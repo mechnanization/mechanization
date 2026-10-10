@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { hasAtMostTwoDecimals } from './money-amount';
 
 /**
  * الخزينة — the municipality's wallets and the ledger behind them.
@@ -48,7 +49,7 @@ const openingAmount = z
   .finite('الرصيد الافتتاحي رقم')
   .min(0, 'الرصيد الافتتاحي لا يكون سالباً')
   .max(999_999_999_999, 'الرصيد كبير جداً')
-  .refine((value) => Math.abs(value * 100 - Math.round(value * 100)) < 1e-6, 'خانتان عشريتان على الأكثر');
+  .refine(hasAtMostTwoDecimals, 'خانتان عشريتان على الأكثر');
 
 /**
  * «تفعيل الخزينة» — the counted opening balance of every wallet, posted once.
@@ -104,6 +105,10 @@ export interface TreasuryOverview {
   rate: TreasuryRate;
   /** Held by collectors, per currency — shown beside the safe, never counted into it. */
   heldByCollectors: Array<{ currency: string; amount: number }>;
+  /** Expense requests waiting for the manager's payment order (nothing has left a wallet). */
+  pendingExpenseRequests: number;
+  /** Urgent payments an accountant made first, still waiting for their order (art. 35). */
+  vouchersAwaitingOrder: number;
 }
 
 export interface TreasuryStatementEntry {
@@ -130,7 +135,7 @@ export interface TreasuryStatement {
   /** The balance before the first entry shown. */
   openingBalance: number;
   entries: TreasuryStatementEntry[];
-  /** True when more entries exist after the last one shown. */
+  /** True when older entries in the range exist before the first one shown (the page keeps the latest). */
   truncated: boolean;
 }
 

@@ -1,13 +1,19 @@
 import { Injectable } from '@nestjs/common';
 import {
   municipalToday,
+  TREASURY_ADMIN_ROLES,
   type ExpenseCategoryKey,
   type ExpenseCategoryView,
   type ExpenseListResult,
+  type ExpenseRequestListResult,
+  type ExpenseRequestStatus,
+  type ExpenseRequestView,
   type ExpenseVoucherView,
   type CreateExpenseCategoryInput,
   type RecordExpenseInput,
   type RecordExpenseResult,
+  type RequestExpenseInput,
+  type RequestExpenseResult,
   type UpdateExpenseCategoryInput,
 } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
@@ -15,10 +21,12 @@ import { TenantContextService } from '../../../infrastructure/context/tenant-con
 import { allocateDocumentNumber } from '../../common/document-number';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
-import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { AuditService } from '../audit/audit.service';
-import { expenseOccurredAt, planExpenseDate } from './expenses.plan';
+import { planExpenseDate } from './expenses.plan';
+import { isUniqueViolationOn } from './retry-key';
 import { TreasuryLedgerService } from './treasury-ledger.service';
+import { documentOccurredAt } from './treasury.plan';
 
 /** One page of the register. A municipality's year of spending is thousands of rows, not all of them. */
 const PAGE_MAX = 200;
@@ -38,23 +46,58 @@ const VOUCHER_SELECT = {
   adjustmentReason: true,
   voidedAt: true,
   voidReason: true,
+  orderedAt: true,
+  urgentReason: true,
   category: { select: { id: true, name: true } },
   account: { select: { id: true, name: true, currency: true } },
   recordedBy: { select: { firstName: true, lastName: true } },
   voidedBy: { select: { firstName: true, lastName: true } },
+  orderedBy: { select: { firstName: true, lastName: true } },
 } satisfies Prisma.ExpenseVoucherSelect;
 
 type VoucherRow = Prisma.ExpenseVoucherGetPayload<{ select: typeof VOUCHER_SELECT }>;
 
+/** The request row a list or a decision returns. */
+const REQUEST_SELECT = {
+  id: true,
+  amount: true,
+  currency: true,
+  payee: true,
+  description: true,
+  invoiceNumber: true,
+  hasPhysicalReceipt: true,
+  requestedById: true,
+  createdAt: true,
+  decision: true,
+  decidedAt: true,
+  decisionReason: true,
+  voucherId: true,
+  category: { select: { id: true, name: true } },
+  account: { select: { id: true, name: true, currency: true } },
+  requestedBy: { select: { firstName: true, lastName: true } },
+  decidedBy: { select: { firstName: true, lastName: true } },
+  voucher: { select: { voucherNumber: true } },
+} satisfies Prisma.ExpenseRequestSelect;
+
+type RequestRow = Prisma.ExpenseRequestGetPayload<{ select: typeof REQUEST_SELECT }>;
+
+/** Whether a role signs payment orders — the manager, acting for the head of the municipality. */
+const ordersPayments = (role: string): boolean => (TREASURY_ADMIN_ROLES as readonly string[]).includes(role);
+
 /**
  * النفقات — recording money out of a wallet, and cancelling a voucher.
  *
- * ## Recording is paying
+ * ## The payment order, and recording is paying
  *
- * There is no draft and no approval step (docs/finance.md §5.1, a product
- * decision): one call writes the voucher and the ledger entry that takes the
- * money out, inside one transaction. So a voucher cannot exist without its
- * movement, and a movement cannot exist without the voucher explaining it.
+ * Money leaves on the order of the head of the municipality (decree 5595/1982
+ * art. 28 and 33; docs/finance.md §5.1, decided 2026-10-09). The manager's own
+ * voucher is the order. An accountant either files a request (`requestPayment`)
+ * that the manager orders — the order writes and pays the voucher — or, for
+ * what art. 35 lets be paid first, pays at once with a reason and the voucher
+ * waits for the manager to regularise it. Wherever a voucher is written, one
+ * call writes it and the ledger entry that takes the money out, inside one
+ * transaction: a voucher cannot exist without its movement, and a movement
+ * cannot exist without the voucher explaining it.
  *
  * The outflow goes through `TreasuryLedgerService.post`, which holds the
  * wallet's row lock and refuses to take it below zero. That is the whole
@@ -169,12 +212,17 @@ export class ExpensesService {
         });
       }
 
+      /*
+        A PATCH: what the request leaves out stays as it is. Read as a full
+        replacement it cleared the budget codes of any edit that only renamed a
+        band, and switched a retired band back on whenever `active` was omitted.
+      */
       const updated = await this.writeCategory(tx, id, {
         name: input.name.trim(),
-        description: input.description?.trim() || null,
-        chapterCode: input.chapterCode?.trim() || null,
-        itemCode: input.itemCode?.trim() || null,
-        active: input.active ?? true,
+        ...(input.description !== undefined ? { description: input.description.trim() || null } : {}),
+        ...(input.chapterCode !== undefined ? { chapterCode: input.chapterCode.trim() || null } : {}),
+        ...(input.itemCode !== undefined ? { itemCode: input.itemCode.trim() || null } : {}),
+        ...(input.active !== undefined ? { active: input.active } : {}),
       });
 
       await this.audit.recordInTransaction({
@@ -198,6 +246,8 @@ export class ExpensesService {
     categoryId?: string;
     accountId?: string;
     includeVoid?: boolean;
+    /** Only urgent payments still waiting for the manager's order (art. 35). */
+    awaitingOrder?: boolean;
     page?: number;
     pageSize?: number;
   }): Promise<ExpenseListResult> {
@@ -207,7 +257,8 @@ export class ExpensesService {
     const where: Prisma.ExpenseVoucherWhereInput = {
       ...(filters.categoryId ? { categoryId: filters.categoryId } : {}),
       ...(filters.accountId ? { accountId: filters.accountId } : {}),
-      ...(filters.includeVoid ? {} : { voidedAt: null }),
+      ...(filters.includeVoid && !filters.awaitingOrder ? {} : { voidedAt: null }),
+      ...(filters.awaitingOrder ? { orderedAt: null } : {}),
       ...(filters.from || filters.to
         ? {
             occurredAt: {
@@ -266,36 +317,62 @@ export class ExpensesService {
    * `planExpenseDate`, or the wallet does not hold the amount.
    */
   async record(input: RecordExpenseInput, actor: { id: string; role: string }): Promise<RecordExpenseResult> {
-    return runInTenantTransaction(this.tenantContext, async () => {
+    try {
+      return await runInTenantTransaction(this.tenantContext, () => this.recordInTransaction(input, actor));
+    } catch (error) {
+      /*
+        Two presses carrying one key, past both reads at the same moment: the
+        loser's insert hits the unique index on `clientRequestId` and its
+        transaction is gone. Answer it from the winner's voucher, read afresh,
+        rather than as a server error — the supplier is paid once either way.
+      */
+      if (input.clientRequestId && isUniqueViolationOn(error, 'clientRequestId')) {
+        const replay = await this.replayVoucher(this.db as Prisma.TransactionClient, input, actor);
+        if (replay) return replay;
+      }
+      throw error;
+    }
+  }
+
+  private async recordInTransaction(
+    input: RecordExpenseInput,
+    actor: { id: string; role: string },
+  ): Promise<RecordExpenseResult> {
+    {
       const tx = this.db as Prisma.TransactionClient;
 
       /*
         Checked before anything is written, so a double-clicked button answers
-        with the first voucher instead of paying the supplier twice. The unique
-        index on `clientRequestId` is what makes this safe under a real race:
-        the loser's insert fails rather than becoming a second payment.
+        with the first voucher instead of paying the supplier twice — and again
+        once the wallet is locked, below, for the press that arrived while the
+        first was still running.
       */
-      if (input.clientRequestId) {
-        const earlier = await tx.expenseVoucher.findUnique({
-          where: { clientRequestId: input.clientRequestId },
-          select: { id: true, voucherNumber: true, accountId: true, currency: true },
-        });
-        if (earlier) {
-          return {
-            id: earlier.id,
-            voucherNumber: earlier.voucherNumber,
-            balanceAfter: (await this.ledger.balanceOf(tx, earlier.accountId)).toNumber(),
-            currency: earlier.currency,
-            replayed: true,
-          };
-        }
-      }
+      const replay = await this.replayVoucher(tx, input, actor);
+      if (replay) return replay;
 
       const config = await this.ledger.config(tx);
       if (!config.goLiveAt) {
         throw new ConflictError({
           code: 'TREASURY_NOT_ACTIVE',
           message: 'The treasury is not active, so no money can leave it yet.',
+        });
+      }
+
+      /*
+        «أمر الصرف» (decree 5595/1982 art. 28 and 33): money leaves on the order
+        of the head of the municipality. The manager's own voucher is that order.
+        An accountant pays without one only for what art. 35 allows — salaries,
+        routine petty and urgent expenses — and says why, and the voucher then
+        waits for the manager to regularise it; everything else goes to the
+        manager as a request (`requestPayment`) and moves no money until ordered.
+      */
+      const ordered = ordersPayments(actor.role);
+      const urgentReason = ordered ? null : input.urgentReason?.trim() || null;
+      if (!ordered && !urgentReason) {
+        throw new ConflictError({
+          code: 'EXPENSE_ORDER_REQUIRED',
+          message:
+            "An expense is paid only on the manager's payment order: send it as a request, or give the reason it is urgent.",
         });
       }
 
@@ -324,37 +401,28 @@ export class ExpensesService {
         });
       }
 
-      const category = await tx.expenseCategory.findUnique({
-        where: { id: input.categoryId },
-        select: { id: true, name: true, active: true },
-      });
-      if (!category) {
-        throw new NotFoundError({
-          code: 'EXPENSE_CATEGORY_NOT_FOUND',
-          message: `Expense category ${input.categoryId} was not found`,
-        });
-      }
-      if (!category.active) {
-        throw new ConflictError({
-          code: 'EXPENSE_CATEGORY_INACTIVE',
-          message: 'That expense category is no longer in use.',
-          params: { category: category.name },
-        });
-      }
+      const category = await this.activeCategory(tx, input.categoryId);
 
       // The currency comes from the wallet, never from the request.
-      const account = await tx.treasuryAccount.findFirst({
-        where: { id: input.accountId, active: true },
-        select: { id: true, name: true, currency: true },
-      });
-      if (!account) {
-        throw new NotFoundError({
-          code: 'TREASURY_ACCOUNT_NOT_FOUND',
-          message: `Treasury account ${input.accountId} was not found`,
-        });
-      }
+      const account = await this.payingAccount(tx, input.accountId);
 
-      const occurredAt = expenseOccurredAt(verdict.paidOn, today);
+      const occurredAt = documentOccurredAt({
+        day: verdict.paidOn,
+        today,
+        now: new Date(),
+        goLiveAt: config.goLiveAt,
+      });
+
+      /*
+        The wallet's strong lock before anything references it (see
+        `TreasuryLedgerService.lockAccounts`): the voucher's foreign key would
+        otherwise take a weak one first, and an expense and a handover on the
+        same safe deadlocked. Then the retry key is asked once more, now that a
+        press racing this one has either committed or not started.
+      */
+      await this.ledger.lockAccounts(tx, [account.id]);
+      const lateReplay = await this.replayVoucher(tx, input, actor);
+      if (lateReplay) return lateReplay;
 
       // «PV-2610-0001». See `allocateDocumentNumbers` and migration 0079.
       const voucherNumber = await allocateDocumentNumber(tx, this.S, 'VOUCHER');
@@ -373,6 +441,9 @@ export class ExpensesService {
           invoiceNumber: input.invoiceNumber?.trim() || null,
           hasPhysicalReceipt: input.hasPhysicalReceipt ?? false,
           recordedById: actor.id,
+          orderedAt: ordered ? new Date() : null,
+          orderedById: ordered ? actor.id : null,
+          urgentReason,
           clientRequestId: input.clientRequestId ?? null,
         },
         select: { id: true },
@@ -417,6 +488,8 @@ export class ExpensesService {
           categoryId: category.id,
           accountId: account.id,
           occurredAt: occurredAt.toISOString(),
+          // Whether the order came with it, or the payment was urgent and waits for one (art. 35).
+          ordered,
         },
       });
 
@@ -426,8 +499,110 @@ export class ExpensesService {
         balanceAfter: (await this.ledger.balanceOf(tx, account.id)).toNumber(),
         currency: account.currency,
         replayed: false,
+        orderStatus: ordered ? 'ORDERED' : 'AWAITING_ORDER',
       };
+    }
+  }
+
+  /**
+   * The wallet an expense may be paid from: an active municipal wallet, never a
+   * collector's custody.
+   *
+   * A custody wallet is the cash a collector is still carrying. Paying an
+   * expense out of it would let an accountant write his liability down with
+   * nobody counting the notes — the shortage write-off docs/finance.md §6.3
+   * keeps for the manager — and a collector may pay nothing out himself
+   * (decree 5595/1982 art. 93).
+   */
+  private async payingAccount(
+    tx: Prisma.TransactionClient,
+    accountId: string,
+  ): Promise<{ id: string; name: string; currency: string }> {
+    const account = await tx.treasuryAccount.findFirst({
+      where: { id: accountId, active: true },
+      select: { id: true, name: true, currency: true, type: true },
     });
+    if (!account) {
+      throw new NotFoundError({
+        code: 'TREASURY_ACCOUNT_NOT_FOUND',
+        message: `Treasury account ${accountId} was not found`,
+      });
+    }
+    if (account.type === 'COLLECTOR_CUSTODY') {
+      throw new ConflictError({
+        code: 'EXPENSE_ACCOUNT_NOT_PAYABLE',
+        message: 'An expense cannot be paid out of a collector custody wallet.',
+      });
+    }
+    return { id: account.id, name: account.name, currency: account.currency };
+  }
+
+  /**
+   * The voucher a retry key already produced, if any.
+   *
+   * A key names one act: this clerk paying this amount out of this wallet, to
+   * this payee, for this, under this band — the fields the form renews its key
+   * on. Replayed with all of them it answers with the first voucher; anything
+   * else is a new act under an old key, and is refused rather than silently
+   * answered with a voucher the clerk did not ask for. What the form does not
+   * renew the key on (the invoice number, the receipt flag, the reasons) is not
+   * compared: a retry is the same payment, and the voucher keeps what it was
+   * first recorded with.
+   *
+   * A voucher cancelled since is not answered as recorded: the clerk would read
+   * «سُجّل» for money the register no longer shows as paid.
+   */
+  private async replayVoucher(
+    tx: Prisma.TransactionClient,
+    input: RecordExpenseInput,
+    actor: { id: string },
+  ): Promise<RecordExpenseResult | null> {
+    if (!input.clientRequestId) return null;
+    const earlier = await tx.expenseVoucher.findUnique({
+      where: { clientRequestId: input.clientRequestId },
+      select: {
+        id: true,
+        voucherNumber: true,
+        accountId: true,
+        currency: true,
+        amount: true,
+        recordedById: true,
+        categoryId: true,
+        payee: true,
+        description: true,
+        orderedAt: true,
+        voidedAt: true,
+      },
+    });
+    if (!earlier) return null;
+    if (
+      earlier.accountId !== input.accountId ||
+      !earlier.amount.equals(new Prisma.Decimal(input.amount)) ||
+      earlier.recordedById !== actor.id ||
+      earlier.categoryId !== input.categoryId ||
+      earlier.payee !== input.payee.trim() ||
+      earlier.description !== input.description.trim()
+    ) {
+      throw new ConflictError({
+        code: 'TREASURY_REQUEST_KEY_REUSED',
+        message: 'This request id was already used for a different voucher.',
+      });
+    }
+    if (earlier.voidedAt) {
+      throw new ConflictError({
+        code: 'EXPENSE_ALREADY_VOID',
+        message: `This request was recorded as ${earlier.voucherNumber}, and that voucher has since been cancelled.`,
+        params: { voucherNumber: earlier.voucherNumber },
+      });
+    }
+    return {
+      id: earlier.id,
+      voucherNumber: earlier.voucherNumber,
+      balanceAfter: (await this.ledger.balanceOf(tx, earlier.accountId)).toNumber(),
+      currency: earlier.currency,
+      replayed: true,
+      orderStatus: earlier.orderedAt ? 'ORDERED' : 'AWAITING_ORDER',
+    };
   }
 
   /**
@@ -492,6 +667,444 @@ export class ExpensesService {
     });
   }
 
+  // ───────────────────────  «أمر الصرف» — the payment order  ───────────────────────
+
+  /**
+   * «طلب أمر صرف» — an accountant prepares an expense for the manager's order.
+   *
+   * Nothing leaves a wallet here: the cashier pays an order that bears the
+   * signature of the head of the municipality (decree 5595/1982 art. 28, 33).
+   * What does not depend on the day — the treasury is live, the band is in use,
+   * the wallet is a municipal one — is checked now, so the manager is not handed
+   * a request that cannot be ordered. The balance is checked when the money
+   * actually leaves, at the order.
+   */
+  async requestPayment(
+    input: RequestExpenseInput,
+    actor: { id: string; role: string },
+  ): Promise<RequestExpenseResult> {
+    try {
+      return await runInTenantTransaction(this.tenantContext, async () => {
+        const tx = this.db as Prisma.TransactionClient;
+
+        const replay = await this.replayRequest(tx, input, actor);
+        if (replay) return replay;
+
+        const config = await this.ledger.config(tx);
+        if (!config.goLiveAt) {
+          throw new ConflictError({
+            code: 'TREASURY_NOT_ACTIVE',
+            message: 'The treasury is not active, so no payment can be requested from it yet.',
+          });
+        }
+        const category = await this.activeCategory(tx, input.categoryId);
+        const account = await this.payingAccount(tx, input.accountId);
+
+        const request = await tx.expenseRequest.create({
+          data: {
+            categoryId: category.id,
+            accountId: account.id,
+            currency: account.currency,
+            amount: new Prisma.Decimal(input.amount),
+            payee: input.payee.trim(),
+            description: input.description.trim(),
+            invoiceNumber: input.invoiceNumber?.trim() || null,
+            hasPhysicalReceipt: input.hasPhysicalReceipt ?? false,
+            requestedById: actor.id,
+            clientRequestId: input.clientRequestId ?? null,
+          },
+          select: { id: true },
+        });
+
+        // Tier 1, and like the voucher's: no payee — free text that may name a citizen.
+        await this.audit.recordInTransaction({
+          actorId: actor.id,
+          actorType: 'STAFF',
+          actorRole: actor.role as never,
+          action: 'EXPENSE_REQUESTED',
+          entityType: 'ExpenseRequest',
+          entityId: request.id,
+          after: { amount: input.amount, currency: account.currency, categoryId: category.id, accountId: account.id },
+        });
+
+        return { id: request.id, status: 'PENDING', replayed: false };
+      });
+    } catch (error) {
+      // The same race as a voucher's double press: answer the loser from the winner's request.
+      if (input.clientRequestId && isUniqueViolationOn(error, 'clientRequestId')) {
+        const replay = await this.replayRequest(this.db as Prisma.TransactionClient, input, actor);
+        if (replay) return replay;
+      }
+      throw error;
+    }
+  }
+
+  /** The requests, newest first — by default the manager's queue, those still waiting. */
+  async listRequests(filters: {
+    status?: ExpenseRequestStatus;
+    page?: number;
+    pageSize?: number;
+  }): Promise<ExpenseRequestListResult> {
+    const pageSize = Math.min(Math.max(filters.pageSize ?? PAGE_DEFAULT, 1), PAGE_MAX);
+    const page = Math.max(filters.page ?? 1, 1);
+    const status = filters.status ?? 'PENDING';
+    const where: Prisma.ExpenseRequestWhereInput = status === 'PENDING' ? { decision: null } : { decision: status };
+
+    const [rows, total] = await Promise.all([
+      this.db.expenseRequest.findMany({
+        where,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        select: REQUEST_SELECT,
+      }),
+      this.db.expenseRequest.count({ where }),
+    ]);
+    return { requests: rows.map((row) => this.requestView(row)), total };
+  }
+
+  /**
+   * «إصدار أمر الصرف» — the manager orders a request, and the money leaves.
+   *
+   * One transaction: the request is locked and found still waiting, the voucher
+   * is written with its PV number and its order, the wallet is debited behind
+   * its lock (refused below zero, which leaves the request waiting), and the
+   * request records the decision and the voucher it produced. The voucher names
+   * the accountant who prepared it as its recorder and the manager as its
+   * orderer — the two signatures the decree asks for.
+   */
+  async orderRequest(id: string, actor: { id: string; role: string }): Promise<RecordExpenseResult> {
+    return runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.db as Prisma.TransactionClient;
+
+      /*
+        The request's own id is the retry key of an order. A manager whose
+        answer was lost, and who presses again, is answered with the voucher his
+        order paid rather than «بُتّ في هذا الطلب» — he would otherwise not know
+        it was paid, or by which voucher. Read under the row lock, so a second
+        press racing the first waits for it and is answered the same way. Another
+        manager's order is not his to be answered with.
+      */
+      const locked = await this.lockRequest(tx, id);
+      if (locked.decision === 'ORDERED' && locked.decidedById === actor.id && locked.voucherId) {
+        return this.answerOrder(tx, locked.voucherId);
+      }
+      const request = await this.lockPendingRequest(tx, id);
+
+      const config = await this.ledger.config(tx);
+      if (!config.goLiveAt) {
+        throw new ConflictError({
+          code: 'TREASURY_NOT_ACTIVE',
+          message: 'The treasury is not active, so no money can leave it yet.',
+        });
+      }
+      const category = await this.activeCategory(tx, request.categoryId);
+      const account = await this.payingAccount(tx, request.accountId);
+
+      // Strong lock before anything references the wallet (see `lockAccounts`).
+      await this.ledger.lockAccounts(tx, [account.id]);
+      const now = new Date();
+      const voucherNumber = await allocateDocumentNumber(tx, this.S, 'VOUCHER');
+
+      const voucher = await tx.expenseVoucher.create({
+        data: {
+          voucherNumber,
+          categoryId: category.id,
+          accountId: account.id,
+          currency: account.currency,
+          amount: request.amount,
+          payee: request.payee,
+          description: request.description,
+          occurredAt: now,
+          invoiceNumber: request.invoiceNumber,
+          hasPhysicalReceipt: request.hasPhysicalReceipt,
+          recordedById: request.requestedById,
+          orderedAt: now,
+          orderedById: actor.id,
+        },
+        select: { id: true },
+      });
+
+      await this.ledger.post(
+        tx,
+        [{ accountId: account.id, currency: account.currency, amount: request.amount.negated() }],
+        {
+          source: 'EXPENSE_VOUCHER',
+          sourceId: voucher.id,
+          actorId: actor.id,
+          occurredAt: now,
+          exchangeRate: config.exchangeRate,
+        },
+      );
+
+      await tx.expenseRequest.update({
+        where: { id },
+        data: { decision: 'ORDERED', decidedAt: now, decidedById: actor.id, voucherId: voucher.id },
+      });
+
+      await this.audit.recordInTransaction({
+        actorId: actor.id,
+        actorType: 'STAFF',
+        actorRole: actor.role as never,
+        action: 'EXPENSE_ORDERED',
+        entityType: 'ExpenseVoucher',
+        entityId: voucher.id,
+        after: {
+          voucherNumber,
+          requestId: id,
+          amount: request.amount.toNumber(),
+          currency: account.currency,
+          categoryId: category.id,
+          accountId: account.id,
+        },
+      });
+
+      return {
+        id: voucher.id,
+        voucherNumber,
+        balanceAfter: (await this.ledger.balanceOf(tx, account.id)).toNumber(),
+        currency: account.currency,
+        replayed: false,
+        orderStatus: 'ORDERED',
+      };
+    });
+  }
+
+  /** «رفض الطلب» — the manager declines a request, with a reason. No money ever moved. */
+  async rejectRequest(id: string, reason: string, actor: { id: string; role: string }): Promise<ExpenseRequestView> {
+    return runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.db as Prisma.TransactionClient;
+      await this.lockPendingRequest(tx, id);
+
+      await tx.expenseRequest.update({
+        where: { id },
+        data: { decision: 'REJECTED', decidedAt: new Date(), decidedById: actor.id, decisionReason: reason.trim() },
+      });
+      await this.audit.recordInTransaction({
+        actorId: actor.id,
+        actorType: 'STAFF',
+        actorRole: actor.role as never,
+        action: 'EXPENSE_REQUEST_REJECTED',
+        entityType: 'ExpenseRequest',
+        entityId: id,
+        after: { reason: reason.trim() },
+      });
+
+      return this.requestView(await tx.expenseRequest.findUniqueOrThrow({ where: { id }, select: REQUEST_SELECT }));
+    });
+  }
+
+  /**
+   * «سحب الطلب» — its author takes back a request still waiting (the manager
+   * may too). Anyone else is refused: a request is one accountant's word, and
+   * another may not unsay it.
+   */
+  async withdrawRequest(id: string, actor: { id: string; role: string }): Promise<ExpenseRequestView> {
+    return runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.db as Prisma.TransactionClient;
+      const request = await this.lockPendingRequest(tx, id);
+      if (request.requestedById !== actor.id && !ordersPayments(actor.role)) {
+        throw new ForbiddenError({
+          code: 'EXPENSE_REQUEST_NOT_YOURS',
+          message: 'Only the person who prepared a request, or the manager, can withdraw it.',
+        });
+      }
+
+      await tx.expenseRequest.update({
+        where: { id },
+        data: { decision: 'WITHDRAWN', decidedAt: new Date(), decidedById: actor.id },
+      });
+      await this.audit.recordInTransaction({
+        actorId: actor.id,
+        actorType: 'STAFF',
+        actorRole: actor.role as never,
+        action: 'EXPENSE_REQUEST_WITHDRAWN',
+        entityType: 'ExpenseRequest',
+        entityId: id,
+        after: {},
+      });
+
+      return this.requestView(await tx.expenseRequest.findUniqueOrThrow({ where: { id }, select: REQUEST_SELECT }));
+    });
+  }
+
+  /**
+   * «تسوية بأمر صرف» — the manager's order for an urgent payment an accountant
+   * already made (decree 5595/1982 art. 35: the order follows). The money has
+   * moved; this stamps the order on the voucher, once. A payment the manager
+   * will not order is cancelled instead (`void`), which returns the money.
+   */
+  async regularize(voucherId: string, actor: { id: string; role: string }): Promise<ExpenseVoucherView> {
+    return runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.db as Prisma.TransactionClient;
+      const locked = await tx.$queryRaw<
+        Array<{ id: string; voucherNumber: string; voidedAt: Date | null; orderedAt: Date | null }>
+      >`
+        SELECT "id", "voucherNumber", "voidedAt", "orderedAt"
+          FROM ${this.S}expense_vouchers
+         WHERE "id" = ${voucherId}::uuid
+         FOR UPDATE
+      `;
+      const voucher = locked[0];
+      if (!voucher) {
+        throw new NotFoundError({ code: 'EXPENSE_NOT_FOUND', message: `Expense voucher ${voucherId} was not found` });
+      }
+      if (voucher.voidedAt) {
+        throw new ConflictError({ code: 'EXPENSE_ALREADY_VOID', message: 'This expense voucher has been cancelled.' });
+      }
+      if (voucher.orderedAt) {
+        throw new ConflictError({
+          code: 'EXPENSE_ALREADY_ORDERED',
+          message: 'This voucher already carries its payment order.',
+        });
+      }
+
+      await tx.expenseVoucher.update({
+        where: { id: voucherId },
+        data: { orderedAt: new Date(), orderedById: actor.id },
+      });
+      await this.audit.recordInTransaction({
+        actorId: actor.id,
+        actorType: 'STAFF',
+        actorRole: actor.role as never,
+        action: 'EXPENSE_ORDERED',
+        entityType: 'ExpenseVoucher',
+        entityId: voucherId,
+        after: { voucherNumber: voucher.voucherNumber, afterPayment: true },
+      });
+
+      return this.view(await tx.expenseVoucher.findUniqueOrThrow({ where: { id: voucherId }, select: VOUCHER_SELECT }));
+    });
+  }
+
+  /** A band money may still be spent under. */
+  private async activeCategory(
+    tx: Prisma.TransactionClient,
+    categoryId: string,
+  ): Promise<{ id: string; name: string }> {
+    const category = await tx.expenseCategory.findUnique({
+      where: { id: categoryId },
+      select: { id: true, name: true, active: true },
+    });
+    if (!category) {
+      throw new NotFoundError({
+        code: 'EXPENSE_CATEGORY_NOT_FOUND',
+        message: `Expense category ${categoryId} was not found`,
+      });
+    }
+    if (!category.active) {
+      throw new ConflictError({
+        code: 'EXPENSE_CATEGORY_INACTIVE',
+        message: 'That expense category is no longer in use.',
+        params: { category: category.name },
+      });
+    }
+    return { id: category.id, name: category.name };
+  }
+
+  /**
+   * A request still waiting for its decision, locked so two managers deciding
+   * it together meet here one after the other and the second finds the first's.
+   */
+  /** Locks a request's row, so two decisions on it are taken one after the other. */
+  private async lockRequest(tx: Prisma.TransactionClient, id: string) {
+    const locked = await tx.$queryRaw<
+      Array<{ id: string; decision: string | null; decidedById: string | null; voucherId: string | null }>
+    >`
+      SELECT "id", "decision", "decidedById", "voucherId"
+        FROM ${this.S}expense_requests
+       WHERE "id" = ${id}::uuid
+       FOR UPDATE
+    `;
+    if (!locked[0]) {
+      throw new NotFoundError({ code: 'EXPENSE_REQUEST_NOT_FOUND', message: `Expense request ${id} was not found` });
+    }
+    return locked[0];
+  }
+
+  /** What an order already given answers its own repeat with: the voucher it paid. */
+  private async answerOrder(tx: Prisma.TransactionClient, voucherId: string): Promise<RecordExpenseResult> {
+    const voucher = await tx.expenseVoucher.findUniqueOrThrow({
+      where: { id: voucherId },
+      select: { id: true, voucherNumber: true, accountId: true, currency: true, voidedAt: true },
+    });
+    if (voucher.voidedAt) {
+      throw new ConflictError({
+        code: 'EXPENSE_ALREADY_VOID',
+        message: `This order paid ${voucher.voucherNumber}, and that voucher has since been cancelled.`,
+        params: { voucherNumber: voucher.voucherNumber },
+      });
+    }
+    return {
+      id: voucher.id,
+      voucherNumber: voucher.voucherNumber,
+      balanceAfter: (await this.ledger.balanceOf(tx, voucher.accountId)).toNumber(),
+      currency: voucher.currency,
+      replayed: true,
+      orderStatus: 'ORDERED',
+    };
+  }
+
+  private async lockPendingRequest(tx: Prisma.TransactionClient, id: string) {
+    const locked = await this.lockRequest(tx, id);
+    if (locked.decision) {
+      throw new ConflictError({
+        code: 'EXPENSE_REQUEST_ALREADY_DECIDED',
+        message: 'This request has already been decided.',
+      });
+    }
+    return tx.expenseRequest.findUniqueOrThrow({
+      where: { id },
+      select: {
+        categoryId: true,
+        accountId: true,
+        amount: true,
+        payee: true,
+        description: true,
+        invoiceNumber: true,
+        hasPhysicalReceipt: true,
+        requestedById: true,
+      },
+    });
+  }
+
+  /** The request a retry key already filed, bound to its act as a voucher's key is (`replayVoucher`). */
+  private async replayRequest(
+    tx: Prisma.TransactionClient,
+    input: RequestExpenseInput,
+    actor: { id: string },
+  ): Promise<RequestExpenseResult | null> {
+    if (!input.clientRequestId) return null;
+    const earlier = await tx.expenseRequest.findUnique({
+      where: { clientRequestId: input.clientRequestId },
+      select: {
+        id: true,
+        accountId: true,
+        amount: true,
+        requestedById: true,
+        categoryId: true,
+        payee: true,
+        description: true,
+        decision: true,
+      },
+    });
+    if (!earlier) return null;
+    if (
+      earlier.accountId !== input.accountId ||
+      !earlier.amount.equals(new Prisma.Decimal(input.amount)) ||
+      earlier.requestedById !== actor.id ||
+      earlier.categoryId !== input.categoryId ||
+      earlier.payee !== input.payee.trim() ||
+      earlier.description !== input.description.trim()
+    ) {
+      throw new ConflictError({
+        code: 'TREASURY_REQUEST_KEY_REUSED',
+        message: 'This request id was already used for a different request.',
+      });
+    }
+    return { id: earlier.id, status: (earlier.decision as ExpenseRequestStatus | null) ?? 'PENDING', replayed: true };
+  }
+
   /**
    * The one place a category row is written, so create and edit map the same
    * database refusals to the same codes.
@@ -508,9 +1121,9 @@ export class ExpensesService {
     id: string | null,
     data: {
       name: string;
-      description: string | null;
-      chapterCode: string | null;
-      itemCode: string | null;
+      description?: string | null;
+      chapterCode?: string | null;
+      itemCode?: string | null;
       active?: boolean;
     },
   ): Promise<ExpenseCategoryView> {
@@ -570,6 +1183,37 @@ export class ExpensesService {
       voidedAt: row.voidedAt?.toISOString() ?? null,
       voidedByName: name(row.voidedBy),
       voidReason: row.voidReason,
+      orderStatus: row.orderedAt ? 'ORDERED' : 'AWAITING_ORDER',
+      orderedAt: row.orderedAt?.toISOString() ?? null,
+      orderedByName: name(row.orderedBy),
+      urgentReason: row.urgentReason,
+    };
+  }
+
+  /** A request as a screen reads it. Its status is derived from the decision, written once. */
+  private requestView(row: RequestRow): ExpenseRequestView {
+    const name = (person: { firstName: string; lastName: string } | null): string | null =>
+      person ? `${person.firstName} ${person.lastName}` : null;
+
+    return {
+      id: row.id,
+      status: (row.decision as ExpenseRequestStatus | null) ?? 'PENDING',
+      category: row.category,
+      account: row.account,
+      amount: row.amount.toNumber(),
+      currency: row.currency,
+      payee: row.payee,
+      description: row.description,
+      invoiceNumber: row.invoiceNumber,
+      hasPhysicalReceipt: row.hasPhysicalReceipt,
+      requestedById: row.requestedById,
+      requestedByName: name(row.requestedBy),
+      createdAt: row.createdAt.toISOString(),
+      decidedAt: row.decidedAt?.toISOString() ?? null,
+      decidedByName: name(row.decidedBy),
+      decisionReason: row.decisionReason,
+      voucherId: row.voucherId,
+      voucherNumber: row.voucher?.voucherNumber ?? null,
     };
   }
 }

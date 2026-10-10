@@ -22,6 +22,12 @@ export interface EntryDraft {
   amount: Prisma.Decimal;
   /** The entry this one reverses, when it is an opposing entry. */
   reversalOfId?: string;
+  /**
+   * The rate to stamp, when it is not the posting's own. An opposing entry
+   * carries its original's, so the pair nets to zero in a report that values
+   * each entry at its own rate (docs/finance.md §3.6).
+   */
+  exchangeRate?: Prisma.Decimal | null;
 }
 
 export interface PostContext {
@@ -66,15 +72,53 @@ export class TreasuryLedgerService {
     return tenantSchemaRef(this.tenantContext.schemaName);
   }
 
-  /** The go-live stamp and the municipality's rate, read in the caller's transaction. */
+  /**
+   * The go-live stamp and the municipality's rate, read in the caller's transaction.
+   *
+   * `FOR SHARE`, not a plain read: activation holds this row `FOR UPDATE` from
+   * the moment it stamps `treasuryGoLiveAt` until it commits, and a plain read
+   * in that window sees NULL — a payment taken after the stamp would then credit
+   * no wallet, and nothing would ever correct it. The share lock makes the reader
+   * wait for the commit and then see the stamp. Readers do not block each other.
+   */
   async config(tx: Prisma.TransactionClient): Promise<TreasuryConfig> {
-    const settings = await tx.systemSettings.findFirst({
-      select: { treasuryGoLiveAt: true, exchangeRate: true },
-    });
+    const rows = await tx.$queryRaw<
+      Array<{ treasuryGoLiveAt: Date | null; exchangeRate: Prisma.Decimal | null }>
+    >`
+      SELECT "treasuryGoLiveAt", "exchangeRate"
+        FROM ${this.S}system_settings
+       LIMIT 1
+         FOR SHARE
+    `;
     return {
-      goLiveAt: settings?.treasuryGoLiveAt ?? null,
-      exchangeRate: settings?.exchangeRate ?? null,
+      goLiveAt: rows[0]?.treasuryGoLiveAt ?? null,
+      exchangeRate: rows[0]?.exchangeRate ?? null,
     };
+  }
+
+  /**
+   * Locks wallet rows, in id order, before the caller writes anything that
+   * references them.
+   *
+   * Inserting a voucher or a transfer checks its foreign key to
+   * `treasury_accounts`, and that check takes `FOR KEY SHARE` on the wallet. If
+   * `post` only asked for `FOR UPDATE` afterwards, an expense and a handover on
+   * the same safe would each hold the weak lock and wait for the other to let
+   * go — a deadlock, reproduced 17 times in 25 simultaneous rounds. Taking the
+   * strong lock first, in the same id order as `post`, is what keeps guarantee 1
+   * deadlock-free across callers. `post` re-locking rows this transaction
+   * already holds costs nothing.
+   */
+  async lockAccounts(tx: Prisma.TransactionClient, accountIds: string[]): Promise<void> {
+    const ids = [...new Set(accountIds)].sort();
+    if (ids.length === 0) return;
+    await tx.$queryRaw`
+      SELECT "id"
+        FROM ${this.S}treasury_accounts
+       WHERE "id" = ANY(${ids}::uuid[])
+       ORDER BY "id"
+       FOR UPDATE
+    `;
   }
 
   /** The sum of an account's entries. Read behind the account lock when a decision hangs on it. */
@@ -138,6 +182,7 @@ export class TreasuryLedgerService {
               account: account.name,
               available: balance.toNumber(),
               required: change.abs().toNumber(),
+              currency: account.currency,
             },
           });
         }
@@ -150,7 +195,8 @@ export class TreasuryLedgerService {
           accountId: draft.accountId,
           currency: draft.currency,
           amount: draft.amount,
-          exchangeRateAtPosting: context.exchangeRate ?? null,
+          exchangeRateAtPosting:
+            draft.exchangeRate !== undefined ? draft.exchangeRate : (context.exchangeRate ?? null),
           source: context.source as never,
           sourceId: context.sourceId,
           reversalOfId: draft.reversalOfId ?? null,
@@ -187,7 +233,7 @@ export class TreasuryLedgerService {
   ): Promise<number> {
     const originals = await tx.treasuryEntry.findMany({
       where: { source: input.source as never, sourceId: input.sourceId, reversalOfId: null },
-      select: { id: true, accountId: true, currency: true, amount: true },
+      select: { id: true, accountId: true, currency: true, amount: true, exchangeRateAtPosting: true },
       orderBy: { id: 'asc' },
     });
     if (originals.length === 0) return 0;
@@ -200,6 +246,7 @@ export class TreasuryLedgerService {
         currency: entry.currency,
         amount: entry.amount.negated(),
         reversalOfId: entry.id,
+        exchangeRate: entry.exchangeRateAtPosting,
       })),
       {
         source: input.source,
@@ -275,27 +322,20 @@ export class TreasuryLedgerService {
 
     const originals = await tx.treasuryEntry.findMany({
       where: { source: 'CITIZEN_PAYMENT', sourceId: input.originalTransactionId, reversalOfId: null },
-      select: { id: true, accountId: true, currency: true, amount: true },
+      select: { id: true, accountId: true, currency: true, amount: true, exchangeRateAtPosting: true },
       orderBy: { id: 'asc' },
     });
 
     if (originals.length > 0) {
-      await this.post(
-        tx,
-        originals.map((entry) => ({
-          accountId: entry.accountId,
-          currency: entry.currency,
-          amount: entry.amount.negated(),
-          reversalOfId: entry.id,
-        })),
-        {
-          source: 'CITIZEN_PAYMENT',
-          sourceId: input.reversalTransactionId,
-          actorId: input.actorId,
-          occurredAt: input.occurredAt,
-          exchangeRate: config.exchangeRate,
-        },
-      );
+      const { drafts, fromSafe } = await this.refundDrafts(tx, originals);
+      await this.post(tx, drafts, {
+        source: 'CITIZEN_PAYMENT',
+        sourceId: input.reversalTransactionId,
+        actorId: input.actorId,
+        occurredAt: input.occurredAt,
+        exchangeRate: config.exchangeRate,
+        note: fromSafe ? 'استرداد من الصندوق: كان الجابي قد سلّم المبلغ' : null,
+      });
       return;
     }
 
@@ -321,6 +361,83 @@ export class TreasuryLedgerService {
   }
 
   // ─────────────────────────────  internals  ─────────────────────────────
+
+  /**
+   * The wallets a reversed payment's money comes back out of (docs/finance.md
+   * §3.4, decision of 2026-10-09).
+   *
+   * Normally the ones it went into, opposed entry by entry. The exception is a
+   * collector's payment whose cash he has since handed in: the custody wallet no
+   * longer holds it — the safe does — so opposing the custody entry would be
+   * refused for want of funds, and the refund could never be made. Then the
+   * refund leaves the safe of the same currency, which is where municipal
+   * practice takes any refund from: a collector may pay nothing out (decree
+   * 5595/1982 art. 93), and refunds go through the treasury, never out of
+   * collections. Decided for the whole payment, never leg by leg, so a tender's
+   * note and its change come back through the same place.
+   *
+   * Each opposing entry still names the entry it reverses (`reversalOfId`) and
+   * carries that entry's own rate.
+   */
+  private async refundDrafts(
+    tx: Prisma.TransactionClient,
+    originals: Array<{
+      id: string;
+      accountId: string;
+      currency: string;
+      amount: Prisma.Decimal;
+      exchangeRateAtPosting: Prisma.Decimal | null;
+    }>,
+  ): Promise<{ drafts: EntryDraft[]; fromSafe: boolean }> {
+    const opposed = (entry: (typeof originals)[number], accountId = entry.accountId): EntryDraft => ({
+      accountId,
+      currency: entry.currency,
+      amount: entry.amount.negated(),
+      reversalOfId: entry.id,
+      exchangeRate: entry.exchangeRateAtPosting,
+    });
+
+    const accounts = await tx.treasuryAccount.findMany({
+      where: { id: { in: [...new Set(originals.map((entry) => entry.accountId))] } },
+      select: { id: true, type: true },
+    });
+    const custodyIds = accounts.filter((account) => account.type === 'COLLECTOR_CUSTODY').map((a) => a.id);
+    if (custodyIds.length === 0) return { drafts: originals.map((entry) => opposed(entry)), fromSafe: false };
+
+    /*
+      The custody wallets and the safes a refund might fall back on, locked
+      together and in id order before any balance is read — the order `post`
+      and every other caller lock in, so this cannot deadlock against a handover
+      moving money between the same two wallets.
+    */
+    const currencies = [
+      ...new Set(originals.filter((entry) => custodyIds.includes(entry.accountId)).map((e) => e.currency)),
+    ];
+    const safes = await tx.treasuryAccount.findMany({
+      where: { type: 'CASH_SAFE', isPrimary: true, active: true, currency: { in: currencies } },
+      select: { id: true },
+    });
+    await this.lockAccounts(tx, [...custodyIds, ...safes.map((safe) => safe.id)]);
+    let covered = true;
+    for (const custodyId of custodyIds) {
+      const broughtIn = originals
+        .filter((entry) => entry.accountId === custodyId)
+        .reduce((sum, entry) => sum.plus(entry.amount), new Prisma.Decimal(0));
+      if (broughtIn.isPositive() && (await this.balanceOf(tx, custodyId)).lessThan(broughtIn)) covered = false;
+    }
+    if (covered) return { drafts: originals.map((entry) => opposed(entry)), fromSafe: false };
+
+    const drafts: EntryDraft[] = [];
+    for (const entry of originals) {
+      if (!custodyIds.includes(entry.accountId)) {
+        drafts.push(opposed(entry));
+        continue;
+      }
+      const safe = await this.resolve(tx, { kind: 'PRIMARY', type: 'CASH_SAFE', currency: entry.currency });
+      drafts.push(opposed(entry, safe.id));
+    }
+    return { drafts, fromSafe: true };
+  }
 
   private async draftsFor(tx: Prisma.TransactionClient, legs: WalletLeg[]): Promise<EntryDraft[]> {
     const drafts: EntryDraft[] = [];

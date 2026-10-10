@@ -49,16 +49,3 @@ export function planExpenseDate(input: {
 
   return { ok: true, paidOn, backdatedDays };
 }
-
-/**
- * The instant a voucher dated `paidOn` is recorded at: midday UTC of that day.
- *
- * The same choice `occurredAtFor` makes for a payment, and for the same reason
- * — midday survives every zone the municipality's reports are read in, so a
- * back-dated voucher never slides onto the day before or after. A voucher for
- * today keeps the real clock time instead, so the day's movements stay in the
- * order they happened.
- */
-export function expenseOccurredAt(paidOn: string, today: string, now: Date = new Date()): Date {
-  return paidOn === today ? now : new Date(`${paidOn}T12:00:00.000Z`);
-}

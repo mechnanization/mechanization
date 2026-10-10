@@ -7,9 +7,11 @@ import { Receipt } from 'lucide-react';
 import { TREASURY_WORK_ROLES } from '@mechanization/shared-schemas';
 import { getExpenseCategories, getTreasuryOverview } from '@/lib/api-client';
 import { hasRole } from '@/lib/staff-roles';
+import { activeAccounts } from '@/lib/treasury-accounts';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { RecordExpenseForm } from '@/components/admin/finance/record-expense-form';
+import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
 import { Alert } from '@/components/ui/alert';
 import { BackLink } from '@/components/ui/back-link';
 import { Card, CardContent } from '@/components/ui/card';
@@ -26,6 +28,10 @@ import { ErrorState } from '@/components/ui/states';
  * does what it says and a half-filled form cannot be lost to a stray click on an
  * overlay.
  *
+ * What the form does depends on the role (`RecordExpenseForm`): the manager's
+ * recording is the payment order and pays at once, while an accountant sends a
+ * request to the register's queue (`?view=queue`) or pays urgently.
+ *
  * It sits under `/finance/expenses`, so `canAccessPath` matches that nav row by
  * prefix and the page is reachable by everyone who may *read* the register —
  * recording is narrower, so the page checks the role itself and says who may do
@@ -40,6 +46,7 @@ export default function NewExpensePage({
   const base = `/${tenant}/${locale}/${adminPath}`;
   const registerHref = `${base}/finance/expenses`;
   const t = useTranslations('finance.expenses');
+  const tCommon = useTranslations('common');
   const router = useRouter();
   const { token, user } = useStaffSession(tenant, base);
 
@@ -61,10 +68,25 @@ export default function NewExpensePage({
     base,
     token,
     reference: true,
-    errorMessage: t('loadError'),
+    errorMessage: t('categoriesLoadError'),
   });
 
   const ready = Boolean(token) && Boolean(overview.data) && Boolean(categories.data);
+  /*
+    Either read failing *before it ever answered* is a panel that says so and
+    offers the retry (STA-1): a failed band list left the skeleton up for good,
+    because the form needs both and nothing said which had failed. A re-read
+    that fails once the form is on screen (a refocus, the refresh after a
+    press) is a note above it, and the form stays mounted with what was typed:
+    replacing it with the panel unmounted the form in the middle of a payment
+    whose answer was lost.
+  */
+  const failure = (!overview.data && overview.error) || (!categories.data && categories.error) || null;
+  const stale = overview.error ?? categories.error;
+  const retry = (): void => {
+    if (overview.error) overview.refetch();
+    if (categories.error) categories.refetch();
+  };
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
@@ -73,10 +95,12 @@ export default function NewExpensePage({
 
       <PageHeader icon={Receipt} title={t('form.title')} />
 
-      {overview.error ? (
+      {!failure && stale ? <RefreshFailedAlert message={stale} onRetry={retry} /> : null}
+
+      {failure ? (
         <Card>
           <CardContent className="p-0">
-            <ErrorState title={overview.error} onRetry={overview.refetch} />
+            <ErrorState title={failure} onRetry={retry} retryLabel={tCommon('retry')} />
           </CardContent>
         </Card>
       ) : !user || !ready ? (
@@ -96,9 +120,11 @@ export default function NewExpensePage({
           locale={locale}
           role={user.role}
           backHref={registerHref}
-          accounts={overview.data.accounts}
+          // Money is paid only from an active wallet; a retired one could only be refused.
+          accounts={activeAccounts(overview.data)}
           categories={categories.data ?? []}
-          onRecorded={() => router.push(registerHref)}
+          // A request goes to the queue where the manager will find it; a payment, to the register it joined.
+          onRecorded={(outcome) => router.push(outcome === 'REQUESTED' ? `${registerHref}?view=queue` : registerHref)}
         />
       )}
     </div>

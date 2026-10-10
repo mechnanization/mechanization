@@ -755,3 +755,40 @@ The register's own export (citizens, `REGISTER_EXPORT_ROLES`) was taken from the
 head's account in `PR #88`. Whether "does nothing else" also means no building
 export, or only no register export, is the owner's call; hiding the button for
 the role is one allow-list in `lib/staff-roles.ts`.
+
+## 18. The treasury’s controls (decided 2026-10-09)
+
+**Status:** decided on the PR #104 review, from the municipal accounting decree
+(Decree 5595/1982, read in its consolidated text) and municipal cash-handling
+practice. Each one is written up, with its grounds, in
+[finance.md §13.1c](finance.md), and pinned by
+`treasury-controls.integration.spec.ts`.
+
+- **D1, a refund after a handover:** it comes out of the collector’s custody only
+  while that still holds all of it; otherwise it comes out of the safe. A collector
+  pays nothing out (art. 93).
+- **D2, a payment dated before go-live:** only a finance role may record one once the
+  treasury is live, and the audit row says no wallet was credited.
+- **D3, the payment order:** an accountant’s expense waits for the manager’s order
+  (art. 28, 33). Urgent payments are paid first and regularised after (art. 35). The
+  manager records the order the head signs on paper; the head’s own account stays
+  «مشاهد فقط» (decision 16).
+- **D4, stage 5 before activation:** not required with D3 in place. Until it ships, the
+  one-day statement is the daily register (art. 101), printed, counted and signed.
+- **D5, the go-live day:** live, for payments and expenses alike. Whatever was taken
+  before the opening count is entered before activation; a document dated that day is
+  never placed before the opening entry.
+
+**Still open:**
+
+- **A ceiling on the urgent path (art. 35).** An accountant can pay any amount, from any
+  wallet, under any band, by giving an urgent reason. The only check is the manager's
+  queue of vouchers waiting for an order. **Undecided:** whether to add a per-voucher
+  ceiling, a list of bands that may be paid first (salaries, petty and urgent ones, as
+  the article names them), or neither.
+
+- Whether each municipality wants the head’s signature reflected through the
+  manager’s account, or a role of its own.
+- Petty-cash advances (art. 37–42).
+- How a backup should carry an append-only ledger ([database.md](database.md),
+  **Undecided**).

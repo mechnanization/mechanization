@@ -1,4 +1,4 @@
-import type { PaymentMethod } from '@mechanization/shared-schemas';
+import { municipalToday, type PaymentMethod } from '@mechanization/shared-schemas';
 
 /**
  * Where a citizen payment's money lands in the treasury — the rules, with no I/O.
@@ -52,9 +52,42 @@ export function roundMoney(value: number, currency: string): number {
  * Only a payment taken at or after the go-live moment does. Cash taken before
  * it is already inside an opening balance, and crediting it again would count
  * it twice. `goLiveAt` null means the treasury is not active: nothing credits.
+ *
+ * A dated payment's moment comes from `documentOccurredAt`, which never puts a
+ * go-live-day document before the opening entry. So by date the rule is the one
+ * an expense follows (`planExpenseDate`): a day before go-live is not live, and
+ * the go-live day itself is, whatever the hour of activation.
  */
 export function creditsWallets(goLiveAt: Date | null, occurredAt: Date): boolean {
   return goLiveAt !== null && occurredAt.getTime() >= goLiveAt.getTime();
+}
+
+/**
+ * The instant a receipt or a voucher dated `day` is recorded at.
+ *
+ * - Today: the real clock time, so the day's movements read in the order they
+ *   happened.
+ * - An earlier day: midday UTC of it — 14:00 or 15:00 in Beirut — so no zone
+ *   the reports are read in moves it off its day.
+ * - On the go-live day, never before the opening entry. That day is live, as at
+ *   any cutover: what was taken before the count is entered before activation
+ *   (and credits nothing, the treasury not being live yet), so an entry for it
+ *   made afterwards is new cash. At midday it was refused or credited to no
+ *   wallet whenever activation came later in the day (14:00 or 15:00 in
+ *   Beirut), and printed ahead of the opening balance it would show the safe
+ *   overdrawn. The statement breaks the tie by `createdAt`, so the opening
+ *   entry still comes first.
+ */
+export function documentOccurredAt(input: {
+  day: string;
+  today: string;
+  now: Date;
+  goLiveAt: Date | null;
+}): Date {
+  if (input.day === input.today) return input.now;
+  const midday = new Date(`${input.day}T12:00:00.000Z`);
+  const { goLiveAt } = input;
+  return goLiveAt && midday < goLiveAt && municipalToday(goLiveAt) === input.day ? goLiveAt : midday;
 }
 
 /** The wallet the money of this method lands in, in this currency. */

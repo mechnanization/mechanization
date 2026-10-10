@@ -1,3 +1,4 @@
+import { citizenDisplayName, NON_PERSON_RESIDENCE } from '@mechanization/shared-schemas';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Prisma, type $Enums } from '../../../generated/tenant-client';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -22,6 +23,7 @@ import {
   isOccupiedByOthers,
   isUnoccupied,
   municipalToday,
+  ownerShareOf,
   roundRate,
 } from '@mechanization/shared-schemas';
 import {
@@ -36,12 +38,14 @@ import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-re
 import { allocateDocumentNumber, allocateDocumentNumbers } from '../../common/document-number';
 import { unitsUnderReview } from '../buildings/unit-status';
 import { uninhabitableUnitIds } from '../buildings/habitability';
+import { ownerBillingRules } from '../buildings/owner-billing';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { assertNotMergedAway } from '../citizens/merged-away';
 import { likePattern, searchTokens } from '../../common/search-terms';
 import { citizenSearchText } from '../../common/citizen-search';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
 import { PaymentLedgerService, type Tender } from './payment-ledger.service';
+import { creditsWallets, documentOccurredAt } from '../treasury/treasury.plan';
 import { AuditService, type AuditEntryInput } from '../audit/audit.service';
 
 /** Property categories that live on `PropertyEntry.propertyType`. */
@@ -66,6 +70,10 @@ export interface CitizenAssessment {
   heldUnitIds?: string[];
   /** The flats held as «غير صالحة للسكن» on this bill, for the same reason. Not stored. */
   uninhabitableUnitIds?: string[];
+  /** The units «معفاة من الرسوم» on this bill, for the same reason. Not stored. */
+  exemptUnitIds?: string[];
+  /** The co-owned flats another owner pays for, for the same reason. Not stored. */
+  coOwnerPaidUnitIds?: string[];
 }
 
 /** What one citizen holds today, as billing reads it. See `FeesService.holdingsOf`. */
@@ -144,9 +152,22 @@ function bearsFee(unit: BillableUnit, bearer: FeeBearer): boolean {
   return !isOccupiedByOthers(unit.unitStatus) && !isUnoccupied(unit.unitStatus);
 }
 
+/**
+ * The part of a unit this person is billed for: their share of a co-owned
+ * flat on an owner's card (`ownerShareOf`), else the whole of it. 0 means
+ * another co-owner — the responsible one under «مالك مسؤول» — pays for it.
+ */
+function ownerWeight(unit: BillableUnit): number {
+  return unit.occupancyType === 'OWNER' && unit.ownerShare
+    ? unit.ownerShare.numerator / unit.ownerShare.denominator
+    : 1;
+}
+
 type HeldEntry = {
   heldUnitIds?: readonly string[];
   uninhabitableUnitIds?: readonly string[];
+  exemptUnitIds?: readonly string[];
+  coOwnerPaidUnitIds?: readonly string[];
   assessment?: FeeAssessment | null;
 };
 
@@ -171,12 +192,34 @@ function distinctHeld(assessed: readonly HeldEntry[]): number {
   return distinctUnits(assessed, (entry) => entry.heldUnitIds, (assessment) => assessment.heldUnitCount);
 }
 
+/** Units «معفاة من الرسوم» across a run (`assessCitizen`). */
+function distinctExempt(assessed: readonly HeldEntry[]): number {
+  return distinctUnits(
+    assessed,
+    (entry) => entry.exemptUnitIds,
+    (assessment) => assessment.exemptUnitCount,
+  );
+}
+
 /** Flats held as «غير صالحة للسكن» across a run (`assessCitizen`). */
 function distinctUninhabitable(assessed: readonly HeldEntry[]): number {
   return distinctUnits(
     assessed,
     (entry) => entry.uninhabitableUnitIds,
     (assessment) => assessment.uninhabitableUnitCount,
+  );
+}
+
+/**
+ * Co-owned flats another owner — the responsible one — pays for, across a run
+ * (`assessCitizen`). Each flat once: three brothers who pay nothing for one shop
+ * are one shop paid by the fourth, not three.
+ */
+function distinctCoOwnerPaid(assessed: readonly HeldEntry[]): number {
+  return distinctUnits(
+    assessed,
+    (entry) => entry.coOwnerPaidUnitIds,
+    (assessment) => assessment.coOwnerPaidUnitCount,
   );
 }
 
@@ -255,6 +298,8 @@ export function assessCitizen(
       assessment: FeeAssessment;
       heldUnitIds?: string[];
       uninhabitableUnitIds?: string[];
+      exemptUnitIds?: string[];
+      coOwnerPaidUnitIds?: string[];
     }
   | { kind: 'unassessable'; reason: string } {
   /*
@@ -279,6 +324,9 @@ export function assessCitizen(
         excludedUnitCount: 0,
         heldUnitCount: 0,
         uninhabitableUnitCount: 0,
+        sharedUnitCount: 0,
+        coOwnerPaidUnitCount: 0,
+        exemptUnitCount: 0,
         lines: [],
       },
     };
@@ -294,9 +342,18 @@ export function assessCitizen(
     };
   }
 
-  const held = entries
+  const matching = entries
     .flatMap(billableUnits)
     .filter((unit) => unitMatches(unit, notice.targetCategory));
+  /*
+    «معفاة من الرسوم» comes off first, under every notice and whoever bears it
+    (migration 0077; the user's decision, 2026-10-07): the mosque on a waqf
+    parcel, a public building. Before the review hold and the bearer rule, so
+    an exempt unit is reported as exempt and nothing else. Counted, so the bill
+    says so rather than reading as a smaller holding.
+  */
+  const exemptUnits = matching.filter((unit) => unit.exempt);
+  const held = matching.filter((unit) => !unit.exempt);
 
   /*
     Split rather than filtered, so the ones left out can be counted.
@@ -331,33 +388,67 @@ export function assessCitizen(
     counting it as an exemption would report as settled what is not.
   */
   const reviewing = bearer === 'OCCUPANT' ? held.filter((unit) => unit.underReview) : [];
+  /** Held under review for this notice — the occupancy fee only, as above. */
+  const inReview = (unit: BillableUnit) => bearer === 'OCCUPANT' && unit.underReview;
   /*
-    A flat nobody can live in is not charged its occupancy fee — to anybody —
-    until a re-inspection reads it habitable (the user's decision, 2026-10-05).
+    A flat nobody can live in is charged nothing — to anybody, under any
+    rate-based notice — until a re-inspection reads it habitable (the user's
+    decisions of 2026-10-05 and 2026-10-07: «غير صالحة للسكن» exempts).
 
     The rental-value fee is due only for actual occupancy (Law 60/1988 Art.
     11), and the annual maintenance fee follows it (Art. 79); a flat whose
     current damage reading says «غير صالحة للسكن» cannot be occupied in the
-    sense either article means. Held rather than dropped, and counted apart
-    from the review hold: the clerk settles a review in the register and an
-    uninhabitable flat with a visit. A flat that is both is counted as under
+    sense either article means. Since 2026-10-07 the owner-borne fees are not
+    charged on it either: the user decided «not habitable → exempt», not
+    «occupancy fee held». Counted apart from the review hold: the clerk
+    settles a review in the register and an uninhabitable flat with a visit.
+    A flat that is both, under an occupancy notice, is counted as under
     review — that is the hold someone in the office can lift.
 
-    Only the occupancy fee, for the reason the review hold gives: an
-    owner-borne fee follows the deed, and the deed does not depend on whether
-    the roof is on.
+    Not back-billed: a period's invoice is written once, so the months a flat
+    was uninhabitable are simply not charged.
   */
-  const unlivable =
-    bearer === 'OCCUPANT' ? held.filter((unit) => !unit.underReview && unit.uninhabitable) : [];
-  const decided =
-    bearer === 'OCCUPANT' ? held.filter((unit) => !unit.underReview && !unit.uninhabitable) : held;
-  const units = decided.filter((unit) => bearsFee(unit, bearer));
-  const excludedUnitCount = decided.length - units.length;
+  const unlivable = held.filter((unit) => !inReview(unit) && unit.uninhabitable);
+  const decided = held.filter((unit) => !inReview(unit) && !unit.uninhabitable);
+  const owed = decided.filter((unit) => bearsFee(unit, bearer));
+  const excludedUnitCount = decided.length - owed.length;
+  /*
+    A flat several people own is divided between them, not billed to each in
+    full («توزيع الرسم على المالكين», the user's decision, 2026-10-07).
+
+    Every co-owner's own file claims the flat, and this function sees one
+    citizen at a time — so before this, each was billed for the whole of it:
+    four brothers, one shop, four bills for it. `holdingsOf` attaches this
+    owner's part (`ownerShareOf`): 1/N by default, their أسهم over everyone's
+    under «حسب الأسهم», all or nothing under «مالك مسؤول». Only an owner's
+    unit carries one — a tenant pays for what they occupy whatever the deed
+    says — and only a unit this owner already owes for reaches here, so the
+    bearer rule has decided first that the owners pay at all.
+
+    «حسب الأسهم» with an owner whose أسهم nobody recorded cannot be divided.
+    Refused rather than guessed, as a flat with no area is: the officer
+    records the أسهم, or chooses another method.
+  */
+  const undecidable = owed.find((unit) => unit.occupancyType === 'OWNER' && unit.ownerShareUndecidable);
+  if (undecidable) {
+    return {
+      kind: 'unassessable',
+      reason: `وحدة ${undecidable.unitCode ?? ''} على العقار ${undecidable.propertyNumber ?? '—'} يتوزّع رسمها «حسب الأسهم» وأسهم أحد مالكيها غير مسجّلة`,
+    };
+  }
+  // Paid by the responsible owner named on the flat — not this person's to pay.
+  const paidByCoOwner = owed.filter((unit) => ownerWeight(unit) === 0);
+  const units = owed.filter((unit) => ownerWeight(unit) > 0);
+  const shared = units.filter((unit) => unit.occupancyType === 'OWNER' && unit.ownerShare);
   const heldUnitCount = reviewing.length;
   const uninhabitableUnitCount = unlivable.length;
   // Which flats, so a run can count each once — an owner and a tenant hold the same one.
   const heldUnitIds = reviewing.map((unit) => unit.unitId).filter((id): id is string => Boolean(id));
   const uninhabitableUnitIds = unlivable
+    .map((unit) => unit.unitId)
+    .filter((id): id is string => Boolean(id));
+  const exemptUnitIds = exemptUnits.map((unit) => unit.unitId).filter((id): id is string => Boolean(id));
+  const coOwnerPaidUnitIds = paidByCoOwner
     .map((unit) => unit.unitId)
     .filter((id): id is string => Boolean(id));
 
@@ -379,10 +470,12 @@ export function assessCitizen(
     }
   }
 
-  const totalArea = units.reduce((sum, unit) => sum + (unit.unitArea ?? 0), 0);
+  // A co-owned flat counts for this owner's part of its area, or of one unit.
+  const totalArea = units.reduce((sum, unit) => sum + (unit.unitArea ?? 0) * ownerWeight(unit), 0);
+  const chargedUnits = units.reduce((sum, unit) => sum + ownerWeight(unit), 0);
 
   // Only the two rate bases reach here; FLAT returned above.
-  const multiplier = notice.basis === 'PER_AREA' ? totalArea : units.length;
+  const multiplier = notice.basis === 'PER_AREA' ? totalArea : chargedUnits;
 
   return {
     kind: 'assessed',
@@ -395,6 +488,8 @@ export function assessCitizen(
     amount: Math.round(notice.amount * multiplier),
     heldUnitIds,
     uninhabitableUnitIds,
+    exemptUnitIds,
+    coOwnerPaidUnitIds,
     assessment: {
       basis: notice.basis,
       rate: notice.amount,
@@ -403,12 +498,96 @@ export function assessCitizen(
       excludedUnitCount,
       heldUnitCount,
       uninhabitableUnitCount,
+      sharedUnitCount: shared.length,
+      coOwnerPaidUnitCount: paidByCoOwner.length,
+      exemptUnitCount: exemptUnits.length,
+      ...(shared.length > 0 && notice.basis === 'PER_UNIT' ? { chargedUnits } : {}),
       lines: units.map((unit) => ({
         propertyNumber: unit.propertyNumber,
         propertyType: unit.propertyType,
         unitType: unit.unitType,
         unitArea: notice.basis === 'PER_AREA' ? unit.unitArea : null,
+        ...(unit.unitCode ? { unitCode: unit.unitCode } : {}),
+        ...(unit.occupancyType === 'OWNER' && unit.ownerShare
+          ? {
+              ownerShare: {
+                mode: unit.ownerShare.mode as 'EQUAL' | 'BY_SHARES' | 'RESPONSIBLE_OWNER',
+                numerator: unit.ownerShare.numerator,
+                denominator: unit.ownerShare.denominator,
+              },
+            }
+          : {}),
       })),
+    },
+  };
+}
+
+/**
+ * A FLAT notice aimed at a category («رسم المحلات», one amount per shop
+ * holder), for one holder.
+ *
+ * The notice's own amount, as every FLAT notice charges — per holder, whatever
+ * they hold of it — except a holder every one of whose units of that category
+ * is charged nothing: «معفاة من الرسوم» (0077), «غير صالحة للسكن», or paid by
+ * another co-owner under «مالك مسؤول» (this owner's part is 0). The waqf whose
+ * one office is the mosque is not a holder of offices for this notice, a family
+ * whose one shop is a ruin is not a shop holder (the user's decisions of
+ * 2026-10-07: «not habitable → exempt», and the mosque exempt), and of four
+ * brothers whose one shop the eldest pays for, only the eldest is (the user's
+ * decision, 2026-10-08). Under «بالتساوي» and «حسب الأسهم» every co-owner is
+ * still a holder and pays the amount once: a flat amount is not divided.
+ *
+ * Only that. The review hold and the bearer rule stay out of FLAT, as they
+ * always have: a flat amount is a person's charge, not a flat's. A notice to
+ * every citizen names no category and never reaches here. A holder with no
+ * matching unit at all — `resolveTargets` is a superset — is charged, as
+ * before: this decides exemption, not targeting.
+ *
+ * Counted when it lets someone off, so the issue summary says how many units
+ * the notice was not charged for; a unit without a register row has no id to
+ * count once by, so the assessment carries the counts too.
+ */
+export function flatCategoryCharge(
+  entries: readonly BillablePropertyEntry[],
+  notice: { amount: number; targetCategory: string },
+): {
+  amount: number;
+  assessment: FeeAssessment | null;
+  uninhabitableUnitIds?: string[];
+  exemptUnitIds?: string[];
+  coOwnerPaidUnitIds?: string[];
+} {
+  const matching = entries
+    .flatMap(billableUnits)
+    .filter((unit) => unitMatches(unit, notice.targetCategory));
+  const exempt = matching.filter((unit) => unit.exempt);
+  const unlivable = matching.filter((unit) => !unit.exempt && unit.uninhabitable);
+  // In the order `assessCitizen` reports them: exempt, then uninhabitable, then another owner's to pay.
+  const paidByCoOwner = matching.filter((unit) => !unit.exempt && !unit.uninhabitable && ownerWeight(unit) === 0);
+
+  if (matching.length === 0 || exempt.length + unlivable.length + paidByCoOwner.length < matching.length) {
+    return { amount: notice.amount, assessment: null };
+  }
+
+  const ids = (units: readonly BillableUnit[]) =>
+    units.map((unit) => unit.unitId).filter((id): id is string => Boolean(id));
+  return {
+    amount: 0,
+    uninhabitableUnitIds: ids(unlivable),
+    exemptUnitIds: ids(exempt),
+    coOwnerPaidUnitIds: ids(paidByCoOwner),
+    assessment: {
+      basis: 'FLAT',
+      rate: notice.amount,
+      unitCount: 0,
+      totalArea: 0,
+      excludedUnitCount: 0,
+      heldUnitCount: 0,
+      uninhabitableUnitCount: unlivable.length,
+      sharedUnitCount: 0,
+      coOwnerPaidUnitCount: paidByCoOwner.length,
+      exemptUnitCount: exempt.length,
+      lines: [],
     },
   };
 }
@@ -866,7 +1045,7 @@ export class FeesService {
       this.db.feeNotice.findMany({
         orderBy: { createdAt: 'desc' },
         include: {
-          targetCitizen: { select: { firstName: true, lastName: true } },
+          targetCitizen: { select: { firstName: true, lastName: true, residence: true } },
           _count: { select: { payments: true } },
         },
       }),
@@ -884,9 +1063,7 @@ export class FeesService {
       frequency: row.frequency,
       targetType: row.targetType,
       targetCategory: row.targetCategory,
-      targetCitizenName: row.targetCitizen
-        ? `${row.targetCitizen.firstName} ${row.targetCitizen.lastName}`
-        : null,
+      targetCitizenName: row.targetCitizen ? citizenDisplayName(row.targetCitizen, { middleName: false }) : null,
       dueDate: row.dueDate.toISOString(),
       instructions: row.instructions,
       /** How many citizens this notice actually billed. */
@@ -938,8 +1115,12 @@ export class FeesService {
     );
     /** Flats whose occupancy fee is held under review — see `assessCitizen`. Each flat once. */
     const heldUnits = distinctHeld(assessed);
-    /** Flats whose occupancy fee is held as «غير صالحة للسكن» — see `assessCitizen`. Each flat once. */
+    /** Flats held as «غير صالحة للسكن» — exempt from every fee; see `assessCitizen`. Each flat once. */
     const uninhabitableUnits = distinctUninhabitable(assessed);
+    /** Units «معفاة من الرسوم» (0077) — see `assessCitizen`. Each unit once. */
+    const feeExemptUnits = distinctExempt(assessed);
+    /** Co-owned flats the responsible owner pays for, not the person assessed — see `assessCitizen`. Each flat once. */
+    const coOwnerPaidUnits = distinctCoOwnerPaid(assessed);
 
     if (billable.length === 0) {
       /*
@@ -953,9 +1134,14 @@ export class FeesService {
       /*
         Every reason that applies, not the first one: a notice that held three
         flats and exempted five was reported as "everything held", and the
-        clerk went looking for the wrong thing.
+        clerk went looking for the wrong thing. A flat «مالك مسؤول» pays for is
+        a reason too: a notice aimed at the brother who pays nothing matched
+        him, and «لا يوجد مواطنون مطابقون» sent the clerk to the wrong place.
       */
-      if (heldUnits + uninhabitableUnits + exemptedUnits + unassessable.length === 0) {
+      if (
+        heldUnits + uninhabitableUnits + exemptedUnits + feeExemptUnits + coOwnerPaidUnits + unassessable.length ===
+        0
+      ) {
         throw new ConflictError({
           code: 'FEE_NO_MATCHING_CITIZENS',
           message: 'No citizen matches this notice, so nothing was issued',
@@ -963,11 +1149,14 @@ export class FeesService {
       }
       throw new ConflictError({
         code: 'FEE_NOTHING_TO_CHARGE',
-        message: 'Every unit this notice targets is held, exempted or unassessable, so nothing was issued',
+        message:
+          'Every unit this notice targets is held, exempted, paid by another co-owner or unassessable, so nothing was issued',
         params: {
           held: heldUnits,
           uninhabitable: uninhabitableUnits,
           exempted: exemptedUnits,
+          feeExempt: feeExemptUnits,
+          coOwnerPaid: coOwnerPaidUnits,
           unassessable: unassessable.length,
         },
       });
@@ -1028,7 +1217,12 @@ export class FeesService {
       );
 
       return { noticeId: notice.id, issued: created.count };
-    });
+      /*
+        `runInTenantTransaction`'s limits rather than Prisma's 5 s default: a
+        town-wide notice writes and numbers tens of thousands of bills in here,
+        and past five seconds Prisma closes the transaction under the insert.
+      */
+    }, { maxWait: 15_000, timeout: 60_000 });
 
     this.logger.log(
       `Fee "${input.title}" issued to ${result.issued} citizen(s) in ${this.tenantContext.tenantSlug}`,
@@ -1069,6 +1263,8 @@ export class FeesService {
       exemptedUnitCount: exemptedUnits,
       heldUnitCount: heldUnits,
       uninhabitableUnitCount: uninhabitableUnits,
+      feeExemptUnitCount: feeExemptUnits,
+      coOwnerPaidUnitCount: coOwnerPaidUnits,
       actorId: actor.id,
       actorRole: actor.role,
     });
@@ -1090,11 +1286,28 @@ export class FeesService {
     }
     if (uninhabitableUnits > 0) {
       this.logger.log(
-        `Fee "${input.title}": ${uninhabitableUnits} unit(s) held as uninhabitable (غير صالحة للسكن)`,
+        `Fee "${input.title}": ${uninhabitableUnits} unit(s) not charged as uninhabitable (غير صالحة للسكن)`,
+      );
+    }
+    if (feeExemptUnits > 0) {
+      this.logger.log(`Fee "${input.title}": ${feeExemptUnits} unit(s) exempt from fees (معفاة من الرسوم)`);
+    }
+
+    if (coOwnerPaidUnits > 0) {
+      this.logger.log(
+        `Fee "${input.title}": ${coOwnerPaidUnits} co-owned unit(s) paid by their responsible owner (مالك مسؤول)`,
       );
     }
 
-    return { ...result, unassessable, exemptedUnits, heldUnits, uninhabitableUnits };
+    return {
+      ...result,
+      unassessable,
+      exemptedUnits,
+      heldUnits,
+      uninhabitableUnits,
+      feeExemptUnits,
+      coOwnerPaidUnits,
+    };
   }
 
   /**
@@ -1164,6 +1377,7 @@ export class FeesService {
         targetType: notice.targetType as never,
         targetCategory: notice.targetCategory ?? undefined,
         targetCitizenId: notice.targetCitizenId ?? undefined,
+        basis: notice.basis,
       } as never);
 
       if (citizenIds.length === 0) {
@@ -1203,11 +1417,28 @@ export class FeesService {
           `Recurring "${notice.title}" (${periodKey}): ${heldUnits} unit(s) held under review (تعارض في حالة الوحدة) — not charged this period`,
         );
       }
-      // Flats nobody can live in this period — logged as the review hold is, never silent.
+      /*
+        Units charged nothing this period — logged, never silent, as `issue`
+        logs them. Not a hold: an uninhabitable unit and an exempt one are
+        settled decisions, and nothing is owed for the period afterwards.
+      */
       const uninhabitableUnits = distinctUninhabitable(assessed);
       if (uninhabitableUnits > 0) {
-        this.logger.warn(
-          `Recurring "${notice.title}" (${periodKey}): ${uninhabitableUnits} unit(s) held as uninhabitable (غير صالحة للسكن) — not charged this period`,
+        this.logger.log(
+          `Recurring "${notice.title}" (${periodKey}): ${uninhabitableUnits} unit(s) not charged as uninhabitable (غير صالحة للسكن)`,
+        );
+      }
+      const feeExemptUnits = distinctExempt(assessed);
+      if (feeExemptUnits > 0) {
+        this.logger.log(
+          `Recurring "${notice.title}" (${periodKey}): ${feeExemptUnits} unit(s) exempt from fees (معفاة من الرسوم)`,
+        );
+      }
+      // Paid in full by their responsible owner — a choice, not a hold, so logged rather than warned.
+      const coOwnerPaidUnits = distinctCoOwnerPaid(assessed);
+      if (coOwnerPaidUnits > 0) {
+        this.logger.log(
+          `Recurring "${notice.title}" (${periodKey}): ${coOwnerPaidUnits} co-owned unit(s) paid by their responsible owner (مالك مسؤول)`,
         );
       }
       if (billable.length === 0) {
@@ -1248,7 +1479,8 @@ export class FeesService {
         });
         await this.numberInvoices(tx, notice.id, periodKey, inserted.count, startedAt);
         return inserted;
-      });
+        // As on the first issue: a period of a town-wide notice is more than five seconds of work.
+      }, { maxWait: 15_000, timeout: 60_000 });
 
       if (created.count > 0) {
         this.logger.log(
@@ -1265,6 +1497,8 @@ export class FeesService {
           periodKey,
           heldUnitCount: heldUnits,
           uninhabitableUnitCount: uninhabitableUnits,
+          feeExemptUnitCount: feeExemptUnits,
+          coOwnerPaidUnitCount: coOwnerPaidUnits,
         });
       }
 
@@ -1381,6 +1615,8 @@ export class FeesService {
     targetType: string;
     targetCategory?: string;
     targetCitizenId?: string;
+    /** The notice's basis — a flat charge falls on people, not on estates or institutions. */
+    basis?: string;
   }): Promise<string[]> {
     if (input.targetType === 'INDIVIDUAL_CITIZEN') {
       const citizen = await this.db.user.findFirst({
@@ -1396,7 +1632,17 @@ export class FeesService {
 
     if (input.targetType === 'ALL_CITIZENS') {
       const rows = await this.db.user.findMany({
-        where: { kind: 'CITIZEN', isActive: true },
+        where: {
+          kind: 'CITIZEN',
+          isActive: true,
+          /*
+            A flat charge is one per person, and an estate or an institution
+            (0076) is not a person: «ورثة المرحوم …» and «وقف مسجد البلدة» own
+            property and are billed for it by the rate-based notices, never per
+            head. A rate-based notice still reaches them through what they hold.
+          */
+          ...(input.basis === 'FLAT' ? { residence: { notIn: [...NON_PERSON_RESIDENCE] } } : {}),
+        },
         select: { id: true },
       });
       return rows.map((row) => row.id);
@@ -1496,7 +1742,7 @@ export class FeesService {
       bearer?: FeeBearer;
     },
   ): Promise<{ assessed: CitizenAssessment[]; unassessable: UnassessableCitizen[] }> {
-    if (notice.basis === 'FLAT') {
+    if (notice.basis === 'FLAT' && !notice.targetCategory) {
       return {
         assessed: citizenIds.map((citizenId) => ({
           citizenId,
@@ -1505,6 +1751,25 @@ export class FeesService {
         })),
         unassessable: [],
       };
+    }
+
+    if (notice.basis === 'FLAT') {
+      // Per holder — unless all they hold of the category is charged nothing (`flatCategoryCharge`).
+      const targetCategory = notice.targetCategory!;
+      const assessed: CitizenAssessment[] = [];
+      const seen = new Set<string>();
+      for await (const batch of this.holdingsOf(citizenIds)) {
+        for (const holding of batch) {
+          seen.add(holding.citizenId);
+          const charge = flatCategoryCharge(holding.entries, { amount: notice.amount, targetCategory });
+          assessed.push({ citizenId: holding.citizenId, ...charge });
+        }
+      }
+      // Never fewer bills than before: a target the register read did not return is charged as one.
+      for (const citizenId of citizenIds) {
+        if (!seen.has(citizenId)) assessed.push({ citizenId, amount: notice.amount, assessment: null });
+      }
+      return { assessed, unassessable: [] };
     }
 
     const assessed: CitizenAssessment[] = [];
@@ -1525,6 +1790,8 @@ export class FeesService {
           assessment: outcome.assessment,
           heldUnitIds: outcome.heldUnitIds,
           uninhabitableUnitIds: outcome.uninhabitableUnitIds,
+          exemptUnitIds: outcome.exemptUnitIds,
+          coOwnerPaidUnitIds: outcome.coOwnerPaidUnitIds,
         });
       }
     }
@@ -1565,6 +1832,7 @@ export class FeesService {
             id: true,
             firstName: true,
             lastName: true,
+            residence: true,
             registrations: {
               orderBy: { submittedAt: 'desc' },
               take: 1,
@@ -1625,7 +1893,15 @@ export class FeesService {
                         unitArea: true,
                         unitStatus: true,
                         unit: {
-                          select: { id: true, unitType: true, unitArea: true, unitStatus: true, unitCode: true },
+                          select: {
+                            id: true,
+                            unitType: true,
+                            unitArea: true,
+                            unitStatus: true,
+                            unitCode: true,
+                            // «معفاة من الرسوم» (0077) — charged nothing, whoever bears the fee.
+                            feeExemption: true,
+                          },
                         },
                       },
                     },
@@ -1659,6 +1935,7 @@ export class FeesService {
                     unitArea: true,
                     unitStatus: true,
                     unitCode: true,
+                    feeExemption: true,
                   },
                 },
               },
@@ -1684,7 +1961,10 @@ export class FeesService {
         for (const occupancy of row.unitOccupancies) heldHere.add(occupancy.unit.id);
       }
       /** The one flat of each structure a منزل card here names — what the card bills. */
-      const soleUnits = new Map<string, { id: string; unitStatus: string | null }>();
+      const soleUnits = new Map<
+        string,
+        { id: string; unitStatus: string | null; unitCode: string; feeExemption: string | null }
+      >();
       const houseBuildings = [
         ...new Set(
           rows.flatMap((row) =>
@@ -1698,7 +1978,7 @@ export class FeesService {
         const houseUnits = await withConnectionRetry(() =>
           this.db.unit.findMany({
             where: { buildingId: { in: houseBuildings } },
-            select: { id: true, buildingId: true, unitStatus: true },
+            select: { id: true, buildingId: true, unitStatus: true, unitCode: true, feeExemption: true },
           }),
         );
         const perBuilding = new Map<string, typeof houseUnits>();
@@ -1735,6 +2015,27 @@ export class FeesService {
       */
       const settledStatus = (unitId: string | undefined | null, stored: string | null) =>
         unitId && review.has(unitId) ? review.get(unitId)!.status : stored;
+      /*
+        «توزيع الرسم على المالكين» for the co-owned flats among them — every
+        current owner of each, not just this batch's, because one owner's part
+        depends on how many others there are and what أسهم they hold.
+      */
+      const coOwnership =
+        heldHere.size === 0
+          ? new Map()
+          : await withConnectionRetry(() => ownerBillingRules(this.db, [...heldHere]));
+      /** This owner's part of a flat others own too; nothing for a flat they own alone. */
+      const ownerShareFor = (
+        unitId: string | undefined | null,
+        citizenId: string,
+      ): { ownerShare?: { mode: string; numerator: number; denominator: number }; ownerShareUndecidable?: boolean } => {
+        const rule = unitId ? coOwnership.get(unitId) : undefined;
+        if (!rule) return {};
+        const outcome = ownerShareOf(rule, citizenId);
+        if (outcome.kind === 'SHARE') return { ownerShare: outcome.share };
+        if (outcome.kind === 'UNDECIDABLE') return { ownerShareUndecidable: true };
+        return {};
+      };
       const reviewedSoleUnit = new Set(
         [...review.values()]
           .filter((fact) => fact.soleUnitOfBuilding && fact.conflicts.length > 0)
@@ -1758,6 +2059,10 @@ export class FeesService {
           underReview: boolean;
           uninhabitable: boolean;
           unitId: string;
+          unitCode: string;
+          ownerShare?: { mode: string; numerator: number; denominator: number };
+          ownerShareUndecidable?: boolean;
+          exempt: boolean;
         }>>();
         for (const occupancy of row.unitOccupancies) {
           const buildingId = occupancy.unit.buildingId;
@@ -1770,6 +2075,9 @@ export class FeesService {
             unitStatus: settledStatus(occupancy.unit.id, occupancy.unit.unitStatus),
             underReview: underReview(occupancy.unit.id),
             uninhabitable: uninhabitable(occupancy.unit.id),
+            unitCode: occupancy.unit.unitCode,
+            exempt: occupancy.unit.feeExemption !== null,
+            ...(occupancy.role === 'OWNER' ? ownerShareFor(occupancy.unit.id, row.id) : {}),
           });
           occupanciesByBuilding.set(buildingId, list);
         }
@@ -1809,6 +2117,9 @@ export class FeesService {
                   const sole = soleUnits.get(card.buildingId!)!;
                   return {
                     soleUnitId: sole.id,
+                    soleUnitCode: sole.unitCode,
+                    exempt: sole.feeExemption !== null,
+                    ...(card.occupancyType === 'OWNER' ? ownerShareFor(sole.id, row.id) : {}),
                     uninhabitable: uninhabitable(sole.id),
                     /*
                       A منزل card that states nothing bills by its flat's answer —
@@ -1829,6 +2140,8 @@ export class FeesService {
                     unitStatus: settledStatus(line.unit.id, line.unit.unitStatus) as never,
                     underReview: underReview(line.unit.id),
                     uninhabitable: uninhabitable(line.unit.id),
+                    exempt: line.unit.feeExemption !== null,
+                    ...(card.occupancyType === 'OWNER' ? ownerShareFor(line.unit.id, row.id) : {}),
                   }
                 : line.unit,
             })),
@@ -1849,7 +2162,7 @@ export class FeesService {
 
         return {
           citizenId: row.id,
-          name: [row.firstName, row.lastName].filter(Boolean).join(' '),
+          name: citizenDisplayName(row, { middleName: false }),
           entries: entries as unknown as BillablePropertyEntry[],
           buildingIds: [...buildingIds],
           unitCodes: [...unitCodes],
@@ -2035,7 +2348,7 @@ export class FeesService {
         orderBy: { updatedAt: 'desc' },
         include: {
           citizen: {
-            select: { id: true, firstName: true, lastName: true, phone: true, referenceNumber: true },
+            select: { id: true, firstName: true, lastName: true, phone: true, referenceNumber: true, residence: true },
           },
         },
       }),
@@ -2053,7 +2366,8 @@ export class FeesService {
       whishTransactionRef: row.whishTransactionRef,
       isSeen: row.isSeen,
       citizenId: row.citizen.id,
-      citizenName: `${row.citizen.firstName} ${row.citizen.lastName}`,
+      // «ورثة المرحوم …» for an estate (0076): the heirs owe, not the deceased.
+      citizenName: citizenDisplayName(row.citizen, { middleName: false }),
       citizenPhone: row.citizen.phone,
       citizenReference: row.citizen.referenceNumber,
     }));
@@ -2295,8 +2609,22 @@ export class FeesService {
    * the new ones blank. Bills issued before 0079 stay unnumbered on purpose.
    *
    * The numbers are formatted once, in TypeScript, and carried into the
-   * statement as a VALUES list: building them in SQL instead would be a second
-   * copy of `formatDocumentNumber` waiting to drift from the first.
+   * statement as one `text[]` parameter, unnested with their position: building
+   * them in SQL instead would be a second copy of `formatDocumentNumber` waiting
+   * to drift from the first. One array, not a VALUES list of pairs — Postgres
+   * takes at most 32,767 bind variables in a statement, so two per bill failed
+   * from 16,384 bills, a town-wide notice, and rolled the whole issue back.
+   *
+   * `createdAt` is a zoneless `timestamp` holding UTC wall-clock time, and a bound
+   * `Date` arrives as `timestamptz`, so a bare `>=` converts the column through the
+   * session time zone: correct in UTC, and 0 rows matched (the issue rolled back)
+   * on a database set to Asia/Beirut. `since` is brought to the column instead.
+   *
+   * `createdAt >= since` relies on Prisma stamping `@default(now())` itself, at
+   * the moment of the insert, after `since` was read. Were the column filled by
+   * the database's own default — the transaction's start, which is before
+   * `since` — nothing would match. So the count is checked, and a mismatch
+   * rolls the issue back instead of leaving a period half-numbered.
    */
   private async numberInvoices(
     tx: Prisma.TransactionClient,
@@ -2308,33 +2636,36 @@ export class FeesService {
     if (count < 1) return;
 
     const numbers = await allocateDocumentNumbers(tx, this.S, 'INVOICE', count);
-    const assigned = Prisma.join(
-      numbers.map((number, index) => Prisma.sql`(${index + 1}::bigint, ${number}::text)`),
-    );
 
-    await tx.$executeRaw`
+    const numbered = await tx.$executeRaw`
       WITH ordered AS (
         SELECT "id", row_number() OVER (ORDER BY "createdAt", "id") AS "rn"
           FROM ${this.S}citizen_payments
          WHERE "feeNoticeId" = ${noticeId}::uuid
            AND "periodKey" = ${periodKey}
            AND "invoiceNumber" IS NULL
-           AND "createdAt" >= ${since}
+           AND "createdAt" >= (${since}::timestamptz AT TIME ZONE 'UTC')
       ),
-      assigned ("rn", "number") AS (VALUES ${assigned})
+      assigned AS (
+        SELECT drawn."number", drawn."rn"
+          FROM unnest(${numbers}::text[]) WITH ORDINALITY AS drawn("number", "rn")
+      )
       UPDATE ${this.S}citizen_payments AS p
          SET "invoiceNumber" = assigned."number"
         FROM ordered, assigned
        WHERE assigned."rn" = ordered."rn"
          AND p."id" = ordered."id"
     `;
+    if (numbered !== count) {
+      throw new Error(`numberInvoices: numbered ${numbered} of the ${count} bills raised on notice ${noticeId}`);
+    }
   }
 
   /** The include this app always joins onto a `CitizenPayment` for admin use — kept
    *  in one place so `getPaymentById` and `listAllPayments` read the identical shape. */
   private readonly ADMIN_PAYMENT_INCLUDE = {
     citizen: {
-      select: { id: true, firstName: true, lastName: true, phone: true, referenceNumber: true },
+      select: { id: true, firstName: true, lastName: true, phone: true, referenceNumber: true, residence: true },
     },
     collectedBy: { select: { firstName: true, lastName: true } },
     feeNotice: { select: { frequency: true } },
@@ -2385,7 +2716,8 @@ export class FeesService {
        */
       assessment: (row.assessment as FeeAssessment | null) ?? null,
       citizenId: row.citizen.id,
-      citizenName: `${row.citizen.firstName} ${row.citizen.lastName}`,
+      // «ورثة المرحوم …» for an estate (0076): the heirs owe, not the deceased.
+      citizenName: citizenDisplayName(row.citizen, { middleName: false }),
       citizenPhone: row.citizen.phone,
       citizenReference: row.citizen.referenceNumber,
     };
@@ -2783,7 +3115,7 @@ export class FeesService {
         paidAmount: true,
         currency: true,
         paymentStatus: true,
-        citizen: { select: { firstName: true, lastName: true } },
+        citizen: { select: { firstName: true, lastName: true, residence: true } },
       },
     });
 
@@ -2820,7 +3152,7 @@ export class FeesService {
       paymentId: payment.id,
       amount: outstanding,
       currency: payment.currency,
-      citizenName: `${payment.citizen.firstName} ${payment.citizen.lastName}`,
+      citizenName: citizenDisplayName(payment.citizen, { middleName: false }),
       callbackUrl: input.callbackUrl,
       returnUrl: input.returnUrl,
     });
@@ -3192,6 +3524,35 @@ export class FeesService {
       role: input.actor.role,
     });
 
+    /*
+      After go-live, a payment dated before it credits no wallet (docs/finance.md
+      §3.3). That is right for cash already inside the counted opening balance,
+      and a silent hole for anything else: cash taken today and dated last week
+      would settle the bill and print a receipt, and reach no wallet and no
+      custody. A receipt is dated the day the money is taken (decree 5595/1982
+      art. 16 and 98), so after go-live only a finance role — someone answerable
+      for the opening count — may date one before it, and the audit row says no
+      wallet was credited.
+    */
+    const goLiveAt = input.paidOn
+      ? ((await this.db.systemSettings.findFirst({ select: { treasuryGoLiveAt: true } }))?.treasuryGoLiveAt ?? null)
+      : null;
+    const occurredAt = occurredAtFor(input.paidOn, goLiveAt);
+    // The ledger's own test, so the refusal and the credit can never disagree.
+    const beforeGoLive = goLiveAt !== null && occurredAt !== undefined && !creditsWallets(goLiveAt, occurredAt);
+    if (beforeGoLive && !canOverrideCashRules(input.actor.role)) {
+      throw new ValidationError({
+        code: 'PAYMENT_DATE_BEFORE_GO_LIVE',
+        message:
+          'A payment dated before the treasury went live reaches no wallet. Record it as today, or ask an accountant.',
+        params: { date: municipalToday(goLiveAt!) },
+      });
+    }
+
+    if (input.method === 'COLLECTOR' && input.collectedById) {
+      await this.assertLiveCollector(input.collectedById);
+    }
+
     const settled = await this.ledger.record({
       paymentId: input.paymentId,
       amount: received,
@@ -3208,7 +3569,7 @@ export class FeesService {
       recordedById: input.actor.id,
       note: input.note,
       tendered: tender,
-      occurredAt: occurredAtFor(input.paidOn),
+      occurredAt,
       adjustmentReason: adjustment.required ? (input.adjustmentReason ?? null) : null,
       clientRequestId: input.clientRequestId ?? null,
       /*
@@ -3233,6 +3594,8 @@ export class FeesService {
           currency: invoice.currency,
           occurredAt: movement.occurredAt,
           ...(input.paidOn ? { paidOn: input.paidOn, backdatedDays: adjustment.backdatedDays } : {}),
+          // Dated before go-live by a finance role: settled, and deliberately in no wallet.
+          ...(beforeGoLive ? { treasuryCredited: false } : {}),
           ...(tender
             ? {
                 tenderedLocal: tender.local,
@@ -3273,7 +3636,31 @@ export class FeesService {
       changeGiven: settled.changeGiven,
       exchangeRate: tender?.exchangeRate ?? null,
       officialExchangeRate: tender?.officialExchangeRate ?? null,
+      /**
+       * A retry answered from the first receipt (the same key): the screen says it
+       * was already recorded rather than showing a second, fresh success.
+       */
+      replayed: settled.replayed,
     };
+  }
+
+  /**
+   * The collector named on a round payment must be someone who can be holding
+   * the cash: staff, still active, not removed, and not view-only. Anyone else
+   * would have a custody wallet opened in his name that nobody can hand in.
+   */
+  private async assertLiveCollector(collectorId: string): Promise<void> {
+    // `kind` in the WHERE, as on every read of `users`.
+    const collector = await this.db.user.findFirst({
+      where: { id: collectorId, kind: 'STAFF', isActive: true, deletedAt: null, role: { not: 'VIEWER' } },
+      select: { id: true },
+    });
+    if (!collector) {
+      throw new NotFoundError({
+        code: 'COLLECTOR_NOT_FOUND',
+        message: `Collector ${collectorId} is not active staff who can hold cash`,
+      });
+    }
   }
 
   /** Every movement of money against one invoice, oldest first. */
@@ -3501,16 +3888,22 @@ export function creditOf(tender: Tender, invoiceCurrency: string): number {
 }
 
 /**
- * When a payment taken on `paidOn` happened: midday of that day, so a
- * back-dated entry lands on its own date in every time zone the
- * municipality's reports are read in. Omitted means now — the page leaves it
- * out for a payment taken today, so its real time is kept.
+ * When a payment taken on `paidOn` happened, by the rule a voucher follows too
+ * (`documentOccurredAt`): midday of an earlier day, so a back-dated entry lands
+ * on its own date in every time zone the reports are read in, but never before
+ * the opening entry on the go-live day. Omitted means now — the page leaves it
+ * out for a payment taken today, so its real time is kept; sent as today, it is
+ * now as well.
  *
- * Not compared with the server's own «today»: that is UTC, a day behind
- * Lebanon between midnight and 3am, and a clerk recording yesterday's cash in
- * that window would have had it silently moved to now. Exported for its spec.
+ * «Today» is the municipality's, never the server's UTC one: that is a day
+ * behind Lebanon between midnight and 3am, and a clerk recording yesterday's
+ * cash in that window would have had it moved to now. Exported for its spec.
  */
-export function occurredAtFor(paidOn: string | undefined): Date | undefined {
+export function occurredAtFor(
+  paidOn: string | undefined,
+  goLiveAt: Date | null = null,
+  now: Date = new Date(),
+): Date | undefined {
   if (!paidOn) return undefined;
-  return new Date(`${paidOn}T12:00:00.000Z`);
+  return documentOccurredAt({ day: paidOn, today: municipalToday(now), now, goLiveAt });
 }

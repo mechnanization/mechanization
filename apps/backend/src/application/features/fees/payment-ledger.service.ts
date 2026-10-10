@@ -233,22 +233,12 @@ export class PaymentLedgerService {
           method: true,
           externalRef: true,
           collectedById: true,
-          reversedBy: { select: { id: true } },
         },
       });
       if (!original) throw new NotFoundError({
         code: 'TRANSACTION_NOT_FOUND',
         message: `Transaction ${input.transactionId} was not found`,
       });
-
-      // The unique index on `reversalOfId` enforces this too; checking here
-      // turns a constraint violation into a sentence a clerk can act on.
-      if (original.reversedBy) {
-        throw new ConflictError({
-          code: 'TRANSACTION_ALREADY_REVERSED',
-          message: 'This transaction has already been reversed.',
-        });
-      }
       if (Number(original.amount) < 0) {
         throw new ConflictError({
           code: 'TRANSACTION_IS_REVERSAL',
@@ -257,6 +247,25 @@ export class PaymentLedgerService {
       }
 
       const invoice = await this.lock(tx, original.paymentId);
+
+      /*
+        The unique index on `reversalOfId` enforces this too; checking here
+        turns a constraint violation into a sentence a clerk can act on. Asked
+        under the invoice's lock, not before it: two clerks reversing the same
+        receipt together both passed a check made earlier, and the second
+        reached the index as a raw 500. The lock serialises them, and a reversal
+        committed while this one waited is visible now.
+      */
+      const reversedBy = await tx.paymentTransaction.findFirst({
+        where: { reversalOfId: original.id },
+        select: { id: true },
+      });
+      if (reversedBy) {
+        throw new ConflictError({
+          code: 'TRANSACTION_ALREADY_REVERSED',
+          message: 'This transaction has already been reversed.',
+        });
+      }
 
       const reversed = await this.append(
         tx,
@@ -389,13 +398,29 @@ export class PaymentLedgerService {
   ): Promise<SettledTotals | null> {
     const row = await tx.paymentTransaction.findUnique({
       where: { clientRequestId },
-      select: { id: true, paymentId: true, receiptNumber: true, amount: true, changeGiven: true, occurredAt: true },
+      select: {
+        id: true,
+        paymentId: true,
+        receiptNumber: true,
+        amount: true,
+        changeGiven: true,
+        occurredAt: true,
+        reversedBy: { select: { id: true } },
+      },
     });
     if (!row) return null;
     if (row.paymentId !== invoice.id) {
       throw new ConflictError({
         code: 'PAYMENT_IDEMPOTENCY_KEY_REUSED',
         message: 'This operation’s identifier was already used for another invoice. Reload the page.',
+      });
+    }
+    // Not answered as recorded once reversed: the clerk would hand over a receipt the ledger has cancelled.
+    if (row.reversedBy) {
+      throw new ConflictError({
+        code: 'TRANSACTION_ALREADY_REVERSED',
+        message: `This operation was recorded as ${row.receiptNumber}, and that receipt has since been reversed.`,
+        params: { receiptNumber: row.receiptNumber },
       });
     }
     return {

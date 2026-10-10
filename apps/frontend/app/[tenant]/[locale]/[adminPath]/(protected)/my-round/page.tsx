@@ -15,12 +15,14 @@ import {
   type CollectorRoundCurrency,
   type CollectorRoundRow,
 } from '@/lib/api-client';
+import { formatMoney } from '@/lib/currency';
 import { formatDateTime } from '@/lib/dates';
 import { hasRole } from '@/lib/staff-roles';
+import { municipalityNameFor } from '@/lib/municipality-name';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { TreasuryAmount } from '@/components/admin/finance/treasury-amount';
-import { PaymentReceipt } from '@/components/admin/payment-receipt';
+import { PaymentReceipt, type RecordedMovement } from '@/components/admin/payment-receipt';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -59,6 +61,7 @@ export default function MyRoundPage({
   const { tenant, locale, adminPath } = use(params);
   const base = `/${tenant}/${locale}/${adminPath}`;
   const t = useTranslations('finance.myRound');
+  const tCommon = useTranslations('common');
   const { token, user } = useStaffSession(tenant, base);
 
   const round = useStaffQuery({
@@ -70,7 +73,13 @@ export default function MyRoundPage({
     errorMessage: t('loadError'),
   });
 
-  /* Only fetched when a receipt is actually opened — it is a whole citizen file. */
+  /*
+    The office details a reopened وصل prints: the settings and the
+    municipality's name. Read once with the page and held for the session
+    (`reference`), under the key the payments page reads the same pair with, so
+    its shape stays theirs: the name in it is the Arabic one. The citizen's own
+    file is the read made only when a receipt is opened (`openReceipt`).
+  */
   const context = useStaffQuery({
     queryKey: ['receipt-context', tenant],
     queryFn: async (accessToken) => {
@@ -86,11 +95,16 @@ export default function MyRoundPage({
     reference: true,
     errorMessage: t('loadError'),
   });
+  /** In the page's language: the English name on /en/ once the municipality has entered one. */
+  const municipalityName = municipalityNameFor(locale, {
+    nameAr: context.data?.municipalityName,
+    nameEn: context.data?.settings.nameEn,
+  });
 
   const [receipt, setReceipt] = useState<{
     citizen: CitizenProfile;
     payment: CitizenProfilePayment;
-    received: number;
+    recorded: RecordedMovement;
   } | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [shareError, setShareError] = useState<string | null>(null);
@@ -108,7 +122,26 @@ export default function MyRoundPage({
           setShareError(t('receiptMissing'));
           return;
         }
-        setReceipt({ citizen: profile, payment, received: row.amount });
+        setReceipt({
+          citizen: profile,
+          payment,
+          /*
+            What this round recorded for the door: its RCP number and its day. Without
+            `recorded` the receipt falls back to the bill's reference and today's date,
+            which is a different document from the one the citizen was handed (STA-6).
+            The round row carries no tender or change, so there is nothing to describe.
+          */
+          recorded: {
+            receiptNumber: row.receiptNumber,
+            occurredAt: row.occurredAt,
+            received: row.amount,
+            remaining: payment.remaining,
+            changeGiven: 0,
+            tender: null,
+            // Every door on a round is a collector's receipt, whatever the bill's last movement was.
+            method: 'COLLECTOR',
+          },
+        });
       } catch (caught) {
         logApiError(caught);
         setShareError(t('receiptError'));
@@ -132,7 +165,7 @@ export default function MyRoundPage({
       {round.error ? (
         <Card>
           <CardContent className="p-0">
-            <ErrorState title={round.error} onRetry={round.refetch} />
+            <ErrorState title={round.error} onRetry={round.refetch} retryLabel={tCommon('retry')} />
           </CardContent>
         </Card>
       ) : round.loading && !data ? (
@@ -252,8 +285,8 @@ export default function MyRoundPage({
           canSend={hasRole(REFERENCE_SEND_ROLES, user?.role)}
           citizen={receipt.citizen}
           payment={receipt.payment}
-          receivedAmount={receipt.received}
-          municipalityName={context.data?.municipalityName ?? ''}
+          recorded={receipt.recorded}
+          municipalityName={municipalityName}
           governorate={settings?.governorate}
           district={settings?.district}
           contactPhone={settings?.contactPhone}
@@ -293,7 +326,7 @@ function PocketCard({
         />
         {wallet.carriedOver > 0 ? (
           <p className="pt-1 text-xs text-muted-foreground">
-            {t('carriedOver', { amount: wallet.listed })}
+            {t('carriedOver', { amount: formatMoney(wallet.listed, wallet.currency, locale) })}
           </p>
         ) : null}
       </CardContent>

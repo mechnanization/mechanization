@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { hasAtMostTwoDecimals } from './money-amount';
 
 /**
  * المناقلات — money moving between the municipality's own wallets.
@@ -16,7 +17,7 @@ const transferAmount = z
   .finite('المبلغ رقم')
   .positive('المبلغ أكبر من صفر')
   .max(999_999_999_999, 'المبلغ كبير جداً')
-  .refine((value) => Math.abs(value * 100 - Math.round(value * 100)) < 1e-6, 'خانتان عشريتان على الأكثر');
+  .refine(hasAtMostTwoDecimals, 'خانتان عشريتان على الأكثر');
 
 /**
  * «استلام صندوق الجابي» — the accountant receives what the collector counted out.
@@ -143,13 +144,20 @@ export interface CollectorCollectionsResult {
   rows: CollectorCollectionRow[];
   total: number;
   /**
-   * What the listed receipts add up to, per currency, reversals netted out.
+   * What his receipts put in his custody, per wallet currency, read from the
+   * ledger (a refund he paid out nets out; one paid from the safe does not).
    *
-   * This is **not** his custody balance and the two will differ the moment he
-   * hands anything in: a handover moves money without touching a receipt. The
+   * This is **not** his custody balance: the two differ by exactly what he has
+   * handed in, because a handover moves money without touching a receipt. The
    * screen says so rather than letting the two figures look like a discrepancy.
    */
   totals: Array<{ currency: string; amount: number }>;
+  /**
+   * Where the list starts: the go-live moment. A receipt from before it never
+   * reached his custody, so it is not counted here either. Null while the
+   * treasury is not active, when every receipt is listed.
+   */
+  since: string | null;
 }
 
 // ───────────────────────────  the collector's own round  ───────────────────────────

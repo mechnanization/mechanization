@@ -3,12 +3,12 @@
 import { useEffect, useId, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Home, Info, Loader2, MoveRight, UserX } from 'lucide-react';
-import { getLabels, type CitizenResidence, type UnitStatus } from '@mechanization/shared-schemas';
+import { getLabels, isOwnerRecord, type CitizenResidence, type UnitStatus } from '@mechanization/shared-schemas';
 import type { CitizenFormValues } from '@/components/admin/citizen-form';
 import { EndTenancyDialog } from '@/components/admin/end-tenancy-dialog';
 import { ApiRequestError, logApiError, setCitizenActive, type EndTenancyResult } from '@/lib/api-client';
 import {
-  AWAY_HOME_STATUSES,
+  homeStatusesFor,
   planResidenceMove,
   type MoveHome,
   type ResidenceMoveAnswers,
@@ -44,6 +44,10 @@ const ELSEWHERE = 'elsewhere';
  *
  * A residence recorded wrongly is not a move: «تصحيح دون انتقال» only switches
  * the answer, and the form and the save's reason do the rest.
+ *
+ * A death opens it too, toward «تركة» (0076): the same settling with the date
+ * of death — every tenancy ends, a home he lived in becomes whoever lives there
+ * now, a file left owning nothing is archived — and no «where do they live».
  */
 export function ResidenceChangeDialog({
   open,
@@ -80,7 +84,10 @@ export function ResidenceChangeDialog({
   const labels = getLabels(locale);
   const ids = { date: useId(), place: useId(), reason: useId(), requestedBy: useId() };
   const tArchive = useTranslations('citizenArchive');
-  const leaving = to === 'NON_RESIDENT_OWNER';
+  const tKind = useTranslations('citizenKind');
+  /** Out of the household: a move away, or a death. */
+  const leaving = isOwnerRecord(to);
+  const death = to === 'ESTATE';
   const plan = useMemo(() => planResidenceMove(values, to), [values, to]);
 
   const [movedOn, setMovedOn] = useState(today());
@@ -111,7 +118,10 @@ export function ResidenceChangeDialog({
   }, [open]);
 
   // Until the officer writes their own, the reason says what the dialog knows.
-  const suggested = leaving
+  // A death that leaves nothing owned archives the file — the reason says so, not «باسم ورثته».
+  const suggested = death
+    ? tKind(plan.nothingLeft ? 'death.archiveReason' : 'death.suggestedReason')
+    : leaving
     ? en
       ? `Moved to live outside the town${place.trim() ? ` (${place.trim()})` : ''}`
       : `انتقل للسكن خارج البلدة${place.trim() ? ` (${place.trim()})` : ''}`
@@ -139,7 +149,7 @@ export function ResidenceChangeDialog({
       plan.needsUnitType.length === 0 &&
       !plan.nothingLeft &&
       plan.homes.every((home) => statuses[home.key]) &&
-      place.trim().length >= 2 &&
+      (death || place.trim().length >= 2) &&
       Boolean(movedOn) &&
       reasonOk
     : livesIn !== null && Boolean(movedOn) && reasonOk;
@@ -177,21 +187,25 @@ export function ResidenceChangeDialog({
               </span>
               <div className="min-w-0 space-y-1.5 text-start">
                 <DialogTitle>
-                  {leaving
-                    ? en ? 'Moved to live outside the town' : 'انتقل للسكن خارج البلدة'
-                    : en ? 'Came to live in the town' : 'أصبح يقيم في البلدة'}
+                  {death
+                    ? tKind('death.title')
+                    : leaving
+                      ? en ? 'Moved to live outside the town' : 'انتقل للسكن خارج البلدة'
+                      : en ? 'Came to live in the town' : 'أصبح يقيم في البلدة'}
                 </DialogTitle>
                 <DialogDescription>
-                  {en
-                    ? 'For a real move. If the residence was simply recorded wrongly, use «Correct without a move».'
-                    : 'لانتقال فعلي. إن كان نوع الملف سُجِّل خطأً فاختر «تصحيح دون انتقال».'}
+                  {death
+                    ? tKind('death.description')
+                    : en
+                      ? 'For a real move. If the residence was simply recorded wrongly, use «Correct without a move».'
+                      : 'لانتقال فعلي. إن كان نوع الملف سُجِّل خطأً فاختر «تصحيح دون انتقال».'}
                 </DialogDescription>
               </div>
             </div>
           </DialogHeader>
 
           <div className="space-y-4">
-            <Field label={en ? 'Moved on' : 'تاريخ الانتقال'} htmlFor={ids.date} required>
+            <Field label={death ? tKind('death.date') : en ? 'Moved on' : 'تاريخ الانتقال'} htmlFor={ids.date} required>
               <Input
                 id={ids.date}
                 type="date"
@@ -205,11 +219,15 @@ export function ResidenceChangeDialog({
             {/* ── Moving out: tenancies that end with the move ── */}
             {leaving && plan.tenancies.length > 0 ? (
               <section className="space-y-2 rounded-lg border p-3">
-                <h3 className="text-sm font-semibold">{en ? 'Rentals that end with the move' : 'إيجارات تنتهي مع الانتقال'}</h3>
+                <h3 className="text-sm font-semibold">
+                  {death ? tKind('death.tenancies') : en ? 'Rentals that end with the move' : 'إيجارات تنتهي مع الانتقال'}
+                </h3>
                 <p className="text-xs text-muted-foreground">
-                  {en
-                    ? 'Somewhere people live cannot stay on a non-resident record. Each is ended on its day and kept in the history.'
-                    : 'المسكن المستأجَر لا يبقى على ملف غير مقيم. يُنهى كلٌّ منها بتاريخه ويبقى في السجل.'}
+                  {death
+                    ? tKind('death.tenanciesBody')
+                    : en
+                      ? 'Somewhere people live cannot stay on a non-resident record. Each is ended on its day and kept in the history.'
+                      : 'المسكن المستأجَر لا يبقى على ملف غير مقيم. يُنهى كلٌّ منها بتاريخه ويبقى في السجل.'}
                 </p>
                 <ul className="space-y-2">
                   {plan.tenancies.map((tenancy) => (
@@ -246,7 +264,9 @@ export function ResidenceChangeDialog({
                   <UserX className="size-4" aria-hidden />
                   {tArchive('nothingLeft.title')}
                 </h3>
-                <p className="text-sm text-muted-foreground">{tArchive('nothingLeft.body')}</p>
+                <p className="text-sm text-muted-foreground">
+                  {death ? tKind('death.nothingLeft') : tArchive('nothingLeft.body')}
+                </p>
                 <Field label={tArchive('requestedBy')} htmlFor={ids.requestedBy} required>
                   <Input
                     id={ids.requestedBy}
@@ -281,7 +301,7 @@ export function ResidenceChangeDialog({
               <section className="space-y-2 rounded-lg border p-3">
                 <h3 className="flex items-center gap-1.5 text-sm font-semibold">
                   <Home className="size-4" aria-hidden />
-                  {en ? 'Homes they owned and lived in' : 'منازل يملكها وكان يسكنها'}
+                  {death ? tKind('death.homes') : en ? 'Homes they owned and lived in' : 'منازل يملكها وكان يسكنها'}
                 </h3>
                 <ul className="space-y-2.5">
                   {plan.homes.map((home) => (
@@ -295,7 +315,7 @@ export function ResidenceChangeDialog({
                           <SelectValue placeholder={en ? 'What is it now?' : 'ما حاله الآن؟'} />
                         </SelectTrigger>
                         <SelectContent>
-                          {AWAY_HOME_STATUSES.map((status) => (
+                          {homeStatusesFor(to).map((status) => (
                             <SelectItem key={status} value={status}>
                               {labels.unitStatus[status]}
                             </SelectItem>
@@ -306,14 +326,16 @@ export function ResidenceChangeDialog({
                   ))}
                 </ul>
                 <p className="text-xs text-muted-foreground">
-                  {en
-                    ? 'Rented or lent to someone: record that person on their own file too.'
-                    : 'مؤجَّر أو مُعار لأحد: يُسجَّل ذلك الشخص في ملفه أيضاً.'}
+                  {death
+                    ? tKind('death.homesHint')
+                    : en
+                      ? 'Rented or lent to someone: record that person on their own file too.'
+                      : 'مؤجَّر أو مُعار لأحد: يُسجَّل ذلك الشخص في ملفه أيضاً.'}
                 </p>
               </section>
             ) : null}
 
-            {leaving && !plan.nothingLeft ? (
+            {leaving && !death && !plan.nothingLeft ? (
               <Field label={en ? 'Where do they live now?' : 'أين يقيم الآن؟'} htmlFor={ids.place} required>
                 <Input
                   id={ids.place}
@@ -364,7 +386,7 @@ export function ResidenceChangeDialog({
             ) : null}
 
             {/* Asked on the deactivation too: it goes on the audit row with the day they left. */}
-            <Field label={en ? 'Reason for the change' : 'سبب التعديل'} htmlFor={ids.reason} required>
+            <Field label={tKind('death.reason')} htmlFor={ids.reason} required>
               <Textarea
                 id={ids.reason}
                 value={reasonText}
@@ -386,7 +408,7 @@ export function ResidenceChangeDialog({
 
           <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-between">
             <Button variant="ghost" onClick={onCorrect} disabled={deactivating} className="h-11 w-full sm:h-10 sm:w-auto">
-              {en ? 'Correct without a move' : 'تصحيح دون انتقال'}
+              {death ? tKind('death.correct') : en ? 'Correct without a move' : 'تصحيح دون انتقال'}
             </Button>
             <div className="flex flex-col-reverse gap-2 sm:flex-row">
               <Button variant="outline" onClick={onCancel} disabled={deactivating} className="h-11 w-full sm:h-10 sm:w-auto">
@@ -400,13 +422,15 @@ export function ResidenceChangeDialog({
                     onApply({
                       movedOn,
                       reason: reasonText,
-                      ...(leaving
-                        ? { residencePlace: place, homeStatuses: statuses }
-                        : { livesIn: livesIn === ELSEWHERE ? null : livesIn }),
+                      ...(death
+                        ? { homeStatuses: statuses }
+                        : leaving
+                          ? { residencePlace: place, homeStatuses: statuses }
+                          : { livesIn: livesIn === ELSEWHERE ? null : livesIn }),
                     })
                   }
                 >
-                  {en ? 'Apply to the form' : 'تطبيق على النموذج'}
+                  {death ? tKind('death.apply') : en ? 'Apply to the form' : 'تطبيق على النموذج'}
                 </Button>
               ) : null}
             </div>
@@ -430,9 +454,11 @@ export function ResidenceChangeDialog({
           }}
           defaults={{ reason: 'MOVED_OUT', endedAt: movedOn }}
           notice={
-            en
-              ? 'Ended on the day of the move. What ends leaves the form; the rest of the form is unchanged.'
-              : 'يُنهى بتاريخ الانتقال. ما يُنهى يخرج من النموذج، وباقي النموذج لا يتغيّر.'
+            death
+              ? tKind('death.endNotice')
+              : en
+                ? 'Ended on the day of the move. What ends leaves the form; the rest of the form is unchanged.'
+                : 'يُنهى بتاريخ الانتقال. ما يُنهى يخرج من النموذج، وباقي النموذج لا يتغيّر.'
           }
           locale={locale}
         />

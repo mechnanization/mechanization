@@ -1,6 +1,6 @@
 # packages/shared-schemas
 
-Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-08.
+Last verified against the code: `fix/pr104-review` (PR #104 `f4aac74` merged with `develop@4ad0b27`), 2026-10-09.
 
 `@mechanization/shared-schemas`: the zod schemas, enums, display labels and
 pure rules that the backend and the frontend share. One copy of each contract,
@@ -8,15 +8,15 @@ used on both sides of the wire. Repo-wide rules: [CLAUDE.md](../../CLAUDE.md).
 
 ## What it exports
 
-`src/index.ts` re-exports 33 modules. Everything is imported from the package
+`src/index.ts` re-exports 36 modules. Everything is imported from the package
 root (`from '@mechanization/shared-schemas'`); there are no deep imports.
 
 | Kind | Modules |
 |---|---|
 | Vocabulary | `enums` (the `as const` value lists, their zod schemas and types), `error-codes` (`ERROR_KINDS`, `ERROR_CODES`, `ErrorCode`, `ErrorParams`, `ApiErrorBody`, `isSpecificErrorCode`), `labels` (`ar`, `en`, `getLabels`), `primitives` (`lebanesePhone`, `internationalPhone`, `optionalInternationalPhone`, `arabicOrLatinName`, `documentNumber`, `civilRecordNumber`, `tenantSlug`, `uuid`, `normalizeDigits`), `role-sets` (who may call what: `EVERY_STAFF_ROLE`, `WORKING_STAFF_ROLES`, `REGISTER_WRITE_ROLES`, `CENSUS_WORKLIST_ROLES`, `FEE_ISSUE_ROLES`, `REGISTER_EXPORT_ROLES` and the rest, `hasStaffRole`) |
-| Contracts (`*.schema.ts`) | `citizen`, `field-flag`, `property`, `registration`, `admin-citizen`, `citizen-import`, `fee`, `auth`, `tenant`, `zone`, `building`, `unit-correction`, `staff`, `case`, `quality`, `citizen-merge`, `treasury`, `expense`, `transfer` |
+| Contracts (`*.schema.ts`) | `citizen`, `field-flag`, `property`, `registration`, `admin-citizen`, `citizen-import`, `fee`, `auth`, `tenant`, `zone`, `building`, `unit-correction`, `staff`, `case`, `quality`, `citizen-merge`, `treasury`, `expense` (vouchers, payment-order requests, `EXPENSE_ORDER_STATUSES`, `EXPENSE_REQUEST_STATUSES`; a category edit sends both budget codes or neither, and both empty clears them), `transfer` (the collector's receipts start at go-live: `since`) |
 | Document numbering | `document-numbering` (`DOCUMENT_PREFIX`, `DocumentKind`, `municipalPeriod`, `formatDocumentNumber`, `isDocumentNumber`) — the shape of «INV-2610-0001». The counter that fills it lives in the backend (`allocateDocumentNumbers`), because drawing a number is a database act |
-| Pure rules | `numbering`, `unit-layout`, `cash-policy`, `payout-policy`, `inspector-earnings`, `unit-status-rule`, `damage-rule` (the severity ladder, `habitabilityFor`, `isUninhabitableReading`, the re-inspection day on the municipality's calendar), `staff-presence` (the stamp interval, the online threshold, `isStaffOnline`, `BACKGROUND_REQUEST_HEADER`) |
+| Pure rules | `numbering`, `unit-layout`, `cash-policy` (also `municipalDayStart`, the first instant of a day on the municipality's calendar, which a range sent as days is read through), `payout-policy`, `inspector-earnings`, `unit-status-rule`, `owner-share` (how a co-owned flat is divided: `ownerShareOf`, `effectiveOwnerBilling`, `ownerSharesPreview`, `usableShares`), `citizen-name` (`citizenDisplayName` — «ورثة المرحوم …» for an estate; every screen and bill names a citizen through it — `citizenStoredName` for a name copied into another row, `storedLandlordName` for every write of a card's submitted `landlordName`, `withoutEstatePrefix`/`ESTATE_PREFIX_PATTERN` for matching typed names, `splitInstitutionName`), `damage-rule` (the severity ladder, `habitabilityFor`, `isUninhabitableReading`, the re-inspection day on the municipality's calendar), `staff-presence` (the stamp interval, the online threshold, `isStaffOnline`, `BACKGROUND_REQUEST_HEADER`), `money-amount` (`hasAtMostTwoDecimals`, judged on the number's decimal form, never on `value * 100`) |
 
 The code is plain TypeScript with no I/O and no Node or browser APIs
 (`tsconfig.base.json` sets `lib` to ES2022). Keep it that way: both apps run
@@ -103,6 +103,12 @@ What checks the copies:
 Never rename or remove a stored value: that is destructive DDL. Change the
 label instead (see the `NON_RESIDENT_OWNER` comment in `enums.ts`).
 
+`CITIZEN_RESIDENCE` has four values since `0076`. Ask `isOwnerRecord` ("not a
+household": non-resident, estate, institution) or `isNonPersonRecord` (estate,
+institution) rather than comparing to one value; the admin schema picks each
+kind's sections in `sectionSchemas`, and `nonResidentCardIssues` takes the kind
+(an estate owns only: `ESTATE_OWNS_ONLY`).
+
 ## Add an error code
 
 `src/error-codes.ts` is the one list of codes the API refuses with
@@ -143,12 +149,25 @@ package. Other new UI copy goes in next-intl messages
 - The output is CommonJS (`module: commonjs` in `tsconfig.base.json`), with
   `strict` and `noUncheckedIndexedAccess`.
 - **An optional phone is `optionalInternationalPhone`, never
-  `internationalPhone.optional().or(z.literal(''))`.** The union looks right
-  and leaks English: when the number is malformed every branch fails and zod
-  reports the union's own «Invalid input» instead of «رقم الهاتف غير صالح», on
-  an Arabic-first form, for the commonest typo there is (TXT-2, TXT-4). The
-  primitive preprocesses an empty string to `undefined` so there is only ever
-  one branch.
+  `internationalPhone.optional().or(z.literal(''))` and never a bare
+  `internationalPhone.optional()`.** The union looks right and leaks English:
+  when the number is malformed every branch fails and zod reports the union's
+  own «Invalid input» instead of «رقم الهاتف غير صالح», on an Arabic-first form,
+  for the commonest typo there is (TXT-2, TXT-4). The bare `.optional()` takes
+  `undefined` and nothing else, so the `''` a cleared box holds is refused as a
+  malformed number, on a field the form may have hidden: `whatsapp` under
+  «لا يملك رقم هاتف» turned the step red with no message. The primitive
+  preprocesses an empty string to `undefined` so there is only ever one
+  branch. A test of a form's payload sends the empty strings the form sends,
+  not an absent key.
+- **A rule on a citizen field is written in the strict schema and in its
+  `partial*` twin.** `shapeSubmission` re-parses what the strict pass accepted
+  with `partialContactDetailsSchema` and `partialPropertyEntrySchema`, and those
+  throw rather than report. Relax a field in one only and a value that should
+  save, or be refused with a message, makes `safeParse` throw, which the API
+  answers with a 500 (`landlordPhone` of a شاغل بتسامح is in both). Test through
+  `adminCreateCitizenSubmissionSchema` or `adminUpdateCitizenSubmissionSchema`,
+  never the card or section alone.
 - A field whose requirement depends on another answer — «لا يملك رقم هاتف»
   waiving `phone` — is optional on the *object* and required again in
   `superRefine`. A field cannot waive a requirement its own type has already

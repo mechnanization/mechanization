@@ -83,7 +83,7 @@ export function PaymentReceipt({
   onOpenChange,
   tenant,
   citizen,
-  payment,
+  payment: billRow,
   municipalityName,
   governorate,
   district,
@@ -139,7 +139,16 @@ export function PaymentReceipt({
   const [busy, setBusy] = React.useState<null | 'share' | 'download'>(null);
   const [shareNote, setShareNote] = React.useState<string | null>(null);
 
-  if (!payment) return null;
+  if (!billRow) return null;
+
+  /*
+    A receipt for a movement just recorded describes that movement: its method,
+    and none of the bill's review note, which belongs to an earlier movement (a
+    Whish claim's review) and would print on a cash receipt as if it were this one's.
+  */
+  const payment: CitizenProfilePayment = recorded
+    ? { ...billRow, paymentMethod: recorded.method ?? billRow.paymentMethod, reviewNote: null }
+    : billRow;
 
   const amount = recorded?.received ?? receivedAmount ?? payment.amount;
   const tenderLine = describeTender(recorded?.tender ?? null, recorded?.changeGiven ?? 0);
@@ -938,6 +947,13 @@ export interface RecordedMovement {
   remaining: number;
   changeGiven: number;
   tender: RecordedTender | null;
+  /**
+   * How this movement was paid — `CASH`, `WHISH_MONEY`, `COLLECTOR`. The bill's
+   * own `paymentMethod` is its last movement's, which on a part-paid bill can be
+   * an earlier one's; the receipt prints this one's. Optional for a caller that
+   * does not know it (the bill's is printed then).
+   */
+  method?: string | null;
 }
 
 /**

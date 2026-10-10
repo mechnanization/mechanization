@@ -1,6 +1,7 @@
 'use client';
 
 import { useId } from 'react';
+import { useTranslations } from 'next-intl';
 import { getLabels, VACANCY_BASIS } from '@mechanization/shared-schemas';
 import type { VacancyBasis } from '@mechanization/shared-schemas';
 import {
@@ -34,7 +35,7 @@ export function AfterTenancyQuestion({
 }: {
   value: AfterTenancyAnswer;
   onChange: (next: AfterTenancyAnswer) => void;
-  /** The owner lives elsewhere — they cannot be recorded living in a dwelling. */
+  /** The owner is an owner record (non-resident, estate, institution) — never recorded living in a dwelling. */
   ownerNonResident?: boolean;
   /**
    * The first answer, said for who the owner is here. «إنهاء الملكية» asks it
@@ -48,6 +49,7 @@ export function AfterTenancyQuestion({
 }) {
   const en = locale === 'en';
   const labels = getLabels(locale);
+  const tKind = useTranslations('citizenKind');
   const group = useId();
   const basisGroup = useId();
   const notesId = useId();
@@ -59,11 +61,7 @@ export function AfterTenancyQuestion({
           status: 'OWNER_OCCUPIED',
           title: en ? 'The owner lives there' : 'يسكنها المالك',
           effect: en ? 'The owner is charged the occupancy fee.' : 'يتحمّل المالك رسم الإشغال.',
-          disabled: ownerNonResident
-            ? en
-              ? 'The owner lives elsewhere.'
-              : 'المالك غير مقيم في البلدة.'
-            : undefined,
+          disabled: ownerNonResident ? tKind('ownerNotHousehold') : undefined,
         },
     {
       status: 'VACANT',

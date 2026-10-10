@@ -46,7 +46,7 @@ export class TreasuryService {
 
   /** Every wallet with its balance, the go-live state, and the rate a screen converts with. */
   async overview(): Promise<TreasuryOverview> {
-    const [settings, accounts, sums] = await Promise.all([
+    const [settings, accounts, sums, pendingExpenseRequests, vouchersAwaitingOrder] = await Promise.all([
       this.db.systemSettings.findFirst({
         select: {
           treasuryGoLiveAt: true,
@@ -68,6 +68,9 @@ export class TreasuryService {
         },
       }),
       this.db.treasuryEntry.groupBy({ by: ['accountId'], _sum: { amount: true } }),
+      // What waits on the manager's payment order (decree 5595/1982 art. 28, 35).
+      this.db.expenseRequest.count({ where: { decision: null } }),
+      this.db.expenseVoucher.count({ where: { orderedAt: null, voidedAt: null } }),
     ]);
 
     const balances = new Map(sums.map((row) => [row.accountId, row._sum.amount?.toNumber() ?? 0]));
@@ -99,15 +102,17 @@ export class TreasuryService {
       heldByCollectors: [...heldByCollectors.entries()]
         .map(([currency, amount]) => ({ currency, amount }))
         .sort((a, b) => a.currency.localeCompare(b.currency)),
+      pendingExpenseRequests,
+      vouchersAwaitingOrder,
     };
   }
 
   /**
-   * One wallet's movements, oldest first, each with the balance after it.
+   * One wallet's movements, listed oldest first, each with the balance after it.
    *
-   * `from` and `to` are instants; the opening balance is everything before
-   * `from`. A page longer than `limit` is cut and flagged, never silently
-   * shortened.
+   * `from` and `to` are instants. When the range holds more than `limit`
+   * movements the page keeps the latest `limit` of them and says so; the
+   * opening balance is then the balance before the first one shown.
    */
   async statement(
     accountId: string,
@@ -134,47 +139,73 @@ export class TreasuryService {
 
     const limit = Math.min(Math.max(range.limit ?? STATEMENT_DEFAULT_LIMIT, 1), STATEMENT_MAX_LIMIT);
 
-    const before = range.from
-      ? await this.db.treasuryEntry.aggregate({
-          where: { accountId, occurredAt: { lt: range.from } },
-          _sum: { amount: true },
-        })
-      : null;
-    const opening = before?._sum.amount ?? new Prisma.Decimal(0);
+    /*
+      One snapshot for the page and the sums the opening balance is worked back
+      from. Read separately, a movement committed between them was in the sum but
+      not on the page, and every running balance on the statement was off by it.
+    */
+    const { rows, total, atEnd } = await this.db.$transaction(
+      async (tx) => {
+        const rows = await tx.treasuryEntry.findMany({
+          where: {
+            accountId,
+            ...(range.from || range.to
+              ? {
+                  occurredAt: {
+                    ...(range.from ? { gte: range.from } : {}),
+                    ...(range.to ? { lte: range.to } : {}),
+                  },
+                }
+              : {}),
+          },
+          /*
+            Newest first, then turned back round. Past `limit` the page keeps the
+            latest movements — today's receipts and payments — not the wallet's
+            first ones: a safe that every citizen payment credits passes two hundred
+            entries in weeks, and its statement then never reached the present.
+          */
+          orderBy: [{ occurredAt: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
+          take: limit + 1,
+          select: {
+            id: true,
+            amount: true,
+            currency: true,
+            source: true,
+            sourceId: true,
+            reversalOfId: true,
+            exchangeRateAtPosting: true,
+            note: true,
+            occurredAt: true,
+            actor: { select: { firstName: true, lastName: true } },
+            reversedBy: { select: { id: true } },
+          },
+        });
+        const total = await tx.treasuryEntry.aggregate({ where: { accountId }, _sum: { amount: true } });
 
-    const rows = await this.db.treasuryEntry.findMany({
-      where: {
-        accountId,
-        ...(range.from || range.to
-          ? {
-              occurredAt: {
-                ...(range.from ? { gte: range.from } : {}),
-                ...(range.to ? { lte: range.to } : {}),
-              },
-            }
-          : {}),
+        /*
+          The balance before the page's first row: the balance at the end of the
+          range, less the page's own movements. With no `to` that end is today and
+          the last row's balance is the wallet's balance; with a `to` it is that
+          day's close — which is what makes a one-day range the day's cash register
+          (docs/finance.md §7).
+        */
+        const atEnd = range.to
+          ? ((
+              await tx.treasuryEntry.aggregate({
+                where: { accountId, occurredAt: { lte: range.to } },
+                _sum: { amount: true },
+              })
+            )._sum.amount ?? new Prisma.Decimal(0))
+          : (total._sum.amount ?? new Prisma.Decimal(0));
+        return { rows, total, atEnd };
       },
-      orderBy: [{ occurredAt: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
-      take: limit + 1,
-      select: {
-        id: true,
-        amount: true,
-        currency: true,
-        source: true,
-        sourceId: true,
-        reversalOfId: true,
-        exchangeRateAtPosting: true,
-        note: true,
-        occurredAt: true,
-        actor: { select: { firstName: true, lastName: true } },
-        reversedBy: { select: { id: true } },
-      },
-    });
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+    );
 
     const truncated = rows.length > limit;
-    const page = truncated ? rows.slice(0, limit) : rows;
+    const page = (truncated ? rows.slice(0, limit) : rows).reverse();
 
-    const total = await this.db.treasuryEntry.aggregate({ where: { accountId }, _sum: { amount: true } });
+    const opening = page.reduce((sum, row) => sum.minus(row.amount), atEnd);
 
     let running = opening;
     const entries: TreasuryStatementEntry[] = page.map((row) => {
@@ -217,21 +248,28 @@ export class TreasuryService {
     input: ActivateTreasuryInput,
     actor: { id: string; role: string },
   ): Promise<ActivateTreasuryResult> {
+    /*
+      The singleton may not exist yet on a municipality that never opened
+      الإعدادات, and it must be COMMITTED before the stamp is written. A payment
+      reads the stamp `FOR SHARE` so that it waits for activation to commit — but
+      a row activation inserted in its own transaction is invisible to it, so it
+      would not wait, would read NULL, and the cash it took after the stamp would
+      credit no wallet (reproduced). Hence its own statement, on the pooled
+      client, before the transaction opens.
+
+      INSERT … ON CONFLICT DO NOTHING rather than upsert: two administrators
+      pressing the button together would both find no row and both insert, and
+      the loser's unique violation would surface as a raw database error.
+    */
+    await this.db.$executeRaw`
+      INSERT INTO ${this.S}system_settings ("id", "singleton", "updatedAt")
+      VALUES (gen_random_uuid(), true, now())
+      ON CONFLICT ("singleton") DO NOTHING
+    `;
+
     return runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
 
-      /*
-        The singleton may not exist yet on a municipality that never opened
-        الإعدادات. INSERT … ON CONFLICT DO NOTHING rather than upsert: two
-        administrators pressing the button together would both find no row and
-        both insert, and the loser's unique violation would abort its
-        transaction with a raw database error instead of «مفعّلة مسبقاً».
-      */
-      await tx.$executeRaw`
-        INSERT INTO ${this.S}system_settings ("id", "singleton", "updatedAt")
-        VALUES (gen_random_uuid(), true, now())
-        ON CONFLICT ("singleton") DO NOTHING
-      `;
       const locked = await tx.$queryRaw<Array<{ id: string; treasuryGoLiveAt: Date | null }>>`
         SELECT "id", "treasuryGoLiveAt"
           FROM ${this.S}system_settings

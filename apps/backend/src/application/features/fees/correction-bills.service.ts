@@ -1,3 +1,4 @@
+import { citizenDisplayName } from '@mechanization/shared-schemas';
 import { Inject, Injectable } from '@nestjs/common';
 import type { FeeAssessment, FeeAssessmentLine, FeeBasis, FeeBearer } from '@mechanization/shared-schemas';
 import { AuditLogEntry } from '../../../domain/entities/audit-log-entry.entity';
@@ -18,7 +19,7 @@ import {
   type BillFigure,
   type ChangeKind,
 } from './bill-corrections';
-import { assessCitizen, FeesService, type CitizenHoldings } from './fees.service';
+import { assessCitizen, FeesService, flatCategoryCharge, type CitizenHoldings } from './fees.service';
 
 /** Owed and not yet settled. PENDING_REVIEW is money claimed, not money received. */
 const OPEN_STATUSES = ['UNPAID', 'OVERDUE', 'PENDING_REVIEW'] as const;
@@ -331,7 +332,16 @@ export class CorrectionBillsService {
     const flat = bills.filter((bill) => bill.feeNotice && bill.feeNotice.basis === 'FLAT');
     const figures = new Map<string, BillFigure>();
 
-    const holdings = await this.holdings([...new Set(rated.map((bill) => bill.citizenId))]);
+    /*
+      A FLAT bill aimed at a category reads the register too since 0077: a
+      holder whose every unit of the category became exempt or uninhabitable,
+      or another co-owner's to pay under «مالك مسؤول», owes nothing for it
+      (`flatCategoryCharge`).
+    */
+    const flatByCategory = flat.filter((bill) => bill.feeNotice!.targetCategory);
+    const holdings = await this.holdings([
+      ...new Set([...rated, ...flatByCategory].map((bill) => bill.citizenId)),
+    ]);
     for (const bill of rated) {
       const holding = holdings.get(bill.citizenId);
       if (!holding) continue;
@@ -356,12 +366,18 @@ export class CorrectionBillsService {
     for (const bill of flat) {
       const notice = bill.feeNotice!;
       if (!notice.targetCategory) continue;
-      figures.set(
-        bill.id,
-        holders.get(notice.targetCategory)?.has(bill.citizenId)
-          ? { kind: 'ASSESSED', amount: Math.round(Number(notice.amount)), assessment: null }
-          : { kind: 'NOT_TARGETED' },
-      );
+      if (!holders.get(notice.targetCategory)?.has(bill.citizenId)) {
+        figures.set(bill.id, { kind: 'NOT_TARGETED' });
+        continue;
+      }
+      const holding = holdings.get(bill.citizenId);
+      const charge = holding
+        ? flatCategoryCharge(holding.entries, {
+            amount: Math.round(Number(notice.amount)),
+            targetCategory: notice.targetCategory,
+          })
+        : { amount: Math.round(Number(notice.amount)), assessment: null };
+      figures.set(bill.id, { kind: 'ASSESSED', amount: charge.amount, assessment: charge.assessment });
     }
     return { figures, holdings };
   }
@@ -448,8 +464,9 @@ export class CorrectionBillsService {
     if (ids.length === 0) return new Map();
     const rows = await this.db.user.findMany({
       where: { id: { in: [...new Set(ids)] } },
-      select: { id: true, firstName: true, lastName: true },
+      select: { id: true, firstName: true, lastName: true, residence: true },
     });
-    return new Map(rows.map((row) => [row.id, [row.firstName, row.lastName].filter(Boolean).join(' ')]));
+    // «ورثة المرحوم …» for an estate (0076).
+    return new Map(rows.map((row) => [row.id, citizenDisplayName(row, { middleName: false })]));
   }
 }

@@ -2,22 +2,29 @@ import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from 
 import {
   createExpenseCategorySchema,
   recordExpenseSchema,
+  rejectExpenseRequestSchema,
+  requestExpenseSchema,
   updateExpenseCategorySchema,
   voidExpenseSchema,
+  EXPENSE_REQUEST_STATUSES,
   TREASURY_ADMIN_ROLES,
   TREASURY_READ_ROLES,
   TREASURY_WORK_ROLES,
   type CreateExpenseCategoryInput,
+  type ExpenseRequestStatus,
   type RecordExpenseInput,
+  type RejectExpenseRequestInput,
+  type RequestExpenseInput,
   type UpdateExpenseCategoryInput,
   type VoidExpenseInput,
 } from '@mechanization/shared-schemas';
+import { ValidationError } from '../../application/common/exceptions';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
 import { ExpensesService } from '../../application/features/treasury/expenses.service';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
-import { requireDate } from './query-params';
+import { optionalInt, requireRangeEnd, requireRangeStart } from './query-params';
 
 /**
  * النفقات — «أمر صرف» (docs/finance.md §5).
@@ -27,6 +34,13 @@ import { requireDate } from './query-params';
  * record and pay, and only the manager cancels. There is no approval route
  * because there is no approval step.
  */
+/** A request status from a query string, or nothing; anything else refuses (non-negotiable 6). */
+function requestStatus(value: string | undefined): ExpenseRequestStatus | undefined {
+  if (value === undefined || value === '') return undefined;
+  if ((EXPENSE_REQUEST_STATUSES as readonly string[]).includes(value)) return value as ExpenseRequestStatus;
+  throw new ValidationError({ code: 'INVALID_QUERY_VALUE', message: `Not a request status: ${value}` });
+}
+
 @Controller('t/:tenantSlug/treasury/expenses')
 export class ExpensesController {
   constructor(private readonly expenses: ExpensesService) {}
@@ -65,30 +79,32 @@ export class ExpensesController {
   list(
     @Query('from') from?: string,
     @Query('to') to?: string,
-    @Query('categoryId') categoryId?: string,
-    @Query('accountId') accountId?: string,
+    // Validated like a path id (non-negotiable 6): an unreadable one is a 400, not a database error.
+    @Query('categoryId', new ParseUUIDPipe({ optional: true })) categoryId?: string,
+    @Query('accountId', new ParseUUIDPipe({ optional: true })) accountId?: string,
     @Query('includeVoid') includeVoid?: string,
+    @Query('awaitingOrder') awaitingOrder?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
   ) {
-    const toInt = (raw: string | undefined): number | undefined => {
-      if (raw === undefined) return undefined;
-      const parsed = Number.parseInt(raw, 10);
-      return Number.isFinite(parsed) ? parsed : undefined;
-    };
     return this.expenses.list({
-      // A figure, so an unreadable date refuses rather than quietly widening the range.
-      from: requireDate(from),
-      to: requireDate(to),
+      // A figure, so an unreadable date refuses rather than quietly widening the range; a bare day is Beirut's.
+      from: requireRangeStart(from),
+      to: requireRangeEnd(to),
       categoryId,
       accountId,
       includeVoid: includeVoid === 'true',
-      page: toInt(page),
-      pageSize: toInt(pageSize),
+      awaitingOrder: awaitingOrder === 'true',
+      page: optionalInt(page),
+      pageSize: optionalInt(pageSize),
     });
   }
 
-  /** Declared before `:id`, or it would be read as one. */
+  /**
+   * Declared before `:id`, or it would be read as one. The manager's recording
+   * is the payment order; an accountant's is refused unless it says why it is
+   * urgent (decree 5595/1982 art. 35) — otherwise it goes to `requests`.
+   */
   @Roles(...TREASURY_WORK_ROLES)
   @Post()
   record(
@@ -98,10 +114,70 @@ export class ExpensesController {
     return this.expenses.record(body, { id: user.sub, role: user.role ?? '' });
   }
 
+  // ─────────────────────  «أمر الصرف» — requests and orders  ─────────────────────
+  // All declared before `:id`, which would otherwise read "requests" as an id.
+
+  /** The requests — by default those still waiting for the manager's order. */
+  @Roles(...TREASURY_READ_ROLES)
+  @Get('requests')
+  requests(
+    @Query('status') status?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    return this.expenses.listRequests({
+      status: requestStatus(status),
+      page: optionalInt(page),
+      pageSize: optionalInt(pageSize),
+    });
+  }
+
+  /** «طلب أمر صرف» — the accountant prepares an expense; nothing leaves a wallet yet. */
+  @Roles(...TREASURY_WORK_ROLES)
+  @Post('requests')
+  requestPayment(
+    @Body(new ZodValidationPipe(requestExpenseSchema)) body: RequestExpenseInput,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.expenses.requestPayment(body, { id: user.sub, role: user.role ?? '' });
+  }
+
+  /** «إصدار أمر الصرف» — the manager orders a request, and the money leaves. */
+  @Roles(...TREASURY_ADMIN_ROLES)
+  @Post('requests/:id/order')
+  orderRequest(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: SessionClaims) {
+    return this.expenses.orderRequest(id, { id: user.sub, role: user.role ?? '' });
+  }
+
+  /** «رفض الطلب» — the manager declines a request, with a reason. */
+  @Roles(...TREASURY_ADMIN_ROLES)
+  @Post('requests/:id/reject')
+  rejectRequest(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body(new ZodValidationPipe(rejectExpenseRequestSchema)) body: RejectExpenseRequestInput,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.expenses.rejectRequest(id, body.reason, { id: user.sub, role: user.role ?? '' });
+  }
+
+  /** «سحب الطلب» — its author (or the manager) takes back a request still waiting. */
+  @Roles(...TREASURY_WORK_ROLES)
+  @Post('requests/:id/withdraw')
+  withdrawRequest(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: SessionClaims) {
+    return this.expenses.withdrawRequest(id, { id: user.sub, role: user.role ?? '' });
+  }
+
   @Roles(...TREASURY_READ_ROLES)
   @Get(':id')
   get(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.expenses.get(id);
+  }
+
+  /** «تسوية بأمر صرف» — the manager's order for an urgent payment already made (art. 35). */
+  @Roles(...TREASURY_ADMIN_ROLES)
+  @Post(':id/order')
+  regularize(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: SessionClaims) {
+    return this.expenses.regularize(id, { id: user.sub, role: user.role ?? '' });
   }
 
   /** «إلغاء سند الصرف»: the manager's alone, and it puts the money back. */

@@ -583,7 +583,8 @@ export function IssueFeeForm({
           </Button>
         ) : (
           <Button variant="ghost" onClick={() => setStepIndex(stepIndex - 1)} disabled={submitting}>
-            <ArrowRight className="size-4 rtl:rotate-180" aria-hidden />
+            {/* Back points back: drawn for LTR, flipped in Arabic, and «التالي» below takes the opposite arrow (RTL-3). */}
+            <ArrowLeft className="size-4 rtl:rotate-180" aria-hidden />
             {locale === 'en' ? 'Back' : 'السابق'}
           </Button>
         )}
@@ -600,7 +601,7 @@ export function IssueFeeForm({
         ) : (
           <Button disabled={!canAdvance} onClick={() => setStepIndex(stepIndex + 1)}>
             {locale === 'en' ? 'Next' : 'التالي'}
-            <ArrowLeft className="size-4 rtl:rotate-180" aria-hidden />
+            <ArrowRight className="size-4 rtl:rotate-180" aria-hidden />
           </Button>
         )}
       </div>

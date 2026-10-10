@@ -1,3 +1,4 @@
+import { EVENT_LISTENER_METADATA } from '@nestjs/event-emitter/dist/constants';
 import { TenantContextService, type TenantScope } from '../../../infrastructure/context/tenant-context.service';
 import { DataQualityService } from './data-quality.service';
 import { RecordReviewService } from './record-review.service';
@@ -77,5 +78,24 @@ describe('the quality caches, cleared around a transaction', () => {
     await expect(quality.onRegisterChanged()).resolves.toBeUndefined();
     await expect(reviews.onQueueChanged()).resolves.toBeUndefined();
     expect(invalidated).toEqual([]);
+  });
+});
+
+describe('what clears the quality cache', () => {
+  /*
+    UNINHABITED_WITHOUT_READING clears on a «غير صالحة للسكن» reading, and a
+    reading is announced as `damage.recorded`, not as `building.changed`.
+    Without this subscription the finding lingers for the whole TTL after the
+    officer did the very thing it asks for.
+  */
+  it('includes a damage reading', () => {
+    const listeners = (Reflect.getMetadata(
+      EVENT_LISTENER_METADATA,
+      DataQualityService.prototype.onRegisterChanged,
+    ) ?? []) as Array<{ event: string }>;
+
+    expect(listeners.map((listener) => listener.event)).toEqual(
+      expect.arrayContaining(['citizen.changed', 'building.changed', 'registration.submitted', 'damage.recorded']),
+    );
   });
 });

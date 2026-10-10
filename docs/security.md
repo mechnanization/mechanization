@@ -1,6 +1,6 @@
 # Security
 
-Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-08.
+Last verified against the code: `fix/pr104-review` (PR #104 `f4aac74` merged with `develop@4ad0b27`), 2026-10-09.
 
 Binding for every change that touches authentication, roles, tokens, validation, uploads, logging,
 headers, client storage or secrets. The rules below are correct practice. Where the code differs today,
@@ -82,12 +82,19 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   changes and never who viewed what. `route-inventory.spec.ts` pins all of this over every
   controller on disk: every non-public route has `@Roles` or is on its reviewed self-service list, no
   write and no side-effecting GET (`SIDE_EFFECT_GETS`) admits VIEWER, and no route deletes a citizen.
+- «المستحق على عقار» (`GET fees/parcel-dues`) is read-only and gated like the ledger it reads
+  (`FEE_READ_ROLES`); its one query value goes through `parcelDuesQuerySchema`. It names each debtor
+  and the remaining amount, nothing a ledger reader does not already see, and never a رقم مرجعي.
 - A citizen file is never hard-deleted (decision of 2026-10-05). It is archived — `isActive: false`
   through `PATCH citizens/:id/active` — with a written reason and who asked (`setCitizenActiveSchema`
   requires both), recorded on the Tier 1 audit row, and restored the same way.
 - What the citizen portal sends about anyone else is named, never passed through: `mySummary` sends a
   flat's owners as name and أسهم only (an allowlist, pinned by `citizen-portal.spec.ts`) and drops the
-  landlord link's id and رقم مرجعي. Its property and unit fields still pass through by spread, so a
+  landlord link's id and رقم مرجعي. A co-owned flat's billing goes as the method and this citizen's own
+  part (under «مالك مسؤول», 1/1 or 0/1 says whether they pay for all), never the responsible owner's
+  register id (same spec). A unit's fee exemption goes as its reason only; the officer's note stays on the
+  staff screens, and `heldUnits` (a house's flat, a card's census flats) go through the same
+  `portalOwnerBilling` mapper. Its property and unit fields still pass through by spread, so a
   field added to the staff profile reaches «ملفّي» unless it is named out
   ([docs/gotchas.md](gotchas.md#a-field-added-to-the-staff-profile-reaches-the-citizen-portal)).
 - Scope citizen reads and writes by `user.sub` in the WHERE clause: `findFirst({ where: { id, citizenId } })`
@@ -191,10 +198,15 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
 - **Audit tiers.** Tier 1 MUST write its audit row inside the transaction of the change, so the change
   rolls back if the row cannot be written: payments (declaration, confirmation, refusal, counter and
   Whish settlement), payment reversals, activating the treasury (`TREASURY_ACTIVATED`: the opening
-  balances and the go-live stamp, one transaction), recording and cancelling an expense, receiving a
-  collector's custody (`CUSTODY_RECEIVED`) and cancelling a transfer, corrections, ownership changes (ending an ownership, owner links,
-  merges), ending a tenancy, review decisions (approve, return, quality check) and citizen status changes
-  (archive and restore). Everything else is Tier 2: an event
+  balances and the go-live stamp, one transaction), recording and cancelling an expense, a payment
+  order's life (`EXPENSE_REQUESTED`; `EXPENSE_ORDERED`, on a request or after an urgent payment;
+  `EXPENSE_REQUEST_REJECTED`; `EXPENSE_REQUEST_WITHDRAWN`), receiving a collector's custody
+  (`CUSTODY_RECEIVED`) and cancelling a transfer, corrections, ownership changes (ending an ownership,
+  owner links, merges), ending a tenancy, review decisions (approve, return, quality check), citizen
+  status changes (archive and restore), how a co-owned flat is billed (`UNIT_OWNER_BILLING_SET`,
+  `OwnerBillingService`, which moves every co-owner's bill), and a unit's fee exemption
+  (`UNIT_FEE_EXEMPTION_SET` / `_LIFTED`, `FeeExemptionService`, SUPER_ADMIN only). Everything else is
+  Tier 2: an event
   after the commit, whose failed write is logged and does not undo the change. How:
   [apps/backend/CLAUDE.md](../apps/backend/CLAUDE.md#events-and-audit).
 - An audit row MUST NOT carry a credential (OWASP Logging Cheat Sheet; NIST SP 800-53 AU-3(3), which
@@ -216,10 +228,21 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   `SUPER_ADMIN`, `ACCOUNTANT`, `AUDITOR` and `VIEWER`; activating is `SUPER_ADMIN` only
   (`TREASURY_*_ROLES` in shared-schemas). A payer or payee name on a voucher is personal data: it
   stays out of logs, Sentry and audit rows ([finance.md](finance.md)).
-- **Expenses.** Recording an expense is paying it, so the write is guarded on both sides: an
-  in-flight ref and an idempotency key the server honours, and the outflow goes through the same
-  locked, never-negative ledger post as everything else. `payee` is free text that may name a
-  citizen, so the audit row carries the voucher number and the figures, never the name.
+- **Expenses.** Money leaves on the manager's payment order (decree 5595/1982 art. 28 and 33;
+  [finance.md §5.1](finance.md)).
+  - An accountant's expense is a request that moves nothing until the manager orders it. An
+    urgent payment (art. 35) is paid at once with a written reason and waits for the order after
+    the fact. The service refuses an accountant's recording that is neither
+    (`EXPENSE_ORDER_REQUIRED`), so the rule does not rest on the screen.
+  - A write that pays is guarded on both sides: an in-flight ref, and an idempotency key the
+    server honours and binds to its act. The same key with another wallet, amount or clerk is
+    refused, never answered with a different voucher.
+  - The outflow goes through the same locked, never-negative ledger post as everything else.
+  - `payee` is free text that may name a citizen, so the audit row carries the voucher number and
+    the figures, never the name.
+  - A collector's custody is never a paying wallet (`EXPENSE_ACCOUNT_NOT_PAYABLE`).
+  - The voucher, the transfer and the request are written once at the database (`0080`): only
+    their stamps may change, once, and none is deleted.
 - **«من حصّل الجابي»** (`GET /treasury/transfers/custody/:collectorId/collections`) names citizens
   and carries their phone and sector, so it stays on the finance *read* roles. That is deliberate and
   it widens nobody's sight: the register itself (`EVERY_STAFF_ROLE`) already shows every staff role
@@ -237,11 +260,32 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   municipality's whole ledger to answer a question about his own pocket.
 - **Collector custody.** A payment taken at a door credits that collector's own custody wallet, not
   the safe: until someone counts the notes and receives them, the municipality does not have the
-  money and its books must not say otherwise. The handover is a transfer, recorded by a different
-  person from the one who collected, and it cannot exceed what the collector holds. The audit row
-  names him by id, never by name.
+  money and its books must not say otherwise.
+  - The handover is a transfer, recorded by a different person from the one who collected. The
+    service refuses a collector receiving his own custody (`CUSTODY_SELF_RECEIPT`), since anyone
+    can be named as the collector on a payment, an accountant included.
+  - It cannot exceed what the collector holds, read behind the wallets' locks.
+  - The audit row names him by id, never by name, beside what he held before.
+  - A refund after he handed the cash in comes out of the safe, never his custody (decision D1).
 - A money write MUST be safe against double submission on the client (an in-flight guard) and on the
-  server (a constraint or idempotent write).
+  server (a constraint or idempotent write). A screen keeps its key across every failure and every
+  edit, and renews it only when the server confirms the key's act exists (a success, or a code
+  saying the key was used: `TREASURY_REQUEST_KEY_REUSED`, `EXPENSE_ALREADY_VOID`,
+  `TRANSFER_ALREADY_VOID`, `PAYMENT_IDEMPOTENCY_KEY_REUSED`), so a retry is always answered from the
+  first write (`apps/frontend/lib/request-id.ts`). A refusal proves only that that attempt wrote
+  nothing: renewing on a 429 after a lost answer recorded the payment twice.
+  Keys are held outside the form (`heldKey`, per tenant and act, for the life of the tab), so a
+  failed background re-read that remounts a screen cannot lose one.
+  - A handover is cancelled from its statement row by `SUPER_ADMIN` only (`POST
+    /treasury/transfers/:id/void`, `TREASURY_ADMIN_ROLES`; the screen mirrors it with
+    `mayVoidTransfer`). The register keeps only ids, days and a flag in its URL, never
+    personal data.
+  - The server binds a key to its act: wallet, amount and clerk, and for an expense or a
+    request also its band, payee and description. The same key with anything else is refused
+    (`TREASURY_REQUEST_KEY_REUSED`), never answered with somebody else's document.
+  - A key whose voucher or handover was cancelled since is refused (`EXPENSE_ALREADY_VOID`,
+    `TRANSFER_ALREADY_VOID`), so a clerk is never told «سُجّل» for money the register shows as
+    returned.
 
 ### Tenancy
 
@@ -387,6 +431,7 @@ add a row. Severity is the harm if exploited today.
 | Medium | A citizen save applies the owner agreements it carries (`landlordCitizenId` from «نعم، هو» on a card) through `LandlordLinkService.applyAgreements` → `confirm` with no role rule, while the answer routes admit only `LANDLORD_LINK_ANSWER_ROLES`. A collector (`REGISTER_WRITE_ROLES`) can so link an owner — and put flats and owner-borne fees on that file — by calling `POST`/`PATCH citizens` directly; the citizen editor keeps collectors out | `CitizensService` (agreements → `applyAgreements`); `CitizenController` create/update vs `confirmLandlordLink`, `dismissLandlordLink`, `restoreLandlordLink`, `unlinkLandlord`; `LandlordMatchHint` (no permission prop) | Apply agreements only for a role in `LANDLORD_LINK_ANSWER_ROLES` (refuse or ignore the rest), and give `LandlordMatchHint` a required `canAnswer` |
 | Low | Raw query values on several reads: a repeated `?search=` arrives as an array and `normalizeSearchText` calls `.toLowerCase()` on it, a 500 and a Sentry event; `limit` and `offset` are coerced by hand. The collection worklists had the same bug and now go through `worklistQuerySchema` (2026-10-06) | `CitizenController.list`, `CitizenController.history`, `FeesController.listPayments` (`@Query('search')`, `@Query('limit')`, …), `AuditController` (`@Query('action')` into `parseActions`, which calls `.split`) | A zod query schema through `ZodValidationPipe`, as `worklistQuerySchema` |
 | Low | `POST citizen/otp/verify` has no explicit `@Throttle` and falls under the 120-per-minute default | `AuthController.verifyOtp` | An explicit limit from `APP_CONFIG.throttle` |
+| Low | No trigger refuses `TRUNCATE` on the append-only and written-once tables (`audit_log_entries`, `payment_transactions`, `treasury_entries`, and the treasury documents of `0080`). The same role could disable a trigger anyway, so this guards against accident, not intent | `0001_init`, `0017_payment_ledger`, `0073_treasury_ledger`, `0080_treasury_controls` (row triggers only); `scripts/db/destructive-sql.mjs` blocks the word `TRUNCATE`, so the natural fix needs a narrowed rule | A `BEFORE TRUNCATE` statement trigger per table, with the scanner rule narrowed to the statement itself |
 | Low | Public routes with no explicit throttle decision ride the default | `HealthController`; `TenantController.getPublicConfig`; `RegistrationController.checkPropertyNumber`; `FeesController.whishCallback` | An explicit `@Throttle`, or `@SkipThrottle()` with a reason |
 | Low | The cron bearer secret is compared with `!==` on `@SkipThrottle()` routes | `InternalCronController` `authorise` | Digest plus `timingSafeEqual`, as in `MetricsController` |
 | Low | JWTs have no algorithm pin, issuer or audience | `ApplicationModule` `JwtModule.registerAsync`; `JwtAuthGuard` (`jwt.verify`) | Sign and verify options with `HS256`, issuer, audience |

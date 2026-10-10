@@ -86,6 +86,7 @@ import {
   type CitizenFormValues,
 } from './citizen-form';
 import {
+  citizenDisplayName,
   parseFloorLabel,
   POSSIBLE_DUPLICATE_FLAG_PATH,
   qualityLabels,
@@ -102,11 +103,13 @@ function text(value: unknown): string | undefined {
 /** The server's `landlordLink` for a card, or nothing when there is none. */
 function readLandlordLink(value: unknown): PropertyDraft['landlordLink'] {
   if (!value || typeof value !== 'object') return undefined;
-  const link = value as { citizenId?: unknown; name?: unknown; referenceNumber?: unknown };
+  const link = value as { citizenId?: unknown; name?: unknown; displayName?: unknown; referenceNumber?: unknown };
   if (typeof link.citizenId !== 'string' || typeof link.name !== 'string') return undefined;
   return {
     citizenId: link.citizenId,
     name: link.name,
+    // A response from before `displayName` existed shows the stored name.
+    displayName: typeof link.displayName === 'string' ? link.displayName : link.name,
     referenceNumber: typeof link.referenceNumber === 'string' ? link.referenceNumber : null,
   };
 }
@@ -1134,8 +1137,16 @@ export function CitizenEditor({
           }
 
           const fresh = seeded ? { ...empty, properties: seeded } : empty;
-          const withFile = initialResidence ? withResidence(fresh, initialResidence) : fresh;
-          setInitial(initialSearch ? withSeededSearch(withFile, initialSearch) : withFile);
+          /*
+            Seeded first, then the kind: an institution's name is one line, and
+            `withResidence` joins the parts the search term was split into
+            («وقف مسجد البلدة» would otherwise keep only «وقف»). The kind goes
+            in too, so a name holding a digit («مدرسة رسمية 2») is still seeded.
+          */
+          const withSearch = initialSearch
+            ? withSeededSearch(fresh, initialSearch, initialResidence)
+            : fresh;
+          setInitial(initialResidence ? withResidence(withSearch, initialResidence) : withSearch);
           return;
         }
 
@@ -1490,11 +1501,16 @@ export function CitizenEditor({
 
       const payload = toSubmission(materialised);
 
+      // «ورثة المرحوم …» for an estate (0076), as the register will show it.
       const displayName =
-        [values.personal.firstName, values.personal.lastName]
-          .filter(Boolean)
-          .join(' ')
-          .trim() || (locale === 'en' ? 'Unnamed record' : 'سجل بلا اسم');
+        citizenDisplayName(
+          {
+            firstName: typeof values.personal.firstName === 'string' ? values.personal.firstName : null,
+            lastName: typeof values.personal.lastName === 'string' ? values.personal.lastName : null,
+            residence: values.residence ?? null,
+          },
+          { locale, middleName: false },
+        ) || (locale === 'en' ? 'Unnamed record' : 'سجل بلا اسم');
 
       /*
         Correcting a record that is already sitting in the queue.

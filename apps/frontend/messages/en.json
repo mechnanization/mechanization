@@ -49,7 +49,8 @@
     "success": "Success",
     "directionOnly": "Direction only",
     "errorBody": "An unexpected error occurred. Try again, and if it keeps happening contact the municipality.",
-    "errorReference": "Error reference"
+    "errorReference": "Error reference",
+    "refreshFailed": "The page could not be refreshed — what is shown is the last read"
   },
   "nav": {
     "registry": "Registry",
@@ -289,7 +290,7 @@
     "TENANCY_NONE_ACTIVE": "There is no current tenancy to end.",
     "OCCUPANCY_END_BEFORE_START": "The end date is before the occupancy began.",
     "UNIT_STATUS_AFTER_EXIT_REQUIRED": "Set the unit’s status after the occupant leaves.",
-    "NON_RESIDENT_OWNER_CANNOT_OCCUPY": "The owner of unit {unitCode} does not live in the town, so they cannot be recorded as living there. Choose “Vacant” or “I don’t know”.",
+    "NON_RESIDENT_OWNER_CANNOT_OCCUPY": "The owner of unit {unitCode} is not a household in the town (living elsewhere, an estate or a body), so they cannot be recorded as living there. Choose “Vacant” or “I don’t know”.",
     "OCCUPANCY_CHANGED_CONCURRENTLY": "This occupancy just changed. Refresh the page.",
     "UNIT_CORRECTION_PREVIEW_STALE": "This unit’s data changed since you opened the preview. Review the new preview, then confirm again.",
     "UNIT_CONFIRM_CODE_MISMATCH": "The code you typed does not match the unit’s code.",
@@ -334,7 +335,7 @@
     "SESSION_ENDED": "Your session has ended. Sign in again.",
     "ORIGIN_NOT_ALLOWED": "This request did not come from the municipality’s portal.",
     "SESSION_REFRESH_UNAVAILABLE": "The session could not be renewed. Check the connection and try again.",
-    "FEE_NOTHING_TO_CHARGE": "Nothing to charge — no notice was issued.{held, plural, =0 {} one { 1 unit is held for review (unit status conflict).} other { # units are held for review (unit status conflict).}}{uninhabitable, plural, =0 {} one { 1 unit is uninhabitable — its occupancy fee is held until re-inspection.} other { # units are uninhabitable — their occupancy fee is held until re-inspection.}}{exempted, plural, =0 {} one { 1 unit is vacant, under construction or exempt by bearer.} other { # units are vacant, under construction or exempt by bearer.}}{unassessable, plural, =0 {} one { 1 citizen's records need a field survey first.} other { # citizens' records need a field survey first.}}",
+    "FEE_NOTHING_TO_CHARGE": "Nothing to charge — no notice was issued.{held, plural, =0 {} one { 1 unit is held for review (unit status conflict).} other { # units are held for review (unit status conflict).}}{uninhabitable, plural, =0 {} one { 1 unit is uninhabitable — it is exempt from fees until re-inspection.} other { # units are uninhabitable — they are exempt from fees until re-inspection.}}{exempted, plural, =0 {} one { 1 unit is vacant, under construction or exempt by bearer.} other { # units are vacant, under construction or exempt by bearer.}}{feeExempt, plural, =0 {} one { 1 unit is exempt from fees.} other { # units are exempt from fees.}}{coOwnerPaid, plural, =0 {} one { 1 co-owned unit is paid for by its responsible owner.} other { # co-owned units are paid for by their responsible owner.}}{unassessable, plural, =0 {} one { 1 citizen's records need a field survey first.} other { # citizens' records need a field survey first.}}",
     "CITIZEN_NO_PHONE_HAS_NUMBER": "The file is marked «has no phone» but holds a number of the citizen's own — clear the phone and WhatsApp, or untick «Does not have a phone number».",
     "CITIZEN_CONTACT_PHONE_IS_OWN": "The contact number is a relative's, so it cannot be the citizen's own phone — correct one of them.",
     "TREASURY_NOT_ACTIVE": "The treasury is not active yet. Enter the opening balances first.",
@@ -342,7 +343,7 @@
     "TREASURY_ACCOUNT_NOT_FOUND": "The account was not found.",
     "TREASURY_ACCOUNT_MISSING": "There is no primary account in {currency} for this payment type. Add the account before accepting the payment.",
     "TREASURY_OPENING_BALANCES_INCOMPLETE": "Enter the opening balance of every active account, and no account that does not exist.",
-    "TREASURY_INSUFFICIENT_FUNDS": "The balance of «{account}» is not enough: {available, number} available, {required, number} needed.",
+    "TREASURY_INSUFFICIENT_FUNDS": "The balance of «{account}» is not enough: {available, number} {currency} available, {required, number} {currency} needed.",
     "EXPENSE_NOT_FOUND": "The expense voucher was not found.",
     "EXPENSE_ALREADY_VOID": "This expense voucher has already been cancelled.",
     "EXPENSE_CATEGORY_NOT_FOUND": "The expense category was not found.",
@@ -354,8 +355,27 @@
     "TRANSFER_NOT_FOUND": "The transfer voucher was not found.",
     "TRANSFER_ALREADY_VOID": "This transfer has already been cancelled.",
     "CUSTODY_ACCOUNT_NOT_FOUND": "The collector custody account was not found.",
-    "CUSTODY_EXCEEDS_HELD": "More than the collector holds: {held, number} in custody, {amount, number} received.",
-    "COLLECTOR_NOT_FOUND": "That collector was not found."
+    "CUSTODY_EXCEEDS_HELD": "More than the collector holds: {held, number} {currency} in custody, {amount, number} {currency} received.",
+    "COLLECTOR_NOT_FOUND": "That collector was not found.",
+    "OWNER_BILLING_NOT_CO_OWNED": "Unit {unitCode} does not have more than one current owner, so there is no fee to divide between owners.",
+    "OWNER_BILLING_STRUCTURAL_UNIT": "Unit {unitCode} is a structural floor that is never billed, so there are no owners to divide its fee between.",
+    "OWNER_BILLING_RESPONSIBLE_NOT_OWNER": "The responsible owner must be one of the current owners of unit {unitCode}.",
+    "OWNER_BILLING_RESPONSIBLE_NOT_BILLED": "This owner’s file does not claim unit {unitCode} as its owner, so they cannot be billed for it. Add it to their file first, or choose another owner.",
+    "OWNER_BILLING_SHARES_NOT_OWNER": "Shares can only be recorded for the current owners of unit {unitCode}.",
+    "OWNER_BILLING_SHARES_MISSING": "Record every owner’s shares for unit {unitCode} before choosing “By shares” (owners without shares: {missing}).",
+    "FEE_EXEMPTION_STRUCTURAL_UNIT": "Unit {unitCode} is a structural floor that is never billed, so there is nothing to exempt it from.",
+    "ESTATE_OWNS_ONLY": "An estate only owns: whoever rents or lives in unit {unitCode} is filed in their own name (the widow, or the tenant).",
+    "CUSTODY_SELF_RECEIPT": "A collector cannot receive his own custody; another accountant or the manager must.",
+    "TREASURY_REQUEST_KEY_REUSED": "An earlier attempt from this form was already recorded, with different details. Check the register before anything else: pressing again records a new, separate entry.",
+    "PAYMENT_DATE_BEFORE_GO_LIVE": "A payment cannot be dated before the treasury went live ({date}). Record it as today, or ask an accountant.",
+    "EXPENSE_ACCOUNT_NOT_PAYABLE": "An expense cannot be paid from a collector’s custody; choose the safe or a municipal account.",
+    "EXPENSE_ORDER_REQUIRED": "An expense is paid only on the head of the municipality’s payment order. Send it as a request, or give the reason for an urgent payment.",
+    "EXPENSE_ALREADY_ORDERED": "This voucher already carries its payment order.",
+    "EXPENSE_REQUEST_NOT_FOUND": "The payment order request was not found.",
+    "EXPENSE_REQUEST_ALREADY_DECIDED": "This request has already been decided.",
+    "EXPENSE_REQUEST_NOT_YOURS": "Only the person who prepared a request, or the manager, can withdraw it.",
+    "INVALID_QUERY_DATE": "That date is not valid.",
+    "INVALID_QUERY_VALUE": "A value in the request is not valid."
   },
   "damage": {
     "level": "Damage level",
@@ -371,7 +391,7 @@
       "label": "Re-inspect after repair on",
       "optional": "(optional)",
       "placeholder": "Pick a day",
-      "feeHeld": "The occupancy fee is held on anything not habitable until a re-inspection reads it habitable."
+      "feeHeld": "No fee is charged on anything not habitable until a re-inspection reads it habitable."
     },
     "inspectedOn": "Inspected on",
     "inspectedOnToday": "(today if left empty)",
@@ -386,7 +406,7 @@
       "overdue": "was due {date}",
       "noDate": "no date set",
       "wholeBuilding": "from a whole-building reading",
-      "feeHeld": "The occupancy fee is held until the re-inspection."
+      "feeHeld": "Exempt from fees until the re-inspection."
     },
     "history": {
       "title": "Damage history",
@@ -437,6 +457,8 @@
   },
   "reinspections": {
     "title": "Awaiting re-inspection",
+    "feeNoticeAll": "Units and buildings read not habitable, waiting for the visit after repair — they are charged no fee until then. Overdue first.",
+    "feeNoticeMine": "What you read not habitable, waiting for the visit after repair — it is charged no fee until then. Overdue first.",
     "waiting": "Waiting for re-inspection",
     "loadError": "Could not load the re-inspection list.",
     "searchPlaceholder": "Search by building code, name, parcel or unit",
@@ -595,12 +617,19 @@
     "notesSeparator": "; ",
     "notCharged": "{count} not charged",
     "heldForReview": "{count} held for review",
-    "uninhabitable": "{count} uninhabitable, not charged"
+    "uninhabitable": "{count} uninhabitable, exempt",
+    "coOwnedShare": "{count} co-owned, charged at this owner’s part",
+    "coOwnerPays": "{count} paid by another owner",
+    "coOwnedShareParts": "{count} co-owned, charged at this owner’s part ({parts})",
+    "exempt": "{count} exempt from fees",
+    "flatNotOwed": "Flat charge, not owed: {notes}"
   },
   "fees": {
     "issue": {
       "uninhabitable": "Uninhabitable units: {count} — not charged this fee. Charging resumes at the first billing run after a re-inspection reads a unit habitable: for the current period if the person has no bill for it yet, otherwise from the next period.",
-      "uninhabitableOnce": "Uninhabitable units: {count} — not charged this fee. It is a one-off fee, so nothing charges them later by itself; to collect it once a re-inspection reads a unit habitable, issue an individual charge."
+      "uninhabitableOnce": "Uninhabitable units: {count} — not charged this fee. It is a one-off fee, so nothing charges them later by itself; to collect it once a re-inspection reads a unit habitable, issue an individual charge.",
+      "feeExempt": "Units exempt from fees (place of worship, public facility…): {count} — not charged this fee.",
+      "coOwnerPaid": "Co-owned units paid for by their responsible owner: {count} — nothing was charged for them to their other owners."
     },
     "issuePage": {
       "back": "Back to fees and payments",
@@ -821,7 +850,14 @@
     "EXPENSE_CATEGORY_CREATED": "Expense category added",
     "EXPENSE_CATEGORY_UPDATED": "Expense category updated",
     "CUSTODY_RECEIVED": "Collector box received",
-    "TRANSFER_VOIDED": "Transfer cancelled"
+    "TRANSFER_VOIDED": "Transfer cancelled",
+    "UNIT_OWNER_BILLING_SET": "Co-owner billing set on a unit",
+    "UNIT_FEE_EXEMPTION_SET": "Unit exempted from fees",
+    "UNIT_FEE_EXEMPTION_LIFTED": "Unit fee exemption lifted",
+    "EXPENSE_REQUESTED": "Payment order requested",
+    "EXPENSE_ORDERED": "Payment order issued",
+    "EXPENSE_REQUEST_REJECTED": "Payment order request rejected",
+    "EXPENSE_REQUEST_WITHDRAWN": "Payment order request withdrawn"
   },
   "auditEntities": {
     "User": "Citizen or staff",
@@ -840,7 +876,8 @@
     "Treasury": "Treasury",
     "ExpenseVoucher": "Expense voucher",
     "ExpenseCategory": "Expense category",
-    "TreasuryTransfer": "Transfer voucher"
+    "TreasuryTransfer": "Transfer voucher",
+    "ExpenseRequest": "Payment order request"
   },
   "audit": {
     "families": {
@@ -946,7 +983,10 @@
       "created": "Created",
       "habitable": "Habitable",
       "level": "Damage level",
-      "source": "Source"
+      "source": "Source",
+      "ownerBillingMode": "How the owners are billed",
+      "shares": "Shares",
+      "feeExemption": "Fee exemption"
     },
     "text": {
       "redacted": "hidden to protect personal data",
@@ -1055,7 +1095,8 @@
       "noNumber": "No number",
       "contactPhone": "Contact number (son, daughter or relative)",
       "completeNote": "The record is saved with no phone and no WhatsApp, and both questions close. The contact number is optional and never signs the citizen in.",
-      "closedWithNoPhone": "Closed with «Does not have a phone number»."
+      "closedWithNoPhone": "Closed with «Does not have a phone number».",
+      "compareNote": "This file is marked «Does not have a phone number». To record one, open the file and untick it."
     },
     "phone": {
       "changed": "The citizen signs in with their reference number and this phone. After saving, they must use the new number — the old one (<ltr>{number}</ltr>) will stop working.",
@@ -1165,9 +1206,14 @@
       "title": "Statement: {name}",
       "opening": "Balance before the first movement shown",
       "loadError": "Could not load the statement.",
-      "empty": "This account has no movements yet.",
-      "emptyHint": "Every movement into or out of the account appears here.",
-      "truncated": "Only the first {count} movements are shown; newer movements exist that are not shown.",
+      "empty": "No movements in this period.",
+      "emptyHint": "Every movement into or out of the account during the chosen period appears here.",
+      "rangeAria": "Period shown",
+      "from": "From",
+      "to": "To",
+      "today": "Today",
+      "dailyRegisterHint": "A one-day statement is the daily cash register (Decree 5595/1982, art. 101): print it, sign it and count the cash against it until the daily close ships.",
+      "truncated": "Only the latest {count} movements are shown; older movements exist that are not shown.",
       "date": "Date",
       "source": "Type",
       "amount": "Amount",
@@ -1182,7 +1228,36 @@
       "back": "Back to the treasury",
       "currentBalance": "Current balance",
       "closing": "Balance after the last movement shown",
-      "truncatedTitle": "The statement is incomplete"
+      "truncatedTitle": "The statement is incomplete",
+      "titleUnknown": "Account statement",
+      "actions": "Action",
+      "print": {
+        "action": "Print the statement",
+        "municipality": "Municipality: {name}",
+        "day": "Day: {date}",
+        "range": "Period: {from} to {to}",
+        "cashier": "Cashier’s signature",
+        "accountant": "Accountant’s signature",
+        "printedAt": "Printed on {when}"
+      },
+      "voidTransfer": {
+        "action": "Cancel handover",
+        "actionFor": "Cancel the handover of {amount} on {when}",
+        "title": "Cancel the collector’s handover",
+        "body": "The money goes back into the collector’s custody, on his name, and leaves this account. The handover stays in the register with the reason; nothing is deleted.",
+        "amount": "Amount",
+        "when": "Handed over",
+        "recordedBy": "Recorded by",
+        "note": "Note",
+        "reason": "Reason for cancelling (at least 5 characters)",
+        "reasonPlaceholder": "For example: the cash was miscounted",
+        "confirm": "Cancel it and return the money to the collector",
+        "cancel": "Go back",
+        "busy": "Cancelling…",
+        "success": "Handover {number} cancelled",
+        "successBody": "The money is back in the collector’s custody.",
+        "insufficient": "«{account}» no longer holds enough to put this amount back in the collector’s custody: {available} in it, {required} needed. Some of it has left since the handover."
+      }
     },
     "expenses": {
       "title": "Expenses",
@@ -1196,8 +1271,6 @@
       "voucherCount": "Vouchers",
       "notActiveTitle": "The treasury is not active yet",
       "notActiveBody": "No expense can be recorded until the opening balances are entered and the treasury is activated.",
-      "truncatedTitle": "The list is incomplete",
-      "truncated": "Showing {shown, number} of {total, number} vouchers. Narrow it by category or account.",
       "columns": {
         "voucher": "Voucher and payee",
         "category": "Category",
@@ -1213,7 +1286,11 @@
         "allAccounts": "All accounts",
         "status": "Status",
         "recordedOnly": "Not cancelled",
-        "includeCancelled": "Including cancelled"
+        "includeCancelled": "Including cancelled",
+        "paidOn": "Paid on",
+        "from": "From",
+        "to": "To",
+        "clear": "Clear filters"
       },
       "form": {
         "title": "Record an expense",
@@ -1234,7 +1311,7 @@
         "invoicePlaceholder": "The supplier's invoice number, if there is one",
         "optional": "optional",
         "hasPhysicalReceipt": "The paper invoice is kept in the file",
-        "submit": "Record the expense",
+        "submit": "Record and issue the payment order",
         "saving": "Recording…",
         "cancel": "Cancel",
         "success": "Expense recorded — voucher {number}",
@@ -1247,12 +1324,18 @@
           "description": "Say what the money was for",
           "paidOn": "Choose a valid date",
           "adjustmentReason": "Give the reason for the earlier date",
-          "form": "The expense could not be recorded."
+          "form": "The expense could not be recorded.",
+          "invoiceNumber": "The invoice number is too long (100 characters at most).",
+          "urgentReason": "Say clearly why it is urgent (at least 5 characters)",
+          "requestForm": "The request could not be sent.",
+          "earlierVoided": "An earlier attempt from this form was recorded as voucher {number}, and that voucher has since been cancelled. Check the register: pressing again records a new, separate expense."
         },
         "sections": {
           "money": "Amount and account",
           "what": "Expense details",
-          "paperwork": "Date and paperwork"
+          "paperwork": "Date and paperwork",
+          "how": "How it is paid",
+          "documents": "Paperwork"
         },
         "balanceNow": "Balance now",
         "balanceAfter": "Balance after",
@@ -1262,17 +1345,42 @@
         "summaryTitle": "Summary",
         "summaryAccount": "Paid from",
         "summaryAmount": "Amount",
-        "summaryEmpty": "Choose the account to see its balance."
+        "summaryEmpty": "Choose the account to see its balance.",
+        "how": {
+          "aria": "How the expense is paid",
+          "request": "Send to the manager for a payment order",
+          "requestBody": "Nothing leaves the account now. The manager pays it when he issues the payment order.",
+          "urgent": "Urgent payment (art. 35)",
+          "urgentBody": "Paid now, then sent to the manager to regularise with a payment order.",
+          "rule": "An expense is paid on a payment order from the head of the municipality. What is paid at once — salaries, petty expenses, or an emergency — is sent to the manager to regularise.",
+          "urgentReason": "Why it is urgent",
+          "urgentReasonPlaceholder": "For example: September salaries, paid before the order is issued"
+        },
+        "submitRequest": "Send to the manager for a payment order",
+        "submitUrgent": "Pay now and send for regularisation",
+        "sending": "Sending…",
+        "urgentSuccess": "Urgent payment recorded — voucher {number}",
+        "urgentSuccessBody": "The money has left the account. The voucher awaits the manager’s payment order.",
+        "requestSent": "The request was sent to the manager",
+        "requestSentBody": "Nothing has left the account yet. The manager pays it when he issues the payment order.",
+        "summaryRequestTitle": "Request summary",
+        "requestNote": "Nothing leaves the account now. The balance is checked when the manager issues the payment order.",
+        "urgentNote": "The voucher stays awaiting the manager’s payment order.",
+        "replayed": "This expense was already recorded — voucher {number}",
+        "replayedBody": "An earlier attempt from this form recorded it and its answer was lost; its details stand as first recorded. No new voucher was recorded and no more money left.",
+        "requestReplayed": "This request was already sent to the manager",
+        "requestReplayedBody": "An earlier attempt from this form sent it and its answer was lost; its details stand as first sent. No new request was sent."
       },
       "voidDialog": {
         "title": "Cancel voucher {number}",
         "body": "The voucher stays in the register with the reason, and the money returns to the account balance. Nothing is deleted.",
-        "reason": "Reason for cancelling",
+        "reason": "Reason for cancelling (at least 5 characters)",
         "reasonPlaceholder": "For example: recorded under the wrong category",
-        "reasonTooShort": "Give a clear reason for cancelling",
         "confirm": "Cancel it and return the money",
         "cancel": "Go back",
-        "busy": "Cancelling…"
+        "busy": "Cancelling…",
+        "success": "Voucher {number} cancelled",
+        "successBody": "The money is back in the account balance; the voucher stays in the register with the reason."
       },
       "spentInLBP": "Spent in pounds",
       "spentInUSD": "Spent in dollars",
@@ -1298,7 +1406,119 @@
       },
       "notAllowedTitle": "You may not record expenses",
       "notAllowedBody": "Recording expenses is for the accountant and the system administrator. You can read the register without recording.",
-      "backToRegister": "Back to the expense register"
+      "backToRegister": "Back to the expense register",
+      "views": {
+        "aria": "How to view the expenses",
+        "register": "Voucher register",
+        "queue": "{count, plural, =0 {Awaiting payment order} other {Awaiting payment order · {count}}}"
+      },
+      "awaitingBadge": "Awaiting payment order",
+      "urgentLine": "Urgent payment: {reason}",
+      "orderedLine": "{hasName, select, yes {Payment order: {name} · {date}} other {Payment order · {date}}}",
+      "queue": {
+        "fields": {
+          "wallet": "Account",
+          "amount": "Amount",
+          "payee": "Payee",
+          "category": "Category",
+          "requestedBy": "Requested by",
+          "recordedBy": "Recorded by",
+          "urgentReason": "Why it was urgent"
+        },
+        "requests": {
+          "title": "Payment order requests",
+          "filterAria": "Request status",
+          "filter": {
+            "PENDING": "Awaiting the order",
+            "ORDERED": "Ordered",
+            "REJECTED": "Rejected",
+            "WITHDRAWN": "Withdrawn"
+          },
+          "decision": {
+            "ORDERED": "Ordered",
+            "REJECTED": "Rejected",
+            "WITHDRAWN": "Withdrawn"
+          },
+          "decisionWhen": "{name} · {date}",
+          "voucherLabel": "Voucher",
+          "reasonLine": "Reason: {reason}",
+          "columns": {
+            "request": "Request",
+            "requestedBy": "Requested by",
+            "decision": "Decision"
+          },
+          "order": "Order payment",
+          "reject": "Reject",
+          "withdraw": "Withdraw request",
+          "orderFor": "Order payment: {payee}",
+          "rejectFor": "Reject: {payee}",
+          "withdrawFor": "Withdraw request: {payee}",
+          "empty": "No requests are waiting for a payment order",
+          "emptyHint": "When an accountant sends a request it appears here for the manager to order or reject.",
+          "emptyDecided": "No requests in this status",
+          "emptyDecidedHint": "Choose another status to see other requests.",
+          "loadError": "Could not load the requests."
+        },
+        "urgent": {
+          "title": "Urgent payments awaiting regularisation",
+          "columns": {
+            "voucher": "Voucher and payee",
+            "recordedBy": "Recorded by"
+          },
+          "reasonLine": "Why it was urgent: {reason}",
+          "regularize": "Issue the payment order",
+          "regularizeFor": "Issue the payment order for voucher {number}",
+          "empty": "No urgent payments are waiting for regularisation",
+          "emptyHint": "A payment an accountant makes before the order (art. 35) appears here until the manager regularises it.",
+          "loadError": "Could not load the urgent payments.",
+          "truncated": "Showing {shown} of {total} payments. Regularise what you see, then refresh to see the rest."
+        },
+        "orderDialog": {
+          "title": "Issue the payment order",
+          "body": "The money leaves the account as soon as you issue the order, and is recorded on a voucher that carries your order. If the account does not hold enough, the request stays waiting for you.",
+          "confirm": "Issue the payment order",
+          "cancel": "Go back",
+          "busy": "Issuing the order…",
+          "success": "Payment order issued — voucher {number}",
+          "successBody": "The money has left the account and the treasury balance is updated.",
+          "replayed": "This request was already ordered — voucher {number}",
+          "replayedBody": "Your earlier attempt issued the order and its answer was lost. No money left a second time.",
+          "earlierVoided": "This request was already ordered as voucher {number}, and that voucher has since been cancelled. A request is not paid twice; file a new one if the money is still due."
+        },
+        "rejectDialog": {
+          "title": "Reject the request",
+          "body": "No money leaves. The request stays in the register with the reason, for whoever prepared it to read.",
+          "reason": "Reason for rejecting (at least 5 characters)",
+          "reasonPlaceholder": "For example: the invoice is incomplete",
+          "confirm": "Reject the request",
+          "cancel": "Go back",
+          "busy": "Rejecting…",
+          "success": "The request was rejected",
+          "successBody": "The reason appears in the request register."
+        },
+        "withdrawDialog": {
+          "title": "Withdraw the request",
+          "body": "No money leaves. The request stays in the register as «Withdrawn», and you can file a new one.",
+          "confirm": "Withdraw the request",
+          "cancel": "Go back",
+          "busy": "Withdrawing…",
+          "success": "The request was withdrawn"
+        },
+        "regularizeDialog": {
+          "title": "Issue the payment order for voucher {number}",
+          "body": "This expense was paid before the order (art. 35). Issuing the order regularises the payment and the account balance does not change. If you will not order it, cancelling the voucher returns the money.",
+          "confirm": "Issue the payment order",
+          "cancel": "Go back",
+          "busy": "Issuing the order…",
+          "success": "Payment order issued — voucher {number}",
+          "successBody": "The urgent payment is regularised; the account balance did not change."
+        }
+      },
+      "categoriesLoadError": "The spending categories could not be loaded.",
+      "voidFor": "Cancel voucher {number}",
+      "emptyFiltered": "No expenses match these filters.",
+      "emptyFilteredHint": "Change the category, the account or the dates, or clear the filters.",
+      "partialLoad": "Part of this page did not load: “Record an expense” or some filter options may be missing."
     },
     "custody": {
       "title": "Held by collectors",
@@ -1327,8 +1547,14 @@
         "errors": {
           "amount": "Enter an amount greater than zero",
           "tooMuch": "More than the collector holds",
-          "form": "The box could not be received."
-        }
+          "form": "The box could not be received.",
+          "tooLarge": "The amount is too large",
+          "decimals": "Two decimal places at most",
+          "note": "The note is too long (500 characters at most)",
+          "earlierVoided": "An earlier attempt from this form was recorded as voucher {number}; that handover has since been cancelled and the money is back in the collector’s custody. Pressing again records a new, separate handover."
+        },
+        "replayed": "This handover was already recorded — voucher {number}",
+        "replayedBody": "An earlier attempt recorded it and its answer was lost; it stands as first recorded. No new handover was recorded."
       },
       "viewCollections": "Who he collected from",
       "status": {
@@ -1352,7 +1578,7 @@
       "heldInUSD": "Holds now, in dollars",
       "heldInOther": "Holds now, in {currency}",
       "receiptCount": "Receipts",
-      "handedInNote": "Collected is the sum of the receipts; held is what he has not handed in yet. The difference is what he brought to the treasury — a handover moves an amount, not particular receipts.",
+      "handedInNote": "Collected is the sum of his receipts since the treasury went live; held is what he has not handed in yet. The difference is what he brought to the treasury — a handover moves an amount, not particular receipts.",
       "reversed": "Payment reversed",
       "reversalRow": "Reversal entry",
       "truncatedTitle": "The list is cut short",
@@ -1367,7 +1593,9 @@
       },
       "contactPhone": "A relative's:",
       "noPhone": "Owns no phone",
-      "noZone": "In no unit"
+      "noZone": "In no unit",
+      "since": "The list starts when the treasury went live, on {date}. Older receipts never entered the collector’s custody, so they are neither listed nor counted here.",
+      "notLive": "The treasury is not live yet: every receipt is listed, and none of them enters the collector’s custody before it goes live."
     },
     "myRound": {
       "title": "My round",
@@ -1375,7 +1603,7 @@
       "noCustody": "Nothing on your name",
       "noCustodyHint": "No collection has been recorded in your name yet. Cash you take at the doors appears here.",
       "inHand": "Cash in hand",
-      "carriedOver": "This round’s receipts come to {amount, number} — the rest is carried from an earlier round you part-handed in.",
+      "carriedOver": "This round’s receipts come to {amount} — the rest is carried from an earlier round you part-handed in.",
       "sinceHandover": "Since your last handover · {when}",
       "sinceStart": "Everything you have collected",
       "empty": "No receipts since your last handover",
@@ -1386,6 +1614,219 @@
       "receiptMissing": "The bill for this receipt was not found.",
       "emptySettled": "You have handed everything in",
       "emptySettledHint": "Nothing is in your custody now. Cash you take at the doors appears here."
+    },
+    "orders": {
+      "requests": "{count, plural, one {One request awaiting a payment order} other {{count} requests awaiting a payment order}}",
+      "urgent": "{count, plural, one {One urgent payment awaiting regularisation} other {{count} urgent payments awaiting regularisation}}"
     }
+  },
+  "ownerBilling": {
+    "title": "How the owners are billed",
+    "intro": "This unit has {count, plural, one {one current owner} other {{count} current owners}}. Choose how what the owners owe is divided between them.",
+    "defaultNote": "No method chosen yet — the fee is split equally between the owners.",
+    "tenantNote": "A tenant or free occupant pays the whole occupancy fee; this only divides what the owners owe.",
+    "modeLabel": "Method",
+    "responsibleLabel": "The owner who pays for everyone",
+    "responsiblePlaceholder": "Choose the owner",
+    "sharesLegend": "Each owner’s shares (out of 2400)",
+    "sharesHint": "Parts are divided by the sum of the owners’ recorded shares, not by 2400.",
+    "sharesFor": "Shares of {name}",
+    "previewTitle": "What each owner is billed for",
+    "previewExempt": "This unit is exempt from fees, so no owner is billed for it while the exemption stands.",
+    "previewUninhabitable": "This unit is not habitable, so no owner is billed for it until a later reading finds it habitable.",
+    "partWhole": "The whole fee",
+    "partFraction": "{numerator}/{denominator} of the fee",
+    "partNone": "Nothing — the responsible owner pays",
+    "partUnknown": "Unknown — shares not recorded",
+    "notOnFile": "Their file does not claim this unit, so their part is not billed until their file is completed",
+    "fallback": "The chosen responsible owner no longer owns this unit, so the fee is split equally until a new method is chosen.",
+    "singleOwner": "This unit has only one owner now, so the saved method ({mode}) does not apply. You can withdraw it.",
+    "withdraw": "Withdraw the saved method",
+    "save": "Save the method",
+    "saved": "Billing method saved",
+    "withdrawn": "Saved method withdrawn",
+    "failed": "Could not save the billing method",
+    "unnamed": "Unnamed owner",
+    "sharesInvalid": "Enter a whole number from 1 to 2400",
+    "fileLabel": "Owners’ billing",
+    "fileShare": "Their part: {numerator}/{denominator} of the fee",
+    "filePaysAll": "Pays the fee for all the owners",
+    "filePaysNone": "Not billed for it — the responsible owner pays",
+    "fileUnknown": "Part unknown — the owners’ shares are incomplete",
+    "fileDefault": "Split equally (no method chosen)",
+    "mineShare": "Your part: {numerator}/{denominator} of the fee",
+    "minePaysAll": "You pay the fee for all the owners",
+    "minePaysNone": "Another owner pays for you",
+    "archivedOwners": "<names></names>: their file is archived, so they are left out and their part falls to the other owners.",
+    "mineUnknown": "Your part is unknown — the owners’ shares are incomplete",
+    "summaryLine": "{method} — {part}",
+    "listSeparator": ", ",
+    "pickResponsible": "Choose the owner who pays for everyone to see what each owner is billed for.",
+    "notOnFileOption": "Their file does not claim this unit"
+  },
+  "feeExemption": {
+    "title": "Exempt this unit from fees",
+    "intro": "An exempt unit is charged no fee at all, whoever bears it. For the mosque itself or a public facility — not for a shop a waqf rents out.",
+    "occupiedWarning": "A tenant or free occupant is recorded on this unit — exempting it exempts them too. A shop a waqf rents out is billed to its tenant as usual, not exempted.",
+    "open": "Exempt this unit from fees…",
+    "reason": "Reason",
+    "reasonPlaceholder": "Choose the reason",
+    "note": "Reason in words",
+    "notePlaceholder": "e.g. the main mosque — council decision no. …",
+    "noteRequired": "Write the reason for the exemption",
+    "noteTooLong": "The reason is too long — 500 characters at most",
+    "grant": "Exempt the unit",
+    "cancel": "Cancel",
+    "standing": "Exempt from fees — {reason}",
+    "grantedBy": "Since {date}, decided by {name}",
+    "unknownGrantor": "a staff member no longer on record",
+    "lift": "Lift the exemption",
+    "liftTitle": "Lift the fee exemption on unit {code}?",
+    "liftBody": "Fees are charged on the unit from the first billing run after the exemption is lifted. The exemption and its lifting both stay in the activity log.",
+    "granted": "Unit exempted from fees",
+    "lifted": "Exemption lifted",
+    "failed": "Could not save the exemption",
+    "fileLabel": "Fee exemption",
+    "fileValue": "Exempt — {reason}",
+    "lifecycleNote": "The building’s status alone exempts nothing from fees. If it cannot be lived in, use “Assess the building” (or “Assess this unit” for a single unit) in the unit matrix and record it as “Not habitable” — what is read not habitable is then exempt from every fee until a re-inspection."
+  },
+  "citizenKind": {
+    "question": "Whose file",
+    "person": "A person",
+    "nonPerson": "Estate or body",
+    "livesHere": "Does this person live in the town most of the year?",
+    "whichBody": "Which kind?",
+    "estateHint": "The file of an owner who has died, named «heirs of the late». An estate only owns: the widow, the children or a tenant are each filed in their own name and pay the occupancy fee; the owner's fees and empty units stay with the estate.",
+    "institutionHint": "A waqf, an association or a public body that owns property. The place of worship itself is exempted from the unit's page («exempt from fees»); what the body rents out is billed to its tenant.",
+    "ownsOnly": "An estate only owns — whoever lives in or rents the unit is filed in their own name.",
+    "sectionPersonalEstate": "The deceased",
+    "sectionContactEstate": "Contact about the estate",
+    "sectionPersonalInstitution": "The body",
+    "sectionContactInstitution": "Contact with the body",
+    "estateFirstName": "Name of the deceased",
+    "middleName": "Father's name",
+    "lastName": "Family name",
+    "shownAs": "Shown in the register and on bills as: {name}",
+    "institutionName": "Name of the body",
+    "institutionNamePlaceholder": "e.g. Waqf of the town mosque",
+    "estatePhone": "Phone for the estate",
+    "institutionPhone": "The body's phone",
+    "whatsappSame": "WhatsApp on the same number",
+    "whatsapp": "WhatsApp number",
+    "estateRepresentative": "Representative of the heirs",
+    "estateRepresentativeHint": "One of the heirs or their agent — who is told about the bills.",
+    "institutionRepresentative": "Person in charge (trustee)",
+    "representativePhone": "Their phone",
+    "death": {
+      "title": "Owner died — make the file an estate",
+      "description": "The file and its properties stay as they are, named «heirs of the late». If the file's kind was simply recorded wrongly, choose «Correct without a death».",
+      "date": "Date of death",
+      "tenancies": "Rentals that end with the death",
+      "tenanciesBody": "An estate neither rents nor occupies. Each is ended on its day and kept in the history; whoever stayed in the home is filed in their own name.",
+      "homes": "Homes the deceased lived in",
+      "homesHint": "If the family still lives there, choose «Occupied rent-free» and file the widow or a child as a household; they pay the occupancy fee.",
+      "nothingLeft": "The deceased owned nothing here — the file is archived instead of made an estate.",
+      "reason": "Reason for the change",
+      "suggestedReason": "Owner died — the file is in the heirs' name",
+      "archiveReason": "The file holder died — owned nothing here",
+      "correct": "Correct without a death",
+      "apply": "Apply to the form",
+      "endNotice": "Ended on the day of the death. What ends leaves the form; the rest of the form is unchanged."
+    },
+    "archiveSuggestEstate": "If the person has died and still owns property here, do not archive the file: make it «Estate (heirs of the late)» under «Whose file», so the properties and their bills stay with the heirs.",
+    "retainedNote": "This record was filed as a household before it became a «{kind}» record. These values are kept as history — the form no longer asks for them and nothing updates them, so do not rely on them as current.",
+    "badgeEstate": "Estate",
+    "badgeInstitution": "Body or waqf",
+    "badgeNonResident": "Lives elsewhere",
+    "institutionRents": "A body is recorded as a tenant or occupant of a shop, office, clinic, warehouse or land only — it lives in no home.",
+    "ownerNotHousehold": "The owner is not a household living in the town (lives elsewhere, an estate or a body) — they do not live in the unit.",
+    "deathApplied": "A death on {date} is applied on this form; it is recorded when you save.",
+    "moveApplied": "A move on {date} is applied on this form; it is recorded when you save.",
+    "motherNotAsked": "Not asked on this kind of file."
+  },
+  "parcelDues": {
+    "title": "Owed on a parcel",
+    "notice": "What is still unpaid on a parcel number, whoever's file it is on today — before a clearance. Read-only: it issues no certificate.",
+    "propertyNumber": "Parcel number",
+    "search": "Show what is owed",
+    "placeholder": "e.g. 420",
+    "loading": "Collecting what is owed on the parcel…",
+    "failed": "Could not load what is owed on the parcel.",
+    "nothingOwed": "No open bill on the units of parcel {number}",
+    "nothingOwedBody": "No open bill charges a unit on this parcel, and the people who own or live on it today have no open bill that names no unit. A bill with no parcel number on it cannot show here: this is not a clearance.",
+    "total": "Owed on the parcel",
+    "totalHint": "The parcel's part of every open bill with a unit on it, by the bill's own lines (area or units, and owners' parts).",
+    "billsTitle": "Bills on units of this parcel",
+    "remaining": "Remaining on the bill",
+    "onParcel": "This parcel's part",
+    "partOfBill": "The bill also covers other parcels",
+    "units": "Units",
+    "due": "Due",
+    "unlinkedTitle": "Bills of the parcel's people that name no unit",
+    "unlinkedHint": "Flat amounts, or bills from before itemised billing, on whoever owns or lives on the parcel today. Their own debts — not shown to be the parcel's.",
+    "unlinkedTotal": "Their total"
+  },
+  "floorCount": {
+    "label": "Roofed floors",
+    "aria": "Number of roofed floors",
+    "fewer": "Fewer floors",
+    "more": "More floors",
+    "help": "Every built level under a roof, the ground floor and a pilotis level included. The roof is not a floor.",
+    "duplexHelp": "Duplex: record it as two flats (one per level), or as one flat on the entrance level with both levels' area and a «duplex» note on it.",
+    "emptyTop": "{count, plural, one {The top row of the matrix holds no unit} other {The top {count} rows of the matrix hold no unit}}. The roof is not a floor: if nothing is built there, lower the count. If it is a built floor not yet divided, draw an «Empty floor» on it; if it is the upper level of a duplex, leave it.",
+    "trimTo": "Lower to {count}"
+  },
+  "counterPayment": {
+    "title": "Record payment",
+    "back": "Back",
+    "backToFees": "Back to fees and payments",
+    "remainingBadge": "Remaining balance: {amount}",
+    "loadError": "The payment demand could not be loaded.",
+    "notFound": "No payment demand has this ID — it may have been deleted, or the link is wrong.",
+    "method": "Payment method",
+    "methodBody": {
+      "CASH": "Received directly at the office",
+      "WHISH_MONEY": "A transfer confirmed in the account",
+      "COLLECTOR": "Collected on a field round"
+    },
+    "reference": "Transfer reference number",
+    "collector": "Collector",
+    "collectorPlaceholder": "Choose the collector…",
+    "noCollectors": "There are no staff accounts to choose a collector from.",
+    "amount": "Amount received (LBP)",
+    "tooMuch": "The amount is more than the remaining balance ({amount})",
+    "fullBalance": "Full balance ({amount})",
+    "half": "Half ({amount})",
+    "inWords": "In words:",
+    "partial": "Partial payment — <b>{amount}</b> will remain due on this charge.",
+    "note": "Note",
+    "notePlaceholder": "Anything to note about this payment…",
+    "details": "Transaction details",
+    "citizen": "Citizen:",
+    "charge": "Charge:",
+    "dueDate": "Due date:",
+    "total": "Total charge:",
+    "previouslyPaid": "Previously paid:",
+    "remainingDue": "Remaining due:",
+    "toRecord": "Amount to record:",
+    "via": {
+      "CASH": "Cash at the office",
+      "WHISH_MONEY": "Transfer via Whish",
+      "COLLECTOR": "Through a collector"
+    },
+    "submit": "Record the payment",
+    "failed": "The payment could not be recorded.",
+    "recordedTitle": "Payment recorded — receipt {number}",
+    "replayedTitle": "This payment was already recorded — receipt {number}",
+    "replayedBody": "An earlier attempt whose answer was lost recorded it, and its details stand as first recorded: {amount}, which may differ from what the form shows. Nothing new was recorded.",
+    "receiptFailedTitle": "Payment recorded as {number}; the full receipt could not be loaded",
+    "receiptFailedBody": "The payment is recorded and will not be recorded again. Load the receipt again to print it.",
+    "retryReceipt": "Load the receipt again",
+    "loadingReceipt": "Loading the receipt…",
+    "collectorsFailed": "The staff list could not be loaded, so a collector cannot be chosen now. Choose another payment method, or open the page again.",
+    "earlierReversed": "An earlier attempt from this page was recorded as receipt {number}, and that payment has since been reversed. Check the citizen’s file: pressing again records a new, separate payment.",
+    "paidSoFar": "Paid so far:",
+    "recorded": "Amount recorded:",
+    "receiptLine": "Receipt {number}"
   }
 }

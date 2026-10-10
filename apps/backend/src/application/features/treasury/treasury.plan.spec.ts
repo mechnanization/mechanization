@@ -1,4 +1,10 @@
-import { creditsWallets, planPaymentLegs, planPreGoLiveRefund, roundMoney } from './treasury.plan';
+import {
+  creditsWallets,
+  documentOccurredAt,
+  planPaymentLegs,
+  planPreGoLiveRefund,
+  roundMoney,
+} from './treasury.plan';
 
 const COLLECTOR_ID = '11111111-1111-4111-8111-111111111111';
 
@@ -20,6 +26,36 @@ describe('creditsWallets', () => {
 
   it('does not credit a payment taken before it — that cash is in the opening balance', () => {
     expect(creditsWallets(goLive, new Date('2026-10-01T08:59:59.999Z'))).toBe(false);
+  });
+
+  it('credits a receipt dated the go-live day, through its dating, whatever the hour', () => {
+    const lateActivation = new Date('2026-10-01T16:00:00.000Z');
+    const dated = documentOccurredAt({ day: '2026-10-01', today: '2026-10-03', now: new Date(), goLiveAt: lateActivation });
+    expect(creditsWallets(lateActivation, dated)).toBe(true);
+    const dayBefore = documentOccurredAt({ day: '2026-09-30', today: '2026-10-03', now: new Date(), goLiveAt: lateActivation });
+    expect(creditsWallets(lateActivation, dayBefore)).toBe(false);
+  });
+});
+
+describe('documentOccurredAt', () => {
+  const today = '2026-10-06';
+  const now = new Date('2026-10-06T07:30:00.000Z');
+
+  it("keeps the real clock time for today's document, so the day reads in order", () => {
+    expect(documentOccurredAt({ day: today, today, now, goLiveAt: null })).toEqual(now);
+  });
+
+  it('puts a back-dated document at midday, so no time zone moves it off its day', () => {
+    const at = documentOccurredAt({ day: '2026-10-03', today, now, goLiveAt: new Date('2026-10-01T09:00:00.000Z') });
+    expect(at.toISOString()).toBe('2026-10-03T12:00:00.000Z');
+  });
+
+  it('never puts a go-live-day document before the opening entry', () => {
+    const late = new Date('2026-10-01T16:00:00.000Z');
+    expect(documentOccurredAt({ day: '2026-10-01', today, now, goLiveAt: late })).toEqual(late);
+    const early = new Date('2026-10-01T06:00:00.000Z');
+    const at = documentOccurredAt({ day: '2026-10-01', today, now, goLiveAt: early });
+    expect(at.toISOString()).toBe('2026-10-01T12:00:00.000Z');
   });
 });
 

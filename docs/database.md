@@ -1,6 +1,6 @@
 # Database
 
-Last verified against the code: `chore/migration-0073-0074` (on `develop@4512abf`), 2026-10-07.
+Last verified against the code: `fix/pr104-review` (PR #104 `f4aac74` merged with `develop@4ad0b27`), 2026-10-09.
 
 The rules for anything that reads or writes a database: the schemas, how to
 query them, how to change them, and how data may move between environments.
@@ -48,13 +48,14 @@ every municipality ([security.md](security.md)).
 | Review and quality | `record_reviews`, `quality_checks`, `data_quality_dismissals` | `RecordReviewService`, `DataQualityService` |
 | Audit | `audit_log_entries` | `AuditService`, `PrismaAuditRepository` |
 | Transfers (0078) | `treasury_transfers` | `TransfersService` (the collector handover; a Whish cash-out, a bank deposit and an exchange share the table and come later) |
-| Expenses (0074) | `expense_categories`, `expense_vouchers` | `ExpensesService` |
+| Expenses (0074, 0080) | `expense_categories`, `expense_vouchers` (the payment order: `orderedAt`, `orderedById`, `urgentReason`), `expense_requests` (requests for the manager's order) | `ExpensesService` |
 | Treasury (0073) | `treasury_accounts`, `treasury_entries`, and `system_settings.treasuryGoLiveAt` | `TreasuryService` (activation, reads), `TreasuryLedgerService` (entries; called from `PaymentLedgerService` inside its transaction) |
 | Ledger | `_tenant_migrations` (no Prisma model) | `migrateTenantSchema` |
 
 Each schema also carries plpgsql functions created by migrations:
-`reject_audit_mutation`, `reject_ledger_mutation`, `reject_treasury_mutation`, `search_normalize`,
-`search_compact`, `sync_building_unit_counts`.
+`reject_audit_mutation`, `reject_ledger_mutation`, `reject_treasury_mutation`,
+`reject_treasury_document_mutation` (0080), `search_normalize`, `search_compact`,
+`sync_building_unit_counts`.
 
 ### `users` holds staff AND citizens
 
@@ -91,6 +92,39 @@ request's tenant (`IdentityService`).
   `users_contact_phone_not_own` (`contactPhone` is never the row's own `phone`).
   Every writer goes through them, the merge included.
 
+**`users.residence` names owners that are not a living person** (`0076`).
+Besides `RESIDENT` and `NON_RESIDENT_OWNER`, `CitizenResidence` holds `ESTATE`
+«تركة (ورثة المرحوم …)», the file of an owner who died, converted in place so
+his cards, flats and bills stay on it, and `INSTITUTION` «جهة / وقف», a waqf,
+council or public body. Neither is a household: no mother's name, gender or
+residency is asked of either, and every population count that filters
+`residence = 'RESIDENT'` already leaves both out. An institution's name is one
+line on the form and is stored across `firstName`/`lastName` (first word, the
+rest; `splitInstitutionName`), so any screen that joins the parts reads it
+whole. An estate keeps the deceased's own name: «ورثة المرحوم …» is added when
+it is shown (`citizenDisplayName`), never written into the row — nor into
+another row: a name copied onto a tenancy card is `citizenStoredName`. Every
+write of `property_entries.landlordName` from a submitted card goes through
+`storedLandlordName` (the entity's `normalise`; `landlordNamesToStore` in the
+registration create and the citizen update; the census tenant card), which
+takes the prefix off whatever a client sent — a form copies the name it was
+*shown* — and, for a card linked to an owner, stores that owner's own name.
+The non-person kinds are `NON_PERSON_RESIDENCE` for a Prisma filter.
+
+**A card's `propertyNumber` is stored as typed**, «٤٢٠» as well as «420», and
+so are the fee lines copied from it. A lookup by رقم العقار compares
+digit-normalised values on both sides (`normalizeDigits`; in SQL,
+`translate(…, '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹', '01234567890123456789')`, as
+`parcel-dues.service.ts` does).
+
+**A flat's billing facts live on `units`** (`0075`, `0077`), beside its status:
+
+| Column | What it means |
+|---|---|
+| `ownerBillingMode` | «توزيع الرسم على المالكين» when the flat has several current owners: `EQUAL`, `BY_SHARES` (each owner's `unit_occupancies.shares` over the sum of all of them) or `RESPONSIBLE_OWNER`. NULL means nobody chose, and is billed as `EQUAL` (decision of 2026-10-07). |
+| `responsibleOwnerId` | The owner who pays the whole under `RESPONSIBLE_OWNER`, and only then. `units_responsible_owner_needs_mode` uses `IS NOT DISTINCT FROM`: with `=`, a CHECK passes on the NULL that `NULL = 'RESPONSIBLE_OWNER'` yields. |
+| `feeExemption`, `feeExemptionNote`, `feeExemptedById`, `feeExemptedAt` | «معفاة من الرسوم»: `PLACE_OF_WORSHIP`, `PUBLIC_FACILITY` or `OTHER` (which needs the note). Set and lifted together (`units_fee_exemption_fields`). An exempt unit is charged nothing by a rate-based notice; a rented waqf shop is not exempt, its tenant pays. |
+
 **A damage reading has two answers** (`0071`). `damage_assessments.level` is the
 UN-Habitat scale, untouched; `habitable` is «صالحة للسكن؟», asked beside it and
 prefilled from the level where the level decides it (decision of 2026-10-05).
@@ -107,12 +141,12 @@ CHECKs keep the rest:
 
 «غير صالحة للسكن» is `habitable = false`, or no answer on a collapse or an
 evacuation (`isUninhabitableReading`, and its SQL twin `uninhabitableSql`). The
-fee assessment holds an occupant-borne fee on a unit whose current reading
-says so — the latest of the unit's and its building's readings *that answers*:
+fee assessment charges no fee at all — occupant-borne or owner-borne (decision
+of 2026-10-07) — on a unit whose current reading says so — the latest of the unit's and its building's readings *that answers*:
 `UNCLASSIFIED` with `habitable` NULL judged nothing and is passed over
 (`answersHabitability`, its SQL twin `answersHabitabilitySql`, and
 `currentReadingForUnit(…, { answering: true })` in
-`application/features/buildings/habitability.ts`), so it never ends a hold.
+`application/features/buildings/habitability.ts`), so it never ends the exemption.
 
 **`lastSeenAt` is staff presence, and the one write on the authenticated hot
 path** (`0070`). `StaffPresenceService` stamps it from `JwtAuthGuard` behind a
@@ -141,6 +175,22 @@ chain, so it reports an officer who worked all morning as last seen at eight.
   balance column. Its foreign keys to `users` and `treasury_accounts` are RESTRICT, so erasing a staff
   member or a wallet that has moved money fails instead of cascading into the trigger. An entry's
   currency equals its account's because the foreign key is the pair `(accountId, currency)`.
+- `expense_vouchers`, `treasury_transfers` and `expense_requests` are the documents behind those
+  entries, and are written once (`0080`).
+  - Triggers `expense_vouchers_written_once`, `treasury_transfers_written_once` and
+    `expense_requests_written_once` call `reject_treasury_document_mutation(<stamps>)`.
+  - No row is deleted, and no column changes after insert except the trigger's named stamps.
+    Those are the cancellation, the payment order, and a request's decision; each goes from empty
+    to a value once.
+  - A cancelled document, and a decided request, accepts nothing further: a reason a
+    withdrawal never gave cannot be added to it later.
+  - The function pins `search_path` and reads no table.
+  - A later migration that backfills a new column on one of these tables wraps its
+    `UPDATE` in `ALTER TABLE … DISABLE TRIGGER …_written_once` / `ENABLE TRIGGER`, in the same
+    file. Without that the backfill is refused like any other edit.
+  - `0080`'s own backfill stamps the order on vouchers written before it, and skips cancelled
+    ones: they are closed and wait for nothing, and the trigger would refuse the stamp when the
+    file runs a second time.
 - No trigger covers `TRUNCATE`. Using `TRUNCATE`, or
   `session_replication_role`, to get past them is circumventing a control. If a
   trigger stops you, stop and report it
@@ -432,20 +482,28 @@ reads staging's history from `.env.staging` and nothing else, and
 
 ### Numbering
 
-- The latest tenant migrations are `0073_treasury_ledger`, `0074_expense_vouchers` and
-  `0078_treasury_transfers`, added by this branch. 0078 is not 0075: `chore/migration-0075-0077`
-  holds 0075–0077, which is the second time a number was taken mid-flight on this branch. `develop` and `main` both end at `0072_users_no_phone_rules`, so `0067`–`0072`
-  have reached production and these two are the only ones outstanding.
+- The latest tenant migration on `main` is `0072_users_no_phone_rules`: `0067`–`0072`
+  went to `main` in their own migrations-only PR, ahead of the release that carries
+  the code reading them (root rule 5; the PR #61 and #86 pattern). On `develop`,
+  `0075`–`0077` follow (co-owner billing, the estate and institution record types,
+  the unit fee exemption), through their own `chore/migration-0075-0077` PR, bound for
+  `main` alone before any release that writes the new columns or values.
+- The treasury's are `0073_treasury_ledger`, `0074_expense_vouchers`,
+  `0078_treasury_transfers`, `0079_document_numbering` and `0080_treasury_controls`
+  (PR #104 and its review). They ship in their own `chore/migration-0073-0080` PR,
+  merged before the code that reads them. 0078 is not 0075 because
+  `chore/migration-0075-0077` took that number mid-flight, and the treasury migration
+  was itself first written as `0071` and renumbered when `0071_damage_habitable` and
+  `0072_users_no_phone_rules` landed. A branch cut before a release is a branch whose
+  numbers can be taken while you work: re-check before you open the PR, not only when
+  you pick.
 - Parallel branches reuse numbers and nothing errors: `0016_*` and `0017_*`
   each exist twice. `0059_staff_refresh_tokens` was merged to `develop` after
-  `0066`, so it applies out of order: `deploy.mjs` warns and applies it. As of
-  this check (2026-10-06, against `origin/main`, `origin/develop` and every
-  unmerged remote branch) the next free number is `0079`.
-- The treasury migration was first written as `0071` and renumbered to `0073`:
-  `0071_damage_habitable` and `0072_users_no_phone_rules` landed on `develop`
-  while it was in progress. A branch cut before a release is a branch whose
-  numbers can be taken while you work — re-check before you open the PR, not
-  only when you pick.
+  `0066`, so it applies out of order: `deploy.mjs` warns and applies it. `0073` and
+  `0074` reach a database that already has `0075`–`0077` the same way, with the same
+  warning; the two sets touch different tables (checked on a scratch schema on the
+  PR #104 review, 2026-10-09). As of 2026-10-09, against `origin/main`,
+  `origin/develop` and every unmerged remote branch, the next free number is `0081`.
 - Before you pick a number, MUST list the migrations on every unmerged branch
   and open PR:
 
@@ -708,11 +766,17 @@ Rare: only `0001_init` exists.
 - **`BackupService` restore** aborts for any tenant with `payment_transactions`
   rows (the append-only trigger fires through the cascade). Documented in its
   own comment as a design decision.
-- **`BackupService` does not export the treasury tables** (`treasury_accounts`,
-  `treasury_entries`, 0073). They hold no citizen data, but their rows are append-only and
-  RESTRICT-linked to `users`, so a restore (which deletes users) aborts for any tenant that has
-  moved money, exactly as for `payment_transactions`. A backup of such a tenant therefore does not
-  contain its wallets. **Undecided:** how the backup should carry an append-only ledger.
+- **`BackupService` does not export the treasury tables:** `treasury_accounts`,
+  `treasury_entries` (0073), `expense_categories`, `expense_vouchers` (0074), `treasury_transfers`
+  (0078), `document_counters` (0079) and `expense_requests` (0080).
+  - Their rows are append-only or written once, and RESTRICT-linked to `users`. So a restore,
+    which deletes users, aborts for any tenant that has activated its treasury, exactly as for
+    `payment_transactions`; even the opening balances carry the activating manager's id.
+  - A backup of such a tenant therefore does not contain its wallets.
+  - The in-app restore is not reachable: `BackupController` is not registered
+    (`presentation.module.ts`), and disaster recovery is the `pg_dump` path, which discovers
+    schemas at run time and carries every table.
+  - **Undecided:** how the in-app backup should carry an append-only ledger.
 - **`dump-tenant.js`, the `reissue-references` CSV, the `claude_ro` views**:
   see [Moving data](#moving-data-between-environments).
 - **Database roles.** One role per environment runs both DDL and DML for every

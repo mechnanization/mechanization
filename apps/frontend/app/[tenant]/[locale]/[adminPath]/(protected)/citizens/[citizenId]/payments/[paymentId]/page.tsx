@@ -3,6 +3,8 @@
 import { use, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
+import { useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Banknote, CalendarDays, Coins, Eraser, Loader2, Pencil, ReceiptText, RotateCcw } from 'lucide-react';
 import {
   ADJUSTMENT_REASON_MIN,
@@ -25,6 +27,8 @@ import { useStaffSession } from '@/lib/use-staff-session';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { formatDate } from '@/lib/dates';
 import { formatForeign, formatLbp, formatTypedAmount, parseAmount } from '@/lib/currency';
+import { heldKey, keyIsSpent, spendKey } from '@/lib/request-id';
+import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
 import { BackLink } from '@/components/ui/back-link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -36,21 +40,13 @@ import { SegmentedControl } from '@/components/ui/segmented-control';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/states';
 import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
 import { Textarea } from '@/components/ui/textarea';
+import { useToast } from '@/components/ui/toast';
 import { PaymentReceipt, type RecordedMovement } from '@/components/admin/payment-receipt';
 import { cn } from '@/lib/utils';
 import { PAYMENT_SETTLE_ROLES, hasRole } from '@/lib/staff-roles';
 
 /** What the citizen is paying in. «BOTH» is «20$ و200,000 ليرة» handed over together. */
 type PayIn = 'LBP' | 'FOREIGN' | 'BOTH';
-
-/** A fresh retry key: one per distinct payment the clerk is about to record. */
-function newRequestId(): string {
-  return typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
-    : '10000000-1000-4000-8000-100000000000'.replace(/[018]/g, (c) =>
-        (Number(c) ^ (Math.random() * 16) >> (Number(c) / 4)).toString(16),
-      );
-}
 
 /**
  * «تسجيل دفعة نقدية» — cash taken at the counter against one ليرة bill.
@@ -75,6 +71,10 @@ export default function SettleCashPage({
 }) {
   const { tenant, locale, adminPath, citizenId, paymentId } = use(params);
   const router = useRouter();
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  // The counter's shared copy (`counterPayment`); this page's older copy is still inline (TXT-1).
+  const t = useTranslations('counterPayment');
   const en = locale === 'en';
   const labels = getLabels(locale);
   const base = `/${tenant}/${locale}/${adminPath}`;
@@ -134,16 +134,20 @@ export default function SettleCashPage({
 
   /*
     Double submission: `busy` disables the button after React re-renders, but
-    a fast second press lands before that. The ref stops it synchronously. The
-    request id survives a failed attempt, so a retry after a lost response is
-    recognised by the server as the same payment; any change to the figures
-    makes it a new one.
+    a fast second press lands before that. The ref stops it synchronously.
+
+    The retry key (STA-4, `keyIsSpent`) is held in `lib/request-id.ts` as
+    `settle:<paymentId>`, the same key the counter settle page holds for this
+    bill, so it outlives this page. It is kept across every failure and every
+    edit: a refusal proves only that this attempt took nothing, never that an
+    earlier one with the key did not. A counter payment's key is bound to its
+    bill, so a retry after a lost answer is answered with the first receipt,
+    whatever the form now says — and the page says so (`replayed`). Once the
+    server has answered with a 2xx the key is spent and the page is done: the
+    receipt opens, and nothing here records again.
   */
   const inFlight = useRef(false);
-  const requestId = useRef(newRequestId());
-  useEffect(() => {
-    requestId.current = newRequestId();
-  }, [payIn, lbp, foreignRaw, rateOverride, paidOn]);
+  const keyScope = `settle:${paymentId}` as const;
 
   /** The municipality's second currency and its rate — the only pair the counter takes. */
   const foreignCurrency = settings?.secondaryCurrency === 'EUR' ? 'EUR' : 'USD';
@@ -223,12 +227,13 @@ export default function SettleCashPage({
   };
 
   const submit = async () => {
-    if (!token || !payment || problem || inFlight.current) return;
+    if (!token || !payment || problem || receipt || inFlight.current) return;
     inFlight.current = true;
     setBusy(true);
     setError(null);
+    let result: Awaited<ReturnType<typeof settlePayment>>;
     try {
-      const result = await settlePayment(tenant, token, payment.id, {
+      result = await settlePayment(tenant, token, payment.id, {
         method: 'CASH',
         tendered: {
           local,
@@ -241,41 +246,68 @@ export default function SettleCashPage({
         ...(paidOn !== today ? { paidOn } : {}),
         ...(needsReason ? { adjustmentReason: reason.trim() } : {}),
         ...(note.trim() ? { note: note.trim() } : {}),
-        clientRequestId: requestId.current,
-      });
-      setReceipt({
-        receiptNumber: result.receiptNumber,
-        occurredAt: result.occurredAt,
-        received: result.received,
-        remaining: result.remaining,
-        changeGiven: result.changeGiven,
-        tender:
-          foreign > 0
-            ? {
-                local,
-                foreign,
-                foreignCurrency,
-                exchangeRate: result.exchangeRate ?? exchangeRate,
-                officialExchangeRate: result.officialExchangeRate,
-              }
-            : null,
+        clientRequestId: heldKey(tenant, keyScope),
       });
     } catch (caught) {
       logApiError(caught);
+      // A key whose act exists is spent; every other failure keeps it, so a retry is answered from the first.
+      if (keyIsSpent(caught)) spendKey(tenant, keyScope);
+      const reversedReceipt =
+        caught instanceof ApiRequestError && caught.code === 'TRANSACTION_ALREADY_REVERSED'
+          ? caught.payload.params?.receiptNumber
+          : undefined;
       setError(
-        caught instanceof ApiRequestError
+        reversedReceipt
+          ? t('earlierReversed', { number: String(reversedReceipt) })
+          : caught instanceof ApiRequestError
           ? caught.message
           : en
             ? 'Could not record the payment. Nothing was taken twice — press again to retry.'
             : 'تعذّر تسجيل الدفعة. لن تُسجَّل مرتين — اضغط مجدداً لإعادة المحاولة.',
       );
-    } finally {
       inFlight.current = false;
       setBusy(false);
+      return;
     }
+
+    // Recorded: `inFlight` stays held and `receipt` keeps the button off, until the page moves on.
+    spendKey(tenant, keyScope);
+    setBusy(false);
+    // The cash is in a wallet now, so every treasury balance read before it is stale.
+    void queryClient.invalidateQueries({ queryKey: ['treasury', tenant] });
+    if (result.replayed) {
+      toast.warning(t('replayedTitle', { number: result.receiptNumber }), {
+        description: t('replayedBody', { amount: formatLbp(result.received, locale) }),
+      });
+    }
+    setReceipt({
+      receiptNumber: result.receiptNumber,
+      occurredAt: result.occurredAt,
+      received: result.received,
+      remaining: result.remaining,
+      changeGiven: result.changeGiven,
+      /*
+        The notes handed over are this form's, which describe the first attempt
+        only when this one recorded it. A replayed receipt prints none rather
+        than notes that may not be the ones taken.
+      */
+      tender:
+        foreign > 0 && !result.replayed
+          ? {
+              local,
+              foreign,
+              foreignCurrency,
+              exchangeRate: result.exchangeRate ?? exchangeRate,
+              officialExchangeRate: result.officialExchangeRate,
+            }
+          : null,
+      // This movement's method, so the receipt does not print an earlier movement's.
+      method: 'CASH',
+    });
   };
 
-  if (profile.error) {
+  // Only a read that never answered replaces the page; a failed re-read leaves the form, and what was typed, in place.
+  if (profile.error && !citizen) {
     return (
       <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
         <BackLink fallbackHref={citizenHref} label={en ? 'Back' : 'رجوع'} />
@@ -302,6 +334,8 @@ export default function SettleCashPage({
   return (
     <div className="mx-auto w-full max-w-5xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <BackLink fallbackHref={citizenHref} label={en ? 'Back' : 'رجوع'} />
+
+      {profile.error ? <RefreshFailedAlert message={profile.error} onRetry={() => void profile.refetch()} /> : null}
 
       {/*
         Who is paying, for what, and how much is left — the three things the
@@ -652,7 +686,12 @@ export default function SettleCashPage({
               ) : null}
 
               <div className="mt-auto space-y-2">
-                <Button type="button" className="w-full" onClick={() => void submit()} disabled={busy || Boolean(problem)}>
+                <Button
+                  type="button"
+                  className="w-full"
+                  onClick={() => void submit()}
+                  disabled={busy || Boolean(problem) || receipt !== null}
+                >
                   {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Banknote className="size-4" aria-hidden />}
                   {en ? 'Record payment' : 'سجّل الدفعة'}
                 </Button>

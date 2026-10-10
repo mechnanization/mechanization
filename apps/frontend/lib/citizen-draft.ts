@@ -114,7 +114,8 @@ export function draftWorthKeeping(values: CitizenFormValues): boolean {
     );
 
   return (
-    values.residence === 'NON_RESIDENT_OWNER' ||
+    // Choosing a kind other than a household is an answer in itself.
+    (values.residence !== undefined && values.residence !== 'RESIDENT') ||
     typed(values.personal, ['isLebanese']) ||
     typed(values.contact, ['whatsappSameAsPhone']) ||
     values.properties.length > 0 ||

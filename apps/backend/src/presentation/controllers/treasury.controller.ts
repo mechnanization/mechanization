@@ -10,7 +10,7 @@ import type { SessionClaims } from '../../application/features/identity/identity
 import { TreasuryService } from '../../application/features/treasury/treasury.service';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
-import { requireDate } from './query-params';
+import { optionalInt, requireRangeEnd, requireRangeStart } from './query-params';
 
 /**
  * الخزينة — the wallets and the ledger behind them (docs/finance.md).
@@ -39,12 +39,15 @@ export class TreasuryController {
     @Query('to') to?: string,
     @Query('limit') limit?: string,
   ) {
-    // A figure, so a date that will not parse refuses rather than silently widening the range.
-    const parsed = limit === undefined ? undefined : Number.parseInt(limit, 10);
+    /*
+      A figure, so a date that will not parse refuses rather than silently
+      widening the range, and a bare day is that day in Beirut — `to=2026-10-08`
+      includes the 8th, which is what makes a one-day range the day's register.
+    */
     return this.treasury.statement(accountId, {
-      from: requireDate(from),
-      to: requireDate(to),
-      limit: parsed !== undefined && Number.isFinite(parsed) ? parsed : undefined,
+      from: requireRangeStart(from),
+      to: requireRangeEnd(to),
+      limit: optionalInt(limit),
     });
   }
 

@@ -17,8 +17,9 @@ import { TenantContextService } from '../../../infrastructure/context/tenant-con
 import { allocateDocumentNumber } from '../../common/document-number';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
-import { ConflictError, NotFoundError } from '../../common/exceptions';
+import { ConflictError, ForbiddenError, NotFoundError } from '../../common/exceptions';
 import { AuditService } from '../audit/audit.service';
+import { isUniqueViolationOn } from './retry-key';
 import { TreasuryLedgerService } from './treasury-ledger.service';
 import { roundMoney } from './treasury.plan';
 
@@ -161,6 +162,11 @@ export class TransfersService {
    * A reversed payment stays on the list beside its opposing row. The citizen
    * was at the door and the clerk did write a receipt; hiding the pair would
    * make the collector's totals stop adding up for whoever is counting.
+   *
+   * It starts at go-live, as «جولتي» does. A receipt from before it never
+   * reached his custody — that cash is inside an opening balance — so counting
+   * it made «collected − held» more than he ever handed in, and the screen says
+   * that difference is exactly what he handed in.
    */
   async collections(collectorId: string, limit = 200): Promise<CollectorCollectionsResult> {
     const collector = await this.db.user.findFirst({
@@ -174,9 +180,16 @@ export class TransfersService {
       });
     }
 
+    const goLiveAt =
+      (await this.db.systemSettings.findFirst({ select: { treasuryGoLiveAt: true } }))?.treasuryGoLiveAt ?? null;
+    const theirs: Prisma.PaymentTransactionWhereInput = {
+      collectedById: collectorId,
+      ...(goLiveAt ? { occurredAt: { gte: goLiveAt } } : {}),
+    };
+
     const [rows, total, totals, custody] = await Promise.all([
       this.db.paymentTransaction.findMany({
-        where: { collectedById: collectorId },
+        where: theirs,
         orderBy: [{ occurredAt: 'desc' }, { createdAt: 'desc' }],
         take: Math.min(Math.max(limit, 1), 500),
         select: {
@@ -217,14 +230,19 @@ export class TransfersService {
           },
         },
       }),
-      this.db.paymentTransaction.count({ where: { collectedById: collectorId } }),
+      this.db.paymentTransaction.count({ where: theirs }),
       /*
-        Over every receipt, not just the page. `amount` is signed and a reversal
-        is a negative row, so the sum nets the cancellations out on its own.
+        What his receipts put in his custody, per wallet currency, over every
+        receipt rather than the page — read from the ledger, as «جولتي» does, so
+        that «collected − held» is exactly what he handed in. Summed from the
+        receipts it was not: a refund paid from the safe after he had handed the
+        cash in (D1) took the receipt off «collected» while his custody never
+        moved, and a tendered $20 counted as the bill's ليرة. A reversal's entry
+        on his custody is in the sum, signed, so a refund he paid nets out.
       */
-      this.db.paymentTransaction.groupBy({
+      this.db.treasuryEntry.groupBy({
         by: ['currency'],
-        where: { collectedById: collectorId },
+        where: { source: 'CITIZEN_PAYMENT', account: { type: 'COLLECTOR_CUSTODY', ownerId: collectorId } },
         _sum: { amount: true },
       }),
       this.custody(),
@@ -290,6 +308,7 @@ export class TransfersService {
       })),
       total,
       totals: totals.map((row) => ({ currency: row.currency, amount: row._sum.amount?.toNumber() ?? 0 })),
+      since: goLiveAt?.toISOString() ?? null,
     };
   }
 
@@ -315,30 +334,38 @@ export class TransfersService {
     input: ReceiveCustodyInput,
     actor: { id: string; role: string },
   ): Promise<ReceiveCustodyResult> {
-    return runInTenantTransaction(this.tenantContext, async () => {
+    try {
+      return await runInTenantTransaction(this.tenantContext, () => this.receiveCustodyInTransaction(input, actor));
+    } catch (error) {
+      /*
+        Two presses carrying one key, past both reads at the same moment: the
+        loser's insert hits the unique index on `clientRequestId` and its
+        transaction is gone. Answer it from the winner's row, read afresh, as if
+        it had arrived a second later — never as a server error.
+      */
+      if (input.clientRequestId && isUniqueViolationOn(error, 'clientRequestId')) {
+        const replay = await this.replayHandover(this.db as Prisma.TransactionClient, input, actor);
+        if (replay) return replay;
+      }
+      throw error;
+    }
+  }
+
+  private async receiveCustodyInTransaction(
+    input: ReceiveCustodyInput,
+    actor: { id: string; role: string },
+  ): Promise<ReceiveCustodyResult> {
+    {
       const tx = this.db as Prisma.TransactionClient;
 
       /*
         Answered before anything is written, so a double-pressed «استلم» returns
-        the first handover instead of emptying the collector twice. The unique
-        index on `clientRequestId` is what makes it safe under a real race.
+        the first handover instead of emptying the collector twice — and asked
+        again once the wallets are locked, below, for the press that arrived
+        while the first was still running.
       */
-      if (input.clientRequestId) {
-        const earlier = await tx.treasuryTransfer.findUnique({
-          where: { clientRequestId: input.clientRequestId },
-          select: { id: true, transferNumber: true, fromAccountId: true, toAccountId: true, toCurrency: true },
-        });
-        if (earlier) {
-          return {
-            id: earlier.id,
-            transferNumber: earlier.transferNumber,
-            remainingInCustody: (await this.ledger.balanceOf(tx, earlier.fromAccountId)).toNumber(),
-            safeBalanceAfter: (await this.ledger.balanceOf(tx, earlier.toAccountId)).toNumber(),
-            currency: earlier.toCurrency,
-            replayed: true,
-          };
-        }
-      }
+      const replay = await this.replayHandover(tx, input, actor);
+      if (replay) return replay;
 
       const custody = await tx.treasuryAccount.findFirst({
         where: { id: input.custodyAccountId, type: 'COLLECTOR_CUSTODY' },
@@ -358,17 +385,16 @@ export class TransfersService {
       }
 
       /*
-        Refused here as well as by the ledger's own never-negative check, so the
-        accountant is told what the collector actually holds rather than a bare
-        "insufficient funds" about a wallet they did not name.
+        The control this route exists for (transfers.controller.ts): whoever
+        receives a collector's cash is someone else. Anyone can be named as the
+        collector on a payment, so an accountant can hold custody too — and must
+        not then count his own pocket into the safe. Custody, booking and
+        receipt in different hands is the first rule of cash handling.
       */
-      const held = await this.ledger.balanceOf(tx, custody.id);
-      const amount = new Prisma.Decimal(input.amount);
-      if (amount.greaterThan(held)) {
-        throw new ConflictError({
-          code: 'CUSTODY_EXCEEDS_HELD',
-          message: `The collector holds ${held.toString()}, less than the ${amount.toString()} received.`,
-          params: { held: held.toNumber(), amount: input.amount },
+      if (custody.ownerId === actor.id) {
+        throw new ForbiddenError({
+          code: 'CUSTODY_SELF_RECEIPT',
+          message: 'A collector cannot receive his own custody; another accountant or the manager must.',
         });
       }
 
@@ -382,6 +408,33 @@ export class TransfersService {
           code: 'TREASURY_ACCOUNT_MISSING',
           message: `No active primary cash safe in ${custody.currency}.`,
           params: { currency: custody.currency },
+        });
+      }
+
+      // Settings before wallets, the one order every treasury path takes its locks in.
+      const config = await this.ledger.config(tx);
+
+      /*
+        Both wallets, strongest lock first, before anything reads a figure or
+        references them (see `TreasuryLedgerService.lockAccounts`). That also
+        makes the check below the real one, not a guess that the ledger repeats.
+      */
+      await this.ledger.lockAccounts(tx, [custody.id, safe.id]);
+      const lateReplay = await this.replayHandover(tx, input, actor);
+      if (lateReplay) return lateReplay;
+
+      /*
+        Refused here as well as by the ledger's own never-negative check, so the
+        accountant is told what the collector actually holds rather than a bare
+        "insufficient funds" about a wallet they did not name.
+      */
+      const held = await this.ledger.balanceOf(tx, custody.id);
+      const amount = new Prisma.Decimal(input.amount);
+      if (amount.greaterThan(held)) {
+        throw new ConflictError({
+          code: 'CUSTODY_EXCEEDS_HELD',
+          message: `The collector holds ${held.toString()}, less than the ${amount.toString()} received.`,
+          params: { held: held.toNumber(), amount: input.amount, currency: custody.currency },
         });
       }
 
@@ -424,12 +477,16 @@ export class TransfersService {
           actorId: actor.id,
           occurredAt,
           note: description,
+          // Every entry keeps the day's rate, a handover's too (docs/finance.md §3.1).
+          exchangeRate: config.exchangeRate,
         },
       );
 
       /*
         Tier 1. The collector is named by id, not by name: an audit row is not a
         second copy of who works here, and the transfer number leads to the rest.
+        What he held before is kept beside it, so a partial handover reads as one
+        without a second query.
       */
       await this.audit.recordInTransaction({
         actorId: actor.id,
@@ -443,6 +500,7 @@ export class TransfersService {
           amount: input.amount,
           currency: custody.currency,
           collectorId: custody.ownerId,
+          heldBefore: held.toNumber(),
           custodyAccountId: custody.id,
           safeAccountId: safe.id,
         },
@@ -456,7 +514,86 @@ export class TransfersService {
         currency: custody.currency,
         replayed: false,
       };
+    }
+  }
+
+  /**
+   * The handover a retry key already produced, if any.
+   *
+   * A key names one act. Replayed with the same custody wallet, amount and
+   * clerk, it answers with the first handover — the double press it exists for.
+   * Anything else is a new act under an old key, and is refused rather than
+   * silently answered with a different handover the clerk never asked for. A
+   * handover cancelled since is not answered as received: the cash it counted
+   * is back on the collector's name.
+   */
+  private async replayHandover(
+    tx: Prisma.TransactionClient,
+    input: ReceiveCustodyInput,
+    actor: { id: string },
+  ): Promise<ReceiveCustodyResult | null> {
+    if (!input.clientRequestId) return null;
+    const earlier = await tx.treasuryTransfer.findUnique({
+      where: { clientRequestId: input.clientRequestId },
+      select: {
+        id: true,
+        transferNumber: true,
+        fromAccountId: true,
+        toAccountId: true,
+        toCurrency: true,
+        amount: true,
+        recordedById: true,
+        voidedAt: true,
+        createdAt: true,
+      },
     });
+    if (!earlier) return null;
+    if (
+      earlier.fromAccountId !== input.custodyAccountId ||
+      !earlier.amount.equals(new Prisma.Decimal(input.amount)) ||
+      earlier.recordedById !== actor.id
+    ) {
+      throw new ConflictError({
+        code: 'TREASURY_REQUEST_KEY_REUSED',
+        message: 'This request id was already used for a different handover.',
+      });
+    }
+    if (earlier.voidedAt) {
+      throw new ConflictError({
+        code: 'TRANSFER_ALREADY_VOID',
+        message: `This request was recorded as ${earlier.transferNumber}, and that handover has since been cancelled.`,
+        params: { transferNumber: earlier.transferNumber },
+      });
+    }
+    /*
+      A replay answers the retry of the moment, not the collector's next handover.
+      A screen keeps its key after an in-doubt answer; if the wallet has moved
+      since — a collection landed, another handover was taken — a press with that
+      key is a new count of new cash, and answering it with the old document would
+      leave that cash on his name while it sits in the safe. Refused as a spent
+      key, which the screen renews.
+    */
+    const movedSince = await tx.treasuryEntry.count({
+      where: {
+        accountId: earlier.fromAccountId,
+        createdAt: { gt: earlier.createdAt },
+        NOT: { source: 'TRANSFER', sourceId: earlier.id },
+      },
+    });
+    if (movedSince > 0) {
+      throw new ConflictError({
+        code: 'TREASURY_REQUEST_KEY_REUSED',
+        message: `This request was recorded as ${earlier.transferNumber}, and the custody has moved since.`,
+      });
+    }
+    return {
+      id: earlier.id,
+      transferNumber: earlier.transferNumber,
+      remainingInCustody: (await this.ledger.balanceOf(tx, earlier.fromAccountId)).toNumber(),
+      safeBalanceAfter: (await this.ledger.balanceOf(tx, earlier.toAccountId)).toNumber(),
+      currency: earlier.toCurrency,
+      replayed: true,
+    };
   }
 
   /**
@@ -519,11 +656,12 @@ export class TransfersService {
   /**
    * What each collector took today, on the municipality's clock.
    *
-   * Raw SQL because the day boundary is Beirut's and the column is a bare
-   * timestamp holding UTC: the first `AT TIME ZONE` labels the stored value as
-   * UTC, the second moves the instant onto the municipality's wall clock. One
-   * alone would shift every boundary by the offset — the same two-step the
-   * audit day-buckets use.
+   * Raw SQL because the day boundary is Beirut's. `occurredAt` is TIMESTAMPTZ
+   * (0017) — the Prisma field carries no `@db.Timestamptz`, which is what once
+   * suggested otherwise — so one `AT TIME ZONE` gives the municipality's wall
+   * clock. The two-step form the audit day-buckets use is for a bare timestamp
+   * holding UTC; on this column it moved every day boundary six hours, and a
+   * receipt taken at 01:00 in Beirut counted for the day before.
    *
    * The count excludes reversal entries so it stays a count of *receipts
    * written*; the sum includes them, so a cancelled payment nets itself out of
@@ -540,7 +678,7 @@ export class TransfersService {
              sum("amount") AS amount
         FROM ${this.S}payment_transactions
        WHERE "collectedById" IS NOT NULL
-         AND ("occurredAt" AT TIME ZONE 'UTC' AT TIME ZONE ${MUNICIPAL_TIME_ZONE}::text)::date
+         AND ("occurredAt" AT TIME ZONE ${MUNICIPAL_TIME_ZONE}::text)::date
              = ${today}::date
        GROUP BY "collectedById", "currency"
     `;
@@ -610,13 +748,26 @@ export class TransfersService {
     const heldOf = new Map(sums.map((row) => [row.accountId, row._sum.amount?.toNumber() ?? 0]));
     const since = lastHandover?.occurredAt ?? null;
 
+    /*
+      The round starts at whichever came later: his last handover, or go-live.
+      A receipt from before go-live never reached his custody — that cash is
+      inside an opening balance — so it is not in his pocket either, and
+      listing it made «محمول من جولة سابقة» go negative on the first day.
+      A plain read: `ledger.config` locks the settings row for a write that must
+      wait out an activation, and a screen showing a round writes nothing.
+    */
+    const goLiveAt =
+      (await this.db.systemSettings.findFirst({ select: { treasuryGoLiveAt: true } }))?.treasuryGoLiveAt ?? null;
+    const floor: Prisma.DateTimeFilter | undefined =
+      since && (!goLiveAt || since >= goLiveAt) ? { gt: since } : goLiveAt ? { gte: goLiveAt } : undefined;
+
     const rows = await this.db.paymentTransaction.findMany({
       where: {
         collectedById: collectorId,
         // Not a reversal entry, and not a receipt that has since been cancelled.
         reversalOfId: null,
         reversedBy: { is: null },
-        ...(since ? { occurredAt: { gt: since } } : {}),
+        ...(floor ? { occurredAt: floor } : {}),
       },
       orderBy: [{ occurredAt: 'desc' }, { createdAt: 'desc' }],
       take: 500,
@@ -653,17 +804,31 @@ export class TransfersService {
       },
     });
 
-    const listedOf = new Map<string, number>();
-    for (const row of rows) {
-      listedOf.set(row.currency, (listedOf.get(row.currency) ?? 0) + row.amount.toNumber());
-    }
+    /*
+      What those receipts put in his pocket, per wallet — read from the same
+      ledger as `held`, not from the receipts' own currency. A 1,500,000 ل.ل bill
+      paid with a $20 note is $20 in his dollar pocket and the change out of his
+      ليرة one; summed by the bill's currency it read as 1.5M ل.ل he never held.
+    */
+    const listedSums = await this.db.treasuryEntry.groupBy({
+      by: ['accountId'],
+      where: {
+        accountId: { in: walletIds },
+        source: 'CITIZEN_PAYMENT',
+        reversalOfId: null,
+        reversedBy: { is: null },
+        ...(floor ? { occurredAt: floor } : {}),
+      },
+      _sum: { amount: true },
+    });
+    const listedOf = new Map(listedSums.map((row) => [row.accountId, row._sum.amount?.toNumber() ?? 0]));
 
     return {
       collector,
       lastHandoverAt: since?.toISOString() ?? null,
       currencies: wallets.map((wallet) => {
         const held = heldOf.get(wallet.id) ?? 0;
-        const listed = roundMoney(listedOf.get(wallet.currency) ?? 0, wallet.currency);
+        const listed = roundMoney(listedOf.get(wallet.id) ?? 0, wallet.currency);
         return {
           currency: wallet.currency,
           held,

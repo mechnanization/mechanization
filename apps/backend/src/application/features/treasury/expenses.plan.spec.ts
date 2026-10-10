@@ -1,4 +1,4 @@
-import { expenseOccurredAt, planExpenseDate } from './expenses.plan';
+import { planExpenseDate } from './expenses.plan';
 
 const TODAY = '2026-10-06';
 const GO_LIVE = '2026-10-01';
@@ -69,16 +69,5 @@ describe('planExpenseDate', () => {
 
   it('asks nothing about go-live when the treasury is not live', () => {
     expect(planExpenseDate({ paidOn: '2020-01-01', reason: 'قديمة', today: TODAY })).toMatchObject({ ok: true });
-  });
-});
-
-describe('expenseOccurredAt', () => {
-  it("keeps the real clock time for today's voucher, so the day reads in order", () => {
-    const now = new Date('2026-10-06T07:30:00.000Z');
-    expect(expenseOccurredAt(TODAY, TODAY, now)).toEqual(now);
-  });
-
-  it('puts a back-dated voucher at midday, so no time zone moves it off its day', () => {
-    expect(expenseOccurredAt('2026-10-03', TODAY).toISOString()).toBe('2026-10-03T12:00:00.000Z');
   });
 });

@@ -54,17 +54,12 @@ describeIfDb('invoice numbering', () => {
     return rows.map((row) => row.invoiceNumber);
   };
 
-  beforeAll(async () => {
-    ddl = new Client({ connectionString: TEST_DATABASE_URL });
-    await ddl.connect();
-    await ddl.query(`DROP SCHEMA IF EXISTS "${SCHEMA}" CASCADE`);
-    await migrateTenantSchema(ddl, SCHEMA);
-
-    db = tenantTestClient(TEST_DATABASE_URL!, SCHEMA);
-    fees = new FeesService(
+  /** The service as one municipality's requests reach it, over `client`. */
+  const feesOver = (client: TenantPrismaClient): FeesService =>
+    new FeesService(
       {
         get prisma() {
-          return db;
+          return client;
         },
         tenantSlug: 'numbering',
         schemaName: SCHEMA,
@@ -80,6 +75,15 @@ describeIfDb('invoice numbering', () => {
       {} as PaymentLedgerService,
       {} as never,
     );
+
+  beforeAll(async () => {
+    ddl = new Client({ connectionString: TEST_DATABASE_URL });
+    await ddl.connect();
+    await ddl.query(`DROP SCHEMA IF EXISTS "${SCHEMA}" CASCADE`);
+    await migrateTenantSchema(ddl, SCHEMA);
+
+    db = tenantTestClient(TEST_DATABASE_URL!, SCHEMA);
+    fees = feesOver(db);
 
     clerkId = randomUUID();
     await db.user.create({
@@ -225,4 +229,77 @@ describeIfDb('invoice numbering', () => {
     expect(numbers.length).toBeGreaterThan(3);
     expect(new Set(numbers).size).toBe(numbers.length);
   });
+
+  /*
+    `createdAt` is a zoneless column, and the run's start reaches the statement
+    as `timestamptz`. Compared as they were, the column went through the
+    session's zone: right on a UTC database, and nothing matched — the issue
+    rolled back — on one whose clock is set to Beirut. Only this client's
+    sessions are moved, so the other suites sharing the database are not.
+  */
+  it('numbers the bills on a database whose clock is set to Beirut', async () => {
+    const url = new URL(TEST_DATABASE_URL!);
+    url.searchParams.set('options', '-c TimeZone=Asia/Beirut');
+    const beirut = tenantTestClient(url.toString(), SCHEMA);
+    try {
+      const [session] = await beirut.$queryRaw<Array<{ tz: string }>>`SELECT current_setting('TimeZone') AS tz`;
+      expect(session?.tz).toBe('Asia/Beirut');
+
+      const issued = await feesOver(beirut).issue(
+        {
+          title: 'رسم الصرف الصحي',
+          amount: 30_000,
+          basis: 'FLAT',
+          bearer: 'OWNER',
+          frequency: 'ONCE',
+          targetType: 'ALL_CITIZENS',
+          dueDate: '2026-12-31',
+        } as never,
+        actor(),
+      );
+
+      expect(issued.issued).toBeGreaterThan(0);
+      expect(await numbersFor(issued.noticeId)).not.toContain(null);
+    } finally {
+      await beirut.$disconnect();
+    }
+  });
+
+  /*
+    The ceiling the first version hit: the numbers went into the statement as
+    two bind variables per bill, a statement takes at most 32,767, and a
+    town-wide notice of 16,384 bills or more rolled back whole — every month,
+    for a recurring one. One `text[]` parameter has no such ceiling. Last in the
+    file: it adds sixteen thousand citizens the tests above do not expect.
+  */
+  it('numbers a town-wide notice of more than 16,384 bills', async () => {
+    const town = 16_500;
+    for (let start = 0; start < town; start += 2_000) {
+      await db.user.createMany({
+        data: Array.from({ length: Math.min(2_000, town - start) }, (_, index) => ({
+          id: randomUUID(),
+          kind: 'CITIZEN' as const,
+          tenantSlug: 'numbering',
+          firstName: `مواطن ${start + index}`,
+          lastName: 'البلدة',
+        })),
+      });
+    }
+
+    const issued = await fees.issue(
+      {
+        title: 'رسم البلدة',
+        amount: 10_000,
+        basis: 'FLAT',
+        bearer: 'OWNER',
+        frequency: 'ONCE',
+        targetType: 'ALL_CITIZENS',
+        dueDate: '2026-12-31',
+      } as never,
+      actor(),
+    );
+
+    expect(issued.issued).toBeGreaterThan(16_384);
+    expect(await db.citizenPayment.count({ where: { feeNoticeId: issued.noticeId, invoiceNumber: null } })).toBe(0);
+  }, 300_000);
 });

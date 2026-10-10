@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useState } from 'react';
+import { use, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { Receipt } from 'lucide-react';
@@ -57,6 +57,14 @@ export default function IssueFeePage({
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /*
+    Synchronous, unlike `submitting`, which lands a render after a fast second
+    press. And never released on success: the dialog this page replaced closed
+    itself, while a page stays mounted until the next route is ready — seconds on
+    a village connection — and a second press there would issue the notice again
+    and bill every household twice.
+  */
+  const inFlight = useRef(false);
 
   const canIssue = user ? hasRole(FEE_ISSUE_ROLES, user.role) : false;
 
@@ -86,7 +94,8 @@ export default function IssueFeePage({
   });
 
   const issue = async (values: IssueFeeValues): Promise<void> => {
-    if (!token || submitting) return;
+    if (!token || inFlight.current) return;
+    inFlight.current = true;
     setSubmitting(true);
     setError(null);
     try {
@@ -145,12 +154,22 @@ export default function IssueFeePage({
         );
       }
 
+      // «معفاة من الرسوم» (0077): the mosque on a waqf parcel, a public building.
+      if (res.feeExemptUnits) toast.info(tFees('issue.feeExempt', { count: res.feeExemptUnits }));
+
+      /*
+        Not held and not exempt: a co-owned flat «مالك مسؤول» pays for in full.
+        Said so the other owners' bills do not read as missing a unit.
+      */
+      if (res.coOwnerPaidUnits) toast.info(tFees('issue.coOwnerPaid', { count: res.coOwnerPaidUnits }));
+
+      // The wizard stays locked from here: the page is leaving (see `inFlight`).
       router.push(feesHref);
     } catch (caught) {
       logApiError(caught);
       // Shown inside the wizard, on the review step the clerk pressed from (TXT-6).
       setError(caught instanceof ApiRequestError ? caught.message : t('failed'));
-    } finally {
+      inFlight.current = false;
       setSubmitting(false);
     }
   };

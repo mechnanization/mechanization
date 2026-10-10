@@ -65,6 +65,15 @@ export function StatStrip({ children, className }: { children: React.ReactNode; 
  *
  * `icon` is decorative and sits inside the `<dd>` above the number: a `<dl>`'s
  * `<div>` may hold only `<dt>` and `<dd>`, so it cannot be a sibling of them.
+ *
+ * ## A figure is never cut
+ *
+ * The value wraps rather than truncating (LAY-6). A truncated «1,250,000,00…»
+ * in the treasury's wallet strip at 360px lost the last digit and the unit,
+ * and a balance read with a digit missing is a different balance. A sum of
+ * money passed here sets `wrap` on its `Money` (or `TreasuryAmount`), so its
+ * unit drops under the figure when the cell is narrow; the figure itself does
+ * not break.
  */
 export function StatItem({
   value,
@@ -121,7 +130,7 @@ export function StatItem({
             className,
           )}
         >
-          <bdi className="min-w-0 truncate">{value}</bdi>
+          <bdi className="min-w-0 break-words">{value}</bdi>
           {unit ? <span className="text-xs font-medium text-muted-foreground">{unit}</span> : null}
         </span>
       </dd>

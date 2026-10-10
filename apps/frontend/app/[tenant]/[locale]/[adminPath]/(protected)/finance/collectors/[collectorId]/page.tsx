@@ -6,7 +6,7 @@ import { useTranslations } from 'next-intl';
 import type { ColumnDef } from '@tanstack/react-table';
 import { Phone, Users } from 'lucide-react';
 import { getCollectorCollections, type CollectorCollectionRow } from '@/lib/api-client';
-import { formatDateTime } from '@/lib/dates';
+import { formatDate, formatDateTime } from '@/lib/dates';
 import { formatPhone } from '@/lib/phone';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
@@ -39,6 +39,12 @@ const LIMIT = 200;
  * page says that out loud rather than letting two honest figures look like a
  * discrepancy.
  *
+ * **The list starts at go-live** (`since`), and the page says so with the date.
+ * A receipt from before the treasury went live never reached his custody, so
+ * counting it would make «the difference is what he handed in» false by exactly
+ * those receipts. Before go-live every receipt is listed and none is in custody,
+ * so the page says that instead and makes no claim about the difference.
+ *
  * No رقم مرجعي anywhere: it is a citizen's sign-in credential and has no
  * business on a reconciliation screen (docs/security.md).
  *
@@ -53,6 +59,7 @@ export default function CollectorCollectionsPage({
   const { tenant, locale, adminPath, collectorId } = use(params);
   const base = `/${tenant}/${locale}/${adminPath}`;
   const t = useTranslations('finance.collections');
+  const tCommon = useTranslations('common');
   const { token } = useStaffSession(tenant, base);
 
   const query = useStaffQuery({
@@ -205,15 +212,22 @@ export default function CollectorCollectionsPage({
         ? t(`${key}USD`)
         : t(`${key}Other`, { currency });
 
+  /** Go-live: where the list starts. Null while the treasury is not live, when every receipt is listed. */
+  const since = data?.since ?? null;
+
   /*
     Shown only when the two figures actually differ, which is the moment the
     question «لماذا الرقمان مختلفان؟» occurs to anyone. Before his first
-    handover they are equal and the note would be noise.
+    handover they are equal and the note would be noise. And only once the
+    treasury is live: before that nothing reaches custody, so the difference is
+    every receipt, not what he handed in.
   */
-  const differs = collected.some((total) => {
-    const wallet = held.find((entry) => entry.currency === total.currency);
-    return Math.abs((wallet?.held ?? 0) - total.amount) > 0.009;
-  });
+  const differs =
+    Boolean(since) &&
+    collected.some((total) => {
+      const wallet = held.find((entry) => entry.currency === total.currency);
+      return Math.abs((wallet?.held ?? 0) - total.amount) > 0.009;
+    });
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
@@ -227,7 +241,7 @@ export default function CollectorCollectionsPage({
       {query.error ? (
         <Card>
           <CardContent className="p-0">
-            <ErrorState title={query.error} onRetry={query.refetch} />
+            <ErrorState title={query.error} onRetry={query.refetch} retryLabel={tCommon('retry')} />
           </CardContent>
         </Card>
       ) : (
@@ -238,18 +252,27 @@ export default function CollectorCollectionsPage({
                 <StatItem
                   key={`collected-${total.currency}`}
                   label={inCurrency('collectedIn', total.currency)}
-                  value={<TreasuryAmount amount={total.amount} currency={total.currency} locale={locale} />}
+                  value={<TreasuryAmount amount={total.amount} currency={total.currency} locale={locale} wrap />}
                 />
               ))}
               {held.map((wallet) => (
                 <StatItem
                   key={`held-${wallet.currency}`}
                   label={inCurrency('heldIn', wallet.currency)}
-                  value={<TreasuryAmount amount={wallet.held} currency={wallet.currency} locale={locale} />}
+                  value={<TreasuryAmount amount={wallet.held} currency={wallet.currency} locale={locale} wrap />}
                 />
               ))}
               <StatItem label={t('receiptCount')} value={String(data?.total ?? 0)} />
             </StatStrip>
+          ) : null}
+
+          {/* Where the list starts, so the totals above can be read for what they are. */}
+          {data ? (
+            since ? (
+              <p className="text-xs text-muted-foreground">{t('since', { date: formatDate(since) })}</p>
+            ) : (
+              <Alert variant="info">{t('notLive')}</Alert>
+            )
           ) : null}
 
           {differs ? <Alert variant="info">{t('handedInNote')}</Alert> : null}

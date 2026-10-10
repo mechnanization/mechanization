@@ -174,8 +174,29 @@ wallet today.
    lock inside the transaction and is refused if it would go below zero.
 8. **Locking order.** When two accounts are touched (transfer, exchange), lock them
    in ascending id order so simultaneous transfers cannot deadlock.
+   - The order holds across callers, not only inside `post`. Inserting a voucher or a
+     transfer checks its foreign key and takes `FOR KEY SHARE` on the wallet, so every
+     caller takes the strong lock first, with `TreasuryLedgerService.lockAccounts`,
+     before writing anything that references the wallet.
+   - Without that, an expense and a handover on the same safe deadlocked in 17 of 25
+     simultaneous rounds (PR #104 review, 2026-10-09).
 9. **Idempotency.** Anything a user can double-click carries `clientRequestId`
    (the existing name).
+   - A key names one act. Replayed with the same wallet, amount and clerk (and, for an
+     expense or a request, the same band, payee and description: the fields its form
+     renews the key on), it answers with the first result. Anything else is refused
+     (`TREASURY_REQUEST_KEY_REUSED`).
+   - A key whose voucher or handover has been cancelled since is refused
+     (`EXPENSE_ALREADY_VOID`, `TRANSFER_ALREADY_VOID`), never answered as recorded.
+   - Two presses carrying one key at the same moment are both answered from the
+     winner's row, never with a server error.
+   - The screens keep the key across every failure and every edit, and change it only
+     when the server confirms the key's act exists: a success, or
+     `TREASURY_REQUEST_KEY_REUSED`, `EXPENSE_ALREADY_VOID`, `TRANSFER_ALREADY_VOID`,
+     `PAYMENT_IDEMPOTENCY_KEY_REUSED` (`apps/frontend/lib/request-id.ts`). A refusal
+     proves only that that attempt wrote nothing. Renewing on one recorded a payment
+     twice after a lost answer followed by a 429; renewing on an edit did the same
+     after a lost answer followed by a corrected typo.
 
 ### 3.2 Go-live: "Activate treasury"
 
@@ -225,6 +246,29 @@ from) are settled in the integration tests (see 12.2).
   before go-live but entered after it is not credited. So before activating, have
   every collector hand in their cash, so the counted opening balance includes it.
   Custody accounts never have an opening balance (they are created by a collection).
+- **Who may date a payment before go-live (decided 2026-10-09).** After go-live, only
+  a finance role (`FINANCE_OVERRIDE_ROLES`) may record a payment dated before it.
+  Everyone else is refused (`PAYMENT_DATE_BEFORE_GO_LIVE`).
+  - Why: the 30-day back-dating window open to every role that takes payments
+    (`cash-policy.ts`) would otherwise let today's cash be dated last week. The bill
+    is settled and a receipt printed, but no wallet or custody is credited and
+    nothing flags it.
+  - The decree dates a receipt on the day the money is taken (art. 16 and 98), and
+    the cut-off at go-live is the opening count.
+  - A finance role who dates one before go-live asserts the cash is inside that count.
+    The audit row says no wallet was credited (`treasuryCredited: false`).
+- **The go-live day itself is live (decided 2026-10-09, D5).** A payment dated today
+  keeps its real time; one dated an earlier day sits at midday UTC of it, but never
+  before the opening entry on the go-live day (`documentOccurredAt`). So by date the
+  rule is the one expenses follow: a day before go-live is not live, the go-live day
+  is, whatever the hour of activation. At midday, a receipt back-dated to that day was
+  refused to a collector, or credited to no wallet, whenever activation came later in
+  the day.
+- The go-live stamp is read `FOR SHARE`, so a payment arriving while the activation
+  is still committing waits for it and is credited, instead of reading NULL and
+  crediting nothing. Activation commits the settings row before its transaction
+  opens: on a municipality that never saved its settings there was otherwise no row
+  to wait on, and the payment went ahead and credited nothing.
 - No active primary account of the needed type and currency: the payment is refused
   with `TREASURY_ACCOUNT_MISSING` (money is never silently dropped). A COLLECTOR
   payment with no collector named falls back to the main safe and says so in the
@@ -241,13 +285,31 @@ from) are settled in the integration tests (see 12.2).
   the wallet does not hold enough, the reversal is **refused** until money is moved
   in (the error message must say so clearly). **[Edge-case mechanics to be settled in
   the integration tests.]**
-- Reversing a post-go-live payment reverses exactly the entries it created.
+- Reversing a post-go-live payment reverses exactly the entries it created, each
+  opposing entry carrying its original's rate.
+- **A collector's payment reversed after he handed the cash in (decided 2026-10-09).**
+  - Opposing the custody entry would be refused, because his custody no longer holds
+    the money; the safe does. The refund could then never be made.
+  - So the refund leaves his custody only while it still holds all of it, and the safe
+    of the same currency otherwise. It is decided for the whole payment, so a
+    tender's note and its change come back through the same place.
+  - This matches municipal practice. A collector may pay nothing out (decree 5595/1982
+    art. 93), and refunds go through the treasury's disbursement, never out of
+    collections (US municipal cash-handling policies, e.g. Barre City VT,
+    Norridgewock ME, Fort Worth TX).
 
 ### 3.5 Collector custody
 
 - One `COLLECTOR_CUSTODY` account per collector per currency, created on first
-  collection.
-- Money stays there until a **handover** (Section 7).
+  collection, for an active staff member who can hold cash. A view-only, deactivated
+  or removed staff member can't be named as the collector (`COLLECTOR_NOT_FOUND`).
+- Money stays there until a **handover** (Section 7). The handover is received by
+  someone other than the collector (`CUSTODY_SELF_RECEIPT`). Custody, booking and
+  receipt are in different hands, which is the first rule of cash handling, and the
+  one this route exists for.
+- Custody is never a paying wallet. An expense from it would write a collector's
+  liability down with nobody counting the notes, which is the shortage write-off §6.3
+  keeps for the manager (`EXPENSE_ACCOUNT_NOT_PAYABLE`; decree art. 93).
 - Custody balances are shown on the daily report as "held by collectors" but are not
   counted to close the safe.
 
@@ -327,38 +389,91 @@ silently renamed**; vouchers point to it by id so old receipts never change.
 
 ## 5. Expenses (Step 3)
 
-### 5.1 Flow — no approval step
+### 5.1 Flow — the payment order (أمر الصرف)
 
-Recording an expense **is** paying it, in one action:
+**Decided 2026-10-09, on the PR #104 review.** This replaces the first design, which
+had no approval step. The deciding source is the municipal accounting decree,
+Decree 5595 of 22 September 1982 (تحديد أصول المحاسبة في البلديات واتحادات
+البلديات), read in its published text:
+
+- Spending passes four stages: commitment, liquidation, the payment order, and
+  payment (art. 21).
+- The payment order is a «حوالة» that authorises paying its amount, and the head of
+  the municipality issues it (art. 28).
+- The cashier pays an order only after checking that it bears the competent
+  authority's signature (art. 33). He must pay one properly issued (art. 85). He
+  answers personally for any payment made against the law unless the head
+  confirmed it in writing (art. 89).
+- Salaries, routine petty expenses and urgent ones may be paid without a prior order,
+  the order being issued afterwards (art. 35). Petty and urgent spending may also run
+  through advances approved by the head (art. 37–42).
+
+The first design had no approval step and leaned on "the daily count and close" as the
+control that would make up for it. That count is stage 5, which isn't built. Without it,
+one accountant could record and pay any expense alone, which is exactly the
+single-person outflow the decree's separation is there to prevent.
 
 ```
-RECORDED (paid) -> VOID (reversed)
+accountant:  REQUEST ──(manager orders)──> RECORDED (paid, ordered)
+                     ├─(manager rejects)──> REJECTED      (no money moved)
+                     └─(author withdraws)─> WITHDRAWN     (no money moved)
+accountant, art. 35: RECORDED (paid, AWAITING_ORDER) ──(manager regularises)──> RECORDED (ordered)
+manager:     RECORDED (paid, ordered) — his recording is the order
+any paid voucher ──(manager cancels, with a reason)──> VOID
 ```
 
-- The **accountant** or the **manager (`SUPER_ADMIN`)** records an expense: date,
-  category, payee, description, amount, currency, and the **paying wallet**. The
-  voucher is posted and the money leaves the wallet at once.
-- There is no draft, no submit, no approve or reject, and no rule that a different
-  person must approve. One accountant can run the whole flow, and the manager can do
-  every action too.
-- Controls that remain: the audit row, no negative balances, append-only entries,
-  void by the manager with a reason, and the daily count and close.
-- Amount and currency cannot change once recorded. A mistake is corrected by a void
-  and a new voucher.
-- Approval thresholds by amount are out of v1. **[unverified]** Whether the
-  municipality's law requires the mayor's authorisation (آمر الصرف) before spending
-  is to be confirmed by their legal advisor. The system does not enforce it. If it is
-  later required, an optional approval step can be added in a later release.
+- **Who signs.** In the app the manager (`SUPER_ADMIN`) records the order. The head
+  of the municipality signs the paper حوالة; his account is «مشاهد فقط» (`VIEWER`),
+  which writes nothing (route inventory). The order a manager records stands for the
+  head's signature on the paper.
+- **The accountant's two paths.**
+  - The ordinary path is a request («طلب أمر صرف»). It carries category, wallet,
+    payee, description and amount. Nothing leaves a wallet, and it has no date: the
+    money leaves on the day of the order.
+  - For what art. 35 allows, the accountant pays at once and writes why
+    (`urgentReason`). The voucher then waits as «بانتظار أمر الصرف» until the manager
+    regularises it, or cancels it to return the money. An accountant's recording
+    without a reason is refused (`EXPENSE_ORDER_REQUIRED`).
+- **The order.** One transaction:
+  - lock the request;
+  - write the voucher with its PV number (recorder: the accountant who prepared it;
+    orderer: the manager);
+  - debit the wallet behind its lock, never below zero;
+  - record the decision on the request.
+
+  A wallet that can't cover the amount refuses the order, and the request keeps
+  waiting. The request's id is the order's retry key: the manager who gave the order
+  is answered with the voucher it paid if he presses again (`replayed: true`), even
+  at the same moment. Another manager is told it was decided
+  (`EXPENSE_REQUEST_ALREADY_DECIDED`).
+- **A decision is written once.** It is ordered (with its voucher), rejected (with a
+  reason), or withdrawn (by its author or the manager). Another accountant can't
+  withdraw it (`EXPENSE_REQUEST_NOT_YOURS`).
+- **Fixed once paid.** Amount, currency, wallet and payee can't change once a voucher
+  exists, and the database refuses it (0080). A mistake is corrected by a void and a
+  new voucher.
+- Approval thresholds by amount, petty-cash advances (art. 37–42) and a supplier
+  register stay out of v1.
 
 ### 5.2 Recording (paying)
 
-One transaction: lock the wallet, check the balance (never negative), write the
-negative wallet entry, assign the payment-order number `PV-nnnnnn`, write the Tier 1
-audit row. Retry key included. Insufficient funds returns a clear error code.
+One transaction:
+
+1. lock the wallet, before anything that references it;
+2. check the balance (never negative);
+3. write the voucher and the negative wallet entry;
+4. assign the payment-order number «PV-2610-0001» (migration 0079);
+5. write the Tier 1 audit row.
+
+The retry key is bound to its act: the same key with another wallet, amount, clerk, band,
+payee or description is refused (`TREASURY_REQUEST_KEY_REUSED`), never answered with the
+first voucher; and a key whose voucher has been cancelled since gets `EXPENSE_ALREADY_VOID`.
+Insufficient funds returns a clear error code.
 
 ### 5.3 Voiding a recorded expense
 
-`SUPER_ADMIN` only, with a written reason. Creates a reversing entry.
+`SUPER_ADMIN` only, with a written reason. It creates a reversing entry carrying the
+original's rate. An urgent payment the manager won't order is refused this way.
 
 ### 5.4 Fields
 
@@ -470,6 +585,21 @@ the category «رسوم تحويل ومصرفية», all in one atomic transacti
 
 ## 7. Daily count and closing (Step 5)
 
+**Until stage 5 ships (decided 2026-10-09).** The decree has the cashier keep a daily
+register: the opening balance, the day's receipts and payments, and the closing
+balance. A new day's register is not opened until the previous one is closed (art. 101).
+
+Activation is not held back for stage 5. With the payment order in place (§5.1), the
+expense outflow no longer rests on the count alone. In the meantime:
+
+- A wallet's statement for a single day is that register. «اليوم» on the statement
+  screen reads one day on Beirut's calendar, from its opening balance to its close.
+- The accountant prints it, counts the cash against it, and signs it with a second
+  person. «طباعة» on the statement prints it alone on A4 (`data-print-root`): the
+  municipality, the wallet, the day, the opening and closing balances, every
+  movement, the print time, and signature lines for the cashier and the accountant.
+- A difference is written on the paper, never posted (§7.2).
+
 ### 7.1 The count (جرد الصندوق)
 
 One record per wallet per day:
@@ -541,9 +671,12 @@ Two working roles. The **accountant** runs the daily work. The **manager
 | View balances, lists, reports | yes | yes | yes | yes | no |
 | **See his own custody and his own round** (`custody/mine`) | yes | yes | yes | no | **yes — his own only** |
 | Post income voucher | yes | yes | no | no | no |
-| Record (pay) an expense | yes | yes | no | no | no |
+| Request a payment order («طلب أمر صرف»; moves no money) | yes | yes | no | no | no |
+| Withdraw a request still waiting | **his own** | yes | no | no | no |
+| Issue a payment order, reject a request, regularise an urgent payment | no | **yes** | no | no | no |
+| Record (pay) an expense | **only urgent, with a reason (art. 35); it waits for the order** | yes — his recording is the order | no | no | no |
 | Record an inspector payout (picks the wallet) | yes | yes | no | no | no |
-| Transfer, exchange, collector handover | yes | yes | no | no | no |
+| Transfer, exchange, collector handover (never of one's own custody) | yes | yes | no | no | no |
 | Count a wallet | yes | yes | no | no | no |
 | Close a day | yes | yes | no | no | no |
 | Review a flagged exchange | no | yes | yes | no | no |
@@ -553,7 +686,10 @@ Two working roles. The **accountant** runs the daily work. The **manager
 | Manage categories and finance settings | no | **yes** | no | no | no |
 
 `ACCOUNTANT` and `SUPER_ADMIN` can reuse `FINANCE_OVERRIDE_ROLES` from
-`cash-policy.ts`. `@Roles` on **every** handler.
+`cash-policy.ts`. `@Roles` on **every** handler, and `route-inventory.spec.ts` pins every
+treasury handler to its row of this table, so widening one is a decision made there.
+`ADMINISTRATIVE_OFFICER` reads `custody/mine` too: the route is on every role but
+«مشاهد فقط», as the next paragraph says.
 
 **The one exception, and why it is not a hole.** `GET custody/mine` is on
 `WORKING_STAFF_ROLES`, which is every role but «مشاهد فقط». It is the only
@@ -575,7 +711,8 @@ inspectors who carry the cash; staff with no custody get an empty round.
 | `treasury_accounts` | Wallets | name, type (enum), currency, active, optional owner (collector user id for custody). Four seeded rows |
 | `treasury_entries` | Append-only ledger | account, signed amount `Decimal`, currency, `exchangeRateAtPosting`, source type + source id, occurredAt, actor, note, `clientRequestId`. Triggers refuse update/delete. CHECK amount <> 0 |
 | `income_categories`, `income_vouchers` | Manual income | `RV-` sequence; CHECK currency = account currency (via account FK + trigger or app + constraint) |
-| `expense_categories`, `expense_vouchers` | Expenses | `PV-` sequence; status (RECORDED, VOID); wallet, recorded by, void reason; invoice fields |
+| `expense_categories`, `expense_vouchers` | Expenses | `PV-` number (0079); status (RECORDED, VOID); wallet, recorded by, void reason; invoice fields; the payment order — `orderedAt`/`orderedById`, `urgentReason` for art. 35 (0080) |
+| `expense_requests` | Payment-order requests (0080) | category, wallet + currency, amount, payee, description; requested by; the decision written once (ORDERED with its voucher, REJECTED with a reason, WITHDRAWN) |
 | `treasury_transfers` | Transfers, exchanges, handovers | `TR-` sequence; from/to accounts; amounts; rate, official rate, `adjustmentReason`; fee amount; money changer name; review flag + reviewed by/at |
 | `treasury_counts` | Daily count per wallet | expected, counted, difference, reason, counter |
 | `treasury_day_closures` | Closed days | business date, closed by/at, reopen history |
@@ -688,13 +825,33 @@ the CLAUDE.md routing table or the AGENTS.md section map.
   tenant that has moved money (same as `payment_transactions`). **Undecided**, recorded
   in `docs/database.md`.
 
+### 13.1c Decided on the PR #104 review (2026-10-09)
+
+Each decision was taken from the municipal accounting decree's published text and from
+municipal cash-handling practice, and is pinned by
+`treasury-controls.integration.spec.ts`.
+
+| # | Question | Decision | Grounds |
+|---|---|---|---|
+| D1 | A collector's payment reversed after he handed the cash in: which wallet pays? | His custody while it still holds all of it; otherwise the safe of the same currency (§3.4) | Decree 5595/1982 art. 93: a collector pays nothing out. Municipal policies route refunds through the treasury's disbursement, never out of collections |
+| D2 | Who may date a payment before go-live, once the treasury is live? | A finance role only, and the audit row says no wallet was credited (§3.3) | Art. 16 and 98: a receipt is written when the money is taken. The go-live cut-off is the opening count |
+| D3 | May an accountant pay an expense without the head's order? | No: a request for the manager's order; art. 35 urgent payments first, regularised after (§5.1) | Art. 21, 28, 33, 35, 85, 89 |
+| D4 | Must stage 5 exist before a municipality activates the treasury? | No, with D3 in place; until it ships, the one-day statement is the daily register, printed, counted and signed (§7) | Art. 101: the daily register, closed before the next opens |
+| D5 | Which side of go-live is the go-live day itself? | Live, for payments and expenses alike. A document dated that day is placed at the opening entry or after it, never before (§3.3) | Cutover practice: every receipt taken before the opening count is entered before activation, so what is entered for that day afterwards is new cash. Art. 16 and 98: a receipt carries the day the money was taken |
+
+The decree's text was read at <https://www.baladiyat.org/?page_id=6636> (the
+consolidated text with its 1985–1996 amendments). It should be confirmed against the
+Official Gazette edition before any screen quotes an article.
+
 ### 13.2 Not verified
 
-- The legal framework cited in discussion (municipal accounting decree, the
-  four-stage spending procedure, who must authorise spending, the Court of Accounts'
-  invoice rules, attachment thresholds). **[unverified]** — to be confirmed by the
-  municipality's accountant or legal advisor before any UI or doc claims
-  compliance.
+- The Court of Accounts' invoice rules and attachment thresholds, and the exact
+  amended wording of the decree's articles (read from a consolidated transcription,
+  §13.1c). To be confirmed by the municipality's accountant or legal advisor before
+  any UI or doc claims compliance.
+- That the manager (`SUPER_ADMIN`) recording the payment order is how each
+  municipality wants the head's signature reflected (§5.1). The head's own account is
+  «مشاهد فقط», which writes nothing.
 - The exact Arabic terms and printed layouts (سند قبض, حوالة دفع / أمر صرف).
 - The official «قطع الحساب» format.
 - Whether the existing citizen receipt print layout can be reused for vouchers.
@@ -704,10 +861,10 @@ the CLAUDE.md routing table or the AGENTS.md section map.
 
 ### 13.3 Deliberately left for later
 
-Budget lines and «قطع الحساب»; any expense approval step or amount-based thresholds (removed from v1 by
-decision); file attachments (3b); supplier register; payroll; exchange gain/loss;
-denomination breakdown; Whish/bank statement line matching; collector shortage
-write-off; a scheduled job (none planned).
+Budget lines and «قطع الحساب»; amount-based approval thresholds; petty-cash advances
+(decree art. 37–42); file attachments (3b); supplier register; payroll; exchange
+gain/loss; denomination breakdown; Whish/bank statement line matching; collector
+shortage write-off; a scheduled job (none planned).
 
 ### 13.4 Risks
 
@@ -719,10 +876,145 @@ write-off; a scheduled job (none planned).
   and the training notes must say exactly what to do.
 - Accounts with one currency each means several rows per collector. Custody accounts
   are created lazily to avoid dozens of empty ones.
+- The payment order (D3) puts a manager's step in front of every ordinary expense. A
+  manager away for days means the queue waits. The urgent path (art. 35) is the relief
+  the decree gives, and petty-cash advances (art. 37–42) are the next step if that is
+  not enough.
 
 ---
 
 ## 14. Implementation status
+
+### Review fixes (2026-10-09; branch `fix/pr104-review`, not committed)
+
+What the PR #104 review found, fixed together with the decisions in §13.1c. Every item
+is pinned by `treasury-controls.integration.spec.ts`, `invoice-numbering.integration.spec.ts`,
+`query-params.spec.ts` or `route-inventory.spec.ts`. The full suite runs on a throwaway
+Postgres 17.
+
+**Payments into the treasury**
+
+- A payment dated before go-live is a finance role's act, flagged in its audit row (D2).
+- A refund after a handover leaves the safe (D1).
+- The go-live stamp is read `FOR SHARE`.
+- A named collector must be active staff who can hold cash.
+
+**The payment order (D3), migration 0080**
+
+- `expense_requests`, the order stamp on vouchers, and the art. 35 urgent path with
+  regularisation.
+- Routes under `treasury/expenses/requests` and `treasury/expenses/:id/order`.
+- The queue counts on the treasury overview.
+
+**Writes and retries**
+
+- One lock order across callers (`lockAccounts`), which ended the expense/handover
+  deadlock.
+- A retry key bound to its act.
+- The same-key race answered as a replay instead of a 500.
+- Handover legs and reversals carry their rate.
+
+**Separation of duties**
+
+- No one receives their own custody.
+- No expense is paid out of custody.
+
+**Documents (0080)**
+
+- Vouchers, transfers and requests refuse a change to anything but their stamps, and
+  refuse to be deleted.
+- `voidedById` is indexed.
+
+**Reads**
+
+- The statement keeps the latest movements and reads a day as Beirut's day; a one-day
+  statement is the interim register (§7).
+- «جولتي» counts only what reached custody, per wallet.
+- "Receipts today" buckets on Beirut's clock: `payment_transactions.occurredAt` is
+  TIMESTAMPTZ, now annotated in `schema.prisma`.
+- Query values are validated (non-negotiable 6).
+
+**Invoices**
+
+- `numberInvoices` passes one array, so a notice of more than 16,384 bills no longer
+  rolls back.
+- The two bill-raising transactions run on 60-second limits.
+
+**Screens**
+
+- Retry keys survive an unknown outcome.
+- Enter in the inline category box no longer pays the voucher.
+- The fee wizard stays locked once it has issued.
+- «جولتي» reprints the RCP receipt.
+- The statement has a date range and «اليوم».
+- The payment-order screens.
+
+**Found by the adversarial pass over these fixes (same day)**
+
+Each item is pinned by a test that was seen to fail with its fix taken out.
+
+- The first activation of a municipality with no settings row commits that row before
+  its transaction opens, so a payment taken meanwhile waits for the stamp and is
+  credited.
+- Invoice numbering compares its zoneless `createdAt` in UTC; on a database set to
+  Beirut it numbered nothing and every issue rolled back.
+- The go-live day is live by date for payments as for expenses, and nothing dated that
+  day sits before the opening entry (D5).
+- A category edit clears its budget codes by sending both empty; one code alone is
+  refused before it reaches the database's both-or-neither check.
+- An expense or request key is also bound to its band, payee and description. A
+  replayed key whose voucher or handover was cancelled since is refused rather than
+  answered as recorded.
+- Two clerks reversing one receipt together get one reversal and
+  `TRANSACTION_ALREADY_REVERSED`, not a raw unique violation. The check moved under the
+  invoice's lock. It predates PR #104, but it is on the reversal path the treasury now
+  moves money through.
+- A query day must fall in 1900–2100: `to=9999-12-31` had become a range ending in 1909.
+- 0080 runs twice without error, and a decided request is closed like a cancelled
+  voucher.
+- «جولتي» reads the go-live stamp without locking it.
+- The collector's page («من حصّل الجابي») starts at go-live too (`since`), so
+  «collected − held» is what he handed in.
+- An order repeated by the manager who gave it is answered with its voucher.
+
+**Found by the frontend adversarial pass (same day)**
+
+Each double-record was reproduced in a browser harness first, then shown to record
+once after the fix.
+
+- The screens keep a retry key across every failure and edit (§3.1 item 9). Before,
+  a 429 or a corrected typo after a lost answer recorded the payment twice.
+- The counter settle page locks once the payment is recorded, even when the receipt
+  details then fail to load. A throttled read had unlocked it, and the second press
+  took a half payment twice. A retried settlement says it was already recorded
+  (`replayed`).
+- A handover dialog closed and reopened keeps its key (held per wallet by the
+  panel), and re-reads the figures after a doubtful failure.
+- The statement prints as the daily register (§7).
+- The manager can cancel a mistaken handover from its row on the statement
+  («إلغاء التسليم», reason required). The money goes back onto the collector's name;
+  it is refused (`TREASURY_INSUFFICIENT_FUNDS`) once the safe no longer holds it.
+- The expense register is paged on the server, with from/to day filters, and keeps
+  its filters in the URL.
+- Activation and the expense form offer only active wallets; an accountant is not
+  offered «استلام الصندوق» on his own custody.
+
+**Found by the final review workflow (same day; each finding re-checked by a skeptic)**
+
+- A failed background re-read no longer unmounts a write form, and the retry keys
+  live outside the form (per tenant and act), so a key cannot be lost and the money
+  recorded twice. Both double-records were reproduced first.
+- A handover key is not replayed once the custody wallet has moved since the earlier
+  transfer: a later handover of the same amount is a new count, refused as a spent key
+  (`TREASURY_REQUEST_KEY_REUSED`) so the screen renews it.
+- A counter retry whose receipt has since been reversed is refused
+  (`TRANSACTION_ALREADY_REVERSED`), not answered as recorded.
+- The statement reads its page and its sums in one repeatable-read snapshot, so a
+  movement committed during the read cannot shift every running balance.
+- The collector page sums «collected» from his custody's ledger entries, so
+  «collected − held» stays what he handed in after a refund paid from the safe.
+- «طباعة الوصل» prints the whole receipt; the statement cannot be printed while
+  another range loads.
 
 ### Stage 1 — core ledger (built; branch `chore/migration-0073`, not committed)
 
@@ -766,7 +1058,9 @@ Built and tested, exactly as §5 describes, with **no approval step**:
   opposing entry. The currency comes from the wallet, never the request.
 - A rule §5 did not state, added because the arithmetic demands it: **an expense
   may not be dated before `treasuryGoLiveAt`**. That money is already subtracted
-  from the counted opening balance, so recording it would take it out twice.
+  from the counted opening balance, so recording it would take it out twice. The
+  go-live day itself is allowed, and a voucher dated it is never placed before the
+  opening entry (D5, as for payments, §3.3).
 - Tests: 12 unit (dates) and 23 integration on a throwaway Postgres 17 — the
   voucher and the money committing together, a refused outflow leaving no
   voucher, two simultaneous vouchers against one wallet, the retry key, the void

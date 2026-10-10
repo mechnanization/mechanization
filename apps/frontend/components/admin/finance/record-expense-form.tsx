@@ -4,22 +4,30 @@ import { useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Plus } from 'lucide-react';
+import { Plus, Send, Zap } from 'lucide-react';
 import {
   getLabels,
-  createExpenseCategorySchema,
   recordExpenseSchema,
+  requestExpenseSchema,
   municipalToday,
   TREASURY_ADMIN_ROLES,
 } from '@mechanization/shared-schemas';
 import {
-  createExpenseCategory,
+  ApiRequestError,
   recordExpense,
+  requestExpense,
   logApiError,
   type ExpenseCategoryView,
+  type RecordExpenseInput,
+  type RecordExpenseResult,
+  type RequestExpenseInput,
+  type RequestExpenseResult,
   type TreasuryAccountView,
 } from '@/lib/api-client';
 import { formatTypedAmount, parseAmount } from '@/lib/currency';
+import { firstFieldToFix, isExpenseField } from '@/lib/expense-form';
+import { expenseModeFor, paysNow, type ExpenseMode } from '@/lib/expense-order';
+import { heldKey, keyIsSpent, spendKey, type KeyScope } from '@/lib/request-id';
 import { hasRole } from '@/lib/staff-roles';
 import { cn } from '@/lib/utils';
 import { Alert } from '@/components/ui/alert';
@@ -28,7 +36,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { CurrencyInput } from '@/components/ui/currency-input';
 import { DatePicker } from '@/components/ui/date-picker';
-import { Field } from '@/components/ui/field';
+import { ChoiceCard, Field } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -40,6 +48,7 @@ import {
 import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
+import { NewCategoryFields } from './new-category-fields';
 import { TreasuryAmount } from './treasury-amount';
 
 /** The unit segment of the amount field: «ل.ل», «$», or the code itself. */
@@ -65,7 +74,28 @@ function FormSection({ title, children }: { title: string; children: React.React
 }
 
 /**
+ * What the form did, for the page to decide where to go next: the register
+ * after a payment, the queue after a request.
+ */
+export type RecordOutcome = 'PAID' | 'REQUESTED';
+
+/**
  * «سجّل نفقة» — the whole act of paying, as a form on its own page.
+ *
+ * ## Three ways to press the button
+ *
+ * Money leaves a municipal wallet on the payment order of the head of the
+ * municipality (decree 5595/1982, art. 28 and 33), so what the button does
+ * depends on who presses it (`ExpenseMode`):
+ *
+ * - the manager's recording **is** the order, so it pays at once;
+ * - the accountant's default is a **request**. Nothing leaves a wallet, so there
+ *   is no date (the money leaves on the day of the order) and no overdraft
+ *   check — the balance is looked at when the manager orders it, from the
+ *   register's queue;
+ * - the accountant may instead pay **urgently** (art. 35: salaries, routine
+ *   petty expenses, an emergency). It pays at once, says why, and the voucher
+ *   waits for the manager's order.
  *
  * ## Why a page and not the dialog this replaces
  *
@@ -81,8 +111,9 @@ function FormSection({ title, children }: { title: string; children: React.React
  * The one fact that decides whether to press the button is what the wallet
  * holds. A municipal safe runs out, and the server refuses an overdraw — so the
  * summary answers «هل يكفي؟» while the amount is being typed rather than after
- * the submit, and turns red the moment the remainder would go below zero. The
- * server is still the authority: it recomputes this under a row lock (FRM-4).
+ * the submit, and turns red the moment the remainder would go below zero. That
+ * holds for a payment only; a request does not move money. The server is still
+ * the authority: it recomputes this under a row lock (FRM-4).
  *
  * ## Why a category can be created here
  *
@@ -93,9 +124,10 @@ function FormSection({ title, children }: { title: string; children: React.React
  * `ExpensesController` enforces the same.
  *
  * Recording is paying, so this form is the whole act: a second submission is
- * guarded by an in-flight ref *and* an idempotency key the server honours
- * (STA-4), because on a slow counter connection a clerk cannot tell a slow
- * response from a lost one.
+ * guarded by an in-flight ref *and* a retry key the server honours (STA-4),
+ * because on a slow counter connection a clerk cannot tell a slow response from
+ * a lost one. The key follows `keyIsSpent` (`lib/request-id.ts`), and once the
+ * server has answered with a 2xx the form stays locked until the page moves on.
  */
 export function RecordExpenseForm({
   tenant,
@@ -111,11 +143,12 @@ export function RecordExpenseForm({
   token: string;
   locale: string;
   role: string | undefined;
-  /** Where «إلغاء» goes, and where the form returns to once the voucher is written. */
+  /** Where «إلغاء» goes. */
   backHref: string;
   accounts: TreasuryAccountView[];
   categories: ExpenseCategoryView[];
-  onRecorded: () => void;
+  /** The voucher or the request is written; the page decides where to go. */
+  onRecorded: (outcome: RecordOutcome) => void;
 }): React.JSX.Element {
   const t = useTranslations('finance.expenses.form');
   const labels = getLabels(locale);
@@ -123,6 +156,11 @@ export function RecordExpenseForm({
   const toast = useToast();
 
   const today = municipalToday();
+  /** What an accountant chose; the manager has nothing to choose (`expenseModeFor`). */
+  const [choice, setChoice] = useState<Exclude<ExpenseMode, 'ORDER'>>('REQUEST');
+  const mode = expenseModeFor(role, choice);
+  const pays = paysNow(mode);
+
   const [categoryId, setCategoryId] = useState('');
   const [accountId, setAccountId] = useState(accounts[0]?.id ?? '');
   const [amount, setAmount] = useState('');
@@ -130,15 +168,32 @@ export function RecordExpenseForm({
   const [description, setDescription] = useState('');
   const [paidOn, setPaidOn] = useState(today);
   const [adjustmentReason, setAdjustmentReason] = useState('');
+  const [urgentReason, setUrgentReason] = useState('');
   const [invoiceNumber, setInvoiceNumber] = useState('');
   const [hasPhysicalReceipt, setHasPhysicalReceipt] = useState(false);
 
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** The server has answered with a 2xx: the act is recorded, and the form stays locked. */
+  const [done, setDone] = useState(false);
   const inFlight = useRef(false);
-  /** One id per attempt; a refused voucher was never recorded, so the retry is a new act. */
-  const requestId = useRef(crypto.randomUUID());
+  /*
+    The retry keys (STA-4, `keyIsSpent`), held in `lib/request-id.ts` rather
+    than here, so they outlive this form: a background re-read that failed, or
+    a trip to the register and back, unmounts it, and a key that died with it
+    paid a second time. Kept across every failure and every edit: a refusal
+    proves only that this attempt wrote nothing, never that an earlier one with
+    the key did not. An edit made after an answer was lost is caught by the
+    server, which binds the key to the wallet, the amount, the band, the payee
+    and the reason, and refuses it (`TREASURY_REQUEST_KEY_REUSED`) instead of
+    paying a second time. A key is spent only when the server says its act
+    exists.
+
+    One scope per route, because they are two acts: a request is filed, a
+    payment is made, and a retry of the one must never be answered as the other.
+  */
+  const scope = (forMode: ExpenseMode): KeyScope => (forMode === 'REQUEST' ? 'expense:request' : 'expense:pay');
 
   /** Bands added without leaving the form, so the select shows them at once. */
   const [added, setAdded] = useState<ExpenseCategoryView[]>([]);
@@ -146,12 +201,13 @@ export function RecordExpenseForm({
   const canManageCategories = hasRole(TREASURY_ADMIN_ROLES, role);
 
   const account = accounts.find((candidate) => candidate.id === accountId);
-  const backdated = paidOn < today;
+  const backdated = pays && paidOn < today;
 
   const typed = parseAmount(amount);
   const spending = Number.isFinite(typed) && typed > 0 ? typed : 0;
   const remaining = account ? account.balance - spending : 0;
-  const short = Boolean(account) && spending > 0 && remaining < 0;
+  /** A request moves no money, so there is nothing for it to overdraw. */
+  const short = pays && Boolean(account) && spending > 0 && remaining < 0;
 
   /* Deduplicated by id: a band added here is in `added`, and arrives again from the list. */
   const allCategories = useMemo(() => {
@@ -170,38 +226,92 @@ export function RecordExpenseForm({
     [accounts, labels],
   );
 
+  /** What a failure with nothing better to say reads, for the act this press would be. */
+  const failedText = t(mode === 'REQUEST' ? 'errors.requestForm' : 'errors.form');
+
+  /**
+   * Re-reads the treasury figures — the balance the summary checks the amount
+   * against, the register, the queue — but not the band list under the open
+   * select: refetching that list while the select is mounted is what dropped
+   * its value (see the select below).
+   */
+  const refreshFigures = (): Promise<void> =>
+    queryClient.invalidateQueries({
+      queryKey: ['treasury', tenant],
+      predicate: (query) => query.queryKey[2] !== 'expense-categories',
+    });
+
+  /**
+   * The words for a failed press. Already the localised text for the code
+   * (TXT-6), except where this form knows more than the code does: an earlier
+   * press from this form that was recorded and then cancelled is answered with
+   * `EXPENSE_ALREADY_VOID`, which on its own reads as a refusal to cancel.
+   */
+  const failureText = (error: unknown): string => {
+    if (error instanceof ApiRequestError && error.code === 'EXPENSE_ALREADY_VOID') {
+      const number = error.payload.params?.voucherNumber;
+      if (number) return t('errors.earlierVoided', { number: String(number) });
+    }
+    return error instanceof Error && error.message ? error.message : failedText;
+  };
+
+  /** Switching how it is paid keeps everything typed and drops only the complaints about the old way. */
+  const choose = (next: Exclude<ExpenseMode, 'ORDER'>): void => {
+    setChoice(next);
+    setErrors({});
+    setFormError(null);
+  };
+
   const submit = async (event: React.FormEvent): Promise<void> => {
     event.preventDefault();
-    if (inFlight.current) return;
+    if (inFlight.current || done) return;
 
-    const parsed = recordExpenseSchema.safeParse({
+    const shared = {
       categoryId,
       accountId,
       amount: parseAmount(amount),
       payee,
       description,
-      paidOn,
-      adjustmentReason: adjustmentReason.trim() || undefined,
       invoiceNumber: invoiceNumber.trim() || undefined,
       hasPhysicalReceipt,
-      clientRequestId: requestId.current,
-    });
+    };
+    /*
+      The shared schema is the contract, and its messages are Arabic by
+      design, so only the field names come from it and the words from this
+      screen's own messages (TXT-1).
+    */
+    let request: RequestExpenseInput | null = null;
+    let payment: RecordExpenseInput | null = null;
+    let issues: ReadonlyArray<{ path: ReadonlyArray<string | number> }> = [];
+    if (mode === 'REQUEST') {
+      const parsed = requestExpenseSchema.safeParse({ ...shared, clientRequestId: heldKey(tenant, scope('REQUEST')) });
+      if (parsed.success) request = parsed.data;
+      else issues = parsed.error.issues;
+    } else {
+      const parsed = recordExpenseSchema.safeParse({
+        ...shared,
+        paidOn,
+        adjustmentReason: adjustmentReason.trim() || undefined,
+        // The manager's recording is the order; only an accountant paying first says why.
+        urgentReason: mode === 'URGENT' ? urgentReason : undefined,
+        clientRequestId: heldKey(tenant, scope(mode)),
+      });
+      if (parsed.success) payment = parsed.data;
+      else issues = parsed.error.issues;
+    }
 
-    if (!parsed.success) {
-      /*
-        The shared schema is the contract, and its messages are Arabic by
-        design, so only the field names come from it and the words from this
-        screen's own messages (TXT-1).
-      */
+    if (!request && !payment) {
       const next: Record<string, string> = {};
-      for (const issue of parsed.error.issues) {
-        const field = String(issue.path[0] ?? 'form');
-        if (!next[field]) next[field] = t(`errors.${field}`);
+      for (const issue of issues) {
+        const field = String(issue.path[0] ?? '');
+        if (isExpenseField(field) && !next[field]) next[field] = t(`errors.${field}`);
       }
       setErrors(next);
-      setFormError(null);
+      // An issue on nothing the officer can edit would otherwise fail without a word.
+      setFormError(Object.keys(next).length === 0 ? failedText : null);
       // Put the officer on the first thing to fix rather than leaving them to hunt (FRM-2).
-      document.getElementById(`expense-${firstFieldId(next)}`)?.focus();
+      const target = firstFieldToFix(next);
+      if (target) document.getElementById(target)?.focus();
       return;
     }
     // The server asks for a reason on any back-dated voucher; say so before the round trip.
@@ -215,21 +325,61 @@ export function RecordExpenseForm({
     setFormError(null);
     inFlight.current = true;
     setBusy(true);
+    let filed: RequestExpenseResult | null = null;
+    let paid: RecordExpenseResult | null = null;
     try {
-      const result = await recordExpense(tenant, token, parsed.data);
-      await queryClient.invalidateQueries({ queryKey: ['treasury', tenant] });
-      toast.success(t('success', { number: result.voucherNumber }), { description: t('successBody') });
-      onRecorded();
+      if (request) filed = await requestExpense(tenant, token, request);
+      else if (payment) paid = await recordExpense(tenant, token, payment);
     } catch (error) {
       logApiError(error);
-      // Already the localised text for the code (TXT-6); never branch on it.
-      setFormError(error instanceof Error ? error.message : t('errors.form'));
-      requestId.current = crypto.randomUUID();
-    } finally {
+      setFormError(failureText(error));
+      if (keyIsSpent(error)) {
+        // That act exists: the next press is a new one, and the register on screen is behind it.
+        spendKey(tenant, scope(mode));
+        void refreshFigures();
+      }
+      // A failed attempt releases the button; a recorded one never does.
       inFlight.current = false;
       setBusy(false);
+      return;
+    }
+
+    /*
+      Recorded. The form stays locked from here — `inFlight` is never released
+      and `done` disables the button — until the page moves on: a page stays
+      mounted until the next route is ready, and a second press here would be
+      a second act.
+    */
+    setDone(true);
+    setBusy(false);
+    // The act is confirmed: the next one in this scope gets a new key.
+    spendKey(tenant, scope(mode));
+    await refreshFigures();
+    if (filed) {
+      if (filed.replayed) {
+        // An earlier press filed it and its answer was lost: that request stands, as it was first sent.
+        toast.warning(t('requestReplayed'), { description: t('requestReplayedBody') });
+      } else {
+        toast.success(t('requestSent'), { description: t('requestSentBody') });
+      }
+      onRecorded('REQUESTED');
+    } else if (paid) {
+      // What the server says it recorded, not what this screen meant to ask for.
+      if (paid.replayed) {
+        toast.warning(t('replayed', { number: paid.voucherNumber }), { description: t('replayedBody') });
+      } else if (paid.orderStatus === 'AWAITING_ORDER') {
+        toast.success(t('urgentSuccess', { number: paid.voucherNumber }), {
+          description: t('urgentSuccessBody'),
+        });
+      } else {
+        toast.success(t('success', { number: paid.voucherNumber }), { description: t('successBody') });
+      }
+      onRecorded('PAID');
     }
   };
+
+  const submitLabel =
+    mode === 'ORDER' ? t('submit') : mode === 'URGENT' ? t('submitUrgent') : t('submitRequest');
 
   return (
     <form
@@ -238,6 +388,45 @@ export function RecordExpenseForm({
       onSubmit={submit}
     >
       <div className="space-y-6">
+        {mode !== 'ORDER' ? (
+          <FormSection title={t('sections.how')}>
+            <div role="radiogroup" aria-label={t('how.aria')} className="grid gap-3 sm:grid-cols-2">
+              <ChoiceCard
+                name="expense-how"
+                value="REQUEST"
+                checked={choice === 'REQUEST'}
+                onChange={() => choose('REQUEST')}
+                title={t('how.request')}
+                description={t('how.requestBody')}
+                icon={Send}
+              />
+              <ChoiceCard
+                name="expense-how"
+                value="URGENT"
+                checked={choice === 'URGENT'}
+                onChange={() => choose('URGENT')}
+                title={t('how.urgent')}
+                description={t('how.urgentBody')}
+                icon={Zap}
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">{t('how.rule')}</p>
+
+            {mode === 'URGENT' ? (
+              <Field htmlFor="expense-urgent" label={t('how.urgentReason')} error={errors.urgentReason} required>
+                <Textarea
+                  id="expense-urgent"
+                  rows={2}
+                  maxLength={500}
+                  value={urgentReason}
+                  placeholder={t('how.urgentReasonPlaceholder')}
+                  onChange={(event) => setUrgentReason(event.target.value)}
+                />
+              </Field>
+            ) : null}
+          </FormSection>
+        ) : null}
+
         <FormSection title={t('sections.money')}>
           <Field htmlFor="expense-account" label={t('account')} error={errors.accountId} required>
             <Select value={accountId} onValueChange={setAccountId}>
@@ -298,6 +487,7 @@ export function RecordExpenseForm({
               variant="ghost"
               size="sm"
               className="h-auto px-2 py-1 text-xs"
+              disabled={done}
               onClick={() => setAddingCategory(true)}
             >
               <Plus className="size-3.5" aria-hidden />
@@ -316,7 +506,9 @@ export function RecordExpenseForm({
                   No refetch while this form is open: reloading the categories
                   query rebuilt the option list under the select, and Radix
                   answered the churn with an empty selection. The new band is
-                  already in hand, and the list refreshes on the way back.
+                  already in hand, and `NewCategoryFields` has written it into
+                  the cached list, so the register's filter and the next form
+                  have it without a read.
                 */
                 setAdded((current) => [...current, category]);
                 setCategoryId(category.id);
@@ -347,19 +539,27 @@ export function RecordExpenseForm({
           </Field>
         </FormSection>
 
-        <FormSection title={t('sections.paperwork')}>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field htmlFor="expense-date" label={t('paidOn')} error={errors.paidOn} required>
-              <DatePicker
-                id="expense-date"
-                value={paidOn}
-                max={today}
-                locale={locale === 'en' ? 'en' : 'ar'}
-                onChange={(value) => setPaidOn(value || today)}
-              />
-            </Field>
+        {/* A request has no date and no back-dating: the money leaves on the day of the order. */}
+        <FormSection title={pays ? t('sections.paperwork') : t('sections.documents')}>
+          <div className={cn('grid gap-4', pays && 'sm:grid-cols-2')}>
+            {pays ? (
+              <Field htmlFor="expense-date" label={t('paidOn')} error={errors.paidOn} required>
+                <DatePicker
+                  id="expense-date"
+                  value={paidOn}
+                  max={today}
+                  locale={locale === 'en' ? 'en' : 'ar'}
+                  onChange={(value) => setPaidOn(value || today)}
+                />
+              </Field>
+            ) : null}
 
-            <Field htmlFor="expense-invoice" label={t('invoiceNumber')} optionalLabel={t('optional')}>
+            <Field
+              htmlFor="expense-invoice"
+              label={t('invoiceNumber')}
+              error={errors.invoiceNumber}
+              optionalLabel={t('optional')}
+            >
               <Input
                 id="expense-invoice"
                 value={invoiceNumber}
@@ -422,8 +622,8 @@ export function RecordExpenseForm({
         collapsing address bar does not make it taller than the screen.
 
         The actions sit at its foot through `mt-auto`, which on a viewport-tall
-        panel means «سجّل النفقة» is on screen the whole way down the form. The
-        body scrolls inside the panel when the figures and a warning outgrow it.
+        panel means the submit button is on screen the whole way down the form.
+        The body scrolls inside the panel when the figures and a warning outgrow it.
 
         Below `lg` none of this applies: the panel falls under the fields, at its
         natural height, directly above the button it qualifies.
@@ -431,7 +631,7 @@ export function RecordExpenseForm({
       <aside className="lg:sticky lg:top-6 lg:h-[calc(100dvh-6.5rem)]">
         <Card className={cn('flex h-full flex-col', short && 'border-destructive/30')}>
           <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
-            <h2 className="text-sm font-semibold">{t('summaryTitle')}</h2>
+            <h2 className="text-sm font-semibold">{pays ? t('summaryTitle') : t('summaryRequestTitle')}</h2>
             {account ? (
               <SummaryList>
                 <SummaryRow label={t('summaryAccount')}>{account.name}</SummaryRow>
@@ -441,13 +641,18 @@ export function RecordExpenseForm({
                 <SummaryRow label={t('summaryAmount')}>
                   <TreasuryAmount amount={spending} currency={account.currency} locale={locale} />
                 </SummaryRow>
-                <SummaryRow label={t('balanceAfter')} className={cn(short && 'text-destructive')}>
-                  <TreasuryAmount amount={remaining} currency={account.currency} locale={locale} />
-                </SummaryRow>
+                {pays ? (
+                  <SummaryRow label={t('balanceAfter')} className={cn(short && 'text-destructive')}>
+                    <TreasuryAmount amount={remaining} currency={account.currency} locale={locale} />
+                  </SummaryRow>
+                ) : null}
               </SummaryList>
             ) : (
               <p className="text-sm text-muted-foreground">{t('summaryEmpty')}</p>
             )}
+
+            {mode === 'REQUEST' ? <p className="text-xs text-muted-foreground">{t('requestNote')}</p> : null}
+            {mode === 'URGENT' ? <p className="text-xs text-muted-foreground">{t('urgentNote')}</p> : null}
 
             {short ? (
               <Alert variant="destructive" live="status" title={t('shortTitle')}>
@@ -457,8 +662,8 @@ export function RecordExpenseForm({
 
             {/* `mt-auto` pushes the actions to the foot of a panel taller than its content. */}
             <div className="mt-auto flex flex-col gap-2 pt-2">
-              <Button type="submit" disabled={busy}>
-                {busy ? t('saving') : t('submit')}
+              <Button type="submit" disabled={busy || done}>
+                {busy ? (mode === 'REQUEST' ? t('sending') : t('saving')) : submitLabel}
               </Button>
               <Button asChild type="button" variant="outline" disabled={busy}>
                 <Link href={backHref}>{t('cancel')}</Link>
@@ -468,138 +673,5 @@ export function RecordExpenseForm({
         </Card>
       </aside>
     </form>
-  );
-}
-
-/** The id suffix of the first field to fix, so focus lands on it (FRM-2). */
-function firstFieldId(errors: Record<string, string>): string {
-  const order = ['accountId', 'amount', 'categoryId', 'payee', 'description', 'paidOn'];
-  const first = order.find((field) => errors[field]) ?? 'amount';
-  return first === 'accountId' ? 'account' : first === 'categoryId' ? 'category' : first;
-}
-
-/**
- * «بند صرف جديد», without leaving the half-filled voucher.
- *
- * Inline rather than a dialog over the form: a modal here would cover the very
- * fields the officer is deciding the band from, and losing what they typed is
- * the one failure this exists to avoid.
- */
-function NewCategoryFields({
-  tenant,
-  token,
-  existing,
-  onCreated,
-  onCancel,
-}: {
-  tenant: string;
-  token: string;
-  existing: ExpenseCategoryView[];
-  onCreated: (category: ExpenseCategoryView) => void;
-  onCancel: () => void;
-}): React.JSX.Element {
-  const t = useTranslations('finance.expenses.newCategory');
-  const [name, setName] = useState('');
-  const [chapterCode, setChapterCode] = useState('');
-  const [itemCode, setItemCode] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const inFlight = useRef(false);
-
-  /*
-    A warning, not a block: nothing in the database stops two bands sharing a
-    name, and refusing here would claim a guarantee the schema does not make.
-    Duplicate *budget codes* are refused, by a partial unique index.
-  */
-  const duplicate =
-    name.trim().length > 0 &&
-    existing.some(
-      (category) => category.name.trim().localeCompare(name.trim(), undefined, { sensitivity: 'base' }) === 0,
-    );
-
-  const create = async (): Promise<void> => {
-    if (inFlight.current) return;
-    const parsed = createExpenseCategorySchema.safeParse({
-      name,
-      chapterCode: chapterCode.trim() || undefined,
-      itemCode: itemCode.trim() || undefined,
-    });
-    if (!parsed.success) {
-      const field = String(parsed.error.issues[0]?.path[0] ?? 'name');
-      setError(field === 'name' ? t('errors.name') : t('errors.codes'));
-      return;
-    }
-    inFlight.current = true;
-    setBusy(true);
-    setError(null);
-    try {
-      onCreated(await createExpenseCategory(tenant, token, parsed.data));
-    } catch (caught) {
-      logApiError(caught);
-      setError(caught instanceof Error ? caught.message : t('errors.form'));
-    } finally {
-      inFlight.current = false;
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="space-y-3 rounded-lg border border-dashed bg-muted/20 p-3">
-      <p className="text-xs font-medium text-muted-foreground">{t('title')}</p>
-
-      <Field htmlFor="new-category-name" label={t('name')} error={error ?? undefined} required>
-        <Input
-          id="new-category-name"
-          value={name}
-          placeholder={t('namePlaceholder')}
-          invalid={Boolean(error)}
-          onChange={(event) => {
-            setName(event.target.value);
-            setError(null);
-          }}
-        />
-      </Field>
-
-      {duplicate ? (
-        <Alert variant="warning" live="status">
-          {t('duplicate')}
-        </Alert>
-      ) : null}
-
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Field htmlFor="new-category-chapter" label={t('chapterCode')} optionalLabel={t('optional')}>
-          <Input
-            id="new-category-chapter"
-            dir="ltr"
-            inputMode="numeric"
-            value={chapterCode}
-            placeholder={t('codePlaceholder')}
-            onChange={(event) => setChapterCode(event.target.value)}
-          />
-        </Field>
-        <Field htmlFor="new-category-item" label={t('itemCode')} optionalLabel={t('optional')}>
-          <Input
-            id="new-category-item"
-            dir="ltr"
-            inputMode="numeric"
-            value={itemCode}
-            placeholder={t('codePlaceholder')}
-            onChange={(event) => setItemCode(event.target.value)}
-          />
-        </Field>
-      </div>
-      <p className="text-xs text-muted-foreground">{t('codesHint')}</p>
-
-      <div className="flex flex-wrap gap-2">
-        <Button type="button" size="sm" onClick={create} disabled={busy}>
-          {busy ? t('saving') : t('create')}
-        </Button>
-        <Button type="button" size="sm" variant="ghost" onClick={onCancel} disabled={busy}>
-          {/* Drawn for LTR; flipped in Arabic (RTL-3). */}
-          <ArrowLeft className="size-4 rtl:rotate-180" aria-hidden />
-          {t('cancel')}
-        </Button>
-      </div>
-    </div>
   );
 }

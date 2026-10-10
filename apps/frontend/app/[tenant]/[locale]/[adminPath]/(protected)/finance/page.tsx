@@ -1,6 +1,7 @@
 'use client';
 
 import { use, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import {
   Banknote,
@@ -16,11 +17,13 @@ import { getTreasuryOverview, type TreasuryAccountView, type TreasuryOverview } 
 import { formatMoney } from '@/lib/currency';
 import { formatDate } from '@/lib/dates';
 import { hasRole } from '@/lib/staff-roles';
+import { activeAccounts } from '@/lib/treasury-accounts';
 import { totalInCurrency, usableRate } from '@/lib/treasury-convert';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { ActivateTreasuryDialog } from '@/components/admin/finance/activate-treasury-dialog';
 import { CollectorCustodyPanel } from '@/components/admin/finance/collector-custody-panel';
+import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
 import { TreasuryAmount } from '@/components/admin/finance/treasury-amount';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -64,7 +67,9 @@ import { EmptyState, ErrorState } from '@/components/ui/states';
  * and is in no total.
  *
  * The expense register is reached from the sidebar («النفقات»), not from a
- * button here.
+ * button here. The one exception is `OrdersNotice`: when requests or urgent
+ * payments are waiting for the manager's payment order, a line says so and
+ * leads straight to that queue.
  *
  * Reading is `TREASURY_READ_ROLES` (the `/finance` nav row and the server both
  * enforce it); activating is the manager's alone, so the control is shown to
@@ -78,6 +83,7 @@ export default function FinancePage({
   const { tenant, locale, adminPath } = use(params);
   const base = `/${tenant}/${locale}/${adminPath}`;
   const t = useTranslations('finance');
+  const tCommon = useTranslations('common');
   const { token, user } = useStaffSession(tenant, base);
   const canActivate = user ? hasRole(TREASURY_ADMIN_ROLES, user.role) : false;
 
@@ -97,10 +103,17 @@ export default function FinancePage({
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <PageHeader icon={Landmark} title={t('title')} />
 
-      {query.error ? (
+      {/*
+        A failed re-read with the treasury already on screen keeps it there, the
+        custody panel and its open dialog included: swapping the page for an
+        error panel unmounted them mid-handover.
+      */}
+      {query.error && overview ? <RefreshFailedAlert message={query.error} onRetry={query.refetch} /> : null}
+
+      {query.error && !overview ? (
         <Card>
           <CardContent className="p-0">
-            <ErrorState title={query.error} onRetry={query.refetch} />
+            <ErrorState title={query.error} onRetry={query.refetch} retryLabel={tCommon('retry')} />
           </CardContent>
         </Card>
       ) : !overview ? (
@@ -114,6 +127,12 @@ export default function FinancePage({
         />
       ) : (
         <>
+          <OrdersNotice
+            href={`${base}/finance/expenses?view=queue`}
+            requests={overview.pendingExpenseRequests}
+            urgent={overview.vouchersAwaitingOrder}
+          />
+
           <section aria-labelledby="treasury-balances" className="space-y-3">
             <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
               <h2 id="treasury-balances" className="text-base font-semibold">
@@ -129,7 +148,14 @@ export default function FinancePage({
           </section>
 
           <ConvertedTotal overview={overview} locale={locale} />
-          <CollectorCustodyPanel tenant={tenant} base={base} token={token} locale={locale} role={user?.role} />
+          <CollectorCustodyPanel
+            tenant={tenant}
+            base={base}
+            token={token}
+            locale={locale}
+            role={user?.role}
+            actorId={user?.id}
+          />
         </>
       )}
 
@@ -138,11 +164,61 @@ export default function FinancePage({
           tenant={tenant}
           token={token}
           locale={locale}
-          accounts={overview.accounts}
+          // The server asks for the opening balance of every active wallet, and only those.
+          accounts={activeAccounts(overview)}
           onClose={() => setActivating(false)}
         />
       ) : null}
     </div>
+  );
+}
+
+/**
+ * «بانتظار أمر الصرف» — a line to the queue when something is waiting for the
+ * manager's payment order.
+ *
+ * Two debts, counted apart: requests an accountant prepared (nothing has left a
+ * wallet) and urgent payments made before the order (the money has moved,
+ * art. 35). Both lead to the same queue on the expense register, and the notice
+ * is gone when neither has anything in it. Shown to everyone who reads the
+ * treasury: it is a fact about the treasury, and for the manager it is the next
+ * thing to do.
+ */
+function OrdersNotice({
+  href,
+  requests,
+  urgent,
+}: {
+  href: string;
+  requests: number;
+  urgent: number;
+}): React.JSX.Element | null {
+  const t = useTranslations('finance.orders');
+  if (requests <= 0 && urgent <= 0) return null;
+
+  /*
+    Underlined, in the alert's own text colour: `text-primary` on this tint measures
+    4.03:1 in the dark theme, under COL-4's 4.5:1, and the underline is what says
+    «link» without leaning on colour (COL-3).
+  */
+  const link =
+    'inline-flex min-h-6 items-center font-medium underline underline-offset-4 hover:no-underline coarse:min-h-touch';
+  // No live region: the note is in the page when it loads, not news that arrived after (A11Y-5).
+  return (
+    <Alert variant="warning">
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
+        {requests > 0 ? (
+          <Link href={href} className={link}>
+            {t('requests', { count: requests })}
+          </Link>
+        ) : null}
+        {urgent > 0 ? (
+          <Link href={href} className={link}>
+            {t('urgent', { count: urgent })}
+          </Link>
+        ) : null}
+      </div>
+    </Alert>
   );
 }
 
@@ -225,7 +301,8 @@ function WalletStrip({
           icon={WALLET_ICON[account.type] ?? Wallet}
           href={`${base}/finance/accounts/${account.id}`}
           label={marksPrimary && account.isPrimary ? `${account.name} · ${t('primary')}` : account.name}
-          value={<TreasuryAmount amount={account.balance} currency={account.currency} locale={locale} />}
+          // `wrap`: at 360px the unit drops under the figure rather than the figure losing its last digits.
+          value={<TreasuryAmount amount={account.balance} currency={account.currency} locale={locale} wrap />}
           className={account.balance < 0 ? 'text-destructive' : undefined}
         />
       ))}
@@ -247,7 +324,9 @@ function SetupState({
 }): React.JSX.Element {
   const t = useTranslations('finance.setup');
   const labels = getLabels(locale);
-  const hasAccounts = overview.accounts.length > 0;
+  // What activation will ask for: every active wallet, and only those.
+  const accounts = activeAccounts(overview);
+  const hasAccounts = accounts.length > 0;
 
   return (
     <Card>
@@ -262,7 +341,7 @@ function SetupState({
           <div className="border-t px-4 py-3">
             <p className="mb-2 text-xs font-medium text-muted-foreground">{t('accountsHeading')}</p>
             <ul className="flex flex-wrap gap-2">
-              {overview.accounts.map((account) => (
+              {accounts.map((account) => (
                 <li key={account.id}>
                   <Badge variant="soft-muted">
                     {account.name} · {labels.treasuryAccountType[account.type]} · {account.currency}
@@ -322,8 +401,8 @@ function ConvertedTotal({ overview, locale }: { overview: TreasuryOverview; loca
                 {t('totalLabel')}
               </h2>
               {pair && converted ? (
-                <p className="text-2xl font-bold leading-none tracking-tight sm:text-3xl">
-                  <TreasuryAmount amount={converted.total} currency={converted.currency} locale={locale} />
+                <p className="text-2xl font-bold leading-tight sm:text-3xl">
+                  <TreasuryAmount amount={converted.total} currency={converted.currency} locale={locale} wrap />
                 </p>
               ) : null}
             </div>

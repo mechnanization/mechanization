@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { FeatureCollection, Geometry } from 'geojson';
@@ -27,6 +28,7 @@ import {
   formatBuildingCode,
   getLabels,
   isOccupiableLifecycle,
+  isUninhabitableLifecycle,
   isUnsurveyableShell,
   nextBuildingSuffix,
   STRUCTURE_TYPE,
@@ -61,6 +63,7 @@ import {
   loadBuildingDraft,
   saveBuildingDraft,
 } from '@/lib/building-draft';
+import { emptyTopFloors } from '@/lib/floor-count';
 import { haversineDistance, pointInGeometry } from '@/lib/map-geometry';
 import { scrollElementToTop } from '@/lib/scroll-to-top';
 import { offlineStorageAvailable } from '@/lib/offline-db';
@@ -365,7 +368,9 @@ export function BuildingEditor({
 }) {
   const router = useRouter();
   const toast = useToast();
+  const tFloors = useTranslations('floorCount');
   const en = locale === 'en';
+  const tFeeExemption = useTranslations('feeExemption');
   const labels = getLabels(locale);
   const base = `/${tenant}/${locale}/${adminPath}`;
   const editing = Boolean(buildingId);
@@ -1341,6 +1346,19 @@ export function BuildingEditor({
   );
 
   const topFloorAllowed = Math.max(0, (Number(floorsCount) || 1) - 1);
+
+  /*
+    Top rows with nothing in them — the roof counted as a floor, most often
+    (`emptyTopFloors`). Not asked of a building still going up: its top floors
+    are expected to be empty.
+  */
+  const topGap = useMemo(
+    () =>
+      lifecycleStatus === 'PERMITTED' || lifecycleStatus === 'UNDER_CONSTRUCTION'
+        ? null
+        : emptyTopFloors([...gridUnits, ...hiddenUnits], Number(floorsCount) || 1),
+    [gridUnits, hiddenUnits, floorsCount, lifecycleStatus],
+  );
   const bottomFloorAllowed = -Math.max(0, Number(basementsCount) || 0);
 
   /** Confirmed grid units left stranded if the officer narrows the building
@@ -2611,6 +2629,21 @@ export function BuildingEditor({
               </div>
 
               {/*
+                «متضررة من الحرب وغير مسكونة» or «مهدوم» exempts nothing by itself
+                (decision of 2026-10-07): a damage reading «غير صالحة للسكن» does,
+                because it records who judged it, when and on what, and a later
+                reading ends it. Said here, where the label is chosen; «مراجعة
+                الجودة» lists the building until the reading is recorded.
+              */}
+              {isUninhabitableLifecycle(lifecycleStatus) ? (
+                <div role="note" className="flex items-start gap-2 rounded-lg border border-info/30 bg-info/5 p-3.5 text-xs leading-relaxed text-foreground">
+                  {/* The icon carries the tone; the text stays foreground (COL-4: text-info on a tint is 4.11:1). */}
+                  <Info className="mt-0.5 size-4 shrink-0 text-info" aria-hidden />
+                  <p>{tFeeExemption('lifecycleNote')}</p>
+                </div>
+              ) : null}
+
+              {/*
                 A building leaving «قائم ومستعمل» with people still recorded in it.
 
                 The lifecycle is a statement about the structure; nothing reads
@@ -2898,6 +2931,27 @@ export function BuildingEditor({
                 onUnitsChange={requestUnits}
                 unfinished={lifecycleStatus === 'PERMITTED' || lifecycleStatus === 'UNDER_CONSTRUCTION'}
               />
+
+              {topGap ? (
+                <div
+                  role="status"
+                  className="flex flex-col gap-2 rounded-lg border border-warning/40 bg-warning/5 p-2.5 text-xs leading-relaxed sm:flex-row sm:items-start sm:justify-between"
+                >
+                  <p className="flex items-start gap-2">
+                    <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />
+                    <span>{tFloors('emptyTop', { count: topGap.empty })}</span>
+                  </p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="shrink-0"
+                    onClick={() => setFloorsCount(String(topGap.suggested))}
+                  >
+                    {tFloors('trimTo', { count: topGap.suggested })}
+                  </Button>
+                </div>
+              ) : null}
 
               {/*
                 Units the grid has no row for — basements, which it does not

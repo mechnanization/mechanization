@@ -7,6 +7,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { HandCoins, UserRound, Users } from 'lucide-react';
 import { receiveCustodySchema, TREASURY_WORK_ROLES } from '@mechanization/shared-schemas';
 import {
+  ApiRequestError,
   getCollectorCustody,
   logApiError,
   receiveCollectorCustody,
@@ -14,6 +15,7 @@ import {
 } from '@/lib/api-client';
 import { formatMoney, formatTypedAmount, parseAmount } from '@/lib/currency';
 import { formatDateTime } from '@/lib/dates';
+import { heldKey, keyIsSpent, outcomeInDoubt, spendKey } from '@/lib/request-id';
 import { hasRole } from '@/lib/staff-roles';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { Alert } from '@/components/ui/alert';
@@ -30,6 +32,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Field } from '@/components/ui/field';
+import { ErrorState } from '@/components/ui/states';
 import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
@@ -54,6 +57,11 @@ function unitOf(currency: string, locale: string): string {
  * Collectors with nothing are kept on the list rather than disappearing: «سلّم
  * كل شيء» is the answer the accountant needs at the end of a round, and a name
  * that vanishes on settling looks like one that never went out.
+ *
+ * «استلام الصندوق» is offered to the working roles on every row but the
+ * signed-in person's own: a collector never receives his own custody — someone
+ * else counts it (the server refuses with `CUSTODY_SELF_RECEIPT`), and a button
+ * that can only be refused is not offered (CODE-4).
  */
 export function CollectorCustodyPanel({
   tenant,
@@ -61,17 +69,32 @@ export function CollectorCustodyPanel({
   token,
   locale,
   role,
+  actorId,
 }: {
   tenant: string;
   base: string;
   token: string | null;
   locale: string;
   role: string | undefined;
+  /** The signed-in staff member, whose own custody row offers no «استلام». */
+  actorId: string | undefined;
 }): React.JSX.Element | null {
   const t = useTranslations('finance.custody');
+  const tCommon = useTranslations('common');
   const [receiving, setReceiving] = useState<CollectorCustodyView | null>(null);
 
   const canReceive = hasRole(TREASURY_WORK_ROLES, role);
+
+  /*
+    The handover retry keys, one per custody wallet (`custody:<accountId>`),
+    held in `lib/request-id.ts` rather than in the dialog or this panel: the
+    dialog unmounts when it closes, and the panel itself unmounted when a
+    background re-read failed — an accountant who then opened the dialog again
+    was retrying the same handover with a new key, and it was recorded twice.
+    A key is minted the first time a wallet's dialog asks for one, kept across
+    every failure, close and unmount, and dropped only when the server confirms
+    its act exists (`keyIsSpent`, or a 2xx) — the next handover is a new act.
+  */
 
   const query = useStaffQuery({
     queryKey: ['treasury', tenant, 'custody'],
@@ -83,8 +106,8 @@ export function CollectorCustodyPanel({
   });
 
   const rows = query.data ?? [];
-  // Nothing to show before any collector has taken a single payment.
-  if (!query.loading && rows.length === 0) return null;
+  // Nothing to show before any collector has taken a single payment — but a read that failed is not «nothing».
+  if (!query.loading && !query.error && rows.length === 0) return null;
 
   return (
     <>
@@ -104,11 +127,20 @@ export function CollectorCustodyPanel({
         </CardHeader>
         <CardContent className="p-0">
           {query.error ? (
-            <div className="px-4 pt-4 sm:px-5">
-              <Alert variant="warning" live="status">
-                {query.error}
-              </Alert>
-            </div>
+            rows.length === 0 ? (
+              /*
+                Nothing was ever loaded, so there is no list to put a warning above:
+                the panel says it could not be read and offers the retry, rather than
+                vanishing as if no collector were carrying anything (STA-1).
+              */
+              <ErrorState compact title={query.error} onRetry={query.refetch} retryLabel={tCommon('retry')} />
+            ) : (
+              <div className="px-4 pt-4 sm:px-5">
+                <Alert variant="warning" live="status">
+                  {query.error}
+                </Alert>
+              </div>
+            )
           ) : null}
 
           <ul className="divide-y">
@@ -175,8 +207,9 @@ export function CollectorCustodyPanel({
                   />
                 </div>
 
-                <div className="flex w-full items-center gap-2 sm:w-auto">
-                  {canReceive && row.held > 0 ? (
+                {/* Wraps: at 360px on /en/ the two labels do not fit one line, and the second was cut off. */}
+                <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+                  {canReceive && row.held > 0 && row.collectorId !== actorId ? (
                     <Button size="sm" variant="outline" onClick={() => setReceiving(row)}>
                       {t('receive')}
                     </Button>
@@ -209,6 +242,8 @@ export function CollectorCustodyPanel({
           token={token}
           locale={locale}
           custody={receiving}
+          retryKey={() => heldKey(tenant, `custody:${receiving.accountId}`)}
+          onKeySpent={() => spendKey(tenant, `custody:${receiving.accountId}`)}
           onClose={() => setReceiving(null)}
         />
       ) : null}
@@ -227,18 +262,29 @@ export function CollectorCustodyPanel({
  * the ordinary case, and left editable because a partial one is normal too —
  * he may be passing the office, or the rest is in another currency. What is
  * refused is more than he holds.
+ *
+ * The retry key is the panel's (`retryKey`), so closing and reopening the
+ * dialog after a lost answer retries the same handover. A field's own problem
+ * is said under the field; the server's refusal is said for the form, in an
+ * `Alert` above the buttons, because it is about the handover, not the box.
  */
 function ReceiveCustodyDialog({
   tenant,
   token,
   locale,
   custody,
+  retryKey,
+  onKeySpent,
   onClose,
 }: {
   tenant: string;
   token: string;
   locale: string;
   custody: CollectorCustodyView;
+  /** This wallet's retry key, kept by the panel across closes until its act is confirmed. */
+  retryKey: () => string;
+  /** The server confirmed the key's act: the panel drops the key, and the next handover gets a new one. */
+  onKeySpent: () => void;
   onClose: () => void;
 }): React.JSX.Element {
   const t = useTranslations('finance.custody.receiveDialog');
@@ -249,10 +295,11 @@ function ReceiveCustodyDialog({
     formatTypedAmount(String(custody.held), custody.currency === 'LBP' ? 0 : 2),
   );
   const [note, setNote] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [amountError, setAmountError] = useState<string | null>(null);
+  const [noteError, setNoteError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const inFlight = useRef(false);
-  const requestId = useRef(crypto.randomUUID());
 
   const received = parseAmount(amount);
   const remaining = useMemo(
@@ -260,6 +307,23 @@ function ReceiveCustodyDialog({
     [custody.held, received],
   );
   const tooMuch = Number.isFinite(received) && received > custody.held;
+
+  /** Every treasury read: the custody list behind the dialog, and the safe it fills. */
+  const refresh = (): Promise<void> => queryClient.invalidateQueries({ queryKey: ['treasury', tenant] });
+
+  /**
+   * The server's refusal, in words. Already the localised text for the code
+   * (TXT-6), except where the dialog knows more: an earlier press that was
+   * recorded and has since been cancelled is answered `TRANSFER_ALREADY_VOID`,
+   * which on its own reads as a refusal to cancel.
+   */
+  const failureText = (caught: unknown): string => {
+    if (caught instanceof ApiRequestError && caught.code === 'TRANSFER_ALREADY_VOID') {
+      const number = caught.payload.params?.transferNumber;
+      if (number) return t('errors.earlierVoided', { number: String(number) });
+    }
+    return caught instanceof Error && caught.message ? caught.message : t('errors.form');
+  };
 
   const submit = async (event: React.FormEvent): Promise<void> => {
     event.preventDefault();
@@ -269,34 +333,79 @@ function ReceiveCustodyDialog({
       custodyAccountId: custody.accountId,
       amount: received,
       note: note.trim() || undefined,
-      clientRequestId: requestId.current,
+      clientRequestId: retryKey(),
     });
     if (!parsed.success) {
-      setError(t('errors.amount'));
+      /*
+        Each field's own words. The schema's messages are Arabic by design, so
+        only the field and the kind of failure are read from it (TXT-1).
+      */
+      let nextAmount: string | null = null;
+      let nextNote: string | null = null;
+      for (const issue of parsed.error.issues) {
+        const field = issue.path[0];
+        if (field === 'amount' && !nextAmount) {
+          nextAmount =
+            issue.code === 'too_big'
+              ? t('errors.tooLarge')
+              : issue.code === 'custom'
+                ? t('errors.decimals')
+                : t('errors.amount');
+        } else if (field === 'note' && !nextNote) {
+          nextNote = t('errors.note');
+        }
+      }
+      setAmountError(nextAmount);
+      setNoteError(nextNote);
+      // An issue on nothing the accountant can edit would otherwise fail without a word.
+      setFormError(nextAmount || nextNote ? null : t('errors.form'));
+      document.getElementById(nextAmount ? 'custody-amount' : 'custody-note')?.focus();
       return;
     }
     if (tooMuch) {
-      setError(t('errors.tooMuch'));
+      setAmountError(t('errors.tooMuch'));
+      document.getElementById('custody-amount')?.focus();
       return;
     }
 
     inFlight.current = true;
     setBusy(true);
-    setError(null);
+    setAmountError(null);
+    setNoteError(null);
+    setFormError(null);
+    let result: Awaited<ReturnType<typeof receiveCollectorCustody>>;
     try {
-      const result = await receiveCollectorCustody(tenant, token, parsed.data);
-      await queryClient.invalidateQueries({ queryKey: ['treasury', tenant] });
-      toast.success(t('success', { number: result.transferNumber }), { description: t('successBody') });
-      onClose();
+      result = await receiveCollectorCustody(tenant, token, parsed.data);
     } catch (caught) {
       logApiError(caught);
-      // Already the localised text for the code (TXT-6); never branch on it.
-      setError(caught instanceof Error ? caught.message : t('errors.form'));
-      requestId.current = crypto.randomUUID();
-    } finally {
+      setFormError(failureText(caught));
+      if (keyIsSpent(caught)) {
+        // That handover exists: the next press is a new one, and the figures on screen are behind it.
+        onKeySpent();
+        void refresh();
+      } else if (outcomeInDoubt(caught)) {
+        /*
+          It may have been recorded. Re-read, so a reopened dialog prefills
+          what he holds now rather than what he held before the lost answer;
+          the key is kept, so a retry of the same handover is answered from it.
+        */
+        void refresh();
+      }
       inFlight.current = false;
       setBusy(false);
+      return;
     }
+
+    // Recorded: the key is spent and the dialog does not take another press.
+    onKeySpent();
+    await refresh();
+    if (result.replayed) {
+      // An earlier press recorded it and its answer was lost: that handover stands, as first recorded.
+      toast.warning(t('replayed', { number: result.transferNumber }), { description: t('replayedBody') });
+    } else {
+      toast.success(t('success', { number: result.transferNumber }), { description: t('successBody') });
+    }
+    onClose();
   };
 
   return (
@@ -308,17 +417,17 @@ function ReceiveCustodyDialog({
         </DialogHeader>
 
         <form noValidate className="space-y-4" onSubmit={submit}>
-          <Field htmlFor="custody-amount" label={t('amount')} error={error ?? undefined} required>
+          <Field htmlFor="custody-amount" label={t('amount')} error={amountError ?? undefined} required>
             <CurrencyInput
               id="custody-amount"
               unit={unitOf(custody.currency, locale)}
               value={amount}
               placeholder="0"
-              invalid={Boolean(error) || tooMuch}
+              invalid={Boolean(amountError) || tooMuch}
               inputClassName="text-lg font-bold"
               onChange={(raw) => {
                 setAmount(formatTypedAmount(raw, custody.currency === 'LBP' ? 0 : 2));
-                setError(null);
+                setAmountError(null);
               }}
             />
           </Field>
@@ -339,16 +448,30 @@ function ReceiveCustodyDialog({
             </Alert>
           ) : null}
 
-          <Field htmlFor="custody-note" label={t('note')} optionalLabel={t('optional')}>
+          <Field
+            htmlFor="custody-note"
+            label={t('note')}
+            optionalLabel={t('optional')}
+            error={noteError ?? undefined}
+          >
             <Textarea
               id="custody-note"
               rows={2}
               maxLength={500}
               value={note}
               placeholder={t('notePlaceholder')}
-              onChange={(event) => setNote(event.target.value)}
+              onChange={(event) => {
+                setNote(event.target.value);
+                setNoteError(null);
+              }}
             />
           </Field>
+
+          {formError ? (
+            <Alert variant="destructive" live="alert">
+              {formError}
+            </Alert>
+          ) : null}
 
           <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             <Button type="button" variant="outline" onClick={onClose} disabled={busy} className="w-full sm:w-auto">

@@ -4,13 +4,14 @@ import { useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { Ban, ExternalLink, PhoneOff, UsersRound } from 'lucide-react';
-import { duplicateMatchedOnLabels, getLabels } from '@mechanization/shared-schemas';
+import { duplicateMatchedOnLabels } from '@mechanization/shared-schemas';
 import type {
   ContactNumberField,
   DuplicateReviewAnswer,
   DuplicateReviewFindings,
 } from '@/lib/api-client';
 import { Badge } from '@/components/ui/badge';
+import { RecordKindBadge } from '@/components/admin/record-kind-badge';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -117,7 +118,6 @@ export function DuplicateReviewDialog({
   onResolve: (outcome: DuplicateReviewOutcome) => void;
 }) {
   const t = useTranslations('duplicateReview');
-  const labels = getLabels(locale);
   // The same words «سجلات مشابهة» uses beside a candidate — one source for what a match agreed on.
   const agreed = duplicateMatchedOnLabels(locale);
   const duplicates = findings.possibleDuplicates;
@@ -249,9 +249,7 @@ export function DuplicateReviewDialog({
                           {row.referenceNumber}
                         </span>
                       ) : null}
-                      {row.residence === 'NON_RESIDENT_OWNER' ? (
-                        <Badge variant="soft-info">{labels.citizenResidence.NON_RESIDENT_OWNER}</Badge>
-                      ) : null}
+                      <RecordKindBadge residence={row.residence} locale={locale} />
                       <Link
                         href={citizenHref(row.id)}
                         target="_blank"

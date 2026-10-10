@@ -14,6 +14,7 @@ import type { SessionClaims } from '../../application/features/identity/identity
 import { TransfersService } from '../../application/features/treasury/transfers.service';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
+import { optionalInt } from './query-params';
 
 /**
  * المناقلات — money between the municipality's own wallets (docs/finance.md §6).
@@ -68,19 +69,14 @@ export class TransfersController {
     @Param('collectorId', new ParseUUIDPipe()) collectorId: string,
     @Query('limit') limit?: string,
   ) {
-    const parsed = limit === undefined ? undefined : Number.parseInt(limit, 10);
-    return this.transfers.collections(
-      collectorId,
-      parsed !== undefined && Number.isFinite(parsed) ? parsed : undefined,
-    );
+    return this.transfers.collections(collectorId, optionalInt(limit));
   }
 
   /** The transfers recorded, newest first. */
   @Roles(...TREASURY_READ_ROLES)
   @Get()
   list(@Query('limit') limit?: string) {
-    const parsed = limit === undefined ? undefined : Number.parseInt(limit, 10);
-    return this.transfers.list(parsed !== undefined && Number.isFinite(parsed) ? parsed : undefined);
+    return this.transfers.list(optionalInt(limit));
   }
 
   /** «استلام صندوق الجابي»: the counted cash leaves custody and reaches the safe. */

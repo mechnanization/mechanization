@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { hasAtMostTwoDecimals } from './money-amount';
 
 /**
  * النفقات — money leaving a municipal wallet, and the «أمر صرف» that says why.
@@ -12,6 +13,18 @@ import { z } from 'zod';
 /** The state a voucher is in. Derived from `voidedAt`, never stored twice. */
 export const EXPENSE_STATUSES = ['RECORDED', 'VOID'] as const;
 export type ExpenseStatus = (typeof EXPENSE_STATUSES)[number];
+
+/**
+ * Whether a paid voucher carries its payment order (حوالة). `AWAITING_ORDER` is
+ * an urgent payment an accountant made first (decree 5595/1982 art. 35) that
+ * the manager has not yet regularised. Derived from `orderedAt`.
+ */
+export const EXPENSE_ORDER_STATUSES = ['ORDERED', 'AWAITING_ORDER'] as const;
+export type ExpenseOrderStatus = (typeof EXPENSE_ORDER_STATUSES)[number];
+
+/** Where a request for a payment order stands. Derived from its decision, set once. */
+export const EXPENSE_REQUEST_STATUSES = ['PENDING', 'ORDERED', 'REJECTED', 'WITHDRAWN'] as const;
+export type ExpenseRequestStatus = (typeof EXPENSE_REQUEST_STATUSES)[number];
 
 /**
  * The seeded categories' stable handles (migration 0074). A municipality's own
@@ -37,7 +50,7 @@ const paidAmount = z
   .finite('المبلغ رقم')
   .positive('المبلغ أكبر من صفر')
   .max(999_999_999_999, 'المبلغ كبير جداً')
-  .refine((value) => Math.abs(value * 100 - Math.round(value * 100)) < 1e-6, 'خانتان عشريتان على الأكثر');
+  .refine(hasAtMostTwoDecimals, 'خانتان عشريتان على الأكثر');
 
 /** `YYYY-MM-DD` on the municipality's own calendar. */
 const businessDate = z
@@ -71,6 +84,14 @@ export const recordExpenseSchema = z.object({
   adjustmentReason: z.string().trim().max(500, 'السبب طويل جداً').optional(),
   invoiceNumber: z.string().trim().max(100, 'الرقم طويل جداً').optional(),
   hasPhysicalReceipt: z.boolean().optional(),
+  /**
+   * «دفع عاجل»: why an accountant pays before the payment order. Decree
+   * 5595/1982 art. 35 allows salaries, routine petty expenses and urgent ones to
+   * be paid first, the order following; anything else waits for the order
+   * (`requestExpenseSchema`). Ignored for the manager, whose recording is the
+   * order.
+   */
+  urgentReason: z.string().trim().min(5, 'اكتب سبب الدفع العاجل بوضوح').max(500, 'السبب طويل جداً').optional(),
   /** One id per press of the button, so a retry does not pay twice. */
   clientRequestId: z.string().uuid().optional(),
 });
@@ -78,14 +99,55 @@ export const recordExpenseSchema = z.object({
 export type RecordExpenseInput = z.infer<typeof recordExpenseSchema>;
 
 /**
+ * «طلب أمر صرف» — the accountant prepares an expense for the manager's payment
+ * order. Nothing leaves a wallet until the order is issued (decree 5595/1982
+ * art. 28 and 33: the cashier pays an order signed by the head of the
+ * municipality), so there is no date here: the money leaves on the day of the
+ * order.
+ */
+export const requestExpenseSchema = z.object({
+  categoryId: z.string().uuid('اختر بند الصرف'),
+  accountId: z.string().uuid('اختر الحساب الذي سيُدفع منه'),
+  amount: paidAmount,
+  payee: z
+    .string({ required_error: 'اكتب اسم المستفيد' })
+    .trim()
+    .min(2, 'اكتب اسم المستفيد')
+    .max(200, 'الاسم طويل جداً'),
+  description: z
+    .string({ required_error: 'اكتب سبب الصرف' })
+    .trim()
+    .min(3, 'اكتب سبب الصرف')
+    .max(1000, 'الوصف طويل جداً'),
+  invoiceNumber: z.string().trim().max(100, 'الرقم طويل جداً').optional(),
+  hasPhysicalReceipt: z.boolean().optional(),
+  /** One id per request, so a retry does not file it twice. */
+  clientRequestId: z.string().uuid().optional(),
+});
+
+export type RequestExpenseInput = z.infer<typeof requestExpenseSchema>;
+
+/** The manager declines a request, with the reason the accountant will read. */
+export const rejectExpenseRequestSchema = z.object({
+  reason: z
+    .string({ required_error: 'اكتب سبب الرفض' })
+    .trim()
+    .min(5, 'اكتب سبباً واضحاً للرفض')
+    .max(500, 'السبب طويل جداً'),
+});
+
+export type RejectExpenseRequestInput = z.infer<typeof rejectExpenseRequestSchema>;
+
+/**
  * A budget code: the chapter or the article as the municipality's own budget
  * numbers it. Digits and dots, because that is every shape a Lebanese municipal
- * budget line takes, and free text here would make the codes unsortable.
+ * budget line takes, and free text here would make the codes unsortable. Empty means
+ * none, which is how an edit takes a code off a category.
  */
 const budgetCode = z
   .string()
   .trim()
-  .regex(/^[0-9][0-9.]{0,15}$/, 'الرمز أرقام، وقد تفصلها نقاط')
+  .regex(/^(?:[0-9][0-9.]{0,15})?$/, 'الرمز أرقام، وقد تفصلها نقاط')
   .optional();
 
 /** The fields a municipality owns on a category, shared by create and edit. */
@@ -116,10 +178,17 @@ export type CreateExpenseCategoryInput = z.infer<typeof createExpenseCategorySch
 /**
  * Editing one. `active: false` is how a category leaves the list: it is never
  * deleted, because every voucher ever filed under it still points here.
+ *
+ * What an edit leaves out stays as it is, so the two codes travel together: one
+ * sent alone would be checked against nothing here and leave the stored pair
+ * half-entered, which the database refuses with a raw error. Both empty clears them.
  */
 export const updateExpenseCategorySchema = z
   .object({ ...categoryFields, active: z.boolean().optional() })
-  .refine(bothOrNeither, { message: 'اكتب الباب والبند معاً، أو اتركهما فارغين', path: ['itemCode'] });
+  .refine(
+    (value) => (value.chapterCode === undefined) === (value.itemCode === undefined) && bothOrNeither(value),
+    { message: 'اكتب الباب والبند معاً، أو اتركهما فارغين', path: ['itemCode'] },
+  );
 
 export type UpdateExpenseCategoryInput = z.infer<typeof updateExpenseCategorySchema>;
 
@@ -170,6 +239,12 @@ export interface ExpenseVoucherView {
   voidedAt: string | null;
   voidedByName: string | null;
   voidReason: string | null;
+  /** «أمر الصرف»: ordered, or an urgent payment still waiting for its order. */
+  orderStatus: ExpenseOrderStatus;
+  orderedAt: string | null;
+  orderedByName: string | null;
+  /** Why an accountant paid before the order (art. 35); null otherwise. */
+  urgentReason: string | null;
 }
 
 export interface ExpenseListResult {
@@ -186,5 +261,43 @@ export interface RecordExpenseResult {
   balanceAfter: number;
   currency: string;
   /** True when this answers a retry of a voucher already recorded. */
+  replayed: boolean;
+  /** `AWAITING_ORDER` for an accountant's urgent payment; `ORDERED` for the manager's. */
+  orderStatus: ExpenseOrderStatus;
+}
+
+export interface ExpenseRequestView {
+  id: string;
+  status: ExpenseRequestStatus;
+  category: { id: string; name: string };
+  account: { id: string; name: string; currency: string };
+  amount: number;
+  currency: string;
+  payee: string;
+  description: string;
+  invoiceNumber: string | null;
+  hasPhysicalReceipt: boolean;
+  /** Who prepared it — the only accountant who may withdraw it. */
+  requestedById: string;
+  requestedByName: string | null;
+  createdAt: string;
+  decidedAt: string | null;
+  decidedByName: string | null;
+  /** The manager's reason for a rejection; null otherwise. */
+  decisionReason: string | null;
+  /** The voucher the order produced, once ordered. */
+  voucherId: string | null;
+  voucherNumber: string | null;
+}
+
+export interface ExpenseRequestListResult {
+  requests: ExpenseRequestView[];
+  total: number;
+}
+
+export interface RequestExpenseResult {
+  id: string;
+  status: ExpenseRequestStatus;
+  /** True when this answers a retry of a request already filed. */
   replayed: boolean;
 }

@@ -161,7 +161,9 @@ raise it with the user before changing course.
 | D21 | The staff map keeps **two layers with two grouping rules**: the census layer is one pin per *building*, the registration layer one dot per *parcel* | They answer different questions. P5-T5 made the second match the first and drew a dot on top of every building pin; P5-T7 reverted it. Before changing a marker's grouping, check which layer already answers the question. See §10.6. |
 | D22 | **Every raw query writes its schema into its SQL.** Never rely on `search_path`, and never on `current_schema()` | The app reaches Postgres through a transaction pooler, where session settings are not guaranteed to follow a statement. It produced a real 42P01 on a table that exists, once, unreproducibly. Enforced by `raw-sql-is-schema-qualified.spec.ts`. See §10.7. |
 | D24 | A registration may **create** the structure it names, but only on an explicit tap, and never without its units | Not selecting a building is evidence of a control below the fold, not of a new building; and a shell with no units links the card while recording no occupancy, which is §10.1's under-billing arriving through the fix for it. See §11. |
-| D25 | **Habitability is a second answer beside the level**, prefilled where the level decides it (decision, 2026-10-05) | A sound building stripped of its windows and services cannot be lived in, and a cracked one can; folding that into the level broke the donors' scale (D4). Collapse and evacuation lock «غير صالحة»; none and minor damage start at «صالحة» and can change; restricted use must be answered. A reading that says nobody can live there may carry a re-inspection day, and holds the occupant-borne fees on the unit until a later reading says otherwise. See §14. |
+| D25 | **Habitability is a second answer beside the level**, prefilled where the level decides it (decision, 2026-10-05) | A sound building stripped of its windows and services cannot be lived in, and a cracked one can; folding that into the level broke the donors' scale (D4). Collapse and evacuation lock «غير صالحة»; none and minor damage start at «صالحة» and can change; restricted use must be answered. A reading that says nobody can live there may carry a re-inspection day, and exempts the unit from every fee until a later reading says otherwise (owner-borne fees too since 2026-10-07). See §14. |
+| D26 | **عدد الطوابق counts built levels under a roof — the ground floor and a «طابق أعمدة» included, the roof never** (decision, 2026-10-07) | The matrix is a picture of the structure, so a pilotis row stays a row; the roof is not a floor. The audit of 2026-10-07 found 75 buildings whose top row was empty — the roof counted, or the old default of 3 left standing. The editor says what is counted, and warns when the top rows hold nothing (`emptyTopFloors`, never for a house or a building still going up) with a one-click lowering; existing buildings are lowered only by a guarded correction the municipality approves. |
+| D27 | **A duplex is two flats, or one flat on the entrance level with both levels' area** (decision, 2026-10-07) | Both bill correctly with no new code. A unit has one floor, so the one-flat form leaves the upper row undrawn, with a «دوبلكس» note on the flat; the empty-top warning names the duplex as a reason to leave the count alone. |
 | D23 | **Verification builds use their own `distDir`** (`pnpm build:check`) | `next build` and `next dev` share `.next`; building while the dev server runs corrupts it and produces runtime 500s that point at nothing. The frontend twin of the `nest build` EBUSY note in §6. See §10.7. |
 
 ---
@@ -566,8 +568,9 @@ single transaction because of the `@unique` constraint.
 | −1 (basement) | 2 | `B102` |
 
 **Floors are 0-indexed, and `Building.floorsCount` counts what stands above
-ground.** So an N-storey building's top floor is `N-1`, and a قبو is a negative
-floor that does not move the count. Phase 7 (§12.4) makes that a rule rather
+ground** — every built level under a roof, the ground floor and a «طابق أعمدة»
+included, never the roof (D26). So an N-storey building's top floor is `N-1`,
+and a قبو is a negative floor that does not move the count. Phase 7 (§12.4) makes that a rule rather
 than a coincidence: a blueprint may not name a floor above `floorsCount - 1`,
 and where only one of the two numbers is stated the other is derived from it.
 
@@ -1780,7 +1783,10 @@ webpack's own output.
   occupancy whose shares do not sum to 2400 are a detectable conflict and nothing
   detects them. Cheap to add, and the only automated ownership-dispute detector
   the system could have — but it is only meaningful once §10.5 lands, because
-  before إفراز the 2400 is over the whole building rather than the flat.
+  before إفراز the 2400 is over the whole building rather than the flat. Billing
+  does read أسهم now (`0075`, 2026-10-07): a flat billed «حسب الأسهم» divides by
+  the sum of its owners' أسهم, not by 2400, for exactly that reason
+  (`ownerShareOf`).
 - **Still no test runner in `apps/frontend`.** The Phase 5 frontend work ships
   verified by `tsc`, `eslint` and a production build only.
 - **The offline round trip is still unexercised end to end** (P3-T8's note).
@@ -2244,10 +2250,11 @@ first, scoped like the other two worklists (`worklistOwnerFilter`). The matrix
 drawer and page show the reading's re-inspection notice; both read the same
 component (`components/admin/damage/`).
 
-**The fee hold.** `assessCitizen` (`fees.service.ts`) holds an occupant-borne fee on such
-a unit (Law 60/1988 Art. 11 and 79 tie the rental-value and maintenance fees to
-actual occupancy). Owner-borne fees follow the deed and are not held. The count
-travels on the bill (`uninhabitableUnitCount`, «وحدة غير صالحة للسكن لم تُحتسب»),
+**The fee hold.** `assessCitizen` (`fees.service.ts`) charges no fee on such a unit
+(Law 60/1988 Art. 11 and 79 tie the rental-value and maintenance fees to actual
+occupancy). Since 2026-10-07 owner-borne fees are not charged on it either — the
+user decided «not habitable → exempt». The count travels on the bill
+(`uninhabitableUnitCount`, «وحدة غير صالحة للسكن معفاة»),
 in the issue summary (`uninhabitableUnits`) and in the recurring run's log, apart
 from the review hold. Nothing is back-billed: the hold is recomputed on every
 (daily) run, so once a re-inspection reads the unit habitable the next run charges

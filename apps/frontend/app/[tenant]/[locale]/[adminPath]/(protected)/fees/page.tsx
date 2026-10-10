@@ -371,6 +371,8 @@ export default function FeesPage({
       setBusyPaymentId(paymentId);
       try {
         await reviewPayment(tenant, token, paymentId, { confirmed });
+        // Confirming puts the money in a wallet, so the treasury's balances are stale; a refusal moves none.
+        if (confirmed) void queryClient.invalidateQueries({ queryKey: ['treasury', tenant] });
         toast.success(confirmed ? 'تم تأكيد الدفعة بنجاح.' : 'تم رفض الدفعة.');
         void load();
       } catch (caught) {
@@ -380,7 +382,7 @@ export default function FeesPage({
         setBusyPaymentId(null);
       }
     },
-    [tenant, token, busyPaymentId, toast, load],
+    [tenant, token, busyPaymentId, toast, load, queryClient],
   );
 
 
@@ -677,7 +679,7 @@ export default function FeesPage({
                 </Button>
                 <Button asChild size="sm">
                   <Link href={`${base}/fees/new`}>
-                    <Plus className="size-4 rtl:ml-1.5 ltr:mr-1.5" />
+                    <Plus className="me-1.5 size-4" />
                     {locale === 'en' ? 'Issue New Fee' : 'إصدار رسم جديد'}
                   </Link>
                 </Button>

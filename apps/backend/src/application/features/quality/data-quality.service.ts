@@ -6,9 +6,12 @@ import {
   describeUnitStatusConflict,
   duplicateMatchedOnLabels,
   POSSIBLE_DUPLICATE_FLAG_PATH,
+  UNINHABITABLE_LIFECYCLE,
   type DismissFindingInput,
   type FieldFlag,
   type QualityFindingKind,
+  citizenDisplayName,
+  NON_PERSON_RESIDENCE,
 } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
@@ -18,6 +21,8 @@ import { ConflictError, NotFoundError } from '../../common/exceptions';
 import { metresBetween } from '../buildings/buildings.service';
 import { LandlordLinkService } from '../citizens/landlord-link.service';
 import { unitsUnderReview } from '../buildings/unit-status';
+import { currentReadingForUnit, uninhabitableSql } from '../buildings/habitability';
+import { activeOwnerSpells, ownerBillingBlock, type OwnerBillingBlock } from '../buildings/owner-billing';
 import {
   duplicateSignals,
   foldNamePart,
@@ -66,8 +71,8 @@ export interface QualityFinding {
   dismissal: { reason: string; by: string | null; at: string } | null;
 }
 
-const fullName = (row: { firstName: string; middleName?: string | null; lastName: string }) =>
-  [row.firstName, row.middleName, row.lastName].filter(Boolean).join(' ');
+/** A citizen's name as shown — «ورثة المرحوم …» for an estate (0076). */
+const fullName = (row: { firstName: string; middleName?: string | null; lastName: string; residence?: string | null }) => citizenDisplayName(row);
 
 const SEVERITY_ORDER: Record<FindingSeverity, number> = { HIGH: 0, MEDIUM: 1, LOW: 2 };
 
@@ -119,7 +124,7 @@ export class DataQualityService {
   }
 
   /**
-   * The eight scans, and only the eight scans.
+   * The eleven scans, and only the eleven scans.
    *
    * This is the whole cost of «مراجعة الجودة»: `duplicateCitizens` alone reads
    * every active citizen and compares them pairwise inside each name and phone
@@ -150,9 +155,11 @@ export class DataQualityService {
       this.nearDuplicateBuildings(),
       this.unitStatusContradictions(),
       this.unitsHeldForReview(),
+      this.ownerBillingBlocked(),
       this.buildingsWithoutPin(),
       this.unitsWithoutArea(),
       this.unlinkedLandlords(),
+      this.uninhabitedWithoutReading(),
     ]);
 
     const computed = groups
@@ -209,6 +216,8 @@ export class DataQualityService {
   @OnEvent('building.changed')
   @OnEvent('registration.submitted')
   @OnEvent('quality.changed')
+  // A «غير صالحة للسكن» reading clears UNINHABITED_WITHOUT_READING.
+  @OnEvent('damage.recorded')
   async onRegisterChanged(): Promise<void> {
     try {
       await this.invalidate();
@@ -468,7 +477,8 @@ export class DataQualityService {
    */
   private async duplicateCitizens(): Promise<RawFinding[]> {
     const people = await this.db.user.findMany({
-      where: { kind: 'CITIZEN', isActive: true },
+      // People only: an estate or an institution (0076) is never "the same person" as anyone.
+      where: { kind: 'CITIZEN', isActive: true, residence: { notIn: [...NON_PERSON_RESIDENCE] } },
       select: {
         id: true,
         firstName: true,
@@ -587,11 +597,23 @@ export class DataQualityService {
   /** An occupant whose own number is the landlord's number on their card, or their linked landlord's. */
   private async occupantsWithLandlordPhone(): Promise<RawFinding[]> {
     const rows = await this.db.$queryRaw<
-      Array<{ entryId: string; citizenId: string; createdById: string | null; createdAt: Date; landlordName: string | null; field: string }>
+      Array<{
+        entryId: string;
+        citizenId: string;
+        createdById: string | null;
+        createdAt: Date;
+        landlordName: string | null;
+        ownerFirstName: string | null;
+        ownerLastName: string | null;
+        ownerResidence: string | null;
+        field: string;
+      }>
     >`
       -- The officer who filed the card, wherever «دمج ملفين» has since moved it (0061).
       SELECT pe.id AS "entryId", u.id AS "citizenId", COALESCE(fr."createdById", r."createdById") AS "createdById", pe."createdAt",
-             COALESCE(pe."landlordName", l."firstName" || ' ' || l."lastName") AS "landlordName",
+             -- The linked owner's name parts, named in TypeScript (citizenDisplayName) where the card names nobody.
+             pe."landlordName", l."firstName" AS "ownerFirstName", l."lastName" AS "ownerLastName",
+             l.residence::text AS "ownerResidence",
              CASE
                WHEN u.phone IS NOT NULL AND (u.phone = pe."landlordPhone" OR u.phone = l.phone OR u.phone = l.whatsapp) THEN 'phone'
                ELSE 'whatsapp'
@@ -612,19 +634,30 @@ export class DataQualityService {
     `;
     if (rows.length === 0) return [];
     const citizens = await this.citizenLabels(rows.map((row) => row.citizenId));
-    return rows.map((row) => ({
-      kind: 'OCCUPANT_HAS_LANDLORD_PHONE' as const,
-      subjectKey: row.entryId,
-      severity: 'MEDIUM' as const,
-      detail:
-        row.field === 'phone'
-          ? `رقم هاتف الشاغل هو رقم المالك${row.landlordName ? ` (${row.landlordName})` : ''} — قد يكون رقم العائلة المشترك`
-          : `رقم واتساب الشاغل هو رقم المالك${row.landlordName ? ` (${row.landlordName})` : ''} — قد يكون رقم العائلة المشترك`,
-      subjects: [citizens.get(row.citizenId)].filter((subject): subject is FindingSubject => Boolean(subject)),
-      officerIds: row.createdById ? [row.createdById] : [],
-      at: row.createdAt.toISOString(),
-      dismissable: true,
-    }));
+    return rows.map((row) => {
+      // «ورثة المرحوم …» for an estate owner (0076): the card's own words first.
+      const named =
+        row.landlordName ??
+        (row.ownerFirstName && row.ownerLastName
+          ? citizenDisplayName(
+              { firstName: row.ownerFirstName, lastName: row.ownerLastName, residence: row.ownerResidence },
+              { middleName: false },
+            )
+          : null);
+      return {
+        kind: 'OCCUPANT_HAS_LANDLORD_PHONE' as const,
+        subjectKey: row.entryId,
+        severity: 'MEDIUM' as const,
+        detail:
+          row.field === 'phone'
+            ? `رقم هاتف الشاغل هو رقم المالك${named ? ` (${named})` : ''} — قد يكون رقم العائلة المشترك`
+            : `رقم واتساب الشاغل هو رقم المالك${named ? ` (${named})` : ''} — قد يكون رقم العائلة المشترك`,
+        subjects: [citizens.get(row.citizenId)].filter((subject): subject is FindingSubject => Boolean(subject)),
+        officerIds: row.createdById ? [row.createdById] : [],
+        at: row.createdAt.toISOString(),
+        dismissable: true,
+      };
+    });
   }
 
   /** Two pinned structures on one parcel, metres apart — the parcel 56 shape. */
@@ -798,6 +831,120 @@ export class DataQualityService {
     });
   }
 
+  /**
+   * Buildings labelled uninhabited or demolished (`UNINHABITABLE_LIFECYCLE`)
+   * with units somebody is still recorded on and no «غير صالحة للسكن» reading
+   * standing over them — the units billing still charges. The label exempts
+   * nothing (decision of 2026-10-07); a damage reading on the building, or on
+   * each unit, does. Clears itself once the reading is recorded, or the holders
+   * are ended, or the label is corrected.
+   */
+  private async uninhabitedWithoutReading(): Promise<RawFinding[]> {
+    const rows = await this.db.$queryRaw<
+      Array<{
+        id: string;
+        code: string;
+        name: string | null;
+        parcelNumber: string;
+        lifecycleStatus: string;
+        createdById: string | null;
+        updatedAt: Date;
+        billedUnits: number;
+        unitCodes: string[];
+      }>
+    >`
+      SELECT b.id, b.code, b.name, b."parcelNumber", b."lifecycleStatus"::text AS "lifecycleStatus",
+             b."createdById", b."updatedAt",
+             COUNT(u.id)::int AS "billedUnits",
+             ARRAY_AGG(u."unitCode" ORDER BY u.floor, u.sequence) AS "unitCodes"
+        FROM ${this.S}buildings b
+        JOIN ${this.S}units u ON u."buildingId" = b.id
+        LEFT JOIN LATERAL (${currentReadingForUnit(this.S, Prisma.sql`u.id`, Prisma.sql`u."buildingId"`, { answering: true })}) cur ON true
+       WHERE b."lifecycleStatus"::text = ANY(${[...UNINHABITABLE_LIFECYCLE]}::text[])
+         AND u."feeExemption" IS NULL
+         AND EXISTS (
+           -- An archived file is never billed (resolveTargets reads active files only).
+           SELECT 1 FROM ${this.S}unit_occupancies o
+             JOIN ${this.S}users c ON c.id = o."citizenId" AND c."isActive"
+            WHERE o."unitId" = u.id AND o."toDate" IS NULL
+         )
+         AND NOT (cur.id IS NOT NULL AND ${uninhabitableSql(Prisma.sql`cur.level`, Prisma.sql`cur.habitable`)})
+       GROUP BY b.id
+    `;
+    return rows.map((row) => ({
+      kind: 'UNINHABITED_WITHOUT_READING' as const,
+      subjectKey: row.id,
+      severity: 'HIGH' as const,
+      detail: `مصنَّف «${(ar.buildingLifecycle as Record<string, string>)[row.lifecycleStatus] ?? row.lifecycleStatus}» وما زالت ${row.billedUnits} وحدة فيه تُفوتر (${row.unitCodes.slice(0, 6).join('، ')}${row.unitCodes.length > 6 ? '…' : ''}) — سجّل تقييم ضرر «غير صالحة للسكن» على المبنى ليُعفى، أو صحّح وضع المنشأة إن كان مسكوناً`,
+      subjects: [
+        {
+          kind: 'building' as const,
+          id: row.id,
+          label: row.name ? `${row.code} — ${row.name}` : row.code,
+          secondary: `عقار ${row.parcelNumber}`,
+        },
+      ],
+      officerIds: row.createdById ? [row.createdById] : [],
+      at: row.updatedAt.toISOString(),
+      dismissable: true,
+    }));
+  }
+
+  /**
+   * Co-owned flats whose saved «توزيع الرسم على المالكين» billing cannot carry
+   * out (migration 0075) — the early warning for a bill that would otherwise be
+   * the first to say so. «حسب الأسهم» stops every co-owner's bill the day an
+   * owner spell is recorded without أسهم (the drawer's box is optional, and a
+   * registration writes no أسهم at all), and nothing else tells the office.
+   *
+   * The owners are `activeOwnerSpells`, the same read billing makes, and the
+   * verdict is `ownerBillingBlock`, the rule billing applies, so this list and
+   * the refused bills are one list. Fresh without a rescan: an owner-billing
+   * save, an occupancy write and «أرشفة الملف» all emit `building.changed` or
+   * `citizen.changed`, which clear the cache (`onRegisterChanged`).
+   *
+   * Not here: a responsible owner whose own file stopped claiming the flat.
+   * Only `holdingsOf` knows which file claims a flat — the census claim rule
+   * and its four readers — and a set-based copy of it would be a fifth.
+   */
+  private async ownerBillingBlocked(): Promise<RawFinding[]> {
+    const units = await this.db.unit.findMany({
+      where: { ownerBillingMode: { in: ['BY_SHARES', 'RESPONSIBLE_OWNER'] } },
+      select: {
+        id: true,
+        unitCode: true,
+        buildingId: true,
+        ownerBillingMode: true,
+        responsibleOwnerId: true,
+        updatedAt: true,
+        occupancies: activeOwnerSpells({ citizenId: true, shares: true, createdAt: true }),
+      },
+    });
+    const blocked = units.flatMap((unit) => {
+      const block = ownerBillingBlock({
+        mode: unit.ownerBillingMode,
+        responsibleOwnerId: unit.responsibleOwnerId,
+        owners: unit.occupancies.map((spell) => ({ citizenId: spell.citizenId, shares: spell.shares })),
+      });
+      return block ? [{ unit, block }] : [];
+    });
+    if (blocked.length === 0) return [];
+
+    const buildings = await this.db.building.findMany({
+      where: { id: { in: [...new Set(blocked.map(({ unit }) => unit.buildingId))] } },
+      select: { id: true, code: true, name: true, parcelNumber: true },
+    });
+    const byId = new Map(buildings.map((building) => [building.id, building]));
+    return blocked.flatMap(({ unit, block }) => {
+      const building = byId.get(unit.buildingId);
+      if (!building) return [];
+      const at = [unit.updatedAt, ...unit.occupancies.map((spell) => spell.createdAt)].sort(
+        (a, b) => b.getTime() - a.getTime(),
+      )[0]!;
+      return [ownerBillingBlockedFinding({ unitId: unit.id, unitCode: unit.unitCode, at }, block, building)];
+    });
+  }
+
   /** Structures with no entrance — the duplicate prompt cannot measure from them. */
   private async buildingsWithoutPin(): Promise<RawFinding[]> {
     const rows = await this.db.$queryRaw<
@@ -914,7 +1061,7 @@ export class DataQualityService {
   private async citizenLabels(ids: readonly string[]): Promise<Map<string, FindingSubject>> {
     const rows = await this.db.user.findMany({
       where: { id: { in: [...new Set(ids)] } },
-      select: { id: true, firstName: true, middleName: true, lastName: true, referenceNumber: true },
+      select: { id: true, firstName: true, middleName: true, lastName: true, residence: true, referenceNumber: true },
     });
     return new Map(
       rows.map((row) => [
@@ -925,5 +1072,41 @@ export class DataQualityService {
   }
 }
 
-type RawFinding = Omit<QualityFinding, 'officers' | 'dismissal'> & { officerIds: string[] };
+export type RawFinding = Omit<QualityFinding, 'officers' | 'dismissal'> & { officerIds: string[] };
+
+/**
+ * One `OWNER_BILLING_BLOCKED` finding: the flat, what stops its saved method,
+ * and what billing does meanwhile. Keyed by the unit, which is what «الإجراء»
+ * opens. Nobody's filing is at fault — a method saved before an owner was
+ * recorded is ordinary — so no officer is named.
+ */
+export function ownerBillingBlockedFinding(
+  unit: { unitId: string; unitCode: string; at: Date },
+  block: OwnerBillingBlock,
+  building: { id: string; code: string; name: string | null; parcelNumber: string },
+): RawFinding {
+  const detail =
+    block.reason === 'SHARES_MISSING'
+      ? `الوحدة ${unit.unitCode}: يتوزّع رسمها حسب الأسهم، وأسهم بعض مالكيها غير مسجّلة (${block.missing} من ${block.owners}) — فواتير جميع مالكيها مرفوضة حتى تُسجَّل الأسهم أو تُختار طريقة أخرى`
+      : `الوحدة ${unit.unitCode}: المالك المسؤول المختار لم يعد بين مالكيها الحاليين (انتهت ملكيته أو أُرشف ملفه) — يُقسَم رسمها بالتساوي بين مالكيها حتى تُختار طريقة جديدة`;
+  return {
+    kind: 'OWNER_BILLING_BLOCKED',
+    subjectKey: unit.unitId,
+    // Every co-owner's bill refused, against a method the office chose that billing set aside.
+    severity: block.reason === 'SHARES_MISSING' ? 'HIGH' : 'MEDIUM',
+    detail,
+    subjects: [
+      {
+        kind: 'building',
+        id: building.id,
+        label: building.name ? `${building.code} — ${building.name}` : building.code,
+        secondary: `عقار ${building.parcelNumber}`,
+      },
+    ],
+    officerIds: [],
+    at: unit.at.toISOString(),
+    // Closed by recording the أسهم or choosing again; «ليست مشكلة» would hide a refused bill.
+    dismissable: false,
+  };
+}
 

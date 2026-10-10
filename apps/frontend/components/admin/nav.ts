@@ -390,6 +390,19 @@ export const NAV_GROUPS: NavGroup[] = [
         roles: PAYMENT_REVIEW_READ_ROLES,
         keywords: ['تصحيح', 'فاتورة', 'فرق', 'مراجعة', 'corrections', 'bills', 'difference'],
       },
+      /*
+        «المستحق على عقار» — the question asked before a براءة ذمّة: what is
+        still owed on a parcel, whoever's file it is on. Read-only, so every
+        role that reads the ledger may ask it.
+      */
+      {
+        path: '/fees/parcel',
+        label: 'المستحق على عقار',
+        labelEn: 'Owed on a parcel',
+        icon: Landmark,
+        roles: FEE_READ_ROLES,
+        keywords: ['براءة ذمة', 'براءة ذمّة', 'رقم العقار', 'مستحق', 'دين', 'clearance', 'parcel', 'owed'],
+      },
       // Read-only: the ledger above answers "who owes what", this answers
       // "what has been paid". An auditor lives here.
       {

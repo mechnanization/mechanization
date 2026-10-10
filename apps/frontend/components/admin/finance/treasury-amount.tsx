@@ -1,27 +1,43 @@
 import { Money } from '@/components/ui/money';
-import { formatMoney } from '@/lib/currency';
-import { cn } from '@/lib/utils';
 
 /**
  * A treasury figure in its own currency, always in full.
  *
- * ليرة goes through `Money` (PRIM-10) with `exact`: a balance read against a
- * counted safe must never be shortened to «12.5 مليون». Anything else goes
- * through `formatMoney`, which spells dollars the one way the portal does.
+ * Drawn by `Money` with `exact`: a balance read against a counted safe must
+ * never be shortened to «12.5 مليون». Through `Money` rather than a string of
+ * its own, so «ل.ل» sits where it does on every other screen (UX-1) and one
+ * minus sign, U+2212, runs through every treasury table: `Money` isolates the
+ * signed figure left to right, which is what keeps a negative balance's minus
+ * on the left of its digits on an Arabic page.
+ *
+ * `signed` puts «+» on money that came in, for a ledger's movement column.
+ * `wrap` lets the unit drop under the figure in a narrow box — a wallet in the
+ * 360px strip — rather than the figure being cut.
  */
 export function TreasuryAmount({
   amount,
   currency,
   locale,
   className,
+  signed = false,
+  wrap = false,
 }: {
   amount: number;
   currency: string;
   locale: string;
   className?: string;
+  signed?: boolean;
+  wrap?: boolean;
 }): React.JSX.Element {
-  if (currency === 'LBP') return <Money amount={amount} locale={locale} exact className={className} />;
   return (
-    <span className={cn('whitespace-nowrap tabular-nums', className)}>{formatMoney(amount, currency, locale)}</span>
+    <Money
+      amount={amount}
+      currency={currency}
+      locale={locale}
+      exact
+      signed={signed}
+      wrap={wrap}
+      className={className}
+    />
   );
 }

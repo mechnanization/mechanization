@@ -161,6 +161,18 @@ describe('the day the money was taken', () => {
     expect(occurredAtFor('2026-09-28')?.toISOString()).toBe('2026-09-28T12:00:00.000Z');
   });
 
+  it('keeps the real time when the day sent is today on the Beirut calendar', () => {
+    // 01:30 on 3 Oct in Beirut: «today» is the 3rd, not UTC's 2nd.
+    const now = new Date('2026-10-02T22:30:00.000Z');
+    expect(occurredAtFor('2026-10-03', null, now)).toEqual(now);
+  });
+
+  it('never dates a go-live-day payment before the opening entry', () => {
+    const goLiveAt = new Date('2026-10-01T16:00:00.000Z');
+    const now = new Date('2026-10-05T08:00:00.000Z');
+    expect(occurredAtFor('2026-10-01', goLiveAt, now)).toEqual(goLiveAt);
+  });
+
   it('reads «today» on the Beirut calendar, not UTC', () => {
     // 01:30 on 3 Oct in Beirut is 22:30 on 2 Oct UTC.
     expect(municipalToday(new Date('2026-10-02T22:30:00.000Z'))).toBe('2026-10-03');
