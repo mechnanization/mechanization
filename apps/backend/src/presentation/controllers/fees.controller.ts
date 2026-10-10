@@ -4,6 +4,7 @@ import {
   Get,
   Logger,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -12,6 +13,9 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import {
+  BULK_SETTLE_ROLES,
+  bulkSettlePaymentsSchema,
+  type BulkSettlePayments,
   FEE_ADMIN_ROLES,
   FEE_ISSUE_ROLES,
   FEE_READ_ROLES,
@@ -38,6 +42,7 @@ import {
 import { FeesService } from '../../application/features/fees/fees.service';
 import { CorrectionBillsService } from '../../application/features/fees/correction-bills.service';
 import { ParcelDuesService } from '../../application/features/fees/parcel-dues.service';
+import { PaymentSettlementService } from '../../application/features/fees/payment-settlement.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { Public } from '../decorators/public.decorator';
@@ -65,6 +70,7 @@ export class FeesController {
     private readonly fees: FeesService,
     private readonly correctionBills: CorrectionBillsService,
     private readonly parcelDues: ParcelDuesService,
+    private readonly settlements: PaymentSettlementService,
   ) {}
 
   // ───────────────────────────  Settings  ───────────────────────────
@@ -253,6 +259,30 @@ export class FeesController {
       ...body,
       actor: { id: user.sub, role: user.role ?? '' },
     });
+  }
+
+  /**
+   * «تسديد الفواتير المحددة» — several of one citizen's bills in one press,
+   * all of them or none, with one consolidated receipt (docs/finance.md §3.7).
+   *
+   * `BULK_SETTLE_ROLES`, the finance roles only: narrower than the single
+   * settle below, so a collector still settles the same bills one at a time.
+   * Declared before the `payments/:id/...` routes, static path first.
+   */
+  @Roles(...BULK_SETTLE_ROLES)
+  @Post('payments/bulk-settle')
+  async bulkSettle(
+    @Body(new ZodValidationPipe(bulkSettlePaymentsSchema)) body: BulkSettlePayments,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.settlements.settle(body, { id: user.sub, role: user.role ?? '' });
+  }
+
+  /** A consolidated receipt, for a reprint. Readable by whoever reads the fee ledger. */
+  @Roles(...FEE_READ_ROLES)
+  @Get('settlements/:id')
+  async settlement(@Param('id', new ParseUUIDPipe()) id: string) {
+    return this.settlements.get(id);
   }
 
   /**

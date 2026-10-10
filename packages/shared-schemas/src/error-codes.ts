@@ -64,6 +64,20 @@ export const ERROR_CODES = [
   'TRANSACTION_ALREADY_REVERSED',
   'TRANSACTION_IS_REVERSAL',
   'PAYMENT_IDEMPOTENCY_KEY_REUSED',
+  // Several of one citizen's bills settled in one press (docs/finance.md §3.7)
+  'BULK_SETTLE_CITIZEN_MISMATCH',
+  // A selected bill was settled since it was ticked (`params.invoice`: its INV- number, or its title).
+  'BULK_SETTLE_SOME_ALREADY_PAID',
+  // The notes do not cover every selected bill (`params.shortBy`, `params.currency`).
+  'BULK_SETTLE_TENDER_SHORT',
+  // Notes in one currency above what is owed in it (`params.amount`, `params.due`, `params.currency`).
+  'BULK_SETTLE_TENDER_EXCEEDS',
+  // A bill in neither the municipality's currency nor the notes' foreign one (`params.currency`).
+  'BULK_SETTLE_CURRENCY_UNSUPPORTED',
+  'BULK_SETTLE_RATE_NOT_SET',
+  // A retry key already used to settle another set of bills.
+  'BULK_SETTLE_REQUEST_REUSED',
+  'PAYMENT_SETTLEMENT_NOT_FOUND',
   'INVOICE_NOT_FOUND',
   'INVOICE_NOT_OPEN',
   'INVOICE_NOT_CHARGED',

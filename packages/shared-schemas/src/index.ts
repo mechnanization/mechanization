@@ -31,6 +31,7 @@ export * from './treasury.schema';
 export * from './expense.schema';
 export * from './income.schema';
 export * from './transfer.schema';
+export * from './payment-settlement.schema';
 export * from './money-amount';
 export * from './owner-share';
 export * from './citizen-name';

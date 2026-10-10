@@ -2,9 +2,17 @@
 
 import { use, useCallback, useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { REFERENCE_SEND_ROLES, hasRole } from '@/lib/staff-roles';
+import { BULK_SETTLE_ROLES, REFERENCE_SEND_ROLES, hasRole } from '@/lib/staff-roles';
+import {
+  fromAdminPayment,
+  isBulkSettleable,
+  pageSelection,
+  rowBlock,
+} from '@/lib/bulk-settle';
+import { useBulkSelection } from '@/lib/use-bulk-selection';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import type { ColumnDef } from '@tanstack/react-table';
 import {
   Banknote,
@@ -54,6 +62,8 @@ import { useToast } from '@/components/ui/toast';
 import { ChargeCitizenDialog, type ChargeValues } from '@/components/admin/charge-citizen-dialog';
 import { BillTypeFilter } from '@/components/admin/bill-type-select';
 import { PaymentReceipt } from '@/components/admin/payment-receipt';
+import { BillCheckbox } from '@/components/admin/bulk-settle/bill-checkbox';
+import { BulkSettleBar } from '@/components/admin/bulk-settle/bulk-settle-bar';
 import { cn } from '@/lib/utils';
 
 function getTableLabels(locale: string): DataTableLabels {
@@ -197,7 +207,20 @@ export default function FeesPage({
   } | null>(null);
 
   const toast = useToast();
+  const tSelect = useTranslations('bulkSettle.select');
   const canManage = role === 'SUPER_ADMIN';
+  /** «تسديد الفواتير المحددة» — `BULK_SETTLE_ROLES`, as the route's `@Roles`; the server is the enforcement. */
+  const canBulkSettle = hasRole(BULK_SETTLE_ROLES, role);
+  /*
+    The ticked bills, kept whole so the bar's totals survive a page turn; one
+    citizen's at a time (`lib/bulk-settle.ts`). Cleared when a filter changes,
+    because the rows it was ticked from are no longer the ones on screen.
+  */
+  const selection = useBulkSelection();
+  const { clear: clearSelection, reconcile: reconcileSelection } = selection;
+  useEffect(() => {
+    clearSelection();
+  }, [statusFilter, feeTitleFilter, appliedSearch, clearSelection]);
 
   useEffect(() => {
     const session = loadSession(tenant);
@@ -306,6 +329,17 @@ export default function FeesPage({
 
   const items = paymentsQuery.data?.items ?? [];
   const total = paymentsQuery.data?.total ?? 0;
+
+  /*
+    Every read of the register checks the ticked bills against it: one paid or
+    sent for review since it was ticked has lost its box, so it leaves the set
+    rather than staying in the bar with nothing on screen to untick it.
+  */
+  const paymentRows = paymentsQuery.data?.items;
+  useEffect(() => {
+    if (!paymentRows) return;
+    reconcileSelection(paymentRows.map((row) => ({ bill: fromAdminPayment(row), settleable: isBulkSettleable(row) })));
+  }, [paymentRows, reconcileSelection]);
   const summary = contextQuery.data?.summary ?? null;
   const citizens = contextQuery.data?.citizens ?? [];
   const settings = contextQuery.data?.settings ?? null;
@@ -409,8 +443,61 @@ export default function FeesPage({
 
   const labels = getLabels(locale);
 
+  /** This page's bills that may be ticked, and where «تحديد الكل» stands over them. */
+  const eligibleOnPage = useMemo(
+    () => (paymentRows ?? []).filter(isBulkSettleable).map(fromAdminPayment),
+    [paymentRows],
+  );
+  const pageState = pageSelection(selection.bills, eligibleOnPage);
+  const pageBox = useCallback(
+    (id?: string) =>
+      pageState.eligible > 0 ? (
+        <BillCheckbox
+          id={id}
+          subject={{ kind: 'page', allSelected: pageState.allSelected }}
+          checked={pageState.allSelected}
+          blocked={pageState.blocked}
+          onToggle={() => selection.toggleRows(eligibleOnPage)}
+        />
+      ) : null,
+    [pageState.eligible, pageState.allSelected, pageState.blocked, selection, eligibleOnPage],
+  );
+  /** A row's box: only on a bill with something owed that is neither paid nor under review. */
+  const rowBox = useCallback(
+    (payment: AdminPaymentItem) => {
+      if (!isBulkSettleable(payment)) return null;
+      const bill = fromAdminPayment(payment);
+      return (
+        <BillCheckbox
+          subject={{ kind: 'row', title: payment.title, name: payment.citizenName }}
+          checked={selection.bills.some((entry) => entry.id === payment.id)}
+          blocked={rowBlock(selection.bills, bill)}
+          onToggle={() => selection.toggle(bill)}
+        />
+      );
+    },
+    [selection],
+  );
+
   const columns = useMemo<ColumnDef<AdminPaymentItem>[]>(
     () => [
+      /*
+        «تسديد الفواتير المحددة»: a box per settleable bill, «تحديد الكل» in the
+        heading. Hidden from the phone cards, where the box sits in the card's
+        heading beside the name instead (below) — a function header would
+        otherwise make it an action column pinned to the card's footer.
+      */
+      ...(canBulkSettle
+        ? [
+            {
+              id: 'select',
+              header: () => pageBox(),
+              cell: ({ row }) => rowBox(row.original),
+              enableHiding: false,
+              meta: { mobile: 'hide', headerClassName: 'w-12', label: tSelect('page') },
+            } satisfies ColumnDef<AdminPaymentItem>,
+          ]
+        : []),
       {
         accessorKey: 'citizenName',
         header: locale === 'en' ? 'Citizen' : 'المواطن',
@@ -418,6 +505,7 @@ export default function FeesPage({
           const payment = row.original;
           return (
             <div className="flex items-center gap-3">
+              {canBulkSettle ? <span className="inline-flex sm:hidden">{rowBox(payment)}</span> : null}
               <span
                 aria-hidden
                 className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary"
@@ -636,7 +724,7 @@ export default function FeesPage({
         },
       },
     ],
-    [base, canManage, busyPaymentId, openReceipt, handleReview, locale, labels],
+    [base, canManage, busyPaymentId, openReceipt, handleReview, locale, labels, canBulkSettle, pageBox, rowBox, tSelect],
   );
 
   if (!token) return null;
@@ -794,6 +882,15 @@ export default function FeesPage({
         </CardHeader>
 
         <CardContent className="p-6">
+          {/* The phone cards have no heading row, so «تحديد الكل» stands above them. */}
+          {canBulkSettle && pageState.eligible > 0 ? (
+            <div className="mb-3 flex items-center gap-2 sm:hidden">
+              {pageBox('fees-select-page')}
+              <label htmlFor="fees-select-page" className="text-sm">
+                {pageState.allSelected ? tSelect('pageClear') : tSelect('page')}
+              </label>
+            </div>
+          ) : null}
           <DataTable
             columns={columns}
             data={items}
@@ -852,6 +949,19 @@ export default function FeesPage({
         receivedAmount={receipt?.received}
         locale={locale}
       />
+
+      {/* «تسديد الفواتير المحددة» — sticky at the foot while a bill is ticked; a direct child of the root. */}
+      {canBulkSettle ? (
+        <BulkSettleBar
+          tenant={tenant}
+          base={base}
+          token={token}
+          locale={locale}
+          selection={selection}
+          onSettled={() => void load()}
+          onStale={() => void load()}
+        />
+      ) : null}
     </div>
   );
 }

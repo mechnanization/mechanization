@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `fix/pr104-review` (PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; income controls, the salary path and the urgent ceiling), 2026-10-10.
+Last verified against the code: `feat/fees-bulk-settlement` (cut from `develop@b034640`; settling several bills at once, `PaymentLedgerService.recordIn`), 2026-10-10.
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -310,13 +310,34 @@ Data access for new code (decided):
   credential, and an integration test pins the row's exact key set so a field added later fails there
   rather than in a browser.
 - **Document numbers.** `allocateDocumentNumbers` / `allocateDocumentNumber`
-  (`application/common/document-number.ts`) is the only way a number is drawn, for all five books:
-  «INV-2610-0001», «RCP-…», «PV-…», «TR-…», «RV-…». Pass the caller's `tx` and `this.S` — the draw and the
+  (`application/common/document-number.ts`) is the only way a number is drawn, for all six books:
+  «INV-2610-0001», «RCP-…», «PV-…», «TR-…», «RV-…», «BRC-…» (the consolidated receipt, 0085). Pass the caller's `tx` and `this.S` — the draw and the
   document must share a transaction, and an unqualified name would resolve through the pooled
   connection's `search_path` into another municipality's counter. Bulk callers take a block sized to
   what was actually inserted: `FeesService.numberInvoices` numbers after `createMany` because
   `skipDuplicates` means a block reserved beforehand would burn numbers on rows that were never
   written. Details and trade-offs: migration 0079 and docs/database.md.
+- **Settling several bills at once.** `PaymentSettlementService` (`fees/payment-settlement.service.ts`,
+  its own service because `FeesService` is a god file to split), routes on `FeesController`:
+  `POST fees/payments/bulk-settle` (`BULK_SETTLE_ROLES`, `bulkSettlePaymentsSchema`) and
+  `GET fees/settlements/:id` (`FEE_READ_ROLES`, the reprint). Design: [docs/finance.md](../../docs/finance.md) §3.7.
+  - One `runInTenantTransaction`, in this lock order: the retry key's advisory lock
+    (`<schema>:bulk-settle:<key>`), every bill `FOR UPDATE` in id order
+    (`PaymentLedgerService.lockInvoices`), the settings row `FOR SHARE`, the «BRC-» number, the
+    `payment_settlements` row, then each bill oldest first through `PaymentLedgerService.recordIn` —
+    `record`'s body in the caller's transaction (`record` itself still opens its own, tracked debt).
+    So a single payment and a settlement take the bill, the counter, the settings and the wallets in
+    the same order.
+  - How the notes are spread is `planBulkSettlement` in `@mechanization/shared-schemas`, run by the
+    dialog for its preview and by the service under the locks; its refusals become `ValidationError`s.
+  - The retry key is required and lives on the settlement (`payment_transactions.clientRequestId` is
+    unique per row). A replay is bound to citizen, method and the set of bills
+    (`BULK_SETTLE_REQUEST_REUSED`); one of whose bills was reversed since is `TRANSACTION_ALREADY_REVERSED`;
+    a unique violation on the key is answered as a replay (`retry-key.ts`).
+  - Audit: each bill's own `PAYMENT_CONFIRMED` row (with `settlementNumber`), plus one
+    `PAYMENT_BULK_SETTLED` row for the set, filed under `PaymentSettlement`. Ids and figures, no names.
+  - The receipt names the citizen with father's name and phone and never carries a رقم مرجعي;
+    `payment-settlement.integration.spec.ts` pins the citizen block's key set.
 - **The collector's own round.** `GET custody/mine` (`TransfersService.myRound`) is the one treasury
   route outside `TREASURY_*`: `WORKING_STAFF_ROLES`, scoped by `user.sub` with no id in the path, the
   same shape as `inspector/me/profile`.
@@ -406,7 +427,7 @@ Every state change MUST leave an `audit_log_entries` row, in one of two tiers
 ([docs/security.md](../../docs/security.md#data-integrity-and-transactions)):
 
 1. **Tier 1, inside the transaction.** Payments (declarations, confirmations, refusals, counter and Whish
-   settlements), payment reversals, activating the treasury, recording and cancelling an expense,
+   settlements, and a settlement of several bills: one row per bill and one for the set), payment reversals, activating the treasury, recording and cancelling an expense,
    recording and cancelling an income voucher, receiving a collector's custody and cancelling a transfer, corrections, ownership changes (ending an ownership, making, updating
    or ending an owner link, a merge or its undo), ending a tenancy, review decisions (approving or returning
    a record, completing a quality check) and citizen status changes (archive and restore; a citizen file
@@ -493,7 +514,7 @@ points at does not exist. `src/scripts/reset-2fa.ts` has no script entry and MUS
 
 ## Tests
 
-- Jest with ts-jest (`jest.config.js`: `rootDir` `src`, `*.spec.ts` beside the source): 136 spec files, 36 of them `*.integration.spec.ts` (counted on disk 2026-10-10, mid-merge of `fix/expense-retry-key-race`).
+- Jest with ts-jest (`jest.config.js`: `rootDir` `src`, `*.spec.ts` beside the source): 138 spec files, 37 of them `*.integration.spec.ts` (counted on disk 2026-10-10 on `feat/fees-bulk-settlement`).
 - Integration specs run only when `TEST_DATABASE_URL` is set (`describeIfDb`) and skip silently otherwise.
   They `DROP SCHEMA … CASCADE` and rebuild fixed `tenant_*_spec` schemas on whatever database it names,
   and nothing checks the target. Point it ONLY at a throwaway Postgres 17 container (migration `0044`

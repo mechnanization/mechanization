@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية الذكية)
 
-Last verified against the code: `fix/pr104-review` (PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; the salary path and the urgent ceiling), 2026-10-10.
+Last verified against the code: `feat/fees-bulk-settlement` (cut from `develop@b034640`; settling several bills at once), 2026-10-10.
 
 A multi-tenant municipal platform for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastral map, municipal fee billing (رسوم القيمة التأجيرية
@@ -41,6 +41,13 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
   - A cadastral map explorer with parcel numbering and sector zones.
   - CSV export with formula-injection-safe cells.
   - An append-only audit log of staff actions.
+  - **تسديد الفواتير المحددة** (accountant and manager): tick several unpaid bills of one citizen —
+    on «الرسوم» or on the citizen's file — and settle them in one act, in cash (ليرة and dollars at the
+    municipality's rate, with the change worked out and checked against the safe), through a
+    collector, or by Whish. Every bill is paid or none is. Each bill keeps its own receipt, and the
+    citizen gets one «وصل قبض بلدي مجمّع» numbered «BRC-2610-0001» listing them all, to print,
+    download as PDF or send over WhatsApp. A bill can still be settled on its own, and a collector
+    settles one bill at a time.
   - **The treasury (الخزينة)**: live balances of the municipality's cash safe and Whish account in
     ليرة and dollars, a statement for each, and their total at the municipality's rate. A citizen payment credits
     the right wallet automatically. `SUPER_ADMIN` activates it once by entering the counted opening
@@ -98,8 +105,8 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
     receipts — «يجمع اليوم», «لم يخرج اليوم», «سلّم كل شيء» — and the day's count and takings.
   - **ترقيم المستندات**: every document the municipality issues carries its book, the month it was
     issued in and a counter that restarts each month — «INV-2610-0001» for a bill, «RCP-2610-0001»
-    for the receipt, «PV-» for an expense voucher, «RV-» for an income voucher and «TR-» for a
-    transfer. A number read over the phone says which book it came from. Documents issued before
+    for the receipt, «PV-» for an expense voucher, «RV-» for an income voucher, «TR-» for a
+    transfer and «BRC-» for a consolidated receipt of several bills. A number read over the phone says which book it came from. Documents issued before
     the change keep the numbers already printed on them; bills raised before it stay without one,
     because a number minted today for a document issued last year would be a fiction.
   - **جولتي**: the collector's own screen, on his own phone. What is in his pocket, then every door

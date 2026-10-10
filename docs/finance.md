@@ -1,12 +1,12 @@
 # Finance (الخزينة والمالية) — design draft
 
-Status: **DESIGN, with stages 1, 2 and 3 built, and of stage 4 the collector handover, the accountant’s collector panel and «جولتي» (see section 14).** It records the design
+Status: **DESIGN, with stages 1, 2 and 3 built, and of stage 4 the collector handover, the accountant’s collector panel and «جولتي» (see section 14); settling several bills at once (§3.7) built on `feat/fees-bulk-settlement`.** It records the design
 agreed in discussion, 2026-10-06. Stage 5 and the rest of stage 4 are not built,
 and every table, column, enum value and error code for them is a *proposal*
 until its migration exists (CLAUDE.md: never invent names; grep first). The
 built stages' names are real: they are in migrations `0073`, `0074`, `0078`,
-`0079`, `0080`, `0081` and `0083` and in the `treasury`, `expense`, `transfer` and `income`
-contracts of `packages/shared-schemas`.
+`0079`, `0080`, `0081`, `0083` and `0085` and in the `treasury`, `expense`, `transfer`, `income`
+and `payment-settlement` contracts of `packages/shared-schemas`.
 Where the code was read, the file is cited. Where a claim could not be verified, it
 is marked **[unverified]**. Where a choice was assumed and not explicitly confirmed,
 it is marked **[assumed]**.
@@ -329,6 +329,51 @@ from) are settled in the integration tests (see 12.2).
   rate used. Each ledger entry always keeps its own original currency, amount and
   `exchangeRateAtPosting`, so changing the rate later never rewrites history.
   Official LBP reports use each entry's own stored rate, not today's.
+
+### 3.7 Settling several bills at once — «تسديد الفواتير المحددة» (built 2026-10-10)
+
+From the owner's phase-4 brief (branch `feat/fees-bulk-settlement`). A cashier ticks several unpaid
+bills of **one** citizen, on «الرسوم» or on the citizen's file, and settles them in one press.
+Decided with the owner on 2026-10-10: notes that do not cover every selected bill are **refused**
+(no part-payment of the last one), and each bill keeps its own «RCP-» receipt under a group record.
+
+- **All or nothing.** `PaymentSettlementService.settle` runs one `runInTenantTransaction`: the retry
+  key's advisory lock, every bill `FOR UPDATE` in id order (`PaymentLedgerService.lockInvoices`), the
+  settings row `FOR SHARE`, the «BRC-» number, the `payment_settlements` row (0085), then each bill,
+  oldest first, through `PaymentLedgerService.recordIn` — the code a single counter payment runs, with
+  its receipt number, wallet entries (`creditPayment`) and Tier 1 audit row. A refusal on any bill, the
+  change the safe cannot cover included (`TREASURY_INSUFFICIENT_FUNDS`), rolls back every bill.
+- **One citizen.** A bill of anyone else is refused (`BULK_SETTLE_CITIZEN_MISMATCH`); a bill settled
+  since it was ticked is refused by name (`BULK_SETTLE_SOME_ALREADY_PAID`, `params.invoice`).
+- **The notes** (`planBulkSettlement`, shared by the dialog and the server; the server's run, under the
+  locks, is the one recorded). WHISH_MONEY and COLLECTOR arrive as one sum per bill in its currency. CASH
+  takes ليرة and the second currency at the **official rate only** (no override, no back-dating here —
+  both stay single-bill acts):
+  1. Bills in the second currency are paid with that currency's notes at face value; too few is
+     `BULK_SETTLE_TENDER_SHORT`.
+  2. Notes of the second currency left over go to the ليرة bills at the official rate
+     (`BULK_SETTLE_RATE_NOT_SET` without one). ليرة above what the ليرة bills owe is refused
+     (`BULK_SETTLE_TENDER_EXCEEDS`), as on a single bill: change comes only from a foreign note.
+  3. Those foreign notes all go on **one** ledger row, the newest ليرة bill, with its change; every other
+     bill is a plain sum. Splitting a note across bills cannot keep each whole to the cent ($20 for
+     900,000 + 890,000 at 89,500 is $10.06 + $9.94, and the second comes out 370 ل.ل short). When the ليرة
+     notes do not cover the older bills, that row's change pays them, as a clerk does it by hand. Every
+     wallet still moves by what physically changed hands (+ليرة in, +dollars, −change), and the safe is
+     judged on that net, so the check is "the safe plus the ليرة handed in covers the change".
+  The settlement row keeps the notes as handed over and the change handed back; the rows' own change can
+  be larger than the settlement's when step 3 recycles it — the net per wallet is the same.
+- **Retry.** `clientRequestId` is required and lives on the settlement, not on the rows (unique per row).
+  It is bound to its act (citizen, method, the set of bills): another set is `BULK_SETTLE_REQUEST_REUSED`;
+  a settlement one of whose bills was reversed since is `TRANSACTION_ALREADY_REVERSED`.
+- **Correcting.** A bill of a settlement is reversed on its own, through the ledger, like any receipt;
+  the consolidated receipt then shows it struck through. The settlement row never changes (append-only).
+- **Who.** `BULK_SETTLE_ROLES` (manager and accountant) settle; `FEE_READ_ROLES` reprint
+  (`GET fees/settlements/:id`). A collector still settles the same bills one at a time.
+- **The receipt** «وصل قبض بلدي مجمّع»: the BRC number, the citizen's name, father's name and phone —
+  **never the رقم مرجعي** (a sign-in credential) — each bill with its INV- and RCP- numbers, parcel and
+  unit, period and amount, totals per currency, the notes, the rate and the change, two signatures, and a
+  QR code of the BRC number only (assumption 13.1.3). Printed A4, downloaded as PDF, sent on WhatsApp.
+  **Not built:** a thermal (80 mm) layout.
 
 ---
 

@@ -33,6 +33,7 @@ import { FeesService } from './features/fees/fees.service';
 import { CorrectionBillsService } from './features/fees/correction-bills.service';
 import { ParcelDuesService } from './features/fees/parcel-dues.service';
 import { PaymentLedgerService } from './features/fees/payment-ledger.service';
+import { PaymentSettlementService } from './features/fees/payment-settlement.service';
 import { TreasuryLedgerService } from './features/treasury/treasury-ledger.service';
 import { TreasuryService } from './features/treasury/treasury.service';
 import { ExpensesService } from './features/treasury/expenses.service';
@@ -81,6 +82,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
     CorrectionBillsService,
     ParcelDuesService,
     PaymentLedgerService,
+    PaymentSettlementService,
     TreasuryLedgerService,
     TreasuryService,
     ExpensesService,
@@ -124,6 +126,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
     CorrectionBillsService,
     ParcelDuesService,
     PaymentLedgerService,
+    PaymentSettlementService,
     TreasuryLedgerService,
     TreasuryService,
     ExpensesService,

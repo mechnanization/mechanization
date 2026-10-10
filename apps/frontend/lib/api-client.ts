@@ -46,6 +46,8 @@ import type {
   SetOwnerBillingInput,
   SetUnitFeeExemptionInput,
   SettlePayment,
+  BulkSettlePayments,
+  SettlementReceipt,
   BuildingLifecycle,
   StructureType,
   SurveyStatus,
@@ -5485,12 +5487,16 @@ export function openByReference(tenant: string, referenceNumber: string) {
 /** One invoice as the admin ledger shows it — who owes it, and where it stands. */
 export interface AdminPaymentItem {
   id: string;
+  /** «INV-2610-0001», or null on a bill raised before migration 0079. */
+  invoiceNumber: string | null;
   title: string;
   amount: number;
   paidAmount: number;
   remaining: number;
   currency: string;
   dueDate: string;
+  /** When the bill was raised — the tie-break of «oldest first» in a bulk settlement (`bulkSettlementOrder`). */
+  createdAt: string;
   paymentStatus: string;
   paymentMethod: string | null;
   whishTransactionRef: string | null;
@@ -5670,6 +5676,31 @@ export async function settlePayment(
   );
   invalidateRequests(`fee-summary:${tenant}`);
   return result;
+}
+
+export type { BulkSettlePayments, SettlementReceipt, SettlementReceiptItem } from '@mechanization/shared-schemas';
+
+/**
+ * «تسديد الفواتير المحددة» — several of one citizen's bills settled in one
+ * press, all or nothing (docs/finance.md §3.7). Each bill gets its own «RCP-»
+ * receipt; the answer is the consolidated receipt, «BRC-…», with `replayed`
+ * when the retry key (`clientRequestId`) answers with a settlement an earlier
+ * attempt recorded. The body is the shared schema's, not re-declared here.
+ */
+export async function bulkSettlePayments(tenant: string, token: string, input: BulkSettlePayments) {
+  const result = await apiFetch<SettlementReceipt>(tenant, '/fees/payments/bulk-settle', {
+    token,
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+  // As `settlePayment`: the fee summary the fees screen caches counts these bills as unpaid.
+  invalidateRequests(`fee-summary:${tenant}`);
+  return result;
+}
+
+/** One consolidated receipt, for a reprint — what `bulkSettlePayments` answered, read again. */
+export function getPaymentSettlement(tenant: string, token: string, id: string, signal?: AbortSignal) {
+  return apiFetch<SettlementReceipt>(tenant, `/fees/settlements/${encodeURIComponent(id)}`, { token, signal });
 }
 
 /**

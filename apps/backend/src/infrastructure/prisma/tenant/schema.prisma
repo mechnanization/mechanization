@@ -259,6 +259,11 @@ model User {
   collectedPayments     CitizenPayment[]     @relation("PaymentCollectedBy")
   collectedTransactions PaymentTransaction[] @relation("TransactionCollectedBy")
   recordedTransactions  PaymentTransaction[] @relation("TransactionRecordedBy")
+  /// Settlements of several bills at once (0085): as the citizen who paid, the
+  /// collector who took the money, or the clerk who recorded it.
+  paymentSettlements          PaymentSettlement[] @relation("SettlementCitizen")
+  collectedPaymentSettlements PaymentSettlement[] @relation("SettlementCollectedBy")
+  recordedPaymentSettlements  PaymentSettlement[] @relation("SettlementRecordedBy")
   targetedFeeNotices    FeeNotice[]          @relation("FeeTargetCitizen")
   issuedFeeNotices      FeeNotice[]          @relation("FeeIssuedBy")
   whishCheckouts        WhishCheckout[]      @relation("WhishCheckoutCitizen")
@@ -2241,6 +2246,12 @@ model PaymentTransaction {
   reversalOf   PaymentTransaction? @relation("Reversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
   reversedBy   PaymentTransaction? @relation("Reversal")
 
+  /// The settlement this row was taken in, when one press settled several of
+  /// the citizen's bills (0085). NULL on a bill settled on its own. Written at
+  /// insert — the table refuses UPDATE — so the settlement row comes first.
+  settlementId String?            @db.Uuid
+  settlement   PaymentSettlement? @relation(fields: [settlementId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   note String?
 
   /// When the money moved, which is not always when the row was written: a
@@ -2256,7 +2267,56 @@ model PaymentTransaction {
   @@index([collectedById, occurredAt])
   /// What the municipality took today, across every collector and clerk.
   @@index([occurredAt])
+  /// The rows of one settlement — what the consolidated receipt reprints.
+  @@index([settlementId])
   @@map("payment_transactions")
+}
+
+/// «وصل قبض بلدي مجمّع» — one press that settled several of one citizen's
+/// bills (0085, docs/finance.md §3.7). Each bill still has its own ledger row
+/// and «RCP-» number; this row holds what belongs to the whole set: the master
+/// number, the notes handed over, the change, and the press's retry key.
+/// Append-only: UPDATE and DELETE are refused by triggers.
+model PaymentSettlement {
+  id     String @id @default(uuid()) @db.Uuid
+  /// «BRC-2610-0001», drawn from `document_counters` as kind BULK_RECEIPT.
+  number String @unique
+
+  citizenId String @db.Uuid
+  citizen   User   @relation("SettlementCitizen", fields: [citizenId], references: [id], onDelete: Restrict)
+
+  method        PaymentMethod
+  /// The محصّل, on COLLECTOR only (CHECK).
+  collectedById String?       @db.Uuid
+  collectedBy   User?         @relation("SettlementCollectedBy", fields: [collectedById], references: [id], onDelete: Restrict)
+  /// The Whish transfer's number, on WHISH_MONEY only (CHECK).
+  externalRef   String?
+
+  /// The notes handed over, on CASH only (CHECK): the municipality's own
+  /// currency, then the second one with the official rate (base currency per
+  /// one unit) it was taken at.
+  tenderedLocal           Decimal? @db.Decimal(14, 2)
+  tenderedForeign         Decimal? @db.Decimal(14, 2)
+  tenderedForeignCurrency String?
+  exchangeRate            Decimal? @db.Decimal(18, 4)
+  /// Handed back, in the municipality's own currency. Equals the sum of the
+  /// change on the settlement's ledger rows.
+  changeGiven             Decimal? @db.Decimal(14, 2)
+
+  recordedById String? @db.Uuid
+  recordedBy   User?   @relation("SettlementRecordedBy", fields: [recordedById], references: [id], onDelete: Restrict)
+  /// One id per press, so a retry answers with this settlement.
+  clientRequestId String @unique @db.Uuid
+
+  occurredAt DateTime @default(now()) @db.Timestamptz(6)
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+
+  transactions PaymentTransaction[]
+
+  @@index([citizenId, occurredAt(sort: Desc)])
+  @@index([collectedById])
+  @@index([recordedById])
+  @@map("payment_settlements")
 }
 
 enum BloodType {
