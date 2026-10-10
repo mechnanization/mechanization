@@ -26,6 +26,40 @@ export function municipalToday(now: Date = new Date()): string {
   }).format(now);
 }
 
+/**
+ * The instant a municipal day (`YYYY-MM-DD`) begins on the municipality's clock.
+ *
+ * Beirut is UTC+2 in winter and UTC+3 in summer, so the offset is read for the
+ * day itself rather than assumed: start from UTC midnight of that date, ask what
+ * the municipal clock reads then, and step back by the difference — twice,
+ * which also settles a day whose offset changes during it. A range sent as
+ * days (`to=2026-10-08`) is read through this, so the 8th is the 8th in Beirut.
+ */
+export function municipalDayStart(day: string): Date {
+  const target = Date.UTC(Number(day.slice(0, 4)), Number(day.slice(5, 7)) - 1, Number(day.slice(8, 10)));
+  let instant = target;
+  for (let pass = 0; pass < 2; pass++) {
+    instant = target - (municipalWallClock(instant) - instant);
+  }
+  return new Date(instant);
+}
+
+/** What the municipal clock reads at `instant`, written as if that wall time were UTC. */
+function municipalWallClock(instant: number): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: MUNICIPAL_TIME_ZONE,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).formatToParts(new Date(instant));
+  const part = (type: Intl.DateTimeFormatPartTypes): number => Number(parts.find((p) => p.type === type)?.value);
+  return Date.UTC(part('year'), part('month') - 1, part('day'), part('hour'), part('minute'), part('second'));
+}
+
 /** Whole days from `from` to `to`, both `YYYY-MM-DD`. Negative when `to` is earlier. */
 export function daysBetween(from: string, to: string): number {
   return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);

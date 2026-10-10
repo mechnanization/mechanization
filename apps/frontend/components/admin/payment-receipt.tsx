@@ -25,7 +25,52 @@ const IMAGE_TEMPLATE_TENANT = 'albazourieh';
  * (`RecordedMovement.receiptNumber`) — the one a reprint and an audit look up.
  */
 function billReference(payment: CitizenProfilePayment): string {
+  /*
+    The bill's own number, once it has one. Bills raised before migration 0079
+    never got one and never will, so those keep printing the derived reference
+    below: minting a number today for a document issued last year would put a
+    fiction on a printed page.
+  */
+  if (payment.invoiceNumber) return payment.invoiceNumber;
   return payment.id.replace(/-/g, '').slice(0, 10).toUpperCase();
+}
+
+/**
+ * The printable area of one A5 landscape sheet, in CSS px: 210 × 148 mm less
+ * the 10 mm margins `@page` sets in `app/globals.css`, at 96 px to the inch.
+ */
+const SHEET_WIDTH_PX = (190 / 25.4) * 96;
+const SHEET_HEIGHT_PX = (128 / 25.4) * 96;
+
+/**
+ * Scales the printed receipt so it fills one A5 sheet and no more (PRIM-28).
+ *
+ * The drawn receipt is about 653 px tall at the sheet's 718 px width, against a
+ * 484 px sheet, so printed as it was it ran onto a second one. On paper it is
+ * zoomed (`--receipt-print-zoom`, read by the print rule in `app/globals.css`)
+ * and laid out at the sheet's width divided by the zoom, so it is exactly as
+ * wide as the sheet once scaled. A wider layout is a shorter one, so the zoom
+ * that fits is found by measuring at that width and trying again: three rounds
+ * settle it. Measured on screen, where the zoom does not apply; `0.97` is the
+ * room left for what print draws differently (its 2 px border, no shadow).
+ *
+ * What it fits is this receipt as it stands — a long name that wraps, the
+ * building row, the tender line — rather than a figure picked for the usual
+ * one. Never above 1: a receipt that already fits is not enlarged. Without it
+ * (a print started from the browser's menu before `beforeprint` ran) the rule
+ * falls back to a zoom that fits a receipt with one extra row.
+ */
+function fitReceiptToSheet(node: HTMLElement): void {
+  const { width, minWidth, maxWidth } = node.style;
+  let zoom = 1;
+  for (let round = 0; round < 3; round += 1) {
+    node.style.width = `${SHEET_WIDTH_PX / zoom}px`;
+    node.style.minWidth = '0';
+    node.style.maxWidth = 'none';
+    zoom = Math.min(1, (SHEET_HEIGHT_PX * 0.97) / node.offsetHeight);
+  }
+  Object.assign(node.style, { width, minWidth, maxWidth });
+  node.style.setProperty('--receipt-print-zoom', String(Math.floor(zoom * 1000) / 1000));
 }
 
 /** `+9617xxxxxxx` / `03 123456` → the digits wa.me expects, Lebanon-defaulted. */
@@ -76,7 +121,7 @@ export function PaymentReceipt({
   onOpenChange,
   tenant,
   citizen,
-  payment,
+  payment: billRow,
   municipalityName,
   governorate,
   district,
@@ -132,7 +177,29 @@ export function PaymentReceipt({
   const [busy, setBusy] = React.useState<null | 'share' | 'download'>(null);
   const [shareNote, setShareNote] = React.useState<string | null>(null);
 
-  if (!payment) return null;
+  /*
+    Fitted to its sheet whichever way the print starts: «طباعة الوصل» below,
+    or the browser's own print command while the receipt is open.
+  */
+  React.useEffect(() => {
+    if (!open) return;
+    const fit = (): void => {
+      if (printRef.current) fitReceiptToSheet(printRef.current);
+    };
+    window.addEventListener('beforeprint', fit);
+    return () => window.removeEventListener('beforeprint', fit);
+  }, [open]);
+
+  if (!billRow) return null;
+
+  /*
+    A receipt for a movement just recorded describes that movement: its method,
+    and none of the bill's review note, which belongs to an earlier movement (a
+    Whish claim's review) and would print on a cash receipt as if it were this one's.
+  */
+  const payment: CitizenProfilePayment = recorded
+    ? { ...billRow, paymentMethod: recorded.method ?? billRow.paymentMethod, reviewNote: null }
+    : billRow;
 
   const amount = recorded?.received ?? receivedAmount ?? payment.amount;
   const tenderLine = describeTender(recorded?.tender ?? null, recorded?.changeGiven ?? 0);
@@ -296,7 +363,14 @@ export function PaymentReceipt({
                 <X className="size-4 rtl:ml-1.5 ltr:mr-1.5" />
                 {locale === 'en' ? 'Close' : 'إغلاق'}
               </Button>
-              <Button variant="outline" size="sm" onClick={() => window.print()}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  if (printRef.current) fitReceiptToSheet(printRef.current);
+                  window.print();
+                }}
+              >
                 <Printer className="size-4 rtl:ml-1.5 ltr:mr-1.5" />
                 {locale === 'en' ? 'Print Receipt' : 'طباعة الوصل'}
               </Button>
@@ -594,11 +668,29 @@ function DrawnFacsimile({
 /**
  * One field positioned over the scanned image, as a percentage of its
  * 1280×720 pixels — so it tracks the image regardless of how large the
- * dialog renders it. `right`/`width` rather than `left`: every field on this
- * form is a label followed by blank space *to its left*, so anchoring the
- * text box to the right edge (where the label ends) and letting it grow
- * left is what keeps a short value hugging the label instead of floating
- * in the middle of the blank space.
+ * dialog renders it.
+ *
+ * Two rules keep a typed value off the printed ink around it, and both were
+ * broken until the boxes below were re-measured against the scan:
+ *
+ * 1. A box is the *blank* and nothing more. Every row on this form reads
+ *    «label : ……………» right to left, so a field's box is inset to its own
+ *    run of printed dots, a few pixels clear of the label on its right and
+ *    of the next label on its left. A box that reached past either end put
+ *    the value on top of the label — which is how «8» came to sit inside
+ *    «إسم المبنى», and the phone inside «الواتساب».
+ * 2. The text anchors to the *right* edge of that box, where the label ends
+ *    and a hand-filled value would start. Inside `dir="rtl"` that is
+ *    `justify-start`, not `justify-end`: flex's main axis is reversed here,
+ *    so the old `justify-end` pushed every value to the far left of its
+ *    blank, as far from its own label as the box allowed and on top of the
+ *    next one.
+ *
+ * Pixel ranges in the comments are measured ink, not estimates: dotted runs
+ * from a column-wise classification of the scan (a column is "dots" when all
+ * of its ink lies inside that rule's own 4px baseline band), squares and the
+ * shaded name box from their borders. Re-measure rather than nudge if the
+ * scan is ever replaced.
  */
 interface ImageField {
   top: number;
@@ -607,58 +699,108 @@ interface ImageField {
   height: number;
 }
 
+/** px → % of the 1280×720 scan, so the table below can stay in measured pixels. */
+function box(left: number, right: number, top: number, bottom: number): ImageField {
+  return {
+    top: (top / 720) * 100,
+    right: ((1280 - right) / 1280) * 100,
+    width: ((right - left) / 1280) * 100,
+    height: ((bottom - top) / 720) * 100,
+  };
+}
+
 const IMAGE_FIELDS = {
-  payerName: { top: 30.0, right: 100 - 60.7, width: 39.14, height: 7.64 },
-  amountUsd: { top: 37.5, right: 100 - 46.1, width: 19.22, height: 8.75 },
-  amountLbp: { top: 37.5, right: 100 - 70.5, width: 19.22, height: 8.75 },
-  propertyNumber: { top: 53.75, right: 100 - 76.09, width: 12.5, height: 5 },
-  buildingName: { top: 53.75, right: 100 - 61.02, width: 13.05, height: 5 },
-  neighborhood: { top: 53.75, right: 100 - 46.88, width: 12.89, height: 5 },
-  units: { top: 59.03, right: 100 - 69.61, width: 12.97, height: 5 },
-  shops: { top: 59.03, right: 100 - 51.95, width: 8.13, height: 5 },
-  phone: { top: 69.44, right: 100 - 43.28, width: 12.03, height: 5 },
-  whatsapp: { top: 69.44, right: 100 - 26.48, width: 6.09, height: 5 },
-  landlord: { top: 69.44, right: 100 - 70.86, width: 10.31, height: 5 },
+  /** The shaded box the booklet prints for the payer's name: x 275–778, y 215–272. */
+  payerName: box(288, 766, 217, 271),
+  /** The two rounded pills, «$» left and «ل.ل» right: x 341–591 / 653–903, y 279–331. */
+  amountUsd: box(360, 576, 286, 326),
+  amountLbp: box(672, 888, 286, 326),
+  /** Row «رقم العقار : … إسم المبنى : … الحي : … المنطقة : …», rule at y 407. */
+  propertyNumber: box(841, 949, 392, 413),
+  buildingName: box(643, 742, 392, 413),
+  neighborhood: box(461, 586, 392, 413),
+  /** Row «عدد الوحدات السكنية : … المحلات التابعة : … عدد الافراد المقيمين : …», rule at y 443. */
+  units: box(774, 877, 429, 450),
+  shops: box(584, 652, 429, 450),
+  residents: box(321, 428, 429, 450),
+  /** Row «اسم المالك بحال كان مستأجر : … الهاتف : … الواتساب : …», rule at y 516. */
+  landlord: box(721, 831, 503, 524),
+  phone: box(541, 643, 503, 524),
+  whatsapp: box(320, 463, 503, 524),
   // Not fields printed on the booklet: the blank under «ايصال», and the open
   // space below «ملاحظات». They carry what the paper never had a box for —
   // the ledger's receipt number and date, and the notes, rate and change of a
   // payment made in two currencies.
-  receipt: { top: 19.5, right: 100 - 46, width: 24, height: 4.5 },
-  notes: { top: 78, right: 100 - 79, width: 19, height: 8 },
+  receipt: box(300, 601, 143, 171),
+  notes: box(800, 1026, 562, 623),
 } as const satisfies Record<string, ImageField>;
 
+/** The five printed squares, measured off their borders: y 352–381, each 45px wide. */
 const IMAGE_CHECKBOXES = {
-  residential: { top: 48.89, right: 100 - 67.19, width: 3.36, height: 3.89 },
-  commercial: { top: 48.89, right: 100 - 58.05, width: 3.44, height: 3.89 },
-  owner: { top: 48.89, right: 100 - 50.08, width: 3.36, height: 3.89 },
-  displaced: { top: 48.89, right: 100 - 42.73, width: 3.44, height: 3.89 },
-  bloodType: { top: 48.89, right: 100 - 32.73, width: 3.44, height: 3.89 },
+  residential: box(817, 862, 352, 382),
+  commercial: box(699, 744, 352, 382),
+  owner: box(598, 643, 352, 382),
+  displaced: box(503, 548, 352, 382),
+  bloodType: box(375, 420, 352, 382),
 } as const satisfies Record<string, ImageField>;
+
+/**
+ * The scale every overlay is typed at, as a fraction of the rendered width.
+ *
+ * `cqw` rather than `px` or `rem`: the same numbers then hold for the ~700px
+ * dialog preview and for the full-width capture `html2canvas` rasterises into
+ * the PDF. The booklet's own printed labels are ~14px tall at 1280px wide,
+ * which is where `field`'s 1.05cqw comes from — a typed value matching the
+ * pre-printed ink reads as part of the form rather than stuck onto it.
+ */
+const OVERLAY_TYPE = {
+  /** The two pills. The one number a payer checks first, so the heaviest mark on the page. */
+  amount: 'text-[1.6cqw] font-black tracking-tight',
+  /** The payer's name, sized to the «إستلمنا من السيد/ السيدة» label beside it. */
+  name: 'text-[1.45cqw] font-bold',
+  /** A value written on one of the printed dotted rules. */
+  field: 'text-[1.05cqw] font-bold',
+  /** Latin digit runs — a phone, the receipt's own number — which need the extra room. */
+  digits: 'text-[0.9cqw] font-semibold tracking-tight',
+  /** The tender note under «ملاحظات», the one overlay allowed to wrap. */
+  note: 'text-[0.85cqw] font-semibold leading-snug',
+} as const;
 
 /** Text sized and positioned to sit in one blank field of the scanned form. */
 function ImageOverlay({
   field,
+  type = 'field',
   wrap = false,
   children,
 }: {
   field: ImageField;
+  type?: keyof typeof OVERLAY_TYPE;
   /** Lets a longer note break across lines inside its box instead of being clipped. */
   wrap?: boolean;
   children: React.ReactNode;
 }) {
+  const style = {
+    top: `${field.top}%`,
+    right: `${field.right}%`,
+    width: `${field.width}%`,
+    height: `${field.height}%`,
+  };
+
+  if (wrap) {
+    return (
+      <div
+        className={`absolute overflow-hidden text-start text-black ${OVERLAY_TYPE[type]}`}
+        style={style}
+      >
+        {children}
+      </div>
+    );
+  }
+
   return (
     <div
-      className={
-        wrap
-          ? 'absolute flex items-start justify-end overflow-hidden text-start text-[0.95cqw] font-bold leading-snug text-black'
-          : 'absolute flex items-center justify-end overflow-hidden whitespace-nowrap text-[1.15cqw] font-bold text-black'
-      }
-      style={{
-        top: `${field.top}%`,
-        right: `${field.right}%`,
-        width: `${field.width}%`,
-        height: `${field.height}%`,
-      }}
+      className={`absolute flex items-center justify-start overflow-hidden whitespace-nowrap text-black ${OVERLAY_TYPE[type]}`}
+      style={style}
     >
       {children}
     </div>
@@ -671,7 +813,7 @@ function ImageCheckbox({ field, checked }: { field: ImageField; checked: boolean
   return (
     <div
       aria-hidden
-      className="absolute flex items-center justify-center text-[1.6cqw] font-black leading-none text-black"
+      className="absolute flex items-center justify-center text-[1.4cqw] font-black leading-none text-black"
       style={{
         top: `${field.top}%`,
         right: `${field.right}%`,
@@ -686,16 +828,14 @@ function ImageCheckbox({ field, checked }: { field: ImageField; checked: boolean
 
 /**
  * Al-Bazourieh's actual paper booklet, scanned, with every blank field typed
- * over it. Positions in `IMAGE_FIELDS`/`IMAGE_CHECKBOXES` were measured
- * directly off the image's pixels (connected-component and edge detection on
- * the gray name box, the amount pills, the checkbox borders, and a row-wise
- * ink-density profile for the dotted lines) — not eyeballed, but still a
- * first pass: nudge the percentages there if a value drifts off its line.
+ * over it. The shaded box behind the payer's name and the five squares are
+ * printed on the paper itself — pixels in `receipt-template.png`, not
+ * anything this component draws — so the work here is seating a value inside
+ * each of them, never restyling them.
  *
  * `container-type: inline-size` + `cqw` units size the overlay text off the
- * *rendered* width of this element rather than the viewport, so the same
- * numbers hold whether this is the ~700px dialog preview or the full-width
- * capture `html2canvas` rasterises for the PDF.
+ * *rendered* width of this element rather than the viewport. See
+ * `IMAGE_FIELDS` for how each box was measured and why values anchor right.
  */
 function ImageFacsimile({
   citizen,
@@ -713,6 +853,24 @@ function ImageFacsimile({
 }: FacsimileProps & { tender: RecordedTender | null }) {
   const isTenant = property?.occupancyType === 'TENANT';
 
+  /*
+    The occupancy squares are one answer, not five independent ticks.
+
+    «سكني» used to be `!isCommercial`, which is true of a file carrying no
+    property at all — so every card awaiting its first survey printed as
+    residential, stated as flatly as one a surveyor had actually walked. The
+    blank square is the honest mark there; the collector ticks it in pen.
+  */
+  const isResidential = property !== null && !isCommercial;
+
+  /*
+    One number, printed once. Most files carry the same line as both الهاتف
+    and الواتساب, and printing it twice side by side reads as two numbers that
+    happen to match — the reader then has to work out which is which, on a
+    receipt whose whole job is to be glanced at.
+  */
+  const whatsapp = citizen.whatsapp && citizen.whatsapp !== citizen.phone ? citizen.whatsapp : null;
+
   return (
     <div className="relative" style={{ containerType: 'inline-size' }}>
       {/* eslint-disable-next-line @next/next/no-img-element -- rasterised by
@@ -720,18 +878,20 @@ function ImageFacsimile({
           would only get in the way of that. */}
       <img src="/receipt-template.png" alt="" className="block w-full h-auto select-none" draggable={false} />
 
-      <ImageOverlay field={IMAGE_FIELDS.receipt}>
+      <ImageOverlay field={IMAGE_FIELDS.receipt} type="digits">
         <span className="tabular-nums" dir="ltr">
           {number} · {receivedOn}
         </span>
       </ImageOverlay>
-      <ImageOverlay field={IMAGE_FIELDS.payerName}>{citizen.fullName}</ImageOverlay>
+      <ImageOverlay field={IMAGE_FIELDS.payerName} type="name">
+        {citizen.fullName}
+      </ImageOverlay>
       {/* The ليرة pill is the credit; the dollar pill, the dollars actually handed over. */}
-      <ImageOverlay field={IMAGE_FIELDS.amountLbp}>
+      <ImageOverlay field={IMAGE_FIELDS.amountLbp} type="amount">
         <span className="tabular-nums">{Math.round(amount).toLocaleString('en-US')}</span>
       </ImageOverlay>
       {payment.currency === 'USD' || (tender && tender.foreignCurrency === 'USD') ? (
-        <ImageOverlay field={IMAGE_FIELDS.amountUsd}>
+        <ImageOverlay field={IMAGE_FIELDS.amountUsd} type="amount">
           <span className="tabular-nums">
             {(payment.currency === 'USD' ? amount : (tender?.foreign ?? 0)).toLocaleString('en-US', {
               maximumFractionDigits: 2,
@@ -740,30 +900,49 @@ function ImageFacsimile({
         </ImageOverlay>
       ) : null}
       {tenderLine ? (
-        <ImageOverlay field={IMAGE_FIELDS.notes} wrap>
+        <ImageOverlay field={IMAGE_FIELDS.notes} type="note" wrap>
           {tenderLine}
         </ImageOverlay>
       ) : null}
 
-      <ImageCheckbox field={IMAGE_CHECKBOXES.residential} checked={!isCommercial} />
+      <ImageCheckbox field={IMAGE_CHECKBOXES.residential} checked={isResidential} />
       <ImageCheckbox field={IMAGE_CHECKBOXES.commercial} checked={isCommercial} />
       <ImageCheckbox field={IMAGE_CHECKBOXES.owner} checked={isOwner} />
       <ImageCheckbox field={IMAGE_CHECKBOXES.displaced} checked={citizen.residentStatus === 'DISPLACED'} />
       <ImageCheckbox field={IMAGE_CHECKBOXES.bloodType} checked={Boolean(citizen.bloodType)} />
 
-      <ImageOverlay field={IMAGE_FIELDS.propertyNumber}>{property?.propertyNumber || ''}</ImageOverlay>
-      <ImageOverlay field={IMAGE_FIELDS.buildingName}>{property?.buildingName || ''}</ImageOverlay>
-      <ImageOverlay field={IMAGE_FIELDS.neighborhood}>{property?.neighborhood || ''}</ImageOverlay>
-      <ImageOverlay field={IMAGE_FIELDS.units}>{residentialUnits > 0 ? String(residentialUnits) : ''}</ImageOverlay>
-      <ImageOverlay field={IMAGE_FIELDS.shops}>{shopUnits > 0 ? String(shopUnits) : ''}</ImageOverlay>
-      <ImageOverlay field={IMAGE_FIELDS.phone}>
-        <span className="font-mono" dir="ltr">{citizen.phone || ''}</span>
-      </ImageOverlay>
-      <ImageOverlay field={IMAGE_FIELDS.whatsapp}>
-        <span className="font-mono" dir="ltr">{citizen.whatsapp || ''}</span>
-      </ImageOverlay>
-      {isTenant ? (
-        <ImageOverlay field={IMAGE_FIELDS.landlord}>{property?.landlordName || ''}</ImageOverlay>
+      {property?.propertyNumber ? (
+        <ImageOverlay field={IMAGE_FIELDS.propertyNumber}>{property.propertyNumber}</ImageOverlay>
+      ) : null}
+      {property?.buildingName ? (
+        <ImageOverlay field={IMAGE_FIELDS.buildingName}>{property.buildingName}</ImageOverlay>
+      ) : null}
+      {property?.neighborhood ? (
+        <ImageOverlay field={IMAGE_FIELDS.neighborhood}>{property.neighborhood}</ImageOverlay>
+      ) : null}
+      {residentialUnits > 0 ? (
+        <ImageOverlay field={IMAGE_FIELDS.units}>{residentialUnits}</ImageOverlay>
+      ) : null}
+      {shopUnits > 0 ? <ImageOverlay field={IMAGE_FIELDS.shops}>{shopUnits}</ImageOverlay> : null}
+      {citizen.actualHouseholdMembers ? (
+        <ImageOverlay field={IMAGE_FIELDS.residents}>{citizen.actualHouseholdMembers}</ImageOverlay>
+      ) : null}
+      {citizen.phone ? (
+        <ImageOverlay field={IMAGE_FIELDS.phone} type="digits">
+          <span className="font-mono" dir="ltr">
+            {citizen.phone}
+          </span>
+        </ImageOverlay>
+      ) : null}
+      {whatsapp ? (
+        <ImageOverlay field={IMAGE_FIELDS.whatsapp} type="digits">
+          <span className="font-mono" dir="ltr">
+            {whatsapp}
+          </span>
+        </ImageOverlay>
+      ) : null}
+      {isTenant && property?.landlordName ? (
+        <ImageOverlay field={IMAGE_FIELDS.landlord}>{property.landlordName}</ImageOverlay>
       ) : null}
     </div>
   );
@@ -826,6 +1005,13 @@ export interface RecordedMovement {
   remaining: number;
   changeGiven: number;
   tender: RecordedTender | null;
+  /**
+   * How this movement was paid — `CASH`, `WHISH_MONEY`, `COLLECTOR`. The bill's
+   * own `paymentMethod` is its last movement's, which on a part-paid bill can be
+   * an earlier one's; the receipt prints this one's. Optional for a caller that
+   * does not know it (the bill's is printed then).
+   */
+  method?: string | null;
 }
 
 /**

@@ -1,6 +1,6 @@
 # packages/shared-schemas
 
-Last verified against the code: `feat/estate-institution-owners` (on `develop@f10a1b7`, review fixes), 2026-10-08.
+Last verified against the code: `fix/pr104-review` (PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; the salary reason, the urgent ceiling and three treasury codes), 2026-10-10.
 
 `@mechanization/shared-schemas`: the zod schemas, enums, display labels and
 pure rules that the backend and the frontend share. One copy of each contract,
@@ -8,14 +8,15 @@ used on both sides of the wire. Repo-wide rules: [CLAUDE.md](../../CLAUDE.md).
 
 ## What it exports
 
-`src/index.ts` re-exports 31 modules. Everything is imported from the package
+`src/index.ts` re-exports 37 modules. Everything is imported from the package
 root (`from '@mechanization/shared-schemas'`); there are no deep imports.
 
 | Kind | Modules |
 |---|---|
 | Vocabulary | `enums` (the `as const` value lists, their zod schemas and types), `error-codes` (`ERROR_KINDS`, `ERROR_CODES`, `ErrorCode`, `ErrorParams`, `ApiErrorBody`, `isSpecificErrorCode`), `labels` (`ar`, `en`, `getLabels`), `primitives` (`lebanesePhone`, `internationalPhone`, `optionalInternationalPhone`, `arabicOrLatinName`, `documentNumber`, `civilRecordNumber`, `tenantSlug`, `uuid`, `normalizeDigits`), `role-sets` (who may call what: `EVERY_STAFF_ROLE`, `WORKING_STAFF_ROLES`, `REGISTER_WRITE_ROLES`, `CENSUS_WORKLIST_ROLES`, `FEE_ISSUE_ROLES`, `REGISTER_EXPORT_ROLES` and the rest, `hasStaffRole`) |
-| Contracts (`*.schema.ts`) | `citizen`, `field-flag`, `property`, `registration`, `admin-citizen`, `citizen-import`, `fee`, `auth`, `tenant`, `zone`, `building`, `unit-correction`, `staff`, `case`, `quality`, `citizen-merge` |
-| Pure rules | `numbering`, `unit-layout`, `cash-policy`, `payout-policy`, `inspector-earnings`, `unit-status-rule`, `owner-share` (how a co-owned flat is divided: `ownerShareOf`, `effectiveOwnerBilling`, `ownerSharesPreview`, `usableShares`), `citizen-name` (`citizenDisplayName` — «ورثة المرحوم …» for an estate; every screen and bill names a citizen through it — `citizenStoredName` for a name copied into another row, `storedLandlordName` for every write of a card's submitted `landlordName`, `withoutEstatePrefix`/`ESTATE_PREFIX_PATTERN` for matching typed names, `splitInstitutionName`), `damage-rule` (the severity ladder, `habitabilityFor`, `isUninhabitableReading`, the re-inspection day on the municipality's calendar), `staff-presence` (the stamp interval, the online threshold, `isStaffOnline`, `BACKGROUND_REQUEST_HEADER`) |
+| Contracts (`*.schema.ts`) | `citizen`, `field-flag`, `property`, `registration`, `admin-citizen`, `citizen-import`, `fee` (`systemSettingsSchema` carries `urgentExpenseCeilingLbp` / `urgentExpenseCeilingUsd`: positive, two decimals at most, `null` clears, absent leaves as is), `auth`, `tenant`, `zone`, `building`, `unit-correction`, `staff`, `case`, `quality`, `citizen-merge`, `treasury`, `expense` (vouchers, payment-order requests, `EXPENSE_ORDER_STATUSES`, `EXPENSE_REQUEST_STATUSES`; a category edit sends both budget codes or neither, and both empty clears them; `recordStaffSalarySchema`, the salary payout that leaves the payee and the category to the server, and `SALARY_URGENT_REASON`, the art. 35 reason the server writes on an accountant's payout, stored exactly), `income` (with `INCOME_RECEIVING_ACCOUNT_TYPES` and `canReceiveIncome`, the rule both the API and the form apply to the receiving wallet), `transfer` (the collector's receipts start at go-live: `since`). The budget-code rule both category kinds share (`budgetCodeSchema`, `budgetCodesComplete`, `BUDGET_CODES_INCOMPLETE`) lives once, in `treasury` |
+| Document numbering | `document-numbering` (`DOCUMENT_PREFIX`, `DocumentKind`, `municipalPeriod`, `formatDocumentNumber`, `isDocumentNumber`) — the shape of «INV-2610-0001», five books since `REVENUE_VOUCHER` («RV-»). A `DocumentKind` key is what `document_counters.kind` stores, so it is never renamed. The counter that fills it lives in the backend (`allocateDocumentNumbers`), because drawing a number is a database act |
+| Pure rules | `numbering`, `unit-layout`, `cash-policy` (also `municipalDayStart`, the first instant of a day on the municipality's calendar, which a range sent as days is read through), `payout-policy`, `inspector-earnings`, `unit-status-rule`, `owner-share` (how a co-owned flat is divided: `ownerShareOf`, `effectiveOwnerBilling`, `ownerSharesPreview`, `usableShares`), `citizen-name` (`citizenDisplayName` — «ورثة المرحوم …» for an estate; every screen and bill names a citizen through it — `citizenStoredName` for a name copied into another row, `storedLandlordName` for every write of a card's submitted `landlordName`, `withoutEstatePrefix`/`ESTATE_PREFIX_PATTERN` for matching typed names, `splitInstitutionName`), `damage-rule` (the severity ladder, `habitabilityFor`, `isUninhabitableReading`, the re-inspection day on the municipality's calendar), `staff-presence` (the stamp interval, the online threshold, `isStaffOnline`, `BACKGROUND_REQUEST_HEADER`), `money-amount` (`hasAtMostTwoDecimals`, judged on the number's decimal form, never on `value * 100`) |
 
 The code is plain TypeScript with no I/O and no Node or browser APIs
 (`tsconfig.base.json` sets `lib` to ES2022). Keep it that way: both apps run

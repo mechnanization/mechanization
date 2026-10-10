@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `feat/estate-institution-owners` (on `develop@f10a1b7`), 2026-10-08.
+Last verified against the code: `fix/pr104-review` (PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; income controls, the salary path and the urgent ceiling), 2026-10-10.
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -180,11 +180,169 @@ Data access for new code (decided):
   profile: a flat's owners go as an allowlist (name and أسهم), the landlord link's id and reference are
   dropped, and everything else on a property or unit passes through, so decide for each field you add to
   `CitizenProfile` ([docs/gotchas.md](../../docs/gotchas.md)).
+- **Treasury.** `TreasuryService` (overview, statements, `activate`) and `TreasuryLedgerService`
+  (`post`, `creditPayment`, `reversePayment`, `reverseEntriesOf`), under
+  `application/features/treasury/`; routes in `TreasuryController` (`t/:tenantSlug/treasury`). The
+  pure routing rules are `treasury.plan.ts`. `PaymentLedgerService.append` calls the ledger **inside
+  its own transaction** after it writes the payment row, so the payment and its wallet entries commit
+  together; `TreasuryLedgerService` never opens a transaction and takes the client explicitly. Nothing
+  credits a wallet until `system_settings.treasuryGoLiveAt` is set and the payment's `occurredAt` is
+  at or after it.
+  - The go-live stamp is read `FOR SHARE`, so a payment waits for an activation that is still
+    committing. `activate` commits the settings row before its transaction opens, so there is
+    always a row to wait on.
+  - After go-live only a finance role may date a payment before it (`FeesService.settleInPerson`,
+    `PAYMENT_DATE_BEFORE_GO_LIVE`).
+  - A dated receipt or voucher takes its moment from `documentOccurredAt` (`treasury.plan.ts`):
+    today keeps the clock, an earlier day sits at midday UTC, and nothing dated the go-live day
+    sits before the opening entry. So the go-live day is live whatever the hour of activation
+    (decision D5).
+  - An outflow locks the wallet rows (id order) and is refused below zero.
+  - **Lock before you reference.** A caller that inserts a row with a foreign key to
+    `treasury_accounts` (a voucher, a transfer) first calls `lockAccounts` with every wallet it will
+    touch. Otherwise the foreign-key check's `FOR KEY SHARE` and `post`'s `FOR UPDATE` deadlock
+    against another caller. The order, for every writer: a retry key's advisory lock, then
+    `ledger.config(tx)` (the settings row, `FOR SHARE`), then `lockAccounts`, then the document
+    number and the insert.
+  - `ledger.config(tx)` returns the go-live stamp, the rate and the urgent-payment ceilings
+    (`urgentExpenseCeiling.LBP` / `.USD`, 0083).
+  - A refund after a collector's handover leaves the safe (`refundDrafts`, decision D1).
+  - Opposing entries carry their original's rate.
+
+  Design and rules: [docs/finance.md](../../docs/finance.md).
+- **Expenses.** `ExpensesService` and `ExpensesController` (`t/:tenantSlug/treasury/expenses`), with
+  the date rules in `expenses.plan.ts`.
+  - **Money leaves on the manager's payment order** (decree 5595/1982 art. 28 and 33; decided
+    2026-10-09).
+    - `record` by the manager is the order.
+    - `record` by an accountant needs `urgentReason` (art. 35) and leaves the voucher
+      `AWAITING_ORDER` until `regularize`. Otherwise it is refused (`EXPENSE_ORDER_REQUIRED`).
+    - The urgent path has the manager's ceiling per currency (decision D6,
+      `urgentCeilingBreached` in `expenses.plan.ts`): above it, an accountant's urgent voucher
+      is refused in `recordInTransaction` before anything is written
+      (`EXPENSE_URGENT_OVER_CEILING`, `params: { ceiling, currency }`). Not for the manager's
+      voucher, nor for a salary (`payeeStaffId` set). The ceiling is written through
+      `FeesService.updateSettings`, which refuses a change from outside `TREASURY_ADMIN_ROLES`
+      (`URGENT_EXPENSE_CEILING_FORBIDDEN`); `FeesController.getSettings` strips it for a citizen.
+    - The ordinary path is `requestPayment` → `orderRequest` (which writes and pays the voucher)
+      / `rejectRequest` / `withdrawRequest`, on `expense_requests`.
+  - Wherever a voucher is written, one transaction locks the wallet (`lockAccounts`), writes the
+    voucher, posts the negative ledger entry through `TreasuryLedgerService.post` (which refuses to
+    take a wallet below zero), and writes the Tier 1 audit row.
+  - A voucher is never edited (the database refuses it, `0083`). It takes a void stamp and the
+    ledger gets an opposing entry through `reverseEntriesOf`.
+  - The voucher's currency is taken from its wallet, never from the request, and a custody wallet
+    never pays (`payingAccount`).
+  - A retry key is bound to its act (`replayVoucher`, `replayRequest`): wallet, amount, clerk,
+    band, payee and description, and for a salary the staff account (`payeeStaffId`). A unique violation on it is answered as a replay
+    (`retry-key.ts`), and a key whose voucher was cancelled since gets `EXPENSE_ALREADY_VOID`.
+    When a key is sent, `record` first takes a schema-scoped `pg_advisory_xact_lock` on it
+    (`<schema>:expense-request:<key>`), so two identical requests arriving together meet there
+    and the second finds the first's voucher.
+  - Three role lists: read; `TREASURY_WORK_ROLES` to record or request; `TREASURY_ADMIN_ROLES` to
+    order, reject, regularise or void. `route-inventory.spec.ts` pins each handler's list.
+  - An order is its request's own retry: the manager who gave it is answered with the voucher it
+    paid (`answerOrder`, read under the request's row lock), another manager with
+    `EXPENSE_REQUEST_ALREADY_DECIDED`.
+  - The municipality names its own bands of spending: `POST`/`PATCH` on `expenses/categories`,
+    manager only. A PATCH changes only the fields it sends; the two budget codes travel together,
+    and both empty clears them. A category is deactivated, never
+    deleted: every voucher ever filed under it still points there, and the foreign key is RESTRICT.
+  - «صرف راتب / أجر» is `POST expenses/salaries/:staffId` (`recordSalary`,
+    `TREASURY_WORK_ROLES`): the same write through the private `recordInTransaction`, so the payment
+    order applies to it as to `record`. Art. 35 names salaries (decision D7): the manager's payout
+    is ordered, and an accountant's goes on the urgent path with `SALARY_URGENT_REASON`, written by
+    the server, and waits for `regularize`. The urgent ceiling does not apply to it; an accountant's own salary is refused (`SALARY_SELF_PAYOUT`, D8). The payee is read from the staff account
+    (`kind = 'STAFF'`, not deleted; a disabled account may still be paid) and the category is
+    looked up by key (`SALARIES`). It stamps `payeeStaffId` (`0081`) on the voucher and in the
+    audit row's `after`, so a person's salaries are found by id, not by name.
+- **Income.** `IncomeService` and `IncomeController` (`t/:tenantSlug/treasury/income`), with the
+  date rules and the register's period bounds in `income.plan.ts`.
+  - The expense module run the other way: one transaction writes the «سند قبض», posts the
+    positive `INCOME_VOUCHER` entry and the Tier 1 audit row (number and amount, never the payer).
+    There is no payment order: money arriving is not a disbursement.
+  - The wallet must be one that `canReceiveIncome` allows (cash safe, Whish, bank), never a
+    collector's custody.
+  - Three role lists: read; `TREASURY_WORK_ROLES` to record; `TREASURY_ADMIN_ROLES` to void.
+    `route-inventory.spec.ts` pins each handler's list.
+  - The retry key is required (optional on an expense) and is serialised with a schema-scoped
+    `pg_advisory_xact_lock` before it is read (`<schema>:income-request:<key>`), so identical
+    requests produce one voucher and replays rather than a unique violation. It is bound to its act
+    (`IncomeService.replayVoucher`: wallet, amount, clerk, category, description, payer); a key whose
+    voucher was cancelled since gets `INCOME_ALREADY_VOID` (`params.voucherNumber`), and a unique
+    violation on it outside the transaction is answered as a replay (`retry-key.ts`).
+  - `record` takes `config`, then `lockAccounts([wallet])`, then the RV number and the insert, and
+    dates the voucher with `documentOccurredAt` and the go-live stamp (D5).
+  - A void *removes* money, so it locks the voucher, then the wallet (`lockAccounts`), and refuses
+    with `TREASURY_INSUFFICIENT_FUNDS_FOR_VOID` when the wallet has spent it since. The voucher is
+    written once (`0083`'s trigger).
+  - The register's `from`/`to` are municipal days, turned into Beirut midnights
+    (`municipalDayStart`) rather than read as UTC dates.
+  - Categories: `POST`/`PATCH` on `income/categories`, manager only, never a delete. An edit keeps
+    `active` unless it is sent, and a taken budget article is the partial unique index's `P2002`,
+    mapped to `INCOME_CATEGORY_CODE_TAKEN` in `writeCategory`.
+- **Transfers.** `TransfersService` and `TransfersController`
+  (`t/:tenantSlug/treasury/transfers`). Today it wires one kind: «تسليم صندوق الجابي», the collector
+  handing in what he took at the doors. A citizen's payment settles his invoice at the door and
+  credits the *collector's* custody wallet, never the safe — the money is in his pocket — and this is
+  the step where it reaches the municipality: both ledger legs, the transfer document and the Tier 1
+  audit row in one transaction. Partial handovers are normal and the remainder stays on his name;
+  more than he holds is refused twice over, by `CUSTODY_EXCEEDS_HELD` naming the figure and by the
+  ledger's own never-negative post, both read behind `lockAccounts`. Cancelling puts both legs back,
+  so the cash is his responsibility again. A collector holds none of the treasury roles. The person
+  who receives from him is someone else, which is the control, and the service enforces it: an
+  accountant named as collector cannot receive his own custody (`CUSTODY_SELF_RECEIPT`). A retry
+  key is bound to its handover (`replayHandover`), and one whose handover was cancelled since gets
+  `TRANSFER_ALREADY_VOID`. A replay answers only the retry of the moment: once the custody wallet
+  has an entry after the earlier transfer, the key is refused as spent (`TREASURY_REQUEST_KEY_REUSED`).
+  A counter retry whose receipt was reversed since gets `TRANSACTION_ALREADY_REVERSED`
+  (`PaymentLedgerService.replay`). `GET custody/:collectorId/collections` answers the other half of the
+  question — not «كم بعهدته» but «من حصّل منهم»: the receipts behind the figure, each with the citizen
+  who paid — his full three-part name, his phone and the sector he lives in. It is a list of receipts
+  and not of handovers, and the two totals part company the moment he hands anything in, because a
+  handover moves an amount and not a set of receipts. It starts at go-live (`since`), as «جولتي» does:
+  a receipt from before it never reached his custody, and counting it made «collected − held» more
+  than he ever handed in. Its «collected» totals are his custody's `CITIZEN_PAYMENT` ledger entries,
+  not the receipts, so a refund paid from the safe after a handover does not move them. The
+  statement reads its page and sums in one `RepeatableRead` transaction. The sector is resolved the way it is everywhere
+  else: occupancy → unit → `building.parcelNumber` → the `Zone` listing it (D13), with the sector
+  table read once per page rather than once per row. It carries no رقم مرجعي: that is a sign-in
+  credential, and an integration test pins the row's exact key set so a field added later fails there
+  rather than in a browser.
+- **Document numbers.** `allocateDocumentNumbers` / `allocateDocumentNumber`
+  (`application/common/document-number.ts`) is the only way a number is drawn, for all five books:
+  «INV-2610-0001», «RCP-…», «PV-…», «TR-…», «RV-…». Pass the caller's `tx` and `this.S` — the draw and the
+  document must share a transaction, and an unqualified name would resolve through the pooled
+  connection's `search_path` into another municipality's counter. Bulk callers take a block sized to
+  what was actually inserted: `FeesService.numberInvoices` numbers after `createMany` because
+  `skipDuplicates` means a block reserved beforehand would burn numbers on rows that were never
+  written. Details and trade-offs: migration 0079 and docs/database.md.
+- **The collector's own round.** `GET custody/mine` (`TransfersService.myRound`) is the one treasury
+  route outside `TREASURY_*`: `WORKING_STAFF_ROLES`, scoped by `user.sub` with no id in the path, the
+  same shape as `inspector/me/profile`.
+  - It answers what he holds, and the receipts that still stand since whichever came later: his last
+    handover or go-live. A receipt from before go-live never reached his custody.
+  - `listed` is summed from the custody ledger per wallet, not from the receipts' invoice currency,
+    so a tender in dollars against a ليرة bill lands in the right pocket.
+  - After a *partial* handover those receipts cannot add up to what he holds, so the difference is
+    returned as `carriedOver` and named on the screen rather than hidden.
+  - Staff holding no custody get an empty round, not a 403.
+
+  `custody()` additionally reports each collector's receipts and takings for today via a raw query.
+  The day boundary is Beirut's (`municipalToday`), and `payment_transactions.occurredAt` is
+  `TIMESTAMPTZ` (0017), so one `AT TIME ZONE` gives the wall clock. The two-step form the audit
+  day-buckets use is for their bare timestamp; on this column it moved the boundary six hours.
 - **Who is calling.** `@CurrentUser()` yields `SessionClaims` (`application/features/identity/identity.service.ts`);
   `@CurrentTenant()` yields `req.tenant`. Pass the actor to services as `{ id: user.sub, role: user.role ?? '' }`.
 - **Validation.** `@Body(new ZodValidationPipe(schema))`, schema from `@mechanization/shared-schemas`. Put
   the pipe on the parameter, never in `@UsePipes` (it would validate `tenantSlug` too). Ids:
-  `new ParseUUIDPipe()`. Dates: `parseDate` / `requireDate` (`presentation/controllers/query-params.ts`).
+  `new ParseUUIDPipe()`, and `new ParseUUIDPipe({ optional: true })` for an id in a query string.
+  Helpers in `presentation/controllers/query-params.ts`:
+  - dates: `parseDate` / `requireDate`;
+  - a range that adds up: `requireRangeStart` / `requireRangeEnd`, which read a bare `YYYY-MM-DD`
+    as that whole day in Beirut;
+  - whole numbers: `optionalInt`, digits only, refused with `INVALID_QUERY_VALUE`.
+
   Declare static paths before `:id`.
 - **Errors.** Throw `DomainError` subclasses from `application/common/exceptions`. No try/catch and no
   `HttpException` in controllers; `DomainExceptionFilter` is the one place errors become HTTP.
@@ -248,7 +406,8 @@ Every state change MUST leave an `audit_log_entries` row, in one of two tiers
 ([docs/security.md](../../docs/security.md#data-integrity-and-transactions)):
 
 1. **Tier 1, inside the transaction.** Payments (declarations, confirmations, refusals, counter and Whish
-   settlements), payment reversals, corrections, ownership changes (ending an ownership, making, updating
+   settlements), payment reversals, activating the treasury, recording and cancelling an expense,
+   recording and cancelling an income voucher, receiving a collector's custody and cancelling a transfer, corrections, ownership changes (ending an ownership, making, updating
    or ending an owner link, a merge or its undo), ending a tenancy, review decisions (approving or returning
    a record, completing a quality check) and citizen status changes (archive and restore; a citizen file
    is never deleted). The row is written in the same transaction as the change; if it fails, the change
@@ -334,7 +493,7 @@ points at does not exist. `src/scripts/reset-2fa.ts` has no script entry and MUS
 
 ## Tests
 
-- Jest with ts-jest (`jest.config.js`: `rootDir` `src`, `*.spec.ts` beside the source): 119 specs, 27 of them `*.integration.spec.ts`.
+- Jest with ts-jest (`jest.config.js`: `rootDir` `src`, `*.spec.ts` beside the source): 136 spec files, 36 of them `*.integration.spec.ts` (counted on disk 2026-10-10, mid-merge of `fix/expense-retry-key-race`).
 - Integration specs run only when `TEST_DATABASE_URL` is set (`describeIfDb`) and skip silently otherwise.
   They `DROP SCHEMA … CASCADE` and rebuild fixed `tenant_*_spec` schemas on whatever database it names,
   and nothing checks the target. Point it ONLY at a throwaway Postgres 17 container (migration `0044`

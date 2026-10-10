@@ -17,6 +17,7 @@ import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { CellTag } from '@/components/ui/cell-tag';
 import { DataTable } from '@/components/ui/data-table';
+import { Alert } from '@/components/ui/alert';
 import { PageHeader } from '@/components/ui/page-header';
 import { ActionTooltip } from '@/components/ui/tooltip';
 import { WORKLIST_OWNER_PARAM, WorklistOwnerFilter } from '@/components/admin/worklist-owner-filter';
@@ -197,7 +198,14 @@ export default function ReinspectionsPage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <PageHeader icon={CalendarClock} title={t('title')} subtitle={seesAll ? t('subtitleAll') : t('subtitleMine')} />
+      <PageHeader icon={CalendarClock} title={t('title')} />
+
+      {/*
+        The one line the old subtitle carried that a reader needs: a unit on this
+        list is charged no fee until the visit after repair reads it habitable.
+        Kept in the body, as page-header.tsx asks of any subtitle that carried a fact.
+      */}
+      <Alert variant="info">{seesAll ? t('feeNoticeAll') : t('feeNoticeMine')}</Alert>
 
       {seesAll ? <WorklistOwnerFilter value={owner} onChange={narrow} ownerName={ownerName} /> : null}
 

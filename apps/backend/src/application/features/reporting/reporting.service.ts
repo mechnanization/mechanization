@@ -517,6 +517,14 @@ export interface CitizenProfilePayment {
   /** `OVERDUE` is derived from the due date on read, never stored. */
   paymentStatus: string;
   paymentMethod: string | null;
+  /**
+   * «INV-2610-0001» — the number on the bill itself (migration 0079).
+   *
+   * Null on every bill raised before that migration, which is why the receipt
+   * falls back to a reference derived from the id: those documents were issued
+   * without a number and inventing one now would be a lie on a printed page.
+   */
+  invoiceNumber: string | null;
   whishTransactionRef: string | null;
   paidAt: string | null;
   reviewNote: string | null;
@@ -1058,6 +1066,7 @@ export class ReportingService {
             dueDate: true,
             paymentStatus: true,
             paymentMethod: true,
+            invoiceNumber: true,
             whishTransactionRef: true,
             paidAt: true,
             reviewNote: true,
@@ -1252,6 +1261,7 @@ export class ReportingService {
           ? 'OVERDUE'
           : payment.paymentStatus,
       paymentMethod: payment.paymentMethod,
+      invoiceNumber: payment.invoiceNumber,
       whishTransactionRef: payment.whishTransactionRef,
       paidAt: payment.paidAt?.toISOString() ?? null,
       reviewNote: payment.reviewNote,

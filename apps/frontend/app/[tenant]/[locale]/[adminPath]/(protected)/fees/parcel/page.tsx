@@ -59,7 +59,7 @@ export default function ParcelDuesPage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <PageHeader icon={Landmark} title={t('title')} subtitle={t('subtitle')} />
+      <PageHeader icon={Landmark} title={t('title')} />
 
       <form
         className="flex flex-col gap-2 sm:flex-row sm:items-end"
@@ -89,7 +89,13 @@ export default function ParcelDuesPage({
         </Button>
       </form>
 
-      {!parcel ? null : duesQuery.loading ? (
+      {/*
+        What this page is and is not, before the first search: the header has no
+        subtitle (PageHeader), and «للقراءة فقط: لا يصدر شهادة» is worth reading once.
+      */}
+      {!parcel ? (
+        <p className="max-w-prose text-sm text-muted-foreground">{t('intro')}</p>
+      ) : duesQuery.loading ? (
         <LoadingState label={t('loading')} />
       ) : duesQuery.error ? (
         <ErrorState description={duesQuery.error} onRetry={() => duesQuery.refetch()} />

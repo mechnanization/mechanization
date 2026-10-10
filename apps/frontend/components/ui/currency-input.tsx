@@ -23,6 +23,7 @@ export function CurrencyInput({
   invalid,
   disabled,
   className,
+  inputClassName,
   'aria-describedby': describedBy,
 }: {
   id: string;
@@ -34,6 +35,14 @@ export function CurrencyInput({
   invalid?: boolean;
   disabled?: boolean;
   className?: string;
+  /**
+   * The digits themselves — for the one screen where the figure *is* the task.
+   *
+   * The cash counter sets the received amount in `text-xl font-bold`, because a
+   * clerk reads it back to the person paying before pressing the button. Every
+   * other field leaves this alone and takes the field size the kit gives it.
+   */
+  inputClassName?: string;
   'aria-describedby'?: string;
 }) {
   const unitId = `${id}-unit`;
@@ -64,7 +73,10 @@ export function CurrencyInput({
         invalid={invalid}
         aria-describedby={[unitId, describedBy].filter(Boolean).join(' ')}
         onChange={(event) => onChange(event.target.value)}
-        className="h-full flex-1 rounded-none border-0 bg-transparent tabular-nums shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+        className={cn(
+          'h-full flex-1 rounded-none border-0 bg-transparent tabular-nums shadow-none focus-visible:ring-0 focus-visible:ring-offset-0',
+          inputClassName,
+        )}
       />
     </div>
   );

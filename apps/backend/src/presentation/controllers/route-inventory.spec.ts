@@ -158,3 +158,67 @@ describe('the «مشاهد فقط» (VIEWER) role — the municipality leader’
     expect(forbidden.map((route) => route.name)).toEqual([]);
   });
 });
+
+/*
+  The treasury's permission table (docs/finance.md §9), pinned route by route.
+  A role list is the whole control on these handlers — the services trust the
+  guard — so widening one must be a decision someone makes here, on purpose,
+  not a side effect of an edit to a decorator.
+*/
+describe('the treasury routes (docs/finance.md §9)', () => {
+  const READ = ['ACCOUNTANT', 'AUDITOR', 'SUPER_ADMIN', 'VIEWER'];
+  const WORK = ['ACCOUNTANT', 'SUPER_ADMIN'];
+  const ADMIN = ['SUPER_ADMIN'];
+  const ALL_BUT_VIEWER = ['ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'AUDITOR', 'COLLECTOR', 'FIELD_INSPECTOR', 'SUPER_ADMIN'];
+  const expected: Record<string, string[]> = {
+    'TreasuryController.overview': READ,
+    'TreasuryController.statement': READ,
+    'TreasuryController.activate': ADMIN,
+    'ExpensesController.categories': READ,
+    'ExpensesController.createCategory': ADMIN,
+    'ExpensesController.updateCategory': ADMIN,
+    'ExpensesController.list': READ,
+    'ExpensesController.get': READ,
+    'ExpensesController.record': WORK,
+    'ExpensesController.recordSalary': WORK,
+    'ExpensesController.requests': READ,
+    'ExpensesController.requestPayment': WORK,
+    'ExpensesController.orderRequest': ADMIN,
+    'ExpensesController.rejectRequest': ADMIN,
+    'ExpensesController.withdrawRequest': WORK,
+    'ExpensesController.regularize': ADMIN,
+    'ExpensesController.void': ADMIN,
+    'IncomeController.categories': READ,
+    'IncomeController.createCategory': ADMIN,
+    'IncomeController.updateCategory': ADMIN,
+    'IncomeController.list': READ,
+    'IncomeController.record': WORK,
+    'IncomeController.get': READ,
+    'IncomeController.void': ADMIN,
+    'TransfersController.custody': READ,
+    'TransfersController.myRound': ALL_BUT_VIEWER,
+    'TransfersController.collections': READ,
+    'TransfersController.list': READ,
+    'TransfersController.receiveCustody': WORK,
+    'TransfersController.void': ADMIN,
+  };
+  const treasury = routes().filter((route) => /^(Treasury|Expenses|Income|Transfers)Controller\./.test(route.name));
+
+  it('knows every treasury handler, and no other', () => {
+    expect(treasury.map((route) => route.name).sort()).toEqual(Object.keys(expected).sort());
+  });
+
+  it.each(Object.entries(expected))('%s admits exactly its roles', (name, roles) => {
+    const route = treasury.find((candidate) => candidate.name === name);
+    expect([...(route?.roles ?? [])].sort()).toEqual([...roles].sort());
+  });
+
+  it('lets no one but the manager order, refuse, regularise or cancel', () => {
+    // `void` covers an expense, an income voucher and a transfer alike.
+    const managerOnly = ['orderRequest', 'rejectRequest', 'regularize', 'void', 'activate'];
+    const wider = treasury.filter(
+      (route) => managerOnly.includes(route.name.split('.')[1]) && (route.roles ?? []).some((role) => role !== 'SUPER_ADMIN'),
+    );
+    expect(wider.map((route) => route.name)).toEqual([]);
+  });
+});

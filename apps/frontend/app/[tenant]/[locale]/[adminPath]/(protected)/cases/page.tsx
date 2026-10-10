@@ -362,11 +362,6 @@ export default function CasesPage({
       <PageHeader
         icon={ClipboardList}
         title={locale === 'en' ? 'Cases' : 'الحالات'}
-        subtitle={
-          locale === 'en'
-            ? 'Visits that did not become a citizen registration — nobody home, access refused. Log what was observed for the next visit.'
-            : 'زيارات لم تنتهِ بتسجيل مواطن — لا أحد في المنزل، أو تعذّر الدخول. سجّل ما أمكن ملاحظته للزيارة القادمة.'
-        }
         actions={
           canWrite ? (
             <Button onClick={() => router.push(`${base}/cases/new`)}>

@@ -3345,6 +3345,14 @@ export interface CitizenProfilePayment {
   /** `OVERDUE` is derived server-side from the due date, never stored. */
   paymentStatus: string;
   paymentMethod: string | null;
+  /**
+   * «INV-2610-0001» — the number on the bill itself (migration 0079).
+   *
+   * Null on every bill raised before that migration, which is why the receipt
+   * falls back to a reference derived from the id: those documents were issued
+   * without a number and inventing one now would be a lie on a printed page.
+   */
+  invoiceNumber: string | null;
   whishTransactionRef: string | null;
   paidAt: string | null;
   reviewNote: string | null;
@@ -4973,6 +4981,13 @@ export interface MunicipalitySettings {
   exchangeRate: number | null;
   /** Stamped server-side, and only when the rate actually changes. */
   exchangeRateUpdatedAt: string | null;
+  /**
+   * «سقف الدفع العاجل»: the most an accountant may pay on the urgent path, per
+   * voucher, in that currency; `null` for none (decision D6, docs/finance.md
+   * §5.1). Absent — not null — for a citizen: the server strips both.
+   */
+  urgentExpenseCeilingLbp?: number | null;
+  urgentExpenseCeilingUsd?: number | null;
 
   numberingSequences: Record<SequenceKey, NumberingSequence> | null;
   backupSchedule: BackupSchedule | null;
@@ -5015,7 +5030,10 @@ export function getMunicipalitySettings(
 }
 
 /**
- * SUPER_ADMIN only, server-enforced.
+ * The settings screen is SUPER_ADMIN only. The route is not: it admits
+ * `FEE_ADMIN_ROLES` (`SUPER_ADMIN`, `ACCOUNTANT`) for every field but the two
+ * urgent-payment ceilings, which the server keeps to the manager
+ * (docs/security.md, gaps).
  *
  * Every field is optional and only what is sent is written — which is what
  * lets one section of the settings screen save without clearing the fields
@@ -5051,6 +5069,12 @@ export async function updateMunicipalitySettings(
     /** `null` clears it. Omitting leaves whatever is stored. */
     secondaryCurrency: CurrencyCode | null;
     exchangeRate: number | null;
+    /**
+     * `null` clears the ceiling; omitting leaves it. The manager's alone: any
+     * other role that changes one is refused (`URGENT_EXPENSE_CEILING_FORBIDDEN`).
+     */
+    urgentExpenseCeilingLbp: number | null;
+    urgentExpenseCeilingUsd: number | null;
 
     numberingSequences: Record<SequenceKey, NumberingSequence>;
     backupSchedule: BackupSchedule;
@@ -5631,6 +5655,12 @@ export async function settlePayment(
     /** The rate the foreign notes were taken at, and the municipality's own. */
     exchangeRate: number | null;
     officialExchangeRate: number | null;
+    /**
+     * True when this answers a retry with the receipt an earlier attempt
+     * recorded — its number, day and amount, which may not be what the form
+     * shows now. Optional: an API that does not send it answers as before.
+     */
+    replayed?: boolean;
   }>(
     tenant,
     `/fees/payments/${encodeURIComponent(id)}/settle`,
@@ -5891,4 +5921,570 @@ export function unitCorrectionRefusal(
   return reason === 'PREVIEW_STALE' || reason === 'BLOCKED' || reason === 'BUSY' || reason === 'UNVERIFIED'
     ? reason
     : null;
+}
+
+// ── الخزينة (stage 1) ───────────────────────────────────────────────────────
+
+import type {
+  ActivateTreasuryInput,
+  ActivateTreasuryResult,
+  TreasuryOverview,
+  TreasuryStatement,
+  CreateExpenseCategoryInput,
+  ExpenseCategoryView,
+  ExpenseListResult,
+  ExpenseRequestListResult,
+  ExpenseRequestStatus,
+  ExpenseRequestView,
+  ExpenseVoucherView,
+  RecordExpenseInput,
+  RecordExpenseResult,
+  RejectExpenseRequestInput,
+  RequestExpenseInput,
+  RequestExpenseResult,
+  RecordStaffSalaryInput,
+  UpdateExpenseCategoryInput,
+  VoidExpenseInput,
+  CreateIncomeCategoryInput,
+  IncomeCategoryView,
+  IncomeListResult,
+  IncomeVoucherView,
+  RecordIncomeVoucherInput,
+  RecordIncomeVoucherResult,
+  UpdateIncomeCategoryInput,
+  VoidIncomeVoucherInput,
+  CollectorCollectionsResult,
+  CollectorCustodyView,
+  CollectorRoundView,
+  ReceiveCustodyInput,
+  ReceiveCustodyResult,
+  TransferView,
+  VoidTransferInput,
+} from '@mechanization/shared-schemas';
+
+export type {
+  ActivateTreasuryInput,
+  ActivateTreasuryResult,
+  TreasuryAccountView,
+  TreasuryOverview,
+  TreasuryRate,
+  TreasuryStatement,
+  TreasuryStatementEntry,
+  CreateExpenseCategoryInput,
+  ExpenseCategoryView,
+  ExpenseListResult,
+  ExpenseOrderStatus,
+  ExpenseRequestListResult,
+  ExpenseRequestStatus,
+  ExpenseRequestView,
+  ExpenseStatus,
+  UpdateExpenseCategoryInput,
+  ExpenseVoucherView,
+  RecordExpenseInput,
+  RecordExpenseResult,
+  RejectExpenseRequestInput,
+  RequestExpenseInput,
+  RequestExpenseResult,
+  RecordStaffSalaryInput,
+  VoidExpenseInput,
+  CreateIncomeCategoryInput,
+  IncomeCategoryView,
+  IncomeListResult,
+  IncomeStatus,
+  UpdateIncomeCategoryInput,
+  IncomeVoucherView,
+  RecordIncomeVoucherInput,
+  RecordIncomeVoucherResult,
+  VoidIncomeVoucherInput,
+  CollectorCollectionRow,
+  CollectorCollectionsResult,
+  CollectorCustodyView,
+  CollectorRoundCurrency,
+  CollectorRoundRow,
+  CollectorRoundView,
+  ReceiveCustodyInput,
+  ReceiveCustodyResult,
+  TransferView,
+  VoidTransferInput,
+} from '@mechanization/shared-schemas';
+
+/** Every wallet with its balance, whether the treasury is live, and the rate to convert with. `GET /treasury`. */
+export function getTreasuryOverview(tenant: string, token: string, _args?: undefined, signal?: AbortSignal) {
+  return apiFetch<TreasuryOverview>(tenant, '/treasury', { token, signal });
+}
+
+/**
+ * One wallet's movements inside a range, each with the balance after it.
+ * `from` and `to` are dates (`YYYY-MM-DD`) on the municipality's calendar, and a date-only `to` runs to the end of
+ * that day in Beirut. `limit` caps the rows at the NEWEST ones in the range, with the opening balance worked out for
+ * the rows shown; the answer says when it cut the list short.
+ */
+export function getTreasuryStatement(
+  tenant: string,
+  token: string,
+  args: { accountId: string; from?: string; to?: string; limit?: number },
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams();
+  if (args.from) query.set('from', args.from);
+  if (args.to) query.set('to', args.to);
+  if (args.limit !== undefined) query.set('limit', String(args.limit));
+  const suffix = query.toString() ? `?${query}` : '';
+  return apiFetch<TreasuryStatement>(
+    tenant,
+    `/treasury/accounts/${encodeURIComponent(args.accountId)}/statement${suffix}`,
+    { token, signal },
+  );
+}
+
+/** «تفعيل الخزينة» — the counted opening balances, posted once. SUPER_ADMIN only. `POST /treasury/activate`. */
+export function activateTreasury(
+  tenant: string,
+  token: string,
+  args: ActivateTreasuryInput,
+  signal?: AbortSignal,
+) {
+  return apiFetch<ActivateTreasuryResult>(tenant, '/treasury/activate', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(args),
+    signal,
+  });
+}
+
+/** «ما بعهدة الجباة» — what each collector is still carrying. `GET /treasury/transfers/custody`. */
+export function getCollectorCustody(tenant: string, token: string, _args?: undefined, signal?: AbortSignal) {
+  return apiFetch<CollectorCustodyView[]>(tenant, '/treasury/transfers/custody', { token, signal });
+}
+
+/**
+ * «من حصّل الجابي» — the receipts behind one collector's custody balance.
+ * `GET /treasury/transfers/custody/:collectorId/collections`.
+ */
+export function getCollectorCollections(
+  tenant: string,
+  token: string,
+  args: { collectorId: string; limit?: number },
+  signal?: AbortSignal,
+) {
+  const suffix = args.limit === undefined ? '' : `?limit=${args.limit}`;
+  return apiFetch<CollectorCollectionsResult>(
+    tenant,
+    `/treasury/transfers/custody/${encodeURIComponent(args.collectorId)}/collections${suffix}`,
+    { token, signal },
+  );
+}
+
+/**
+ * «جولتي» — the signed-in collector's own round: what is in his pocket, and
+ * which doors it came from. `GET /treasury/transfers/custody/mine`.
+ *
+ * No id in the path on purpose — the server scopes it by the session, so there
+ * is nothing here for a client to tamper with.
+ */
+export function getMyRound(tenant: string, token: string, _args?: undefined, signal?: AbortSignal) {
+  return apiFetch<CollectorRoundView>(tenant, '/treasury/transfers/custody/mine', { token, signal });
+}
+
+/** The transfers recorded, newest first. `GET /treasury/transfers`. */
+export function getTransfers(
+  tenant: string,
+  token: string,
+  args: { limit?: number } = {},
+  signal?: AbortSignal,
+) {
+  const suffix = args.limit === undefined ? '' : `?limit=${args.limit}`;
+  return apiFetch<TransferView[]>(tenant, `/treasury/transfers${suffix}`, { token, signal });
+}
+
+/**
+ * «استلام صندوق الجابي» — the counted cash leaves custody and reaches the safe.
+ * ACCOUNTANT or SUPER_ADMIN. `POST /treasury/transfers/custody/receive`.
+ */
+export function receiveCollectorCustody(
+  tenant: string,
+  token: string,
+  args: ReceiveCustodyInput,
+  signal?: AbortSignal,
+) {
+  return apiFetch<ReceiveCustodyResult>(tenant, '/treasury/transfers/custody/receive', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(args),
+    signal,
+  });
+}
+
+/** Cancels a transfer and puts both legs back. SUPER_ADMIN only. `POST /treasury/transfers/:id/void`. */
+export function voidTransfer(
+  tenant: string,
+  token: string,
+  args: { id: string } & VoidTransferInput,
+  signal?: AbortSignal,
+) {
+  const { id, ...body } = args;
+  return apiFetch<TransferView>(tenant, `/treasury/transfers/${encodeURIComponent(id)}/void`, {
+    method: 'POST',
+    token,
+    body: JSON.stringify(body),
+    signal,
+  });
+}
+
+/** The bands money may be spent under. `GET /treasury/expenses/categories`. */
+export function getExpenseCategories(
+  tenant: string,
+  token: string,
+  args?: { includeInactive?: boolean },
+  signal?: AbortSignal,
+) {
+  const suffix = args?.includeInactive ? '?includeInactive=true' : '';
+  return apiFetch<ExpenseCategoryView[]>(tenant, `/treasury/expenses/categories${suffix}`, { token, signal });
+}
+
+/** «بند صرف جديد». SUPER_ADMIN only. `POST /treasury/expenses/categories`. */
+export function createExpenseCategory(
+  tenant: string,
+  token: string,
+  args: CreateExpenseCategoryInput,
+  signal?: AbortSignal,
+) {
+  return apiFetch<ExpenseCategoryView>(tenant, '/treasury/expenses/categories', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(args),
+    signal,
+  });
+}
+
+/**
+ * Renames a band, re-codes it, or takes it out of use. Never deletes one.
+ * SUPER_ADMIN only. `PATCH /treasury/expenses/categories/:id`.
+ */
+export function updateExpenseCategory(
+  tenant: string,
+  token: string,
+  args: { id: string } & UpdateExpenseCategoryInput,
+  signal?: AbortSignal,
+) {
+  const { id, ...body } = args;
+  return apiFetch<ExpenseCategoryView>(
+    tenant,
+    `/treasury/expenses/categories/${encodeURIComponent(id)}`,
+    { method: 'PATCH', token, body: JSON.stringify(body), signal },
+  );
+}
+
+/**
+ * The expense register, newest first. `GET /treasury/expenses`.
+ *
+ * `totals` covers the whole filtered set rather than the page, so «كم صرفنا على
+ * المحروقات» is answered by the figure beside the table and not by adding up
+ * what happens to be on screen.
+ */
+export function getExpenses(
+  tenant: string,
+  token: string,
+  args: {
+    from?: string;
+    to?: string;
+    categoryId?: string;
+    accountId?: string;
+    includeVoid?: boolean;
+    /** Only paid vouchers still waiting for their payment order (an urgent payment, art. 35); never a cancelled one. */
+    awaitingOrder?: boolean;
+    page?: number;
+    pageSize?: number;
+  } = {},
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams();
+  if (args.from) query.set('from', args.from);
+  if (args.to) query.set('to', args.to);
+  if (args.categoryId) query.set('categoryId', args.categoryId);
+  if (args.accountId) query.set('accountId', args.accountId);
+  if (args.includeVoid) query.set('includeVoid', 'true');
+  if (args.awaitingOrder) query.set('awaitingOrder', 'true');
+  if (args.page !== undefined) query.set('page', String(args.page));
+  if (args.pageSize !== undefined) query.set('pageSize', String(args.pageSize));
+  const suffix = query.toString() ? `?${query}` : '';
+  return apiFetch<ExpenseListResult>(tenant, `/treasury/expenses${suffix}`, { token, signal });
+}
+
+/** One voucher. `GET /treasury/expenses/:id`. */
+export function getExpense(tenant: string, token: string, args: { id: string }, signal?: AbortSignal) {
+  return apiFetch<ExpenseVoucherView>(tenant, `/treasury/expenses/${encodeURIComponent(args.id)}`, {
+    token,
+    signal,
+  });
+}
+
+/**
+ * «سجّل النفقة» — records the voucher and takes the money out, in one call.
+ * ACCOUNTANT or SUPER_ADMIN. `POST /treasury/expenses`.
+ *
+ * The manager's recording is the payment order, so the voucher carries it. An
+ * accountant is refused (`EXPENSE_ORDER_REQUIRED`) unless the input states an
+ * `urgentReason` (art. 35); then it pays now and the voucher waits for the
+ * manager's order (`orderStatus: 'AWAITING_ORDER'`). Anything else the
+ * accountant prepares goes through `requestExpense`.
+ */
+export function recordExpense(tenant: string, token: string, args: RecordExpenseInput, signal?: AbortSignal) {
+  return apiFetch<RecordExpenseResult>(tenant, '/treasury/expenses', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(args),
+    signal,
+  });
+}
+
+/**
+ * «صرف راتب / أجر» to one staff member. `POST /treasury/expenses/salaries/:staffId`.
+ * The server sets the payee and the category; the body cannot.
+ */
+export function recordStaffSalary(
+  tenant: string,
+  token: string,
+  staffId: string,
+  args: RecordStaffSalaryInput,
+  signal?: AbortSignal,
+) {
+  return apiFetch<RecordExpenseResult>(tenant, `/treasury/expenses/salaries/${encodeURIComponent(staffId)}`, {
+    method: 'POST',
+    token,
+    body: JSON.stringify(args),
+    signal,
+  });
+}
+
+/** «إلغاء سند الصرف» — cancels it and puts the money back. SUPER_ADMIN only. `POST /treasury/expenses/:id/void`. */
+export function voidExpense(
+  tenant: string,
+  token: string,
+  args: { id: string } & VoidExpenseInput,
+  signal?: AbortSignal,
+) {
+  const { id, ...body } = args;
+  return apiFetch<ExpenseVoucherView>(tenant, `/treasury/expenses/${encodeURIComponent(id)}/void`, {
+    method: 'POST',
+    token,
+    body: JSON.stringify(body),
+    signal,
+  });
+}
+
+/**
+ * «طلب أمر صرف» — the accountant prepares an expense for the manager's order.
+ * Nothing leaves a wallet, so there is no date: the money leaves on the day of
+ * the order. ACCOUNTANT or SUPER_ADMIN. `POST /treasury/expenses/requests`.
+ */
+export function requestExpense(tenant: string, token: string, args: RequestExpenseInput, signal?: AbortSignal) {
+  return apiFetch<RequestExpenseResult>(tenant, '/treasury/expenses/requests', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(args),
+    signal,
+  });
+}
+
+/**
+ * The requests for a payment order, newest first; by default only those still
+ * waiting for the manager. `page` is 1-based. `GET /treasury/expenses/requests`.
+ */
+export function getExpenseRequests(
+  tenant: string,
+  token: string,
+  args: { status?: ExpenseRequestStatus; page?: number; pageSize?: number } = {},
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams();
+  if (args.status) query.set('status', args.status);
+  if (args.page !== undefined) query.set('page', String(args.page));
+  if (args.pageSize !== undefined) query.set('pageSize', String(args.pageSize));
+  const suffix = query.toString() ? `?${query}` : '';
+  return apiFetch<ExpenseRequestListResult>(tenant, `/treasury/expenses/requests${suffix}`, { token, signal });
+}
+
+/**
+ * «أمر بالصرف» — the manager orders a request and the money leaves, in one
+ * transaction. Refused with `TREASURY_INSUFFICIENT_FUNDS` when the wallet falls
+ * short, and the request then stays waiting. SUPER_ADMIN only.
+ * `POST /treasury/expenses/requests/:id/order`.
+ */
+export function orderExpenseRequest(tenant: string, token: string, args: { id: string }, signal?: AbortSignal) {
+  return apiFetch<RecordExpenseResult>(
+    tenant,
+    `/treasury/expenses/requests/${encodeURIComponent(args.id)}/order`,
+    { method: 'POST', token, signal },
+  );
+}
+
+/** «رفض الطلب» — declines a request, with the reason its author will read. SUPER_ADMIN only. `POST /treasury/expenses/requests/:id/reject`. */
+export function rejectExpenseRequest(
+  tenant: string,
+  token: string,
+  args: { id: string } & RejectExpenseRequestInput,
+  signal?: AbortSignal,
+) {
+  const { id, ...body } = args;
+  return apiFetch<ExpenseRequestView>(tenant, `/treasury/expenses/requests/${encodeURIComponent(id)}/reject`, {
+    method: 'POST',
+    token,
+    body: JSON.stringify(body),
+    signal,
+  });
+}
+
+/**
+ * «سحب الطلب» — takes back a request that is still waiting. Its author or the
+ * manager; anyone else is refused (`EXPENSE_REQUEST_NOT_YOURS`).
+ * `POST /treasury/expenses/requests/:id/withdraw`.
+ */
+export function withdrawExpenseRequest(tenant: string, token: string, args: { id: string }, signal?: AbortSignal) {
+  return apiFetch<ExpenseRequestView>(
+    tenant,
+    `/treasury/expenses/requests/${encodeURIComponent(args.id)}/withdraw`,
+    { method: 'POST', token, signal },
+  );
+}
+
+/**
+ * «إصدار أمر الصرف» for an urgent payment already made (art. 35): stamps the
+ * manager's order on the voucher, once. The money has moved already, so no
+ * balance changes. SUPER_ADMIN only. `POST /treasury/expenses/:id/order`.
+ */
+export function regularizeExpense(tenant: string, token: string, args: { id: string }, signal?: AbortSignal) {
+  return apiFetch<ExpenseVoucherView>(tenant, `/treasury/expenses/${encodeURIComponent(args.id)}/order`, {
+    method: 'POST',
+    token,
+    signal,
+  });
+}
+
+// ── الإيرادات العامة (stage 2) ──────────────────────────────────────────────
+
+/** Where income may be filed. `GET /treasury/income/categories`. */
+export function getIncomeCategories(
+  tenant: string,
+  token: string,
+  args?: { includeInactive?: boolean },
+  signal?: AbortSignal,
+) {
+  const suffix = args?.includeInactive ? '?includeInactive=true' : '';
+  return apiFetch<IncomeCategoryView[]>(tenant, `/treasury/income/categories${suffix}`, { token, signal });
+}
+
+/** «بند إيراد جديد». SUPER_ADMIN only. `POST /treasury/income/categories`. */
+export function createIncomeCategory(
+  tenant: string,
+  token: string,
+  args: CreateIncomeCategoryInput,
+  signal?: AbortSignal,
+) {
+  return apiFetch<IncomeCategoryView>(tenant, '/treasury/income/categories', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(args),
+    signal,
+  });
+}
+
+/**
+ * Renames an income category, re-codes it, or stops or restarts it. Never
+ * deletes one. SUPER_ADMIN only. `PATCH /treasury/income/categories/:id`.
+ */
+export function updateIncomeCategory(
+  tenant: string,
+  token: string,
+  args: { id: string } & UpdateIncomeCategoryInput,
+  signal?: AbortSignal,
+) {
+  const { id, ...body } = args;
+  return apiFetch<IncomeCategoryView>(tenant, `/treasury/income/categories/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    token,
+    body: JSON.stringify(body),
+    signal,
+  });
+}
+
+/**
+ * The income register, newest first. `GET /treasury/income`.
+ *
+ * `from` and `to` are days on the municipality's calendar, both inclusive.
+ * `totals` covers the whole filtered set rather than the page.
+ */
+export function getIncomeVouchers(
+  tenant: string,
+  token: string,
+  args: {
+    from?: string;
+    to?: string;
+    categoryId?: string;
+    accountId?: string;
+    currency?: string;
+    search?: string;
+    includeVoid?: boolean;
+    page?: number;
+    pageSize?: number;
+  } = {},
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams();
+  if (args.from) query.set('from', args.from);
+  if (args.to) query.set('to', args.to);
+  if (args.categoryId) query.set('categoryId', args.categoryId);
+  if (args.accountId) query.set('accountId', args.accountId);
+  if (args.currency) query.set('currency', args.currency);
+  if (args.search) query.set('search', args.search);
+  if (args.includeVoid) query.set('includeVoid', 'true');
+  if (args.page !== undefined) query.set('page', String(args.page));
+  if (args.pageSize !== undefined) query.set('pageSize', String(args.pageSize));
+  const suffix = query.toString() ? `?${query}` : '';
+  return apiFetch<IncomeListResult>(tenant, `/treasury/income${suffix}`, { token, signal });
+}
+
+/** One voucher. `GET /treasury/income/:id`. */
+export function getIncomeVoucher(tenant: string, token: string, args: { id: string }, signal?: AbortSignal) {
+  return apiFetch<IncomeVoucherView>(tenant, `/treasury/income/${encodeURIComponent(args.id)}`, {
+    token,
+    signal,
+  });
+}
+
+/**
+ * «سجّل الإيراد» — records the voucher and credits the wallet, in one call.
+ * ACCOUNTANT or SUPER_ADMIN. `POST /treasury/income`.
+ */
+export function recordIncomeVoucher(
+  tenant: string,
+  token: string,
+  args: RecordIncomeVoucherInput,
+  signal?: AbortSignal,
+) {
+  return apiFetch<RecordIncomeVoucherResult>(tenant, '/treasury/income', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(args),
+    signal,
+  });
+}
+
+/**
+ * «إلغاء سند القبض» — cancels it and takes the money back out; refused when the
+ * wallet has spent it since. SUPER_ADMIN only. `POST /treasury/income/:id/void`.
+ */
+export function voidIncomeVoucher(
+  tenant: string,
+  token: string,
+  args: { id: string } & VoidIncomeVoucherInput,
+  signal?: AbortSignal,
+) {
+  const { id, ...body } = args;
+  return apiFetch<IncomeVoucherView>(tenant, `/treasury/income/${encodeURIComponent(id)}/void`, {
+    method: 'POST',
+    token,
+    body: JSON.stringify(body),
+    signal,
+  });
 }

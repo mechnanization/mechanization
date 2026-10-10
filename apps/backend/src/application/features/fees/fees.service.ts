@@ -25,6 +25,7 @@ import {
   municipalToday,
   ownerShareOf,
   roundRate,
+  TREASURY_ADMIN_ROLES,
 } from '@mechanization/shared-schemas';
 import {
   billableUnits,
@@ -35,6 +36,7 @@ import {
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
+import { allocateDocumentNumber, allocateDocumentNumbers } from '../../common/document-number';
 import { unitsUnderReview } from '../buildings/unit-status';
 import { uninhabitableUnitIds } from '../buildings/habitability';
 import { ownerBillingRules } from '../buildings/owner-billing';
@@ -44,6 +46,7 @@ import { likePattern, searchTokens } from '../../common/search-terms';
 import { citizenSearchText } from '../../common/citizen-search';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
 import { PaymentLedgerService, type Tender } from './payment-ledger.service';
+import { creditsWallets, documentOccurredAt } from '../treasury/treasury.plan';
 import { AuditService, type AuditEntryInput } from '../audit/audit.service';
 
 /** Property categories that live on `PropertyEntry.propertyType`. */
@@ -930,6 +933,9 @@ export class FeesService {
       secondaryCurrency: row?.secondaryCurrency ?? null,
       exchangeRate: row?.exchangeRate == null ? null : Number(row.exchangeRate),
       exchangeRateUpdatedAt: row?.exchangeRateUpdatedAt?.toISOString() ?? null,
+      // «سقف الدفع العاجل» (docs/finance.md §5.1, D6). Null: no ceiling.
+      urgentExpenseCeilingLbp: row?.urgentExpenseCeilingLbp == null ? null : Number(row.urgentExpenseCeilingLbp),
+      urgentExpenseCeilingUsd: row?.urgentExpenseCeilingUsd == null ? null : Number(row.urgentExpenseCeilingUsd),
 
       numberingSequences: (row?.numberingSequences as SystemSettingsInput['numberingSequences']) ?? null,
       backupSchedule: (row?.backupSchedule as SystemSettingsInput['backupSchedule']) ?? null,
@@ -956,13 +962,15 @@ export class FeesService {
      * that actually changes moves it: re-saving the finance section with the
      * same number must not make a month-old rate look current.
      */
+    const sendsCeiling =
+      input.urgentExpenseCeilingLbp !== undefined || input.urgentExpenseCeilingUsd !== undefined;
     const previous =
-      input.exchangeRate === undefined
+      input.exchangeRate === undefined && !sendsCeiling
         ? null
         : await withConnectionRetry(() =>
             this.db.systemSettings.findFirst({
               where: { singleton: true },
-              select: { exchangeRate: true },
+              select: { exchangeRate: true, urgentExpenseCeilingLbp: true, urgentExpenseCeilingUsd: true },
             }),
           );
     const rateChanged =
@@ -970,6 +978,30 @@ export class FeesService {
       (previous?.exchangeRate == null
         ? input.exchangeRate !== null
         : Number(previous.exchangeRate) !== input.exchangeRate);
+
+    /*
+     * «سقف الدفع العاجل» is the manager's (docs/finance.md §5.1, decision D6).
+     *
+     * The route admits the accountant for the rest of the settings, and the
+     * ceiling is the limit on the accountant's own urgent payments, so he may
+     * not move it: a change from anyone outside TREASURY_ADMIN_ROLES is refused.
+     * A form that sends the value it read is not a change, and is not written
+     * either — so an accountant's save of the finance section can never put back
+     * a ceiling the manager changed a moment earlier.
+     */
+    const ceilingChanged = (sent: number | null | undefined, stored: Prisma.Decimal | null | undefined) =>
+      sent !== undefined && (stored == null ? sent !== null : sent === null || Number(stored) !== sent);
+    const setsCeiling = (TREASURY_ADMIN_ROLES as readonly string[]).includes(actor.role);
+    if (
+      !setsCeiling &&
+      (ceilingChanged(input.urgentExpenseCeilingLbp, previous?.urgentExpenseCeilingLbp) ||
+        ceilingChanged(input.urgentExpenseCeilingUsd, previous?.urgentExpenseCeilingUsd))
+    ) {
+      throw new ForbiddenError({
+        code: 'URGENT_EXPENSE_CEILING_FORBIDDEN',
+        message: 'Only the manager can change the urgent-payment ceiling.',
+      });
+    }
 
     const data = {
       whishMoneyNumber: blankToNull(input.whishMoneyNumber),
@@ -998,6 +1030,8 @@ export class FeesService {
       ...(rateChanged
         ? { exchangeRateUpdatedAt: input.exchangeRate === null ? null : new Date() }
         : {}),
+      urgentExpenseCeilingLbp: setsCeiling ? input.urgentExpenseCeilingLbp : undefined,
+      urgentExpenseCeilingUsd: setsCeiling ? input.urgentExpenseCeilingUsd : undefined,
 
       numberingSequences: input.numberingSequences,
       backupSchedule: input.backupSchedule,
@@ -1178,6 +1212,8 @@ export class FeesService {
         select: { id: true },
       });
 
+      // Taken before the insert; see `numberInvoices`.
+      const raisedAt = new Date();
       const created = await tx.citizenPayment.createMany({
         data: billable.map((entry) => ({
           citizenId: entry.citizenId,
@@ -1204,8 +1240,21 @@ export class FeesService {
         skipDuplicates: true,
       });
 
+      await this.numberInvoices(
+        tx,
+        notice.id,
+        periodKeyFor(input.frequency, dueDate),
+        created.count,
+        raisedAt,
+      );
+
       return { noticeId: notice.id, issued: created.count };
-    });
+      /*
+        `runInTenantTransaction`'s limits rather than Prisma's 5 s default: a
+        town-wide notice writes and numbers tens of thousands of bills in here,
+        and past five seconds Prisma closes the transaction under the insert.
+      */
+    }, { maxWait: 15_000, timeout: 60_000 });
 
     this.logger.log(
       `Fee "${input.title}" issued to ${result.issued} citizen(s) in ${this.tenantContext.tenantSlug}`,
@@ -1440,18 +1489,30 @@ export class FeesService {
         );
       }
 
-      const created = await this.db.citizenPayment.createMany({
-        data: billable.map((entry) => ({
-          citizenId: entry.citizenId,
-          feeNoticeId: notice.id,
-          title: notice.title,
-          amount: entry.amount,
-          assessment: (entry.assessment ?? undefined) as never,
-          dueDate,
-          periodKey,
-        })),
-        skipDuplicates: true,
-      });
+      /*
+        The insert and the numbering share a transaction, so a period is never
+        left with bills that carry no number. It holds this month's invoice
+        counter for the length of the batch — acceptable here because the
+        recurring job runs at 2am and is the only thing issuing bills at that
+        hour, and the alternative is a half-numbered period.
+      */
+      const created = await this.db.$transaction(async (tx) => {
+        const inserted = await tx.citizenPayment.createMany({
+          data: billable.map((entry) => ({
+            citizenId: entry.citizenId,
+            feeNoticeId: notice.id,
+            title: notice.title,
+            amount: entry.amount,
+            assessment: (entry.assessment ?? undefined) as never,
+            dueDate,
+            periodKey,
+          })),
+          skipDuplicates: true,
+        });
+        await this.numberInvoices(tx, notice.id, periodKey, inserted.count, startedAt);
+        return inserted;
+        // As on the first issue: a period of a town-wide notice is more than five seconds of work.
+      }, { maxWait: 15_000, timeout: 60_000 });
 
       if (created.count > 0) {
         this.logger.log(
@@ -2540,17 +2601,96 @@ export class FeesService {
     // A bill on a file folded into another is one the person never sees.
     await assertNotMergedAway(this.db, citizen.id);
 
-    const created = await this.db.citizenPayment.create({
-      data: {
-        citizenId: citizen.id,
-        title: input.title,
-        amount: input.amount,
-        dueDate: new Date(input.dueDate),
-      },
-      select: { id: true },
+    /*
+      One bill, so the number goes straight into the row rather than through
+      `numberInvoices` — there is no notice to scope an after-the-fact update
+      by, and nothing here is skipped as a duplicate. The transaction is what
+      ties the number to the bill: drawn and then not used, it would be printed
+      on nothing.
+    */
+    const created = await this.db.$transaction(async (tx) => {
+      const invoiceNumber = await allocateDocumentNumber(tx, this.S, 'INVOICE');
+      return tx.citizenPayment.create({
+        data: {
+          citizenId: citizen.id,
+          title: input.title,
+          amount: input.amount,
+          dueDate: new Date(input.dueDate),
+          invoiceNumber,
+        },
+        select: { id: true },
+      });
     });
 
     return { id: created.id };
+  }
+
+  /**
+   * Puts «INV-2610-0001» on the bills just raised, in the order they were created.
+   *
+   * Numbered **after** the insert rather than in it, because `createMany` runs
+   * with `skipDuplicates`: a block reserved beforehand would be sized to what we
+   * meant to write, and a re-run that inserts nothing would burn a month's worth
+   * of numbers on documents that do not exist. `count` is `createMany`'s own
+   * return, so exactly as many numbers are drawn as there are rows to carry them.
+   *
+   * `since` is taken before the insert and is what keeps this off bills raised
+   * earlier. Without it, a recurring notice re-billed for a period that was
+   * already billed before migration 0079 would hand this run's numbers to those
+   * older, unnumbered rows — the oldest first, by this very ordering — and leave
+   * the new ones blank. Bills issued before 0079 stay unnumbered on purpose.
+   *
+   * The numbers are formatted once, in TypeScript, and carried into the
+   * statement as one `text[]` parameter, unnested with their position: building
+   * them in SQL instead would be a second copy of `formatDocumentNumber` waiting
+   * to drift from the first. One array, not a VALUES list of pairs — Postgres
+   * takes at most 32,767 bind variables in a statement, so two per bill failed
+   * from 16,384 bills, a town-wide notice, and rolled the whole issue back.
+   *
+   * `createdAt` is a zoneless `timestamp` holding UTC wall-clock time, and a bound
+   * `Date` arrives as `timestamptz`, so a bare `>=` converts the column through the
+   * session time zone: correct in UTC, and 0 rows matched (the issue rolled back)
+   * on a database set to Asia/Beirut. `since` is brought to the column instead.
+   *
+   * `createdAt >= since` relies on Prisma stamping `@default(now())` itself, at
+   * the moment of the insert, after `since` was read. Were the column filled by
+   * the database's own default — the transaction's start, which is before
+   * `since` — nothing would match. So the count is checked, and a mismatch
+   * rolls the issue back instead of leaving a period half-numbered.
+   */
+  private async numberInvoices(
+    tx: Prisma.TransactionClient,
+    noticeId: string,
+    periodKey: string,
+    count: number,
+    since: Date,
+  ): Promise<void> {
+    if (count < 1) return;
+
+    const numbers = await allocateDocumentNumbers(tx, this.S, 'INVOICE', count);
+
+    const numbered = await tx.$executeRaw`
+      WITH ordered AS (
+        SELECT "id", row_number() OVER (ORDER BY "createdAt", "id") AS "rn"
+          FROM ${this.S}citizen_payments
+         WHERE "feeNoticeId" = ${noticeId}::uuid
+           AND "periodKey" = ${periodKey}
+           AND "invoiceNumber" IS NULL
+           AND "createdAt" >= (${since}::timestamptz AT TIME ZONE 'UTC')
+      ),
+      assigned AS (
+        SELECT drawn."number", drawn."rn"
+          FROM unnest(${numbers}::text[]) WITH ORDINALITY AS drawn("number", "rn")
+      )
+      UPDATE ${this.S}citizen_payments AS p
+         SET "invoiceNumber" = assigned."number"
+        FROM ordered, assigned
+       WHERE assigned."rn" = ordered."rn"
+         AND p."id" = ordered."id"
+    `;
+    if (numbered !== count) {
+      throw new Error(`numberInvoices: numbered ${numbered} of the ${count} bills raised on notice ${noticeId}`);
+    }
   }
 
   /** The include this app always joins onto a `CitizenPayment` for admin use — kept
@@ -3416,6 +3556,35 @@ export class FeesService {
       role: input.actor.role,
     });
 
+    /*
+      After go-live, a payment dated before it credits no wallet (docs/finance.md
+      §3.3). That is right for cash already inside the counted opening balance,
+      and a silent hole for anything else: cash taken today and dated last week
+      would settle the bill and print a receipt, and reach no wallet and no
+      custody. A receipt is dated the day the money is taken (decree 5595/1982
+      art. 16 and 98), so after go-live only a finance role — someone answerable
+      for the opening count — may date one before it, and the audit row says no
+      wallet was credited.
+    */
+    const goLiveAt = input.paidOn
+      ? ((await this.db.systemSettings.findFirst({ select: { treasuryGoLiveAt: true } }))?.treasuryGoLiveAt ?? null)
+      : null;
+    const occurredAt = occurredAtFor(input.paidOn, goLiveAt);
+    // The ledger's own test, so the refusal and the credit can never disagree.
+    const beforeGoLive = goLiveAt !== null && occurredAt !== undefined && !creditsWallets(goLiveAt, occurredAt);
+    if (beforeGoLive && !canOverrideCashRules(input.actor.role)) {
+      throw new ValidationError({
+        code: 'PAYMENT_DATE_BEFORE_GO_LIVE',
+        message:
+          'A payment dated before the treasury went live reaches no wallet. Record it as today, or ask an accountant.',
+        params: { date: municipalToday(goLiveAt!) },
+      });
+    }
+
+    if (input.method === 'COLLECTOR' && input.collectedById) {
+      await this.assertLiveCollector(input.collectedById);
+    }
+
     const settled = await this.ledger.record({
       paymentId: input.paymentId,
       amount: received,
@@ -3432,7 +3601,7 @@ export class FeesService {
       recordedById: input.actor.id,
       note: input.note,
       tendered: tender,
-      occurredAt: occurredAtFor(input.paidOn),
+      occurredAt,
       adjustmentReason: adjustment.required ? (input.adjustmentReason ?? null) : null,
       clientRequestId: input.clientRequestId ?? null,
       /*
@@ -3457,6 +3626,8 @@ export class FeesService {
           currency: invoice.currency,
           occurredAt: movement.occurredAt,
           ...(input.paidOn ? { paidOn: input.paidOn, backdatedDays: adjustment.backdatedDays } : {}),
+          // Dated before go-live by a finance role: settled, and deliberately in no wallet.
+          ...(beforeGoLive ? { treasuryCredited: false } : {}),
           ...(tender
             ? {
                 tenderedLocal: tender.local,
@@ -3497,7 +3668,31 @@ export class FeesService {
       changeGiven: settled.changeGiven,
       exchangeRate: tender?.exchangeRate ?? null,
       officialExchangeRate: tender?.officialExchangeRate ?? null,
+      /**
+       * A retry answered from the first receipt (the same key): the screen says it
+       * was already recorded rather than showing a second, fresh success.
+       */
+      replayed: settled.replayed,
     };
+  }
+
+  /**
+   * The collector named on a round payment must be someone who can be holding
+   * the cash: staff, still active, not removed, and not view-only. Anyone else
+   * would have a custody wallet opened in his name that nobody can hand in.
+   */
+  private async assertLiveCollector(collectorId: string): Promise<void> {
+    // `kind` in the WHERE, as on every read of `users`.
+    const collector = await this.db.user.findFirst({
+      where: { id: collectorId, kind: 'STAFF', isActive: true, deletedAt: null, role: { not: 'VIEWER' } },
+      select: { id: true },
+    });
+    if (!collector) {
+      throw new NotFoundError({
+        code: 'COLLECTOR_NOT_FOUND',
+        message: `Collector ${collectorId} is not active staff who can hold cash`,
+      });
+    }
   }
 
   /** Every movement of money against one invoice, oldest first. */
@@ -3725,16 +3920,22 @@ export function creditOf(tender: Tender, invoiceCurrency: string): number {
 }
 
 /**
- * When a payment taken on `paidOn` happened: midday of that day, so a
- * back-dated entry lands on its own date in every time zone the
- * municipality's reports are read in. Omitted means now — the page leaves it
- * out for a payment taken today, so its real time is kept.
+ * When a payment taken on `paidOn` happened, by the rule a voucher follows too
+ * (`documentOccurredAt`): midday of an earlier day, so a back-dated entry lands
+ * on its own date in every time zone the reports are read in, but never before
+ * the opening entry on the go-live day. Omitted means now — the page leaves it
+ * out for a payment taken today, so its real time is kept; sent as today, it is
+ * now as well.
  *
- * Not compared with the server's own «today»: that is UTC, a day behind
- * Lebanon between midnight and 3am, and a clerk recording yesterday's cash in
- * that window would have had it silently moved to now. Exported for its spec.
+ * «Today» is the municipality's, never the server's UTC one: that is a day
+ * behind Lebanon between midnight and 3am, and a clerk recording yesterday's
+ * cash in that window would have had it moved to now. Exported for its spec.
  */
-export function occurredAtFor(paidOn: string | undefined): Date | undefined {
+export function occurredAtFor(
+  paidOn: string | undefined,
+  goLiveAt: Date | null = null,
+  now: Date = new Date(),
+): Date | undefined {
   if (!paidOn) return undefined;
-  return new Date(`${paidOn}T12:00:00.000Z`);
+  return documentOccurredAt({ day: paidOn, today: municipalToday(now), now, goLiveAt });
 }

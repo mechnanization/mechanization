@@ -6,8 +6,10 @@ import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-cli
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { ConflictError } from '../../common/exceptions';
 import { PaymentLedgerService, type LedgerAudit } from './payment-ledger.service';
+import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
 import { AuditService } from '../audit/audit.service';
 import { PrismaAuditRepository } from '../../../infrastructure/repositories/audit.repository';
+import { municipalPeriod } from '@mechanization/shared-schemas';
 
 /**
  * The payment ledger, against a real Postgres.
@@ -97,6 +99,7 @@ describeIfDb('PaymentLedgerService', () => {
     ledger = new PaymentLedgerService(
       context,
       new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
+      new TreasuryLedgerService(context),
     );
   }, SETUP_TIMEOUT_MS);
 
@@ -230,7 +233,8 @@ describeIfDb('PaymentLedgerService', () => {
       expect(result.paymentStatus).toBe('PAID');
       expect(result.paidAmount).toBe(100_000);
       expect(result.remaining).toBe(0);
-      expect(result.receiptNumber).toMatch(/^RCP-\d{6}$/);
+      // «RCP-2610-0001»: the book, the month it was issued in, then the counter (0079).
+      expect(result.receiptNumber).toMatch(new RegExp(`^RCP-${municipalPeriod()}-\\d{4}$`));
 
       const row = await db.citizenPayment.findUniqueOrThrow({ where: { id: paymentId } });
       expect(row.paymentStatus).toBe('PAID');

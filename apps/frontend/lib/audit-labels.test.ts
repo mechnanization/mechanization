@@ -20,9 +20,30 @@ describe('auditActionLabel', () => {
   });
 });
 
+// The payment order (decree 5595/1982): every audit row the expense register writes has a name, never its code.
+describe('auditActionLabel — payment orders', () => {
+  it('names the four acts of the order in both languages', () => {
+    const expected: Record<string, [string, string]> = {
+      EXPENSE_REQUESTED: ['طلب أمر صرف', 'Payment order requested'],
+      EXPENSE_ORDERED: ['أمر صرف', 'Payment order issued'],
+      EXPENSE_REQUEST_REJECTED: ['رفض طلب أمر صرف', 'Payment order request rejected'],
+      EXPENSE_REQUEST_WITHDRAWN: ['سحب طلب أمر صرف', 'Payment order request withdrawn'],
+    };
+    for (const [action, [ar, en]] of Object.entries(expected)) {
+      expect({ action, ar: auditActionLabel(action, 'ar') }).toEqual({ action, ar });
+      expect({ action, en: auditActionLabel(action, 'en') }).toEqual({ action, en });
+    }
+  });
+});
+
 describe('auditEntityLabel', () => {
   it('names a citizen’s trail by the table it is filed under', () => {
     expect(auditEntityLabel('User', 'ar')).toBe('مواطن أو موظف');
     expect(auditEntityLabel('Mystery', 'en')).toBe('Mystery');
+  });
+
+  it('names a payment order request, filed under its own table', () => {
+    expect(auditEntityLabel('ExpenseRequest', 'ar')).toBe('طلب أمر صرف');
+    expect(auditEntityLabel('ExpenseRequest', 'en')).toBe('Payment order request');
   });
 });

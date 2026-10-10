@@ -24,7 +24,7 @@ function normalizeArabic(text: string): string {
 }
 
 /**
-  * Autocomplete selector for creating a bill (IssueFeeDialog / ChargeCitizenDialog).
+  * Autocomplete selector for creating a bill (IssueFeeForm / ChargeCitizenDialog).
   * Staff can pick from previously created bill types or type any new bill name.
   */
 export function BillTypeSelect({

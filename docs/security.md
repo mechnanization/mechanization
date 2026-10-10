@@ -1,6 +1,6 @@
 # Security
 
-Last verified against the code: `feat/estate-institution-owners` (on `develop@f10a1b7`), 2026-10-08.
+Last verified against the code: `fix/pr104-review` (PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; income controls, the salary path and the urgent ceiling), 2026-10-10.
 
 Binding for every change that touches authentication, roles, tokens, validation, uploads, logging,
 headers, client storage or secrets. The rules below are correct practice. Where the code differs today,
@@ -197,11 +197,17 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
 - Multi-step writes run in `runInTenantTransaction`.
 - **Audit tiers.** Tier 1 MUST write its audit row inside the transaction of the change, so the change
   rolls back if the row cannot be written: payments (declaration, confirmation, refusal, counter and
-  Whish settlement), payment reversals, corrections, ownership changes (ending an ownership, owner links,
-  merges), ending a tenancy, review decisions (approve, return, quality check), citizen status changes
-  (archive and restore), how a co-owned flat is billed (`UNIT_OWNER_BILLING_SET`, `OwnerBillingService`,
-  which moves every co-owner's bill), and a unit's fee exemption (`UNIT_FEE_EXEMPTION_SET` / `_LIFTED`,
-  `FeeExemptionService`, SUPER_ADMIN only). Everything else is Tier 2: an event
+  Whish settlement), payment reversals, activating the treasury (`TREASURY_ACTIVATED`: the opening
+  balances and the go-live stamp, one transaction), recording and cancelling an expense, a payment
+  order's life (`EXPENSE_REQUESTED`; `EXPENSE_ORDERED`, on a request or after an urgent payment;
+  `EXPENSE_REQUEST_REJECTED`; `EXPENSE_REQUEST_WITHDRAWN`), recording and cancelling an income
+  voucher (`INCOME_RECORDED`, `INCOME_VOIDED`), receiving a collector's custody
+  (`CUSTODY_RECEIVED`) and cancelling a transfer, corrections, ownership changes (ending an ownership,
+  owner links, merges), ending a tenancy, review decisions (approve, return, quality check), citizen
+  status changes (archive and restore), how a co-owned flat is billed (`UNIT_OWNER_BILLING_SET`,
+  `OwnerBillingService`, which moves every co-owner's bill), and a unit's fee exemption
+  (`UNIT_FEE_EXEMPTION_SET` / `_LIFTED`, `FeeExemptionService`, SUPER_ADMIN only). Everything else is
+  Tier 2: an event
   after the commit, whose failed write is logged and does not undo the change. How:
   [apps/backend/CLAUDE.md](../apps/backend/CLAUDE.md#events-and-audit).
 - An audit row MUST NOT carry a credential (OWASP Logging Cheat Sheet; NIST SP 800-53 AU-3(3), which
@@ -211,14 +217,109 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   last four characters, the usual card and tax-number truncation: the six-character suffix *is* the
   credential, and four of its characters leave 1,024 candidates. The filing's own number
   (`registrations.referenceNumber`) is not a credential and may be written in full.
-- MUST NOT bypass the append-only triggers on `audit_log_entries` and `payment_transactions`
-  (`0001_init`, `0017_payment_ledger`), MUST NOT `SET session_replication_role`, and MUST NOT reach
+- MUST NOT bypass the append-only triggers on `audit_log_entries`, `payment_transactions` and
+  `treasury_entries` (`0001_init`, `0017_payment_ledger`, `0073_treasury_ledger`), MUST NOT `SET session_replication_role`, and MUST NOT reach
   for `TRUNCATE` because a trigger refused a `DELETE`. A refusal is an answer
   ([CLAUDE.md](../CLAUDE.md#how-to-work-here)).
 - Uniqueness is enforced by a database constraint and surfaces as a `ConflictError`, never by a
   check-then-insert alone.
+- **The treasury (الخزينة).** Wallet balances are the sum of append-only entries. An outflow takes row
+  locks on the wallets in id order and refuses to take one below zero (`TREASURY_INSUFFICIENT_FUNDS`);
+  the wallet entries of a citizen payment commit in the payment's own transaction. Reading is
+  `SUPER_ADMIN`, `ACCOUNTANT`, `AUDITOR` and `VIEWER`; activating is `SUPER_ADMIN` only
+  (`TREASURY_*_ROLES` in shared-schemas). A payer or payee name on a voucher is personal data: it
+  stays out of logs, Sentry and audit rows ([finance.md](finance.md)).
+- **Expenses.** Money leaves on the manager's payment order (decree 5595/1982 art. 28 and 33;
+  [finance.md §5.1](finance.md)).
+  - An accountant's expense is a request that moves nothing until the manager orders it. An
+    urgent payment (art. 35) is paid at once with a written reason and waits for the order after
+    the fact. The service refuses an accountant's recording that is neither
+    (`EXPENSE_ORDER_REQUIRED`), so the rule does not rest on the screen.
+  - The urgent path has the manager's ceiling, per currency (decision D6): an accountant's
+    urgent voucher above it is refused before anything is written
+    (`EXPENSE_URGENT_OVER_CEILING`). It is read in the payment's own transaction, from the
+    settings row held `FOR SHARE`. The ceiling is set through `PATCH fees/settings`, whose
+    route admits the accountant for the other settings, so the service refuses a change to it
+    from anyone outside `TREASURY_ADMIN_ROLES` (`URGENT_EXPENSE_CEILING_FORBIDDEN`) and never
+    writes the value an accountant's save sends back. `GET fees/settings` strips both
+    ceilings for a citizen: they are the treasury's limits on its own staff.
+  - A write that pays is guarded on both sides: an in-flight ref, and an idempotency key the
+    server honours and binds to its act. The same key with another wallet, amount or clerk is
+    refused, never answered with a different voucher. The key is serialised under a
+    schema-scoped advisory lock before it is read, so a raced retry replays rather than failing.
+  - The outflow goes through the same locked, never-negative ledger post as everything else.
+  - `payee` is free text that may name a citizen, so the audit row carries the voucher number and
+    the figures, never the name.
+  - A collector's custody is never a paying wallet (`EXPENSE_ACCOUNT_NOT_PAYABLE`).
+  - The voucher, the transfer and the request are written once at the database (`0083`): only
+    their stamps may change, once, and none is deleted.
+  - **Salaries** (`POST treasury/expenses/salaries/:staffId`, `TREASURY_WORK_ROLES`, id through
+    `ParseUUIDPipe`, body through `recordStaffSalarySchema`) take neither the payee nor the
+    category from the body: the server reads the name from the account, with `kind = 'STAFF'` and
+    `deletedAt IS NULL` in the WHERE (a citizen's id answers `SALARY_PAYEE_NOT_FOUND`, pinned by a
+    test), and files the voucher under the seeded `SALARIES`. The payment order applies: the
+    manager's payout is ordered; an accountant's is paid on the urgent path with a reason the
+    server writes (art. 35 names salaries, decision D7), waits for the manager's regularisation,
+    and is not held to the urgent ceiling. The body carries no reason, so a client cannot widen
+    that exemption to anything but a staff account's salary. Nobody but the manager pays his own
+    salary (`SALARY_SELF_PAYOUT`, 403, decision D8). The retry key is also bound to the
+    staff account. The audit row names the staff member by id (`payeeStaffId`), never by name. The
+    button lives on «الموظفون», which only `SUPER_ADMIN` opens; the route is what decides.
+- **Income vouchers** (`t/:tenantSlug/treasury/income`). The expense guards, mirrored: read on
+  `TREASURY_READ_ROLES`, record on `TREASURY_WORK_ROLES`, void and the category writes (`POST`,
+  `PATCH` on `income/categories`, both Tier 1 audited) on `TREASURY_ADMIN_ROLES`; the body
+  and the register's query values through shared zod schemas, ids through `ParseUUIDPipe`. The retry
+  key is required and serialised under an advisory lock keyed by schema, so a double press credits
+  once; it is bound to its act (wallet, amount, clerk, category, description, payer), and one
+  whose voucher was cancelled since is refused (`INCOME_ALREADY_VOID`). The wallet is locked
+  (`lockAccounts`) before the voucher references it, and the voucher is written once at the
+  database (`0083`). `route-inventory.spec.ts` pins every handler's role list. `payerName` (a fine, a rent) may name a citizen: the audit row carries the voucher number and
+  figures only. The register's search term goes to the API in the query string, as the other
+  registers' do, and so falls under the URL-logging gap below.
+- **«من حصّل الجابي»** (`GET /treasury/transfers/custody/:collectorId/collections`) names citizens
+  and carries their phone and sector, so it stays on the finance *read* roles. That is deliberate and
+  it widens nobody's sight: the register itself (`EVERY_STAFF_ROLE`) already shows every staff role
+  the same name and number, and treasury-read is a strict subset of it. A relative's number is
+  labelled as a relative's, never passed off as the citizen's own. What the row does **not** carry is
+  a رقم مرجعي or a national id — those are sign-in credentials, not contact details. The row's exact
+  key set is pinned by an integration test, so widening it again stays a decision somebody makes on
+  purpose rather than a field that drifts onto a screen.
+- **«جولتي»** (`GET /treasury/transfers/custody/mine`) is the only treasury route a collector may
+  call, and the only one on `WORKING_STAFF_ROLES` rather than a `TREASURY_*` list. It is safe
+  because it is scoped by `user.sub` **in the query** rather than checked afterwards: there is no id
+  in the path to tamper with, so it can only ever answer for the person asking. A new route that
+  takes a `collectorId` must go back on `TREASURY_READ_ROLES` — `custody/:collectorId/collections`
+  does. Granting the collector `TREASURY_READ_ROLES` instead would have handed him the
+  municipality's whole ledger to answer a question about his own pocket.
+- **Collector custody.** A payment taken at a door credits that collector's own custody wallet, not
+  the safe: until someone counts the notes and receives them, the municipality does not have the
+  money and its books must not say otherwise.
+  - The handover is a transfer, recorded by a different person from the one who collected. The
+    service refuses a collector receiving his own custody (`CUSTODY_SELF_RECEIPT`), since anyone
+    can be named as the collector on a payment, an accountant included.
+  - It cannot exceed what the collector holds, read behind the wallets' locks.
+  - The audit row names him by id, never by name, beside what he held before.
+  - A refund after he handed the cash in comes out of the safe, never his custody (decision D1).
 - A money write MUST be safe against double submission on the client (an in-flight guard) and on the
-  server (a constraint or idempotent write).
+  server (a constraint or idempotent write). A screen keeps its key across every failure and every
+  edit, and renews it only when the server confirms the key's act exists (a success, or a code
+  saying the key was used: `TREASURY_REQUEST_KEY_REUSED`, `EXPENSE_ALREADY_VOID`,
+  `INCOME_ALREADY_VOID`, `TRANSFER_ALREADY_VOID`, `PAYMENT_IDEMPOTENCY_KEY_REUSED`), so a retry is always answered from the
+  first write (`apps/frontend/lib/request-id.ts`). A refusal proves only that that attempt wrote
+  nothing: renewing on a 429 after a lost answer recorded the payment twice.
+  Keys are held outside the form (`heldKey`, per tenant and act, for the life of the tab), so a
+  failed background re-read that remounts a screen cannot lose one.
+  - A handover is cancelled from its statement row by `SUPER_ADMIN` only (`POST
+    /treasury/transfers/:id/void`, `TREASURY_ADMIN_ROLES`; the screen mirrors it with
+    `mayVoidTransfer`). The register keeps only ids, days and a flag in its URL, never
+    personal data.
+  - The server binds a key to its act: wallet, amount and clerk, and for an expense or a
+    request also its band, payee and description (a salary also its staff account; income its
+    category, description and payer). The same key with anything else is refused
+    (`TREASURY_REQUEST_KEY_REUSED`), never answered with somebody else's document.
+  - A key whose voucher or handover was cancelled since is refused (`EXPENSE_ALREADY_VOID`,
+    `INCOME_ALREADY_VOID`, `TRANSFER_ALREADY_VOID`), so a clerk is never told «سُجّل» for money the register shows as
+    returned.
 
 ### Tenancy
 
@@ -364,6 +465,8 @@ add a row. Severity is the harm if exploited today.
 | Medium | A citizen save applies the owner agreements it carries (`landlordCitizenId` from «نعم، هو» on a card) through `LandlordLinkService.applyAgreements` → `confirm` with no role rule, while the answer routes admit only `LANDLORD_LINK_ANSWER_ROLES`. A collector (`REGISTER_WRITE_ROLES`) can so link an owner — and put flats and owner-borne fees on that file — by calling `POST`/`PATCH citizens` directly; the citizen editor keeps collectors out | `CitizensService` (agreements → `applyAgreements`); `CitizenController` create/update vs `confirmLandlordLink`, `dismissLandlordLink`, `restoreLandlordLink`, `unlinkLandlord`; `LandlordMatchHint` (no permission prop) | Apply agreements only for a role in `LANDLORD_LINK_ANSWER_ROLES` (refuse or ignore the rest), and give `LandlordMatchHint` a required `canAnswer` |
 | Low | Raw query values on several reads: a repeated `?search=` arrives as an array and `normalizeSearchText` calls `.toLowerCase()` on it, a 500 and a Sentry event; `limit` and `offset` are coerced by hand. The collection worklists had the same bug and now go through `worklistQuerySchema` (2026-10-06) | `CitizenController.list`, `CitizenController.history`, `FeesController.listPayments` (`@Query('search')`, `@Query('limit')`, …), `AuditController` (`@Query('action')` into `parseActions`, which calls `.split`) | A zod query schema through `ZodValidationPipe`, as `worklistQuerySchema` |
 | Low | `POST citizen/otp/verify` has no explicit `@Throttle` and falls under the 120-per-minute default | `AuthController.verifyOtp` | An explicit limit from `APP_CONFIG.throttle` |
+| Medium | The accountant can change the treasury's settings, not only the citizen-facing ones. `PATCH fees/settings` is `FEE_ADMIN_ROLES` (`SUPER_ADMIN`, `ACCOUNTANT`) for every field, so he can set the official `exchangeRate` that every ledger entry stamps (`exchangeRateAtPosting`) and the numbering sequences, while [finance.md §9](finance.md) gives finance settings to the manager alone. The settings screen is the manager's; the route is not, as the comment on `updateMunicipalitySettings` in `apps/frontend/lib/api-client.ts` now says. The urgent-payment ceiling is the one field the service already keeps to the manager (found 2026-10-10) | `FeesController.updateSettings` (`@Roles(...FEE_ADMIN_ROLES)`); `FeesService.updateSettings` | **Undecided:** which settings the accountant keeps (contact details, office hours) and which become the manager's; then split the schema or refuse per field, as the ceiling does |
+| Low | No trigger refuses `TRUNCATE` on the append-only and written-once tables (`audit_log_entries`, `payment_transactions`, `treasury_entries`, and the treasury documents of `0083`). The same role could disable a trigger anyway, so this guards against accident, not intent | `0001_init`, `0017_payment_ledger`, `0073_treasury_ledger`, `0083_treasury_controls` (row triggers only); `scripts/db/destructive-sql.mjs` blocks the word `TRUNCATE`, so the natural fix needs a narrowed rule | A `BEFORE TRUNCATE` statement trigger per table, with the scanner rule narrowed to the statement itself |
 | Low | Public routes with no explicit throttle decision ride the default | `HealthController`; `TenantController.getPublicConfig`; `RegistrationController.checkPropertyNumber`; `FeesController.whishCallback` | An explicit `@Throttle`, or `@SkipThrottle()` with a reason |
 | Low | The cron bearer secret is compared with `!==` on `@SkipThrottle()` routes | `InternalCronController` `authorise` | Digest plus `timingSafeEqual`, as in `MetricsController` |
 | Low | JWTs have no algorithm pin, issuer or audience | `ApplicationModule` `JwtModule.registerAsync`; `JwtAuthGuard` (`jwt.verify`) | Sign and verify options with `HS256`, issuer, audience |

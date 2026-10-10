@@ -1,7 +1,7 @@
 ---
 name: Mechanization
 description: Operate-mode municipal register, Arabic and RTL first, on warm neutrals with one blue accent and status colours that each mean one thing.
-# Last verified against the code: develop@8742c5b, 2026-10-03. Source: apps/frontend/app/globals.css, apps/frontend/tailwind.config.ts.
+# Last verified against the code: fix/pr104-review (uncommitted review fixes), 2026-10-10. Source: apps/frontend/app/globals.css, apps/frontend/tailwind.config.ts.
 colors:
   background: "hsl(40 20% 98%)"
   foreground: "hsl(0 0% 4%)"
@@ -163,7 +163,7 @@ components:
 
 # Design System: Mechanization
 
-Last verified against the code: `develop@8742c5b`, 2026-10-03.
+Last verified against the code: `fix/pr104-review` (with the PR #104 review fixes uncommitted), 2026-10-10.
 
 This file records the visual system **as the code defines it**. The values come from
 `apps/frontend/app/globals.css`, `apps/frontend/tailwind.config.ts` and the primitives in
@@ -342,7 +342,14 @@ Tailwind's default shadows. The shadow scale is not customised.
 ### Cards and figures
 - **Card**: `rounded-lg border bg-card shadow-sm`; header and content `p-4`.
 - **StatStrip** and **StatItem**: up to five figures in equal columns divided by 1px
-  border gaps, two columns below `sm`.
+  border gaps, two columns below `sm`. A value wraps and is never truncated.
+
+### Money
+- **Money** draws a sum as its signed figure, isolated left to right, then its unit in the
+  page's direction: «ل.ل 1,500,000» on an Arabic page, "1,500,000 LBP" on an English one.
+  A negative carries U+2212, as wide as «+», on the left of its digits. One line by default;
+  `wrap` lets the unit drop under the figure (the treasury's wallet strip at 360px). Dollars
+  and euros take the same shape (`currency`), with the symbol after the figure.
 
 ### Inputs and fields
 - **Input**, **Select** trigger: 40px (48px coarse), `rounded-md`, `border-input`,
@@ -370,7 +377,19 @@ otherwise: `transition-*` runs 150ms on `cubic-bezier(0.4, 0, 0.2, 1)`; `animate
   `.animate-spin` keeps turning, slowed to 2s.
 - **Theme switch**: `disableTransitionOnChange`, so no colour transition on toggle.
 
-### Icons
+### Print
+- **Receipt** (`#receipt-print-area`): A5 landscape, 10mm margins, a 2px black border, lifted
+  out of its dialog, on one sheet: zoomed by `--receipt-print-zoom` (measured per receipt by
+  `fitReceiptToSheet`, never above 1, fallback 0.68) at a width of 190mm divided by the zoom, so
+  it is exactly the sheet's width once scaled. Fields that truncate on screen wrap on paper.
+- **A page's document** (`data-print-root`, today the treasury statement): the named page
+  `register`, A4 portrait with 12mm margins (A5 landscape where named pages are not supported).
+  Black text on white whatever the theme, no shadows or surfaces, tokens' borders kept; table
+  cells may wrap and padding tightens to 4×6px at 12px type, the heading row repeats on each
+  sheet and no row splits across two. Print-only parts — the sheet heading, the signature lines
+  drawn as a 1px rule in the text colour — are `hidden print:block`.
+
+### Icons
 - `lucide-react` only, one stroke family. `size-4` by default, `size-3.5` in dense rows,
   `size-5` in card and section titles and in the page-header tile.
 

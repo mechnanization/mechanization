@@ -173,11 +173,6 @@ export function InspectorProfileDetail({
               ? `أرباح المفتش: ${data.inspector.name}`
               : `Inspector earnings: ${data.inspector.name}`
         }
-        subtitle={
-          isAr
-            ? 'نشاط المسح الميداني، والعمولة المستحقة عنه بمعدل 1.00$ لكل عقار أو وحدة'
-            : 'Field survey activity and the commission owed against it, at $1.00 per property or unit'
-        }
         actions={
           <div className="flex items-center gap-2">
             {!isViewingSelf && isSuperAdmin ? (

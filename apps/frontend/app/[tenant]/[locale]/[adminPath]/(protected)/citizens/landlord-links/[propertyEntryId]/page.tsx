@@ -105,7 +105,6 @@ export default function LandlordLinkPage({
   const settled = Boolean(resolution && proposal);
   const queue = `${base}/citizens/landlord-links`;
 
-  const reference = proposal ? (proposal.buildingCode ?? proposal.propertyNumber) : null;
   const view = proposal ? landlordLinkStatusView(landlordLinkStatus(proposal), locale) : null;
   const occupant = proposal?.filedBy ?? null;
   const fileHref = occupant ? `${base}/citizens/${occupant.citizenId}` : null;
@@ -125,34 +124,6 @@ export default function LandlordLinkPage({
       <PageHeader
         icon={Link2}
         title={occupant?.name ?? (en ? 'Check link' : 'فحص الرابط')}
-        subtitle={
-          proposal ? (
-            <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-              <span>{en ? 'Owner link check' : 'فحص رابط المالك'}</span>
-              {occupant ? (
-                <>
-                  <span aria-hidden>·</span>
-                  <bdi dir="ltr" className="font-mono">
-                    {occupant.referenceNumber}
-                  </bdi>
-                </>
-              ) : null}
-              {reference ? (
-                <>
-                  <span aria-hidden>·</span>
-                  <bdi dir="ltr" className="font-mono">
-                    {reference}
-                  </bdi>
-                </>
-              ) : null}
-              <span aria-hidden>·</span>
-              <span className="tabular-nums">
-                {en ? 'Filed ' : 'قُدِّم '}
-                {formatDate(proposal.filedAt)}
-              </span>
-            </span>
-          ) : undefined
-        }
         actions={
           proposal ? (
             <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap">

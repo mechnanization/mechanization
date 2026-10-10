@@ -56,8 +56,8 @@ export default function ReviewQueuePage({
   const { token, user } = useStaffSession(tenant, base);
   /*
     `user` is null on the first paint, before the session is read. Taken as a
-    reviewer until then, so the header and the subtitle do not flip from
-    «الملف» to «فحص الملف» on every load for the roles this page is for. The
+    reviewer until then, so the page does not flip from «الملف» to «فحص
+    الملف» on every load for the roles this page is for. The
     first fetch waits for the token, which arrives with the role; only a
     cached page shown on a return visit can paint an auditor's rows with
     «فحص الملف» for that frame, and its page says the role cannot review.
@@ -236,7 +236,6 @@ export default function ReviewQueuePage({
       <PageHeader
         icon={FileQuestion}
         title={t('title')}
-        subtitle={t('subtitle', { scope: seesAll ? 'all' : 'mine', review: canReview ? 'yes' : 'no' })}
         actions={
           <Link href={`${base}/citizens`} className={buttonVariants({ variant: 'outline' })}>
             <Users className="size-4" aria-hidden />
