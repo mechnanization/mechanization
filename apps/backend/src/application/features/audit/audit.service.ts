@@ -262,10 +262,10 @@ export class AuditService {
    * A damage reading — «تقييم الضرر».
    *
    * Emitted since the census began and heard only by the dashboard cache, so a
-   * reading left no row. Since the decision of 2026-10-05 a reading can hold a
-   * flat's occupant-borne fees («غير صالحة للسكن») and a later one resumes
-   * them, which makes who read what, and when, the first thing a resident
-   * disputing a held or a resumed bill asks. Filed under the building, as every
+   * reading left no row. Since the decisions of 2026-10-05 and 2026-10-07 a
+   * reading of «غير صالحة للسكن» exempts a flat from every fee until a later
+   * one reads it habitable, which makes who read what, and when, the first
+   * thing a resident disputing an exempt or a resumed bill asks. Filed under the building, as every
    * census write is, with the unit named in `after`.
    */
   @OnEvent('damage.recorded')

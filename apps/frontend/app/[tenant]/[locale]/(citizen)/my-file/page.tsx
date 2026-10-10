@@ -2,6 +2,7 @@
 
 import { use, useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import {
   BadgeCheck,
   Building2,
@@ -26,12 +27,13 @@ import {
   MessageSquareWarning,
   Phone,
   Ruler,
+  Scale,
   Sun,
   User,
   Users,
   Wallet,
 } from 'lucide-react';
-import { getLabels, isUnoccupied, OWNER_BILLED_WHILE_ABSENT } from '@mechanization/shared-schemas';
+import { getLabels, isNonPersonRecord, isUnoccupied, OWNER_BILLED_WHILE_ABSENT } from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
   getMyPayments,
@@ -49,6 +51,7 @@ import { clearSession, loadSession } from '@/lib/session';
 import { formatLbp } from '@/lib/currency';
 import { formatDate, formatMonthList } from '@/lib/dates';
 import { describeAssessment } from '@/lib/fee-assessment';
+import { ownerBillingApplies, ownerBillingWording } from '@/lib/owner-billing';
 import { flagFieldLabel } from '@/lib/field-flags';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -158,9 +161,12 @@ export default function MyFilePage({
   const router = useRouter();
   const base = `/${tenant}/${locale}`;
   const labels = getLabels(locale);
+  const tKind = useTranslations('citizenKind');
 
   const [token, setToken] = useState<string | null>(null);
   const [summary, setSummary] = useState<MyCitizenSummary | null>(null);
+  // A household's details — not an estate's or an institution's (0076), which is asked none of them.
+  const household = !isNonPersonRecord(summary?.residence);
   const [payments, setPayments] = useState<CitizenPaymentItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -304,9 +310,10 @@ export default function MyFilePage({
                   as anything other than an ordinary household — so the page
                   looked to them like a household file missing half its fields.
                 */}
-                {summary?.residence === 'NON_RESIDENT_OWNER' ? (
+                {summary?.residence && summary.residence !== 'RESIDENT' ? (
                   <Badge variant="soft-info">
-                    {labels.citizenResidence.NON_RESIDENT_OWNER}
+                    {labels.citizenResidence[summary.residence as keyof typeof labels.citizenResidence] ??
+                      summary.residence}
                   </Badge>
                 ) : null}
               </div>
@@ -358,11 +365,14 @@ export default function MyFilePage({
               the row rather than printing a dash the reader would take for an
               answer.
             */}
-            <Detail
-              icon={User}
-              label={locale === 'en' ? "Mother's Full Name" : 'اسم الأم وشهرتها'}
-              value={summary?.motherName}
-            />
+            {/* Not on an estate or an institution (0076): it is not a household, and nothing here is asked of it. */}
+            {household ? (
+              <Detail
+                icon={User}
+                label={locale === 'en' ? "Mother's Full Name" : 'اسم الأم وشهرتها'}
+                value={summary?.motherName}
+              />
+            ) : null}
             {/*
               «غير مقيم في البلدة» — where they live, and who holds their keys
               here. The municipality asks for these instead of a household, and
@@ -397,77 +407,92 @@ export default function MyFilePage({
                 />
               </>
             ) : null}
-            <Detail
-              icon={IdCard}
-              label={
-                summary?.identityDocType
-                  ? (labels.identityDocType[summary.identityDocType as never] ?? (locale === 'en' ? 'Identity Document' : 'وثيقة الإثبات'))
-                  : (locale === 'en' ? 'Identity Document' : 'وثيقة الإثبات')
-              }
-              value={summary?.identityDocNumberMasked}
-              mono
-              hint={locale === 'en' ? 'Last 3 digits only' : 'آخر ثلاثة أرقام فقط'}
-            />
-            <Detail
-              icon={Flag}
-              label={locale === 'en' ? 'Nationality' : 'الجنسية'}
-              value={
-                summary?.nationality ??
-                (summary?.isLebanese ? (locale === 'en' ? 'Lebanese' : 'لبناني') : null)
-              }
-            />
-            <Detail
-              icon={Home}
-              label={locale === 'en' ? 'Residency Status' : 'صفة الإقامة'}
-              value={
-                summary?.residentStatus
-                  ? (labels.residentStatus[summary.residentStatus as never] ?? summary.residentStatus)
-                  : null
-              }
-            />
-            <Detail
-              icon={HeartHandshake}
-              label={locale === 'en' ? 'Marital Status' : 'الحالة الاجتماعية'}
-              value={
-                summary?.maritalStatus
-                  ? (labels.maritalStatus[summary.maritalStatus as never] ?? summary.maritalStatus)
-                  : null
-              }
-            />
-            <Detail
-              icon={Users}
-              label={
-                locale === 'en'
-                  ? 'Family Members (Living in House)'
-                  : 'عدد أفراد الأسرة (المقيمين في المنزل)'
-              }
-              value={
-                summary?.actualHouseholdMembers
-                  ? String(summary.actualHouseholdMembers)
-                  : summary?.totalRegisteredMembers
-                    ? String(summary.totalRegisteredMembers)
-                    : null
-              }
-            />
-            {/*
-              إجمالي المسجلين في القيد earns a row only where it differs from
-              the household actually in the house.
-            */}
-            {summary?.totalRegisteredMembers != null &&
-            summary?.actualHouseholdMembers != null &&
-            summary.totalRegisteredMembers > summary.actualHouseholdMembers ? (
-              <Detail
-                icon={Users}
-                label={locale === 'en' ? 'Total Registered (Civil Record)' : 'إجمالي المسجلين في القيد'}
-                value={String(summary.totalRegisteredMembers)}
-              />
+            {/* «تركة» or «جهة أو وقف» (0076): who speaks for the heirs, or for the body. */}
+            {summary?.residence === 'ESTATE' || summary?.residence === 'INSTITUTION' ? (
+              <>
+                <Detail
+                  icon={User}
+                  label={tKind(summary.residence === 'ESTATE' ? 'estateRepresentative' : 'institutionRepresentative')}
+                  value={summary.localContactName}
+                />
+                <Detail icon={Phone} label={tKind('representativePhone')} value={summary.localContactPhone} mono />
+              </>
             ) : null}
-            <Detail
-              icon={FileDigit}
-              label={locale === 'en' ? 'Civil Record Number' : 'رقم السجل'}
-              value={summary?.civilRecordNumberMasked}
-              mono
-            />
+            {household ? (
+              <>
+                <Detail
+                  icon={IdCard}
+                  label={
+                    summary?.identityDocType
+                      ? (labels.identityDocType[summary.identityDocType as never] ?? (locale === 'en' ? 'Identity Document' : 'وثيقة الإثبات'))
+                      : (locale === 'en' ? 'Identity Document' : 'وثيقة الإثبات')
+                  }
+                  value={summary?.identityDocNumberMasked}
+                  mono
+                  hint={locale === 'en' ? 'Last 3 digits only' : 'آخر ثلاثة أرقام فقط'}
+                />
+                <Detail
+                  icon={Flag}
+                  label={locale === 'en' ? 'Nationality' : 'الجنسية'}
+                  value={
+                    summary?.nationality ??
+                    (summary?.isLebanese ? (locale === 'en' ? 'Lebanese' : 'لبناني') : null)
+                  }
+                />
+                <Detail
+                  icon={Home}
+                  label={locale === 'en' ? 'Residency Status' : 'صفة الإقامة'}
+                  value={
+                    summary?.residentStatus
+                      ? (labels.residentStatus[summary.residentStatus as never] ?? summary.residentStatus)
+                      : null
+                  }
+                />
+                <Detail
+                  icon={HeartHandshake}
+                  label={locale === 'en' ? 'Marital Status' : 'الحالة الاجتماعية'}
+                  value={
+                    summary?.maritalStatus
+                      ? (labels.maritalStatus[summary.maritalStatus as never] ?? summary.maritalStatus)
+                      : null
+                  }
+                />
+                <Detail
+                  icon={Users}
+                  label={
+                    locale === 'en'
+                      ? 'Family Members (Living in House)'
+                      : 'عدد أفراد الأسرة (المقيمين في المنزل)'
+                  }
+                  value={
+                    summary?.actualHouseholdMembers
+                      ? String(summary.actualHouseholdMembers)
+                      : summary?.totalRegisteredMembers
+                        ? String(summary.totalRegisteredMembers)
+                        : null
+                  }
+                />
+                {/*
+                  إجمالي المسجلين في القيد earns a row only where it differs from
+                  the household actually in the house.
+                */}
+                {summary?.totalRegisteredMembers != null &&
+                summary?.actualHouseholdMembers != null &&
+                summary.totalRegisteredMembers > summary.actualHouseholdMembers ? (
+                  <Detail
+                    icon={Users}
+                    label={locale === 'en' ? 'Total Registered (Civil Record)' : 'إجمالي المسجلين في القيد'}
+                    value={String(summary.totalRegisteredMembers)}
+                  />
+                ) : null}
+                <Detail
+                  icon={FileDigit}
+                  label={locale === 'en' ? 'Civil Record Number' : 'رقم السجل'}
+                  value={summary?.civilRecordNumberMasked}
+                  mono
+                />
+              </>
+            ) : null}
             <Detail
               icon={Building2}
               label={locale === 'en' ? 'Properties Count' : 'عدد العقارات'}
@@ -752,6 +777,21 @@ function PropertyRow({
         </ul>
       ) : null}
 
+      {/* A house's flat, or the census flats this card bills through: the same notes, by code when several. */}
+      {(property.heldUnits ?? []).length > 0 ? (
+        <div className="space-y-1 text-xs">
+          {(property.heldUnits ?? []).map((unit) => (
+            <UnitBillingNotes
+              key={unit.unitId}
+              feeExemption={unit.feeExemption}
+              ownerBilling={unit.ownerBilling}
+              unitCode={(property.heldUnits ?? []).length > 1 ? unit.unitCode : undefined}
+              locale={locale}
+            />
+          ))}
+        </div>
+      ) : null}
+
       {property.landlordName ? (
         <p className="text-xs text-muted-foreground">
           {en ? 'Owner: ' : 'المالك: '}
@@ -866,7 +906,51 @@ function MyUnitRow({ unit, locale }: { unit: CitizenProfileUnit; locale: string 
           ) : null}
         </p>
       ) : null}
+
+      <UnitBillingNotes feeExemption={unit.feeExemption} ownerBilling={unit.ownerBilling} locale={locale} />
     </li>
+  );
+}
+
+/**
+ * What changes a unit's bill beyond its status: «معفاة من الرسوم» (0077), and
+ * how a flat this person owns with others is divided (0075) — their own part,
+ * never who else pays, and only while the unit is billed at all. On a unit
+ * line, and on a house or a census flat whose card has no unit lines (`heldUnits`).
+ */
+function UnitBillingNotes({
+  feeExemption,
+  ownerBilling,
+  unitCode,
+  locale,
+}: Pick<CitizenProfileUnit, 'feeExemption' | 'ownerBilling'> & { unitCode?: string; locale: string }) {
+  const labels = getLabels(locale);
+  const tFeeExemption = useTranslations('feeExemption');
+  const code = unitCode ? (
+    <bdi dir="ltr" className="font-mono">
+      {unitCode}
+    </bdi>
+  ) : null;
+
+  return (
+    <>
+      {feeExemption ? (
+        <p className="flex flex-wrap items-center gap-x-2 px-2 text-success">
+          <BadgeCheck className="size-3 shrink-0" aria-hidden />
+          {code}
+          <span>{tFeeExemption('fileValue', { reason: labels.feeExemptionReason[feeExemption] })}</span>
+        </p>
+      ) : null}
+      {/* An exempt unit is billed to no owner: no part to tell them (`ownerBillingApplies`). */}
+      {ownerBilling && ownerBillingApplies({ feeExemption }) ? (
+        <p className="flex flex-wrap items-center gap-x-2 px-2 text-muted-foreground">
+          <Scale className="size-3 shrink-0" aria-hidden />
+          {code}
+          {/* Worded to the owner reading it, the way the staff file words it (`ownerBillingWording`). */}
+          <span>{ownerBillingWording(ownerBilling, locale, 'mine').line}</span>
+        </p>
+      ) : null}
+    </>
   );
 }
 

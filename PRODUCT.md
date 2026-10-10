@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية الذكية)
 
-Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-09.
+Last verified against the code: `fix/expense-retry-key-race` (merged with `develop@4ad0b27`), 2026-10-09.
 
 A multi-tenant municipal platform for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastral map, municipal fee billing (رسوم القيمة التأجيرية
@@ -120,21 +120,78 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
   owners — the answer «لا يملك رقم هاتف» and the relative's number are shown as such,
   never as the citizen's own, and a search that found a file through the relative's
   number says so on the row.
+- **An owner can be an estate or a body, not only a person** (the user's guidance of
+  2026-10-07). «صاحب الملف» asks first whether the file is a person's or an estate's or a
+  body's. «تركة (ورثة المرحوم)» is the file of an owner who has died: converted in place
+  from his own file — with the date of death, through the same guide as a move — so his
+  properties and their bills stay where they were, shown everywhere as «ورثة المرحوم …».
+  It only owns: his rentals end on the date of death, a home he lived in — or came back to
+  for a season — becomes «مشغولة بتسامح» with the widow or a child filed as a household who
+  pays the occupancy fee (or «مؤجرة», or «شاغرة»), and the owner's fees and empty units stay
+  with the estate. A tenant who writes the owner as «ورثة المرحوم …» is still matched to him.
+  «جهة أو وقف» is a waqf, an association or a public body: one name, and it may rent
+  what nobody lives in. Each records a representative («ممثل الورثة», «المسؤول عن الجهة»)
+  and needs no phone. Neither is billed a per-head flat amount, and neither can be merged
+  with a person's file. Archiving a file warns that a deceased owner who still owns here
+  should become an estate instead.
+- **What is owed on a parcel can be looked up** («المستحق على عقار», for every role that
+  reads the fees). Given a رقم العقار, it lists every unpaid bill with a unit on that parcel,
+  whoever's file it is on today — the estate's, a tenant's, an archived owner's — with the
+  parcel's part of each, by the bill's own lines; and apart, the unpaid bills that name no
+  unit of the people on the parcel today. It answers «is anything owed» before a براءة ذمّة
+  and issues no certificate; a bill that names no parcel cannot be found by it, and the
+  empty answer says so rather than claiming nothing is owed.
 - **A citizen file is archived, never deleted** (decision of 2026-10-05). «أرشفة الملف»
   asks for the reason and who asked for it, both written to the activity log; an archived
   file is billed nothing new and keeps everything it holds, and «إعادة من الأرشيف» brings it
   back.
+- **A building's height counts its built floors, never its roof** (the user's decision of
+  2026-10-07). «الطوابق المسقوفة» is every level under a roof, the ground floor and a
+  «طابق أعمدة» included. The building editor says so, gives the two ways to record a duplex
+  (two flats, or one flat with both levels' area), and warns when the top rows of the
+  matrix hold nothing, offering to lower the count; it never lowers it by itself, and says
+  nothing for a house or a building still going up.
 - **War damage has two answers.** Each reading keeps the UN-Habitat level, the scale donors
   and the reconstruction file read, and asks beside it whether anyone can live there
   («صالحة للسكن؟»). The level answers it where it can: a collapse or an evacuation is «لا»,
   locked; no or minor damage starts at «نعم» and can change; restricted use must be
   answered. A reading «غير صالحة للسكن» can carry a re-inspection day, and «بانتظار إعادة
   الكشف» lists them, overdue first. Every reading is on the activity log.
-- **No occupancy fee on a home nobody can live in.** While a unit's current reading says it
-  cannot be lived in, the fees its occupant bears are not charged — the rental-value fee
-  and the annual maintenance fee follow actual occupancy (Law 60/1988, Art. 11 and 79) —
-  until a re-inspection reads it habitable. Fees the owner bears follow the deed and are
-  charged as before. The bill and the issue summary both say how many units were held.
+- **No fee at all on a home nobody can live in.** While a unit's current reading says it
+  cannot be lived in, nothing is charged on it — neither what its occupant bears nor what
+  its owner bears (the user's decision of 2026-10-07: not habitable → exempt) — until a
+  re-inspection reads it habitable. A whole-building reading covers every unit in it. A
+  building's status alone («متضررة من الحرب وغير مسكونة», «مهدوم») exempts nothing: the
+  editor asks for the reading, and «مراجعة الجودة» lists any such building whose units are
+  still billed. The bill and the issue summary both say how many units were not charged.
+- **A flat amount aimed at a kind of unit follows the same rule.** A notice of one amount
+  per holder of, say, shops is not charged to someone all of whose shops are exempt, cannot
+  be lived in, or are paid for by another co-owner named «مالك مسؤول»; one shop they pay for
+  beside them and the amount is due as usual. Of four brothers whose one shop the eldest pays
+  for, only he is charged; when they split it equally or by أسهم, each is charged the amount
+  once (the user's decision of 2026-10-08). A flat amount sent to every citizen is a charge on
+  the person and is not affected.
+- **A unit can be exempt from fees.** A system administrator can mark a unit «معفاة من
+  الرسوم» — a place of worship, a public facility, or another reason written out — and no
+  fee is charged on it, whoever owns or uses it. It is for the mosque itself or the
+  municipality's own building, not for a shop a waqf rents out: that shop's tenant is billed
+  as usual. Granting and lifting are on the activity log; the unit, the owner's file and the
+  citizen's «ملفّي» show it — on a house's own flat and on a flat the census recorded the
+  person on as well as on an itemised unit — and none of them shows a co-owned unit's split
+  while it is exempt, since no owner is billed for it. Granting corrects a fact: bills raised
+  on the unit before it, on any day, are listed in «فواتير تأثّرت بتصحيحات» for the accountant
+  to decide. Lifting runs forward: the unit owes from then, and earlier bills stay as raised.
+  Nothing changes a bill by itself (the user's decision of 2026-10-08).
+- **A flat several people own is billed once, divided between them.** Each co-owner's file
+  claims the flat, and each used to be billed for all of it. Now what the owners owe is split
+  equally by default, and an officer can choose instead to divide it by the owners' أسهم or to
+  name one owner who pays for everyone (the user's decision of 2026-10-07). The unit panel shows
+  each owner's part before saving, the owner's file and the citizen's own «ملفّي» show it after,
+  and a bill says when a co-owned flat was charged at a part or paid by another owner. A tenant
+  still pays the whole occupancy fee: only what the owners bear is divided. «ملاحظات الجودة» warns
+  when a chosen method cannot be carried out — «حسب الأسهم» with an owner's أسهم missing, which
+  stops every co-owner's bill, or a responsible owner who no longer owns the flat, which bills it
+  equally instead — and opens the unit where the method is chosen.
 - **Staff accounts have three states, and none of them loses history.** An account is
   active, disabled, or deleted. Disabling blocks sign-in and moves the account out of the
   staff directory into «الأرشيف», where a system administrator reads it and can bring it

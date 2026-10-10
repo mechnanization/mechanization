@@ -20,7 +20,7 @@ import {
   ShieldX,
   UserRound,
 } from 'lucide-react';
-import { getLabels, type CitizenResidence } from '@mechanization/shared-schemas';
+import { citizenDisplayName, getLabels, type CitizenResidence } from '@mechanization/shared-schemas';
 import { askableFields, type CitizenFormValues } from '@/components/admin/citizen-form';
 import {
   OpenQuestionList,
@@ -552,11 +552,19 @@ export default function ReviewFilePage({
 
   const personal = values?.personal ?? {};
   const contact = values?.contact ?? {};
-  const fullName =
-    [text(personal.firstName), text(personal.middleName), text(personal.lastName)].filter(Boolean).join(' ') ||
-    (en ? 'Unnamed' : 'بلا اسم');
-  const phone = text(contact.phone);
   const residence = values?.residence as CitizenResidence | undefined;
+  // «ورثة المرحوم …» for an estate (0076), as the register names it.
+  const fullName =
+    citizenDisplayName(
+      {
+        firstName: text(personal.firstName) || null,
+        middleName: text(personal.middleName) || null,
+        lastName: text(personal.lastName) || null,
+        residence,
+      },
+      { locale },
+    ) || (en ? 'Unnamed' : 'بلا اسم');
+  const phone = text(contact.phone);
   const dash = <span className="text-muted-foreground">—</span>;
 
   return (

@@ -984,7 +984,7 @@ describe('a flat under review — its occupancy fee held (2026-09-30)', () => {
   });
 });
 
-describe('a flat nobody can live in — its occupancy fee held until re-inspected (2026-10-05)', () => {
+describe('a flat nobody can live in — exempt from every fee until re-inspected (2026-10-05, 2026-10-07)', () => {
   const flat = (options: { unitStatus?: string | null; underReview?: boolean; uninhabitable?: boolean; id?: string }) => ({
     propertyType: 'BUILDING',
     propertyNumber: '4212',
@@ -1018,9 +1018,24 @@ describe('a flat nobody can live in — its occupancy fee held until re-inspecte
     });
   });
 
-  it('holds only the occupancy fee — an owner-borne fee follows the deed', () => {
+  it('charges no owner-borne fee on it either — «not habitable → exempt» (2026-10-07)', () => {
     const outcome = assessCitizen([flat({ uninhabitable: true })], { amount: 1000, basis: 'PER_UNIT', bearer: 'OWNER' });
-    expect(outcome).toMatchObject({ kind: 'assessed', amount: 1000, assessment: { uninhabitableUnitCount: 0 } });
+    expect(outcome).toMatchObject({
+      kind: 'assessed',
+      amount: 0,
+      uninhabitableUnitIds: ['unit-1'],
+      assessment: { uninhabitableUnitCount: 1, heldUnitCount: 0, unitCount: 0 },
+    });
+  });
+
+  it('under an owner-borne notice, counts a flat under review that cannot be lived in as uninhabitable', () => {
+    // The review hold is the occupancy fee's; an owner-borne notice never held for review.
+    const outcome = assessCitizen([flat({ uninhabitable: true, underReview: true })], {
+      amount: 1000,
+      basis: 'PER_UNIT',
+      bearer: 'OWNER',
+    });
+    expect(outcome).toMatchObject({ kind: 'assessed', amount: 0, assessment: { heldUnitCount: 0, uninhabitableUnitCount: 1 } });
   });
 
   it('counts a flat that is both once, as under review — the hold the office can lift', () => {

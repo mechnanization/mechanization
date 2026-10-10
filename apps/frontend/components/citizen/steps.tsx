@@ -4,6 +4,7 @@ import { useCallback, useEffect, type ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 import {
   BLOOD_TYPE,
+  citizenDisplayName,
   GENDER,
   getLabels,
   MARITAL_STATUS,
@@ -913,6 +914,237 @@ export function OwnerContactStep({
           />
         </Field>
       </div>
+    </div>
+  );
+}
+
+// ─────────  «تركة» and «جهة أو وقف» — owners that are not a living person (0076)  ─────────
+
+/**
+ * Who an estate or an institution is.
+ *
+ * An estate is the deceased owner's own file, converted in place: his name, as
+ * before, shown everywhere as «ورثة المرحوم …» (`citizenDisplayName`) — the
+ * heirs owe, the deceased does not. An institution is one line, «وقف مسجد
+ * البلدة», stored across the name parts by the API. Nothing a household file
+ * asks is asked here (`estatePersonalSchema`, `institutionPersonalSchema`).
+ */
+export function NonPersonPersonalStep({
+  kind,
+  value,
+  errors,
+  onChange,
+  locale = 'ar',
+}: {
+  kind: 'ESTATE' | 'INSTITUTION';
+  value: Values;
+  errors: Errors;
+  onChange: (next: Values) => void;
+  locale?: string;
+}) {
+  const t = useTranslations('citizenKind');
+  const set = (patch: Values) => onChange({ ...value, ...patch });
+
+  if (kind === 'INSTITUTION') {
+    return (
+      <div className="review-body space-y-4 sm:space-y-5">
+        <Field
+          label={t('institutionName')}
+          htmlFor="body-name"
+          path="personal.firstName"
+          required
+          error={errors['personal.firstName']}
+        >
+          <Input
+            id="body-name"
+            placeholder={t('institutionNamePlaceholder')}
+            invalid={Boolean(errors['personal.firstName'])}
+            value={str(value.firstName)}
+            onChange={(e) => set({ firstName: e.target.value })}
+          />
+        </Field>
+        <p className="rounded-md bg-muted/50 p-3 text-xs text-muted-foreground">{t('institutionHint')}</p>
+      </div>
+    );
+  }
+
+  const shown = citizenDisplayName(
+    {
+      firstName: str(value.firstName).trim() || null,
+      middleName: str(value.middleName).trim() || null,
+      lastName: str(value.lastName).trim() || null,
+      residence: 'ESTATE',
+    },
+    { locale },
+  );
+
+  return (
+    <div className="review-body space-y-4 sm:space-y-5">
+      <div className="grid grid-cols-1 items-start gap-3 sm:grid-cols-3">
+        <Field
+          label={t('estateFirstName')}
+          htmlFor="estate-firstName"
+          path="personal.firstName"
+          required
+          error={errors['personal.firstName']}
+        >
+          <Input
+            id="estate-firstName"
+            invalid={Boolean(errors['personal.firstName'])}
+            value={str(value.firstName)}
+            onChange={(e) => set({ firstName: e.target.value })}
+          />
+        </Field>
+        <Field
+          label={t('middleName')}
+          htmlFor="estate-middleName"
+          path="personal.middleName"
+          error={errors['personal.middleName']}
+        >
+          <Input
+            id="estate-middleName"
+            invalid={Boolean(errors['personal.middleName'])}
+            value={str(value.middleName)}
+            onChange={(e) => set({ middleName: e.target.value })}
+          />
+        </Field>
+        <Field
+          label={t('lastName')}
+          htmlFor="estate-lastName"
+          path="personal.lastName"
+          required
+          error={errors['personal.lastName']}
+        >
+          <Input
+            id="estate-lastName"
+            invalid={Boolean(errors['personal.lastName'])}
+            value={str(value.lastName)}
+            onChange={(e) => set({ lastName: e.target.value })}
+          />
+        </Field>
+      </div>
+      {str(value.firstName).trim() ? (
+        <p className="text-sm text-muted-foreground">{t('shownAs', { name: shown })}</p>
+      ) : null}
+      <p className="rounded-md bg-muted/50 p-3 text-xs text-muted-foreground">{t('estateHint')}</p>
+    </div>
+  );
+}
+
+/**
+ * How to reach an estate or an institution: its representative — «ممثل
+ * الورثة», «المسؤول عن الجهة» — in the local-contact fields, and a phone if
+ * there is one. Nothing is required (`nonPersonContactSchema`): a waqf with no
+ * known trustee still owns its mosque. So nothing here can be marked «غير
+ * مؤكَّد» either: there is nothing to excuse.
+ */
+export function NonPersonContactStep({
+  kind,
+  value,
+  errors,
+  onChange,
+  afterPhone,
+}: {
+  kind: 'ESTATE' | 'INSTITUTION';
+  value: Values;
+  errors: Errors;
+  onChange: (next: Values) => void;
+  /** Under the numbers, as in `ContactStep`. */
+  afterPhone?: ReactNode;
+}) {
+  const t = useTranslations('citizenKind');
+  const set = (patch: Values) => onChange({ ...value, ...patch });
+  const sameAsPhone = value.whatsappSameAsPhone !== false;
+  const hasPhone = str(value.phone).trim().length > 0;
+  const estate = kind === 'ESTATE';
+
+  return (
+    <div className="review-body space-y-4 sm:space-y-5">
+      <div className="review-body grid grid-cols-1 items-start gap-3.5 md:grid-cols-2">
+        <div className="review-body space-y-1">
+          <Field
+            label={estate ? t('estateRepresentative') : t('institutionRepresentative')}
+            htmlFor="body-representative"
+            error={errors['contact.localContactName']}
+          >
+            <Input
+              id="body-representative"
+              invalid={Boolean(errors['contact.localContactName'])}
+              value={str(value.localContactName)}
+              onChange={(e) => set({ localContactName: e.target.value })}
+            />
+          </Field>
+          {estate ? <p className="text-xs text-muted-foreground">{t('estateRepresentativeHint')}</p> : null}
+        </div>
+        <Field
+          label={t('representativePhone')}
+          htmlFor="body-representativePhone"
+          error={errors['contact.localContactPhone']}
+        >
+          <Input
+            id="body-representativePhone"
+            type="tel"
+            inputMode="tel"
+            dir="ltr"
+            placeholder="03 123456"
+            className="text-start"
+            invalid={Boolean(errors['contact.localContactPhone'])}
+            value={str(value.localContactPhone)}
+            onChange={(e) => set({ localContactPhone: e.target.value })}
+          />
+        </Field>
+      </div>
+
+      <div className="review-body grid grid-cols-1 items-start gap-3.5 md:grid-cols-2">
+        <div className="review-body space-y-2">
+          <Field
+            label={estate ? t('estatePhone') : t('institutionPhone')}
+            htmlFor="body-phone"
+            error={errors['contact.phone']}
+          >
+            <Input
+              id="body-phone"
+              type="tel"
+              inputMode="tel"
+              dir="ltr"
+              placeholder="03 123456"
+              className="text-start"
+              invalid={Boolean(errors['contact.phone'])}
+              value={str(value.phone)}
+              onChange={(e) => set({ phone: e.target.value })}
+            />
+          </Field>
+          {hasPhone ? (
+            <label
+              htmlFor="body-whatsappSameAsPhone"
+              className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-muted-foreground"
+            >
+              <Checkbox
+                id="body-whatsappSameAsPhone"
+                checked={sameAsPhone}
+                onCheckedChange={(checked) => set({ whatsappSameAsPhone: checked === true })}
+              />
+              <span className="font-medium">{t('whatsappSame')}</span>
+            </label>
+          ) : null}
+        </div>
+        {hasPhone && !sameAsPhone ? (
+          <Field label={t('whatsapp')} htmlFor="body-whatsapp" error={errors['contact.whatsapp']}>
+            <Input
+              id="body-whatsapp"
+              type="tel"
+              inputMode="tel"
+              dir="ltr"
+              className="text-start"
+              invalid={Boolean(errors['contact.whatsapp'])}
+              value={str(value.whatsapp)}
+              onChange={(e) => set({ whatsapp: e.target.value })}
+            />
+          </Field>
+        ) : null}
+      </div>
+
+      {afterPhone}
     </div>
   );
 }

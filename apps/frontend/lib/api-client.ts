@@ -25,6 +25,7 @@ import type {
   FeeAssessment,
   FeeAssessmentLine,
   FeeBasis,
+  FeeExemptionReason,
   FeeBearer,
   FeeFrequency,
   FieldFlag,
@@ -34,12 +35,16 @@ import type {
   NumberingSequence,
   OccupancyEndReason,
   OccupancyRole,
+  OwnerBillingMode,
+  OwnerBillingState,
   PaymentMethod,
   PossibleDuplicateMatch,
   PossibleDuplicatesQuery,
   PaymentStatus,
   RecordInspectorPayoutInput,
   SequenceKey,
+  SetOwnerBillingInput,
+  SetUnitFeeExemptionInput,
   SettlePayment,
   BuildingLifecycle,
   StructureType,
@@ -1578,6 +1583,12 @@ export interface UnitOccupant {
   citizenName: string | null;
   /** Their phone, shown on the unit. Optional for a server from before it. */
   citizenPhone?: string | null;
+  /**
+   * Whether their file is open. An archived owner is never billed, so co-owner
+   * billing leaves them out of the division. Optional on the wire: absent reads
+   * as open.
+   */
+  citizenActive?: boolean;
   role: OccupancyRole;
   /** أسهم out of 2400 — owners only. */
   shares: number | null;
@@ -1654,6 +1665,22 @@ export interface UnitRow {
   presenceMonths?: number[];
   ownerLastStayAt?: string | null;
   vacancyDeclaredAt?: string | null;
+  /**
+   * «توزيع الرسم على المالكين» (migration 0075): how a flat with several
+   * owners is billed. Null means nobody chose — split equally. Optional on the
+   * wire for responses from before it existed. Each owner's part is computed
+   * with the shared `ownerSharesPreview`, the rule billing applies.
+   */
+  ownerBillingMode?: OwnerBillingMode | null;
+  responsibleOwnerId?: string | null;
+  /**
+   * «معفاة من الرسوم» (0077): why the unit is charged nothing, the reason in
+   * words, when and who granted it. Optional on the wire for older responses.
+   */
+  feeExemption?: FeeExemptionReason | null;
+  feeExemptionNote?: string | null;
+  feeExemptedAt?: string | null;
+  feeExemptedByName?: string | null;
   notes: string | null;
   createdAt: string;
   updatedAt: string;
@@ -2892,6 +2919,46 @@ export async function logUnitVisit(tenant: string, token: string, input: LogVisi
 }
 
 /**
+ * «معفاة من الرسوم» — grants (`reason` set) or lifts (`reason` null) a unit's
+ * exemption from every fee. SUPER_ADMIN only.
+ */
+export async function setUnitFeeExemption(
+  tenant: string,
+  token: string,
+  unitId: string,
+  input: SetUnitFeeExemptionInput,
+  signal?: AbortSignal,
+): Promise<{ unitId: string; feeExemption: FeeExemptionReason | null }> {
+  const result = await apiFetch<{ unitId: string; feeExemption: FeeExemptionReason | null }>(
+    tenant,
+    `/buildings/units/${encodeURIComponent(unitId)}/fee-exemption`,
+    { token, method: 'PUT', body: JSON.stringify(input), signal },
+  );
+  invalidateCensus(tenant);
+  return result;
+}
+
+/**
+ * «توزيع الرسم على المالكين» — saves how a co-owned flat is billed, and the
+ * owners' أسهم with it. `mode: null` withdraws a choice (back to the equal split).
+ */
+export async function setOwnerBilling(
+  tenant: string,
+  token: string,
+  unitId: string,
+  input: SetOwnerBillingInput,
+  signal?: AbortSignal,
+): Promise<OwnerBillingState> {
+  const result = await apiFetch<OwnerBillingState>(
+    tenant,
+    `/buildings/units/${encodeURIComponent(unitId)}/owner-billing`,
+    { token, method: 'PUT', body: JSON.stringify(input), signal },
+  );
+  invalidateCensus(tenant);
+  return result;
+}
+
+/**
  * Records that a unit was found empty, with what says so.
  *
  * Its own call rather than a `updateUnit({ unitStatus: 'VACANT', surveyStatus:
@@ -3131,6 +3198,22 @@ export interface CitizenProfileUnit {
     contactPhone?: string | null;
     shares: number | null;
   }>;
+  /** «معفاة من الرسوم» (0077): why the linked unit is charged nothing, or null. */
+  feeExemption?: FeeExemptionReason | null;
+  /**
+   * «توزيع الرسم على المالكين» (0075) when the linked flat has several current
+   * owners; null otherwise. `share` is this file's owner's part — under «مالك
+   * مسؤول», 1/1 for the owner who pays for all and 0/1 for the others. On the
+   * citizen's own portal view `responsibleOwnerId` and `fallback` are absent.
+   * Worded by `ownerBillingWording` (`lib/owner-billing.ts`).
+   */
+  ownerBilling?: {
+    mode: OwnerBillingMode | null;
+    effectiveMode: OwnerBillingMode;
+    responsibleOwnerId?: string | null;
+    fallback?: 'RESPONSIBLE_NOT_OWNER' | null;
+    share: { numerator: number; denominator: number } | null;
+  } | null;
 }
 
 export interface CitizenProfileProperty {
@@ -3202,6 +3285,14 @@ export interface CitizenProfileProperty {
   buildingLifecycleStatus?: string | null;
   unitCount: number;
   units: CitizenProfileUnit[];
+  /**
+   * The census flats a card with no unit lines is billed through — a منزل's
+   * one flat, or the flats a مبنى card's holder is recorded on — with what
+   * changes their bill. Optional on the wire for a profile cached before it.
+   */
+  heldUnits?: Array<
+    { unitId: string; unitCode: string } & Pick<CitizenProfileUnit, 'feeExemption' | 'ownerBilling'>
+  >;
 }
 
 export interface CitizenProfileDocument {
@@ -3448,7 +3539,10 @@ export interface CitizenListItem {
   identityDocType: string | null;
   identityDocNumber: string | null;
   residentStatus: string | null;
-  /** نوع الملف — a household file, or «غير مقيم في البلدة» (stored as NON_RESIDENT_OWNER). */
+  /**
+   * نوع الملف — a household (RESIDENT), «غير مقيم في البلدة» (NON_RESIDENT_OWNER),
+   * «تركة (ورثة المرحوم)» (ESTATE) or «جهة أو وقف» (INSTITUTION).
+   */
   residence?: CitizenResidence;
   isActive: boolean;
   /** The file «دمج ملفين» folded this one into — pickers skip it, the register points to it. */
@@ -5100,12 +5194,21 @@ export async function issueFeeNotice(
      */
     heldUnits?: number;
     /**
-     * Flats whose occupancy fee this notice held because their current damage
-     * reading says nobody can live in them — see
-     * `FeeAssessment.uninhabitableUnitCount`. Charged again from the first
-     * period after a re-inspection reads them habitable.
+     * Flats this notice did not charge because their current damage reading
+     * says nobody can live in them — exempt from every fee (decisions of
+     * 2026-10-05 and 2026-10-07); see `FeeAssessment.uninhabitableUnitCount`.
+     * Charged again from the first period after a re-inspection reads them
+     * habitable.
      */
     uninhabitableUnits?: number;
+    /** Units «معفاة من الرسوم» this notice did not charge (0077). */
+    feeExemptUnits?: number;
+    /**
+     * Co-owned flats this notice reached whose responsible owner («مالك مسؤول»)
+     * pays for them in full, so the other owners were charged nothing for them —
+     * see `FeeAssessment.coOwnerPaidUnitCount`. Each flat once.
+     */
+    coOwnerPaidUnits?: number;
   }>(tenant, '/fees/notices', {
     token,
     method: 'POST',
@@ -5246,6 +5349,12 @@ export function getCorrectionAffectedBills(
     token,
     signal,
   });
+}
+
+/** «المستحق على عقار» — open bills with a line on one رقم العقار. Read-only. */
+export function getParcelDues(tenant: string, token: string, propertyNumber: string, signal?: AbortSignal) {
+  const params = new URLSearchParams({ propertyNumber });
+  return apiFetch<ParcelDues>(tenant, `/fees/parcel-dues?${params.toString()}`, { token, signal });
 }
 
 /** The key a review records having seen — must match the server's `figureKey`. */
@@ -5735,12 +5844,15 @@ export async function disableStaffTotp(
 // ── «حذف تصحيحي» (SUPER_ADMIN) ──────────────────────────────────────────────
 
 import type {
+  ParcelDues,
   UnitCorrectionDeleteInput,
   UnitCorrectionPreview,
   UnitCorrectionResult,
 } from '@mechanization/shared-schemas';
 
 export type {
+  ParcelDues,
+  ParcelDuesBill,
   UnitCorrectionBlocker,
   UnitCorrectionDeleteInput,
   UnitCorrectionPreview,

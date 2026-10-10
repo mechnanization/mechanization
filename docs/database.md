@@ -1,6 +1,6 @@
 # Database
 
-Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-09.
+Last verified against the code: `fix/expense-retry-key-race` (merged with `develop@4ad0b27`), 2026-10-09.
 
 The rules for anything that reads or writes a database: the schemas, how to
 query them, how to change them, and how data may move between environments.
@@ -93,6 +93,39 @@ request's tenant (`IdentityService`).
   `users_contact_phone_not_own` (`contactPhone` is never the row's own `phone`).
   Every writer goes through them, the merge included.
 
+**`users.residence` names owners that are not a living person** (`0076`).
+Besides `RESIDENT` and `NON_RESIDENT_OWNER`, `CitizenResidence` holds `ESTATE`
+«تركة (ورثة المرحوم …)», the file of an owner who died, converted in place so
+his cards, flats and bills stay on it, and `INSTITUTION` «جهة / وقف», a waqf,
+council or public body. Neither is a household: no mother's name, gender or
+residency is asked of either, and every population count that filters
+`residence = 'RESIDENT'` already leaves both out. An institution's name is one
+line on the form and is stored across `firstName`/`lastName` (first word, the
+rest; `splitInstitutionName`), so any screen that joins the parts reads it
+whole. An estate keeps the deceased's own name: «ورثة المرحوم …» is added when
+it is shown (`citizenDisplayName`), never written into the row — nor into
+another row: a name copied onto a tenancy card is `citizenStoredName`. Every
+write of `property_entries.landlordName` from a submitted card goes through
+`storedLandlordName` (the entity's `normalise`; `landlordNamesToStore` in the
+registration create and the citizen update; the census tenant card), which
+takes the prefix off whatever a client sent — a form copies the name it was
+*shown* — and, for a card linked to an owner, stores that owner's own name.
+The non-person kinds are `NON_PERSON_RESIDENCE` for a Prisma filter.
+
+**A card's `propertyNumber` is stored as typed**, «٤٢٠» as well as «420», and
+so are the fee lines copied from it. A lookup by رقم العقار compares
+digit-normalised values on both sides (`normalizeDigits`; in SQL,
+`translate(…, '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹', '01234567890123456789')`, as
+`parcel-dues.service.ts` does).
+
+**A flat's billing facts live on `units`** (`0075`, `0077`), beside its status:
+
+| Column | What it means |
+|---|---|
+| `ownerBillingMode` | «توزيع الرسم على المالكين» when the flat has several current owners: `EQUAL`, `BY_SHARES` (each owner's `unit_occupancies.shares` over the sum of all of them) or `RESPONSIBLE_OWNER`. NULL means nobody chose, and is billed as `EQUAL` (decision of 2026-10-07). |
+| `responsibleOwnerId` | The owner who pays the whole under `RESPONSIBLE_OWNER`, and only then. `units_responsible_owner_needs_mode` uses `IS NOT DISTINCT FROM`: with `=`, a CHECK passes on the NULL that `NULL = 'RESPONSIBLE_OWNER'` yields. |
+| `feeExemption`, `feeExemptionNote`, `feeExemptedById`, `feeExemptedAt` | «معفاة من الرسوم»: `PLACE_OF_WORSHIP`, `PUBLIC_FACILITY` or `OTHER` (which needs the note). Set and lifted together (`units_fee_exemption_fields`). An exempt unit is charged nothing by a rate-based notice; a rented waqf shop is not exempt, its tenant pays. |
+
 **A damage reading has two answers** (`0071`). `damage_assessments.level` is the
 UN-Habitat scale, untouched; `habitable` is «صالحة للسكن؟», asked beside it and
 prefilled from the level where the level decides it (decision of 2026-10-05).
@@ -109,12 +142,12 @@ CHECKs keep the rest:
 
 «غير صالحة للسكن» is `habitable = false`, or no answer on a collapse or an
 evacuation (`isUninhabitableReading`, and its SQL twin `uninhabitableSql`). The
-fee assessment holds an occupant-borne fee on a unit whose current reading
-says so — the latest of the unit's and its building's readings *that answers*:
+fee assessment charges no fee at all — occupant-borne or owner-borne (decision
+of 2026-10-07) — on a unit whose current reading says so — the latest of the unit's and its building's readings *that answers*:
 `UNCLASSIFIED` with `habitable` NULL judged nothing and is passed over
 (`answersHabitability`, its SQL twin `answersHabitabilitySql`, and
 `currentReadingForUnit(…, { answering: true })` in
-`application/features/buildings/habitability.ts`), so it never ends a hold.
+`application/features/buildings/habitability.ts`), so it never ends the exemption.
 
 **`lastSeenAt` is staff presence, and the one write on the authenticated hot
 path** (`0070`). `StaffPresenceService` stamps it from `JwtAuthGuard` behind a
@@ -434,19 +467,25 @@ reads staging's history from `.env.staging` and nothing else, and
 
 ### Numbering
 
-- The latest tenant migrations are `0073_treasury_ledger`, `0074_expense_vouchers`,
+- `main` ends at `0072_users_no_phone_rules`: `0067`–`0072` went to `main` in their own
+  migrations-only PR, ahead of the release that carries the code reading them (root rule 5; the
+  PR #61 and #86 pattern). `develop` ends at `0077_unit_fee_exemption`: `0075`–`0077`
+  (`chore/migration-0075-0077`: co-owner billing, the estate and institution record types, the
+  unit fee exemption) follow the same path, their own PR into `develop`, then to `main` alone,
+  before any release that writes the new columns or values.
+- `feat/finance-treasury-expenses` holds `0073_treasury_ledger`, `0074_expense_vouchers`,
   `0078_treasury_transfers`, `0079_document_numbering`, `0080_income_vouchers` and
-  `0081_expense_voucher_payee_staff`, added by `feat/finance-treasury-expenses`. 0078 is not
-  0075: `chore/migration-0075-0077` holds 0075–0077, which is the second time a number was taken
-  mid-flight on this branch. `main` ends at `0072_users_no_phone_rules`, so `0067`–`0072` have
-  reached production; `develop` has since taken `0075`–`0077`, and these six are outstanding.
-  Checked on 2026-10-09 against every local and remote branch after a fetch: the next free number
-  is `0082`.
+  `0081_expense_voucher_payee_staff`, none of them on `develop` yet. The PRs for `0073`/`0074`
+  (#94, #93) were closed unmerged on 2026-10-08, but the branches are still on `origin`, so those
+  numbers stay reserved and are never reused. `0078` is not `0075` because
+  `chore/migration-0075-0077` had taken it: the second time a number was taken mid-flight on that
+  branch. As `0075`–`0077` merged first, `0073` and `0074` will land out of order on any database
+  that already has them, which `deploy.mjs` warns about and applies; the two sets touch different
+  tables. Checked on 2026-10-09 against `origin/main`, `origin/develop` and every local and remote
+  branch after a fetch: the next free number is `0082`.
 - Parallel branches reuse numbers and nothing errors: `0016_*` and `0017_*`
   each exist twice. `0059_staff_refresh_tokens` was merged to `develop` after
-  `0066`, so it applies out of order: `deploy.mjs` warns and applies it. As of
-  this check (2026-10-09, against `origin/main`, `origin/develop` and every
-  local and remote branch) the next free number is `0082`.
+  `0066`, so it applies out of order: `deploy.mjs` warns and applies it.
 - The treasury migration was first written as `0071` and renumbered to `0073`:
   `0071_damage_habitable` and `0072_users_no_phone_rules` landed on `develop`
   while it was in progress. A branch cut before a release is a branch whose

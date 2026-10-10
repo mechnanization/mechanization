@@ -1,6 +1,12 @@
 import { z } from 'zod';
 import {
   contactDetailsSchema,
+  estatePersonalSchema,
+  institutionPersonalSchema,
+  nonPersonContactSchema,
+  partialEstatePersonalSchema,
+  partialInstitutionPersonalSchema,
+  partialNonPersonContactSchema,
   nonResidentOwnerContactSchema,
   nonResidentOwnerPersonalSchema,
   partialContactDetailsSchema,
@@ -27,6 +33,8 @@ import {
 import { optionalInternationalPhone, uuid } from './primitives';
 import {
   citizenResidenceSchema,
+  isOwnerRecord,
+  isNonPersonRecord,
   isDwellingUnitType,
   NON_OWNER_OCCUPANCY,
   type CitizenResidence,
@@ -305,19 +313,37 @@ function isAbsent(value: unknown): boolean {
  * would store fields a strict pass never looked at.
  */
 function sectionSchemas(residence: CitizenResidence) {
-  return residence === 'NON_RESIDENT_OWNER'
-    ? {
+  switch (residence) {
+    case 'NON_RESIDENT_OWNER':
+      return {
         personal: nonResidentOwnerPersonalSchema,
         contact: nonResidentOwnerContactSchema,
         partialPersonal: partialNonResidentOwnerPersonalSchema,
         partialContact: partialNonResidentOwnerContactSchema,
-      }
-    : {
+      };
+    // «تركة» and «جهة أو وقف» (0076): a name, and a representative if there is one.
+    case 'ESTATE':
+      return {
+        personal: estatePersonalSchema,
+        contact: nonPersonContactSchema,
+        partialPersonal: partialEstatePersonalSchema,
+        partialContact: partialNonPersonContactSchema,
+      };
+    case 'INSTITUTION':
+      return {
+        personal: institutionPersonalSchema,
+        contact: nonPersonContactSchema,
+        partialPersonal: partialInstitutionPersonalSchema,
+        partialContact: partialNonPersonContactSchema,
+      };
+    default:
+      return {
         personal: personalDetailsSchema,
         contact: contactDetailsSchema,
         partialPersonal: partialPersonalDetailsSchema,
         partialContact: partialContactDetailsSchema,
       };
+  }
 }
 
 /** Every path the strict schemas complain about, given what is already excused. */
@@ -415,7 +441,7 @@ function allFlags(input: SubmissionInput): FieldFlag[] {
     not have, so it is dropped here, before any pass reads the flags.
   */
   const own =
-    input.residence !== 'NON_RESIDENT_OWNER' && input.contact?.hasNoPhone === true
+    !isOwnerRecord(input.residence) && input.contact?.hasNoPhone === true
       ? input.flags.filter((flag) => !(PHONE_PATHS as readonly string[]).includes(flag.path))
       : input.flags;
   const explicit = flaggedPaths(own);
@@ -478,19 +504,35 @@ export function nonResidentCardIssues(
   card: Record<string, unknown>,
   flagged: ReadonlySet<string>,
   prefix: string,
+  /**
+   * Which owner record this is (0076). An estate owns and nothing else; an
+   * institution, like a non-resident, may also rent or run premises nobody
+   * lives in. None of the three lives in a dwelling.
+   */
+  residence: CitizenResidence = 'NON_RESIDENT_OWNER',
 ): NonResidentCardIssue[] {
   const issues: NonResidentCardIssue[] = [];
   const owner = card.occupancyType === 'OWNER';
   const units = Array.isArray(card.units) ? (card.units as Array<Record<string, unknown>>) : [];
+  const notLivingThere = OWNER_NOT_LIVING_THERE_BY_RECORD[residence] ?? OWNER_NOT_LIVING_THERE;
+  /*
+    «مشغولة من المالك» for every owner record; and «مسكن موسمي» for an estate
+    or an institution, neither of which comes back for a season — a family that
+    does is «مشغولة بتسامح», and pays the occupancy fee itself. («مسكن موسمي»
+    is billed to the owner while away, so on either it would bill the heirs or
+    the body the occupancy fee.)
+  */
+  const livesThere = (status: unknown) =>
+    status === 'OWNER_OCCUPIED' || (isNonPersonRecord(residence) && status === 'SEASONAL');
 
   if (owner) {
-    if (card.propertyType === 'HOUSE' && card.unitStatus === 'OWNER_OCCUPIED') {
-      issues.push({ path: ['unitStatus'], message: OWNER_NOT_LIVING_THERE, code: 'OWNER_LIVES_THERE' });
+    if (card.propertyType === 'HOUSE' && livesThere(card.unitStatus)) {
+      issues.push({ path: ['unitStatus'], message: notLivingThere, code: 'OWNER_LIVES_THERE' });
     }
     if (card.propertyType === 'BUILDING') {
       units.forEach((unit, unitIndex) => {
-        if (isDwellingUnitType(unit.unitType as string) && unit.unitStatus === 'OWNER_OCCUPIED') {
-          issues.push({ path: ['units', unitIndex, 'unitStatus'], message: OWNER_NOT_LIVING_THERE, code: 'OWNER_LIVES_THERE' });
+        if (isDwellingUnitType(unit.unitType as string) && livesThere(unit.unitStatus)) {
+          issues.push({ path: ['units', unitIndex, 'unitStatus'], message: notLivingThere, code: 'OWNER_LIVES_THERE' });
         }
       });
     }
@@ -498,6 +540,16 @@ export function nonResidentCardIssues(
   }
 
   if (card.occupancyType === undefined) return issues;
+
+  /*
+    An estate rents nothing and occupies nothing: the person in the flat — the
+    widow, a tenant — is filed in their own name, which is how the occupancy fee
+    reaches someone who can pay it (decision of 2026-10-07).
+  */
+  if (residence === 'ESTATE') {
+    issues.push({ path: ['occupancyType'], message: ESTATE_OWNS_ONLY, code: 'ESTATE_OWNS_ONLY' });
+    return issues;
+  }
 
   switch (card.propertyType) {
     case 'LAND':
@@ -532,7 +584,7 @@ export function nonResidentCardIssues(
  *  - `NEEDS_UNIT_TYPE`: what they rent is not known to be somewhere nobody lives.
  *  - `OWNER_LIVES_THERE`: a home they own is marked as the one they live in.
  */
-export type NonResidentCardIssueCode = 'DWELLING' | 'NEEDS_UNIT_TYPE' | 'OWNER_LIVES_THERE';
+export type NonResidentCardIssueCode = 'DWELLING' | 'NEEDS_UNIT_TYPE' | 'OWNER_LIVES_THERE' | 'ESTATE_OWNS_ONLY';
 
 export interface NonResidentCardIssue {
   path: Array<string | number>;
@@ -546,6 +598,14 @@ const NON_RESIDENT_NEEDS_UNIT_TYPE =
   'حدِّد نوع الوحدة — غير المقيم يُسجَّل مستأجراً أو شاغلاً لوحدة غير سكنية فقط';
 const OWNER_NOT_LIVING_THERE =
   'غير المقيم لا يسكن هذه الوحدة — اختر «مسكن موسمي» إن كان يحضر في مواسم، أو «شاغرة»، أو حالة من يشغلها';
+/** The same refusal, worded for the estate and the institution (0076). */
+const OWNER_NOT_LIVING_THERE_BY_RECORD: Partial<Record<CitizenResidence, string>> = {
+  ESTATE:
+    'المرحوم لا يسكن الوحدة — إن كانت عائلته تسكنها فاختر «مشغولة بتسامح» وسجّل الأرملة أو أحد الأولاد بملف أسرة، وإلا فاختر «مؤجرة» أو «شاغرة»',
+  INSTITUTION: 'الجهة لا تسكن مسكناً — اختر حالة من يشغله («مؤجرة»، «مشغولة بتسامح») أو «شاغرة»',
+};
+const ESTATE_OWNS_ONLY =
+  'التركة تملك فقط — من يستأجر الوحدة أو يسكنها يُسجَّل بملفه هو (الأرملة أو المستأجر)، وتُربط بطاقته بالتركة مالكاً';
 
 const UNIT_STATUS_REQUIRED = 'حالة الوحدة مطلوبة — اختر من يشغلها';
 
@@ -617,7 +677,7 @@ function ownerUnitStatusIssues(card: unknown, prefix: string): string[] {
 const PHONE_PATHS = ['contact.phone', 'contact.whatsapp'] as const;
 
 function householdPhoneIssues(input: SubmissionInput): Array<{ path: string; message: string }> {
-  if (input.residence === 'NON_RESIDENT_OWNER') return [];
+  if (isOwnerRecord(input.residence)) return [];
   const contact = input.contact ?? {};
   if (contact.hasNoPhone === true) return [];
   const issues: Array<{ path: string; message: string }> = [];
@@ -693,9 +753,9 @@ function unexcusedIssues(input: SubmissionInput, ctx: z.RefinementCtx): void {
     }
   });
 
-  if (input.residence === 'NON_RESIDENT_OWNER') {
+  if (isOwnerRecord(input.residence)) {
     input.properties.forEach((card, index) => {
-      for (const issue of nonResidentCardIssues(card, paths, `properties.${index}`)) {
+      for (const issue of nonResidentCardIssues(card, paths, `properties.${index}`, input.residence)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['properties', index, ...issue.path],

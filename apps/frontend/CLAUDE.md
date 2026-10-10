@@ -1,6 +1,6 @@
 # apps/frontend: agent guide
 
-Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-09.
+Last verified against the code: `fix/expense-retry-key-race` (merged with `develop@4ad0b27`), 2026-10-09.
 
 Next.js 15 app router, React 18, next-intl 4, TanStack Query 5, Tailwind 3.4 with
 tailwind-merge 3, Radix and lucide-react. One app serves the staff dashboard and the
@@ -36,7 +36,7 @@ the id — `billReference` is where that choice lives.
     inspector/profile/** quality/**
 ```
 
-All 60 `page.tsx` files are `'use client'` and read `params` with `use(params)`.
+All 61 `page.tsx` files are `'use client'` and read `params` with `use(params)` (counted 2026-10-09).
 `components/ui` is the kit (33 files, `alert.tsx` added 2026-10-06); `components/admin` holds staff screens (feature
 folders `cases/`, `damage/`, `finance/`, `quality/`, `settings/`, `staff/`); `components/citizen` is mostly citizen-record
 form pieces used by staff screens, and only `pay-dialog` serves the portal. `lib` holds the
@@ -125,7 +125,7 @@ component types.
 ## Copy and i18n (decision D-i18n)
 
 - New copy MUST go in next-intl messages, `messages/ar.json` and `messages/en.json`, with
-  the same keys in both (1,316 leaf keys each, counted 2026-10-09). Read it with `useTranslations`.
+  the same keys in both (1,566 leaf keys each, counted 2026-10-09). Read it with `useTranslations`.
   `lib/messages-parity.test.ts` checks that both files hold the same keys, the same ICU
   placeholders and the same rich-text tags, and that no Arabic message outside `errors`
   writes a count as `#`: inside a plural branch write `{count}`, because `#` is formatted
@@ -133,7 +133,7 @@ component types.
 - A plain module that needs copy (no React context: a formatter, a table-cell helper) builds
   a translator over its own slice of the message files with `createTranslator` and
   `FORMAT_LOCALE` (`ar-u-nu-latn`, Latin digits) from `lib/api-errors.ts`, as `api-errors.ts`,
-  `fee-assessment.ts` and `audit-describe.ts` do. Plain labels with no placeholders are a lookup
+  `fee-assessment.ts`, `owner-billing.ts` and `audit-describe.ts` do. Plain labels with no placeholders are a lookup
   (`audit-labels.ts` reads `auditActions` and `auditEntities`).
 - Enum and status labels MUST come from `getLabels(locale)` (shared-schemas).
 - Legacy, convert when you touch a file: inline `en ? '…' : '…'` (about 117 files; 62 declare
@@ -183,6 +183,22 @@ component types.
 `lib/use-url-state.ts` with `param.*` from `lib/url-state.ts`: `useUrlState` (schema at
 module scope), `useUrlPagination`, `PAGE_SIZE_OPTIONS`. The search term lives in tab
 sessionStorage through `useTabSearch`, never in the URL.
+
+## Citizen record kinds
+
+A file is a household, «غير مقيم في البلدة», «تركة (ورثة المرحوم)» or «جهة أو وقف» (`0076`).
+`ResidenceChooser` in `citizen-form.tsx` asks it in two steps («صاحب الملف»: a person, or an
+estate or a body; then which), and each kind has its own first two steps
+(`PersonalStep`/`ContactStep`, `OwnerPersonalStep`/`OwnerContactStep`,
+`NonPersonPersonalStep`/`NonPersonContactStep`). Branch on `isOwnerRecord` / `isNonPersonRecord`
+from shared-schemas, not on one value. `withResidence` joins or splits an institution's one-line
+name (`namesForKind` in `lib/residence-move.ts`); it and `withSeededSearch` (which takes the kind
+the form opens as) live in `lib/citizen-seed.ts`, re-exported by `citizen-form.tsx`. A card
+never sends a shown owner name: `landlordNameToSend` (`lib/citizen-field-edit.ts`) strips
+«ورثة المرحوم», and `landlordLink.displayName` is what the locked field shows; `PropertyCard` takes `recordKind` (an estate
+offers «مالك» only); `RecordKindBadge` marks the kind beside a name. On a saved file a death
+(person → estate) goes through `ResidenceChangeDialog`, like a move; switching to or from an
+institution is a correction. «المستحق على عقار» is `fees/parcel`.
 
 ## Recipe: add a staff screen
 
@@ -242,7 +258,7 @@ are inlined at build time. The local `.env.local` block is in
 ## Tests
 
 Vitest (`apps/frontend/vitest.config.mts`): `environment: 'node'`, only `lib/**/*.test.ts`,
-with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 22 files, 280 cases.
+with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 25 test files (counted on disk 2026-10-10, after merging `develop`; cases not recounted).
 No component, accessibility or end-to-end tests exist (no jsdom, no Testing Library); a
 rendered check uses the uncommitted headless harness of UI §16.4. Untested, so add a test
 when you touch them: `lib/sentry-redaction.ts`, `lib/session.ts`, `lib/csv.ts` `csvCell`.
@@ -258,7 +274,7 @@ each copied.)
 
 - UI debt with counts and files, including the contrast failures:
   [docs/ui-ux-standards.md](../../docs/ui-ux-standards.md) §17.
-- Code debt (40 `.tsx` files over 600 lines, `lib/api-client.ts` at 5,782 lines, dead
+- Code debt (40 `.tsx` files over 600 lines, `lib/api-client.ts` at 5,885 lines, dead
   modules, the tenant config fetched three times, UTC "today"): [docs/code-quality.md](../../docs/code-quality.md).
 - Traps (tailwind-merge 3 on Tailwind 3, the two default locales, missing providers on the
   citizen side, null token on first paint, `sw.js` `VERSION`, the CSP nonce, `[adminPath]` is not a control):

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import {
   Building2,
   CheckCircle2,
@@ -27,6 +28,7 @@ import {
 } from '@mechanization/shared-schemas';
 import type {
   CardRemovalReason,
+  CitizenResidence,
   LandType,
   OccupancyType,
   PropertyType,
@@ -164,7 +166,12 @@ export interface PropertyDraft {
    * one — and «إلغاء الربط» is the only way out, because undoing it also
    * removes what it added to the owner's file. Never sent (`toPayloadProperty`).
    */
-  landlordLink?: { citizenId: string; name: string; referenceNumber: string | null };
+  /**
+   * `name` is the owner's name as a row stores it (sent when the tenant's own
+   * is blank); `displayName` is what the locked field shows — an estate as
+   * «ورثة المرحوم …».
+   */
+  landlordLink?: { citizenId: string; name: string; displayName: string; referenceNumber: string | null };
   /**
    * The registered name of the citizen agreed to on this form, shown in the
    * locked name field. The tenant's own words stay in `landlordName`, so
@@ -209,6 +216,7 @@ export function PropertyCard({
   censusPicker = false,
   lockedCensusTarget,
   nonResident = false,
+  recordKind,
 }: {
   tenant: string;
   index: number;
@@ -278,8 +286,19 @@ export function PropertyCard({
    * (`nonResidentCardIssues`); this is the half that stops it being offered.
    */
   nonResident?: boolean;
+  /**
+   * Whose card it is, when not a household's (0076). An estate («تركة») owns
+   * and nothing else: only «مالك» is offered — a card already holding another
+   * answer, on a file converted from a person's, keeps showing it, so the
+   * refusal under it (`ESTATE_OWNS_ONLY`) points at something on screen. An
+   * institution may rent what nobody lives in, as a non-resident may, and the
+   * hint says so in its own words.
+   */
+  recordKind?: CitizenResidence;
 }) {
   const labels = getLabels(locale);
+  const tKind = useTranslations('citizenKind');
+  const ownerOnly = recordKind === 'ESTATE';
   const visible: readonly string[] = draft.propertyType
     ? PROPERTY_FIELD_MAP[draft.propertyType]
     : [];
@@ -908,6 +927,7 @@ export function PropertyCard({
                           : undefined
                       }
                       nonResident={nonResident}
+                      estate={recordKind === 'ESTATE'}
                       layout="wide"
                       onPatch={(patch) =>
                         onChange((current) => ({
@@ -953,11 +973,14 @@ export function PropertyCard({
                       ? setUnlinkOpen(true)
                       : set({ occupancyType: v as OccupancyType })
                   }
-                  options={OCCUPANCY_TYPE.map((option) => ({
+                  options={OCCUPANCY_TYPE.filter(
+                    (option) => !ownerOnly || option === 'OWNER' || option === draft.occupancyType,
+                  ).map((option) => ({
                     value: option,
                     label: labels.occupancyType[option] ?? option,
                   }))}
                 />
+                {ownerOnly ? <p className="mt-1 text-xs text-muted-foreground">{tKind('ownsOnly')}</p> : null}
               </Field>
 
               <Field
@@ -990,11 +1013,13 @@ export function PropertyCard({
                 />
               </Field>
 
-              {nonResidentOccupant ? (
+              {nonResidentOccupant && !ownerOnly ? (
                 <p className="rounded-md border border-border/70 bg-muted/20 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
-                  {locale === 'en'
-                    ? 'Someone who lives outside the town is recorded as a tenant or occupant of a shop, office, clinic, warehouse or land only. A person who rents a home here and lives in it belongs on a household file.'
-                    : 'غير المقيم يُسجَّل مستأجراً أو شاغلاً لمحل أو مكتب أو عيادة أو مستودع أو أرض فقط. من يستأجر مسكناً في البلدة ويسكنه يُسجَّل بملف أسرة.'}
+                  {recordKind === 'INSTITUTION'
+                    ? tKind('institutionRents')
+                    : locale === 'en'
+                      ? 'Someone who lives outside the town is recorded as a tenant or occupant of a shop, office, clinic, warehouse or land only. A person who rents a home here and lives in it belongs on a household file.'
+                      : 'غير المقيم يُسجَّل مستأجراً أو شاغلاً لمحل أو مكتب أو عيادة أو مستودع أو أرض فقط. من يستأجر مسكناً في البلدة ويسكنه يُسجَّل بملف أسرة.'}
                 </p>
               ) : null}
             </div>
@@ -1035,7 +1060,7 @@ export function PropertyCard({
                       <span className="font-medium">
                         {locale === 'en' ? 'Linked to a registered citizen: ' : 'مرتبط بمواطن مسجَّل: '}
                       </span>
-                      <span className="font-semibold">{draft.landlordLink.name}</span>
+                      <span className="font-semibold">{draft.landlordLink.displayName}</span>
                       {draft.landlordLink.referenceNumber ? (
                         <bdi dir="ltr" className="ms-2 font-mono text-xs text-muted-foreground">
                           {draft.landlordLink.referenceNumber}
@@ -1130,7 +1155,7 @@ export function PropertyCard({
                       id={`ln-${index}`}
                       invalid={!landlordFromRegister && Boolean(errors.landlordName)}
                       value={
-                        draft.landlordLink?.name ??
+                        draft.landlordLink?.displayName ??
                         (draft.landlordCitizenId ? draft.landlordAgreedName : undefined) ??
                         draft.landlordName ??
                         ''
@@ -1355,7 +1380,7 @@ export function PropertyCard({
                 value={draft.unitStatus}
                 onChange={(unitStatus) => set({ unitStatus })}
                 // A منزل is a dwelling; its owner lives elsewhere, so not in it.
-                omit={nonResident ? ['OWNER_OCCUPIED'] : []}
+                omit={nonResident ? (recordKind === 'ESTATE' ? ['OWNER_OCCUPIED', 'SEASONAL'] : ['OWNER_OCCUPIED']) : []}
                 path={flagPath(index, 'unitStatus')}
                 required
                 error={errors.unitStatus}
@@ -1405,6 +1430,7 @@ export function PropertyCard({
                     : undefined
                 }
                 nonResident={nonResident}
+                estate={recordKind === 'ESTATE'}
                 errors={scopeErrors(errors, 'units')}
                 onChange={(update) =>
                   onChange((current) => ({ ...current, units: update(current.units ?? []) }))

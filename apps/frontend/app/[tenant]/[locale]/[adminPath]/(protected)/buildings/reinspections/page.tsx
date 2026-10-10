@@ -30,8 +30,8 @@ const URL_STATE = { owner: WORKLIST_OWNER_PARAM };
  *
  * The follow-up a re-inspection date needs: without a list, a planned day is
  * found only by opening the exact unit, and passes unnoticed. Each row's flat
- * has its occupancy fee held until that visit (decision, 2026-10-05), so a
- * missed one is also a bill nobody issues. Planned days first, the most overdue
+ * is exempt from every fee until a visit reads it habitable (decisions of
+ * 2026-10-05 and 2026-10-07), so a missed one is also a bill nobody issues. Planned days first, the most overdue
  * at the top, then the readings no day was set for. A whole-building reading is
  * one row, one visit — not one row per flat.
  *

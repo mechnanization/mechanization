@@ -1,3 +1,4 @@
+import { citizenDisplayName } from '@mechanization/shared-schemas';
 import { Inject, Injectable } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
@@ -443,6 +444,7 @@ export class StaffService {
             firstName: true,
             middleName: true,
             lastName: true,
+            residence: true,
           },
         },
         properties: {
@@ -550,12 +552,8 @@ export class StaffService {
         }
       }
 
-      const citizenName = reg.citizen
-        ? [reg.citizen.firstName, reg.citizen.middleName, reg.citizen.lastName]
-            .filter(Boolean)
-            .join(' ')
-            .trim()
-        : 'مواطن';
+      // «ورثة المرحوم …» for an estate (0076).
+      const citizenName = reg.citizen ? citizenDisplayName(reg.citizen) || 'مواطن' : 'مواطن';
 
       return {
         registrationId: reg.id,

@@ -24,7 +24,8 @@ import {
   adminCreateCitizenSubmissionSchema,
   allowedPropertyTypesFor,
   getLabels,
-  normalizeDigits,
+  isNonPersonRecord,
+  isOwnerRecord,
   PROPERTY_FIELD_MAP,
   type CitizenMergeResult,
   type CitizenResidence,
@@ -37,6 +38,8 @@ import { EmptyState } from '@/components/ui/states';
 import { Textarea } from '@/components/ui/textarea';
 import {
   ContactStep,
+  NonPersonContactStep,
+  NonPersonPersonalStep,
   OwnerContactStep,
   OwnerPersonalStep,
   PersonalStep,
@@ -56,8 +59,10 @@ import { QuickSaveDialog } from './quick-save-dialog';
 import type { LockedCensusTarget } from './building-unit-picker';
 import { ParcelRosterDialog } from './parcel-roster-dialog';
 import { ResidenceChangeDialog } from './residence-change-dialog';
-import { applyResidenceMove, planResidenceMove } from '@/lib/residence-move';
-import { carryHeldPhone } from '@/lib/citizen-contact';
+import { applyResidenceMove, planResidenceMove, type NamesBefore } from '@/lib/residence-move';
+import { withResidence } from '@/lib/citizen-seed';
+import { carryHeldPhone, withoutUnusedWhatsapp } from '@/lib/citizen-contact';
+import { landlordNameToSend } from '@/lib/citizen-field-edit';
 import { scrollElementToTop } from '@/lib/scroll-to-top';
 import { cn, scopeErrors } from '@/lib/utils';
 
@@ -122,6 +127,12 @@ export interface CitizenFormValues {
    * from. Absent on a correction, where only the answer changes.
    */
   residenceMove?: { movedOn: string; reason: string };
+  /**
+   * A person's name parts as they were when the file was switched to «جهة أو
+   * وقف», so switching back restores them rather than re-splitting the joined
+   * line (`namesForKind`). Never sent.
+   */
+  namesBefore?: NamesBefore;
 }
 
 /**
@@ -158,118 +169,8 @@ export function emptyCitizen(): CitizenFormValues {
   };
 }
 
-/**
- * Switching نوع الملف, as a value rather than a state update.
- *
- * Nothing typed is thrown away — a clerk who picks the wrong kind and back
- * again gets their answers back, cards included.
- *
- * It used to turn every card into «مالك» on the way to a non-resident record,
- * when that record held owners only. It now also holds a person who rents or
- * runs a shop, an office, a clinic, a warehouse or a plot here while living
- * elsewhere, so a tenant's card is left exactly as it was: whether a card fits
- * a non-resident is the schema's question (`nonResidentCardIssues`), and it is
- * answered on the field that has to change rather than by silently rewriting
- * what the officer entered.
- *
- * Pure so the two ways a record becomes non-resident agree: the chooser at the
- * top of the form, and a unit link that arrives already carrying
- * `?residence=NON_RESIDENT_OWNER` on `citizens/new`.
- */
-export function withResidence(
-  values: CitizenFormValues,
-  residence: CitizenResidence,
-): CitizenFormValues {
-  return { ...values, residence };
-}
-
-/**
- * The phone number a search term holds, or null when it does not hold one.
- *
- * The unit panel's box searches by name, phone and رقم القيد alike, and in the
- * field the phone is usually what gets typed first — it is the one thing a
- * household reads out without hesitating. So a term is a phone when it is
- * nothing but digits, with an optional leading `+`, once the separators people
- * dictate numbers with are taken out: `03 123 456`, `70-123456`, `(+33) 6 12
- * 34 56 78`, `٠٠٣٣٦١٢٣٤٥٦٧٨`.
- *
- * ## Where a digit run is not a phone
- *
- * Fewer than seven digits and no `+`. Seven is the shortest number this
- * register accepts at all (`3 123456`, Lebanon's 03 without its zero); below it
- * the term is a رقم السجل, which runs to one to three digits, or a number the
- * officer stopped typing halfway. Either one in الهاتف is a wrong answer
- * sitting in a required field, so it seeds nothing. A `+` settles it at any
- * length: nobody writes one in front of anything but a phone.
- *
- * ## What it returns
- *
- * The digits in Latin with the separators gone, and the `+` or `00` kept as
- * typed. It is deliberately *not* validated against `internationalPhone`: a
- * foreign number typed without its `+` is still that person's number, and the
- * phone field's own error and hint («ابدأ بـ + ثم رمز الدولة») are where that
- * gets fixed — not a blank field and a retype.
- */
-export function phoneFromSearchTerm(term: string): string | null {
-  const compact = normalizeDigits(term.trim()).replace(/[\s\-()./]/g, '');
-  if (!/^\+?\d+$/.test(compact)) return null;
-  return compact.startsWith('+') || compact.length >= 7 ? compact : null;
-}
-
-/**
- * Seeds the form from whatever the officer had typed into the search that sent
- * them here: the phone field when it is a number, the name block otherwise.
- *
- * The unit panel's «ملف جديد» links carry their search term across, so a
- * search that found nobody is not retyped into the form immediately after. It
- * also gives the duplicate check something to check on the first render —
- * against the phone, which is the stronger of the two things it matches on,
- * whenever the officer searched by one.
- *
- * ## What it refuses to seed
- *
- * Into the name, a term holding a digit. «03 123456» split across الاسم الأول
- * and الشهرة is worse than an empty form — it is a name nobody will read
- * closely before saving, and `arabicOrLatinName` would reject it at the point
- * where the officer has stopped looking at it. A term that is neither a name
- * nor a phone — a رقم السجل, a reference number — seeds nothing at all.
- *
- * ## How a name splits
- *
- * A single word is a first name. Two are الاسم الأول and الشهرة, because that
- * is how a person is addressed and therefore how they are searched for. Three
- * or more fill اسم الأب with everything in between, which is the one reading
- * that never loses a word the officer typed. None of it is authoritative — it
- * is a first draft of three fields the officer is looking straight at.
- */
-export function withSeededSearch(
-  values: CitizenFormValues,
-  term: string,
-): CitizenFormValues {
-  const phone = phoneFromSearchTerm(term);
-  if (phone) return { ...values, contact: { ...values.contact, phone } };
-
-  const trimmed = term.trim();
-  // Arabic-Indic and Extended digits alongside the Latin ones: an Arabic
-  // keyboard produces «٠٣» by default, and a phone typed that way is no more a
-  // name than «03» is.
-  if (!trimmed || /[\d٠-٩۰-۹]/u.test(trimmed)) return values;
-
-  const parts = trimmed.split(/\s+/);
-  const [firstName, ...rest] = parts;
-  const lastName = rest.length > 0 ? rest[rest.length - 1] : undefined;
-  const middleName = rest.length > 1 ? rest.slice(0, -1).join(' ') : undefined;
-
-  return {
-    ...values,
-    personal: {
-      ...values.personal,
-      firstName,
-      ...(middleName ? { middleName } : {}),
-      ...(lastName ? { lastName } : {}),
-    },
-  };
-}
+// Pure, so the lib tests can reach them: switching نوع الملف and seeding from a search.
+export { phoneFromSearchTerm, withResidence, withSeededSearch } from '@/lib/citizen-seed';
 
 /**
  * One field this form is currently asking about, in the order it is asked.
@@ -312,6 +213,21 @@ export interface AskableField {
  * ticked six boxes and came back to five. One list, read by both.
  */
 export function askableFields(values: CitizenFormValues): AskableField[] {
+  /*
+    An estate asks the deceased's name and an institution its own; nothing
+    else on either is required, so nothing else can be excused (0076).
+  */
+  if (values.residence === 'ESTATE' || values.residence === 'INSTITUTION') {
+    const named: AskableField[] =
+      values.residence === 'ESTATE'
+        ? [
+            { path: 'personal.firstName', field: 'firstName', section: 'personal' },
+            { path: 'personal.middleName', field: 'middleName', section: 'personal' },
+            { path: 'personal.lastName', field: 'lastName', section: 'personal' },
+          ]
+        : [{ path: 'personal.firstName', field: 'firstName', section: 'personal' }];
+    return [...named, ...propertyAskableFields(values)];
+  }
   /*
     A non-resident record asks five things and nothing a household file asks —
     so a flag left on a household field by an officer who then switched the
@@ -586,13 +502,12 @@ export function toPayloadProperty(property: PropertyDraft): Record<string, unkno
     resolves the owner's registered name on every read. The registered name is
     sent only where the tenant's own is empty — a card whose name was flagged
     unknown before the owner was identified — because the schema requires one
-    of a مستأجر and the field cannot be typed into while locked.
+    of a مستأجر and the field cannot be typed into while locked. Never in its
+    shown form: see `landlordNameToSend`.
   */
-  const isNonOwner = property.occupancyType === 'TENANT' || property.occupancyType === 'FREE_OCCUPANT';
-  const landlordName =
-    isNonOwner && !rest.landlordName?.trim()
-      ? (landlordLink?.name ?? landlordAgreedName ?? rest.landlordName)
-      : rest.landlordName;
+  const landlordName = landlordNameToSend({ ...rest, landlordLink, landlordAgreedName }) as
+    | string
+    | undefined;
 
   return {
     // Present only when this card is editing a stored row; the create endpoint
@@ -676,6 +591,11 @@ function submittedPersonal(values: CitizenFormValues): Record<string, unknown> {
     const { firstName, middleName, lastName, residencePlace } = personal;
     return { firstName, middleName, lastName, residencePlace };
   }
+  if (values.residence === 'ESTATE') {
+    const { firstName, middleName, lastName } = personal;
+    return { firstName, middleName, lastName };
+  }
+  if (values.residence === 'INSTITUTION') return { firstName: personal.firstName };
   if (personal.isLebanese !== false) {
     const { identityDocType: _type, identityDocNumber: _number, residencyNumber: _residency, ...rest } =
       personal;
@@ -684,10 +604,17 @@ function submittedPersonal(values: CitizenFormValues): Record<string, unknown> {
   return personal;
 }
 
+/**
+ * The contact section as it goes on the wire — and, like the personal one, only
+ * what this kind of file asks. A WhatsApp number nobody is using is left out
+ * (`withoutUnusedWhatsapp`), so a value typed into a box that has since been
+ * hidden cannot fail validation on a field nobody can see.
+ */
 function submittedContact(values: CitizenFormValues): Record<string, unknown> {
-  if (values.residence !== 'NON_RESIDENT_OWNER') return values.contact;
+  // A non-resident, an estate or an institution: a phone, and somebody to reach.
+  if (!isOwnerRecord(values.residence)) return withoutUnusedWhatsapp(values.contact);
   const { phone, whatsapp, whatsappSameAsPhone, localContactName, localContactPhone } = values.contact;
-  return { phone, whatsapp, whatsappSameAsPhone, localContactName, localContactPhone };
+  return withoutUnusedWhatsapp({ phone, whatsapp, whatsappSameAsPhone, localContactName, localContactPhone });
 }
 
 /**
@@ -1084,7 +1011,8 @@ export function CitizenForm({
         {
           // A clerk entering several properties for one household fills the same
           // shape repeatedly, so a new card inherits the last one's occupancy.
-          occupancyType: (source ?? current.properties.at(-1))?.occupancyType,
+          occupancyType:
+            current.residence === 'ESTATE' ? 'OWNER' : (source ?? current.properties.at(-1))?.occupancyType,
           ...(source
             ? { propertyNumber: source.propertyNumber, neighborhood: source.neighborhood }
             : {}),
@@ -1162,7 +1090,8 @@ export function CitizenForm({
             locale={locale}
             token={token}
             censusPicker
-            nonResident={isNonResident}
+            nonResident={ownerRecord}
+            recordKind={values.residence}
             // Only the first card inherits a matrix launch: the officer opened
             // one flat, and pinning every card they go on to add to it would
             // link properties they never said were in that building.
@@ -1205,7 +1134,8 @@ export function CitizenForm({
                 locale={locale}
                 token={token}
                 censusPicker
-                nonResident={isNonResident}
+                nonResident={ownerRecord}
+                recordKind={values.residence}
                 lockedCensusTarget={index === 0 ? (lockedCensusTarget ?? null) : null}
                 title={locale === 'en' ? `Unit ${unitPosition + 1}` : `الملكية ${unitPosition + 1}`}
               />
@@ -1380,6 +1310,11 @@ export function CitizenForm({
 
   /** «غير مقيم في البلدة» — the stored value still reads OWNER; see `CITIZEN_RESIDENCE`. */
   const isNonResident = values.residence === 'NON_RESIDENT_OWNER';
+  /** «تركة» or «جهة أو وقف» (0076) — not a living person, so neither household nor non-resident. */
+  const nonPerson = isNonPersonRecord(values.residence) ? (values.residence as 'ESTATE' | 'INSTITUTION') : null;
+  /** Any record that is not a household: none of them lives in a dwelling here. */
+  const ownerRecord = isOwnerRecord(values.residence);
+  const tKind = useTranslations('citizenKind');
 
   /** Switching نوع الملف. See `withResidence`. */
   const setResidence = useCallback((residence: CitizenResidence) => {
@@ -1409,7 +1344,18 @@ export function CitizenForm({
         setValues(snapshot ?? { ...withResidence(values, next), residenceMove: undefined });
         return;
       }
-      if (mode === 'edit' && citizenId) {
+      /*
+        The guide is for what happened to a person: a move into or out of the
+        town, or a death (→ «تركة»). Anything else — a file that was always an
+        institution, or an estate recorded by mistake — is a correction, and
+        the form's own checks say what it leaves to settle.
+      */
+      const current = values.residence ?? 'RESIDENT';
+      const guided =
+        (current === 'RESIDENT' && next === 'NON_RESIDENT_OWNER') ||
+        (current === 'NON_RESIDENT_OWNER' && next === 'RESIDENT') ||
+        (!isNonPersonRecord(current) && next === 'ESTATE');
+      if (mode === 'edit' && citizenId && guided) {
         setResidenceGuide(next);
         return;
       }
@@ -1417,6 +1363,14 @@ export function CitizenForm({
     },
     [values, mode, citizenId, setResidence],
   );
+
+  /** Undoes the move or death applied on this form — the form as it was before it. */
+  const undoMove = useCallback(() => {
+    const snapshot = beforeMove.current;
+    beforeMove.current = null;
+    if (snapshot) setValues(snapshot);
+    else setValues((current) => ({ ...current, residenceMove: undefined }));
+  }, []);
 
   /**
    * «قد يكون مسجَّلاً مسبقاً» — looked up once, shown in one of two places.
@@ -1432,7 +1386,8 @@ export function CitizenForm({
    */
   const duplicateCheck = usePossibleDuplicates({
     tenant,
-    token,
+    // No lookup for an estate or an institution: it is never "the same person" (0076), and the server skips it too.
+    token: isNonPersonRecord(values.residence) ? null : token,
     firstName: values.personal.firstName,
     middleName: values.personal.middleName,
     lastName: values.personal.lastName,
@@ -1474,7 +1429,8 @@ export function CitizenForm({
   const ltr = (chunks: React.ReactNode) => <span dir="ltr">{chunks}</span>;
   const loadedPhone = String(initial.contact.phone ?? '').replace(/\s+/g, '');
   const phoneNow = String(values.contact.phone ?? '').replace(/\s+/g, '');
-  const noPhoneNow = values.contact.hasNoPhone === true;
+  // An estate or an institution has an optional phone and no «لا يملك رقم هاتف» (the server stores it false).
+  const noPhoneNow = values.contact.hasNoPhone === true && !isNonPersonRecord(values.residence);
   const phoneNoteText = noPhoneNow ? (
     <>
       {tPhone('noPhoneSignIn')}
@@ -1530,25 +1486,29 @@ export function CitizenForm({
         id: 'personal',
         step: locale === 'en' ? '1' : '١',
         icon: IdCard,
-        title: isNonResident
-          ? locale === 'en'
-            ? 'Basic details'
-            : 'البيانات الأساسية'
-          : locale === 'en'
-            ? 'Personal Info'
-            : 'البيانات الشخصية',
+        title: nonPerson
+          ? tKind(nonPerson === 'ESTATE' ? 'sectionPersonalEstate' : 'sectionPersonalInstitution')
+          : isNonResident
+            ? locale === 'en'
+              ? 'Basic details'
+              : 'البيانات الأساسية'
+            : locale === 'en'
+              ? 'Personal Info'
+              : 'البيانات الشخصية',
       },
       {
         id: 'contact',
         step: locale === 'en' ? '2' : '٢',
         icon: UsersRound,
-        title: isNonResident
-          ? locale === 'en'
-            ? 'Contact'
-            : 'التواصل'
-          : locale === 'en'
-            ? 'Contact & Family'
-            : 'التواصل والأسرة',
+        title: nonPerson
+          ? tKind(nonPerson === 'ESTATE' ? 'sectionContactEstate' : 'sectionContactInstitution')
+          : isNonResident
+            ? locale === 'en'
+              ? 'Contact'
+              : 'التواصل'
+            : locale === 'en'
+              ? 'Contact & Family'
+              : 'التواصل والأسرة',
       },
       {
         id: 'properties',
@@ -1557,7 +1517,7 @@ export function CitizenForm({
         title: locale === 'en' ? 'Properties' : 'العقارات',
       },
     ],
-    [locale, isNonResident],
+    [locale, isNonResident, nonPerson, tKind],
   );
 
   /** The wizard's page — one of the three, on every screen size. */
@@ -1880,22 +1840,30 @@ export function CitizenForm({
             {values.residenceMove ? (
               <p className="-mt-2 mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md bg-primary/5 px-3 py-2 text-sm">
                 <span>
-                  {locale === 'en'
-                    ? `A move on ${values.residenceMove.movedOn} is applied on this form; it is recorded when you save.`
-                    : `انتقال بتاريخ ${values.residenceMove.movedOn} مطبَّق على النموذج، ويُسجَّل عند الحفظ.`}
+                  {tKind(values.residence === 'ESTATE' ? 'deathApplied' : 'moveApplied', {
+                    date: values.residenceMove.movedOn,
+                  })}
                 </span>
                 <Button
                   type="button"
                   size="sm"
                   variant="link"
                   className="h-auto p-0"
-                  onClick={() => chooseResidence(values.residence === 'NON_RESIDENT_OWNER' ? 'RESIDENT' : 'NON_RESIDENT_OWNER')}
+                  onClick={undoMove}
                 >
                   {locale === 'en' ? 'Undo' : 'تراجع'}
                 </Button>
               </p>
             ) : null}
-            {isNonResident ? (
+            {nonPerson ? (
+              <NonPersonPersonalStep
+                kind={nonPerson}
+                value={values.personal}
+                errors={shown}
+                onChange={(personal) => update({ personal })}
+                locale={locale}
+              />
+            ) : isNonResident ? (
               <OwnerPersonalStep value={values.personal} errors={shown} onChange={(personal) => update({ personal })} locale={locale} />
             ) : (
               <PersonalStep value={values.personal} errors={shown} onChange={(personal) => update({ personal })} locale={locale} />
@@ -1912,7 +1880,15 @@ export function CitizenForm({
             title={sections[1].title}
             invalid={sectionInvalid('contact')}
           >
-            {isNonResident ? (
+            {nonPerson ? (
+              <NonPersonContactStep
+                kind={nonPerson}
+                value={values.contact}
+                errors={shown}
+                onChange={(contact) => update({ contact })}
+                afterPhone={phoneNote}
+              />
+            ) : isNonResident ? (
               <OwnerContactStep value={values.contact} errors={shown} onChange={(contact) => update({ contact })} locale={locale} afterPhone={phoneNote} />
             ) : (
               <ContactStep value={values.contact} errors={shown} onChange={updateContact} locale={locale} afterPhone={phoneNote} />
@@ -2402,14 +2378,19 @@ export function CitizenForm({
 }
 
 /**
- * «من يُسجَّل؟» — a household that lives in the town, or an owner who does not.
+ * «صاحب الملف» — a person, or an owner that is not one; then which.
  *
- * Asked as a question about **where the person lives most of the year**, never
- * about محل القيد: plenty of people registered in the town live in Beirut, and
- * an expatriate whose family is on the civil register here still lives abroad.
+ * A person is asked **where they live most of the year**, never about محل
+ * القيد: plenty of people registered in the town live in Beirut, and an
+ * expatriate whose family is on the civil register here still lives abroad.
  * Somebody who lives in someone else's property is always a household — the
  * non-resident record holds what they own, and what they rent or occupy that
  * nobody lives in (`nonResidentCardIssues`).
+ *
+ * Not a person (0076): «تركة (ورثة المرحوم)» — a deceased owner's file, in his
+ * heirs' name — or «جهة أو وقف». Two choices of two rather than one of four,
+ * so each still fits a phone in a stairwell; the first only opens the second,
+ * and nothing changes until the second is answered.
  */
 function ResidenceChooser({
   value,
@@ -2420,24 +2401,62 @@ function ResidenceChooser({
   onChange: (next: CitizenResidence) => void;
   locale: string;
 }) {
-  const en = locale === 'en';
   const labels = getLabels(locale);
+  const t = useTranslations('citizenKind');
+  const isBody = isNonPersonRecord(value);
+  /** The first answer, given and not yet followed by the second. */
+  const [pending, setPending] = useState<'PERSON' | 'BODY' | null>(null);
+  const group = pending ?? (isBody ? 'BODY' : 'PERSON');
+  const settled = pending === null;
+
   return (
-    <div className="mb-4 space-y-2 rounded-lg border border-border/70 bg-muted/10 p-3">
-      <Field
-        label={en ? 'Does this person live in the town most of the year?' : 'هل يقيم هذا الشخص في البلدة معظم السنة؟'}
-        htmlFor="residence"
-        required
-      >
+    <div className="mb-4 space-y-3 rounded-lg border border-border/70 bg-muted/10 p-3">
+      <Field label={t('question')} htmlFor="record-kind" required>
         <SegmentedControl
-          value={value}
-          onChange={(next) => onChange(next as CitizenResidence)}
+          value={group}
+          aria-label={t('question')}
+          onChange={(next) => setPending(next === (isBody ? 'BODY' : 'PERSON') ? null : (next as 'PERSON' | 'BODY'))}
           options={[
-            { value: 'RESIDENT', label: labels.citizenResidence.RESIDENT },
-            { value: 'NON_RESIDENT_OWNER', label: labels.citizenResidence.NON_RESIDENT_OWNER },
+            { value: 'PERSON', label: t('person') },
+            { value: 'BODY', label: t('nonPerson') },
           ]}
         />
       </Field>
+      {group === 'BODY' ? (
+        <Field label={t('whichBody')} htmlFor="residence" required>
+          <SegmentedControl
+            value={settled ? value : ''}
+            aria-label={t('whichBody')}
+            onChange={(next) => {
+              setPending(null);
+              onChange(next as CitizenResidence);
+            }}
+            options={[
+              { value: 'ESTATE', label: labels.citizenResidence.ESTATE },
+              { value: 'INSTITUTION', label: labels.citizenResidence.INSTITUTION },
+            ]}
+          />
+        </Field>
+      ) : (
+        <Field
+          label={t('livesHere')}
+          htmlFor="residence"
+          required
+        >
+          <SegmentedControl
+            value={settled ? value : ''}
+            aria-label={t('livesHere')}
+            onChange={(next) => {
+              setPending(null);
+              onChange(next as CitizenResidence);
+            }}
+            options={[
+              { value: 'RESIDENT', label: labels.citizenResidence.RESIDENT },
+              { value: 'NON_RESIDENT_OWNER', label: labels.citizenResidence.NON_RESIDENT_OWNER },
+            ]}
+          />
+        </Field>
+      )}
     </div>
   );
 }

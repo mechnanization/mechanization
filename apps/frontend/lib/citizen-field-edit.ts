@@ -1,3 +1,4 @@
+import { isOwnerRecord, storedLandlordName } from '@mechanization/shared-schemas';
 import type { CitizenFormData, CitizenWriteInput } from './api-client';
 
 /**
@@ -69,6 +70,9 @@ const SECTION: Record<CitizenEditableField, 'personal' | 'contact'> = {
  * validation.
  */
 const NON_RESIDENT_PERSONAL = ['firstName', 'middleName', 'lastName', 'residencePlace'] as const;
+/** «تركة» (0076): the deceased's name; «جهة أو وقف»: its name, on one line. Same contact as above. */
+const ESTATE_PERSONAL = ['firstName', 'middleName', 'lastName'] as const;
+const INSTITUTION_PERSONAL = ['firstName'] as const;
 const NON_RESIDENT_CONTACT = [
   'phone',
   'whatsapp',
@@ -77,9 +81,47 @@ const NON_RESIDENT_CONTACT = [
   'localContactPhone',
 ] as const;
 
-/** A field the form does not ask on this kind of file cannot be corrected on it. */
+/**
+ * The owner's name a property card sends as `landlordName`.
+ *
+ * The tenant's own words; where they are blank (a name flagged unknown before
+ * the owner was identified), the linked or agreed owner's name, because the
+ * schema requires one of a non-owner. Never a name as it is *shown*: the
+ * agreed name is copied from a display, so «ورثة المرحوم» is taken off (the
+ * server does the same at the write — `storedLandlordName`). Shared by the full
+ * form (`toPayloadProperty`) and the one-field correction (`toPayloadCard`).
+ */
+export function landlordNameToSend(card: {
+  occupancyType?: unknown;
+  landlordName?: unknown;
+  landlordLink?: unknown;
+  landlordAgreedName?: unknown;
+}): unknown {
+  const isNonOwner = card.occupancyType === 'TENANT' || card.occupancyType === 'FREE_OCCUPANT';
+  if (!isNonOwner) return card.landlordName;
+  const link = card.landlordLink as { name?: string } | null | undefined;
+  const sent = text(card.landlordName).trim()
+    ? card.landlordName
+    : (link?.name ?? (card.landlordAgreedName as string | undefined) ?? card.landlordName);
+  return typeof sent === 'string' && sent.trim() ? storedLandlordName(sent) : sent;
+}
+
+/**
+ * A field the form does not ask on this kind of file cannot be corrected on it.
+ *
+ * Two files do not ask for the phone or the mother's name: «غير مقيم في البلدة»
+ * (and «تركة», «جهة أو وقف») has no اسم الأم, and a file marked «لا يملك رقم
+ * هاتف» has no phone. An institution's name is one line, so only «الاسم». The second
+ * is a finished answer and the flag decides over the field — a number sent
+ * beside it is dropped on save (`contactDetailsSchema`), so a correction made
+ * here would be reported as made and not stored. Giving the person a phone is
+ * a decision for the full form, where the flag is unticked on purpose.
+ */
 export function isEditableOn(form: CitizenFormData, field: CitizenEditableField): boolean {
-  if (form.residence !== 'NON_RESIDENT_OWNER') return true;
+  if (field === 'phone' && form.contact.hasNoPhone === true) return false;
+  // An institution's name is one line, held in «الاسم» (0076).
+  if (form.residence === 'INSTITUTION') return field === 'firstName' || field === 'phone';
+  if (!isOwnerRecord(form.residence)) return true;
   return field !== 'motherName';
 }
 
@@ -154,12 +196,7 @@ function toPayloadCard(card: Record<string, unknown>): Record<string, unknown> {
     ...rest
   } = card;
 
-  const link = landlordLink as { name?: string } | null | undefined;
-  const isNonOwner = rest.occupancyType === 'TENANT' || rest.occupancyType === 'FREE_OCCUPANT';
-  const landlordName =
-    isNonOwner && !text(rest.landlordName).trim()
-      ? (link?.name ?? (landlordAgreedName as string | undefined) ?? rest.landlordName)
-      : rest.landlordName;
+  const landlordName = landlordNameToSend({ ...rest, landlordLink, landlordAgreedName });
 
   const area = numeric(unitArea);
   const shareCount = numeric(shares);
@@ -199,13 +236,21 @@ export function citizenFieldPatch(
   form: CitizenFormData,
   edits: Partial<Record<CitizenEditableField, string>>,
 ): CitizenWriteInput {
-  const nonResident = form.residence === 'NON_RESIDENT_OWNER';
+  // Not a household (non-resident, estate, institution): only what its form asks goes back.
+  const nonResident = isOwnerRecord(form.residence);
+  const personalKeys =
+    form.residence === 'ESTATE'
+      ? ESTATE_PERSONAL
+      : form.residence === 'INSTITUTION'
+        ? INSTITUTION_PERSONAL
+        : NON_RESIDENT_PERSONAL;
 
   const personal: Record<string, unknown> = { ...form.personal };
   const contact: Record<string, unknown> = { ...form.contact };
 
   for (const [field, value] of Object.entries(edits) as Array<[CitizenEditableField, string]>) {
-    if (value === undefined) continue;
+    // Never a value the save would drop: see `isEditableOn`.
+    if (value === undefined || !isEditableOn(form, field)) continue;
     if (SECTION[field] === 'personal') personal[field] = value;
     else contact[field] = value;
   }
@@ -219,7 +264,7 @@ export function citizenFieldPatch(
   const lebanese = personal.isLebanese !== false;
 
   const submittedPersonal = nonResident
-    ? pick(personal, NON_RESIDENT_PERSONAL)
+    ? pick(personal, personalKeys)
     : lebanese
       ? (() => {
           const {

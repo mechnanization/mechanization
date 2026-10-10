@@ -348,7 +348,8 @@ export default function CitizensPage({
         meta: { label: locale === 'en' ? 'Status' : 'الحالة' },
         cell: ({ row }) => {
           const citizen = row.original;
-          const nonResident = citizen.residence === 'NON_RESIDENT_OWNER';
+          // Not a household — «غير مقيم», «تركة» or «جهة أو وقف» (0076): said on the row.
+          const nonResident = Boolean(citizen.residence && citizen.residence !== 'RESIDENT');
           const review = citizen.latestStatus === 'REQUIRES_REVIEW';
           /*
             Nothing to flag is itself the answer: an active file with no review
@@ -390,7 +391,8 @@ export default function CitizensPage({
               ) : null}
               {nonResident ? (
                 <p className="text-info">
-                  {labels.citizenResidence.NON_RESIDENT_OWNER}
+                  {labels.citizenResidence[citizen.residence as keyof typeof labels.citizenResidence] ??
+                    citizen.residence}
                 </p>
               ) : null}
             </div>

@@ -11,6 +11,7 @@ import {
   DoorClosed,
   EllipsisVertical,
   Footprints,
+  Landmark,
   Loader2,
   MapPin,
   Ruler,
@@ -28,6 +29,7 @@ import {
   isStructuralUnitType,
   isUnoccupied,
   layoutFloorSpans,
+  NON_PERSON_RESIDENCE,
   OCCUPANCY_ROLE,
   SURVEY_STATUS,
   UNIT_STATUS,
@@ -45,6 +47,7 @@ import {
   type UnitStatus,
   type VacancyBasis,
   type VacancyEndReason,
+  isDwellingUnitType,
 } from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
@@ -822,11 +825,14 @@ export function AddPersonForm({
   vacancy,
   owners = [],
   unitArea: recordedArea,
+  unitType,
   onSubmit,
 }: {
   tenant: string;
   token: string;
   busy: boolean;
+  /** The unit's type: a body («جهة أو وقف») is offered as a tenant only of what nobody lives in. */
+  unitType?: string | null;
   locale: string;
   /**
    * The registration form, pointed at this unit, with نوع الملف preset. The
@@ -1181,6 +1187,27 @@ export function AddPersonForm({
                   <MapPin className="size-4" aria-hidden />
                   {labels.citizenResidence.NON_RESIDENT_OWNER}
                 </Link>
+                {/*
+                  Not a living person (0076): an estate owns and nothing else,
+                  so it is offered for an owner only; a waqf or a public body
+                  may also rent what nobody lives in.
+                */}
+                {(role === 'OWNER'
+                  ? NON_PERSON_RESIDENCE
+                  : isDwellingUnitType(unitType ?? '')
+                    ? ([] as const)
+                    : (['INSTITUTION'] as const)
+                ).map((kind) => (
+                  <Link
+                    key={kind}
+                    href={newFileHref(kind)}
+                    onClick={() => stashLinkSeed(tenant, newFileHref(kind), term)}
+                    className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
+                  >
+                    <Landmark className="size-4" aria-hidden />
+                    {labels.citizenResidence[kind]}
+                  </Link>
+                ))}
               </div>
             </div>
           ) : (

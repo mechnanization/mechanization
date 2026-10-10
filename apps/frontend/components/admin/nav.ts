@@ -12,6 +12,7 @@ import {
   FileWarning,
   HandCoins,
   KeyRound,
+  LandPlot,
   Landmark,
   LayoutDashboard,
   Layers,
@@ -426,6 +427,20 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: FileWarning,
         roles: PAYMENT_REVIEW_READ_ROLES,
         keywords: ['تصحيح', 'فاتورة', 'فرق', 'مراجعة', 'corrections', 'bills', 'difference'],
+      },
+      /*
+        «المستحق على عقار» — the question asked before a براءة ذمّة: what is
+        still owed on a parcel, whoever's file it is on. Read-only, so every
+        role that reads the ledger may ask it. `LandPlot`, not `Landmark`:
+        that one is the treasury's «الأرصدة», and no two rows share an icon.
+      */
+      {
+        path: '/fees/parcel',
+        label: 'المستحق على عقار',
+        labelEn: 'Owed on a parcel',
+        icon: LandPlot,
+        roles: FEE_READ_ROLES,
+        keywords: ['براءة ذمة', 'براءة ذمّة', 'رقم العقار', 'مستحق', 'دين', 'clearance', 'parcel', 'owed'],
       },
     ],
   },

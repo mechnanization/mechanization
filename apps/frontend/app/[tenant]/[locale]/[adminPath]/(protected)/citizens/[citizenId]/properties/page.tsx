@@ -39,6 +39,8 @@ import { ChipGroup, SegmentedControl } from '@/components/ui/segmented-control';
 import { StatItem, StatStrip } from '@/components/ui/stat-strip';
 import { SummaryRow } from '@/components/ui/summary-list';
 import { EndOwnershipDialog } from '@/components/admin/end-ownership-dialog';
+import { OwnerBillingSummary } from '@/components/admin/owner-billing-panel';
+import { ownerBillingApplies } from '@/lib/owner-billing';
 import { EndTenancyDialog } from '@/components/admin/end-tenancy-dialog';
 import { LandlordUnlinkDialog } from '@/components/admin/landlord-unlink-dialog';
 import { PropertyScene, type PropertyTone } from '@/components/admin/property-illustrations';
@@ -565,6 +567,22 @@ function PropertyBlock({
             ) : null}
           </>
         ) : null}
+        {/*
+          The census flats this card bills through: a house's one flat, or a
+          block's flats this person is on. The server chooses the cards as
+          billing does (`billedBareCards`) — one whose every line has ended
+          included — so this shows whatever it sends.
+        */}
+        {(property.heldUnits ?? []).map((unit) => (
+          <HeldUnitBilling
+            key={unit.unitId}
+            unit={unit}
+            labels={labels}
+            en={en}
+            tone={tone}
+            showCode={(property.heldUnits ?? []).length > 1}
+          />
+        ))}
         {!owner && property.landlordName ? (
           <SummaryRow label={en ? 'Landlord' : 'المالك'}>
             {property.landlordCitizenId ? (
@@ -774,6 +792,52 @@ function PropertyBlock({
   );
 }
 
+/**
+ * «معفاة من الرسوم» and «توزيع الرسم على المالكين» for a flat a card bills
+ * through without a unit line (`heldUnits`) — the two rows `UnitRows` shows
+ * for a line, by unit code when the card holds several.
+ */
+function HeldUnitBilling({
+  unit,
+  labels,
+  en,
+  tone,
+  showCode,
+}: {
+  unit: NonNullable<CitizenProfileProperty['heldUnits']>[number];
+  labels: Labels;
+  en: boolean;
+  tone: PropertyTone;
+  showCode: boolean;
+}) {
+  const tOwnerBilling = useTranslations('ownerBilling');
+  const tFeeExemption = useTranslations('feeExemption');
+  const suffix = showCode ? (
+    <>
+      {' · '}
+      <bdi dir="ltr" className="font-mono">
+        {unit.unitCode}
+      </bdi>
+    </>
+  ) : null;
+  return (
+    <>
+      {unit.feeExemption ? (
+        <SummaryRow label={tFeeExemption('fileLabel')} className="text-success">
+          {tFeeExemption('fileValue', { reason: labels.feeExemptionReason[unit.feeExemption] })}
+          {suffix}
+        </SummaryRow>
+      ) : null}
+      {/* An exempt unit is billed to no owner: no part to show (`ownerBillingApplies`). */}
+      {unit.ownerBilling && tone === 'owner' && ownerBillingApplies(unit) ? (
+        <SummaryRow label={tOwnerBilling('fileLabel')}>
+          <OwnerBillingSummary billing={unit.ownerBilling} locale={en ? 'en' : 'ar'} />
+          {suffix}
+        </SummaryRow>
+      ) : null}
+    </>
+  );
+}
 
 /**
  * One unit: a door plate with its code and its type's icon, then every fact
@@ -805,6 +869,8 @@ function UnitRows({
   const status = unit.censusUnitStatus ?? unit.unitStatus;
   const disagree = Boolean(unit.censusUnitStatus && unit.unitStatus && unit.censusUnitStatus !== unit.unitStatus);
   const owners = unit.owners ?? [];
+  const tOwnerBilling = useTranslations('ownerBilling');
+  const tFeeExemption = useTranslations('feeExemption');
   const seasonal = unit.unitStatus === 'SEASONAL' || unit.censusUnitStatus === 'SEASONAL';
   const billedHint = ownerBilledHint(status, en);
 
@@ -874,6 +940,21 @@ function UnitRows({
           {owners.length > 0 ? (
             <SummaryRow label={owners.length > 1 ? (en ? 'Co-owners' : 'المالكون') : en ? 'Owner' : 'المالك'}>
               <OwnerList owners={owners} base={base} />
+            </SummaryRow>
+          ) : null}
+          {/* «معفاة من الرسوم» (0077): nothing is charged on this unit, whoever holds it. */}
+          {unit.feeExemption ? (
+            <SummaryRow label={tFeeExemption('fileLabel')} className="text-success">
+              {tFeeExemption('fileValue', { reason: labels.feeExemptionReason[unit.feeExemption] })}
+            </SummaryRow>
+          ) : null}
+          {/*
+            «توزيع الرسم على المالكين» (0075): how this co-owned flat is billed,
+            and this owner's part — while it is billed at all (`ownerBillingApplies`).
+          */}
+          {unit.ownerBilling && tone === 'owner' && ownerBillingApplies(unit) ? (
+            <SummaryRow label={tOwnerBilling('fileLabel')}>
+              <OwnerBillingSummary billing={unit.ownerBilling} locale={en ? 'en' : 'ar'} />
             </SummaryRow>
           ) : null}
           {/*

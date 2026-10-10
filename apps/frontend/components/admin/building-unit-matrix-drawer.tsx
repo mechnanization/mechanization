@@ -1,6 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslations } from 'next-intl';
+import type { SetOwnerBillingInput, SetUnitFeeExemptionInput } from '@mechanization/shared-schemas';
 import {
   AlertTriangle,
   Building2,
@@ -41,6 +43,8 @@ import {
   logApiError,
   recordDamage,
   recordOccupancy,
+  setOwnerBilling,
+  setUnitFeeExemption,
   updateUnit,
   type BuildingDetail,
   type DamageAssessmentRow,
@@ -87,10 +91,13 @@ import {
   VisitForm,
   withDeclaredBasements,
 } from './building-unit-forms';
+import { OwnerBillingPanel } from './owner-billing-panel';
+import { FeeExemptionPanel } from './fee-exemption-panel';
+import { showsOwnerBilling } from '@/lib/owner-billing';
 import { DamageForm } from './damage/damage-form';
 import { DamageHistory } from './damage/damage-history';
 import { ReinspectNotice } from './damage/reinspect-notice';
-import { damageInput } from '@/lib/damage-reading';
+import { damageInput, isUninhabitableNow } from '@/lib/damage-reading';
 
 /**
  * One building's units, floor by floor, with the things an officer standing in
@@ -174,6 +181,8 @@ export function BuildingUnitMatrixDrawer({
   locale?: string;
 }) {
   const en = locale === 'en';
+  const tOwnerBilling = useTranslations('ownerBilling');
+  const tFeeExemption = useTranslations('feeExemption');
   const labels = getLabels(locale);
   const toast = useToast();
   /** The signed-in officer — lets the visit form recognise their own visit from earlier today. */
@@ -214,7 +223,7 @@ export function BuildingUnitMatrixDrawer({
       logApiError(caught);
       setError(
         caught instanceof ApiRequestError
-          ? caught.payload.message
+          ? caught.message
           : en
             ? 'Could not load the building.'
             : 'تعذّر تحميل المبنى.',
@@ -329,7 +338,7 @@ export function BuildingUnitMatrixDrawer({
         toast.success(message);
       } catch (caught) {
         logApiError(caught);
-        const message = caught instanceof ApiRequestError ? caught.payload.message : failure;
+        const message = caught instanceof ApiRequestError ? caught.message : failure;
         setActionError(message);
         toast.error(failure, { description: message });
       } finally {
@@ -400,7 +409,7 @@ export function BuildingUnitMatrixDrawer({
       }
 
       const failure = en ? 'Could not add the unit.' : 'تعذّرت إضافة الوحدة.';
-      const message = caught instanceof ApiRequestError ? caught.payload.message : failure;
+      const message = caught instanceof ApiRequestError ? caught.message : failure;
       setActionError(message);
       toast.error(failure, { description: message });
     } finally {
@@ -477,7 +486,7 @@ export function BuildingUnitMatrixDrawer({
       logApiError(caught);
       throw new Error(
         caught instanceof ApiRequestError
-          ? caught.payload.message
+          ? caught.message
           : en
             ? 'Could not lift the vacancy.'
             : 'تعذّر إلغاء تأكيد الشغور.',
@@ -517,7 +526,7 @@ export function BuildingUnitMatrixDrawer({
       logApiError(caught);
       throw new Error(
         caught instanceof ApiRequestError
-          ? caught.payload.message
+          ? caught.message
           : en
             ? 'Could not end the occupancy.'
             : 'تعذّر إنهاء الإشغال.',
@@ -537,7 +546,7 @@ export function BuildingUnitMatrixDrawer({
       logApiError(caught);
       throw new Error(
         caught instanceof ApiRequestError
-          ? caught.payload.message
+          ? caught.message
           : en
             ? 'Could not link the owner.'
             : 'تعذّر الربط بالمالك.',
@@ -558,6 +567,26 @@ export function BuildingUnitMatrixDrawer({
         return en ? 'Seasonal details saved' : 'تم حفظ بيانات السكن الموسمي';
       },
       en ? 'Could not save the seasonal details.' : 'تعذّر حفظ بيانات السكن الموسمي.',
+    );
+
+  /** «معفاة من الرسوم» — granted or lifted by a SUPER_ADMIN (0077). */
+  const saveFeeExemption = (unit: UnitWithOccupants, input: SetUnitFeeExemptionInput) =>
+    run(
+      async () => {
+        await setUnitFeeExemption(tenant, token, unit.id, input);
+        return input.reason ? tFeeExemption('granted') : tFeeExemption('lifted');
+      },
+      tFeeExemption('failed'),
+    );
+
+  /** «توزيع الرسم على المالكين» — the officer's choice for a co-owned flat (0075). */
+  const saveOwnerBilling = (unit: UnitWithOccupants, input: SetOwnerBillingInput, kind: 'save' | 'withdraw') =>
+    run(
+      async () => {
+        await setOwnerBilling(tenant, token, unit.id, input);
+        return kind === 'withdraw' ? tOwnerBilling('withdrawn') : tOwnerBilling('saved');
+      },
+      tOwnerBilling('failed'),
     );
 
   return (
@@ -1023,6 +1052,27 @@ export function BuildingUnitMatrixDrawer({
                 onEnd={(values) => liftVacancy(selectedUnit, values)}
               />
 
+              {/* «معفاة من الرسوم» — shown to all; granted and lifted by a SUPER_ADMIN. */}
+              <FeeExemptionPanel
+                unit={selectedUnit}
+                locale={locale}
+                busy={busy}
+                canGrant={role === 'SUPER_ADMIN'}
+                onSave={(input) => void saveFeeExemption(selectedUnit, input)}
+              />
+
+              {/* «توزيع الرسم على المالكين» — a flat several people own. */}
+              {showsOwnerBilling(selectedUnit) ? (
+                <OwnerBillingPanel
+                  unit={selectedUnit}
+                  locale={locale}
+                  busy={busy}
+                  canWrite={canWrite}
+                  uninhabitable={isUninhabitableNow(damage?.history ?? [], { unitId: selectedUnit.id })}
+                  onSave={(input, kind) => void saveOwnerBilling(selectedUnit, input, kind)}
+                />
+              ) : null}
+
               {effectiveUnitStatus(selectedUnit) === 'SEASONAL' ? (
                 <SeasonalHomePanel
                   unit={selectedUnit}
@@ -1187,6 +1237,7 @@ export function BuildingUnitMatrixDrawer({
                   // See the matrix page's own call — the field opens only where
                   // the census has no area for this flat.
                   unitArea={selectedUnit.unitArea}
+                  unitType={selectedUnit.unitType}
                   onSubmit={({ citizen, role, endsVacancy, ...rest }) =>
                     void run(
                       async () => {

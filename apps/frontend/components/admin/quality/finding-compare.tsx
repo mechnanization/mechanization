@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { ArrowLeft, ExternalLink, GitMerge, Loader2, Pencil, ShieldAlert } from 'lucide-react';
 import {
   arabicOrLatinName,
@@ -468,6 +469,8 @@ function CitizenCompare({
   const labels = getLabels(locale);
   const toast = useToast();
   const router = useRouter();
+  const tNoPhone = useTranslations('citizenForm.noPhone');
+  const tKind = useTranslations('citizenKind');
   const [merging, setMerging] = useState(false);
 
   const query = useStaffQuery({
@@ -647,16 +650,28 @@ function CitizenCompare({
     if (!canEdit) return null;
 
     /*
-      A «غير مقيم في البلدة» file is never asked for اسم الأم — its form does not
-      have the field. Said here rather than left as a missing button: one side of
+      A file that is not a household's («غير مقيم في البلدة», «تركة», «جهة أو
+      وقف») is never asked for اسم الأم — its form does not have the field. Said here rather than left as a missing button: one side of
       the comparison offering «تعديل» where the other does not reads as a fault
       until you know why.
     */
-    if (target === 'motherName' && person.residence === 'NON_RESIDENT_OWNER') {
+    if (target === 'motherName' && person.residence && person.residence !== 'RESIDENT') {
       return (
         <span className="mt-1 block text-xs text-muted-foreground">
-          {en ? 'Not asked on a non-resident file.' : 'لا يُسأل في ملف «غير مقيم».'}
+          {tKind('motherNotAsked')}
         </span>
+      );
+    }
+
+    /*
+      «لا يملك رقم هاتف» is a finished answer, and the flag decides over the
+      field: a number typed here would be dropped on save while the screen said
+      the record was corrected (`isEditableOn`). Said instead of offered, for the
+      same reason as above — and it says where the change is made.
+    */
+    if (target === 'phone' && person.hasNoPhone) {
+      return (
+        <span className="mt-1 block text-xs text-muted-foreground">{tNoPhone('compareNote')}</span>
       );
     }
 

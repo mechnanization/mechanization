@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { adminUpdateCitizenSubmissionSchema } from '@mechanization/shared-schemas';
 import type { CitizenFormData } from './api-client';
-import { citizenFieldPatch, isEditableOn } from './citizen-field-edit';
+import { citizenFieldPatch, isEditableOn, landlordNameToSend } from './citizen-field-edit';
 
 /**
  * What these tests are actually defending.
@@ -236,6 +236,22 @@ describe('citizenFieldPatch', () => {
     expect(patch.contact.phone).toBe('+96170123456');
   });
 
+  it('asks an estate the deceased’s three names and an institution its one line, and nothing of a household (0076)', () => {
+    const estate = citizenFieldPatch(
+      form({ residence: 'ESTATE', personal: { ...form().personal, residencePlace: 'بيروت' } }),
+      { middleName: 'علي', motherName: 'سعاد' },
+    );
+    expect(estate.personal).toEqual({ firstName: 'محمد', middleName: 'علي', lastName: 'خليل' });
+    expect(estate.contact).not.toHaveProperty('actualHouseholdMembers');
+
+    const institution = citizenFieldPatch(
+      form({ residence: 'INSTITUTION', personal: { ...form().personal, firstName: 'وقف مسجد البلدة' } }),
+      { firstName: 'وقف مسجد الساحة', lastName: 'خليل حمود' },
+    );
+    expect(institution.personal).toEqual({ firstName: 'وقف مسجد الساحة' });
+    expect(institution.contact.phone).toBe('+96170123456');
+  });
+
   it('carries the record’s flags and its visit note', () => {
     const patch = citizenFieldPatch(
       form({
@@ -275,6 +291,30 @@ describe('citizenFieldPatch', () => {
  * back raw, it fails here instead of on a phone, in a settlement, as an error
  * about a field nobody touched.
  */
+/*
+  The owner lookup and the unit matrix answer with the name as it is *shown* —
+  «ورثة المرحوم …» for an estate — and «نعم، هو المالك» copies it into the
+  card. What is sent is never that shown form (the server strips it as well).
+*/
+describe('landlordNameToSend', () => {
+  it('sends an agreed estate owner’s name without «ورثة المرحوم»', () => {
+    expect(
+      landlordNameToSend({
+        occupancyType: 'FREE_OCCUPANT',
+        landlordName: '',
+        landlordAgreedName: 'ورثة المرحوم نزار عاقوري',
+      }),
+    ).toBe('نزار عاقوري');
+  });
+
+  it('sends a linked owner’s stored name, and the tenant’s own words when they gave any', () => {
+    const link = { citizenId: 'o', name: 'نزار علي عاقوري', displayName: 'ورثة المرحوم نزار علي عاقوري' };
+    expect(landlordNameToSend({ occupancyType: 'TENANT', landlordName: '', landlordLink: link })).toBe('نزار علي عاقوري');
+    expect(landlordNameToSend({ occupancyType: 'TENANT', landlordName: 'أبو علي', landlordLink: link })).toBe('أبو علي');
+    expect(landlordNameToSend({ occupancyType: 'OWNER', landlordName: undefined })).toBeUndefined();
+  });
+});
+
 describe('citizenFieldPatch output is accepted by the schema the save applies', () => {
   const parse = (patch: unknown) => adminUpdateCitizenSubmissionSchema.safeParse(patch);
 
@@ -445,5 +485,68 @@ describe('isEditableOn', () => {
     expect(isEditableOn(form(), 'motherName')).toBe(true);
     expect(isEditableOn(form({ residence: 'NON_RESIDENT_OWNER' }), 'motherName')).toBe(false);
     expect(isEditableOn(form({ residence: 'NON_RESIDENT_OWNER' }), 'phone')).toBe(true);
+  });
+
+  it('offers an institution only its name and its phone, and an estate no mother’s name (0076)', () => {
+    const institution = form({ residence: 'INSTITUTION' });
+    expect(isEditableOn(institution, 'firstName')).toBe(true);
+    expect(isEditableOn(institution, 'phone')).toBe(true);
+    expect(isEditableOn(institution, 'lastName')).toBe(false);
+    expect(isEditableOn(institution, 'motherName')).toBe(false);
+    expect(isEditableOn(form({ residence: 'ESTATE' }), 'motherName')).toBe(false);
+    expect(isEditableOn(form({ residence: 'ESTATE' }), 'middleName')).toBe(true);
+  });
+});
+
+/*
+  «لا يملك رقم هاتف» is a finished answer and the flag decides over the field: a
+  number sent beside it is dropped on save. So a phone typed on «ملاحظات
+  الجودة» for such a file was reported as corrected («صُحِّح السجل») and never
+  stored. The screen now says so instead of offering the edit, and the patch
+  cannot be built with a value the save would drop.
+*/
+describe('a file marked «لا يملك رقم هاتف»', () => {
+  const noPhone = () =>
+    form({
+      contact: {
+        ...form().contact,
+        phone: null as never,
+        whatsapp: null as never,
+        whatsappSameAsPhone: true,
+        hasNoPhone: true,
+        contactPhone: '+96170555444',
+      },
+    });
+
+  it('is not offered a phone correction, and is offered everything else', () => {
+    expect(isEditableOn(noPhone(), 'phone')).toBe(false);
+    for (const field of ['firstName', 'middleName', 'lastName', 'motherName'] as const) {
+      expect(isEditableOn(noPhone(), field)).toBe(true);
+    }
+  });
+
+  it('leaves a file that has a phone as it was, whether the flag is false or absent', () => {
+    expect(isEditableOn(form(), 'phone')).toBe(true);
+    expect(isEditableOn(form({ contact: { ...form().contact, hasNoPhone: false } }), 'phone')).toBe(true);
+  });
+
+  it('never writes the phone it was asked to, and still corrects the name', () => {
+    const patch = citizenFieldPatch(noPhone(), { phone: '+96171000000', lastName: 'سعد' });
+
+    expect((patch.contact as Record<string, unknown>).phone).toBeUndefined();
+    expect(patch.contact).toMatchObject({ hasNoPhone: true, contactPhone: '+96170555444' });
+    expect(patch.personal).toMatchObject({ lastName: 'سعد' });
+  });
+
+  it('is stored as the screen showed it: still no phone, the relative’s number kept', () => {
+    const result = adminUpdateCitizenSubmissionSchema.safeParse(
+      citizenFieldPatch(noPhone(), { phone: '+96171000000', lastName: 'سعد' }),
+    );
+
+    expect(result.error?.issues ?? []).toEqual([]);
+    const contact = (result.data as { contact: Record<string, unknown> }).contact;
+    expect(contact.hasNoPhone).toBe(true);
+    expect(contact.phone).toBeUndefined();
+    expect(contact.contactPhone).toBe('+96170555444');
   });
 });
