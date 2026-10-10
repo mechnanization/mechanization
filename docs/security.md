@@ -1,6 +1,6 @@
 # Security
 
-Last verified against the code: `fix/pr104-review` (PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; income controls, the salary path and the urgent ceiling), 2026-10-10.
+Last verified against the code: `feat/fees-bulk-settlement` (cut from `develop@b034640`; the bulk-settle routes and the receipt's رقم مرجعي gap), 2026-10-10.
 
 Binding for every change that touches authentication, roles, tokens, validation, uploads, logging,
 headers, client storage or secrets. The rules below are correct practice. Where the code differs today,
@@ -85,6 +85,16 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
 - «المستحق على عقار» (`GET fees/parcel-dues`) is read-only and gated like the ledger it reads
   (`FEE_READ_ROLES`); its one query value goes through `parcelDuesQuerySchema`. It names each debtor
   and the remaining amount, nothing a ledger reader does not already see, and never a رقم مرجعي.
+- Settling several bills at once (`POST fees/payments/bulk-settle`) is `BULK_SETTLE_ROLES` (manager and
+  accountant), narrower than the single settle's `FEE_ISSUE_ROLES`; its body is `bulkSettlePaymentsSchema`
+  (1–50 distinct UUIDs, each method's one fact, a required retry key). Every bill must belong to the
+  citizen named, checked under the bills' locks. The reprint, `GET fees/settlements/:id`, is
+  `FEE_READ_ROLES` with `ParseUUIDPipe`. The consolidated receipt names the citizen with father's name and
+  phone, never the رقم مرجعي — on paper, in the PDF or in the WhatsApp text — and an integration test pins
+  the citizen block's key set (docs/finance.md §3.7). The WhatsApp text is built by
+  `apps/frontend/lib/bulk-receipt-message.ts`, whose test feeds it a citizen carrying a reference and
+  asserts it never appears; the button is `RECEIPT_SEND_ROLES` (`lib/staff-roles.ts`: every working role,
+  not «مشاهد فقط»), which only hides it — the receipt itself is `FEE_READ_ROLES`.
 - A citizen file is never hard-deleted (decision of 2026-10-05). It is archived — `isActive: false`
   through `PATCH citizens/:id/active` — with a written reason and who asked (`setCitizenActiveSchema`
   requires both), recorded on the Tier 1 audit row, and restored the same way.
@@ -466,7 +476,8 @@ add a row. Severity is the harm if exploited today.
 | Low | Raw query values on several reads: a repeated `?search=` arrives as an array and `normalizeSearchText` calls `.toLowerCase()` on it, a 500 and a Sentry event; `limit` and `offset` are coerced by hand. The collection worklists had the same bug and now go through `worklistQuerySchema` (2026-10-06) | `CitizenController.list`, `CitizenController.history`, `FeesController.listPayments` (`@Query('search')`, `@Query('limit')`, …), `AuditController` (`@Query('action')` into `parseActions`, which calls `.split`) | A zod query schema through `ZodValidationPipe`, as `worklistQuerySchema` |
 | Low | `POST citizen/otp/verify` has no explicit `@Throttle` and falls under the 120-per-minute default | `AuthController.verifyOtp` | An explicit limit from `APP_CONFIG.throttle` |
 | Medium | The accountant can change the treasury's settings, not only the citizen-facing ones. `PATCH fees/settings` is `FEE_ADMIN_ROLES` (`SUPER_ADMIN`, `ACCOUNTANT`) for every field, so he can set the official `exchangeRate` that every ledger entry stamps (`exchangeRateAtPosting`) and the numbering sequences, while [finance.md §9](finance.md) gives finance settings to the manager alone. The settings screen is the manager's; the route is not, as the comment on `updateMunicipalitySettings` in `apps/frontend/lib/api-client.ts` now says. The urgent-payment ceiling is the one field the service already keeps to the manager (found 2026-10-10) | `FeesController.updateSettings` (`@Roles(...FEE_ADMIN_ROLES)`); `FeesService.updateSettings` | **Undecided:** which settings the accountant keeps (contact details, office hours) and which become the manager's; then split the schema or refuse per field, as the ceiling does |
-| Low | No trigger refuses `TRUNCATE` on the append-only and written-once tables (`audit_log_entries`, `payment_transactions`, `treasury_entries`, and the treasury documents of `0083`). The same role could disable a trigger anyway, so this guards against accident, not intent | `0001_init`, `0017_payment_ledger`, `0073_treasury_ledger`, `0083_treasury_controls` (row triggers only); `scripts/db/destructive-sql.mjs` blocks the word `TRUNCATE`, so the natural fix needs a narrowed rule | A `BEFORE TRUNCATE` statement trigger per table, with the scanner rule narrowed to the statement itself |
+| Medium | The single-bill receipt's WhatsApp message carries the citizen's full رقم مرجعي — a sign-in credential that alone opens a citizen session (the High gap above) — in a `wa.me/…?text=` URL, so it reaches the staff browser's history, the messaging provider and whoever the message is forwarded to (found 2026-10-10; the consolidated receipt of §3.7 leaves it out) | `apps/frontend/components/admin/payment-receipt.tsx` (`message`, the `الرقم المرجعي:` line; `waHref`) | Drop the line, or print `ReferenceNumber.mask` as the audit trail does |
+| Low | No trigger refuses `TRUNCATE` on the append-only and written-once tables (`audit_log_entries`, `payment_transactions`, `payment_settlements`, `treasury_entries`, and the treasury documents of `0083`). The same role could disable a trigger anyway, so this guards against accident, not intent | `0001_init`, `0017_payment_ledger`, `0073_treasury_ledger`, `0083_treasury_controls`, `0085_payment_settlements` (row triggers only); `scripts/db/destructive-sql.mjs` blocks the word `TRUNCATE`, so the natural fix needs a narrowed rule | A `BEFORE TRUNCATE` statement trigger per table, with the scanner rule narrowed to the statement itself |
 | Low | Public routes with no explicit throttle decision ride the default | `HealthController`; `TenantController.getPublicConfig`; `RegistrationController.checkPropertyNumber`; `FeesController.whishCallback` | An explicit `@Throttle`, or `@SkipThrottle()` with a reason |
 | Low | The cron bearer secret is compared with `!==` on `@SkipThrottle()` routes | `InternalCronController` `authorise` | Digest plus `timingSafeEqual`, as in `MetricsController` |
 | Low | JWTs have no algorithm pin, issuer or audience | `ApplicationModule` `JwtModule.registerAsync`; `JwtAuthGuard` (`jwt.verify`) | Sign and verify options with `HS256`, issuer, audience |

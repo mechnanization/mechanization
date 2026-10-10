@@ -35,6 +35,25 @@ export interface LedgerEntryInput {
    * money twice.
    */
   clientRequestId?: string | null;
+  /**
+   * The settlement this movement belongs to, when one press settles several
+   * of a citizen's bills (migration 0085). The settlement row must already be
+   * written in the same transaction: the ledger refuses UPDATE, so a row joins
+   * its settlement at insert or never.
+   */
+  settlementId?: string | null;
+}
+
+/** An invoice as its row lock returns it, as plain numbers. */
+export interface LockedInvoice {
+  id: string;
+  amount: number;
+  paidAmount: number;
+  currency: string;
+  paymentStatus: string;
+  citizenId: string;
+  createdAt: Date;
+  dueDate: Date;
 }
 
 /**
@@ -133,80 +152,133 @@ export class PaymentLedgerService {
    * reprint possible at all.
    */
   async record(input: LedgerEntryInput & { audit: LedgerAudit }): Promise<SettledTotals> {
-    if (!Number.isFinite(input.amount) || input.amount <= 0) {
-      throw new ValidationError({
-        code: 'PAYMENT_AMOUNT_NOT_POSITIVE',
-        message: 'The amount received must be greater than zero.',
-        details: {
-          amount: String(input.amount ?? ''),
-        },
+    assertPositiveAmount(input.amount);
+    return this.db.$transaction((tx) => this.recordIn(tx, input));
+  }
+
+  /**
+   * `record`, inside a transaction the caller already holds.
+   *
+   * For an act that settles several bills and must commit all of them or none
+   * (`FeesService.settleBulk`): the same lock, the same checks, the same
+   * receipt number, wallet entries and Tier 1 audit row, written through the
+   * caller's client. The caller owns the commit, and a refusal here rolls the
+   * whole act back.
+   */
+  async recordIn(
+    tx: Prisma.TransactionClient,
+    input: LedgerEntryInput & { audit: LedgerAudit },
+  ): Promise<SettledTotals> {
+    assertPositiveAmount(input.amount);
+    const invoice = await this.lock(tx, input.paymentId);
+
+    /*
+      Checked behind the lock, so two presses racing each other still meet
+      here one after the other and the second finds the first's row.
+    */
+    if (input.clientRequestId) {
+      const earlier = await this.replay(tx, invoice, input.clientRequestId);
+      if (earlier) return earlier;
+    }
+
+    const outstanding = invoice.amount - invoice.paidAmount;
+    if (invoice.paymentStatus === 'PAID' || outstanding <= 0) {
+      throw new ConflictError({
+        code: 'PAYMENT_ALREADY_PAID',
+        message: 'This payment has already been settled.',
       });
     }
 
-    return this.db.$transaction(async (tx) => {
-      const invoice = await this.lock(tx, input.paymentId);
+    // Money cannot have been taken against a bill before the bill existed.
+    if (input.occurredAt && municipalToday(input.occurredAt) < municipalToday(invoice.createdAt)) {
+      throw new ValidationError({
+        code: 'PAYMENT_DATE_BEFORE_INVOICE',
+        message: `The payment date is before the invoice was issued (${municipalToday(invoice.createdAt)}).`,
+        params: { issuedOn: municipalToday(invoice.createdAt) },
+        details: { paidOn: municipalToday(input.occurredAt) },
+      });
+    }
 
-      /*
-        Checked behind the lock, so two presses racing each other still meet
-        here one after the other and the second finds the first's row.
-      */
-      if (input.clientRequestId) {
-        const earlier = await this.replay(tx, invoice, input.clientRequestId);
-        if (earlier) return earlier;
-      }
-
-      const outstanding = invoice.amount - invoice.paidAmount;
-      if (invoice.paymentStatus === 'PAID' || outstanding <= 0) {
+    const tolerance = toleranceFor(invoice.currency);
+    let credit = input.amount;
+    let changeGiven = 0;
+    /*
+      «الباقي»: a citizen pays a smaller bill with a larger dollar note and
+      gets the difference back. The credit is what was owed; the rest is
+      recorded as change, so tender − change = credit on the row. Only the
+      foreign notes can produce change — ليرة handed over beyond the balance
+      is a typing mistake, not a note too large to split.
+    */
+    if (input.tendered && input.amount > outstanding + tolerance) {
+      if (!input.tendered.foreign || input.tendered.local > outstanding + tolerance) {
         throw new ConflictError({
-          code: 'PAYMENT_ALREADY_PAID',
-          message: 'This payment has already been settled.',
+          code: 'PAYMENT_TENDER_EXCEEDS_BALANCE',
+          message: `The amount in the invoice currency (${input.tendered.local}) is more than the balance due (${outstanding}).`,
+          params: { amount: input.tendered.local, outstanding },
         });
       }
+      credit = outstanding;
+      changeGiven = roundTo(input.amount - outstanding, invoice.currency);
+    }
 
-      // Money cannot have been taken against a bill before the bill existed.
-      if (input.occurredAt && municipalToday(input.occurredAt) < municipalToday(invoice.createdAt)) {
-        throw new ValidationError({
-          code: 'PAYMENT_DATE_BEFORE_INVOICE',
-          message: `The payment date is before the invoice was issued (${municipalToday(invoice.createdAt)}).`,
-          params: { issuedOn: municipalToday(invoice.createdAt) },
-          details: { paidOn: municipalToday(input.occurredAt) },
-        });
-      }
+    if (credit > outstanding + tolerance) {
+      throw new ConflictError({
+        code: 'PAYMENT_EXCEEDS_BALANCE',
+        message: `The amount received (${credit}) is more than the balance due (${outstanding}).`,
+        params: { amount: credit, outstanding },
+      });
+    }
 
-      const tolerance = toleranceFor(invoice.currency);
-      let credit = input.amount;
-      let changeGiven = 0;
-      /*
-        «الباقي»: a citizen pays a smaller bill with a larger dollar note and
-        gets the difference back. The credit is what was owed; the rest is
-        recorded as change, so tender − change = credit on the row. Only the
-        foreign notes can produce change — ليرة handed over beyond the balance
-        is a typing mistake, not a note too large to split.
-      */
-      if (input.tendered && input.amount > outstanding + tolerance) {
-        if (!input.tendered.foreign || input.tendered.local > outstanding + tolerance) {
-          throw new ConflictError({
-            code: 'PAYMENT_TENDER_EXCEEDS_BALANCE',
-            message: `The amount in the invoice currency (${input.tendered.local}) is more than the balance due (${outstanding}).`,
-            params: { amount: input.tendered.local, outstanding },
-          });
-        }
-        credit = outstanding;
-        changeGiven = roundTo(input.amount - outstanding, invoice.currency);
-      }
+    const settled = await this.append(tx, invoice, credit, input, undefined, changeGiven);
+    await this.auditTrail.recordInTransaction(input.audit(settled), tx);
+    return settled;
+  }
 
-      if (credit > outstanding + tolerance) {
-        throw new ConflictError({
-          code: 'PAYMENT_EXCEEDS_BALANCE',
-          message: `The amount received (${credit}) is more than the balance due (${outstanding}).`,
-          params: { amount: credit, outstanding },
-        });
-      }
-
-      const settled = await this.append(tx, invoice, credit, input, undefined, changeGiven);
-      await this.auditTrail.recordInTransaction(input.audit(settled), tx);
-      return settled;
-    });
+  /**
+   * Takes `record`'s row lock on several invoices at once, in id order.
+   *
+   * A settlement of several bills locks all of them before it writes any, so a
+   * bill another clerk is settling at that moment is waited for and then seen
+   * as paid, never half-way. Id order is the deadlock rule (as `lockAccounts`
+   * on wallets): two settlements over overlapping sets take their locks in the
+   * same order and the second simply waits. `recordIn` re-locking a row this
+   * transaction already holds costs nothing.
+   *
+   * Returns the rows found, in id order; the caller decides what a missing id
+   * means.
+   */
+  async lockInvoices(tx: Prisma.TransactionClient, paymentIds: string[]): Promise<LockedInvoice[]> {
+    const ids = [...new Set(paymentIds)].sort();
+    if (ids.length === 0) return [];
+    const rows = await tx.$queryRaw<
+      Array<{
+        id: string;
+        amount: string;
+        paidAmount: string;
+        currency: string;
+        paymentStatus: string;
+        citizenId: string;
+        createdAt: Date;
+        dueDate: Date;
+      }>
+    >`
+      SELECT "id", "amount"::text, "paidAmount"::text, "currency",
+             "paymentStatus"::text, "citizenId", "createdAt", "dueDate"
+        FROM ${this.S}citizen_payments
+       WHERE "id" = ANY(${ids}::uuid[])
+       ORDER BY "id"
+       FOR UPDATE
+    `;
+    return rows.map((row) => ({
+      id: row.id,
+      amount: Number(row.amount),
+      paidAmount: Number(row.paidAmount),
+      currency: row.currency,
+      paymentStatus: row.paymentStatus,
+      citizenId: row.citizenId,
+      createdAt: row.createdAt,
+      dueDate: row.dueDate,
+    }));
   }
 
   /**
@@ -490,6 +562,7 @@ export class PaymentLedgerService {
           : {}),
         adjustmentReason: input.adjustmentReason ?? null,
         clientRequestId: input.clientRequestId ?? null,
+        settlementId: input.settlementId ?? null,
       },
       select: { id: true, occurredAt: true },
     });
@@ -589,6 +662,19 @@ export class PaymentLedgerService {
       occurredAt: created.occurredAt.toISOString(),
       replayed: false,
     };
+  }
+}
+
+/** Money received is more than nothing — checked before any lock is taken. */
+function assertPositiveAmount(amount: number): void {
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new ValidationError({
+      code: 'PAYMENT_AMOUNT_NOT_POSITIVE',
+      message: 'The amount received must be greater than zero.',
+      details: {
+        amount: String(amount ?? ''),
+      },
+    });
   }
 }
 

@@ -1,6 +1,6 @@
 # apps/frontend: agent guide
 
-Last verified against the code: `fix/pr104-review` (PR #104 review fixes merged with `fix/expense-retry-key-race@ff44f27` and `develop@4ad0b27`, then with `origin/fix/expense-retry-key-race`; uncommitted), 2026-10-10.
+Last verified against the code: `feat/fees-bulk-settlement` (cut from `develop@b034640`; bulk settlement, the consolidated receipt, `renderReceiptPdf` options; uncommitted), 2026-10-10.
 
 Next.js 15 app router, React 18, next-intl 4, TanStack Query 5, Tailwind 3.4 with
 tailwind-merge 3, Radix and lucide-react. One app serves the staff dashboard and the
@@ -50,12 +50,28 @@ amounts the server returned) wherever a movement is known: the citizen payment p
 counter settle page and «جولتي». Without it `PaymentReceipt` falls back to the bill's reference
 and today's date, which is a different document from the one the citizen was handed.
     citizens/** buildings/** cases/** fees/** (incl. fees/new — إصدار رسم جديد)
+    fees/settlements/[settlementId] (وصل قبض بلدي مجمّع — the consolidated receipt of a bulk settlement,
+      `GET fees/settlements/:id`; opened right after «تسديد الفواتير المحددة», and a reload reprints)
     inspector/profile/** quality/**
 ```
 
-All 61 `page.tsx` files are `'use client'` and read `params` with `use(params)` (counted 2026-10-10).
+«تسديد الفواتير المحددة» (docs/finance.md §3.7) is selection on two existing lists — the `/fees`
+table (a checkbox column; the box beside the name on phone cards) and the citizen file's
+`FeesPanel` (its state and the bar at the page root, since the section clips a sticky child) —
+for `BULK_SETTLE_ROLES` only, beside each row's own «تسجيل دفعة» and «الوصل», which stay.
+Pieces in `components/admin/bulk-settle/` (`bill-checkbox`, `bulk-settle-bar` — the sticky bar,
+`bulk-settle-dialog`, `bulk-bills-table`, `money-list`, `bulk-payment-receipt`); the rules in
+`lib/bulk-settle.ts` (which bills can be ticked, one citizen, at most 50, select-all, due per
+currency, the retry-key scope, the parcel/unit wording) and the selection in
+`lib/use-bulk-selection.ts`. The dialog's live «الباقي للمواطن» is `planBulkSettlement` from the
+shared package, the function the server runs under lock; it refuses submit when the main cash safe
+in the base currency plus the ليرة handed in cannot cover the change (a warning only while the key
+is in doubt). The WhatsApp text is `lib/bulk-receipt-message.ts`, which never carries a رقم مرجعي
+(its test feeds one in); the button is `RECEIPT_SEND_ROLES`.
+
+All 62 `page.tsx` files are `'use client'` and read `params` with `use(params)` (counted 2026-10-10).
 `components/ui` is the kit (33 files, `alert.tsx` added 2026-10-06); `components/admin` holds staff screens (feature
-folders `cases/`, `damage/`, `finance/`, `quality/`, `settings/`, `staff/`); `components/citizen` is mostly citizen-record
+folders `bulk-settle/`, `cases/`, `damage/`, `finance/`, `quality/`, `settings/`, `staff/`); `components/citizen` is mostly citizen-record
 form pieces used by staff screens, and only `pay-dialog` serves the portal. `lib` holds the
 API client, session, hooks, formatters and offline queue; `public/sw.js` is the service worker.
 
@@ -146,6 +162,11 @@ component types.
     until the server itself refuses the retry. The re-read balance may already carry the lost
     act, the server answers a replay before it judges the balance or the ceiling, and the old way
     out (another wallet, a request) was a new act under a new key.
+  - The bulk-settle dialog holds its key under `bulk-settle:<the selected ids, sorted>`, so the same
+    selection retries the same act and another selection is a new one; `BULK_SETTLE_REQUEST_REUSED`
+    is among the refusals that spend a key. On a 2xx it writes the server's answer into
+    `['fees-settlement', tenant, id]` and moves to the receipt page, which opens on it without a
+    fetch (STA-6); the page reads the letterhead's names through `['tenant-config', tenant]`.
   - A reopened handover dialog therefore retries the same act. After a failure `outcomeInDoubt` names (status 0, 408, 429, 5xx) it re-reads
     `['treasury', tenant]`, so the reopened dialog prefills what the collector holds now.
   - A 2xx with `replayed: true` answers a retry with the act an earlier attempt recorded. The
@@ -274,6 +295,15 @@ measures the receipt in hand on `beforeprint` and on «طباعة الوصل» a
 by it (fallback 0.68). A field that truncates on screen wraps on paper. A receipt built from a recorded movement (`RecordedMovement`) prints that movement's
 `method` and no review note.
 
+The consolidated receipt (`bulk-settle/bulk-payment-receipt.tsx`, on `fees/settlements/[settlementId]`)
+is a document page like the statement: one `data-print-root`, A4 portrait, drawn in the theme's tokens
+on screen and black on white on paper. Its heading is `ReceiptLetterhead`, exported from
+`payment-receipt.tsx` and shared with the single receipt; it takes `currentColor`, which the single
+receipt's `#receipt-print-area` sets to black. `renderReceiptPdf` (`lib/receipt-pdf.ts`) takes
+`{ orientation, breakBefore }`: portrait, and a capture taller than one sheet cut between `tr` rows over
+several; the default stays the single receipt's one A4 landscape sheet. Every capture is taken in the
+light theme (`onclone` drops `dark` from the copy, never from the page).
+
 ## Citizen record kinds
 
 A file is a household, «غير مقيم في البلدة», «تركة (ورثة المرحوم)» or «جهة أو وقف» (`0076`).
@@ -353,8 +383,8 @@ are inlined at build time. The local `.env.local` block is in
 ## Tests
 
 Vitest (`apps/frontend/vitest.config.mts`): `environment: 'node'`, only `lib/**/*.test.ts`,
-with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 31 test files (counted on disk
-2026-10-10, mid-merge of `fix/expense-retry-key-race`; cases not recounted).
+with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 35 test files, 436 cases (counted
+2026-10-10 on `feat/fees-bulk-settlement`).
 No component, accessibility or end-to-end tests exist (no jsdom, no Testing Library); a
 rendered check uses the uncommitted headless harness of UI §16.4. Untested, so add a test
 when you touch them: `lib/sentry-redaction.ts`, `lib/session.ts`, `lib/csv.ts` `csvCell`.

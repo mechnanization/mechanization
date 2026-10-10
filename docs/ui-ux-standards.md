@@ -1,6 +1,6 @@
 # UI/UX standards: binding for every change to `apps/frontend`
 
-Last verified against the code: `fix/pr104-review` (PR #104 review fixes merged with `fix/expense-retry-key-race@ff44f27` and `develop@4ad0b27`, then with `origin/fix/expense-retry-key-race`; uncommitted), 2026-10-10.
+Last verified against the code: `feat/fees-bulk-settlement` (cut from `develop@b034640`; the consolidated receipt as a PRIM-28 document page; uncommitted), 2026-10-10.
 
 This file binds every AI agent and every person who builds or reviews an
 interface in this repository. [CLAUDE.md](../CLAUDE.md) (non-negotiable 9) and
@@ -131,7 +131,7 @@ to, the primitive gets a prop instead.
 | PRIM-25 | Typing a money amount | `CurrencyInput`. The unit gets a segment of its own beside the digits, never laid over them: an `dir="ltr"` field on an RTL page reserves its padding on one side while `end-0` pins the unit to the other, and «ل.ل» lands on the «0». `inputClassName` styles the digits, for the cash counter alone | A local `formatLbp(value: string)` that shadows `lib/currency`; an input with the unit absolutely positioned over it |
 | PRIM-26 | A menu of actions | `DropdownMenu` and its parts | A hand-rolled menu panel |
 | PRIM-27 | A yes/no field; a choice drawn as a card | `Checkbox`; `ChoiceCard` (`components/ui/field.tsx`) | A native checkbox or radio (CTL-3, CTL-4) |
-| PRIM-28 | A page that is a document to print (the statement, the daily register) | `data-print-root` on the one region that is the document (`app/globals.css`): only it reaches the paper, black on white whatever the theme, over as many A4 sheets as it needs. Print-only parts inside it (a sheet heading, signature lines) are `hidden print:block`; controls inside it are `print:hidden`. One per page; the receipt keeps `#receipt-print-area`, released from its dialog the same way (fixed and one screen tall, it printed its top strip on every sheet), and prints on one A5 landscape sheet, zoomed to fit by `fitReceiptToSheet` (`--receipt-print-zoom`, with a width of the sheet divided by it) | A page printed as it is (it printed blank: the receipt rule hides everything else); a second print stylesheet; colour as the only signal on paper (COL-3) |
+| PRIM-28 | A page that is a document to print (the statement, the daily register, the consolidated receipt `fees/settlements/[settlementId]`) | `data-print-root` on the one region that is the document (`app/globals.css`): only it reaches the paper, black on white whatever the theme, over as many A4 sheets as it needs. Print-only parts inside it (a sheet heading, signature lines) are `hidden print:block`; controls inside it are `print:hidden`. One per page; the receipt keeps `#receipt-print-area`, released from its dialog the same way (fixed and one screen tall, it printed its top strip on every sheet), and prints on one A5 landscape sheet, zoomed to fit by `fitReceiptToSheet` (`--receipt-print-zoom`, with a width of the sheet divided by it) | A page printed as it is (it printed blank: the receipt rule hides everything else); a second print stylesheet; colour as the only signal on paper (COL-3) |
 
 **PRIM-21. A new primitive** goes in `components/ui/` with a doc comment that
 says what it replaces and why. It takes every user-visible string as a prop

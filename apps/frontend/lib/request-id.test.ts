@@ -58,6 +58,14 @@ describe('heldKey and spendKey', () => {
     for (const scope of ['income:new', 'salary:staff-ali', 'salary:staff-omar', 'expense:pay'] as const) spendKey('t1', scope);
   });
 
+  it('holds one key per set of bills settled together, apart from each bill’s own', () => {
+    const pair = heldKey('t1', 'bulk-settle:bill-1,bill-2');
+    expect(heldKey('t1', 'bulk-settle:bill-1,bill-2')).toBe(pair);
+    // Another set is another act, and the single-bill counter keeps its own key for the same bill.
+    expect(new Set([pair, heldKey('t1', 'bulk-settle:bill-1'), heldKey('t1', 'settle:bill-1')]).size).toBe(3);
+    for (const scope of ['bulk-settle:bill-1,bill-2', 'bulk-settle:bill-1', 'settle:bill-1'] as const) spendKey('t1', scope);
+  });
+
   it('spending a key nobody holds is harmless', () => {
     expect(() => spendKey('t1', 'settle:never-held')).not.toThrow();
   });
@@ -135,6 +143,7 @@ describe('keyIsSpent', () => {
       'TRANSFER_ALREADY_VOID',
       'TRANSACTION_ALREADY_REVERSED',
       'PAYMENT_IDEMPOTENCY_KEY_REUSED',
+      'BULK_SETTLE_REQUEST_REUSED',
     ]) {
       expect({ code, spent: keyIsSpent(failed(409, code)) }).toEqual({ code, spent: true });
     }

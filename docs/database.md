@@ -1,6 +1,6 @@
 # Database
 
-Last verified against the code: `fix/pr104-review` (PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; 0083 extended to income vouchers and the urgent-payment ceiling), 2026-10-10.
+Last verified against the code: `feat/fees-bulk-settlement` (cut from `develop@b034640`; 0085 `payment_settlements` and `payment_transactions.settlementId`), 2026-10-10.
 
 The rules for anything that reads or writes a database: the schemas, how to
 query them, how to change them, and how data may move between environments.
@@ -44,7 +44,7 @@ every municipality ([security.md](security.md)).
 | Map | `parcels`, `zones` | `CadastreImportService`, `ZonesService` |
 | Building census | `buildings`, `building_code_aliases`, `units`, `unit_occupancies`, `unit_visits`, `unit_vacancy_confirmations`, `damage_assessments` | `BuildingsService`, `CensusSyncService`, `DamageService`, `ParcelCorrectionService`, `UnitCorrectionService` |
 | Cases | `cases` | `CasesService` |
-| Fees and money | `fee_notices`, `citizen_payments`, `payment_transactions`, `billing_run_entries`, `whish_checkouts`, `system_settings`, `inspector_payouts` | `FeesService`, `PaymentLedgerService`, `CorrectionBillsService`, `StaffService` (payouts) |
+| Fees and money | `fee_notices`, `citizen_payments`, `payment_transactions` (`settlementId`, 0085: the settlement a row was taken in, NULL on a bill settled alone), `payment_settlements` (0085: one press that settled several of one citizen's bills — the «BRC-» number, the notes, the change, the retry key), `billing_run_entries`, `whish_checkouts`, `system_settings`, `inspector_payouts` | `FeesService`, `PaymentLedgerService`, `PaymentSettlementService` (settlements; each bill through `PaymentLedgerService.recordIn`), `CorrectionBillsService`, `StaffService` (payouts) |
 | Review and quality | `record_reviews`, `quality_checks`, `data_quality_dismissals` | `RecordReviewService`, `DataQualityService` |
 | Audit | `audit_log_entries` | `AuditService`, `PrismaAuditRepository` |
 | Transfers (0078) | `treasury_transfers` | `TransfersService` (the collector handover; a Whish cash-out, a bank deposit and an exchange share the table and come later) |
@@ -56,8 +56,8 @@ every municipality ([security.md](security.md)).
 
 Each schema also carries plpgsql functions created by migrations:
 `reject_audit_mutation`, `reject_ledger_mutation`, `reject_treasury_mutation`,
-`reject_treasury_document_mutation` (0083), `search_normalize`, `search_compact`,
-`sync_building_unit_counts`.
+`reject_treasury_document_mutation` (0083), `reject_settlement_mutation` (0085),
+`search_normalize`, `search_compact`, `sync_building_unit_counts`.
 
 ### `users` holds staff AND citizens
 
@@ -172,6 +172,11 @@ chain, so it reports an officer who worked all morning as last seen at eight.
   `payment_transactions_no_delete` call `reject_ledger_mutation()`
   (`0017_payment_ledger`). Deleting a `citizen_payments` row cascades into it
   and raises.
+- `payment_settlements`: `payment_settlements_no_update` and `payment_settlements_no_delete`
+  call `reject_settlement_mutation()` (`0085`). A ledger row joins its settlement at insert
+  (`payment_transactions.settlementId`, RESTRICT), since the ledger refuses UPDATE, so
+  `PaymentSettlementService` writes the settlement first. Its foreign keys to `users`
+  (citizen, collector, clerk) are RESTRICT.
 - `treasury_entries`: `treasury_entries_no_update` and `treasury_entries_no_delete` call
   `reject_treasury_mutation()` (`0073`). A wallet balance is the SUM of its entries; there is no
   balance column. Its foreign keys to `users` and `treasury_accounts` are RESTRICT, so erasing a staff
@@ -517,6 +522,14 @@ reads staging's history from `.env.staging` and nothing else, and
   PR #104 review, 2026-10-09). On 2026-10-10, after a fresh fetch, the remote branches use
   `0080`–`0082` (`0082_treasury_day_closing` on PR #106) and this branch `0083`, so the next
   free number is `0084`.
+- `feat/fees-bulk-settlement` (cut from `develop@b034640`) holds `0085_payment_settlements`. Checked on
+  2026-10-10 after a fetch against every unmerged remote branch: the highest number held anywhere was
+  `0084` (`0084_treasury_exchange_and_review`, `feat/treasury-transfers-and-exchange`), and **`0083` is
+  held twice** — `develop`'s `0083_treasury_controls` and `feat/treasury-inspector-payouts-and-vouchers`'s
+  `0083_inspector_payout_voucher` (and its descendants). Whichever of those reaches `develop` second must
+  be renumbered before it merges; a renumbering that takes `0085` collides with this one. The next free
+  number is `0086`. `0085` needs nothing newer than `0079` (the `BULK_RECEIPT` book) and touches only
+  `payment_transactions` and its own table. Its own `chore/migration-0085` PR, before the feature.
 - Before you pick a number, MUST list the migrations on every unmerged branch
   and open PR:
 
@@ -780,7 +793,8 @@ Rare: only `0001_init` exists.
   into "absent" (`.catch(() => ({ rows: [] }))`).
 - **`BackupService` restore** aborts for any tenant with `payment_transactions`
   rows (the append-only trigger fires through the cascade). Documented in its
-  own comment as a design decision.
+  own comment as a design decision. `payment_settlements` (0085) is not in
+  `TABLE_ORDER` either, for the same reason, and it names the citizen who paid.
 - **`BackupService` does not export the treasury tables:** `treasury_accounts`,
   `treasury_entries` (0073), `expense_categories`, `expense_vouchers` (0074), `treasury_transfers`
   (0078), `document_counters` (0079), `income_categories`, `income_vouchers` (0080) and

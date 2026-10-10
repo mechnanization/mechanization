@@ -23,11 +23,32 @@
  * keeps both out of the initial bundle and off every route that never prints.
  */
 
-/** A4 landscape at 96 dpi, which is what the receipt's layout is drawn for. */
-const PAGE = { width: 297, height: 210 } as const;
+/** A4 in millimetres, each way round: landscape is what the single receipt's layout is drawn for. */
+const PAGE = {
+  landscape: { width: 297, height: 210 },
+  portrait: { width: 210, height: 297 },
+} as const;
+
+export interface ReceiptPdfOptions {
+  /**
+   * The A4 sheet's orientation. Landscape, the default, is the single receipt's;
+   * portrait is a document's, such as the consolidated receipt
+   * (`BulkPaymentReceipt`), which prints on A4 portrait too (PRIM-28).
+   */
+  orientation?: 'landscape' | 'portrait';
+  /**
+   * The elements a sheet may end before, as a CSS selector (`tr`). With it a
+   * capture taller than one sheet is fitted to the sheet's width and cut
+   * between those elements over as many sheets as it needs, so a long list
+   * stays readable instead of shrinking onto one page; without it the capture
+   * is shrunk onto one sheet, as the single receipt always has been.
+   */
+  breakBefore?: string;
+}
 
 /**
- * Renders `element` to a one-page PDF and returns it as a `File`.
+ * Renders `element` to a PDF and returns it as a `File`: one sheet, or several
+ * when `breakBefore` is given and the capture is taller than one.
  *
  * A `File` rather than a `Blob` because `navigator.share` requires one — the
  * share sheet needs a name and a MIME type to hand WhatsApp, and a bare Blob
@@ -36,7 +57,10 @@ const PAGE = { width: 297, height: 210 } as const;
 export async function renderReceiptPdf(
   element: HTMLElement,
   fileName: string,
+  options: ReceiptPdfOptions = {},
 ): Promise<File> {
+  const orientation = options.orientation ?? 'landscape';
+  const sheet = PAGE[orientation];
   const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
     import('html2canvas'),
     import('jspdf'),
@@ -52,30 +76,98 @@ export async function renderReceiptPdf(
     backgroundColor: '#ffffff',
     useCORS: true,
     logging: false,
+    /*
+      Photographed in the light theme. A document drawn in the theme's tokens —
+      the consolidated receipt, like the statement — would otherwise come out
+      as the dark theme's surfaces under near-white text. The single receipt is
+      literal black on white and looks the same either way. Only the copy
+      html2canvas renders is changed, never the page.
+    */
+    onclone: (copy) => {
+      copy.documentElement.classList.remove('dark');
+    },
   });
 
-  const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+  const pdf = new jsPDF({ orientation, unit: 'mm', format: 'a4' });
 
-  // Fit the capture inside the page while preserving its aspect ratio, then
-  // centre it. Stretching to the page would distort the form's rules and boxes.
   const margin = 10;
-  const maxWidth = PAGE.width - margin * 2;
-  const maxHeight = PAGE.height - margin * 2;
-  const ratio = Math.min(maxWidth / canvas.width, maxHeight / canvas.height);
-  const width = canvas.width * ratio;
-  const height = canvas.height * ratio;
+  const maxWidth = sheet.width - margin * 2;
+  const maxHeight = sheet.height - margin * 2;
 
-  pdf.addImage(
-    canvas.toDataURL('image/png'),
-    'PNG',
-    (PAGE.width - width) / 2,
-    (PAGE.height - height) / 2,
-    width,
-    height,
-  );
+  // Canvas pixels per millimetre with the capture at the sheet's full width.
+  const perMm = canvas.width / maxWidth;
+  if (options.breakBefore && canvas.height > maxHeight * perMm) {
+    addSheets(pdf, canvas, element, options.breakBefore, { margin, maxWidth, maxHeight, perMm, orientation });
+  } else {
+    // Fit the capture inside the page while preserving its aspect ratio, then
+    // centre it. Stretching to the page would distort the form's rules and boxes.
+    const ratio = Math.min(maxWidth / canvas.width, maxHeight / canvas.height);
+    const width = canvas.width * ratio;
+    const height = canvas.height * ratio;
+
+    pdf.addImage(
+      canvas.toDataURL('image/png'),
+      'PNG',
+      (sheet.width - width) / 2,
+      (sheet.height - height) / 2,
+      width,
+      height,
+    );
+  }
 
   const blob = pdf.output('blob');
   return new File([blob], fileName, { type: 'application/pdf' });
+}
+
+/**
+ * Lays a capture taller than one sheet over several, at the sheet's full width,
+ * each sheet ending before one of the `breakBefore` elements (a table row), so
+ * no row is cut through its text. A sheet with no such element in its lower two
+ * thirds is cut at its foot instead, rather than leaving most of it blank.
+ */
+function addSheets(
+  pdf: import('jspdf').jsPDF,
+  canvas: HTMLCanvasElement,
+  element: HTMLElement,
+  breakBefore: string,
+  layout: { margin: number; maxWidth: number; maxHeight: number; perMm: number; orientation: 'landscape' | 'portrait' },
+): void {
+  const sheetPx = Math.floor(layout.maxHeight * layout.perMm);
+  const box = element.getBoundingClientRect();
+  // Canvas pixels per CSS pixel: the capture's scale, measured rather than assumed.
+  const scale = canvas.height / Math.max(1, box.height);
+  const cuts = Array.from(element.querySelectorAll(breakBefore))
+    .map((node) => Math.round((node.getBoundingClientRect().top - box.top) * scale))
+    .filter((y) => y > 0 && y < canvas.height)
+    .sort((a, b) => a - b);
+
+  let start = 0;
+  let first = true;
+  while (start < canvas.height) {
+    let end = Math.min(start + sheetPx, canvas.height);
+    if (end < canvas.height) {
+      const cut = cuts.filter((y) => y > start + sheetPx / 3 && y <= end).pop();
+      if (cut !== undefined) end = cut;
+    }
+    const slice = document.createElement('canvas');
+    slice.width = canvas.width;
+    slice.height = end - start;
+    const context = slice.getContext('2d');
+    if (!context) throw new Error('Canvas 2D context unavailable');
+    // The capture is opaque (painted on white above), so the slice needs no background of its own.
+    context.drawImage(canvas, 0, start, canvas.width, end - start, 0, 0, canvas.width, end - start);
+    if (!first) pdf.addPage('a4', layout.orientation);
+    pdf.addImage(
+      slice.toDataURL('image/png'),
+      'PNG',
+      layout.margin,
+      layout.margin,
+      layout.maxWidth,
+      (end - start) / layout.perMm,
+    );
+    first = false;
+    start = end;
+  }
 }
 
 /**

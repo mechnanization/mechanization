@@ -114,6 +114,48 @@ function LebaneseRepublicCalligraphy({ className }: { className?: string }) {
 }
 
 /**
+ * The official heading of a municipal receipt: the Republic's emblem, the
+ * ministry with the governorate, the district, and the municipality — drawn
+ * from settings, because every municipality sits under a different governorate
+ * and district. Arabic whatever the page's language: it is the state's heading
+ * on the document, not the dashboard's copy.
+ *
+ * Shared by the single receipt's drawn facsimile and the consolidated one
+ * (`bulk-settle/bulk-payment-receipt.tsx`), so the two documents carry the same
+ * heading. It takes the colour of the paper it sits on (`currentColor`): black
+ * on the single receipt's white facsimile, the theme's text on the consolidated
+ * receipt, which its print root and the PDF capture turn black on white.
+ */
+export function ReceiptLetterhead({
+  municipalityName,
+  governorate,
+  district,
+}: {
+  municipalityName: string;
+  governorate?: string | null;
+  district?: string | null;
+}) {
+  return (
+    <div dir="rtl" className="text-center space-y-0.5 leading-tight">
+      <div className="flex justify-center -mb-1">
+        <LebaneseRepublicCalligraphy className="h-9 w-44" />
+      </div>
+      <p className="text-xs font-bold">
+        وزارة الداخلية والبلديات{governorate ? ` ـ محافظة ${governorate}` : ''}
+      </p>
+      {district ? (
+        <p className="text-xs font-bold">قائمقامية {district}</p>
+      ) : null}
+      <div className="pt-0.5">
+        <span className="inline-block border-b-2 border-current pb-0.5 text-base sm:text-lg font-black">
+          بلدية {municipalityName || '—'}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/**
  * وصل قبض / ايصال جباية — Official municipal collection receipt matching the official physical printed book.
  */
 export function PaymentReceipt({
@@ -483,22 +525,7 @@ function DrawnFacsimile({
 
             {/* Left (second, in RTL): Republic of Lebanon Emblem & Municipality Details,
                 drawn from settings — governorate/district differ per municipality. */}
-            <div className="text-center space-y-0.5 leading-tight">
-              <div className="flex justify-center -mb-1">
-                <LebaneseRepublicCalligraphy className="h-9 w-44 text-black" />
-              </div>
-              <p className="text-xs font-bold text-black">
-                وزارة الداخلية والبلديات{governorate ? ` ـ محافظة ${governorate}` : ''}
-              </p>
-              {district ? (
-                <p className="text-xs font-bold text-black">قائمقامية {district}</p>
-              ) : null}
-              <div className="pt-0.5">
-                <span className="inline-block border-b-2 border-black pb-0.5 text-base sm:text-lg font-black text-black">
-                  بلدية {municipalityName || '—'}
-                </span>
-              </div>
-            </div>
+            <ReceiptLetterhead municipalityName={municipalityName} governorate={governorate} district={district} />
           </header>
 
           {/* 2. Payer Section (إستلمنا من السيد/ السيدة) */}

@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `fix/pr104-review` (PR #104 review fixes merged with `fix/expense-retry-key-race@ff44f27` and `develop@4ad0b27`), 2026-10-09.
+Last verified against the code: `feat/fees-bulk-settlement` (cut from `develop@b034640`; the payment ledger's own transaction, the doubled `0083`), 2026-10-10.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -240,6 +240,28 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **Do this:** use `runInTenantTransaction`, which joins an open transaction.
 - **Where:** `tenant-transaction.ts`; `BuildingsService.atomic` is the
   workaround.
+- **The payment ledger is one of them.** `PaymentLedgerService.record` (and
+  `reverse`) still open their own `this.db.$transaction`, so calling `record`
+  from inside `runInTenantTransaction` throws. To settle a bill inside a larger
+  act, call `recordIn(tx, input)` with the scope's client, as
+  `PaymentSettlementService` does: same lock, checks and audit, the caller's
+  commit.
+
+### `0083` is held by two branches at once
+
+- **What happens:** `develop`'s `0083_treasury_controls` and
+  `feat/treasury-inspector-payouts-and-vouchers`'s `0083_inspector_payout_voucher`
+  (and the branches cut from it, which add `0082_treasury_day_closing` and
+  `0084_treasury_exchange_and_review`) share a number. A local database that ran
+  those branches has `0082`–`0084` applied and `develop`'s `0083` pending, so
+  `pnpm db:deploy:local` on any branch cut from `develop` applies `0083_treasury_controls`
+  out of order on top of them.
+- **Why:** the two were numbered on separate branches on the same day (found
+  2026-10-10).
+- **Do this:** renumber whichever reaches `develop` second before it merges
+  ([database.md](database.md#numbering)); before deploying a `develop`-based branch
+  to a local database that ran the treasury branches, decide whether to rebuild it.
+- **Where:** `apps/backend/src/infrastructure/prisma/tenant/migrations`.
 
 ### Side effects inside a transaction are lost or premature
 

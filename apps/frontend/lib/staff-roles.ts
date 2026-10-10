@@ -1,4 +1,5 @@
 import {
+  BULK_SETTLE_ROLES as SHARED_BULK_SETTLE_ROLES,
   CENSUS_WORKLIST_ROLES,
   FEE_ISSUE_ROLES,
   LANDLORD_LINK_ANSWER_ROLES as SHARED_LANDLORD_LINK_ANSWER_ROLES,
@@ -60,6 +61,23 @@ export const REFERENCE_SEND_ROLES: readonly string[] = WORKING_STAFF_ROLES;
  * counter and the round. `FEE_ISSUE_ROLES`, as the route.
  */
 export const PAYMENT_SETTLE_ROLES: readonly string[] = FEE_ISSUE_ROLES;
+
+/**
+ * «تسديد الفواتير المحددة» — tick several of one citizen's bills and settle
+ * them in one press, `POST fees/payments/bulk-settle`. `BULK_SETTLE_ROLES`, as
+ * the route: the finance roles only, so a collector still settles the same
+ * bills one at a time with «تسجيل دفعة».
+ */
+export const BULK_SETTLE_ROLES: readonly string[] = SHARED_BULK_SETTLE_ROLES;
+
+/**
+ * Send a citizen a copy of a consolidated receipt over WhatsApp. Every working
+ * role, the audience the single receipt's «إرسال عبر واتساب» already has;
+ * «مشاهد فقط» reads and prints a receipt, and sends nothing. The message carries
+ * no رقم مرجعي (`lib/bulk-receipt-message.ts`), so this is not
+ * `REFERENCE_SEND_ROLES`, though today it is the same list.
+ */
+export const RECEIPT_SEND_ROLES: readonly string[] = WORKING_STAFF_ROLES;
 
 /** The register export, `dashboard/export.csv`. Not «مشاهد فقط». */
 export const REGISTER_EXPORT_ROLES: readonly string[] = SHARED_REGISTER_EXPORT_ROLES;

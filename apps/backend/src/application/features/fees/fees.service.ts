@@ -2710,12 +2710,16 @@ export class FeesService {
   ) {
     return {
       id: row.id,
+      /** «INV-…», or null for a bill raised before migration 0079. */
+      invoiceNumber: row.invoiceNumber,
       title: row.title,
       amount: Number(row.amount),
       paidAmount: Number(row.paidAmount),
       remaining: Math.max(Number(row.amount) - Number(row.paidAmount), 0),
       currency: row.currency,
       dueDate: row.dueDate.toISOString(),
+      /** When the bill was raised — the tie-break of «oldest first» in a bulk settlement. */
+      createdAt: row.createdAt.toISOString(),
       paymentStatus:
         row.paymentStatus === 'UNPAID' && row.dueDate < now ? 'OVERDUE' : row.paymentStatus,
       paymentMethod: row.paymentMethod,

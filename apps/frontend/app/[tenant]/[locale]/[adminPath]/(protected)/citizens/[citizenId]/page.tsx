@@ -78,7 +78,11 @@ import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/dates';
 import { param, useUrlState } from '@/lib/use-url-state';
 import { buildCitizenWelcomeMessage, buildWhatsappHref } from '@/lib/whatsapp';
-import { DOCUMENT_VIEW_ROLES, REFERENCE_SEND_ROLES, hasRole } from '@/lib/staff-roles';
+import { BULK_SETTLE_ROLES, DOCUMENT_VIEW_ROLES, REFERENCE_SEND_ROLES, hasRole } from '@/lib/staff-roles';
+import { fromCitizenPayment, isBulkSettleable, pageSelection, rowBlock } from '@/lib/bulk-settle';
+import { useBulkSelection, type BulkSelection } from '@/lib/use-bulk-selection';
+import { BillCheckbox } from '@/components/admin/bulk-settle/bill-checkbox';
+import { BulkSettleBar } from '@/components/admin/bulk-settle/bulk-settle-bar';
 
 interface FactItem {
   icon: React.ComponentType<{ className?: string }>;
@@ -469,6 +473,23 @@ export default function CitizenProfilePage({
   /** The WhatsApp welcome carries the رقم مرجعي, which «مشاهد فقط» is never given. */
   const canSendReference = hasRole(REFERENCE_SEND_ROLES, role);
   const { merges, reload: reloadMerges } = useCitizenMerges(tenant, token, citizenId);
+
+  /*
+    «تسديد الفواتير المحددة» — `BULK_SETTLE_ROLES`, as the route; the server is
+    the enforcement. Held here rather than in the fees panel because the bar and
+    the dialog sit at the page's root: the panel folds (`CollapsibleSection`
+    clips its content), and a sticky bar inside it would hold nowhere.
+  */
+  const canBulkSettle = hasRole(BULK_SETTLE_ROLES, role);
+  const bulkSelection = useBulkSelection();
+  const { reconcile: reconcileBulk } = bulkSelection;
+  // Each read of the file drops a ticked bill that has been paid, or sent for review, since.
+  useEffect(() => {
+    if (!citizen) return;
+    reconcileBulk(
+      citizen.payments.map((row) => ({ bill: fromCitizenPayment(citizen, row), settleable: isBulkSettleable(row) })),
+    );
+  }, [citizen, reconcileBulk]);
 
   useEffect(() => {
     const session = loadSession(tenant);
@@ -1058,6 +1079,7 @@ export default function CitizenProfilePage({
             payments={citizen.payments}
             fees={citizen.fees}
             canManage={canManage}
+            selection={canBulkSettle ? bulkSelection : null}
             municipalityName={municipalityName}
             governorate={settings?.governorate}
             councilDecisionRef={settings?.councilDecisionRef}
@@ -1247,6 +1269,19 @@ export default function CitizenProfilePage({
         locale={locale}
         onSaved={() => void reload()}
       />
+
+      {/* «تسديد الفواتير المحددة» — sticky at the foot while a bill is ticked; a direct child of the root. */}
+      {canBulkSettle && token ? (
+        <BulkSettleBar
+          tenant={tenant}
+          base={base}
+          token={token}
+          locale={locale}
+          selection={bulkSelection}
+          onSettled={() => void reload().catch(logApiError)}
+          onStale={() => void reload().catch(logApiError)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -1582,12 +1617,19 @@ const FEES_URL = { feesPage: param.page() };
  * them must not be forced to settle all three or none: every row carries its
  * own «تسجيل دفعة» and its own receipt. Bulk-only settlement is exactly what
  * made arrears impossible to work down gradually.
+ *
+ * So «تسديد الفواتير المحددة» is added beside those, never in their place: for
+ * the finance roles a box on each settleable bill, and «تحديد الكل» over the
+ * page, tick the bills the citizen is paying today; the bar and the dialog that
+ * settle them live at the page's root (`selection`). A bill left unticked stays
+ * owed, and settleable on its own as before.
  */
 function FeesPanel({
   citizen,
   payments,
   fees,
   canManage,
+  selection,
   municipalityName,
   governorate,
   councilDecisionRef,
@@ -1600,6 +1642,8 @@ function FeesPanel({
   payments: CitizenProfilePayment[];
   fees: CitizenFeeTotals;
   canManage: boolean;
+  /** The bills ticked for «تسديد الفواتير المحددة», or null for a role that may not settle several at once. */
+  selection: BulkSelection | null;
   municipalityName: string;
   governorate?: string | null;
   councilDecisionRef?: string | null;
@@ -1609,6 +1653,7 @@ function FeesPanel({
   locale?: string;
 }) {
   const { tenant, adminPath } = useParams<{ tenant: string; adminPath: string }>();
+  const tSelect = useTranslations('bulkSettle.select');
   /** «تسجيل دفعة نقدية» is its own page now — ليرة, dollars, the rate — see payments/[paymentId]. */
   const settleHref = (paymentId: string) =>
     `/${tenant}/${locale}/${adminPath}/citizens/${encodeURIComponent(citizen.id)}/payments/${encodeURIComponent(paymentId)}`;
@@ -1626,6 +1671,9 @@ function FeesPanel({
   const lastPage = Math.max(0, Math.ceil(payments.length / FEES_PAGE_SIZE) - 1);
   const shownPage = Math.min(page, lastPage);
   const pagePayments = payments.slice(shownPage * FEES_PAGE_SIZE, (shownPage + 1) * FEES_PAGE_SIZE);
+  /** This page's bills that may be ticked, and where «تحديد الكل» stands over them. */
+  const pageEligible = pagePayments.filter(isBulkSettleable).map((row) => fromCitizenPayment(citizen, row));
+  const pageState = selection ? pageSelection(selection.bills, pageEligible) : null;
 
   return (
     <>
@@ -1697,6 +1745,21 @@ function FeesPanel({
               }
             />
           ) : (
+            <div className="space-y-2">
+            {selection && pageState && pageState.eligible > 0 ? (
+              <div className="flex items-center gap-2">
+                <BillCheckbox
+                  id="citizen-fees-select-page"
+                  subject={{ kind: 'page', allSelected: pageState.allSelected }}
+                  checked={pageState.allSelected}
+                  blocked={pageState.blocked}
+                  onToggle={() => selection.toggleRows(pageEligible)}
+                />
+                <label htmlFor="citizen-fees-select-page" className="text-sm">
+                  {pageState.allSelected ? tSelect('pageClear') : tSelect('page')}
+                </label>
+              </div>
+            ) : null}
             <ul ref={listTop} className={cn('divide-y rounded-lg border lg:gap-x-3', FEE_LIST_GRID)}>
               <li
                 aria-hidden
@@ -1705,7 +1768,8 @@ function FeesPanel({
                   FEE_ROW_GRID,
                 )}
               >
-                <span>{locale === 'en' ? 'Item' : 'البند'}</span>
+                {/* Past the rows' boxes when they have them (`size-6` and `gap-3`), so the heading sits over the titles. */}
+                <span className={selection ? 'ps-9' : undefined}>{locale === 'en' ? 'Item' : 'البند'}</span>
                 <span>{locale === 'en' ? 'Status' : 'الحالة'}</span>
                 <span>{locale === 'en' ? 'Due' : 'الاستحقاق'}</span>
                 <span>{locale === 'en' ? 'Frequency' : 'الدورية'}</span>
@@ -1732,6 +1796,24 @@ function FeesPanel({
                     key={payment.id}
                     className={cn('grid items-center gap-x-3 gap-y-2 p-4', FEE_ROW_GRID)}
                   >
+                    <div className="flex min-w-0 items-start gap-3">
+                    {/*
+                      The box for «تسديد الفواتير المحددة», beside the row's own
+                      buttons rather than instead of them. A bill that cannot be
+                      ticked keeps the box's width, so every title lines up.
+                    */}
+                    {selection ? (
+                      isBulkSettleable(payment) ? (
+                        <BillCheckbox
+                          subject={{ kind: 'row', title: payment.title }}
+                          checked={selection.bills.some((entry) => entry.id === payment.id)}
+                          blocked={rowBlock(selection.bills, fromCitizenPayment(citizen, payment))}
+                          onToggle={() => selection.toggle(fromCitizenPayment(citizen, payment))}
+                        />
+                      ) : (
+                        <span aria-hidden className="size-6 shrink-0" />
+                      )
+                    ) : null}
                     <div className="min-w-0 space-y-0.5">
                       <p className="truncate font-semibold">{payment.title}</p>
                       {/*
@@ -1750,6 +1832,7 @@ function FeesPanel({
                           {payment.reviewNote}
                         </p>
                       ) : null}
+                    </div>
                     </div>
 
                     <div className="col-span-2 col-start-1 row-start-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground lg:contents">
@@ -1812,6 +1895,7 @@ function FeesPanel({
                 );
               })}
             </ul>
+            </div>
           )}
 
           <Pager
