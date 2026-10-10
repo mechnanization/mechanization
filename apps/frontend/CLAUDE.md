@@ -1,6 +1,6 @@
 # apps/frontend: agent guide
 
-Last verified against the code: `feat/treasury-day-closing` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race@ff44f27` and `develop@4ad0b27`, then with `origin/fix/expense-retry-key-race`; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5; then the PR #106 review fixes; uncommitted), 2026-10-10.
+Last verified against the code: `feat/treasury-day-closing@29c9b22` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race@ff44f27` and `develop@4ad0b27`, then with `origin/fix/expense-retry-key-race`; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5; then the PR #106 review fixes) merged with PR #109 `feat/treasury-inspector-payouts-and-vouchers@c734ae3` («صرف عمولة», the printed vouchers, `official-document.tsx`; uncommitted), 2026-10-10.
 
 Next.js 15 app router, React 18, next-intl 4, TanStack Query 5, Tailwind 3.4 with
 tailwind-merge 3, Radix and lucide-react. One app serves the staff dashboard and the
@@ -20,7 +20,8 @@ app/[tenant]/[locale]/layout.tsx        TenantLayout (server, force-dynamic) + e
     page.tsx (AdminIndexPage, role landing) · [...unknown] (AdminNotFound)
     dashboard account audit map zones settings staff payments
     (staff: «صرف راتب / أجر» per active row, `components/admin/staff/staff-salary-dialog.tsx`, TREASURY_WORK_ROLES;
-      the manager's payout is the order, anyone else's is said before and after to await it, D7)
+      the manager's payout is the order, anyone else's is said before and after to await it, D7;
+      «صرف عمولة» per inspector row, `components/admin/inspector-payout-dialog.tsx`, SUPER_ADMIN — it reads the inspector's profile)
     (settings › المالية: «سقف الدفع العاجل», one per currency, empty for none, `finance-section.tsx`;
       a save sends a ceiling only when its field changed, `ceilingChange` in lib/urgent-ceiling.ts)
     finance (الخزينة) · finance/accounts/[accountId] (كشف حساب: prints through `data-print-root`;
@@ -35,7 +36,9 @@ app/[tenant]/[locale]/layout.tsx        TenantLayout (server, force-dynamic) + e
       request, or pays urgently under art. 35 — lib/expense-order.ts decides the mode; the urgent
       path shows the wallet currency's ceiling and refuses above it with «أرسلها طلباً», except
       for the retry of a press whose answer was lost)
+    finance/expenses/[voucherId]/print (أمر الصرف — A4 portrait; `?print=1` opens the print dialog once)
     finance/income (الإيرادات) · finance/income/new (تسجيل إيراد جديد)
+    finance/income/[voucherId]/print (سند القبض — A4 portrait, QR of the number; `?print=1`)
     finance/income/categories (بنود الإيرادات — every reader sees the list, the manager edits it)
     finance/collectors (الجباة والتحصيل — عهدة الجباة and «استلام الصندوق», moved off the treasury page)
     finance/collectors/[collectorId] (ما حصّله الجابي)
@@ -43,6 +46,8 @@ app/[tenant]/[locale]/layout.tsx        TenantLayout (server, force-dynamic) + e
       the close sends the counts its dialog listed, `closeRequest` in lib/daily-count.ts; a save
       clears only the boxes it carried, `draftsAfterSave`; a lost close answer re-reads that day)
     finance/daily/report (تقرير الصندوق اليومي — printed A4 landscape by its own print rules; `?date=`)
+    (the three printed documents share `components/admin/finance/official-document.tsx`: the
+     letterhead and crest from الإعدادات, the signature lines, `documentPrintCss`, `useAutoPrint`)
     my-round (جولتي — the collector's own pocket, phone-first, WORKING_STAFF_ROLES)
 
 `CitizenProfilePayment.invoiceNumber` carries «INV-2610-0001» and is what

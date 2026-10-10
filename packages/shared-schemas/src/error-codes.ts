@@ -196,6 +196,14 @@ export const ERROR_CODES = [
   'EXPENSE_BACKDATE_REASON_REQUIRED',
   'EXPENSE_CATEGORY_CODE_TAKEN',
   'SALARY_PAYEE_NOT_FOUND',
+  'INSPECTOR_PAYOUT_WALLET_REQUIRED',
+  'INSPECTOR_PAYOUT_WALLET_NOT_USD',
+  'INSPECTOR_PAYOUT_DATE_NOT_ALLOWED',
+  'INSPECTOR_PAYOUT_REQUEST_REUSED',
+  // «صرف عمولة» is the manager's until the owner decides the accountant's part (finance.md §5.6).
+  'INSPECTOR_PAYOUT_MANAGER_ONLY',
+  // A بند only its own path may file under: «تعويضات المسح والجباية» is the payout's (`params.category`).
+  'EXPENSE_CATEGORY_RESERVED',
   'INCOME_VOUCHER_NOT_FOUND',
   'INCOME_VOUCHER_ALREADY_VOIDED',
   'INCOME_CATEGORY_NOT_FOUND',

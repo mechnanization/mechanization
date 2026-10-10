@@ -106,3 +106,28 @@ const OUT_OF_DATE = new Set([
 export function meansOutOfDate(code: string): boolean {
   return OUT_OF_DATE.has(code);
 }
+
+/**
+ * What a printed «أمر الصرف» says about its order (D3, decree 5595/1982 art. 28,
+ * 33, 35), read from the voucher as the server holds it.
+ *
+ * - `awaiting`: paid before the order on the urgent path — an accountant's
+ *   salary, or an urgent payment — and not yet regularised. The paper says so,
+ *   with the reason, above everything but a cancellation: under the title
+ *   «أمر صرف» and the mayor's signature line it would otherwise read as an
+ *   ordinary, ordered payment while the register says it is not.
+ * - `ordered`: who gave the order and when, printed beside the other fields.
+ */
+export type PrintedOrder =
+  | { kind: 'awaiting'; urgentReason: string | null }
+  | { kind: 'ordered'; by: string | null; at: string | null };
+
+export function printedOrder(voucher: {
+  orderStatus: ExpenseOrderStatus;
+  urgentReason: string | null;
+  orderedAt: string | null;
+  orderedByName: string | null;
+}): PrintedOrder {
+  if (voucher.orderStatus === 'AWAITING_ORDER') return { kind: 'awaiting', urgentReason: voucher.urgentReason };
+  return { kind: 'ordered', by: voucher.orderedByName, at: voucher.orderedAt };
+}

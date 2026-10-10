@@ -45,6 +45,27 @@ export const EXPENSE_CATEGORY_KEYS = [
 ] as const;
 export type ExpenseCategoryKey = (typeof EXPENSE_CATEGORY_KEYS)[number];
 
+/**
+ * The seeded categories only their own path may file a voucher under.
+ *
+ * «تعويضات المسح والجباية» (`FIELD_COMMISSIONS`) is «صرف عمولة»'s
+ * (`StaffService.recordInspectorPayout`), because what an inspector is owed is
+ * read from the payout rows that path writes beside its voucher. A commission
+ * paid through the expense form, or ordered from a request, would leave the
+ * wallet with no payout row: the inspector would still read as owed it, and
+ * the payout dialog would pay it again. So the form, a request and an order
+ * refuse it (`EXPENSE_CATEGORY_RESERVED`), and the form does not offer it.
+ *
+ * «رواتب وأجور» is not here: a salary has no balance owed to fall out of step
+ * with, and the full form is how a back-dated one is paid (§5.8).
+ */
+export const RESERVED_EXPENSE_CATEGORY_KEYS = ['FIELD_COMMISSIONS'] as const satisfies readonly ExpenseCategoryKey[];
+
+/** Whether only a dedicated path may file under this category (`RESERVED_EXPENSE_CATEGORY_KEYS`). */
+export function isReservedExpenseCategory(key: ExpenseCategoryKey | null | undefined): boolean {
+  return key != null && (RESERVED_EXPENSE_CATEGORY_KEYS as readonly string[]).includes(key);
+}
+
 /** A paid amount: greater than zero, at most two decimals, inside what the column holds. */
 const paidAmount = z
   .number({ required_error: 'اكتب المبلغ', invalid_type_error: 'المبلغ رقم' })
@@ -279,12 +300,13 @@ export interface ExpenseVoucherView {
   id: string;
   voucherNumber: string;
   status: ExpenseStatus;
-  category: { id: string; name: string };
+  /** With its budget chapter and article, printed on «أمر الصرف»; both null until the municipality fills them in. */
+  category: { id: string; name: string; chapterCode: string | null; itemCode: string | null };
   account: { id: string; name: string; currency: string };
   amount: number;
   currency: string;
   payee: string;
-  /** The staff account a salary voucher paid; null on every other voucher. */
+  /** The staff account a salary or commission voucher paid (0081, 0086); null on every other voucher. */
   payeeStaffId: string | null;
   description: string;
   occurredAt: string;

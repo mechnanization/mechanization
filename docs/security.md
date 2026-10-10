@@ -1,6 +1,6 @@
 # Security
 
-Last verified against the code: `feat/treasury-day-closing` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; income controls, the salary path and the urgent ceiling; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5; then the PR #106 review fixes: the stage 5 route pin, 0084; uncommitted), 2026-10-10.
+Last verified against the code: `feat/treasury-day-closing@29c9b22` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; income controls, the salary path and the urgent ceiling; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5; then the PR #106 review fixes: the stage 5 route pin, 0087) merged with PR #109 `feat/treasury-inspector-payouts-and-vouchers@c734ae3` (the commission route opened to `TREASURY_WORK_ROLES`, the printed vouchers; uncommitted), 2026-10-10.
 
 Binding for every change that touches authentication, roles, tokens, validation, uploads, logging,
 headers, client storage or secrets. The rules below are correct practice. Where the code differs today,
@@ -221,7 +221,7 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   (`registrations.referenceNumber`) is not a credential and may be written in full.
 - MUST NOT bypass the append-only triggers on `audit_log_entries`, `payment_transactions` and
   `treasury_entries` (`0001_init`, `0017_payment_ledger`, `0073_treasury_ledger`), or the closed-day
-  triggers on `treasury_entries`, `treasury_counts` and `treasury_day_closures` (`0082`, `0084`), MUST NOT `SET session_replication_role`, and MUST NOT reach
+  triggers on `treasury_entries`, `treasury_counts` and `treasury_day_closures` (`0082`, `0087`), MUST NOT `SET session_replication_role`, and MUST NOT reach
   for `TRUNCATE` because a trigger refused a `DELETE`. A refusal is an answer
   ([CLAUDE.md](../CLAUDE.md#how-to-work-here)).
 - Uniqueness is enforced by a database constraint and surfaces as a `ConflictError`, never by a
@@ -268,6 +268,29 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
     salary (`SALARY_SELF_PAYOUT`, 403, decision D8). The retry key is also bound to the
     staff account. The audit row names the staff member by id (`payeeStaffId`), never by name. The
     button lives on «الموظفون», which only `SUPER_ADMIN` opens; the route is what decides.
+  - **Inspector commissions** (`POST staff/inspectors/:id/payouts`) moved from `SUPER_ADMIN` to
+    `TREASURY_WORK_ROLES` on 2026-10-10 (finance.md §5.6, §9): once the treasury is live a payout
+    is an expense voucher, the accountant's work as much as the manager's. The id now goes through
+    `ParseUUIDPipe`, the body through `recordInspectorPayoutSchema`.
+    - Opening it to the accountant shows them nothing new: what is owed is computed on the
+      server, and the inspector's profile (`GET inspectors/:id/profile`, which lists the citizens
+      he registered) stays `SUPER_ADMIN` or the inspector himself.
+    - The payee and the category are the server's, as for a salary; the wallet must hold dollars
+      (`INSPECTOR_PAYOUT_WALLET_NOT_USD`); the amount owed is re-read under a transaction-scoped
+      advisory lock on the inspector, so two payouts cannot both spend one balance (pinned by a
+      test that fails without the lock); and the retry key replays the first payout, or is
+      refused when it already paid someone else (`INSPECTOR_PAYOUT_REQUEST_REUSED`).
+    - The voucher is written through the same path as every other, so the payment order applies
+      to it: the manager's payout is the order. How it applies to a commission an accountant pays
+      is **Undecided** (finance.md §5.6).
+    - Both audit rows (`EXPENSE_RECORDED`, `INSPECTOR_PAYOUT_RECORDED`) are Tier 1 and carry ids
+      and figures, never the inspector's name.
+- **Printed vouchers** (`finance/expenses/:id/print`, `finance/income/:id/print`). Screens, not
+  routes: they read `GET treasury/expenses/:id` and `GET treasury/income/:id`, so the finance read
+  roles, and sit under those nav rows' prefixes. The receipt's QR code carries the voucher number
+  and nothing else; there is no public page to verify it against, which would be a new
+  unauthenticated surface. A printed «سند قبض» carries the payer's name, as the paper handed to
+  them must.
 - **Income vouchers** (`t/:tenantSlug/treasury/income`). The expense guards, mirrored: read on
   `TREASURY_READ_ROLES`, record on `TREASURY_WORK_ROLES`, void and the category writes (`POST`,
   `PATCH` on `income/categories`, both Tier 1 audited) on `TREASURY_ADMIN_ROLES`; the body
@@ -310,7 +333,7 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   payment, voucher, transfer or reversal — by the application (`TreasuryLedgerService.post`) or by
   anything else (the 0082 triggers). A closure cannot be deleted, only reopened by the manager with a
   reason that goes into the audit row and onto the printed report, and only the latest closed day. Nor
-  can it be rewritten (0084): its day never moves, reopening keeps who closed it, and a count links
+  can it be rewritten (0087): its day never moves, reopening keeps who closed it, and a count links
   only to its own day's closure. The close carries the counts its dialog showed and is refused
   (`COUNT_CHANGED_SINCE_LOADED`) when someone recounted meanwhile, so the audit row records figures
   the closer saw. `route-inventory.spec.ts` pins the six handlers' roles, reopening among the

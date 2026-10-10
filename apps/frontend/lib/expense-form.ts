@@ -1,3 +1,5 @@
+import { isReservedExpenseCategory, type ExpenseCategoryView } from '@mechanization/shared-schemas';
+
 /**
  * The recording form's fields, in the order they sit on the screen, each with
  * the id of the control to focus.
@@ -31,4 +33,23 @@ export function isExpenseField(name: string): name is ExpenseField {
 export function firstFieldToFix(errors: Readonly<Record<string, string | undefined>>): string | null {
   const first = FIELDS.find(([field]) => Boolean(errors[field]));
   return first ? first[1] : null;
+}
+
+/**
+ * The بنود the form offers: the active ones, then any added on this screen, once
+ * each — and never one reserved to its own path (`RESERVED_EXPENSE_CATEGORY_KEYS`).
+ *
+ * «تعويضات المسح والجباية» is paid with «صرف عمولة», which writes the payout row
+ * that what an inspector is owed is read from. Offered here, a commission paid
+ * through the form left him still owed it, and the payout dialog paid it again;
+ * the server refuses it too (`EXPENSE_CATEGORY_RESERVED`).
+ */
+export function formCategories(
+  listed: readonly ExpenseCategoryView[],
+  added: readonly ExpenseCategoryView[],
+): ExpenseCategoryView[] {
+  const byId = new Map<string, ExpenseCategoryView>();
+  for (const category of listed) if (category.active) byId.set(category.id, category);
+  for (const category of added) byId.set(category.id, category);
+  return [...byId.values()].filter((category) => !isReservedExpenseCategory(category.key));
 }

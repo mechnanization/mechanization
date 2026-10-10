@@ -1,4 +1,4 @@
--- 0084_treasury_day_closure_written_once
+-- 0087_treasury_day_closure_written_once
 --
 -- A closed day's closure, and the counts it locked, are written once — the
 -- rule 0083 gave every other treasury document, which 0082 did not give the
@@ -56,8 +56,8 @@
 -- reads a table is pinned to its own schema (see 0030, 0082), the other to
 -- pg_catalog (see 0083). Needs 0082.
 --
--- Numbered 0084: 0082 is PR #106's day closing and 0083 PR #104's controls; no
--- local or remote-tracking branch held an 0084 or later on 2026-10-10 (`git log
+-- Numbered 0087: 0082 is PR #106's day closing and 0083 PR #104's controls; no
+-- local or remote-tracking branch held an 0087 or later on 2026-10-10 (`git log
 -- --all`, without a fresh fetch). Check again before the PR.
 
 -- ════════════════════════  a closure is written once  ═════════════════════════

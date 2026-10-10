@@ -209,10 +209,19 @@ describe('the treasury routes (docs/finance.md §9)', () => {
     'TreasuryClosingController.record': WORK,
     'TreasuryClosingController.close': WORK,
     'TreasuryClosingController.reopen': ADMIN,
+    // «صرف عمولة» (§5.6): a «PV-» voucher and a ledger debit once live. The manager's while the
+    // accountant's part is Undecided (open-decisions §18); widening it is a decision made here.
+    'StaffController.recordPayout': ADMIN,
   };
-  // Every treasury controller by name: a new one is added here, or its handlers are pinned by nothing.
-  const treasury = routes().filter((route) =>
-    /^(Treasury|TreasuryClosing|Expenses|Income|Transfers)Controller\./.test(route.name),
+  /*
+    Every treasury controller by name: a new one is added here, or its handlers are pinned by
+    nothing. And, by name, each handler elsewhere that moves treasury money.
+  */
+  const MONEY_HANDLERS_ELSEWHERE = ['StaffController.recordPayout'];
+  const treasury = routes().filter(
+    (route) =>
+      /^(Treasury|TreasuryClosing|Expenses|Income|Transfers)Controller\./.test(route.name) ||
+      MONEY_HANDLERS_ELSEWHERE.includes(route.name),
   );
 
   it('knows every treasury handler, and no other', () => {
@@ -224,9 +233,9 @@ describe('the treasury routes (docs/finance.md §9)', () => {
     expect([...(route?.roles ?? [])].sort()).toEqual([...roles].sort());
   });
 
-  it('lets no one but the manager order, refuse, regularise, cancel or reopen a closed day', () => {
+  it('lets no one but the manager order, refuse, regularise, cancel, reopen a closed day or pay a commission', () => {
     // `void` covers an expense, an income voucher and a transfer alike.
-    const managerOnly = ['orderRequest', 'rejectRequest', 'regularize', 'void', 'activate', 'reopen'];
+    const managerOnly = ['orderRequest', 'rejectRequest', 'regularize', 'void', 'activate', 'reopen', 'recordPayout'];
     const wider = treasury.filter(
       (route) => managerOnly.includes(route.name.split('.')[1]) && (route.roles ?? []).some((role) => role !== 'SUPER_ADMIN'),
     );

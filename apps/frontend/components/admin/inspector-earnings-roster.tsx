@@ -280,6 +280,7 @@ export function InspectorEarningsRoster({
         open={payoutFor !== null}
         onOpenChange={(next) => !next && setPayoutFor(null)}
         tenant={tenant}
+        base={base}
         token={token}
         locale={locale}
         staff={payoutFor ? { id: payoutFor.id, name: payoutFor.fullName } : null}

@@ -644,6 +644,7 @@ export function InspectorProfileDetail({
         open={payoutOpen}
         onOpenChange={setPayoutOpen}
         tenant={tenant}
+        base={base}
         token={token}
         locale={locale}
         staff={{ id: data.inspector.id, name: data.inspector.name }}

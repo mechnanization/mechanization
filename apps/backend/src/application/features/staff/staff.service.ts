@@ -19,16 +19,23 @@ import { StaffRole } from '../../../domain/entities/user.entity';
 import { IdentityService } from '../identity/identity.service';
 import { SessionRevocationService } from '../identity/session-revocation.service';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
+import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
+import { Prisma } from '../../../generated/tenant-client';
+import { AuditService } from '../audit/audit.service';
+import { ExpensesService } from '../treasury/expenses.service';
+import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
 import {
   COMMISSION_RATE,
   cardsFiledOn,
   creditBillableUnits,
   payoutAllowance,
   payoutRefusal,
+  TREASURY_ADMIN_ROLES,
   type InspectorPayoutItem,
   type InspectorProfileResponse,
   type InspectorPropertyBreakdown,
   type RecordInspectorPayoutInput,
+  type RecordInspectorPayoutResult,
 } from '@mechanization/shared-schemas';
 import {
   ConflictError,
@@ -62,6 +69,9 @@ export class StaffService {
     private readonly revocation: SessionRevocationService,
     private readonly identity: IdentityService,
     private readonly events: EventEmitter2,
+    private readonly expenses: ExpensesService,
+    private readonly ledger: TreasuryLedgerService,
+    private readonly audit: AuditService,
   ) {}
 
   private get db() {
@@ -465,14 +475,7 @@ export class StaffService {
     const payouts = await this.db.inspectorPayout.findMany({
       where: { inspectorId },
       orderBy: { paidAt: 'desc' },
-      include: {
-        recordedBy: {
-          select: {
-            firstName: true,
-            lastName: true,
-          },
-        },
-      },
+      include: PAYOUT_INCLUDE,
     });
 
     const breakdown: InspectorPropertyBreakdown = {
@@ -575,7 +578,15 @@ export class StaffService {
 
     const commissionRate = COMMISSION_RATE;
     const totalEarnings = totalProperties * commissionRate;
-    const paidBalance = payouts.reduce((sum, p) => sum + Number(p.amount), 0);
+    /*
+      A payout whose voucher was cancelled is not money paid: the void put it
+      back into the wallet (0086). It stays in the history, marked, and leaves
+      the sum — the same filter `UserRepository.listStaff` puts in its query,
+      so the roster and this page agree on what is owed.
+    */
+    const paidBalance = payouts
+      .filter((p) => !p.expenseVoucher?.voidedAt)
+      .reduce((sum, p) => sum + Number(p.amount), 0);
     const pendingBalance = Math.max(0, totalEarnings - paidBalance);
     /*
       The other side of that clamp, which used to be nowhere.
@@ -588,18 +599,7 @@ export class StaffService {
     */
     const overpaidBalance = Math.max(0, paidBalance - totalEarnings);
 
-    const formattedPayouts: InspectorPayoutItem[] = payouts.map((p) => ({
-      id: p.id,
-      amount: Number(p.amount),
-      currency: p.currency,
-      paidAt: p.paidAt.toISOString(),
-      note: p.note,
-      reference: p.reference,
-      recordedByName: p.recordedBy
-        ? `${p.recordedBy.firstName} ${p.recordedBy.lastName}`.trim()
-        : null,
-      createdAt: p.createdAt.toISOString(),
-    }));
+    const formattedPayouts: InspectorPayoutItem[] = payouts.map(payoutItem);
 
     return {
       inspector: {
@@ -625,78 +625,345 @@ export class StaffService {
   }
 
   /**
-   * Super Admin records a commission payment made to a Field Inspector.
+   * «صرف عمولة» — a commission payment to a field inspector.
    *
    * Refused unless `payoutAllowance` accepts it: never more than is still
    * owed. The figures are the ones the inspector's dashboard shows, read
    * through the same method, so the refusal and the screen cannot disagree
    * about what is owed.
+   *
+   * ## Two paths, chosen by the treasury, never by the client
+   *
+   * Before go-live a payout is a figure and nothing else, as it always was —
+   * there is no ledger yet for the money to leave, and `paidAt` may date it.
+   * Once live the money must leave a wallet, or the day's count comes up short
+   * by every commission paid (docs/finance.md §5.6): the payout is paid now,
+   * from a dollar wallet the client names, as a «PV-» voucher in «تعويضات
+   * المسح والجباية» written by `ExpensesService.recordCommission`, and the
+   * payout row points at it. Voucher, ledger entry, payout and both audit rows
+   * commit together or not at all. Each path refuses the other's fields rather
+   * than quietly dropping them.
+   *
+   * ## Why the inspector is locked
+   *
+   * «what is owed» is read and then paid. Two payouts to one inspector at once
+   * would both read the same balance and both pass, and he would be paid twice
+   * what he earned. A transaction-scoped advisory lock on his id makes the
+   * second wait for the first to commit, and then read what is left. The key
+   * names the schema, so two municipalities never wait on each other.
+   *
+   * The same lock is what makes a retried press safe: the second request for a
+   * `clientRequestId` waits here, then finds the payout the first wrote and
+   * answers with it (`replayPayout`) — rather than reading a balance the first
+   * already spent and refusing a payment that in fact went through.
+   *
+   * ## Whose it is
+   *
+   * The manager's (`TREASURY_ADMIN_ROLES`), checked first, before any figure
+   * or account is read — the route says the same. Whether, and how, an
+   * accountant pays a commission is **Undecided** (docs/finance.md §5.6,
+   * docs/open-decisions.md §18): art. 35 names salaries, not commissions. Until
+   * the owner decides, he is refused here rather than handed the one path he
+   * could otherwise reach, the figure-only payout before go-live with no wallet,
+   * no voucher and no order; and a refusal that comes before the balance tells
+   * him nothing about what an inspector is owed.
    */
   async recordInspectorPayout(input: {
     tenantSlug: string;
     inspectorId: string;
     payload: RecordInspectorPayoutInput;
     actor: { id: string; role: string };
-  }): Promise<InspectorPayoutItem> {
-    // Throws NotFoundError for anything that is not a staff account.
-    const profile = await this.getInspectorProfile(input.tenantSlug, input.inspectorId);
-    // A deleted account was settled before it went (see `remove`); paying it now has no basis.
-    if (await this.users.isStaffHidden(input.inspectorId)) {
-      throw new ConflictError('هذا الحساب محذوف — استعده أولاً إن كان له مستحقات');
+  }): Promise<RecordInspectorPayoutResult> {
+    if (!(TREASURY_ADMIN_ROLES as readonly string[]).includes(input.actor.role)) {
+      throw new ForbiddenError({
+        code: 'INSPECTOR_PAYOUT_MANAGER_ONLY',
+        message: "An inspector's commission is paid by the manager.",
+      });
     }
 
-    const paidAt = input.payload.paidAt ? new Date(input.payload.paidAt) : new Date();
+    return runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.db as Prisma.TransactionClient;
+      const { payload } = input;
+
+      const lockKey = `${this.tenantContext.schemaName}:inspector-payout:${input.inspectorId}`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
+
+      if (payload.clientRequestId) {
+        const earlier = await tx.inspectorPayout.findFirst({
+          where: { expenseVoucher: { clientRequestId: payload.clientRequestId } },
+          include: PAYOUT_INCLUDE,
+        });
+        if (earlier) return replayPayout(earlier, input);
+      }
+
+      // Throws NotFoundError for anything that is not a staff account.
+      const profile = await this.getInspectorProfile(input.tenantSlug, input.inspectorId);
+      // A deleted account was settled before it went (see `remove`); paying it now has no basis.
+      if (await this.users.isStaffHidden(input.inspectorId)) {
+        throw new ConflictError('هذا الحساب محذوف — استعده أولاً إن كان له مستحقات');
+      }
+
+      const refusal = payoutRefusal(
+        payoutAllowance({ pendingBalance: profile.pendingBalance }),
+        payload.amount,
+      );
+      if (refusal) {
+        throw new ValidationError(refusal);
+      }
+
+      const { goLiveAt } = await this.ledger.config(tx);
+      if (!goLiveAt) {
+        return this.recordPayoutWithoutTreasury(tx, input);
+      }
+
+      if (!payload.accountId) {
+        throw new ValidationError({
+          code: 'INSPECTOR_PAYOUT_WALLET_REQUIRED',
+          message: 'The treasury is live, so a payout must name the wallet it is paid from.',
+        });
+      }
+      /*
+        Paid now, as the voucher is. No other road pays a commission dated
+        another day: the expense form refuses «تعويضات المسح والجباية»
+        (`EXPENSE_CATEGORY_RESERVED`), since a voucher there with no payout row
+        would leave the inspector owed what he was paid. Whether a commission
+        may be back-dated once live is Undecided (docs/open-decisions.md §18).
+      */
+      if (payload.paidAt) {
+        throw new ValidationError({
+          code: 'INSPECTOR_PAYOUT_DATE_NOT_ALLOWED',
+          message: 'With the treasury live a payout is dated today.',
+        });
+      }
+      /*
+        Earnings are counted in dollars, so a payout that left a ليرة wallet
+        would be summed as dollars against them. An unknown or stopped wallet
+        is left to `recordVoucher`, which refuses it with its own code.
+      */
+      const wallet = await tx.treasuryAccount.findFirst({
+        where: { id: payload.accountId, active: true },
+        select: { currency: true },
+      });
+      if (wallet && wallet.currency !== 'USD') {
+        throw new ValidationError({
+          code: 'INSPECTOR_PAYOUT_WALLET_NOT_USD',
+          message: 'Commissions are paid from a US dollar wallet.',
+          params: { currency: wallet.currency },
+        });
+      }
+
+      const voucher = await this.expenses.recordCommission(
+        { id: profile.inspector.id, name: profile.inspector.name },
+        {
+          accountId: payload.accountId,
+          amount: payload.amount,
+          description: payload.note,
+          invoiceNumber: payload.reference,
+          clientRequestId: payload.clientRequestId,
+        },
+        input.actor,
+      );
+      /*
+        The payout replay above found nothing for this key, so a voucher that
+        answers as a replay was written by some other form under the same key.
+        Linking a payout to it would book that money as commission.
+      */
+      if (voucher.replayed) {
+        throw new ConflictError({
+          code: 'INSPECTOR_PAYOUT_REQUEST_REUSED',
+          message: 'This request id already wrote another expense voucher.',
+        });
+      }
+
+      const { occurredAt } = await tx.expenseVoucher.findUniqueOrThrow({
+        where: { id: voucher.id },
+        select: { occurredAt: true },
+      });
+
+      const payout = await tx.inspectorPayout.create({
+        data: {
+          inspectorId: input.inspectorId,
+          amount: new Prisma.Decimal(payload.amount),
+          currency: voucher.currency,
+          paidAt: occurredAt,
+          note: payload.note?.trim() || null,
+          reference: payload.reference?.trim() || null,
+          recordedById: input.actor.id,
+          expenseVoucherId: voucher.id,
+        },
+        include: PAYOUT_INCLUDE,
+      });
+
+      /*
+        Tier 1, in the transaction, beside the voucher's own EXPENSE_RECORDED
+        row: that one says money left a wallet, this one says whom it paid.
+        Ids and figures only; the inspector is the entity.
+      */
+      await this.audit.recordInTransaction({
+        actorId: input.actor.id,
+        actorType: 'STAFF',
+        actorRole: input.actor.role as never,
+        action: 'INSPECTOR_PAYOUT_RECORDED',
+        entityType: 'User',
+        entityId: input.inspectorId,
+        after: {
+          payoutId: payout.id,
+          amount: payload.amount,
+          currency: voucher.currency,
+          voucherId: voucher.id,
+          voucherNumber: voucher.voucherNumber,
+          accountId: payload.accountId,
+        },
+      });
+
+      return { ...payoutItem(payout), replayed: false };
+    });
+  }
+
+  /**
+   * The payout as it was before the treasury: a row and its audit row, no
+   * wallet and no voucher. Kept for a municipality that has not gone live,
+   * where there is no ledger for the money to leave. The manager's alone, as
+   * it always was (`recordInspectorPayout`).
+   */
+  private async recordPayoutWithoutTreasury(
+    tx: Prisma.TransactionClient,
+    input: {
+      tenantSlug: string;
+      inspectorId: string;
+      payload: RecordInspectorPayoutInput;
+      actor: { id: string; role: string };
+    },
+  ): Promise<RecordInspectorPayoutResult> {
+    const { payload } = input;
+    if (payload.accountId) {
+      throw new ConflictError({
+        code: 'TREASURY_NOT_ACTIVE',
+        message: 'The treasury is not active, so no wallet can pay this payout yet.',
+      });
+    }
+
+    const paidAt = payload.paidAt ? new Date(payload.paidAt) : new Date();
     if (Number.isNaN(paidAt.getTime())) {
       throw new ValidationError('تاريخ الدفع غير صالح.');
     }
-    const refusal = payoutRefusal(
-      payoutAllowance({ pendingBalance: profile.pendingBalance }),
-      input.payload.amount,
-    );
-    if (refusal) {
-      throw new ValidationError(refusal);
-    }
 
-    const payout = await this.db.inspectorPayout.create({
+    const payout = await tx.inspectorPayout.create({
       data: {
         inspectorId: input.inspectorId,
-        amount: input.payload.amount,
-        currency: input.payload.currency || 'USD',
+        amount: payload.amount,
+        currency: payload.currency || 'USD',
         paidAt,
-        note: input.payload.note ?? null,
-        reference: input.payload.reference ?? null,
+        note: payload.note ?? null,
+        reference: payload.reference ?? null,
         recordedById: input.actor.id,
       },
-      include: {
-        recordedBy: {
-          select: {
-            firstName: true,
-            lastName: true,
-          },
-        },
+      include: PAYOUT_INCLUDE,
+    });
+
+    /*
+      Tier 1, in the transaction, with the figures: the same row the live path
+      writes, less the voucher. It used to be the `staff.changed` event, whose
+      listener keeps only an email, a role and a list of changed fields — so
+      the amount a payout lowered the inspector's balance by was in no audit
+      row at all. Ids and figures only; the inspector is the entity.
+    */
+    await this.audit.recordInTransaction({
+      actorId: input.actor.id,
+      actorType: 'STAFF',
+      actorRole: input.actor.role as never,
+      action: 'INSPECTOR_PAYOUT_RECORDED',
+      entityType: 'User',
+      entityId: input.inspectorId,
+      after: {
+        payoutId: payout.id,
+        amount: payload.amount,
+        currency: payout.currency,
+        paidAt: payout.paidAt.toISOString(),
       },
     });
 
-    this.events.emit('staff.changed', {
-      action: 'INSPECTOR_PAYOUT_RECORDED',
-      tenantSlug: input.tenantSlug,
-      staffId: input.inspectorId,
-      actorId: input.actor.id,
-      actorRole: input.actor.role,
-      amount: input.payload.amount,
-    });
-
-    return {
-      id: payout.id,
-      amount: Number(payout.amount),
-      currency: payout.currency,
-      paidAt: payout.paidAt.toISOString(),
-      note: payout.note,
-      reference: payout.reference,
-      recordedByName: payout.recordedBy
-        ? `${payout.recordedBy.firstName} ${payout.recordedBy.lastName}`.trim()
-        : null,
-      createdAt: payout.createdAt.toISOString(),
-    };
+    return { ...payoutItem(payout), replayed: false };
   }
+}
+
+/** A payout with what its history row shows: who recorded it, and the voucher that paid it. */
+const PAYOUT_INCLUDE = {
+  recordedBy: { select: { firstName: true, lastName: true } },
+  expenseVoucher: {
+    // `accountId` is not shown; `replayPayout` compares it.
+    select: { id: true, voucherNumber: true, voidedAt: true, accountId: true, account: { select: { name: true } } },
+  },
+} satisfies Prisma.InspectorPayoutInclude;
+
+type PayoutRow = Prisma.InspectorPayoutGetPayload<{ include: typeof PAYOUT_INCLUDE }>;
+
+/**
+ * The answer to a press whose `clientRequestId` already paid a commission.
+ *
+ * A key names one act, as an expense voucher's does (`ExpensesService.replayVoucher`):
+ * this manager paying this inspector this amount out of this wallet, for this
+ * statement. Replayed with all of them it answers with the first payout,
+ * marked `replayed`. Anything else is a new act under an old key and is
+ * refused (`TREASURY_REQUEST_KEY_REUSED`), rather than answered with a payout
+ * the manager did not ask for. The paper reference is not compared: a retry is
+ * the same payment, and the payout keeps what it was first recorded with.
+ *
+ * A payout whose voucher was cancelled since is not answered as made
+ * (`EXPENSE_ALREADY_VOID`): the manager would read «صُرفت» and hand over cash
+ * the register shows as returned, which the inspector is owed again.
+ */
+function replayPayout(
+  earlier: PayoutRow,
+  input: { inspectorId: string; payload: RecordInspectorPayoutInput; actor: { id: string } },
+): RecordInspectorPayoutResult {
+  const { payload } = input;
+  if (earlier.inspectorId !== input.inspectorId) {
+    throw new ConflictError({
+      code: 'INSPECTOR_PAYOUT_REQUEST_REUSED',
+      message: 'This request id already paid another inspector.',
+    });
+  }
+  const voucher = earlier.expenseVoucher;
+  if (
+    !voucher ||
+    !earlier.amount.equals(new Prisma.Decimal(payload.amount)) ||
+    voucher.accountId !== payload.accountId ||
+    earlier.recordedById !== input.actor.id ||
+    earlier.note !== (payload.note?.trim() || null)
+  ) {
+    throw new ConflictError({
+      code: 'TREASURY_REQUEST_KEY_REUSED',
+      message: 'This request id was already used for a different payout.',
+    });
+  }
+  if (voucher.voidedAt) {
+    throw new ConflictError({
+      code: 'EXPENSE_ALREADY_VOID',
+      message: `This request was paid as ${voucher.voucherNumber}, and that voucher has since been cancelled.`,
+      params: { voucherNumber: voucher.voucherNumber },
+    });
+  }
+  return { ...payoutItem(earlier), replayed: true };
+}
+
+function payoutItem(p: PayoutRow): InspectorPayoutItem {
+  return {
+    id: p.id,
+    amount: Number(p.amount),
+    currency: p.currency,
+    paidAt: p.paidAt.toISOString(),
+    note: p.note,
+    reference: p.reference,
+    recordedByName: p.recordedBy ? `${p.recordedBy.firstName} ${p.recordedBy.lastName}`.trim() : null,
+    createdAt: p.createdAt.toISOString(),
+    voucher: p.expenseVoucher
+      ? {
+          id: p.expenseVoucher.id,
+          voucherNumber: p.expenseVoucher.voucherNumber,
+          accountName: p.expenseVoucher.account.name,
+          voided: p.expenseVoucher.voidedAt !== null,
+        }
+      : null,
+  };
 }

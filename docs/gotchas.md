@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `feat/treasury-day-closing` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race@ff44f27` and `develop@4ad0b27`; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5; then the PR #106 review fixes; uncommitted), 2026-10-10.
+Last verified against the code: `feat/treasury-day-closing@29c9b22` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race@ff44f27` and `develop@4ad0b27`; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5; then the PR #106 review fixes) merged with PR #109 `feat/treasury-inspector-payouts-and-vouchers@c734ae3` (uncommitted), 2026-10-10.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -196,7 +196,7 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   count column that closing writes needs the trigger's exception widened in a new migration.
   Integration fixtures that need old days move money on them before closing them.
 - **Where:** `0082_treasury_day_closing` (`reject_closed_day_entry`, `reject_closed_day_count`),
-  `0084_treasury_day_closure_written_once` (a closure's day never moves; a count links only to its
+  `0087_treasury_day_closure_written_once` (a closure's day never moves; a count links only to its
   own day's closure; a repair goes through reopening the day, never an `UPDATE` of either),
   `treasury-ledger.service.ts` (`assertDayOpen`), `cash-policy.ts` (`MUNICIPAL_TIME_ZONE`).
 
@@ -1057,6 +1057,22 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   translator uses `FORMAT_LOCALE` (`ar-u-nu-latn`) from `lib/api-errors.ts`.
 - **Where:** `apps/frontend/messages/ar.json`; `lib/messages-parity.test.ts`
   refuses a `#` in any Arabic message outside `errors`.
+
+### A dark theme prints a black sheet
+
+- **What happens:** a voucher or the daily report printed from a dark screen,
+  with «Background graphics» ticked (which a clerk does to get the crest in
+  colour), comes out as black ink on a black page, margins included.
+- **Why:** the print rules forced the document's own text and boxes to black on
+  transparent, but the page behind it kept the dark theme's background, and
+  Chromium paints the page margins from the root's `color-scheme`, not from any
+  background.
+- **Do this:** print through `documentPrintCss` in
+  `components/admin/finance/official-document.tsx`, which sets
+  `color-scheme: light` and a white `html, body` in print. Check a new printed
+  document with `page.pdf({ printBackground: true })` from a dark theme.
+- **Where:** `official-document.tsx`; the daily report, «أمر الصرف» and «سند
+  القبض» share it.
 
 ### A poll keeps its user «متصل الآن»
 

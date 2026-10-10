@@ -1,6 +1,7 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import {
   INSPECTOR_PROFILE_ROLES,
+  TREASURY_ADMIN_ROLES,
   WORKING_STAFF_ROLES,
   createStaffUserSchema,
   recordInspectorPayoutSchema,
@@ -178,13 +179,21 @@ export class StaffController {
   }
 
   /**
-   * Super Admin records a commission payout made to a Field Inspector.
+   * «صرف عمولة» — a commission payout to a field inspector.
+   *
+   * The manager's alone, as it always was (docs/finance.md §5.6, §9). Once the
+   * treasury is live this writes a «PV-» voucher and a ledger debit; before, a
+   * figure that lowers what the inspector is owed. Whether an accountant may
+   * pay a commission, and on which footing (art. 35 names salaries, not
+   * commissions), is **Undecided** (docs/open-decisions.md §18), so the route
+   * stays where it was, and `StaffService.recordInspectorPayout` refuses anyone
+   * else again before it reads a figure. Pinned in route-inventory.spec.ts.
    */
-  @Roles('SUPER_ADMIN')
+  @Roles(...TREASURY_ADMIN_ROLES)
   @Post('inspectors/:id/payouts')
   async recordPayout(
     @Param('tenantSlug') tenantSlug: string,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body(new ZodValidationPipe(recordInspectorPayoutSchema))
     body: RecordInspectorPayoutInput,
     @CurrentUser() user: SessionClaims,

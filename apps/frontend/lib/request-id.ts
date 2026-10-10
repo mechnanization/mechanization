@@ -30,6 +30,7 @@ const held = new Map<string, string>();
  * page and the citizen cash page both settle one bill (`settle:<paymentId>`).
  */
 export type KeyScope =
+  | `commission:${string}`
   | `custody:${string}`
   | 'expense:pay'
   | 'expense:request'

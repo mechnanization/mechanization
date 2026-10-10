@@ -11,6 +11,7 @@ import {
 } from '@mechanization/shared-schemas';
 import { PrismaClient as TenantPrismaClient } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
+import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
 import { migrateTenantSchema } from '../../../infrastructure/prisma/tenant-migrator';
 import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-client';
 import { PrismaAuditRepository } from '../../../infrastructure/repositories/audit.repository';
@@ -1134,6 +1135,42 @@ describeIfDb('treasury controls', () => {
           ),
         ),
       ).resolves.toMatchObject({ orderStatus: 'AWAITING_ORDER' });
+    });
+
+    it('holds any other voucher naming a staff payee to it: the exemption is the salary path’s, not the payee’s', async () => {
+      /*
+        A commission voucher carries `payeeStaffId` too, and art. 35 names
+        salaries, not commissions. No route sends a commission down the urgent
+        path today (the payout is the manager's), so the one write behind every
+        voucher is driven directly, as a path that names a staff payee without
+        claiming the salary's exemption — what a commission would be.
+      */
+      await setCeilings(CEILING_LBP, null);
+      const person = staff('FIELD_INSPECTOR');
+      await db.user.create({ data: person.row });
+      const write = (
+        expenses as unknown as {
+          recordInTransaction: (
+            input: ReturnType<typeof urgent>,
+            actor: { id: string; role: string },
+            path: { payeeStaffId: string | null; exemptFromUrgentCeiling: boolean; mayUseReservedCategory: boolean },
+          ) => Promise<unknown>;
+        }
+      ).recordInTransaction.bind(expenses);
+      const vouchersBefore = await db.expenseVoucher.count();
+
+      await expect(
+        scoped(() =>
+          runInTenantTransaction(context, () =>
+            write(urgent(CEILING_LBP * 2), ACCOUNTANT(), {
+              payeeStaffId: person.id,
+              exemptFromUrgentCeiling: false,
+              mayUseReservedCategory: false,
+            }),
+          ),
+        ),
+      ).rejects.toMatchObject({ code: 'EXPENSE_URGENT_OVER_CEILING' });
+      expect(await db.expenseVoucher.count()).toBe(vouchersBefore);
     });
 
     it('has no limit while it is not set', async () => {

@@ -1,6 +1,6 @@
 # UI/UX standards: binding for every change to `apps/frontend`
 
-Last verified against the code: `feat/treasury-day-closing` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race@ff44f27` and `develop@4ad0b27`, then with `origin/fix/expense-retry-key-race`; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5; then the PR #106 review fixes; uncommitted), 2026-10-10.
+Last verified against the code: `feat/treasury-day-closing@29c9b22` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race@ff44f27` and `develop@4ad0b27`, then with `origin/fix/expense-retry-key-race`; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5; then the PR #106 review fixes) merged with PR #109 `feat/treasury-inspector-payouts-and-vouchers@c734ae3` (the payout dialog and the printed vouchers; uncommitted), 2026-10-10.
 
 This file binds every AI agent and every person who builds or reviews an
 interface in this repository. [CLAUDE.md](../CLAUDE.md) (non-negotiable 9) and
@@ -275,9 +275,11 @@ Token values, light and dark: [DESIGN.md](../DESIGN.md) "Colors".
     one map-palette module derived from the tokens (today the hex is spread
     over five map files, §17.2).
   - The printed receipt and the receipt PDF canvas, which must print black on
-    white whatever the theme, and the printed «تقرير الصندوق اليومي» (the print
-    stylesheet in `components/admin/finance/daily-cash-report.tsx`; on screen it
-    uses tokens). They should become `--paper` and `--ink` tokens.
+    white whatever the theme, and the printed treasury documents —
+    «تقرير الصندوق اليومي», «أمر الصرف» and «سند القبض» — through one print
+    stylesheet, `documentPrintCss` in
+    `components/admin/finance/official-document.tsx` (on screen they use
+    tokens). They should become `--paper` and `--ink` tokens.
   - QR codes, which need fixed dark-on-light.
   - `app/global-error.tsx`, which renders outside the token tree, and the web
     manifest's `background_color` and `theme_color`.
@@ -874,7 +876,13 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
   and the landlord-links page (counted 2026-10-08; the matrix drawer's six were
   fixed then). `ErrorState` detects offline by matching «تعذّر الاتصال» in its
   description.
-- **Copy mechanisms** (TXT-1): about 116 files branch inline on the locale (`en ?`,
+- **A shared rule that speaks Arabic** (TXT-1, TXT-6): `payoutRefusal` in
+  `packages/shared-schemas/src/payout-policy.ts` returns «لا يوجد رصيد مستحق…» and
+  «المبلغ أكبر من الرصيد المستحق…» as prose, which the payout dialog shows as the
+  field error and the server throws as an uncoded `ValidationError`, so an
+  English screen reads Arabic. It wants a reason code the screen translates
+  (found 2026-10-10).
+- **Copy mechanisms** (TXT-1): about 117 files branch inline on the locale (`en ?`,
   `locale === 'en' ?`, `isAr ?`), 62 of them through `const en = locale === 'en'`;
   `settingsCopy` serves settings and account; the 13 `messages.nav` keys are
   never read.
@@ -883,8 +891,7 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
   search by «الرقم المرجعي» for every role, but for «مشاهد فقط» the search leaves
   the reference out (`citizenSearchText`). Role-aware hints are not built
   (2026-10-06).
-- **Money formatting** (PRIM-11, PRIM-25): `inspector-payout-dialog.tsx` writes
-  `$${x.toFixed(2)}` 5 times; `charge-citizen-dialog.tsx` and
+- **Money formatting** (PRIM-11, PRIM-25): `charge-citizen-dialog.tsx` and
   `issue-fee-form.tsx` each define a local `formatLbp(value: string)`;
   `components/citizen/pay-dialog.tsx` builds «ل.ل» by hand in a local `lbp` (PRIM-10).
   The settle page's own hand-rolled field — an input with «ل.ل» absolutely placed

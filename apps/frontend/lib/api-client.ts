@@ -30,7 +30,6 @@ import type {
   FeeFrequency,
   FieldFlag,
   ImportRow,
-  InspectorPayoutItem,
   InspectorProfileResponse,
   NumberingSequence,
   OccupancyEndReason,
@@ -42,6 +41,7 @@ import type {
   PossibleDuplicatesQuery,
   PaymentStatus,
   RecordInspectorPayoutInput,
+  RecordInspectorPayoutResult,
   SequenceKey,
   SetOwnerBillingInput,
   SetUnitFeeExemptionInput,
@@ -4724,14 +4724,14 @@ export function getInspectorProfile(
   );
 }
 
-/** Super Admin records a commission payment made to an inspector */
+/** «صرف عمولة»: the manager pays an inspector's commission; `replayed` when a retried press found it already paid. */
 export function recordInspectorPayout(
   tenant: string,
   token: string,
   id: string,
   input: RecordInspectorPayoutInput,
 ) {
-  return apiFetch<InspectorPayoutItem>(
+  return apiFetch<RecordInspectorPayoutResult>(
     tenant,
     `/staff/inspectors/${encodeURIComponent(id)}/payouts`,
     {

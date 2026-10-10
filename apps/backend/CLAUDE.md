@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `feat/treasury-day-closing` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; income controls, the salary path and the urgent ceiling; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5; then the PR #106 review fixes; uncommitted), 2026-10-10.
+Last verified against the code: `feat/treasury-day-closing@29c9b22` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; income controls, the salary path and the urgent ceiling; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5; then the PR #106 review fixes) merged with PR #109 `feat/treasury-inspector-payouts-and-vouchers@c734ae3` («صرف عمولة» through `ExpensesService.recordCommission`, migration `0086`; uncommitted), 2026-10-10.
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -256,6 +256,23 @@ Data access for new code (decided):
     (`kind = 'STAFF'`, not deleted; a disabled account may still be paid) and the category is
     looked up by key (`SALARIES`). It stamps `payeeStaffId` (`0081`) on the voucher and in the
     audit row's `after`, so a person's salaries are found by id, not by name.
+  - «صرف عمولة» is `recordCommission`, the third caller of `recordInTransaction`: category
+    `FIELD_COMMISSIONS`, `payeeStaffId` the inspector, and the description the category's own name
+    when none is given. Its only caller is `StaffService.recordInspectorPayout`
+    (`POST staff/inspectors/:id/payouts`, `TREASURY_WORK_ROLES`), which is why `StaffService` now
+    takes `ExpensesService`, `TreasuryLedgerService` and `AuditService`.
+    - That method runs in one transaction under `pg_advisory_xact_lock` on
+      `<schema>:inspector-payout:<inspectorId>` (the balance owed is read and then paid, so two
+      payouts must queue), and replays a retried key by finding the payout whose voucher carries
+      it (`INSPECTOR_PAYOUT_REQUEST_REUSED` when that payout, or the voucher the key answers with,
+      belongs to someone else).
+    - It then forks on `treasuryGoLiveAt`: before go-live the old wallet-less row and its
+      `staff.changed` event; once live a voucher from a dollar wallet, the payout linked to it
+      (`inspector_payouts.expenseVoucherId`, `0086`) and a Tier 1 `INSPECTOR_PAYOUT_RECORDED` row.
+    - A payout whose voucher is voided stops counting as paid, in `getInspectorProfile` and in
+      `UserRepository.listStaff` alike.
+    - The manager's payout is the order. How the payment order applies to a commission an
+      accountant pays is **Undecided** (docs/finance.md §5.6).
 - **Income.** `IncomeService` and `IncomeController` (`t/:tenantSlug/treasury/income`), with the
   date rules and the register's period bounds in `income.plan.ts`.
   - The expense module run the other way: one transaction writes the «سند قبض», posts the
@@ -309,7 +326,7 @@ Data access for new code (decided):
   table read once per page rather than once per row. It carries no رقم مرجعي: that is a sign-in
   credential, and an integration test pins the row's exact key set so a field added later fails there
   rather than in a browser.
-- **Daily count and closing** (docs/finance.md §7, migrations 0082 and 0084). The rules are `day-closing.plan.ts`
+- **Daily count and closing** (docs/finance.md §7, migrations 0082 and 0087). The rules are `day-closing.plan.ts`
   (`planCountDate`, `planCountLine`, `planClosure`, `countsChangedSinceShown`, `planReopen`, `nextDayToClose`,
   `summariseDay`);
   `DayClosureService` (book state, a day's facts, `close`, `reopen`, `history`), `DailyCountService`

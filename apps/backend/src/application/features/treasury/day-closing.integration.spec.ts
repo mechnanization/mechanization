@@ -45,7 +45,7 @@ const MIGRATION_SQL = join(
 );
 const WRITTEN_ONCE_SQL = join(
   __dirname,
-  '../../../infrastructure/prisma/tenant/migrations/0084_treasury_day_closure_written_once/migration.sql',
+  '../../../infrastructure/prisma/tenant/migrations/0087_treasury_day_closure_written_once/migration.sql',
 );
 
 const TODAY = municipalToday();
@@ -356,7 +356,7 @@ describeIfDb('Daily count and closing', () => {
     });
   });
 
-  describe('a closure is written once (migration 0084)', () => {
+  describe('a closure is written once (migration 0087)', () => {
     const insertClosure = (client: Client, day: string) =>
       client.query(
         `INSERT INTO "${SCHEMA}"."treasury_day_closures" ("businessDate", "closedById") VALUES ($1, $2) RETURNING "id"`,

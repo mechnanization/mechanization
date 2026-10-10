@@ -4,7 +4,7 @@ import { use, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import type { ColumnDef } from '@tanstack/react-table';
-import { Ban, Plus, Receipt, X } from 'lucide-react';
+import { Ban, Plus, Printer, Receipt, X } from 'lucide-react';
 import { TREASURY_ADMIN_ROLES, TREASURY_WORK_ROLES } from '@mechanization/shared-schemas';
 import {
   getExpenseCategories,
@@ -275,9 +275,18 @@ export default function ExpensesPage({
           const voucher = row.original;
           const regularizes = mayRegularize(voucher, user);
           const voids = canVoid && voucher.status === 'RECORDED';
-          if (!regularizes && !voids) return null;
           return (
             <div className="flex flex-wrap items-center justify-end gap-2 max-sm:w-full">
+              {/* Every voucher prints, a cancelled one too: its paper says so (`ExpenseVoucherDocument`). */}
+              <Button asChild variant="ghost" size="sm" className="max-sm:flex-1">
+                <Link
+                  href={`${base}/finance/expenses/${voucher.id}/print?print=1`}
+                  aria-label={t('printFor', { number: voucher.voucherNumber })}
+                >
+                  <Printer className="size-4" aria-hidden />
+                  {t('print')}
+                </Link>
+              </Button>
               {regularizes ? (
                 <Button
                   variant="outline"
@@ -307,7 +316,7 @@ export default function ExpensesPage({
         },
       },
     ],
-    [t, locale, canVoid, user],
+    [t, locale, canVoid, user, base],
   );
 
   const totals = list.data?.totals ?? [];

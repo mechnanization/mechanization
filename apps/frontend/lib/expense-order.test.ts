@@ -7,6 +7,7 @@ import {
   mayWithdrawRequest,
   meansOutOfDate,
   paysNow,
+  printedOrder,
 } from './expense-order';
 
 const manager = { id: 'manager-1', role: 'SUPER_ADMIN' };
@@ -123,5 +124,29 @@ describe('meansOutOfDate', () => {
     for (const code of ['TREASURY_INSUFFICIENT_FUNDS', 'EXPENSE_REQUEST_NOT_YOURS', 'EXPENSE_CATEGORY_INACTIVE', 'NETWORK_ERROR']) {
       expect(meansOutOfDate(code)).toBe(false);
     }
+  });
+});
+
+describe('printedOrder', () => {
+  it('prints an urgent voucher still waiting for its order as waiting, with its reason', () => {
+    expect(
+      printedOrder({
+        orderStatus: 'AWAITING_ORDER',
+        urgentReason: 'راتب — يُدفع قبل الحوالة (المادة 35)',
+        orderedAt: null,
+        orderedByName: null,
+      }),
+    ).toEqual({ kind: 'awaiting', urgentReason: 'راتب — يُدفع قبل الحوالة (المادة 35)' });
+  });
+
+  it('prints who ordered it and when once it is ordered, regularised or not', () => {
+    expect(
+      printedOrder({
+        orderStatus: 'ORDERED',
+        urgentReason: 'تعطّلت الشاحنة أثناء الجولة',
+        orderedAt: '2026-10-10T09:30:00.000Z',
+        orderedByName: 'المدير العام',
+      }),
+    ).toEqual({ kind: 'ordered', by: 'المدير العام', at: '2026-10-10T09:30:00.000Z' });
   });
 });

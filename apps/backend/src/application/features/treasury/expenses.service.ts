@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
+  isReservedExpenseCategory,
   municipalToday,
   SALARY_URGENT_REASON,
   TREASURY_ADMIN_ROLES,
@@ -34,6 +35,27 @@ import { documentOccurredAt } from './treasury.plan';
 const PAGE_MAX = 200;
 const PAGE_DEFAULT = 50;
 
+/**
+ * What the caller of `recordInTransaction` is, said outright rather than read
+ * off the voucher's fields.
+ *
+ * Each control here belongs to one path, and inferring it from another field
+ * is how it ends up somewhere it was never meant to be: the urgent ceiling's
+ * salary exemption was once `payeeStaffId !== null`, which a commission voucher
+ * also satisfies, though art. 35 names salaries and not commissions.
+ */
+interface VoucherPath {
+  /** The staff account the voucher pays (`recordSalary`, `recordCommission`); null on the form's vouchers. */
+  payeeStaffId: string | null;
+  /** Art. 35 names salaries, so `recordSalary` alone is exempt from the urgent ceiling (D6, D7). */
+  exemptFromUrgentCeiling: boolean;
+  /** `recordCommission` alone files under a reserved category (`RESERVED_EXPENSE_CATEGORY_KEYS`). */
+  mayUseReservedCategory: boolean;
+}
+
+/** The expense form's voucher: no staff payee, held to every control. */
+const FORM_PATH: VoucherPath = { payeeStaffId: null, exemptFromUrgentCeiling: false, mayUseReservedCategory: false };
+
 /** The voucher row a list or a read returns, with everything the screen names. */
 const VOUCHER_SELECT = {
   id: true,
@@ -51,7 +73,7 @@ const VOUCHER_SELECT = {
   voidReason: true,
   orderedAt: true,
   urgentReason: true,
-  category: { select: { id: true, name: true } },
+  category: { select: { id: true, name: true, chapterCode: true, itemCode: true } },
   account: { select: { id: true, name: true, currency: true } },
   recordedBy: { select: { firstName: true, lastName: true } },
   voidedBy: { select: { firstName: true, lastName: true } },
@@ -318,12 +340,13 @@ export class ExpensesService {
    *
    * Refuses, writing nothing, when the treasury is not live, an accountant
    * gives no urgent reason or pays above the urgent ceiling, the category is
-   * gone or switched off, the date breaks one of the three rules in
+   * gone, switched off or reserved to its own path (a commission is paid
+   * through «صرف عمولة», `EXPENSE_CATEGORY_RESERVED`), the date breaks one of the three rules in
    * `planExpenseDate`, or the wallet does not hold the amount.
    */
   async record(input: RecordExpenseInput, actor: { id: string; role: string }): Promise<RecordExpenseResult> {
     try {
-      return await runInTenantTransaction(this.tenantContext, () => this.recordInTransaction(input, actor, null));
+      return await runInTenantTransaction(this.tenantContext, () => this.recordInTransaction(input, actor, FORM_PATH));
     } catch (error) {
       /*
         Two presses carrying one key, past both reads at the same moment: the
@@ -415,7 +438,11 @@ export class ExpensesService {
           urgentReason: ordersPayments(actor.role) ? undefined : SALARY_URGENT_REASON,
           clientRequestId: input.clientRequestId,
         };
-        return this.recordInTransaction(built.voucher, actor, staff.id);
+        return this.recordInTransaction(built.voucher, actor, {
+          payeeStaffId: staff.id,
+          exemptFromUrgentCeiling: true,
+          mayUseReservedCategory: false,
+        });
       });
     } catch (error) {
       if (built.voucher && isUniqueViolationOn(error, 'clientRequestId')) {
@@ -426,14 +453,80 @@ export class ExpensesService {
     }
   }
 
-  /** The one write behind `record` and `recordSalary`. `payeeStaffId` is null except for a salary. */
+  /**
+   * «صرف عمولة» — the voucher behind an inspector's commission payout
+   * (docs/finance.md §5.6).
+   *
+   * Only `StaffService.recordInspectorPayout` calls this, inside its own
+   * transaction, and it writes the payout row that points at the voucher
+   * beside it. That caller owns the rules a voucher knows nothing about: the
+   * inspector is a staff account, the amount is no more than he is owed, and
+   * the wallet holds dollars. What is left here is `recordSalary`'s shape: the
+   * seeded «تعويضات المسح والجباية» rather than a category the client names,
+   * the payee as the caller read it, and `payeeStaffId` so the voucher is found
+   * by the inspector's id.
+   *
+   * The only writer of that category (`RESERVED_EXPENSE_CATEGORY_KEYS`): the
+   * form, a request and an order refuse it, because a commission voucher with
+   * no payout row beside it would leave the inspector reading as owed what he
+   * was paid. And not exempt from the urgent ceiling — art. 35 names salaries,
+   * not commissions — should a commission ever take the urgent path.
+   *
+   * With no statement given, the voucher says what its category says: a voucher
+   * needs a description, and the category's name is the municipality's own
+   * words for what this money is, where a sentence written here would not be.
+   */
+  async recordCommission(
+    inspector: { id: string; name: string },
+    input: {
+      accountId: string;
+      amount: number;
+      description?: string;
+      invoiceNumber?: string;
+      clientRequestId?: string;
+    },
+    actor: { id: string; role: string },
+  ): Promise<RecordExpenseResult> {
+    return runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.db as Prisma.TransactionClient;
+
+      const commissions: ExpenseCategoryKey = 'FIELD_COMMISSIONS';
+      const category = await tx.expenseCategory.findFirst({
+        where: { key: commissions },
+        select: { id: true, name: true },
+      });
+      if (!category) {
+        throw new NotFoundError({
+          code: 'EXPENSE_CATEGORY_NOT_FOUND',
+          message: 'The seeded field-commissions category is missing',
+        });
+      }
+
+      return this.recordInTransaction(
+        {
+          categoryId: category.id,
+          accountId: input.accountId,
+          amount: input.amount,
+          payee: inspector.name,
+          description: input.description?.trim() || category.name,
+          invoiceNumber: input.invoiceNumber,
+          clientRequestId: input.clientRequestId,
+        },
+        actor,
+        { payeeStaffId: inspector.id, exemptFromUrgentCeiling: false, mayUseReservedCategory: true },
+      );
+    });
+  }
+
+  /** The one write behind `record`, `recordSalary` and `recordCommission`; `path` says which (`VoucherPath`). */
   private async recordInTransaction(
     input: RecordExpenseInput,
     actor: { id: string; role: string },
-    payeeStaffId: string | null,
+    path: VoucherPath,
   ): Promise<RecordExpenseResult> {
     {
       const tx = this.db as Prisma.TransactionClient;
+      const { payeeStaffId } = path;
 
       /*
         Checked before anything is written, so a double-clicked button answers
@@ -511,7 +604,7 @@ export class ExpensesService {
         });
       }
 
-      const category = await this.activeCategory(tx, input.categoryId);
+      const category = await this.activeCategory(tx, input.categoryId, path.mayUseReservedCategory);
 
       // The currency comes from the wallet, never from the request.
       const account = await this.payingAccount(tx, input.accountId);
@@ -522,10 +615,12 @@ export class ExpensesService {
         the manager's ceiling for the wallet's currency, an accountant's urgent
         payment is refused and goes to him as a request. Read from the settings
         row `config` already holds FOR SHARE. Not for the manager's own voucher,
-        which is the order, nor for a salary (`payeeStaffId`, written only by
-        `recordSalary`): art. 35 names salaries, so no ceiling holds them back.
+        which is the order, nor for a salary paid by `recordSalary` (the one
+        path that says `exemptFromUrgentCeiling`): art. 35 names salaries, so no
+        ceiling holds them back. Said by the path, never read off
+        `payeeStaffId`, which a commission voucher carries too.
       */
-      if (!ordered && payeeStaffId === null) {
+      if (!ordered && !path.exemptFromUrgentCeiling) {
         const breach = urgentCeilingBreached({
           amount: input.amount,
           currency: account.currency,
@@ -679,8 +774,9 @@ export class ExpensesService {
    *
    * A key names one act: this clerk paying this amount out of this wallet, to
    * this payee, for this, under this band — the fields the form renews its key
-   * on — and, for a salary, to this staff account (`payeeStaffId`, so two staff
-   * members who share a name are two acts; null on any other voucher). Replayed
+   * on — and, for a salary or a commission, to this staff account
+   * (`payeeStaffId`, so two staff members who share a name are two acts; null
+   * on the form's vouchers). Replayed
    * with all of them it answers with the first voucher; anything
    * else is a new act under an old key, and is refused rather than silently
    * answered with a voucher the clerk did not ask for. What the form does not
@@ -839,7 +935,8 @@ export class ExpensesService {
             message: 'The treasury is not active, so no payment can be requested from it yet.',
           });
         }
-        const category = await this.activeCategory(tx, input.categoryId);
+        // A commission is «صرف عمولة»'s alone, ordered or not (`RESERVED_EXPENSE_CATEGORY_KEYS`).
+        const category = await this.activeCategory(tx, input.categoryId, false);
         const account = await this.payingAccount(tx, input.accountId);
 
         const request = await tx.expenseRequest.create({
@@ -940,7 +1037,8 @@ export class ExpensesService {
           message: 'The treasury is not active, so no money can leave it yet.',
         });
       }
-      const category = await this.activeCategory(tx, request.categoryId);
+      // Refused even for a request filed before the category was reserved: it stays waiting, to be rejected.
+      const category = await this.activeCategory(tx, request.categoryId, false);
       const account = await this.payingAccount(tx, request.accountId);
 
       // Strong lock before anything references the wallet (see `lockAccounts`).
@@ -1119,14 +1217,19 @@ export class ExpensesService {
     });
   }
 
-  /** A band money may still be spent under. */
+  /**
+   * A band money may still be spent under — and, unless the caller is its own
+   * path (`mayUseReserved`), not one reserved to a dedicated path
+   * (`RESERVED_EXPENSE_CATEGORY_KEYS`).
+   */
   private async activeCategory(
     tx: Prisma.TransactionClient,
     categoryId: string,
+    mayUseReserved: boolean,
   ): Promise<{ id: string; name: string }> {
     const category = await tx.expenseCategory.findUnique({
       where: { id: categoryId },
-      select: { id: true, name: true, active: true },
+      select: { id: true, key: true, name: true, active: true },
     });
     if (!category) {
       throw new NotFoundError({
@@ -1138,6 +1241,13 @@ export class ExpensesService {
       throw new ConflictError({
         code: 'EXPENSE_CATEGORY_INACTIVE',
         message: 'That expense category is no longer in use.',
+        params: { category: category.name },
+      });
+    }
+    if (!mayUseReserved && isReservedExpenseCategory(category.key as ExpenseCategoryKey | null)) {
+      throw new ConflictError({
+        code: 'EXPENSE_CATEGORY_RESERVED',
+        message: 'This category is paid only through its own action (a commission through «صرف عمولة»).',
         params: { category: category.name },
       });
     }
