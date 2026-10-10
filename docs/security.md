@@ -1,6 +1,6 @@
 # Security
 
-Last verified against the code: `feat/treasury-day-closing@29c9b22` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; income controls, the salary path and the urgent ceiling; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5; then the PR #106 review fixes: the stage 5 route pin, 0087) merged with PR #109 `feat/treasury-inspector-payouts-and-vouchers@c734ae3` (the commission route opened to `TREASURY_WORK_ROLES`, the printed vouchers), committed as `6b5b038`; then the PR #109 review fixes and decision D9 (uncommitted), 2026-10-10.
+Last verified against the code: `feat/treasury-day-closing@29c9b22` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; income controls, the salary path and the urgent ceiling; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5; then the PR #106 review fixes: the stage 5 route pin, 0087) merged with PR #109 `feat/treasury-inspector-payouts-and-vouchers@c734ae3` (the commission route opened to `TREASURY_WORK_ROLES`, the printed vouchers), committed as `6b5b038`; then the PR #109 review fixes and decision D9 (uncommitted); then merged with PR #111 `feat/treasury-transfers-and-exchange@c502b5f` (transfers, exchange, new wallets, the printed transfer slip) and its review fixes and `0088` (uncommitted), 2026-10-10.
 
 Binding for every change that touches authentication, roles, tokens, validation, uploads, logging,
 headers, client storage or secrets. The rules below are correct practice. Where the code differs today,
@@ -325,6 +325,40 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   database (`0083`). `route-inventory.spec.ts` pins every handler's role list. `payerName` (a fine, a rent) may name a citizen: the audit row carries the voucher number and
   figures only. The register's search term goes to the API in the query string, as the other
   registers' do, and so falls under the URL-logging gap below.
+- **Transfers and exchange** (`t/:tenantSlug/treasury/transfers`, 2026-10-10). `GET` (the register,
+  query through `listTransfersQuerySchema`) and `GET :id` on `TREASURY_READ_ROLES`; `POST` (body
+  through `createTransferSchema`, a union on `kind`) on `TREASURY_WORK_ROLES`; `POST :id/review` on
+  `TREASURY_REVIEW_ROLES` — the auditor and the manager, never the accountant who booked it; `POST
+  :id/void` stays `TREASURY_ADMIN_ROLES`. Every id through `ParseUUIDPipe`; `GET :id` is declared
+  last so `custody/...` is never read as one. The server takes nothing about money from the client
+  that it can read itself: the currencies come from the wallets, the rate is derived from the two
+  amounts, the official rate and the tolerance from `system_settings`. A custody wallet or a stopped
+  one is refused as either end (`TRANSFER_ACCOUNT_NOT_ALLOWED`); the handover keeps its own route.
+  The retry key is serialised under a schema-scoped advisory lock and bound to its act
+  (`replayTransfer`: wallets, amounts, fee, statement, clerk — another act under it, a handover's
+  key included, is `TREASURY_REQUEST_KEY_REUSED`, a cancelled one `TRANSFER_ALREADY_VOID`, a unique
+  violation a replay); until the PR #111 review any reuse was answered as a replay of whatever the
+  key had produced. The settings row, then both wallets in ascending id order, are locked before
+  the fee and the move post, so amount + fee is judged under the lock (pinned by a race test that
+  fails without it); a cancellation takes them in the same order. The fee voucher is held to the
+  payment order like every voucher (D3). An exchange is judged only against the official rate of
+  its own currency (`EXCHANGE_PAIR_UNSUPPORTED` otherwise). Audit rows carry ids, figures and
+  rates; the money changer's name and the free-text reasons stay on the document. A fee voucher
+  cannot be cancelled alone from the expense register (`EXPENSE_IS_TRANSFER_FEE`). The review is a
+  stamp the database writes once (0088); a cancelled transfer is refused before it.
+  `route-inventory.spec.ts` pins all four new handlers, and that the accountant never reviews.
+- **Opening a wallet** (`POST /treasury/accounts`) is `TREASURY_ADMIN_ROLES`, like activation. The
+  wallet opens at zero — nothing posts an opening balance after go-live — and only in the base or
+  secondary currency. One wallet per name, kind and currency, serialised
+  (`TREASURY_ACCOUNT_NAME_TAKEN`): the dialog's answer can be lost, and a wallet is never deleted.
+- **The exchange rule** (the tolerance and the large-exchange threshold) travels with `PATCH
+  fees/settings`, whose `FEE_ADMIN_ROLES` include the accountant — the person who books the
+  exchanges this rule sends to review. So `FeesService.updateSettings` refuses a change to either by
+  anyone but the manager (`EXCHANGE_RULE_MANAGER_ONLY`); the same values sent back pass, so an
+  accountant can still save the rest of the section (`exchangeRuleChangeAllowed`, unit-tested), and
+  what he sends back is not written, so the settings audit never records him changing it. A citizen
+  reads `fees/settings` too, and `FeesController.getSettings` strips the rule for him as it does the
+  urgent ceilings (`fees-settings-citizen.spec.ts`).
 - **«من حصّل الجابي»** (`GET /treasury/transfers/custody/:collectorId/collections`) names citizens
   and carries their phone and sector, so it stays on the finance *read* roles. That is deliberate and
   it widens nobody's sight: the register itself (`EVERY_STAFF_ROLE`) already shows every staff role
@@ -600,6 +634,9 @@ These need a human. Long-running product decisions live in [docs/open-decisions.
 - **Deploy gating.** Require CI and the audit job before a production deploy, and an approval on the
   deploy job and not only the migration?
 - **Dangerous tools.** Delete `dump-tenant.js` and `reset-2fa.ts`, or rebuild them behind the target guard?
+- **Self-review of an exchange.** The manager may approve the review of an exchange he booked
+  himself. Refuse it, at the cost of a municipality with no auditor never clearing his flags?
+  ([docs/open-decisions.md](open-decisions.md) §18.)
 
 ## Unverified
 

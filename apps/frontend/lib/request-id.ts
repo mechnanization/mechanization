@@ -36,7 +36,8 @@ export type KeyScope =
   | 'expense:request'
   | 'income:new'
   | `salary:${string}`
-  | `settle:${string}`;
+  | `settle:${string}`
+  | 'transfer:new';
 
 /** The key held for this act, minted the first time it is asked for. */
 export function heldKey(tenant: string, scope: KeyScope): string {

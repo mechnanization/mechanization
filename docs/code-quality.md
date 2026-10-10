@@ -1,6 +1,6 @@
 # Code quality
 
-Last verified against the code: `feat/treasury-daily-count-and-closure` (on `fix/expense-retry-key-race@ff44f27`), 2026-10-10.
+Last verified against the code: `feat/treasury-day-closing` (with PR #111 `feat/treasury-transfers-and-exchange@c502b5f` merged and its review fixes, uncommitted), 2026-10-10.
 
 Two parts: the code-pattern rules every change follows, and the debt the code carries today. The debt
 is not a precedent. **Fix an item when you touch its file, and remove its row in the same change.** Add a
@@ -82,12 +82,14 @@ in [docs/ui-ux-standards.md](ui-ux-standards.md) §17.
 | `BackupController` (unregistered), `BackupService` | Kept for a rebuild; restore aborts once a tenant has ledger rows | **Undecided:** rebuild or delete |
 | `test:e2e` script; `apps/backend/tsconfig.json` `paths` `@shared/*` | Points at a missing directory; an alias nothing imports | Delete, or build an HTTP suite (supertest is installed) |
 | `InfrastructureModule` docblock ("the only module that knows Prisma"), `AppModule` scheduler comment (Vercel Cron), `envSchema` SMTP message ("through Supabase"), `IdentityService` `challengeTotp` comment ("one-step window"), `createApiApp` docblock ("two ways this API runs"), `User.requiresTotp` docblock | Comments that contradict the code | Rewrite to match the code |
+| `TransfersService.list` (`kind` = `SAME_CURRENCY` / `EXCHANGE`) | Reads the id of every transfer whose currencies match, unpaged, and passes them back as an `IN` list, because Prisma cannot compare two columns of one row; the register grows by every handover | A raw, schema-qualified, paged query for that filter, or a generated `isExchange` column with an index |
 
 ### Frontend (code-level)
 
 | Location (path + symbol) | Problem | Correct replacement |
 |---|---|---|
 | `apps/frontend/lib/api-client.ts` (5,782 lines) | One file for every feature's client | Split per feature under `apps/frontend/lib`, keeping `apiFetch` shared |
+| `transfer-document.tsx`, `voucher-documents.tsx`, `daily-cash-report.tsx` (`documentPrintCss`) | The printed documents hide the page by `visibility` and position their own root absolutely, beside the `data-print-root` rule in `globals.css` that the account statement uses; two print mechanisms for one kind of page | One: move the documents onto `data-print-root`, with each page size named there |
 | 40 `.tsx` files over 600 lines, led by `building-unit-forms.tsx` (3,376), `building-editor.tsx` (3,288), `citizen-form.tsx` (2,582), `fullscreen-map.tsx` (2,489), `citizen-editor.tsx` (2,310) | God components (CODE-6) | Split into `components/admin/<feature>/*` pieces with one job each, as `components/admin/cases/` did |
 | `process.env.NEXT_PUBLIC_API_URL` read in 10 files; `NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN` in `fullscreen-map.tsx`, `parcel-pin-picker.tsx`, `zone-editor-map.tsx` | Config and fallback repeated | One validated config module in `apps/frontend/lib` |
 | `TenantLayout` `getTenant`, `ProtectedAdminLayout` `getTenantName`, the citizen layout's `getTenant` | The tenant config fetch exists three times | One server-side helper |

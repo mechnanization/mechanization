@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `feat/treasury-day-closing@29c9b22` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race@ff44f27` and `develop@4ad0b27`; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5; then the PR #106 review fixes) merged with PR #109 `feat/treasury-inspector-payouts-and-vouchers@c734ae3`, committed as `6b5b038`; then the PR #109 review fixes and decision D9 (uncommitted), 2026-10-10.
+Last verified against the code: `feat/treasury-day-closing@29c9b22` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race@ff44f27` and `develop@4ad0b27`; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5; then the PR #106 review fixes) merged with PR #109 `feat/treasury-inspector-payouts-and-vouchers@c734ae3`, committed as `6b5b038`; then the PR #109 review fixes and decision D9 (uncommitted); then merged with PR #111 `feat/treasury-transfers-and-exchange@c502b5f` (transfers, exchange, new wallets, the printed transfer slip) and its review fixes and `0088` (uncommitted), 2026-10-10.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -424,6 +424,46 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **Do this:** put `/usr/lib/postgresql/17/bin` first on `PATH` and assert the
   version.
 - **Where:** `migrate-database.yml`, step "Install Postgres 17 client and age".
+
+### A lock-order test cannot fail while a document number is drawn first
+
+- **What happens:** a test that runs transfers both ways over one pair of
+  wallets, to prove they cannot deadlock, passes with the wallet lock order
+  removed.
+- **Why:** every transfer draws its «TR-» number from `document_counters`,
+  which row-locks the month's counter. That queues every concurrent transfer
+  before a wallet is touched, so the inversion the test hunts never happens.
+  Any act that draws a document number first has the same cover.
+- **Do this:** pin a lock by what it changes, not by a deadlock: the transfer
+  suite races two transfers for one wallet and checks the loser is refused with
+  amount + fee against the balance the winner left, which only holds when both
+  wallets are locked before the balance is read. Remove the lock and run it to
+  see it fail (docs/code-quality.md, rule 12).
+- **Where:** `TransfersService.create`, `TreasuryLedgerService.lockAccounts`,
+  `transfers-exchange.integration.spec.ts`.
+
+### A new stamp column is refused until the write-once trigger names it
+
+- **What happens:** a column added to a treasury document after `0083` — a
+  review stamp, a second approval — is written by an `UPDATE` in the code, and
+  every such `UPDATE` fails with «only its stamps may change after it is
+  written», reaching the user as a server error. The migration that added the
+  column applied cleanly, and a test that inserts the row with the column set
+  passes.
+- **Why:** `reject_treasury_document_mutation(<stamps>)` (0083) compares the
+  whole row before and after, minus the stamps its trigger was created with. A
+  new column is outside that list until the trigger is re-created with it.
+  PR #111's `0084` added `reviewedAt`/`reviewedById`/`reviewNote` to
+  `treasury_transfers` without it, and no exchange could be reviewed until
+  `0088`.
+- **Do this:** in the migration that adds a column some path UPDATEs — or a new
+  one, if that migration may already be applied — `DROP TRIGGER IF EXISTS` and
+  `CREATE TRIGGER` the table's `*_written_once` trigger with the column in its
+  stamp list, and test the `UPDATE` itself against a migrated schema, not the
+  insert. A cancelled document accepts no stamp at all, so refuse the act on a
+  cancelled row with a code before the trigger does.
+- **Where:** `0083_treasury_controls`, `0088_treasury_transfer_review_stamp`,
+  `TransfersService.review`, `transfers-review.integration.spec.ts`.
 
 ### Advisory-lock keys must match character for character
 

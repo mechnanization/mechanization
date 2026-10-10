@@ -4,6 +4,7 @@ import {
   isReservedExpenseCategory,
   municipalToday,
   SALARY_URGENT_REASON,
+  TRANSFER_FEE_URGENT_REASON,
   TREASURY_ADMIN_ROLES,
   type ExpenseCategoryKey,
   type ExpenseCategoryView,
@@ -534,7 +535,60 @@ export class ExpensesService {
     });
   }
 
-  /** The one write behind `record`, `recordSalary` and `recordCommission`; `path` says which (`VoucherPath`). */
+  /**
+   * «رسوم تحويل ومصرفية» — the voucher behind a transfer's fee (docs/finance.md §6.2).
+   *
+   * Only `TransfersService.create` calls this, inside its own transaction, after
+   * it has taken the settings row and locked both wallets, so the fee and the
+   * move commit together and no lock is taken out of order. The category is the
+   * seeded `TRANSFER_FEES`, never the client's. No retry key of its own: the
+   * transfer's replays the whole act, fee included. The date and its reason are
+   * the transfer's, judged by the same three rules.
+   *
+   * The payment order (D3) holds here as on every voucher: the manager's
+   * transfer is the order of its fee; an accountant's fee is paid at once on
+   * the urgent path with `TRANSFER_FEE_URGENT_REASON`, written here, held to the
+   * urgent ceiling (D6), and waits for the manager's regularisation.
+   */
+  async recordTransferFee(
+    input: {
+      accountId: string;
+      amount: number;
+      payee: string;
+      description: string;
+      paidOn?: string;
+      adjustmentReason?: string;
+    },
+    actor: { id: string; role: string },
+  ): Promise<RecordExpenseResult> {
+    return runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.db as Prisma.TransactionClient;
+      const fees: ExpenseCategoryKey = 'TRANSFER_FEES';
+      const category = await tx.expenseCategory.findFirst({ where: { key: fees }, select: { id: true } });
+      if (!category) {
+        throw new NotFoundError({
+          code: 'EXPENSE_CATEGORY_NOT_FOUND',
+          message: 'The seeded transfer-fees category is missing',
+        });
+      }
+      return this.recordInTransaction(
+        {
+          categoryId: category.id,
+          accountId: input.accountId,
+          amount: input.amount,
+          payee: input.payee,
+          description: input.description,
+          paidOn: input.paidOn,
+          adjustmentReason: input.adjustmentReason,
+          urgentReason: ordersPayments(actor.role) ? undefined : TRANSFER_FEE_URGENT_REASON,
+        },
+        actor,
+        FORM_PATH,
+      );
+    });
+  }
+
+  /** The one write behind `record`, `recordSalary`, `recordCommission` and `recordTransferFee`; `path` says which (`VoucherPath`). */
   private async recordInTransaction(
     input: RecordExpenseInput,
     actor: { id: string; role: string },
@@ -868,6 +922,23 @@ export class ExpensesService {
    * that has quietly forgotten the third.
    */
   async void(id: string, reason: string, actor: { id: string; role: string }): Promise<ExpenseVoucherView> {
+    return this.voidVoucher(id, reason, actor, false);
+  }
+
+  /**
+   * Cancels a transfer's fee voucher, as part of cancelling the transfer.
+   * `TransfersService.void` is the only caller; `void` refuses these alone.
+   */
+  async voidTransferFee(id: string, reason: string, actor: { id: string; role: string }): Promise<ExpenseVoucherView> {
+    return this.voidVoucher(id, reason, actor, true);
+  }
+
+  private async voidVoucher(
+    id: string,
+    reason: string,
+    actor: { id: string; role: string },
+    asTransferFee: boolean,
+  ): Promise<ExpenseVoucherView> {
     return runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
 
@@ -890,6 +961,24 @@ export class ExpensesService {
           code: 'EXPENSE_ALREADY_VOID',
           message: 'This expense voucher has already been cancelled.',
         });
+      }
+      /*
+        A transfer's fee is half of one act: cancelled alone, it would put the
+        fee back while the transfer still says it was charged. It goes with
+        the transfer or not at all.
+      */
+      if (!asTransferFee) {
+        const owner = await tx.treasuryTransfer.findFirst({
+          where: { feeVoucherId: id },
+          select: { transferNumber: true },
+        });
+        if (owner) {
+          throw new ConflictError({
+            code: 'EXPENSE_IS_TRANSFER_FEE',
+            message: `This voucher is the fee of transfer ${owner.transferNumber}; cancel the transfer.`,
+            params: { transfer: owner.transferNumber },
+          });
+        }
       }
 
       const voidedAt = new Date();

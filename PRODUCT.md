@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية الذكية)
 
-Last verified against the code: `feat/treasury-day-closing@29c9b22` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; the salary path and the urgent ceiling; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5) merged with PR #109 `feat/treasury-inspector-payouts-and-vouchers@c734ae3` (inspector payouts and the printed vouchers), committed as `6b5b038`; then the PR #109 review fixes and decision D9 (uncommitted), 2026-10-10.
+Last verified against the code: `feat/treasury-day-closing@29c9b22` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; the salary path and the urgent ceiling; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5) merged with PR #109 `feat/treasury-inspector-payouts-and-vouchers@c734ae3` (inspector payouts and the printed vouchers), committed as `6b5b038`; then the PR #109 review fixes and decision D9 (uncommitted); then merged with PR #111 `feat/treasury-transfers-and-exchange@c502b5f` (transfers, exchange, new wallets, the printed transfer slip) and its review fixes and `0088` (uncommitted), 2026-10-10.
 
 A multi-tenant municipal platform for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastral map, municipal fee billing (رسوم القيمة التأجيرية
@@ -45,8 +45,27 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
     ليرة and dollars, a statement for each, and their total at the municipality's rate. A citizen payment credits
     the right wallet automatically. `SUPER_ADMIN` activates it once by entering the counted opening
     balances; the accountant works it, the auditor and view-only staff read it. Income, the
-    collector handover and the daily count and day closing are below; exchange, bank deposits and
-    petty cash follow in later stages ([docs/finance.md](docs/finance.md)).
+    collector handover, transfers and exchange, and the daily count and day closing are below. The
+    manager adds a bank account or a petty-cash fund («إضافة حساب»); it opens at zero and is filled
+    by a transfer, and a second wallet of the same name, kind and currency is refused
+    ([docs/finance.md](docs/finance.md)).
+  - **المناقلات والمصارفة**: money between the municipality's own wallets, in one register with the
+    collectors' handovers.
+    - An *internal transfer* moves one currency — a Whish cash-out, a bank deposit, topping up
+      petty cash. Any bank or Whish fee is taken from the source with it and filed as its own «أمر
+      صرف» under «رسوم تحويل ومصرفية»: the manager's transfer is the order of its fee; an
+      accountant's fee is paid at once as an art. 35 payment with a reason the system writes, held
+      to the urgent-payment ceiling, and waits for the manager's order.
+    - An *exchange* sells one currency for the other: the accountant enters what left and what
+      arrived (or the rate the صرّاف quoted), and the screen shows the rate against the
+      municipality's own. A rate further than the allowed difference (3% unless the manager changes
+      it) needs a written reason. Such an exchange, any exchange above the large-exchange threshold
+      ($1,000 unless changed), and any exchange made with no official rate set are booked at once
+      and wait, amber, for an auditor or the manager to approve the review, once.
+    - Every transfer prints as a «سند» with the three signatures (handed over, received,
+      accountant). Only the manager cancels one; its fee goes back with it, and a cancellation is
+      refused while the destination no longer holds the money.
+    - The two exchange settings are the manager's alone, and a citizen does not see them.
   - **النفقات**: an expense register and «أمر صرف».
     - Money leaves on the payment order, as the municipal accounting decree requires (Decree
       5595/1982 art. 28 and 33). The accountant prepares «طلب أمر صرف»: what, to whom, from which

@@ -1,5 +1,6 @@
 import {
   ArrowLeftRight,
+  ArrowRightLeft,
   BadgeDollarSign,
   BanknoteArrowDown,
   BanknoteArrowUp,
@@ -131,9 +132,10 @@ export interface NavGroup {
  *    of their own: a clerk past the survey folds it away instead of scrolling
  *    past three quiet queues.
  *  - «الرسوم والجباية» and «الخزينة» — money, as two jobs. Billing citizens
- *    is the collector's and the counter's; the treasury's books are the
- *    accountant's. One «المالية» of seven rows was the flat list again, and a
- *    collector saw a heading of which he could open three rows.
+ *    and the collectors' rounds, down to the handover, are the collection
+ *    side; the treasury's books are the accountant's. One «المالية» of seven
+ *    rows was the flat list again, and a collector saw a heading of which he
+ *    could open three rows.
  *
  * No group holds more than five rows: past that a heading stops helping the
  * eye find a row. Each row has an icon of its own, so a folded rail still tells
@@ -443,6 +445,26 @@ export const NAV_GROUPS: NavGroup[] = [
         roles: FEE_READ_ROLES,
         keywords: ['براءة ذمة', 'براءة ذمّة', 'رقم العقار', 'مستحق', 'دين', 'clearance', 'parcel', 'owed'],
       },
+      /*
+        What each collector still carries, and the handover into the safe.
+        Under «الرسوم والجباية» since 2026-10-10, when «المناقلات والمصارفة»
+        made «الخزينة» six rows: the round and its handover are the end of
+        collecting, and the group's name already says الجباية. Still
+        `TREASURY_READ_ROLES`, so a collector, who sees this group, does not
+        see this row.
+        Reading is `TREASURY_READ_ROLES`, the list `TransfersController` puts on
+        `GET /treasury/transfers/custody`; receiving is `TREASURY_WORK_ROLES`
+        and is gated on the page. The longest match wins (`activeNavItem`), so
+        a collector's own page, `/finance/collectors/:id`, lights this row up.
+      */
+      {
+        path: '/finance/collectors',
+        label: 'الجباة والتحصيل',
+        labelEn: 'Collectors & handover',
+        icon: HandCoins,
+        roles: TREASURY_READ_ROLES,
+        keywords: ['جباة', 'جابي', 'عهدة', 'تحصيل', 'تسليم', 'استلام', 'collectors', 'custody', 'handover'],
+      },
     ],
   },
   /*
@@ -467,21 +489,6 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: Landmark,
         roles: TREASURY_READ_ROLES,
         keywords: ['خزينة', 'صندوق', 'رصيد', 'أرصدة', 'حساب', 'نقد', 'treasury', 'safe', 'balance', 'cash'],
-      },
-      /*
-        What each collector still carries, and the handover into the safe.
-        Reading is `TREASURY_READ_ROLES`, the list `TransfersController` puts on
-        `GET /treasury/transfers/custody`; receiving is `TREASURY_WORK_ROLES`
-        and is gated on the page. The longest match wins (`activeNavItem`), so
-        a collector's own page, `/finance/collectors/:id`, lights this row up.
-      */
-      {
-        path: '/finance/collectors',
-        label: 'الجباة والتحصيل',
-        labelEn: 'Collectors & handover',
-        icon: HandCoins,
-        roles: TREASURY_READ_ROLES,
-        keywords: ['جباة', 'جابي', 'عهدة', 'تحصيل', 'تسليم', 'استلام', 'collectors', 'custody', 'handover'],
       },
       /*
         Money in that no citizen's bill brought: the Independent Municipal
@@ -512,6 +519,23 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: BanknoteArrowDown,
         roles: TREASURY_READ_ROLES,
         keywords: ['نفقات', 'صرف', 'مصاريف', 'سند صرف', 'فاتورة', 'expense', 'spending', 'voucher', 'payout'],
+      },
+      /*
+        Money between the municipality's own wallets: a Whish cash-out, a bank
+        deposit, funding petty cash, and المصارفة between ليرة and dollars. After
+        the money in and the money out, since it is neither. Every finance reader
+        sees the register, the auditor included — the review queue is theirs.
+        Recording is `TREASURY_WORK_ROLES` and reviewing `TREASURY_REVIEW_ROLES`,
+        gated on the pages and by `TransfersController`. A collector's handover
+        stays on «الجباة والتحصيل»; it is listed here too.
+      */
+      {
+        path: '/finance/transfers',
+        label: 'المناقلات والمصارفة',
+        labelEn: 'Transfers & exchange',
+        icon: ArrowRightLeft,
+        roles: TREASURY_READ_ROLES,
+        keywords: ['مناقلة', 'تحويل', 'مصارفة', 'صرّاف', 'سعر الصرف', 'إيداع', 'سلفة', 'transfer', 'exchange', 'deposit', 'review'],
       },
       /*
         The day's end: each wallet counted against the books, the day closed so

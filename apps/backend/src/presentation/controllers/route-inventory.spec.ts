@@ -169,11 +169,15 @@ describe('the treasury routes (docs/finance.md §9)', () => {
   const READ = ['ACCOUNTANT', 'AUDITOR', 'SUPER_ADMIN', 'VIEWER'];
   const WORK = ['ACCOUNTANT', 'SUPER_ADMIN'];
   const ADMIN = ['SUPER_ADMIN'];
+  // Who clears a flagged exchange (§6.3): the auditor and the manager, never the accountant who booked it.
+  const REVIEW = ['AUDITOR', 'SUPER_ADMIN'];
   const ALL_BUT_VIEWER = ['ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'AUDITOR', 'COLLECTOR', 'FIELD_INSPECTOR', 'SUPER_ADMIN'];
   const expected: Record<string, string[]> = {
     'TreasuryController.overview': READ,
     'TreasuryController.statement': READ,
     'TreasuryController.activate': ADMIN,
+    // «إضافة حساب» (§6.4): a wallet is opened by the manager alone.
+    'TreasuryController.createAccount': ADMIN,
     'ExpensesController.categories': READ,
     'ExpensesController.createCategory': ADMIN,
     'ExpensesController.updateCategory': ADMIN,
@@ -201,6 +205,10 @@ describe('the treasury routes (docs/finance.md §9)', () => {
     'TransfersController.list': READ,
     'TransfersController.receiveCustody': WORK,
     'TransfersController.void': ADMIN,
+    // Stage 4 (§6): an internal transfer or an exchange is work; its slip is read; its review is the auditor's.
+    'TransfersController.create': WORK,
+    'TransfersController.get': READ,
+    'TransfersController.review': REVIEW,
     // Stage 5 (§7): the sheet, the history and the report are read; counting and closing are work;
     // reopening a closed day is the manager's alone.
     'TreasuryClosingController.sheet': READ,
@@ -233,12 +241,17 @@ describe('the treasury routes (docs/finance.md §9)', () => {
     expect([...(route?.roles ?? [])].sort()).toEqual([...roles].sort());
   });
 
-  it('lets no one but the manager order, refuse, regularise, cancel or reopen a closed day', () => {
+  it('lets no one but the manager order, refuse, regularise, cancel, reopen a closed day or open a wallet', () => {
     // `void` covers an expense, an income voucher and a transfer alike.
-    const managerOnly = ['orderRequest', 'rejectRequest', 'regularize', 'void', 'activate', 'reopen'];
+    const managerOnly = ['orderRequest', 'rejectRequest', 'regularize', 'void', 'activate', 'reopen', 'createAccount'];
     const wider = treasury.filter(
       (route) => managerOnly.includes(route.name.split('.')[1]) && (route.roles ?? []).some((role) => role !== 'SUPER_ADMIN'),
     );
     expect(wider.map((route) => route.name)).toEqual([]);
+  });
+
+  it('never lets the accountant, who books an exchange, clear its review', () => {
+    const route = treasury.find((candidate) => candidate.name === 'TransfersController.review');
+    expect(route?.roles ?? []).not.toContain('ACCOUNTANT');
   });
 });

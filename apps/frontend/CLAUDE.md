@@ -1,6 +1,6 @@
 # apps/frontend: agent guide
 
-Last verified against the code: `feat/treasury-day-closing@29c9b22` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race@ff44f27` and `develop@4ad0b27`, then with `origin/fix/expense-retry-key-race`; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5; then the PR #106 review fixes) merged with PR #109 `feat/treasury-inspector-payouts-and-vouchers@c734ae3` («صرف عمولة», the printed vouchers, `official-document.tsx`; uncommitted), 2026-10-10.
+Last verified against the code: `feat/treasury-day-closing@29c9b22` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race@ff44f27` and `develop@4ad0b27`, then with `origin/fix/expense-retry-key-race`; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5; then the PR #106 review fixes) merged with PR #109 `feat/treasury-inspector-payouts-and-vouchers@c734ae3` («صرف عمولة», the printed vouchers, `official-document.tsx`; uncommitted); then merged with PR #111 `feat/treasury-transfers-and-exchange@c502b5f` (transfers, exchange, new wallets, the printed transfer slip) and its review fixes and `0088` (uncommitted), 2026-10-10.
 
 Next.js 15 app router, React 18, next-intl 4, TanStack Query 5, Tailwind 3.4 with
 tailwind-merge 3, Radix and lucide-react. One app serves the staff dashboard and the
@@ -24,7 +24,7 @@ app/[tenant]/[locale]/layout.tsx        TenantLayout (server, force-dynamic) + e
       «صرف عمولة» per inspector row, `components/admin/inspector-payout-dialog.tsx`, SUPER_ADMIN — it reads the inspector's profile)
     (settings › المالية: «سقف الدفع العاجل», one per currency, empty for none, `finance-section.tsx`;
       a save sends a ceiling only when its field changed, `ceilingChange` in lib/urgent-ceiling.ts)
-    finance (الخزينة) · finance/accounts/[accountId] (كشف حساب: prints through `data-print-root`;
+    finance (الخزينة; the manager's «إضافة حساب», `components/admin/finance/add-account-dialog.tsx`) · finance/accounts/[accountId] (كشف حساب: prints through `data-print-root`;
       until stage 5 the one-day print was the daily register, now finance/daily/report;
       SUPER_ADMIN cancels a handover from its row, «إلغاء التسليم»,
       components/admin/finance/void-transfer-dialog.tsx, `mayVoidTransfer` in lib/treasury-statement.ts)
@@ -40,7 +40,16 @@ app/[tenant]/[locale]/layout.tsx        TenantLayout (server, force-dynamic) + e
     finance/income (الإيرادات) · finance/income/new (تسجيل إيراد جديد)
     finance/income/[voucherId]/print (سند القبض — A4 portrait, QR of the number; `?print=1`)
     finance/income/categories (بنود الإيرادات — every reader sees the list, the manager edits it)
-    finance/collectors (الجباة والتحصيل — عهدة الجباة and «استلام الصندوق», moved off the treasury page)
+    finance/transfers (المناقلات والمصارفة — the register, the review queue; review on TREASURY_REVIEW_ROLES;
+      drawn through `readView`, a failed re-read is a `RefreshFailedAlert`)
+    finance/transfers/new (تحويل داخلي or مصارفة, `record-transfer-form.tsx`, sticky summary; the key
+      is held under `transfer:new` and follows `keyIsSpent`, the form stays locked after a 2xx, a
+      replay is announced as already recorded, and while the key is in doubt the shortage and the
+      rate-reason checks warn instead of refusing; the page keeps the form on a failed re-read)
+    finance/transfers/[transferId]/print (سند المناقلة — A4 portrait, `transfer-document.tsx`; `?print=1`;
+      `readView`, as every print page)
+    finance/collectors (الجباة والتحصيل — عهدة الجباة and «استلام الصندوق»; its nav row is under
+     «الرسوم والجباية» since 2026-10-10, when transfers made «الخزينة» six rows)
     finance/collectors/[collectorId] (ما حصّله الجابي)
     finance/daily (جرد وإقفال اليومية — the count, the close, the manager's reopen; `?date=`;
       the close sends the counts its dialog listed, `closeRequest` in lib/daily-count.ts; a save

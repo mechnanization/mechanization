@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react';
 import { useTranslations } from 'next-intl';
 import { getMunicipalitySettings, getTenantConfig, logApiError } from '@/lib/api-client';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { SummaryRow } from '@/components/ui/summary-list';
 
 /**
  * The parts every printed treasury document shares: «تقرير الصندوق اليومي»,
@@ -95,6 +96,15 @@ export function LetterheadCrest({ crest }: { crest: string | null }): React.JSX.
   // A data URI from الإعدادات: nothing for next/image to optimise, and no host for the CSP.
   // eslint-disable-next-line @next/next/no-img-element
   return <img src={crest} alt="" className="size-16 object-contain" />;
+}
+
+/** A labelled line of a printed document; the value may wrap, since a statement is prose. */
+export function DocumentRow({ label, children }: { label: string; children: React.ReactNode }): React.JSX.Element {
+  return (
+    <SummaryRow label={label}>
+      <span className="whitespace-normal break-words text-end">{children}</span>
+    </SummaryRow>
+  );
 }
 
 /** «الاسم / التوقيع / التاريخ» with a line to write on, under each signatory's title. */

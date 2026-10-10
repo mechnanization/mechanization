@@ -154,9 +154,9 @@ describeIfDb('treasury controls', () => {
     const auditService = new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never);
     ledger = new TreasuryLedgerService(context);
     payments = new PaymentLedgerService(context, auditService, ledger);
-    transfers = new TransfersService(context, ledger, auditService);
     treasury = new TreasuryService(context, ledger, auditService);
     expenses = new ExpensesService(context, ledger, auditService);
+    transfers = new TransfersService(context, ledger, auditService, expenses);
     income = new IncomeService(context, ledger, auditService);
     fees = new FeesService(
       context,

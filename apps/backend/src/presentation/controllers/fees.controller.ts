@@ -92,8 +92,16 @@ export class FeesController {
     // Still staff-only when asked for — a citizen cannot opt in.
     const settings = await this.fees.getSettings(includeLogo === 'true' && Boolean(user.role));
     if (user.role) return settings;
-    // A citizen reads how to pay, not the limits the treasury sets on its own staff.
-    const { urgentExpenseCeilingLbp: _lbp, urgentExpenseCeilingUsd: _usd, ...forCitizen } = settings;
+    // A citizen reads how to pay, not the limits the treasury sets on its own staff:
+    // the urgent-payment ceilings (D6) and the exchange rule that decides which
+    // exchanges an auditor reviews (0084).
+    const {
+      urgentExpenseCeilingLbp: _lbp,
+      urgentExpenseCeilingUsd: _usd,
+      exchangeRateTolerancePercent: _tolerance,
+      largeExchangeThreshold: _large,
+      ...forCitizen
+    } = settings;
     return forCitizen;
   }
 

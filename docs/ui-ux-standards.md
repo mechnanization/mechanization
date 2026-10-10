@@ -1,6 +1,6 @@
 # UI/UX standards: binding for every change to `apps/frontend`
 
-Last verified against the code: `feat/treasury-day-closing@29c9b22` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race@ff44f27` and `develop@4ad0b27`, then with `origin/fix/expense-retry-key-race`; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5; then the PR #106 review fixes) merged with PR #109 `feat/treasury-inspector-payouts-and-vouchers@c734ae3` (the payout dialog and the printed vouchers; uncommitted), 2026-10-10.
+Last verified against the code: `feat/treasury-day-closing@29c9b22` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race@ff44f27` and `develop@4ad0b27`, then with `origin/fix/expense-retry-key-race`; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5; then the PR #106 review fixes) merged with PR #109 `feat/treasury-inspector-payouts-and-vouchers@c734ae3` (the payout dialog and the printed vouchers; uncommitted); then merged with PR #111 `feat/treasury-transfers-and-exchange@c502b5f` (transfers, exchange, new wallets, the printed transfer slip) and its review fixes and `0088` (uncommitted), 2026-10-10.
 
 This file binds every AI agent and every person who builds or reviews an
 interface in this repository. [CLAUDE.md](../CLAUDE.md) (non-negotiable 9) and
@@ -276,7 +276,7 @@ Token values, light and dark: [DESIGN.md](../DESIGN.md) "Colors".
     over five map files, §17.2).
   - The printed receipt and the receipt PDF canvas, which must print black on
     white whatever the theme, and the printed treasury documents —
-    «تقرير الصندوق اليومي», «أمر الصرف» and «سند القبض» — through one print
+    «تقرير الصندوق اليومي», «أمر الصرف», «سند القبض» and «سند المناقلة» — through one print
     stylesheet, `documentPrintCss` in
     `components/admin/finance/official-document.tsx` (on screen they use
     tokens). They should become `--paper` and `--ink` tokens.

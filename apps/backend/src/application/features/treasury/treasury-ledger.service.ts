@@ -198,12 +198,20 @@ export class TreasuryLedgerService {
    * strong lock first, in the same id order as `post`, is what keeps guarantee 1
    * deadlock-free across callers. `post` re-locking rows this transaction
    * already holds costs nothing.
+   *
+   * An act that posts more than once — a transfer and the voucher for its fee
+   * — calls this first with every wallet it will touch: two `post`s, each
+   * locking in order, can still meet in the opposite order between them.
+   * Returns the wallets that exist; `post` reads their names from it.
    */
-  async lockAccounts(tx: Prisma.TransactionClient, accountIds: string[]): Promise<void> {
+  async lockAccounts(
+    tx: Prisma.TransactionClient,
+    accountIds: readonly string[],
+  ): Promise<Array<{ id: string; name: string; currency: string }>> {
     const ids = [...new Set(accountIds)].sort();
-    if (ids.length === 0) return;
-    await tx.$queryRaw`
-      SELECT "id"
+    if (ids.length === 0) return [];
+    return tx.$queryRaw<Array<{ id: string; name: string; currency: string }>>`
+      SELECT "id", "name", "currency"
         FROM ${this.S}treasury_accounts
        WHERE "id" = ANY(${ids}::uuid[])
        ORDER BY "id"
@@ -242,18 +250,7 @@ export class TreasuryLedgerService {
       net.set(draft.accountId, (net.get(draft.accountId) ?? new Prisma.Decimal(0)).plus(draft.amount));
     }
     const ids = [...net.keys()].sort();
-
-    /*
-      Locked in id order. Two transfers over the same pair of wallets, opposite
-      ways round, would otherwise each hold one row and wait for the other.
-    */
-    const locked = await tx.$queryRaw<Array<{ id: string; name: string; currency: string }>>`
-      SELECT "id", "name", "currency"
-        FROM ${this.S}treasury_accounts
-       WHERE "id" = ANY(${ids}::uuid[])
-       ORDER BY "id"
-       FOR UPDATE
-    `;
+    const locked = await this.lockAccounts(tx, ids);
     const byId = new Map(locked.map((row) => [row.id, row]));
 
     for (const id of ids) {

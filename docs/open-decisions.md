@@ -824,6 +824,20 @@ is written up, with its grounds, in
 - **Which settings the accountant may change.** The settings route admits him for every field
   except the urgent ceilings, including the official exchange rate ([security.md](security.md)
   gaps). **Undecided.**
+- **A transfer's fee and the payment order (PR #111 review, 2026-10-10).** A bank or Whish fee
+  is taken by the provider as the money moves, so it cannot wait for the order. Until decided,
+  the code applies D3 as to any voucher: the manager's transfer is the order of its fee, and an
+  accountant's fee is paid at once on the urgent path with the server's reason «رسوم تحويل —
+  تُدفع مع المناقلة (المادة 35)» (`TRANSFER_FEE_URGENT_REASON`), waits for regularisation, and is
+  **held to the urgent ceiling**: a fee above it refuses the whole transfer, which the manager
+  then records. **Undecided:** whether a fee is exempt from the ceiling like a salary (D7), held
+  to it as now, or needs no regularisation at all because the transfer is the act.
+- **Who may clear the review of an exchange the manager booked himself (PR #111 review,
+  2026-10-10).** The review is `TREASURY_REVIEW_ROLES` (the auditor and the manager), so the
+  manager can approve the review of his own exchange — the self-check D8 and
+  `CUSTODY_SELF_RECEIPT` refuse elsewhere. Refusing it would leave a municipality with no auditor
+  account unable to clear any of the manager's flagged exchanges. **Undecided:** refuse a
+  self-review (`TRANSFER_SELF_REVIEW`), or allow it and let the audit row show who reviewed whom.
 
 - Whether each municipality wants the head’s signature reflected through the
   manager’s account, or a role of its own.

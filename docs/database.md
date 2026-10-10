@@ -1,6 +1,6 @@
 # Database
 
-Last verified against the code: `feat/treasury-day-closing@29c9b22` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; 0083 extended to income vouchers and the urgent-payment ceiling; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5; then the PR #106 review fixes and `0087`) merged with PR #109 `feat/treasury-inspector-payouts-and-vouchers@c734ae3` (its migration renumbered `0086_inspector_payout_voucher`), committed as `6b5b038`; then the PR #109 review fixes and decision D9 (uncommitted), 2026-10-10.
+Last verified against the code: `feat/treasury-day-closing@29c9b22` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; 0083 extended to income vouchers and the urgent-payment ceiling; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5; then the PR #106 review fixes and `0087`) merged with PR #109 `feat/treasury-inspector-payouts-and-vouchers@c734ae3` (its migration renumbered `0086_inspector_payout_voucher`), committed as `6b5b038`; then the PR #109 review fixes and decision D9 (uncommitted); then merged with PR #111 `feat/treasury-transfers-and-exchange@c502b5f` (transfers, exchange, new wallets, the printed transfer slip) and its review fixes and `0088` (uncommitted), 2026-10-10.
 
 The rules for anything that reads or writes a database: the schemas, how to
 query them, how to change them, and how data may move between environments.
@@ -47,7 +47,7 @@ every municipality ([security.md](security.md)).
 | Fees and money | `fee_notices`, `citizen_payments`, `payment_transactions`, `billing_run_entries`, `whish_checkouts`, `system_settings`, `inspector_payouts` (`expenseVoucherId`, 0086: the «PV-» voucher that paid it once the treasury is live, unique, NULL before; a payout whose voucher is voided is not counted as paid, a filter both readers apply) | `FeesService`, `PaymentLedgerService`, `CorrectionBillsService`, `StaffService` (payouts; once live through `ExpensesService.recordCommission`) |
 | Review and quality | `record_reviews`, `quality_checks`, `data_quality_dismissals` | `RecordReviewService`, `DataQualityService` |
 | Audit | `audit_log_entries` | `AuditService`, `PrismaAuditRepository` |
-| Transfers (0078) | `treasury_transfers` | `TransfersService` (the collector handover; a Whish cash-out, a bank deposit and an exchange share the table and come later) |
+| Transfers (0078, 0084, 0088) | `treasury_transfers` (0084: `feeAmount` and `feeVoucherId`, the «PV-» voucher that books a fee, both set or both NULL; `moneyChangerName`, exchanges only; `backdateReason`; `requiresReview` and the review stamp `reviewedAt`/`reviewedById`/`reviewNote`, only on a flagged transfer, and in the write-once trigger's stamp list since 0088) and, on `system_settings`, `exchangeRateTolerancePercent` (default 3) and `largeExchangeThreshold` (default 1000) | `TransfersService` (the collector handover, internal transfers with their fee, exchanges, the review); `ExpensesService.recordTransferFee` writes the fee voucher |
 | Expenses (0074, 0081, 0083) | `expense_categories`, `expense_vouchers` (the payment order: `orderedAt`, `orderedById`, `urgentReason`, 0083; `payeeStaffId`, 0081: the staff account a salary or commission voucher paid, NULL otherwise; a FK to `users` that cannot say STAFF, so `recordSalary` and, for a commission, `StaffService.recordInspectorPayout` filter `kind`), `expense_requests` (requests for the manager's order, 0083) | `ExpensesService` |
 | Income (0080, 0083) | `income_categories`, `income_vouchers` (`payerName` is free text that may name a citizen; written once, 0083) | `IncomeService` |
 | Document numbers (0079) | `document_counters`, one row per (book, month) | `allocateDocumentNumbers` |
@@ -188,8 +188,14 @@ chain, so it reports an officer who worked all morning as last seen at eight.
     `reject_treasury_document_mutation(<stamps>)`. An income voucher's stamps are its
     cancellation (`voidedAt`, `voidedById`, `voidReason`); its `voidedById` index is 0080's.
   - No row is deleted, and no column changes after insert except the trigger's named stamps.
-    Those are the cancellation, the payment order, and a request's decision; each goes from empty
-    to a value once.
+    Those are the cancellation, the payment order, a request's decision and, on a transfer since
+    `0088`, the review (`reviewedAt`, `reviewedById`, `reviewNote`); each goes from empty to a
+    value once. `treasury_transfers_review_once` (`0088`) also refuses any change to a review once
+    `reviewedAt` is set, so a note cannot be added to a review made without one.
+  - A migration that adds a column some code path UPDATEs after insert must re-create the table's
+    `*_written_once` trigger with that column in its stamp list, in a new migration — or every such
+    UPDATE is refused. 0084 added the review stamp without it, and no review could be written until
+    0088 (docs/gotchas.md).
   - A cancelled document, and a decided request, accepts nothing further: a reason a
     withdrawal never gave cannot be added to it later.
   - The function pins `search_path` and reads no table.
@@ -521,8 +527,11 @@ reads staging's history from `.env.staging` and nothing else, and
   `0078_treasury_transfers`, `0079_document_numbering`, `0080_income_vouchers`,
   `0081_expense_voucher_payee_staff` (PR #104 and its review), `0082_treasury_day_closing`
   (PR #106, stage 5: the daily count and the day closing), `0083_treasury_controls` (PR #104's
-  review), `0087_treasury_day_closure_written_once` (PR #106's review) and
-  `0086_inspector_payout_voucher` (PR #109: an inspector's commission paid as a voucher).
+  review), `0087_treasury_day_closure_written_once` (PR #106's review),
+  `0086_inspector_payout_voucher` (PR #109: an inspector's commission paid as a voucher),
+  `0084_treasury_exchange_and_review` (PR #111: transfers' fees, exchange and review, the exchange
+  rule on `system_settings`) and `0088_treasury_transfer_review_stamp` (PR #111's review: the
+  review stamp in the write-once trigger).
   `0073`–`0081` and `0083` reached `develop` in their own migrations-only PR (#107,
   `chore/migration-0073-0083`), merged before the code that reads them (#108). `0082`, `0087`
   and `0086` are not on `develop` yet and follow the same path. `0082` needs `0073`, `0087`
@@ -561,6 +570,11 @@ reads staging's history from `.env.staging` and nothing else, and
     history row). It is one nullable column on `inspector_payouts`, which is in production
     (0025), with a unique index built without CONCURRENTLY on a table of tens of rows. It needs
     `0074`, and ships in its own migrations-only PR after the finance migrations.
+  - `0084_treasury_exchange_and_review` keeps PR #111's number. It may be on staging, so it is not
+    edited; what its review found in the database is fixed forward by `0088`, which needs `0083`
+    (the trigger function) and `0084` (the columns) and ships after both. `0088` has not been applied to staging or production;
+    whether staging holds `0084` was not checked. `0088` was the next free number on 2026-10-10,
+    with `0085` reserved for PR #112.
   - The treasury migration was itself first written as `0071` and renumbered when
     `0071_damage_habitable` and `0072_users_no_phone_rules` landed on `develop`.
   - A branch cut before a release is a branch whose numbers can be taken while you work:

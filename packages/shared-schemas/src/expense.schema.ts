@@ -226,6 +226,19 @@ export const SALARY_URGENT_REASON = 'راتب — يُدفع قبل الحوال
 export const COMMISSION_URGENT_REASON = 'عمولة مسح ميداني — تُدفع قبل الحوالة (المادة 35)';
 
 /**
+ * The reason an accountant's transfer-fee voucher carries, written by the server.
+ *
+ * A bank or Whish fee is taken by the provider as the transfer happens, so it
+ * cannot wait for the payment order (decision D3): an accountant's transfer
+ * pays its fee at once on the urgent path with this reason, held to the urgent
+ * ceiling (D6) like any petty expense, and the voucher waits for the manager's
+ * regularisation (docs/finance.md §6.4). The manager's own transfer is the
+ * order and its fee carries none. Whether a fee should instead be exempt from
+ * the ceiling is open (docs/open-decisions.md §18). Stored exactly as written here.
+ */
+export const TRANSFER_FEE_URGENT_REASON = 'رسوم تحويل — تُدفع مع المناقلة (المادة 35)';
+
+/**
  * A budget code as an edit sends it. Unlike `budgetCodeSchema` (treasury.schema.ts),
  * empty is allowed here and means none: that is how an edit takes the codes off a
  * category (both sent empty). Left out, a code stays as it is.

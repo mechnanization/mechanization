@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `feat/treasury-day-closing@29c9b22` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; income controls, the salary path and the urgent ceiling; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5; then the PR #106 review fixes) merged with PR #109 `feat/treasury-inspector-payouts-and-vouchers@c734ae3` («صرف عمولة» through `ExpensesService.recordCommission`, migration `0086`), committed as `6b5b038`; then the PR #109 review fixes and decision D9 (uncommitted), 2026-10-10.
+Last verified against the code: `feat/treasury-day-closing@29c9b22` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; income controls, the salary path and the urgent ceiling; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5; then the PR #106 review fixes) merged with PR #109 `feat/treasury-inspector-payouts-and-vouchers@c734ae3` («صرف عمولة» through `ExpensesService.recordCommission`, migration `0086`), committed as `6b5b038`; then the PR #109 review fixes and decision D9 (uncommitted); then merged with PR #111 `feat/treasury-transfers-and-exchange@c502b5f` (transfers, exchange, new wallets, the printed transfer slip) and its review fixes and `0088` (uncommitted), 2026-10-10.
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -208,6 +208,16 @@ Data access for new code (decided):
     (`urgentExpenseCeiling.LBP` / `.USD`, 0083).
   - A refund after a collector's handover leaves the safe (`refundDrafts`, decision D1).
   - Opposing entries carry their original's rate.
+  - The manager opens a bank account or a petty-cash fund with `TreasuryService.createAccount`
+    (`POST accounts`, `TREASURY_ADMIN_ROLES`): empty, never primary, in the base or secondary
+    currency, and one per name, kind and currency — serialised under
+    `<schema>:treasury-account-create` and refused as `TREASURY_ACCOUNT_NAME_TAKEN`, since its
+    answer can be lost like any other and a wallet is never deleted.
+  - The exchange rule (`system_settings.exchangeRateTolerancePercent`, `largeExchangeThreshold`,
+    0084) is saved through `FeesService.updateSettings`: only the manager moves it
+    (`exchangeRuleChangeAllowed`, `EXCHANGE_RULE_MANAGER_ONLY`), and, like the ceilings, it is
+    written only when the manager saves, so an accountant's save of the section never writes it
+    back or is recorded as changing it. `FeesController.getSettings` strips it for a citizen.
 
   Design and rules: [docs/finance.md](../../docs/finance.md).
 - **Expenses.** `ExpensesService` and `ExpensesController` (`t/:tenantSlug/treasury/expenses`), with
@@ -316,7 +326,39 @@ Data access for new code (decided):
     `active` unless it is sent, and a taken budget article is the partial unique index's `P2002`,
     mapped to `INCOME_CATEGORY_CODE_TAKEN` in `writeCategory`.
 - **Transfers.** `TransfersService` and `TransfersController`
-  (`t/:tenantSlug/treasury/transfers`). Today it wires one kind: «تسليم صندوق الجابي», the collector
+  (`t/:tenantSlug/treasury/transfers`), with the pure rules in `transfers.plan.ts` and the exchange
+  arithmetic in shared `exchange-policy.ts`. Three kinds, derived from the two ends and never stored
+  (`transferKindOf`). «تحويل داخلي» and «مصارفة» are `create` (`POST`, `TREASURY_WORK_ROLES`):
+  the retry key under a schema-scoped advisory lock (`<schema>:transfer-request:<key>`) and
+  answered before anything is judged (`replayTransfer`), then `ledger.config`, the date by
+  `planTransferDate` (the expense rules, renamed) and `documentOccurredAt` (D5), both wallets locked
+  through `TreasuryLedgerService.lockAccounts` in ascending id order *before* anything references
+  them — the fee and the move are two inserts and two posts, and amount + fee is judged under that
+  lock — then the fee voucher (`ExpensesService.recordTransferFee`, `TRANSFER_FEES`), the
+  document, its two legs and a Tier 1 `TRANSFER_RECORDED` or `EXCHANGE_RECORDED`.
+  - The retry key is bound to its act (`replayTransfer`: both wallets, amount, received amount,
+    fee, statement, clerk). Anything else under it is `TREASURY_REQUEST_KEY_REUSED` — a handover's
+    key included, which lives in the same column — a key whose transfer was cancelled since gets
+    `TRANSFER_ALREADY_VOID` (`params.transferNumber`), and a unique violation on it is answered as
+    a replay (`retry-key.ts`).
+  - The fee voucher goes through `recordInTransaction` like every voucher, so the payment order
+    holds (D3): the manager's transfer is its order; an accountant's fee is paid on the urgent path
+    with `TRANSFER_FEE_URGENT_REASON`, held to the urgent ceiling, and waits for `regularize`.
+  - An exchange's rate is derived from its two amounts (`exchangeRateOf`) and judged by
+    `judgeExchange` against `system_settings.exchangeRate`, which is the rate of the *secondary*
+    currency: an exchange whose other side is any other currency is `EXCHANGE_PAIR_UNSUPPORTED`.
+    Beyond the tolerance without a reason it is refused (`EXCHANGE_RATE_TOLERANCE_EXCEEDED`), and
+    beyond it, above the threshold, or with no official rate it is booked with `requiresReview`.
+  - `review` (`POST :id/review`, `TREASURY_REVIEW_ROLES`) stamps it once; the stamp is in the
+    write-once trigger's list since 0088, which also refuses changing a review afterwards. A
+    cancelled transfer is refused with `TRANSFER_ALREADY_VOID`, never reaching the trigger.
+  - `void` takes the transfer row, then `config`, then both wallets, reverses the legs and cancels
+    the fee voucher with them (`voidTransferFee`); it is refused while the destination no longer
+    holds what arrived. `ExpensesService.void` refuses a fee voucher alone
+    (`EXPENSE_IS_TRANSFER_FEE`).
+  - Every transfer draws its «TR-» number from `document_counters`, whose
+  row lock queues concurrent transfers before any wallet is touched — so a test of the wallet lock
+  order cannot rely on a deadlock appearing (docs/gotchas.md). The first kind is «تسليم صندوق الجابي», the collector
   handing in what he took at the doors. A citizen's payment settles his invoice at the door and
   credits the *collector's* custody wallet, never the safe — the money is in his pocket — and this is
   the step where it reaches the municipality: both ledger legs, the transfer document and the Tier 1
