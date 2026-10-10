@@ -43,6 +43,12 @@ export interface PostContext {
 export interface TreasuryConfig {
   goLiveAt: Date | null;
   exchangeRate: Prisma.Decimal | null;
+  /**
+   * «سقف الدفع العاجل» per currency (0083, docs/finance.md §5.1, decision D6):
+   * the most an accountant's urgent voucher may pay before the manager's
+   * order. NULL is no ceiling; a currency with no column has none.
+   */
+  urgentExpenseCeiling: { LBP: Prisma.Decimal | null; USD: Prisma.Decimal | null };
 }
 
 /**
@@ -73,19 +79,30 @@ export class TreasuryLedgerService {
   }
 
   /**
-   * The go-live stamp and the municipality's rate, read in the caller's transaction.
+   * The go-live stamp, the municipality's rate and the urgent-payment ceilings,
+   * read in the caller's transaction.
    *
    * `FOR SHARE`, not a plain read: activation holds this row `FOR UPDATE` from
    * the moment it stamps `treasuryGoLiveAt` until it commits, and a plain read
    * in that window sees NULL — a payment taken after the stamp would then credit
    * no wallet, and nothing would ever correct it. The share lock makes the reader
    * wait for the commit and then see the stamp. Readers do not block each other.
+   * The same lock keeps a ceiling the manager is changing from being read half
+   * way: an expense waits for the settings save and then judges by the new one.
+   *
+   * Called before `lockAccounts`: the settings row, then the wallets, is the
+   * one order every caller takes them in.
    */
   async config(tx: Prisma.TransactionClient): Promise<TreasuryConfig> {
     const rows = await tx.$queryRaw<
-      Array<{ treasuryGoLiveAt: Date | null; exchangeRate: Prisma.Decimal | null }>
+      Array<{
+        treasuryGoLiveAt: Date | null;
+        exchangeRate: Prisma.Decimal | null;
+        urgentExpenseCeilingLbp: Prisma.Decimal | null;
+        urgentExpenseCeilingUsd: Prisma.Decimal | null;
+      }>
     >`
-      SELECT "treasuryGoLiveAt", "exchangeRate"
+      SELECT "treasuryGoLiveAt", "exchangeRate", "urgentExpenseCeilingLbp", "urgentExpenseCeilingUsd"
         FROM ${this.S}system_settings
        LIMIT 1
          FOR SHARE
@@ -93,6 +110,10 @@ export class TreasuryLedgerService {
     return {
       goLiveAt: rows[0]?.treasuryGoLiveAt ?? null,
       exchangeRate: rows[0]?.exchangeRate ?? null,
+      urgentExpenseCeiling: {
+        LBP: rows[0]?.urgentExpenseCeilingLbp ?? null,
+        USD: rows[0]?.urgentExpenseCeilingUsd ?? null,
+      },
     };
   }
 

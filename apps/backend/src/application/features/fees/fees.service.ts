@@ -25,6 +25,7 @@ import {
   municipalToday,
   ownerShareOf,
   roundRate,
+  TREASURY_ADMIN_ROLES,
 } from '@mechanization/shared-schemas';
 import {
   billableUnits,
@@ -932,6 +933,9 @@ export class FeesService {
       secondaryCurrency: row?.secondaryCurrency ?? null,
       exchangeRate: row?.exchangeRate == null ? null : Number(row.exchangeRate),
       exchangeRateUpdatedAt: row?.exchangeRateUpdatedAt?.toISOString() ?? null,
+      // «سقف الدفع العاجل» (docs/finance.md §5.1, D6). Null: no ceiling.
+      urgentExpenseCeilingLbp: row?.urgentExpenseCeilingLbp == null ? null : Number(row.urgentExpenseCeilingLbp),
+      urgentExpenseCeilingUsd: row?.urgentExpenseCeilingUsd == null ? null : Number(row.urgentExpenseCeilingUsd),
 
       numberingSequences: (row?.numberingSequences as SystemSettingsInput['numberingSequences']) ?? null,
       backupSchedule: (row?.backupSchedule as SystemSettingsInput['backupSchedule']) ?? null,
@@ -958,13 +962,15 @@ export class FeesService {
      * that actually changes moves it: re-saving the finance section with the
      * same number must not make a month-old rate look current.
      */
+    const sendsCeiling =
+      input.urgentExpenseCeilingLbp !== undefined || input.urgentExpenseCeilingUsd !== undefined;
     const previous =
-      input.exchangeRate === undefined
+      input.exchangeRate === undefined && !sendsCeiling
         ? null
         : await withConnectionRetry(() =>
             this.db.systemSettings.findFirst({
               where: { singleton: true },
-              select: { exchangeRate: true },
+              select: { exchangeRate: true, urgentExpenseCeilingLbp: true, urgentExpenseCeilingUsd: true },
             }),
           );
     const rateChanged =
@@ -972,6 +978,30 @@ export class FeesService {
       (previous?.exchangeRate == null
         ? input.exchangeRate !== null
         : Number(previous.exchangeRate) !== input.exchangeRate);
+
+    /*
+     * «سقف الدفع العاجل» is the manager's (docs/finance.md §5.1, decision D6).
+     *
+     * The route admits the accountant for the rest of the settings, and the
+     * ceiling is the limit on the accountant's own urgent payments, so he may
+     * not move it: a change from anyone outside TREASURY_ADMIN_ROLES is refused.
+     * A form that sends the value it read is not a change, and is not written
+     * either — so an accountant's save of the finance section can never put back
+     * a ceiling the manager changed a moment earlier.
+     */
+    const ceilingChanged = (sent: number | null | undefined, stored: Prisma.Decimal | null | undefined) =>
+      sent !== undefined && (stored == null ? sent !== null : sent === null || Number(stored) !== sent);
+    const setsCeiling = (TREASURY_ADMIN_ROLES as readonly string[]).includes(actor.role);
+    if (
+      !setsCeiling &&
+      (ceilingChanged(input.urgentExpenseCeilingLbp, previous?.urgentExpenseCeilingLbp) ||
+        ceilingChanged(input.urgentExpenseCeilingUsd, previous?.urgentExpenseCeilingUsd))
+    ) {
+      throw new ForbiddenError({
+        code: 'URGENT_EXPENSE_CEILING_FORBIDDEN',
+        message: 'Only the manager can change the urgent-payment ceiling.',
+      });
+    }
 
     const data = {
       whishMoneyNumber: blankToNull(input.whishMoneyNumber),
@@ -1000,6 +1030,8 @@ export class FeesService {
       ...(rateChanged
         ? { exchangeRateUpdatedAt: input.exchangeRate === null ? null : new Date() }
         : {}),
+      urgentExpenseCeilingLbp: setsCeiling ? input.urgentExpenseCeilingLbp : undefined,
+      urgentExpenseCeilingUsd: setsCeiling ? input.urgentExpenseCeilingUsd : undefined,
 
       numberingSequences: input.numberingSequences,
       backupSchedule: input.backupSchedule,

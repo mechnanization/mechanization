@@ -49,3 +49,28 @@ export function planExpenseDate(input: {
 
   return { ok: true, paidOn, backdatedDays };
 }
+
+/**
+ * Whether an accountant's urgent payment is above the manager's ceiling, and
+ * which ceiling it broke. Design: docs/finance.md §5.1, decision D6.
+ *
+ * Decree 5595/1982 art. 35 lets salaries, routine petty expenses and genuinely
+ * urgent ones be paid before the payment order. A large purchase is neither
+ * petty nor, usually, urgent, so the manager sets a ceiling per currency and
+ * anything above it goes to him as a request. The ceiling is per voucher, and
+ * an amount equal to it is still under it.
+ *
+ * Not consulted for the manager's own voucher (it is the order) or for a
+ * salary (art. 35 names salaries); the caller decides that. A currency with no
+ * ceiling column (anything but LBP and USD), or a ceiling left NULL, has none.
+ */
+export function urgentCeilingBreached(input: {
+  amount: number;
+  currency: string;
+  ceilings: Partial<Record<string, { toNumber(): number } | null>>;
+}): { ceiling: number; currency: string } | null {
+  const ceiling = input.ceilings[input.currency];
+  if (!ceiling) return null;
+  const limit = ceiling.toNumber();
+  return input.amount > limit ? { ceiling: limit, currency: input.currency } : null;
+}

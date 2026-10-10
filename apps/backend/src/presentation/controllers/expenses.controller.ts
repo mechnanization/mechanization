@@ -2,6 +2,7 @@ import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from 
 import {
   createExpenseCategorySchema,
   recordExpenseSchema,
+  recordStaffSalarySchema,
   rejectExpenseRequestSchema,
   requestExpenseSchema,
   updateExpenseCategorySchema,
@@ -13,6 +14,7 @@ import {
   type CreateExpenseCategoryInput,
   type ExpenseRequestStatus,
   type RecordExpenseInput,
+  type RecordStaffSalaryInput,
   type RejectExpenseRequestInput,
   type RequestExpenseInput,
   type UpdateExpenseCategoryInput,
@@ -26,14 +28,6 @@ import { CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import { optionalInt, requireRangeEnd, requireRangeStart } from './query-params';
 
-/**
- * النفقات — «أمر صرف» (docs/finance.md §5).
- *
- * Three role lists, mirroring the product decision rather than the shape of the
- * data: everyone with finance sight reads, the accountant and the manager
- * record and pay, and only the manager cancels. There is no approval route
- * because there is no approval step.
- */
 /** A request status from a query string, or nothing; anything else refuses (non-negotiable 6). */
 function requestStatus(value: string | undefined): ExpenseRequestStatus | undefined {
   if (value === undefined || value === '') return undefined;
@@ -41,6 +35,18 @@ function requestStatus(value: string | undefined): ExpenseRequestStatus | undefi
   throw new ValidationError({ code: 'INVALID_QUERY_VALUE', message: `Not a request status: ${value}` });
 }
 
+/**
+ * النفقات — «أمر صرف» (docs/finance.md §5).
+ *
+ * Three role lists, mirroring the product decision rather than the shape of the
+ * data: everyone with finance sight reads; the accountant and the manager
+ * record, request and pay salaries; and only the manager gives the payment
+ * order «أمر الصرف» (decree 5595/1982 art. 28 and 33, docs/finance.md §5.1) —
+ * ordering a request, rejecting one, regularising an urgent payment — and
+ * cancels. The manager's own voucher is the order. An accountant's is a
+ * request, or an art. 35 urgent payment (with its reason, under the manager's
+ * ceiling, a salary's reason written by the server) that waits for the order.
+ */
 @Controller('t/:tenantSlug/treasury/expenses')
 export class ExpensesController {
   constructor(private readonly expenses: ExpensesService) {}
@@ -165,6 +171,23 @@ export class ExpensesController {
   @Post('requests/:id/withdraw')
   withdrawRequest(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: SessionClaims) {
     return this.expenses.withdrawRequest(id, { id: user.sub, role: user.role ?? '' });
+  }
+
+  /**
+   * «صرف راتب / أجر» — a salary paid to the staff member in the path, from the
+   * staff page. The same role list as recording any expense: it is one. The
+   * payee and the category are the server's to set, never the body's, and so
+   * is an accountant's art. 35 reason: his payout is `AWAITING_ORDER`, the
+   * manager's `ORDERED` (`orderStatus` in the result).
+   */
+  @Roles(...TREASURY_WORK_ROLES)
+  @Post('salaries/:staffId')
+  recordSalary(
+    @Param('staffId', new ParseUUIDPipe()) staffId: string,
+    @Body(new ZodValidationPipe(recordStaffSalarySchema)) body: RecordStaffSalaryInput,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.expenses.recordSalary(staffId, body, { id: user.sub, role: user.role ?? '' });
   }
 
   @Roles(...TREASURY_READ_ROLES)

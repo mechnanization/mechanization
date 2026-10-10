@@ -269,7 +269,7 @@ export function AdminHeader({
 
           <DropdownMenuItem onSelect={() => router.push(`${base}/inspector/profile`)}>
             <BadgeDollarSign className="size-4" aria-hidden />
-            <span>{locale === 'en' ? 'My Earnings & Field Work' : 'أرباحي والمسح الميداني'}</span>
+            <span>{locale === 'en' ? 'Field Work Earnings' : 'أرباح المسح الميداني'}</span>
           </DropdownMenuItem>
 
           <DropdownMenuItem onSelect={() => router.push(`${base}/account`)}>

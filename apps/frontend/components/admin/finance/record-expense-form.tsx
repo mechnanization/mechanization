@@ -24,10 +24,18 @@ import {
   type RequestExpenseResult,
   type TreasuryAccountView,
 } from '@/lib/api-client';
-import { formatTypedAmount, parseAmount } from '@/lib/currency';
+import { currencyUnit, formatMoney, formatTypedAmount, parseAmount } from '@/lib/currency';
 import { firstFieldToFix, isExpenseField } from '@/lib/expense-form';
 import { expenseModeFor, paysNow, type ExpenseMode } from '@/lib/expense-order';
-import { heldKey, keyIsSpent, spendKey, type KeyScope } from '@/lib/request-id';
+import {
+  heldInDoubt,
+  heldKey,
+  keyIsSpent,
+  markInDoubt,
+  outcomeInDoubt,
+  spendKey,
+  type KeyScope,
+} from '@/lib/request-id';
 import { hasRole } from '@/lib/staff-roles';
 import { cn } from '@/lib/utils';
 import { Alert } from '@/components/ui/alert';
@@ -50,12 +58,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
 import { NewCategoryFields } from './new-category-fields';
 import { TreasuryAmount } from './treasury-amount';
-
-/** The unit segment of the amount field: «ل.ل», «$», or the code itself. */
-function unitOf(currency: string, locale: string): string {
-  if (currency === 'LBP') return locale === 'en' ? 'LBP' : 'ل.ل';
-  return currency === 'USD' ? '$' : currency;
-}
 
 /**
  * A heading over a group of fields.
@@ -123,6 +125,19 @@ export type RecordOutcome = 'PAID' | 'REQUESTED';
  * exactly as it is. Manager only, as docs/finance.md §9 sets out, and
  * `ExpensesController` enforces the same.
  *
+ * ## The urgent-payment ceiling
+ *
+ * The manager may cap what an accountant pays on the urgent path, per voucher
+ * and per currency (decision D6, docs/finance.md §5.1). When the chosen
+ * wallet's currency has one, the urgent path says it, and an amount above it is
+ * refused here with the way out — send it as a request — before the round
+ * trip. The server is the authority (`EXPENSE_URGENT_OVER_CEILING`): this
+ * screen read the ceiling when it opened, and the manager may have changed it.
+ * After a press whose answer was lost (`heldInDoubt`) the ceiling is a warning
+ * only: that press may have paid, a retry with its key is answered before the
+ * ceiling is judged, and «send it as a request» would be a new act under a new
+ * key. The request is offered again once the server itself refuses the retry.
+ *
  * Recording is paying, so this form is the whole act: a second submission is
  * guarded by an in-flight ref *and* a retry key the server honours (STA-4),
  * because on a slow counter connection a clerk cannot tell a slow response from
@@ -137,6 +152,7 @@ export function RecordExpenseForm({
   backHref,
   accounts,
   categories,
+  urgentCeilings,
   onRecorded,
 }: {
   tenant: string;
@@ -147,6 +163,12 @@ export function RecordExpenseForm({
   backHref: string;
   accounts: TreasuryAccountView[];
   categories: ExpenseCategoryView[];
+  /**
+   * The manager's urgent-payment ceiling per currency (`LBP`, `USD`), `null`
+   * for none; absent while the settings have not been read, when the server's
+   * refusal is the only check.
+   */
+  urgentCeilings?: Partial<Record<string, number | null>>;
   /** The voucher or the request is written; the page decides where to go. */
   onRecorded: (outcome: RecordOutcome) => void;
 }): React.JSX.Element {
@@ -174,6 +196,8 @@ export function RecordExpenseForm({
 
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
+  /** The server refused the urgent payment as above the ceiling: offer the request instead. */
+  const [refusedOverCeiling, setRefusedOverCeiling] = useState(false);
   const [busy, setBusy] = useState(false);
   /** The server has answered with a 2xx: the act is recorded, and the form stays locked. */
   const [done, setDone] = useState(false);
@@ -208,6 +232,21 @@ export function RecordExpenseForm({
   const remaining = account ? account.balance - spending : 0;
   /** A request moves no money, so there is nothing for it to overdraw. */
   const short = pays && Boolean(account) && spending > 0 && remaining < 0;
+
+  /**
+   * The ceiling that holds this voucher: the urgent path only, in the wallet's
+   * currency. Equal to it is under it, as the server judges (`urgentCeilingBreached`).
+   */
+  const ceiling = mode === 'URGENT' && account ? (urgentCeilings?.[account.currency] ?? null) : null;
+  const overCeiling = ceiling !== null && spending > ceiling;
+  /**
+   * An urgent press under the held payment key got no answer: the ceiling as
+   * this screen read it may not refuse the retry. Read on each render; every
+   * press that changes it also sets state.
+   */
+  const retrying = mode === 'URGENT' && heldInDoubt(tenant, scope(mode));
+  const refusesOverCeiling = overCeiling && !retrying;
+  const ceilingText = ceiling !== null && account ? formatMoney(ceiling, account.currency, locale) : '';
 
   /* Deduplicated by id: a band added here is in `added`, and arrives again from the list. */
   const allCategories = useMemo(() => {
@@ -252,6 +291,16 @@ export function RecordExpenseForm({
       const number = error.payload.params?.voucherNumber;
       if (number) return t('errors.earlierVoided', { number: String(number) });
     }
+    /*
+      The ceiling the server judged by — it may be newer than the one this
+      screen read — written with the currency's own unit rather than its code.
+    */
+    if (error instanceof ApiRequestError && error.code === 'EXPENSE_URGENT_OVER_CEILING') {
+      const { ceiling: limit, currency } = error.payload.params ?? {};
+      if (typeof limit === 'number' && typeof currency === 'string') {
+        return t('ceiling.refused', { ceiling: formatMoney(limit, currency, locale) });
+      }
+    }
     return error instanceof Error && error.message ? error.message : failedText;
   };
 
@@ -260,6 +309,7 @@ export function RecordExpenseForm({
     setChoice(next);
     setErrors({});
     setFormError(null);
+    setRefusedOverCeiling(false);
   };
 
   const submit = async (event: React.FormEvent): Promise<void> => {
@@ -320,9 +370,19 @@ export function RecordExpenseForm({
       document.getElementById('expense-adjustment')?.focus();
       return;
     }
+    /*
+      Above the manager's ceiling the urgent path is closed; the panel offers the
+      request instead. Not for the retry of a lost press: the server answers that.
+    */
+    if (refusesOverCeiling) {
+      setErrors({ amount: t('ceiling.overField', { ceiling: ceilingText }) });
+      document.getElementById('expense-amount')?.focus();
+      return;
+    }
 
     setErrors({});
     setFormError(null);
+    setRefusedOverCeiling(false);
     inFlight.current = true;
     setBusy(true);
     let filed: RequestExpenseResult | null = null;
@@ -333,9 +393,19 @@ export function RecordExpenseForm({
     } catch (error) {
       logApiError(error);
       setFormError(failureText(error));
+      setRefusedOverCeiling(error instanceof ApiRequestError && error.code === 'EXPENSE_URGENT_OVER_CEILING');
       if (keyIsSpent(error)) {
         // That act exists: the next press is a new one, and the register on screen is behind it.
         spendKey(tenant, scope(mode));
+        void refreshFigures();
+      } else if (outcomeInDoubt(error)) {
+        /*
+          It may have been recorded. Re-read, so the balance the summary checks
+          is not the one from before the lost answer; the key is kept, so a
+          retry of the same act is answered from it rather than paid again.
+          Marked in doubt, so a ceiling lowered since does not refuse that retry.
+        */
+        markInDoubt(tenant, scope(mode));
         void refreshFigures();
       }
       // A failed attempt releases the button; a recorded one never does.
@@ -424,6 +494,10 @@ export function RecordExpenseForm({
                 />
               </Field>
             ) : null}
+
+            {ceiling !== null ? (
+              <p className="text-xs text-muted-foreground">{t('ceiling.note', { ceiling: ceilingText })}</p>
+            ) : null}
           </FormSection>
         ) : null}
 
@@ -446,7 +520,7 @@ export function RecordExpenseForm({
           <Field htmlFor="expense-amount" label={t('amount')} error={errors.amount} required>
             <CurrencyInput
               id="expense-amount"
-              unit={account ? unitOf(account.currency, locale) : ''}
+              unit={account ? currencyUnit(account.currency, locale) : ''}
               value={amount}
               placeholder="0"
               invalid={Boolean(errors.amount) || short}
@@ -657,6 +731,29 @@ export function RecordExpenseForm({
             {short ? (
               <Alert variant="destructive" live="status" title={t('shortTitle')}>
                 {t('shortBody')}
+              </Alert>
+            ) : null}
+
+            {/*
+              Above the ceiling — as typed, or as the server judged it — the way
+              on is the request: one press switches to it and keeps what was typed.
+              Not while a lost press may have paid it: then the way on is the
+              same press again, which the server answers from its key. Gone once
+              the act is recorded: a replay spends the key, and the page moves on.
+            */}
+            {done ? null : overCeiling && retrying && !refusedOverCeiling ? (
+              <Alert variant="warning" live="status" title={t('ceiling.overTitle')}>
+                {t('ceiling.inDoubtBody', { ceiling: ceilingText })}
+              </Alert>
+            ) : (overCeiling || refusedOverCeiling) && mode === 'URGENT' ? (
+              <Alert variant="warning" live="status" title={t('ceiling.overTitle')}>
+                <div className="space-y-2">
+                  <p>{overCeiling ? t('ceiling.overBody', { ceiling: ceilingText }) : t('ceiling.refusedBody')}</p>
+                  <Button type="button" size="sm" variant="outline" disabled={done} onClick={() => choose('REQUEST')}>
+                    <Send className="size-4" aria-hidden />
+                    {t('ceiling.sendAsRequest')}
+                  </Button>
+                </div>
               </Alert>
             ) : null}
 

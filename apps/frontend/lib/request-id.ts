@@ -33,6 +33,8 @@ export type KeyScope =
   | `custody:${string}`
   | 'expense:pay'
   | 'expense:request'
+  | 'income:new'
+  | `salary:${string}`
   | `settle:${string}`;
 
 /** The key held for this act, minted the first time it is asked for. */
@@ -48,10 +50,42 @@ export function heldKey(tenant: string, scope: KeyScope): string {
 
 /**
  * Drops the key once the server has confirmed its act — a 2xx, or a refusal
- * `keyIsSpent` names — so the next act in this scope gets a new one.
+ * `keyIsSpent` names — so the next act in this scope gets a new one. The
+ * in-doubt mark goes with it (`markInDoubt`).
  */
 export function spendKey(tenant: string, scope: KeyScope): void {
-  held.delete(`${tenant}:${scope}`);
+  const slot = `${tenant}:${scope}`;
+  held.delete(slot);
+  inDoubt.delete(slot);
+}
+
+/**
+ * The held keys whose last attempt ended in doubt (`outcomeInDoubt`): the act
+ * may have been recorded, and only a retry with the key can say.
+ *
+ * Module state for the reason the keys are: a dialog closed and opened again
+ * must still know. Why a screen needs it at all: after a lost answer it
+ * re-reads the balance, and that balance may already carry the act. A check
+ * made before the request («الرصيد لا يكفي», «أعلى من السقف») then refuses the
+ * very retry that would have been answered from the key, and its way out
+ * (another wallet, a request instead) is a new act under a new key. While a
+ * key is held in doubt such a check is a warning, never a refusal: the server
+ * answers a replay before it judges the balance or the ceiling.
+ *
+ * Cleared only by `spendKey`. A later refusal under the same key does not
+ * clear it: the attempt that was lost may still be committing on the server.
+ */
+const inDoubt = new Set<string>();
+
+/** Marks this scope's held key as in doubt; a scope with no held key is left alone. */
+export function markInDoubt(tenant: string, scope: KeyScope): void {
+  const slot = `${tenant}:${scope}`;
+  if (held.has(slot)) inDoubt.add(slot);
+}
+
+/** Whether this scope holds a key whose last attempt ended in doubt (`markInDoubt`). */
+export function heldInDoubt(tenant: string, scope: KeyScope): boolean {
+  return inDoubt.has(`${tenant}:${scope}`);
 }
 
 /**
@@ -61,8 +95,8 @@ export function spendKey(tenant: string, scope: KeyScope): void {
  * - `TREASURY_REQUEST_KEY_REUSED`: recorded, with other details than this
  *   attempt's (the form was edited after an answer was lost, or a custody
  *   wallet has moved since the earlier handover);
- * - `EXPENSE_ALREADY_VOID`, `TRANSFER_ALREADY_VOID`: recorded, and cancelled
- *   since;
+ * - `EXPENSE_ALREADY_VOID`, `INCOME_ALREADY_VOID`, `TRANSFER_ALREADY_VOID`:
+ *   recorded, and cancelled since;
  * - `TRANSACTION_ALREADY_REVERSED`: a counter payment recorded, and reversed
  *   since;
  * - `PAYMENT_IDEMPOTENCY_KEY_REUSED`: recorded, against another invoice.
@@ -70,6 +104,7 @@ export function spendKey(tenant: string, scope: KeyScope): void {
 const ACT_RECORDED = new Set<string>([
   'TREASURY_REQUEST_KEY_REUSED',
   'EXPENSE_ALREADY_VOID',
+  'INCOME_ALREADY_VOID',
   'TRANSFER_ALREADY_VOID',
   'TRANSACTION_ALREADY_REVERSED',
   'PAYMENT_IDEMPOTENCY_KEY_REUSED',

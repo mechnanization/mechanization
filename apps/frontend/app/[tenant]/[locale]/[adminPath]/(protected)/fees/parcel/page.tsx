@@ -16,7 +16,6 @@ import { FactCell, FactRow } from '@/components/ui/facts';
 import { Field } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Money } from '@/components/ui/money';
-import { Alert } from '@/components/ui/alert';
 import { PageHeader } from '@/components/ui/page-header';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/states';
 
@@ -62,9 +61,6 @@ export default function ParcelDuesPage({
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <PageHeader icon={Landmark} title={t('title')} />
 
-      {/* Said where it is read, now that the header has no subtitle: this screen is not a clearance. */}
-      <Alert variant="info">{t('notice')}</Alert>
-
       <form
         className="flex flex-col gap-2 sm:flex-row sm:items-end"
         onSubmit={(event) => {
@@ -93,7 +89,13 @@ export default function ParcelDuesPage({
         </Button>
       </form>
 
-      {!parcel ? null : duesQuery.loading ? (
+      {/*
+        What this page is and is not, before the first search: the header has no
+        subtitle (PageHeader), and «للقراءة فقط: لا يصدر شهادة» is worth reading once.
+      */}
+      {!parcel ? (
+        <p className="max-w-prose text-sm text-muted-foreground">{t('intro')}</p>
+      ) : duesQuery.loading ? (
         <LoadingState label={t('loading')} />
       ) : duesQuery.error ? (
         <ErrorState description={duesQuery.error} onRetry={() => duesQuery.refetch()} />

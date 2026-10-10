@@ -195,12 +195,24 @@ export const ERROR_CODES = [
   'EXPENSE_DATE_BEFORE_GO_LIVE',
   'EXPENSE_BACKDATE_REASON_REQUIRED',
   'EXPENSE_CATEGORY_CODE_TAKEN',
+  'SALARY_PAYEE_NOT_FOUND',
+  'INCOME_VOUCHER_NOT_FOUND',
+  'INCOME_VOUCHER_ALREADY_VOIDED',
+  'INCOME_CATEGORY_NOT_FOUND',
+  'INCOME_CATEGORY_INACTIVE',
+  'INCOME_CATEGORY_CODE_TAKEN',
+  'INCOME_ACCOUNT_NOT_RECEIVING',
+  'INCOME_DATE_IN_FUTURE',
+  'INCOME_DATE_BEFORE_GO_LIVE',
+  'INCOME_BACKDATE_REASON_REQUIRED',
+  'TREASURY_INSUFFICIENT_FUNDS_FOR_VOID',
   'TRANSFER_NOT_FOUND',
   'TRANSFER_ALREADY_VOID',
   'CUSTODY_ACCOUNT_NOT_FOUND',
   'COLLECTOR_NOT_FOUND',
   'CUSTODY_EXCEEDS_HELD',
   'CUSTODY_SELF_RECEIPT',
+  'SALARY_SELF_PAYOUT',
   'TREASURY_REQUEST_KEY_REUSED',
   'PAYMENT_DATE_BEFORE_GO_LIVE',
   'EXPENSE_ACCOUNT_NOT_PAYABLE',
@@ -209,6 +221,13 @@ export const ERROR_CODES = [
   'EXPENSE_REQUEST_NOT_FOUND',
   'EXPENSE_REQUEST_ALREADY_DECIDED',
   'EXPENSE_REQUEST_NOT_YOURS',
+  // A retried «سجّل الإيراد» whose voucher has been cancelled since (`params.voucherNumber`).
+  // Not INCOME_VOUCHER_ALREADY_VOIDED, which refuses cancelling a voucher twice.
+  'INCOME_ALREADY_VOID',
+  // An accountant's urgent payment (art. 35) above the manager's ceiling (`params.ceiling`, `params.currency`).
+  'EXPENSE_URGENT_OVER_CEILING',
+  // Someone other than the manager changing the urgent-payment ceiling in الإعدادات.
+  'URGENT_EXPENSE_CEILING_FORBIDDEN',
   // A query-string value that does not parse (presentation/controllers/query-params.ts)
   'INVALID_QUERY_DATE',
   'INVALID_QUERY_VALUE',

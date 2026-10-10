@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApiRequestError } from './api-client';
-import { heldKey, keyIsSpent, newRequestId, outcomeInDoubt, spendKey } from './request-id';
+import {
+  heldInDoubt,
+  heldKey,
+  keyIsSpent,
+  markInDoubt,
+  newRequestId,
+  outcomeInDoubt,
+  spendKey,
+} from './request-id';
 
 describe('heldKey and spendKey', () => {
   it('hold one key per act, the same each time it is asked for, until it is spent', () => {
@@ -37,8 +45,58 @@ describe('heldKey and spendKey', () => {
     spendKey('t1', 'settle:bill-2');
   });
 
+  it('holds the income form and each staff member’s salary apart', () => {
+    const income = heldKey('t1', 'income:new');
+    const ali = heldKey('t1', 'salary:staff-ali');
+    const omar = heldKey('t1', 'salary:staff-omar');
+    expect(new Set([income, ali, omar, heldKey('t1', 'expense:pay')]).size).toBe(4);
+    // Paying Ali is confirmed: Omar's salary dialog, still waiting on a lost answer, keeps its key.
+    spendKey('t1', 'salary:staff-ali');
+    expect(heldKey('t1', 'salary:staff-omar')).toBe(omar);
+    expect(heldKey('t1', 'income:new')).toBe(income);
+    expect(heldKey('t1', 'salary:staff-ali')).not.toBe(ali);
+    for (const scope of ['income:new', 'salary:staff-ali', 'salary:staff-omar', 'expense:pay'] as const) spendKey('t1', scope);
+  });
+
   it('spending a key nobody holds is harmless', () => {
     expect(() => spendKey('t1', 'settle:never-held')).not.toThrow();
+  });
+});
+
+describe('markInDoubt and heldInDoubt', () => {
+  it('marks a held key in doubt until it is spent, and the next key starts clear', () => {
+    const key = heldKey('t1', 'salary:staff-ali');
+    expect(heldInDoubt('t1', 'salary:staff-ali')).toBe(false);
+    markInDoubt('t1', 'salary:staff-ali');
+    expect(heldInDoubt('t1', 'salary:staff-ali')).toBe(true);
+    // A dialog closed and opened again asks again: the key and the mark are both still there.
+    expect(heldKey('t1', 'salary:staff-ali')).toBe(key);
+    expect(heldInDoubt('t1', 'salary:staff-ali')).toBe(true);
+    // The retry is answered (replayed, or refused as already recorded): the act is confirmed.
+    spendKey('t1', 'salary:staff-ali');
+    expect(heldInDoubt('t1', 'salary:staff-ali')).toBe(false);
+    heldKey('t1', 'salary:staff-ali');
+    expect(heldInDoubt('t1', 'salary:staff-ali')).toBe(false);
+    spendKey('t1', 'salary:staff-ali');
+  });
+
+  it('keeps scopes and tenants apart', () => {
+    heldKey('t1', 'expense:pay');
+    heldKey('t1', 'expense:request');
+    heldKey('t2', 'expense:pay');
+    markInDoubt('t1', 'expense:pay');
+    expect(heldInDoubt('t1', 'expense:pay')).toBe(true);
+    expect(heldInDoubt('t1', 'expense:request')).toBe(false);
+    expect(heldInDoubt('t2', 'expense:pay')).toBe(false);
+    for (const [tenant, scope] of [['t1', 'expense:pay'], ['t1', 'expense:request'], ['t2', 'expense:pay']] as const) {
+      spendKey(tenant, scope);
+    }
+  });
+
+  it('marks nothing for a scope that holds no key', () => {
+    // Nothing was sent under it, so there is nothing a retry could be answered from.
+    markInDoubt('t1', 'salary:never-held');
+    expect(heldInDoubt('t1', 'salary:never-held')).toBe(false);
   });
 });
 
@@ -73,12 +131,24 @@ describe('keyIsSpent', () => {
     for (const code of [
       'TREASURY_REQUEST_KEY_REUSED',
       'EXPENSE_ALREADY_VOID',
+      'INCOME_ALREADY_VOID',
       'TRANSFER_ALREADY_VOID',
       'TRANSACTION_ALREADY_REVERSED',
       'PAYMENT_IDEMPOTENCY_KEY_REUSED',
     ]) {
       expect({ code, spent: keyIsSpent(failed(409, code)) }).toEqual({ code, spent: true });
     }
+  });
+
+  it('spends an income key whose voucher was recorded and cancelled since', () => {
+    // The income form's own case: an earlier press recorded RV-…, the manager voided it, and the
+    // retry with the held key is refused. Keeping that key would refuse every later press too.
+    const refusal = new ApiRequestError(409, {
+      code: 'INCOME_ALREADY_VOID',
+      message: 'x',
+      params: { voucherNumber: 'RV-2610-0004' },
+    });
+    expect(keyIsSpent(refusal)).toBe(true);
   });
 
   it('keeps the key on every other refusal: it proves only that this attempt wrote nothing', () => {

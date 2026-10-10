@@ -1,4 +1,4 @@
-import { planExpenseDate } from './expenses.plan';
+import { planExpenseDate, urgentCeilingBreached } from './expenses.plan';
 
 const TODAY = '2026-10-06';
 const GO_LIVE = '2026-10-01';
@@ -69,5 +69,25 @@ describe('planExpenseDate', () => {
 
   it('asks nothing about go-live when the treasury is not live', () => {
     expect(planExpenseDate({ paidOn: '2020-01-01', reason: 'قديمة', today: TODAY })).toMatchObject({ ok: true });
+  });
+});
+
+describe('urgentCeilingBreached (decision D6)', () => {
+  const decimal = (value: number) => ({ toNumber: () => value });
+
+  it('refuses above the ceiling of the wallet’s currency, naming it', () => {
+    expect(urgentCeilingBreached({ amount: 100_001, currency: 'LBP', ceilings: { LBP: decimal(100_000), USD: null } })).toEqual({
+      ceiling: 100_000,
+      currency: 'LBP',
+    });
+  });
+
+  it('lets an amount equal to the ceiling through', () => {
+    expect(urgentCeilingBreached({ amount: 100_000, currency: 'LBP', ceilings: { LBP: decimal(100_000), USD: null } })).toBeNull();
+  });
+
+  it('has no limit when the ceiling is not set, or the currency has none', () => {
+    expect(urgentCeilingBreached({ amount: 9e9, currency: 'LBP', ceilings: { LBP: null, USD: decimal(50) } })).toBeNull();
+    expect(urgentCeilingBreached({ amount: 9e9, currency: 'EUR', ceilings: { LBP: decimal(1), USD: decimal(1) } })).toBeNull();
   });
 });

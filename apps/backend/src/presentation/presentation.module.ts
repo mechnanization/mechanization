@@ -9,6 +9,7 @@ import { BuildingsController } from './controllers/buildings.controller';
 import { CorrectionsController } from './controllers/corrections.controller';
 import { TreasuryController } from './controllers/treasury.controller';
 import { ExpensesController } from './controllers/expenses.controller';
+import { IncomeController } from './controllers/income.controller';
 import { TransfersController } from './controllers/transfers.controller';
 import { CasesController } from './controllers/cases.controller';
 import { CitizenController } from './controllers/citizen.controller';
@@ -52,6 +53,7 @@ import { MetricsModule } from './metrics.module';
     CorrectionsController,
     TreasuryController,
     ExpensesController,
+    IncomeController,
     TransfersController,
     /*
      * BackupController (`t/:tenantSlug/backup/export` and `/restore`) is not

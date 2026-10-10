@@ -271,14 +271,18 @@ model User {
   /// Expenses this staff member recorded, and any they cancelled (0074).
   expensesRecorded         ExpenseVoucher[]     @relation("ExpenseRecordedBy")
   expensesVoided           ExpenseVoucher[]     @relation("ExpenseVoidedBy")
+  expensesPaidTo           ExpenseVoucher[]     @relation("ExpensePayeeStaff")
   /// Transfers between wallets this staff member recorded or cancelled (0078).
   transfersRecorded        TreasuryTransfer[]   @relation("TransferRecordedBy")
   transfersVoided          TreasuryTransfer[]   @relation("TransferVoidedBy")
   /// Payment orders this staff member issued, requests they filed, and the
-  /// requests they decided (0080, decree 5595/1982 art. 28).
+  /// requests they decided (0083, decree 5595/1982 art. 28).
   expensesOrdered          ExpenseVoucher[]     @relation("ExpenseOrderedBy")
   expenseRequestsFiled     ExpenseRequest[]     @relation("ExpenseRequestFiledBy")
   expenseRequestsDecided   ExpenseRequest[]     @relation("ExpenseRequestDecidedBy")
+  /// Income vouchers this staff member recorded, and any they cancelled (0080).
+  incomeRecorded           IncomeVoucher[]      @relation("IncomeRecordedBy")
+  incomeVoided             IncomeVoucher[]      @relation("IncomeVoidedBy")
   createdCases          Case[]               @relation("CaseCreatedBy")
   resolvedCases         Case[]               @relation("CaseResolvedCitizen")
   unitOccupancies       UnitOccupancy[]      @relation("UnitOccupant")
@@ -1924,6 +1928,14 @@ model SystemSettings {
   /// the cash it brought in is already in an opening balance.
   treasuryGoLiveAt DateTime? @db.Timestamptz(3)
 
+  /// «سقف الدفع العاجل» (0083, decision D6 in docs/finance.md §13.1c): the most
+  /// an accountant may pay per voucher before the manager's payment order
+  /// (decree 5595/1982 art. 35), one per currency. NULL is no ceiling. Read
+  /// with the go-live stamp (`TreasuryLedgerService.config`, FOR SHARE); a
+  /// salary is not held to it. Greater than zero when set (CHECK in 0083).
+  urgentExpenseCeilingLbp Decimal? @db.Decimal(14, 2)
+  urgentExpenseCeilingUsd Decimal? @db.Decimal(14, 2)
+
   updatedAt   DateTime @updatedAt
   updatedById String?  @db.Uuid
 
@@ -2320,6 +2332,7 @@ model TreasuryAccount {
   entries TreasuryEntry[]
   expenses ExpenseVoucher[]
   expenseRequests ExpenseRequest[]
+  incomes  IncomeVoucher[]
   transfersOut TreasuryTransfer[] @relation("TransferFrom")
   transfersIn  TreasuryTransfer[] @relation("TransferTo")
 
@@ -2459,13 +2472,18 @@ model ExpenseCategory {
 
 /// One «أمر صرف»: money that left a wallet, and why.
 ///
-/// Recording is paying — there is no approval step (docs/finance.md §5.1) — so
-/// a voucher always has its `TreasuryEntry`, written in the same transaction.
-/// A mistake is voided, never edited: this row takes a cancellation stamp while
-/// the ledger entry it wrote is opposed by a new one.
+/// Money leaves on the manager's payment order (docs/finance.md §5.1, decree
+/// 5595/1982 art. 28 and 33): the manager's own voucher carries it from the
+/// start, a voucher written from an accountant's request carries the order that
+/// paid it, and an accountant's urgent payment (art. 35, `urgentReason`) waits
+/// for it (`orderedAt` NULL) until the manager regularises it. Whichever way it
+/// was written, a voucher always has its `TreasuryEntry`, written in the same
+/// transaction. A mistake is voided, never edited (trigger in 0083): this row
+/// takes a cancellation stamp while the ledger entry it wrote is opposed by a
+/// new one.
 model ExpenseVoucher {
   id String @id @default(uuid()) @db.Uuid
-  /// `PV-000001`, from `expense_voucher_seq`. Printed on the voucher.
+  /// «PV-2610-0001», from `document_counters` (kind `VOUCHER`, 0079). Printed on the voucher.
   voucherNumber String @unique
 
   categoryId String          @db.Uuid
@@ -2497,6 +2515,12 @@ model ExpenseVoucher {
   recordedById String? @db.Uuid
   recordedBy   User?   @relation("ExpenseRecordedBy", fields: [recordedById], references: [id], onDelete: Restrict)
 
+  /// The staff account a salary or wage voucher paid (0081); NULL on every
+  /// other voucher. `payee` still holds the name as it stood on the day. That
+  /// it is a STAFF row is checked by its one writer, `recordSalary`.
+  payeeStaffId String? @db.Uuid
+  payeeStaff   User?   @relation("ExpensePayeeStaff", fields: [payeeStaffId], references: [id], onDelete: Restrict)
+
   /// One id per press of «سجّل النفقة», so a retry finds the first voucher
   /// instead of paying twice.
   clientRequestId String? @unique @db.Uuid
@@ -2511,7 +2535,7 @@ model ExpenseVoucher {
   /// «أمر الصرف» — the payment order (decree 5595/1982 art. 28 and 33). Set at
   /// creation on the manager's vouchers and on vouchers paid from an order;
   /// NULL on an accountant's urgent payment (art. 35) until the manager
-  /// regularises it. Written once (trigger in 0080).
+  /// regularises it. Written once (trigger in 0083).
   orderedAt   DateTime? @db.Timestamptz(3)
   orderedById String?   @db.Uuid
   orderedBy   User?     @relation("ExpenseOrderedBy", fields: [orderedById], references: [id], onDelete: Restrict)
@@ -2529,13 +2553,14 @@ model ExpenseVoucher {
   @@index([recordedById])
   @@index([orderedById])
   @@index([voidedById])
+  @@index([payeeStaffId, occurredAt(sort: Desc)])
   @@map("expense_vouchers")
 }
 
 /// «طلب أمر صرف» — an expense an accountant has prepared for the manager's
-/// payment order (0080). Nothing has left a wallet: the order writes and pays
+/// payment order (0083). Nothing has left a wallet: the order writes and pays
 /// the voucher in one transaction. The decision is written once (trigger in
-/// 0080) — `ORDERED` with its voucher, `REJECTED` with a reason, or `WITHDRAWN`
+/// 0083) — `ORDERED` with its voucher, `REJECTED` with a reason, or `WITHDRAWN`
 /// by its author. Status is derived from `decision`, never stored twice.
 model ExpenseRequest {
   id String @id @default(uuid()) @db.Uuid
@@ -2564,7 +2589,7 @@ model ExpenseRequest {
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
 
-  /// 'ORDERED' | 'REJECTED' | 'WITHDRAWN' (CHECK in 0080).
+  /// 'ORDERED' | 'REJECTED' | 'WITHDRAWN' (CHECK in 0083).
   decision       String?
   decidedAt      DateTime? @db.Timestamptz(3)
   decidedById    String?   @db.Uuid
@@ -2579,6 +2604,94 @@ model ExpenseRequest {
   @@index([requestedById])
   @@index([decidedById])
   @@map("expense_requests")
+}
+
+// ─────────────────────────  Income (migration 0080)  ─────────────────────────
+// Design: docs/finance.md §4.
+
+/// Where income comes from: the Independent Municipal Fund, permits, rent,
+/// grants, fines. Rows rather than an enum, for the reason `ExpenseCategory` gives.
+model IncomeCategory {
+  id String @id @default(uuid()) @db.Uuid
+  /// The stable handle for the seeded rows (`INCOME_CATEGORY_KEYS`). NULL for a
+  /// municipality's own. Unique where present (a partial index in 0080).
+  key     String?
+  /// The name as the municipality reads it.
+  labelAr String
+  /// Its English name, or NULL for a category entered in Arabic only.
+  labelEn String?
+  /// باب وبند الموازنة. NULL on every seeded row: the codes come from the
+  /// municipality's adopted budget. Both set or both NULL (CHECK in 0080).
+  chapterCode String?
+  itemCode    String?
+  /// Deactivated, never deleted: vouchers point here for ever.
+  active    Boolean  @default(true)
+  sortOrder Int      @default(100)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+
+  vouchers IncomeVoucher[]
+
+  @@map("income_categories")
+}
+
+/// One «سند قبض إيرادات»: money that reached a wallet without a citizen's bill
+/// behind it, and where it came from.
+///
+/// Recording is receiving — the `INCOME_VOUCHER` ledger entry is written in the
+/// same transaction. A mistake is voided, never edited (trigger in 0083): this
+/// row takes a cancellation stamp while the entry it wrote is opposed by a new one.
+model IncomeVoucher {
+  id String @id @default(uuid()) @db.Uuid
+  /// «RV-2610-0001», from `document_counters` (kind `REVENUE_VOUCHER`).
+  voucherNumber String @unique
+
+  categoryId String         @db.Uuid
+  category   IncomeCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  /// The wallet it reached. Paired with the currency, so the foreign key itself
+  /// refuses a ليرة voucher received into a dollar safe.
+  accountId String          @db.Uuid
+  currency  String
+  account   TreasuryAccount @relation(fields: [accountId, currency], references: [id, currency], onDelete: Restrict, onUpdate: Restrict, map: "income_vouchers_account_currency_fkey")
+
+  /// Positive: what was received. The ledger's own precision.
+  amount Decimal @db.Decimal(14, 2)
+
+  /// Who paid. Optional free text, and it may name a citizen — personal data,
+  /// kept out of logs, Sentry and audit rows.
+  payerName         String?
+  description       String
+  /// A cheque number, or a bank or Whish transfer number.
+  externalReference String?
+
+  /// The day the money arrived, which is not always the day the row was written.
+  occurredAt DateTime @default(now()) @db.Timestamptz(3)
+  /// Why it is dated before today. Required by the server for any back-dating.
+  adjustmentReason String?
+
+  recordedById String? @db.Uuid
+  recordedBy   User?   @relation("IncomeRecordedBy", fields: [recordedById], references: [id], onDelete: Restrict)
+
+  /// One id per press of «سجّل الإيراد». Required, so a retry always finds the
+  /// first voucher instead of crediting the wallet twice.
+  clientRequestId String @unique @db.Uuid
+
+  /// The cancellation stamp. All three move together (CHECK in 0080); a voucher
+  /// with `voidedAt` set has an opposing ledger entry against the same wallet.
+  voidedAt   DateTime? @db.Timestamptz(3)
+  voidedById String?   @db.Uuid
+  voidedBy   User?     @relation("IncomeVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
+  voidReason String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([occurredAt(sort: Desc)])
+  @@index([categoryId, occurredAt(sort: Desc)])
+  @@index([accountId, occurredAt(sort: Desc)])
+  @@index([recordedById])
+  @@index([voidedById])
+  @@map("income_vouchers")
 }
 
 // ─────────────────────────  Quality review (migration 0049)  ─────────────────────────

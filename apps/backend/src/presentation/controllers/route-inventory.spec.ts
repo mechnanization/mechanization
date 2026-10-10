@@ -180,6 +180,7 @@ describe('the treasury routes (docs/finance.md §9)', () => {
     'ExpensesController.list': READ,
     'ExpensesController.get': READ,
     'ExpensesController.record': WORK,
+    'ExpensesController.recordSalary': WORK,
     'ExpensesController.requests': READ,
     'ExpensesController.requestPayment': WORK,
     'ExpensesController.orderRequest': ADMIN,
@@ -187,6 +188,13 @@ describe('the treasury routes (docs/finance.md §9)', () => {
     'ExpensesController.withdrawRequest': WORK,
     'ExpensesController.regularize': ADMIN,
     'ExpensesController.void': ADMIN,
+    'IncomeController.categories': READ,
+    'IncomeController.createCategory': ADMIN,
+    'IncomeController.updateCategory': ADMIN,
+    'IncomeController.list': READ,
+    'IncomeController.record': WORK,
+    'IncomeController.get': READ,
+    'IncomeController.void': ADMIN,
     'TransfersController.custody': READ,
     'TransfersController.myRound': ALL_BUT_VIEWER,
     'TransfersController.collections': READ,
@@ -194,7 +202,7 @@ describe('the treasury routes (docs/finance.md §9)', () => {
     'TransfersController.receiveCustody': WORK,
     'TransfersController.void': ADMIN,
   };
-  const treasury = routes().filter((route) => /^(Treasury|Expenses|Transfers)Controller\./.test(route.name));
+  const treasury = routes().filter((route) => /^(Treasury|Expenses|Income|Transfers)Controller\./.test(route.name));
 
   it('knows every treasury handler, and no other', () => {
     expect(treasury.map((route) => route.name).sort()).toEqual(Object.keys(expected).sort());
@@ -206,6 +214,7 @@ describe('the treasury routes (docs/finance.md §9)', () => {
   });
 
   it('lets no one but the manager order, refuse, regularise or cancel', () => {
+    // `void` covers an expense, an income voucher and a transfer alike.
     const managerOnly = ['orderRequest', 'rejectRequest', 'regularize', 'void', 'activate'];
     const wider = treasury.filter(
       (route) => managerOnly.includes(route.name.split('.')[1]) && (route.roles ?? []).some((role) => role !== 'SUPER_ADMIN'),

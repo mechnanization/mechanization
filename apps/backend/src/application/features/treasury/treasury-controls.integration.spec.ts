@@ -1,7 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { Client } from 'pg';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { municipalDayStart, municipalToday, updateExpenseCategorySchema } from '@mechanization/shared-schemas';
+import {
+  municipalDayStart,
+  municipalToday,
+  recordExpenseSchema,
+  SALARY_URGENT_REASON,
+  systemSettingsSchema,
+  updateExpenseCategorySchema,
+} from '@mechanization/shared-schemas';
 import { PrismaClient as TenantPrismaClient } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { migrateTenantSchema } from '../../../infrastructure/prisma/tenant-migrator';
@@ -11,6 +18,7 @@ import { AuditService } from '../audit/audit.service';
 import { FeesService } from '../fees/fees.service';
 import { PaymentLedgerService, type LedgerAudit } from '../fees/payment-ledger.service';
 import { ExpensesService } from './expenses.service';
+import { IncomeService } from './income.service';
 import { TransfersService } from './transfers.service';
 import { TreasuryLedgerService } from './treasury-ledger.service';
 import { TreasuryService } from './treasury.service';
@@ -24,7 +32,10 @@ import { TreasuryService } from './treasury.service';
  * payment being regularised after (D3, decree 5595/1982 art. 28, 33, 35);
  * custody is received by someone other than the collector, and never spent;
  * a retry key names one act; an expense and a handover on one safe cannot
- * deadlock; and the documents behind the ledger are written once (0080).
+ * deadlock; and the documents behind the ledger are written once (0083).
+ * Then the controls extended on 2026-10-10: income vouchers under the same
+ * lock order, retry-key binding, dating and write-once rule; a salary paid on
+ * the art. 35 path; and the manager's urgent-payment ceiling (decision D6).
  */
 const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL;
 const SCHEMA = 'tenant_treasury_controls_spec';
@@ -43,6 +54,7 @@ describeIfDb('treasury controls', () => {
   let transfers: TransfersService;
   let treasury: TreasuryService;
   let expenses: ExpensesService;
+  let income: IncomeService;
   let fees: FeesService;
 
   let citizenId: string;
@@ -144,6 +156,7 @@ describeIfDb('treasury controls', () => {
     transfers = new TransfersService(context, ledger, auditService);
     treasury = new TreasuryService(context, ledger, auditService);
     expenses = new ExpensesService(context, ledger, auditService);
+    income = new IncomeService(context, ledger, auditService);
     fees = new FeesService(
       context,
       { emit: jest.fn() } as unknown as EventEmitter2,
@@ -529,7 +542,7 @@ describeIfDb('treasury controls', () => {
     expect(outcomes.filter((outcome) => outcome !== 'ok')).toEqual([]);
   });
 
-  // ─────────────────────  0080 — documents are written once  ─────────────────────
+  // ─────────────────────  0083 — documents are written once  ─────────────────────
 
   describe('the documents behind the ledger', () => {
     const table = (name: string) => `"${SCHEMA}"."${name}"`;
@@ -854,6 +867,334 @@ describeIfDb('treasury controls', () => {
     expect(cleared).toMatchObject({ chapterCode: null, itemCode: null, active: false });
     expect(updateExpenseCategorySchema.safeParse({ name: 'صيانة الطرقات', chapterCode: '' }).success).toBe(false);
     expect(updateExpenseCategorySchema.safeParse({ name: 'صيانة الطرقات', chapterCode: '7' }).success).toBe(false);
+  });
+
+  // ─────────────────────  income vouchers, under the same controls  ─────────────────────
+
+  describe('an income voucher', () => {
+    let incomeCategoryId: string;
+    const receive = (over: Record<string, unknown> = {}, actor = MANAGER()) =>
+      scoped(() =>
+        income.record(
+          {
+            categoryId: incomeCategoryId,
+            accountId: safeLbpId,
+            amount: 12_000,
+            payerName: 'مستأجر القاعة',
+            description: 'إيجار قاعة البلدية',
+            clientRequestId: randomUUID(),
+            ...over,
+          } as Parameters<IncomeService['record']>[0],
+          actor,
+        ),
+      );
+
+    beforeAll(async () => {
+      incomeCategoryId = (await db.incomeCategory.findFirstOrThrow({ where: { key: 'MISCELLANEOUS_INCOME' } })).id;
+    });
+
+    it('binds its retry key to the act: another amount, payer or clerk is refused, the same act replayed', async () => {
+      const clientRequestId = randomUUID();
+      const first = await receive({ clientRequestId });
+      const before = await balance(safeLbpId);
+
+      await expect(receive({ clientRequestId, amount: 13_000 })).rejects.toMatchObject({
+        code: 'TREASURY_REQUEST_KEY_REUSED',
+      });
+      await expect(receive({ clientRequestId, payerName: 'غيره' })).rejects.toMatchObject({
+        code: 'TREASURY_REQUEST_KEY_REUSED',
+      });
+      await expect(receive({ clientRequestId }, ACCOUNTANT())).rejects.toMatchObject({
+        code: 'TREASURY_REQUEST_KEY_REUSED',
+      });
+      await expect(receive({ clientRequestId })).resolves.toMatchObject({
+        replayed: true,
+        voucherNumber: first.voucherNumber,
+      });
+      expect(await balance(safeLbpId)).toBe(before);
+      expect(await db.incomeVoucher.count({ where: { clientRequestId } })).toBe(1);
+    });
+
+    it('does not answer a cancelled voucher as recorded', async () => {
+      const clientRequestId = randomUUID();
+      const first = await receive({ clientRequestId });
+      await scoped(() => income.void(first.id, 'سُجّل مرتين', MANAGER()));
+
+      await expect(receive({ clientRequestId })).rejects.toMatchObject({
+        code: 'INCOME_ALREADY_VOID',
+        params: { voucherNumber: first.voucherNumber },
+      });
+    });
+
+    it('dated the go-live day, never sits before the opening entry (D5)', async () => {
+      const { treasuryGoLiveAt } = await db.systemSettings.findFirstOrThrow({ select: { treasuryGoLiveAt: true } });
+      // Activated yesterday evening, after midday UTC — where a back-dated voucher would sit.
+      const yesterday = municipalToday(new Date(Date.now() - 86_400_000));
+      const lateGoLive = new Date(`${yesterday}T16:00:00.000Z`);
+      await db.systemSettings.updateMany({ data: { treasuryGoLiveAt: lateGoLive } });
+      try {
+        const recorded = await receive({ receivedOn: yesterday, adjustmentReason: 'وصل التحويل مساءً وأُدخل اليوم' });
+        const voucher = await db.incomeVoucher.findUniqueOrThrow({
+          where: { id: recorded.id },
+          select: { occurredAt: true },
+        });
+        const entry = await db.treasuryEntry.findFirstOrThrow({
+          where: { source: 'INCOME_VOUCHER', sourceId: recorded.id },
+          select: { occurredAt: true },
+        });
+        expect(voucher.occurredAt).toEqual(lateGoLive);
+        expect(entry.occurredAt).toEqual(lateGoLive);
+      } finally {
+        await db.systemSettings.updateMany({ data: { treasuryGoLiveAt } });
+      }
+    });
+
+    it('is written once: its amount cannot be changed, nor the row deleted', async () => {
+      const recorded = await receive();
+      const table = `"${SCHEMA}"."income_vouchers"`;
+      await expect(
+        db.$executeRawUnsafe(`UPDATE ${table} SET "amount" = 1 WHERE "id" = $1::uuid`, recorded.id),
+      ).rejects.toThrow(/only its stamps may change/);
+      await expect(db.$executeRawUnsafe(`DELETE FROM ${table} WHERE "id" = $1::uuid`, recorded.id)).rejects.toThrow(
+        /never removed/,
+      );
+      // Its stamps still go on, once: the cancellation is how it is corrected.
+      await scoped(() => income.void(recorded.id, 'خطأ في البند', MANAGER()));
+      await expect(
+        db.$executeRawUnsafe(`UPDATE ${table} SET "voidedAt" = NULL WHERE "id" = $1::uuid`, recorded.id),
+      ).rejects.toThrow(/cancelled document does not change/);
+    });
+
+    it('goes through with an expense and a handover on the same safe, without a deadlock', async () => {
+      const outcomes: string[] = [];
+      for (let round = 0; round < 15; round++) {
+        await collect(10_000, ids.collector);
+        const custodyAccountId = await custodyOf(ids.collector);
+        const results = await Promise.allSettled([
+          scoped(() =>
+            expenses.record(
+              { categoryId, accountId: safeLbpId, amount: 1_000, payee: 'مورد', description: 'سباق' },
+              MANAGER(),
+            ),
+          ),
+          receive({ amount: 1_000 }),
+          scoped(() => transfers.receiveCustody({ custodyAccountId, amount: 10_000 }, MANAGER())),
+        ]);
+        for (const result of results) {
+          outcomes.push(result.status === 'fulfilled' ? 'ok' : String((result.reason as Error).message).slice(0, 80));
+        }
+      }
+      expect(outcomes.filter((outcome) => outcome !== 'ok')).toEqual([]);
+    });
+  });
+
+  // ─────────────────────  a salary is paid on the art. 35 path  ─────────────────────
+
+  describe('a salary payout', () => {
+    const salaryStaff = async (firstName = 'ريما', lastName = 'حداد') => {
+      const person = staff('ADMINISTRATIVE_OFFICER', { firstName, lastName });
+      await db.user.create({ data: person.row });
+      return person.id;
+    };
+    const paySalary = (staffId: string, actor: { id: string; role: string }, over: Record<string, unknown> = {}) =>
+      scoped(() =>
+        expenses.recordSalary(
+          staffId,
+          {
+            accountId: safeLbpId,
+            amount: 20_000,
+            description: 'راتب تشرين الأول',
+            clientRequestId: randomUUID(),
+            ...over,
+          } as Parameters<ExpensesService['recordSalary']>[1],
+          actor,
+        ),
+      );
+
+    it("is refused to an accountant paying himself, and moves nothing", async () => {
+      const before = await balance(safeLbpId);
+      await expect(paySalary(ids.accountant, ACCOUNTANT())).rejects.toMatchObject({ code: 'SALARY_SELF_PAYOUT' });
+      expect(await balance(safeLbpId)).toBe(before);
+    });
+
+    it("refuses a day that is not on the calendar instead of storing another one", () => {
+      const base = { categoryId, accountId: safeLbpId, amount: 1_000, payee: 'مورد', description: 'قرطاسية' };
+      expect(recordExpenseSchema.safeParse({ ...base, paidOn: '2026-09-31' }).success).toBe(false);
+      expect(recordExpenseSchema.safeParse({ ...base, paidOn: '2026-10-00' }).success).toBe(false);
+      expect(recordExpenseSchema.safeParse({ ...base, paidOn: '2026-09-30' }).success).toBe(true);
+    });
+
+    it("by the accountant, is paid at once and waits for the manager's order, with the art. 35 reason", async () => {
+      const paid = await paySalary(await salaryStaff(), ACCOUNTANT());
+      expect(paid.orderStatus).toBe('AWAITING_ORDER');
+      const voucher = await scoped(() => expenses.get(paid.id));
+      expect(voucher).toMatchObject({ orderStatus: 'AWAITING_ORDER', urgentReason: SALARY_URGENT_REASON });
+      expect(voucher.urgentReason).toBe('راتب — يُدفع قبل الحوالة (المادة 35)');
+
+      const waiting = await scoped(() => expenses.list({ awaitingOrder: true }));
+      expect(waiting.vouchers.map((row) => row.id)).toContain(paid.id);
+      await expect(scoped(() => expenses.regularize(paid.id, MANAGER()))).resolves.toMatchObject({
+        orderStatus: 'ORDERED',
+      });
+    });
+
+    it('by the manager, is the order itself', async () => {
+      const paid = await paySalary(await salaryStaff(), MANAGER());
+      expect(paid.orderStatus).toBe('ORDERED');
+      expect(await scoped(() => expenses.get(paid.id))).toMatchObject({ orderStatus: 'ORDERED', urgentReason: null });
+    });
+
+    it('binds its retry key to the staff account, not only to the name on it', async () => {
+      // Two staff members who share a name: the payee text alone cannot tell them apart.
+      const first = await salaryStaff('حسن', 'سرور');
+      const namesake = await salaryStaff('حسن', 'سرور');
+      const clientRequestId = randomUUID();
+      await paySalary(first, MANAGER(), { clientRequestId });
+      const before = await balance(safeLbpId);
+
+      await expect(paySalary(namesake, MANAGER(), { clientRequestId })).rejects.toMatchObject({
+        code: 'TREASURY_REQUEST_KEY_REUSED',
+      });
+      expect(await balance(safeLbpId)).toBe(before);
+      await expect(paySalary(first, MANAGER(), { clientRequestId })).resolves.toMatchObject({ replayed: true });
+    });
+  });
+
+  // ─────────────────────  D6 — the urgent-payment ceiling  ─────────────────────
+
+  describe('the urgent-payment ceiling (decision D6)', () => {
+    const CEILING_LBP = 100_000;
+    const CEILING_USD = 50;
+    let safeUsdId: string;
+    const urgent = (amount: number, accountId = safeLbpId) => ({
+      categoryId,
+      accountId,
+      amount,
+      payee: 'كاراج الحي',
+      description: 'تصليح عاجل لشاحنة النفايات',
+      urgentReason: 'تعطّلت الشاحنة أثناء الجولة',
+    });
+    const setCeilings = (lbp: number | null, usd: number | null) =>
+      db.systemSettings.updateMany({ data: { urgentExpenseCeilingLbp: lbp, urgentExpenseCeilingUsd: usd } });
+
+    beforeAll(async () => {
+      safeUsdId = (await db.treasuryAccount.findFirstOrThrow({ where: { type: 'CASH_SAFE', currency: 'USD' } })).id;
+      // Dollars in the safe, so a dollar expense has something to come out of.
+      const miscIncome = (await db.incomeCategory.findFirstOrThrow({ where: { key: 'MISCELLANEOUS_INCOME' } })).id;
+      await scoped(() =>
+        income.record(
+          { categoryId: miscIncome, accountId: safeUsdId, amount: 1_000, description: 'هبة', clientRequestId: randomUUID() },
+          MANAGER(),
+        ),
+      );
+    });
+
+    afterEach(async () => {
+      await setCeilings(null, null);
+    });
+
+    it("refuses an accountant's urgent payment above it, writing nothing", async () => {
+      await setCeilings(CEILING_LBP, null);
+      const vouchersBefore = await db.expenseVoucher.count();
+      const safeBefore = await balance(safeLbpId);
+      await expect(scoped(() => expenses.record(urgent(CEILING_LBP + 1), ACCOUNTANT()))).rejects.toMatchObject({
+        code: 'EXPENSE_URGENT_OVER_CEILING',
+        params: { ceiling: CEILING_LBP, currency: 'LBP' },
+      });
+      expect(await db.expenseVoucher.count()).toBe(vouchersBefore);
+      expect(await balance(safeLbpId)).toBe(safeBefore);
+    });
+
+    it('lets one at the ceiling or under it through, still waiting for the order', async () => {
+      await setCeilings(CEILING_LBP, null);
+      for (const amount of [CEILING_LBP, CEILING_LBP - 1]) {
+        await expect(scoped(() => expenses.record(urgent(amount), ACCOUNTANT()))).resolves.toMatchObject({
+          orderStatus: 'AWAITING_ORDER',
+        });
+      }
+    });
+
+    it("does not hold back the manager's own voucher, which is the order", async () => {
+      await setCeilings(CEILING_LBP, null);
+      await expect(scoped(() => expenses.record(urgent(CEILING_LBP * 2), MANAGER()))).resolves.toMatchObject({
+        orderStatus: 'ORDERED',
+      });
+    });
+
+    it('does not hold back a salary, which art. 35 names', async () => {
+      await setCeilings(CEILING_LBP, null);
+      const person = staff('ADMINISTRATIVE_OFFICER');
+      await db.user.create({ data: person.row });
+      await expect(
+        scoped(() =>
+          expenses.recordSalary(
+            person.id,
+            { accountId: safeLbpId, amount: CEILING_LBP * 2, description: 'راتب', clientRequestId: randomUUID() },
+            ACCOUNTANT(),
+          ),
+        ),
+      ).resolves.toMatchObject({ orderStatus: 'AWAITING_ORDER' });
+    });
+
+    it('has no limit while it is not set', async () => {
+      await setCeilings(null, null);
+      await expect(scoped(() => expenses.record(urgent(CEILING_LBP * 3), ACCOUNTANT()))).resolves.toMatchObject({
+        orderStatus: 'AWAITING_ORDER',
+      });
+    });
+
+    it('is one per currency: a dollar ceiling holds dollars only, a ليرة ceiling ليرة only', async () => {
+      await setCeilings(null, CEILING_USD);
+      await expect(
+        scoped(() => expenses.record(urgent(CEILING_USD + 10, safeUsdId), ACCOUNTANT())),
+      ).rejects.toMatchObject({
+        code: 'EXPENSE_URGENT_OVER_CEILING',
+        params: { ceiling: CEILING_USD, currency: 'USD' },
+      });
+      await expect(scoped(() => expenses.record(urgent(CEILING_LBP * 3), ACCOUNTANT()))).resolves.toMatchObject({
+        orderStatus: 'AWAITING_ORDER',
+      });
+
+      await setCeilings(CEILING_LBP, null);
+      await expect(
+        scoped(() => expenses.record(urgent(CEILING_USD + 10, safeUsdId), ACCOUNTANT())),
+      ).resolves.toMatchObject({ orderStatus: 'AWAITING_ORDER' });
+    });
+
+    it('is set in الإعدادات by the manager alone, validated, and refused at zero by the database too', async () => {
+      // The form's schema: positive, two decimals at most, null clears it.
+      for (const bad of [0, -5, 10.123]) {
+        expect(systemSettingsSchema.safeParse({ urgentExpenseCeilingLbp: bad }).success).toBe(false);
+      }
+      expect(systemSettingsSchema.safeParse({ urgentExpenseCeilingUsd: null }).success).toBe(true);
+      expect(systemSettingsSchema.safeParse({ urgentExpenseCeilingUsd: 99.5 }).success).toBe(true);
+
+      const saved = await scoped(() =>
+        fees.updateSettings({ urgentExpenseCeilingLbp: 250_000, urgentExpenseCeilingUsd: 75.5 }, MANAGER()),
+      );
+      expect(saved).toMatchObject({ urgentExpenseCeilingLbp: 250_000, urgentExpenseCeilingUsd: 75.5 });
+
+      // The accountant may not move the limit on his own payments…
+      await expect(
+        scoped(() => fees.updateSettings({ urgentExpenseCeilingLbp: 9_000_000 }, ACCOUNTANT())),
+      ).rejects.toMatchObject({ code: 'URGENT_EXPENSE_CEILING_FORBIDDEN' });
+      await expect(
+        scoped(() => fees.updateSettings({ urgentExpenseCeilingUsd: null }, ACCOUNTANT())),
+      ).rejects.toMatchObject({ code: 'URGENT_EXPENSE_CEILING_FORBIDDEN' });
+      // …but saving the finance section with the values it read is no change, and he may.
+      await expect(
+        scoped(() =>
+          fees.updateSettings(
+            { defaultDueDays: 30, urgentExpenseCeilingLbp: 250_000, urgentExpenseCeilingUsd: 75.5 },
+            ACCOUNTANT(),
+          ),
+        ),
+      ).resolves.toMatchObject({ urgentExpenseCeilingLbp: 250_000, urgentExpenseCeilingUsd: 75.5 });
+
+      await expect(
+        db.$executeRawUnsafe(`UPDATE "${SCHEMA}"."system_settings" SET "urgentExpenseCeilingLbp" = 0`),
+      ).rejects.toThrow(/system_settings_urgent_ceiling_lbp_positive/);
+    });
   });
 });
 

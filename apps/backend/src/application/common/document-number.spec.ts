@@ -38,6 +38,7 @@ describe('document numbering', () => {
       expect(formatDocumentNumber('RECEIPT', '2610', 42)).toBe('RCP-2610-0042');
       expect(formatDocumentNumber('VOUCHER', '2601', 999)).toBe('PV-2601-0999');
       expect(formatDocumentNumber('TRANSFER', '2712', 1000)).toBe('TR-2712-1000');
+      expect(formatDocumentNumber('REVENUE_VOUCHER', '2610', 7)).toBe('RV-2610-0007');
     });
 
     /*
@@ -51,9 +52,9 @@ describe('document numbering', () => {
     });
 
     it('gives each book its own letters', () => {
-      expect(Object.values(DOCUMENT_PREFIX).sort()).toEqual(['INV', 'PV', 'RCP', 'TR']);
-      // Four distinct prefixes, so a number read aloud says which book it is from.
-      expect(new Set(Object.values(DOCUMENT_PREFIX)).size).toBe(4);
+      expect(Object.values(DOCUMENT_PREFIX).sort()).toEqual(['INV', 'PV', 'RCP', 'RV', 'TR']);
+      // Five distinct prefixes, so a number read aloud says which book it is from.
+      expect(new Set(Object.values(DOCUMENT_PREFIX)).size).toBe(5);
     });
   });
 
@@ -62,6 +63,7 @@ describe('document numbering', () => {
       expect(isDocumentNumber('INV-2610-0001')).toBe(true);
       expect(isDocumentNumber('RCP-000014')).toBe(true);
       expect(isDocumentNumber('  TR-2610-0001  ')).toBe(true);
+      expect(isDocumentNumber('RV-2610-0001')).toBe(true);
     });
 
     it('refuses what is not one', () => {
@@ -69,6 +71,11 @@ describe('document numbering', () => {
       expect(isDocumentNumber('XYZ-2610-0001')).toBe(false);
       expect(isDocumentNumber('RCP-26100001')).toBe(false);
       expect(isDocumentNumber('')).toBe(false);
+    });
+
+    // The income book began after 0079, so the six-digit shape was never printed on one.
+    it('refuses an RV number in the pre-0079 shape', () => {
+      expect(isDocumentNumber('RV-000001')).toBe(false);
     });
   });
 });

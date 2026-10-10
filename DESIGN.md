@@ -1,7 +1,7 @@
 ---
 name: Mechanization
 description: Operate-mode municipal register, Arabic and RTL first, on warm neutrals with one blue accent and status colours that each mean one thing.
-# Last verified against the code: fix/pr104-review (uncommitted review fixes), 2026-10-09. Source: apps/frontend/app/globals.css, apps/frontend/tailwind.config.ts.
+# Last verified against the code: fix/pr104-review (uncommitted review fixes), 2026-10-10. Source: apps/frontend/app/globals.css, apps/frontend/tailwind.config.ts.
 colors:
   background: "hsl(40 20% 98%)"
   foreground: "hsl(0 0% 4%)"
@@ -163,7 +163,7 @@ components:
 
 # Design System: Mechanization
 
-Last verified against the code: `fix/pr104-review` (with the PR #104 review fixes uncommitted), 2026-10-09.
+Last verified against the code: `fix/pr104-review` (with the PR #104 review fixes uncommitted), 2026-10-10.
 
 This file records the visual system **as the code defines it**. The values come from
 `apps/frontend/app/globals.css`, `apps/frontend/tailwind.config.ts` and the primitives in
@@ -379,7 +379,9 @@ otherwise: `transition-*` runs 150ms on `cubic-bezier(0.4, 0, 0.2, 1)`; `animate
 
 ### Print
 - **Receipt** (`#receipt-print-area`): A5 landscape, 10mm margins, a 2px black border, lifted
-  out of its dialog.
+  out of its dialog, on one sheet: zoomed by `--receipt-print-zoom` (measured per receipt by
+  `fitReceiptToSheet`, never above 1, fallback 0.68) at a width of 190mm divided by the zoom, so
+  it is exactly the sheet's width once scaled. Fields that truncate on screen wrap on paper.
 - **A page's document** (`data-print-root`, today the treasury statement): the named page
   `register`, A4 portrait with 12mm margins (A5 landscape where named pages are not supported).
   Black text on white whatever the theme, no shadows or surfaces, tokens' borders kept; table

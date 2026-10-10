@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { hasAtMostTwoDecimals } from './money-amount';
+import { BUDGET_CODES_INCOMPLETE, budgetCodeSchema, budgetCodesComplete } from './treasury.schema';
 
 /**
  * النفقات — money leaving a municipal wallet, and the «أمر صرف» that says why.
@@ -55,7 +56,14 @@ const paidAmount = z
 /** `YYYY-MM-DD` on the municipality's own calendar. */
 const businessDate = z
   .string({ required_error: 'اختر التاريخ' })
-  .regex(/^\d{4}-\d{2}-\d{2}$/, 'تاريخ غير صالح');
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'تاريخ غير صالح')
+  // A day that exists: «2026-09-31» parses — as 1 October — so it must also come back
+  // unchanged. Without this it was stored on a day nobody typed, or reached Prisma as
+  // an Invalid Date and answered with a 500.
+  .refine((day) => {
+    const parsed = new Date(`${day}T00:00:00Z`);
+    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === day;
+  }, 'تاريخ غير صالح');
 
 /**
  * «سجّل النفقة» — the whole act, in one request.
@@ -139,12 +147,56 @@ export const rejectExpenseRequestSchema = z.object({
 export type RejectExpenseRequestInput = z.infer<typeof rejectExpenseRequestSchema>;
 
 /**
- * A budget code: the chapter or the article as the municipality's own budget
- * numbers it. Digits and dots, because that is every shape a Lebanese municipal
- * budget line takes, and free text here would make the codes unsortable. Empty means
- * none, which is how an edit takes a code off a category.
+ * «صرف راتب / أجر» — a salary or wage paid to a staff member, from the staff
+ * page. Design: docs/finance.md §5.8.
+ *
+ * Narrower than `recordExpenseSchema` on purpose: the payee and the category
+ * are not the client's to state. The staff member is the route's id; the server
+ * writes their name as the payee, links the account (`payeeStaffId`), and files
+ * the voucher under the seeded «رواتب وأجور» (`SALARIES`). So a salary cannot be
+ * filed under fuel, or paid to a name no account carries.
+ *
+ * Dated today, with no date field: a salary paid on another day goes through
+ * the full expense form, which asks why it is back-dated.
+ *
+ * No reason field either: an accountant's payout goes on the urgent path with
+ * `SALARY_URGENT_REASON`, which the server writes, and the manager's is the
+ * payment order itself.
  */
-const budgetCode = z
+export const recordStaffSalarySchema = z.object({
+  accountId: z.string().uuid('اختر الحساب الذي سيُدفع منه'),
+  amount: paidAmount,
+  /** «عن شهر / بيان الصرف» — what the payment is for, e.g. the month. */
+  description: z
+    .string({ required_error: 'اكتب عن أي فترة يُصرف' })
+    .trim()
+    .min(3, 'اكتب عن أي فترة يُصرف')
+    .max(1000, 'الوصف طويل جداً'),
+  /** The paper behind it: a payroll sheet or a signed receipt number. */
+  invoiceNumber: z.string().trim().max(100, 'الرقم طويل جداً').optional(),
+  /** Required: one id per press, so a retry does not pay a salary twice. */
+  clientRequestId: z.string().uuid(),
+});
+
+export type RecordStaffSalaryInput = z.infer<typeof recordStaffSalarySchema>;
+
+/**
+ * The reason an accountant's salary payout carries, written by the server.
+ *
+ * Decree 5595/1982 art. 35 names salaries among what may be paid before the
+ * payment order, so an accountant's payout is not refused for want of one: it
+ * is paid on the urgent path with this reason, and waits for the manager's
+ * regularisation like any urgent voucher (docs/finance.md §5.8). The manager's
+ * own payout is the order and carries none. Stored exactly as written here.
+ */
+export const SALARY_URGENT_REASON = 'راتب — يُدفع قبل الحوالة (المادة 35)';
+
+/**
+ * A budget code as an edit sends it. Unlike `budgetCodeSchema` (treasury.schema.ts),
+ * empty is allowed here and means none: that is how an edit takes the codes off a
+ * category (both sent empty). Left out, a code stays as it is.
+ */
+const budgetCodeOnEdit = z
   .string()
   .trim()
   .regex(/^(?:[0-9][0-9.]{0,15})?$/, 'الرمز أرقام، وقد تفصلها نقاط')
@@ -162,16 +214,13 @@ const categoryFields = {
    * باب وبند الموازنة. Both or neither: a chapter without its article is a
    * half-entered code no report can use, and the database refuses it.
    */
-  chapterCode: budgetCode,
-  itemCode: budgetCode,
+  chapterCode: budgetCodeSchema,
+  itemCode: budgetCodeSchema,
 };
-
-const bothOrNeither = (value: { chapterCode?: string; itemCode?: string }) =>
-  Boolean(value.chapterCode) === Boolean(value.itemCode);
 
 export const createExpenseCategorySchema = z
   .object(categoryFields)
-  .refine(bothOrNeither, { message: 'اكتب الباب والبند معاً، أو اتركهما فارغين', path: ['itemCode'] });
+  .refine(budgetCodesComplete, BUDGET_CODES_INCOMPLETE);
 
 export type CreateExpenseCategoryInput = z.infer<typeof createExpenseCategorySchema>;
 
@@ -184,10 +233,16 @@ export type CreateExpenseCategoryInput = z.infer<typeof createExpenseCategorySch
  * half-entered, which the database refuses with a raw error. Both empty clears them.
  */
 export const updateExpenseCategorySchema = z
-  .object({ ...categoryFields, active: z.boolean().optional() })
+  .object({
+    ...categoryFields,
+    chapterCode: budgetCodeOnEdit,
+    itemCode: budgetCodeOnEdit,
+    active: z.boolean().optional(),
+  })
   .refine(
-    (value) => (value.chapterCode === undefined) === (value.itemCode === undefined) && bothOrNeither(value),
-    { message: 'اكتب الباب والبند معاً، أو اتركهما فارغين', path: ['itemCode'] },
+    (value) =>
+      (value.chapterCode === undefined) === (value.itemCode === undefined) && budgetCodesComplete(value),
+    BUDGET_CODES_INCOMPLETE,
   );
 
 export type UpdateExpenseCategoryInput = z.infer<typeof updateExpenseCategorySchema>;
@@ -229,6 +284,8 @@ export interface ExpenseVoucherView {
   amount: number;
   currency: string;
   payee: string;
+  /** The staff account a salary voucher paid; null on every other voucher. */
+  payeeStaffId: string | null;
   description: string;
   occurredAt: string;
   invoiceNumber: string | null;

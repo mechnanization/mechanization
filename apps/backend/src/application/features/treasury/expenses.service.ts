@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
   municipalToday,
+  SALARY_URGENT_REASON,
   TREASURY_ADMIN_ROLES,
   type ExpenseCategoryKey,
   type ExpenseCategoryView,
@@ -12,6 +13,7 @@ import {
   type CreateExpenseCategoryInput,
   type RecordExpenseInput,
   type RecordExpenseResult,
+  type RecordStaffSalaryInput,
   type RequestExpenseInput,
   type RequestExpenseResult,
   type UpdateExpenseCategoryInput,
@@ -23,7 +25,7 @@ import { runInTenantTransaction } from '../../../infrastructure/context/tenant-t
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { AuditService } from '../audit/audit.service';
-import { planExpenseDate } from './expenses.plan';
+import { planExpenseDate, urgentCeilingBreached } from './expenses.plan';
 import { isUniqueViolationOn } from './retry-key';
 import { TreasuryLedgerService } from './treasury-ledger.service';
 import { documentOccurredAt } from './treasury.plan';
@@ -39,6 +41,7 @@ const VOUCHER_SELECT = {
   amount: true,
   currency: true,
   payee: true,
+  payeeStaffId: true,
   description: true,
   occurredAt: true,
   invoiceNumber: true,
@@ -107,9 +110,10 @@ const ordersPayments = (role: string): boolean => (TREASURY_ADMIN_ROLES as reado
  * ## What the client is not trusted with
  *
  * The currency is taken from the wallet, never from the request, so a voucher
- * can never claim a currency its wallet does not hold. The voucher number comes
- * from a Postgres sequence. The balance it reports is read back after the
- * write, not computed on the client.
+ * can never claim a currency its wallet does not hold. The voucher number is
+ * drawn from `document_counters` in the same transaction
+ * (`allocateDocumentNumber`, migration 0079). The balance it reports is read
+ * back after the write, not computed on the client.
  */
 @Injectable()
 export class ExpensesService {
@@ -312,13 +316,14 @@ export class ExpensesService {
   /**
    * «سجّل النفقة» — writes the voucher and takes the money out, together.
    *
-   * Refuses, writing nothing, when the treasury is not live, the category is
+   * Refuses, writing nothing, when the treasury is not live, an accountant
+   * gives no urgent reason or pays above the urgent ceiling, the category is
    * gone or switched off, the date breaks one of the three rules in
    * `planExpenseDate`, or the wallet does not hold the amount.
    */
   async record(input: RecordExpenseInput, actor: { id: string; role: string }): Promise<RecordExpenseResult> {
     try {
-      return await runInTenantTransaction(this.tenantContext, () => this.recordInTransaction(input, actor));
+      return await runInTenantTransaction(this.tenantContext, () => this.recordInTransaction(input, actor, null));
     } catch (error) {
       /*
         Two presses carrying one key, past both reads at the same moment: the
@@ -327,16 +332,105 @@ export class ExpensesService {
         rather than as a server error — the supplier is paid once either way.
       */
       if (input.clientRequestId && isUniqueViolationOn(error, 'clientRequestId')) {
-        const replay = await this.replayVoucher(this.db as Prisma.TransactionClient, input, actor);
+        const replay = await this.replayVoucher(this.db as Prisma.TransactionClient, input, actor, null);
         if (replay) return replay;
       }
       throw error;
     }
   }
 
+  /**
+   * «صرف راتب / أجر» — a salary or wage paid to a staff member (docs/finance.md §5.8).
+   *
+   * `record`, with two things taken out of the client's hands: the payee is the
+   * account's own name, read here, and the category is the seeded «رواتب وأجور».
+   * The lock, the never-negative post, the number and the audit row are
+   * `record`'s, unchanged. The voucher also carries `payeeStaffId`, so what a
+   * person was paid is found by their id rather than by a name two people share.
+   *
+   * The payment order (decided 2026-10-10): decree 5595/1982 art. 35 names
+   * salaries among what may be paid before the order. So the manager's payout
+   * is ordered, as any voucher of his, and an accountant's is paid at once on
+   * the urgent path with `SALARY_URGENT_REASON`, written here rather than asked
+   * for, and waits for the manager's regularisation like any urgent voucher.
+   * The urgent-payment ceiling does not apply to it (`recordInTransaction`).
+   *
+   * `kind = 'STAFF'` is in the WHERE because `users` holds citizens too. A
+   * deleted account is refused: it has left the books. A disabled one is not —
+   * someone who has stopped working may still be owed their last month.
+   */
+  async recordSalary(
+    staffId: string,
+    input: RecordStaffSalaryInput,
+    actor: { id: string; role: string },
+  ): Promise<RecordExpenseResult> {
+    // The voucher's own input, built in the transaction; a lost key race is replayed against it, as in `record`.
+    const built: { voucher?: RecordExpenseInput } = {};
+    try {
+      return await runInTenantTransaction(this.tenantContext, async () => {
+        const tx = this.db as Prisma.TransactionClient;
+
+        const staff = await tx.user.findFirst({
+          where: { id: staffId, kind: 'STAFF', deletedAt: null },
+          select: { id: true, firstName: true, lastName: true },
+        });
+        if (!staff) {
+          throw new NotFoundError({
+            code: 'SALARY_PAYEE_NOT_FOUND',
+            message: `Staff member ${staffId} was not found`,
+          });
+        }
+
+        /*
+          Nobody pays himself on the urgent path. An accountant's salary leaves the
+          safe before any order, so an accountant naming himself would be paying
+          himself with only his own word behind it — the control behind
+          CUSTODY_SELF_RECEIPT, for the same reason. The manager records it, or it
+          goes as a request for his order.
+        */
+        if (!ordersPayments(actor.role) && staff.id === actor.id) {
+          throw new ForbiddenError({
+            code: 'SALARY_SELF_PAYOUT',
+            message: 'Staff cannot pay their own salary; the manager records it, or send it as a request.',
+          });
+        }
+
+        const salaries: ExpenseCategoryKey = 'SALARIES';
+        const category = await tx.expenseCategory.findFirst({ where: { key: salaries }, select: { id: true } });
+        if (!category) {
+          throw new NotFoundError({
+            code: 'EXPENSE_CATEGORY_NOT_FOUND',
+            message: 'The seeded salaries category is missing',
+          });
+        }
+
+        built.voucher = {
+          categoryId: category.id,
+          accountId: input.accountId,
+          amount: input.amount,
+          payee: `${staff.firstName} ${staff.lastName}`.trim(),
+          description: input.description,
+          invoiceNumber: input.invoiceNumber,
+          // Art. 35: an accountant's salary is paid before the order; the manager's payout is the order.
+          urgentReason: ordersPayments(actor.role) ? undefined : SALARY_URGENT_REASON,
+          clientRequestId: input.clientRequestId,
+        };
+        return this.recordInTransaction(built.voucher, actor, staff.id);
+      });
+    } catch (error) {
+      if (built.voucher && isUniqueViolationOn(error, 'clientRequestId')) {
+        const replay = await this.replayVoucher(this.db as Prisma.TransactionClient, built.voucher, actor, staffId);
+        if (replay) return replay;
+      }
+      throw error;
+    }
+  }
+
+  /** The one write behind `record` and `recordSalary`. `payeeStaffId` is null except for a salary. */
   private async recordInTransaction(
     input: RecordExpenseInput,
     actor: { id: string; role: string },
+    payeeStaffId: string | null,
   ): Promise<RecordExpenseResult> {
     {
       const tx = this.db as Prisma.TransactionClient;
@@ -346,8 +440,22 @@ export class ExpensesService {
         with the first voucher instead of paying the supplier twice — and again
         once the wallet is locked, below, for the press that arrived while the
         first was still running.
+
+        The retry key is serialised first, as `IncomeService.record` does in
+        its own namespace: a second press with the same key waits here until the
+        first commits, then finds its voucher. It complements, and does not
+        replace, the answer `record` gives a unique violation on
+        `clientRequestId` (a press that got past this point by another road
+        is still answered from the winner's voucher). The key names the schema,
+        so two municipalities never wait on each other. Taken before any row
+        lock, so it adds no lock-order edge (`TreasuryLedgerService.lockAccounts`).
       */
-      const replay = await this.replayVoucher(tx, input, actor);
+      if (input.clientRequestId) {
+        const lockKey = `${this.tenantContext.schemaName}:expense-request:${input.clientRequestId}`;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
+      }
+
+      const replay = await this.replayVoucher(tx, input, actor, payeeStaffId);
       if (replay) return replay;
 
       const config = await this.ledger.config(tx);
@@ -362,9 +470,11 @@ export class ExpensesService {
         «أمر الصرف» (decree 5595/1982 art. 28 and 33): money leaves on the order
         of the head of the municipality. The manager's own voucher is that order.
         An accountant pays without one only for what art. 35 allows — salaries,
-        routine petty and urgent expenses — and says why, and the voucher then
-        waits for the manager to regularise it; everything else goes to the
-        manager as a request (`requestPayment`) and moves no money until ordered.
+        routine petty and urgent expenses — and says why (a salary's reason is
+        written by `recordSalary`), up to the manager's ceiling below, and the
+        voucher then waits for the manager to regularise it; everything else
+        goes to the manager as a request (`requestPayment`) and moves no money
+        until ordered.
       */
       const ordered = ordersPayments(actor.role);
       const urgentReason = ordered ? null : input.urgentReason?.trim() || null;
@@ -406,6 +516,30 @@ export class ExpensesService {
       // The currency comes from the wallet, never from the request.
       const account = await this.payingAccount(tx, input.accountId);
 
+      /*
+        «سقف الدفع العاجل» (decision D6): art. 35 covers salaries, routine petty
+        and genuinely urgent spending, not a large purchase called urgent. Above
+        the manager's ceiling for the wallet's currency, an accountant's urgent
+        payment is refused and goes to him as a request. Read from the settings
+        row `config` already holds FOR SHARE. Not for the manager's own voucher,
+        which is the order, nor for a salary (`payeeStaffId`, written only by
+        `recordSalary`): art. 35 names salaries, so no ceiling holds them back.
+      */
+      if (!ordered && payeeStaffId === null) {
+        const breach = urgentCeilingBreached({
+          amount: input.amount,
+          currency: account.currency,
+          ceilings: config.urgentExpenseCeiling,
+        });
+        if (breach) {
+          throw new ConflictError({
+            code: 'EXPENSE_URGENT_OVER_CEILING',
+            message: `An urgent payment is capped at ${breach.ceiling} ${breach.currency}; above it, the manager orders it.`,
+            params: breach,
+          });
+        }
+      }
+
       const occurredAt = documentOccurredAt({
         day: verdict.paidOn,
         today,
@@ -421,7 +555,7 @@ export class ExpensesService {
         press racing this one has either committed or not started.
       */
       await this.ledger.lockAccounts(tx, [account.id]);
-      const lateReplay = await this.replayVoucher(tx, input, actor);
+      const lateReplay = await this.replayVoucher(tx, input, actor, payeeStaffId);
       if (lateReplay) return lateReplay;
 
       // «PV-2610-0001». See `allocateDocumentNumbers` and migration 0079.
@@ -435,6 +569,7 @@ export class ExpensesService {
           currency: account.currency,
           amount: new Prisma.Decimal(input.amount),
           payee: input.payee.trim(),
+          payeeStaffId,
           description: input.description.trim(),
           occurredAt,
           adjustmentReason: verdict.backdatedDays > 0 ? (input.adjustmentReason?.trim() ?? null) : null,
@@ -472,7 +607,8 @@ export class ExpensesService {
         Tier 1: the audit row commits with the money or not at all. The payee is
         deliberately absent — it is free text that may name a citizen, and an
         audit row is not a second copy of personal data (docs/security.md). The
-        voucher number is the handle that leads to it.
+        voucher number is the handle that leads to it. A salary's payee is a
+        staff account, so it is named here by its id, never by its name.
       */
       await this.audit.recordInTransaction({
         actorId: actor.id,
@@ -490,6 +626,7 @@ export class ExpensesService {
           occurredAt: occurredAt.toISOString(),
           // Whether the order came with it, or the payment was urgent and waits for one (art. 35).
           ordered,
+          ...(payeeStaffId ? { payeeStaffId } : {}),
         },
       });
 
@@ -542,7 +679,9 @@ export class ExpensesService {
    *
    * A key names one act: this clerk paying this amount out of this wallet, to
    * this payee, for this, under this band — the fields the form renews its key
-   * on. Replayed with all of them it answers with the first voucher; anything
+   * on — and, for a salary, to this staff account (`payeeStaffId`, so two staff
+   * members who share a name are two acts; null on any other voucher). Replayed
+   * with all of them it answers with the first voucher; anything
    * else is a new act under an old key, and is refused rather than silently
    * answered with a voucher the clerk did not ask for. What the form does not
    * renew the key on (the invoice number, the receipt flag, the reasons) is not
@@ -556,6 +695,7 @@ export class ExpensesService {
     tx: Prisma.TransactionClient,
     input: RecordExpenseInput,
     actor: { id: string },
+    payeeStaffId: string | null,
   ): Promise<RecordExpenseResult | null> {
     if (!input.clientRequestId) return null;
     const earlier = await tx.expenseVoucher.findUnique({
@@ -569,6 +709,7 @@ export class ExpensesService {
         recordedById: true,
         categoryId: true,
         payee: true,
+        payeeStaffId: true,
         description: true,
         orderedAt: true,
         voidedAt: true,
@@ -581,6 +722,7 @@ export class ExpensesService {
       earlier.recordedById !== actor.id ||
       earlier.categoryId !== input.categoryId ||
       earlier.payee !== input.payee.trim() ||
+      earlier.payeeStaffId !== payeeStaffId ||
       earlier.description !== input.description.trim()
     ) {
       throw new ConflictError({
@@ -1174,6 +1316,7 @@ export class ExpensesService {
       amount: row.amount.toNumber(),
       currency: row.currency,
       payee: row.payee,
+      payeeStaffId: row.payeeStaffId,
       description: row.description,
       occurredAt: row.occurredAt.toISOString(),
       invoiceNumber: row.invoiceNumber,

@@ -1,6 +1,6 @@
--- 0080_treasury_controls
+-- 0083_treasury_controls
 --
--- Three controls the treasury was missing, decided on the PR #104 review
+-- Four controls the treasury was missing, decided on the PR #104 review
 -- (docs/finance.md §5.1 and §13, docs/open-decisions.md):
 --
 -- == 1. The payment order (أمر الصرف / حوالة) ==============================
@@ -32,9 +32,10 @@
 -- == 2. Documents are written once ========================================
 --
 -- `treasury_entries` is append-only (0073). The documents behind the entries
--- were not: an expense voucher's amount, wallet or payee could be rewritten, a
--- cancellation undone, a row deleted — leaving entries whose `sourceId` points
--- at nothing. From here a voucher, a transfer and a request are never deleted,
+-- were not: an expense or income voucher's amount, wallet or payee could be
+-- rewritten, a cancellation undone, a row deleted — leaving entries whose
+-- `sourceId` points at nothing. From here a voucher (expense or income), a
+-- transfer and a request are never deleted,
 -- their own fields never change, and each stamp on them (cancelled, ordered,
 -- decided) is written once and then stays. A cancelled document, and a decided
 -- request, is closed: nothing on it changes again. TRUNCATE is not covered, as
@@ -45,17 +46,31 @@
 -- == 3. Index hygiene =====================================================
 --
 -- The cancelling staff member's foreign keys get the index every other
--- foreign key in this schema has (docs/database.md).
+-- foreign key in this schema has (docs/database.md). `income_vouchers` has had
+-- its own since 0080.
+--
+-- == 4. The urgent-payment ceiling (سقف الدفع العاجل) =====================
+--
+-- Art. 35 lets salaries, routine petty expenses and urgent ones be paid before
+-- the order. It does not let a large purchase skip the order by being called
+-- urgent, so the manager sets a ceiling per currency on `system_settings`
+-- (decision D6, docs/finance.md §13.1c): an accountant's urgent voucher above
+-- it is refused and goes to the manager as a request. NULL is no ceiling,
+-- which is what every municipality has until its manager sets one. Salaries
+-- are not held to it: art. 35 names them. Only LBP and USD have a column; a
+-- wallet in another currency has no ceiling.
 --
 -- == Safety ===============================================================
 --
--- Additive: new nullable columns, one new empty table, one function, three
+-- Additive: new nullable columns, one new empty table, one function, four
 -- triggers, indexes on small tables. The only row write is the backfill of the
 -- new `orderedAt`/`orderedById` columns on vouchers that predate it; it fills
 -- new columns and rewrites nothing that existed. Idempotent; every catalog guard
--- filters on CURRENT_SCHEMA() (see 0050). Numbered 0080: 0075–0077 are
--- develop's, 0078–0079 are PR #104's, and no open branch uses 0080 (checked
--- 2026-10-09).
+-- filters on CURRENT_SCHEMA() (see 0050). Numbered 0083: 0075–0077 are
+-- develop's, 0078–0081 are PR #104's (0080 income vouchers, 0081 the salary
+-- payee), and 0082 is PR #106's day closing (checked on every remote branch,
+-- 2026-10-10). First written as 0080, then 0082; renumbered each time before it
+-- was applied anywhere but throwaway databases.
 
 -- ═══════════════════════════  the order on a voucher  ═══════════════════════════
 
@@ -72,6 +87,12 @@ UPDATE "expense_vouchers"
  WHERE "orderedAt" IS NULL
    AND "urgentReason" IS NULL
    AND "voidedAt" IS NULL;
+
+-- ═══════════════════════════  the urgent-payment ceiling  ═══════════════════════════
+
+-- The column type of the vouchers it is compared with. NULL: no ceiling.
+ALTER TABLE "system_settings" ADD COLUMN IF NOT EXISTS "urgentExpenseCeilingLbp" DECIMAL(14,2);
+ALTER TABLE "system_settings" ADD COLUMN IF NOT EXISTS "urgentExpenseCeilingUsd" DECIMAL(14,2);
 
 -- ═════════════════════════════  expense_requests  ═════════════════════════════
 
@@ -138,7 +159,12 @@ BEGIN
       ('expense_requests', 'expense_requests_decidedById_fkey',
          'FOREIGN KEY ("decidedById") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE'),
       ('expense_requests', 'expense_requests_voucherId_fkey',
-         'FOREIGN KEY ("voucherId") REFERENCES "expense_vouchers"("id") ON DELETE RESTRICT ON UPDATE RESTRICT')
+         'FOREIGN KEY ("voucherId") REFERENCES "expense_vouchers"("id") ON DELETE RESTRICT ON UPDATE RESTRICT'),
+      -- A ceiling of zero would refuse every urgent payment, salaries aside; that is "no urgent path", not a ceiling.
+      ('system_settings', 'system_settings_urgent_ceiling_lbp_positive',
+         'CHECK ("urgentExpenseCeilingLbp" IS NULL OR "urgentExpenseCeilingLbp" > 0)'),
+      ('system_settings', 'system_settings_urgent_ceiling_usd_positive',
+         'CHECK ("urgentExpenseCeilingUsd" IS NULL OR "urgentExpenseCeilingUsd" > 0)')
     ) AS t(tbl, name, definition)
   LOOP
     IF NOT EXISTS (
@@ -177,7 +203,7 @@ CREATE INDEX IF NOT EXISTS "treasury_transfers_voidedById_idx" ON "treasury_tran
 
 -- ══════════════════════════  documents are written once  ══════════════════════════
 --
--- One function for the three tables. The trigger names the row's stamps — the
+-- One function for the four tables. The trigger names the row's stamps — the
 -- columns that may be filled in after the row is written; every other column
 -- is fixed at insert. A stamp goes from empty to a value once and then stays,
 -- a cancelled row or a decided request accepts nothing further (the reason a
@@ -228,6 +254,8 @@ BEGIN
       ('expense_vouchers', 'expense_vouchers_written_once',
          '''voidedAt'', ''voidedById'', ''voidReason'', ''orderedAt'', ''orderedById'''),
       ('treasury_transfers', 'treasury_transfers_written_once',
+         '''voidedAt'', ''voidedById'', ''voidReason'''),
+      ('income_vouchers', 'income_vouchers_written_once',
          '''voidedAt'', ''voidedById'', ''voidReason'''),
       ('expense_requests', 'expense_requests_written_once',
          '''decision'', ''decidedAt'', ''decidedById'', ''decisionReason'', ''voucherId''')

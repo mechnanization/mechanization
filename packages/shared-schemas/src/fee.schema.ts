@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { normalizeDigits, uuid } from './primitives';
 import { OWNER_BILLING_MODE } from './enums';
 import { ADJUSTMENT_REASON_MIN, municipalToday } from './cash-policy';
+import { hasAtMostTwoDecimals } from './money-amount';
 
 /**
  * Fees, and the per-citizen invoices they produce.
@@ -383,6 +384,20 @@ export const createFeeNoticeSchema = z
 
 export type CreateFeeNotice = z.infer<typeof createFeeNoticeSchema>;
 
+/**
+ * An urgent-payment ceiling as the settings form sends it: greater than zero,
+ * at most two decimals and inside the DECIMAL(14,2) column (a CHECK in 0083
+ * refuses zero or less), `null` for none.
+ */
+const urgentCeiling = z
+  .number({ invalid_type_error: 'السقف رقم' })
+  .finite('السقف رقم')
+  .positive('السقف أكبر من صفر')
+  .max(999_999_999_999, 'السقف كبير جداً')
+  .refine(hasAtMostTwoDecimals, 'خانتان عشريتان على الأكثر')
+  .nullable()
+  .optional();
+
 /** The municipality-wide settings a clerk edits without a deploy. */
 export const systemSettingsSchema = z.object({
   /**
@@ -484,6 +499,18 @@ export const systemSettingsSchema = z.object({
     .max(1_000_000_000)
     .nullable()
     .optional(),
+
+  /**
+   * «سقف الدفع العاجل»: the most an accountant may pay, per voucher, before the
+   * manager's payment order (decree 5595/1982 art. 35; docs/finance.md §5.1,
+   * decision D6). One per currency; anything above it goes to the manager as a
+   * request. `null` clears it — no ceiling — and omitting it leaves it as it is.
+   * Salaries are not held to it: art. 35 names them. The manager's alone to
+   * change (`URGENT_EXPENSE_CEILING_FORBIDDEN`), though the route admits the
+   * accountant for the rest of the settings.
+   */
+  urgentExpenseCeilingLbp: urgentCeiling,
+  urgentExpenseCeilingUsd: urgentCeiling,
 
   // ── Configuration held as documents ───────────────────────────────────
   /**

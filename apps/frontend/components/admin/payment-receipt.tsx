@@ -35,6 +35,44 @@ function billReference(payment: CitizenProfilePayment): string {
   return payment.id.replace(/-/g, '').slice(0, 10).toUpperCase();
 }
 
+/**
+ * The printable area of one A5 landscape sheet, in CSS px: 210 × 148 mm less
+ * the 10 mm margins `@page` sets in `app/globals.css`, at 96 px to the inch.
+ */
+const SHEET_WIDTH_PX = (190 / 25.4) * 96;
+const SHEET_HEIGHT_PX = (128 / 25.4) * 96;
+
+/**
+ * Scales the printed receipt so it fills one A5 sheet and no more (PRIM-28).
+ *
+ * The drawn receipt is about 653 px tall at the sheet's 718 px width, against a
+ * 484 px sheet, so printed as it was it ran onto a second one. On paper it is
+ * zoomed (`--receipt-print-zoom`, read by the print rule in `app/globals.css`)
+ * and laid out at the sheet's width divided by the zoom, so it is exactly as
+ * wide as the sheet once scaled. A wider layout is a shorter one, so the zoom
+ * that fits is found by measuring at that width and trying again: three rounds
+ * settle it. Measured on screen, where the zoom does not apply; `0.97` is the
+ * room left for what print draws differently (its 2 px border, no shadow).
+ *
+ * What it fits is this receipt as it stands — a long name that wraps, the
+ * building row, the tender line — rather than a figure picked for the usual
+ * one. Never above 1: a receipt that already fits is not enlarged. Without it
+ * (a print started from the browser's menu before `beforeprint` ran) the rule
+ * falls back to a zoom that fits a receipt with one extra row.
+ */
+function fitReceiptToSheet(node: HTMLElement): void {
+  const { width, minWidth, maxWidth } = node.style;
+  let zoom = 1;
+  for (let round = 0; round < 3; round += 1) {
+    node.style.width = `${SHEET_WIDTH_PX / zoom}px`;
+    node.style.minWidth = '0';
+    node.style.maxWidth = 'none';
+    zoom = Math.min(1, (SHEET_HEIGHT_PX * 0.97) / node.offsetHeight);
+  }
+  Object.assign(node.style, { width, minWidth, maxWidth });
+  node.style.setProperty('--receipt-print-zoom', String(Math.floor(zoom * 1000) / 1000));
+}
+
 /** `+9617xxxxxxx` / `03 123456` → the digits wa.me expects, Lebanon-defaulted. */
 function whatsappNumber(raw: string | null): string | null {
   if (!raw) return null;
@@ -138,6 +176,19 @@ export function PaymentReceipt({
   const printRef = React.useRef<HTMLDivElement>(null);
   const [busy, setBusy] = React.useState<null | 'share' | 'download'>(null);
   const [shareNote, setShareNote] = React.useState<string | null>(null);
+
+  /*
+    Fitted to its sheet whichever way the print starts: «طباعة الوصل» below,
+    or the browser's own print command while the receipt is open.
+  */
+  React.useEffect(() => {
+    if (!open) return;
+    const fit = (): void => {
+      if (printRef.current) fitReceiptToSheet(printRef.current);
+    };
+    window.addEventListener('beforeprint', fit);
+    return () => window.removeEventListener('beforeprint', fit);
+  }, [open]);
 
   if (!billRow) return null;
 
@@ -312,7 +363,14 @@ export function PaymentReceipt({
                 <X className="size-4 rtl:ml-1.5 ltr:mr-1.5" />
                 {locale === 'en' ? 'Close' : 'إغلاق'}
               </Button>
-              <Button variant="outline" size="sm" onClick={() => window.print()}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  if (printRef.current) fitReceiptToSheet(printRef.current);
+                  window.print();
+                }}
+              >
                 <Printer className="size-4 rtl:ml-1.5 ltr:mr-1.5" />
                 {locale === 'en' ? 'Print Receipt' : 'طباعة الوصل'}
               </Button>

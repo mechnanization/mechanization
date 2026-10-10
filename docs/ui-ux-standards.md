@@ -1,6 +1,6 @@
 # UI/UX standards: binding for every change to `apps/frontend`
 
-Last verified against the code: `fix/pr104-review` (PR #104 `f4aac74` merged with `develop@4ad0b27`, with the PR #104 review fixes uncommitted), 2026-10-09.
+Last verified against the code: `fix/pr104-review` (PR #104 review fixes merged with `fix/expense-retry-key-race@ff44f27` and `develop@4ad0b27`, then with `origin/fix/expense-retry-key-race`; uncommitted), 2026-10-10.
 
 This file binds every AI agent and every person who builds or reviews an
 interface in this repository. [CLAUDE.md](../CLAUDE.md) (non-negotiable 9) and
@@ -125,13 +125,13 @@ to, the primitive gets a prop instead.
 | PRIM-17 | Any other modal | `Dialog`, always with a `closeLabel` in the current locale | `Sheet` for new work: it lacks a focus trap. Fix Sheet before adding users (§17.1) |
 | PRIM-18 | Feedback after a write | `useToast()` | `alert()`, a page-local banner that never clears |
 | PRIM-19 | Icon-only control | `Button size="icon*"` + `aria-label` + `ActionTooltip` | A bare `<button>` with only an icon |
-| PRIM-20 | KPI or stat row | `StatStrip` with `StatItem` (`components/ui/stat-strip.tsx`), up to five figures. `StatItem` takes an optional `icon` (decorative, in a tinted circle above the number) and `href` (the whole cell becomes one stretched link named by its label — the treasury's wallets use both). The value wraps and is never truncated: a sum of money in it passes `wrap` to its `Money`, so at 360px the unit drops under the figure rather than the figure losing digits (LAY-6). A PR that touches a page with a local stat component replaces it | An eleventh local copy (§17.1 lists the ten) |
+| PRIM-20 | KPI or stat row | `StatStrip` with `StatItem` (`components/ui/stat-strip.tsx`), up to five figures. `StatItem` takes an optional `icon` (decorative, in a tinted circle above the number) and `href` (the whole cell becomes one stretched link named by its label). The citizen properties page uses `icon`; `href` has no caller since the treasury's wallets became statement lines (2026-10-09). A list of places money is kept, each opening its own statement, is lines with a total, not a strip. The value wraps and is never truncated: a sum of money in it passes `wrap` to its `Money`, so at 360px the unit drops under the figure rather than the figure losing digits (LAY-6). A PR that touches a page with a local stat component replaces it | An eleventh local copy (§17.1 lists the ten) |
 | PRIM-23 | DataTable strings | `useTableLabels(overrides)` (`lib/use-table-labels.ts`, reads `messages.table`) | A page-local `getTableLabels` |
 | PRIM-24 | A filter control above a table | `FilterSelect`, `FilterInput` (`components/ui/filter-controls.tsx`) | A hand-styled select or search box |
 | PRIM-25 | Typing a money amount | `CurrencyInput`. The unit gets a segment of its own beside the digits, never laid over them: an `dir="ltr"` field on an RTL page reserves its padding on one side while `end-0` pins the unit to the other, and «ل.ل» lands on the «0». `inputClassName` styles the digits, for the cash counter alone | A local `formatLbp(value: string)` that shadows `lib/currency`; an input with the unit absolutely positioned over it |
 | PRIM-26 | A menu of actions | `DropdownMenu` and its parts | A hand-rolled menu panel |
 | PRIM-27 | A yes/no field; a choice drawn as a card | `Checkbox`; `ChoiceCard` (`components/ui/field.tsx`) | A native checkbox or radio (CTL-3, CTL-4) |
-| PRIM-28 | A page that is a document to print (the statement, the daily register) | `data-print-root` on the one region that is the document (`app/globals.css`): only it reaches the paper, black on white whatever the theme, over as many A4 sheets as it needs. Print-only parts inside it (a sheet heading, signature lines) are `hidden print:block`; controls inside it are `print:hidden`. One per page; the receipt keeps `#receipt-print-area`, released from its dialog the same way (fixed and one screen tall, it printed its top strip on every sheet) | A page printed as it is (it printed blank: the receipt rule hides everything else); a second print stylesheet; colour as the only signal on paper (COL-3) |
+| PRIM-28 | A page that is a document to print (the statement, the daily register) | `data-print-root` on the one region that is the document (`app/globals.css`): only it reaches the paper, black on white whatever the theme, over as many A4 sheets as it needs. Print-only parts inside it (a sheet heading, signature lines) are `hidden print:block`; controls inside it are `print:hidden`. One per page; the receipt keeps `#receipt-print-area`, released from its dialog the same way (fixed and one screen tall, it printed its top strip on every sheet), and prints on one A5 landscape sheet, zoomed to fit by `fitReceiptToSheet` (`--receipt-print-zoom`, with a width of the sheet divided by it) | A page printed as it is (it printed blank: the receipt rule hides everything else); a second print stylesheet; colour as the only signal on paper (COL-3) |
 
 **PRIM-21. A new primitive** goes in `components/ui/` with a doc comment that
 says what it replaces and why. It takes every user-visible string as a prop
@@ -674,7 +674,7 @@ Code-pattern debt outside the UI rules lives in
   (`citizens/[citizenId]/page.tsx`); `Stat` in
   `inspector/profile/[staffId]/payouts/page.tsx`, `inspector-earnings-roster.tsx`
   and `inspector-profile-detail.tsx`; `StatusTile` (`settings/settings-ui.tsx`);
-  `StatCard` (`(citizen)/my-file`). `StatStrip` has 9 uses in 8 files.
+  `StatCard` (`(citizen)/my-file`). `StatStrip` has 8 uses in 7 files.
 - **Hand-rolled pagers, 3** (PRIM-4): `AuditTrailPage` (`audit/page.tsx`),
   `CorrectionBillsPage` (`fees/corrections/page.tsx`), `AuditDaily`
   (`components/admin/audit-daily.tsx`). `Pager` has 1 user.
@@ -903,6 +903,21 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
     retry then recorded the act twice (reproduced 2026-10-09). Fixed: those pages keep their
     content and show `RefreshFailedAlert` (STA-1), and the keys live in `lib/request-id.ts`
     (`heldKey`, `spendKey`), out of any component, so they outlive every unmount.
+  - The income form and the salary dialog (merged in from `fix/expense-retry-key-race`) minted a
+    key per attempt and renewed it in the `catch`, and their pages swapped the form for
+    `ErrorState` on any failed re-read. Fixed 2026-10-10: the same policy (`income:new`,
+    `salary:<staffId>`, `INCOME_ALREADY_VOID` spends a key), `RefreshFailedAlert` on the new-income
+    page, the income register and inside the salary dialog. Seen in the harness: a lost answer
+    and then a retry, and a lost answer, a failed re-read and then a retry, each record once.
+  - After a lost salary payout the re-read balance made «الرصيد لا يكفي» true, which disabled the
+    button and refused before the request, so the held key could not be replayed, and the copy
+    sent the clerk to another wallet, which is a second salary. The expense form's client-side
+    urgent ceiling could likewise turn a retry into a request under a new key. Fixed 2026-10-10:
+    `markInDoubt`/`heldInDoubt` in `lib/request-id.ts`; while a key is held in doubt both checks
+    are warnings that say to press again unchanged, and the server answers from the key.
+  - An income category added inline on the recording form never reached the cached category
+    lists (reference reads), so the register's filter and the next form missed it until a
+    reload. Fixed 2026-10-10: `IncomeCategoryEditor` writes it into both (`withSavedCategory`).
   - Still open: the fee wizard's issue (`fees/new`) carries no retry key; it needs a server key
     and a migration.
   - The fee wizard (`fees/new`) gained an in-flight ref, and stays locked once it has issued. A
@@ -913,8 +928,13 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
   only the treasury statement has one. «طباعة الوصل» printed only the receipt's top strip,
   repeated on every A5 sheet, because its dialog is fixed and one screen tall (it predates
   PR #104); fixed 2026-10-09 by releasing the dialog in print. The drawn receipt is 653px
-  tall at the A5-landscape width against a 484px sheet, so it now prints whole over two A5
-  sheets. **Undecided:** fit it to one sheet (scale it in print) or print it on another size.
+  tall at the A5-landscape width against a 484px sheet, so it printed whole over two A5
+  sheets. Decided 2026-10-10 (the user): one A5 landscape sheet. Done the same day: the print
+  rule zooms it by `--receipt-print-zoom`, which `fitReceiptToSheet` measures for the receipt
+  in hand (0.72 for the usual one, about 0.62 with a long name, the building row and a tender
+  line), and a truncating field wraps on paper instead of spilling over its neighbour. Seen as
+  `page.pdf()` in the harness: one 595×420pt page with the amount and the RCP number, in
+  Arabic and English, with a short and a long name.
 - **Money in a stat cell** (PRIM-20, LAY-6): `StatItem` no longer truncates, but a `Money`
   passed without `wrap` stays on one line. The treasury's figures pass it; the compact totals
   on the citizens, citizen-detail and dashboard pages do not, and are short enough today.

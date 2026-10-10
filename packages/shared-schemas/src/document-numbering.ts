@@ -4,7 +4,7 @@ import { municipalToday } from './cash-policy';
  * The numbering on every document the municipality issues.
  *
  * «INV-2610-0001» — the book, the year and month it was issued in, and a
- * counter that restarts at 0001 on the first of each month. Four books share
+ * counter that restarts at 0001 on the first of each month. Five books share
  * the scheme so a number read over the phone says which one it came from:
  * «ألفان وستمئة وعشرة» on its own could be either half of the same payment.
  *
@@ -18,7 +18,14 @@ import { municipalToday } from './cash-policy';
  * resident would make the paper in their hand disagree with the register.
  */
 
-/** The four books, and the letters each one's numbers carry. */
+/**
+ * The five books, and the letters each one's numbers carry.
+ *
+ * The key is what `document_counters.kind` stores, so it is never renamed:
+ * `VOUCHER` is the expense book because it was the only voucher book when 0079
+ * named it, and income arrived later as `REVENUE_VOUCHER`. The column is text,
+ * so a new book needs no migration.
+ */
 export const DOCUMENT_PREFIX = {
   /** فاتورة — the bill a resident is handed. */
   INVOICE: 'INV',
@@ -28,6 +35,8 @@ export const DOCUMENT_PREFIX = {
   VOUCHER: 'PV',
   /** سند مناقلة — money moved between the municipality's own wallets. */
   TRANSFER: 'TR',
+  /** سند قبض إيرادات — income that is not a citizen's fee (migration 0080). */
+  REVENUE_VOUCHER: 'RV',
 } as const;
 
 export type DocumentKind = keyof typeof DOCUMENT_PREFIX;
@@ -61,8 +70,10 @@ export function formatDocumentNumber(kind: DocumentKind, period: string, value: 
  *
  * Both are accepted on purpose — the six-digit form is what every document
  * issued before migration 0079 carries, and those are the ones most likely to
- * be typed in from a piece of paper.
+ * be typed in from a piece of paper. `RV` never had the old form (its book
+ * began after 0079), and accepting one would only accept a typo.
  */
 export function isDocumentNumber(value: string): boolean {
-  return /^(INV|RCP|PV|TR)-(\d{4}-\d{4,}|\d{6})$/.test(value.trim());
+  const trimmed = value.trim();
+  return /^(INV|RCP|PV|TR)-(\d{4}-\d{4,}|\d{6})$/.test(trimmed) || /^RV-\d{4}-\d{4,}$/.test(trimmed);
 }

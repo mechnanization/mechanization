@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية الذكية)
 
-Last verified against the code: `fix/pr104-review` (PR #104 `f4aac74` merged with `develop@4ad0b27`), 2026-10-09.
+Last verified against the code: `fix/pr104-review` (PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; the salary path and the urgent ceiling), 2026-10-10.
 
 A multi-tenant municipal platform for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastral map, municipal fee billing (رسوم القيمة التأجيرية
@@ -42,10 +42,11 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
   - CSV export with formula-injection-safe cells.
   - An append-only audit log of staff actions.
   - **The treasury (الخزينة)**: live balances of the municipality's cash safe and Whish account in
-    ليرة and dollars, a statement for each, and what collectors still hold. A citizen payment credits
+    ليرة and dollars, a statement for each, and their total at the municipality's rate. A citizen payment credits
     the right wallet automatically. `SUPER_ADMIN` activates it once by entering the counted opening
-    balances; the accountant works it, the auditor and view-only staff read it. Income, transfers and
-    the daily count follow in later stages ([docs/finance.md](docs/finance.md)).
+    balances; the accountant works it, the auditor and view-only staff read it. Income and the
+    collector handover are below; the other transfers and the daily count follow in later stages
+    ([docs/finance.md](docs/finance.md)).
   - **النفقات**: an expense register and «أمر صرف».
     - Money leaves on the payment order, as the municipal accounting decree requires (Decree
       5595/1982 art. 28 and 33). The accountant prepares «طلب أمر صرف»: what, to whom, from which
@@ -53,11 +54,37 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
       paid in that act, or rejects it with a reason.
     - For a salary, a routine petty expense or an emergency (art. 35), the accountant pays at once
       with a reason, and the voucher waits for the manager's order after the fact.
+    - The manager may set «سقف الدفع العاجل» in الإعدادات, one per currency (ليرة, dollar): an
+      urgent payment above it cannot be made by the accountant and goes to the manager as a
+      request. Left unset, there is no ceiling. Salaries are not held to it. Only the manager
+      changes it.
     - The manager's own recording is the order.
     - A mistake is cancelled with a reason, which returns the money and keeps both the voucher and
       its cancellation on the record. Only the manager may cancel.
     - The treasury page shows what is waiting on the manager.
-  - **عهدة الجباة**: what each collector is still carrying from his round, and «استلام الصندوق».
+    - A salary or wage is paid from the staff list itself («صرف راتب / أجر»): the payer picks the
+      wallet, the amount and the month, and the voucher is filed under «رواتب وأجور», in the staff
+      member's own name and linked to their account. The manager's payout is the order; an
+      accountant's is paid at once as an art. 35 payment, with the reason «راتب — يُدفع قبل الحوالة
+      (المادة 35)» written by the system, and waits for the manager's order.
+    - The staff list no longer shows the field inspectors' commission cards; an inspector's earnings
+      stay on their own profile.
+  - **الإيرادات**: a register of «سند قبض إيرادات» — money that reaches the treasury without a
+    citizen's bill: the Independent Municipal Fund, the state's share of telephone, electricity and
+    water revenue, permits, rent on municipal property, grants, fines.
+    - The accountant or the manager records the amount, the wallet it arrived in (a cash safe, Whish
+      or a bank account, never a collector's custody), the source category, the payer and the cheque
+      or transfer number, and the wallet's balance rises in the same act. Numbered «RV-2610-0001».
+    - Only the manager may cancel, with a reason, and a cancellation is refused once the wallet has
+      spent the money.
+    - Citizen fees are not entered here: they credit the wallets on their own.
+    - The manager manages the income categories on «بنود الإيرادات»: adds one (from that page, or
+      without leaving a half-filled voucher), renames it, gives it an English name or its budget
+      chapter and article, and stops or restarts it. A category is never deleted; a stopped one
+      leaves the form and stays in the register.
+  - **عهدة الجباة**, on its own page «الجباة والتحصيل» rather than on the treasury's, since it is
+    not the treasury's money yet: what each collector is still carrying from his round, and
+    «استلام الصندوق».
     - The accountant counts the notes with him and records the handover, which moves the money from
       his name into the cash safe. Nobody receives his own custody.
     - Cash a collector took at a door is never counted as the municipality's until that moment.
@@ -71,10 +98,10 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
     receipts — «يجمع اليوم», «لم يخرج اليوم», «سلّم كل شيء» — and the day's count and takings.
   - **ترقيم المستندات**: every document the municipality issues carries its book, the month it was
     issued in and a counter that restarts each month — «INV-2610-0001» for a bill, «RCP-2610-0001»
-    for the receipt, «PV-» for an expense voucher and «TR-» for a transfer. A number read over the
-    phone says which book it came from. Documents issued before the change keep the numbers already
-    printed on them; bills raised before it stay without one, because a number minted today for a
-    document issued last year would be a fiction.
+    for the receipt, «PV-» for an expense voucher, «RV-» for an income voucher and «TR-» for a
+    transfer. A number read over the phone says which book it came from. Documents issued before
+    the change keep the numbers already printed on them; bills raised before it stay without one,
+    because a number minted today for a document issued last year would be a fiction.
   - **جولتي**: the collector's own screen, on his own phone. What is in his pocket, then every door
     he collected at since his last handover — the citizen, his unit, the amount, the time and the
     receipt number — with the وصل one tap away to print, download or send over WhatsApp. He sees his

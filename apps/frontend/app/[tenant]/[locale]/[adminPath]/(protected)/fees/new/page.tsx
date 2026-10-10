@@ -153,6 +153,17 @@ export default function IssueFeePage({
           }),
         );
       }
+      // «معفاة من الرسوم» (0077): the mosque on a waqf parcel, a public building.
+      if (res.feeExemptUnits) {
+        toast.info(tFees('issue.feeExempt', { count: res.feeExemptUnits }));
+      }
+      /*
+        Not held and not exempt: a co-owned flat «مالك مسؤول» pays for in full.
+        Said so the other owners' bills do not read as missing a unit.
+      */
+      if (res.coOwnerPaidUnits) {
+        toast.info(tFees('issue.coOwnerPaid', { count: res.coOwnerPaidUnits }));
+      }
 
       // «معفاة من الرسوم» (0077): the mosque on a waqf parcel, a public building.
       if (res.feeExemptUnits) toast.info(tFees('issue.feeExempt', { count: res.feeExemptUnits }));

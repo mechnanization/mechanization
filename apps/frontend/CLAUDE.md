@@ -1,6 +1,6 @@
 # apps/frontend: agent guide
 
-Last verified against the code: `fix/pr104-review` (PR #104 `f4aac74` merged with `develop@4ad0b27`, with the PR #104 review fixes uncommitted), 2026-10-09.
+Last verified against the code: `fix/pr104-review` (PR #104 review fixes merged with `fix/expense-retry-key-race@ff44f27` and `develop@4ad0b27`, then with `origin/fix/expense-retry-key-race`; uncommitted), 2026-10-10.
 
 Next.js 15 app router, React 18, next-intl 4, TanStack Query 5, Tailwind 3.4 with
 tailwind-merge 3, Radix and lucide-react. One app serves the staff dashboard and the
@@ -19,6 +19,10 @@ app/[tenant]/[locale]/layout.tsx        TenantLayout (server, force-dynamic) + e
   [adminPath]/(protected)/layout.tsx    ProtectedAdminLayout + manifest.webmanifest/route.ts
     page.tsx (AdminIndexPage, role landing) · [...unknown] (AdminNotFound)
     dashboard account audit map zones settings staff payments
+    (staff: «صرف راتب / أجر» per active row, `components/admin/staff/staff-salary-dialog.tsx`, TREASURY_WORK_ROLES;
+      the manager's payout is the order, anyone else's is said before and after to await it, D7)
+    (settings › المالية: «سقف الدفع العاجل», one per currency, empty for none, `finance-section.tsx`;
+      a save sends a ceiling only when its field changed, `ceilingChange` in lib/urgent-ceiling.ts)
     finance (الخزينة) · finance/accounts/[accountId] (كشف حساب: prints as the daily register through
       `data-print-root`; SUPER_ADMIN cancels a handover from its row, «إلغاء التسليم»,
       components/admin/finance/void-transfer-dialog.tsx, `mayVoidTransfer` in lib/treasury-statement.ts)
@@ -27,7 +31,12 @@ app/[tenant]/[locale]/layout.tsx        TenantLayout (server, force-dynamic) + e
       requests and urgent payments waiting on the manager's order,
       components/admin/finance/expense-queue.tsx, expense-dialogs.tsx)
     finance/expenses/new (تسجيل نفقة: the manager records and orders; an accountant sends a
-      request, or pays urgently under art. 35 — lib/expense-order.ts decides the mode)
+      request, or pays urgently under art. 35 — lib/expense-order.ts decides the mode; the urgent
+      path shows the wallet currency's ceiling and refuses above it with «أرسلها طلباً», except
+      for the retry of a press whose answer was lost)
+    finance/income (الإيرادات) · finance/income/new (تسجيل إيراد جديد)
+    finance/income/categories (بنود الإيرادات — every reader sees the list, the manager edits it)
+    finance/collectors (الجباة والتحصيل — عهدة الجباة and «استلام الصندوق», moved off the treasury page)
     finance/collectors/[collectorId] (ما حصّله الجابي)
     my-round (جولتي — the collector's own pocket, phone-first, WORKING_STAFF_ROLES)
 
@@ -44,7 +53,7 @@ and today's date, which is a different document from the one the citizen was han
     inspector/profile/** quality/**
 ```
 
-All 57 `page.tsx` files are `'use client'` and read `params` with `use(params)`.
+All 61 `page.tsx` files are `'use client'` and read `params` with `use(params)` (counted 2026-10-10).
 `components/ui` is the kit (33 files, `alert.tsx` added 2026-10-06); `components/admin` holds staff screens (feature
 folders `cases/`, `damage/`, `finance/`, `quality/`, `settings/`, `staff/`); `components/citizen` is mostly citizen-record
 form pieces used by staff screens, and only `pay-dialog` serves the portal. `lib` holds the
@@ -112,26 +121,37 @@ component types.
   - A write that moves money carries a `clientRequestId` held in `lib/request-id.ts`
     (`heldKey(tenant, scope)`, `spendKey`): module state, so the key outlives every unmount of
     the form for the life of the tab. Scopes: `custody:<accountId>`, `expense:pay`,
-    `expense:request`, `settle:<paymentId>` (the settle page and the citizen cash page settle the
-    same bill and share it). The key belongs to one act: it is minted when a screen first asks
+    `expense:request`, `income:new`, `salary:<staffId>` (one per person paid),
+    `settle:<paymentId>` (the settle page and the citizen cash page settle the same bill and
+    share it). The key belongs to one act: it is minted when a screen first asks
     for it and kept across **every** failure (any 4xx, 401, 403, 408 and
     429 included, status 0, 5xx) and every edit, because a refusal proves only that this attempt
     wrote nothing, never that an earlier one with the key did not. The server binds a key to its
-    act (an expense: wallet, amount, clerk, band, payee, reason; a handover: custody wallet,
-    amount, clerk; a counter payment: the bill), so an edit after a lost answer is refused with
+    act (an expense: wallet, amount, clerk, band, payee, reason; a salary: also the staff
+    account; an income voucher: wallet, amount, clerk, category, description, payer; a handover:
+    custody wallet, amount, clerk; a counter payment: the bill), so an edit after a lost answer is refused with
     `TREASURY_REQUEST_KEY_REUSED` instead of recorded twice. The key is spent (`spendKey`) only
     when the server confirms its act exists: a 2xx, or one of the refusals `keyIsSpent` names
-    (`TREASURY_REQUEST_KEY_REUSED`, `EXPENSE_ALREADY_VOID`, `TRANSFER_ALREADY_VOID`,
-    `TRANSACTION_ALREADY_REVERSED`, `PAYMENT_IDEMPOTENCY_KEY_REUSED`), after which the treasury
-    queries are re-read. A reversed earlier receipt is said as such on the settle and cash pages. No form
+    (`TREASURY_REQUEST_KEY_REUSED`, `EXPENSE_ALREADY_VOID`, `INCOME_ALREADY_VOID`,
+    `TRANSFER_ALREADY_VOID`, `TRANSACTION_ALREADY_REVERSED`, `PAYMENT_IDEMPOTENCY_KEY_REUSED`),
+    after which the treasury queries are re-read. The expense, income and salary forms also
+    re-read them after a failure `outcomeInDoubt` names, keeping the key. A reversed earlier receipt is said as such on the settle and cash pages. No form
     renews a key in an effect on its fields. Regenerating it in a `catch` is how a dropped
     connection paid twice ([gotchas](../../docs/gotchas.md)).
+  - A failure `outcomeInDoubt` names also marks the held key in doubt (`markInDoubt`;
+    `heldInDoubt` reads it, `spendKey` clears it; module state like the key, so a reopened dialog
+    still knows). While it is marked, a check made before the request is a warning, never a
+    refusal: the salary dialog's «الرصيد لا يكفي» keeps the button live and says to press again
+    unchanged, and the expense form's urgent ceiling neither refuses nor offers «أرسلها طلباً»
+    until the server itself refuses the retry. The re-read balance may already carry the lost
+    act, the server answers a replay before it judges the balance or the ceiling, and the old way
+    out (another wallet, a request) was a new act under a new key.
   - A reopened handover dialog therefore retries the same act. After a failure `outcomeInDoubt` names (status 0, 408, 429, 5xx) it re-reads
     `['treasury', tenant]`, so the reopened dialog prefills what the collector holds now.
   - A 2xx with `replayed: true` answers a retry with the act an earlier attempt recorded. The
     screen says so — the document number, and that the first attempt's details stand — with a
-    warning toast, never the fresh-success one (expense form, request, handover, order, settle
-    and cash pages). A counter payment's replay can carry another amount than the form shows;
+    warning toast, never the fresh-success one (expense form, request, income form, salary
+    dialog, handover, order, settle and cash pages). A counter payment's replay can carry another amount than the form shows;
     the receipt prints the server's.
   - After a 2xx the form stays locked — the in-flight ref is never released, the button stays
     off — until the page moves on or the form is reset for a new act: a page stays mounted until
@@ -142,7 +162,10 @@ component types.
     moves a wallet. The expense form leaves the band list (`expense-categories`) out of that
     while its select is open, and `NewCategoryFields` writes a new band into the cached list
     (`setQueryData`): a reference read is never re-read by itself, and refetching it under an
-    open Radix select empties the selection.
+    open Radix select empties the selection. The income form does the same with
+    `income-categories`: `IncomeCategoryEditor` writes what it saves into both cached lists
+    (`['treasury', tenant, 'income-categories']` and `[…, 'all']`) through
+    `withSavedCategory` (`lib/category-cache.ts`).
 - `lib/request-cache.ts` (`cachedRequest`, `invalidateRequests`) is a second, memory-only
   cache inside api-client (tenant config, zones, census, fee summary, settings). Legacy for
   new reads. **Undecided:** retire it for `reference: true` reads, or keep it for non-React callers.
@@ -173,7 +196,8 @@ component types.
 ## Copy and i18n (decision D-i18n)
 
 - New copy MUST go in next-intl messages, `messages/ar.json` and `messages/en.json`, with
-  the same keys in both (1,583 each today). Read it with `useTranslations`.
+  the same keys in both (1,590 leaf keys each before `fix/expense-retry-key-race` was merged in;
+  not recounted since). Read it with `useTranslations`.
   `lib/messages-parity.test.ts` checks that both files hold the same keys, the same ICU
   placeholders and the same rich-text tags, and that no Arabic message outside `errors`
   writes a count as `#`: inside a plural branch write `{count}`, because `#` is formatted
@@ -244,7 +268,10 @@ print:block` (the statement's heading and its signature lines); controls inside 
 `print:hidden`. One print root per page. The receipt keeps its own rules
 (`#receipt-print-area`, A5 landscape), and is let out of its dialog the same way — the dialog
 is fixed and one screen tall, and printed as it was it repeated the receipt's top strip on every
-sheet. A receipt built from a recorded movement (`RecordedMovement`) prints that movement's
+sheet. It prints on **one** sheet: `fitReceiptToSheet` (`components/admin/payment-receipt.tsx`)
+measures the receipt in hand on `beforeprint` and on «طباعة الوصل» and sets
+`--receipt-print-zoom`, which the print rule applies as `zoom` with a width of the sheet divided
+by it (fallback 0.68). A field that truncates on screen wraps on paper. A receipt built from a recorded movement (`RecordedMovement`) prints that movement's
 `method` and no review note.
 
 ## Citizen record kinds
@@ -270,7 +297,8 @@ Model: `app/[tenant]/[locale]/[adminPath]/(protected)/citizens/review/page.tsx` 
 1. **API function** in `lib/api-client.ts` beside its feature, shaped like `getReviewQueue`.
 2. **Route** `app/[tenant]/[locale]/[adminPath]/(protected)/<section>/page.tsx`: `'use client'`,
    `use(params)`, `base = /<tenant>/<locale>/<adminPath>`.
-3. **Roles**: a `NAV_GROUPS` row with `roles` from the same shared set as the controller's
+3. **Roles**: a `NAV_GROUPS` row (in the group of the job it serves; at most five rows a group,
+   an icon no other row uses — `lib/nav.test.ts` fails otherwise) with `roles` from the same shared set as the controller's
    `@Roles` (`role-sets.ts` in shared-schemas); gate controls with an allow-list in
    `lib/staff-roles.ts` and `hasRole`. Never a deny-list: the next read-only role, or an
    undefined role on first paint, would get the write controls. A write page that a role
@@ -325,11 +353,18 @@ are inlined at build time. The local `.env.local` block is in
 ## Tests
 
 Vitest (`apps/frontend/vitest.config.mts`): `environment: 'node'`, only `lib/**/*.test.ts`,
-with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 29 files, 362 cases.
+with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 31 test files (counted on disk
+2026-10-10, mid-merge of `fix/expense-retry-key-race`; cases not recounted).
 No component, accessibility or end-to-end tests exist (no jsdom, no Testing Library); a
 rendered check uses the uncommitted headless harness of UI §16.4. Untested, so add a test
-when you touch them: `lib/sentry-redaction.ts`, `lib/session.ts`, `lib/csv.ts` `csvCell`,
-`canAccessPath`.
+when you touch them: `lib/sentry-redaction.ts`, `lib/session.ts`, `lib/csv.ts` `csvCell`.
+`lib/nav.test.ts` (2026-10-09) covers `components/admin/nav.ts`: each role's landing page,
+`canAccessPath`, `activeNavItem`, and the sidebar's shape — every path once, at most five rows
+a group, one icon per row. A row hidden from a role under a row it can see (`/citizens/new`
+under `/citizens` for «مشاهد فقط») is still reachable by address, because the longest
+*visible* row matches; the page turns the role away itself. (`lib/currency.ts` gained `currency.test.ts` on 2026-10-09, with
+`currencyUnit`, the one home of the «ل.ل»/«$» field unit that three finance components had
+each copied.)
 
 ## Current state and known issues
 

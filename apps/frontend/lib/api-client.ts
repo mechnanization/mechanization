@@ -4981,6 +4981,13 @@ export interface MunicipalitySettings {
   exchangeRate: number | null;
   /** Stamped server-side, and only when the rate actually changes. */
   exchangeRateUpdatedAt: string | null;
+  /**
+   * «سقف الدفع العاجل»: the most an accountant may pay on the urgent path, per
+   * voucher, in that currency; `null` for none (decision D6, docs/finance.md
+   * §5.1). Absent — not null — for a citizen: the server strips both.
+   */
+  urgentExpenseCeilingLbp?: number | null;
+  urgentExpenseCeilingUsd?: number | null;
 
   numberingSequences: Record<SequenceKey, NumberingSequence> | null;
   backupSchedule: BackupSchedule | null;
@@ -5023,7 +5030,10 @@ export function getMunicipalitySettings(
 }
 
 /**
- * SUPER_ADMIN only, server-enforced.
+ * The settings screen is SUPER_ADMIN only. The route is not: it admits
+ * `FEE_ADMIN_ROLES` (`SUPER_ADMIN`, `ACCOUNTANT`) for every field but the two
+ * urgent-payment ceilings, which the server keeps to the manager
+ * (docs/security.md, gaps).
  *
  * Every field is optional and only what is sent is written — which is what
  * lets one section of the settings screen save without clearing the fields
@@ -5059,6 +5069,12 @@ export async function updateMunicipalitySettings(
     /** `null` clears it. Omitting leaves whatever is stored. */
     secondaryCurrency: CurrencyCode | null;
     exchangeRate: number | null;
+    /**
+     * `null` clears the ceiling; omitting leaves it. The manager's alone: any
+     * other role that changes one is refused (`URGENT_EXPENSE_CEILING_FORBIDDEN`).
+     */
+    urgentExpenseCeilingLbp: number | null;
+    urgentExpenseCeilingUsd: number | null;
 
     numberingSequences: Record<SequenceKey, NumberingSequence>;
     backupSchedule: BackupSchedule;
@@ -5926,8 +5942,17 @@ import type {
   RejectExpenseRequestInput,
   RequestExpenseInput,
   RequestExpenseResult,
+  RecordStaffSalaryInput,
   UpdateExpenseCategoryInput,
   VoidExpenseInput,
+  CreateIncomeCategoryInput,
+  IncomeCategoryView,
+  IncomeListResult,
+  IncomeVoucherView,
+  RecordIncomeVoucherInput,
+  RecordIncomeVoucherResult,
+  UpdateIncomeCategoryInput,
+  VoidIncomeVoucherInput,
   CollectorCollectionsResult,
   CollectorCustodyView,
   CollectorRoundView,
@@ -5960,7 +5985,17 @@ export type {
   RejectExpenseRequestInput,
   RequestExpenseInput,
   RequestExpenseResult,
+  RecordStaffSalaryInput,
   VoidExpenseInput,
+  CreateIncomeCategoryInput,
+  IncomeCategoryView,
+  IncomeListResult,
+  IncomeStatus,
+  UpdateIncomeCategoryInput,
+  IncomeVoucherView,
+  RecordIncomeVoucherInput,
+  RecordIncomeVoucherResult,
+  VoidIncomeVoucherInput,
   CollectorCollectionRow,
   CollectorCollectionsResult,
   CollectorCustodyView,
@@ -6203,6 +6238,25 @@ export function recordExpense(tenant: string, token: string, args: RecordExpense
   });
 }
 
+/**
+ * «صرف راتب / أجر» to one staff member. `POST /treasury/expenses/salaries/:staffId`.
+ * The server sets the payee and the category; the body cannot.
+ */
+export function recordStaffSalary(
+  tenant: string,
+  token: string,
+  staffId: string,
+  args: RecordStaffSalaryInput,
+  signal?: AbortSignal,
+) {
+  return apiFetch<RecordExpenseResult>(tenant, `/treasury/expenses/salaries/${encodeURIComponent(staffId)}`, {
+    method: 'POST',
+    token,
+    body: JSON.stringify(args),
+    signal,
+  });
+}
+
 /** «إلغاء سند الصرف» — cancels it and puts the money back. SUPER_ADMIN only. `POST /treasury/expenses/:id/void`. */
 export function voidExpense(
   tenant: string,
@@ -6303,6 +6357,134 @@ export function regularizeExpense(tenant: string, token: string, args: { id: str
   return apiFetch<ExpenseVoucherView>(tenant, `/treasury/expenses/${encodeURIComponent(args.id)}/order`, {
     method: 'POST',
     token,
+    signal,
+  });
+}
+
+// ── الإيرادات العامة (stage 2) ──────────────────────────────────────────────
+
+/** Where income may be filed. `GET /treasury/income/categories`. */
+export function getIncomeCategories(
+  tenant: string,
+  token: string,
+  args?: { includeInactive?: boolean },
+  signal?: AbortSignal,
+) {
+  const suffix = args?.includeInactive ? '?includeInactive=true' : '';
+  return apiFetch<IncomeCategoryView[]>(tenant, `/treasury/income/categories${suffix}`, { token, signal });
+}
+
+/** «بند إيراد جديد». SUPER_ADMIN only. `POST /treasury/income/categories`. */
+export function createIncomeCategory(
+  tenant: string,
+  token: string,
+  args: CreateIncomeCategoryInput,
+  signal?: AbortSignal,
+) {
+  return apiFetch<IncomeCategoryView>(tenant, '/treasury/income/categories', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(args),
+    signal,
+  });
+}
+
+/**
+ * Renames an income category, re-codes it, or stops or restarts it. Never
+ * deletes one. SUPER_ADMIN only. `PATCH /treasury/income/categories/:id`.
+ */
+export function updateIncomeCategory(
+  tenant: string,
+  token: string,
+  args: { id: string } & UpdateIncomeCategoryInput,
+  signal?: AbortSignal,
+) {
+  const { id, ...body } = args;
+  return apiFetch<IncomeCategoryView>(tenant, `/treasury/income/categories/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    token,
+    body: JSON.stringify(body),
+    signal,
+  });
+}
+
+/**
+ * The income register, newest first. `GET /treasury/income`.
+ *
+ * `from` and `to` are days on the municipality's calendar, both inclusive.
+ * `totals` covers the whole filtered set rather than the page.
+ */
+export function getIncomeVouchers(
+  tenant: string,
+  token: string,
+  args: {
+    from?: string;
+    to?: string;
+    categoryId?: string;
+    accountId?: string;
+    currency?: string;
+    search?: string;
+    includeVoid?: boolean;
+    page?: number;
+    pageSize?: number;
+  } = {},
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams();
+  if (args.from) query.set('from', args.from);
+  if (args.to) query.set('to', args.to);
+  if (args.categoryId) query.set('categoryId', args.categoryId);
+  if (args.accountId) query.set('accountId', args.accountId);
+  if (args.currency) query.set('currency', args.currency);
+  if (args.search) query.set('search', args.search);
+  if (args.includeVoid) query.set('includeVoid', 'true');
+  if (args.page !== undefined) query.set('page', String(args.page));
+  if (args.pageSize !== undefined) query.set('pageSize', String(args.pageSize));
+  const suffix = query.toString() ? `?${query}` : '';
+  return apiFetch<IncomeListResult>(tenant, `/treasury/income${suffix}`, { token, signal });
+}
+
+/** One voucher. `GET /treasury/income/:id`. */
+export function getIncomeVoucher(tenant: string, token: string, args: { id: string }, signal?: AbortSignal) {
+  return apiFetch<IncomeVoucherView>(tenant, `/treasury/income/${encodeURIComponent(args.id)}`, {
+    token,
+    signal,
+  });
+}
+
+/**
+ * «سجّل الإيراد» — records the voucher and credits the wallet, in one call.
+ * ACCOUNTANT or SUPER_ADMIN. `POST /treasury/income`.
+ */
+export function recordIncomeVoucher(
+  tenant: string,
+  token: string,
+  args: RecordIncomeVoucherInput,
+  signal?: AbortSignal,
+) {
+  return apiFetch<RecordIncomeVoucherResult>(tenant, '/treasury/income', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(args),
+    signal,
+  });
+}
+
+/**
+ * «إلغاء سند القبض» — cancels it and takes the money back out; refused when the
+ * wallet has spent it since. SUPER_ADMIN only. `POST /treasury/income/:id/void`.
+ */
+export function voidIncomeVoucher(
+  tenant: string,
+  token: string,
+  args: { id: string } & VoidIncomeVoucherInput,
+  signal?: AbortSignal,
+) {
+  const { id, ...body } = args;
+  return apiFetch<IncomeVoucherView>(tenant, `/treasury/income/${encodeURIComponent(id)}/void`, {
+    method: 'POST',
+    token,
+    body: JSON.stringify(body),
     signal,
   });
 }

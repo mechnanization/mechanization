@@ -364,6 +364,21 @@
  * everything that neither holds the receipt nor sits inside it leaves the
  * flow, and the receipt's ancestors drop the dialog's frame: static, no
  * transform, no clipping, no height.
+ *
+ * One sheet, always (decided 2026-10-10). The drawn receipt is about 653px
+ * tall at the sheet's 718px width against a 484px sheet, so it is zoomed to
+ * fit: `zoom` rather than `transform`, because a transform leaves the layout
+ * box full size and the browser paginates that, and a width of the sheet
+ * divided by the zoom, so the scaled receipt is exactly the sheet's width
+ * rather than a narrower block or one that overflows sideways. `zoom` takes a
+ * percentage width unscaled, hence the width in millimetres. The factor is
+ * `--receipt-print-zoom`, which `fitReceiptToSheet` (payment-receipt.tsx)
+ * measures for the receipt in hand before it prints; 0.68 is the fallback,
+ * which fits a receipt with one row more than the usual one.
+ *
+ * A field that truncates on screen wraps on paper. Nothing inside the receipt
+ * may clip (below), so a long name that only truncated spilled over the phone
+ * number beside it; on paper it takes a second line, and the fit allows for it.
  */
 @media print {
   body * {
@@ -401,10 +416,17 @@
   /* In the flow, at the top of the sheet; `relative` because the image template places its fields absolutely inside it. */
   #receipt-print-area {
     position: relative;
-    width: 100%;
+    zoom: var(--receipt-print-zoom, 0.68);
+    width: calc(190mm / var(--receipt-print-zoom, 0.68));
+    min-width: 0;
     max-width: none;
     border: 2px solid #000;
     box-shadow: none;
+  }
+
+  #receipt-print-area .truncate {
+    white-space: normal !important;
+    overflow-wrap: anywhere;
   }
 
   /* Nothing inside the receipt clips it either; on paper there is no viewport to clip to. */

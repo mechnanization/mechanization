@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { Receipt } from 'lucide-react';
 import { TREASURY_WORK_ROLES } from '@mechanization/shared-schemas';
-import { getExpenseCategories, getTreasuryOverview } from '@/lib/api-client';
+import { getExpenseCategories, getMunicipalitySettings, getTreasuryOverview } from '@/lib/api-client';
 import { hasRole } from '@/lib/staff-roles';
 import { activeAccounts } from '@/lib/treasury-accounts';
 import { useStaffQuery } from '@/lib/use-staff-query';
@@ -71,6 +71,24 @@ export default function NewExpensePage({
     errorMessage: t('categoriesLoadError'),
   });
 
+  /*
+    The manager's urgent-payment ceiling, for the form to say and to check
+    before the round trip. Not part of `failure` or `stale`: the server enforces
+    the ceiling whatever this screen knows, so a failed read leaves the form
+    exactly as it was before the ceiling existed rather than blocking a payment.
+  */
+  const settings = useStaffQuery({
+    queryKey: ['municipality-settings', tenant],
+    queryFn: (accessToken) => getMunicipalitySettings(tenant, accessToken),
+    tenant,
+    base,
+    token,
+    errorMessage: t('loadError'),
+  });
+  const urgentCeilings = settings.data
+    ? { LBP: settings.data.urgentExpenseCeilingLbp ?? null, USD: settings.data.urgentExpenseCeilingUsd ?? null }
+    : undefined;
+
   const ready = Boolean(token) && Boolean(overview.data) && Boolean(categories.data);
   /*
     Either read failing *before it ever answered* is a panel that says so and
@@ -123,6 +141,7 @@ export default function NewExpensePage({
           // Money is paid only from an active wallet; a retired one could only be refused.
           accounts={activeAccounts(overview.data)}
           categories={categories.data ?? []}
+          urgentCeilings={urgentCeilings}
           // A request goes to the queue where the manager will find it; a payment, to the register it joined.
           onRecorded={(outcome) => router.push(outcome === 'REQUESTED' ? `${registerHref}?view=queue` : registerHref)}
         />

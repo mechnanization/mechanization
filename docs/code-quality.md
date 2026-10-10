@@ -1,6 +1,6 @@
 # Code quality
 
-Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06.
+Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-09.
 
 Two parts: the code-pattern rules every change follows, and the debt the code carries today. The debt
 is not a precedent. **Fix an item when you touch its file, and remove its row in the same change.** Add a

@@ -1,10 +1,12 @@
 # Finance (الخزينة والمالية) — design draft
 
-Status: **DESIGN, with stages 1 and 3 built, and of stage 4 the collector handover, the accountant’s collector panel and «جولتي» (see section 14).** It records the design
-agreed in discussion, 2026-10-06. Stages 2 to 5 are not built, and every table,
-column, enum value and error code for them is a *proposal* until its migration
-exists (CLAUDE.md: never invent names; grep first). Stage 1 names are real: they
-are in migration `0073_treasury_ledger` and `treasury.schema.ts`.
+Status: **DESIGN, with stages 1, 2 and 3 built, and of stage 4 the collector handover, the accountant’s collector panel and «جولتي» (see section 14).** It records the design
+agreed in discussion, 2026-10-06. Stage 5 and the rest of stage 4 are not built,
+and every table, column, enum value and error code for them is a *proposal*
+until its migration exists (CLAUDE.md: never invent names; grep first). The
+built stages' names are real: they are in migrations `0073`, `0074`, `0078`,
+`0079`, `0080`, `0081` and `0083` and in the `treasury`, `expense`, `transfer` and `income`
+contracts of `packages/shared-schemas`.
 Where the code was read, the file is cited. Where a claim could not be verified, it
 is marked **[unverified]**. Where a choice was assumed and not explicitly confirmed,
 it is marked **[assumed]**.
@@ -184,16 +186,19 @@ wallet today.
    (the existing name).
    - A key names one act. Replayed with the same wallet, amount and clerk (and, for an
      expense or a request, the same band, payee and description: the fields its form
-     renews the key on), it answers with the first result. Anything else is refused
-     (`TREASURY_REQUEST_KEY_REUSED`).
+     renews the key on; for a salary, also the same staff account, `payeeStaffId`; for
+     income, the same category, description and payer), it answers with the first
+     result. Anything else is refused (`TREASURY_REQUEST_KEY_REUSED`).
    - A key whose voucher or handover has been cancelled since is refused
-     (`EXPENSE_ALREADY_VOID`, `TRANSFER_ALREADY_VOID`), never answered as recorded.
+     (`EXPENSE_ALREADY_VOID`, `INCOME_ALREADY_VOID`, `TRANSFER_ALREADY_VOID`, each with
+     the cancelled document's number), never answered as recorded.
    - Two presses carrying one key at the same moment are both answered from the
      winner's row, never with a server error.
    - The screens keep the key across every failure and every edit, and change it only
      when the server confirms the key's act exists: a success, or
-     `TREASURY_REQUEST_KEY_REUSED`, `EXPENSE_ALREADY_VOID`, `TRANSFER_ALREADY_VOID`,
-     `PAYMENT_IDEMPOTENCY_KEY_REUSED` (`apps/frontend/lib/request-id.ts`). A refusal
+     `TREASURY_REQUEST_KEY_REUSED`, `EXPENSE_ALREADY_VOID`, `INCOME_ALREADY_VOID`,
+     `TRANSFER_ALREADY_VOID`, `PAYMENT_IDEMPOTENCY_KEY_REUSED`
+     (`apps/frontend/lib/request-id.ts`). A refusal
      proves only that that attempt wrote nothing. Renewing on one recorded a payment
      twice after a lost answer followed by a 429; renewing on an edit did the same
      after a lost answer followed by a corrected typo.
@@ -338,37 +343,52 @@ permits, fines, rent, donations. Citizen fees keep auto-crediting (Section 3.3).
 
 | Field | Rule |
 |---|---|
-| Number | `RV-nnnnnn`, from its own sequence. Gaps possible after a rollback; never reused **[assumed: gaps accepted]** |
-| Date | Today by default. Future dates refused. Backdating requires a reason |
+| Number | «RV-2610-0001»: the book, the month, a counter that restarts each month, drawn from `document_counters` (0079) as kind `REVENUE_VOUCHER`. Not gapless, never reused **[assumed: gaps accepted]** |
+| Date | Today by default. Future dates refused. Backdating requires a reason. Not before `treasuryGoLiveAt`: that money is already in the counted opening balance (the expense rule, mirrored). Dated by `documentOccurredAt`: today keeps the clock, an earlier day sits at midday UTC, and a voucher dated the go-live day never sits before the opening entry (D5) |
 | Category | From the income category list (below) |
 | Description | Required |
 | Amount, currency | Positive. Must equal the receiving wallet's currency (enforced by the database) |
 | Receiving wallet | CASH_SAFE, WHISH_ACCOUNT or BANK_ACCOUNT. Never collector custody |
 | Payer name | Free text (may be a citizen; treated as personal data) |
 | External reference | Optional bank or Whish transfer number |
-| Idempotency | `clientRequestId` |
+| Idempotency | `clientRequestId`, required. Bound to its act (wallet, amount, clerk, category, description, payer): anything else under the same key is `TREASURY_REQUEST_KEY_REUSED`, and a key whose voucher was cancelled since is `INCOME_ALREADY_VOID` (`params.voucherNumber`) |
 
 Attachments are **not** in step 2 (see Step 3b).
 
 ### 4.3 Default income categories (seeded)
 
-1. الصندوق البلدي المستقل (Independent Municipal Fund)
-2. رخص بناء وإشغال وتخطيط (building permits)
-3. إيجارات واستثمار أملاك البلدية (municipal property rent)
-4. غرامات ومخالفات (fines and violations)
-5. هبات ومساعدات غير مشروطة (grants and donations)
-6. إيرادات متفرقة (miscellaneous)
+Seven, in this order (migration 0080, by `key`; the owner added the second on
+2026-10-09). Each carries an Arabic and an English name; the budget codes are
+NULL, as on the expense categories.
+
+1. الصندوق البلدي المستقل (`INDEPENDENT_MUNICIPAL_FUND`)
+2. عائدات الهاتف والكهرباء والمياه من الدولة (`STATE_UTILITIES_FEES`)
+3. رخص بناء وإشغال وتخطيط (`BUILDING_PERMITS_PLANNING`)
+4. إيجارات واستثمار أملاك البلدية (`PROPERTY_RENTAL_INVESTMENT`)
+5. هبات ومساعدات غير مشروطة (`UNCONDITIONAL_GRANTS_DONATIONS`)
+6. غرامات ومخالفات (`FINES_AND_PENALTIES`)
+7. إيرادات متفرقة (`MISCELLANEOUS_INCOME`)
 
 Managed by `SUPER_ADMIN` only. A category is **deactivated, never deleted or
 silently renamed**; vouchers point to it by id so old receipts never change.
+The manager manages them on «بنود الإيرادات» (`finance/income/categories`) and
+adds one inline from the recording form (see §14, stage 2). A municipality's own
+category has no `key`, an Arabic name, and an English one only if someone gives
+it one.
 
 ### 4.4 Posting and voiding
 
 - Posting writes the voucher and its wallet entry in one transaction, with a Tier 1
-  audit row (voucher number and amount only — **not** the payer's name).
-- No edit, no delete.
+  audit row (voucher number and amount only — **not** the payer's name). It takes its
+  locks in the order every treasury writer does: the retry key's advisory lock, the
+  settings row (`FOR SHARE`), the wallet (`lockAccounts`), then the RV number and the
+  insert. So income, an expense and a handover on one safe never deadlock.
+- No edit, no delete: the database refuses both (the write-once trigger of 0083). Only
+  the cancellation stamp (`voidedAt`, `voidedById`, `voidReason`) is written after the
+  insert, once.
 - **Void:** `SUPER_ADMIN` only, with a written reason. Creates a reversing entry. **[assumed]** If the wallet no longer holds the money (it was
-  spent), the void is **blocked** with a clear message.
+  spent), the void is **blocked** with a clear message (`TREASURY_INSUFFICIENT_FUNDS_FOR_VOID`),
+  judged behind the wallet's lock (`lockAccounts`), taken after the voucher's own row lock.
 
 ### 4.5 Screens and printing
 
@@ -434,6 +454,21 @@ any paid voucher ──(manager cancels, with a reason)──> VOID
     (`urgentReason`). The voucher then waits as «بانتظار أمر الصرف» until the manager
     regularises it, or cancels it to return the money. An accountant's recording
     without a reason is refused (`EXPENSE_ORDER_REQUIRED`).
+  - **The urgent-payment ceiling** («سقف الدفع العاجل», decision D6, 2026-10-10). The
+    manager sets one ceiling per currency in الإعدادات
+    (`system_settings.urgentExpenseCeilingLbp` / `urgentExpenseCeilingUsd`, 0083). An
+    accountant's urgent voucher above the ceiling of its wallet's currency is refused,
+    writing nothing (`EXPENSE_URGENT_OVER_CEILING`, `params: { ceiling, currency }`),
+    and goes to the manager as a request instead. An amount equal to the ceiling is
+    under it. Unset (NULL) means no ceiling, which is where every municipality starts;
+    a wallet in a currency other than LBP or USD has none. It is read from the settings
+    row the payment already holds `FOR SHARE`, so a payment waits for a ceiling being
+    saved and judges by the new one. It does not apply to the manager's own voucher
+    (it is the order) or to a salary (art. 35 names salaries; §5.8). Only the manager
+    changes it: the settings route also admits the accountant, and a change he sends
+    is refused (`URGENT_EXPENSE_CEILING_FORBIDDEN`).
+  - A salary paid by the accountant takes the urgent path with a reason the server
+    writes (§5.8, decision D7).
 - **The order.** One transaction:
   - lock the request;
   - write the voucher with its PV number (recorder: the accountant who prepared it;
@@ -450,24 +485,34 @@ any paid voucher ──(manager cancels, with a reason)──> VOID
   reason), or withdrawn (by its author or the manager). Another accountant can't
   withdraw it (`EXPENSE_REQUEST_NOT_YOURS`).
 - **Fixed once paid.** Amount, currency, wallet and payee can't change once a voucher
-  exists, and the database refuses it (0080). A mistake is corrected by a void and a
+  exists, and the database refuses it (0083). A mistake is corrected by a void and a
   new voucher.
-- Approval thresholds by amount, petty-cash advances (art. 37–42) and a supplier
-  register stay out of v1.
+- Thresholds on the manager's own orders, petty-cash advances (art. 37–42) and a
+  supplier register stay out of v1. The urgent-payment ceiling above is the one
+  amount limit, and it holds only the accountant's art. 35 path.
 
 ### 5.2 Recording (paying)
 
 One transaction:
 
-1. lock the wallet, before anything that references it;
-2. check the balance (never negative);
-3. write the voucher and the negative wallet entry;
-4. assign the payment-order number «PV-2610-0001» (migration 0079);
-5. write the Tier 1 audit row.
+1. serialise the retry key, when one is sent, under a schema-scoped advisory lock
+   (`<schema>:expense-request:<key>`) before it is read, so identical requests racing
+   each other produce one voucher and replays (until 2026-10-09 the loser got a 500; no
+   money moved twice);
+2. lock the wallet, before anything that references it;
+3. check the balance (never negative);
+4. write the voucher and the negative wallet entry;
+5. assign the payment-order number «PV-2610-0001» (migration 0079);
+6. write the Tier 1 audit row.
+
+Before step 2, nothing written yet: the payment order is checked (an accountant's voucher
+needs an urgent reason), and an accountant's urgent voucher above the manager's ceiling is
+refused (§5.1, `EXPENSE_URGENT_OVER_CEILING`).
 
 The retry key is bound to its act: the same key with another wallet, amount, clerk, band,
-payee or description is refused (`TREASURY_REQUEST_KEY_REUSED`), never answered with the
-first voucher; and a key whose voucher has been cancelled since gets `EXPENSE_ALREADY_VOID`.
+payee or description (or, for a salary, another staff account) is refused
+(`TREASURY_REQUEST_KEY_REUSED`), never answered with the first voucher; and a key whose
+voucher has been cancelled since gets `EXPENSE_ALREADY_VOID`.
 Insufficient funds returns a clear error code.
 
 ### 5.3 Voiding a recorded expense
@@ -483,7 +528,8 @@ paying wallet (chosen when recording), recorded by, void reason.
 
 Not now: budget line (added later together with the budget-lines table — no loose
 column now), file attachments (Step 3b), supplier register (free text instead),
-any approval step or amount-based thresholds.
+amount thresholds on the manager's orders. (The payment order itself is in, §5.1, and
+so is the one amount limit, the ceiling on the accountant's urgent path.)
 
 ### 5.5 Default expense categories (seeded)
 
@@ -499,7 +545,8 @@ any approval step or amount-based thresholds.
 10. رسوم تحويل ومصرفية (transfer and bank fees — used by transfer fees, Section 6)
 
 Managed by `SUPER_ADMIN`; deactivated, never deleted. Salaries are only a category
-here. A payroll module with a line per employee is **out of scope**.
+here. A payroll module with a line per employee is **out of scope**; paying one
+staff member from the staff page is one voucher in this category (§5.8).
 
 **باب وبند الموازنة (added 2026-10-06).** Each category also carries an optional
 `chapterCode` and `itemCode` — the chapter and article it is charged to in the
@@ -538,6 +585,56 @@ File upload of the invoice scan. Follows the upload security rules in
 amount threshold above which an attachment is required before the expense can be recorded (off by
 default, set by `SUPER_ADMIN`; the example thresholds seen in discussion — $50 /
 5,000,000 LBP — are **not verified rules**).
+
+### 5.8 Salary and wage payouts — «صرف راتب / أجر» (built 2026-10-09)
+
+Requested by the owner on 2026-10-09, together with removing the field
+inspectors' commission cards («ما سجّله كل مفتش، وما يستحقه من عمولات
+(1$ لكل وحدة محتسبة)») from the staff page. The inspector payout ledger itself
+is untouched and still reached from the inspector's row (§5.6).
+
+- **Where.** A «صرف راتب / أجر» action on each *active* row of «الموظفون», which
+  opens a dialog: the payee (shown, not typed), the paying wallet with its
+  balance and what would be left, the amount in that wallet's currency, «عن شهر
+  / بيان الصرف» (required) and a paper reference (optional). An amount above the
+  wallet's balance disables the button before any request; the server re-checks
+  under the wallet's lock.
+- **What it writes.** An ordinary expense voucher: `PV-` number, the negative
+  ledger entry, the Tier 1 audit row, in one transaction, through the same code
+  as §5.2. Two things are the server's, not the client's: the payee is the staff
+  account's own name, and the category is the seeded «رواتب وأجور» (`SALARIES`).
+  Dated today; a salary paid on another day goes through the full expense form,
+  which asks why it is back-dated.
+- **The link.** `expense_vouchers.payeeStaffId` (migration 0081) holds the staff
+  account the voucher paid, and the audit row carries the same id. `payee` still
+  holds the name as it stood that day. No screen lists a person's salaries yet;
+  the column is what such a screen would read.
+- **Who, and the payment order (decision D7, 2026-10-10).**
+  `POST treasury/expenses/salaries/:staffId` is `TREASURY_WORK_ROLES`, like any
+  expense, and goes through the payment order of §5.1. Decree 5595/1982 art. 35 names
+  salaries among what may be paid before the order, so:
+  - the manager's payout is the order (`orderStatus: 'ORDERED'`, no `urgentReason`);
+  - an accountant's is paid at once on the urgent path. The server writes its reason,
+    exactly «راتب — يُدفع قبل الحوالة (المادة 35)» (`SALARY_URGENT_REASON` in
+    `packages/shared-schemas`), and the voucher waits as «بانتظار أمر الصرف»
+    (`orderStatus: 'AWAITING_ORDER'`) until the manager regularises it, like any
+    urgent voucher. The body carries no reason field.
+  - An accountant cannot pay his own salary (`SALARY_SELF_PAYOUT`, decision D8): the
+    manager records it, or it goes as a request.
+  - The urgent-payment ceiling (§5.1, D6) does not apply: art. 35 names salaries.
+    It applies to a salary paid through the full expense form, which is an ordinary
+    voucher.
+  - The retry key is also bound to the staff account (`payeeStaffId`), so a retry for
+    another person who shares the name is refused (`TREASURY_REQUEST_KEY_REUSED`).
+
+  The button is on «الموظفون», which only `SUPER_ADMIN` opens today.
+- **Refused.** A citizen's id, a deleted account or an unknown id
+  (`SALARY_PAYEE_NOT_FOUND`); a stopped «رواتب وأجور» (`EXPENSE_CATEGORY_INACTIVE`);
+  everything §5.2 refuses. A *disabled* account can still be paid: someone who
+  has left may be owed their last month.
+- **Not built.** A printable «أمر صرف»: no printed layout exists for any expense
+  voucher, and its wording and layout are unverified (§13.2). The success toast
+  links to the expense register instead.
 
 ---
 
@@ -674,8 +771,9 @@ Two working roles. The **accountant** runs the daily work. The **manager
 | Request a payment order («طلب أمر صرف»; moves no money) | yes | yes | no | no | no |
 | Withdraw a request still waiting | **his own** | yes | no | no | no |
 | Issue a payment order, reject a request, regularise an urgent payment | no | **yes** | no | no | no |
-| Record (pay) an expense | **only urgent, with a reason (art. 35); it waits for the order** | yes — his recording is the order | no | no | no |
+| Record (pay) an expense | **only urgent, with a reason (art. 35), up to the manager's ceiling (D6); it waits for the order** | yes — his recording is the order | no | no | no |
 | Record an inspector payout (picks the wallet) | yes | yes | no | no | no |
+| Pay a staff member's salary (§5.8; the button is on the `SUPER_ADMIN`-only staff page) | **yes, on the urgent path: the server writes the art. 35 reason, no ceiling; it waits for the order** (D7) | yes — his payout is the order | no | no | no |
 | Transfer, exchange, collector handover (never of one's own custody) | yes | yes | no | no | no |
 | Count a wallet | yes | yes | no | no | no |
 | Close a day | yes | yes | no | no | no |
@@ -684,6 +782,7 @@ Two working roles. The **accountant** runs the daily work. The **manager
 | Activate treasury (opening balances) | no | **yes** | no | no | no |
 | Reopen a closed day, post an adjustment | no | **yes** | no | no | no |
 | Manage categories and finance settings | no | **yes** | no | no | no |
+| Set the urgent-payment ceiling (الإعدادات, D6) | no — refused (`URGENT_EXPENSE_CEILING_FORBIDDEN`) although `PATCH fees/settings` admits him for the other settings | **yes** | no | no | no |
 
 `ACCOUNTANT` and `SUPER_ADMIN` can reuse `FINANCE_OVERRIDE_ROLES` from
 `cash-policy.ts`. `@Roles` on **every** handler, and `route-inventory.spec.ts` pins every
@@ -711,8 +810,8 @@ inspectors who carry the cash; staff with no custody get an empty round.
 | `treasury_accounts` | Wallets | name, type (enum), currency, active, optional owner (collector user id for custody). Four seeded rows |
 | `treasury_entries` | Append-only ledger | account, signed amount `Decimal`, currency, `exchangeRateAtPosting`, source type + source id, occurredAt, actor, note, `clientRequestId`. Triggers refuse update/delete. CHECK amount <> 0 |
 | `income_categories`, `income_vouchers` | Manual income | `RV-` sequence; CHECK currency = account currency (via account FK + trigger or app + constraint) |
-| `expense_categories`, `expense_vouchers` | Expenses | `PV-` number (0079); status (RECORDED, VOID); wallet, recorded by, void reason; invoice fields; the payment order — `orderedAt`/`orderedById`, `urgentReason` for art. 35 (0080) |
-| `expense_requests` | Payment-order requests (0080) | category, wallet + currency, amount, payee, description; requested by; the decision written once (ORDERED with its voucher, REJECTED with a reason, WITHDRAWN) |
+| `expense_categories`, `expense_vouchers` | Expenses | `PV-` number (0079); status (RECORDED, VOID); wallet, recorded by, void reason; invoice fields; the payment order — `orderedAt`/`orderedById`, `urgentReason` for art. 35 (0083); `payeeStaffId` for a salary (0081, built) |
+| `expense_requests` | Payment-order requests (0083) | category, wallet + currency, amount, payee, description; requested by; the decision written once (ORDERED with its voucher, REJECTED with a reason, WITHDRAWN) |
 | `treasury_transfers` | Transfers, exchanges, handovers | `TR-` sequence; from/to accounts; amounts; rate, official rate, `adjustmentReason`; fee amount; money changer name; review flag + reviewed by/at |
 | `treasury_counts` | Daily count per wallet | expected, counted, difference, reason, counter |
 | `treasury_day_closures` | Closed days | business date, closed by/at, reopen history |
@@ -837,7 +936,10 @@ municipal cash-handling practice, and is pinned by
 | D2 | Who may date a payment before go-live, once the treasury is live? | A finance role only, and the audit row says no wallet was credited (§3.3) | Art. 16 and 98: a receipt is written when the money is taken. The go-live cut-off is the opening count |
 | D3 | May an accountant pay an expense without the head's order? | No: a request for the manager's order; art. 35 urgent payments first, regularised after (§5.1) | Art. 21, 28, 33, 35, 85, 89 |
 | D4 | Must stage 5 exist before a municipality activates the treasury? | No, with D3 in place; until it ships, the one-day statement is the daily register, printed, counted and signed (§7) | Art. 101: the daily register, closed before the next opens |
-| D5 | Which side of go-live is the go-live day itself? | Live, for payments and expenses alike. A document dated that day is placed at the opening entry or after it, never before (§3.3) | Cutover practice: every receipt taken before the opening count is entered before activation, so what is entered for that day afterwards is new cash. Art. 16 and 98: a receipt carries the day the money was taken |
+| D5 | Which side of go-live is the go-live day itself? | Live, for payments, expenses and income alike. A document dated that day is placed at the opening entry or after it, never before (§3.3) | Cutover practice: every receipt taken before the opening count is entered before activation, so what is entered for that day afterwards is new cash. Art. 16 and 98: a receipt carries the day the money was taken |
+| D6 | Is the accountant's urgent path (art. 35) limited? (decided by the owner, 2026-10-10) | Yes: a per-voucher ceiling per currency (LBP, USD) that the manager sets in الإعدادات. Above it, `EXPENSE_URGENT_OVER_CEILING`, and the expense goes as a request. NULL means none. Not for the manager's voucher, nor for a salary (§5.1) | Art. 35 covers salaries, routine petty expenses and genuinely urgent ones. A ceiling keeps a large purchase on the order path (art. 28, 33) without slowing what the article lets through |
+| D7 | Does an accountant's salary payout need the manager's order first? (decided by the owner, 2026-10-10) | No: it is paid on the urgent path with the server's reason «راتب — يُدفع قبل الحوالة (المادة 35)», and waits for regularisation. The manager's payout is the order (§5.8) | Art. 35 names salaries among what may be paid before the order |
+| D8 | May an accountant pay his own salary on the urgent path? (2026-10-10) | No (`SALARY_SELF_PAYOUT`): the manager records it, or it goes as a request for his order (§5.8) | The separation already decided for custody (`CUSTODY_SELF_RECEIPT`): money that leaves before any order must not rest on the payee's word alone |
 
 The decree's text was read at <https://www.baladiyat.org/?page_id=6636> (the
 consolidated text with its 1985–1996 amendments). It should be confirmed against the
@@ -861,7 +963,8 @@ Official Gazette edition before any screen quotes an article.
 
 ### 13.3 Deliberately left for later
 
-Budget lines and «قطع الحساب»; amount-based approval thresholds; petty-cash advances
+Budget lines and «قطع الحساب»; amount thresholds on the manager's orders (the urgent path has
+its ceiling, D6); petty-cash advances
 (decree art. 37–42); file attachments (3b); supplier register; payroll; exchange
 gain/loss; denomination breakdown; Whish/bank statement line matching; collector
 shortage write-off; a scheduled job (none planned).
@@ -879,7 +982,8 @@ shortage write-off; a scheduled job (none planned).
 - The payment order (D3) puts a manager's step in front of every ordinary expense. A
   manager away for days means the queue waits. The urgent path (art. 35) is the relief
   the decree gives, and petty-cash advances (art. 37–42) are the next step if that is
-  not enough.
+  not enough. A ceiling set too low (D6) pushes ordinary urgent spending back into
+  that queue; the manager sets it, and leaving it unset means none.
 
 ---
 
@@ -899,7 +1003,7 @@ Postgres 17.
 - The go-live stamp is read `FOR SHARE`.
 - A named collector must be active staff who can hold cash.
 
-**The payment order (D3), migration 0080**
+**The payment order (D3), migration 0083 (first written as 0080)**
 
 - `expense_requests`, the order stamp on vouchers, and the art. 35 urgent path with
   regularisation.
@@ -919,7 +1023,7 @@ Postgres 17.
 - No one receives their own custody.
 - No expense is paid out of custody.
 
-**Documents (0080)**
+**Documents (0083)**
 
 - Vouchers, transfers and requests refuse a change to anything but their stamps, and
   refuse to be deleted.
@@ -970,7 +1074,7 @@ Each item is pinned by a test that was seen to fail with its fix taken out.
   invoice's lock. It predates PR #104, but it is on the reversal path the treasury now
   moves money through.
 - A query day must fall in 1900–2100: `to=9999-12-31` had become a range ending in 1909.
-- 0080 runs twice without error, and a decided request is closed like a cancelled
+- 0083 runs twice without error, and a decided request is closed like a cancelled
   voucher.
 - «جولتي» reads the go-live stamp without locking it.
 - The collector's page («من حصّل الجابي») starts at go-live too (`since`), so
@@ -1015,6 +1119,28 @@ once after the fix.
   «collected − held» stays what he handed in after a refund paid from the safe.
 - «طباعة الوصل» prints the whole receipt; the statement cannot be printed while
   another range loads.
+
+### Extended 2026-10-10 (merge of `fix/expense-retry-key-race`; branch `fix/pr104-review`, not committed)
+
+The controls above, carried to the income vouchers and the salary payout that the merge
+brought in, and the two decisions the owner took that day (D6, D7). Each item is pinned in
+`treasury-controls.integration.spec.ts` by a test that was seen to fail with its fix taken
+out.
+
+- **Income vouchers** (§4): the retry key is bound to its act and a cancelled voucher's key
+  is `INCOME_ALREADY_VOID`; a unique violation on the key is answered as a replay
+  (`retry-key.ts`); the lock order is the advisory lock, `config` (`FOR SHARE`),
+  `lockAccounts`, then the RV number; the go-live day is dated by `documentOccurredAt`
+  with the go-live stamp (D5); a void takes the wallet's lock through `lockAccounts`; and
+  0083's write-once trigger covers `income_vouchers`.
+- **Salaries** (§5.8, D7): the manager's payout is ordered; the accountant's is urgent with
+  the server's art. 35 reason and awaits regularisation; the key is bound to
+  `payeeStaffId`.
+- **The urgent-payment ceiling** (§5.1, D6): two columns on `system_settings` (0083, each
+  NULL or > 0), read with the go-live stamp, enforced in
+  `ExpensesService.recordInTransaction`, set through `PATCH fees/settings` by the manager
+  only (`URGENT_EXPENSE_CEILING_FORBIDDEN`), and stripped from the settings a citizen reads.
+- `route-inventory.spec.ts` pins every `IncomeController` handler's role list.
 
 ### Stage 1 — core ledger (built; branch `chore/migration-0073`, not committed)
 
@@ -1082,6 +1208,20 @@ Built and tested, exactly as §5 describes, with **no approval step**:
 table, approval thresholds, a supplier register, and the inspector-payout link
 of §5.6 — `inspector_payouts` still records a payout with no wallet, and wiring
 it to a voucher is the next piece of this stage.
+
+**Added to stage 3 on 2026-10-09: the salary payout (§5.8).** Migration
+`0081_expense_voucher_payee_staff` (`payeeStaffId`, its foreign key and index),
+`ExpensesService.recordSalary` and `POST expenses/salaries/:staffId`, the
+`SALARY_PAYEE_NOT_FOUND` code, and the «صرف راتب / أجر» dialog on the staff page,
+which lost the inspectors' commission cards in the same change. Nine
+integration tests on a throwaway Postgres 17 (the voucher and its link, the
+audit row by id, the retry, the overdraw, a citizen's id, a deleted and a
+disabled account, a stopped category, the foreign key). Verified in a browser
+against the local seeded database: two payments of 250,000 ل.ل
+(`PV-2610-0002`, `PV-2610-0003`) took the ليرة safe from 6,525,000 to
+6,025,000, each with one ledger entry and one audit row, and an amount above
+the balance disabled the button and wrote nothing. Rendered at 360 and 1440px,
+Arabic and English, light and dark.
 
 ### Stage 4 — the collector handover (built; same branch, not committed)
 
@@ -1157,7 +1297,62 @@ custody balance says.
 exchange with its rate tolerance and post-review flag, and transfer fees. They
 share the table and the service.
 
-### Stages 2 and 5
+### Stage 2 — income vouchers (built 2026-10-09; same branch, not committed)
+
+Built as §4 describes, with the differences listed after:
+
+- Migration `0080_income_vouchers`: `income_categories` (Arabic and English
+  names, optional budget codes, deactivated never deleted) and
+  `income_vouchers`, with the seven categories of §4.3 seeded by `key`. The
+  (accountId, currency) foreign key makes a ليرة voucher in a dollar safe
+  impossible at the database; `clientRequestId` is NOT NULL. The amount is
+  `DECIMAL(14,2)`, the ledger's own precision. No sequence: the number comes
+  from `document_counters`, kind `REVENUE_VOUCHER`, prefix `RV`.
+- Backend: `income.plan.ts` (the date rules — `planExpenseDate`'s, delegated and
+  renamed, not copied — and the Beirut-midnight bounds of a register period),
+  `IncomeService`, `IncomeController` (`t/:tenantSlug/treasury/income`), wired
+  into both modules. Recording writes the voucher, posts the positive
+  `INCOME_VOUCHER` entry and the Tier 1 audit row (number and amount, never the
+  payer) in one transaction. The receiving wallet must be a cash safe, Whish or
+  a bank account (`canReceiveIncome`); custody and petty cash are refused with
+  `INCOME_ACCOUNT_NOT_RECEIVING`.
+- The retry key is serialised with a schema-scoped advisory lock before it is
+  read, so two identical requests racing each other produce one voucher and
+  one replay — not a unique violation surfacing as a 500, which a read alone
+  cannot prevent. Pinned by a test. Since 2026-10-10 it is also bound to its
+  act (see "Extended 2026-10-10" above).
+- Voiding, manager only, locks the voucher and then the wallet, and refuses
+  with `TREASURY_INSUFFICIENT_FUNDS_FOR_VOID` (figures named) when the wallet
+  has spent the money since (§4.4, assumption 13.1.2). The voucher is left
+  untouched.
+- Categories, the manager's alone: `POST` and `PATCH` on `income/categories`
+  add one, rename it, give it an English name or its budget codes, and stop or
+  restart it. Never a delete. Two on one budget article are refused by the
+  partial unique index (`INCOME_CATEGORY_CODE_TAKEN`). An edit replaces the
+  names and codes as the form holds them, but keeps `active` unless it is sent,
+  as the expense edit does since the PR #104 review (a PATCH changes only the
+  fields it sends). Both acts are Tier 1 audited with the state
+  before and after.
+- Tests: 12 unit (dates, Beirut midnights across both clock changes, periods)
+  and 38 integration on a throwaway Postgres 17.
+- Frontend: the `finance/income` register (search on the server, period,
+  category, currency and status filters, per-currency totals over the whole
+  filtered set, cancelled vouchers struck through with their reason), the
+  cancel dialog, its own nav row «الإيرادات», and the recording page
+  `finance/income/new` with the sticky summary of the expense page — balance
+  now, amount, balance after. «بنود الإيرادات» (`finance/income/categories`)
+  lists every category, stopped ones included, for every finance reader, and
+  gives the manager add, edit, stop and restart; the recording form offers the
+  manager «بند جديد» inline, so a missing category does not cost the voucher.
+  The register's category filter lists stopped categories too, since their
+  vouchers are still in it.
+
+**Not in stage 2 yet**, against §4.5: the register lists manual vouchers only,
+not citizen-fee income beside them; there is no printable «سند قبض» (nor its
+QR code); the totals have no convert toggle. Not rendered in a browser (no check at 360/1440px, light/dark,
+Arabic/English) and not exercised over HTTP.
+
+### Stage 5
 
 Not started.
 

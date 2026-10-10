@@ -43,6 +43,32 @@ export const TREASURY_READ_ROLES = ['SUPER_ADMIN', 'ACCOUNTANT', 'AUDITOR', 'VIE
 export const TREASURY_WORK_ROLES = ['SUPER_ADMIN', 'ACCOUNTANT'] as const;
 export const TREASURY_ADMIN_ROLES = ['SUPER_ADMIN'] as const;
 
+/**
+ * باب وبند الموازنة: the chapter or the article as the municipality's own budget
+ * numbers it. Digits and dots, because that is every shape a Lebanese municipal
+ * budget line takes, and free text here would make the codes unsortable.
+ *
+ * Shared by the expense and the income categories (0074, 0080), whose tables
+ * carry the same two columns under the same CHECK.
+ */
+export const budgetCodeSchema = z
+  .string()
+  .trim()
+  .regex(/^[0-9][0-9.]{0,15}$/, 'الرمز أرقام، وقد تفصلها نقاط')
+  .optional();
+
+/**
+ * Both codes or neither: a chapter without its article is a half-entered code
+ * no report can use, and the database refuses it.
+ */
+export const budgetCodesComplete = (value: { chapterCode?: string; itemCode?: string }): boolean =>
+  Boolean(value.chapterCode) === Boolean(value.itemCode);
+
+export const BUDGET_CODES_INCOMPLETE = {
+  message: 'اكتب الباب والبند معاً، أو اتركهما فارغين',
+  path: ['itemCode'],
+};
+
 /** An amount in a wallet's currency: not negative, at most two decimals. */
 const openingAmount = z
   .number({ required_error: 'اكتب الرصيد الافتتاحي', invalid_type_error: 'الرصيد الافتتاحي رقم' })

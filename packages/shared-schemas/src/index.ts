@@ -29,6 +29,7 @@ export * from './citizen-merge.schema';
 export * from './unit-status-rule';
 export * from './treasury.schema';
 export * from './expense.schema';
+export * from './income.schema';
 export * from './transfer.schema';
 export * from './money-amount';
 export * from './owner-share';

@@ -9,6 +9,7 @@ import {
   Archive,
   BadgeDollarSign,
   Ban,
+  Banknote,
   Check,
   CheckCircle2,
   Copy,
@@ -21,7 +22,7 @@ import {
   UserPlus,
   UsersRound,
 } from 'lucide-react';
-import { getLabels, STAFF_ROLE } from '@mechanization/shared-schemas';
+import { getLabels, STAFF_ROLE, TREASURY_WORK_ROLES } from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
   createStaff,
@@ -36,7 +37,7 @@ import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { param, useTabSearch, useUrlPagination, useUrlState } from '@/lib/use-url-state';
 import { formatDate } from '@/lib/dates';
-import { formatForeign } from '@/lib/currency';
+import { hasRole } from '@/lib/staff-roles';
 import { CellTag } from '@/components/ui/cell-tag';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -58,6 +59,7 @@ import { ActionTooltip } from '@/components/ui/tooltip';
 import { StaffForm, type StaffFormValues } from '@/components/admin/staff-form';
 import { PresenceCell } from '@/components/admin/staff/presence-cell';
 import { DeletedStaffSection } from '@/components/admin/staff/deleted-staff-section';
+import { StaffSalaryDialog } from '@/components/admin/staff/staff-salary-dialog';
 import { useStaffPresence } from '@/lib/use-staff-presence';
 
 /**
@@ -154,6 +156,7 @@ export default function StaffPage({
 
   const [token, setToken] = useState<string | null>(null);
   const [selfId, setSelfId] = useState<string | null>(null);
+  const [role, setRole] = useState<string | null>(null);
   /** A failed *write*. The read reports its own failure through the query. */
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -164,6 +167,8 @@ export default function StaffPage({
   const [busyId, setBusyId] = useState<string | null>(null);
   /** The account whose deletion is being confirmed, or null. */
   const [pendingDelete, setPendingDelete] = useState<StaffSummary | null>(null);
+  /** The staff member a salary is being paid to, or null. */
+  const [paying, setPaying] = useState<StaffSummary | null>(null);
   const toast = useToast();
 
   useEffect(() => {
@@ -178,6 +183,7 @@ export default function StaffPage({
     }
     setToken(session.accessToken);
     setSelfId(session.user.id);
+    setRole(session.user.role ?? null);
   }, [tenant, base, router]);
 
   /*
@@ -385,12 +391,13 @@ export default function StaffPage({
     presence read's one-minute poll is what drives.
   */
   const onlineCount = activeStaff.filter((staff) => presence.isOnline(staff.id)).length;
-  /*
-    Every field inspector, disabled ones included. This section is a payout
-    ledger, not a roster: an inspector is archived still owed what they
-    earned, and hiding the card would hide the balance (STA-6).
-  */
+  /* Every field inspector, disabled ones included, as the «الموظفون» count beside it includes them. */
   const inspectors = items.filter((staff) => staff.role === 'FIELD_INSPECTOR');
+  /*
+    «صرف راتب / أجر» is a finance act on a staff page: offered to the roles that
+    may record an expense, which `ExpensesController` enforces either way.
+  */
+  const canPaySalary = hasRole(TREASURY_WORK_ROLES, role);
 
   const columns = useMemo<ColumnDef<StaffSummary>[]>(
     () => [
@@ -527,6 +534,21 @@ export default function StaffPage({
                 </ActionTooltip>
               ) : null}
 
+              {/* Active accounts only: the directory is who works here now. */}
+              {canPaySalary && staff.isActive ? (
+                <ActionTooltip label={tStaff('payout.paySalary')}>
+                  <Button
+                    variant="outline"
+                    size="icon-sm"
+                    aria-label={tStaff('payout.paySalary')}
+                    disabled={busy}
+                    onClick={() => setPaying(staff)}
+                  >
+                    <Banknote className="size-4" aria-hidden />
+                  </Button>
+                </ActionTooltip>
+              ) : null}
+
               <ActionTooltip label={en ? 'Edit' : 'تعديل'}>
                 <Button
                   variant="outline"
@@ -586,7 +608,7 @@ export default function StaffPage({
         },
       },
     ],
-    [selfId, busyId, toggleActive, en, locale, roleLabel, base, router, presence, tStaff],
+    [selfId, busyId, toggleActive, en, locale, roleLabel, base, router, presence, tStaff, canPaySalary],
   );
 
   if (!token) return null;
@@ -704,69 +726,16 @@ export default function StaffPage({
         onError={setActionError}
       />
 
-      {/* ── Field inspectors ────────────────────────────────────────── */}
-      {inspectors.length > 0 ? (
-        <section className="space-y-3">
-          <div>
-            <h2 className="flex items-center gap-2 text-base font-semibold">
-              <BadgeDollarSign className="size-5 text-primary" aria-hidden />
-              {en ? 'Field inspectors' : 'المفتشون الميدانيون'}
-            </h2>
-            <p className="text-xs text-muted-foreground">
-              {en
-                ? 'What each inspector has registered, and what they are owed ($1 per billable unit).'
-                : 'ما سجّله كل مفتش، وما يستحقه من عمولات (1$ لكل وحدة محتسبة).'}
-            </p>
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {inspectors.map((inspector) => (
-              <article key={inspector.id} className="flex flex-col gap-4 rounded-lg border bg-card p-4 shadow-sm">
-                <div className="flex items-center gap-3">
-                  <span
-                    aria-hidden
-                    className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 font-bold text-primary"
-                  >
-                    {initials(inspector)}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate font-semibold">{inspector.fullName}</p>
-                    <p dir="ltr" className="truncate text-xs text-muted-foreground">
-                      {inspector.email}
-                    </p>
-                  </div>
-                  {inspector.isActive ? (
-                    <CellTag tone="success">{en ? 'Active' : 'فعّال'}</CellTag>
-                  ) : (
-                    <CellTag tone="muted">{en ? 'Disabled' : 'معطّل'}</CellTag>
-                  )}
-                </div>
-                <StatStrip>
-                  <StatItem value={inspector.registeredCitizensCount ?? 0} label={en ? 'Citizens' : 'مواطن'} />
-                  <StatItem
-                    value={inspector.registeredPropertiesCount ?? 0}
-                    label={en ? 'Billable units' : 'الوحدات المحتسبة'}
-                  />
-                  {/* To the cent: the server refuses a delete over $0.40 owed, so the page must not show «0». */}
-                  <StatItem value={formatForeign(inspector.totalEarnings ?? 0, 'USD')} label={en ? 'Earned' : 'الأرباح'} />
-                  <StatItem
-                    value={formatForeign(inspector.pendingBalance ?? 0, 'USD')}
-                    label={en ? 'Owed' : 'المتبقي'}
-                    className={(inspector.pendingBalance ?? 0) > 0 ? 'text-warning' : undefined}
-                  />
-                </StatStrip>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="mt-auto w-full"
-                  onClick={() => router.push(`${base}/inspector/profile/${inspector.id}`)}
-                >
-                  <BadgeDollarSign className="size-4" aria-hidden />
-                  {en ? 'Earnings & payouts' : 'الأرباح والدفعات'}
-                </Button>
-              </article>
-            ))}
-          </div>
-        </section>
+      {paying ? (
+        <StaffSalaryDialog
+          tenant={tenant}
+          base={base}
+          token={token}
+          locale={locale}
+          role={role ?? undefined}
+          staff={paying}
+          onClose={() => setPaying(null)}
+        />
       ) : null}
 
       <StaffForm
