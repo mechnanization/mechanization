@@ -1,6 +1,6 @@
 # Security
 
-Last verified against the code: `fix/expense-retry-key-race` (merged with `develop@4ad0b27`), 2026-10-09.
+Last verified against the code: `feat/treasury-daily-count-and-closure` (on `fix/expense-retry-key-race@ff44f27`), 2026-10-10.
 
 Binding for every change that touches authentication, roles, tokens, validation, uploads, logging,
 headers, client storage or secrets. The rules below are correct practice. Where the code differs today,
@@ -200,7 +200,9 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   Whish settlement), payment reversals, activating the treasury (`TREASURY_ACTIVATED`: the opening
   balances and the go-live stamp, one transaction), recording and cancelling an expense, recording
   and cancelling an income voucher (`INCOME_RECORDED`, `INCOME_VOIDED`), receiving a
-  collector's custody (`CUSTODY_RECEIVED`) and cancelling a transfer, corrections, ownership changes (ending an ownership, owner links,
+  collector's custody (`CUSTODY_RECEIVED`) and cancelling a transfer, counting the treasury and
+  closing, sweeping and reopening a day (`TREASURY_COUNT_RECORDED`, `TREASURY_DAY_CLOSED`,
+  `TREASURY_DAY_AUTO_CLOSED`, `TREASURY_DAY_REOPENED`), corrections, ownership changes (ending an ownership, owner links,
   merges), ending a tenancy, review decisions (approve, return, quality check), citizen status changes
   (archive and restore), how a co-owned flat is billed (`UNIT_OWNER_BILLING_SET`, `OwnerBillingService`,
   which moves every co-owner's bill), and a unit's fee exemption (`UNIT_FEE_EXEMPTION_SET` / `_LIFTED`,
@@ -215,7 +217,8 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   credential, and four of its characters leave 1,024 candidates. The filing's own number
   (`registrations.referenceNumber`) is not a credential and may be written in full.
 - MUST NOT bypass the append-only triggers on `audit_log_entries`, `payment_transactions` and
-  `treasury_entries` (`0001_init`, `0017_payment_ledger`, `0073_treasury_ledger`), MUST NOT `SET session_replication_role`, and MUST NOT reach
+  `treasury_entries` (`0001_init`, `0017_payment_ledger`, `0073_treasury_ledger`), or the closed-day
+  triggers on `treasury_entries`, `treasury_counts` and `treasury_day_closures` (`0082`), MUST NOT `SET session_replication_role`, and MUST NOT reach
   for `TRUNCATE` because a trigger refused a `DELETE`. A refusal is an answer
   ([CLAUDE.md](../CLAUDE.md#how-to-work-here)).
 - Uniqueness is enforced by a database constraint and surfaces as a `ConflictError`, never by a
@@ -266,6 +269,16 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   money and its books must not say otherwise. The handover is a transfer, recorded by a different
   person from the one who collected, and it cannot exceed what the collector holds. The audit row
   names him by id, never by name.
+- **A closed day** (docs/finance.md §7, `t/:tenantSlug/treasury`: `GET counts`, `GET closures`, `GET
+  reports/daily` on `TREASURY_READ_ROLES`; `POST counts`, `POST closures` on `TREASURY_WORK_ROLES`;
+  `POST closures/reopen` on `TREASURY_ADMIN_ROLES`; every body and query value through a shared zod
+  schema). Once the accountant signs a day off, nothing dated on or before it can be written — no
+  payment, voucher, transfer or reversal — by the application (`TreasuryLedgerService.post`) or by
+  anything else (the 0082 triggers). A closure cannot be deleted, only reopened by the manager with a
+  reason that goes into the audit row and onto the printed report, and only the latest closed day. A
+  count is a statement about cash, not a movement of it: a difference is recorded with its reason and
+  never posted. The report names staff (who counted, closed, reopened; each collector holding cash)
+  and no citizen.
 - A money write MUST be safe against double submission on the client (an in-flight guard) and on the
   server (a constraint or idempotent write).
 

@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `fix/expense-retry-key-race` (merged with `develop@4ad0b27`), 2026-10-09.
+Last verified against the code: `feat/treasury-daily-count-and-closure` (on `fix/expense-retry-key-race@ff44f27`), 2026-10-10.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -74,7 +74,8 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **What happens:** after a schema change and `pnpm db:generate`, the API
   started by `pnpm dev` recompiles the new code and then answers its new
   queries with a 500 (`INTERNAL_ERROR`), while the integration suites, which
-  load the client from `src/`, pass. Seen 2026-10-09 with `payeeStaffId` (0081).
+  load the client from `src/`, pass. Seen 2026-10-09 with `payeeStaffId` (0081), and again
+  2026-10-10 with the 0082 models: every new treasury route answered 500.
 - **Why:** `nest start --watch` runs `dist/`, and the Prisma clients reach
   `dist/generated` only as assets. `nest-cli.json` sets `"watchAssets": false`,
   so the watcher recompiles TypeScript but never re-copies the regenerated
@@ -177,6 +178,25 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **Do this:** `ALTER FUNCTION … SET search_path = <schema>, pg_catalog`, or
   qualify calls with the schema.
 - **Where:** `0030_building_census`, `0048_search_compact_schema_qualified`.
+
+### A closed treasury day is judged in two places, on a calendar written twice
+
+- **What happens:** a back-dated write into a closed day — a voucher, a payment, a
+  collector's round, a test fixture — is refused (`CLOSED_DAY_MUTATION_BLOCKED`, or the trigger's
+  «treasury day … is closed»), however it reaches `treasury_entries`. Change the municipal time
+  zone in one place only and the application and the database disagree about which day an entry
+  is on, for the hours between the two midnights.
+- **Why:** `TreasuryLedgerService.post` judges the day with `municipalToday` (`MUNICIPAL_TIME_ZONE`,
+  shared-schemas), and the 0082 triggers with `AT TIME ZONE 'Asia/Beirut'` written into SQL. The
+  count trigger also lets exactly one write through on a closed day — closing's link to its
+  closure — by comparing the row minus `closureId`, so a column added to `treasury_counts` that
+  closing must also set would be refused.
+- **Do this:** change the zone in both, in the same release. Date a late movement on the day it
+  is entered and say in its note which day it belongs to; reopen only the latest closed day. A new
+  count column that closing writes needs the trigger's exception widened in a new migration.
+  Integration fixtures that need old days move money on them before closing them.
+- **Where:** `0082_treasury_day_closing` (`reject_closed_day_entry`, `reject_closed_day_count`),
+  `treasury-ledger.service.ts` (`assertDayOpen`), `cash-policy.ts` (`MUNICIPAL_TIME_ZONE`).
 
 ### A new enum value cannot be used in its own migration
 

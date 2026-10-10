@@ -2,8 +2,10 @@ import { Injectable } from '@nestjs/common';
 import type { PaymentMethod, TreasuryEntrySource } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
+import { closedTreasuryDay } from '../../../infrastructure/prisma/check-violation';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { ConflictError, NotFoundError } from '../../common/exceptions';
+import { closedDayFor } from './day-closing.plan';
 import {
   creditsWallets,
   planPaymentLegs,
@@ -57,6 +59,11 @@ export interface TreasuryConfig {
  *    the balance is read behind the lock.
  * 2. **Entries are never edited.** The database refuses UPDATE and DELETE; a
  *    correction is an opposing entry (`reversalOfId`).
+ * 3. **A closed day takes nothing** (docs/finance.md §7.3). Every entry is
+ *    written by `post`, which refuses one dated on or before the latest closed
+ *    day with `CLOSED_DAY_MUTATION_BLOCKED` — the payment, the voucher or the
+ *    transfer behind it rolls back with it. The 0082 trigger holds the same
+ *    rule underneath.
  */
 @Injectable()
 export class TreasuryLedgerService {
@@ -64,6 +71,68 @@ export class TreasuryLedgerService {
 
   private get S() {
     return tenantSchemaRef(this.tenantContext.schemaName);
+  }
+
+  // ─────────────────────────────  closed days  ─────────────────────────────
+
+  /** The latest CLOSED business day, `YYYY-MM-DD`, or null when none is. */
+  async closedThrough(tx: Prisma.TransactionClient): Promise<string | null> {
+    const latest = await tx.treasuryDayClosure.aggregate({
+      where: { status: 'CLOSED' },
+      _max: { businessDate: true },
+    });
+    return latest._max.businessDate ? isoDay(latest._max.businessDate) : null;
+  }
+
+  /**
+   * Refuses a movement dated on a closed day, naming the day.
+   *
+   * Called by `post` for every entry, and by `PaymentLedgerService.record`
+   * before it writes anything, so a backdated round into a closed day is turned
+   * away before a receipt number is drawn.
+   */
+  async assertDayOpen(tx: Prisma.TransactionClient, occurredAt: Date): Promise<void> {
+    const day = closedDayFor(occurredAt, await this.closedThrough(tx));
+    if (day !== null) throw closedDayRefusal(day);
+  }
+
+  /**
+   * The same refusal for a citizen payment, asked before the payment row is
+   * written — and only of a payment that will reach a wallet. One dated before
+   * go-live never touches the books a closure locks (`creditsWallets`), so the
+   * closure has nothing to say about it.
+   */
+  async assertPaymentDayOpen(tx: Prisma.TransactionClient, occurredAt: Date): Promise<void> {
+    const config = await this.config(tx);
+    if (!creditsWallets(config.goLiveAt, occurredAt)) return;
+    await this.assertDayOpen(tx, occurredAt);
+  }
+
+  /**
+   * Serialises everything that reads or changes a day's lock — counting,
+   * closing, reopening — within one municipality. The key names the schema, so
+   * two municipalities never wait on each other (docs/database.md).
+   */
+  async lockDayBook(tx: Prisma.TransactionClient): Promise<void> {
+    const key = `${this.tenantContext.schemaName}:treasury-day-book`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${key}))`;
+  }
+
+  /** Each account's balance from the entries before `before` — a day's end is the next day's start. */
+  async balancesBefore(
+    tx: Prisma.TransactionClient,
+    accountIds: readonly string[],
+    before: Date,
+  ): Promise<Map<string, Prisma.Decimal>> {
+    const balances = new Map<string, Prisma.Decimal>(accountIds.map((id) => [id, new Prisma.Decimal(0)]));
+    if (accountIds.length === 0) return balances;
+    const sums = await tx.treasuryEntry.groupBy({
+      by: ['accountId'],
+      where: { accountId: { in: [...accountIds] }, occurredAt: { lt: before } },
+      _sum: { amount: true },
+    });
+    for (const row of sums) balances.set(row.accountId, row._sum.amount ?? new Prisma.Decimal(0));
+    return balances;
   }
 
   /** The go-live stamp and the municipality's rate, read in the caller's transaction. */
@@ -99,6 +168,9 @@ export class TreasuryLedgerService {
     context: PostContext,
   ): Promise<void> {
     if (drafts.length === 0) return;
+
+    // Every entry of one act shares its day, so one check covers them all.
+    await this.assertDayOpen(tx, context.occurredAt);
 
     const net = new Map<string, Prisma.Decimal>();
     for (const draft of drafts) {
@@ -145,21 +217,32 @@ export class TreasuryLedgerService {
     }
 
     for (const draft of drafts) {
-      await tx.treasuryEntry.create({
-        data: {
-          accountId: draft.accountId,
-          currency: draft.currency,
-          amount: draft.amount,
-          exchangeRateAtPosting: context.exchangeRate ?? null,
-          source: context.source as never,
-          sourceId: context.sourceId,
-          reversalOfId: draft.reversalOfId ?? null,
-          actorId: context.actorId,
-          note: context.note ?? null,
-          occurredAt: context.occurredAt,
-        },
-        select: { id: true },
-      });
+      try {
+        await tx.treasuryEntry.create({
+          data: {
+            accountId: draft.accountId,
+            currency: draft.currency,
+            amount: draft.amount,
+            exchangeRateAtPosting: context.exchangeRate ?? null,
+            source: context.source as never,
+            sourceId: context.sourceId,
+            reversalOfId: draft.reversalOfId ?? null,
+            actorId: context.actorId,
+            note: context.note ?? null,
+            occurredAt: context.occurredAt,
+          },
+          select: { id: true },
+        });
+      } catch (error) {
+        /*
+          The day was closed between the check above and this insert, and the
+          0082 trigger refused it. Same refusal, same words; the transaction is
+          already aborted, and rethrowing rolls the whole act back.
+        */
+        const day = closedTreasuryDay(error);
+        if (day !== null) throw closedDayRefusal(day);
+        throw error;
+      }
     }
   }
 
@@ -400,4 +483,27 @@ export class TreasuryLedgerService {
       select: { id: true, currency: true },
     });
   }
+}
+
+/** A `DATE` column as Prisma reads it — midnight UTC of the day — back to `YYYY-MM-DD`. */
+export function isoDay(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+/** `YYYY-MM-DD` as the midnight-UTC `Date` Prisma writes into a `DATE` column. */
+export function dateColumn(day: string): Date {
+  return new Date(`${day}T00:00:00.000Z`);
+}
+
+/**
+ * «اليوم مقفل» — the one refusal for anything dated on a closed day, from the
+ * application's check and from the trigger's alike. A CONFLICT: the request is
+ * well formed, the books' state refuses it.
+ */
+function closedDayRefusal(day: string): ConflictError {
+  return new ConflictError({
+    code: 'CLOSED_DAY_MUTATION_BLOCKED',
+    message: `The treasury day ${day} is closed; nothing may be recorded on or before it.`,
+    params: { date: day },
+  });
 }

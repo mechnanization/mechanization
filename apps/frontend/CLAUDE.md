@@ -1,6 +1,6 @@
 # apps/frontend: agent guide
 
-Last verified against the code: `fix/expense-retry-key-race` (merged with `develop@4ad0b27`), 2026-10-09.
+Last verified against the code: `feat/treasury-daily-count-and-closure` (on `fix/expense-retry-key-race@ff44f27`), 2026-10-10.
 
 Next.js 15 app router, React 18, next-intl 4, TanStack Query 5, Tailwind 3.4 with
 tailwind-merge 3, Radix and lucide-react. One app serves the staff dashboard and the
@@ -26,6 +26,8 @@ app/[tenant]/[locale]/layout.tsx        TenantLayout (server, force-dynamic) + e
     finance/income/categories (بنود الإيرادات — every reader sees the list, the manager edits it)
     finance/collectors (الجباة والتحصيل — عهدة الجباة and «استلام الصندوق», moved off the treasury page)
     finance/collectors/[collectorId] (ما حصّله الجابي)
+    finance/daily (جرد وإقفال اليومية — the count, the close, the manager's reopen; `?date=`)
+    finance/daily/report (تقرير الصندوق اليومي — printed A4 landscape by its own print rules; `?date=`)
     my-round (جولتي — the collector's own pocket, phone-first, WORKING_STAFF_ROLES)
 
 `CitizenProfilePayment.invoiceNumber` carries «INV-2610-0001» and is what
@@ -36,7 +38,7 @@ the id — `billReference` is where that choice lives.
     inspector/profile/** quality/**
 ```
 
-All 61 `page.tsx` files are `'use client'` and read `params` with `use(params)` (counted 2026-10-09).
+All 63 `page.tsx` files are `'use client'` and read `params` with `use(params)` (counted 2026-10-10).
 `components/ui` is the kit (33 files, `alert.tsx` added 2026-10-06); `components/admin` holds staff screens (feature
 folders `cases/`, `damage/`, `finance/`, `quality/`, `settings/`, `staff/`); `components/citizen` is mostly citizen-record
 form pieces used by staff screens, and only `pay-dialog` serves the portal. `lib` holds the
@@ -125,7 +127,7 @@ component types.
 ## Copy and i18n (decision D-i18n)
 
 - New copy MUST go in next-intl messages, `messages/ar.json` and `messages/en.json`, with
-  the same keys in both (1,566 leaf keys each, counted 2026-10-09). Read it with `useTranslations`.
+  the same keys in both (1,709 leaf keys each, counted 2026-10-10). Read it with `useTranslations`.
   `lib/messages-parity.test.ts` checks that both files hold the same keys, the same ICU
   placeholders and the same rich-text tags, and that no Arabic message outside `errors`
   writes a count as `#`: inside a plural branch write `{count}`, because `#` is formatted
@@ -258,7 +260,7 @@ are inlined at build time. The local `.env.local` block is in
 ## Tests
 
 Vitest (`apps/frontend/vitest.config.mts`): `environment: 'node'`, only `lib/**/*.test.ts`,
-with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 25 test files (counted on disk 2026-10-10, after merging `develop`; cases not recounted).
+with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 26 test files, 339 cases (counted 2026-10-10).
 No component, accessibility or end-to-end tests exist (no jsdom, no Testing Library); a
 rendered check uses the uncommitted headless harness of UI §16.4. Untested, so add a test
 when you touch them: `lib/sentry-redaction.ts`, `lib/session.ts`, `lib/csv.ts` `csvCell`.

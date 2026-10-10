@@ -374,7 +374,20 @@
     "TRANSFER_ALREADY_VOID": "This transfer has already been cancelled.",
     "CUSTODY_ACCOUNT_NOT_FOUND": "The collector custody account was not found.",
     "CUSTODY_EXCEEDS_HELD": "More than the collector holds: {held, number} in custody, {amount, number} received.",
-    "COLLECTOR_NOT_FOUND": "That collector was not found."
+    "COLLECTOR_NOT_FOUND": "That collector was not found.",
+    "COUNT_DATE_IN_FUTURE": "A day that has not come yet cannot be counted. Pick today or an earlier day.",
+    "COUNT_VARIANCE_REASON_REQUIRED": "The count of «{account}» does not match the books. Write the reason for the difference, then save.",
+    "COUNT_EXPECTED_CHANGED": "The books of {count, plural, one {one wallet} other {{count} wallets}} changed after the count, through an entry dated on this day. Count again, then save.",
+    "COUNT_MISSING_FOR_ACTIVE_ACCOUNTS": "{count, plural, one {One wallet has} other {{count} wallets have}} not been counted yet. A day closes once every wallet is counted.",
+    "DAY_ALREADY_CLOSED": "The day {date} is closed: its count cannot change and nothing can be recorded in it.",
+    "DAY_NOT_CLOSED": "The day {date} is not closed.",
+    "DAY_NOT_OVER": "The day {date} has not ended yet. A day closes once it is over — the next morning, for example.",
+    "DAY_BEFORE_GO_LIVE": "The treasury went live on {date}. Nothing before that day is counted or closed.",
+    "CLOSURE_OUT_OF_CHRONOLOGICAL_ORDER": "The day {date} was reopened. Close it again before any later day.",
+    "UNRESOLVED_ACTIVE_DAYS_EXIST": "{count, plural, one {An earlier day with movement is} other {{count} earlier days with movement are}} still open, the first being {date}. Days close in order.",
+    "CLOSED_DAY_MUTATION_BLOCKED": "The day {date} is closed: nothing can be recorded on it or before it. Record the movement with today's date and say in its description which day it belongs to.",
+    "REOPEN_REASON_REQUIRED": "Write a clear reason for reopening the day (at least {min} characters).",
+    "ONLY_LATEST_CLOSED_DAY_CAN_BE_REOPENED": "Only the latest closed day can be reopened, which is {date}."
   },
   "damage": {
     "level": "Damage level",
@@ -893,7 +906,11 @@
     "INCOME_CATEGORY_CREATED": "Income category added",
     "INCOME_CATEGORY_UPDATED": "Income category updated",
     "CUSTODY_RECEIVED": "Collector box received",
-    "TRANSFER_VOIDED": "Transfer cancelled"
+    "TRANSFER_VOIDED": "Transfer cancelled",
+    "TREASURY_COUNT_RECORDED": "Cash count recorded",
+    "TREASURY_DAY_CLOSED": "Day closed",
+    "TREASURY_DAY_AUTO_CLOSED": "Quiet day closed",
+    "TREASURY_DAY_REOPENED": "Day reopened"
   },
   "auditEntities": {
     "User": "Citizen or staff",
@@ -914,7 +931,8 @@
     "ExpenseCategory": "Expense category",
     "IncomeVoucher": "Income receipt voucher",
     "IncomeCategory": "Income category",
-    "TreasuryTransfer": "Transfer voucher"
+    "TreasuryTransfer": "Transfer voucher",
+    "TreasuryDay": "Treasury day"
   },
   "audit": {
     "families": {
@@ -1797,6 +1815,159 @@
       "receiptMissing": "The bill for this receipt was not found.",
       "emptySettled": "You have handed everything in",
       "emptySettledHint": "Nothing is in your custody now. Cash you take at the doors appears here."
+    }
+  },
+  "dailyClosing": {
+    "title": "Daily count & close",
+    "loadError": "Could not load the day's count.",
+    "printReport": "Daily cash report",
+    "notActive": {
+      "title": "The treasury is not active",
+      "body": "Nothing is counted or closed until the treasury is activated with its opening balances, on the «Balances» page."
+    },
+    "day": {
+      "heading": "The day",
+      "pick": "Day counted",
+      "closedBy": "Closed by {name} on {date}",
+      "autoClosed": "Closed with a later day: none of the counted wallets moved on it.",
+      "reopenedBy": "Reopened by {name} on {date}",
+      "reopenReason": "Reason: {reason}",
+      "openNote": "The day is open: it can be counted, and it closes once it is over.",
+      "next": "Next day to close: {date}",
+      "goToNext": "Go to it"
+    },
+    "sheet": {
+      "heading": "Wallet count",
+      "intro": "Type what you actually found in each wallet: the cash in the safe, and the balance as the Whish app or the bank statement shows it. A difference does not change the books; it is recorded with its reason.",
+      "expected": "Books",
+      "counted": "Counted",
+      "countedFor": "Counted in «{name}»",
+      "difference": "Difference",
+      "kind": {
+        "MATCH": "Matches",
+        "SURPLUS": "Surplus",
+        "SHORTAGE": "Shortage"
+      },
+      "reason": "Reason for the difference",
+      "reasonPlaceholder": "For example: a note missing, or a transfer fee not recorded yet",
+      "notCounted": "Not counted yet",
+      "countedBy": "Counted by {name} — {date}",
+      "stale": "The books changed after the count: {before} then, {after} now. Count again.",
+      "inactive": "Wallet stopped",
+      "save": "Record the count",
+      "saving": "Saving…",
+      "nothingNew": "Nothing new to record: every figure typed is saved.",
+      "fixFirst": "Correct the marked boxes, then save.",
+      "saved": "Count recorded",
+      "savedBody": "{count, plural, one {One wallet's count saved.} other {{count} wallets' counts saved.}}",
+      "readOnly": "Wallets are counted by the accountant or the system administrator.",
+      "locked": "The day is closed: its count stays as recorded.",
+      "problems": {
+        "notNumber": "Type a number",
+        "decimals": "Two decimals at most",
+        "tooLarge": "The amount is too large",
+        "reasonRequired": "Write the reason for the difference"
+      }
+    },
+    "close": {
+      "heading": "Close the day",
+      "ready": "Every wallet is counted against its current books. The day {date} can be closed.",
+      "sweeps": "{count, plural, one {It also closes one day on which none of the counted wallets moved: {days}} other {It also closes {count} days on which none of the counted wallets moved: {days}}}",
+      "unsaved": "Some boxes hold figures not saved yet. Record the count before closing.",
+      "workOnly": "The day is closed by the accountant or the system administrator.",
+      "closed": "The day is closed. No entry dated on it or before it is accepted.",
+      "action": "Close the day",
+      "confirmTitle": "Close the day {date}",
+      "confirmBody": "Once closed, no entry dated on this day or before it is accepted: no payment, no voucher, no transfer. Only the system administrator can reopen it, with a reason.",
+      "confirmAction": "Close the day",
+      "confirming": "Closing…",
+      "cancel": "Cancel",
+      "summaryRow": "{expected} in the books, {counted} counted",
+      "done": "The day {date} is closed",
+      "doneSwept": "{count, plural, one {One quiet day was closed with it.} other {{count} quiet days were closed with it.}}"
+    },
+    "reopen": {
+      "action": "Reopen the day",
+      "title": "Reopen the day {date}",
+      "body": "The day becomes open again: entries dated on it are accepted and its count can change, and no later day can close until it is closed again. The reason is kept in the activity log and on the day's report.",
+      "reason": "Reason for reopening",
+      "reasonPlaceholder": "For example: an expense voucher recorded with the wrong amount, to be cancelled on its own day",
+      "reasonShort": "At least {min} characters",
+      "confirm": "Reopen the day",
+      "confirming": "Reopening…",
+      "cancel": "Cancel",
+      "done": "The day {date} is reopened"
+    },
+    "history": {
+      "heading": "Latest closed days",
+      "empty": "No day has been closed yet.",
+      "auto": "Automatically",
+      "open": "Open the day {date}",
+      "loadError": "Could not load the closed days."
+    },
+    "report": {
+      "title": "Daily cash report",
+      "loadError": "Could not load the day's report.",
+      "back": "Daily count & close",
+      "print": "Print the report",
+      "draftTitle": "Draft: the day is not closed yet",
+      "draftBody": "The figures can still change while the day is open. Print the copy to be signed after closing.",
+      "republic": "Republic of Lebanon",
+      "ministry": "Ministry of Interior and Municipalities",
+      "governorate": "Governorate of {name}",
+      "district": "District of {name}",
+      "municipality": "Municipality of {name}",
+      "status": "Day status: {status}",
+      "closedLine": "Closed by {name} on {date}",
+      "autoClosedLine": "Closed with a later day: none of the counted wallets moved on it.",
+      "walletsHeading": "Wallets",
+      "columns": {
+        "wallet": "Wallet",
+        "opening": "Opening balance",
+        "receipts": "Receipts",
+        "payments": "Payments",
+        "closing": "Closing balance",
+        "counted": "Counted",
+        "difference": "Difference",
+        "notes": "Notes"
+      },
+      "total": "Total ({currency})",
+      "notCounted": "Not counted",
+      "staleNote": "Counted before the day's last entry",
+      "noWallets": "No wallets on this day.",
+      "sourcesHeading": "Movement by source",
+      "sourceColumns": {
+        "wallet": "Wallet",
+        "source": "Source",
+        "receipts": "Receipts",
+        "payments": "Payments"
+      },
+      "noMovement": "No wallet moved on this day.",
+      "custodyHeading": "Cash held by collectors",
+      "custodyNote": "For information: cash in collectors' hands, not yet handed into the safe, and so not part of its count.",
+      "custodyColumns": {
+        "collector": "Collector",
+        "receipts": "Collected on the day",
+        "payments": "Handed in or reversed",
+        "held": "Held at the end of the day"
+      },
+      "custodyTotal": "Total held by collectors ({currency})",
+      "noCustody": "No cash held by collectors on this day.",
+      "unknownCollector": "Unnamed collector",
+      "timelineHeading": "The day's history",
+      "timelineEmpty": "Nothing has been recorded on this day yet.",
+      "eventAccounts": "{count, plural, one {one wallet} other {{count} wallets}}",
+      "eventReason": "Reason: {reason}",
+      "systemActor": "The system",
+      "signatures": {
+        "accountant": "Accountant / Cashier",
+        "mayor": "Head of Municipality / Authorising officer",
+        "name": "Name",
+        "signature": "Signature",
+        "date": "Date"
+      },
+      "generated": "Prepared on {date} by {name}",
+      "generatedAnonymous": "Prepared on {date}"
     }
   }
 }

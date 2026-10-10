@@ -1,6 +1,6 @@
 # UI/UX standards: binding for every change to `apps/frontend`
 
-Last verified against the code: `fix/expense-retry-key-race` (merged with `develop@4ad0b27`), 2026-10-09.
+Last verified against the code: `feat/treasury-daily-count-and-closure` (on `fix/expense-retry-key-race@ff44f27`), 2026-10-10.
 
 This file binds every AI agent and every person who builds or reviews an
 interface in this repository. [CLAUDE.md](../CLAUDE.md) (non-negotiable 9) and
@@ -117,7 +117,7 @@ to, the primitive gets a prop instead.
 | PRIM-9 | An annotation chip | `Badge` with a `soft-*` variant | `Badge` with colour overrides in `className` |
 | PRIM-10 | LBP on screen | `<Money>`; `formatLbp` only for plain strings (toast, aria, CSV) | `toLocaleString()` plus «ل.ل» by hand |
 | PRIM-11 | USD/EUR on screen | `formatForeign(amount, currency)` or `formatMoney(amount, currency, locale)` from `lib/currency.ts` | A page-local USD formatter, `$${x.toFixed(2)}`, or a third spelling |
-| PRIM-12 | Dates | `formatDate` / `formatTime` / `formatDateTime` / `formatMonthList` from `lib/dates` | `toLocaleDateString('ar')`, raw month numbers joined with «، » |
+| PRIM-12 | Dates | `formatDate` / `formatTime` / `formatDateTime` / `formatMonthList` from `lib/dates`; a calendar day (`YYYY-MM-DD`, a business day with no time) through `formatDay` / `formatDayLong`, which never pass it through a zone | `toLocaleDateString('ar')`, raw month numbers joined with «، » |
 | PRIM-13 | A labelled input | `Field` (label, required `*`, «(اختياري)», `caution`, error with `role="alert"`) wrapping `Input`/`Select`/`Textarea`/`DatePicker` | A bare `<label>` plus input; a native `<select>`; a native `type="date"` in new code |
 | PRIM-14 | Two to four options | `SegmentedControl`; three or more filter chips: `ChipGroup` | Hand-rolled toggle buttons |
 | PRIM-15 | Foldable section | `CollapsibleSection` | A `useState` toggle with a chevron |
@@ -274,7 +274,9 @@ Token values, light and dark: [DESIGN.md](../DESIGN.md) "Colors".
     one map-palette module derived from the tokens (today the hex is spread
     over five map files, §17.2).
   - The printed receipt and the receipt PDF canvas, which must print black on
-    white whatever the theme. They should become `--paper` and `--ink` tokens.
+    white whatever the theme, and the printed «تقرير الصندوق اليومي» (the print
+    stylesheet in `components/admin/finance/daily-cash-report.tsx`; on screen it
+    uses tokens). They should become `--paper` and `--ink` tokens.
   - QR codes, which need fixed dark-on-light.
   - `app/global-error.tsx`, which renders outside the token tree, and the web
     manifest's `background_color` and `theme_color`.
@@ -883,6 +885,12 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
   The settle page's own hand-rolled field — an input with «ل.ل» absolutely placed
   over it — was replaced by `CurrencyInput` on 2026-10-07, which is what fixed
   the unit landing on the digits. Check the three above for the same shape.
+- **A calendar day through `formatDate`** (PRIM-12): `formatDate('2026-10-09')` reads the
+  string as midnight UTC and shows it in the browser's zone, the day before anywhere west of
+  Greenwich. Found 2026-10-10 in `damage/damage-history.tsx` (`reinspectAt`),
+  `end-ownership-dialog.tsx` (`endedAt`) and the citizen payment page
+  (`citizens/[citizenId]/payments/[paymentId]/page.tsx`, `paidOn`); `formatDay` is the fix.
+  Harmless in Lebanon, wrong on a laptop set to another zone.
 - **Double submit** (STA-4): the settle page, the fee wizard (`fees/new`, whose
   form is `issue-fee-form.tsx`), and the payouts page with `InspectorPayoutDialog` guard with
   `busy` state only, with no in-flight ref.

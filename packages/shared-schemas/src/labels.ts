@@ -26,6 +26,7 @@ import type {
   VacancyEndReason,
 } from './enums';
 import type { CaseStatus } from './case.schema';
+import type { TreasuryDayStatus } from './treasury-closing.schema';
 import type { FeeBasis, FeeBearer, FeeTargetCategory } from './fee.schema';
 
 /** Arabic display labels. Keep UI copy here, not inside the schemas. */
@@ -132,6 +133,13 @@ export const ar = {
     TRANSFER: 'مناقلة',
     ADJUSTMENT: 'تسوية',
   },
+
+  /** Where a municipal day stands: open, locked by «إقفال اليومية», or opened again by the manager. */
+  treasuryDayStatus: {
+    OPEN: 'مفتوحة',
+    CLOSED: 'مقفلة',
+    REOPENED: 'أُعيد فتحها',
+  } satisfies Record<TreasuryDayStatus, string>,
 
   /** Staff roles as the municipality names them, not as the enum spells them. */
   staffRole: {
@@ -535,6 +543,12 @@ export const en = {
     TRANSFER: 'Transfer',
     ADJUSTMENT: 'Adjustment',
   },
+
+  treasuryDayStatus: {
+    OPEN: 'Open',
+    CLOSED: 'Closed',
+    REOPENED: 'Reopened',
+  } satisfies Record<TreasuryDayStatus, string>,
 
   staffRole: {
     SUPER_ADMIN: 'System Administrator',

@@ -278,6 +278,10 @@ model User {
   /// Income vouchers this staff member recorded, and any they cancelled (0080).
   incomeRecorded           IncomeVoucher[]      @relation("IncomeRecordedBy")
   incomeVoided             IncomeVoucher[]      @relation("IncomeVoidedBy")
+  /// Days this staff member closed or reopened, and wallets they counted (0082).
+  treasuryDaysClosed       TreasuryDayClosure[] @relation("TreasuryDayClosedBy")
+  treasuryDaysReopened     TreasuryDayClosure[] @relation("TreasuryDayReopenedBy")
+  treasuryCounts           TreasuryCount[]      @relation("TreasuryCountedBy")
   createdCases          Case[]               @relation("CaseCreatedBy")
   resolvedCases         Case[]               @relation("CaseResolvedCitizen")
   unitOccupancies       UnitOccupancy[]      @relation("UnitOccupant")
@@ -2317,6 +2321,7 @@ model TreasuryAccount {
   entries TreasuryEntry[]
   expenses ExpenseVoucher[]
   incomes  IncomeVoucher[]
+  counts   TreasuryCount[]
   transfersOut TreasuryTransfer[] @relation("TransferFrom")
   transfersIn  TreasuryTransfer[] @relation("TransferTo")
 
@@ -2605,6 +2610,90 @@ model IncomeVoucher {
   @@index([recordedById])
   @@index([voidedById])
   @@map("income_vouchers")
+}
+
+// ─────────────────  Daily count and closing (migration 0082)  ─────────────────
+// Design: docs/finance.md §7.
+
+/// A day with no `TreasuryDayClosure` row is open. CLOSED locks it; REOPENED is
+/// a closed day the manager opened again, which must be closed again before any
+/// later day can be.
+enum TreasuryDayStatus {
+  CLOSED
+  REOPENED
+}
+
+/// «إقفال اليومية» — one municipal business day, closed.
+///
+/// While a day is CLOSED nothing is written into it: triggers in 0082 refuse a
+/// ledger entry dated on or before it and any change to its counts, and refuse
+/// deleting this row. Closures run from go-live in date order with no gaps.
+model TreasuryDayClosure {
+  id           String            @id @default(uuid()) @db.Uuid
+  /// Beirut's calendar day. Read back as midnight UTC of that date.
+  businessDate DateTime          @unique @db.Date
+  status       TreasuryDayStatus @default(CLOSED)
+  /// Swept closed, uncounted, when a later day closed: none of the counted
+  /// wallets moved on it.
+  autoClosed   Boolean           @default(false)
+  closedAt     DateTime          @default(now()) @db.Timestamptz(3)
+  /// For a swept day, the person whose close swept it.
+  closedById   String            @db.Uuid
+  closedBy     User              @relation("TreasuryDayClosedBy", fields: [closedById], references: [id], onDelete: Restrict)
+
+  /// Set while the day stands open again, and only then (CHECK in 0082).
+  reopenedAt   DateTime?         @db.Timestamptz(3)
+  reopenedById String?           @db.Uuid
+  reopenedBy   User?             @relation("TreasuryDayReopenedBy", fields: [reopenedById], references: [id], onDelete: Restrict)
+  reopenReason String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  counts TreasuryCount[]
+
+  @@index([closedById])
+  @@index([reopenedById])
+  @@map("treasury_day_closures")
+}
+
+/// «جرد الصندوق» — one wallet counted on one day.
+///
+/// The books' figure beside the counted one. A difference is explained, never
+/// posted: nothing here moves money. A recount replaces the row until the day
+/// closes, and from then on the trigger in 0082 refuses any change but the
+/// closure link.
+model TreasuryCount {
+  id        String          @id @default(uuid()) @db.Uuid
+  accountId String          @db.Uuid
+  /// Always the wallet's own currency: the foreign key is the pair.
+  currency  String
+  account   TreasuryAccount @relation(fields: [accountId, currency], references: [id, currency], onDelete: Restrict, onUpdate: Restrict, map: "treasury_counts_account_currency_fkey")
+
+  businessDate   DateTime @db.Date
+  /// The wallet's entries summed to the end of `businessDate`, by the server.
+  expectedAmount Decimal  @db.Decimal(14, 2)
+  /// Found in the safe, or read off the Whish app or the bank statement. Not negative.
+  countedAmount  Decimal  @db.Decimal(14, 2)
+  /// counted − expected (CHECK). Positive a surplus, negative a shortage.
+  difference     Decimal  @db.Decimal(14, 2)
+  /// Required whenever `difference` is not zero (CHECK).
+  varianceReason String?
+
+  countedById String   @db.Uuid
+  countedBy   User     @relation("TreasuryCountedBy", fields: [countedById], references: [id], onDelete: Restrict)
+  countedAt   DateTime @default(now()) @db.Timestamptz(3)
+
+  /// The closure that locked it, set when its day closes.
+  closureId String?             @db.Uuid
+  closure   TreasuryDayClosure? @relation(fields: [closureId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([accountId, businessDate])
+  @@index([businessDate])
+  @@index([countedById])
+  @@index([closureId])
+  @@map("treasury_counts")
 }
 
 // ─────────────────────────  Quality review (migration 0049)  ─────────────────────────

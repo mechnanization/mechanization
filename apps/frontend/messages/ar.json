@@ -374,7 +374,20 @@
     "TRANSFER_ALREADY_VOID": "سند المناقلة مُلغى مسبقاً",
     "CUSTODY_ACCOUNT_NOT_FOUND": "عهدة الجابي غير موجودة",
     "CUSTODY_EXCEEDS_HELD": "المبلغ أكبر مما بعهدة الجابي: بعهدته {held, number} والمُستلَم {amount, number}",
-    "COLLECTOR_NOT_FOUND": "الجابي غير موجود"
+    "COLLECTOR_NOT_FOUND": "الجابي غير موجود",
+    "COUNT_DATE_IN_FUTURE": "لا يُجرد يومٌ لم يأتِ بعد. اختر اليوم أو يوماً قبله",
+    "COUNT_VARIANCE_REASON_REQUIRED": "جرد «{account}» لا يطابق الرصيد الدفتري. اكتب سبب الفرق ثم احفظ",
+    "COUNT_EXPECTED_CHANGED": "تغيّر الرصيد الدفتري {count, plural, one {لحساب واحد} two {لحسابين} few {لـ{count} حسابات} many {لـ{count} حساباً} other {لـ{count} حساب}} بعد جرده، بقيدٍ سُجّل بتاريخ هذا اليوم. أعد العدّ ثم احفظ",
+    "COUNT_MISSING_FOR_ACTIVE_ACCOUNTS": "{count, plural, one {لم يُجرد حساب واحد بعد} two {لم يُجرد حسابان بعد} few {لم تُجرد {count} حسابات بعد} many {لم يُجرد {count} حساباً بعد} other {لم يُجرد {count} حساب بعد}}. تُقفل اليومية بعد جرد كل الحسابات",
+    "DAY_ALREADY_CLOSED": "يومية {date} مقفلة: لا يتغيّر جردها ولا يُسجّل فيها شيء",
+    "DAY_NOT_CLOSED": "يومية {date} ليست مقفلة",
+    "DAY_NOT_OVER": "يومية {date} لم تنتهِ بعد. تُقفل اليومية بعد انقضاء يومها، صباح اليوم التالي مثلاً",
+    "DAY_BEFORE_GO_LIVE": "فُعّلت الخزينة في {date}. لا جرد ولا إقفال قبل ذلك اليوم",
+    "CLOSURE_OUT_OF_CHRONOLOGICAL_ORDER": "أُعيد فتح يومية {date}. أقفلها من جديد قبل أي يومية بعدها",
+    "UNRESOLVED_ACTIVE_DAYS_EXIST": "{count, plural, one {ما زالت يومية سابقة فيها حركة مفتوحة} two {ما زالت يوميتان سابقتان فيهما حركة مفتوحتين} other {ما زالت {count} يوميات سابقة فيها حركة مفتوحة}}، أولها يومية {date}. تُقفل اليوميات بالترتيب",
+    "CLOSED_DAY_MUTATION_BLOCKED": "يومية {date} مقفلة: لا يُسجّل فيها ولا قبلها شيء. سجّل الحركة بتاريخ اليوم واذكر في البيان اليوم الذي تخصّه",
+    "REOPEN_REASON_REQUIRED": "اكتب سبباً واضحاً لإعادة فتح اليومية ({min} أحرف على الأقل)",
+    "ONLY_LATEST_CLOSED_DAY_CAN_BE_REOPENED": "يُعاد فتح آخر يومية مقفلة فقط، وهي يومية {date}"
   },
   "damage": {
     "level": "مستوى الضرر",
@@ -893,7 +906,11 @@
     "INCOME_CATEGORY_CREATED": "إضافة بند إيراد",
     "INCOME_CATEGORY_UPDATED": "تعديل بند إيراد",
     "CUSTODY_RECEIVED": "استلام صندوق جابٍ",
-    "TRANSFER_VOIDED": "إلغاء سند مناقلة"
+    "TRANSFER_VOIDED": "إلغاء سند مناقلة",
+    "TREASURY_COUNT_RECORDED": "تسجيل جرد الصندوق",
+    "TREASURY_DAY_CLOSED": "إقفال اليومية",
+    "TREASURY_DAY_AUTO_CLOSED": "إقفال يومية بلا حركة",
+    "TREASURY_DAY_REOPENED": "إعادة فتح اليومية"
   },
   "auditEntities": {
     "User": "مواطن أو موظف",
@@ -914,7 +931,8 @@
     "ExpenseCategory": "بند صرف",
     "IncomeVoucher": "سند قبض إيرادات",
     "IncomeCategory": "بند إيراد",
-    "TreasuryTransfer": "سند مناقلة"
+    "TreasuryTransfer": "سند مناقلة",
+    "TreasuryDay": "يومية الخزينة"
   },
   "audit": {
     "families": {
@@ -1797,6 +1815,159 @@
       "receiptMissing": "لم يُعثر على الفاتورة لهذا الوصل.",
       "emptySettled": "سلّمت كل شيء",
       "emptySettledHint": "لا نقود بعهدتك الآن. ما تقبضه على الأبواب يظهر هنا."
+    }
+  },
+  "dailyClosing": {
+    "title": "جرد وإقفال اليومية",
+    "loadError": "تعذّر تحميل جرد اليومية.",
+    "printReport": "تقرير الصندوق اليومي",
+    "notActive": {
+      "title": "الخزينة غير مفعّلة",
+      "body": "لا جرد ولا إقفال قبل تفعيل الخزينة وإدخال الأرصدة الافتتاحية من صفحة «الأرصدة»."
+    },
+    "day": {
+      "heading": "اليومية",
+      "pick": "يوم الجرد",
+      "closedBy": "أقفلها {name} في {date}",
+      "autoClosed": "أُقفلت تلقائياً مع يومية لاحقة: لم يتحرّك فيها أي حساب يُجرد.",
+      "reopenedBy": "أعاد فتحها {name} في {date}",
+      "reopenReason": "السبب: {reason}",
+      "openNote": "اليومية مفتوحة: يمكن جردها، وتُقفل بعد انقضاء يومها.",
+      "next": "اليومية التالية للإقفال: {date}",
+      "goToNext": "انتقل إليها"
+    },
+    "sheet": {
+      "heading": "جرد الحسابات",
+      "intro": "اكتب ما وجدته فعلاً في كل حساب: النقد في الصندوق، والرصيد كما يظهر في تطبيق Whish أو كشف المصرف. الفرق لا يغيّر الدفاتر، بل يُسجّل مع سببه.",
+      "expected": "الرصيد الدفتري",
+      "counted": "المعدود فعلياً",
+      "countedFor": "المعدود فعلياً في «{name}»",
+      "difference": "الفرق",
+      "kind": {
+        "MATCH": "مطابق",
+        "SURPLUS": "فائض",
+        "SHORTAGE": "عجز"
+      },
+      "reason": "سبب الفرق",
+      "reasonPlaceholder": "مثال: ورقة نقدية ناقصة، أو رسم تحويل لم يُسجّل بعد",
+      "notCounted": "لم يُجرد بعد",
+      "countedBy": "جرده {name} — {date}",
+      "stale": "تغيّر الرصيد الدفتري بعد الجرد: كان {before} وصار {after}. أعد العدّ.",
+      "inactive": "حساب موقوف",
+      "save": "سجّل الجرد",
+      "saving": "جارٍ الحفظ…",
+      "nothingNew": "لا جديد لتسجيله: كل الأرقام المكتوبة محفوظة.",
+      "fixFirst": "صحّح الخانات المعلَّمة ثم احفظ.",
+      "saved": "سُجّل الجرد",
+      "savedBody": "{count, plural, one {حُفظ جرد حساب واحد} two {حُفظ جرد حسابين} few {حُفظ جرد {count} حسابات} many {حُفظ جرد {count} حساباً} other {حُفظ جرد {count} حساب}}.",
+      "readOnly": "يجرد الحسابات المحاسب أو مدير النظام.",
+      "locked": "اليومية مقفلة: يبقى جردها كما سُجّل.",
+      "problems": {
+        "notNumber": "اكتب رقماً",
+        "decimals": "خانتان عشريتان على الأكثر",
+        "tooLarge": "المبلغ كبير جداً",
+        "reasonRequired": "اكتب سبب الفرق"
+      }
+    },
+    "close": {
+      "heading": "إقفال اليومية",
+      "ready": "كل الحسابات مجرودة ومطابقة لدفاترها الحالية. يمكن إقفال يومية {date}.",
+      "sweeps": "{count, plural, one {وسيُقفل معها يوم لم يتحرّك فيه أي حساب يُجرد: {days}} two {وسيُقفل معها يومان لم يتحرّك فيهما أي حساب يُجرد: {days}} few {وسيُقفل معها {count} أيام لم يتحرّك فيها أي حساب يُجرد: {days}} many {وسيُقفل معها {count} يوماً لم يتحرّك فيها أي حساب يُجرد: {days}} other {وسيُقفل معها {count} يوم لم يتحرّك فيها أي حساب يُجرد: {days}}}",
+      "unsaved": "في الخانات أرقام لم تُحفظ بعد. سجّل الجرد قبل الإقفال.",
+      "workOnly": "يقفل اليومية المحاسب أو مدير النظام.",
+      "closed": "اليومية مقفلة. لا يُقبل أي قيد بتاريخها أو قبله.",
+      "action": "إقفال اليومية",
+      "confirmTitle": "إقفال يومية {date}",
+      "confirmBody": "بعد الإقفال لا يُقبل أي قيد بتاريخ هذا اليوم أو قبله: لا دفعة ولا سند ولا مناقلة. يعيد فتحها مدير النظام وحده، مع ذكر السبب.",
+      "confirmAction": "أقفل اليومية",
+      "confirming": "جارٍ الإقفال…",
+      "cancel": "إلغاء",
+      "summaryRow": "{expected} دفترياً، {counted} معدوداً",
+      "done": "أُقفلت يومية {date}",
+      "doneSwept": "{count, plural, one {وأُقفل معها يوم بلا حركة.} two {وأُقفل معها يومان بلا حركة.} few {وأُقفلت معها {count} أيام بلا حركة.} many {وأُقفل معها {count} يوماً بلا حركة.} other {وأُقفل معها {count} يوم بلا حركة.}}"
+    },
+    "reopen": {
+      "action": "إعادة فتح اليومية",
+      "title": "إعادة فتح يومية {date}",
+      "body": "تعود اليومية مفتوحة: تُقبل القيود المؤرخة فيها ويمكن تعديل جردها، ولا تُقفل أي يومية بعدها قبل أن تُقفل هي من جديد. يُحفظ السبب في سجل النشاطات وفي تقرير اليوم.",
+      "reason": "سبب إعادة الفتح",
+      "reasonPlaceholder": "مثال: سند صرف سُجّل بمبلغ خاطئ ويجب إلغاؤه في يومه",
+      "reasonShort": "{min} أحرف على الأقل",
+      "confirm": "أعد فتح اليومية",
+      "confirming": "جارٍ إعادة الفتح…",
+      "cancel": "إلغاء",
+      "done": "أُعيد فتح يومية {date}"
+    },
+    "history": {
+      "heading": "آخر اليوميات المقفلة",
+      "empty": "لم تُقفل أي يومية بعد.",
+      "auto": "تلقائياً",
+      "open": "افتح يومية {date}",
+      "loadError": "تعذّر تحميل اليوميات المقفلة."
+    },
+    "report": {
+      "title": "تقرير الصندوق اليومي",
+      "loadError": "تعذّر تحميل تقرير اليوم.",
+      "back": "جرد وإقفال اليومية",
+      "print": "اطبع التقرير",
+      "draftTitle": "مسودة: اليومية لم تُقفل بعد",
+      "draftBody": "الأرقام قد تتغيّر ما دامت اليومية مفتوحة. اطبع النسخة التي تُوقَّع بعد الإقفال.",
+      "republic": "الجمهورية اللبنانية",
+      "ministry": "وزارة الداخلية والبلديات",
+      "governorate": "محافظة {name}",
+      "district": "قائمقامية {name}",
+      "municipality": "بلدية {name}",
+      "status": "حالة اليومية: {status}",
+      "closedLine": "أقفلها {name} في {date}",
+      "autoClosedLine": "أُقفلت تلقائياً مع يومية لاحقة: لم يتحرّك فيها أي حساب يُجرد.",
+      "walletsHeading": "الحسابات",
+      "columns": {
+        "wallet": "الحساب",
+        "opening": "الرصيد الافتتاحي",
+        "receipts": "المقبوضات",
+        "payments": "المدفوعات",
+        "closing": "الرصيد الختامي",
+        "counted": "المعدود فعلياً",
+        "difference": "الفرق",
+        "notes": "ملاحظات"
+      },
+      "total": "المجموع ({currency})",
+      "notCounted": "لم يُجرد",
+      "staleNote": "جُرد قبل آخر قيد في اليوم",
+      "noWallets": "لا حسابات في هذا اليوم.",
+      "sourcesHeading": "تفصيل الحركة حسب المصدر",
+      "sourceColumns": {
+        "wallet": "الحساب",
+        "source": "المصدر",
+        "receipts": "مقبوضات",
+        "payments": "مدفوعات"
+      },
+      "noMovement": "لم يتحرّك أي حساب في هذا اليوم.",
+      "custodyHeading": "مبالغ بعهدة الجباة",
+      "custodyNote": "للعلم: نقدٌ بيد الجباة لم يُسلَّم إلى الصندوق بعد، فلا يدخل في جرده.",
+      "custodyColumns": {
+        "collector": "الجابي",
+        "receipts": "حصّل في اليوم",
+        "payments": "سلّم أو رُدّ",
+        "held": "بعهدته عند نهاية اليوم"
+      },
+      "custodyTotal": "مجموع ما بعهدة الجباة ({currency})",
+      "noCustody": "لا مبالغ بعهدة الجباة في هذا اليوم.",
+      "unknownCollector": "جابٍ غير محدد",
+      "timelineHeading": "سجل اليومية",
+      "timelineEmpty": "لا شيء مسجّل على هذه اليومية بعد.",
+      "eventAccounts": "{count, plural, one {حساب واحد} two {حسابان} few {{count} حسابات} many {{count} حساباً} other {{count} حساب}}",
+      "eventReason": "السبب: {reason}",
+      "systemActor": "النظام",
+      "signatures": {
+        "accountant": "المحاسب / أمين الصندوق",
+        "mayor": "رئيس البلدية / الآمر بالصرف",
+        "name": "الاسم",
+        "signature": "التوقيع",
+        "date": "التاريخ"
+      },
+      "generated": "أُعدّ في {date} بواسطة {name}",
+      "generatedAnonymous": "أُعدّ في {date}"
     }
   }
 }

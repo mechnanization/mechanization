@@ -4,6 +4,7 @@ import {
   BanknoteArrowDown,
   BanknoteArrowUp,
   Building2,
+  CalendarCheck,
   CalendarClock,
   ClipboardCheck,
   ClipboardList,
@@ -511,6 +512,22 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: BanknoteArrowDown,
         roles: TREASURY_READ_ROLES,
         keywords: ['نفقات', 'صرف', 'مصاريف', 'سند صرف', 'فاتورة', 'expense', 'spending', 'voucher', 'payout'],
+      },
+      /*
+        The day's end: each wallet counted against the books, the day closed so
+        nothing more is written into it, and «تقرير الصندوق اليومي» to print
+        and sign (`/finance/daily/report`, guarded by this row's prefix). Last
+        in the group because it is the last thing the accountant does each day.
+        Counting and closing are `TREASURY_WORK_ROLES` and reopening is
+        `TREASURY_ADMIN_ROLES`, gated on the page and by `TreasuryClosingController`.
+      */
+      {
+        path: '/finance/daily',
+        label: 'جرد وإقفال اليومية',
+        labelEn: 'Daily count & close',
+        icon: CalendarCheck,
+        roles: TREASURY_READ_ROLES,
+        keywords: ['جرد', 'إقفال', 'يومية', 'صندوق', 'عجز', 'فائض', 'تقرير يومي', 'count', 'close', 'daily', 'cash report'],
       },
     ],
   },

@@ -6354,3 +6354,102 @@ export function voidIncomeVoucher(
     signal,
   });
 }
+
+// ── جرد الصندوق وإقفال اليومية (stage 5) ────────────────────────────────────
+
+import type {
+  CloseDayInput,
+  CloseDayResult,
+  DailyCashReport,
+  DailyCountSheet,
+  RecordDailyCountInput,
+  ReopenDayInput,
+  TreasuryDayClosureView,
+  TreasuryDayState,
+} from '@mechanization/shared-schemas';
+
+export type {
+  CloseDayInput,
+  CloseDayResult,
+  CountedWalletView,
+  DailyCashReport,
+  DailyCashReportCustody,
+  DailyCashReportTotal,
+  DailyCashReportWallet,
+  DailyCountLineView,
+  DailyCountSheet,
+  DailyCountView,
+  DayClosureVerdict,
+  RecordDailyCountInput,
+  ReopenDayInput,
+  TreasuryDayClosureView,
+  TreasuryDayEvent,
+  TreasuryDayState,
+  TreasuryDayStatus,
+} from '@mechanization/shared-schemas';
+
+/**
+ * «جرد وإقفال اليومية» for one day — or, with no `date`, for the day that needs
+ * closing next. `GET /treasury/counts`.
+ */
+export function getDailyCountSheet(
+  tenant: string,
+  token: string,
+  args: { date?: string } = {},
+  signal?: AbortSignal,
+) {
+  const suffix = args.date ? `?date=${encodeURIComponent(args.date)}` : '';
+  return apiFetch<DailyCountSheet>(tenant, `/treasury/counts${suffix}`, { token, signal });
+}
+
+/**
+ * «سجّل الجرد» — one or more wallets counted for one day; answers with the sheet
+ * as it now stands. ACCOUNTANT or SUPER_ADMIN. `POST /treasury/counts`.
+ */
+export function recordDailyCount(tenant: string, token: string, args: RecordDailyCountInput, signal?: AbortSignal) {
+  return apiFetch<DailyCountSheet>(tenant, '/treasury/counts', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(args),
+    signal,
+  });
+}
+
+/** «أقفل اليومية». ACCOUNTANT or SUPER_ADMIN. `POST /treasury/closures`. */
+export function closeTreasuryDay(tenant: string, token: string, args: CloseDayInput, signal?: AbortSignal) {
+  return apiFetch<CloseDayResult>(tenant, '/treasury/closures', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(args),
+    signal,
+  });
+}
+
+/** «أعد فتح اليومية» — the latest closed day, with a reason. SUPER_ADMIN only. `POST /treasury/closures/reopen`. */
+export function reopenTreasuryDay(tenant: string, token: string, args: ReopenDayInput, signal?: AbortSignal) {
+  return apiFetch<TreasuryDayState>(tenant, '/treasury/closures/reopen', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(args),
+    signal,
+  });
+}
+
+/** The closed and reopened days, latest first. `GET /treasury/closures`. */
+export function getTreasuryClosures(
+  tenant: string,
+  token: string,
+  args: { limit?: number } = {},
+  signal?: AbortSignal,
+) {
+  const suffix = args.limit === undefined ? '' : `?limit=${args.limit}`;
+  return apiFetch<TreasuryDayClosureView[]>(tenant, `/treasury/closures${suffix}`, { token, signal });
+}
+
+/** «تقرير الصندوق اليومي». `GET /treasury/reports/daily`. */
+export function getDailyCashReport(tenant: string, token: string, args: { date: string }, signal?: AbortSignal) {
+  return apiFetch<DailyCashReport>(tenant, `/treasury/reports/daily?date=${encodeURIComponent(args.date)}`, {
+    token,
+    signal,
+  });
+}
