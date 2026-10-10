@@ -255,3 +255,30 @@ describe('the treasury routes (docs/finance.md §9)', () => {
     expect(route?.roles ?? []).not.toContain('ACCOUNTANT');
   });
 });
+
+/*
+  «تسديد الفواتير المحددة» (docs/finance.md §3.7), pinned as the treasury's
+  routes are: it moves money for up to fifty bills in one press, and the role
+  list is the whole control on who may press it. A collector settles the same
+  bills one at a time; widening this is a decision, not an edit.
+*/
+describe('the bulk settlement routes (docs/finance.md §3.7)', () => {
+  const expected: Record<string, string[]> = {
+    'FeesController.bulkSettle': ['ACCOUNTANT', 'SUPER_ADMIN'],
+    'FeesController.settlement': ['ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'AUDITOR', 'COLLECTOR', 'SUPER_ADMIN', 'VIEWER'],
+  };
+  const all = routes();
+
+  it.each(Object.entries(expected))('%s admits exactly its roles', (name, roles) => {
+    const route = all.find((candidate) => candidate.name === name);
+    expect(route).toBeDefined();
+    expect([...(route?.roles ?? [])].sort()).toEqual([...roles].sort());
+  });
+
+  it('serves the settle as a POST and the reprint as a GET', () => {
+    const settle = all.find((route) => route.name === 'FeesController.bulkSettle');
+    const reprint = all.find((route) => route.name === 'FeesController.settlement');
+    expect([settle?.method, settle?.path]).toEqual([RequestMethod.POST, 'payments/bulk-settle']);
+    expect([reprint?.method, reprint?.path]).toEqual([RequestMethod.GET, 'settlements/:id']);
+  });
+});

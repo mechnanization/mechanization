@@ -1,13 +1,14 @@
 # Finance (الخزينة والمالية) — design draft
 
-Status: **DESIGN, with stages 1 to 5 built (see section 14).** It records the design
-agreed in discussion, 2026-10-06. The §7.2 adjustment entry, an opening balance
-for a wallet added after go-live, and transfer write-offs are not built, and
-every table, column, enum value and error code for them is a *proposal* until its
-migration exists (CLAUDE.md: never invent names; grep first). The built stages'
-names are real: they are in migrations `0073`, `0074`, `0078`, `0079`, `0080`,
-`0081`, `0082`, `0083`, `0084`, `0086`, `0087` and `0088` and in the `treasury`, `expense`, `transfer`,
-`income`, `treasury-closing` and `staff` contracts and `exchange-policy` of `packages/shared-schemas`.
+Status: **DESIGN, with stages 1 to 5 built, and settling several bills at once (§3.7) (see
+section 14).** It records the design agreed in discussion, 2026-10-06. The §7.2 adjustment
+entry, an opening balance for a wallet added after go-live, and transfer write-offs are not
+built, and every table, column, enum value and error code for them is a *proposal* until its
+migration exists (CLAUDE.md: never invent names; grep first). The built stages' names are
+real: they are in migrations `0073`, `0074`, `0078`, `0079`, `0080`, `0081`, `0082`, `0083`,
+`0084`, `0085`, `0086`, `0087` and `0088` and in the `treasury`, `expense`, `transfer`,
+`income`, `treasury-closing`, `staff` and `payment-settlement` contracts and `exchange-policy`
+of `packages/shared-schemas`.
 Where the code was read, the file is cited. Where a claim could not be verified, it
 is marked **[unverified]**. Where a choice was assumed and not explicitly confirmed,
 it is marked **[assumed]**.
@@ -330,6 +331,74 @@ from) are settled in the integration tests (see 12.2).
   rate used. Each ledger entry always keeps its own original currency, amount and
   `exchangeRateAtPosting`, so changing the rate later never rewrites history.
   Official LBP reports use each entry's own stored rate, not today's.
+
+### 3.7 Settling several bills at once — «تسديد الفواتير المحددة» (built 2026-10-10)
+
+From the owner's phase-4 brief (branch `feat/fees-bulk-settlement`). A cashier ticks several unpaid
+bills of **one** citizen, on «الرسوم» or on the citizen's file, and settles them in one press.
+Decided with the owner on 2026-10-10: notes that do not cover every selected bill are **refused**
+(no part-payment of the last one), and each bill keeps its own «RCP-» receipt under a group record.
+
+- **All or nothing.** `PaymentSettlementService.settle` runs one `runInTenantTransaction`: the retry
+  key's advisory lock, every bill `FOR UPDATE` in id order (`PaymentLedgerService.lockInvoices`), the
+  settings row `FOR SHARE`, the closed-day check, the «BRC-» number, the `payment_settlements` row
+  (0085), every bill's «RCP-» number drawn as one block (`reserveReceiptNumbers`), every wallet the
+  set will post to locked in id order (`TreasuryLedgerService.lockPaymentWallets`), then each bill,
+  oldest first, through `PaymentLedgerService.recordIn` — the code a single counter payment runs, with
+  its receipt number, wallet entries (`creditPayment`) and Tier 1 audit row. A refusal on any bill, the
+  change the safe cannot cover included (`TREASURY_INSUFFICIENT_FUNDS`), rolls back every bill.
+- **One lock order with every other writer** (cross-feature review, 2026-10-10). Bill by bill, each
+  bill's `post` locked only its own wallets, so a set with a dollar bill and a ليرة bill took the two
+  safes in the order the bills fell due; an exchange between the same safes takes them in id order,
+  and the two deadlocked (`40P01`, every round of the race in `payment-settlement.integration.spec.ts`).
+  Now every wallet is locked in id order before the first bill posts. They are locked after the
+  RECEIPT counter, because a single counter payment takes the counter before its wallet: taken the
+  other way round, a settlement and a counter payment into the same safe deadlocked too.
+- **A closed day takes nothing** (§7.3). A settlement is dated now, so the case is today's day
+  closed — which the application never does, but a closure row can say so. Refused with
+  `CLOSED_DAY_MUTATION_BLOCKED` after the bill locks and before the «BRC-» number or any row is
+  written; `recordIn` asks again for each bill, as it does for a single counter payment.
+- **One citizen.** A bill of anyone else is refused (`BULK_SETTLE_CITIZEN_MISMATCH`); a bill settled
+  since it was ticked is refused by name (`BULK_SETTLE_SOME_ALREADY_PAID`, `params.invoice`), and so is
+  one sent for review of a Whish transfer since (`BULK_SETTLE_BILL_PENDING_REVIEW`): a claim is settled
+  by confirming it, not by taking the money again (whether the single settle should refuse it too is
+  open-decisions.md §19).
+- **What the clerk was shown.** The press carries `expectedDue`, what the bills owed per currency on
+  the screen. Under the locks the server refuses any difference (`BULK_SETTLE_DUE_CHANGED`,
+  `params.currency`, `expected`, `due`) and the dialog re-reads. Whish and collector settlements carry
+  no other figure: without it, a part-payment at the next desk after the tick was recorded as a smaller
+  transfer than the one that arrived, and the wallet credited less than it received.
+- **The collector** of a COLLECTOR settlement is active staff who can hold cash (`COLLECTOR_NOT_FOUND`
+  otherwise), by the single settle's own rule (`fees/live-collector.ts`, §3.5).
+- **The notes** (`planBulkSettlement`, shared by the dialog and the server; the server's run, under the
+  locks, is the one recorded). WHISH_MONEY and COLLECTOR arrive as one sum per bill in its currency. CASH
+  takes ليرة and the second currency at the **official rate only** (no override, no back-dating here —
+  both stay single-bill acts):
+  1. Bills in the second currency are paid with that currency's notes at face value; too few is
+     `BULK_SETTLE_TENDER_SHORT`.
+  2. Notes of the second currency left over go to the ليرة bills at the official rate
+     (`BULK_SETTLE_RATE_NOT_SET` without one). ليرة above what the ليرة bills owe is refused
+     (`BULK_SETTLE_TENDER_EXCEEDS`), as on a single bill: change comes only from a foreign note.
+  3. Those foreign notes all go on **one** ledger row, the newest ليرة bill, with its change; every other
+     bill is a plain sum. Splitting a note across bills cannot keep each whole to the cent ($20 for
+     900,000 + 890,000 at 89,500 is $10.06 + $9.94, and the second comes out 370 ل.ل short). When the ليرة
+     notes do not cover the older bills, that row's change pays them, as a clerk does it by hand. Every
+     wallet still moves by what physically changed hands (+ليرة in, +dollars, −change), and the safe is
+     judged on that net, so the check is "the safe plus the ليرة handed in covers the change".
+  The settlement row keeps the notes as handed over and the change handed back; the rows' own change can
+  be larger than the settlement's when step 3 recycles it — the net per wallet is the same.
+- **Retry.** `clientRequestId` is required and lives on the settlement, not on the rows (unique per row).
+  It is bound to its act (citizen, method, the set of bills): another set is `BULK_SETTLE_REQUEST_REUSED`;
+  a settlement one of whose bills was reversed since is `TRANSACTION_ALREADY_REVERSED`.
+- **Correcting.** A bill of a settlement is reversed on its own, through the ledger, like any receipt;
+  the consolidated receipt then shows it struck through. The settlement row never changes (append-only).
+- **Who.** `BULK_SETTLE_ROLES` (manager and accountant) settle; `FEE_READ_ROLES` reprint
+  (`GET fees/settlements/:id`). A collector still settles the same bills one at a time.
+- **The receipt** «وصل قبض بلدي مجمّع»: the BRC number, the citizen's name, father's name and phone —
+  **never the رقم مرجعي** (a sign-in credential) — each bill with its INV- and RCP- numbers, parcel and
+  unit, period and amount, totals per currency, the notes, the rate and the change, two signatures, and a
+  QR code of the BRC number only (assumption 13.1.3). Printed A4, downloaded as PDF, sent on WhatsApp.
+  **Not built:** a thermal (80 mm) layout.
 
 ---
 
@@ -840,8 +909,9 @@ new entries). A day may be closed with an unresolved difference.
 - Once closed: **hard lock.** Any entry dated on or before a closed day is refused.
   A late entry must be dated on the current open day, with a note. This also applies
   to `PaymentLedgerService` (a backdated citizen payment or a collector round entered
-  into a closed day is refused). **This changes the existing payment path** and needs
-  its own tests.
+  into a closed day is refused, in `recordIn`, which every way of settling a bill
+  runs) and to a settlement of several bills (§3.7), which is refused before it
+  writes anything. **This changes the existing payment path** and needs its own tests.
 - **Reopening a day:** `SUPER_ADMIN` only, with a reason, audited. **The latest
   closed day only** (the stage 5 brief): reopening an older one would leave a
   closed day after an open one. A reopened day must be closed again before any
@@ -1138,6 +1208,65 @@ shortage write-off; a scheduled job (none planned).
 ---
 
 ## 14. Implementation status
+
+### Review of PR #112, settling several bills at once (2026-10-10; branch `feat/fees-bulk-settlement-review`, not committed)
+
+Adversarial review of `9df68e4` against the controls of the PR #104 review. Each fix is pinned by a
+test that fails without it (`payment-settlement.integration.spec.ts`, `payment-settlement.plan.spec.ts`,
+`route-inventory.spec.ts`, `apps/frontend/lib/bulk-settle.test.ts`).
+
+- **A collector who cannot hold cash was accepted.** The bulk path skipped `assertLiveCollector`, so a
+  view-only, deactivated or removed member of staff, or a citizen, was recorded as the collector;
+  before go-live nothing else looked. Now the shared `assertLiveCollector` (`live-collector.ts`).
+- **A bill waiting for review was settled.** The dialog never offers one, the server took one.
+  Refused under the lock (`BULK_SETTLE_BILL_PENDING_REVIEW`).
+- **Whish and collector settlements recorded whatever was owed by the time of the press.** The
+  request now carries `expectedDue`, and a difference is `BULK_SETTLE_DUE_CHANGED`.
+- **A background re-read could orphan an in-doubt press.** The lists drop a ticked bill once it reads
+  as paid; after a press with no answer that committed, a window-focus re-read emptied the set, which
+  unmounted the dialog with its bar and changed the retry key's scope, so the retry that returns the
+  consolidated receipt could not be made. The set is now held while a press of it is on the wire or in
+  doubt (`selectionHeld` in `lib/bulk-settle.ts`).
+- **The routes were not pinned.** `FeesController.bulkSettle` and `FeesController.settlement` now have
+  their role lists pinned in `route-inventory.spec.ts`.
+
+Checked and found sound: all-or-nothing (a refusal on any bill leaves the settlement, the ledger, the
+counters, the wallets and the audit trail as they were); one receipt per bill; the wallet entries per
+bill match the single path's routing, and the pivot row's change nets to what changed hands; reversal
+of one bill of a settlement through `PaymentLedgerService.reverse`, and a replay of a reversed
+settlement refused (`TRANSACTION_ALREADY_REVERSED`); the retry key bound to citizen, method and set;
+migration 0085 idempotent with `CURRENT_SCHEMA()` guards, applied on top of 0073–0083.
+
+### Cross-feature review: PR #112 merged into `feat/treasury-day-closing` (2026-10-10; not committed)
+
+PR #112 was merged on top of stage 5 (PR #106), the inspector payouts (PR #109) and the transfers and
+exchange (PR #111). The two items this section used to leave "for later merges" are closed, each pinned
+by a test in `payment-settlement.integration.spec.ts` that fails without its fix (mutation-checked).
+
+- **A bulk settlement on a closed day.** The stage 5 check sat in `PaymentLedgerService.record`, and a
+  settlement writes through `recordIn`. The merge puts the check in `recordIn`, which every way of
+  settling a bill runs, and `PaymentSettlementService` now asks it itself (`assertPaymentDayOpen`, the
+  moment being now) before the «BRC-» number, the settlement row or any receipt is written. Refused with
+  `CLOSED_DAY_MUTATION_BLOCKED`, the day named; nothing reaches the ledger or the wallets (§3.7).
+- **A settlement against an exchange deadlocked.** The settlement locked its wallets bill by bill; an
+  exchange between the same two safes locks them in id order without the RECEIPT counter. With the
+  older bill in the higher-id safe's currency, each held what the other waited for: `40P01` in every
+  round of the race. Now every wallet of the plan is locked in id order up front
+  (`TreasuryLedgerService.lockPaymentWallets`, after `ledger.config`), once the set's receipt numbers
+  are drawn as one block (`PaymentLedgerService.reserveReceiptNumbers`): a single counter payment takes
+  the RECEIPT counter before its wallet, and locking the wallets before the counter deadlocked against
+  one (also pinned).
+
+Checked, nothing else found: every other writer added by PR #106, #109 and #111 respects the closed-day
+lock and the lock order. Vouchers (an expense, a salary, a commission, a transfer fee, an ordered
+request), income vouchers, handovers, transfers and exchanges are refused on a closed day by
+`TreasuryLedgerService.post`, before any entry, and roll back whole (the document number and row
+included); counts and closes have their own rules and the 0082 triggers. Each takes the settings row,
+then its wallets in one id-ordered `lockAccounts` before the first insert that references them (a
+transfer with a fee, a handover and their cancellations lock both ends together), then its document
+number. Payments and reversals take the RECEIPT counter before their wallets; nothing takes a wallet
+and then the RECEIPT counter. Opening a wallet (`createAccount`) and stamping a transfer's review post
+no entry.
 
 ### Review fixes (2026-10-09; branch `fix/pr104-review`, not committed)
 
@@ -1529,8 +1658,10 @@ closes; activity means a counted wallet moved):
   history), `DailyCountService` (the sheet, recording), `DailyCashReportService`,
   `TreasuryClosingController`. `TreasuryLedgerService.post` refuses any entry on
   a closed day (`CLOSED_DAY_MUTATION_BLOCKED`), so every voucher, transfer,
-  reversal and payment is covered; `PaymentLedgerService.record` asks the same
-  before it draws a receipt number, for a payment that would reach a wallet. A
+  reversal and payment is covered; `PaymentLedgerService.recordIn` (behind `record`
+  and every bill of a settlement) asks the same before it draws a receipt number, for
+  a payment that would reach a wallet, and `PaymentSettlementService` asks it before
+  the «BRC-» number. A
   trigger refusal that slips past the check is mapped back to the same code
   (`closedTreasuryDay` in `check-violation.ts`).
 - **The books' figure is the server's, and a count goes stale.** The screen

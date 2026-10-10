@@ -99,9 +99,10 @@ export class TreasuryLedgerService {
   /**
    * Refuses a movement dated on a closed day, naming the day.
    *
-   * Called by `post` for every entry, and by `PaymentLedgerService.record`
-   * before it writes anything, so a backdated round into a closed day is turned
-   * away before a receipt number is drawn.
+   * Called by `post` for every entry, by `PaymentLedgerService.recordIn` before
+   * it writes anything, so a backdated round into a closed day is turned away
+   * before a receipt number is drawn, and by `PaymentSettlementService` before
+   * a settlement of several bills draws its «BRC-» number.
    */
   async assertDayOpen(tx: Prisma.TransactionClient, occurredAt: Date): Promise<void> {
     const day = closedDayFor(occurredAt, await this.closedThrough(tx));
@@ -217,6 +218,43 @@ export class TreasuryLedgerService {
        ORDER BY "id"
        FOR UPDATE
     `;
+  }
+
+  /**
+   * Locks, in one call and so in id order, every wallet that a set of citizen
+   * payments recorded in this transaction will post to — before the first of
+   * them posts.
+   *
+   * For an act that records several payments in one transaction (a settlement
+   * of several bills, docs/finance.md §3.7). Each payment's `post` locks only
+   * its own wallets, so bill by bill the act took them in the order the bills
+   * fell due: a ليرة bill's safe, then a dollar bill's. An exchange between
+   * the same two safes takes both in id order, and when the bills' order was
+   * the reverse of the ids, each held the wallet the other was waiting for — a
+   * deadlock. Taking them all here, in the one order every writer uses, closes
+   * that. The wallets are the ones `creditPayment` would resolve for the same
+   * movements (`planPaymentLegs`): a collector's custody is created now rather
+   * than at his first bill, and a missing primary account is refused now with
+   * the code `creditPayment` would have refused it with.
+   *
+   * Lock order: the settings row (`config`, FOR SHARE), then the wallets. The
+   * caller must already hold the RECEIPT counter, which a single payment takes
+   * before its wallets (`PaymentLedgerService.append`); taking the wallets
+   * first would wait on a counter payment that is waiting on them. Nothing to
+   * lock when the payments credit no wallet (`creditsWallets`).
+   */
+  async lockPaymentWallets(
+    tx: Prisma.TransactionClient,
+    movements: readonly PaymentMovement[],
+    occurredAt: Date,
+  ): Promise<void> {
+    const config = await this.config(tx);
+    if (!creditsWallets(config.goLiveAt, occurredAt)) return;
+    const ids: string[] = [];
+    for (const movement of movements) {
+      for (const leg of planPaymentLegs(movement).legs) ids.push((await this.resolve(tx, leg.target)).id);
+    }
+    await this.lockAccounts(tx, ids);
   }
 
   /** The sum of an account's entries. Read behind the account lock when a decision hangs on it. */

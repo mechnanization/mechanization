@@ -37,6 +37,11 @@ export const DOCUMENT_PREFIX = {
   TRANSFER: 'TR',
   /** سند قبض إيرادات — income that is not a citizen's fee (migration 0080). */
   REVENUE_VOUCHER: 'RV',
+  /**
+   * وصل قبض بلدي مجمّع — several of one citizen's bills settled in one act
+   * (migration 0085). Each bill keeps its own «RCP-»; this is the master number.
+   */
+  BULK_RECEIPT: 'BRC',
 } as const;
 
 export type DocumentKind = keyof typeof DOCUMENT_PREFIX;
@@ -70,10 +75,10 @@ export function formatDocumentNumber(kind: DocumentKind, period: string, value: 
  *
  * Both are accepted on purpose — the six-digit form is what every document
  * issued before migration 0079 carries, and those are the ones most likely to
- * be typed in from a piece of paper. `RV` never had the old form (its book
- * began after 0079), and accepting one would only accept a typo.
+ * be typed in from a piece of paper. `RV` and `BRC` never had the old form
+ * (their books began after 0079), and accepting one would only accept a typo.
  */
 export function isDocumentNumber(value: string): boolean {
   const trimmed = value.trim();
-  return /^(INV|RCP|PV|TR)-(\d{4}-\d{4,}|\d{6})$/.test(trimmed) || /^RV-\d{4}-\d{4,}$/.test(trimmed);
+  return /^(INV|RCP|PV|TR)-(\d{4}-\d{4,}|\d{6})$/.test(trimmed) || /^(RV|BRC)-\d{4}-\d{4,}$/.test(trimmed);
 }

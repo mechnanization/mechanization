@@ -20,6 +20,7 @@ describe('FeesController.getSettings', () => {
     { getSettings: jest.fn().mockResolvedValue(settings) } as never,
     {} as never,
     {} as never,
+    {} as never,
   );
 
   it('gives a citizen how to pay, and none of the treasury’s own limits', async () => {

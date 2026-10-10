@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `feat/treasury-day-closing@29c9b22` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race@ff44f27` and `develop@4ad0b27`; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5; then the PR #106 review fixes) merged with PR #109 `feat/treasury-inspector-payouts-and-vouchers@c734ae3`, committed as `6b5b038`; then the PR #109 review fixes and decision D9 (uncommitted); then merged with PR #111 `feat/treasury-transfers-and-exchange@c502b5f` (transfers, exchange, new wallets, the printed transfer slip) and its review fixes and `0088` (uncommitted), 2026-10-10.
+Last verified against the code: `feat/treasury-day-closing@b5993af` (`develop` with the reviewed treasury, #107/#108; PR #106, stage 5: the daily count, the day closing and the closed-day lock; PR #109, inspector payouts and decision D9; PR #111, transfers, exchange and wallets with `0088`; each merged with its review fixes) merged with PR #112 `feat/fees-bulk-settlement-review@a3ce944` (the payment ledger's own transaction, the doubled `0083`, a selection that is a retry key's scope), then the cross-feature fixes: a bulk settlement refused on a closed day before it writes anything, and its wallets locked in id order (uncommitted), 2026-10-10.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -262,6 +262,32 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **Do this:** use `runInTenantTransaction`, which joins an open transaction.
 - **Where:** `tenant-transaction.ts`; `BuildingsService.atomic` is the
   workaround.
+- **The payment ledger is one of them.** `PaymentLedgerService.record` (and
+  `reverse`) still open their own `this.db.$transaction`, so calling `record`
+  from inside `runInTenantTransaction` throws. To settle a bill inside a larger
+  act, call `recordIn(tx, input)` with the scope's client, as
+  `PaymentSettlementService` does: same lock, checks and audit, the caller's
+  commit.
+
+### `0083` is held by two branches at once
+
+- **What happens:** `develop`'s `0083_treasury_controls` and
+  `feat/treasury-inspector-payouts-and-vouchers`'s `0083_inspector_payout_voucher`
+  (and the branches cut from it, which add `0082_treasury_day_closing` and
+  `0084_treasury_exchange_and_review`) share a number. A local database that ran
+  those branches has `0082`–`0084` applied and `develop`'s `0083` pending, so
+  `pnpm db:deploy:local` on any branch cut from `develop` applies `0083_treasury_controls`
+  out of order on top of them.
+- **Why:** the two were numbered on separate branches on the same day (found
+  2026-10-10).
+- **Do this:** renumber whichever reaches `develop` second before it merges
+  ([database.md](database.md#numbering)); before deploying a `develop`-based branch
+  to a local database that ran the treasury branches, decide whether to rebuild it.
+  On `feat/treasury-day-closing` the payout migration is renumbered
+  `0086_inspector_payout_voucher` (2026-10-10), so the clash is gone there; a local
+  database that ran the old branch still records `0083_inspector_payout_voucher`, which
+  no file matches any more: decide whether to rebuild it, as above.
+- **Where:** `apps/backend/src/infrastructure/prisma/tenant/migrations`.
 
 ### Side effects inside a transaction are lost or premature
 
@@ -441,6 +467,28 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   see it fail (docs/code-quality.md, rule 12).
 - **Where:** `TransfersService.create`, `TreasuryLedgerService.lockAccounts`,
   `transfers-exchange.integration.spec.ts`.
+
+### Several payments in one transaction lock their wallets bill by bill
+
+- **What happens:** a settlement of a dollar bill and a ليرة bill, pressed while
+  an exchange moves money between the two safes, fails with `40P01` (deadlock
+  detected) — every round, once the older bill is in the currency of the safe
+  with the higher id.
+- **Why:** each payment's `post` locks only its own wallets, in id order within
+  that payment. Two payments in one transaction therefore take the safes in the
+  order the bills fell due; an exchange takes both in id order and draws no
+  RECEIPT number, so nothing queues it behind the settlement. The opposite fix
+  has its own trap: a single counter payment takes the RECEIPT counter before its
+  wallet, so locking the wallets before the counter deadlocks against that.
+- **Do this:** an act that records several payments draws the receipt numbers
+  first (`PaymentLedgerService.reserveReceiptNumbers`), then locks every wallet
+  the set will touch in one call (`TreasuryLedgerService.lockPaymentWallets`),
+  then records the bills. To pin a lock order, interleave the two acts by hand
+  (a `jest.spyOn` that lets the first act lock, starts the second, and pauses),
+  rather than hoping a free-running race lands in the window.
+- **Where:** `payment-settlement.service.ts`, `treasury-ledger.service.ts`,
+  `payment-settlement.integration.spec.ts` ("one lock order with the other
+  treasury writers").
 
 ### A new stamp column is refused until the write-once trigger names it
 
@@ -1132,6 +1180,19 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   document with `page.pdf({ printBackground: true })` from a dark theme.
 - **Where:** `official-document.tsx`; the daily report, «أمر الصرف» and «سند
   القبض» share it.
+
+### A re-read that tidies a selection can orphan its retry key
+
+- **What happens:** a clerk presses «تسديد الفواتير المحددة», the answer is lost, the settlement
+  committed. He switches window and back; the dialog vanishes, the bills read as paid, and no retry
+  ever shows him the consolidated receipt.
+- **Why:** the lists drop a ticked bill once a read shows it paid (`reconcileSelection`), and the
+  window-focus refetch is such a read. The ticked set is also the retry key's scope
+  (`bulkKeyScope`): emptying it unmounts the bar and its dialog, and any other set is a new key.
+- **Do this:** never drop from a set while a press of it is on the wire or its key is in doubt —
+  `selectionHeld` (`beginPress`/`endPress`, `heldInDoubt`). Any screen whose key scope is derived
+  from state that a background read can rewrite needs the same hold.
+- **Where:** `lib/bulk-settle.ts`, `lib/use-bulk-selection.ts`, `components/admin/bulk-settle/bulk-settle-dialog.tsx`.
 
 ### A poll keeps its user «متصل الآن»
 

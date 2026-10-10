@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية الذكية)
 
-Last verified against the code: `feat/treasury-day-closing@29c9b22` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; the salary path and the urgent ceiling; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5) merged with PR #109 `feat/treasury-inspector-payouts-and-vouchers@c734ae3` (inspector payouts and the printed vouchers), committed as `6b5b038`; then the PR #109 review fixes and decision D9 (uncommitted); then merged with PR #111 `feat/treasury-transfers-and-exchange@c502b5f` (transfers, exchange, new wallets, the printed transfer slip) and its review fixes and `0088` (uncommitted), 2026-10-10.
+Last verified against the code: `feat/treasury-day-closing@b5993af` (`develop` with the reviewed treasury, #107/#108; PR #106, stage 5: the daily count, the day closing and the closed-day lock; PR #109, inspector payouts and decision D9; PR #111, transfers, exchange and wallets with `0088`; each merged with its review fixes) merged with PR #112 `feat/fees-bulk-settlement-review@a3ce944` (settling several bills at once), then the cross-feature fixes: a bulk settlement refused on a closed day before it writes anything, and its wallets locked in id order (uncommitted), 2026-10-10.
 
 A multi-tenant municipal platform for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastral map, municipal fee billing (رسوم القيمة التأجيرية
@@ -41,6 +41,13 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
   - A cadastral map explorer with parcel numbering and sector zones.
   - CSV export with formula-injection-safe cells.
   - An append-only audit log of staff actions.
+  - **تسديد الفواتير المحددة** (accountant and manager): tick several unpaid bills of one citizen —
+    on «الرسوم» or on the citizen's file — and settle them in one act, in cash (ليرة and dollars at the
+    municipality's rate, with the change worked out and checked against the safe), through a
+    collector, or by Whish. Every bill is paid or none is. Each bill keeps its own receipt, and the
+    citizen gets one «وصل قبض بلدي مجمّع» numbered «BRC-2610-0001» listing them all, to print,
+    download as PDF or send over WhatsApp. A bill can still be settled on its own, and a collector
+    settles one bill at a time.
   - **The treasury (الخزينة)**: live balances of the municipality's cash safe and Whish account in
     ليرة and dollars, a statement for each, and their total at the municipality's rate. A citizen payment credits
     the right wallet automatically. `SUPER_ADMIN` activates it once by entering the counted opening
@@ -141,8 +148,8 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
     receipts — «يجمع اليوم», «لم يخرج اليوم», «سلّم كل شيء» — and the day's count and takings.
   - **ترقيم المستندات**: every document the municipality issues carries its book, the month it was
     issued in and a counter that restarts each month — «INV-2610-0001» for a bill, «RCP-2610-0001»
-    for the receipt, «PV-» for an expense voucher, «RV-» for an income voucher and «TR-» for a
-    transfer. A number read over the phone says which book it came from. Documents issued before
+    for the receipt, «PV-» for an expense voucher, «RV-» for an income voucher, «TR-» for a
+    transfer and «BRC-» for a consolidated receipt of several bills. A number read over the phone says which book it came from. Documents issued before
     the change keep the numbers already printed on them; bills raised before it stay without one,
     because a number minted today for a document issued last year would be a fiction.
   - **جرد وإقفال اليومية**: at the end of a municipal day the accountant counts each wallet — the

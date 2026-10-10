@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `feat/treasury-day-closing@29c9b22` (`fix/pr104-review`: PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; income controls, the salary path and the urgent ceiling; then merged with PR #106 `feat/treasury-daily-count-and-closure@3ea515a`, stage 5; then the PR #106 review fixes) merged with PR #109 `feat/treasury-inspector-payouts-and-vouchers@c734ae3` («صرف عمولة» through `ExpensesService.recordCommission`, migration `0086`), committed as `6b5b038`; then the PR #109 review fixes and decision D9 (uncommitted); then merged with PR #111 `feat/treasury-transfers-and-exchange@c502b5f` (transfers, exchange, new wallets, the printed transfer slip) and its review fixes and `0088` (uncommitted), 2026-10-10.
+Last verified against the code: `feat/treasury-day-closing@b5993af` (`develop` with the reviewed treasury, #107/#108; PR #106, stage 5: the daily count, the day closing and the closed-day lock; PR #109, inspector payouts and decision D9; PR #111, transfers, exchange and wallets with `0088`; each merged with its review fixes) merged with PR #112 `feat/fees-bulk-settlement-review@a3ce944` (settling several bills at once, `PaymentLedgerService.recordIn`, `live-collector.ts`), then the cross-feature fixes: a bulk settlement refused on a closed day before it writes anything, and its wallets locked in id order (uncommitted), 2026-10-10.
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -203,7 +203,10 @@ Data access for new code (decided):
     touch. Otherwise the foreign-key check's `FOR KEY SHARE` and `post`'s `FOR UPDATE` deadlock
     against another caller. The order, for every writer: a retry key's advisory lock, then
     `ledger.config(tx)` (the settings row, `FOR SHARE`), then `lockAccounts`, then the document
-    number and the insert.
+    number and the insert. A payment is the exception that keeps the same pairs in order: it takes
+    the RECEIPT counter before its wallets, so nothing may take a wallet and then that counter. An
+    act that records several payments in one transaction locks all their wallets at once, after the
+    counter (`lockPaymentWallets`), never bill by bill.
   - `ledger.config(tx)` returns the go-live stamp, the rate and the urgent-payment ceilings
     (`urgentExpenseCeiling.LBP` / `.USD`, 0083).
   - A refund after a collector's handover leaves the safe (`refundDrafts`, decision D1).
@@ -402,19 +405,56 @@ Data access for new code (decided):
   since with `COUNT_CHANGED_SINCE_LOADED`. `DailyCashReportService.daily` reads in one `RepeatableRead`
   transaction and adds the go-live day's `OPENING_BALANCE` entries to the opening, not the receipts. The lock on
   money is in `TreasuryLedgerService.post` (`assertDayOpen`), which every entry passes through, and in
-  `PaymentLedgerService.record` (`assertPaymentDayOpen`, only for a payment that reaches a wallet), with
-  the 0082 triggers underneath. A count stores the server's books figure and is refused, or goes stale
+  `PaymentLedgerService.recordIn` (`assertPaymentDayOpen`, only for a payment that reaches a wallet;
+  `record` and every bill of a settlement run it), and in `PaymentSettlementService` before the «BRC-»
+  number, with the 0082 triggers underneath. A count stores the server's books figure and is refused, or goes stale
   for the close, when the books move (`COUNT_EXPECTED_CHANGED`). Counts, closes, sweeps and reopens are
   Tier 1 audit rows filed as `entityType 'TreasuryDay'`, `entityId` the date: the report's timeline
   reads them.
 - **Document numbers.** `allocateDocumentNumbers` / `allocateDocumentNumber`
-  (`application/common/document-number.ts`) is the only way a number is drawn, for all five books:
-  «INV-2610-0001», «RCP-…», «PV-…», «TR-…», «RV-…». Pass the caller's `tx` and `this.S` — the draw and the
+  (`application/common/document-number.ts`) is the only way a number is drawn, for all six books:
+  «INV-2610-0001», «RCP-…», «PV-…», «TR-…», «RV-…», «BRC-…» (the consolidated receipt, 0085). Pass the caller's `tx` and `this.S` — the draw and the
   document must share a transaction, and an unqualified name would resolve through the pooled
   connection's `search_path` into another municipality's counter. Bulk callers take a block sized to
   what was actually inserted: `FeesService.numberInvoices` numbers after `createMany` because
   `skipDuplicates` means a block reserved beforehand would burn numbers on rows that were never
-  written. Details and trade-offs: migration 0079 and docs/database.md.
+  written. A settlement of several bills reserves its receipts' block first
+  (`PaymentLedgerService.reserveReceiptNumbers`): every bill is written or the whole act rolls back
+  with the counter, so nothing burns. Details and trade-offs: migration 0079 and docs/database.md.
+- **Settling several bills at once.** `PaymentSettlementService` (`fees/payment-settlement.service.ts`,
+  its own service because `FeesService` is a god file to split), routes on `FeesController`:
+  `POST fees/payments/bulk-settle` (`BULK_SETTLE_ROLES`, `bulkSettlePaymentsSchema`) and
+  `GET fees/settlements/:id` (`FEE_READ_ROLES`, the reprint). Design: [docs/finance.md](../../docs/finance.md) §3.7.
+  - One `runInTenantTransaction`, in this lock order: the retry key's advisory lock
+    (`<schema>:bulk-settle:<key>`), every bill `FOR UPDATE` in id order
+    (`PaymentLedgerService.lockInvoices`), the settings row `FOR SHARE`, the closed-day check
+    (`TreasuryLedgerService.assertPaymentDayOpen`, refused before anything is written), the «BRC-»
+    number, the `payment_settlements` row, every bill's «RCP-» number as one block
+    (`PaymentLedgerService.reserveReceiptNumbers`), every wallet the set will post to in id order
+    (`TreasuryLedgerService.lockPaymentWallets`), then each bill oldest first through
+    `PaymentLedgerService.recordIn` with its reserved number — `record`'s body in the caller's
+    transaction (`record` itself still opens its own, tracked debt). A single payment takes the bill,
+    the settings row, the RECEIPT counter and then its wallets; a transfer or a voucher takes the
+    settings row and then its wallets in id order. Locking the wallets bill by bill deadlocked
+    against an exchange between the same two safes, and locking them before the RECEIPT counter
+    deadlocked against a counter payment; both races are pinned in
+    `payment-settlement.integration.spec.ts`.
+  - How the notes are spread is `planBulkSettlement` in `@mechanization/shared-schemas`, run by the
+    dialog for its preview and by the service under the locks; its refusals become `ValidationError`s.
+  - Refused under the locks, before anything is written: a bill paid since (`BULK_SETTLE_SOME_ALREADY_PAID`)
+    or waiting for review (`BULK_SETTLE_BILL_PENDING_REVIEW`), and sums per currency that are not the
+    request's `expectedDue` (`BULK_SETTLE_DUE_CHANGED`) — without it a Whish or collector settlement
+    recorded whatever the bills owed by then. A COLLECTOR settlement checks the collector with
+    `assertLiveCollector` (`fees/live-collector.ts`, shared with `FeesService.settleInPerson`), after
+    the replay and before the bill locks.
+  - The retry key is required and lives on the settlement (`payment_transactions.clientRequestId` is
+    unique per row). A replay is bound to citizen, method and the set of bills
+    (`BULK_SETTLE_REQUEST_REUSED`); one of whose bills was reversed since is `TRANSACTION_ALREADY_REVERSED`;
+    a unique violation on the key is answered as a replay (`retry-key.ts`).
+  - Audit: each bill's own `PAYMENT_CONFIRMED` row (with `settlementNumber`), plus one
+    `PAYMENT_BULK_SETTLED` row for the set, filed under `PaymentSettlement`. Ids and figures, no names.
+  - The receipt names the citizen with father's name and phone and never carries a رقم مرجعي;
+    `payment-settlement.integration.spec.ts` pins the citizen block's key set.
 - **The collector's own round.** `GET custody/mine` (`TransfersService.myRound`) is the one treasury
   route outside `TREASURY_*`: `WORKING_STAFF_ROLES`, scoped by `user.sub` with no id in the path, the
   same shape as `inspector/me/profile`.
@@ -504,7 +544,7 @@ Every state change MUST leave an `audit_log_entries` row, in one of two tiers
 ([docs/security.md](../../docs/security.md#data-integrity-and-transactions)):
 
 1. **Tier 1, inside the transaction.** Payments (declarations, confirmations, refusals, counter and Whish
-   settlements), payment reversals, activating the treasury, recording and cancelling an expense,
+   settlements, and a settlement of several bills: one row per bill and one for the set), payment reversals, activating the treasury, recording and cancelling an expense,
    recording and cancelling an income voucher, receiving a collector's custody and cancelling a transfer,
    counting the treasury, closing (and sweeping) and reopening a day, corrections, ownership changes (ending an ownership, making, updating
    or ending an owner link, a merge or its undo), ending a tenancy, review decisions (approving or returning
@@ -592,7 +632,7 @@ points at does not exist. `src/scripts/reset-2fa.ts` has no script entry and MUS
 
 ## Tests
 
-- Jest with ts-jest (`jest.config.js`: `rootDir` `src`, `*.spec.ts` beside the source): 138 spec files, 37 of them `*.integration.spec.ts` (counted on disk 2026-10-10, mid-merge of PR #106 `feat/treasury-daily-count-and-closure`).
+- Jest with ts-jest (`jest.config.js`: `rootDir` `src`, `*.spec.ts` beside the source): 145 spec files, 41 of them `*.integration.spec.ts` (counted on disk 2026-10-10, after PR #112 merged into `feat/treasury-day-closing`).
 - Integration specs run only when `TEST_DATABASE_URL` is set (`describeIfDb`) and skip silently otherwise.
   They `DROP SCHEMA … CASCADE` and rebuild fixed `tenant_*_spec` schemas on whatever database it names,
   and nothing checks the target. Point it ONLY at a throwaway Postgres 17 container (migration `0044`

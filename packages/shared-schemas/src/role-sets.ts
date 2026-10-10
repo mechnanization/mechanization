@@ -112,6 +112,15 @@ export const FEE_ISSUE_ROLES = [
 /** The fee settings, notices' active flag, the recurring run and payment review. */
 export const FEE_ADMIN_ROLES = ['SUPER_ADMIN', 'ACCOUNTANT'] as const satisfies readonly StaffRole[];
 
+/**
+ * «تسديد الفواتير المحددة»: several of one citizen's bills in one press
+ * (docs/finance.md §3.7). The finance roles only, per the phase-4 brief —
+ * narrower than `FEE_ISSUE_ROLES`, so a collector still settles the same bills
+ * one at a time. Its own set because it is its own audience: the dialog reads
+ * the treasury's balances to check the change, which a collector cannot.
+ */
+export const BULK_SETTLE_ROLES = ['SUPER_ADMIN', 'ACCOUNTANT'] as const satisfies readonly StaffRole[];
+
 /** Read the payments waiting for verification and the bills a correction affects. */
 export const PAYMENT_REVIEW_READ_ROLES = [
   'SUPER_ADMIN',
