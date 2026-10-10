@@ -23,6 +23,21 @@ export const inspectorPayoutItemSchema = z.object({
   reference: z.string().nullable().optional(),
   recordedByName: z.string().nullable().optional(),
   createdAt: z.string(),
+  /**
+   * The «PV-» voucher that paid it, once the treasury is live (migration 0083);
+   * null for a payout recorded before. `voided` means the voucher was
+   * cancelled and the money went back to its wallet, so this payout no longer
+   * counts toward what was paid.
+   */
+  voucher: z
+    .object({
+      id: z.string().uuid(),
+      voucherNumber: z.string(),
+      accountName: z.string(),
+      voided: z.boolean(),
+    })
+    .nullable()
+    .default(null),
 });
 
 export type InspectorPayoutItem = z.infer<typeof inspectorPayoutItemSchema>;
@@ -77,12 +92,26 @@ export const inspectorProfileResponseSchema = z.object({
 
 export type InspectorProfileResponse = z.infer<typeof inspectorProfileResponseSchema>;
 
+/**
+ * One commission payout.
+ *
+ * Two shapes share this schema, and the server picks by whether the treasury is
+ * live (docs/finance.md §5.6). Before go-live a payout is a figure and nothing
+ * else: no wallet, and `paidAt` may date it. Once live it is paid now, from
+ * `accountId` — a dollar wallet — as a «PV-» voucher in «تعويضات المسح
+ * والجباية», and `clientRequestId` keeps a retried press from paying twice.
+ * The server refuses the wrong half for the state it is in.
+ */
 export const recordInspectorPayoutSchema = z.object({
   amount: z.number().positive('Amount must be greater than 0'),
   currency: z.string().default('USD'),
   paidAt: z.string().optional(),
   note: z.string().max(500).optional(),
   reference: z.string().max(100).optional(),
+  /** The paying wallet. Required once the treasury is live, refused before. */
+  accountId: z.string().uuid('اختر الحساب الذي ستُدفع منه العمولة').optional(),
+  /** One id per press; with the treasury live it is the voucher's retry key. */
+  clientRequestId: z.string().uuid().optional(),
 });
 
 export type RecordInspectorPayoutInput = z.infer<typeof recordInspectorPayoutSchema>;

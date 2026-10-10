@@ -88,6 +88,7 @@ export function RecordIncomeForm({
   accounts,
   categories,
   onRecorded,
+  onPrint,
 }: {
   tenant: string;
   token: string;
@@ -99,6 +100,8 @@ export function RecordIncomeForm({
   accounts: TreasuryAccountView[];
   categories: IncomeCategoryView[];
   onRecorded: () => void;
+  /** Opens the voucher just written, to print: the success toast's action. */
+  onPrint: (voucherId: string) => void;
 }): React.JSX.Element {
   const t = useTranslations('finance.income.form');
   const labels = getLabels(locale);
@@ -194,7 +197,10 @@ export function RecordIncomeForm({
     try {
       const result = await recordIncomeVoucher(tenant, token, parsed.data);
       await queryClient.invalidateQueries({ queryKey: ['treasury', tenant] });
-      toast.success(t('success', { number: result.voucherNumber }), { description: t('successBody') });
+      toast.success(t('success', { number: result.voucherNumber }), {
+        description: t('successBody'),
+        action: { label: t('print'), onClick: () => onPrint(result.id) },
+      });
       onRecorded();
     } catch (error) {
       logApiError(error);

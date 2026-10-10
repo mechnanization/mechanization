@@ -28,6 +28,9 @@ function setup(
     revocation as never,
     {} as never,
     events as never,
+    {} as never,
+    {} as never,
+    {} as never,
   );
   // Nothing owed unless a test says otherwise.
   jest.spyOn(service, 'getInspectorProfile').mockResolvedValue({ pendingBalance: 0 } as never);

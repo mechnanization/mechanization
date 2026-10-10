@@ -105,6 +105,7 @@ export default function NewIncomePage({
           accounts={overview.data.accounts}
           categories={categories.data ?? []}
           onRecorded={() => router.push(registerHref)}
+          onPrint={(voucherId) => router.push(`${base}/finance/income/${voucherId}/print?print=1`)}
         />
       )}
     </div>

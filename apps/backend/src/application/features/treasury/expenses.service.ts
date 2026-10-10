@@ -40,7 +40,7 @@ const VOUCHER_SELECT = {
   adjustmentReason: true,
   voidedAt: true,
   voidReason: true,
-  category: { select: { id: true, name: true } },
+  category: { select: { id: true, name: true, chapterCode: true, itemCode: true } },
   account: { select: { id: true, name: true, currency: true } },
   recordedBy: { select: { firstName: true, lastName: true } },
   voidedBy: { select: { firstName: true, lastName: true } },
@@ -329,7 +329,66 @@ export class ExpensesService {
     });
   }
 
-  /** The one write behind `record` and `recordSalary`. `payeeStaffId` is null except for a salary. */
+  /**
+   * «صرف عمولة» — the voucher behind an inspector's commission payout
+   * (docs/finance.md §5.6).
+   *
+   * Only `StaffService.recordInspectorPayout` calls this, inside its own
+   * transaction, and it writes the payout row that points at the voucher
+   * beside it. That caller owns the rules a voucher knows nothing about: the
+   * inspector is a staff account, the amount is no more than he is owed, and
+   * the wallet holds dollars. What is left here is `recordSalary`'s shape: the
+   * seeded «تعويضات المسح والجباية» rather than a category the client names,
+   * the payee as the caller read it, and `payeeStaffId` so the voucher is found
+   * by the inspector's id.
+   *
+   * With no statement given, the voucher says what its category says: a voucher
+   * needs a description, and the category's name is the municipality's own
+   * words for what this money is, where a sentence written here would not be.
+   */
+  async recordCommission(
+    inspector: { id: string; name: string },
+    input: {
+      accountId: string;
+      amount: number;
+      description?: string;
+      invoiceNumber?: string;
+      clientRequestId?: string;
+    },
+    actor: { id: string; role: string },
+  ): Promise<RecordExpenseResult> {
+    return runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.db as Prisma.TransactionClient;
+
+      const commissions: ExpenseCategoryKey = 'FIELD_COMMISSIONS';
+      const category = await tx.expenseCategory.findFirst({
+        where: { key: commissions },
+        select: { id: true, name: true },
+      });
+      if (!category) {
+        throw new NotFoundError({
+          code: 'EXPENSE_CATEGORY_NOT_FOUND',
+          message: 'The seeded field-commissions category is missing',
+        });
+      }
+
+      return this.recordVoucher(
+        {
+          categoryId: category.id,
+          accountId: input.accountId,
+          amount: input.amount,
+          payee: inspector.name,
+          description: input.description?.trim() || category.name,
+          invoiceNumber: input.invoiceNumber,
+          clientRequestId: input.clientRequestId,
+        },
+        actor,
+        inspector.id,
+      );
+    });
+  }
+
+  /** The one write behind `record`, `recordSalary` and `recordCommission`. `payeeStaffId` is null except for a staff payee. */
   private async recordVoucher(
     input: RecordExpenseInput,
     actor: { id: string; role: string },

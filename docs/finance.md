@@ -6,8 +6,8 @@ bank deposit, petty cash, fees) and the §7.2 adjustment entry are not built, an
 every table, column, enum value and error code for them is a *proposal* until its
 migration exists (CLAUDE.md: never invent names; grep first). The built stages'
 names are real: they are in migrations `0073`, `0074`, `0078`, `0079`, `0080`,
-`0081` and `0082` and in the `treasury`, `expense`, `transfer`, `income` and
-`treasury-closing` contracts of `packages/shared-schemas`.
+`0081`, `0082` and `0083` and in the `treasury`, `expense`, `transfer`, `income`,
+`treasury-closing` and `staff` contracts of `packages/shared-schemas`.
 Where the code was read, the file is cited. Where a claim could not be verified, it
 is marked **[unverified]**. Where a choice was assumed and not explicitly confirmed,
 it is marked **[assumed]**.
@@ -326,7 +326,9 @@ it one.
 - Income list: searchable and filterable (date, category, wallet, source). It shows
   manual vouchers **and** automatic citizen-fee income, clearly tagged by source and
   never entered twice. Totals per currency, with the convert toggle.
-- Printable official receipt in Arabic. A reprint is stamped «نسخة».
+- Printable official receipt in Arabic. A reprint is stamped «نسخة». **Built 2026-10-10
+  without the «نسخة» stamp** (§14): telling a first print from a reprint needs the server
+  to remember the first, a column nothing writes yet.
 - **[assumed]** The QR code encodes only the voucher number as plain text. No public
   verification page (a public route would be a new unauthenticated surface), and
   never a citizen's رقم مرجعي. **[Not yet checked: whether the existing citizen
@@ -431,6 +433,12 @@ a unique index.
 - The inspector has no finance access; the accountant who records the payout does.
 - The existing payout flow must keep working for anyone not yet activated
   (before go-live no wallet is touched).
+- **Built 2026-10-10** (§14, «صرف عمولة»). Two decisions taken while building, not stated
+  above: a payout made while the treasury is live is **dated today** like a salary
+  (`INSPECTOR_PAYOUT_DATE_NOT_ALLOWED`; a commission paid on another day is an expense-form
+  job); and **cancelling its voucher returns the amount to what the inspector is owed** — the
+  payout stays in his history marked cancelled, and both the profile and the roster leave it out
+  of what was paid. Derived on read from the voucher's `voidedAt`, never a second stamp.
 
 ### 5.7 Step 3b — attachments
 
@@ -471,9 +479,9 @@ is untouched and still reached from the inspector's row (§5.6).
   (`SALARY_PAYEE_NOT_FOUND`); a stopped «رواتب وأجور» (`EXPENSE_CATEGORY_INACTIVE`);
   everything §5.2 refuses. A *disabled* account can still be paid: someone who
   has left may be owed their last month.
-- **Not built.** A printable «أمر صرف»: no printed layout exists for any expense
-  voucher, and its wording and layout are unverified (§13.2). The success toast
-  links to the expense register instead.
+- **Printing.** Built 2026-10-10 for every expense voucher (§14); the salary
+  toast still links to the expense register, where each row now prints. The
+  wording and the layout remain unverified (§13.2).
 
 ---
 
@@ -1058,6 +1066,48 @@ closes; activity means a counted wallet moved):
 unposted), note-by-note counting, statement matching (§7.5), and a date picker
 on the voucher forms that stops before the closed days (a back-dated voucher into
 one is refused by the server, with the day named).
+
+### Stage 3, finished — inspector payouts and the printed vouchers (built 2026-10-10; branch `feat/treasury-inspector-payouts-and-vouchers`, not committed)
+
+The §5.6 link and the printing §4.5 and §5.8 left out, from the owner's brief of 2026-10-10:
+
+- Migration `0083_inspector_payout_voucher`: `inspector_payouts.expenseVoucherId`, nullable,
+  unique, a RESTRICT foreign key to `expense_vouchers`. `inspector_payouts` is in production
+  (0025); the column is additive and every existing payout keeps NULL.
+- **«صرف عمولة».** `POST staff/inspectors/:id/payouts`, now `TREASURY_WORK_ROLES`. One
+  transaction under an advisory lock on the inspector: the amount owed is read and checked
+  (`payoutAllowance`), then — once live — `ExpensesService.recordCommission` writes a «PV-»
+  voucher under `FIELD_COMMISSIONS` with the inspector as `payeeStaffId`, the ledger entry
+  leaves the wallet under its lock, the payout row points at the voucher, and two Tier 1 audit
+  rows are written (`EXPENSE_RECORDED`, `INSPECTOR_PAYOUT_RECORDED`). The wallet must hold
+  dollars. Before go-live the old path, unchanged, with no wallet. Three codes:
+  `INSPECTOR_PAYOUT_WALLET_REQUIRED`, `INSPECTOR_PAYOUT_WALLET_NOT_USD`,
+  `INSPECTOR_PAYOUT_DATE_NOT_ALLOWED`, and `INSPECTOR_PAYOUT_REQUEST_REUSED` for a retry key
+  that already paid someone else.
+- The dialog (on the staff page's inspector rows, the roster, the profile and the payout
+  history): the units credited, what was earned, what is owed, the dollar wallets with the main
+  dollar safe first, the balance and what would be left as the amount is typed, the button off
+  when the wallet is short or nothing is owed, and a toast whose action prints the order. The
+  payout history gained the order's number, its print button, and the cancelled ones struck
+  through and left out of the running balance.
+- **«أمر صرف / حوالة دفع بلدية»** (`finance/expenses/:id/print`) and **«سند قبض إيرادات
+  بلدية»** (`finance/income/:id/print`), A4 portrait, from each register's rows and each
+  recording form's toast; `?print=1` opens the print dialog once. The letterhead and crest come
+  from الإعدادات, as on the daily report, which now shares the module
+  (`official-document.tsx`). The amount is written out by `tafqeetAmount`, which adds dollars and
+  cents to the existing ليرة `tafqeet` (10 new tests). The category's budget chapter and article
+  print, or «لم يُحدَّدا بعد». Signatures: the accountant, the head of municipality and the
+  beneficiary on an order; the cashier and the accountant on a receipt. The QR code is the
+  voucher number only (assumption 13.1.3). A cancelled voucher prints marked cancelled.
+- Tests: 11 integration on a throwaway Postgres 17 (both paths, every refusal writing nothing,
+  the retry, two payouts racing for one balance — it fails with the lock removed — the cancelled
+  voucher on the profile and the roster, the short wallet). Rendered with a mocked API at 360 and
+  1440px, light and dark, Arabic and English, and printed to PDF from a dark theme.
+
+**Not built:** the «نسخة» stamp on a reprint (§4.5); a warning in the expense register's
+cancel dialog that the voucher paid a commission; the wording and layout of both papers are
+still to be confirmed by the municipality's accountant (§13.2), and the signatories' titles
+(«رئيس المحاسبة» among them) are the brief's, not the law's.
 
 ---
 

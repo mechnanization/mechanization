@@ -172,7 +172,8 @@ export interface ExpenseVoucherView {
   id: string;
   voucherNumber: string;
   status: ExpenseStatus;
-  category: { id: string; name: string };
+  /** With its budget chapter and article, printed on «أمر الصرف»; both null until the municipality fills them in. */
+  category: { id: string; name: string; chapterCode: string | null; itemCode: string | null };
   account: { id: string; name: string; currency: string };
   amount: number;
   currency: string;

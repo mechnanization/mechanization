@@ -218,7 +218,14 @@ export interface IncomeVoucherView {
   /** «RV-2610-0001». */
   voucherNumber: string;
   status: IncomeStatus;
-  category: { id: string; labelAr: string; labelEn: string | null };
+  /** With its budget chapter and article, printed on «سند القبض»; both null until the municipality fills them in. */
+  category: {
+    id: string;
+    labelAr: string;
+    labelEn: string | null;
+    chapterCode: string | null;
+    itemCode: string | null;
+  };
   account: { id: string; name: string; currency: string };
   amount: number;
   currency: string;

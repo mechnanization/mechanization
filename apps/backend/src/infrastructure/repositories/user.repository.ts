@@ -268,9 +268,14 @@ export class PrismaUserRepository implements UserRepository {
       creditBillableUnits(cardsFiledOn(reg), stat.units);
     }
 
-    // Query recorded payouts for each inspector
+    // Query recorded payouts for each inspector. One whose voucher was
+    // cancelled put the money back in the wallet and is not paid (0083) — the
+    // same rule `StaffService.getInspectorProfile` applies, so both agree.
     const payouts = await this.db.inspectorPayout.findMany({
-      where: { inspectorId: { in: staffIds } },
+      where: {
+        inspectorId: { in: staffIds },
+        OR: [{ expenseVoucherId: null }, { expenseVoucher: { voidedAt: null } }],
+      },
       select: {
         inspectorId: true,
         amount: true,

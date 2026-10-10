@@ -360,6 +360,10 @@
     "EXPENSE_BACKDATE_REASON_REQUIRED": "اكتب سبب تسجيل النفقة بتاريخ سابق",
     "EXPENSE_CATEGORY_CODE_TAKEN": "بند آخر مسجَّل على الباب والبند نفسهما في الموازنة",
     "SALARY_PAYEE_NOT_FOUND": "الموظف المطلوب صرف راتبه غير موجود، أو حُذف حسابه. حدّث صفحة الموظفين وحاول مجدداً.",
+    "INSPECTOR_PAYOUT_WALLET_REQUIRED": "الخزينة مفعّلة: اختر الحساب الذي ستُدفع منه العمولة.",
+    "INSPECTOR_PAYOUT_WALLET_NOT_USD": "عمولات المفتشين بالدولار: اختر حساباً بالدولار الأميركي.",
+    "INSPECTOR_PAYOUT_DATE_NOT_ALLOWED": "الخزينة مفعّلة، فالعمولة تُصرف بتاريخ اليوم. لا يمكن تأريخها بيوم آخر.",
+    "INSPECTOR_PAYOUT_REQUEST_REUSED": "رقم هذا الطلب استُعمل لعملية أخرى. أغلق النافذة وافتحها من جديد، ثم أعد المحاولة.",
     "INCOME_VOUCHER_NOT_FOUND": "سند القبض غير موجود",
     "INCOME_VOUCHER_ALREADY_VOIDED": "سند القبض مُلغى مسبقاً",
     "INCOME_CATEGORY_NOT_FOUND": "بند الإيراد غير موجود",
@@ -655,6 +659,57 @@
         "description": "اكتب عن أي شهر أو عمل يُصرف هذا المبلغ",
         "invoiceNumber": "الرقم طويل جداً",
         "form": "تعذّر صرف الراتب."
+      }
+    },
+    "commission": {
+      "action": "صرف عمولة",
+      "dialogTitle": "صرف عمولة مفتش",
+      "descriptionLive": "يُسجَّل أمر صرف تحت بند «تعويضات المسح والجباية» ويخرج المبلغ من الحساب فور التأكيد. التصحيح يكون بإلغاء السند من سجل النفقات، فيعود المبلغ إلى ما يستحقه المفتش.",
+      "descriptionLegacy": "تسليم مبلغ إلى {name}، يُخصم من رصيده المتبقي.",
+      "payee": "المستفيد",
+      "unitsSurveyed": "الوحدات المحتسبة",
+      "earned": "إجمالي العمولات",
+      "owed": "الرصيد المستحق",
+      "loading": "جارٍ حساب المستحق وتحميل أرصدة الخزينة…",
+      "loadError": "تعذّر تحميل الرصيد المستحق أو أرصدة الخزينة.",
+      "payingWallet": "يُدفع من حساب",
+      "accountPlaceholder": "اختر الحساب",
+      "noAccountsTitle": "لا يوجد حساب بالدولار",
+      "noAccountsBody": "العمولات تُصرف بالدولار، ولا يوجد في الخزينة حساب فعّال بالدولار.",
+      "amount": "المبلغ المسلّم",
+      "availableBalance": "الرصيد المتاح",
+      "balanceAfter": "الرصيد بعد الصرف",
+      "shortTitle": "الرصيد لا يكفي",
+      "shortBody": "المبلغ أكبر من رصيد هذا الحساب. اختر حساباً آخر، أو حوّل إليه أولاً.",
+      "date": "تاريخ الدفع",
+      "statement": "بيان الصرف",
+      "statementPlaceholder": "مثلاً: عمولة مسح حي الزهور — أيلول 2026",
+      "note": "ملاحظات",
+      "notePlaceholder": "مثلاً: دفعة نقدية عن مسح حي الزهور",
+      "reference": "رقم الإيصال الورقي",
+      "referencePlaceholder": "مثلاً: REC-2026-004",
+      "optional": "اختياري",
+      "submitLive": "صرف العمولة وتأكيد النفقة",
+      "submitLegacy": "حفظ الدفعة",
+      "saving": "جارٍ الحفظ…",
+      "cancel": "إلغاء",
+      "close": "إغلاق",
+      "retry": "إعادة المحاولة",
+      "successLive": "صُرفت العمولة بأمر الصرف {number}",
+      "successLiveBody": "خرج المبلغ من الحساب، ونقص من مستحقات المفتش.",
+      "successLegacy": "سُجّلت دفعة بقيمة {amount} لـ {name}",
+      "printOrder": "طباعة أمر الصرف",
+      "errors": {
+        "accountId": "اختر الحساب الذي ستُدفع منه العمولة",
+        "amount": "اكتب مبلغاً أكبر من صفر",
+        "short": "المبلغ أكبر من رصيد الحساب المختار",
+        "form": "تعذّر تسجيل الدفعة."
+      },
+      "history": {
+        "order": "أمر الصرف",
+        "cancelled": "ملغى",
+        "print": "طباعة أمر الصرف",
+        "printFor": "طباعة أمر الصرف {number}"
       }
     }
   },
@@ -1513,7 +1568,8 @@
         "summaryTitle": "ملخّص الصرف",
         "summaryAccount": "من حساب",
         "summaryAmount": "المبلغ",
-        "summaryEmpty": "اختر الحساب لعرض الرصيد."
+        "summaryEmpty": "اختر الحساب لعرض الرصيد.",
+        "print": "طباعة أمر الصرف"
       },
       "voidDialog": {
         "title": "إلغاء سند الصرف {number}",
@@ -1549,7 +1605,9 @@
       },
       "notAllowedTitle": "لا صلاحية لتسجيل النفقات",
       "notAllowedBody": "تسجيل النفقات للمحاسب ومدير النظام. يمكنك الاطّلاع على السجل دون تسجيل.",
-      "backToRegister": "عودة إلى سجل النفقات"
+      "backToRegister": "عودة إلى سجل النفقات",
+      "print": "طباعة",
+      "printFor": "طباعة أمر الصرف {number}"
     },
     "income": {
       "title": "الإيرادات",
@@ -1648,7 +1706,8 @@
         "summaryEmpty": "اختر الحساب لعرض الرصيد.",
         "noAccounts": "لا يوجد حساب يقبل الإيرادات. أضف صندوق النقد أو حساب Whish أولاً.",
         "newCategory": "بند جديد",
-        "newCategoryTitle": "إضافة بند إيراد"
+        "newCategoryTitle": "إضافة بند إيراد",
+        "print": "طباعة سند القبض"
       },
       "voidDialog": {
         "title": "إلغاء سند القبض {number}",
@@ -1708,6 +1767,56 @@
           "labelEn": "الاسم بالإنكليزية طويل جداً",
           "codes": "اكتب الباب والبند معاً بأرقام، أو اتركهما فارغين",
           "form": "تعذّر حفظ البند."
+        }
+      },
+      "print": "طباعة",
+      "printFor": "طباعة سند القبض {number}"
+    },
+    "vouchers": {
+      "print": "طباعة",
+      "loadError": "تعذّر تحميل السند.",
+      "number": "رقم السند",
+      "issuedOn": "تاريخ الإصدار: {date}",
+      "issuedAt": "التاريخ والوقت: {date}",
+      "amount": "المبلغ",
+      "amountInWords": "المبلغ كتابةً:",
+      "category": "البند",
+      "budget": "الباب والبند في الموازنة",
+      "budgetCodes": "الباب {chapter} — البند {item}",
+      "noBudgetCodes": "لم يُحدَّدا بعد",
+      "description": "البيان",
+      "backdated": "سبب التأريخ بيوم سابق",
+      "recordedBy": "سجّله",
+      "voidTitle": "سند ملغى",
+      "voidBody": "أُلغي هذا السند في {date}. السبب: {reason}",
+      "printed": "طُبع في {date}",
+      "payment": {
+        "title": "أمر صرف / حوالة دفع بلدية",
+        "pageTitle": "أمر الصرف",
+        "pageTitleNumbered": "أمر الصرف {number}",
+        "back": "سجل النفقات",
+        "payee": "المستفيد",
+        "paidFrom": "يُدفع من حساب",
+        "invoice": "رقم الفاتورة / المرجع",
+        "signatures": {
+          "accountant": "رئيس المحاسبة",
+          "mayor": "رئيس البلدية / الآمر بالصرف",
+          "beneficiary": "المستفيد",
+          "beneficiaryNote": "استلمتُ المبلغ المذكور أعلاه كاملاً."
+        }
+      },
+      "receipt": {
+        "title": "سند قبض إيرادات بلدية",
+        "pageTitle": "سند القبض",
+        "pageTitleNumbered": "سند القبض {number}",
+        "back": "سجل الإيرادات",
+        "payer": "الدافع",
+        "receivedInto": "قُبض في حساب",
+        "reference": "رقم التحويل / المرجع الخارجي",
+        "qrCaption": "رقم السند",
+        "signatures": {
+          "cashier": "أمين الصندوق / الجابي",
+          "accountant": "رئيس المحاسبة"
         }
       }
     },
@@ -1912,11 +2021,6 @@
       "print": "اطبع التقرير",
       "draftTitle": "مسودة: اليومية لم تُقفل بعد",
       "draftBody": "الأرقام قد تتغيّر ما دامت اليومية مفتوحة. اطبع النسخة التي تُوقَّع بعد الإقفال.",
-      "republic": "الجمهورية اللبنانية",
-      "ministry": "وزارة الداخلية والبلديات",
-      "governorate": "محافظة {name}",
-      "district": "قائمقامية {name}",
-      "municipality": "بلدية {name}",
       "status": "حالة اليومية: {status}",
       "closedLine": "أقفلها {name} في {date}",
       "autoClosedLine": "أُقفلت تلقائياً مع يومية لاحقة: لم يتحرّك فيها أي حساب يُجرد.",
@@ -1961,13 +2065,24 @@
       "systemActor": "النظام",
       "signatures": {
         "accountant": "المحاسب / أمين الصندوق",
-        "mayor": "رئيس البلدية / الآمر بالصرف",
-        "name": "الاسم",
-        "signature": "التوقيع",
-        "date": "التاريخ"
+        "mayor": "رئيس البلدية / الآمر بالصرف"
       },
       "generated": "أُعدّ في {date} بواسطة {name}",
       "generatedAnonymous": "أُعدّ في {date}"
+    }
+  },
+  "officialDocument": {
+    "letterhead": {
+      "republic": "الجمهورية اللبنانية",
+      "ministry": "وزارة الداخلية والبلديات",
+      "governorate": "محافظة {name}",
+      "district": "قائمقامية {name}",
+      "municipality": "بلدية {name}"
+    },
+    "signatures": {
+      "name": "الاسم",
+      "signature": "التوقيع",
+      "date": "التاريخ"
     }
   }
 }

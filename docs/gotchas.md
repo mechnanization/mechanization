@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `feat/treasury-daily-count-and-closure` (on `fix/expense-retry-key-race@ff44f27`), 2026-10-10.
+Last verified against the code: `feat/treasury-inspector-payouts-and-vouchers` (on `feat/treasury-daily-count-and-closure@3ea515a`), 2026-10-10.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -934,6 +934,22 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   translator uses `FORMAT_LOCALE` (`ar-u-nu-latn`) from `lib/api-errors.ts`.
 - **Where:** `apps/frontend/messages/ar.json`; `lib/messages-parity.test.ts`
   refuses a `#` in any Arabic message outside `errors`.
+
+### A dark theme prints a black sheet
+
+- **What happens:** a voucher or the daily report printed from a dark screen,
+  with «Background graphics» ticked (which a clerk does to get the crest in
+  colour), comes out as black ink on a black page, margins included.
+- **Why:** the print rules forced the document's own text and boxes to black on
+  transparent, but the page behind it kept the dark theme's background, and
+  Chromium paints the page margins from the root's `color-scheme`, not from any
+  background.
+- **Do this:** print through `documentPrintCss` in
+  `components/admin/finance/official-document.tsx`, which sets
+  `color-scheme: light` and a white `html, body` in print. Check a new printed
+  document with `page.pdf({ printBackground: true })` from a dark theme.
+- **Where:** `official-document.tsx`; the daily report, «أمر الصرف» and «سند
+  القبض» share it.
 
 ### A poll keeps its user «متصل الآن»
 

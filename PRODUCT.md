@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية الذكية)
 
-Last verified against the code: `feat/treasury-daily-count-and-closure` (on `fix/expense-retry-key-race@ff44f27`), 2026-10-10.
+Last verified against the code: `feat/treasury-inspector-payouts-and-vouchers` (on `feat/treasury-daily-count-and-closure@3ea515a`), 2026-10-10.
 
 A multi-tenant municipal platform for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastral map, municipal fee billing (رسوم القيمة التأجيرية
@@ -53,7 +53,21 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
     manager may cancel. A salary or wage is paid from the staff list itself («صرف راتب / أجر»): the
     manager picks the wallet, the amount and the month, and the voucher is filed under «رواتب وأجور»,
     in the staff member's own name and linked to their account. The staff list no longer shows the
-    field inspectors' commission cards; an inspector's earnings stay on their own profile.
+    field inspectors' commission cards; an inspector's earnings stay on their own profile. An
+    inspector's commission is paid from his row too («صرف عمولة»): the dialog shows the units he
+    is credited for and what he is still owed, the manager picks a dollar wallet and sees its
+    balance, and once the treasury is live the payment is a «أمر صرف» under «تعويضات المسح
+    والجباية» that takes the money out of that wallet. Cancelling that voucher puts the amount back
+    on what the inspector is owed. Before the treasury is live, a payout is recorded as it always
+    was, with no wallet.
+  - **Printed vouchers.** Every «أمر صرف» and every «سند قبض إيرادات» prints on an A4 sheet from
+    its register, from the success message after recording it, and (for a commission) from the
+    inspector's payout history: the municipality's letterhead and crest from الإعدادات, the number
+    and date, the payee or payer, the category with its budget chapter and article, the amount in
+    figures and in Arabic words, the wallet, and signature lines — the accountant, the head of
+    municipality and the beneficiary on a payment order; the cashier and the accountant on a
+    receipt, which also carries a QR code of its number. A cancelled voucher still prints, marked
+    cancelled with its reason. «حفظ كملف PDF» is the browser's own print destination.
   - **الإيرادات**: a register of «سند قبض إيرادات» — money that reaches the treasury without a
     citizen's bill: the Independent Municipal Fund, the state's share of telephone, electricity and
     water revenue, permits, rent on municipal property, grants, fines. The accountant or the manager

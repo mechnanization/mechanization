@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useQueryClient } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
-import { Ban, Plus, Receipt } from 'lucide-react';
+import { Ban, Plus, Printer, Receipt } from 'lucide-react';
 import { TREASURY_ADMIN_ROLES, TREASURY_WORK_ROLES } from '@mechanization/shared-schemas';
 import {
   getExpenseCategories,
@@ -176,21 +176,34 @@ export default function ExpensesPage({
         header: t('columns.actions'),
         enableSorting: false,
         meta: { align: 'end', mobile: 'actions' },
-        cell: ({ row }) =>
-          canVoid && row.original.status === 'RECORDED' ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="max-sm:w-full"
-              onClick={() => setVoiding(row.original)}
-            >
-              <Ban className="size-4" aria-hidden />
-              {t('void')}
+        cell: ({ row }) => (
+          <div className="flex items-center justify-end gap-1 max-sm:w-full max-sm:flex-col">
+            {/* Every voucher prints, a cancelled one too: its paper says so (`ExpenseVoucherDocument`). */}
+            <Button asChild variant="ghost" size="sm" className="max-sm:w-full">
+              <Link
+                href={`${base}/finance/expenses/${row.original.id}/print?print=1`}
+                aria-label={t('printFor', { number: row.original.voucherNumber })}
+              >
+                <Printer className="size-4" aria-hidden />
+                {t('print')}
+              </Link>
             </Button>
-          ) : null,
+            {canVoid && row.original.status === 'RECORDED' ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="max-sm:w-full"
+                onClick={() => setVoiding(row.original)}
+              >
+                <Ban className="size-4" aria-hidden />
+                {t('void')}
+              </Button>
+            ) : null}
+          </div>
+        ),
       },
     ],
-    [t, locale, canVoid],
+    [t, locale, canVoid, base],
   );
 
   const totals = list.data?.totals ?? [];

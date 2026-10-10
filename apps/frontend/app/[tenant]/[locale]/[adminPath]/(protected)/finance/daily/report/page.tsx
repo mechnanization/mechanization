@@ -4,12 +4,13 @@ import { use } from 'react';
 import { useTranslations } from 'next-intl';
 import { Printer, ScrollText } from 'lucide-react';
 import { municipalToday } from '@mechanization/shared-schemas';
-import { getDailyCashReport, getMunicipalitySettings, getTenantConfig, logApiError } from '@/lib/api-client';
+import { getDailyCashReport } from '@/lib/api-client';
 import { param } from '@/lib/url-state';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { useUrlState } from '@/lib/use-url-state';
-import { DailyCashReport, type ReportLetterhead } from '@/components/admin/finance/daily-cash-report';
+import { DailyCashReport } from '@/components/admin/finance/daily-cash-report';
+import { BLANK_LETTERHEAD, useMunicipalLetterhead } from '@/components/admin/finance/official-document';
 import { BackLink } from '@/components/ui/back-link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -48,35 +49,7 @@ export default function DailyCashReportPage({
     errorMessage: t('loadError'),
   });
 
-  /*
-    The letterhead: الإعدادات for the governorate, the district and the crest
-    (a data URI, so it prints without a host the CSP would refuse), the public
-    config for the name when the settings have none. A letterhead that fails
-    to load leaves the name blank rather than the report unprintable.
-  */
-  const letterhead = useStaffQuery({
-    queryKey: ['treasury', tenant, 'report-letterhead'],
-    queryFn: async (accessToken): Promise<ReportLetterhead> => {
-      const [settings, config] = await Promise.allSettled([
-        getMunicipalitySettings(tenant, accessToken, { includeLogo: true }),
-        getTenantConfig(tenant),
-      ]);
-      for (const result of [settings, config]) if (result.status === 'rejected') logApiError(result.reason);
-      const s = settings.status === 'fulfilled' ? settings.value : null;
-      const c = config.status === 'fulfilled' ? config.value : null;
-      return {
-        name: (locale === 'en' ? s?.nameEn || c?.name : s?.nameAr || c?.nameAr || c?.name) ?? '',
-        governorate: s?.governorate ?? null,
-        district: s?.district ?? null,
-        crest: s?.logoDataUri ?? null,
-      };
-    },
-    tenant,
-    base,
-    token,
-    errorMessage: t('loadError'),
-    reference: true,
-  });
+  const letterhead = useMunicipalLetterhead({ tenant, base, token, locale, errorMessage: t('loadError') });
 
   const data = report.data;
 
@@ -111,7 +84,7 @@ export default function DailyCashReportPage({
       ) : (
         <DailyCashReport
           report={data}
-          letterhead={letterhead.data ?? { name: '', governorate: null, district: null, crest: null }}
+          letterhead={letterhead.data ?? BLANK_LETTERHEAD}
           locale={locale}
         />
       )}

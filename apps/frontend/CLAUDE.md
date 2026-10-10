@@ -1,6 +1,6 @@
 # apps/frontend: agent guide
 
-Last verified against the code: `feat/treasury-daily-count-and-closure` (on `fix/expense-retry-key-race@ff44f27`), 2026-10-10.
+Last verified against the code: `feat/treasury-inspector-payouts-and-vouchers` (on `feat/treasury-daily-count-and-closure@3ea515a`), 2026-10-10.
 
 Next.js 15 app router, React 18, next-intl 4, TanStack Query 5, Tailwind 3.4 with
 tailwind-merge 3, Radix and lucide-react. One app serves the staff dashboard and the
@@ -19,15 +19,20 @@ app/[tenant]/[locale]/layout.tsx        TenantLayout (server, force-dynamic) + e
   [adminPath]/(protected)/layout.tsx    ProtectedAdminLayout + manifest.webmanifest/route.ts
     page.tsx (AdminIndexPage, role landing) · [...unknown] (AdminNotFound)
     dashboard account audit map zones settings staff payments
-    (staff: «صرف راتب / أجر» per active row, `components/admin/staff/staff-salary-dialog.tsx`, TREASURY_WORK_ROLES)
+    (staff: «صرف راتب / أجر» per active row, `components/admin/staff/staff-salary-dialog.tsx`, TREASURY_WORK_ROLES;
+     «صرف عمولة» per inspector row, `components/admin/inspector-payout-dialog.tsx`, SUPER_ADMIN — it reads the inspector's profile)
     finance (الخزينة) · finance/accounts/[accountId] (كشف حساب)
     finance/expenses (النفقات) · finance/expenses/new (تسجيل نفقة)
+    finance/expenses/[voucherId]/print (أمر الصرف — A4 portrait; `?print=1` opens the print dialog once)
     finance/income (الإيرادات) · finance/income/new (تسجيل إيراد جديد)
+    finance/income/[voucherId]/print (سند القبض — A4 portrait, QR of the number; `?print=1`)
     finance/income/categories (بنود الإيرادات — every reader sees the list, the manager edits it)
     finance/collectors (الجباة والتحصيل — عهدة الجباة and «استلام الصندوق», moved off the treasury page)
     finance/collectors/[collectorId] (ما حصّله الجابي)
     finance/daily (جرد وإقفال اليومية — the count, the close, the manager's reopen; `?date=`)
-    finance/daily/report (تقرير الصندوق اليومي — printed A4 landscape by its own print rules; `?date=`)
+    finance/daily/report (تقرير الصندوق اليومي — printed A4 landscape; `?date=`)
+    (the three printed documents share `components/admin/finance/official-document.tsx`: the
+     letterhead and crest from الإعدادات, the signature lines, `documentPrintCss`, `useAutoPrint`)
     my-round (جولتي — the collector's own pocket, phone-first, WORKING_STAFF_ROLES)
 
 `CitizenProfilePayment.invoiceNumber` carries «INV-2610-0001» and is what

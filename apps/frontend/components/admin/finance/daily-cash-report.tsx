@@ -11,56 +11,17 @@ import { cn } from '@/lib/utils';
 import { Alert } from '@/components/ui/alert';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { DayStatusBadge } from './day-status-badge';
+import {
+  LetterheadCrest,
+  LetterheadLines,
+  SignatureBlock,
+  documentPrintCss,
+  type MunicipalLetterhead,
+} from './official-document';
 import { TreasuryAmount } from './treasury-amount';
 
-/**
- * Printing «تقرير الصندوق اليومي».
- *
- * The admin shell is around this page, so the global print rules
- * (`globals.css`) already hide `body *` for the receipt; these un-hide the
- * report alone and lift it to the top of the sheet, the receipt's own method.
- * Landscape A4: eight columns of figures, each with its unit, do not fit a
- * portrait page at a size anyone can read. This sheet is mounted only while the
- * report is, and comes after `globals.css`, so its `@page` replaces the
- * receipt's A5 for as long as the report is on screen.
- *
- * Black on white whatever the theme: a signed paper record must not come out
- * grey because the screen was dark (COL-9, the printed-receipt exception).
- * Physical `left` is the print exception RTL-1 names.
- */
-const PRINT_CSS = `
-@media print {
-  @page { size: A4 landscape; margin: 10mm; }
-  #daily-cash-report, #daily-cash-report * { visibility: visible; }
-  #daily-cash-report {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-    border: 0;
-    box-shadow: none;
-    padding: 0;
-    background: #fff;
-  }
-  #daily-cash-report, #daily-cash-report * {
-    color: #000 !important;
-    border-color: #000 !important;
-    background: transparent !important;
-    overflow: visible !important;
-  }
-  #daily-cash-report section { break-inside: avoid; }
-  #daily-cash-report tr { break-inside: avoid; }
-}
-`;
-
-/** The municipality as the letterhead names it, from الإعدادات. */
-export interface ReportLetterhead {
-  name: string;
-  governorate: string | null;
-  district: string | null;
-  /** The crest as a data URI, when the municipality has one. */
-  crest: string | null;
-}
+/** Eight columns of figures, each with its unit, do not fit a portrait page at a size anyone can read. */
+const PRINT_CSS = documentPrintCss('daily-cash-report', 'A4 landscape');
 
 /**
  * «تقرير الصندوق اليومي» — one municipal day on one sheet, to print and sign.
@@ -76,7 +37,7 @@ export function DailyCashReport({
   locale,
 }: {
   report: DailyCashReportData;
-  letterhead: ReportLetterhead;
+  letterhead: MunicipalLetterhead;
   locale: string;
 }): React.JSX.Element {
   const t = useTranslations('dailyClosing.report');
@@ -90,21 +51,8 @@ export function DailyCashReport({
       <style>{PRINT_CSS}</style>
 
       <header className="flex flex-wrap items-start justify-between gap-4 border-b pb-4">
-        <div className="space-y-0.5 text-xs">
-          <p className="font-semibold">{t('republic')}</p>
-          <p>
-            {t('ministry')}
-            {letterhead.governorate ? ` — ${t('governorate', { name: letterhead.governorate })}` : ''}
-          </p>
-          {letterhead.district ? <p>{t('district', { name: letterhead.district })}</p> : null}
-          <p className="pt-1 text-base font-semibold">{t('municipality', { name: letterhead.name || '—' })}</p>
-        </div>
-
-        {letterhead.crest ? (
-          // A data URI from الإعدادات: nothing for next/image to optimise, and no host for the CSP.
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={letterhead.crest} alt="" className="size-16 object-contain" />
-        ) : null}
+        <LetterheadLines letterhead={letterhead} />
+        <LetterheadCrest crest={letterhead.crest} />
 
         <div className="space-y-1 text-end">
           <h2 className="text-lg font-semibold">{t('title')}</h2>
@@ -361,21 +309,5 @@ function Money({
     <TableCell className={cn('px-2 py-1.5 text-end align-top', className)}>
       {value === null ? '—' : <TreasuryAmount amount={value} currency={currency} locale={locale} />}
     </TableCell>
-  );
-}
-
-/** «الاسم / التوقيع / التاريخ» with a line to write on, under each signatory's title. */
-function SignatureBlock({ title }: { title: string }): React.JSX.Element {
-  const t = useTranslations('dailyClosing.report.signatures');
-  return (
-    <div className="space-y-4">
-      <p className="font-semibold">{title}</p>
-      {(['name', 'signature', 'date'] as const).map((key) => (
-        <div key={key} className="flex items-end gap-2">
-          <span className="shrink-0 text-xs text-muted-foreground">{t(key)}</span>
-          <span aria-hidden className="h-6 flex-1 border-b border-dashed" />
-        </div>
-      ))}
-    </div>
   );
 }

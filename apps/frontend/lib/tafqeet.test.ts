@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { tafqeet } from './tafqeet';
+import { tafqeet, tafqeetAmount } from './tafqeet';
 
 /**
  * تفقيط — the written-out amount on a municipal receipt.
@@ -259,5 +259,70 @@ describe('tafqeet', () => {
         expect(occurrences, `currency named ${occurrences}× for ${amount}`).toBe(1);
       }
     });
+  });
+});
+
+/**
+ * The same line on «أمر الصرف» and «سند القبض», in the voucher's own currency.
+ *
+ * دولار is masculine where ليرة is feminine, so every boundary the pound tests
+ * pin moves the other way here: the numeral 3–10 is feminine in form
+ * («ثلاثة دولارات»), and the noun after 11–99 is accusative («دولاراً
+ * أميركياً»). Cents follow the same rule and come after the dollars.
+ */
+describe('tafqeetAmount', () => {
+  it('writes a ليرة amount exactly as tafqeet does, so a voucher and a وصل never disagree', () => {
+    for (const amount of [0, 1, 2, 7, 11, 500_000, 2_500_000, 234_000_000]) {
+      expect(tafqeetAmount(amount, 'LBP')).toBe(tafqeet(amount));
+    }
+  });
+
+  it('names one and two dollars by the noun alone', () => {
+    expect(tafqeetAmount(1, 'USD')).toBe('دولار أميركي واحد فقط لا غير');
+    expect(tafqeetAmount(2, 'USD')).toBe('دولاران أميركيان فقط لا غير');
+  });
+
+  it('uses the feminine numeral and the plural for three to ten', () => {
+    expect(tafqeetAmount(3, 'USD')).toBe('ثلاثة دولارات أميركية فقط لا غير');
+    expect(tafqeetAmount(10, 'USD')).toBe('عشرة دولارات أميركية فقط لا غير');
+  });
+
+  it('takes the accusative after eleven to ninety-nine', () => {
+    expect(tafqeetAmount(11, 'USD')).toBe('أحد عشر دولاراً أميركياً فقط لا غير');
+    expect(tafqeetAmount(25, 'USD')).toBe('خمسة وعشرون دولاراً أميركياً فقط لا غير');
+    expect(tafqeetAmount(150, 'USD')).toBe('مائة وخمسون دولاراً أميركياً فقط لا غير');
+  });
+
+  it('agrees with the last numeral spoken, not with the size of the whole', () => {
+    expect(tafqeetAmount(100, 'USD')).toBe('مائة دولار أميركي فقط لا غير');
+    expect(tafqeetAmount(103, 'USD')).toBe('مائة وثلاثة دولارات أميركية فقط لا غير');
+    expect(tafqeetAmount(1_000, 'USD')).toBe('ألف دولار أميركي فقط لا غير');
+    expect(tafqeetAmount(2_500, 'USD')).toBe('ألفان وخمسمائة دولار أميركي فقط لا غير');
+  });
+
+  it('keeps the cents, after the dollars', () => {
+    expect(tafqeetAmount(1_500.75, 'USD')).toBe(
+      'ألف وخمسمائة دولار أميركي وخمسة وسبعون سنتاً فقط لا غير',
+    );
+    expect(tafqeetAmount(12.05, 'USD')).toBe('اثنا عشر دولاراً أميركياً وخمسة سنتات فقط لا غير');
+    expect(tafqeetAmount(1.01, 'USD')).toBe('دولار أميركي واحد وسنت واحد فقط لا غير');
+  });
+
+  it('writes cents alone when there is no whole dollar', () => {
+    expect(tafqeetAmount(0.5, 'USD')).toBe('خمسون سنتاً فقط لا غير');
+    expect(tafqeetAmount(0.02, 'USD')).toBe('سنتان فقط لا غير');
+  });
+
+  it('rounds to the cent rather than reading a float’s tail', () => {
+    // 0.1 + 0.2 is 0.30000000000000004 in binary; a voucher for 30 cents says 30.
+    expect(tafqeetAmount(0.1 + 0.2, 'USD')).toBe('ثلاثون سنتاً فقط لا غير');
+  });
+
+  it('writes zero out rather than leaving the line blank', () => {
+    expect(tafqeetAmount(0, 'USD')).toBe('صفر دولار أميركي فقط لا غير');
+  });
+
+  it('has no words for a currency it does not know, rather than the pound’s', () => {
+    expect(tafqeetAmount(100, 'EUR')).toBeNull();
   });
 });

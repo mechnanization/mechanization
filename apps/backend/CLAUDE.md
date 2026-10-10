@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `feat/treasury-daily-count-and-closure` (on `fix/expense-retry-key-race@ff44f27`), 2026-10-10.
+Last verified against the code: `feat/treasury-inspector-payouts-and-vouchers` (on `feat/treasury-daily-count-and-closure@3ea515a`), 2026-10-10.
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -203,6 +203,18 @@ Data access for new code (decided):
   the payee read from the staff account (`kind = 'STAFF'`, not deleted; a disabled account may
   still be paid) and the category looked up by key (`SALARIES`). It stamps `payeeStaffId` (0081) on
   the voucher and in the audit row's `after`, so a person's salaries are found by id, not by name.
+  «صرف عمولة» is `recordCommission`, the third caller of `recordVoucher`: category
+  `FIELD_COMMISSIONS`, `payeeStaffId` the inspector, and the description the category's own name
+  when none is given. Its only caller is `StaffService.recordInspectorPayout`
+  (`POST staff/inspectors/:id/payouts`, `TREASURY_WORK_ROLES`), which is why `StaffService` now
+  takes `ExpensesService`, `TreasuryLedgerService` and `AuditService`. That method runs in one
+  transaction under `pg_advisory_xact_lock` on `<schema>:inspector-payout:<inspectorId>` (the
+  balance owed is read and then paid, so two payouts must queue), replays a retried key by finding
+  the payout whose voucher carries it, and then forks on `treasuryGoLiveAt`: before go-live the old
+  wallet-less row and its `staff.changed` event; once live a voucher, the payout linked to it
+  (`inspector_payouts.expenseVoucherId`, 0083) and a Tier 1 `INSPECTOR_PAYOUT_RECORDED` row. A
+  payout whose voucher is voided stops counting as paid, in `getInspectorProfile` and in
+  `UserRepository.listStaff` alike.
 - **Income.** `IncomeService` and `IncomeController` (`t/:tenantSlug/treasury/income`), with the
   date rules and the register's period bounds in `income.plan.ts`. The expense module run the
   other way: one transaction writes the «سند قبض», posts the positive `INCOME_VOUCHER` entry and

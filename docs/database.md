@@ -1,6 +1,6 @@
 # Database
 
-Last verified against the code: `feat/treasury-daily-count-and-closure` (on `fix/expense-retry-key-race@ff44f27`), 2026-10-10.
+Last verified against the code: `feat/treasury-inspector-payouts-and-vouchers` (on `feat/treasury-daily-count-and-closure@3ea515a`), 2026-10-10.
 
 The rules for anything that reads or writes a database: the schemas, how to
 query them, how to change them, and how data may move between environments.
@@ -44,11 +44,11 @@ every municipality ([security.md](security.md)).
 | Map | `parcels`, `zones` | `CadastreImportService`, `ZonesService` |
 | Building census | `buildings`, `building_code_aliases`, `units`, `unit_occupancies`, `unit_visits`, `unit_vacancy_confirmations`, `damage_assessments` | `BuildingsService`, `CensusSyncService`, `DamageService`, `ParcelCorrectionService`, `UnitCorrectionService` |
 | Cases | `cases` | `CasesService` |
-| Fees and money | `fee_notices`, `citizen_payments`, `payment_transactions`, `billing_run_entries`, `whish_checkouts`, `system_settings`, `inspector_payouts` | `FeesService`, `PaymentLedgerService`, `CorrectionBillsService`, `StaffService` (payouts) |
+| Fees and money | `fee_notices`, `citizen_payments`, `payment_transactions`, `billing_run_entries`, `whish_checkouts`, `system_settings`, `inspector_payouts` (`expenseVoucherId`, 0083: the «PV-» voucher that paid it once the treasury is live, unique, NULL before; a payout whose voucher is voided is not counted as paid, a filter both readers apply) | `FeesService`, `PaymentLedgerService`, `CorrectionBillsService`, `StaffService` (payouts; once live through `ExpensesService.recordCommission`) |
 | Review and quality | `record_reviews`, `quality_checks`, `data_quality_dismissals` | `RecordReviewService`, `DataQualityService` |
 | Audit | `audit_log_entries` | `AuditService`, `PrismaAuditRepository` |
 | Transfers (0078) | `treasury_transfers` | `TransfersService` (the collector handover; a Whish cash-out, a bank deposit and an exchange share the table and come later) |
-| Expenses (0074) | `expense_categories`, `expense_vouchers` (`payeeStaffId`, 0081: the staff account a salary voucher paid, NULL otherwise; a FK to `users` that cannot say STAFF, so `recordSalary` filters `kind`) | `ExpensesService` |
+| Expenses (0074) | `expense_categories`, `expense_vouchers` (`payeeStaffId`, 0081: the staff account a salary or commission voucher paid, NULL otherwise; a FK to `users` that cannot say STAFF, so `recordSalary` and, for a commission, `StaffService.recordInspectorPayout` filter `kind`) | `ExpensesService` |
 | Income (0080) | `income_categories`, `income_vouchers` (`payerName` is free text that may name a citizen) | `IncomeService` |
 | Document numbers (0079) | `document_counters`, one row per (book, month) | `allocateDocumentNumbers` |
 | Daily count and closing (0082) | `treasury_day_closures` (one row per closed or reopened day), `treasury_counts` (one count per wallet per day) | `DayClosureService` (close, sweep, reopen), `DailyCountService` (counts) |
@@ -498,6 +498,12 @@ reads staging's history from `.env.staging` and nothing else, and
   the above) holds `0082_treasury_day_closing`. Checked on 2026-10-10 after a fetch against every
   local and remote branch: no branch held an `0082` or later. The next free number is `0083`; it needs
   `0073`, so it ships after the finance migrations, in its own `chore/migration-0082` PR.
+- `feat/treasury-inspector-payouts-and-vouchers` (cut from `feat/treasury-daily-count-and-closure`)
+  holds `0083_inspector_payout_voucher`: one nullable column on `inspector_payouts`, which is in
+  production (0025), with a unique index built without CONCURRENTLY on a table of tens of rows.
+  Needs `0074`. Checked on 2026-10-10 after a fetch against every local and remote branch: no branch
+  held an `0083` or later. The next free number is `0084`. Its own `chore/migration-0083` PR, after
+  the finance migrations.
 - Parallel branches reuse numbers and nothing errors: `0016_*` and `0017_*`
   each exist twice. `0059_staff_refresh_tokens` was merged to `develop` after
   `0066`, so it applies out of order: `deploy.mjs` warns and applies it.
@@ -779,7 +785,9 @@ Rare: only `0001_init` exists.
   `income_vouchers` (0080), `treasury_day_closures` and `treasury_counts` (0082) are not in
   `TABLE_ORDER` either (checked 2026-10-10; a restore would also meet the no-delete trigger on
   closures), and the free-text
-  payee and payer columns may name a citizen. **Undecided:** how the backup should carry an
+  payee and payer columns may name a citizen. `inspector_payouts` *is* exported, and since 0083
+  carries `expenseVoucherId`; a non-NULL link exists only once a voucher does, and such a tenant
+  already cannot be restored, so the column adds no new failure (the snapshot version is unchanged). **Undecided:** how the backup should carry an
   append-only ledger and the vouchers that explain it.
 - **`dump-tenant.js`, the `reissue-references` CSV, the `claude_ro` views**:
   see [Moving data](#moving-data-between-environments).

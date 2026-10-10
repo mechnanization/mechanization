@@ -99,6 +99,7 @@ export default function NewExpensePage({
           accounts={overview.data.accounts}
           categories={categories.data ?? []}
           onRecorded={() => router.push(registerHref)}
+          onPrint={(voucherId) => router.push(`${base}/finance/expenses/${voucherId}/print?print=1`)}
         />
       )}
     </div>

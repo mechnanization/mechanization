@@ -1,6 +1,6 @@
 # Security
 
-Last verified against the code: `feat/treasury-daily-count-and-closure` (on `fix/expense-retry-key-race@ff44f27`), 2026-10-10.
+Last verified against the code: `feat/treasury-inspector-payouts-and-vouchers` (on `feat/treasury-daily-count-and-closure@3ea515a`), 2026-10-10.
 
 Binding for every change that touches authentication, roles, tokens, validation, uploads, logging,
 headers, client storage or secrets. The rules below are correct practice. Where the code differs today,
@@ -241,6 +241,24 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   test), and files the voucher under the seeded `SALARIES`. The audit row names the staff member by
   id (`payeeStaffId`), never by name. The button lives on «الموظفون», which only `SUPER_ADMIN`
   opens; the route is what decides.
+  **Inspector commissions** (`POST staff/inspectors/:id/payouts`) moved from `SUPER_ADMIN` to
+  `TREASURY_WORK_ROLES` on 2026-10-10 (finance.md §5.6, §9): once the treasury is live a payout is
+  an expense voucher, the accountant's work as much as the manager's. The id now goes through
+  `ParseUUIDPipe`, the body through `recordInspectorPayoutSchema`. Opening it to the accountant
+  shows them nothing new: what is owed is computed on the server, and the inspector's profile
+  (`GET inspectors/:id/profile`, which lists the citizens he registered) stays `SUPER_ADMIN` or the
+  inspector himself. The payee and the category are the server's, as for a salary; the wallet must
+  hold dollars (`INSPECTOR_PAYOUT_WALLET_NOT_USD`); the amount owed is re-read under a
+  transaction-scoped advisory lock on the inspector, so two payouts cannot both spend one balance
+  (pinned by a test that fails without the lock); and the retry key replays the first payout. Both
+  audit rows (`EXPENSE_RECORDED`, `INSPECTOR_PAYOUT_RECORDED`) are Tier 1 and carry ids and figures,
+  never the inspector's name.
+- **Printed vouchers** (`finance/expenses/:id/print`, `finance/income/:id/print`). Screens, not
+  routes: they read `GET treasury/expenses/:id` and `GET treasury/income/:id`, so the finance read
+  roles, and sit under those nav rows' prefixes. The receipt's QR code carries the voucher number
+  and nothing else; there is no public page to verify it against, which would be a new
+  unauthenticated surface. A printed «سند قبض» carries the payer's name, as the paper handed to
+  them must.
 - **Income vouchers** (`t/:tenantSlug/treasury/income`). The expense guards, mirrored: read on
   `TREASURY_READ_ROLES`, record on `TREASURY_WORK_ROLES`, void and the category writes (`POST`,
   `PATCH` on `income/categories`, both Tier 1 audited) on `TREASURY_ADMIN_ROLES`; the body

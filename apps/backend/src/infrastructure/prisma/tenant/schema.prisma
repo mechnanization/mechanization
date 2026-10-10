@@ -2273,6 +2273,12 @@ model InspectorPayout {
   recordedBy   User?    @relation("RecordedInspectorPayouts", fields: [recordedById], references: [id])
   createdAt    DateTime @default(now())
 
+  /// The «PV-» voucher that paid it, written in the same transaction (0083).
+  /// NULL for a payout recorded while the treasury was not live. A payout whose
+  /// voucher is voided no longer counts as paid; the readers filter on it.
+  expenseVoucherId String?         @unique @db.Uuid
+  expenseVoucher   ExpenseVoucher? @relation(fields: [expenseVoucherId], references: [id], onDelete: Restrict)
+
   @@index([inspectorId, paidAt])
   @@map("inspector_payouts")
 }
@@ -2497,11 +2503,16 @@ model ExpenseVoucher {
   recordedById String? @db.Uuid
   recordedBy   User?   @relation("ExpenseRecordedBy", fields: [recordedById], references: [id], onDelete: Restrict)
 
-  /// The staff account a salary or wage voucher paid (0081); NULL on every
-  /// other voucher. `payee` still holds the name as it stood on the day. That
-  /// it is a STAFF row is checked by its one writer, `recordSalary`.
+  /// The staff account a salary, wage or commission voucher paid (0081); NULL
+  /// on every other voucher. `payee` still holds the name as it stood on the
+  /// day. That it is a STAFF row is checked in the WHERE that resolves the
+  /// payee: `recordSalary`'s own, and for a commission
+  /// `StaffService.recordInspectorPayout`'s, before `recordCommission` runs.
   payeeStaffId String? @db.Uuid
   payeeStaff   User?   @relation("ExpensePayeeStaff", fields: [payeeStaffId], references: [id], onDelete: Restrict)
+
+  /// The inspector payout this voucher paid, when it paid one (0083).
+  inspectorPayout InspectorPayout?
 
   /// One id per press of «سجّل النفقة», so a retry finds the first voucher
   /// instead of paying twice.

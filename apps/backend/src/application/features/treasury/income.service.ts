@@ -36,7 +36,7 @@ const VOUCHER_SELECT = {
   adjustmentReason: true,
   voidedAt: true,
   voidReason: true,
-  category: { select: { id: true, labelAr: true, labelEn: true } },
+  category: { select: { id: true, labelAr: true, labelEn: true, chapterCode: true, itemCode: true } },
   account: { select: { id: true, name: true, currency: true } },
   recordedBy: { select: { firstName: true, lastName: true } },
   voidedBy: { select: { firstName: true, lastName: true } },

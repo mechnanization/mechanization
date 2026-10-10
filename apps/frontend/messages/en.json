@@ -360,6 +360,10 @@
     "EXPENSE_BACKDATE_REASON_REQUIRED": "Give the reason for dating the expense earlier than today.",
     "EXPENSE_CATEGORY_CODE_TAKEN": "Another category is already charged to that budget chapter and article.",
     "SALARY_PAYEE_NOT_FOUND": "The staff member to be paid was not found, or their account was deleted. Refresh the staff page and try again.",
+    "INSPECTOR_PAYOUT_WALLET_REQUIRED": "The treasury is active: choose the wallet the commission is paid from.",
+    "INSPECTOR_PAYOUT_WALLET_NOT_USD": "Inspector commissions are paid in dollars: choose a US dollar wallet.",
+    "INSPECTOR_PAYOUT_DATE_NOT_ALLOWED": "The treasury is active, so a commission is paid today. It cannot be dated another day.",
+    "INSPECTOR_PAYOUT_REQUEST_REUSED": "This request was already used for another payment. Close the dialog, open it again and retry.",
     "INCOME_VOUCHER_NOT_FOUND": "The income voucher was not found.",
     "INCOME_VOUCHER_ALREADY_VOIDED": "This income voucher has already been cancelled.",
     "INCOME_CATEGORY_NOT_FOUND": "The income category was not found.",
@@ -655,6 +659,57 @@
         "description": "Say which month or work this payment is for",
         "invoiceNumber": "The number is too long",
         "form": "Could not pay the salary."
+      }
+    },
+    "commission": {
+      "action": "Pay commission",
+      "dialogTitle": "Pay an inspector’s commission",
+      "descriptionLive": "A payment order is recorded under field commissions, and the money leaves the wallet as soon as you confirm. A mistake is corrected by cancelling the voucher in the expense register, which puts the amount back on what the inspector is owed.",
+      "descriptionLegacy": "A payment handed to {name}. It reduces their pending balance.",
+      "payee": "Beneficiary",
+      "unitsSurveyed": "Units counted",
+      "earned": "Total earned",
+      "owed": "Still owed",
+      "loading": "Working out what is owed and loading the wallets…",
+      "loadError": "Could not load what is owed or the wallet balances.",
+      "payingWallet": "Paid from",
+      "accountPlaceholder": "Choose a wallet",
+      "noAccountsTitle": "No dollar wallet",
+      "noAccountsBody": "Commissions are paid in dollars, and the treasury has no active dollar wallet.",
+      "amount": "Amount handed over",
+      "availableBalance": "Available balance",
+      "balanceAfter": "Balance after payment",
+      "shortTitle": "Not enough in this wallet",
+      "shortBody": "The amount is more than this wallet holds. Choose another wallet, or transfer into this one first.",
+      "date": "Payment date",
+      "statement": "Statement",
+      "statementPlaceholder": "e.g. Zuhour survey commission, September 2026",
+      "note": "Notes",
+      "notePlaceholder": "e.g. cash, for the Zuhour survey",
+      "reference": "Paper receipt number",
+      "referencePlaceholder": "e.g. REC-2026-004",
+      "optional": "Optional",
+      "submitLive": "Pay and record the expense",
+      "submitLegacy": "Record payout",
+      "saving": "Saving…",
+      "cancel": "Cancel",
+      "close": "Close",
+      "retry": "Retry",
+      "successLive": "Commission paid as {number}",
+      "successLiveBody": "The money left the wallet, and what the inspector is owed went down.",
+      "successLegacy": "Recorded a {amount} payout to {name}",
+      "printOrder": "Print payment order",
+      "errors": {
+        "accountId": "Choose the wallet the commission is paid from",
+        "amount": "Enter an amount greater than zero",
+        "short": "The amount is more than the chosen wallet holds",
+        "form": "Could not record the payout."
+      },
+      "history": {
+        "order": "Payment order",
+        "cancelled": "Cancelled",
+        "print": "Print payment order",
+        "printFor": "Print payment order {number}"
       }
     }
   },
@@ -1513,7 +1568,8 @@
         "summaryTitle": "Summary",
         "summaryAccount": "Paid from",
         "summaryAmount": "Amount",
-        "summaryEmpty": "Choose the account to see its balance."
+        "summaryEmpty": "Choose the account to see its balance.",
+        "print": "Print payment order"
       },
       "voidDialog": {
         "title": "Cancel voucher {number}",
@@ -1549,7 +1605,9 @@
       },
       "notAllowedTitle": "You may not record expenses",
       "notAllowedBody": "Recording expenses is for the accountant and the system administrator. You can read the register without recording.",
-      "backToRegister": "Back to the expense register"
+      "backToRegister": "Back to the expense register",
+      "print": "Print",
+      "printFor": "Print payment order {number}"
     },
     "income": {
       "title": "Income",
@@ -1648,7 +1706,8 @@
         "summaryEmpty": "Choose the account to see its balance.",
         "noAccounts": "No account can receive income. Add the cash safe or a Whish account first.",
         "newCategory": "New category",
-        "newCategoryTitle": "Add an income category"
+        "newCategoryTitle": "Add an income category",
+        "print": "Print receipt"
       },
       "voidDialog": {
         "title": "Cancel voucher {number}",
@@ -1708,6 +1767,56 @@
           "labelEn": "The English name is too long",
           "codes": "Enter both codes as numbers, or leave both empty",
           "form": "The category could not be saved."
+        }
+      },
+      "print": "Print",
+      "printFor": "Print receipt {number}"
+    },
+    "vouchers": {
+      "print": "Print",
+      "loadError": "Could not load the voucher.",
+      "number": "No.",
+      "issuedOn": "Issued {date}",
+      "issuedAt": "Received {date}",
+      "amount": "Amount",
+      "amountInWords": "In words:",
+      "category": "Category",
+      "budget": "Budget chapter and article",
+      "budgetCodes": "Chapter {chapter}, article {item}",
+      "noBudgetCodes": "Not set yet",
+      "description": "Statement",
+      "backdated": "Why it is dated earlier",
+      "recordedBy": "Recorded by",
+      "voidTitle": "Cancelled voucher",
+      "voidBody": "This voucher was cancelled on {date}. Reason: {reason}",
+      "printed": "Printed {date}",
+      "payment": {
+        "title": "Municipal payment order",
+        "pageTitle": "Payment order",
+        "pageTitleNumbered": "Payment order {number}",
+        "back": "Expense register",
+        "payee": "Beneficiary",
+        "paidFrom": "Paid from",
+        "invoice": "Invoice / reference no.",
+        "signatures": {
+          "accountant": "Chief accountant",
+          "mayor": "Head of municipality / Authorising officer",
+          "beneficiary": "Beneficiary",
+          "beneficiaryNote": "I received the amount above in full."
+        }
+      },
+      "receipt": {
+        "title": "Municipal revenue receipt",
+        "pageTitle": "Receipt",
+        "pageTitleNumbered": "Receipt {number}",
+        "back": "Income register",
+        "payer": "Received from",
+        "receivedInto": "Received into",
+        "reference": "Transfer / external reference",
+        "qrCaption": "Voucher number",
+        "signatures": {
+          "cashier": "Cashier / Collector",
+          "accountant": "Chief accountant"
         }
       }
     },
@@ -1912,11 +2021,6 @@
       "print": "Print the report",
       "draftTitle": "Draft: the day is not closed yet",
       "draftBody": "The figures can still change while the day is open. Print the copy to be signed after closing.",
-      "republic": "Republic of Lebanon",
-      "ministry": "Ministry of Interior and Municipalities",
-      "governorate": "Governorate of {name}",
-      "district": "District of {name}",
-      "municipality": "Municipality of {name}",
       "status": "Day status: {status}",
       "closedLine": "Closed by {name} on {date}",
       "autoClosedLine": "Closed with a later day: none of the counted wallets moved on it.",
@@ -1961,13 +2065,24 @@
       "systemActor": "The system",
       "signatures": {
         "accountant": "Accountant / Cashier",
-        "mayor": "Head of Municipality / Authorising officer",
-        "name": "Name",
-        "signature": "Signature",
-        "date": "Date"
+        "mayor": "Head of Municipality / Authorising officer"
       },
       "generated": "Prepared on {date} by {name}",
       "generatedAnonymous": "Prepared on {date}"
+    }
+  },
+  "officialDocument": {
+    "letterhead": {
+      "republic": "Republic of Lebanon",
+      "ministry": "Ministry of Interior and Municipalities",
+      "governorate": "Governorate of {name}",
+      "district": "District of {name}",
+      "municipality": "Municipality of {name}"
+    },
+    "signatures": {
+      "name": "Name",
+      "signature": "Signature",
+      "date": "Date"
     }
   }
 }
