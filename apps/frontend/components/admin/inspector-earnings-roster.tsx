@@ -18,8 +18,10 @@ import { getLabels } from '@mechanization/shared-schemas';
 import { getStaff } from '@/lib/api-client';
 import type { StaffSummary } from '@/lib/api-client';
 import { formatDate } from '@/lib/dates';
+import { readView } from '@/lib/read-view';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { InspectorPayoutDialog } from '@/components/admin/inspector-payout-dialog';
+import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -101,6 +103,12 @@ export function InspectorEarningsRoster({
     token,
     errorMessage: isAr ? 'تعذّر تحميل قائمة الموظفين' : 'Failed to load the staff list',
   });
+  /*
+    A failed re-read — a refocus past the stale time — keeps the roster, and the
+    payout dialog open on it (STA-1). Swapping the page for ErrorState unmounted
+    the dialog with what was typed in it (review of 2026-10-11).
+  */
+  const view = readView(data, error);
 
   const inspectors = useMemo(() => {
     const rows = (data?.items ?? []).filter(
@@ -174,13 +182,13 @@ export function InspectorEarningsRoster({
     );
   }
 
-  if (error) {
+  if (view.state === 'failed') {
     return (
       <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
         {header}
         <Card>
           <CardContent className="p-0">
-            <ErrorState description={error} onRetry={() => refetch()} />
+            <ErrorState description={view.error} onRetry={() => refetch()} />
           </CardContent>
         </Card>
       </div>
@@ -190,6 +198,10 @@ export function InspectorEarningsRoster({
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       {header}
+
+      {view.state === 'ready' && view.refreshFailed ? (
+        <RefreshFailedAlert message={view.refreshFailed} onRetry={() => refetch()} />
+      ) : null}
 
       {/*
         The whole municipality's position, above the rows that make it up.

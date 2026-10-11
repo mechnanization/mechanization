@@ -22,7 +22,7 @@ import {
   type SettlementReceipt,
 } from '@/lib/api-client';
 import { localizeApiError } from '@/lib/api-errors';
-import { beginPress, bulkKeyScope, dueByCurrency, endPress, type SelectedBill } from '@/lib/bulk-settle';
+import { beginPress, bulkKeyScope, dueByCurrency, endPress, previewGate, type SelectedBill } from '@/lib/bulk-settle';
 import { currencyUnit, formatMoney, formatTypedAmount, parseAmount } from '@/lib/currency';
 import { formatDate } from '@/lib/dates';
 import { heldInDoubt, heldKey, keyIsSpent, markInDoubt, outcomeInDoubt, spendKey } from '@/lib/request-id';
@@ -102,8 +102,11 @@ const FIELD_IDS: Record<FieldKey, string> = {
  * safe holding less than the change, plus the base-currency notes just handed
  * in, refuses the press here — unless a press under this key got no answer
  * (`heldInDoubt`): the balance may already carry it, and only a retry with the
- * key can say. If the treasury cannot be read, nothing is refused; the server
- * checks under lock (`TREASURY_INSUFFICIENT_FUNDS`).
+ * key can say. The same holds for the preview's own refusals: a rate changed or
+ * cleared since the lost press makes the same notes «short», and the retry the
+ * server would answer from the key must still go (`previewGate`). If the
+ * treasury cannot be read, nothing is refused; the server checks under lock
+ * (`TREASURY_INSUFFICIENT_FUNDS`).
  *
  * ## One press
  *
@@ -214,14 +217,6 @@ export function BulkSettleDialog({
     exchangeRate: officialRate,
   });
   const change = planned.ok ? planned.plan.change : 0;
-  /** A bill in a currency neither note pays is said at once; a shortfall only once something is typed. */
-  const refusal =
-    cash && settings && !planned.ok && (typed || planned.refusal.code === 'BULK_SETTLE_CURRENCY_UNSUPPORTED')
-      ? localizeApiError(
-          { code: planned.refusal.code, params: planned.refusal.params },
-          locale === 'en' ? 'en' : 'ar',
-        )
-      : null;
 
   const scope = bulkKeyScope(bills.map((bill) => bill.id));
   /** Read on each render: every press that changes it also sets state. */
@@ -235,8 +230,25 @@ export function BulkSettleDialog({
       )
     : undefined;
   const changeShort = cash && planned.ok && safe !== undefined && change > 0 && safe.balance + local < change;
-  const refusesChange = changeShort && !retrying;
   const treasuryUnread = cash && change > 0 && Boolean(overviewQuery.error) && !overviewQuery.data;
+
+  /*
+    What the preview may refuse, and what it only warns of while a press of this
+    set is in doubt (`previewGate`). A bill in a currency neither note pays is
+    said at once; a shortfall only once something is typed.
+  */
+  const gate = previewGate({
+    cash,
+    settingsRead: Boolean(settings),
+    planRefused: !planned.ok,
+    planSaid: !planned.ok && (typed || planned.refusal.code === 'BULK_SETTLE_CURRENCY_UNSUPPORTED'),
+    changeShort,
+    inDoubt: retrying,
+  });
+  const refusal =
+    gate.plan === 'refusal' && !planned.ok
+      ? localizeApiError({ code: planned.refusal.code, params: planned.refusal.params }, locale === 'en' ? 'en' : 'ar')
+      : null;
 
   const pickable = (staffQuery.data?.items ?? []).filter(
     (candidate) => candidate.isActive && candidate.role !== 'VIEWER',
@@ -299,8 +311,8 @@ export function BulkSettleDialog({
       setFormError(t('failed'));
       return;
     }
-    // The preview already says why; the server would refuse the same.
-    if (cash && (!settings || !planned.ok || refusesChange)) return;
+    // The preview already says why; the server would refuse the same. In doubt, it only warns: the retry goes.
+    if (gate.blocksPress) return;
 
     setFieldErrors({});
     setFormError(null);
@@ -570,10 +582,14 @@ export function BulkSettleDialog({
                     <Alert variant="destructive" live="status">
                       {refusal}
                     </Alert>
+                  ) : gate.plan === 'inDoubt' ? (
+                    <Alert variant="warning" live="status" title={t('planInDoubtTitle')}>
+                      {t('planInDoubtBody')}
+                    </Alert>
                   ) : null}
 
                   {changeShort && safe ? (
-                    retrying ? (
+                    gate.change === 'inDoubt' ? (
                       <Alert variant="warning" live="status" title={t('changeShortInDoubtTitle')}>
                         {t('changeShortInDoubtBody')}
                       </Alert>
@@ -606,8 +622,8 @@ export function BulkSettleDialog({
             </Field>
           </fieldset>
 
-          {/* After a lost answer the way out is the same press, unchanged. */}
-          {retrying && !changeShort ? <Alert variant="warning">{t('inDoubt')}</Alert> : null}
+          {/* After a lost answer the way out is the same press, unchanged (said above when a check warns of it). */}
+          {retrying && !changeShort && gate.plan !== 'inDoubt' ? <Alert variant="warning">{t('inDoubt')}</Alert> : null}
 
           {formError ? (
             <Alert variant="destructive" live="alert">
@@ -619,11 +635,7 @@ export function BulkSettleDialog({
             <Button type="button" variant="outline" onClick={onClose} disabled={busy} className="w-full sm:w-auto">
               {t('cancel')}
             </Button>
-            <Button
-              type="submit"
-              disabled={busy || done || refusesChange || (cash && (!settings || refusal !== null))}
-              className="w-full gap-1.5 sm:w-auto"
-            >
+            <Button type="submit" disabled={busy || done || gate.disablesButton} className="w-full gap-1.5 sm:w-auto">
               {busy ? (
                 <Loader2 className="size-4 animate-spin" aria-hidden />
               ) : (

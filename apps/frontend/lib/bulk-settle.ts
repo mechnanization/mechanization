@@ -269,6 +269,51 @@ export function selectionHeld(tenant: string, bills: readonly Pick<SelectedBill,
   return pressing.has(`${tenant}:${scope}`) || heldInDoubt(tenant, scope);
 }
 
+/** How the dialog says what its preview found: a refusal, or — while the key is in doubt — a warning. */
+export type PreviewNote = 'refusal' | 'inDoubt';
+
+/**
+ * What the dialog's own checks do to a press of the set, before any request.
+ *
+ * Normally they refuse what the server would refuse: notes short of the bills
+ * or a rate that is not set (`planBulkSettlement`, the server's own function),
+ * and change the safe cannot hand back. Without the settings nothing can be
+ * judged, so a cash press waits for them.
+ *
+ * Except while the set's key is held in doubt (`heldInDoubt`, `lib/request-id.ts`):
+ * a press got no answer and may have been recorded, and the server answers a
+ * retry under the key before it plans anything. A preview that has moved since
+ * — the official rate changed or was cleared, the safe's balance already
+ * carries the change the lost press gave — must not stop that retry. Refusing
+ * it, in words that end «لم يُسجَّل شيء», told the clerk nothing was recorded
+ * for a settlement that was, and left him no press to find out (review of
+ * 2026-10-11). In doubt, each check is a warning, and the press goes to the
+ * server, which replays it or judges it.
+ */
+export function previewGate(input: {
+  cash: boolean;
+  /** The currencies and the rate have been read. */
+  settingsRead: boolean;
+  /** `planBulkSettlement` refused the notes as typed. */
+  planRefused: boolean;
+  /** Whether that refusal is said yet: something is typed, or a bill is in a currency no note pays. */
+  planSaid: boolean;
+  /** The main cash safe, with the notes handed in, cannot give the change. */
+  changeShort: boolean;
+  inDoubt: boolean;
+}): { blocksPress: boolean; disablesButton: boolean; plan: PreviewNote | null; change: PreviewNote | null } {
+  if (!input.cash) return { blocksPress: false, disablesButton: false, plan: null, change: null };
+  const note = (found: boolean): PreviewNote | null => (found ? (input.inDoubt ? 'inDoubt' : 'refusal') : null);
+  const refuses = !input.inDoubt;
+  return {
+    blocksPress: !input.settingsRead || (refuses && (input.planRefused || input.changeShort)),
+    disablesButton:
+      !input.settingsRead || (refuses && ((input.planRefused && input.planSaid) || input.changeShort)),
+    plan: input.settingsRead ? note(input.planRefused && input.planSaid) : null,
+    change: note(input.changeShort),
+  };
+}
+
 /** One parcel or unit a bill was assessed on, as the receipt words it. */
 export interface PropertyLine {
   /**

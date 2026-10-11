@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { Client } from 'pg';
 import { PrismaClient as TenantPrismaClient } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
@@ -86,6 +88,37 @@ describeIfDb('StaffService.recordInspectorPayout', () => {
     vouchers: await db.expenseVoucher.count(),
     entries: await db.treasuryEntry.count({ where: { source: 'EXPENSE_VOUCHER' } }),
   });
+
+  /** Another field inspector, with one flat filed: a dollar owed. */
+  let earners = 0;
+  const earner = async (firstName: string): Promise<string> => {
+    const id = randomUUID();
+    const citizenId = randomUUID();
+    await db.user.createMany({
+      data: [
+        { id, kind: 'STAFF', tenantSlug: 'payouts', email: `e-${id}@t.gov.lb`, firstName, lastName: 'الميداني', role: 'FIELD_INSPECTOR' },
+        { id: citizenId, kind: 'CITIZEN', tenantSlug: 'payouts', firstName: 'مالك', lastName: 'الشقة' },
+      ],
+    });
+    const registration = await db.registration.create({
+      data: { citizenId, referenceNumber: `R-${randomUUID().slice(0, 10)}`, createdById: id },
+      select: { id: true },
+    });
+    await db.propertyEntry.create({
+      data: {
+        registrationId: registration.id,
+        occupancyType: 'OWNER',
+        propertyType: 'BUILDING',
+        neighborhood: 'الحي',
+        propertyNumber: String(300 + earners++),
+        units: { create: [{ unitType: 'APARTMENT', floor: '1', unitArea: 100, unitStatus: 'OWNER_OCCUPIED' }] },
+      },
+    });
+    return id;
+  };
+
+  /** A figure-only payout whose press is retried once the treasury is live (the transition test). */
+  let lostBeforeLive: { id: string; key: string };
 
   beforeAll(async () => {
     ddl = new Client({ connectionString: TEST_DATABASE_URL });
@@ -236,6 +269,83 @@ describeIfDb('StaffService.recordInspectorPayout', () => {
       await expect(pay({ amount: 1, accountId: safeUsdId })).rejects.toMatchObject({ code: 'TREASURY_NOT_ACTIVE' });
       expect(await counts()).toEqual({ payouts: 1, vouchers: 0, entries: 0 });
     });
+
+    /*
+      Review of 2026-10-11: the figure-only payout kept no retry key, and the
+      server inserted every press, so a payout whose answer was lost, pressed
+      again, was recorded twice — the inspector read as owed less than he was,
+      with no voucher to void. Since 0089 the key is on the payout row.
+    */
+    it('answers a retried press with the first payout, recording the figure once', async () => {
+      const key = randomUUID();
+      const owed = (await profile()).pendingBalance;
+      const before = await counts();
+
+      const first = await pay({ amount: 1, note: 'دفعة نقدية', clientRequestId: key });
+      const again = await pay({ amount: 1, note: ' دفعة نقدية ', clientRequestId: key });
+
+      expect(first.replayed).toBe(false);
+      expect(again).toMatchObject({ id: first.id, replayed: true, voucher: null, amount: 1 });
+      expect(await counts()).toEqual({ ...before, payouts: before.payouts + 1 });
+      expect((await profile()).pendingBalance).toBe(owed - 1);
+      expect((await db.inspectorPayout.findUniqueOrThrow({ where: { id: first.id } })).clientRequestId).toBe(key);
+      lostBeforeLive = { id: first.id, key };
+    });
+
+    it('binds a key to its act before go-live too: another amount, statement or officer under it is refused', async () => {
+      const key = randomUUID();
+      await pay({ amount: 1, note: 'دفعة', clientRequestId: key });
+      const owed = (await profile()).pendingBalance;
+      const before = await counts();
+
+      for (const edited of [
+        { amount: 2, note: 'دفعة' },
+        { amount: 1, note: 'دفعة أخرى' },
+      ]) {
+        await expect(pay({ ...edited, clientRequestId: key })).rejects.toMatchObject({
+          code: 'TREASURY_REQUEST_KEY_REUSED',
+        });
+      }
+      // The accountant cannot have the manager's payout answered to him: the key binds who recorded it.
+      await expect(pay({ amount: 1, note: 'دفعة', clientRequestId: key }, ACCOUNTANT)).rejects.toMatchObject({
+        code: 'TREASURY_REQUEST_KEY_REUSED',
+      });
+      expect(await counts()).toEqual(before);
+      expect((await profile()).pendingBalance).toBe(owed);
+    });
+
+    /*
+      Two inspectors' payouts take two advisory locks, so one key sent for both
+      gets past both lookups. Made certain rather than likely: an outside session
+      holds the settings row, which each press reads after its lookup, so both
+      are past it before either may write. The loser meets the winner on the
+      key's unique index and is answered as what it is — a key that paid
+      another inspector — never with a server error.
+    */
+    it('answers one key sent for two inspectors at once with one payout and a coded refusal', async () => {
+      const [first, second] = [await earner('سليم'), await earner('وسيم')];
+      const key = randomUUID();
+      const before = await counts();
+
+      // Before go-live the row exists once anything has written it; activation, later in this file, keeps it.
+      await ddl.query(
+        `INSERT INTO "${SCHEMA}"."system_settings" ("id", "singleton", "updatedAt")
+         VALUES (gen_random_uuid(), true, now()) ON CONFLICT ("singleton") DO NOTHING`,
+      );
+      await ddl.query('BEGIN');
+      await ddl.query(`SELECT 1 FROM "${SCHEMA}"."system_settings" FOR UPDATE`);
+      const racing = [first, second].map((to) => pay({ amount: 1, clientRequestId: key }, MANAGER, to));
+      for (const press of racing) press.catch(() => undefined);
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      await ddl.query('COMMIT');
+      const results = await Promise.allSettled(racing);
+
+      expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+      const refused = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+      expect(refused).toHaveLength(1);
+      expect(refused[0].reason).toMatchObject({ code: 'INSPECTOR_PAYOUT_REQUEST_REUSED' });
+      expect(await counts()).toEqual({ ...before, payouts: before.payouts + 1 });
+    });
   });
 
   // ───────────────────────────  once live  ───────────────────────────
@@ -260,6 +370,7 @@ describeIfDb('StaffService.recordInspectorPayout', () => {
 
     it('pays from the dollar safe: voucher, ledger entry and payout together, linked', async () => {
       const before = await balance(safeUsdId);
+      const owed = (await profile()).pendingBalance;
       const payout = await pay({ amount: 3, accountId: safeUsdId, note: 'عمولة أيلول', reference: 'وصل 8' });
 
       expect(payout.voucher).toMatchObject({ voided: false });
@@ -283,7 +394,7 @@ describeIfDb('StaffService.recordInspectorPayout', () => {
       expect(row.expenseVoucherId).toBe(firstVoucherId);
       expect(row.paidAt.getTime()).toBe(entries[0].occurredAt.getTime());
 
-      expect((await profile()).pendingBalance).toBe(EARNED - 5);
+      expect((await profile()).pendingBalance).toBe(owed - 3);
     });
 
     it('files the voucher under the category’s own name when no statement is given', async () => {
@@ -331,6 +442,26 @@ describeIfDb('StaffService.recordInspectorPayout', () => {
         vouchers: before.vouchers + 1,
         entries: before.entries + 1,
       });
+      // The key on the payout as on its voucher (0089): one lookup answers either path.
+      expect((await db.inspectorPayout.findUniqueOrThrow({ where: { id: first.id } })).clientRequestId).toBe(key);
+    });
+
+    /*
+      The treasury went live between a press that got no answer and its retry:
+      the dialog now names a wallet. The first press recorded the figure before
+      the books opened, and that is the answer — no voucher, no money out.
+    */
+    it('answers a press lost before go-live and retried after it with the figure it recorded, paying nothing', async () => {
+      const owed = (await profile()).pendingBalance;
+      const usd = await balance(safeUsdId);
+      const before = await counts();
+
+      const again = await pay({ amount: 1, accountId: safeUsdId, note: 'دفعة نقدية', clientRequestId: lostBeforeLive.key });
+
+      expect(again).toMatchObject({ id: lostBeforeLive.id, replayed: true, voucher: null });
+      expect(await counts()).toEqual(before);
+      expect(await balance(safeUsdId)).toBe(usd);
+      expect((await profile()).pendingBalance).toBe(owed);
     });
 
     it('binds a retry key to its act: another amount, wallet or statement under it is refused, not answered', async () => {
@@ -456,6 +587,23 @@ describeIfDb('StaffService.recordInspectorPayout', () => {
       expect(await counts()).toEqual(before);
     });
 
+    it('refuses an accountant his own commission whatever case his id is written in', async () => {
+      // The path's ParseUUIDPipe passes «3F2A…» on as typed; Postgres reads it as the same account.
+      const before = await counts();
+      await expect(
+        pay({ amount: 1, accountId: safeUsdId, clientRequestId: randomUUID() }, ACCOUNTANT, ACCOUNTANT.id.toUpperCase()),
+      ).rejects.toMatchObject({ code: 'COMMISSION_SELF_PAYOUT' });
+      // Both sides are compared in the one spelling, the caller's too.
+      await expect(
+        pay(
+          { amount: 1, accountId: safeUsdId, clientRequestId: randomUUID() },
+          { ...ACCOUNTANT, id: ACCOUNTANT.id.toUpperCase() },
+          ACCOUNTANT.id,
+        ),
+      ).rejects.toMatchObject({ code: 'COMMISSION_SELF_PAYOUT' });
+      expect(await counts()).toEqual(before);
+    });
+
     it('names no owed figure to the accountant, and judges the balance last, so no other refusal tells him it', async () => {
       const owed = (await profile()).pendingBalance;
       const before = await counts();
@@ -555,6 +703,43 @@ describeIfDb('StaffService.recordInspectorPayout', () => {
       expect((await profile()).pendingBalance).toBe(owed - half);
     });
 
+    /*
+      The same race with the inspector's id upper-cased in one of the two paths.
+      It names the same row to Postgres, but the advisory lock is keyed by the
+      string: two keys, two locks, and both payouts read the same balance owed.
+      Made certain rather than likely: an outside session holds the dollar safe's
+      row lock, so each payout gets as far as it can — past the balance it reads,
+      unless the inspector's lock stops it first — before either may commit.
+    */
+    it('lets only one of two simultaneous payouts spend the balance, whatever case the inspector’s id is written in', async () => {
+      const owed = (await profile()).pendingBalance;
+      const half = Math.floor(owed / 2) + 1; // two of these exceed what is owed; one does not
+      const before = await counts();
+
+      await ddl.query('BEGIN');
+      await ddl.query(`SELECT 1 FROM "${SCHEMA}"."treasury_accounts" WHERE "id" = $1 FOR UPDATE`, [safeUsdId]);
+      const racing = [
+        pay({ amount: half, accountId: safeUsdId, clientRequestId: randomUUID() }, MANAGER, inspectorId.toLowerCase()),
+        pay({ amount: half, accountId: safeUsdId, clientRequestId: randomUUID() }, MANAGER, inspectorId.toUpperCase()),
+      ];
+      for (const press of racing) press.catch(() => undefined);
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      await ddl.query('COMMIT');
+      const results = await Promise.allSettled(racing);
+
+      expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+      expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+      expect(await counts()).toEqual({
+        payouts: before.payouts + 1,
+        vouchers: before.vouchers + 1,
+        entries: before.entries + 1,
+      });
+      expect((await profile()).pendingBalance).toBe(owed - half);
+      // Stored in the one spelling the database returns.
+      const rows = await db.inspectorPayout.findMany({ where: { inspectorId } });
+      expect(rows.every((row) => row.inspectorId === inspectorId.toLowerCase())).toBe(true);
+    });
+
     it('stops counting a payout as paid once its voucher is cancelled, on the profile and the roster alike', async () => {
       const before = await profile();
       await scoped(() => expenses.void(firstVoucherId, 'دُفعت العمولة مرتين بالخطأ', MANAGER));
@@ -590,6 +775,121 @@ describeIfDb('StaffService.recordInspectorPayout', () => {
       });
       expect(await counts()).toEqual(before);
       expect(await balance(safeUsdId)).toBe(1);
+    });
+  });
+
+  // ─────────────────  a payout paid by a voucher is written once  ─────────────────
+
+  /*
+    Migration 0089. What an inspector is owed is read from the payout rows alone,
+    so a stray write on one is a payment made or unmade with no voucher moving:
+    repointed at a voided voucher, he read as owed the amount again while the
+    real voucher stayed paid; unlinked, a later void no longer gave it back
+    (review of 2026-10-11). The figure-only payouts recorded before go-live keep
+    the cascades their staff accounts need.
+  */
+  describe('a payout paid by a voucher is written once (migration 0089)', () => {
+    const MIGRATION_SQL = join(
+      __dirname,
+      '../../../infrastructure/prisma/tenant/migrations/0089_inspector_payout_key_and_written_once/migration.sql',
+    );
+    const PAYOUTS = `"${SCHEMA}"."inspector_payouts"`;
+
+    /** Runs a statement in a transaction that is always rolled back, so nothing a test does stays. */
+    const rolledBack = async (sql: string, params: unknown[]): Promise<void> => {
+      await ddl.query('BEGIN');
+      try {
+        await ddl.query(sql, params);
+      } finally {
+        await ddl.query('ROLLBACK');
+      }
+    };
+
+    let linked: string;
+    let unlinked: string;
+    let voidedVoucher: string;
+
+    beforeAll(async () => {
+      linked = (
+        await db.inspectorPayout.findFirstOrThrow({
+          where: { expenseVoucherId: { not: null }, expenseVoucher: { voidedAt: null } },
+          select: { id: true },
+        })
+      ).id;
+      unlinked = (await db.inspectorPayout.findFirstOrThrow({ where: { expenseVoucherId: null }, select: { id: true } })).id;
+      // A voided voucher no payout points at: the one a stray repoint would aim at.
+      const stray = await scoped(() =>
+        expenses.record(
+          { categoryId: miscId, accountId: safeLbpId, amount: 10_000, payee: 'مورّد', description: 'قرطاسية' },
+          MANAGER,
+        ),
+      );
+      await scoped(() => expenses.void(stray.id, 'سُجّلت بالخطأ', MANAGER));
+      voidedVoucher = stray.id;
+    });
+
+    it('is idempotent, and its function reads nothing but its row', async () => {
+      const sql = readFileSync(MIGRATION_SQL, 'utf8');
+      await ddl.query(`SET search_path TO "${SCHEMA}"`);
+      await ddl.query(sql);
+      await ddl.query(sql);
+      await ddl.query('RESET search_path');
+      const triggers = await ddl.query(
+        `SELECT tg.tgname FROM pg_trigger tg
+           JOIN pg_class c ON c.oid = tg.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = $1 AND c.relname = 'inspector_payouts' AND NOT tg.tgisinternal`,
+        [SCHEMA],
+      );
+      expect(triggers.rows.map((row: { tgname: string }) => row.tgname)).toEqual(['inspector_payouts_written_once']);
+      const fn = await ddl.query(
+        `SELECT p.proconfig FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+          WHERE n.nspname = $1 AND p.proname = 'reject_inspector_payout_rewrite'`,
+        [SCHEMA],
+      );
+      expect((fn.rows[0] as { proconfig: string[] }).proconfig).toEqual(['search_path=pg_catalog']);
+    });
+
+    it('refuses repointing, clearing or changing a payout paid by a voucher, and deleting it', async () => {
+      const writes: Array<[string, unknown[]]> = [
+        [`UPDATE ${PAYOUTS} SET "expenseVoucherId" = $2 WHERE "id" = $1`, [linked, voidedVoucher]],
+        [`UPDATE ${PAYOUTS} SET "expenseVoucherId" = NULL WHERE "id" = $1`, [linked]],
+        [`UPDATE ${PAYOUTS} SET "amount" = "amount" + 1 WHERE "id" = $1`, [linked]],
+        [`UPDATE ${PAYOUTS} SET "note" = 'تصحيح لاحق' WHERE "id" = $1`, [linked]],
+        [`DELETE FROM ${PAYOUTS} WHERE "id" = $1`, [linked]],
+      ];
+      for (const [sql, params] of writes) {
+        await expect(rolledBack(sql, params)).rejects.toThrow(/a payout paid by a voucher/);
+      }
+      // What it paid still counts: the row is as it was written.
+      expect(await db.inspectorPayout.findUniqueOrThrow({ where: { id: linked } })).toMatchObject({ id: linked });
+    });
+
+    it('refuses linking a voucher to a payout recorded without one', async () => {
+      await expect(
+        rolledBack(`UPDATE ${PAYOUTS} SET "expenseVoucherId" = $2 WHERE "id" = $1`, [unlinked, voidedVoucher]),
+      ).rejects.toThrow(/linked to its voucher when it is written, or never/);
+    });
+
+    it('leaves a payout recorded before go-live to the cascades of its staff accounts', async () => {
+      const inspector2 = randomUUID();
+      const recorder2 = randomUUID();
+      await db.user.createMany({
+        data: [
+          { id: inspector2, kind: 'STAFF', tenantSlug: 'payouts', email: `i2-${inspector2}@t.gov.lb`, firstName: 'سليم', lastName: 'الميداني', role: 'FIELD_INSPECTOR' },
+          { id: recorder2, kind: 'STAFF', tenantSlug: 'payouts', email: `r2-${recorder2}@t.gov.lb`, firstName: 'هالة', lastName: 'الإدارية', role: 'SUPER_ADMIN' },
+        ],
+      });
+      const payout = await db.inspectorPayout.create({
+        data: { inspectorId: inspector2, amount: 3, currency: 'USD', recordedById: recorder2 },
+        select: { id: true },
+      });
+
+      // The recorder's account goes: ON DELETE SET NULL updates the payout, and is let through.
+      await ddl.query(`DELETE FROM "${SCHEMA}"."users" WHERE "id" = $1`, [recorder2]);
+      expect((await db.inspectorPayout.findUniqueOrThrow({ where: { id: payout.id } })).recordedById).toBeNull();
+      // The inspector's account goes: ON DELETE CASCADE deletes his figure-only payout, and is let through.
+      await ddl.query(`DELETE FROM "${SCHEMA}"."users" WHERE "id" = $1`, [inspector2]);
+      expect(await db.inspectorPayout.findUnique({ where: { id: payout.id } })).toBeNull();
     });
   });
 });

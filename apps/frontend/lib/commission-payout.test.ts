@@ -3,7 +3,13 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { payoutAllowance } from '@mechanization/shared-schemas';
 import { ApiRequestError } from './api-client';
-import { commissionScope, payoutDialogView, payoutFieldErrors, payoutKeyAfterFailure } from './commission-payout';
+import {
+  commissionScope,
+  payoutDialogView,
+  payoutFieldErrors,
+  payoutKeyAfterFailure,
+  payoutRequest,
+} from './commission-payout';
 import { heldKey, spendKey } from './request-id';
 
 const refused = (status: number, code: string) => new ApiRequestError(status, { code, message: 'x' });
@@ -17,6 +23,41 @@ describe('commissionScope', () => {
     expect(heldKey('t1', commissionScope('inspector-1'))).toBe(hassan);
     spendKey('t1', commissionScope('inspector-1'));
     spendKey('t1', commissionScope('inspector-2'));
+  });
+});
+
+describe('payoutRequest', () => {
+  const press = {
+    amount: 200,
+    accountId: 'wallet-usd',
+    paidOn: '2026-10-09',
+    note: ' عمولة أيلول ',
+    reference: '',
+    clientRequestId: 'key-1',
+  };
+
+  it('sends a wallet and no date once live', () => {
+    expect(payoutRequest({ ...press, live: true })).toEqual({
+      amount: 200,
+      currency: 'USD',
+      accountId: 'wallet-usd',
+      note: 'عمولة أيلول',
+      reference: undefined,
+      clientRequestId: 'key-1',
+    });
+  });
+
+  /*
+    Review of 2026-10-11: before go-live the request carried no key, so a payout
+    whose answer was lost, pressed again, was recorded twice (owed 500 → 100 for
+    one $200 handover). The server answers a retry from the key since 0089.
+  */
+  it('carries the held key before go-live too, with the picked day and no wallet', () => {
+    const request = payoutRequest({ ...press, live: false });
+    expect(request).toMatchObject({ amount: 200, currency: 'USD', note: 'عمولة أيلول', clientRequestId: 'key-1' });
+    expect(request.accountId).toBeUndefined();
+    // Midday of the picked day, so no timezone moves it to the day before.
+    expect(request.paidAt).toBe(new Date('2026-10-09T12:00:00').toISOString());
   });
 });
 
@@ -128,6 +169,13 @@ describe('the payout dialog', () => {
     expect(source).toMatch(/clientRequestId:\s*heldKey\(tenant,\s*scope\)/);
     expect(source).toMatch(/const scope = commissionScope\(staff\.id\)/);
     expect(source).not.toMatch(/randomUUID|newRequestId/);
+    // One builder for both shapes, so the key cannot be left off the figure-only one again.
+    expect(source).toMatch(/payoutRequest\(\{/);
+  });
+
+  it('holds a lost press in doubt before go-live as after, so the figures it lowered do not refuse its retry', () => {
+    expect(source).toMatch(/heldInDoubt\(tenant,\s*scope\)/);
+    expect(source).not.toMatch(/live\s*&&\s*heldInDoubt/);
   });
 
   it('decides what a failure does to the key through payoutKeyAfterFailure, and marks a lost answer in doubt', () => {

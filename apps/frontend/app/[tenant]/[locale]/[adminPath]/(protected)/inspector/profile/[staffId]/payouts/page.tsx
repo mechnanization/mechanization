@@ -19,9 +19,11 @@ import { getInspectorProfile, getMyInspectorProfile } from '@/lib/api-client';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { formatDate, formatDateTime } from '@/lib/dates';
+import { readView } from '@/lib/read-view';
 import { hasRole } from '@/lib/staff-roles';
 import { cn } from '@/lib/utils';
 import { InspectorPayoutDialog } from '@/components/admin/inspector-payout-dialog';
+import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
 import { BackLink } from '@/components/ui/back-link';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -80,7 +82,7 @@ export default function InspectorPayoutHistoryPage({
   */
   const queryKey = ['staff', tenant, 'inspector-profile', staffId] as const;
 
-  const { data, loading, fetching, error, refetch } = useStaffQuery<InspectorProfileResponse>({
+  const { data: read, loading, fetching, error, refetch } = useStaffQuery<InspectorProfileResponse>({
     queryKey,
     queryFn: (tok, signal) => {
       // See `InspectorProfileDetail`: every role can read its own figures
@@ -95,6 +97,15 @@ export default function InspectorPayoutHistoryPage({
     token,
     errorMessage: isAr ? 'تعذّر تحميل سجل الدفعات' : 'Failed to load the payout history',
   });
+  /*
+    A failed re-read keeps the page, and the payout dialog mounted on it (STA-1).
+    After a payout with no answer the dialog re-reads this very key; when that
+    read failed too, the page swapped itself for ErrorState and unmounted the
+    dialog — the amount, the statement and the failure message — and reopened it
+    empty (review of 2026-10-11).
+  */
+  const view = readView(read, error);
+  const data = view.state === 'ready' ? view.data : undefined;
 
   /*
     Oldest first, with the balance carried down the column. The API returns
@@ -190,11 +201,11 @@ export default function InspectorPayoutHistoryPage({
         }
       />
 
-      {error || !data ? (
+      {view.state !== 'ready' || !data ? (
         <Card>
           <CardContent className="p-0">
             <ErrorState
-              description={error ?? (isAr ? 'الموظف غير موجود' : 'Staff member not found')}
+              description={view.state === 'failed' ? view.error : isAr ? 'الموظف غير موجود' : 'Staff member not found'}
               onRetry={() => refetch()}
               retryLabel={isAr ? 'إعادة المحاولة' : 'Retry'}
             />
@@ -202,6 +213,8 @@ export default function InspectorPayoutHistoryPage({
         </Card>
       ) : (
         <>
+          {view.refreshFailed ? <RefreshFailedAlert message={view.refreshFailed} onRetry={() => refetch()} /> : null}
+
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <Stat
               icon={TrendingUp}

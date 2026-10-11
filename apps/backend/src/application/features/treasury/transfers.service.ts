@@ -631,22 +631,6 @@ export class TransfersService {
     if (lateReplay) return lateReplay;
 
     /*
-      Checked for amount + fee together, under the lock, so the refusal names
-      what the source actually needs. The two posts below would each refuse
-      on their own, but the second would report the balance the first had
-      already reduced.
-    */
-    const needed = fee ? amount.plus(fee) : amount;
-    const held = await this.ledger.balanceOf(tx, from.id);
-    if (held.lessThan(needed)) {
-      throw new ConflictError({
-        code: 'TREASURY_INSUFFICIENT_FUNDS',
-        message: `Account ${from.id} holds ${held.toString()}, less than the ${needed.toString()} this transfer needs.`,
-        params: { account: from.name, available: held.toNumber(), required: needed.toNumber(), currency: from.currency },
-      });
-    }
-
-    /*
       The moment it is dated at, as every treasury document is: today keeps the
       clock, an earlier day sits at midday UTC, and nothing dated the go-live
       day sits before the opening entry (decision D5). A closed day is refused
@@ -658,6 +642,17 @@ export class TransfersService {
       now: new Date(),
       goLiveAt: config.goLiveAt,
     });
+
+    /*
+      Checked for amount + fee together, under the lock, so the refusal names
+      what the source actually needs. The two posts below would each refuse
+      on their own, but the second would report the balance the first had
+      already reduced. Judged as the ledger judges any outflow: the balance
+      now, and, for a transfer dated on an earlier day, the close of that day
+      and of every day since (`assertCanPay`) — not today's balance alone.
+    */
+    const needed = fee ? amount.plus(fee) : amount;
+    await this.ledger.assertCanPay(tx, from, needed, occurredAt);
     // «TR-2610-0001». See `allocateDocumentNumbers` and migration 0079.
     const transferNumber = await allocateDocumentNumber(tx, this.S, 'TRANSFER');
     const description = input.description.trim();

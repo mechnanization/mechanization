@@ -6,7 +6,7 @@ entry, an opening balance for a wallet added after go-live, and transfer write-o
 built, and every table, column, enum value and error code for them is a *proposal* until its
 migration exists (CLAUDE.md: never invent names; grep first). The built stages' names are
 real: they are in migrations `0073`, `0074`, `0078`, `0079`, `0080`, `0081`, `0082`, `0083`,
-`0084`, `0085`, `0086`, `0087` and `0088` and in the `treasury`, `expense`, `transfer`,
+`0084`, `0085`, `0086`, `0087`, `0088` and `0089` and in the `treasury`, `expense`, `transfer`,
 `income`, `treasury-closing`, `staff` and `payment-settlement` contracts and `exchange-policy`
 of `packages/shared-schemas`.
 Where the code was read, the file is cited. Where a claim could not be verified, it
@@ -138,9 +138,10 @@ wallet today.
 ### 2.6 Rules that shape every change (from CLAUDE.md and apps/backend/CLAUDE.md)
 
 - A migration ships **alone, additive, in its own `chore/migration-NNNN` PR**, merged
-  before the code that needs it. Latest on `develop` as of the last check is
-  `0070_staff_last_seen_at`; the next free number must be rechecked against every
-  open branch and PR before choosing.
+  before the code that needs it. `develop` ends at `0083_treasury_controls` (checked
+  2026-10-11); the live record of what is where, and of the next free number, is
+  [database.md, Numbering](database.md#numbering), rechecked against every open branch
+  and PR before choosing.
 - Tenancy is by Postgres schema. No `tenantId` column. Data access through
   `TenantContextService`; multi-step writes through `runInTenantTransaction`.
 - Every route authenticated and carries `@Roles(...)`. Bodies validated with a shared
@@ -176,6 +177,16 @@ wallet today.
    voucher, an expense voucher, a transfer, an opening balance, an adjustment).
 7. **No negative balances.** Any outflow checks the account's balance under a row
    lock inside the transaction and is refused if it would go below zero.
+   - **Nor any day's close** (review of 2026-10-11). An outflow dated on an earlier day — a
+     back-dated voucher, transfer or cash payment's change — lands on that day and on every
+     close after it, and a close is what is counted, closed and signed (§7). Judged by today's
+     balance alone, an expense dated three days back from a bank account opened and funded
+     today was accepted, and that day closed at −4,000,000 ل.ل, its count forced to a surplus
+     that never existed, on the signed register. It is now refused unless that day's close and
+     every close since cover it (`TREASURY_INSUFFICIENT_FUNDS_ON_DAY`, naming the first short day
+     and its close; `TreasuryLedgerService.assertCanPay`, for `post` and for a transfer's
+     amount + fee). Days, not instants: a back-dated document sits at a nominal midday, so money
+     that reached the wallet later the same day still covers it.
 8. **Locking order.** When two accounts are touched (transfer, exchange), lock them
    in ascending id order so simultaneous transfers cannot deadlock.
    - The order holds across callers, not only inside `post`. Inserting a voucher or a
@@ -197,10 +208,12 @@ wallet today.
    - Two presses carrying one key at the same moment are both answered from the
      winner's row, never with a server error.
    - The screens keep the key across every failure and every edit, and change it only
-     when the server confirms the key's act exists: a success, or
-     `TREASURY_REQUEST_KEY_REUSED`, `EXPENSE_ALREADY_VOID`, `INCOME_ALREADY_VOID`,
-     `TRANSFER_ALREADY_VOID`, `PAYMENT_IDEMPOTENCY_KEY_REUSED`
-     (`apps/frontend/lib/request-id.ts`). A refusal
+     when the server confirms the key's act exists: a success, or a refusal in `ACT_RECORDED`
+     (`apps/frontend/lib/request-id.ts`, the one list) — `TREASURY_REQUEST_KEY_REUSED`,
+     `EXPENSE_ALREADY_VOID`, `INCOME_ALREADY_VOID`, `TRANSFER_ALREADY_VOID`,
+     `TRANSACTION_ALREADY_REVERSED`, `PAYMENT_IDEMPOTENCY_KEY_REUSED`,
+     `BULK_SETTLE_REQUEST_REUSED` — and, in the commission payout dialog,
+     `INSPECTOR_PAYOUT_REQUEST_REUSED`. A refusal
      proves only that that attempt wrote nothing. Renewing on one recorded a payment
      twice after a lost answer followed by a 429; renewing on an edit did the same
      after a lost answer followed by a corrected typo.
@@ -293,7 +306,10 @@ from) are settled in the integration tests (see 12.2).
   in (the error message must say so clearly). **[Edge-case mechanics to be settled in
   the integration tests.]**
 - Reversing a post-go-live payment reverses exactly the entries it created, each
-  opposing entry carrying its original's rate.
+  opposing entry carrying its original's rate — except the bill of a cash settlement whose row
+  carried the set's notes and change (§3.7): it is refunded its own credit, in its currency, from
+  the safe (`planCreditRefund`, the pre-go-live refund's rule), since its notes paid every bill of
+  the set and its change, recycled, paid the older ones (review of 2026-10-11).
 - **A collector's payment reversed after he handed the cash in (decided 2026-10-09).**
   - Opposing the custody entry would be refused, because his custody no longer holds
     the money; the safe does. The refund could then never be made.
@@ -388,10 +404,19 @@ Decided with the owner on 2026-10-10: notes that do not cover every selected bil
   The settlement row keeps the notes as handed over and the change handed back; the rows' own change can
   be larger than the settlement's when step 3 recycles it — the net per wallet is the same.
 - **Retry.** `clientRequestId` is required and lives on the settlement, not on the rows (unique per row).
-  It is bound to its act (citizen, method, the set of bills): another set is `BULK_SETTLE_REQUEST_REUSED`;
-  a settlement one of whose bills was reversed since is `TRANSACTION_ALREADY_REVERSED`.
+  It is bound to its act (citizen, method, the set of bills): anything else is `BULK_SETTLE_REQUEST_REUSED`,
+  which names the settlement the key recorded (`params.number`, its «BRC-»). The dialog holds its key per
+  set, so from the screen that refusal means the same bills pressed again another way after a lost
+  answer: the earlier press was recorded, and the clerk is told which receipt it is (review of 2026-10-11;
+  it said the key had settled «other bills» and to reload). A settlement one of whose bills was reversed
+  since is `TRANSACTION_ALREADY_REVERSED`.
 - **Correcting.** A bill of a settlement is reversed on its own, through the ledger, like any receipt;
   the consolidated receipt then shows it struck through. The settlement row never changes (append-only).
+  The refund is the bill's own credit: a plain row's entries are opposed, as for any receipt, but the row
+  that carried the notes (step 3) is refunded its credit, in its currency, from the safe — its notes paid
+  the whole set and its change, recycled, paid the older bills, so opposing it took back money the citizen
+  never had ($20 out and 1,690,000 ل.ل of change in, for a 100,000 ل.ل bill whose citizen got 790,000;
+  review of 2026-10-11). The reversal's receipt and the safes now say the same thing.
 - **Who.** `BULK_SETTLE_ROLES` (manager and accountant) settle; `FEE_READ_ROLES` reprint
   (`GET fees/settlements/:id`). A collector still settles the same bills one at a time.
 - **The receipt** «وصل قبض بلدي مجمّع»: the BRC number, the citizen's name, father's name and phone —
@@ -683,6 +708,24 @@ a unique index.
   - before go-live a payout is a figure with no wallet, no voucher and so no order to wait for:
     it stays the manager's (`INSPECTOR_PAYOUT_BEFORE_LIVE_MANAGER_ONLY`), in dollars, dated no
     later than today (`INSPECTOR_PAYOUT_DATE_IN_FUTURE`), with the amount in its Tier 1 audit row.
+- **The payout row is the record of what was paid** (review of 2026-10-11). What an inspector is
+  owed is read from the payout rows alone, so a payout paid by a voucher is written once at the
+  database (`0089`): never changed, never deleted, linked to its voucher in the insert or never.
+  A mistake is corrected by voiding the voucher, which returns the amount to what is owed. The
+  amount is dollars and cents within the row's `DECIMAL(10,2)`, and the inspector's id is read in
+  one spelling before the self-payout check and the per-inspector lock, so an upper-cased id in the
+  path cannot pass either.
+- **A retried press records once, before go-live too** (review of 2026-10-11). The retry key
+  lives on the payout row (`inspector_payouts.clientRequestId`, `0089`), and once live on its
+  voucher as well. Before, a figure-only payout kept none: the dialog sent no key, the server
+  inserted every press, and a payout whose answer was lost, pressed again, was recorded twice —
+  the inspector read as owed less than he was, with no voucher to void. Now the dialog holds its
+  `commission:<staffId>` key on both paths and marks a lost press in doubt, and the server answers
+  a retry from the key under the inspector's lock, bound to the act (inspector, amount, recorder,
+  statement, and the wallet once live). A press lost before go-live and retried after it is
+  answered with the figure it recorded: no voucher, no money out. One key sent for two
+  inspectors at once meets on the unique index and is refused (`INSPECTOR_PAYOUT_REQUEST_REUSED`),
+  never answered with a server error.
 - **The accountant does not see what is owed.** The inspector's profile lists the citizens he
   registered and stays `SUPER_ADMIN` or the inspector himself. So the payout's refusal names no
   figure to the accountant, and once live the balance is judged last, inside the transaction, so
@@ -813,7 +856,10 @@ Built as 6.1 to 6.3 describe, with these decisions taken while building:
   keeps its own act. A stopped wallet is refused too.
 - **A transfer may be dated earlier**, with the expense rules: not in the future, not before
   go-live, a reason when earlier (`backdateReason`, not `adjustmentReason`, which is the rate's).
-  A closed day refuses it through the ledger, as everything else.
+  A closed day refuses it through the ledger, as everything else. The day must exist (`businessDay`,
+  as on every treasury contract; «2026-10-00» answered with a 500 until the review of 2026-10-11), and
+  amount + fee must be covered by the source's close on that day and every day since, not only by its
+  balance now (§3.1, rule 7).
 - **New wallets** (decided by the owner on 2026-10-10): the manager adds a bank account or a
   petty-cash fund, in the base or secondary currency. It opens at zero and is filled by a transfer;
   an opening balance for one that already holds money is not built.
@@ -881,6 +927,11 @@ One record per wallet per day:
 - **Difference** = counted − expected. **Any** difference (shortage عجز or surplus
   فائض) needs a written reason.
 - Who counted, when.
+- **Locked like a writer** (review of 2026-10-11). A count locks the wallets it records in id order
+  (`lockAccounts`), after the settings row and before it reads their books or writes a line — the
+  order every writer takes them in (§14). A count's line references its wallet, and the foreign key's
+  `FOR KEY SHARE`, taken line by line in the sheet's order, deadlocked against a transfer, an exchange
+  or a cash payment with a dollar note over two counted wallets.
 
 ### 7.2 A difference never changes the books automatically
 
@@ -1004,8 +1055,11 @@ close work; reopen the manager's), and reopening a closed day is in its manager-
 beside ordering, refusing, regularising, cancelling and activation. Until the PR #106 review
 the pin's filter missed that controller, and all six handlers were unpinned. A handler that
 moves treasury money from another controller is pinned by name
-(`MONEY_HANDLERS_ELSEWHERE`): today `StaffController.recordPayout`, at the work roles (D9),
-which the pin's filter missed until the PR #109 review.
+(`MONEY_HANDLERS_ELSEWHERE`): `StaffController.recordPayout`, at the work roles (D9), which the
+pin's filter missed until the PR #109 review, and the fee routes that post wallet entries once
+live — `FeesController.settle` (`FEE_ISSUE_ROLES`), `review` (`FEE_ADMIN_ROLES`), `reverseTransaction`
+(the manager) and the public, HMAC-checked `whishCallback` — which no pin held until the final-stack
+review (2026-10-11). The bulk settlement's two routes are pinned in their own block.
 `ADMINISTRATIVE_OFFICER` reads `custody/mine` too: the route is on every role but
 «مشاهد فقط», as the next paragraph says.
 
@@ -1109,8 +1163,9 @@ throwaway Postgres 17; the report says what ran, what failed and what was skippe
 wiring, error codes, audit), `docs/security.md` (endpoint checklist, gaps),
 `packages/shared-schemas/CLAUDE.md`, `PRODUCT.md` (new finance capability and
 roles), `docs/gotchas.md` for new traps, and this file moved into the routing table
-in `CLAUDE.md`. "Last verified" lines bumped. This file is **not** yet linked from
-the CLAUDE.md routing table or the AGENTS.md section map.
+in `CLAUDE.md`. "Last verified" lines bumped. Root `CLAUDE.md` links this file from its
+routing table («Money: wallets, …») and from the treasury row of «Keeping the docs true»;
+the AGENTS.md section map does not list it yet (checked 2026-10-11).
 
 ---
 
@@ -1209,6 +1264,45 @@ shortage write-off; a scheduled job (none planned).
 
 ## 14. Implementation status
 
+### Final-stack review (2026-10-11; `feat/treasury-day-closing@c88c971`, fixes not committed)
+
+An adversarial review of the whole stack — `develop` with PRs #106, #109, #111 and #112 merged and
+hardened. Every confirmed finding the stack itself introduced or made worse is fixed, each pinned by a
+test that fails with its fix undone (mutation-checked, the fix restored byte for byte):
+
+- **A past day closed below zero** (P1). An outflow dated on an earlier day was judged by the balance
+  now; an expense dated three days back from a bank opened today, or a back-dated transfer out of Whish,
+  left that day closing negative, and the signed register printed it. Now every close from the dated day
+  on must cover it (`assertCanPay`, `TREASURY_INSUFFICIENT_FUNDS_ON_DAY`; §3.1 rule 7;
+  `treasury-backdated-outflow.integration.spec.ts`).
+- **The count deadlocked with a two-wallet writer** (P3). It locked its wallets through its lines' foreign
+  keys, in the sheet's order; now `lockAccounts` in id order first (§7.1;
+  `daily-count-lock-order.integration.spec.ts`). The cross-feature section below said every writer kept
+  the lock order: the count did not.
+- **Reversing the bill that carried a settlement's notes** (P3) took back the notes and the recycled
+  change; now it refunds the bill's own credit (§3.7; `payment-settlement.integration.spec.ts`).
+- **An upper-cased inspector id** (P1) passed the per-inspector lock and `COMMISSION_SELF_PAYOUT`; now one
+  spelling (§5.6; `inspector-payout.integration.spec.ts`).
+- **A paid payout could be rewritten at the database** (P3); now `0089` (§5.6; the same spec).
+- **«صرف عمولة» before go-live kept no retry key** (P2): a lost answer pressed again recorded the
+  figure twice. Already on `develop`, but this stack rewrote the path, so it is fixed here: the key on
+  the payout row (`0089`), answered under the inspector's lock, and the dialog holding it on both paths
+  (§5.6; `inspector-payout.integration.spec.ts`, `lib/commission-payout.test.ts`).
+- **Contracts**: a transfer's dates are real days (`businessDay`, shared by every treasury contract;
+  `treasury-dates.spec.ts`); a payout's amount is two decimals within its column (`payout-policy.spec.ts`).
+- **Screens**: the bulk dialog no longer refuses, while a press is in doubt, the retry the key would answer
+  (`previewGate`); `BULK_SETTLE_REQUEST_REUSED` names the receipt the key recorded; a closed day in a
+  refusal reads 09/10/2026, not 2026-10-09; the payout dialog's host pages keep it mounted when a re-read
+  fails (`readView`). Pinned in `apps/frontend/lib/*.test.ts`.
+- **Pins and docs**: the fee routes that post wallet entries are pinned by name in
+  `route-inventory.spec.ts` (§9); `0085`'s note about its foreign key's lock is corrected in
+  docs/database.md (the file is not edited).
+
+Left as a recorded follow-up, already on `develop` and not changed by this stack: «تكليف مالي» (a
+one-off charge to a citizen) has no retry key ([security.md](security.md#known-gaps)); it needs a
+column of its own. So do the same path-id comparisons in the staff accounts' self-guards, also
+already on `develop` (security.md), and the unit-sequence lock key (code-quality.md).
+
 ### Review of PR #112, settling several bills at once (2026-10-10; branch `feat/fees-bulk-settlement-review`, not committed)
 
 Adversarial review of `9df68e4` against the controls of the PR #104 review. Each fix is pinned by a
@@ -1266,7 +1360,8 @@ then its wallets in one id-ordered `lockAccounts` before the first insert that r
 transfer with a fee, a handover and their cancellations lock both ends together), then its document
 number. Payments and reversals take the RECEIPT counter before their wallets; nothing takes a wallet
 and then the RECEIPT counter. Opening a wallet (`createAccount`) and stamping a transfer's review post
-no entry.
+no entry. (The count did not keep the order — its lines' foreign keys took the wallets in the sheet's
+order — which the final-stack review above found and fixed.)
 
 ### Review fixes (2026-10-09; branch `fix/pr104-review`, not committed)
 
@@ -1747,7 +1842,8 @@ The §5.6 link and the printing §4.5 and §5.8 left out, from the owner's brief
   ledger entry leaves the wallet under its lock, the amount owed is checked
   (`payoutAllowance`), the payout row points at the voucher, and two Tier 1 audit rows are
   written (`EXPENSE_RECORDED`, `INSPECTOR_PAYOUT_RECORDED`). The wallet must hold dollars.
-  Before go-live the old path, the manager's, with no wallet. Codes:
+  Before go-live the old path, the manager's, with no wallet; since `0089` it keeps the press's
+  retry key on the payout row, as the live path does (§5.6). Codes:
   `INSPECTOR_PAYOUT_WALLET_REQUIRED`, `INSPECTOR_PAYOUT_WALLET_NOT_USD`,
   `INSPECTOR_PAYOUT_DATE_NOT_ALLOWED`, `INSPECTOR_PAYOUT_REQUEST_REUSED` (a retry key that
   already paid someone else or wrote another voucher), and from the review and D9

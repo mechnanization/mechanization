@@ -1,6 +1,6 @@
 # Database
 
-Last verified against the code: `feat/treasury-day-closing@b5993af` (`develop` with the reviewed treasury, #107/#108; PR #106, stage 5: the daily count, the day closing and the closed-day lock; PR #109, inspector payouts and decision D9; PR #111, transfers, exchange and wallets with `0088`; each merged with its review fixes) merged with PR #112 `feat/fees-bulk-settlement-review@a3ce944` (0085 `payment_settlements` and `payment_transactions.settlementId`), then the cross-feature fixes: a bulk settlement refused on a closed day before it writes anything, and its wallets locked in id order (uncommitted), 2026-10-10.
+Last verified against the code: `feat/treasury-day-closing@c88c971` (`develop` with the reviewed treasury, #107/#108; PR #106, stage 5: the daily count, the day closing and the closed-day lock; PR #109, inspector payouts and decision D9; PR #111, transfers, exchange and wallets with `0088`; PR #112, bulk settlement with `0085`; each merged with its review fixes, and the cross-feature fixes) with the fixes of the final-stack review (uncommitted): `0089` (a paid commission payout written once, and the payout's retry key on its row), a back-dated outflow judged against every day's close, the count's wallet locks in id order, the migrator's lock note, 2026-10-11.
 
 The rules for anything that reads or writes a database: the schemas, how to
 query them, how to change them, and how data may move between environments.
@@ -44,7 +44,7 @@ every municipality ([security.md](security.md)).
 | Map | `parcels`, `zones` | `CadastreImportService`, `ZonesService` |
 | Building census | `buildings`, `building_code_aliases`, `units`, `unit_occupancies`, `unit_visits`, `unit_vacancy_confirmations`, `damage_assessments` | `BuildingsService`, `CensusSyncService`, `DamageService`, `ParcelCorrectionService`, `UnitCorrectionService` |
 | Cases | `cases` | `CasesService` |
-| Fees and money | `fee_notices`, `citizen_payments`, `payment_transactions` (`settlementId`, 0085: the settlement a row was taken in, NULL on a bill settled alone), `payment_settlements` (0085: one press that settled several of one citizen's bills — the «BRC-» number, the notes, the change, the retry key), `billing_run_entries`, `whish_checkouts`, `system_settings`, `inspector_payouts` (`expenseVoucherId`, 0086: the «PV-» voucher that paid it once the treasury is live, unique, NULL before; a payout whose voucher is voided is not counted as paid, a filter both readers apply) | `FeesService`, `PaymentLedgerService`, `PaymentSettlementService` (settlements; each bill through `PaymentLedgerService.recordIn`), `CorrectionBillsService`, `StaffService` (payouts; once live through `ExpensesService.recordCommission`) |
+| Fees and money | `fee_notices`, `citizen_payments`, `payment_transactions` (`settlementId`, 0085: the settlement a row was taken in, NULL on a bill settled alone), `payment_settlements` (0085: one press that settled several of one citizen's bills — the «BRC-» number, the notes, the change, the retry key), `billing_run_entries`, `whish_checkouts`, `system_settings`, `inspector_payouts` (`expenseVoucherId`, 0086: the «PV-» voucher that paid it once the treasury is live, unique, NULL before; a payout whose voucher is voided is not counted as paid, a filter both readers apply; a payout with a voucher is written once and never deleted, and the link is made at insert or never, 0089; `clientRequestId`, 0089: the dialog’s retry key, unique, on both paths, so a retried press is answered with its payout before go-live too) | `FeesService`, `PaymentLedgerService`, `PaymentSettlementService` (settlements; each bill through `PaymentLedgerService.recordIn`), `CorrectionBillsService`, `StaffService` (payouts; once live through `ExpensesService.recordCommission`) |
 | Review and quality | `record_reviews`, `quality_checks`, `data_quality_dismissals` | `RecordReviewService`, `DataQualityService` |
 | Audit | `audit_log_entries` | `AuditService`, `PrismaAuditRepository` |
 | Transfers (0078, 0084, 0088) | `treasury_transfers` (0084: `feeAmount` and `feeVoucherId`, the «PV-» voucher that books a fee, both set or both NULL; `moneyChangerName`, exchanges only; `backdateReason`; `requiresReview` and the review stamp `reviewedAt`/`reviewedById`/`reviewNote`, only on a flagged transfer, and in the write-once trigger's stamp list since 0088) and, on `system_settings`, `exchangeRateTolerancePercent` (default 3) and `largeExchangeThreshold` (default 1000) | `TransfersService` (the collector handover, internal transfers with their fee, exchanges, the review); `ExpensesService.recordTransferFee` writes the fee voucher |
@@ -60,8 +60,11 @@ Each schema also carries plpgsql functions created by migrations:
 `search_normalize`, `search_compact`, `sync_building_unit_counts`; since 0082
 `reject_closed_day_entry`, `reject_closed_day_count` and `reject_day_closure_delete` (each pinned
 to its schema); since 0083 `reject_treasury_document_mutation`; since 0085
-`reject_settlement_mutation`; and since 0087 `reject_day_closure_rewrite` (reads only its row,
-pinned to `pg_catalog`) and `reject_count_link_elsewhere` (pinned to its schema).
+`reject_settlement_mutation`; since 0087 `reject_day_closure_rewrite` (reads only its row,
+pinned to `pg_catalog`) and `reject_count_link_elsewhere` (pinned to its schema); since 0088
+`reject_transfer_review_rewrite` (keeps a transfer's review from being rewritten; reads only its row,
+pinned to `pg_catalog`); and since 0089 `reject_inspector_payout_rewrite` (reads only its row, pinned
+to `pg_catalog`).
 
 ### `users` holds staff AND citizens
 
@@ -231,6 +234,18 @@ chain, so it reports an officer who worked all morning as last seen at eight.
   - Neither message starts «treasury day … is closed», so `closedTreasuryDay` never reads them as
     the closed-day lock. A later migration that backfills a new column on `treasury_day_closures`
     disables the trigger around its `UPDATE`, as for the 0083 tables.
+- **A commission payout paid by a voucher is written once** (`0089_inspector_payout_key_and_written_once`). What an inspector is still
+  owed is read from the `inspector_payouts` rows alone, so `inspector_payouts_written_once`
+  (`reject_inspector_payout_rewrite()`) refuses any change to a payout whose `expenseVoucherId` is
+  set, and its `DELETE`: the money is corrected by voiding the voucher. A link is made in the insert
+  or never (setting `expenseVoucherId` on a payout without one is refused). A payout recorded before
+  go-live (no voucher) is left alone, so deleting a staff account still cascades to his figure-only
+  payouts (`inspectorId`) and clears `recordedById` (SET NULL), and the in-app restore can still
+  replace them; a linked payout never meets either cascade, because its voucher names the same two
+  accounts (RESTRICT). A later migration that backfills a new column on `inspector_payouts` disables
+  the trigger around its `UPDATE`. The same file adds `inspector_payouts.clientRequestId` (unique), the
+  press's retry key on the payout row: a figure-only payout had nowhere to keep one, and a lost answer
+  pressed again was recorded twice (`StaffService.recordInspectorPayout` answers a retry from it).
 - No trigger covers `TRUNCATE`. Using `TRUNCATE`, or
   `session_replication_role`, to get past them is circumventing a control. If a
   trigger stops you, stop and report it
@@ -504,6 +519,20 @@ Consequences you MUST design for:
   plus a non-transactional migrator mode, which does not exist. Today, use a
   plain index and justify the lock in the header by the table's size (see
   `0066`). **Undecided:** whether to add that mode.
+- **Every lock a file takes is held until that file commits.** A statement's lock
+  does not end with the statement: the migrator commits once per file. So once a
+  file has run `ALTER TABLE … ADD COLUMN` on a table, it holds `ACCESS EXCLUSIVE` on
+  that table to its last line, and every read and write of the table waits for the
+  whole file. Adding a foreign key `NOT VALID` and `VALIDATE`-ing it later in the
+  same file then gains nothing; only a `VALIDATE` in a later file of its own runs
+  under `SHARE UPDATE EXCLUSIVE` without blocking readers and writers. `0085`'s
+  header says the opposite («the check of existing rows … does not block the
+  counter»): probed on Postgres 17, the file held `AccessExclusiveLock` on
+  `payment_transactions` to its commit, and a second session's `SELECT` and
+  `INSERT` timed out behind it (review of 2026-10-11). It is harmless at today's
+  few thousand rows (sub-second), and the file is not edited (it may be applied);
+  a table large enough to matter needs the column in one file and the `VALIDATE` in
+  the next, or the size in the header to justify the lock, as for an index.
 - A new enum value cannot be used in the transaction that adds it. Put
   `ALTER TYPE … ADD VALUE IF NOT EXISTS` alone in one migration and use the
   value in a later one (`0062_status_conflict_case`, then
@@ -535,12 +564,19 @@ reads staging's history from `.env.staging` and nothing else, and
   review), `0087_treasury_day_closure_written_once` (PR #106's review),
   `0086_inspector_payout_voucher` (PR #109: an inspector's commission paid as a voucher),
   `0084_treasury_exchange_and_review` (PR #111: transfers' fees, exchange and review, the exchange
-  rule on `system_settings`) and `0088_treasury_transfer_review_stamp` (PR #111's review: the
-  review stamp in the write-once trigger).
+  rule on `system_settings`), `0088_treasury_transfer_review_stamp` (PR #111's review: the
+  review stamp in the write-once trigger) and `0089_inspector_payout_key_and_written_once` (the
+  final-stack review: the payout’s retry key on its row, and a paid commission payout written once).
   `0073`–`0081` and `0083` reached `develop` in their own migrations-only PR (#107,
-  `chore/migration-0073-0083`), merged before the code that reads them (#108). `0082`, `0087`
-  and `0086` are not on `develop` yet and follow the same path. `0082` needs `0073`, `0087`
-  needs `0082`, and `0086` needs `0074`, so none of them ships ahead of the finance set.
+  `chore/migration-0073-0083`), merged before the code that reads them (#108). Seven are not on
+  `develop` yet and follow the same path, in one migrations-only PR ahead of this branch's code:
+  `0082_treasury_day_closing`, `0084_treasury_exchange_and_review`, `0085_payment_settlements`,
+  `0086_inspector_payout_voucher`, `0087_treasury_day_closure_written_once`,
+  `0088_treasury_transfer_review_stamp` and `0089_inspector_payout_key_and_written_once`. Their needs:
+  `0082` needs `0073`; `0084` needs `0074` and `0078`; `0085` needs nothing newer than `0079` (the
+  `BULK_RECEIPT` book); `0086` needs `0074`; `0087` needs `0082`; `0088` needs `0083` (the trigger
+  function) and `0084` (the columns); `0089` needs `0086` (the link). None ships ahead of the
+  finance set.
   - The PRs for `0073`/`0074` (#94, #93) were closed unmerged on 2026-10-08, but the branches are
     still on `origin`, so those numbers stay reserved and are never reused.
   - `0078` is not `0075` because `chore/migration-0075-0077` took that number mid-flight: the
@@ -580,7 +616,11 @@ reads staging's history from `.env.staging` and nothing else, and
     edited; what its review found in the database is fixed forward by `0088`, which needs `0083`
     (the trigger function) and `0084` (the columns) and ships after both. `0088` has not been applied to staging or production;
     whether staging holds `0084` was not checked. `0088` was the next free number on 2026-10-10,
-    with `0085` reserved for PR #112, which has since been merged; the next free number is `0089`.
+    with `0085` reserved for PR #112, which has since been merged.
+  - `0089_inspector_payout_key_and_written_once` (the final-stack review, 2026-10-11) took the next free
+    number after a check of every branch, local and remote (`git ls-remote` matched every ref as last
+    fetched), and of every open PR (#106, #109–#116): none held an `0089` or later. It needs `0086` and
+    has not been applied to staging or production.
   - The treasury migration was itself first written as `0071` and renumbered when
     `0071_damage_habitable` and `0072_users_no_phone_rules` landed on `develop`.
   - A branch cut before a release is a branch whose numbers can be taken while you work:
@@ -594,10 +634,11 @@ reads staging's history from `.env.staging` and nothing else, and
   treasury run after `develop`'s `0083_treasury_controls`, in this order: `0082_treasury_day_closing`
   (PR #106), `0084_treasury_exchange_and_review` (PR #111), `0085_payment_settlements` (PR #112),
   `0086_inspector_payout_voucher` (PR #109, renumbered from its old `0083_inspector_payout_voucher`,
-  which collided with `develop`'s), `0087_treasury_day_closure_written_once` (PR #106 review) and
-  `0088_treasury_transfer_review_stamp` (PR #111 review). `0085` needs nothing newer than `0079`
-  (the `BULK_RECEIPT` book) and touches only `payment_transactions` and its own table. The next free
-  number is `0089`; list every unmerged branch again before you take it.
+  which collided with `develop`'s), `0087_treasury_day_closure_written_once` (PR #106 review),
+  `0088_treasury_transfer_review_stamp` (PR #111 review) and `0089_inspector_payout_key_and_written_once`
+  (the final-stack review, 2026-10-11). `0085` needs nothing newer than `0079` (the `BULK_RECEIPT`
+  book) and touches only `payment_transactions` and its own table. The next free number is `0090`;
+  list every unmerged branch again before you take it.
 - Before you pick a number, MUST list the migrations on every unmerged branch
   and open PR:
 
@@ -877,7 +918,11 @@ Rare: only `0001_init` exists.
     name a citizen.
   - `inspector_payouts` *is* exported, and since `0086` carries `expenseVoucherId`. A non-NULL
     link exists only once a voucher does, and such a tenant already cannot be restored, so the
-    column adds no new failure (the snapshot version is unchanged).
+    column adds no new failure (the snapshot version is unchanged). Nor does `0089`: its
+    `clientRequestId` is one more nullable column (an older snapshot reads as NULL), and its
+    trigger refuses deleting a linked payout only — the restore empties the table, and a tenant
+    with a linked payout already fails on its voucher's RESTRICT; figure-only payouts are deleted
+    as before.
   - The in-app restore is not reachable: `BackupController` is not registered
     (`presentation.module.ts`), and disaster recovery is the `pg_dump` path, which discovers
     schemas at run time and carries every table.

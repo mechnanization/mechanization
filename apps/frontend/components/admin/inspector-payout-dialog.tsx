@@ -22,9 +22,15 @@ import {
   recordInspectorPayout,
   type TreasuryAccountView,
 } from '@/lib/api-client';
-import { commissionScope, payoutDialogView, payoutFieldErrors, payoutKeyAfterFailure } from '@/lib/commission-payout';
+import {
+  commissionScope,
+  payoutDialogView,
+  payoutFieldErrors,
+  payoutKeyAfterFailure,
+  payoutRequest,
+} from '@/lib/commission-payout';
 import { currencyUnit, formatMoney, formatTypedAmount, parseAmount } from '@/lib/currency';
-import { heldInDoubt, heldKey, markInDoubt, outcomeInDoubt, spendKey } from '@/lib/request-id';
+import { heldInDoubt, heldKey, markInDoubt, spendKey } from '@/lib/request-id';
 import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
 import { TreasuryAmount } from '@/components/admin/finance/treasury-amount';
 import { Alert } from '@/components/ui/alert';
@@ -69,13 +75,15 @@ import { useToast } from '@/components/ui/toast';
  *
  * ## A second press never pays twice (STA-4)
  *
- * An in-flight ref, and once live a retry key the server honours, held per
+ * An in-flight ref, and a retry key the server honours on both paths, held per
  * inspector (`commission:<staffId>`) outside the dialog and following
  * `lib/request-id.ts`: kept across every failure, edit and close, spent on a
  * 2xx — after which the form takes no other press — or when the server says
  * the act exists (`payoutKeyAfterFailure`). It used to be a fresh id after
  * every failure, so a payout whose answer was lost was paid again on the next
- * press (reproduced: two vouchers, $400 out for one $200 handover).
+ * press (reproduced: two vouchers, $400 out for one $200 handover); and before
+ * go-live there was no key at all, so the same lost press recorded the figure
+ * twice (review of 2026-10-11). The request is `payoutRequest`.
  *
  * After a lost answer the figures are read again, and the checks that read
  * them — more than is owed, more than the wallet holds — stop refusing: the
@@ -254,10 +262,11 @@ function PayoutForm({
   const short = live && Boolean(account) && typed > 0 && remaining < 0;
   /**
    * A press under the held key got no answer, so the figures may already carry
-   * it: what is owed and the wallet's balance warn rather than refuse. Read on
-   * each render; every press that changes it also sets state.
+   * it: what is owed and the wallet's balance warn rather than refuse. Before
+   * go-live as after: a lost figure-only payout has lowered what is owed too.
+   * Read on each render; every press that changes it also sets state.
    */
-  const retrying = live && heldInDoubt(tenant, scope);
+  const retrying = heldInDoubt(tenant, scope);
 
   const setWorking = (next: boolean): void => {
     setBusy(next);
@@ -305,28 +314,16 @@ function PayoutForm({
       return;
     }
 
-    const payload: RecordInspectorPayoutInput = live
-      ? {
-          amount: typed,
-          currency: 'USD',
-          accountId,
-          note: note.trim() || undefined,
-          reference: reference.trim() || undefined,
-          clientRequestId: heldKey(tenant, scope),
-        }
-      : {
-          amount: typed,
-          currency: 'USD',
-          /*
-            Midday rather than midnight. The picker yields a date with no time,
-            and `new Date('2026-09-20')` is parsed as UTC midnight — which in a
-            timezone behind UTC is the 19th. A payout dated a day early is the
-            kind of discrepancy somebody reconciles against a paper slip later.
-          */
-          paidAt: new Date(`${paidOn}T12:00:00`).toISOString(),
-          note: note.trim() || undefined,
-          reference: reference.trim() || undefined,
-        };
+    // The held key on both paths: the server answers a retry from it before go-live too (0089).
+    const payload: RecordInspectorPayoutInput = payoutRequest({
+      live,
+      amount: typed,
+      accountId,
+      paidOn,
+      note,
+      reference,
+      clientRequestId: heldKey(tenant, scope),
+    });
 
     setErrors({});
     setFormError(null);
@@ -338,37 +335,32 @@ function PayoutForm({
     } catch (caught) {
       logApiError(caught);
       setFormError(failureText(caught));
-      if (live) {
-        const fate = payoutKeyAfterFailure(caught);
-        if (fate === 'spend') {
-          // That payout exists: the next press is a new one, and the figures on screen are behind it.
-          spendKey(tenant, scope);
-          void refresh();
-        } else if (fate === 'doubt') {
-          /*
-            It may have been paid. The key is kept, so a retry of the same
-            payout is answered from it rather than paid again; marked in doubt,
-            so figures the lost payout lowered do not refuse that retry; and
-            re-read, so what is owed and the balance are not the ones from
-            before. A re-read that fails leaves this form, under a note.
-          */
-          markInDoubt(tenant, scope);
-          void refresh();
-        }
-      } else if (outcomeInDoubt(caught)) {
-        // No key before go-live; the re-read is how the officer sees whether it was recorded.
+      const fate = payoutKeyAfterFailure(caught);
+      if (fate === 'spend') {
+        // That payout exists: the next press is a new one, and the figures on screen are behind it.
+        spendKey(tenant, scope);
+        void refresh();
+      } else if (fate === 'doubt') {
+        /*
+          It may have been recorded. The key is kept, so a retry of the same
+          payout is answered from it rather than recorded again; marked in
+          doubt, so figures the lost payout lowered do not refuse that retry;
+          and re-read, so what is owed and the balance are not the ones from
+          before. A re-read that fails leaves this form, under a note.
+        */
+        markInDoubt(tenant, scope);
         void refresh();
       }
-      // A failed attempt releases the button; a paid one never does.
+      // A failed attempt releases the button; a recorded one never does.
       inFlight.current = false;
       setWorking(false);
       return;
     }
 
-    // Paid: the key is spent and the form takes no other press, then the dialog closes.
+    // Recorded: the key is spent and the form takes no other press, then the dialog closes.
     setDone(true);
     setWorking(false);
-    if (live) spendKey(tenant, scope);
+    spendKey(tenant, scope);
     const voucher = payout.voucher;
     if (voucher) {
       await queryClient.invalidateQueries({ queryKey: ['treasury', tenant] });
@@ -388,6 +380,11 @@ function PayoutForm({
           action: printOrder,
         });
       }
+    } else if (payout.replayed) {
+      // An earlier press recorded it and its answer was lost: the figure it recorded, never the one typed now.
+      toast.warning(t('replayedLegacy', { amount: formatMoney(payout.amount, 'USD', locale), name: staff.name }), {
+        description: t('replayedLegacyBody'),
+      });
     } else {
       toast.success(t('successLegacy', { amount: formatMoney(typed, 'USD', locale), name: staff.name }));
     }
@@ -415,11 +412,12 @@ function PayoutForm({
 
       {/*
         After a lost answer the way out is the same press, unchanged: another
-        amount, wallet or statement would be refused as another act.
+        amount, wallet or statement would be refused as another act. Before
+        go-live there is no wallet or payment order to name.
       */}
       {retrying ? (
-        <Alert variant="warning" live="status" title={t('inDoubtTitle')}>
-          {t('inDoubtBody')}
+        <Alert variant="warning" live="status" title={live ? t('inDoubtTitle') : t('inDoubtLegacyTitle')}>
+          {live ? t('inDoubtBody') : t('inDoubtLegacyBody')}
         </Alert>
       ) : blocked ? (
         <Alert variant="warning" live="status">

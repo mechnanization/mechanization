@@ -441,15 +441,32 @@ describeIfDb('Bulk settlement', () => {
       expect(await snapshot()).toEqual(before);
     });
 
-    it('refuses a key that settled other bills', async () => {
+    it('refuses a key that settled other bills, naming the receipt it recorded', async () => {
       const a = await bill(10_000);
       const b = await bill(10_000);
       const key = randomUUID();
-      await settle({ clientRequestId: key, paymentIds: [a], method: 'CASH', tendered: { local: 10_000, foreign: 0, foreignCurrency: 'USD' } });
+      const first = await settle({ clientRequestId: key, paymentIds: [a], method: 'CASH', tendered: { local: 10_000, foreign: 0, foreignCurrency: 'USD' } });
       await expect(
         settle({ clientRequestId: key, paymentIds: [b], method: 'CASH', tendered: { local: 10_000, foreign: 0, foreignCurrency: 'USD' } }),
-      ).rejects.toMatchObject({ code: 'BULK_SETTLE_REQUEST_REUSED' });
+      ).rejects.toMatchObject({ code: 'BULK_SETTLE_REQUEST_REUSED', params: { number: first.number } });
       expect(await status(b)).toBe('UNPAID');
+    });
+
+    /*
+      The case the dialog can reach: its key is the set of bills, so a press with
+      no answer and a second press of the same bills by another method meet here.
+      The earlier press was recorded, and the clerk is told which receipt it is —
+      not that the key settled «other bills» (review of 2026-10-11).
+    */
+    it('names the earlier receipt when the same bills come back under the key by another method', async () => {
+      const a = await bill(12_000);
+      const key = randomUUID();
+      const first = await settle({ clientRequestId: key, paymentIds: [a], method: 'CASH', tendered: { local: 12_000, foreign: 0, foreignCurrency: 'USD' } });
+      const before = await snapshot();
+      await expect(
+        settle({ clientRequestId: key, paymentIds: [a], method: 'WHISH_MONEY', whishTransactionRef: 'WH-55501' }),
+      ).rejects.toMatchObject({ code: 'BULK_SETTLE_REQUEST_REUSED', params: { number: first.number } });
+      expect(await snapshot()).toEqual(before);
     });
 
     it('settles once when two identical presses arrive together', async () => {
@@ -616,6 +633,50 @@ describeIfDb('Bulk settlement', () => {
       expect(again.items.find((item) => item.paymentId === b)?.reversed).toBe(true);
       // A retry now would hand over a receipt the ledger has partly cancelled.
       await expect(settle(input)).rejects.toMatchObject({ code: 'TRANSACTION_ALREADY_REVERSED' });
+    });
+
+    /*
+      The bill that carried the set's notes (step 3 of `planBulkSettlement`): $20 at
+      89,500 for 900,000 + 100,000 ل.ل puts +$20 and −1,690,000 ل.ل of change on the
+      newer bill's row, though 790,000 was handed back — the recycled change paid the
+      older bill. Opposing that row on a reversal took the $20 out of the dollar safe
+      and put 1,690,000 into the ليرة safe, money the citizen never had, while the
+      reversal's receipt said 100,000 refunded (review of 2026-10-11). Refunded as
+      its own credit, the safes move by exactly that.
+    */
+    it('refunds the bill that carried the notes its own credit, not the notes and the recycled change', async () => {
+      const older = await bill(900_000);
+      const newer = await bill(100_000);
+      const receipt = await settle({
+        paymentIds: [older, newer],
+        method: 'CASH',
+        tendered: { local: 0, foreign: 20, foreignCurrency: 'USD' },
+      });
+      expect(receipt.tender?.changeGiven).toBe(790_000);
+      const pivot = await db.paymentTransaction.findFirstOrThrow({ where: { settlementId: receipt.id, paymentId: newer } });
+      expect(Number(pivot.changeGiven)).toBe(1_690_000);
+
+      const lbpBefore = await safe('LBP');
+      const usdBefore = await safe('USD');
+      const reversed = await scoped(() =>
+        payments.reverse({ transactionId: pivot.id, recordedById: accountantId, note: 'إلغاء الفاتورة', audit }),
+      );
+      expect(reversed.received).toBe(100_000);
+      expect(await safe('LBP')).toBe(lbpBefore - 100_000);
+      expect(await safe('USD')).toBe(usdBefore);
+      expect(await status(newer)).toBe('UNPAID');
+      expect(await status(older)).toBe('PAID');
+
+      // What the settlement and its reversal left in the safes is what changed hands: $20 in, 890,000 ل.ل out.
+      const net = await db.treasuryEntry.groupBy({
+        by: ['currency'],
+        where: { sourceId: { in: [pivot.id, reversed.transactionId, (await db.paymentTransaction.findFirstOrThrow({ where: { settlementId: receipt.id, paymentId: older } })).id] } },
+        _sum: { amount: true },
+      });
+      expect(Object.fromEntries(net.map((row) => [row.currency, Number(row._sum.amount)]))).toEqual({
+        LBP: 900_000 - 1_690_000 - 100_000,
+        USD: 20,
+      });
     });
 
     // ─────────────────────  beside the other treasury writers  ─────────────────────

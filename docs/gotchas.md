@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `feat/treasury-day-closing@b5993af` (`develop` with the reviewed treasury, #107/#108; PR #106, stage 5: the daily count, the day closing and the closed-day lock; PR #109, inspector payouts and decision D9; PR #111, transfers, exchange and wallets with `0088`; each merged with its review fixes) merged with PR #112 `feat/fees-bulk-settlement-review@a3ce944` (the payment ledger's own transaction, the doubled `0083`, a selection that is a retry key's scope), then the cross-feature fixes: a bulk settlement refused on a closed day before it writes anything, and its wallets locked in id order (uncommitted), 2026-10-10.
+Last verified against the code: `feat/treasury-day-closing@c88c971` (`develop` with the reviewed treasury, #107/#108; PR #106, stage 5: the daily count, the day closing and the closed-day lock; PR #109, inspector payouts and decision D9; PR #111, transfers, exchange and wallets with `0088`; PR #112, the payment ledger's own transaction and a selection that is a retry key's scope; each merged with its review fixes, and the cross-feature fixes) with the fixes of the final-stack review (uncommitted): a path id's case in a lock key and a self-check, the count's foreign-key locks, a back-dated outflow and the balance now, the four printed documents, 2026-10-11.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -392,9 +392,32 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   row. Upgrading it to `FOR UPDATE` waits for every other holder of the weak lock,
   and each waits for the other.
 - **Do this:** take the strong lock first, in id order, before writing anything that
-  references the row (`TreasuryLedgerService.lockAccounts`).
-- **Where:** `expenses.service.ts`, `transfers.service.ts`,
-  `treasury-ledger.service.ts` (`lockAccounts`, `refundDrafts`).
+  references the row (`TreasuryLedgerService.lockAccounts`). A row that is not money
+  references a wallet too: each line of a daily count (`treasury_counts`) checks its
+  foreign key, so a count written line by line in the sheet's order (type, currency,
+  name) held one wallet and waited for another that a transfer held — `40P01`. The count
+  now calls `lockAccounts` with every wallet it records before it reads their books (review
+  of 2026-10-11). Only a day's first count of a wallet is an INSERT; a recount keeps the key
+  and takes no lock, so a test must start from no count.
+- **Where:** `expenses.service.ts`, `transfers.service.ts`, `daily-count.service.ts`,
+  `treasury-ledger.service.ts` (`lockAccounts`, `refundDrafts`);
+  `daily-count-lock-order.integration.spec.ts`.
+
+### A balance read with no date is today's balance
+
+- **What happens:** an expense dated three days ago, from a bank account opened and funded
+  today, is accepted; the day it is dated on now closes below zero, its count can only be
+  recorded as a surplus that never existed, and the signed «تقرير الصندوق اليومي» prints the
+  negative close. A back-dated transfer, or a back-dated cash payment's change, does the same.
+- **Why:** `balanceOf` sums every entry of the wallet, whatever its date — the balance now.
+  An entry dated on an earlier day lands on that day's close and on every close after it,
+  which the balance now does not show.
+- **Do this:** judge any outflow through `TreasuryLedgerService.assertCanPay` (as `post` and a
+  transfer's amount + fee check do), which also checks every close from the dated day on.
+  Judge by the day's close, not the instant: a back-dated document sits at a nominal midday
+  UTC (`documentOccurredAt`).
+- **Where:** `treasury-ledger.service.ts` (`assertCanPay`, `firstShortClose`),
+  `transfers.service.ts`; `treasury-backdated-outflow.integration.spec.ts`.
 
 ### A table lock taken before the settings row deadlocks with activation
 
@@ -516,12 +539,27 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 ### Advisory-lock keys must match character for character
 
 - **What happens:** two writers that build the key differently take different
-  locks, and the building-suffix race returns.
+  locks, and the building-suffix race returns. The same happens inside one
+  writer when the key carries an id from the path: «صرف عمولة» for
+  `3F2A…` and for `3f2a…` took two locks, both read the same balance owed and
+  both paid it, and an accountant's own upper-cased id passed
+  `COMMISSION_SELF_PAYOUT` (review of 2026-10-11).
 - **Why:** the key is a string hashed by `hashtext`, built separately in each
-  service.
-- **Do this:** change both together, or extract one helper.
+  service. `ParseUUIDPipe` accepts any case and passes the id on as typed, while
+  Postgres reads every spelling as the same uuid — so a string comparison with
+  `actor.id` (always lower case, from the database) or a lock key built from it
+  sees two ids where the database sees one.
+- **Do this:** change both together, or extract one helper. Lower-case a path
+  id before it is compared or put in a key, as `StaffService.recordInspectorPayout`
+  does, or compare the id read back from the row.
 - **Where:** `BuildingsService.create`, `ParcelCorrectionService`
-  (`<schema>:building-suffix:<parcel>`).
+  (`<schema>:building-suffix:<parcel>`); `StaffService.recordInspectorPayout`
+  (`<schema>:inspector-payout:<inspectorId>`), pinned in
+  `inspector-payout.integration.spec.ts`. Still open, both already on `develop`:
+  `BuildingsService.addUnit` builds `<schema>:unit-sequence:<buildingId>` from
+  the path as typed ([code-quality.md](code-quality.md)), and the staff accounts'
+  self-guards compare `input.id === input.actor.id`
+  ([security.md](security.md#known-gaps)).
 
 ### A push to `main` migrates production before CI finishes
 
@@ -1178,8 +1216,8 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   `components/admin/finance/official-document.tsx`, which sets
   `color-scheme: light` and a white `html, body` in print. Check a new printed
   document with `page.pdf({ printBackground: true })` from a dark theme.
-- **Where:** `official-document.tsx`; the daily report, «أمر الصرف» and «سند
-  القبض» share it.
+- **Where:** `official-document.tsx`; the four printed documents share it — the
+  daily report, «أمر الصرف», «سند القبض» and «سند المناقلة» (`transfer-document.tsx`).
 
 ### A re-read that tidies a selection can orphan its retry key
 

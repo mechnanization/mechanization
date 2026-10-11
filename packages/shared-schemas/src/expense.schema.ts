@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { hasAtMostTwoDecimals } from './money-amount';
+import { positiveMoneyAmount } from './money-amount';
+import { businessDay } from './primitives';
 import { BUDGET_CODES_INCOMPLETE, budgetCodeSchema, budgetCodesComplete } from './treasury.schema';
 
 /**
@@ -66,25 +67,8 @@ export function isReservedExpenseCategory(key: ExpenseCategoryKey | null | undef
   return key != null && (RESERVED_EXPENSE_CATEGORY_KEYS as readonly string[]).includes(key);
 }
 
-/** A paid amount: greater than zero, at most two decimals, inside what the column holds. */
-const paidAmount = z
-  .number({ required_error: 'اكتب المبلغ', invalid_type_error: 'المبلغ رقم' })
-  .finite('المبلغ رقم')
-  .positive('المبلغ أكبر من صفر')
-  .max(999_999_999_999, 'المبلغ كبير جداً')
-  .refine(hasAtMostTwoDecimals, 'خانتان عشريتان على الأكثر');
-
-/** `YYYY-MM-DD` on the municipality's own calendar. */
-const businessDate = z
-  .string({ required_error: 'اختر التاريخ' })
-  .regex(/^\d{4}-\d{2}-\d{2}$/, 'تاريخ غير صالح')
-  // A day that exists: «2026-09-31» parses — as 1 October — so it must also come back
-  // unchanged. Without this it was stored on a day nobody typed, or reached Prisma as
-  // an Invalid Date and answered with a 500.
-  .refine((day) => {
-    const parsed = new Date(`${day}T00:00:00Z`);
-    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === day;
-  }, 'تاريخ غير صالح');
+/** A paid amount: greater than zero, at most two decimals, inside what `DECIMAL(14,2)` holds. */
+const paidAmount = positiveMoneyAmount(999_999_999_999);
 
 /**
  * «سجّل النفقة» — the whole act, in one request.
@@ -107,8 +91,8 @@ export const recordExpenseSchema = z.object({
     .trim()
     .min(3, 'اكتب سبب الصرف')
     .max(1000, 'الوصف طويل جداً'),
-  /** Defaults to the municipality's today when the screen leaves it out. */
-  paidOn: businessDate.optional(),
+  /** Defaults to the municipality's today when the screen leaves it out. A real calendar day (`businessDay`). */
+  paidOn: businessDay.optional(),
   /** Required by the server for any back-dated voucher. */
   adjustmentReason: z.string().trim().max(500, 'السبب طويل جداً').optional(),
   invoiceNumber: z.string().trim().max(100, 'الرقم طويل جداً').optional(),

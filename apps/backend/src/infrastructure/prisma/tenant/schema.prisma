@@ -2359,8 +2359,15 @@ model InspectorPayout {
   /// The «PV-» voucher that paid it, written in the same transaction (0086).
   /// NULL for a payout recorded while the treasury was not live. A payout whose
   /// voucher is voided no longer counts as paid; the readers filter on it.
+  /// Once set, the row is written once: no update, no delete (0089).
   expenseVoucherId String?         @unique @db.Uuid
   expenseVoucher   ExpenseVoucher? @relation(fields: [expenseVoucherId], references: [id], onDelete: Restrict)
+
+  /// The dialog's retry key (0089), on both paths: a press whose answer was
+  /// lost and is pressed again is answered with this row, never recorded twice.
+  /// NULL on a payout written before 0089 (a live one is found through its
+  /// voucher's key).
+  clientRequestId String? @unique @db.Uuid
 
   @@index([inspectorId, paidAt])
   @@map("inspector_payouts")

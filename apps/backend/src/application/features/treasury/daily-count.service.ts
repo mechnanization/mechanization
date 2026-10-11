@@ -149,6 +149,19 @@ export class DailyCountService {
         }
       }
 
+      /*
+        The wallets, strongest lock first, in id order, before their books are
+        read and before a count references them — the order every writer takes
+        them in (`TreasuryLedgerService.lockAccounts`). A count's insert checks
+        its foreign key to the wallet and takes `FOR KEY SHARE` on it; taken
+        line by line, in the order the sheet sends them (by type, currency and
+        name, not by id), a count held one wallet while a transfer, an exchange
+        or a cash payment with a dollar note held the other and waited for the
+        first: a deadlock (`40P01`), and a 500 for whichever lost (review of
+        2026-10-11). Held here, a writer waits for the count, and the books the
+        count is judged against cannot move under it.
+      */
+      await this.ledger.lockAccounts(tx, ids);
       const expected = await this.ledger.balancesBefore(tx, ids, dayEnd);
 
       // Judge every line before writing any of them.

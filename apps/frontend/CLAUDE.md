@@ -1,6 +1,6 @@
 # apps/frontend: agent guide
 
-Last verified against the code: `feat/treasury-day-closing@b5993af` (`develop` with the reviewed treasury, #107/#108; PR #106, stage 5: the daily count, the day closing and the closed-day lock; PR #109, inspector payouts and decision D9; PR #111, transfers, exchange and wallets with `0088`; each merged with its review fixes) merged with PR #112 `feat/fees-bulk-settlement-review@a3ce944` (bulk settlement, the held selection, `expectedDue`, the consolidated receipt, `renderReceiptPdf` options), then the cross-feature fixes: a bulk settlement refused on a closed day before it writes anything, and its wallets locked in id order (uncommitted), 2026-10-10.
+Last verified against the code: `feat/treasury-day-closing@c88c971` (`develop` with the reviewed treasury, #107/#108; PR #106, stage 5: the daily count, the day closing and the closed-day lock; PR #109, inspector payouts and decision D9; PR #111, transfers, exchange and wallets with `0088`; PR #112, bulk settlement, the held selection, `expectedDue`, the consolidated receipt; each merged with its review fixes, and the cross-feature fixes) with the fixes of the final-stack review (uncommitted): the bulk dialog's `previewGate`, a day in a refusal through `formatDay`, the payout dialog's hosts on `readView` and its key before go-live (`payoutRequest`), the key scopes and spending codes listed whole, 2026-10-11.
 
 Next.js 15 app router, React 18, next-intl 4, TanStack Query 5, Tailwind 3.4 with
 tailwind-merge 3, Radix and lucide-react. One app serves the staff dashboard and the
@@ -55,7 +55,8 @@ app/[tenant]/[locale]/layout.tsx        TenantLayout (server, force-dynamic) + e
       the close sends the counts its dialog listed, `closeRequest` in lib/daily-count.ts; a save
       clears only the boxes it carried, `draftsAfterSave`; a lost close answer re-reads that day)
     finance/daily/report (تقرير الصندوق اليومي — printed A4 landscape by its own print rules; `?date=`)
-    (the three printed documents share `components/admin/finance/official-document.tsx`: the
+    (the four printed documents — the daily report, «أمر الصرف», «سند القبض» and «سند المناقلة»
+     (`transfer-document.tsx`) — share `components/admin/finance/official-document.tsx`: the
      letterhead and crest from الإعدادات, the signature lines, `documentPrintCss`, `useAutoPrint`)
     my-round (جولتي — the collector's own pocket, phone-first, WORKING_STAFF_ROLES)
 
@@ -89,10 +90,14 @@ bills a lost press paid emptied the set, unmounted the dialog with its bar and o
 retry returns the consolidated receipt (review of PR #112). The dialog sends `expectedDue`, the sums it
 shows, and re-reads the list on `BULK_SETTLE_SOME_ALREADY_PAID`, `BULK_SETTLE_BILL_PENDING_REVIEW` and
 `BULK_SETTLE_DUE_CHANGED`. The dialog's live «الباقي للمواطن» is `planBulkSettlement` from the
-shared package, the function the server runs under lock; it refuses submit when the main cash safe
-in the base currency plus the ليرة handed in cannot cover the change (a warning only while the key
-is in doubt). The WhatsApp text is `lib/bulk-receipt-message.ts`, which never carries a رقم مرجعي
-(its test feeds one in); the button is `RECEIPT_SEND_ROLES`.
+shared package, the function the server runs under lock; it refuses submit when the plan refuses the
+notes or the main cash safe in the base currency plus the ليرة handed in cannot cover the change —
+each a warning only while the key is in doubt (`previewGate` in `lib/bulk-settle.ts`): an official
+rate moved or cleared after a lost press made the same notes «short», and refusing then blocked the
+retry the server answers from the key, in words that said nothing was recorded (review of 2026-10-11).
+`BULK_SETTLE_REQUEST_REUSED` names the «BRC-» the key recorded (`params.number`). The WhatsApp text is
+`lib/bulk-receipt-message.ts`, which never carries a رقم مرجعي (its test feeds one in); the button is
+`RECEIPT_SEND_ROLES`.
 
 All 69 `page.tsx` files are `'use client'` and read `params` with `use(params)` (counted 2026-10-10, after PR #106 added `finance/daily` and `finance/daily/report` and PR #112 `fees/settlements/[settlementId]`).
 `components/ui` is the kit (33 files, `alert.tsx` added 2026-10-06); `components/admin` holds staff screens (feature
@@ -148,9 +153,12 @@ component types.
     re-read fails, and `error` comes back beside it. Show `ErrorState` only when nothing has
     loaded (`error && !data`); with data on screen, keep it and show `RefreshFailedAlert`
     (`components/admin/refresh-failed-alert.tsx`) above it, with a retry. `readView(data, error)`
-    (`lib/read-view.ts`) makes that choice once; the day-closing pages use it. Replacing the page
-    unmounted whatever was open on it: a failed treasury re-read after an in-doubt handover
-    unmounted the custody panel and its key, and the retry recorded the handover twice. A relative label («آخر ظهور»)
+    (`lib/read-view.ts`) makes that choice once; the day-closing pages, the print pages and the
+    commission payout dialog's hosts (the payout history, the inspector's dashboard, the earnings
+    roster; `lib/payout-hosts.test.ts` reads every host) use it. Replacing the page unmounted
+    whatever was open on it: a failed treasury re-read after an in-doubt handover unmounted the
+    custody panel and its key, and the retry recorded the handover twice; a failed re-read of the
+    inspector's profile after an in-doubt payout unmounted the dialog with what was typed in it. A relative label («آخر ظهور»)
   needs the re-render as much as the data does, and the server's clock: the presence read
   carries `now`, and `useStaffPresence` judges «متصل الآن» against it, not the browser's clock.
 - **A poll is a background request.** Anything that re-reads on a timer MUST pass
@@ -162,10 +170,13 @@ component types.
   `components/admin/landlord-proposal-card.tsx`.
   - A write that moves money carries a `clientRequestId` held in `lib/request-id.ts`
     (`heldKey(tenant, scope)`, `spendKey`): module state, so the key outlives every unmount of
-    the form for the life of the tab. Scopes: `custody:<accountId>`, `expense:pay`,
+    the form for the life of the tab. Scopes — `KeyScope`, nine of them: `bulk-settle:<ids>` (the
+    selected bills' ids, sorted; `bulkKeyScope`), `commission:<staffId>` (one per inspector paid;
+    `commissionScope` in `lib/commission-payout.ts`; sent before go-live too, by `payoutRequest`,
+    since the payout row keeps it, `0089`), `custody:<accountId>`, `expense:pay`,
     `expense:request`, `income:new`, `salary:<staffId>` (one per person paid),
     `settle:<paymentId>` (the settle page and the citizen cash page settle the same bill and
-    share it). The key belongs to one act: it is minted when a screen first asks
+    share it), `transfer:new`. The key belongs to one act: it is minted when a screen first asks
     for it and kept across **every** failure (any 4xx, 401, 403, 408 and
     429 included, status 0, 5xx) and every edit, because a refusal proves only that this attempt
     wrote nothing, never that an earlier one with the key did not. The server binds a key to its
@@ -173,10 +184,12 @@ component types.
     account; an income voucher: wallet, amount, clerk, category, description, payer; a handover:
     custody wallet, amount, clerk; a counter payment: the bill), so an edit after a lost answer is refused with
     `TREASURY_REQUEST_KEY_REUSED` instead of recorded twice. The key is spent (`spendKey`) only
-    when the server confirms its act exists: a 2xx, or one of the refusals `keyIsSpent` names
-    (`TREASURY_REQUEST_KEY_REUSED`, `EXPENSE_ALREADY_VOID`, `INCOME_ALREADY_VOID`,
-    `TRANSFER_ALREADY_VOID`, `TRANSACTION_ALREADY_REVERSED`, `PAYMENT_IDEMPOTENCY_KEY_REUSED`),
-    after which the treasury queries are re-read. The expense, income and salary forms also
+    when the server confirms its act exists: a 2xx, or one of the refusals `keyIsSpent` names —
+    `ACT_RECORDED`, the one list: `TREASURY_REQUEST_KEY_REUSED`, `EXPENSE_ALREADY_VOID`,
+    `INCOME_ALREADY_VOID`, `TRANSFER_ALREADY_VOID`, `TRANSACTION_ALREADY_REVERSED`,
+    `PAYMENT_IDEMPOTENCY_KEY_REUSED`, `BULK_SETTLE_REQUEST_REUSED`; the commission payout dialog
+    also spends on `INSPECTOR_PAYOUT_REQUEST_REUSED` (`payoutKeyAfterFailure`) — after which the
+    treasury queries are re-read. The expense, income and salary forms also
     re-read them after a failure `outcomeInDoubt` names, keeping the key. A reversed earlier receipt is said as such on the settle and cash pages. No form
     renews a key in an effect on its fields. Regenerating it in a `catch` is how a dropped
     connection paid twice ([gotchas](../../docs/gotchas.md)).
@@ -243,7 +256,7 @@ component types.
 ## Copy and i18n (decision D-i18n)
 
 - New copy MUST go in next-intl messages, `messages/ar.json` and `messages/en.json`, with
-  the same keys in both (1,964 leaf keys each, counted 2026-10-10 after PR #106 was merged in). Read it with `useTranslations`.
+  the same keys in both (2,434 leaf keys each, counted 2026-10-11 on `feat/treasury-day-closing` with the final-stack review's fixes). Read it with `useTranslations`.
   `lib/messages-parity.test.ts` checks that both files hold the same keys, the same ICU
   placeholders and the same rich-text tags, and that no Arabic message outside `errors`
   writes a count as `#`: inside a plural branch write `{count}`, because `#` is formatted
@@ -266,7 +279,9 @@ component types.
   keyed by the code from `ERROR_CODES` (`packages/shared-schemas`). `ApiRequestError` builds its
   `message` through `localizeApiError` (`lib/api-errors.ts`) in the page's language, so a screen shows
   `error.message` and nothing else. The server's own text is shown only for a refusal with no code yet,
-  a code this build does not know, or params that do not fit.
+  a code this build does not know, or params that do not fit. A param that is a calendar day
+  (`YYYY-MM-DD`: a closed day, a go-live day) is written through `formatDay` first, so a refusal reads
+  09/10/2026 like the page around it (PRIM-12).
 - Branch on `error.kind` (`CONFLICT`, `VALIDATION_FAILED`, …) for the class and `error.code` for one
   case, never on the message. Offline is `status === 0`, never a string match. The older
   `details.code` / `details.reason` values (`STALE_PREVIEW`, `FIGURE_CHANGED`, `NOT_OPEN`, …) are still
@@ -408,8 +423,11 @@ are inlined at build time. The local `.env.local` block is in
 ## Tests
 
 Vitest (`apps/frontend/vitest.config.mts`): `environment: 'node'`, only `lib/**/*.test.ts`,
-with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 40 test files, 502 cases (counted
-2026-10-10, after PR #112 merged into `feat/treasury-day-closing`).
+with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 41 test files, 516 cases (counted
+2026-10-11, with the final-stack review's fixes on `feat/treasury-day-closing`). Five of them read
+components rather than render them: `print-pages.test.ts` and `payout-hosts.test.ts` read every
+print page and every payout-dialog host, `transfer-screens.test.ts` the transfer screens,
+`commission-payout.test.ts` the payout dialog and `bulk-settle.test.ts` the bulk dialog's gate.
 No component, accessibility or end-to-end tests exist (no jsdom, no Testing Library); a
 rendered check uses the uncommitted headless harness of UI §16.4. Untested, so add a test
 when you touch them: `lib/sentry-redaction.ts`, `lib/session.ts`, `lib/csv.ts` `csvCell`.
@@ -425,7 +443,7 @@ each copied.)
 
 - UI debt with counts and files, including the contrast failures:
   [docs/ui-ux-standards.md](../../docs/ui-ux-standards.md) §17.
-- Code debt (40 `.tsx` files over 600 lines, `lib/api-client.ts` at 5,885 lines, dead
+- Code debt (44 `.tsx` files over 600 lines, `lib/api-client.ts` at 6,701 lines, both counted 2026-10-11, dead
   modules, the tenant config fetched three times, UTC "today"): [docs/code-quality.md](../../docs/code-quality.md).
 - Traps (tailwind-merge 3 on Tailwind 3, the two default locales, missing providers on the
   citizen side, null token on first paint, `sw.js` `VERSION`, the CSP nonce, `[adminPath]` is not a control):

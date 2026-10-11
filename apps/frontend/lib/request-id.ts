@@ -106,7 +106,8 @@ export function heldInDoubt(tenant: string, scope: KeyScope): boolean {
  *   since;
  * - `PAYMENT_IDEMPOTENCY_KEY_REUSED`: recorded, against another invoice;
  * - `BULK_SETTLE_REQUEST_REUSED`: a settlement of several bills recorded,
- *   against another set of bills.
+ *   with other details — from the dialog, the same bills by another method
+ *   (its «BRC-» number in `params.number`).
  */
 const ACT_RECORDED = new Set<string>([
   'TREASURY_REQUEST_KEY_REUSED',

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { staffRoleSchema } from './enums';
+import { positiveMoneyAmount } from './money-amount';
 
 export const inspectorPropertyBreakdownSchema = z.object({
   houses: z.number().int().nonnegative(),
@@ -99,11 +100,18 @@ export type InspectorProfileResponse = z.infer<typeof inspectorProfileResponseSc
  * live (docs/finance.md §5.6). Before go-live a payout is a figure and nothing
  * else: no wallet, and `paidAt` may date it. Once live it is paid now, from
  * `accountId` — a dollar wallet — as a «PV-» voucher in «تعويضات المسح
- * والجباية», and `clientRequestId` keeps a retried press from paying twice.
- * The server refuses the wrong half for the state it is in.
+ * والجباية». The server refuses the wrong half for the state it is in. On
+ * both, `clientRequestId` keeps a retried press from recording twice.
  */
 export const recordInspectorPayoutSchema = z.object({
-  amount: z.number().positive('Amount must be greater than 0'),
+  /**
+   * Dollars and cents, no more than `inspector_payouts.amount` (DECIMAL(10,2))
+   * holds. A third decimal was rounded by the columns and kept whole in both
+   * Tier 1 rows, so the audit trail said 12.345 for 12.35 paid; 0.004 became a
+   * $0.00 payout, or a CHECK failure answered with a 500; 1e13 overflowed into
+   * another 500 (review of 2026-10-11).
+   */
+  amount: positiveMoneyAmount(99_999_999.99),
   /**
    * Dollars only: earnings are counted in dollars, and a payout in anything
    * else would be summed as dollars against them. Once live the wallet's
@@ -117,10 +125,13 @@ export const recordInspectorPayoutSchema = z.object({
   /** The paying wallet. Required once the treasury is live, refused before. */
   accountId: z.string().uuid('اختر الحساب الذي ستُدفع منه العمولة').optional(),
   /**
-   * With the treasury live, the voucher's retry key: one per payout, kept by
+   * The payout's retry key, before go-live and after: one per payout, kept by
    * the dialog across every failure until the server confirms the act
-   * (`lib/request-id.ts`). The server binds it to the act — inspector, amount,
-   * wallet, recorder, statement — and refuses another act under it.
+   * (`lib/request-id.ts`). The server keeps it on the payout row (0089), and
+   * once live on its voucher too, binds it to the act — inspector, amount,
+   * recorder, statement, and the wallet once live — and refuses another act
+   * under it. Before 0089 a figure-only payout kept none, and a lost answer
+   * pressed again was recorded twice (review of 2026-10-11).
    */
   clientRequestId: z.string().uuid().optional(),
 });

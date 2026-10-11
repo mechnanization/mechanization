@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { municipalToday } from './cash-policy';
+import { businessDay } from './primitives';
 import type { TreasuryAccountType, TreasuryEntrySource } from './treasury.schema';
 
 /**
@@ -25,17 +26,8 @@ export type TreasuryDayStatus = (typeof TREASURY_DAY_STATUSES)[number];
  */
 export const REOPEN_REASON_MIN = 10;
 
-/** A real calendar day as `YYYY-MM-DD` — «2026-02-30» is refused, not rolled into March. */
-function isCalendarDay(day: string): boolean {
-  const parsed = Date.parse(`${day}T00:00:00Z`);
-  return !Number.isNaN(parsed) && new Date(parsed).toISOString().slice(0, 10) === day;
-}
-
-/** `YYYY-MM-DD` on the municipality's own calendar. */
-const businessDate = z
-  .string({ required_error: 'اختر التاريخ' })
-  .regex(/^\d{4}-\d{2}-\d{2}$/, 'تاريخ غير صالح')
-  .refine(isCalendarDay, 'تاريخ غير صالح');
+/** `YYYY-MM-DD` on the municipality's own calendar: a real calendar day (`businessDay`). */
+const businessDate = businessDay;
 
 /**
  * A day that has begun. Evaluated per parse, never at module load: a value

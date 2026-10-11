@@ -168,7 +168,7 @@ export class PaymentLedgerService {
    * `record`, inside a transaction the caller already holds.
    *
    * For an act that settles several bills and must commit all of them or none
-   * (`FeesService.settleBulk`): the same lock, the same checks, the same
+   * (`PaymentSettlementService.settle`): the same lock, the same checks, the same
    * receipt number, wallet entries and Tier 1 audit row, written through the
    * caller's client. The caller owns the commit, and a refusal here rolls the
    * whole act back.

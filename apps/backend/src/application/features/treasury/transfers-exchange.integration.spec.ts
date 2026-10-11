@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Client } from 'pg';
-import { PrismaClient as TenantPrismaClient } from '../../../generated/tenant-client';
+import { PrismaClient as TenantPrismaClient, Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { migrateTenantSchema } from '../../../infrastructure/prisma/tenant-migrator';
 import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-client';
@@ -40,6 +40,7 @@ describeIfDb('TransfersService — transfers, fees and exchange', () => {
   let expenses: ExpensesService;
   let transfers: TransfersService;
   let treasury: TreasuryService;
+  let ledger: TreasuryLedgerService;
 
   let safeLbp: string;
   let safeUsd: string;
@@ -109,7 +110,7 @@ describeIfDb('TransfersService — transfers, fees and exchange', () => {
     db = tenantTestClient(TEST_DATABASE_URL!, SCHEMA);
     context = new TenantContextService();
     const audit = new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never);
-    const ledger = new TreasuryLedgerService(context);
+    ledger = new TreasuryLedgerService(context);
     expenses = new ExpensesService(context, ledger, audit);
     transfers = new TransfersService(context, ledger, audit, expenses);
     treasury = new TreasuryService(context, ledger, audit);
@@ -141,7 +142,9 @@ describeIfDb('TransfersService — transfers, fees and exchange', () => {
     /*
       Live since five days ago, so a back-dated transfer is possible, and the
       official rate the exchanges are judged against. The opening entries keep
-      today's date; nothing reads them against the go-live day.
+      today's date, so on the days before today the wallets held nothing: a
+      back-dated outflow reads every close from its day on, and the «dates»
+      block gives the wallet it pays from money on those days first.
     */
     await db.systemSettings.updateMany({
       data: {
@@ -447,6 +450,27 @@ describeIfDb('TransfersService — transfers, fees and exchange', () => {
 
   describe('dates', () => {
     const daysAgo = (n: number): string => municipalToday(new Date(Date.now() - n * 86_400_000));
+
+    /*
+      The opening balances were counted today (the fixture activates now and
+      then moves go-live back five days), so on the days these transfers are
+      dated the Whish dollar wallet held nothing — and a back-dated outflow is
+      judged by the close of its day and of every day since, not by today's
+      balance alone (docs/finance.md §3.1, rule 7; review of 2026-10-11). The
+      dollars it pays out here reached it four days ago.
+    */
+    beforeAll(async () => {
+      await scoped(() =>
+        db.$transaction((tx) =>
+          ledger.post(tx, [{ accountId: whishUsd, currency: 'USD', amount: new Prisma.Decimal(50) }], {
+            source: 'ADJUSTMENT',
+            sourceId: null,
+            actorId: MANAGER.id,
+            occurredAt: new Date(Date.now() - 4 * 86_400_000),
+          }),
+        ),
+      );
+    });
 
     it('books a back-dated transfer with its reason, fee voucher on the same day', async () => {
       const result = await move({ amount: 7, feeAmount: 1, transferredOn: daysAgo(1), backdateReason: 'سُحب أمس ولم يُسجَّل' });

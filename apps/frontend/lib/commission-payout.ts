@@ -1,4 +1,4 @@
-import type { PayoutAllowance } from '@mechanization/shared-schemas';
+import type { PayoutAllowance, RecordInspectorPayoutInput } from '@mechanization/shared-schemas';
 import { ApiRequestError } from './api-client';
 import { keyIsSpent, outcomeInDoubt, type KeyScope } from './request-id';
 
@@ -6,15 +6,56 @@ import { keyIsSpent, outcomeInDoubt, type KeyScope } from './request-id';
  * «صرف عمولة» — what the payout dialog decides, kept out of the component so
  * each rule can be tested on its own (`components/admin/inspector-payout-dialog.tsx`).
  *
- * The dialog moves money once the treasury is live, so it follows the rule
- * every money form here follows (STA-4, `lib/request-id.ts`): one retry key per
- * payout, held outside the dialog, kept across every failure, edit and close,
- * and spent only when the server confirms the act.
+ * A payout moves money once the treasury is live, and before go-live it lowers
+ * what the inspector is owed; either way a second record of one handover is a
+ * wrong figure. So the dialog follows the rule every money form here follows
+ * (STA-4, `lib/request-id.ts`) on both paths: one retry key per payout, held
+ * outside the dialog, kept across every failure, edit and close, and spent
+ * only when the server confirms the act.
  */
 
 /** One payout per inspector: paying another inspector is another act, under another key. */
 export function commissionScope(staffId: string): KeyScope {
   return `commission:${staffId}`;
+}
+
+/**
+ * The request a press sends, in the shape the treasury's state asks for: once
+ * live a wallet and no date (the voucher is dated today), before go-live a date
+ * and no wallet. Both carry the key held for this inspector. Before go-live it
+ * used to carry none, and the server deduped nothing, so a payout whose answer
+ * was lost, pressed again, was recorded twice — the inspector read as owed less
+ * than he was, with no voucher to void (review of 2026-10-11). The server now
+ * keeps the key on the payout row (0089) and answers the retry from it.
+ */
+export function payoutRequest(input: {
+  live: boolean;
+  amount: number;
+  accountId: string;
+  /** The picked day, `YYYY-MM-DD`; read before go-live only. */
+  paidOn: string;
+  note: string;
+  reference: string;
+  clientRequestId: string;
+}): RecordInspectorPayoutInput {
+  const common = {
+    amount: input.amount,
+    currency: 'USD' as const,
+    note: input.note.trim() || undefined,
+    reference: input.reference.trim() || undefined,
+    clientRequestId: input.clientRequestId,
+  };
+  if (input.live) return { ...common, accountId: input.accountId };
+  return {
+    ...common,
+    /*
+      Midday rather than midnight. The picker yields a date with no time, and
+      `new Date('2026-09-20')` is parsed as UTC midnight — which in a timezone
+      behind UTC is the 19th. A payout dated a day early is the kind of
+      discrepancy somebody reconciles against a paper slip later.
+    */
+    paidAt: new Date(`${input.paidOn}T12:00:00`).toISOString(),
+  };
 }
 
 /**

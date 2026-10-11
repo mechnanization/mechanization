@@ -1,5 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import type { PaymentMethod, TreasuryEntrySource } from '@mechanization/shared-schemas';
+import {
+  MUNICIPAL_TIME_ZONE,
+  municipalDayStart,
+  municipalToday,
+  type PaymentMethod,
+  type TreasuryEntrySource,
+} from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { closedTreasuryDay } from '../../../infrastructure/prisma/check-violation';
@@ -9,7 +15,7 @@ import { closedDayFor } from './day-closing.plan';
 import {
   creditsWallets,
   planPaymentLegs,
-  planPreGoLiveRefund,
+  planCreditRefund,
   type PaymentMovement,
   type WalletLeg,
   type WalletTarget,
@@ -65,10 +71,12 @@ export interface TreasuryConfig {
  *
  * ## The three guarantees
  *
- * 1. **No wallet goes below zero.** A CHECK cannot see the sum of other rows,
- *    so the account rows are locked (`FOR UPDATE`, in id order, so two
- *    simultaneous postings over the same pair of wallets cannot deadlock) and
- *    the balance is read behind the lock.
+ * 1. **No wallet goes below zero**, now or at the close of any day. A CHECK
+ *    cannot see the sum of other rows, so the account rows are locked (`FOR
+ *    UPDATE`, in id order, so two simultaneous postings over the same pair of
+ *    wallets cannot deadlock) and the balance is read behind the lock — and,
+ *    for a movement dated on an earlier day, every close from that day on
+ *    (`assertCanPay`).
  * 2. **Entries are never edited.** The database refuses UPDATE and DELETE; a
  *    correction is an opposing entry (`reversalOfId`).
  * 3. **A closed day takes nothing** (docs/finance.md §7.3). Every entry is
@@ -267,11 +275,119 @@ export class TreasuryLedgerService {
   }
 
   /**
+   * Refuses taking `amount` out of a wallet at `occurredAt` when the wallet
+   * cannot cover it — now, or at the close of the day the movement is dated on
+   * or of any day since. Read behind the wallet's lock (`lockAccounts`); `post`
+   * asks it of every outflow, and a caller that judges one before posting
+   * (a transfer, for amount + fee) asks it too, so both answer alike.
+   *
+   * The balance now is the whole test for a movement dated today: its day has
+   * not closed, and nothing is dated after now. It is not the test for one
+   * dated on an earlier day. That entry lands on the earlier day and on every
+   * close after it, and a day's close is what is counted, closed and signed
+   * (docs/finance.md §7); the balance now says nothing about them. An expense
+   * dated three days ago from a bank account opened and funded today passed on
+   * today's balance, and that day then closed at −4,000,000 ل.ل, its count
+   * forced to a surplus that never existed, on the signed register (review of
+   * 2026-10-11). Days, not instants: a back-dated document's hour is nominal
+   * (midday UTC, `documentOccurredAt`), so money that reached the wallet later
+   * that same day still covers it.
+   *
+   * Two refusals, so each names a figure the clerk can find:
+   * `TREASURY_INSUFFICIENT_FUNDS` with the balance now, as always, and
+   * `TREASURY_INSUFFICIENT_FUNDS_ON_DAY` with the first day whose close falls
+   * short, and that close. A movement dated on a closed day is refused as such
+   * (`CLOSED_DAY_MUTATION_BLOCKED`) before its day's closes are judged: nothing
+   * is recorded there whatever the wallet held, so a shortfall on it is not
+   * the answer to give.
+   */
+  async assertCanPay(
+    tx: Prisma.TransactionClient,
+    account: { id: string; name: string; currency: string },
+    amount: Prisma.Decimal,
+    occurredAt: Date,
+  ): Promise<void> {
+    const balance = await this.balanceOf(tx, account.id);
+    if (balance.lessThan(amount)) {
+      throw new ConflictError({
+        code: 'TREASURY_INSUFFICIENT_FUNDS',
+        message: `Account ${account.id} does not hold enough: ${balance.toString()} available, ${amount.toString()} needed.`,
+        params: {
+          account: account.name,
+          available: balance.toNumber(),
+          required: amount.toNumber(),
+          currency: account.currency,
+        },
+      });
+    }
+    if (municipalToday(occurredAt) < municipalToday()) await this.assertDayOpen(tx, occurredAt);
+    const short = await this.firstShortClose(tx, account.id, occurredAt, amount);
+    if (short) {
+      throw new ConflictError({
+        code: 'TREASURY_INSUFFICIENT_FUNDS_ON_DAY',
+        message: `Account ${account.id} closed ${short.day} on ${short.close.toString()}, less than the ${amount.toString()} a movement dated ${municipalToday(occurredAt)} takes out.`,
+        params: {
+          account: account.name,
+          date: short.day,
+          available: short.close.toNumber(),
+          required: amount.toNumber(),
+          currency: account.currency,
+        },
+      });
+    }
+  }
+
+  /**
+   * The first municipal day, from the one `occurredAt` falls on, whose close is
+   * less than `amount` — with that close — or null when every close covers it.
+   * A day with no entry closes where the day before it did, so only the dated
+   * day and the days with entries are read; the last of them is today, whose
+   * close so far is the balance now. Nothing to read for a movement dated today.
+   *
+   * Grouped by the Beirut day the 0082 trigger judges an entry by
+   * (`occurredAt AT TIME ZONE`, a `timestamptz`), from that day's Beirut midnight.
+   */
+  async firstShortClose(
+    tx: Prisma.TransactionClient,
+    accountId: string,
+    occurredAt: Date,
+    amount: Prisma.Decimal,
+  ): Promise<{ day: string; close: Prisma.Decimal } | null> {
+    const dated = municipalToday(occurredAt);
+    if (dated >= municipalToday()) return null;
+
+    const start = municipalDayStart(dated);
+    const before = await tx.treasuryEntry.aggregate({
+      where: { accountId, occurredAt: { lt: start } },
+      _sum: { amount: true },
+    });
+    const days = await tx.$queryRaw<Array<{ day: string; total: Prisma.Decimal }>>`
+      SELECT to_char("occurredAt" AT TIME ZONE ${MUNICIPAL_TIME_ZONE}::text, 'YYYY-MM-DD') AS day,
+             SUM("amount") AS total
+        FROM ${this.S}treasury_entries
+       WHERE "accountId" = ${accountId}::uuid
+         AND "occurredAt" >= ${start.toISOString()}::timestamptz
+       GROUP BY 1
+       ORDER BY 1
+    `;
+
+    let close = before._sum.amount ?? new Prisma.Decimal(0);
+    // The dated day itself, when nothing else moved on it: it closes on the balance it opened with.
+    if (days[0]?.day !== dated && close.lessThan(amount)) return { day: dated, close };
+    for (const row of days) {
+      close = close.plus(row.total);
+      if (close.lessThan(amount)) return { day: row.day, close };
+    }
+    return null;
+  }
+
+  /**
    * Posts the entries of one act, atomically with the caller's transaction.
    *
    * Refuses the whole act, writing nothing, when any wallet would end below
-   * zero. Several entries on one wallet are netted before the check: a $20
-   * note in and $5 of change out is a net +$15, and judged as such.
+   * zero — now, or at the close of any day from the one the act is dated on
+   * (`assertCanPay`). Several entries on one wallet are netted before the
+   * check: a $20 note in and $5 of change out is a net +$15, and judged as such.
    */
   async post(
     tx: Prisma.TransactionClient,
@@ -300,21 +416,7 @@ export class TreasuryLedgerService {
         });
       }
       const change = net.get(id)!;
-      if (change.isNegative()) {
-        const balance = await this.balanceOf(tx, id);
-        if (balance.plus(change).isNegative()) {
-          throw new ConflictError({
-            code: 'TREASURY_INSUFFICIENT_FUNDS',
-            message: `Account ${id} does not hold enough: ${balance.toString()} available, ${change.abs().toString()} needed.`,
-            params: {
-              account: account.name,
-              available: balance.toNumber(),
-              required: change.abs().toNumber(),
-              currency: account.currency,
-            },
-          });
-        }
-      }
+      if (change.isNegative()) await this.assertCanPay(tx, account, change.abs(), context.occurredAt);
     }
 
     for (const draft of drafts) {
@@ -434,10 +536,17 @@ export class TreasuryLedgerService {
   /**
    * Takes the wallet entries of a reversed payment back out.
    *
-   * - The original left entries: each is opposed exactly, to the same wallet.
+   * - The original left entries: each is opposed exactly, to the same wallet —
+   *   the notes it took in go back, and the change it handed out comes back.
+   * - Except the bill of a cash settlement that carried the set's notes and
+   *   change (the pivot, docs/finance.md §3.7): those paid every bill of the set,
+   *   and its change, recycled, paid the older ones, so the citizen never held
+   *   what opposing them would take back. That bill is refunded its own credit,
+   *   in its currency, from the safe (`planCreditRefund`), as its reversal
+   *   receipt says.
    * - It left none because it was taken before go-live: cash still leaves the
    *   drawer today, so a refund entry is written from the wallet of the
-   *   original method (`planPreGoLiveRefund`).
+   *   original method (`planCreditRefund`).
    * - The treasury is not active: nothing to do.
    *
    * In every case the wallet balance is checked first: a refund the drawer
@@ -465,7 +574,37 @@ export class TreasuryLedgerService {
       orderBy: { id: 'asc' },
     });
 
+    const original = await tx.paymentTransaction.findUnique({
+      where: { id: input.originalTransactionId },
+      select: { occurredAt: true, settlementId: true, tenderedLocal: true },
+    });
+
     if (originals.length > 0) {
+      /*
+        A settlement's rows are plain sums of their bills, except the one that
+        carried the notes (`planBulkSettlement`, the only row of a set with a
+        tender): $20 for a 900,000 and a 100,000 ل.ل bill is +$20 and −1,690,000
+        ل.ل on the newer bill's row, for 790,000 handed back. Opposed, its
+        reversal took the $20 back and put 1,690,000 into the safe — money the
+        citizen never had — while its receipt said 100,000 refunded, and the
+        older bill was left paid in ليرة that never came in.
+      */
+      if (original?.settlementId && original.tenderedLocal !== null) {
+        const refund = planCreditRefund({
+          method: input.method,
+          invoiceCurrency: input.invoiceCurrency,
+          amount: input.amount,
+        });
+        await this.post(tx, await this.draftsFor(tx, refund), {
+          source: 'CITIZEN_PAYMENT',
+          sourceId: input.reversalTransactionId,
+          actorId: input.actorId,
+          occurredAt: input.occurredAt,
+          exchangeRate: config.exchangeRate,
+          note: 'استرداد فاتورة من تسديد مجمّع: تُردّ قيمتها بعملتها من الصندوق',
+        });
+        return;
+      }
       const { drafts, fromSafe } = await this.refundDrafts(tx, originals);
       await this.post(tx, drafts, {
         source: 'CITIZEN_PAYMENT',
@@ -478,13 +617,9 @@ export class TreasuryLedgerService {
       return;
     }
 
-    const original = await tx.paymentTransaction.findUnique({
-      where: { id: input.originalTransactionId },
-      select: { occurredAt: true },
-    });
     if (!original || original.occurredAt.getTime() >= config.goLiveAt.getTime()) return;
 
-    const legs = planPreGoLiveRefund({
+    const legs = planCreditRefund({
       method: input.method,
       invoiceCurrency: input.invoiceCurrency,
       amount: input.amount,

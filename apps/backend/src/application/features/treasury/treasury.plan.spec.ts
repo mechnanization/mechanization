@@ -2,7 +2,7 @@ import {
   creditsWallets,
   documentOccurredAt,
   planPaymentLegs,
-  planPreGoLiveRefund,
+  planCreditRefund,
   roundMoney,
 } from './treasury.plan';
 
@@ -189,21 +189,21 @@ describe('planPaymentLegs', () => {
   });
 });
 
-describe('planPreGoLiveRefund', () => {
+describe('planCreditRefund', () => {
   it('takes a cash refund out of the safe of the invoice currency', () => {
-    expect(planPreGoLiveRefund({ method: 'CASH', invoiceCurrency: 'LBP', amount: 100_000 })).toEqual([
+    expect(planCreditRefund({ method: 'CASH', invoiceCurrency: 'LBP', amount: 100_000 })).toEqual([
       { target: safe('LBP'), amount: -100_000 },
     ]);
   });
 
   it('takes a Whish refund out of the Whish account', () => {
-    expect(planPreGoLiveRefund({ method: 'WHISH_MONEY', invoiceCurrency: 'USD', amount: 40 })).toEqual([
+    expect(planCreditRefund({ method: 'WHISH_MONEY', invoiceCurrency: 'USD', amount: 40 })).toEqual([
       { target: whish('USD'), amount: -40 },
     ]);
   });
 
   it("takes a collector payment's refund out of the safe: his cash was handed in before the count", () => {
-    expect(planPreGoLiveRefund({ method: 'COLLECTOR', invoiceCurrency: 'LBP', amount: 50_000 })).toEqual([
+    expect(planCreditRefund({ method: 'COLLECTOR', invoiceCurrency: 'LBP', amount: 50_000 })).toEqual([
       { target: safe('LBP'), amount: -50_000 },
     ]);
   });

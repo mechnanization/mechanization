@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `feat/treasury-day-closing@b5993af` (`develop` with the reviewed treasury, #107/#108; PR #106, stage 5: the daily count, the day closing and the closed-day lock; PR #109, inspector payouts and decision D9; PR #111, transfers, exchange and wallets with `0088`; each merged with its review fixes) merged with PR #112 `feat/fees-bulk-settlement-review@a3ce944` (settling several bills at once, `PaymentLedgerService.recordIn`, `live-collector.ts`), then the cross-feature fixes: a bulk settlement refused on a closed day before it writes anything, and its wallets locked in id order (uncommitted), 2026-10-10.
+Last verified against the code: `feat/treasury-day-closing@c88c971` (`develop` with the reviewed treasury, #107/#108; PR #106, stage 5: the daily count, the day closing and the closed-day lock; PR #109, inspector payouts and decision D9; PR #111, transfers, exchange and wallets with `0088`; PR #112, settling several bills at once, `PaymentLedgerService.recordIn`, `live-collector.ts`; each merged with its review fixes, and the cross-feature fixes) with the fixes of the final-stack review (uncommitted): `assertCanPay`, the count's `lockAccounts`, a settlement pivot's refund, the commission payout's canonical id and its retry key on both paths (`payoutByKey`), `0089`, the fee money routes pinned, 2026-10-11.
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -75,13 +75,18 @@ Data access for new code (decided):
   `@Roles` is absent (gap in [docs/security.md](../../docs/security.md#known-gaps)). Until that is fixed, a
   self-service route without `@Roles` MUST check `user.kind` and scope every query by `user.sub`. A
   handler's `@Roles` replaces the class's.
-- **Role lists.** `@Roles(...)` takes a set from `role-sets.ts` in `@mechanization/shared-schemas`
+- **Role lists.** `@Roles(...)` takes a named set from `@mechanization/shared-schemas` — `role-sets.ts`
   (`EVERY_STAFF_ROLE`, `WORKING_STAFF_ROLES`, `REGISTER_WRITE_ROLES`, `CENSUS_WORKLIST_ROLES`,
-  `FEE_ISSUE_ROLES`, `REGISTER_EXPORT_ROLES` and the rest), never a literal list: the frontend's
+  `FEE_ISSUE_ROLES`, `REGISTER_EXPORT_ROLES` and the rest), except the treasury's `TREASURY_*_ROLES`
+  (`treasury.schema.ts`) and `FINANCE_OVERRIDE_ROLES` (`cash-policy.ts`), which `role-sets.ts` points
+  to — never a literal list: the frontend's
   `lib/staff-roles.ts` reads the same sets, so a route and its button move together. A new audience is a
   new named set there. `route-inventory.spec.ts` checks every controller on disk: `@Roles` on every
   non-public route (or a reviewed entry in its `SELF_SERVICE` list), «مشاهد فقط» on no write and no
-  side-effecting GET, and no route that deletes a citizen.
+  side-effecting GET, and no route that deletes a citizen. It also pins, route by route, every treasury
+  handler and every handler elsewhere that moves treasury money (`MONEY_HANDLERS_ELSEWHERE`: the
+  commission payout, and the fee routes that post wallet entries — `settle`, `review`,
+  `reverseTransaction`, `whishCallback`; the bulk settlement's two in their own block).
 - **Staff sessions.** Rotating refresh tokens in an httpOnly cookie (`StaffRefreshTokenService`,
   `presentation/http/staff-refresh-cookie.ts`), checked by family in `JwtAuthGuard`; expired rows are
   pruned by `StaffRefreshTokenCleanupJob`. Rules: [docs/security.md](../../docs/security.md#tokens-passwords-and-totp).
@@ -197,7 +202,15 @@ Data access for new code (decided):
     today keeps the clock, an earlier day sits at midday UTC, and nothing dated the go-live day
     sits before the opening entry. So the go-live day is live whatever the hour of activation
     (decision D5).
-  - An outflow locks the wallet rows (id order) and is refused below zero.
+  - An outflow locks the wallet rows (id order) and is refused below zero — now, and, when it is
+    dated on an earlier day, at the close of that day and of every day since
+    (`TreasuryLedgerService.assertCanPay`: `TREASURY_INSUFFICIENT_FUNDS` with the balance now,
+    `TREASURY_INSUFFICIENT_FUNDS_ON_DAY` with the first short day and its close). `post` asks it of
+    every outflow; a caller that judges one before posting (a transfer's amount + fee) asks it too.
+    A day's close, not an instant: a back-dated document sits at a nominal midday, so money that
+    reached the wallet later that day still covers it. Today's balance alone let a back-dated
+    expense from a bank opened today, or a back-dated transfer, close a past day below zero on the
+    signed register (review of 2026-10-11).
   - **Lock before you reference.** A caller that inserts a row with a foreign key to
     `treasury_accounts` (a voucher, a transfer) first calls `lockAccounts` with every wallet it will
     touch. Otherwise the foreign-key check's `FOR KEY SHARE` and `post`'s `FOR UPDATE` deadlock
@@ -282,17 +295,27 @@ Data access for new code (decided):
       inferred from `payeeStaffId`; `mayUseReservedCategory` is `recordCommission`'s alone, so
       `record`, `requestPayment` and `orderRequest` refuse `FIELD_COMMISSIONS`
       (`EXPENSE_CATEGORY_RESERVED`; `RESERVED_EXPENSE_CATEGORY_KEYS` in shared-schemas).
+    - The inspector's id (and the actor's) is read in one spelling, lower case, before anything
+      compares or locks with it: `ParseUUIDPipe` passes an upper-cased UUID on as typed, Postgres
+      reads it as the same row, but the self-check and the lock key are strings, and «3F2A…» was
+      another inspector to both (two payouts spent one balance; an accountant paid himself; review
+      of 2026-10-11).
     - Before the transaction, an accountant's own commission is refused (`COMMISSION_SELF_PAYOUT`,
       the D8 rule). Then one transaction under `pg_advisory_xact_lock` on
       `<schema>:inspector-payout:<inspectorId>` (the balance owed is read and then paid, so two
-      payouts must queue). A retried key is replayed by `replayPayout`, which binds it to the act
-      (inspector, amount, wallet, recorder, statement: `TREASURY_REQUEST_KEY_REUSED` otherwise),
-      refuses one whose voucher was voided (`EXPENSE_ALREADY_VOID`), and answers
+      payouts must queue). A retried key, on either path, is found by `payoutByKey` — on the payout
+      row (`inspector_payouts.clientRequestId`, `0089`), or on its voucher for a live payout written
+      before it — and replayed by `replayPayout`, which binds it to the act (inspector, amount,
+      recorder, statement, and the wallet when a voucher paid it: `TREASURY_REQUEST_KEY_REUSED`
+      otherwise), refuses one whose voucher was voided (`EXPENSE_ALREADY_VOID`), and answers
       `INSPECTOR_PAYOUT_REQUEST_REUSED` for a key that paid another inspector or wrote another
-      voucher.
+      voucher. One key sent for two inspectors at once takes two locks and meets on the unique
+      index; the loser is answered from the winner's row (`isUniqueViolationOn`), never with a 500.
+      Before `0089` a figure-only payout kept no key, and a lost answer pressed again was recorded
+      twice (review of 2026-10-11).
     - It then reads `ledger.config` (FOR SHARE, before any wallet is named) and forks on
       `goLiveAt`. Before go-live: the manager's alone (`INSPECTOR_PAYOUT_BEFORE_LIVE_MANAGER_ONLY`),
-      a wallet-less row dated no later than today (`INSPECTOR_PAYOUT_DATE_IN_FUTURE`) and a Tier 1
+      a wallet-less row with the press's key, dated no later than today (`INSPECTOR_PAYOUT_DATE_IN_FUTURE`), and a Tier 1
       `INSPECTOR_PAYOUT_RECORDED` row with the amount. Once live: a voucher from a dollar wallet,
       the payout linked to it (`inspector_payouts.expenseVoucherId`, `0086`) and the same Tier 1
       row, saying whether the order came with it.
@@ -302,7 +325,8 @@ Data access for new code (decided):
       `payoutRefusal` names the figure only to a caller `getInspectorProfile` would admit
       (`showOwed`).
     - A payout whose voucher is voided stops counting as paid, in `getInspectorProfile` and in
-      `UserRepository.listStaff` alike.
+      `UserRepository.listStaff` alike. A payout with a voucher is written once at the database
+      (`0089`): no update, no delete, and the link is made in the insert or never.
 - **Income.** `IncomeService` and `IncomeController` (`t/:tenantSlug/treasury/income`), with the
   date rules and the register's period bounds in `income.plan.ts`.
   - The expense module run the other way: one transaction writes the «سند قبض», posts the
@@ -337,7 +361,8 @@ Data access for new code (decided):
   `planTransferDate` (the expense rules, renamed) and `documentOccurredAt` (D5), both wallets locked
   through `TreasuryLedgerService.lockAccounts` in ascending id order *before* anything references
   them — the fee and the move are two inserts and two posts, and amount + fee is judged under that
-  lock — then the fee voucher (`ExpensesService.recordTransferFee`, `TRANSFER_FEES`), the
+  lock, by `assertCanPay` (every close since a back-dated day included) — then the fee voucher
+  (`ExpensesService.recordTransferFee`, `TRANSFER_FEES`), the
   document, its two legs and a Tier 1 `TRANSFER_RECORDED` or `EXCHANGE_RECORDED`.
   - The retry key is bound to its act (`replayTransfer`: both wallets, amount, received amount,
     fee, statement, clerk). Anything else under it is `TREASURY_REQUEST_KEY_REUSED` — a handover's
@@ -396,7 +421,12 @@ Data access for new code (decided):
   `TreasuryClosingController` (`t/:tenantSlug/treasury`: `counts`, `closures`, `closures/reopen`,
   `reports/daily`). Read `TREASURY_READ_ROLES`, count and close `TREASURY_WORK_ROLES`, reopen
   `TREASURY_ADMIN_ROLES`. Only a day that has ended closes; days with movement on a counted wallet close
-  in order, and the quiet days between are swept closed with the next close. Counting, closing and
+  in order, and the quiet days between are swept closed with the next close. A count locks the wallets
+  it records (`lockAccounts`, id order) after the settings row and before it reads their books or
+  writes a line: its insert's foreign key takes `FOR KEY SHARE` on each wallet, and taken line by line
+  in the sheet's order (type, currency, name) it deadlocked against a transfer, an exchange or a cash
+  payment with a dollar note over two of them (review of 2026-10-11;
+  `daily-count-lock-order.integration.spec.ts`). Counting, closing and
   reopening serialise on `TreasuryLedgerService.lockDayBook` (`<schema>:treasury-day-book`), and a close
   also takes `SHARE` on `treasury_entries` so nothing lands in the day while it is judged. It reads
   `ledger.config` (the settings row, `FOR SHARE`) before that `LOCK TABLE` and refuses a book not live
@@ -449,8 +479,17 @@ Data access for new code (decided):
     the replay and before the bill locks.
   - The retry key is required and lives on the settlement (`payment_transactions.clientRequestId` is
     unique per row). A replay is bound to citizen, method and the set of bills
-    (`BULK_SETTLE_REQUEST_REUSED`); one of whose bills was reversed since is `TRANSACTION_ALREADY_REVERSED`;
+    (`BULK_SETTLE_REQUEST_REUSED`, with the settlement's «BRC-» number in `params.number`: from the
+    dialog it means the same bills pressed again another way after a lost answer, so the clerk is told
+    which receipt exists); one of whose bills was reversed since is `TRANSACTION_ALREADY_REVERSED`;
     a unique violation on the key is answered as a replay (`retry-key.ts`).
+  - Reversing a bill of a settlement (`PaymentLedgerService.reverse`) opposes its entries, as for any
+    receipt, except the one row of a cash settlement that carried the set's notes and change (the
+    pivot, the only row with a tender): its notes paid every bill and its change, recycled, paid the
+    older ones, so it is refunded its own credit, in its currency, from the safe
+    (`TreasuryLedgerService.reversePayment`, `planCreditRefund`). Opposed, it took the $20 back and put
+    1,690,000 ل.ل of change the citizen never had into the safe for a 100,000 ل.ل bill (review of
+    2026-10-11).
   - Audit: each bill's own `PAYMENT_CONFIRMED` row (with `settlementNumber`), plus one
     `PAYMENT_BULK_SETTLED` row for the set, filed under `PaymentSettlement`. Ids and figures, no names.
   - The receipt names the citizen with father's name and phone and never carries a رقم مرجعي;
@@ -544,8 +583,10 @@ Every state change MUST leave an `audit_log_entries` row, in one of two tiers
 ([docs/security.md](../../docs/security.md#data-integrity-and-transactions)):
 
 1. **Tier 1, inside the transaction.** Payments (declarations, confirmations, refusals, counter and Whish
-   settlements, and a settlement of several bills: one row per bill and one for the set), payment reversals, activating the treasury, recording and cancelling an expense,
-   recording and cancelling an income voucher, receiving a collector's custody and cancelling a transfer,
+   settlements, and a settlement of several bills: one row per bill and one for the set), payment reversals, activating the treasury, opening a wallet, recording and cancelling an expense
+   and every step of its payment order, paying an inspector's commission, recording and cancelling an
+   income voucher, adding or editing an expense or income category, receiving a collector's custody,
+   recording a transfer or an exchange, clearing an exchange's review and cancelling a transfer,
    counting the treasury, closing (and sweeping) and reopening a day, corrections, ownership changes (ending an ownership, making, updating
    or ending an owner link, a merge or its undo), ending a tenancy, review decisions (approving or returning
    a record, completing a quality check) and citizen status changes (archive and restore; a citizen file
@@ -632,7 +673,7 @@ points at does not exist. `src/scripts/reset-2fa.ts` has no script entry and MUS
 
 ## Tests
 
-- Jest with ts-jest (`jest.config.js`: `rootDir` `src`, `*.spec.ts` beside the source): 145 spec files, 41 of them `*.integration.spec.ts` (counted on disk 2026-10-10, after PR #112 merged into `feat/treasury-day-closing`).
+- Jest with ts-jest (`jest.config.js`: `rootDir` `src`, `*.spec.ts` beside the source): 148 spec files, 43 of them `*.integration.spec.ts` (counted on disk 2026-10-11, with the final-stack review's fixes on `feat/treasury-day-closing`).
 - Integration specs run only when `TEST_DATABASE_URL` is set (`describeIfDb`) and skip silently otherwise.
   They `DROP SCHEMA … CASCADE` and rebuild fixed `tenant_*_spec` schemas on whatever database it names,
   and nothing checks the target. Point it ONLY at a throwaway Postgres 17 container (migration `0044`

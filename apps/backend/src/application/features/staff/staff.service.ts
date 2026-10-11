@@ -23,6 +23,7 @@ import { runInTenantTransaction } from '../../../infrastructure/context/tenant-t
 import { Prisma } from '../../../generated/tenant-client';
 import { AuditService } from '../audit/audit.service';
 import { ExpensesService } from '../treasury/expenses.service';
+import { isUniqueViolationOn } from '../treasury/retry-key';
 import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
 import {
   COMMISSION_RATE,
@@ -673,7 +674,11 @@ export class StaffService {
    * The same lock is what makes a retried press safe: the second request for a
    * `clientRequestId` waits here, then finds the payout the first wrote and
    * answers with it (`replayPayout`) — rather than reading a balance the first
-   * already spent and refusing a payment that in fact went through.
+   * already spent and refusing a payment that in fact went through. On both
+   * paths: the key is kept on the payout row itself (0089), and once live on
+   * its voucher too. Before 0089 a payout recorded before go-live kept no key,
+   * so a press whose answer was lost, pressed again, recorded the figure twice
+   * (review of 2026-10-11).
    *
    * ## The balance is judged last
    *
@@ -684,12 +689,26 @@ export class StaffService {
    * what is owed, and the refusal itself names no figure to him
    * (`payoutRefusal`'s `showOwed`).
    */
-  async recordInspectorPayout(input: {
+  async recordInspectorPayout(request: {
     tenantSlug: string;
     inspectorId: string;
     payload: RecordInspectorPayoutInput;
     actor: { id: string; role: string };
   }): Promise<RecordInspectorPayoutResult> {
+    /*
+      One spelling of the inspector's id for everything below. The path's
+      `ParseUUIDPipe` accepts an upper-cased UUID and passes it on as typed,
+      and Postgres reads either spelling as the same row — but the self-payout
+      check and the advisory lock key compare strings. «3F2A…» was another
+      inspector to both: a second payout took another lock and spent the same
+      balance again, and an accountant paid himself (review of 2026-10-11).
+      Lower case is the form the database returns every id in.
+    */
+    const input = {
+      ...request,
+      inspectorId: request.inspectorId.toLowerCase(),
+      actor: { ...request.actor, id: request.actor.id.toLowerCase() },
+    };
     const ordersPayments = (TREASURY_ADMIN_ROLES as readonly string[]).includes(input.actor.role);
     if (!ordersPayments && input.inspectorId === input.actor.id) {
       throw new ForbiddenError({
@@ -700,6 +719,41 @@ export class StaffService {
     // Who may read the figure: `StaffController.getInspectorProfile`'s rule, the manager or the inspector himself.
     const showOwed = input.actor.role === 'SUPER_ADMIN' || input.actor.id === input.inspectorId;
 
+    try {
+      return await this.recordInspectorPayoutInTransaction(input, ordersPayments, showOwed);
+    } catch (error) {
+      /*
+        Two presses carrying one key that met on a unique index rather than on
+        the inspector's lock: the same key sent for two inspectors takes two
+        locks, and both get past the lookup. The loser's transaction is gone.
+        Answer it from the row the key wrote, read afresh, as if it had arrived
+        a second later — never as a server error (`retry-key.ts`). A key that
+        wrote some other form's voucher has no payout to answer with.
+      */
+      const key = input.payload.clientRequestId;
+      if (key && isUniqueViolationOn(error, 'clientRequestId')) {
+        const earlier = await payoutByKey(this.db as Prisma.TransactionClient, key);
+        if (earlier) return replayPayout(earlier, input);
+        throw new ConflictError({
+          code: 'INSPECTOR_PAYOUT_REQUEST_REUSED',
+          message: 'This request id already wrote another expense voucher.',
+        });
+      }
+      throw error;
+    }
+  }
+
+  /** The one transaction behind `recordInspectorPayout`, with the inspector's id already in its one spelling. */
+  private async recordInspectorPayoutInTransaction(
+    input: {
+      tenantSlug: string;
+      inspectorId: string;
+      payload: RecordInspectorPayoutInput;
+      actor: { id: string; role: string };
+    },
+    ordersPayments: boolean,
+    showOwed: boolean,
+  ): Promise<RecordInspectorPayoutResult> {
     return runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
       const { payload } = input;
@@ -726,11 +780,9 @@ export class StaffService {
       const lockKey = `${this.tenantContext.schemaName}:inspector-payout:${input.inspectorId}`;
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
 
+      // A retried press, on either path: answered with the payout its key wrote (`payoutByKey`).
       if (payload.clientRequestId) {
-        const earlier = await tx.inspectorPayout.findFirst({
-          where: { expenseVoucher: { clientRequestId: payload.clientRequestId } },
-          include: PAYOUT_INCLUDE,
-        });
+        const earlier = await payoutByKey(tx, payload.clientRequestId);
         if (earlier) return replayPayout(earlier, input);
       }
 
@@ -832,6 +884,8 @@ export class StaffService {
           reference: payload.reference?.trim() || null,
           recordedById: input.actor.id,
           expenseVoucherId: voucher.id,
+          // On the payout as on its voucher, so one lookup answers a retry on either path (0089).
+          clientRequestId: payload.clientRequestId ?? null,
         },
         include: PAYOUT_INCLUDE,
       });
@@ -908,9 +962,17 @@ export class StaffService {
         amount: payload.amount,
         currency: payload.currency || 'USD',
         paidAt,
-        note: payload.note ?? null,
-        reference: payload.reference ?? null,
+        // Trimmed as the live path stores them, so a retry's statement compares alike (`replayPayout`).
+        note: payload.note?.trim() || null,
+        reference: payload.reference?.trim() || null,
         recordedById: input.actor.id,
+        /*
+          The press's retry key (0089). There is no voucher to keep it before
+          go-live, and without it a payout whose answer was lost, pressed
+          again, was recorded twice: the inspector read as owed less than he
+          was, with nothing to void (review of 2026-10-11).
+        */
+        clientRequestId: payload.clientRequestId ?? null,
       },
       include: PAYOUT_INCLUDE,
     });
@@ -953,15 +1015,33 @@ const PAYOUT_INCLUDE = {
 type PayoutRow = Prisma.InspectorPayoutGetPayload<{ include: typeof PAYOUT_INCLUDE }>;
 
 /**
+ * The payout a retry key wrote, if any: on the payout row since 0089, on both
+ * paths, and on its voucher once the treasury is live — the only place a live
+ * payout written before 0089 keeps it.
+ */
+function payoutByKey(tx: Prisma.TransactionClient, clientRequestId: string): Promise<PayoutRow | null> {
+  return tx.inspectorPayout.findFirst({
+    where: { OR: [{ clientRequestId }, { expenseVoucher: { clientRequestId } }] },
+    include: PAYOUT_INCLUDE,
+  });
+}
+
+/**
  * The answer to a press whose `clientRequestId` already paid a commission.
  *
  * A key names one act, as an expense voucher's does (`ExpensesService.replayVoucher`):
- * this officer paying this inspector this amount out of this wallet, for this
- * statement. Replayed with all of them it answers with the first payout,
- * marked `replayed`. Anything else is a new act under an old key and is
- * refused (`TREASURY_REQUEST_KEY_REUSED`), rather than answered with a payout
- * the officer did not ask for. The paper reference is not compared: a retry is
- * the same payment, and the payout keeps what it was first recorded with.
+ * this officer paying this inspector this amount, for this statement — and,
+ * when a voucher paid it, out of this wallet. Replayed with all of them it
+ * answers with the first payout, marked `replayed`. Anything else is a new act
+ * under an old key and is refused (`TREASURY_REQUEST_KEY_REUSED`), rather than
+ * answered with a payout the officer did not ask for. The paper reference and
+ * the date are not compared: a retry is the same payment, and the payout keeps
+ * what it was first recorded with.
+ *
+ * A payout recorded before go-live left no wallet, so none is compared: if the
+ * treasury went live between the lost press and its retry, the dialog now names
+ * a wallet, and the answer is still the figure the first press recorded — the
+ * inspector was paid once, before the books opened.
  *
  * A payout whose voucher was cancelled since is not answered as made
  * (`EXPENSE_ALREADY_VOID`): the officer would read «صُرفت» and hand over cash
@@ -980,9 +1060,8 @@ function replayPayout(
   }
   const voucher = earlier.expenseVoucher;
   if (
-    !voucher ||
     !earlier.amount.equals(new Prisma.Decimal(payload.amount)) ||
-    voucher.accountId !== payload.accountId ||
+    (voucher !== null && voucher.accountId !== payload.accountId) ||
     earlier.recordedById !== input.actor.id ||
     earlier.note !== (payload.note?.trim() || null)
   ) {
@@ -991,7 +1070,7 @@ function replayPayout(
       message: 'This request id was already used for a different payout.',
     });
   }
-  if (voucher.voidedAt) {
+  if (voucher?.voidedAt) {
     throw new ConflictError({
       code: 'EXPENSE_ALREADY_VOID',
       message: `This request was paid as ${voucher.voucherNumber}, and that voucher has since been cancelled.`,

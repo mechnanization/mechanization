@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { BULK_SETTLE_MAX_BILLS } from '@mechanization/shared-schemas';
 import { heldKey, markInDoubt, spendKey } from './request-id';
@@ -8,6 +10,7 @@ import {
   endPress,
   isBulkSettleable,
   pageSelection,
+  previewGate,
   propertyLines,
   reconcileSelection,
   rowBlock,
@@ -252,5 +255,69 @@ describe('propertyLines', () => {
       ]),
     ).toEqual([{ key: 'parcelType', parcel: '123', unitType: 'APARTMENT', unitCode: null }]);
     expect(propertyLines([])).toEqual([]);
+  });
+});
+
+describe('previewGate', () => {
+  const cash = { cash: true, settingsRead: true, planRefused: false, planSaid: false, changeShort: false, inDoubt: false };
+
+  it('refuses before any request what the server would refuse: notes short of the bills, change the safe cannot give', () => {
+    expect(previewGate({ ...cash, planRefused: true, planSaid: true })).toEqual({
+      blocksPress: true,
+      disablesButton: true,
+      plan: 'refusal',
+      change: null,
+    });
+    expect(previewGate({ ...cash, changeShort: true })).toEqual({
+      blocksPress: true,
+      disablesButton: true,
+      plan: null,
+      change: 'refusal',
+    });
+    // Nothing typed yet: the button stays live, so the press can name the empty field.
+    expect(previewGate({ ...cash, planRefused: true })).toMatchObject({ blocksPress: true, disablesButton: false, plan: null });
+    // Nothing is judged without the currencies and the rate.
+    expect(previewGate({ ...cash, settingsRead: false })).toMatchObject({ blocksPress: true, disablesButton: true });
+    expect(previewGate({ ...cash, settingsRead: false, inDoubt: true })).toMatchObject({ blocksPress: true });
+  });
+
+  /*
+    Review of 2026-10-11: a press got no answer and committed; the manager then
+    moved the official rate. The same notes now read 100,000 ل.ل short, and the
+    dialog refused the retry — the one press the server answers from the key with
+    the receipt — saying «لم يُسجَّل شيء» of a settlement that was recorded.
+  */
+  it('only warns while a press of the set is in doubt, so the retry the key answers can go', () => {
+    expect(previewGate({ ...cash, planRefused: true, planSaid: true, inDoubt: true })).toEqual({
+      blocksPress: false,
+      disablesButton: false,
+      plan: 'inDoubt',
+      change: null,
+    });
+    expect(previewGate({ ...cash, changeShort: true, inDoubt: true })).toEqual({
+      blocksPress: false,
+      disablesButton: false,
+      plan: null,
+      change: 'inDoubt',
+    });
+  });
+
+  it('judges nothing for Whish or a collector: no notes, no change', () => {
+    expect(previewGate({ ...cash, cash: false, planRefused: true, planSaid: true, settingsRead: false })).toEqual({
+      blocksPress: false,
+      disablesButton: false,
+      plan: null,
+      change: null,
+    });
+  });
+
+  // The dialog is a component, which this suite does not render; so it is read (as print-pages.test.ts reads the print pages).
+  it('is what the dialog gates its press and its button on', () => {
+    const dialog = readFileSync(join(__dirname, '..', 'components', 'admin', 'bulk-settle', 'bulk-settle-dialog.tsx'), 'utf8');
+    expect(dialog).toMatch(/\bpreviewGate\(/);
+    expect(dialog).toMatch(/if \(gate\.blocksPress\) return;/);
+    expect(dialog).toMatch(/disabled=\{busy \|\| done \|\| gate\.disablesButton\}/);
+    // The guard that refused a retry in doubt on the plan alone.
+    expect(dialog).not.toMatch(/!planned\.ok \|\| refusesChange/);
   });
 });

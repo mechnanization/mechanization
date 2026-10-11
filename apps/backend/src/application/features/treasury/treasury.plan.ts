@@ -159,16 +159,25 @@ export function planPaymentLegs(movement: PaymentMovement): {
 }
 
 /**
- * The refund of a payment taken before go-live, reversed after it.
+ * The refund of a payment's own credit — the amount it put against its bill,
+ * in the bill's currency — out of the wallet of the original method, when its
+ * entries cannot simply be opposed. Two cases:
  *
- * Its cash was counted into an opening balance, so it left no entries to
- * reverse — but handing the money back takes cash out of the drawer today, and
- * the drawer count must show it. The detail of the original notes is not
- * replayed: the refund is the credit, in the invoice's currency, out of the
- * wallet of the original method (a collector's cash had been handed in by the
- * time of the count, so it is the safe).
+ * - A payment taken before go-live, reversed after it. Its cash was counted
+ *   into an opening balance, so it left no entries to reverse — but handing
+ *   the money back takes cash out of the drawer today, and the drawer count
+ *   must show it. (A collector's cash had been handed in by the time of the
+ *   count, so it is the safe.)
+ * - A bill of a cash settlement whose row carried the set's foreign notes and
+ *   the change (the pivot, docs/finance.md §3.7). Its entries are notes that
+ *   paid every bill of the set and change that, recycled, paid the older ones:
+ *   opposing them took back $20 and handed in 1,690,000 ل.ل of change for a
+ *   100,000 ل.ل bill whose citizen had received 790,000 (review of 2026-10-11).
+ *
+ * The detail of the original notes is not replayed in either: the refund is
+ * the credit, which is also what the reversal's own receipt says.
  */
-export function planPreGoLiveRefund(movement: {
+export function planCreditRefund(movement: {
   method: PaymentMethod;
   invoiceCurrency: string;
   amount: number;

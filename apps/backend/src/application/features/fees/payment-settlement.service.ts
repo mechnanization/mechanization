@@ -537,6 +537,7 @@ export class PaymentSettlementService {
       where: { clientRequestId: input.clientRequestId },
       select: {
         id: true,
+        number: true,
         citizenId: true,
         method: true,
         transactions: {
@@ -554,9 +555,18 @@ export class PaymentSettlementService {
       settled.length === asked.length &&
       settled.every((id, index) => id === asked[index]);
     if (!same) {
+      /*
+        The dialog holds its key per set of bills, so from the screen the one
+        difference left is the method: a cash press lost, then the same bills
+        pressed again as Whish. That earlier press was recorded, and the clerk is
+        given its «BRC-» number to find it by — not told the key settled «other
+        bills», which sent him back to settle these ones again (review of
+        2026-10-11).
+      */
       throw new ConflictError({
         code: 'BULK_SETTLE_REQUEST_REUSED',
-        message: 'This retry key already settled a different set of bills.',
+        message: `This retry key already recorded settlement ${row.number}, with other details.`,
+        params: { number: row.number },
       });
     }
     const reversed = row.transactions.find((tx) => tx.reversedBy !== null);

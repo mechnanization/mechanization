@@ -1,6 +1,6 @@
 # UI/UX standards: binding for every change to `apps/frontend`
 
-Last verified against the code: `feat/treasury-day-closing@b5993af` (`develop` with the reviewed treasury, #107/#108; PR #106, stage 5: the daily count, the day closing and the closed-day lock; PR #109, inspector payouts and decision D9; PR #111, transfers, exchange and wallets with `0088`; each merged with its review fixes) merged with PR #112 `feat/fees-bulk-settlement-review@a3ce944` (the consolidated receipt as a PRIM-28 document page), then the cross-feature fixes: a bulk settlement refused on a closed day before it writes anything, and its wallets locked in id order (uncommitted), 2026-10-10.
+Last verified against the code: `feat/treasury-day-closing@c88c971` (`develop` with the reviewed treasury, #107/#108; PR #106, stage 5: the daily count, the day closing and the closed-day lock; PR #109, inspector payouts and decision D9; PR #111, transfers, exchange and wallets with `0088`; PR #112, the consolidated receipt as a PRIM-28 document page; each merged with its review fixes, and the cross-feature fixes) with the fixes of the final-stack review (uncommitted): the bulk dialog's checks in doubt, the payout dialog's hosts on `readView` and its retry key before go-live, a day in a refusal through `formatDay`, 2026-10-11.
 
 This file binds every AI agent and every person who builds or reviews an
 interface in this repository. [CLAUDE.md](../CLAUDE.md) (non-negotiable 9) and
@@ -902,7 +902,9 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
   Greenwich. Found 2026-10-10 in `damage/damage-history.tsx` (`reinspectAt`),
   `end-ownership-dialog.tsx` (`endedAt`) and the citizen payment page
   (`citizens/[citizenId]/payments/[paymentId]/page.tsx`, `paidOn`); `formatDay` is the fix.
-  Harmless in Lebanon, wrong on a laptop set to another zone.
+  Harmless in Lebanon, wrong on a laptop set to another zone. A day named in an API refusal
+  (`CLOSED_DAY_MUTATION_BLOCKED`, `DAY_ALREADY_CLOSED`, …) printed in its ISO form beside the page's
+  09/10/2026; fixed 2026-10-11: `localizeApiError` writes any `YYYY-MM-DD` param through `formatDay`.
 - **Double submit** (STA-4): the payouts page with `InspectorPayoutDialog` guards with `busy`
   state only, with no in-flight ref.
   - The counter settle page (`fees/payments/[paymentId]/settle`) gained an in-flight ref and a
@@ -943,8 +945,24 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
   - An income category added inline on the recording form never reached the cached category
     lists (reference reads), so the register's filter and the next form missed it until a
     reload. Fixed 2026-10-10: `IncomeCategoryEditor` writes it into both (`withSavedCategory`).
+  - «تسديد الفواتير المحددة» after a press with no answer: a rate changed or cleared since made the
+    dialog's own preview refuse the same notes, which disabled the retry the server answers from the
+    key and said «لم يُسجَّل شيء» of a settlement that was recorded. Fixed 2026-10-11 (the final-stack
+    review): `previewGate` (`lib/bulk-settle.ts`) makes every check a warning while the key is in
+    doubt, as the change check already was. A press of the same bills by another method after a lost
+    answer was refused as «…لتسديد فواتير أخرى — أعد تحميل الصفحة»; it now says the earlier press was
+    recorded and names its «BRC-».
+  - The payout dialog's hosts (the payout history, the inspector's dashboard, the earnings roster)
+    swapped the page for `ErrorState` when the dialog's own re-read after a lost answer failed, which
+    unmounted the dialog with its amount, statement and message. Fixed 2026-10-11: `readView` on all
+    three, pinned by `lib/payout-hosts.test.ts`.
+  - «صرف عمولة» before go-live sent no retry key, so a lost answer pressed again recorded the
+    payout twice. Fixed 2026-10-11 (the final-stack review): `payoutRequest`
+    (`lib/commission-payout.ts`) sends the held `commission:<staffId>` key on both paths, a lost
+    press is held in doubt before go-live too, and the server keeps the key on the payout row
+    (`0089`).
   - Still open: the fee wizard's issue (`fees/new`) carries no retry key; it needs a server key
-    and a migration.
+    and a migration. So does «تكليف مالي» (docs/security.md, known gaps).
   - The fee wizard (`fees/new`) gained an in-flight ref, and stays locked once it has issued. A
     page, unlike the dialog it replaced, stays mounted until the next route is ready, and a
     second press there would bill every household twice.

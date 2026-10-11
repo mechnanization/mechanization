@@ -220,12 +220,32 @@ describe('the treasury routes (docs/finance.md §9)', () => {
     // «صرف عمولة» (§5.6): a «PV-» voucher and a ledger debit once live. Paid like a salary (D9):
     // the accountant's on the urgent path, waiting for the manager's order.
     'StaffController.recordPayout': WORK,
+    /*
+      The fee routes that post wallet entries once the treasury is live (§3.3, §3.4): a counter
+      or collector payment credits a safe or a custody wallet (`settleInPerson`), confirming a
+      Whish transfer credits the Whish wallet (`review`), and reversing a receipt takes the money
+      back out (`reverseTransaction`). Their lists are the fee sets the screens read
+      (`FEE_ISSUE_ROLES`, `FEE_ADMIN_ROLES`), pinned here so that widening one — an
+      administrative officer at the counter — fails CI rather than passing unseen.
+    */
+    'FeesController.settle': ['ACCOUNTANT', 'COLLECTOR', 'SUPER_ADMIN'],
+    'FeesController.review': WORK,
+    'FeesController.reverseTransaction': ADMIN,
+    // Whish's own callback: no session and no role — `@Public()`, checked by the HMAC over its body.
+    'FeesController.whishCallback': [],
   };
   /*
     Every treasury controller by name: a new one is added here, or its handlers are pinned by
-    nothing. And, by name, each handler elsewhere that moves treasury money.
+    nothing. And, by name, each handler elsewhere that moves treasury money; the bulk settlement's
+    two are pinned in their own block below.
   */
-  const MONEY_HANDLERS_ELSEWHERE = ['StaffController.recordPayout'];
+  const MONEY_HANDLERS_ELSEWHERE = [
+    'StaffController.recordPayout',
+    'FeesController.settle',
+    'FeesController.review',
+    'FeesController.reverseTransaction',
+    'FeesController.whishCallback',
+  ];
   const treasury = routes().filter(
     (route) =>
       /^(Treasury|TreasuryClosing|Expenses|Income|Transfers)Controller\./.test(route.name) ||

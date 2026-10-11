@@ -83,6 +83,14 @@ export const QUALITY_REVIEWER_ROLES = [
 
 /* Complete a quality check in the field: `QUALITY_CHECK_ROLES`, in `quality.schema.ts`. */
 
+/*
+  The treasury's sets live beside its contract, not here: `TREASURY_READ_ROLES`,
+  `TREASURY_WORK_ROLES`, `TREASURY_ADMIN_ROLES` and `TREASURY_REVIEW_ROLES` (who
+  clears a flagged exchange) in `treasury.schema.ts`, and `FINANCE_OVERRIDE_ROLES`
+  (who may take another rate or date a payment further back) in `cash-policy.ts`.
+  `route-inventory.spec.ts` pins every treasury handler to its list.
+*/
+
 /** See whether a record has an open quality return — everyone who files or reviews one. */
 export const QUALITY_RETURN_READ_ROLES = [
   'SUPER_ADMIN',

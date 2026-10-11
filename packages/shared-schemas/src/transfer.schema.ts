@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { hasAtMostTwoDecimals } from './money-amount';
+import { positiveMoneyAmount } from './money-amount';
+import { businessDay } from './primitives';
 
 /**
  * المناقلات — money moving between the municipality's own wallets.
@@ -16,12 +17,7 @@ import { hasAtMostTwoDecimals } from './money-amount';
  */
 
 /** An amount handed over: greater than zero, at most two decimals. */
-const transferAmount = z
-  .number({ required_error: 'اكتب المبلغ', invalid_type_error: 'المبلغ رقم' })
-  .finite('المبلغ رقم')
-  .positive('المبلغ أكبر من صفر')
-  .max(999_999_999_999, 'المبلغ كبير جداً')
-  .refine(hasAtMostTwoDecimals, 'خانتان عشريتان على الأكثر');
+const transferAmount = positiveMoneyAmount(999_999_999_999);
 
 /**
  * «استلام صندوق الجابي» — the accountant receives what the collector counted out.
@@ -57,8 +53,14 @@ export type VoidTransferInput = z.infer<typeof voidTransferSchema>;
 export const TRANSFER_KINDS = ['SAME_CURRENCY', 'EXCHANGE'] as const;
 export type TransferKind = (typeof TRANSFER_KINDS)[number];
 
-/** `YYYY-MM-DD` on the municipality's calendar. */
-const businessDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'تاريخ غير صالح');
+/**
+ * `YYYY-MM-DD` on the municipality's calendar, and a day that exists
+ * (`businessDay`). The pattern alone let «2026-10-00» reach the server as an
+ * Invalid Date (a 500), «2026-13-45» fail the register's period with a
+ * RangeError (a 500), and «2026-09-31» be booked on 1 October (review of
+ * 2026-10-11).
+ */
+const businessDate = businessDay;
 
 const optionalText = (max: number, tooLong: string) => z.string().trim().max(max, tooLong).optional();
 

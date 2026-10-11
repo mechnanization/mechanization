@@ -205,6 +205,9 @@ export const ERROR_CODES = [
   'TREASURY_ACCOUNT_MISSING',
   'TREASURY_OPENING_BALANCES_INCOMPLETE',
   'TREASURY_INSUFFICIENT_FUNDS',
+  // An outflow dated on an earlier day that would leave that day's close, or a later one, below
+  // zero although the wallet holds enough now (`params.date`, the first such day, and its close).
+  'TREASURY_INSUFFICIENT_FUNDS_ON_DAY',
   'EXPENSE_NOT_FOUND',
   'EXPENSE_ALREADY_VOID',
   'EXPENSE_CATEGORY_NOT_FOUND',
