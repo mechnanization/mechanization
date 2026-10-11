@@ -1,6 +1,6 @@
 # UI/UX standards: binding for every change to `apps/frontend`
 
-Last verified against the code: `fix/pr104-review` (PR #104 review fixes merged with `fix/expense-retry-key-race@ff44f27` and `develop@4ad0b27`, then with `origin/fix/expense-retry-key-race`; uncommitted), 2026-10-10.
+Last verified against the code: `fix/moderate-frontend` (on `develop@b034640`; the review queue's `Pager`, the building editor's double-submit guard), 2026-10-11.
 
 This file binds every AI agent and every person who builds or reviews an
 interface in this repository. [CLAUDE.md](../CLAUDE.md) (non-negotiable 9) and
@@ -677,7 +677,8 @@ Code-pattern debt outside the UI rules lives in
   `StatCard` (`(citizen)/my-file`). `StatStrip` has 8 uses in 7 files.
 - **Hand-rolled pagers, 3** (PRIM-4): `AuditTrailPage` (`audit/page.tsx`),
   `CorrectionBillsPage` (`fees/corrections/page.tsx`), `AuditDaily`
-  (`components/admin/audit-daily.tsx`). `Pager` has 1 user.
+  (`components/admin/audit-daily.tsx`). `Pager` has 2 users (the citizen file's bills, and
+  «مراجعة السجلات», `quality/review-queue.tsx`, since 2026-10-11).
 - **Red error banners, 60 copies in 45 files** (CTL-12), none of them yet moved
   to the `Alert` primitive that now exists — the finance screens and the counter
   settle page (moved 2026-10-09) are its only users. Each is a className holding `border-destructive…`, `bg-destructive/5` or `/10` and
@@ -888,7 +889,13 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
   over it — was replaced by `CurrencyInput` on 2026-10-07, which is what fixed
   the unit landing on the digits. Check the three above for the same shape.
 - **Double submit** (STA-4): the payouts page with `InspectorPayoutDialog` guards with `busy`
-  state only, with no in-flight ref.
+  state only, with no in-flight ref. So do the fees register's «تكليف مباشر» (`handleChargeCitizen`
+  in `fees/page.tsx`, `charging`) and the case editor's save (`case-editor.tsx`, `submitting`)
+  (found 2026-10-11).
+  - The building editor (`building-editor.tsx`) created a second building on a double click and
+    re-enabled «حفظ» while the page was leaving. Fixed 2026-10-11: an in-flight ref, a
+    `clientSubmissionId` kept across every failure `outcomeInDoubt` names (and given to the
+    offline queue), the form locked after a save that landed, and a `deduplicated` answer said.
   - The counter settle page (`fees/payments/[paymentId]/settle`) gained an in-flight ref and a
     retry key on the PR #104 review. It also prints the receipt the server wrote (its RCP number
     and moment), not the bill's reference. Fixed 2026-10-09: the profile read that builds the

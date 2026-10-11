@@ -1,6 +1,6 @@
 # apps/frontend: agent guide
 
-Last verified against the code: `fix/pr104-review` (PR #104 review fixes merged with `fix/expense-retry-key-race@ff44f27` and `develop@4ad0b27`, then with `origin/fix/expense-retry-key-race`; uncommitted), 2026-10-10.
+Last verified against the code: `fix/moderate-frontend` (on `develop@b034640`; citizen pickers, the building editor's submission id and stale drafts, the offline queue's revised and refused records), 2026-10-11.
 
 Next.js 15 app router, React 18, next-intl 4, TanStack Query 5, Tailwind 3.4 with
 tailwind-merge 3, Radix and lucide-react. One app serves the staff dashboard and the
@@ -166,6 +166,12 @@ component types.
     `income-categories`: `IncomeCategoryEditor` writes what it saves into both cached lists
     (`['treasury', tenant, 'income-categories']` and `[…, 'all']`) through
     `withSavedCategory` (`lib/category-cache.ts`).
+- A citizen picker searches the register on the server as the clerk types: `useCitizenSearch`
+  (`lib/use-citizen-search.ts`: `SEARCH_DEBOUNCE_MS` 350 ms, an `AbortController`, `limit: 8`, files
+  folded by «دمج ملفين» dropped, a failed search told apart from «no match» by `failed`), with
+  `CitizenSearchStatus` under the field; the picker holds the chosen `CitizenListItem` in state. Never a
+  `listCitizens({ limit: 200 })` filtered in the browser: a file filed after that page cannot be found
+  (the direct-charge dialog and «إصدار رسم جديد» did that until 2026-10-11).
 - `lib/request-cache.ts` (`cachedRequest`, `invalidateRequests`) is a second, memory-only
   cache inside api-client (tenant config, zones, census, fee summary, settings). Legacy for
   new reads. **Undecided:** retire it for `reference: true` reads, or keep it for non-React callers.
@@ -238,11 +244,27 @@ component types.
 - `lib/offline-db.ts`: IndexedDB `mechanization.offline` (`DB_VERSION = 2`), stores
   `citizenSubmissions` and `buildingSubmissions`, keyed by `id`, a `clientSubmissionId` from
   `newSubmissionId` (`lib/offline-sync.ts`) that the server's unique index deduplicates. `lib/offline-sync.ts` runs one engine per tenant (`queueSubmission`,
-  `queueBuilding`, `syncQueue`, `retrySubmission`, `useOfflineQueue`, …).
+  `queueBuilding`, `syncQueue`, `retrySubmission`, `retryBuilding`, `discardBuilding`, `useOfflineQueue`, …).
+- The building editor sends a creation's `clientSubmissionId` (also the building's id) and queues an
+  offline save under the same id. It keeps the id across every failure `outcomeInDoubt` names and
+  renews it only after a refusal the server stated or a save that landed; an `inFlight` ref guards the
+  save, and after one that landed the form stays locked while the page moves on. A `deduplicated`
+  answer is said as such (`buildingEditor.deduplicated`).
+- A queued registration revised after it was queued carries `revisedAt` (`reviseQueued`). Answered
+  `deduplicated` — an earlier attempt under its id had already filed the unrevised record — it is kept,
+  `blocked`, with the `citizenId` it reached, never dequeued: the officer makes the revision on that file
+  (`OfflineQueuePanel` links to it) and then discards the copy. Both fields are optional and
+  unindexed, so `DB_VERSION` did not change.
+- A refused queued building is retried or discarded from `BuildingQueueNotice`; the discard
+  confirmation counts the queued registrations that name it or its flats (`registrationsOnBuilding`).
+  No screen edits a queued building's payload.
 - `public/sw.js`: `VERSION` is bumped by hand; GET only, never `/api/`, never localhost;
   network-first navigations with `/offline.html`. `useServiceWorker` registers it (staff
   side) and unregisters it in development.
-- Drafts: `lib/citizen-draft.ts` (localStorage), `lib/building-draft.ts` (sessionStorage).
+- Drafts: `lib/citizen-draft.ts` (localStorage), `lib/building-draft.ts` (sessionStorage). A building
+  draft of an edit stores `baseUpdatedAt`, the version its edits were made against, and is restored
+  silently only while the server holds that version (`draftIsCurrent`); otherwise the editor keeps the
+  draft on screen, saves nothing, and asks: the latest version, or the draft saved over it.
 - A session that cannot write the register (`CITIZEN_RECORD_EDIT_ROLES`: «مشاهد فقط», an
   auditor, the accountant, on a device an officer queued records on) never drains:
   `syncQueue` reports `writerRequired` and leaves every record as it was, and a 403 leaves a
@@ -256,7 +278,9 @@ component types.
 module scope), `useUrlPagination`, `PAGE_SIZE_OPTIONS`. The search term lives in tab
 sessionStorage through `useTabSearch`, never in the URL. Two views on one page that each
 page their own table (the expense register and its queue) share `?page=` / `?limit=`, so a
-view switch clears the other view's parameters in the same write.
+view switch clears the other view's parameters in the same write. A list whose rows leave it as they
+are acted on steps back to the last page with rows once its answer is in (`pageWithRows` in
+`lib/url-state.ts`; «مراجعة السجلات», which pages its cards with `Pager`).
 
 ## Printing
 
@@ -353,8 +377,8 @@ are inlined at build time. The local `.env.local` block is in
 ## Tests
 
 Vitest (`apps/frontend/vitest.config.mts`): `environment: 'node'`, only `lib/**/*.test.ts`,
-with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 31 test files (counted on disk
-2026-10-10, mid-merge of `fix/expense-retry-key-race`; cases not recounted).
+with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 36 test files (counted on disk
+2026-10-11, `fix/moderate-frontend`).
 No component, accessibility or end-to-end tests exist (no jsdom, no Testing Library); a
 rendered check uses the uncommitted headless harness of UI §16.4. Untested, so add a test
 when you touch them: `lib/sentry-redaction.ts`, `lib/session.ts`, `lib/csv.ts` `csvCell`.

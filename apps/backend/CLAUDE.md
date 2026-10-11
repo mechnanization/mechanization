@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `fix/pr104-review` (PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; income controls, the salary path and the urgent ceiling), 2026-10-10.
+Last verified against the code: `fix/moderate-frontend` (on `develop@b034640`; the audit reads' `?actorId=` filter and its «النظام» value), 2026-10-11.
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -435,6 +435,13 @@ request's tenant scope. A misspelt or unheard name is dropped silently. Add each
 credential: a رقم مرجعي goes in only as `ReferenceNumber.mask(...)`
 ([docs/security.md](../../docs/security.md#data-integrity-and-transactions)).
 
+Reading the log (`AuditController`, `AUDIT_READ_ROLES`): `GET audit` and `GET audit/daily` take
+`?actorId=` through `auditActorFilterSchema` (shared-schemas): a person's id, or `AUDIT_SYSTEM_ACTOR`
+(`SYSTEM`) for the entries no person made, whose `actorId` is NULL (a Whish callback, the scheduler's
+billing). The controller maps `SYSTEM` to `AuditQuery.systemActor`, which
+`PrismaAuditRepository.where()` reads as `"actorId" IS NULL`; it is how the daily report's «النظام» row
+drills down to its own entries (`audit-daily.integration.spec.ts`). The actor facets list staff only.
+
 ## Recipe: add an endpoint
 
 Model: commit `f9fd805` — `CorrectionsController`, `UnitCorrectionService`, `unit-correction.plan.ts`.
@@ -493,7 +500,7 @@ points at does not exist. `src/scripts/reset-2fa.ts` has no script entry and MUS
 
 ## Tests
 
-- Jest with ts-jest (`jest.config.js`: `rootDir` `src`, `*.spec.ts` beside the source): 136 spec files, 36 of them `*.integration.spec.ts` (counted on disk 2026-10-10, mid-merge of `fix/expense-retry-key-race`).
+- Jest with ts-jest (`jest.config.js`: `rootDir` `src`, `*.spec.ts` beside the source): 137 spec files, 36 of them `*.integration.spec.ts` (counted on disk 2026-10-11, `fix/moderate-frontend`).
 - Integration specs run only when `TEST_DATABASE_URL` is set (`describeIfDb`) and skip silently otherwise.
   They `DROP SCHEMA … CASCADE` and rebuild fixed `tenant_*_spec` schemas on whatever database it names,
   and nothing checks the target. Point it ONLY at a throwaway Postgres 17 container (migration `0044`
