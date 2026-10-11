@@ -18,6 +18,7 @@ import {
   logApiError,
   updateCase,
 } from '@/lib/api-client';
+import { caseCreatePayload, caseUpdatePayload, type CaseFormValues } from '@/lib/case-payload';
 import { clearSession, loadSession } from '@/lib/session';
 import { CASE_WRITE_ROLES, hasRole } from '@/lib/staff-roles';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -33,18 +34,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-
-interface CaseFormValues {
-  notes: string;
-  propertyNumber: string;
-  neighborhood: string;
-  propertyType: string;
-  buildingName: string;
-  floor: string;
-  side: string;
-  landType: string;
-  tentLocation: string;
-}
 
 const EMPTY: CaseFormValues = {
   notes: '',
@@ -186,22 +175,12 @@ export function CaseEditor({
 
     setSubmitting(true);
     setError(null);
-    const payload = {
-      notes: values.notes.trim(),
-      ...(values.propertyNumber.trim() ? { propertyNumber: values.propertyNumber.trim() } : {}),
-      ...(values.neighborhood.trim() ? { neighborhood: values.neighborhood.trim() } : {}),
-      ...(values.propertyType ? { propertyType: values.propertyType } : {}),
-      ...(values.buildingName.trim() ? { buildingName: values.buildingName.trim() } : {}),
-      ...(values.floor.trim() ? { floor: values.floor.trim() } : {}),
-      ...(values.side.trim() ? { side: values.side.trim() } : {}),
-      ...(values.landType ? { landType: values.landType } : {}),
-      ...(values.tentLocation.trim() ? { tentLocation: values.tentLocation.trim() } : {}),
-    };
     try {
+      // An edit sends an emptied field as null so it is cleared (`caseUpdatePayload`).
       if (caseId) {
-        await updateCase(tenant, token, caseId, payload);
+        await updateCase(tenant, token, caseId, caseUpdatePayload(values));
       } else {
-        await createCase(tenant, token, payload);
+        await createCase(tenant, token, caseCreatePayload(values));
       }
       router.push(cancelHref);
     } catch (caught) {
