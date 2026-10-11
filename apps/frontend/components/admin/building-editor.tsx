@@ -60,6 +60,7 @@ import { ParcelCorrectionDialog } from '@/components/admin/parcel-correction-dia
 import { BuildingReviewDialog } from '@/components/admin/building-review-dialog';
 import {
   clearBuildingDraft,
+  draftIsCurrent,
   loadBuildingDraft,
   saveBuildingDraft,
 } from '@/lib/building-draft';
@@ -71,6 +72,7 @@ import { newSubmissionId, queueBuilding } from '@/lib/offline-sync';
 import { outcomeInDoubt } from '@/lib/request-id';
 import { loadSession, clearSession } from '@/lib/session';
 import { CENSUS_WRITE_ROLES, hasRole } from '@/lib/staff-roles';
+import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -537,6 +539,9 @@ export function BuildingEditor({
 
   const trimmedParcel = parcelNumber.trim();
 
+  /** The wizard's outermost element — what a step change scrolls back to. */
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
   /**
    * Restoring across a locale switch.
    *
@@ -547,16 +552,33 @@ export function BuildingEditor({
    *
    * Runs once, before the edit-mode fetch resolves, and `restoredRef` stops the
    * autosave below from writing the blank initial state over a good draft in
-   * the same tick. See `lib/building-draft.ts` for why this is session-scoped.
+   * the same tick. See `lib/building-draft.ts` for why this is session-scoped,
+   * and `loadDetail` for the draft of an edit the server has moved past.
    */
-  /** The wizard's outermost element — what a step change scrolls back to. */
-  const rootRef = useRef<HTMLDivElement | null>(null);
-
   const restoredRef = useRef(false);
   /** Whether the values on screen came from a draft rather than the server —
    *  read by `loadDetail` so the refetch does not overwrite them. A ref, not
    *  state: `loadDetail` must not be rebuilt when it flips. */
   const draftRestoredRef = useRef(false);
+  /**
+   * On an edit, the building's `updatedAt` the values on screen were made
+   * against — stored with the draft (`baseUpdatedAt`) so a restore can tell
+   * whether a colleague has saved since. State for the autosave, mirrored in a
+   * ref for `loadDetail`, which must not be rebuilt when it changes.
+   */
+  const [draftBase, setDraftBase] = useState<string | null>(null);
+  const draftBaseRef = useRef<string | null>(null);
+  const markDraftBase = useCallback((updatedAt: string | null) => {
+    draftBaseRef.current = updatedAt;
+    setDraftBase(updatedAt);
+  }, []);
+  /**
+   * The server's copy, while a restored draft was made against an older
+   * version of it and the officer has not yet said which one to keep. Nothing
+   * is saved meanwhile (`handleSave`).
+   */
+  const [staleDraft, setStaleDraft] = useState<BuildingDetail | null>(null);
+  const staleDraftRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (restoredRef.current) return;
     restoredRef.current = true;
@@ -564,6 +586,7 @@ export function BuildingEditor({
     const draft = loadBuildingDraft(tenant, buildingId);
     if (!draft) return;
 
+    markDraftBase(draft.baseUpdatedAt ?? null);
     setStep(draft.step);
     setParcelNumber(draft.parcelNumber);
     pinParcelRef.current = draft.parcelNumber.trim() || null;
@@ -585,7 +608,7 @@ export function BuildingEditor({
     setDuplicateReason(draft.duplicateReason ?? '');
     setNoPinReason(draft.noPinReason ?? null);
     draftRestoredRef.current = true;
-  }, [tenant, buildingId]);
+  }, [tenant, buildingId, markDraftBase]);
 
   /**
    * Autosave, on every change to anything the officer typed, dropped or
@@ -613,10 +636,12 @@ export function BuildingEditor({
       acknowledgedDuplicates,
       duplicateReason,
       ...(noPinReason !== null ? { noPinReason } : {}),
+      baseUpdatedAt: draftBase,
     });
   }, [
     tenant,
     buildingId,
+    draftBase,
     step,
     parcelNumber,
     name,
@@ -639,19 +664,11 @@ export function BuildingEditor({
   ]);
 
   /**
-   * Fills the whole wizard from the building on file.
-   *
-   * `keepEdits` is the locale-switch case. The remount refetches the building,
-   * and this would then write the server's copy over the corrections the
-   * officer had already typed — so when a draft was restored, only the parts
-   * the server owns are applied: the allocated code, the suffix, the baseline
-   * the save diffs against, and the units the grid cannot draw. What the
-   * officer typed stays theirs.
-   */
-  /**
    * The building's `updatedAt` as last loaded, sent with the save so a colleague's
    * change made since is not silently replaced. Refreshed on every load,
-   * including the reload after a half-refused save.
+   * including the reload after a half-refused save — except under a restored
+   * draft made against an older version, where it stays that version until
+   * the officer chooses (`loadDetail`, `staleDraft`).
    */
   const loadedUpdatedAtRef = useRef<string | null>(null);
   /** The building as loaded — what «مراجعة التعديلات» compares the save with. */
@@ -687,17 +704,31 @@ export function BuildingEditor({
       setSuffix(result.building.codeSuffix);
       setSavedCode(result.building.code);
       loadedUpdatedAtRef.current = result.building.updatedAt;
+      // The officer made this version, on top of what is on screen.
+      markDraftBase(result.building.updatedAt);
       setPreviousCodes((current) => [
         { code: result.previousCode, parcelNumber: oldParcel, reason: '', retiredAt: new Date().toISOString() },
         ...current.filter((row) => row.code !== result.building.code),
       ]);
     },
-    [],
+    [markDraftBase],
   );
 
+  /**
+   * Fills the whole wizard from the building on file.
+   *
+   * `keepEdits` is the locale-switch case. The remount refetches the building,
+   * and this would then write the server's copy over the corrections the
+   * officer had already typed — so when a draft was restored, only the parts
+   * the server owns are applied: the allocated code, the suffix, the baseline
+   * the save diffs against, and the units the grid cannot draw. What the
+   * officer typed stays theirs. Whether the draft may be kept without asking
+   * is `loadDetail`'s question (`draftIsCurrent`), not this one's.
+   */
   const hydrate = useCallback(
     (detail: BuildingDetail, keepEdits = false) => {
       loadedUpdatedAtRef.current = detail.updatedAt ?? null;
+      if (!keepEdits) markDraftBase(detail.updatedAt ?? null);
       loadedDetailRef.current = detail;
       setLoadedLifecycle(detail.lifecycleStatus);
       setLiveOccupants(
@@ -769,7 +800,7 @@ export function BuildingEditor({
           ]),
       );
     },
-    [en],
+    [en, markDraftBase],
   );
 
   const loadDetail = useCallback(async () => {
@@ -777,7 +808,21 @@ export function BuildingEditor({
     setLoadingDetail(true);
     setLoadError(null);
     try {
-      hydrate(await getBuilding(tenant, token, buildingId), draftRestoredRef.current);
+      const detail = await getBuilding(tenant, token, buildingId);
+      const keepEdits = draftRestoredRef.current;
+      hydrate(detail, keepEdits);
+      /*
+        A restored draft made against an older version than the server holds:
+        a colleague has saved this building since. Keeping it silently, with
+        the fresh `updatedAt` as the save's `expectedUpdatedAt`, overwrote their
+        change without a word. The draft stays on screen, the save still names
+        the version the draft was made against (so it is refused as stale), and
+        the officer is asked which to keep (`staleDraft`).
+      */
+      if (keepEdits && !draftIsCurrent({ baseUpdatedAt: draftBaseRef.current }, detail.updatedAt)) {
+        loadedUpdatedAtRef.current = draftBaseRef.current;
+        setStaleDraft(detail);
+      }
     } catch (caught) {
       logApiError(caught);
       if (caught instanceof ApiRequestError && caught.status === 401) {
@@ -800,6 +845,26 @@ export function BuildingEditor({
   useEffect(() => {
     void loadDetail();
   }, [loadDetail]);
+
+  /** «حمّل النسخة الأحدث»: the draft is dropped and the server's copy shown, as on a fresh open. */
+  const loadLatestVersion = () => {
+    if (!staleDraft) return;
+    clearBuildingDraft(tenant, buildingId);
+    draftRestoredRef.current = false;
+    setAcknowledgedDuplicates(false);
+    setDuplicateReason('');
+    setNoPinReason(null);
+    hydrate(staleDraft, false);
+    setStaleDraft(null);
+  };
+
+  /** «أبقِ مسودتي»: an informed choice — the draft stays, and its save replaces the newer version. */
+  const keepDraftOverLatest = () => {
+    if (!staleDraft) return;
+    loadedUpdatedAtRef.current = staleDraft.updatedAt;
+    markDraftBase(staleDraft.updatedAt);
+    setStaleDraft(null);
+  };
 
   /*
     The two things the sector step needs, fetched once per mount.
@@ -1555,6 +1620,11 @@ export function BuildingEditor({
   // Save handler
   const handleSave = async (confirmed = false) => {
     if (inFlight.current) return;
+    // Which version to keep is asked first (`staleDraft`); the question is where the answer is.
+    if (staleDraft) {
+      staleDraftRef.current?.focus();
+      return;
+    }
     if (!trimmedParcel) {
       setFieldErrors({ parcelNumber: en ? 'Parcel number is required' : 'رقم العقار مطلوب' });
       goToStep(0);
@@ -2058,6 +2128,28 @@ export function BuildingEditor({
           {step + 1} / {visibleSteps.length}
         </span>
       </div>
+
+      {staleDraft ? (
+        <Alert
+          ref={staleDraftRef}
+          tabIndex={-1}
+          variant="warning"
+          live="alert"
+          title={tEditor('staleDraft.title')}
+        >
+          <div className="space-y-3">
+            <p>{tEditor('staleDraft.body')}</p>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" size="sm" onClick={loadLatestVersion}>
+                {tEditor('staleDraft.loadLatest')}
+              </Button>
+              <Button type="button" size="sm" variant="outline" onClick={keepDraftOverLatest}>
+                {tEditor('staleDraft.keepDraft')}
+              </Button>
+            </div>
+          </div>
+        </Alert>
+      ) : null}
 
       {/* Global Error Banner */}
       {error ? (

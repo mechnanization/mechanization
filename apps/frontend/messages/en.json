@@ -2035,6 +2035,12 @@
     "deduplicated": {
       "title": "This building was already saved",
       "description": "An earlier press reached the server but its answer was lost, so nothing was created twice. What was saved is what that press sent: check {code} on the matrix."
+    },
+    "staleDraft": {
+      "title": "This building was saved again after your draft",
+      "body": "Someone saved this building after the edits restored here were made. Load the latest version to see that save — your unsaved edits are dropped — or keep your draft: saving it will then replace that version, its units included.",
+      "loadLatest": "Load the latest version",
+      "keepDraft": "Keep my draft"
     }
   },
   "floorCount": {
