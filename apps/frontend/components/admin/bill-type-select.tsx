@@ -181,7 +181,7 @@ export function BillTypeSelect({
                   ? 'Search existing bill or type new name…'
                   : 'ابحث في الرسوم السابقة أو اكتب اسماً جديداً…'
               }
-              className="w-full rounded-lg border border-border/70 bg-muted/40 ps-9 pe-8 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-1 focus:ring-primary focus:bg-background transition-all"
+              className="w-full rounded-lg border border-border/70 bg-muted/40 ps-9 pe-8 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-1 focus:ring-primary focus:bg-background transition"
             />
             {search ? (
               <button
@@ -235,7 +235,7 @@ export function BillTypeSelect({
                     type="button"
                     onClick={() => handleSelect(title)}
                     className={cn(
-                      'group flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-start transition-all cursor-pointer',
+                      'group flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-start transition-colors cursor-pointer',
                       isSelected
                         ? 'bg-primary text-primary-foreground font-semibold shadow-xs'
                         : 'hover:bg-accent hover:text-accent-foreground text-foreground',
@@ -319,7 +319,7 @@ export function BillTypeFilter({
         type="button"
         onClick={() => setIsOpen((prev) => !prev)}
         className={cn(
-          'inline-flex h-8 items-center gap-1.5 rounded-lg border border-border/80 bg-card px-2.5 text-xs font-semibold shadow-2xs transition-all cursor-pointer',
+          'inline-flex h-8 items-center gap-1.5 rounded-lg border border-border/80 bg-card px-2.5 text-xs font-semibold shadow-2xs transition cursor-pointer',
           value
             ? 'border-primary/50 bg-primary/10 text-primary font-bold'
             : 'text-muted-foreground hover:bg-accent hover:text-foreground',
@@ -360,7 +360,7 @@ export function BillTypeFilter({
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder={isEnglish ? 'Search created bills…' : 'ابحث في الرسوم المنشأة…'}
-              className="w-full rounded-md border border-border/70 bg-muted/40 ps-8 pe-7 py-1 text-xs text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-1 focus:ring-primary focus:bg-background transition-all"
+              className="w-full rounded-md border border-border/70 bg-muted/40 ps-8 pe-7 py-1 text-xs text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-1 focus:ring-primary focus:bg-background transition"
             />
             {search ? (
               <button
@@ -379,7 +379,7 @@ export function BillTypeFilter({
               type="button"
               onClick={() => handleSelect('')}
               className={cn(
-                'flex w-full items-center justify-between rounded-md px-2 py-1.5 text-xs text-start transition-all cursor-pointer',
+                'flex w-full items-center justify-between rounded-md px-2 py-1.5 text-xs text-start transition-colors cursor-pointer',
                 !value
                   ? 'bg-primary text-primary-foreground font-semibold shadow-xs'
                   : 'hover:bg-accent text-foreground',
@@ -403,7 +403,7 @@ export function BillTypeFilter({
                     type="button"
                     onClick={() => handleSelect(title)}
                     className={cn(
-                      'flex w-full items-center justify-between gap-1.5 rounded-md px-2 py-1.5 text-xs text-start transition-all cursor-pointer',
+                      'flex w-full items-center justify-between gap-1.5 rounded-md px-2 py-1.5 text-xs text-start transition-colors cursor-pointer',
                       isSelected
                         ? 'bg-primary text-primary-foreground font-semibold shadow-xs'
                         : 'hover:bg-accent text-foreground',

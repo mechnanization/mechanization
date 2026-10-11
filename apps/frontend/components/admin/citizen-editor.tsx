@@ -50,6 +50,7 @@ import {
   loadCitizenDraft,
   saveCitizenDraft,
 } from '@/lib/citizen-draft';
+import { Alert } from '@/components/ui/alert';
 import { buttonVariants } from '@/components/ui/button';
 import type { PropertyDraft, UnitDraft } from '@/components/citizen/property-card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -1917,12 +1918,9 @@ export function CitizenEditor({
   if (loadError) {
     return (
       <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-        <p
-          role="alert"
-          className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-destructive"
-        >
+        <Alert variant="destructive" live="alert">
           {loadError}
-        </p>
+        </Alert>
         <ShellLink href={`${base}/citizens`} className={buttonVariants({ variant: 'outline' })}>
           {locale === 'en' ? 'Back to Citizens Registry' : 'رجوع إلى سجل المواطنين'}
         </ShellLink>

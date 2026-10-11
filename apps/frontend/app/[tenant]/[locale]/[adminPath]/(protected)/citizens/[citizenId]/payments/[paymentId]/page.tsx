@@ -30,6 +30,7 @@ import { formatForeign, formatLbp, formatTypedAmount, parseAmount } from '@/lib/
 import { heldKey, keyIsSpent, spendKey } from '@/lib/request-id';
 import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
 import { HeaderBackLink } from '@/components/admin/header-back-link';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { CurrencyInput } from '@/components/ui/currency-input';
@@ -680,9 +681,9 @@ export default function SettleCashPage({
                 </p>
               ) : null}
               {error ? (
-                <p role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
+                <Alert variant="destructive" live="alert">
                   {error}
-                </p>
+                </Alert>
               ) : null}
 
               <div className="mt-auto space-y-2">

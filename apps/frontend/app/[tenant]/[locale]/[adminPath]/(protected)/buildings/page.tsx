@@ -40,14 +40,16 @@ import {
 import { loadSession } from '@/lib/session';
 import { param, useTabSearch, useUrlPagination, useUrlState } from '@/lib/use-url-state';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { useTableLabels } from '@/lib/use-table-labels';
 import { CellTag } from '@/components/ui/cell-tag';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import { DataTable, type DataTableLabels } from '@/components/ui/data-table';
+import { DataTable } from '@/components/ui/data-table';
 import { PageHeader } from '@/components/ui/page-header';
 import { FilterInput, FilterSelect } from '@/components/ui/filter-controls';
 import { Skeleton } from '@/components/ui/skeleton';
+import { StatItem, StatStrip } from '@/components/ui/stat-strip';
 import { ActionTooltip } from '@/components/ui/tooltip';
 import { useToast } from '@/components/ui/toast';
 import { BuildingQueueNotice } from '@/components/admin/building-queue-notice';
@@ -64,10 +66,11 @@ import { CENSUS_WRITE_ROLES, hasRole } from '@/lib/staff-roles';
  * because somebody filed a card about it, so an unsurveyed block is a row here
  * with a number on it rather than an absence nobody can count.
  *
- * The four tiles are the dispatch decision in four numbers, and they are
- * computed by the server over the whole filtered set rather than over the page
- * on screen — a tile that quietly described the first hundred rows would read
- * as a statement about the municipality and be one about the pagination.
+ * The figures above the ledger are the dispatch decision in five numbers, and
+ * they are computed by the server over the whole filtered set rather than over
+ * the page on screen — a figure that quietly described the first hundred rows
+ * would read as a statement about the municipality and be one about the
+ * pagination.
  *
  * The filters compose because the questions compose: "unsurveyed flats in the
  * eastern sector" and "unsafe buildings on parcel 1042" are the same query with
@@ -107,60 +110,6 @@ const FILTERS = {
  * Stated as a constant so the ceiling is visible rather than implied by a loop.
  */
 const EXPORT_CEILING = 10_000;
-
-
-function getTableLabels(locale: string): DataTableLabels {
-  if (locale === 'en') {
-    return {
-      searchAriaLabel: 'Search buildings',
-      searchPlaceholder: 'Search by code, name, posted number or parcel…',
-      clearSearch: 'Clear search',
-      searchHint: 'Enter',
-      searchApplied: 'Search: "{term}"',
-      empty: 'No buildings recorded yet.',
-      emptySearch: 'No buildings match these filters.',
-      loadError: 'Failed to load the census.',
-      retry: 'Retry',
-      previous: 'Previous',
-      next: 'Next',
-      pageOf: 'Page {current} of {total}',
-      rowsPerPage: 'Rows per page',
-      totalRows: '{count} buildings',
-      sortAscending: 'Sort ascending',
-      sortDescending: 'Sort descending',
-      sortNone: 'Clear sorting',
-      columns: 'Columns',
-      columnsHint: 'Visible columns',
-      resetColumns: 'Reset to default',
-      filters: 'Filters',
-      clearFilters: 'Clear filters',
-    };
-  }
-  return {
-    searchAriaLabel: 'بحث في المباني',
-    searchPlaceholder: 'ابحث بالرمز أو الاسم أو الرقم المكتوب أو رقم العقار…',
-    clearSearch: 'مسح البحث',
-    searchHint: 'Enter',
-    searchApplied: 'بحث: «{term}»',
-    empty: 'لا توجد مبانٍ مسجّلة بعد.',
-    emptySearch: 'لا توجد مبانٍ مطابقة لهذه الفلاتر.',
-    loadError: 'تعذّر تحميل سجل المباني.',
-    retry: 'إعادة المحاولة',
-    previous: 'السابق',
-    next: 'التالي',
-    pageOf: 'صفحة {current} من {total}',
-    rowsPerPage: 'عدد الصفوف',
-    totalRows: '{count} مبنى',
-    sortAscending: 'ترتيب تصاعدي',
-    sortDescending: 'ترتيب تنازلي',
-    sortNone: 'إلغاء الترتيب',
-    columns: 'الأعمدة',
-    columnsHint: 'الأعمدة الظاهرة',
-    resetColumns: 'استعادة الافتراضي',
-    filters: 'الفلاتر',
-    clearFilters: 'مسح الفلاتر',
-  };
-}
 
 export default function BuildingsPage({
   params,
@@ -207,7 +156,7 @@ export default function BuildingsPage({
 
       Only one direction of it is worth offering. "Structures that *do* have a
       pin" is not a question anybody asks; "the ones that do not" is a
-      morning's dispatch list, so this is a toggle the tile turns on.
+      morning's dispatch list, so this is one toggle, «بلا مدخل», in the filter bar.
     */
     noEntrance: withoutEntrance,
   } = filters;
@@ -366,6 +315,9 @@ export default function BuildingsPage({
 
   const rows = useMemo(() => query.data?.buildings ?? [], [query.data]);
   const summary = query.data?.summary;
+  /** One strip figure: drawn from the summary once it is in, a bar until then. */
+  const figure = (draw: (s: NonNullable<typeof summary>) => string) =>
+    summary ? draw(summary) : <Skeleton className="h-5 w-16" />;
   const total = query.data?.total ?? 0;
 
   const reload = useCallback(
@@ -768,6 +720,37 @@ export default function BuildingsPage({
     [en, labels, canWrite, canDelete, base, router],
   );
 
+  /*
+    The shared table strings, with what this ledger says that no other table
+    does. The column picker is asked for
+    (`columnsMenu`): this ledger keeps its choice of columns.
+  */
+  const tableLabels = useTableLabels({
+    ...(en
+      ? {
+          searchAriaLabel: 'Search buildings',
+          searchPlaceholder: 'Search by code, name, posted number or parcel…',
+          searchApplied: 'Search: "{term}"',
+          empty: 'No buildings recorded yet.',
+          emptySearch: 'No buildings match these filters.',
+          loadError: 'Failed to load the census.',
+          totalRows: '{count} buildings',
+          filters: 'Filters',
+          clearFilters: 'Clear filters',
+        }
+      : {
+          searchAriaLabel: 'بحث في المباني',
+          searchPlaceholder: 'ابحث بالرمز أو الاسم أو الرقم المكتوب أو رقم العقار…',
+          searchApplied: 'بحث: «{term}»',
+          empty: 'لا توجد مبانٍ مسجّلة بعد.',
+          emptySearch: 'لا توجد مبانٍ مطابقة لهذه الفلاتر.',
+          loadError: 'تعذّر تحميل سجل المباني.',
+          totalRows: '{count} مبنى',
+          filters: 'الفلاتر',
+          clearFilters: 'مسح الفلاتر',
+        }),
+  }, { columnsMenu: true });
+
   if (!token) return null;
 
   return (
@@ -803,55 +786,55 @@ export default function BuildingsPage({
       {/*
         Buildings still on this device, and any code that changed on the way in.
 
-        Above the tiles because it is about records that are *not* in them yet:
-        a provisional code an officer is still quoting is the one thing on this
-        screen that can be wrong in a way nothing else would reveal.
+        Above the figures because it is about records that are *not* in them
+        yet: a provisional code an officer is still quoting is the one thing on
+        this screen that can be wrong in a way nothing else would reveal.
       */}
       <BuildingQueueNotice tenant={tenant} canSend={canWrite} />
 
       {/*
         ── The dispatch decision, in five numbers ───────────────────
-        Two across until five fit — the sidebar takes a quarter of a laptop —
-        and the fifth takes the whole last row rather than sitting alone at
-        half width.
+        A strip of zeros while it loads would read as an empty municipality, so
+        a figure not in yet is a bar, as on the citizens page, and a read that
+        failed draws no strip at all. The tone of each figure is the colour of
+        its number (PRIM-20).
       */}
-      <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 xl:grid-cols-5">
-        <MetricCard
-          label={en ? 'Buildings' : 'عدد المباني'}
-          value={(summary?.buildings ?? 0).toLocaleString('en-US')}
-          loading={query.loading}
-          icon={<Building2 className="size-6 text-primary" />}
-        />
-        {/* The count behind the share, which a percentage hides: «12 من 40». */}
-        <MetricCard
-          label={en ? 'Units surveyed' : 'الوحدات الممسوحة'}
-          value={`${(summary?.unitsSurveyed ?? 0).toLocaleString('en-US')} ${en ? 'of' : 'من'} ${(summary?.unitsTotal ?? 0).toLocaleString('en-US')}`}
-          loading={query.loading}
-          icon={<ClipboardCheck className="size-6 text-success" />}
-          accent="bg-success/10"
-        />
-        <MetricCard
-          label={en ? 'Damaged buildings' : 'مبانٍ متضررة'}
-          value={(summary?.damaged ?? 0).toLocaleString('en-US')}
-          loading={query.loading}
-          icon={<ShieldAlert className="size-6 text-destructive" />}
-          accent="bg-destructive/10"
-        />
-        <MetricCard
-          label={en ? 'Unsurveyed units' : 'وحدات غير ممسوحة'}
-          value={(summary?.unitsUnsurveyed ?? 0).toLocaleString('en-US')}
-          loading={query.loading}
-          icon={<DoorOpen className="size-6 text-warning" />}
-          accent="bg-warning/10"
-        />
-        <MetricCard
-          label={en ? 'No entrance placed' : 'بلا مدخل مُثبت'}
-          value={(summary?.withoutEntrance ?? 0).toLocaleString('en-US')}
-          loading={query.loading}
-          icon={<MapPinOff className="size-6 text-muted-foreground" />}
-          className="col-span-2 xl:col-span-1"
-        />
-      </div>
+      {summary || query.loading ? (
+        <StatStrip>
+          <StatItem
+            label={en ? 'Buildings' : 'عدد المباني'}
+            value={figure((s) => s.buildings.toLocaleString('en-US'))}
+            icon={Building2}
+          />
+          {/* The count behind the share, which a percentage hides: «12 من 40». */}
+          <StatItem
+            label={en ? 'Units surveyed' : 'الوحدات الممسوحة'}
+            value={figure(
+              (s) =>
+                `${s.unitsSurveyed.toLocaleString('en-US')} ${en ? 'of' : 'من'} ${s.unitsTotal.toLocaleString('en-US')}`,
+            )}
+            icon={ClipboardCheck}
+            className="text-success"
+          />
+          <StatItem
+            label={en ? 'Damaged buildings' : 'مبانٍ متضررة'}
+            value={figure((s) => s.damaged.toLocaleString('en-US'))}
+            icon={ShieldAlert}
+            className="text-destructive"
+          />
+          <StatItem
+            label={en ? 'Unsurveyed units' : 'وحدات غير ممسوحة'}
+            value={figure((s) => s.unitsUnsurveyed.toLocaleString('en-US'))}
+            icon={DoorOpen}
+            className="text-warning"
+          />
+          <StatItem
+            label={en ? 'No entrance placed' : 'بلا مدخل مُثبت'}
+            value={figure((s) => s.withoutEntrance.toLocaleString('en-US'))}
+            icon={MapPinOff}
+          />
+        </StatStrip>
+      ) : null}
 
       {/*
         Says why the figures above are smaller than the matrix totals suggest.
@@ -862,9 +845,9 @@ export default function BuildingsPage({
         to be explainable on the screen showing it rather than only in the
         audit log.
 
-        Under the row rather than on a tile: it qualifies «الوحدات الممسوحة»
-        and «وحدات غير ممسوحة» equally, and `MetricCard` is label-and-value by
-        decision — a caveat that belongs to two tiles is not a subtext of
+        Under the strip rather than in a cell: it qualifies «الوحدات الممسوحة»
+        and «وحدات غير ممسوحة» equally, and a `StatItem` is a figure and its
+        label — a caveat that belongs to two figures is not a subtext of
         either. Shown only when something is actually excluded, so a register
         with nothing out of scope carries no line at all.
       */}
@@ -913,7 +896,7 @@ export default function BuildingsPage({
             className="rounded-none border-0 shadow-none"
             columns={columns}
             data={rows}
-            labels={getTableLabels(locale)}
+            labels={tableLabels}
             getRowId={(row) => row.id}
             loading={query.loading}
             error={query.error}
@@ -1087,51 +1070,5 @@ export default function BuildingsPage({
         }}
       />
     </div>
-  );
-}
-
-/**
- * One figure: the icon at the start, its label over its value beside it.
- * Label and value only — a line under the number is one more thing to read
- * on a row that is meant to be taken in at a glance.
- */
-function MetricCard({
-  label,
-  value,
-  loading,
-  icon,
-  accent,
-  className,
-}: {
-  label: string;
-  value: React.ReactNode;
-  loading: boolean;
-  icon: React.ReactNode;
-  accent?: string;
-  className?: string;
-}) {
-  return (
-    <Card className={className}>
-      <CardContent className="flex items-center gap-3 p-4">
-        <div
-          className={cn(
-            'flex size-11 shrink-0 items-center justify-center rounded-xl bg-primary/10',
-            accent,
-          )}
-        >
-          {icon}
-        </div>
-        <div className="min-w-0 flex-1 space-y-1">
-          <p className="text-xs font-medium leading-snug text-muted-foreground">{label}</p>
-          {loading ? (
-            <Skeleton className="h-7 w-20" />
-          ) : (
-            <div className="break-words text-lg font-bold tracking-tight tabular-nums text-foreground sm:text-xl">
-              {value}
-            </div>
-          )}
-        </div>
-      </CardContent>
-    </Card>
   );
 }

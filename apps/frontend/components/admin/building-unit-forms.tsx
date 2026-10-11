@@ -72,6 +72,7 @@ import { formatPhone } from '@/lib/phone';
 import { useTableLabels } from '@/lib/use-table-labels';
 import { stashLinkSeed } from '@/lib/tab-search';
 import { cn } from '@/lib/utils';
+import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import {
@@ -91,6 +92,7 @@ import {
 import { CellTag } from '@/components/ui/cell-tag';
 import { Checkbox } from '@/components/ui/checkbox';
 import { DataTable } from '@/components/ui/data-table';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Field, FieldFlagProvider } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import {
@@ -2122,15 +2124,13 @@ export function EndOccupancyDialog({
 
           {reason !== 'RECORDED_IN_ERROR' ? (
             <Field label={en ? 'Left on' : 'تاريخ الانتهاء'} htmlFor="end-occupancy-date">
-              <Input
+              <DatePicker
                 id="end-occupancy-date"
-                type="date"
                 min={occupant.fromDate.slice(0, 10)}
                 max={today()}
                 value={toDate}
-                onChange={(event) => setToDate(event.target.value)}
-                dir="ltr"
-                className="text-start"
+                onChange={setToDate}
+                locale={en ? 'en' : 'ar'}
               />
             </Field>
           ) : null}
@@ -2147,12 +2147,9 @@ export function EndOccupancyDialog({
           ) : null}
 
           {failure ? (
-            <p
-              role="alert"
-              className="rounded-md border border-destructive/30 bg-destructive/10 p-2.5 text-sm text-destructive"
-            >
+            <Alert variant="destructive" live="alert">
               {failure}
-            </p>
+            </Alert>
           ) : null}
         </div>
 
@@ -2745,12 +2742,9 @@ function LinkOwnerDialog({
         ) : null}
 
         {failure ? (
-          <p
-            role="alert"
-            className="rounded-md border border-destructive/30 bg-destructive/10 p-2.5 text-sm text-destructive"
-          >
+          <Alert variant="destructive" live="alert">
             {failure}
-          </p>
+          </Alert>
         ) : null}
 
         <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
@@ -2903,14 +2897,12 @@ export function ConfirmVacancyForm({
         label={en ? 'Seen empty on' : 'تاريخ المعاينة'}
         htmlFor="vacancy-observed"
       >
-        <Input
+        <DatePicker
           id="vacancy-observed"
-          type="date"
           max={today()}
           value={observedAt}
-          onChange={(event) => setObservedAt(event.target.value)}
-          dir="ltr"
-          className="text-start"
+          onChange={setObservedAt}
+          locale={en ? 'en' : 'ar'}
         />
       </Field>
 
@@ -3087,15 +3079,13 @@ export function EndVacancyDialog({
 
           {reason === 'NO_LONGER_VACANT' ? (
             <Field label={en ? 'Occupied again since' : 'تاريخ انتهاء الشغور'} htmlFor="vacancy-ended">
-              <Input
+              <DatePicker
                 id="vacancy-ended"
-                type="date"
                 min={vacancy.observedAt.slice(0, 10)}
                 max={today()}
                 value={endedAt}
-                onChange={(event) => setEndedAt(event.target.value)}
-                dir="ltr"
-                className="text-start"
+                onChange={setEndedAt}
+                locale={en ? 'en' : 'ar'}
               />
             </Field>
           ) : null}
@@ -3113,12 +3103,9 @@ export function EndVacancyDialog({
           </Field>
 
           {failure ? (
-            <p
-              role="alert"
-              className="rounded-md border border-destructive/30 bg-destructive/10 p-2.5 text-sm text-destructive"
-            >
+            <Alert variant="destructive" live="alert">
               {failure}
-            </p>
+            </Alert>
           ) : null}
         </div>
 

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Check, Link2, Loader2, Search, Unlink, UserRound, X } from 'lucide-react';
 import type { CaseSummary, CaseUnitOccupant, CitizenListItem } from '@/lib/api-client';
 import { listCitizens, logApiError } from '@/lib/api-client';
+import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -380,9 +381,9 @@ export function LinkCaseCitizenDialog({
         ) : null}
 
         {error ? (
-          <p role="alert" className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+          <Alert variant="destructive" live="alert">
             {error}
-          </p>
+          </Alert>
         ) : null}
 
         {currentCitizenName ? null : (

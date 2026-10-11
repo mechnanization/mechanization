@@ -3,7 +3,9 @@
 import { useEffect, useState } from 'react';
 import { Loader2, UserPlus } from 'lucide-react';
 import type { CitizenListItem } from '@/lib/api-client';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 import {
   Dialog,
   DialogContent,
@@ -115,12 +117,9 @@ export function ChargeCitizenDialog({
 
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-6">
           {error ? (
-            <p
-              role="alert"
-              className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
-            >
+            <Alert variant="destructive" live="alert">
               {error}
-            </p>
+            </Alert>
           ) : null}
 
           <Field
@@ -202,13 +201,11 @@ export function ChargeCitizenDialog({
               htmlFor="charge-due"
               required
             >
-              <Input
+              <DatePicker
                 id="charge-due"
-                type="date"
-                dir="ltr"
-                className="text-start"
                 value={values.dueDate}
-                onChange={(event) => set({ dueDate: event.target.value })}
+                onChange={(dueDate) => set({ dueDate })}
+                locale={locale === 'en' ? 'en' : 'ar'}
               />
             </Field>
           </div>

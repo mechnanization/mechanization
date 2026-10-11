@@ -3,15 +3,7 @@
 import { use, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useQueryClient } from '@tanstack/react-query';
-import {
-  BadgeDollarSign,
-  Clock,
-  HandCoins,
-  Receipt,
-  RefreshCw,
-  TrendingUp,
-  Wallet,
-} from 'lucide-react';
+import { BadgeDollarSign, HandCoins, Receipt, RefreshCw } from 'lucide-react';
 import type { InspectorProfileResponse } from '@mechanization/shared-schemas';
 import { getInspectorProfile, getMyInspectorProfile } from '@/lib/api-client';
 import { useStaffQuery } from '@/lib/use-staff-query';
@@ -23,6 +15,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
 import { Skeleton } from '@/components/ui/skeleton';
+import { StatItem, StatStrip } from '@/components/ui/stat-strip';
 import { EmptyState, ErrorState } from '@/components/ui/states';
 import {
   Table,
@@ -129,11 +122,7 @@ export default function InspectorPayoutHistoryPage({
             <Skeleton className="h-4 w-96" />
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, index) => (
-            <Skeleton key={index} className="h-24 rounded-lg" />
-          ))}
-        </div>
+        <Skeleton className="h-36 rounded-lg sm:h-20" />
         <Skeleton className="h-80 rounded-xl" />
       </div>
     );
@@ -193,35 +182,31 @@ export default function InspectorPayoutHistoryPage({
         </Card>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Stat
-              icon={TrendingUp}
+          <StatStrip>
+            <StatItem
               label={isAr ? 'إجمالي الأرباح' : 'Total earned'}
               value={`$${money(data.totalEarnings)}`}
-              note={`${data.totalProperties.toLocaleString(locale)} ${isAr ? 'وحدة محتسبة' : 'billable units'}`}
+              hint={`${data.totalProperties.toLocaleString(locale)} ${isAr ? 'وحدة محتسبة' : 'billable units'}`}
             />
-            <Stat
-              icon={Wallet}
+            <StatItem
               label={isAr ? 'إجمالي المدفوع' : 'Total paid'}
               value={`$${money(data.paidBalance)}`}
             />
-            <Stat
-              icon={Receipt}
+            <StatItem
               label={isAr ? 'عدد الدفعات' : 'Payouts recorded'}
               value={data.payouts.length.toLocaleString(locale)}
-              note={
+              hint={
                 latestPayout
                   ? `${isAr ? 'آخر دفعة:' : 'Latest:'} ${formatDate(latestPayout.paidAt)}`
                   : undefined
               }
             />
-            <Stat
-              icon={Clock}
+            <StatItem
               label={isAr ? 'المتبقي المستحق' : 'Still owed'}
               value={`$${money(data.pendingBalance)}`}
-              emphasis
+              className="text-warning"
             />
-          </div>
+          </StatStrip>
 
           <Card className="overflow-hidden border-border/70">
             <CardContent className="p-0">
@@ -335,44 +320,6 @@ export default function InspectorPayoutHistoryPage({
           />
         </>
       )}
-    </div>
-  );
-}
-
-function Stat({
-  icon: Icon,
-  label,
-  value,
-  note,
-  emphasis,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  value: string;
-  note?: string;
-  emphasis?: boolean;
-}): React.JSX.Element {
-  return (
-    <div className="rounded-lg border bg-card p-4">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Icon className="size-4 shrink-0" aria-hidden />
-        <span className="min-w-0 truncate">{label}</span>
-      </div>
-      {/*
-        `<bdi>` rather than a `dir` override: the label sits above the value,
-        and a value with its own direction lands on the opposite edge from the
-        word naming it. The isolate keeps «$412.00» in the right order without
-        moving where it starts — so counts and amounts now line up with each
-        other too, which the `plain` flag used to exist to work around.
-      */}
-      <div
-        className={`mt-2 text-2xl font-bold tabular-nums ${
-          emphasis ? 'text-warning' : 'text-foreground'
-        }`}
-      >
-        <bdi>{value}</bdi>
-      </div>
-      {note ? <p className="mt-1 truncate text-xs text-muted-foreground">{note}</p> : null}
     </div>
   );
 }

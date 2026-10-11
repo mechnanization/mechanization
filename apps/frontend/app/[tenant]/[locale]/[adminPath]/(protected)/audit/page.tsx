@@ -1,8 +1,8 @@
 'use client';
 
-import { use, useCallback, useEffect, useMemo, useState } from 'react';
+import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { CalendarDays, ChevronLeft, ChevronRight, History, ListTree, ShieldCheck, X } from 'lucide-react';
+import { CalendarDays, History, ListTree, ShieldCheck, X } from 'lucide-react';
 import { getLabels } from '@mechanization/shared-schemas';
 import { getAuditFacets, getAuditLog, type AuditEntry, type Session } from '@/lib/api-client';
 import { auditEntityLabel } from '@/lib/audit-labels';
@@ -18,6 +18,7 @@ import { SegmentedControl } from '@/components/ui/segmented-control';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { PageHeader } from '@/components/ui/page-header';
+import { Pager } from '@/components/ui/pager';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState, ErrorState } from '@/components/ui/states';
@@ -173,6 +174,8 @@ export default function AuditTrailPage({
   }, [query.data, query.fetching, family, facets.loading, page, pages, setFilters]);
 
   const days = useMemo(() => groupByDay(entries), [entries]);
+  /** The top of the timeline, which the pager brings back into view after a page change. */
+  const listTop = useRef<HTMLDivElement>(null);
   const today = dayKey(new Date());
   const yesterday = dayKey(new Date(Date.now() - 86_400_000));
 
@@ -290,7 +293,7 @@ export default function AuditTrailPage({
         />
       ) : (
       <>
-      <div className="flex items-center justify-between gap-2 text-sm text-muted-foreground" aria-live="polite">
+      <div ref={listTop} className="flex items-center justify-between gap-2 text-sm text-muted-foreground" aria-live="polite">
         <span className="flex items-center gap-1.5">
           <History className="size-4" aria-hidden />
           {query.data
@@ -366,26 +369,15 @@ export default function AuditTrailPage({
         </div>
       )}
 
-      {pages > 1 ? (
-        <nav className="flex items-center justify-center gap-2" aria-label={en ? 'Pages' : 'الصفحات'}>
-          <Button variant="outline" size="sm" disabled={page === 0 || query.fetching} onClick={() => setFilters((current) => ({ page: current.page - 1 }))}>
-            <ChevronRight className="size-4 ltr:rotate-180" aria-hidden />
-            {en ? 'Newer' : 'الأحدث'}
-          </Button>
-          <span className="px-2 text-sm tabular-nums text-muted-foreground">
-            {page + 1} / {pages}
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={page + 1 >= pages || query.fetching}
-            onClick={() => setFilters((current) => ({ page: current.page + 1 }))}
-          >
-            {en ? 'Older' : 'الأقدم'}
-            <ChevronLeft className="size-4 ltr:rotate-180" aria-hidden />
-          </Button>
-        </nav>
-      ) : null}
+      {/* Newest first: the previous page is the newer one. Renders nothing on a single page. */}
+      <Pager
+        page={page}
+        pageSize={PAGE_SIZE}
+        total={total}
+        onPageChange={(next) => setFilters({ page: next })}
+        locale={locale}
+        scrollTarget={listTop}
+      />
       </>
       )}
     </div>

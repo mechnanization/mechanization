@@ -959,7 +959,7 @@ export function BackupSection({
                 if (file) acceptSnapshot(file);
               }}
               className={cn(
-                'flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed p-6 text-center transition-all',
+                'flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed p-6 text-center transition-colors',
                 snapshotDragging
                   ? 'border-primary/60 bg-muted/30'
                   : 'border-muted-foreground/25 bg-muted/10 hover:border-primary/60 hover:bg-muted/30',

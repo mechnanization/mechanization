@@ -1,6 +1,6 @@
 # apps/frontend: agent guide
 
-Last verified against the code: `fix/ui` (at `9df68e4`; the recording forms' shared frame, `treasury-form-parts.tsx`; the way back in the header, `HeaderBackLink`; uncommitted), 2026-10-10.
+Last verified against the code: `refactor/ui-kit-adoption` (cut from `fix/ui@b60fd4e`; phase 1 of the kit adoption, `StatItem`'s `hint`; uncommitted), 2026-10-11.
 
 Next.js 15 app router, React 18, next-intl 4, TanStack Query 5, Tailwind 3.4 with
 tailwind-merge 3, Radix and lucide-react. One app serves the staff dashboard and the
@@ -350,13 +350,16 @@ Model: `app/[tenant]/[locale]/[adminPath]/(protected)/citizens/review/page.tsx` 
    no subtitle — the prop no longer exists, PRIM-1; a page with a way back declares it with
    `HeaderBackLink`, which the header draws, PRIM-2), `Card` > `CardContent className="p-0"` > borderless `DataTable`
    (`manualPagination manualFiltering sortable={false}`, `loading`, `error`, `onRetry`,
-   labels from `useTableLabels`) (LAY-1, BAN-4, PRIM-3).
+   labels from `useTableLabels`, with `{ columnsMenu: true }` when the table passes
+   `columnStorageKey`) (LAY-1, BAN-4, PRIM-3). A failed write above it is `Alert`
+   (`variant="destructive" live="alert"`), never a red `<p>` (CTL-12).
 7. **Panels and cells**: `LoadingState`, `EmptyState`, `ErrorState`; `CellTag`, `Money`,
    `formatDate` and friends, `formatPhone` (PRIM-5 to PRIM-12). `Money` isolates the signed
    figure left to right (minus U+2212, `moneyParts` in `lib/currency.ts`) and leaves the unit in
    the page's direction; `currency` draws a dollar or euro figure the same way, `signed` adds «+»
    for a ledger movement, and `wrap` lets the unit drop under the figure — a figure in a
-   `StatItem` passes it, because `StatItem` wraps and never truncates. The treasury draws every
+   `StatItem` passes it, because `StatItem` wraps and never truncates. A line that qualifies
+   the figure («منها متأخرات», «آخر دفعة: …») is `StatItem`'s `hint`, not a local tile. The treasury draws every
    figure through `TreasuryAmount`, which is `Money` with `exact`.
 8. **Writes**: in-flight ref, `invalidateQueries`, `useToast`; destructive actions through
    `ConfirmDialog`; `closeLabel` on every `DialogContent` (STA-3, STA-4, PRIM-16).

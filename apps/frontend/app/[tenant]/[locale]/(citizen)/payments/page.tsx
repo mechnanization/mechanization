@@ -26,6 +26,7 @@ import {
 import type { CitizenPaymentItem, MunicipalitySettings } from '@/lib/api-client';
 import { clearSession, loadSession } from '@/lib/session';
 import { formatLbp } from '@/lib/currency';
+import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -189,12 +190,9 @@ export default function CitizenPayments({
       </header>
 
       {error ? (
-        <p
-          role="alert"
-          className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-destructive"
-        >
+        <Alert variant="destructive" live="alert">
           {error}
-        </p>
+        </Alert>
       ) : null}
 
       <div className="grid gap-4 sm:grid-cols-3">
@@ -286,10 +284,9 @@ export default function CitizenPayments({
                   </div>
 
                   {item.reviewNote && item.paymentStatus !== 'PAID' ? (
-                    <p className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">
-                      <XCircle className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
+                    <Alert variant="destructive" icon={XCircle}>
                       {item.reviewNote}
-                    </p>
+                    </Alert>
                   ) : null}
 
                   {item.paymentStatus === 'PENDING_REVIEW' ? (

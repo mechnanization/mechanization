@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `feat/fees-bulk-settlement` (cut from `develop@b034640`; the payment ledger's own transaction, the doubled `0083`), 2026-10-10.
+Last verified against the code: `refactor/ui-kit-adoption` (cut from `fix/ui@b60fd4e`; Tailwind 4 class names on 3.4), 2026-10-11.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -874,6 +874,20 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   use `shadow-xs`. **Undecided:** pin tailwind-merge 2.6 or extend its config.
 - **Where:** `apps/frontend/lib/utils.ts` `cn`, `tailwind.config.ts`
   `spacing.touch`.
+
+### Tailwind 4 class names compile to nothing on 3.4
+
+- **What happens:** `outline-hidden` and `focus:outline-hidden` leave the
+  browser's own focus outline on the input, and `shadow-xs`/`shadow-2xs` draw no
+  shadow. No build step or lint rule says so.
+- **Why:** these are Tailwind 4 names (3.4 spells the first `outline-none`);
+  Tailwind 3.4.19 generates no rule for a class it does not know. Seen
+  2026-10-11 by compiling a probe with the app's config.
+- **Do this:** use the 3.4 name. Before trusting a class you remember from
+  Tailwind 4 docs, compile it (`npx tailwindcss --content <file> -c tailwind.config.ts`).
+- **Where:** `outline-hidden` 7 times in `bill-type-select.tsx` and
+  `fullscreen-map.tsx`; `shadow-xs` counts in
+  [ui-ux-standards.md](ui-ux-standards.md) §17.4.
 
 ### `toISOString().slice(0, 10)` is the UTC date
 

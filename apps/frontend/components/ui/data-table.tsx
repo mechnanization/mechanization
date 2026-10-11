@@ -918,7 +918,7 @@ export function DataTable<TData, TValue = unknown>({
       {filterBar ? (
         <div
           className={cn(
-            'border-b bg-muted/20 px-3.5 py-2.5 transition-all',
+            'border-b bg-muted/20 px-3.5 py-2.5 transition-colors',
             filtersOpen ? 'block' : 'hidden sm:block',
           )}
         >

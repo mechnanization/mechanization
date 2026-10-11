@@ -167,7 +167,7 @@ export function SettingsTabs<T extends string>({
               onClick={() => onSelect(item.id)}
               aria-current={isActive ? 'page' : undefined}
               className={cn(
-                'inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium transition-all',
+                'inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
                 isActive
                   ? 'bg-background text-foreground shadow'
                   : 'hover:text-foreground',

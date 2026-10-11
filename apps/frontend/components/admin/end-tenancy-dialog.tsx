@@ -13,6 +13,7 @@ import {
   type TenancyPreview,
   type TenancyPreviewRow,
 } from '@/lib/api-client';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -23,8 +24,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Field } from '@/components/ui/field';
-import { Input } from '@/components/ui/input';
 import { useToast } from '@/components/ui/toast';
 import { formatDate } from '@/lib/dates';
 import { cn } from '@/lib/utils';
@@ -280,9 +281,9 @@ export function EndTenancyDialog({
         </DialogHeader>
 
         {loadError ? (
-          <p role="alert" className="rounded-md bg-destructive/10 p-2.5 text-sm text-destructive">
+          <Alert variant="destructive" live="alert">
             {loadError}
-          </p>
+          </Alert>
         ) : !preview ? (
           <p className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin" aria-hidden />
@@ -371,15 +372,13 @@ export function EndTenancyDialog({
 
             {reason === 'MOVED_OUT' ? (
               <Field label={en ? 'Left on' : 'تاريخ الخروج'} htmlFor={dateId}>
-                <Input
+                <DatePicker
                   id={dateId}
-                  type="date"
                   min={preview.startedAt?.slice(0, 10)}
                   max={today()}
                   value={endedAt}
-                  onChange={(event) => setEndedAt(event.target.value)}
-                  dir="ltr"
-                  className="text-start"
+                  onChange={setEndedAt}
+                  locale={en ? 'en' : 'ar'}
                 />
               </Field>
             ) : null}
@@ -467,9 +466,9 @@ export function EndTenancyDialog({
         ) : null}
 
         {failure ? (
-          <p role="alert" className="rounded-md bg-destructive/10 p-2.5 text-sm text-destructive">
+          <Alert variant="destructive" live="alert">
             {failure}
-          </p>
+          </Alert>
         ) : null}
 
         <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">

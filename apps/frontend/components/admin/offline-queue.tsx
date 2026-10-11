@@ -2,6 +2,7 @@
 
 import { CloudOff, Loader2, Pencil, RefreshCw, TriangleAlert, Trash2 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import { Alert } from '@/components/ui/alert';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useState } from 'react';
@@ -165,13 +166,9 @@ export function OfflineQueuePanel({
       </header>
 
       {queue.authRequired ? (
-        <p
-          role="alert"
-          className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-2 text-xs font-medium text-destructive"
-        >
-          <TriangleAlert className="size-4 shrink-0" aria-hidden />
+        <Alert variant="destructive" live="alert">
           {t('authRequired')}
-        </p>
+        </Alert>
       ) : null}
 
       {!canSend ? (

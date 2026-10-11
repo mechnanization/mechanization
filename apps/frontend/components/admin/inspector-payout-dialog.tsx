@@ -14,6 +14,7 @@ import {
   logApiError,
   recordInspectorPayout,
 } from '@/lib/api-client';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
 import {
@@ -214,12 +215,9 @@ export function InspectorPayoutDialog({
 
         <form onSubmit={handleSubmit} className="space-y-4">
           {error ? (
-            <p
-              role="alert"
-              className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
-            >
+            <Alert variant="destructive" live="alert">
               {error}
-            </p>
+            </Alert>
           ) : null}
 
           {/*

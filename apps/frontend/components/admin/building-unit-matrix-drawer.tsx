@@ -52,6 +52,7 @@ import {
   type UnitWithOccupants,
 } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
+import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -1346,13 +1347,9 @@ export function BuildingUnitMatrixDrawer({
               ) : null}
 
               {actionError ? (
-                <p
-                  role="alert"
-                  className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"
-                >
-                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                <Alert variant="destructive" live="alert">
                   {actionError}
-                </p>
+                </Alert>
               ) : null}
               </div>
             </section>

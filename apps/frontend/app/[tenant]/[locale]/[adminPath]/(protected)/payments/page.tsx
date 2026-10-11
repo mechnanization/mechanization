@@ -32,81 +32,28 @@ import type {
 import { loadSession } from '@/lib/session';
 import { REFERENCE_SEND_ROLES, hasRole } from '@/lib/staff-roles';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { useTableLabels } from '@/lib/use-table-labels';
 import { param, useTabSearch, useUrlPagination, useUrlState } from '@/lib/use-url-state';
 import { formatLbp } from '@/lib/currency';
 import { formatDateTime, formatRelative } from '@/lib/dates';
+import { Alert } from '@/components/ui/alert';
 import { CellTag } from '@/components/ui/cell-tag';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { DataTable, type DataTableLabels } from '@/components/ui/data-table';
+import { DataTable } from '@/components/ui/data-table';
+import { Money } from '@/components/ui/money';
 import { PageHeader } from '@/components/ui/page-header';
 import { SegmentedControl } from '@/components/ui/segmented-control';
+import { StatItem, StatStrip } from '@/components/ui/stat-strip';
 import { ActionTooltip } from '@/components/ui/tooltip';
 import { PaymentReceipt } from '@/components/admin/payment-receipt';
 import { cn } from '@/lib/utils';
 
 /**
- * The table chrome, from the shared `table` catalogue plus this screen's own
- * two strings.
- *
- * This was a module-level `const` of twenty Arabic literals, which is why an
- * English visitor saw an Arabic table: a value computed once at import time
- * cannot depend on the request's locale. Nineteen of those literals were also
- * *already* in `messages/*.json` under `table` — the catalogue had been written
- * and then not used — so the fix is mostly deletion.
- *
- * Built inside the component rather than at module scope for that same reason,
- * and memoised on the two translators so the object is stable across renders:
- * `DataTable` takes `labels` by reference, and a fresh one every keystroke
- * would re-render the whole grid.
- */
-function useTableLabels(): DataTableLabels {
-  const t = useTranslations('table');
-  const tPayments = useTranslations('payments');
-
-  return useMemo(
-    () => ({
-      // The two that are genuinely about payments rather than about tables: the
-      // placeholder names this screen's searchable fields, and the row count is
-      // «١٢ عملية» rather than a bare total.
-      searchAriaLabel: tPayments('searchAria'),
-      searchPlaceholder: tPayments('searchPlaceholder'),
-      /*
-        `.raw`, not a call, for the three with placeholders: `DataTable` fills
-        {term}, {count}, {current} and {total} itself (`fillTemplate`), so it
-        needs the template. Calling `t()` asked next-intl to fill them now,
-        with nothing to fill them from — a FORMATTING_ERROR on every render.
-      */
-      searchApplied: tPayments.raw('searchApplied') as string,
-      empty: tPayments('empty'),
-      loadError: tPayments('loadError'),
-      totalRows: tPayments.raw('totalRows') as string,
-
-      clearSearch: t('clearSearch'),
-      // Not translated: it is the name of a key on the keyboard.
-      searchHint: 'Enter',
-      emptySearch: t('emptySearch'),
-      retry: t('retry'),
-      previous: t('previous'),
-      next: t('next'),
-      pageOf: t.raw('pageOf') as string,
-      rowsPerPage: t('rowsPerPage'),
-      sortAscending: t('sortAsc'),
-      sortDescending: t('sortDesc'),
-      sortNone: t('sortNone'),
-      columns: t('columns'),
-      columnsHint: t('columnsHint'),
-      resetColumns: t('resetColumns'),
-    }),
-    [t, tPayments],
-  );
-}
-
-/**
- * What the tiles show before the first response, and after a failed one.
+ * What the strip shows before the first response, and after a failed one.
  *
  * A stable object rather than a literal built during render: it is the
- * fallback for a query result, so a new one every render would make the tiles
+ * fallback for a query result, so a new one every render would make the strip
  * re-render on every keystroke elsewhere on the page.
  *
  * These figures are the server's, over every matching row rather than the
@@ -200,7 +147,25 @@ export default function PaymentsPage({
   const base = `/${tenant}/${locale}/${adminPath}`;
 
   const t = useTranslations('payments');
-  const tableLabels = useTableLabels();
+  /*
+    Only what is about payments rather than about tables: the placeholder names
+    this screen's searchable fields, and the row count is «١٢ عملية» rather than
+    a bare total. The column picker is asked for
+    (`columnsMenu`): this ledger keeps its choice of columns.
+
+    `.raw`, not a call, for the two with placeholders: `DataTable` fills {term}
+    and {count} itself (`fillTemplate`), so it needs the template. Calling `t()`
+    asked next-intl to fill them now, with nothing to fill them from — a
+    FORMATTING_ERROR on every render.
+  */
+  const tableLabels = useTableLabels({
+    searchAriaLabel: t('searchAria'),
+    searchPlaceholder: t('searchPlaceholder'),
+    searchApplied: t.raw('searchApplied') as string,
+    empty: t('empty'),
+    loadError: t('loadError'),
+    totalRows: t.raw('totalRows') as string,
+  }, { columnsMenu: true });
   /**
    * Enum labels — payment method, and anything else this screen renders from a
    * server enum.
@@ -641,28 +606,28 @@ export default function PaymentsPage({
       <PageHeader icon={ArrowLeftRight} title={t('title')} />
 
       {error ? (
-        <p
-          role="alert"
-          className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-destructive"
-        >
+        <Alert variant="destructive" live="alert">
           {error}
-        </p>
+        </Alert>
       ) : null}
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <SummaryTile label={t('tileCount')} value={total.toLocaleString('en-US')} />
-        <SummaryTile label={t('tileCollected')} value={formatLbp(totals.collected, locale)} />
-        <SummaryTile
+      <StatStrip>
+        <StatItem label={t('tileCount')} value={total.toLocaleString('en-US')} />
+        <StatItem
+          label={t('tileCollected')}
+          value={<Money amount={totals.collected} locale={locale} exact wrap />}
+        />
+        <StatItem
           label={t('tileByMethod')}
           value={`${totals.cash} / ${totals.whish} / ${totals.collector}`}
           hint={t('tileByMethodHint')}
         />
-        <SummaryTile
+        <StatItem
           label={t('tileAwaiting')}
           value={totals.awaiting.toLocaleString('en-US')}
-          tone={totals.awaiting > 0 ? 'warning' : undefined}
+          className={totals.awaiting > 0 ? 'text-warning' : undefined}
         />
-      </div>
+      </StatStrip>
 
       <Card className="overflow-hidden">
         <CardHeader className="border-b pb-4">
@@ -705,8 +670,9 @@ export default function PaymentsPage({
           </div>
         </CardHeader>
 
-        <CardContent className="p-6">
+        <CardContent className="p-0">
           <DataTable
+            className="rounded-none border-0 shadow-none"
             columns={columns}
             data={items}
             labels={tableLabels}
@@ -748,28 +714,5 @@ export default function PaymentsPage({
         />
       ) : null}
     </div>
-  );
-}
-
-/** A compact figure above the table — no icon chip, so the table stays the page. */
-function SummaryTile({
-  label,
-  value,
-  hint,
-  tone,
-}: {
-  label: string;
-  value: string;
-  hint?: string;
-  tone?: 'warning';
-}) {
-  return (
-    <Card className={cn(tone === 'warning' && 'border-warning/50 ring-1 ring-warning/20')}>
-      <CardContent className="space-y-1 p-4">
-        <p className="text-xs text-muted-foreground">{label}</p>
-        <p className="truncate text-xl font-bold tabular-nums">{value}</p>
-        {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
-      </CardContent>
-    </Card>
   );
 }

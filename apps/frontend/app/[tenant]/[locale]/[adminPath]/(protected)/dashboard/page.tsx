@@ -43,6 +43,7 @@ import type { InspectorProfileResponse } from '@mechanization/shared-schemas';
 import { clearSession, loadSession } from '@/lib/session';
 import { formatLbp } from '@/lib/currency';
 import { formatMonth } from '@/lib/dates';
+import { Alert } from '@/components/ui/alert';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Money } from '@/components/ui/money';
 import { PageHeader } from '@/components/ui/page-header';
@@ -412,12 +413,9 @@ export default function StaffDashboard({
       />
 
       {error ? (
-        <p
-          role="alert"
-          className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-destructive"
-        >
+        <Alert variant="destructive" live="alert">
           {error}
-        </p>
+        </Alert>
       ) : null}
 
       {/*

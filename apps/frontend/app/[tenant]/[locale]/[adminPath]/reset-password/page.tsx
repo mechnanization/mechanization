@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { ApiRequestError, confirmStaffPasswordReset, logApiError } from '@/lib/api-client';
+import { Alert } from '@/components/ui/alert';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -171,13 +172,9 @@ export default function ResetPasswordPage({
             </div>
 
             {error ? (
-              <p
-                role="alert"
-                className="mb-6 flex items-start gap-3 rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm leading-relaxed text-destructive"
-              >
-                <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-                <span>{error}</span>
-              </p>
+              <Alert variant="destructive" live="alert" className="mb-6">
+                {error}
+              </Alert>
             ) : null}
 
             <form

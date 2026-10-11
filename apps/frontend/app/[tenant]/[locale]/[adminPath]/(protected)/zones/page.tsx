@@ -18,6 +18,7 @@ import {
   type ZoneSummary,
 } from '@/lib/api-client';
 import { clearSession, loadSession } from '@/lib/session';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { ZoneModal, type ZoneFormValues } from '@/components/admin/zone-modal';
 import { DraggablePanel } from '@/components/admin/draggable-panel';
@@ -290,9 +291,9 @@ export default function ZonesPage({
       */}
       <h1 className="sr-only">{locale === 'en' ? 'Zones / Sectors' : 'القطاعات'}</h1>
       {error ? (
-        <p role="alert" className="border-b bg-destructive/5 px-4 py-2 text-sm text-destructive">
+        <Alert variant="destructive" live="alert" className="rounded-none border-x-0 border-t-0">
           {error}
-        </p>
+        </Alert>
       ) : null}
 
       <div className="relative flex min-h-0 flex-1">

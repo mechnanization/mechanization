@@ -1,7 +1,7 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { ChevronDown, ChevronLeft, ChevronRight, History, User } from 'lucide-react';
+import { useMemo, useRef, useState } from 'react';
+import { ChevronDown, History, User } from 'lucide-react';
 import { getLabels } from '@mechanization/shared-schemas';
 import { getAuditDaily, getAuditLog, type AuditDaySummary, type AuditEntry } from '@/lib/api-client';
 import { auditActionLabel, auditEntityLabel } from '@/lib/audit-labels';
@@ -10,6 +10,7 @@ import { formatMonth } from '@/lib/dates';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { FactCell, FactRow } from '@/components/ui/facts';
 import { Button } from '@/components/ui/button';
+import { Pager } from '@/components/ui/pager';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState, ErrorState } from '@/components/ui/states';
 import {
@@ -65,6 +66,8 @@ export function AuditDaily({
   const en = locale === 'en';
   const [page, setPage] = useState(0);
   const [openKey, setOpenKey] = useState<string | null>(null);
+  /** The top of the table, which the pager brings back into view after a page change. */
+  const tableTop = useRef<HTMLDivElement>(null);
 
   const actionsKey = filter.actions?.join(',') ?? '';
 
@@ -95,7 +98,6 @@ export function AuditDaily({
 
   const rows = useMemo(() => query.data?.items ?? [], [query.data]);
   const total = query.data?.total ?? 0;
-  const pages = Math.max(Math.ceil(total / PAGE_SIZE), 1);
 
   const todayKey = isoDay(new Date());
   const yesterdayKey = isoDay(new Date(Date.now() - 86_400_000));
@@ -141,7 +143,7 @@ export function AuditDaily({
         these rows are read by scanning one column at a time — whose day, how
         many — and a stack of cards makes that a search rather than a glance.
       */}
-      <div className="overflow-x-auto rounded-xl border bg-card">
+      <div ref={tableTop} className="overflow-x-auto rounded-xl border bg-card">
         <Table>
           <TableHeader>
             <TableRow className="hover:bg-transparent">
@@ -177,37 +179,18 @@ export function AuditDaily({
         </Table>
       </div>
 
-      {pages > 1 ? (
-        <nav className="flex items-center justify-center gap-2" aria-label={en ? 'Pages' : 'الصفحات'}>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={page === 0 || query.fetching}
-            onClick={() => {
-              setOpenKey(null);
-              setPage((current) => current - 1);
-            }}
-          >
-            <ChevronRight className="size-4 ltr:rotate-180" aria-hidden />
-            {en ? 'Newer' : 'الأحدث'}
-          </Button>
-          <span className="px-2 text-sm tabular-nums text-muted-foreground">
-            {page + 1} / {pages}
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={page + 1 >= pages || query.fetching}
-            onClick={() => {
-              setOpenKey(null);
-              setPage((current) => current + 1);
-            }}
-          >
-            {en ? 'Older' : 'الأقدم'}
-            <ChevronLeft className="size-4 ltr:rotate-180" aria-hidden />
-          </Button>
-        </nav>
-      ) : null}
+      {/* Newest first: the previous page is the newer one. Renders nothing on a single page. */}
+      <Pager
+        page={page}
+        pageSize={PAGE_SIZE}
+        total={total}
+        onPageChange={(next) => {
+          setOpenKey(null);
+          setPage(next);
+        }}
+        locale={locale}
+        scrollTarget={tableTop}
+      />
     </div>
   );
 }

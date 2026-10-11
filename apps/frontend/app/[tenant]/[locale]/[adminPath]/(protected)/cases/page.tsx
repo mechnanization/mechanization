@@ -16,6 +16,8 @@ import type { CaseSummary } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useTabSearch, useUrlPagination, useUrlState } from '@/lib/use-url-state';
+import { useTableLabels } from '@/lib/use-table-labels';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -27,7 +29,6 @@ import { useToast } from '@/components/ui/toast';
 import { BuildingUnitMatrixDrawer } from '@/components/admin/building-unit-matrix-drawer';
 import { CASE_FILTERS, CASE_TABS, TYPED_FILTER_DELAY_MS } from '@/components/admin/cases/case-queues';
 import { nextStatus } from '@/components/admin/cases/case-status';
-import { getCaseTableLabels } from '@/components/admin/cases/case-table-labels';
 import { useCaseColumns } from '@/components/admin/cases/use-case-columns';
 import { useCaseLinking } from '@/components/admin/cases/use-case-linking';
 import { CaseLinkDialog, CaseUnlinkDialog } from '@/components/admin/cases/case-link-dialogs';
@@ -353,9 +354,33 @@ export default function CasesPage({
     setPendingDelete,
   });
 
-  if (!token) return null;
+  /*
+    The cases table's own copy — what it searches and what it is empty of — over
+    the shared table strings. The column picker is asked
+    for (`columnsMenu`): this table keeps its choice of columns.
+  */
+  const tableLabels = useTableLabels({
+    ...(locale === 'en'
+      ? {
+          searchAriaLabel: 'Search cases',
+          searchPlaceholder: 'Search by property number, neighborhood, or notes…',
+          searchApplied: 'Search: "{term}"',
+          empty: 'No cases logged yet.',
+          loadError: 'Failed to load cases.',
+          totalRows: '{count} cases',
+        }
+      : {
+          searchAriaLabel: 'بحث في الحالات',
+          searchPlaceholder: 'ابحث برقم العقار أو الحي أو الملاحظات…',
+          searchApplied: 'بحث: «{term}»',
+          empty: 'لا توجد حالات مسجّلة بعد.',
+          emptySearch: 'لا نتائج مطابقة لبحثك.',
+          loadError: 'تعذّر تحميل الحالات.',
+          totalRows: '{count} حالة',
+        }),
+  }, { columnsMenu: true });
 
-  const tableLabels = getCaseTableLabels(locale);
+  if (!token) return null;
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
@@ -373,12 +398,9 @@ export default function CasesPage({
       />
 
       {error ? (
-        <p
-          role="alert"
-          className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-destructive"
-        >
+        <Alert variant="destructive" live="alert">
           {error}
-        </p>
+        </Alert>
       ) : null}
 
       {/*

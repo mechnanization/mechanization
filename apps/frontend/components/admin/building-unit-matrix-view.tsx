@@ -62,6 +62,7 @@ import {
   type UnitWithOccupants,
 } from '@/lib/api-client';
 import { clearSession, loadSession } from '@/lib/session';
+import { Alert } from '@/components/ui/alert';
 import { BackLink } from '@/components/ui/back-link';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -1578,13 +1579,9 @@ export function BuildingUnitMatrixView({
               ) : null}
 
               {actionError ? (
-                <p
-                  role="alert"
-                  className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"
-                >
-                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                <Alert variant="destructive" live="alert">
                   {actionError}
-                </p>
+                </Alert>
               ) : null}
 
               <SummaryList>

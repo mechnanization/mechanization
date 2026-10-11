@@ -8,7 +8,6 @@ import {
   Building2,
   CalendarDays,
   Check,
-  Clock,
   Copy,
   CreditCard,
   DoorClosed,
@@ -53,9 +52,11 @@ import { formatDate, formatMonthList } from '@/lib/dates';
 import { describeAssessment } from '@/lib/fee-assessment';
 import { ownerBillingApplies, ownerBillingWording } from '@/lib/owner-billing';
 import { flagFieldLabel } from '@/lib/field-flags';
+import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { StatItem, StatStrip } from '@/components/ui/stat-strip';
 import { cn } from '@/lib/utils';
 
 /** A bill is settled, or it is not — everything else is a shade of "not". */
@@ -271,12 +272,9 @@ export default function MyFilePage({
   return (
     <div className="space-y-6">
       {error ? (
-        <p
-          role="alert"
-          className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-destructive"
-        >
+        <Alert variant="destructive" live="alert">
           {error}
-        </p>
+        </Alert>
       ) : null}
 
       {/* ── Who this is ──
@@ -503,22 +501,20 @@ export default function MyFilePage({
       </Card>
 
       {/* ── What is owed, at a glance ── */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <StatCard
+      <StatStrip>
+        <StatItem
           label={locale === 'en' ? 'Amount Due' : 'المستحق عليك'}
           value={formatLbp(summary?.fees.outstandingTotal ?? 0, locale)}
-          icon={<Wallet className="size-5" aria-hidden />}
-          tone={
-            (summary?.fees.outstandingTotal ?? 0) > 0 ? 'destructive' : 'success'
+          className={
+            (summary?.fees.outstandingTotal ?? 0) > 0 ? 'text-destructive' : 'text-success'
           }
         />
-        <StatCard
+        <StatItem
           label={locale === 'en' ? 'Settled' : 'المسدَّد'}
           value={formatLbp(summary?.fees.paidTotal ?? 0, locale)}
-          icon={<BadgeCheck className="size-5" aria-hidden />}
-          tone="success"
+          className="text-success"
         />
-        <StatCard
+        <StatItem
           label={locale === 'en' ? 'Overdue' : 'متأخّرات'}
           value={formatLbp(summary?.fees.overdueTotal ?? 0, locale)}
           hint={
@@ -528,10 +524,9 @@ export default function MyFilePage({
                   : `${summary?.fees.overdueCount} مطالبة تجاوزت موعدها`)
               : (locale === 'en' ? 'No overdue claims' : 'لا متأخّرات')
           }
-          icon={<Clock className="size-5" aria-hidden />}
-          tone={(summary?.fees.overdueTotal ?? 0) > 0 ? 'destructive' : undefined}
+          className={(summary?.fees.overdueTotal ?? 0) > 0 ? 'text-destructive' : undefined}
         />
-      </div>
+      </StatStrip>
 
       {/*
         ── What the municipality could not establish ──
@@ -980,54 +975,6 @@ function ownerBilledNote(status: string, locale: string): string | undefined {
   return locale === 'en'
     ? 'Recorded as a seasonal home — the occupancy fee stays with the owner unless a vacancy declaration is filed with the municipality.'
     : 'مسجَّلة كمسكن موسمي — يبقى رسم الإشغال على المالك ما لم يُقدَّم تصريح بالشغور إلى البلدية.';
-}
-
-/** One headline figure. */
-function StatCard({
-  label,
-  value,
-  hint,
-  icon,
-  tone,
-}: {
-  label: string;
-  value: string;
-  hint?: string;
-  icon: React.ReactNode;
-  tone?: 'destructive' | 'success';
-}) {
-  return (
-    <Card>
-      <CardContent className="flex items-start justify-between gap-3 p-5">
-        <div className="min-w-0 space-y-1">
-          <p className="text-sm text-muted-foreground">{label}</p>
-          <p
-            className={cn(
-              'truncate text-xl font-bold tabular-nums',
-              tone === 'destructive' && 'text-destructive',
-              tone === 'success' && 'text-success',
-            )}
-          >
-            {value}
-          </p>
-          {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
-        </div>
-        <span
-          aria-hidden
-          className={cn(
-            'flex size-10 shrink-0 items-center justify-center rounded-lg',
-            tone === 'destructive'
-              ? 'bg-destructive/10 text-destructive'
-              : tone === 'success'
-                ? 'bg-success/10 text-success'
-                : 'bg-accent text-muted-foreground',
-          )}
-        >
-          {icon}
-        </span>
-      </CardContent>
-    </Card>
-  );
 }
 
 /**

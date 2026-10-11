@@ -3,7 +3,6 @@
 import { use, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  AlertCircle,
   ArrowRight,
   Eye,
   EyeOff,
@@ -17,6 +16,7 @@ import {
 import { ApiRequestError, isTotpRequired, loginStaff, logApiError } from '@/lib/api-client';
 import { loadSession, saveSession } from '@/lib/session';
 import { defaultPathFor } from '@/components/admin/nav';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { LoadingState } from '@/components/ui/states';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -232,13 +232,13 @@ export default function StaffLogin({
           </div>
 
           {error ? (
-            <div
-              role="alert"
-              className="mb-6 flex items-start gap-3 rounded-xl border border-destructive/40 bg-destructive/10 p-3.5 text-sm leading-relaxed text-destructive animate-in fade-in-0 duration-200"
+            <Alert
+              variant="destructive"
+              live="alert"
+              className="mb-6 animate-in fade-in-0 duration-200"
             >
-              <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-              <span>{error}</span>
-            </div>
+              {error}
+            </Alert>
           ) : null}
 
           <form

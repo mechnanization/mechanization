@@ -397,6 +397,8 @@ export function ChoiceCard({
   description,
   icon: Icon,
   className,
+  disabled,
+  children,
 }: {
   name: string;
   value: string;
@@ -406,6 +408,17 @@ export function ChoiceCard({
   description?: string;
   icon?: React.ComponentType<{ className?: string }>;
   className?: string;
+  /**
+   * This one answer is not available, with `description` saying why. Dims the
+   * card the way a locked `fieldset` does, without locking its siblings.
+   */
+  disabled?: boolean;
+  /**
+   * More than one line of description — badges, a comparison, a warning —
+   * rendered under the title inside the same label, so the whole card still
+   * selects.
+   */
+  children?: React.ReactNode;
 }) {
   return (
     <label
@@ -423,6 +436,7 @@ export function ChoiceCard({
         name={name}
         value={value}
         checked={checked}
+        disabled={disabled}
         onChange={() => onChange(value)}
         className="size-4 shrink-0 accent-[hsl(var(--primary))]"
       />
@@ -440,6 +454,7 @@ export function ChoiceCard({
         {description ? (
           <span className="block text-xs text-muted-foreground leading-normal mt-0.5">{description}</span>
         ) : null}
+        {children}
       </span>
     </label>
   );
