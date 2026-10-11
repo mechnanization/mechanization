@@ -1,6 +1,6 @@
 # Code quality
 
-Last verified against the code: `fix/moderate-cadastre-citizens` (on `develop@b034640`; the panel cadastre import's merge), 2026-10-11.
+Last verified against the code: `fix/moderate-cadastre-citizens` (on `develop@b034640`; the panel cadastre import's merge, the map components' API reads), 2026-10-11.
 
 Two parts: the code-pattern rules every change follows, and the debt the code carries today. The debt
 is not a precedent. **Fix an item when you touch its file, and remove its row in the same change.** Add a
@@ -88,7 +88,7 @@ in [docs/ui-ux-standards.md](ui-ux-standards.md) §17.
 |---|---|---|
 | `apps/frontend/lib/api-client.ts` (5,782 lines) | One file for every feature's client | Split per feature under `apps/frontend/lib`, keeping `apiFetch` shared |
 | 40 `.tsx` files over 600 lines, led by `building-unit-forms.tsx` (3,376), `building-editor.tsx` (3,288), `citizen-form.tsx` (2,582), `fullscreen-map.tsx` (2,489), `citizen-editor.tsx` (2,310) | God components (CODE-6) | Split into `components/admin/<feature>/*` pieces with one job each, as `components/admin/cases/` did |
-| `process.env.NEXT_PUBLIC_API_URL` read in 10 files; `NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN` in `fullscreen-map.tsx`, `parcel-pin-picker.tsx`, `zone-editor-map.tsx` | Config and fallback repeated | One validated config module in `apps/frontend/lib` |
+| `process.env.NEXT_PUBLIC_API_URL` read in 7 files; `NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN` in `fullscreen-map.tsx`, `parcel-pin-picker.tsx`, `zone-editor-map.tsx` | Config and fallback repeated | One validated config module in `apps/frontend/lib` |
 | `TenantLayout` `getTenant`, `ProtectedAdminLayout` `getTenantName`, the citizen layout's `getTenant` | The tenant config fetch exists three times | One server-side helper |
 | `bill-type-select.tsx` `normalizeArabic` | Local copy of a shared helper | Import `normalizeArabic` from `@mechanization/shared-schemas` |
 | `new Date().toISOString().slice(0, 10)`, 8 times in 7 files (`building-unit-forms.tsx` 2, `end-ownership-dialog.tsx`, `end-tenancy-dialog.tsx`, `residence-change-dialog.tsx`, buildings `page.tsx`, `map-export-dialog.tsx`, `quality/checks-panel.tsx` `isoDaysAgo`); `audit-daily.tsx` subtracts the offset first and is correct | A UTC date: between 00:00 and 03:00 Beirut time it is yesterday | `municipalToday` from `@mechanization/shared-schemas`, as the damage form (`lib/damage-reading.ts` `today`) does |

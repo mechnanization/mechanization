@@ -1,6 +1,6 @@
 # apps/frontend: agent guide
 
-Last verified against the code: `fix/pr104-review` (PR #104 review fixes merged with `fix/expense-retry-key-race@ff44f27` and `develop@4ad0b27`, then with `origin/fix/expense-retry-key-race`; uncommitted), 2026-10-10.
+Last verified against the code: `fix/moderate-cadastre-citizens` (on `develop@b034640`; signed cadastre layers), 2026-10-11.
 
 Next.js 15 app router, React 18, next-intl 4, TanStack Query 5, Tailwind 3.4 with
 tailwind-merge 3, Radix and lucide-react. One app serves the staff dashboard and the
@@ -94,6 +94,12 @@ component types.
   0, code `NETWORK_ERROR`), and on a 401 exchanges the token once (`exchangeStaffToken`,
   one flight per tenant) and replays. Endpoint functions MUST be shaped
   `fn(tenant, token, args?, signal?)` (model `getReviewQueue`), with shared-schemas types (CODE-3).
+  Nothing calls the API with a bare `fetch`: it carries no token, and every route but the
+  `@Public()` ones answers 401. The cadastre map layers are read through `fetchCadastreAsset`
+  (`lib/cadastre-assets.ts`): the portal's `public/tenants/<slug>/` copy first, then
+  `getCadastreAsset` with the token; `null` when neither answers, never a throw. The three maps
+  hold the token in a ref (`tokenRef`), because the map's `load` handler outlives the render
+  that created it.
 - **Reads** MUST use `useStaffQuery` (`lib/use-staff-query.ts`) with key
   `[resource, tenant, ...every param that changes the answer]`. It waits for the token,
   clears the session on a 401, and returns `{data, loading, fetching, error, refetch}`.
@@ -334,7 +340,7 @@ are inlined at build time. The local `.env.local` block is in
 
 | Name | Read in |
 |---|---|
-| `NEXT_PUBLIC_API_URL` | 10 files, each with its own fallback (`'http://localhost:4000/api/v1'`, except `'http://localhost:3001'` in `fullscreen-map.tsx` and `zone-editor-map.tsx`): `lib/api-client.ts`, `middleware.ts`, three layouts, the manifest route, dashboard, three map components (debt: [docs/code-quality.md](../../docs/code-quality.md)) |
+| `NEXT_PUBLIC_API_URL` | 7 files, each with its own fallback (`'http://localhost:4000/api/v1'`): `lib/api-client.ts`, `middleware.ts`, three layouts, the manifest route, dashboard (debt: [docs/code-quality.md](../../docs/code-quality.md)) |
 | `NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN` | `fullscreen-map.tsx`, `parcel-pin-picker.tsx`, `zone-editor-map.tsx` |
 | `NEXT_PUBLIC_SENTRY_DSN`, `NEXT_PUBLIC_SENTRY_ENVIRONMENT`, `NEXT_PUBLIC_VERCEL_ENV`, `NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA` | `lib/sentry-options.ts` |
 | `SENTRY_ORG`, `SENTRY_PROJECT`, `CI`, `VERCEL`, `NEXT_DIST_DIR` | `next.config.mjs`, build time |

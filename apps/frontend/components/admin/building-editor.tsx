@@ -785,7 +785,8 @@ export function BuildingEditor({
     The two things the sector step needs, fetched once per mount.
 
     Both are already cached at the module level — `loadParcelOutlines` keeps one
-    promise per tenant for the life of the tab, and `getZoneParcelIndex` a
+    promise per tenant for the life of the tab once it has found the outlines
+    (a miss is asked again, with the token once there is one), and `getZoneParcelIndex` a
     five-minute one — so this is not a second copy of anything. What it adds is
     holding them in state, because the pin→parcel lookup has to be able to
     answer synchronously the moment somebody taps the map.
@@ -798,11 +799,11 @@ export function BuildingEditor({
   useEffect(() => {
     let cancelled = false;
 
-    void loadParcelOutlines(tenant).then((collection) => {
+    void loadParcelOutlines(tenant, token).then((collection) => {
       if (!cancelled) setParcelOutlines(collection);
     });
 
-    void loadParcelLabelPoints(tenant).then((collection) => {
+    void loadParcelLabelPoints(tenant, token).then((collection) => {
       if (!cancelled) setParcelLabelPoints(collection);
     });
 
@@ -976,7 +977,7 @@ export function BuildingEditor({
 
     const timer = setTimeout(() => {
       void Promise.all([
-        loadParcelOutlines(tenant),
+        loadParcelOutlines(tenant, token),
         token
           ? getZoneParcelIndex(tenant, token).catch(
               () => ({}) as Record<string, { code: string; name: string }>,

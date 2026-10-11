@@ -1,6 +1,6 @@
 # Security
 
-Last verified against the code: `fix/pr104-review` (PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; income controls, the salary path and the urgent ceiling), 2026-10-10.
+Last verified against the code: `fix/moderate-cadastre-citizens` (on `develop@b034640`; signed cadastre layers), 2026-10-11.
 
 Binding for every change that touches authentication, roles, tokens, validation, uploads, logging,
 headers, client storage or secrets. The rules below are correct practice. Where the code differs today,
@@ -351,6 +351,11 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
 - Access tokens: `sessionStorage` by default, `localStorage` only with "remember me" (`saveSession`,
   `apps/frontend/lib/session.ts`). Sent as `Authorization: Bearer` by `apiFetch`. MUST NOT put a token
   in a URL. The staff refresh credential is the httpOnly cookie above, which page script cannot read.
+- An API read goes through `apiFetch`, never a bare `fetch`, so it carries the token and is renewed
+  like the rest. The cadastre map layers (`GET cadastre/assets/:assetName`, not public: any signed-in
+  token, `SELF_SERVICE` in `route-inventory.spec.ts`) are read through `fetchCadastreAsset` →
+  `getCadastreAsset`, and the API answers them `Cache-Control: private`, so no shared cache keeps a
+  signed-in response.
 - `dangerouslySetInnerHTML` only with constants or sanitised values (`ACCENT_INIT_SCRIPT`, `safeHslTriple`).
 - MUST NOT take a redirect target from a query parameter. `window.location.href` only to a URL the
   server built (the Whish checkout) or an internal route.

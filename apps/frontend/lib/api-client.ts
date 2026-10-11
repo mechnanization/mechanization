@@ -4921,6 +4921,36 @@ export interface CadastreImportResult {
   linesImported: number;
 }
 
+/** The map layers `GET /cadastre/assets/:assetName` serves — the server refuses any other name. */
+export type CadastreAssetName =
+  | 'cadastre.geojson'
+  | 'parcels.geojson'
+  | 'parcel-polygons.geojson'
+  | 'city-boundary.geojson';
+
+/**
+ * One of the municipality's cadastre map layers, from the API.
+ *
+ * Signed in like every other read: the route is not public, and a bare `fetch`
+ * of it was a 401 wherever `public/tenants/<slug>/` lacks the file. `version`
+ * only busts the browser's cache after an import (the response is cached
+ * privately for an hour); the server ignores it. The static-first lookup the
+ * maps use is `fetchCadastreAsset` (`lib/cadastre-assets.ts`).
+ */
+export function getCadastreAsset(
+  tenant: string,
+  token: string,
+  args: { asset: CadastreAssetName; version?: string | number },
+  signal?: AbortSignal,
+) {
+  const query = args.version ? `?v=${encodeURIComponent(String(args.version))}` : '';
+  return apiFetch<GeoJSON.FeatureCollection>(
+    tenant,
+    `/cadastre/assets/${encodeURIComponent(args.asset)}${query}`,
+    { token, signal },
+  );
+}
+
 /** SUPER_ADMIN only — rebuilds the parcel registry and the map's static
  * cartography layer from an uploaded GeoJSON file. */
 export function importCadastre(tenant: string, token: string, file: File) {
