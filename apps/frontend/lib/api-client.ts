@@ -4834,6 +4834,7 @@ export function getAuditLog(
   tenant: string,
   token: string,
   filter: {
+    /** A person's id, or `AUDIT_SYSTEM_ACTOR` for the entries no person made (no actor id). */
     actorId?: string;
     entityType?: string;
     /** One record's own trail. Pairs with `entityType`; the server indexes both. */
