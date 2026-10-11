@@ -420,7 +420,13 @@ export class AuditService {
     periodKey?: string;
   }): Promise<void> {
     await this.record({
-      actorId: payload.actorId ?? 'SYSTEM',
+      /*
+        A scheduled run has no actor: NULL, typed SYSTEM, as the Whish settlement
+        writes it. `actorId` is a uuid column, and the literal 'SYSTEM' it used to
+        carry was refused — and swallowed by `write` — so no recurring run had
+        ever left a row.
+      */
+      actorId: payload.actorId ?? null,
       actorType: payload.actorId ? 'STAFF' : 'SYSTEM',
       actorRole: (payload.actorRole ?? null) as never,
       action: payload.recurring ? 'FEE_RECURRING_ISSUED' : 'FEE_ISSUED',

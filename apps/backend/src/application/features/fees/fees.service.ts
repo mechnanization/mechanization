@@ -1353,8 +1353,15 @@ export class FeesService {
    * same month writes nothing; there is no "have I already billed?" flag to
    * get out of step with reality. That also means a municipality that adds a
    * resident mid-month gets them billed on the next run rather than never.
+   *
+   * `actor` is the staff member who pressed «إصدار الفواتير» (`POST
+   * fees/recurring/run`); the scheduled run has none, and its audit rows are the
+   * system's (`actorId` NULL, `actorType` SYSTEM).
    */
-  async runRecurringBilling(now = new Date()): Promise<{
+  async runRecurringBilling(
+    now = new Date(),
+    actor?: { id: string; role: string },
+  ): Promise<{
     noticesConsidered: number;
     invoicesCreated: number;
     /** Notices whose own run threw. The rest still ran; see `billing_run_entries`. */
@@ -1531,6 +1538,8 @@ export class FeesService {
           uninhabitableUnitCount: uninhabitableUnits,
           feeExemptUnitCount: feeExemptUnits,
           coOwnerPaidUnitCount: coOwnerPaidUnits,
+          actorId: actor?.id ?? null,
+          actorRole: actor?.role ?? null,
         });
       }
 

@@ -1,6 +1,6 @@
 # Security
 
-Last verified against the code: `fix/pr104-review` (PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; income controls, the salary path and the urgent ceiling), 2026-10-10.
+Last verified against the code: `fix/moderate-finance` (on `develop@b034640`; the system actor on audit rows), 2026-10-11.
 
 Binding for every change that touches authentication, roles, tokens, validation, uploads, logging,
 headers, client storage or secrets. The rules below are correct practice. Where the code differs today,
@@ -210,6 +210,10 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   Tier 2: an event
   after the commit, whose failed write is logged and does not undo the change. How:
   [apps/backend/CLAUDE.md](../apps/backend/CLAUDE.md#events-and-audit).
+- A row no person caused (the recurring biller's scheduled run, a Whish settlement) carries
+  `actorId` NULL and `actorType` SYSTEM. `actorId` is a uuid column, so a placeholder string is
+  refused, and in Tier 2 silently: until 2026-10-11 (M6) no recurring run had left a row. A run
+  someone started from the fees page names that staff member.
 - An audit row MUST NOT carry a credential (OWASP Logging Cheat Sheet; NIST SP 800-53 AU-3(3), which
   limits what audit records hold to what the record needs). A citizen is named by id, and the audit screen
   resolves the person at read time (`audit-view.ts`). Where a human needs a hint, the رقم مرجعي goes in

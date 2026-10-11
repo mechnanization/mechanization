@@ -170,8 +170,9 @@ export class FeesController {
    */
   @Roles(...FEE_ADMIN_ROLES)
   @Post('recurring/run')
-  async runRecurring() {
-    const result = await this.fees.runRecurringBilling();
+  async runRecurring(@CurrentUser() user: SessionClaims) {
+    // The staff member who pressed it is the actor on the run's audit rows; the cron's run has none.
+    const result = await this.fees.runRecurringBilling(new Date(), { id: user.sub, role: user.role ?? '' });
     return { tenants: 1, ...result };
   }
 
