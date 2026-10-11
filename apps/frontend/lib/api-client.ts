@@ -5261,7 +5261,12 @@ export function getFeeSummary(tenant: string, token: string) {
 export interface PendingPayment {
   id: string;
   title: string;
+  /** The bill's face value. */
   amount: number;
+  /** Already taken against it, at the counter or on a round. */
+  paidAmount: number;
+  /** What is left — what confirming the claim credits (`FeesService.review`). */
+  remaining: number;
   currency: string;
   dueDate: string;
   paymentMethod: string | null;

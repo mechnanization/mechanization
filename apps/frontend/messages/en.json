@@ -117,6 +117,7 @@
     "declarePayment": "Submit Payment Receipt",
     "unsettled": "Unsettled",
     "totalOwed": "Total Amount Due",
+    "partlyPaid": "Paid {paid} of {total}",
     "noBills": "No unpaid bills found",
     "propertiesSummary": "Registered Properties & Units",
     "invoicesSummary": "Invoices & Demands"

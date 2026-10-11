@@ -117,6 +117,7 @@
     "declarePayment": "تسجيل إيصال دفع",
     "unsettled": "غير مسدّد",
     "totalOwed": "المبلغ المستحق",
+    "partlyPaid": "سدّدت {paid} من {total}",
     "noBills": "لا توجد فواتير غير مسددة",
     "propertiesSummary": "العقارات والوحدات المسجّلة",
     "invoicesSummary": "الفواتير والمطالبات"
