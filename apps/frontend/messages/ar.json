@@ -2673,6 +2673,10 @@
       "successBody": "سُجّل القيد العكسي {reversal}. المتبقي على الفاتورة الآن {remaining}."
     }
   },
+  "inspectorPayouts": {
+    "overpaid": "مدفوع بالزيادة",
+    "overpaidAfter": "زيادة {amount}"
+  },
   "settings": {
     "urgentCeiling": {
       "heading": "سقف الدفع العاجل",

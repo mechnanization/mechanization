@@ -1,6 +1,6 @@
 # apps/frontend: agent guide
 
-Last verified against the code: `fix/pr113-review` (PR #113's «وصولات الفاتورة» and «عكس الوصل» on `develop@5e8f5c3`, with the receipt API functions; the portal's part-paid figures), 2026-10-13.
+Last verified against the code: `fix/pr113-review` (PR #113's «وصولات الفاتورة» and «عكس الوصل» on `develop@5e8f5c3`, with the receipt API functions; the portal's part-paid figures; the payout history's balances), 2026-10-13.
 
 Next.js 15 app router, React 18, next-intl 4, TanStack Query 5, Tailwind 3.4 with
 tailwind-merge 3, Radix and lucide-react. One app serves the staff dashboard and the
@@ -81,6 +81,8 @@ and today's date, which is a different document from the one the citizen was han
       every movement on the bill, with «عكس الوصل» and its required reason for PAYMENT_REVERSE_ROLES,
       components/admin/finance/bill-receipts.tsx, reverse-receipt-dialog.tsx, `mayReverseReceipt` in lib/bill-receipts.ts)
     inspector/profile/** quality/**
+    (inspector/profile/[staffId]/payouts: «المتبقي بعدها» per payout is earned-by-then less paid-by-then,
+      `payoutHistory` in lib/inspector-payouts.ts, recomputed from today's records; «مدفوع بالزيادة» when overpaid)
 ```
 
 «تسديد الفواتير المحددة» (docs/finance.md §3.7) is selection on two existing lists — the `/fees`
@@ -431,7 +433,7 @@ are inlined at build time. The local `.env.local` block is in
 ## Tests
 
 Vitest (`apps/frontend/vitest.config.mts`): `environment: 'node'`, only `lib/**/*.test.ts`,
-with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 43 test files (counted on disk
+with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 44 test files (counted on disk
 2026-10-13 on `fix/pr113-review`; cases not recounted). Five of them read
 components rather than render them: `print-pages.test.ts` and `payout-hosts.test.ts` read every
 print page and every payout-dialog host, `transfer-screens.test.ts` the transfer screens,

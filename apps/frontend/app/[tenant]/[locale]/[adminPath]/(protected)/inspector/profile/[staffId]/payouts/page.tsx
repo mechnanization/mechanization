@@ -19,6 +19,7 @@ import { getInspectorProfile, getMyInspectorProfile } from '@/lib/api-client';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { formatDate, formatDateTime } from '@/lib/dates';
+import { payoutHistory } from '@/lib/inspector-payouts';
 import { readView } from '@/lib/read-view';
 import { hasRole } from '@/lib/staff-roles';
 import { cn } from '@/lib/utils';
@@ -62,6 +63,7 @@ export default function InspectorPayoutHistoryPage({
   const isAr = locale !== 'en';
 
   const queryClient = useQueryClient();
+  const t = useTranslations('inspectorPayouts');
   const { token, user } = useStaffSession(tenant, base);
   const [payoutOpen, setPayoutOpen] = useState(false);
 
@@ -108,24 +110,16 @@ export default function InspectorPayoutHistoryPage({
   const data = view.state === 'ready' ? view.data : undefined;
 
   /*
-    Oldest first, with the balance carried down the column. The API returns
-    payouts newest-first, which is the right order to *read* but the wrong one
-    to accumulate against: a running balance only means anything if it is
-    computed in the order the money actually moved.
+    Each payout with the balance as it stood once it was made: earned by then
+    (the registrations submitted up to its `paidAt`) less paid by then, not
+    today's total less the running sum. Recomputed from today's records — see
+    the caveat on `payoutHistory`.
   */
-  const rows = useMemo(() => {
-    if (!data) return [];
-    const chronological = [...data.payouts].sort(
-      (a, b) => new Date(a.paidAt).getTime() - new Date(b.paidAt).getTime(),
-    );
-    let paidSoFar = 0;
-    const withBalance = chronological.map((payout) => {
-      // A cancelled voucher put the money back: the payout stays listed, and owes again.
-      if (!payout.voucher?.voided) paidSoFar += payout.amount;
-      return { payout, remaining: Math.max(0, data.totalEarnings - paidSoFar) };
-    });
-    return withBalance.reverse();
-  }, [data]);
+  const rows = useMemo(
+    () => (data ? payoutHistory(data.payouts, data.recentRegistrations) : []),
+    [data],
+  );
+  const overpaid = data?.overpaidBalance ?? 0;
 
   /** The API already orders payouts newest-first, so this is the most recent. */
   const latestPayout = data?.payouts[0];
@@ -237,12 +231,17 @@ export default function InspectorPayoutHistoryPage({
                   : undefined
               }
             />
-            <Stat
-              icon={Clock}
-              label={isAr ? 'المتبقي المستحق' : 'Still owed'}
-              value={`$${money(data.pendingBalance)}`}
-              emphasis
-            />
+            {/* Two balances, never both, as on the inspector's dashboard: `pendingBalance` clamps at zero. */}
+            {overpaid > 0 ? (
+              <Stat icon={Clock} label={t('overpaid')} value={`$${money(overpaid)}`} emphasis />
+            ) : (
+              <Stat
+                icon={Clock}
+                label={isAr ? 'المتبقي المستحق' : 'Still owed'}
+                value={`$${money(data.pendingBalance)}`}
+                emphasis
+              />
+            )}
           </div>
 
           <Card className="overflow-hidden border-border/70">
@@ -291,7 +290,7 @@ export default function InspectorPayoutHistoryPage({
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {rows.map(({ payout, remaining }) => (
+                      {rows.map(({ payout, owedAfter, overpaidAfter }) => (
                         <TableRow key={payout.id}>
                           <TableCell className="whitespace-nowrap">
                             {formatDateTime(payout.paidAt)}
@@ -358,7 +357,13 @@ export default function InspectorPayoutHistoryPage({
                             {payout.recordedByName ?? '—'}
                           </TableCell>
                           <TableCell className="whitespace-nowrap tabular-nums">
-                            <bdi>${money(remaining)}</bdi>
+                            {overpaidAfter > 0 ? (
+                              <span className="text-warning">
+                                {t('overpaidAfter', { amount: `$${money(overpaidAfter)}` })}
+                              </span>
+                            ) : (
+                              <bdi>${money(owedAfter)}</bdi>
+                            )}
                           </TableCell>
                           {/*
                             The one cell here that is prose rather than a
