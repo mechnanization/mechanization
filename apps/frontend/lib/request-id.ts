@@ -28,14 +28,19 @@ const held = new Map<string, string>();
  * The scopes a key is held under. One scope is one act a screen can be about
  * to record; screens that record the same act share it — the counter settle
  * page and the citizen cash page both settle one bill (`settle:<paymentId>`).
+ * «تسديد الفواتير المحددة» holds one per set of bills, the ids sorted
+ * (`bulk-settle:<id>,<id>,…`, `bulkKeyScope` in `lib/bulk-settle.ts`).
  */
 export type KeyScope =
+  | `bulk-settle:${string}`
+  | `commission:${string}`
   | `custody:${string}`
   | 'expense:pay'
   | 'expense:request'
   | 'income:new'
   | `salary:${string}`
-  | `settle:${string}`;
+  | `settle:${string}`
+  | 'transfer:new';
 
 /** The key held for this act, minted the first time it is asked for. */
 export function heldKey(tenant: string, scope: KeyScope): string {
@@ -99,7 +104,10 @@ export function heldInDoubt(tenant: string, scope: KeyScope): boolean {
  *   recorded, and cancelled since;
  * - `TRANSACTION_ALREADY_REVERSED`: a counter payment recorded, and reversed
  *   since;
- * - `PAYMENT_IDEMPOTENCY_KEY_REUSED`: recorded, against another invoice.
+ * - `PAYMENT_IDEMPOTENCY_KEY_REUSED`: recorded, against another invoice;
+ * - `BULK_SETTLE_REQUEST_REUSED`: a settlement of several bills recorded,
+ *   with other details — from the dialog, the same bills by another method
+ *   (its «BRC-» number in `params.number`).
  */
 const ACT_RECORDED = new Set<string>([
   'TREASURY_REQUEST_KEY_REUSED',
@@ -108,6 +116,7 @@ const ACT_RECORDED = new Set<string>([
   'TRANSFER_ALREADY_VOID',
   'TRANSACTION_ALREADY_REVERSED',
   'PAYMENT_IDEMPOTENCY_KEY_REUSED',
+  'BULK_SETTLE_REQUEST_REUSED',
 ]);
 
 /**

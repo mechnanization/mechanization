@@ -25,7 +25,7 @@ import {
   type TreasuryAccountView,
 } from '@/lib/api-client';
 import { currencyUnit, formatMoney, formatTypedAmount, parseAmount } from '@/lib/currency';
-import { firstFieldToFix, isExpenseField } from '@/lib/expense-form';
+import { firstFieldToFix, formCategories, isExpenseField } from '@/lib/expense-form';
 import { expenseModeFor, paysNow, type ExpenseMode } from '@/lib/expense-order';
 import {
   heldInDoubt,
@@ -154,6 +154,7 @@ export function RecordExpenseForm({
   categories,
   urgentCeilings,
   onRecorded,
+  onPrint,
 }: {
   tenant: string;
   token: string;
@@ -171,6 +172,8 @@ export function RecordExpenseForm({
   urgentCeilings?: Partial<Record<string, number | null>>;
   /** The voucher or the request is written; the page decides where to go. */
   onRecorded: (outcome: RecordOutcome) => void;
+  /** Opens the voucher just written, to print: the success toast's action. */
+  onPrint: (voucherId: string) => void;
 }): React.JSX.Element {
   const t = useTranslations('finance.expenses.form');
   const labels = getLabels(locale);
@@ -248,13 +251,11 @@ export function RecordExpenseForm({
   const refusesOverCeiling = overCeiling && !retrying;
   const ceilingText = ceiling !== null && account ? formatMoney(ceiling, account.currency, locale) : '';
 
-  /* Deduplicated by id: a band added here is in `added`, and arrives again from the list. */
-  const allCategories = useMemo(() => {
-    const byId = new Map<string, ExpenseCategoryView>();
-    for (const category of categories) if (category.active) byId.set(category.id, category);
-    for (const category of added) byId.set(category.id, category);
-    return [...byId.values()];
-  }, [categories, added]);
+  /*
+    Deduplicated by id: a band added here is in `added`, and arrives again from
+    the list. Never «تعويضات المسح والجباية», which «صرف عمولة» alone pays.
+  */
+  const allCategories = useMemo(() => formCategories(categories, added), [categories, added]);
 
   const accountOptions = useMemo(
     () =>
@@ -435,14 +436,20 @@ export function RecordExpenseForm({
       onRecorded('REQUESTED');
     } else if (paid) {
       // What the server says it recorded, not what this screen meant to ask for.
+      const voucherId = paid.id;
+      const print = { label: t('print'), onClick: () => onPrint(voucherId) };
       if (paid.replayed) {
-        toast.warning(t('replayed', { number: paid.voucherNumber }), { description: t('replayedBody') });
+        toast.warning(t('replayed', { number: paid.voucherNumber }), {
+          description: t('replayedBody'),
+          action: print,
+        });
       } else if (paid.orderStatus === 'AWAITING_ORDER') {
         toast.success(t('urgentSuccess', { number: paid.voucherNumber }), {
           description: t('urgentSuccessBody'),
+          action: print,
         });
       } else {
-        toast.success(t('success', { number: paid.voucherNumber }), { description: t('successBody') });
+        toast.success(t('success', { number: paid.voucherNumber }), { description: t('successBody'), action: print });
       }
       onRecorded('PAID');
     }

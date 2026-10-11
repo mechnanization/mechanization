@@ -144,6 +144,7 @@ export default function NewExpensePage({
           urgentCeilings={urgentCeilings}
           // A request goes to the queue where the manager will find it; a payment, to the register it joined.
           onRecorded={(outcome) => router.push(outcome === 'REQUESTED' ? `${registerHref}?view=queue` : registerHref)}
+          onPrint={(voucherId) => router.push(`${base}/finance/expenses/${voucherId}/print?print=1`)}
         />
       )}
     </div>

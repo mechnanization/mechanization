@@ -1,12 +1,19 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import {
+  createTransferSchema,
+  listTransfersQuerySchema,
   receiveCustodySchema,
+  reviewTransferSchema,
   voidTransferSchema,
   TREASURY_ADMIN_ROLES,
   TREASURY_READ_ROLES,
+  TREASURY_REVIEW_ROLES,
   TREASURY_WORK_ROLES,
   WORKING_STAFF_ROLES,
+  type CreateTransferInput,
+  type ListTransfersQuery,
   type ReceiveCustodyInput,
+  type ReviewTransferInput,
   type VoidTransferInput,
 } from '@mechanization/shared-schemas';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
@@ -21,8 +28,10 @@ import { optionalInt } from './query-params';
  *
  * The same three role lists as the rest of the treasury: everyone with finance
  * sight reads, the accountant and the manager move money, and only the manager
- * cancels. A collector has none of them — he takes cash at a door, and the
- * person who receives it from him is someone else, which is the control.
+ * cancels. A fourth for one act: a flagged exchange is cleared by the auditor
+ * or the manager (`TREASURY_REVIEW_ROLES`), never by the accountant who booked it.
+ * A collector has none of them — he takes cash at a door, and the person who
+ * receives it from him is someone else, which is the control.
  */
 @Controller('t/:tenantSlug/treasury/transfers')
 export class TransfersController {
@@ -72,11 +81,21 @@ export class TransfersController {
     return this.transfers.collections(collectorId, optionalInt(limit));
   }
 
-  /** The transfers recorded, newest first. */
+  /** «سجل المناقلات» — newest first, filtered, with the auditor's count. */
   @Roles(...TREASURY_READ_ROLES)
   @Get()
-  list(@Query('limit') limit?: string) {
-    return this.transfers.list(optionalInt(limit));
+  list(@Query(new ZodValidationPipe(listTransfersQuerySchema)) query: ListTransfersQuery) {
+    return this.transfers.list(query);
+  }
+
+  /** «تحويل داخلي» or «مصارفة»: both legs, any fee, one transaction. */
+  @Roles(...TREASURY_WORK_ROLES)
+  @Post()
+  create(
+    @Body(new ZodValidationPipe(createTransferSchema)) body: CreateTransferInput,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.transfers.create(body, { id: user.sub, role: user.role ?? '' });
   }
 
   /** «استلام صندوق الجابي»: the counted cash leaves custody and reaches the safe. */
@@ -98,5 +117,23 @@ export class TransfersController {
     @CurrentUser() user: SessionClaims,
   ) {
     return this.transfers.void(id, body.reason, { id: user.sub, role: user.role ?? '' });
+  }
+
+  /** «اعتماد المراجعة»: an auditor or the manager clears a flagged exchange. */
+  @Roles(...TREASURY_REVIEW_ROLES)
+  @Post(':id/review')
+  review(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body(new ZodValidationPipe(reviewTransferSchema)) body: ReviewTransferInput,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.transfers.review(id, body.note, { id: user.sub, role: user.role ?? '' });
+  }
+
+  /** One transfer, for its printed «سند». Last, so no static path above is read as an id. */
+  @Roles(...TREASURY_READ_ROLES)
+  @Get(':id')
+  get(@Param('id', new ParseUUIDPipe()) id: string) {
+    return this.transfers.get(id);
   }
 }

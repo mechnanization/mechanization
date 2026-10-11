@@ -2,23 +2,30 @@
 
 import { use, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   BadgeDollarSign,
   Clock,
   HandCoins,
+  Printer,
   Receipt,
   RefreshCw,
   TrendingUp,
   Wallet,
 } from 'lucide-react';
-import type { InspectorProfileResponse } from '@mechanization/shared-schemas';
+import { TREASURY_READ_ROLES, type InspectorProfileResponse } from '@mechanization/shared-schemas';
 import { getInspectorProfile, getMyInspectorProfile } from '@/lib/api-client';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { formatDate, formatDateTime } from '@/lib/dates';
+import { readView } from '@/lib/read-view';
+import { hasRole } from '@/lib/staff-roles';
+import { cn } from '@/lib/utils';
 import { InspectorPayoutDialog } from '@/components/admin/inspector-payout-dialog';
+import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
 import { BackLink } from '@/components/ui/back-link';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
@@ -59,6 +66,9 @@ export default function InspectorPayoutHistoryPage({
   const [payoutOpen, setPayoutOpen] = useState(false);
 
   const isSuperAdmin = user?.role === 'SUPER_ADMIN';
+  /* A payment order is a treasury document: its print-out sits behind the expense register's guard. */
+  const canPrintOrders = user ? hasRole(TREASURY_READ_ROLES, user.role) : false;
+  const tHistory = useTranslations('staff.commission.history');
   const money = (value: number): string =>
     value.toLocaleString(locale === 'en' ? 'en-US' : 'en-GB', {
       minimumFractionDigits: 2,
@@ -72,7 +82,7 @@ export default function InspectorPayoutHistoryPage({
   */
   const queryKey = ['staff', tenant, 'inspector-profile', staffId] as const;
 
-  const { data, loading, fetching, error, refetch } = useStaffQuery<InspectorProfileResponse>({
+  const { data: read, loading, fetching, error, refetch } = useStaffQuery<InspectorProfileResponse>({
     queryKey,
     queryFn: (tok, signal) => {
       // See `InspectorProfileDetail`: every role can read its own figures
@@ -87,6 +97,15 @@ export default function InspectorPayoutHistoryPage({
     token,
     errorMessage: isAr ? 'تعذّر تحميل سجل الدفعات' : 'Failed to load the payout history',
   });
+  /*
+    A failed re-read keeps the page, and the payout dialog mounted on it (STA-1).
+    After a payout with no answer the dialog re-reads this very key; when that
+    read failed too, the page swapped itself for ErrorState and unmounted the
+    dialog — the amount, the statement and the failure message — and reopened it
+    empty (review of 2026-10-11).
+  */
+  const view = readView(read, error);
+  const data = view.state === 'ready' ? view.data : undefined;
 
   /*
     Oldest first, with the balance carried down the column. The API returns
@@ -101,7 +120,8 @@ export default function InspectorPayoutHistoryPage({
     );
     let paidSoFar = 0;
     const withBalance = chronological.map((payout) => {
-      paidSoFar += payout.amount;
+      // A cancelled voucher put the money back: the payout stays listed, and owes again.
+      if (!payout.voucher?.voided) paidSoFar += payout.amount;
       return { payout, remaining: Math.max(0, data.totalEarnings - paidSoFar) };
     });
     return withBalance.reverse();
@@ -181,11 +201,11 @@ export default function InspectorPayoutHistoryPage({
         }
       />
 
-      {error || !data ? (
+      {view.state !== 'ready' || !data ? (
         <Card>
           <CardContent className="p-0">
             <ErrorState
-              description={error ?? (isAr ? 'الموظف غير موجود' : 'Staff member not found')}
+              description={view.state === 'failed' ? view.error : isAr ? 'الموظف غير موجود' : 'Staff member not found'}
               onRetry={() => refetch()}
               retryLabel={isAr ? 'إعادة المحاولة' : 'Retry'}
             />
@@ -193,6 +213,8 @@ export default function InspectorPayoutHistoryPage({
         </Card>
       ) : (
         <>
+          {view.refreshFailed ? <RefreshFailedAlert message={view.refreshFailed} onRetry={() => refetch()} /> : null}
+
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <Stat
               icon={TrendingUp}
@@ -250,7 +272,7 @@ export default function InspectorPayoutHistoryPage({
               ) : (
                 /*
                   `Table` is a bare `<table>` by design — it leaves the scroll
-                  container to whoever knows how wide the screen is. Six
+                  container to whoever knows how wide the screen is. Seven
                   columns do not fit a phone, and without this the card's
                   `overflow-hidden` would clip the notes rather than let them
                   be reached.
@@ -261,6 +283,7 @@ export default function InspectorPayoutHistoryPage({
                       <TableRow>
                         <TableHead>{isAr ? 'تاريخ الدفع' : 'Paid on'}</TableHead>
                         <TableHead>{isAr ? 'المبلغ' : 'Amount'}</TableHead>
+                        <TableHead>{tHistory('order')}</TableHead>
                         <TableHead>{isAr ? 'رقم الإيصال' : 'Receipt'}</TableHead>
                         <TableHead>{isAr ? 'سُجّلت بواسطة' : 'Recorded by'}</TableHead>
                         <TableHead>{isAr ? 'المتبقي بعدها' : 'Owed after'}</TableHead>
@@ -281,10 +304,48 @@ export default function InspectorPayoutHistoryPage({
                             payout amount is: it is a value being read off a
                             paper slip, not a control.
                           */}
-                          <TableCell className="whitespace-nowrap font-bold tabular-nums text-success">
+                          <TableCell
+                            className={cn(
+                              'whitespace-nowrap font-bold tabular-nums text-success',
+                              payout.voucher?.voided && 'text-muted-foreground line-through',
+                            )}
+                          >
                             <bdi>
                               ${money(payout.amount)} {payout.currency}
                             </bdi>
+                          </TableCell>
+                          {/*
+                            The «PV-» voucher that paid it, once the treasury
+                            is live; a payout from before has none. A cancelled
+                            one is struck through on the amount and badged
+                            here, and stays listed: it happened, and so did
+                            its cancellation.
+                          */}
+                          <TableCell className="whitespace-nowrap">
+                            {payout.voucher ? (
+                              <div className="flex items-center gap-2">
+                                <span dir="ltr" className="font-mono text-xs">
+                                  {payout.voucher.voucherNumber}
+                                </span>
+                                {payout.voucher.voided ? (
+                                  <Badge variant="soft-warning">{tHistory('cancelled')}</Badge>
+                                ) : null}
+                                {canPrintOrders ? (
+                                  <ActionTooltip label={tHistory('print')}>
+                                    <Button asChild variant="ghost" size="icon-sm">
+                                      <Link
+                                        href={`${base}/finance/expenses/${payout.voucher.id}/print?print=1`}
+                                        aria-label={tHistory('printFor', { number: payout.voucher.voucherNumber })}
+                                      >
+                                        <Printer className="size-4" aria-hidden />
+                                      </Link>
+                                    </Button>
+                                  </ActionTooltip>
+                                ) : null}
+                              </div>
+                            ) : (
+                              <span className="text-muted-foreground">—</span>
+                            )}
                           </TableCell>
                           <TableCell className="whitespace-nowrap font-mono text-xs">
                             {payout.reference ? (
@@ -323,6 +384,7 @@ export default function InspectorPayoutHistoryPage({
             open={payoutOpen}
             onOpenChange={setPayoutOpen}
             tenant={tenant}
+            base={base}
             token={token}
             locale={locale}
             staff={{ id: data.inspector.id, name: data.inspector.name }}

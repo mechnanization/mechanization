@@ -7,6 +7,8 @@ const RATE: TreasuryRate = {
   secondaryCurrency: 'USD',
   exchangeRate: 89_500,
   exchangeRateUpdatedAt: '2026-10-01T08:00:00.000Z',
+  tolerancePercent: 3,
+  largeExchangeThreshold: 1000,
 };
 const NO_RATE: TreasuryRate = { ...RATE, exchangeRate: null, exchangeRateUpdatedAt: null };
 

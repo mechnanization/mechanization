@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية الذكية)
 
-Last verified against the code: `fix/pr104-review` (PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; the salary path and the urgent ceiling), 2026-10-10.
+Last verified against the code: `feat/treasury-day-closing@b5993af` (`develop` with the reviewed treasury, #107/#108; PR #106, stage 5: the daily count, the day closing and the closed-day lock; PR #109, inspector payouts and decision D9; PR #111, transfers, exchange and wallets with `0088`; each merged with its review fixes) merged with PR #112 `feat/fees-bulk-settlement-review@a3ce944` (settling several bills at once), then the cross-feature fixes: a bulk settlement refused on a closed day before it writes anything, and its wallets locked in id order (uncommitted), 2026-10-10.
 
 A multi-tenant municipal platform for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastral map, municipal fee billing (رسوم القيمة التأجيرية
@@ -41,12 +41,38 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
   - A cadastral map explorer with parcel numbering and sector zones.
   - CSV export with formula-injection-safe cells.
   - An append-only audit log of staff actions.
+  - **تسديد الفواتير المحددة** (accountant and manager): tick several unpaid bills of one citizen —
+    on «الرسوم» or on the citizen's file — and settle them in one act, in cash (ليرة and dollars at the
+    municipality's rate, with the change worked out and checked against the safe), through a
+    collector, or by Whish. Every bill is paid or none is. Each bill keeps its own receipt, and the
+    citizen gets one «وصل قبض بلدي مجمّع» numbered «BRC-2610-0001» listing them all, to print,
+    download as PDF or send over WhatsApp. A bill can still be settled on its own, and a collector
+    settles one bill at a time.
   - **The treasury (الخزينة)**: live balances of the municipality's cash safe and Whish account in
     ليرة and dollars, a statement for each, and their total at the municipality's rate. A citizen payment credits
     the right wallet automatically. `SUPER_ADMIN` activates it once by entering the counted opening
-    balances; the accountant works it, the auditor and view-only staff read it. Income and the
-    collector handover are below; the other transfers and the daily count follow in later stages
+    balances; the accountant works it, the auditor and view-only staff read it. Income, the
+    collector handover, transfers and exchange, and the daily count and day closing are below. The
+    manager adds a bank account or a petty-cash fund («إضافة حساب»); it opens at zero and is filled
+    by a transfer, and a second wallet of the same name, kind and currency is refused
     ([docs/finance.md](docs/finance.md)).
+  - **المناقلات والمصارفة**: money between the municipality's own wallets, in one register with the
+    collectors' handovers.
+    - An *internal transfer* moves one currency — a Whish cash-out, a bank deposit, topping up
+      petty cash. Any bank or Whish fee is taken from the source with it and filed as its own «أمر
+      صرف» under «رسوم تحويل ومصرفية»: the manager's transfer is the order of its fee; an
+      accountant's fee is paid at once as an art. 35 payment with a reason the system writes, held
+      to the urgent-payment ceiling, and waits for the manager's order.
+    - An *exchange* sells one currency for the other: the accountant enters what left and what
+      arrived (or the rate the صرّاف quoted), and the screen shows the rate against the
+      municipality's own. A rate further than the allowed difference (3% unless the manager changes
+      it) needs a written reason. Such an exchange, any exchange above the large-exchange threshold
+      ($1,000 unless changed), and any exchange made with no official rate set are booked at once
+      and wait, amber, for an auditor or the manager to approve the review, once.
+    - Every transfer prints as a «سند» with the three signatures (handed over, received,
+      accountant). Only the manager cancels one; its fee goes back with it, and a cancellation is
+      refused while the destination no longer holds the money.
+    - The two exchange settings are the manager's alone, and a citizen does not see them.
   - **النفقات**: an expense register and «أمر صرف».
     - Money leaves on the payment order, as the municipal accounting decree requires (Decree
       5595/1982 art. 28 and 33). The accountant prepares «طلب أمر صرف»: what, to whom, from which
@@ -69,6 +95,30 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
       (المادة 35)» written by the system, and waits for the manager's order.
     - The staff list no longer shows the field inspectors' commission cards; an inspector's earnings
       stay on their own profile.
+    - An inspector's commission is paid from his row too («صرف عمولة»): the dialog shows the units
+      he is credited for and what he is still owed, the manager picks a dollar wallet and sees its
+      balance, and once the treasury is live the payment is a «أمر صرف» under «تعويضات المسح
+      والجباية» that takes the money out of that wallet; the manager's payout is the order.
+      Cancelling that voucher puts the amount back on what the inspector is owed. Before the
+      treasury is live, the manager records a payout as he always did, with no wallet, dated no
+      later than today.
+    - A commission is paid like a salary (decided 2026-10-10): an accountant may pay one once the
+      treasury is live, at once, as an art. 35 payment with the reason «عمولة مسح ميداني — تُدفع
+      قبل الحوالة (المادة 35)» written by the system, and it waits for the manager's order. He
+      cannot pay his own. He has no screen for it yet and is not shown what an inspector is owed
+      (the dialog is on the manager's screens), so today he pays through the API alone
+      ([docs/finance.md](docs/finance.md) §5.6).
+    - A commission is paid only through «صرف عمولة»: the expense form no longer offers
+      «تعويضات المسح والجباية», since a commission paid there was not counted against what the
+      inspector is owed.
+  - **Printed vouchers.** Every «أمر صرف» and every «سند قبض إيرادات» prints on an A4 sheet from
+    its register, from the success message after recording it, and (for a commission) from the
+    inspector's payout history: the municipality's letterhead and crest from الإعدادات, the number
+    and date, the payee or payer, the category with its budget chapter and article, the amount in
+    figures and in Arabic words, the wallet, and signature lines — the accountant, the head of
+    municipality and the beneficiary on a payment order; the cashier and the accountant on a
+    receipt, which also carries a QR code of its number. A cancelled voucher still prints, marked
+    cancelled with its reason. «حفظ كملف PDF» is the browser's own print destination.
   - **الإيرادات**: a register of «سند قبض إيرادات» — money that reaches the treasury without a
     citizen's bill: the Independent Municipal Fund, the state's share of telephone, electricity and
     water revenue, permits, rent on municipal property, grants, fines.
@@ -98,10 +148,21 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
     receipts — «يجمع اليوم», «لم يخرج اليوم», «سلّم كل شيء» — and the day's count and takings.
   - **ترقيم المستندات**: every document the municipality issues carries its book, the month it was
     issued in and a counter that restarts each month — «INV-2610-0001» for a bill, «RCP-2610-0001»
-    for the receipt, «PV-» for an expense voucher, «RV-» for an income voucher and «TR-» for a
-    transfer. A number read over the phone says which book it came from. Documents issued before
+    for the receipt, «PV-» for an expense voucher, «RV-» for an income voucher, «TR-» for a
+    transfer and «BRC-» for a consolidated receipt of several bills. A number read over the phone says which book it came from. Documents issued before
     the change keep the numbers already printed on them; bills raised before it stay without one,
     because a number minted today for a document issued last year would be a fiction.
+  - **جرد وإقفال اليومية**: at the end of a municipal day the accountant counts each wallet — the
+    notes in the safe, the balance in the Whish app or on the bank statement — beside what the books
+    say, and writes why wherever the two differ (فائض or عجز). A difference never changes the books.
+    Once the day is over (the next morning, typically) the accountant or the manager closes it: from
+    then on nothing dated on that day or before it can be recorded, not a payment, a voucher or a
+    transfer, and a late one is entered on the day it is entered. Days on which no counted wallet
+    moved close by themselves with the next close. Only the manager can reopen a day — the latest
+    one, with a reason that stays on the record. «تقرير الصندوق اليومي» prints the day on A4: each
+    wallet's opening balance, money in and out, closing balance, count and difference, the cash still
+    with collectors set apart, the day's history, and signature lines for the accountant and the head
+    of the municipality.
   - **جولتي**: the collector's own screen, on his own phone. What is in his pocket, then every door
     he collected at since his last handover — the citizen, his unit, the amount, the time and the
     receipt number — with the وصل one tap away to print, download or send over WhatsApp. He sees his

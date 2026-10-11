@@ -1,13 +1,21 @@
 import { Injectable } from '@nestjs/common';
-import type { PaymentMethod, TreasuryEntrySource } from '@mechanization/shared-schemas';
+import {
+  MUNICIPAL_TIME_ZONE,
+  municipalDayStart,
+  municipalToday,
+  type PaymentMethod,
+  type TreasuryEntrySource,
+} from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
+import { closedTreasuryDay } from '../../../infrastructure/prisma/check-violation';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { ConflictError, NotFoundError } from '../../common/exceptions';
+import { closedDayFor } from './day-closing.plan';
 import {
   creditsWallets,
   planPaymentLegs,
-  planPreGoLiveRefund,
+  planCreditRefund,
   type PaymentMovement,
   type WalletLeg,
   type WalletTarget,
@@ -61,14 +69,21 @@ export interface TreasuryConfig {
  * holds it, and an entry written through any other client would commit
  * separately.
  *
- * ## The two guarantees
+ * ## The three guarantees
  *
- * 1. **No wallet goes below zero.** A CHECK cannot see the sum of other rows,
- *    so the account rows are locked (`FOR UPDATE`, in id order, so two
- *    simultaneous postings over the same pair of wallets cannot deadlock) and
- *    the balance is read behind the lock.
+ * 1. **No wallet goes below zero**, now or at the close of any day. A CHECK
+ *    cannot see the sum of other rows, so the account rows are locked (`FOR
+ *    UPDATE`, in id order, so two simultaneous postings over the same pair of
+ *    wallets cannot deadlock) and the balance is read behind the lock — and,
+ *    for a movement dated on an earlier day, every close from that day on
+ *    (`assertCanPay`).
  * 2. **Entries are never edited.** The database refuses UPDATE and DELETE; a
  *    correction is an opposing entry (`reversalOfId`).
+ * 3. **A closed day takes nothing** (docs/finance.md §7.3). Every entry is
+ *    written by `post`, which refuses one dated on or before the latest closed
+ *    day with `CLOSED_DAY_MUTATION_BLOCKED` — the payment, the voucher or the
+ *    transfer behind it rolls back with it. The 0082 trigger holds the same
+ *    rule underneath.
  */
 @Injectable()
 export class TreasuryLedgerService {
@@ -76,6 +91,69 @@ export class TreasuryLedgerService {
 
   private get S() {
     return tenantSchemaRef(this.tenantContext.schemaName);
+  }
+
+  // ─────────────────────────────  closed days  ─────────────────────────────
+
+  /** The latest CLOSED business day, `YYYY-MM-DD`, or null when none is. */
+  async closedThrough(tx: Prisma.TransactionClient): Promise<string | null> {
+    const latest = await tx.treasuryDayClosure.aggregate({
+      where: { status: 'CLOSED' },
+      _max: { businessDate: true },
+    });
+    return latest._max.businessDate ? isoDay(latest._max.businessDate) : null;
+  }
+
+  /**
+   * Refuses a movement dated on a closed day, naming the day.
+   *
+   * Called by `post` for every entry, by `PaymentLedgerService.recordIn` before
+   * it writes anything, so a backdated round into a closed day is turned away
+   * before a receipt number is drawn, and by `PaymentSettlementService` before
+   * a settlement of several bills draws its «BRC-» number.
+   */
+  async assertDayOpen(tx: Prisma.TransactionClient, occurredAt: Date): Promise<void> {
+    const day = closedDayFor(occurredAt, await this.closedThrough(tx));
+    if (day !== null) throw closedDayRefusal(day);
+  }
+
+  /**
+   * The same refusal for a citizen payment, asked before the payment row is
+   * written — and only of a payment that will reach a wallet. One dated before
+   * go-live never touches the books a closure locks (`creditsWallets`), so the
+   * closure has nothing to say about it.
+   */
+  async assertPaymentDayOpen(tx: Prisma.TransactionClient, occurredAt: Date): Promise<void> {
+    const config = await this.config(tx);
+    if (!creditsWallets(config.goLiveAt, occurredAt)) return;
+    await this.assertDayOpen(tx, occurredAt);
+  }
+
+  /**
+   * Serialises everything that reads or changes a day's lock — counting,
+   * closing, reopening — within one municipality. The key names the schema, so
+   * two municipalities never wait on each other (docs/database.md).
+   */
+  async lockDayBook(tx: Prisma.TransactionClient): Promise<void> {
+    const key = `${this.tenantContext.schemaName}:treasury-day-book`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${key}))`;
+  }
+
+  /** Each account's balance from the entries before `before` — a day's end is the next day's start. */
+  async balancesBefore(
+    tx: Prisma.TransactionClient,
+    accountIds: readonly string[],
+    before: Date,
+  ): Promise<Map<string, Prisma.Decimal>> {
+    const balances = new Map<string, Prisma.Decimal>(accountIds.map((id) => [id, new Prisma.Decimal(0)]));
+    if (accountIds.length === 0) return balances;
+    const sums = await tx.treasuryEntry.groupBy({
+      by: ['accountId'],
+      where: { accountId: { in: [...accountIds] }, occurredAt: { lt: before } },
+      _sum: { amount: true },
+    });
+    for (const row of sums) balances.set(row.accountId, row._sum.amount ?? new Prisma.Decimal(0));
+    return balances;
   }
 
   /**
@@ -129,17 +207,62 @@ export class TreasuryLedgerService {
    * strong lock first, in the same id order as `post`, is what keeps guarantee 1
    * deadlock-free across callers. `post` re-locking rows this transaction
    * already holds costs nothing.
+   *
+   * An act that posts more than once — a transfer and the voucher for its fee
+   * — calls this first with every wallet it will touch: two `post`s, each
+   * locking in order, can still meet in the opposite order between them.
+   * Returns the wallets that exist; `post` reads their names from it.
    */
-  async lockAccounts(tx: Prisma.TransactionClient, accountIds: string[]): Promise<void> {
+  async lockAccounts(
+    tx: Prisma.TransactionClient,
+    accountIds: readonly string[],
+  ): Promise<Array<{ id: string; name: string; currency: string }>> {
     const ids = [...new Set(accountIds)].sort();
-    if (ids.length === 0) return;
-    await tx.$queryRaw`
-      SELECT "id"
+    if (ids.length === 0) return [];
+    return tx.$queryRaw<Array<{ id: string; name: string; currency: string }>>`
+      SELECT "id", "name", "currency"
         FROM ${this.S}treasury_accounts
        WHERE "id" = ANY(${ids}::uuid[])
        ORDER BY "id"
        FOR UPDATE
     `;
+  }
+
+  /**
+   * Locks, in one call and so in id order, every wallet that a set of citizen
+   * payments recorded in this transaction will post to — before the first of
+   * them posts.
+   *
+   * For an act that records several payments in one transaction (a settlement
+   * of several bills, docs/finance.md §3.7). Each payment's `post` locks only
+   * its own wallets, so bill by bill the act took them in the order the bills
+   * fell due: a ليرة bill's safe, then a dollar bill's. An exchange between
+   * the same two safes takes both in id order, and when the bills' order was
+   * the reverse of the ids, each held the wallet the other was waiting for — a
+   * deadlock. Taking them all here, in the one order every writer uses, closes
+   * that. The wallets are the ones `creditPayment` would resolve for the same
+   * movements (`planPaymentLegs`): a collector's custody is created now rather
+   * than at his first bill, and a missing primary account is refused now with
+   * the code `creditPayment` would have refused it with.
+   *
+   * Lock order: the settings row (`config`, FOR SHARE), then the wallets. The
+   * caller must already hold the RECEIPT counter, which a single payment takes
+   * before its wallets (`PaymentLedgerService.append`); taking the wallets
+   * first would wait on a counter payment that is waiting on them. Nothing to
+   * lock when the payments credit no wallet (`creditsWallets`).
+   */
+  async lockPaymentWallets(
+    tx: Prisma.TransactionClient,
+    movements: readonly PaymentMovement[],
+    occurredAt: Date,
+  ): Promise<void> {
+    const config = await this.config(tx);
+    if (!creditsWallets(config.goLiveAt, occurredAt)) return;
+    const ids: string[] = [];
+    for (const movement of movements) {
+      for (const leg of planPaymentLegs(movement).legs) ids.push((await this.resolve(tx, leg.target)).id);
+    }
+    await this.lockAccounts(tx, ids);
   }
 
   /** The sum of an account's entries. Read behind the account lock when a decision hangs on it. */
@@ -152,11 +275,119 @@ export class TreasuryLedgerService {
   }
 
   /**
+   * Refuses taking `amount` out of a wallet at `occurredAt` when the wallet
+   * cannot cover it — now, or at the close of the day the movement is dated on
+   * or of any day since. Read behind the wallet's lock (`lockAccounts`); `post`
+   * asks it of every outflow, and a caller that judges one before posting
+   * (a transfer, for amount + fee) asks it too, so both answer alike.
+   *
+   * The balance now is the whole test for a movement dated today: its day has
+   * not closed, and nothing is dated after now. It is not the test for one
+   * dated on an earlier day. That entry lands on the earlier day and on every
+   * close after it, and a day's close is what is counted, closed and signed
+   * (docs/finance.md §7); the balance now says nothing about them. An expense
+   * dated three days ago from a bank account opened and funded today passed on
+   * today's balance, and that day then closed at −4,000,000 ل.ل, its count
+   * forced to a surplus that never existed, on the signed register (review of
+   * 2026-10-11). Days, not instants: a back-dated document's hour is nominal
+   * (midday UTC, `documentOccurredAt`), so money that reached the wallet later
+   * that same day still covers it.
+   *
+   * Two refusals, so each names a figure the clerk can find:
+   * `TREASURY_INSUFFICIENT_FUNDS` with the balance now, as always, and
+   * `TREASURY_INSUFFICIENT_FUNDS_ON_DAY` with the first day whose close falls
+   * short, and that close. A movement dated on a closed day is refused as such
+   * (`CLOSED_DAY_MUTATION_BLOCKED`) before its day's closes are judged: nothing
+   * is recorded there whatever the wallet held, so a shortfall on it is not
+   * the answer to give.
+   */
+  async assertCanPay(
+    tx: Prisma.TransactionClient,
+    account: { id: string; name: string; currency: string },
+    amount: Prisma.Decimal,
+    occurredAt: Date,
+  ): Promise<void> {
+    const balance = await this.balanceOf(tx, account.id);
+    if (balance.lessThan(amount)) {
+      throw new ConflictError({
+        code: 'TREASURY_INSUFFICIENT_FUNDS',
+        message: `Account ${account.id} does not hold enough: ${balance.toString()} available, ${amount.toString()} needed.`,
+        params: {
+          account: account.name,
+          available: balance.toNumber(),
+          required: amount.toNumber(),
+          currency: account.currency,
+        },
+      });
+    }
+    if (municipalToday(occurredAt) < municipalToday()) await this.assertDayOpen(tx, occurredAt);
+    const short = await this.firstShortClose(tx, account.id, occurredAt, amount);
+    if (short) {
+      throw new ConflictError({
+        code: 'TREASURY_INSUFFICIENT_FUNDS_ON_DAY',
+        message: `Account ${account.id} closed ${short.day} on ${short.close.toString()}, less than the ${amount.toString()} a movement dated ${municipalToday(occurredAt)} takes out.`,
+        params: {
+          account: account.name,
+          date: short.day,
+          available: short.close.toNumber(),
+          required: amount.toNumber(),
+          currency: account.currency,
+        },
+      });
+    }
+  }
+
+  /**
+   * The first municipal day, from the one `occurredAt` falls on, whose close is
+   * less than `amount` — with that close — or null when every close covers it.
+   * A day with no entry closes where the day before it did, so only the dated
+   * day and the days with entries are read; the last of them is today, whose
+   * close so far is the balance now. Nothing to read for a movement dated today.
+   *
+   * Grouped by the Beirut day the 0082 trigger judges an entry by
+   * (`occurredAt AT TIME ZONE`, a `timestamptz`), from that day's Beirut midnight.
+   */
+  async firstShortClose(
+    tx: Prisma.TransactionClient,
+    accountId: string,
+    occurredAt: Date,
+    amount: Prisma.Decimal,
+  ): Promise<{ day: string; close: Prisma.Decimal } | null> {
+    const dated = municipalToday(occurredAt);
+    if (dated >= municipalToday()) return null;
+
+    const start = municipalDayStart(dated);
+    const before = await tx.treasuryEntry.aggregate({
+      where: { accountId, occurredAt: { lt: start } },
+      _sum: { amount: true },
+    });
+    const days = await tx.$queryRaw<Array<{ day: string; total: Prisma.Decimal }>>`
+      SELECT to_char("occurredAt" AT TIME ZONE ${MUNICIPAL_TIME_ZONE}::text, 'YYYY-MM-DD') AS day,
+             SUM("amount") AS total
+        FROM ${this.S}treasury_entries
+       WHERE "accountId" = ${accountId}::uuid
+         AND "occurredAt" >= ${start.toISOString()}::timestamptz
+       GROUP BY 1
+       ORDER BY 1
+    `;
+
+    let close = before._sum.amount ?? new Prisma.Decimal(0);
+    // The dated day itself, when nothing else moved on it: it closes on the balance it opened with.
+    if (days[0]?.day !== dated && close.lessThan(amount)) return { day: dated, close };
+    for (const row of days) {
+      close = close.plus(row.total);
+      if (close.lessThan(amount)) return { day: row.day, close };
+    }
+    return null;
+  }
+
+  /**
    * Posts the entries of one act, atomically with the caller's transaction.
    *
    * Refuses the whole act, writing nothing, when any wallet would end below
-   * zero. Several entries on one wallet are netted before the check: a $20
-   * note in and $5 of change out is a net +$15, and judged as such.
+   * zero — now, or at the close of any day from the one the act is dated on
+   * (`assertCanPay`). Several entries on one wallet are netted before the
+   * check: a $20 note in and $5 of change out is a net +$15, and judged as such.
    */
   async post(
     tx: Prisma.TransactionClient,
@@ -165,23 +396,15 @@ export class TreasuryLedgerService {
   ): Promise<void> {
     if (drafts.length === 0) return;
 
+    // Every entry of one act shares its day, so one check covers them all.
+    await this.assertDayOpen(tx, context.occurredAt);
+
     const net = new Map<string, Prisma.Decimal>();
     for (const draft of drafts) {
       net.set(draft.accountId, (net.get(draft.accountId) ?? new Prisma.Decimal(0)).plus(draft.amount));
     }
     const ids = [...net.keys()].sort();
-
-    /*
-      Locked in id order. Two transfers over the same pair of wallets, opposite
-      ways round, would otherwise each hold one row and wait for the other.
-    */
-    const locked = await tx.$queryRaw<Array<{ id: string; name: string; currency: string }>>`
-      SELECT "id", "name", "currency"
-        FROM ${this.S}treasury_accounts
-       WHERE "id" = ANY(${ids}::uuid[])
-       ORDER BY "id"
-       FOR UPDATE
-    `;
+    const locked = await this.lockAccounts(tx, ids);
     const byId = new Map(locked.map((row) => [row.id, row]));
 
     for (const id of ids) {
@@ -193,40 +416,37 @@ export class TreasuryLedgerService {
         });
       }
       const change = net.get(id)!;
-      if (change.isNegative()) {
-        const balance = await this.balanceOf(tx, id);
-        if (balance.plus(change).isNegative()) {
-          throw new ConflictError({
-            code: 'TREASURY_INSUFFICIENT_FUNDS',
-            message: `Account ${id} does not hold enough: ${balance.toString()} available, ${change.abs().toString()} needed.`,
-            params: {
-              account: account.name,
-              available: balance.toNumber(),
-              required: change.abs().toNumber(),
-              currency: account.currency,
-            },
-          });
-        }
-      }
+      if (change.isNegative()) await this.assertCanPay(tx, account, change.abs(), context.occurredAt);
     }
 
     for (const draft of drafts) {
-      await tx.treasuryEntry.create({
-        data: {
-          accountId: draft.accountId,
-          currency: draft.currency,
-          amount: draft.amount,
-          exchangeRateAtPosting:
-            draft.exchangeRate !== undefined ? draft.exchangeRate : (context.exchangeRate ?? null),
-          source: context.source as never,
-          sourceId: context.sourceId,
-          reversalOfId: draft.reversalOfId ?? null,
-          actorId: context.actorId,
-          note: context.note ?? null,
-          occurredAt: context.occurredAt,
-        },
-        select: { id: true },
-      });
+      try {
+        await tx.treasuryEntry.create({
+          data: {
+            accountId: draft.accountId,
+            currency: draft.currency,
+            amount: draft.amount,
+            exchangeRateAtPosting:
+              draft.exchangeRate !== undefined ? draft.exchangeRate : (context.exchangeRate ?? null),
+            source: context.source as never,
+            sourceId: context.sourceId,
+            reversalOfId: draft.reversalOfId ?? null,
+            actorId: context.actorId,
+            note: context.note ?? null,
+            occurredAt: context.occurredAt,
+          },
+          select: { id: true },
+        });
+      } catch (error) {
+        /*
+          The day was closed between the check above and this insert, and the
+          0082 trigger refused it. Same refusal, same words; the transaction is
+          already aborted, and rethrowing rolls the whole act back.
+        */
+        const day = closedTreasuryDay(error);
+        if (day !== null) throw closedDayRefusal(day);
+        throw error;
+      }
     }
   }
 
@@ -316,10 +536,17 @@ export class TreasuryLedgerService {
   /**
    * Takes the wallet entries of a reversed payment back out.
    *
-   * - The original left entries: each is opposed exactly, to the same wallet.
+   * - The original left entries: each is opposed exactly, to the same wallet —
+   *   the notes it took in go back, and the change it handed out comes back.
+   * - Except the bill of a cash settlement that carried the set's notes and
+   *   change (the pivot, docs/finance.md §3.7): those paid every bill of the set,
+   *   and its change, recycled, paid the older ones, so the citizen never held
+   *   what opposing them would take back. That bill is refunded its own credit,
+   *   in its currency, from the safe (`planCreditRefund`), as its reversal
+   *   receipt says.
    * - It left none because it was taken before go-live: cash still leaves the
    *   drawer today, so a refund entry is written from the wallet of the
-   *   original method (`planPreGoLiveRefund`).
+   *   original method (`planCreditRefund`).
    * - The treasury is not active: nothing to do.
    *
    * In every case the wallet balance is checked first: a refund the drawer
@@ -347,7 +574,37 @@ export class TreasuryLedgerService {
       orderBy: { id: 'asc' },
     });
 
+    const original = await tx.paymentTransaction.findUnique({
+      where: { id: input.originalTransactionId },
+      select: { occurredAt: true, settlementId: true, tenderedLocal: true },
+    });
+
     if (originals.length > 0) {
+      /*
+        A settlement's rows are plain sums of their bills, except the one that
+        carried the notes (`planBulkSettlement`, the only row of a set with a
+        tender): $20 for a 900,000 and a 100,000 ل.ل bill is +$20 and −1,690,000
+        ل.ل on the newer bill's row, for 790,000 handed back. Opposed, its
+        reversal took the $20 back and put 1,690,000 into the safe — money the
+        citizen never had — while its receipt said 100,000 refunded, and the
+        older bill was left paid in ليرة that never came in.
+      */
+      if (original?.settlementId && original.tenderedLocal !== null) {
+        const refund = planCreditRefund({
+          method: input.method,
+          invoiceCurrency: input.invoiceCurrency,
+          amount: input.amount,
+        });
+        await this.post(tx, await this.draftsFor(tx, refund), {
+          source: 'CITIZEN_PAYMENT',
+          sourceId: input.reversalTransactionId,
+          actorId: input.actorId,
+          occurredAt: input.occurredAt,
+          exchangeRate: config.exchangeRate,
+          note: 'استرداد فاتورة من تسديد مجمّع: تُردّ قيمتها بعملتها من الصندوق',
+        });
+        return;
+      }
       const { drafts, fromSafe } = await this.refundDrafts(tx, originals);
       await this.post(tx, drafts, {
         source: 'CITIZEN_PAYMENT',
@@ -360,13 +617,9 @@ export class TreasuryLedgerService {
       return;
     }
 
-    const original = await tx.paymentTransaction.findUnique({
-      where: { id: input.originalTransactionId },
-      select: { occurredAt: true },
-    });
     if (!original || original.occurredAt.getTime() >= config.goLiveAt.getTime()) return;
 
-    const legs = planPreGoLiveRefund({
+    const legs = planCreditRefund({
       method: input.method,
       invoiceCurrency: input.invoiceCurrency,
       amount: input.amount,
@@ -538,4 +791,27 @@ export class TreasuryLedgerService {
       select: { id: true, currency: true },
     });
   }
+}
+
+/** A `DATE` column as Prisma reads it — midnight UTC of the day — back to `YYYY-MM-DD`. */
+export function isoDay(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+/** `YYYY-MM-DD` as the midnight-UTC `Date` Prisma writes into a `DATE` column. */
+export function dateColumn(day: string): Date {
+  return new Date(`${day}T00:00:00.000Z`);
+}
+
+/**
+ * «اليوم مقفل» — the one refusal for anything dated on a closed day, from the
+ * application's check and from the trigger's alike. A CONFLICT: the request is
+ * well formed, the books' state refuses it.
+ */
+function closedDayRefusal(day: string): ConflictError {
+  return new ConflictError({
+    code: 'CLOSED_DAY_MUTATION_BLOCKED',
+    message: `The treasury day ${day} is closed; nothing may be recorded on or before it.`,
+    params: { date: day },
+  });
 }

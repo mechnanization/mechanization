@@ -33,11 +33,15 @@ import { FeesService } from './features/fees/fees.service';
 import { CorrectionBillsService } from './features/fees/correction-bills.service';
 import { ParcelDuesService } from './features/fees/parcel-dues.service';
 import { PaymentLedgerService } from './features/fees/payment-ledger.service';
+import { PaymentSettlementService } from './features/fees/payment-settlement.service';
 import { TreasuryLedgerService } from './features/treasury/treasury-ledger.service';
 import { TreasuryService } from './features/treasury/treasury.service';
 import { ExpensesService } from './features/treasury/expenses.service';
 import { IncomeService } from './features/treasury/income.service';
 import { TransfersService } from './features/treasury/transfers.service';
+import { DayClosureService } from './features/treasury/day-closure.service';
+import { DailyCountService } from './features/treasury/daily-count.service';
+import { DailyCashReportService } from './features/treasury/daily-cash-report.service';
 import { StaffService } from './features/staff/staff.service';
 import { ZonesService } from './features/zones/zones.service';
 import { DataQualityService } from './features/quality/data-quality.service';
@@ -81,11 +85,15 @@ import { RecordReviewService } from './features/quality/record-review.service';
     CorrectionBillsService,
     ParcelDuesService,
     PaymentLedgerService,
+    PaymentSettlementService,
     TreasuryLedgerService,
     TreasuryService,
     ExpensesService,
     IncomeService,
     TransfersService,
+    DayClosureService,
+    DailyCountService,
+    DailyCashReportService,
     StaffService,
     ZonesService,
     CasesService,
@@ -124,11 +132,15 @@ import { RecordReviewService } from './features/quality/record-review.service';
     CorrectionBillsService,
     ParcelDuesService,
     PaymentLedgerService,
+    PaymentSettlementService,
     TreasuryLedgerService,
     TreasuryService,
     ExpensesService,
     IncomeService,
     TransfersService,
+    DayClosureService,
+    DailyCountService,
+    DailyCashReportService,
     StaffService,
     ZonesService,
     CasesService,

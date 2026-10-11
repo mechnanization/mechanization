@@ -102,6 +102,7 @@ export function RecordIncomeForm({
   accounts,
   categories,
   onRecorded,
+  onPrint,
 }: {
   tenant: string;
   token: string;
@@ -113,6 +114,8 @@ export function RecordIncomeForm({
   accounts: TreasuryAccountView[];
   categories: IncomeCategoryView[];
   onRecorded: () => void;
+  /** Opens the voucher just written, to print: the success toast's action. */
+  onPrint: (voucherId: string) => void;
 }): React.JSX.Element {
   const t = useTranslations('finance.income.form');
   const labels = getLabels(locale);
@@ -263,11 +266,16 @@ export function RecordIncomeForm({
     setBusy(false);
     spendKey(tenant, KEY_SCOPE);
     await refreshFigures();
+    const voucherId = result.id;
+    const print = { label: t('print'), onClick: () => onPrint(voucherId) };
     if (result.replayed) {
       // An earlier press recorded it and its answer was lost: that voucher stands, as first recorded.
-      toast.warning(t('replayed', { number: result.voucherNumber }), { description: t('replayedBody') });
+      toast.warning(t('replayed', { number: result.voucherNumber }), {
+        description: t('replayedBody'),
+        action: print,
+      });
     } else {
-      toast.success(t('success', { number: result.voucherNumber }), { description: t('successBody') });
+      toast.success(t('success', { number: result.voucherNumber }), { description: t('successBody'), action: print });
     }
     onRecorded();
   };

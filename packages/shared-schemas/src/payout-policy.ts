@@ -54,12 +54,26 @@ export function payoutAllowance(input: PayoutPolicyInput): PayoutAllowance {
 /**
  * Why `amount` cannot be paid, in the words the dialog and the server both
  * show — or null when it can.
+ *
+ * `showOwed: false` says only that the amount is more than is owed — nothing
+ * owed included, which is the same refusal of any positive amount. The server
+ * passes it for a caller who may not read the inspector's profile, an
+ * accountant paying a commission (decision D9): the refusal must not hand him
+ * the balance the profile route refuses him (docs/security.md).
  */
-export function payoutRefusal(allowance: PayoutAllowance, amount: number): string | null {
+export function payoutRefusal(
+  allowance: PayoutAllowance,
+  amount: number,
+  options: { showOwed?: boolean } = {},
+): string | null {
+  const over = allowance.reason === 'NOTHING_OWED' || cents(amount) > cents(allowance.owed);
+  if (over && options.showOwed === false) {
+    return 'المبلغ أكبر من الرصيد المستحق.';
+  }
   if (allowance.reason === 'NOTHING_OWED') {
     return 'لا يوجد رصيد مستحق لهذا المفتش.';
   }
-  if (cents(amount) > cents(allowance.owed)) {
+  if (over) {
     return `المبلغ أكبر من الرصيد المستحق (${allowance.owed.toFixed(2)}$).`;
   }
   return null;
