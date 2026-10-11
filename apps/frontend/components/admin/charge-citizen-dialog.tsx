@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Loader2, UserPlus } from 'lucide-react';
 import type { CitizenListItem } from '@/lib/api-client';
+import { useCitizenSearch } from '@/lib/use-citizen-search';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -15,6 +16,7 @@ import {
 import { Field } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { BillTypeSelect } from '@/components/admin/bill-type-select';
+import { CitizenSearchStatus } from '@/components/admin/citizen-search-status';
 
 export interface ChargeValues {
   citizenId: string;
@@ -41,7 +43,8 @@ function formatLbp(value: string): string {
 export function ChargeCitizenDialog({
   open,
   onOpenChange,
-  citizens,
+  tenant,
+  token,
   submitting,
   error,
   onSubmit,
@@ -50,7 +53,9 @@ export function ChargeCitizenDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  citizens: CitizenListItem[];
+  tenant: string;
+  /** The staff session's token; the picker searches the register with it. */
+  token: string | null;
   submitting: boolean;
   error: string | null;
   onSubmit: (values: ChargeValues) => void;
@@ -59,35 +64,24 @@ export function ChargeCitizenDialog({
 }) {
   const [values, setValues] = useState<ChargeValues>(EMPTY);
   const [query, setQuery] = useState('');
+  /** The file picked from a search, held because the search that found it is cleared. */
+  const [picked, setPicked] = useState<CitizenListItem | null>(null);
 
   useEffect(() => {
     if (open) {
       setValues(EMPTY);
       setQuery('');
+      setPicked(null);
     }
   }, [open]);
 
   const set = (patch: Partial<ChargeValues>) =>
     setValues((previous) => ({ ...previous, ...patch }));
 
-  const q = query.trim().toLowerCase();
-  const digitsOnly = q.replace(/\D/g, '');
-  const matches = q
-    ? citizens
-        .filter(
-          (row) =>
-            row.fullName.toLowerCase().includes(q) ||
-            (row.referenceNumber ?? '').toLowerCase().includes(q) ||
-            (row.phone ?? '').toLowerCase().includes(q) ||
-            (digitsOnly.length > 0 && (row.phone ?? '').replace(/\D/g, '').includes(digitsOnly)) ||
-            (row.whatsapp ?? '').toLowerCase().includes(q) ||
-            (row.identityDocNumber ?? '').toLowerCase().includes(q) ||
-            row.id.toLowerCase().includes(q),
-        )
-        .slice(0, 8)
-    : [];
-
-  const chosen = citizens.find((row) => row.id === values.citizenId);
+  const chosen = picked && picked.id === values.citizenId ? picked : undefined;
+  // Searched on the server, so a file filed after any first page is found too.
+  const search = useCitizenSearch(tenant, token, query, open && !chosen);
+  const matches = search.results;
 
   const complete =
     values.citizenId !== '' &&
@@ -145,6 +139,7 @@ export function ChargeCitizenDialog({
                       <button
                         type="button"
                         onClick={() => {
+                          setPicked(row);
                           set({ citizenId: row.id });
                           setQuery('');
                         }}
@@ -159,6 +154,7 @@ export function ChargeCitizenDialog({
                   ))}
                 </ul>
               ) : null}
+              {!chosen ? <CitizenSearchStatus term={query} search={search} /> : null}
             </div>
           </Field>
 

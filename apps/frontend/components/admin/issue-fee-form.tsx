@@ -27,6 +27,7 @@ import {
 } from '@mechanization/shared-schemas';
 import type { FeeBasis, FeeBearer } from '@mechanization/shared-schemas';
 import type { CitizenListItem } from '@/lib/api-client';
+import { useCitizenSearch } from '@/lib/use-citizen-search';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { Alert } from '@/components/ui/alert';
@@ -41,6 +42,7 @@ import {
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { BillTypeSelect } from '@/components/admin/bill-type-select';
+import { CitizenSearchStatus } from '@/components/admin/citizen-search-status';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/dates';
 
@@ -115,7 +117,8 @@ function formatLbp(value: string): string {
  * unbilled); this owns the steps and the fields.
  */
 export function IssueFeeForm({
-  citizens,
+  tenant,
+  token,
   submitting,
   error,
   onSubmit,
@@ -123,7 +126,9 @@ export function IssueFeeForm({
   locale = 'ar',
   existingTitles = [],
 }: {
-  citizens: CitizenListItem[];
+  tenant: string;
+  /** The staff session's token; the citizen picker searches the register with it. */
+  token: string | null;
   submitting: boolean;
   error: string | null;
   onSubmit: (values: IssueFeeValues) => void;
@@ -135,6 +140,8 @@ export function IssueFeeForm({
   const labels = getLabels(locale);
   const [values, setValues] = useState<IssueFeeValues>(EMPTY);
   const [citizenQuery, setCitizenQuery] = useState('');
+  /** The file picked from a search, held because the search that found it is cleared. */
+  const [picked, setPicked] = useState<CitizenListItem | null>(null);
   const [stepIndex, setStepIndex] = useState(0);
 
   const steps = [
@@ -163,24 +170,15 @@ export function IssueFeeForm({
   const set = (patch: Partial<IssueFeeValues>) =>
     setValues((previous) => ({ ...previous, ...patch }));
 
-  const q = citizenQuery.trim().toLowerCase();
-  const digitsOnly = q.replace(/\D/g, '');
-  const matches = q
-    ? citizens
-        .filter(
-          (row) =>
-            row.fullName.toLowerCase().includes(q) ||
-            (row.referenceNumber ?? '').toLowerCase().includes(q) ||
-            (row.phone ?? '').toLowerCase().includes(q) ||
-            (digitsOnly.length > 0 && (row.phone ?? '').replace(/\D/g, '').includes(digitsOnly)) ||
-            (row.whatsapp ?? '').toLowerCase().includes(q) ||
-            (row.identityDocNumber ?? '').toLowerCase().includes(q) ||
-            row.id.toLowerCase().includes(q),
-        )
-        .slice(0, 8)
-    : [];
-
-  const chosen = citizens.find((row) => row.id === values.targetCitizenId);
+  const chosen = picked && picked.id === values.targetCitizenId ? picked : undefined;
+  // Searched on the server, so a file filed after any first page is found too.
+  const search = useCitizenSearch(
+    tenant,
+    token,
+    citizenQuery,
+    values.targetType === 'INDIVIDUAL_CITIZEN' && !chosen,
+  );
+  const matches = search.results;
   const amount = Number(values.amount.replace(/\D/g, ''));
   const recurring = values.frequency !== 'ONCE';
 
@@ -477,6 +475,7 @@ export function IssueFeeForm({
                             <button
                               type="button"
                               onClick={() => {
+                                setPicked(row);
                                 set({ targetCitizenId: row.id });
                                 setCitizenQuery('');
                               }}
@@ -494,6 +493,7 @@ export function IssueFeeForm({
                         ))}
                       </ul>
                     ) : null}
+                    {!chosen ? <CitizenSearchStatus term={citizenQuery} search={search} /> : null}
                   </div>
                 </Field>
               ) : null}

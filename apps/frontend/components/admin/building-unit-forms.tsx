@@ -71,6 +71,7 @@ import { formatDate, monthNames } from '@/lib/dates';
 import { formatPhone } from '@/lib/phone';
 import { useTableLabels } from '@/lib/use-table-labels';
 import { stashLinkSeed } from '@/lib/tab-search';
+import { SEARCH_DEBOUNCE_MS } from '@/lib/use-citizen-search';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -117,8 +118,6 @@ import { EndOwnershipDialog } from '@/components/admin/end-ownership-dialog';
  * Extracted rather than duplicated so the two surfaces can never quietly
  * diverge on what "add a person to a unit" or "open a follow-up case" means.
  */
-
-export const SEARCH_DEBOUNCE_MS = 350;
 
 /**
  * What an attempt can have produced.

@@ -28,7 +28,6 @@ import {
   getFeeFilterOptions,
   getMunicipalitySettings,
   getTenantConfig,
-  listCitizens,
   logApiError,
   reviewPayment,
 } from '@/lib/api-client';
@@ -270,21 +269,21 @@ export default function FeesPage({
   });
 
   /*
-    Everything on this screen that is not the ledger: the headline figures, the
-    citizen picker the two dialogs read, and the office details a reprinted وصل
-    carries. `allSettled` rather than `all`, kept from the original, because a
-    receipt's phone number failing to load must not blank the table beside it.
+    Everything on this screen that is not the ledger: the headline figures and
+    the office details a reprinted وصل carries. `allSettled` rather than `all`,
+    kept from the original, because a receipt's phone number failing to load
+    must not blank the table beside it. The charge dialog searches the register
+    itself, on the server (`useCitizenSearch`).
   */
   const contextQuery = useStaffQuery({
     queryKey: ['fees-context', tenant],
     queryFn: async (accessToken) => {
-      const [summaryRes, settingsRes, configRes, citizensRes] = await Promise.allSettled([
+      const [summaryRes, settingsRes, configRes] = await Promise.allSettled([
         getFeeSummary(tenant, accessToken),
         getMunicipalitySettings(tenant, accessToken),
         getTenantConfig(tenant),
-        listCitizens(tenant, accessToken, { limit: 200 }),
       ]);
-      for (const result of [summaryRes, settingsRes, configRes, citizensRes]) {
+      for (const result of [summaryRes, settingsRes, configRes]) {
         if (result.status === 'rejected') logApiError(result.reason);
       }
       return {
@@ -294,8 +293,6 @@ export default function FeesPage({
           configRes.status === 'fulfilled'
             ? configRes.value.nameAr || configRes.value.name
             : '',
-        // A file «دمج ملفين» folded into another is charged on the file that stays.
-        citizens: citizensRes.status === 'fulfilled' ? citizensRes.value.items.filter((row) => !row.mergedIntoId) : [],
       };
     },
     tenant,
@@ -307,7 +304,6 @@ export default function FeesPage({
   const items = paymentsQuery.data?.items ?? [];
   const total = paymentsQuery.data?.total ?? 0;
   const summary = contextQuery.data?.summary ?? null;
-  const citizens = contextQuery.data?.citizens ?? [];
   const settings = contextQuery.data?.settings ?? null;
   const municipalityName = contextQuery.data?.municipalityName ?? '';
   const loading = paymentsQuery.loading;
@@ -822,7 +818,8 @@ export default function FeesPage({
       <ChargeCitizenDialog
         open={chargeOpen}
         onOpenChange={setChargeOpen}
-        citizens={citizens}
+        tenant={tenant}
+        token={token}
         submitting={charging}
         error={null}
         onSubmit={handleChargeCitizen}

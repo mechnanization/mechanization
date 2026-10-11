@@ -543,6 +543,11 @@
       "title": "File restored from the archive",
       "description": "{name} — new fees can now be issued on this file.",
       "failed": "Could not restore the file from the archive."
+    },
+    "search": {
+      "searching": "Searching the register…",
+      "noMatches": "No file in the register matches. Search by name, phone, reference number or document number.",
+      "failed": "Could not search the register. Check the connection and type again."
     }
   },
   "citizenArchive": {
