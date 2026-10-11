@@ -1,6 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import {
   Check,
   Copy,
@@ -19,14 +21,23 @@ import {
   ApiRequestError,
   beginStaffTotpEnrolment,
   changeStaffEmail,
+  changeStaffPassword,
   confirmStaffTotpEnrolment,
   disableStaffTotp,
-  getStaff,
+  getStaffSelf,
   logApiError,
+  logoutStaff,
   sendStaffPasswordResetEmail,
 } from '@/lib/api-client';
+import {
+  passwordChangeIssues,
+  signInAfterPasswordChange,
+  type PasswordChangeIssues,
+} from '@/lib/password-change';
+import { clearSession } from '@/lib/session';
 import { QRCodeSVG } from 'qrcode.react';
 import type { SettingsCopy } from '@/lib/settings-i18n';
+import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { CellTag } from '@/components/ui/cell-tag';
 import { Button } from '@/components/ui/button';
@@ -77,20 +88,21 @@ const SAMPLE_ROWS = [
 export function SecuritySection({
   tenant,
   token,
-  userId,
   copy,
   locale,
   base,
 }: {
   tenant: string;
   token: string;
-  userId: string;
   copy: SettingsCopy;
   locale: string;
   /** `/{tenant}/{locale}/{adminPath}` — where the reset-password link lands. */
   base: string;
 }) {
   const toast = useToast();
+  const router = useRouter();
+  const tAuth = useTranslations('auth');
+  const tPassword = useTranslations('settings.changePassword');
   const [email, setEmail] = useState('');
   const [loadingEmail, setLoadingEmail] = useState(true);
 
@@ -103,6 +115,16 @@ export function SecuritySection({
 
   // Password reset state
   const [sendingResetEmail, setSendingResetEmail] = useState(false);
+
+  // Password change state
+  const [showPasswordForm, setShowPasswordForm] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordIssues, setPasswordIssues] = useState<PasswordChangeIssues>({});
+  const [passwordRefusal, setPasswordRefusal] = useState<string | null>(null);
+  const [changingPassword, setChangingPassword] = useState(false);
+  const changingPasswordRef = useRef(false);
 
   // 2FA state
   const [is2FAEnabled, setIs2FAEnabled] = useState(false);
@@ -131,13 +153,12 @@ export function SecuritySection({
     (async () => {
       try {
         setLoadingEmail(true);
-        const { items } = await getStaff(tenant, token);
+        // The caller's own account, which every staff role may read — not the
+        // roster (`getStaff`), which only the administrator may.
+        const self = await getStaffSelf(tenant, token);
         if (!cancelled) {
-          const current = items.find((item) => item.id === userId);
-          setEmail(current?.email ?? '');
-          if (current?.hasConfirmedTotp) {
-            setIs2FAEnabled(true);
-          }
+          setEmail(self.email);
+          setIs2FAEnabled(self.hasConfirmedTotp);
         }
       } catch (caught) {
         logApiError(caught);
@@ -148,7 +169,7 @@ export function SecuritySection({
     return () => {
       cancelled = true;
     };
-  }, [tenant, token, userId]);
+  }, [tenant, token]);
 
   const dateFormat = useMemo(
     () =>
@@ -197,6 +218,80 @@ export function SecuritySection({
     } finally {
       setSendingEmailChange(false);
     }
+  };
+
+  const closePasswordForm = () => {
+    setShowPasswordForm(false);
+    setCurrentPassword('');
+    setNewPassword('');
+    setConfirmPassword('');
+    setPasswordIssues({});
+    setPasswordRefusal(null);
+  };
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (changingPasswordRef.current) return;
+    setPasswordRefusal(null);
+
+    const issues = passwordChangeIssues({ currentPassword, newPassword, confirmPassword });
+    setPasswordIssues(issues);
+    const firstInvalid = issues.currentPassword
+      ? 'current-password'
+      : issues.newPassword
+        ? 'new-password'
+        : issues.confirmPassword
+          ? 'confirm-password'
+          : null;
+    if (firstInvalid) {
+      document.getElementById(firstInvalid)?.focus();
+      return;
+    }
+
+    changingPasswordRef.current = true;
+    setChangingPassword(true);
+    try {
+      await changeStaffPassword(tenant, token, { currentPassword, newPassword });
+    } catch (caught) {
+      logApiError(caught);
+      if (caught instanceof ApiRequestError && caught.code === 'STAFF_CURRENT_PASSWORD_INCORRECT') {
+        setPasswordIssues({ currentPassword: 'required' });
+        setPasswordRefusal(caught.message);
+        document.getElementById('current-password')?.focus();
+      } else {
+        setPasswordRefusal(caught instanceof ApiRequestError ? caught.message : tPassword('failed'));
+      }
+      changingPasswordRef.current = false;
+      setChangingPassword(false);
+      return;
+    }
+
+    /*
+      The change ended every session of the account, this tab's included (the
+      server bumped its token version). Signed out the way the header does it:
+      the server first, then this browser whatever the server answered, and on
+      to sign-in with the reason. The form stays locked until the page moves.
+    */
+    try {
+      await logoutStaff(tenant, token);
+    } catch {
+      // The session is over either way.
+    }
+    clearSession(tenant);
+    router.replace(signInAfterPasswordChange(base));
+  };
+
+  const passwordIssueText = {
+    currentPassword: passwordIssues.currentPassword
+      ? (passwordRefusal ?? tPassword('currentRequired'))
+      : undefined,
+    newPassword:
+      passwordIssues.newPassword === 'tooLong'
+        ? tPassword('tooLong')
+        : passwordIssues.newPassword === 'tooShort'
+          ? tAuth('passwordTooShort')
+          : undefined,
+    confirmPassword: passwordIssues.confirmPassword ? tAuth('passwordsDontMatch') : undefined,
   };
 
   const handleSendResetPasswordEmail = async () => {
@@ -354,11 +449,12 @@ export function SecuritySection({
         </div>
       </SettingsCard>
 
-      {/* Password & Authentication Section (Single Action Button) */}
+      {/* Password & Authentication Section */}
       <SettingsCard
         icon={KeyRound}
         title={copy.security.passwordHeading}
         hint={copy.security.passwordHint}
+        bodyClassName="space-y-4"
         actions={
           <Badge variant="soft-success">
             {locale === 'en' ? 'Protected' : 'محمي'}
@@ -395,6 +491,112 @@ export function SecuritySection({
             )}
           </Button>
         </div>
+
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between rounded-xl border border-border/70 bg-muted/20 p-4">
+          <div className="space-y-1">
+            <p className="text-sm font-semibold text-foreground">{tPassword('label')}</p>
+            <p className="text-xs text-muted-foreground">{tPassword('description')}</p>
+          </div>
+          {!showPasswordForm && (
+            <Button type="button" variant="outline" size="sm" onClick={() => setShowPasswordForm(true)}>
+              <Lock className="me-2 size-3.5" aria-hidden />
+              {tPassword('open')}
+            </Button>
+          )}
+        </div>
+
+        {showPasswordForm && (
+          <form
+            noValidate
+            onSubmit={handleChangePassword}
+            className="rounded-xl border border-primary/20 bg-primary/[0.02] p-4 space-y-4"
+          >
+            <AlignedFieldGrid>
+              <SettingsField
+                label={tPassword('current')}
+                htmlFor="current-password"
+                error={passwordIssueText.currentPassword}
+                required
+              >
+                <Input
+                  id="current-password"
+                  type="password"
+                  autoComplete="current-password"
+                  value={currentPassword}
+                  aria-invalid={passwordIssueText.currentPassword ? true : undefined}
+                  onChange={(e) => {
+                    setCurrentPassword(e.target.value);
+                    setPasswordIssues((issues) => ({ ...issues, currentPassword: undefined }));
+                    setPasswordRefusal(null);
+                  }}
+                />
+              </SettingsField>
+              <SettingsField
+                label={tAuth('newPassword')}
+                htmlFor="new-password"
+                error={passwordIssueText.newPassword}
+                required
+              >
+                <Input
+                  id="new-password"
+                  type="password"
+                  autoComplete="new-password"
+                  value={newPassword}
+                  aria-invalid={passwordIssueText.newPassword ? true : undefined}
+                  onChange={(e) => {
+                    setNewPassword(e.target.value);
+                    setPasswordIssues((issues) => ({ ...issues, newPassword: undefined }));
+                  }}
+                />
+              </SettingsField>
+              <SettingsField
+                label={tAuth('confirmPassword')}
+                htmlFor="confirm-password"
+                error={passwordIssueText.confirmPassword}
+                required
+              >
+                <Input
+                  id="confirm-password"
+                  type="password"
+                  autoComplete="new-password"
+                  value={confirmPassword}
+                  aria-invalid={passwordIssueText.confirmPassword ? true : undefined}
+                  onChange={(e) => {
+                    setConfirmPassword(e.target.value);
+                    setPasswordIssues((issues) => ({ ...issues, confirmPassword: undefined }));
+                  }}
+                />
+              </SettingsField>
+            </AlignedFieldGrid>
+
+            <p className="text-xs text-muted-foreground">{tPassword('signsOut')}</p>
+
+            {passwordRefusal && !passwordIssues.currentPassword ? (
+              <Alert variant="destructive" live="alert">
+                {passwordRefusal}
+              </Alert>
+            ) : null}
+
+            <div className="flex items-center gap-3 pt-1">
+              <Button type="submit" disabled={changingPassword}>
+                {changingPassword ? (
+                  <>
+                    <Loader2 className="me-2 size-4 animate-spin" aria-hidden />
+                    {tPassword('submitting')}
+                  </>
+                ) : (
+                  <>
+                    <KeyRound className="me-2 size-4" aria-hidden />
+                    {tPassword('submit')}
+                  </>
+                )}
+              </Button>
+              <Button type="button" variant="ghost" disabled={changingPassword} onClick={closePasswordForm}>
+                {tPassword('cancel')}
+              </Button>
+            </div>
+          </form>
+        )}
       </SettingsCard>
 
       {/* Two-Factor Authentication */}

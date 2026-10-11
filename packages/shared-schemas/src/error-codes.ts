@@ -240,6 +240,8 @@ export const ERROR_CODES = [
   'SESSION_INVALID',
   'SESSION_ENDED',
   'ORIGIN_NOT_ALLOWED',
+  // A staff member's own account («أمان الحساب»): the password typed to confirm a change is wrong.
+  'STAFF_CURRENT_PASSWORD_INCORRECT',
   // Raised by the portal itself when no response arrives or it cannot be read
   'NETWORK_ERROR',
   'UNKNOWN',

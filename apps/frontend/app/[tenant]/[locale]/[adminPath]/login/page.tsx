@@ -15,8 +15,10 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { ApiRequestError, isTotpRequired, loginStaff, logApiError } from '@/lib/api-client';
+import { openedAfterPasswordChange } from '@/lib/password-change';
 import { loadSession, saveSession } from '@/lib/session';
 import { defaultPathFor } from '@/components/admin/nav';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { LoadingState } from '@/components/ui/states';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -46,6 +48,8 @@ export default function StaffLogin({
   const [totpToken, setTotpToken] = useState('');
   const [totpStage, setTotpStage] = useState(false);
   const [checking, setChecking] = useState(true);
+  // Sent here by «تغيير كلمة المرور», which ended every session of the account.
+  const [passwordChanged, setPasswordChanged] = useState(false);
 
   useEffect(() => {
     const session = loadSession(tenant);
@@ -53,6 +57,7 @@ export default function StaffLogin({
       router.replace(`/${tenant}/${locale}/${adminPath}${defaultPathFor(session.user.role)}`);
       return;
     }
+    setPasswordChanged(openedAfterPasswordChange(window.location.search));
     setChecking(false);
   }, [tenant, locale, adminPath, router]);
 
@@ -230,6 +235,12 @@ export default function StaffLogin({
                 : tAuth('staffLoginDesc')}
             </p>
           </div>
+
+          {passwordChanged && !error ? (
+            <Alert variant="success" live="status" title={tAuth('passwordUpdatedTitle')} className="mb-6">
+              {tAuth('passwordUpdatedDesc')}
+            </Alert>
+          ) : null}
 
           {error ? (
             <div

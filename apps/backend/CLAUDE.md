@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `fix/moderate-cadastre-citizens` (on `develop@b034640`; the cadastre import deviation, the cadastre asset's private cache), 2026-10-11.
+Last verified against the code: `fix/moderate-cadastre-citizens` (on `develop@b034640`; the cadastre import deviation, the cadastre asset's private cache, `GET auth/staff/me`), 2026-10-11.
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -85,6 +85,12 @@ Data access for new code (decided):
 - **Staff sessions.** Rotating refresh tokens in an httpOnly cookie (`StaffRefreshTokenService`,
   `presentation/http/staff-refresh-cookie.ts`), checked by family in `JwtAuthGuard`; expired rows are
   pruned by `StaffRefreshTokenCleanupJob`. Rules: [docs/security.md](../../docs/security.md#tokens-passwords-and-totp).
+- **A staff member's own account.** `GET auth/staff/me` (`IdentityService.staffSelf`,
+  `@Roles(...EVERY_STAFF_ROLE)`) answers `StaffSelf` — id, email, role, `hasConfirmedTotp` and
+  nothing else — read by `user.sub`. «أمان الحساب» reads it; `GET staff` is the administrator's
+  roster and refuses every other role. The own-account writes beside it (`staff/change-password`,
+  `staff/change-email`, `staff/totp/disable`) refuse a wrong current password with
+  `STAFF_CURRENT_PASSWORD_INCORRECT`.
 - **Staff presence.** `StaffPresenceService.touch` stamps `users.lastSeenAt` from `JwtAuthGuard`, after
   every check has passed, without the guard awaiting it. It is the only write on the authenticated hot
   path, and it stays affordable through a Redis gate: one UPDATE a minute per account, not one per
@@ -379,7 +385,7 @@ Rule: a refusal is thrown with a specific code from `ERROR_CODES` in
   kept beside the top-level code because screens still read them; do not add new ones.
 
 Today: the fee, payment, ownership, tenancy, landlord-link, correction, citizen-file and damage services
-are converted; what is left is counted by `LEGACY_PROSE_THROWS` (206 on 2026-10-06). The block-driven refusals (`plan.block.message` in `LandlordLinkService`,
+are converted; what is left is counted by `LEGACY_PROSE_THROWS` (203 on 2026-10-11). The block-driven refusals (`plan.block.message` in `LandlordLinkService`,
 `blockerMessage` in `UnitCorrectionService`, `blocks[0].message` in `CitizenMergeService`) are not: their
 text is also rendered in the preview endpoints, which need localising first.
 

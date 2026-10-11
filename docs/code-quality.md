@@ -1,6 +1,6 @@
 # Code quality
 
-Last verified against the code: `fix/moderate-cadastre-citizens` (on `develop@b034640`; the panel cadastre import's merge, the map components' API reads), 2026-10-11.
+Last verified against the code: `fix/moderate-cadastre-citizens` (on `develop@b034640`; the panel cadastre import's merge, the map components' API reads, the prose-throw count), 2026-10-11.
 
 Two parts: the code-pattern rules every change follows, and the debt the code carries today. The debt
 is not a precedent. **Fix an item when you touch its file, and remove its row in the same change.** Add a
@@ -73,7 +73,7 @@ in [docs/ui-ux-standards.md](ui-ux-standards.md) §17.
 | `PrismaUserRepository` `translate` fallback | Any other unique violation reads «هذه الوثيقة مسجّلة مسبقاً لشخص آخر» | A generic «هذه البيانات مسجّلة مسبقاً», as `PrismaRegistrationRepository` does |
 | `PrismaUserRepository` `hideStaff`, `setStaffActive`, `restoreStaff`, `updateStaff` | `where: { id }` only; the STAFF check lives in `StaffService` before the call (check-then-act) | `where: { id, kind: 'STAFF' }` |
 | `OtpService` reads `process.env.NODE_ENV`; `APP_CONFIG.publicApiUrl` / `publicPortalUrl` read `process.env` at import; `WhishGatewayService` reads undeclared `WHISH_*` | Config bypasses `envSchema` | `ConfigService` and declared variables; only pre-DI code (`isSchedulerEnabled`, `initSentry`) reads `process.env` |
-| 206 prose throws (`new ConflictError('نص')`), counted by `error-codes.ratchet.spec.ts` | The server writes the words, so `/en/` shows Arabic, and the block-driven ones (`plan.block.message`, `blockerMessage`, `blocks[0].message`) also render in previews | A code from `ERROR_CODES` with `errors.<CODE>` in both message files; lower the ratchet constant ([apps/backend/CLAUDE.md](../apps/backend/CLAUDE.md#error-codes)) |
+| 203 prose throws (`new ConflictError('نص')`), counted by `error-codes.ratchet.spec.ts` | The server writes the words, so `/en/` shows Arabic, and the block-driven ones (`plan.block.message`, `blockerMessage`, `blocks[0].message`) also render in previews | A code from `ERROR_CODES` with `errors.<CODE>` in both message files; lower the ratchet constant ([apps/backend/CLAUDE.md](../apps/backend/CLAUDE.md#error-codes)) |
 | `TenantMiddleware`, `OtpCleanupJob`, `RecurringBillingJob` | The tenant scope is built by hand in three places | One helper that runs a function as a tenant |
 | `APP_CONFIG.tenantRoutePattern`, `APP_CONFIG.throttle.submission`, `OtpService.pruneExpired` | No readers or callers | Delete |
 | `SUPABASE_AUTH_SERVICE`, `domain/interfaces/supabase-auth.interface.ts`, `infrastructure/supabase/auth/supabase-auth.service.ts`, `infrastructure/supabase/storage/supabase-storage.service.ts`, `CadastreStorageService` (`infrastructure/cadastre/cadastre-storage.service.ts`), `@supabase/supabase-js`, `SUPABASE_*` | Unbound Supabase adapters kept after the cutover | Delete (**Undecided:** when; the `envSchema` comment waits for the cutover to be watched) |

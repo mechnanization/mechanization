@@ -334,6 +334,7 @@
     "SESSION_INVALID": "Your session has ended or is no longer valid. Sign in again.",
     "SESSION_ENDED": "Your session has ended. Sign in again.",
     "ORIGIN_NOT_ALLOWED": "This request did not come from the municipality’s portal.",
+    "STAFF_CURRENT_PASSWORD_INCORRECT": "The current password is incorrect.",
     "SESSION_REFRESH_UNAVAILABLE": "The session could not be renewed. Check the connection and try again.",
     "FEE_NOTHING_TO_CHARGE": "Nothing to charge — no notice was issued.{held, plural, =0 {} one { 1 unit is held for review (unit status conflict).} other { # units are held for review (unit status conflict).}}{uninhabitable, plural, =0 {} one { 1 unit is uninhabitable — it is exempt from fees until re-inspection.} other { # units are uninhabitable — they are exempt from fees until re-inspection.}}{exempted, plural, =0 {} one { 1 unit is vacant, under construction or exempt by bearer.} other { # units are vacant, under construction or exempt by bearer.}}{feeExempt, plural, =0 {} one { 1 unit is exempt from fees.} other { # units are exempt from fees.}}{coOwnerPaid, plural, =0 {} one { 1 co-owned unit is paid for by its responsible owner.} other { # co-owned units are paid for by their responsible owner.}}{unassessable, plural, =0 {} one { 1 citizen's records need a field survey first.} other { # citizens' records need a field survey first.}}",
     "CITIZEN_NO_PHONE_HAS_NUMBER": "The file is marked «has no phone» but holds a number of the citizen's own — clear the phone and WhatsApp, or untick «Does not have a phone number».",
@@ -2098,6 +2099,19 @@
       "none": "No ceiling",
       "invalid": "Enter an amount greater than zero, or leave the field empty for no ceiling.",
       "emptyHint": "An empty field means no ceiling. The ceiling follows the currency of the account the money is paid from."
+    },
+    "changePassword": {
+      "label": "Change password",
+      "description": "Set a new password here with your current one. You will be signed out on every device.",
+      "open": "Change password",
+      "current": "Current password",
+      "currentRequired": "Enter your current password.",
+      "tooLong": "Use at most 200 characters.",
+      "signsOut": "Changing the password ends every session of this account, this one included. You will sign in again with the new password.",
+      "submit": "Change password and sign out",
+      "submitting": "Changing the password…",
+      "cancel": "Cancel",
+      "failed": "Could not change the password."
     }
   }
 }

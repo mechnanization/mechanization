@@ -1,6 +1,6 @@
 # Security
 
-Last verified against the code: `fix/moderate-cadastre-citizens` (on `develop@b034640`; signed cadastre layers), 2026-10-11.
+Last verified against the code: `fix/moderate-cadastre-citizens` (on `develop@b034640`; signed cadastre layers, `GET auth/staff/me` and the password change), 2026-10-11.
 
 Binding for every change that touches authentication, roles, tokens, validation, uploads, logging,
 headers, client storage or secrets. The rules below are correct practice. Where the code differs today,
@@ -106,7 +106,13 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
 - The token's tenant MUST equal the URL's tenant (`JwtAuthGuard`, `TenantMismatchError`). MUST NOT
   accept a tenant, slug or schema from a body or query string.
 - Any change to a password, role, active flag or second factor MUST bump `tokenVersion` and call
-  `SessionRevocationService.forget`, as `IdentityService.changeStaffPassword` does.
+  `SessionRevocationService.forget`, as `IdentityService.changeStaffPassword` does. That ends the
+  caller's own session too, so «أمان الحساب» signs out after a password change (`logoutStaff`, then
+  `clearSession`) and opens sign-in with `?notice=password-changed`, a fixed value the page
+  compares and never shows or follows (`lib/password-change.ts`).
+- A staff member reads their own account through `GET auth/staff/me` (`EVERY_STAFF_ROLE`, scoped by
+  `user.sub`, no id in the path), which answers id, email, role and `hasConfirmedTotp` only: no hash,
+  no secret, no presence. The roster (`GET staff`) stays `SUPER_ADMIN`'s.
 - Changing a second factor (enrol, confirm, disable) MUST require re-authentication: the current
   password and a current TOTP code. A confirmed factor MUST stay active until its replacement is confirmed.
 - Non-session tokens MUST be signed with a derived purpose key (`IdentityService.resetSigningKey`),

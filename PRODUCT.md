@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية الذكية)
 
-Last verified against the code: `fix/pr104-review` (PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; the salary path and the urgent ceiling), 2026-10-10.
+Last verified against the code: `fix/moderate-cadastre-citizens` (on `develop@b034640`; «أمان الحساب» for every staff role), 2026-10-11.
 
 A multi-tenant municipal platform for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastral map, municipal fee billing (رسوم القيمة التأجيرية
@@ -212,6 +212,10 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
   when a chosen method cannot be carried out — «حسب الأسهم» with an owner's أسهم missing, which
   stops every co-owner's bill, or a responsible owner who no longer owns the flat, which bills it
   equally instead — and opens the unit where the method is chosen.
+- **Every staff member manages their own account.** «أمان الحساب» shows each role its own
+  sign-in email and whether its second factor is on, and changes the email or the password
+  with the current password typed again. A password change signs the account out
+  everywhere, this screen included, and the sign-in page says why.
 - **Staff accounts have three states, and none of them loses history.** An account is
   active, disabled, or deleted. Disabling blocks sign-in and moves the account out of the
   staff directory into «الأرشيف», where a system administrator reads it and can bring it

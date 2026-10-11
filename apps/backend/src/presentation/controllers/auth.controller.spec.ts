@@ -1,7 +1,11 @@
-import { GUARDS_METADATA, HTTP_CODE_METADATA } from '@nestjs/common/constants';
+import { RequestMethod, type ExecutionContext } from '@nestjs/common';
+import { GUARDS_METADATA, HTTP_CODE_METADATA, METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
+import { Reflector } from '@nestjs/core';
 import type { Request, Response } from 'express';
+import { EVERY_STAFF_ROLE, STAFF_ROLE } from '@mechanization/shared-schemas';
 import {
   IdentityService,
+  SessionClaims,
   SessionResult,
   StaffRefreshOutcome,
   StaffSessionGrant,
@@ -9,6 +13,8 @@ import {
 import { ForbiddenError, UnauthorizedError } from '../../application/common/exceptions';
 import { APP_CONFIG } from '../config/app.config';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
+import { ROLES_KEY } from '../decorators/roles.decorator';
+import { RolesGuard } from '../guards/roles.guard';
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard';
 import { AuthController } from './auth.controller';
 
@@ -213,6 +219,44 @@ describe('AuthController — staff/logout', () => {
       signedOut: true,
     });
     expect(cookies).toEqual([]);
+  });
+});
+
+describe('AuthController — staff/me, the caller’s own account', () => {
+  const handler = AuthController.prototype.staffMe as unknown as object;
+
+  /** `RolesGuard` over the real handler and class, as Nest runs it after `JwtAuthGuard`. */
+  const admits = (user: Partial<SessionClaims>) =>
+    new RolesGuard(new Reflector()).canActivate({
+      switchToHttp: () => ({ getRequest: () => ({ user }) }),
+      getHandler: () => handler,
+      getClass: () => AuthController,
+    } as unknown as ExecutionContext);
+
+  it('reads the account the token names, and nothing the caller sends', async () => {
+    const own = { id: 'staff-1', email: 'clerk@zahle.gov.lb', role: 'COLLECTOR', hasConfirmedTotp: true };
+    const staffSelf = jest.fn().mockResolvedValue(own);
+    const controller = build({ staffSelf });
+
+    await expect(
+      controller.staffMe({ sub: 'staff-1', kind: 'STAFF', tenantSlug: 'zahle', role: 'COLLECTOR' }),
+    ).resolves.toEqual(own);
+    expect(staffSelf).toHaveBeenCalledWith('staff-1');
+  });
+
+  it('is GET staff/me, signed in, for every staff role', () => {
+    expect(Reflect.getMetadata(METHOD_METADATA, handler)).toBe(RequestMethod.GET);
+    expect(Reflect.getMetadata(PATH_METADATA, handler)).toBe('staff/me');
+    expect(Reflect.getMetadata(IS_PUBLIC_KEY, handler)).toBeUndefined();
+    expect([...(Reflect.getMetadata(ROLES_KEY, handler) as string[])].sort()).toEqual([...EVERY_STAFF_ROLE].sort());
+  });
+
+  it.each(STAFF_ROLE)('admits %s', (role) => {
+    expect(admits({ sub: 's1', kind: 'STAFF', tenantSlug: 'zahle', role })).toBe(true);
+  });
+
+  it('refuses a citizen token, which the role-less routes beside it admit', () => {
+    expect(() => admits({ sub: 'c1', kind: 'CITIZEN', tenantSlug: 'zahle' })).toThrow(ForbiddenError);
   });
 });
 

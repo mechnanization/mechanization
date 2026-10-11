@@ -4,6 +4,7 @@ import {
   type ErrorParams,
   type ReinspectionsPage,
   type StaffPresenceResponse,
+  type StaffSelf,
 } from '@mechanization/shared-schemas';
 import { localizeApiError } from './api-errors';
 import { cachedRequest, invalidateRequests, peekCachedRequest } from './request-cache';
@@ -5806,6 +5807,20 @@ export async function restoreSnapshot(
   return payload as RestoreReport;
 }
 
+/**
+ * «أمان الحساب»: the signed-in staff member's own account (email, role, whether
+ * a second factor is confirmed). Every staff role may read its own; `getStaff`
+ * is the administrator's roster and refuses everyone else.
+ */
+export function getStaffSelf(tenant: string, token: string, signal?: AbortSignal) {
+  return apiFetch<StaffSelf>(tenant, '/auth/staff/me', { token, signal });
+}
+
+/**
+ * Ends every session of the account, this one included: the server bumps its
+ * token version. After a success the caller signs out (`logoutStaff`,
+ * `clearSession`) and sends the user to the sign-in page.
+ */
 export async function changeStaffPassword(
   tenant: string,
   token: string,

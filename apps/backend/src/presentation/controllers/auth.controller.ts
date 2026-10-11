@@ -13,6 +13,7 @@ import { Throttle } from '@nestjs/throttler';
 import { Request, Response } from 'express';
 import { createHash } from 'node:crypto';
 import {
+  EVERY_STAFF_ROLE,
   changeEmailSchema,
   changePasswordSchema,
   confirmPasswordResetSchema,
@@ -27,6 +28,7 @@ import { IdentityService } from '../../application/features/identity/identity.se
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { Public } from '../decorators/public.decorator';
+import { Roles } from '../decorators/roles.decorator';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
 import { APP_CONFIG } from '../config/app.config';
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard';
@@ -231,6 +233,17 @@ export class AuthController {
   ) {
     await this.identity.disableTotp(user.sub, tenantSlug, body?.currentPassword);
     return { disabled: true };
+  }
+
+  /**
+   * «أمان الحساب»: the caller's own staff account — email, role, and whether a
+   * second factor is confirmed. Every staff role, because every staff member
+   * has that screen; scoped by the token's `sub`, with no id in the path.
+   */
+  @Roles(...EVERY_STAFF_ROLE)
+  @Get('staff/me')
+  staffMe(@CurrentUser() user: SessionClaims) {
+    return this.identity.staffSelf(user.sub);
   }
 
   @Post('staff/change-password')

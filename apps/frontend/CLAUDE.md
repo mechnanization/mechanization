@@ -1,6 +1,6 @@
 # apps/frontend: agent guide
 
-Last verified against the code: `fix/moderate-cadastre-citizens` (on `develop@b034640`; signed cadastre layers), 2026-10-11.
+Last verified against the code: `fix/moderate-cadastre-citizens` (on `develop@b034640`; signed cadastre layers, «أمان الحساب»'s own-account read and password change), 2026-10-11.
 
 Next.js 15 app router, React 18, next-intl 4, TanStack Query 5, Tailwind 3.4 with
 tailwind-merge 3, Radix and lucide-react. One app serves the staff dashboard and the
@@ -197,6 +197,11 @@ component types.
   effect runs; redirects unless `kind === 'STAFF'`) and show a skeleton while the token is
   null (CODE-1). `StaffRouteGuard` checks `canAccessPath`, which opens a path with no
   `NAV_GROUPS` row to every role (CODE-4). Citizen pages call `loadSession` directly.
+- A screen about the signed-in account reads `getStaffSelf` (`GET auth/staff/me`), never the
+  roster (`getStaff` is `SUPER_ADMIN`'s, and answered every other role 403). A password change
+  (`changeStaffPassword`) ends this session too, so «أمان الحساب» signs out as `AdminHeader` does
+  and goes to `signInAfterPasswordChange(base)`; the sign-in page shows why
+  (`openedAfterPasswordChange`, both in `lib/password-change.ts`).
 - Drafts and the offline queue survive sign-out: [docs/security.md](../../docs/security.md#known-gaps).
 
 ## Copy and i18n (decision D-i18n)

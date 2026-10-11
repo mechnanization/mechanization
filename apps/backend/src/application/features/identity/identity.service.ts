@@ -3,6 +3,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { createHmac } from 'node:crypto';
+import type { StaffSelf } from '@mechanization/shared-schemas';
 import {
   EMAIL_SENDER,
   PASSWORD_HASHER,
@@ -45,6 +46,14 @@ const RESET_PURPOSE = 'PASSWORD_RESET';
 const RESET_KEY_LABEL = 'password-reset.v1';
 
 const ABSENT_PASSWORD_HASH = '$2b$12$0TQq.TFqu6SjurFnnRd/3eWT5wd9BsdSSqeoT8tSlia7rBFo8Pm6i';
+
+/** The password typed to confirm a change to one's own account is not the account's. */
+function currentPasswordIncorrect(): UnauthorizedError {
+  return new UnauthorizedError({
+    code: 'STAFF_CURRENT_PASSWORD_INCORRECT',
+    message: 'The current password does not match',
+  });
+}
 
 /**
  * The two sentences a refused refresh answers with. The first for a request
@@ -473,6 +482,30 @@ export class IdentityService {
     return null;
   }
 
+  /**
+   * «أمان الحساب»: the signed-in staff member's own account, read by the
+   * session's `sub` and never by an id the caller sends. Only what that screen
+   * shows — no hash, no secret, no presence. Every staff role has the screen,
+   * while `GET staff` is the administrator's roster; reading the roster here
+   * left everyone else with no email and a 2FA card that offered to set up a
+   * factor they had already confirmed.
+   */
+  async staffSelf(userId: string): Promise<StaffSelf> {
+    const user = await this.users.findById(userId);
+    if (!user || user.kind !== 'STAFF' || !user.role) {
+      throw new UnauthorizedError({
+        code: 'SESSION_INVALID',
+        message: 'The session names no staff account',
+      });
+    }
+    return {
+      id: user.id,
+      email: user.email ?? '',
+      role: user.role,
+      hasConfirmedTotp: user.hasConfirmedTotp,
+    };
+  }
+
   /** Enrolment: hands back the otpauth:// URI for the authenticator app. */
   async beginTotpEnrolment(
     userId: string,
@@ -540,7 +573,7 @@ export class IdentityService {
     if (currentPassword && user.passwordHash) {
       const match = await this.hasher.verify(currentPassword, user.passwordHash);
       if (!match) {
-        throw new UnauthorizedError('كلمة المرور الحالية غير صحيحة');
+        throw currentPasswordIncorrect();
       }
     }
 
@@ -572,7 +605,7 @@ export class IdentityService {
 
     const match = await this.hasher.verify(currentPassword, user.passwordHash);
     if (!match) {
-      throw new UnauthorizedError('كلمة المرور الحالية غير صحيحة');
+      throw currentPasswordIncorrect();
     }
 
     const passwordHash = await this.hasher.hash(newPassword);
@@ -610,7 +643,7 @@ export class IdentityService {
 
     const match = await this.hasher.verify(currentPassword, user.passwordHash);
     if (!match) {
-      throw new UnauthorizedError('كلمة المرور الحالية غير صحيحة');
+      throw currentPasswordIncorrect();
     }
 
     const nextEmail = newEmail.trim().toLowerCase();
