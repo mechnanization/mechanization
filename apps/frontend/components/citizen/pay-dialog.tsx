@@ -1,8 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Banknote, Building2, Clock, Loader2, MapPin, Smartphone } from 'lucide-react';
 import type { CitizenPaymentItem, MunicipalitySettings } from '@/lib/api-client';
+import { isPartlyPaid } from '@/lib/citizen-payments';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -47,6 +49,7 @@ export function PayDialog({
   onDeclare: (input: { method: string; whishTransactionRef?: string }) => void;
   locale?: string;
 }) {
+  const tCitizen = useTranslations('citizen');
   const whishAvailable = Boolean(settings?.whishMoneyNumber);
   const [method, setMethod] = useState<'CASH' | 'WHISH_MONEY'>('CASH');
   const [reference, setReference] = useState('');
@@ -70,7 +73,14 @@ export function PayDialog({
           </DialogTitle>
           <DialogDescription>
             {locale === 'en' ? 'Amount due: ' : 'المبلغ المستحق: '}
-            <span className="font-semibold">{payment ? lbp(payment.amount) : ''}</span>
+            {/* What is left: a confirmed claim credits only the outstanding balance, never the face value. */}
+            <span className="font-semibold">{payment ? lbp(payment.remaining) : ''}</span>
+            {payment && isPartlyPaid(payment) ? (
+              <>
+                {' · '}
+                {tCitizen('partlyPaid', { paid: lbp(payment.paidAmount), total: lbp(payment.amount) })}
+              </>
+            ) : null}
           </DialogDescription>
         </DialogHeader>
 
@@ -144,7 +154,7 @@ export function PayDialog({
                     {locale === 'en'
                       ? 'Open Whish Money app and transfer '
                       : 'افتح تطبيق Whish Money وحوّل '}
-                    <span className="font-semibold">{payment ? lbp(payment.amount) : ''}</span>
+                    <span className="font-semibold">{payment ? lbp(payment.remaining) : ''}</span>
                     {locale === 'en' ? ' to number:' : ' إلى الرقم:'}
                   </span>
                 </li>

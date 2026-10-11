@@ -2,6 +2,7 @@
 
 import { use, useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import {
   AlertTriangle,
   BadgeCheck,
@@ -26,6 +27,7 @@ import {
 import type { CitizenPaymentItem, MunicipalitySettings } from '@/lib/api-client';
 import { clearSession, loadSession } from '@/lib/session';
 import { formatLbp } from '@/lib/currency';
+import { billFigure, citizenPaymentTotals, isPartlyPaid, isPayable } from '@/lib/citizen-payments';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -55,6 +57,7 @@ export default function CitizenPayments({
   const { tenant, locale } = use(params);
   const router = useRouter();
   const labels = getLabels(locale);
+  const tCitizen = useTranslations('citizen');
 
   const [token, setToken] = useState<string | null>(null);
   const [name, setName] = useState('');
@@ -151,13 +154,9 @@ export default function CitizenPayments({
 
   if (!token) return null;
 
-  const outstanding = items.filter(
-    (item) => item.paymentStatus === 'UNPAID' || item.paymentStatus === 'OVERDUE',
-  );
-  const unpaidTotal = outstanding.reduce((total, item) => total + item.amount, 0);
-  const paidTotal = items
-    .filter((item) => item.paymentStatus === 'PAID')
-    .reduce((total, item) => total + item.amount, 0);
+  const outstanding = items.filter(isPayable);
+  // What is left on each bill and everything paid, part-payments included — not the face values.
+  const { outstanding: unpaidTotal, paid: paidTotal } = citizenPaymentTotals(items);
   const nextDue = outstanding
     .map((item) => item.dueDate)
     .sort()
@@ -250,8 +249,7 @@ export default function CitizenPayments({
         <div className="space-y-3">
           {items.map((item) => {
             const Icon = STATUS_ICON[item.paymentStatus] ?? Clock;
-            const payable =
-              item.paymentStatus === 'UNPAID' || item.paymentStatus === 'OVERDUE';
+            const payable = isPayable(item);
 
             return (
               <Card key={item.id}>
@@ -271,10 +269,18 @@ export default function CitizenPayments({
                           </Badge>
                         ) : null}
                       </div>
+                      {isPartlyPaid(item) ? (
+                        <p className="text-sm text-muted-foreground">
+                          {tCitizen('partlyPaid', {
+                            paid: formatLbp(item.paidAmount, locale),
+                            total: formatLbp(item.amount, locale),
+                          })}
+                        </p>
+                      ) : null}
                     </div>
 
                     <div className="flex flex-col items-end gap-2">
-                      <p className="text-xl font-bold">{formatLbp(item.amount, locale)}</p>
+                      <p className="text-xl font-bold">{formatLbp(billFigure(item), locale)}</p>
                       <Badge
                         variant="outline"
                         className={cn('gap-1.5 py-1', STATUS_TONE[item.paymentStatus])}

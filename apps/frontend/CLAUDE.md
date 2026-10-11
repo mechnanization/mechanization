@@ -1,6 +1,6 @@
 # apps/frontend: agent guide
 
-Last verified against the code: `fix/moderate-finance` (on `develop@b034640`; «وصولات الفاتورة» and «عكس الوصل», the receipt API functions), 2026-10-11.
+Last verified against the code: `fix/moderate-finance` (on `develop@b034640`; «وصولات الفاتورة» and «عكس الوصل», the receipt API functions, the portal's part-paid figures), 2026-10-11.
 
 Next.js 15 app router, React 18, next-intl 4, TanStack Query 5, Tailwind 3.4 with
 tailwind-merge 3, Radix and lucide-react. One app serves the staff dashboard and the
@@ -44,6 +44,11 @@ app/[tenant]/[locale]/layout.tsx        TenantLayout (server, force-dynamic) + e
 `payment-receipt.tsx` prints as the bill's reference. It is null on every bill
 raised before migration 0079, and those keep printing the reference derived from
 the id — `billReference` is where that choice lives.
+
+A bill can be part-paid, so a screen that tells someone what to pay reads the server's
+`remaining` and `paidAmount`, never `amount` alone: the portal's payments page and pay dialog
+through `lib/citizen-payments.ts` (as «ملفّي» does), and the staff bell shows a claim's
+`remaining`, which is what confirming it credits.
 
 A receipt is printed with `recorded` (a `RecordedMovement`: the RCP number, its moment and the
 amounts the server returned) wherever a movement is known: the citizen payment page, the
@@ -356,7 +361,7 @@ are inlined at build time. The local `.env.local` block is in
 ## Tests
 
 Vitest (`apps/frontend/vitest.config.mts`): `environment: 'node'`, only `lib/**/*.test.ts`,
-with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 34 test files (counted on disk
+with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 35 test files (counted on disk
 2026-10-11, `fix/moderate-finance`; cases not recounted).
 No component, accessibility or end-to-end tests exist (no jsdom, no Testing Library); a
 rendered check uses the uncommitted headless harness of UI §16.4. Untested, so add a test
