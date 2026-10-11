@@ -1,6 +1,6 @@
 # Security
 
-Last verified against the code: `fix/moderate-cadastre-citizens` (on `develop@b034640`; signed cadastre layers, `GET auth/staff/me` and the password change, the save-path unlink rows), 2026-10-11.
+Last verified against the code: `fix/moderate-cadastre-citizens` (on `develop@b034640`; signed cadastre layers, `GET auth/staff/me` and the password change, the save-path unlink rows, no filing on an archived file), 2026-10-11.
 
 Binding for every change that touches authentication, roles, tokens, validation, uploads, logging,
 headers, client storage or secrets. The rules below are correct practice. Where the code differs today,
@@ -87,7 +87,11 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   and the remaining amount, nothing a ledger reader does not already see, and never a رقم مرجعي.
 - A citizen file is never hard-deleted (decision of 2026-10-05). It is archived — `isActive: false`
   through `PATCH citizens/:id/active` — with a written reason and who asked (`setCitizenActiveSchema`
-  requires both), recorded on the Tier 1 audit row, and restored the same way.
+  requires both), recorded on the Tier 1 audit row, and restored the same way. An archived file takes
+  no new filing until it is restored: a filing whose passport attaches it to the same person's
+  archived file (`PrismaRegistrationRepository.submit`) and a save that would mint an archived
+  file's first filing (`CitizensService.update`) are refused with `CITIZEN_FILE_ARCHIVED`
+  (`details.citizenId`; the message names nobody).
 - What the citizen portal sends about anyone else is named, never passed through: `mySummary` sends a
   flat's owners as name and أسهم only (an allowlist, pinned by `citizen-portal.spec.ts`) and drops the
   landlord link's id and رقم مرجعي. A co-owned flat's billing goes as the method and this citizen's own

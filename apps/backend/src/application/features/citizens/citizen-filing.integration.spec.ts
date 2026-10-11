@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { Client } from 'pg';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { adminUpdateCitizenSubmissionSchema, type ImportRow } from '@mechanization/shared-schemas';
+import {
+  adminCreateCitizenSubmissionSchema,
+  adminUpdateCitizenSubmissionSchema,
+  type ImportRow,
+} from '@mechanization/shared-schemas';
 import { PrismaClient as TenantPrismaClient } from '../../../generated/tenant-client';
 import { ConflictError } from '../../../domain/errors/domain-error';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
@@ -215,6 +219,118 @@ describeIfDb('filing on a citizen file', () => {
       );
 
       expect(preview.results[0]).toEqual({ row: 2, ok: true, name: 'وسيم بزي' });
+    });
+  });
+
+  describe('an archived file takes no new filing', () => {
+    const foreigner = (lastName: string, identityDocNumber: string) => ({
+      firstName: 'Jean',
+      middleName: 'Paul',
+      lastName,
+      motherName: 'Marie',
+      gender: 'MALE',
+      isLebanese: false,
+      nationality: 'FR',
+      residentStatus: 'DISPLACED',
+      identityDocNumber,
+    });
+    const contact = {
+      phone: '+96177000000',
+      whatsappSameAsPhone: true,
+      maritalStatus: 'SINGLE',
+      actualHouseholdMembers: 1,
+      totalRegisteredMembers: 1,
+    };
+    const land = {
+      occupancyType: 'OWNER',
+      propertyType: 'LAND',
+      propertyNumber: '77',
+      landType: 'AGRICULTURAL',
+      unitArea: '500',
+      shares: '2400',
+    };
+
+    it('refuses a new filing that would join the same person’s archived file, and writes nothing', async () => {
+      const number = `P${randomUUID().slice(0, 8).toUpperCase()}`;
+      // Letters only: a name refuses digits.
+      const lastName = `Archived${Array.from({ length: 6 }, () => String.fromCharCode(97 + Math.floor(Math.random() * 26))).join('')}`;
+      const holder = randomUUID();
+      await db.user.create({
+        data: {
+          id: holder,
+          kind: 'CITIZEN',
+          tenantSlug: 'cf',
+          firstName: 'Jean',
+          middleName: 'Paul',
+          lastName,
+          isLebanese: false,
+          identityDocType: 'PASSPORT',
+          identityDocNumber: number,
+          isActive: false,
+          referenceNumber: `CF-${randomUUID().slice(0, 10)}`,
+        },
+      });
+      const before = await db.registration.count();
+      const people = await db.user.count({ where: { kind: 'CITIZEN' } });
+
+      const refusal = await thrown(
+        within(() =>
+          citizens.create({
+            tenantSlug: 'cf',
+            payload: adminCreateCitizenSubmissionSchema.parse({
+              personal: foreigner(lastName, number),
+              contact,
+              flags: [],
+              properties: [land],
+            }),
+            actor: actor(),
+          }),
+        ),
+      );
+
+      expect(refusal).toBeInstanceOf(ConflictError);
+      expect((refusal as ConflictError).code).toBe('CITIZEN_FILE_ARCHIVED');
+      expect((refusal as ConflictError).details).toEqual({ citizenId: holder });
+      expect(await db.registration.count()).toBe(before);
+      expect(await db.user.count({ where: { kind: 'CITIZEN' } })).toBe(people);
+    });
+
+    it('refuses a save that would mint the first filing on an archived file', async () => {
+      const archived = randomUUID();
+      await db.user.create({
+        data: {
+          id: archived,
+          kind: 'CITIZEN',
+          tenantSlug: 'cf',
+          firstName: 'Jean',
+          middleName: 'Paul',
+          lastName: 'Archived',
+          isLebanese: false,
+          isActive: false,
+          referenceNumber: `CF-${randomUUID().slice(0, 10)}`,
+        },
+      });
+
+      const refusal = await thrown(
+        within(() =>
+          citizens.update({
+            tenantSlug: 'cf',
+            citizenId: archived,
+            payload: adminUpdateCitizenSubmissionSchema.parse({
+              personal: foreigner('Archived', ''),
+              contact,
+              flags: [],
+              properties: [land],
+            }),
+            actor: actor(),
+          }),
+        ),
+      );
+
+      expect(refusal).toBeInstanceOf(ConflictError);
+      expect((refusal as ConflictError).code).toBe('CITIZEN_FILE_ARCHIVED');
+      expect((refusal as ConflictError).details).toEqual({ citizenId: archived });
+      expect(await db.registration.count({ where: { citizenId: archived } })).toBe(0);
     });
   });
 

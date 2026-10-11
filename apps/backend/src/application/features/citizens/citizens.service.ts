@@ -2298,6 +2298,25 @@ export class CitizensService {
         });
       }
 
+      /*
+        … unless the file is archived: an archived file takes no new filing,
+        here as on the create path (`CITIZEN_FILE_ARCHIVED`). It is reactivated
+        first, with its reason. Read under the row lock the update above holds.
+      */
+      if (!existing?.id) {
+        const person = await tx.user.findFirst({
+          where: { id: citizen.id, kind: 'CITIZEN' },
+          select: { isActive: true },
+        });
+        if (!person?.isActive) {
+          throw new ConflictError({
+            code: 'CITIZEN_FILE_ARCHIVED',
+            message: 'This file is archived. Reactivate it before filing on it.',
+            details: { citizenId: citizen.id },
+          });
+        }
+      }
+
       // A citizen with no registration at all (never expected from this form,
       // but reachable if their only claim was deleted) gets one rather than
       // silently dropping the properties they just typed.

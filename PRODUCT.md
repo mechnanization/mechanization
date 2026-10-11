@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية الذكية)
 
-Last verified against the code: `fix/moderate-cadastre-citizens` (on `develop@b034640`; «أمان الحساب» for every staff role), 2026-10-11.
+Last verified against the code: `fix/moderate-cadastre-citizens` (on `develop@b034640`; «أمان الحساب» for every staff role, no filing on an archived file), 2026-10-11.
 
 A multi-tenant municipal platform for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastral map, municipal fee billing (رسوم القيمة التأجيرية
@@ -164,7 +164,9 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
 - **A citizen file is archived, never deleted** (decision of 2026-10-05). «أرشفة الملف»
   asks for the reason and who asked for it, both written to the activity log; an archived
   file is billed nothing new and keeps everything it holds, and «إعادة من الأرشيف» brings it
-  back.
+  back. It takes no new filing either: a registration that would join it is refused with
+  «أعِد تفعيل الملف أولاً», on the form, from the offline queue (which parks it as refused)
+  and in an import.
 - **A building's height counts its built floors, never its roof** (the user's decision of
   2026-10-07). «الطوابق المسقوفة» is every level under a roof, the ground floor and a
   «طابق أعمدة» included. The building editor says so, gives the two ways to record a duplex

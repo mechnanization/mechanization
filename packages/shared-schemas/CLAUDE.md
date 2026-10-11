@@ -1,6 +1,6 @@
 # packages/shared-schemas
 
-Last verified against the code: `fix/moderate-cadastre-citizens` (on `develop@b034640`; the digit constants, `StaffSelf`, the import row's code), 2026-10-11.
+Last verified against the code: `fix/moderate-cadastre-citizens` (on `develop@b034640`; the digit constants, `StaffSelf`, the import row's code, the citizen-file codes `CITIZEN_IDENTITY_DOC_TAKEN` / `CITIZEN_FILE_ARCHIVED`), 2026-10-11.
 
 `@mechanization/shared-schemas`: the zod schemas, enums, display labels and
 pure rules that the backend and the frontend share. One copy of each contract,

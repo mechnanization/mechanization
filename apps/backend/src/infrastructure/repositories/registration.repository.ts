@@ -181,7 +181,15 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
                 identityDocNumber,
               },
             },
-            select: { id: true, kind: true, firstName: true, middleName: true, lastName: true, residence: true },
+            select: {
+              id: true,
+              kind: true,
+              firstName: true,
+              middleName: true,
+              lastName: true,
+              residence: true,
+              isActive: true,
+            },
           });
 
           /*
@@ -196,7 +204,15 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
               where: { absorbedId: holder.id, undoneAt: null },
               select: {
                 survivor: {
-                  select: { id: true, kind: true, firstName: true, middleName: true, lastName: true, residence: true },
+                  select: {
+                    id: true,
+                    kind: true,
+                    firstName: true,
+                    middleName: true,
+                    lastName: true,
+                    residence: true,
+                    isActive: true,
+                  },
                 },
               },
             });
@@ -213,6 +229,20 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
             !isNonPersonRecord(holder.residence) &&
             isSamePerson(holder, input.citizen)
           ) {
+            /*
+              The same person, on a file that is archived: no new filing joins
+              it. The file is reactivated first, on purpose and with its reason
+              (`setActive`); attaching here would put flats and bills on a file
+              the register says is closed. Refused rather than filed beside it,
+              which would make the same person twice.
+            */
+            if (!holder.isActive) {
+              throw new ConflictError({
+                code: 'CITIZEN_FILE_ARCHIVED',
+                message: 'The file this filing belongs to is archived. Reactivate it first.',
+                details: { citizenId: holder.id },
+              });
+            }
             identity = 'ATTACHED';
             attachedTo = holder.id;
           } else {

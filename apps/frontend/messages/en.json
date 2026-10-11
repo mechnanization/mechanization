@@ -325,6 +325,7 @@
     "MERGE_ABSORBED_CHANGED": "The file being merged changed during the merge (something new was recorded on it). Reopen the preview and try again.",
     "CITIZEN_MERGED_AWAY": "This file was merged into the file of {name}{hasReference, select, yes { ({reference})} other {}}. Use that file. A system administrator can undo the merge to separate them.",
     "CITIZEN_IDENTITY_DOC_TAKEN": "This document number is already recorded for someone else in the register. Check the number.",
+    "CITIZEN_FILE_ARCHIVED": "This person’s file is archived, so no new filing is added to it. Reactivate the file first, then send the filing again.",
     "OWNER_NAME_REQUIRED": "Enter the property owner’s name.",
     "LANDLORD_PHONE_REQUIRED": "Enter the landlord’s phone number.",
     "LOCATION_INCOMPLETE": "A location needs both a latitude and a longitude.",

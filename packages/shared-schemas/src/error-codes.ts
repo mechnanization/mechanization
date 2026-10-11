@@ -177,6 +177,8 @@ export const ERROR_CODES = [
   'CITIZEN_MERGED_AWAY',
   // A passport number another file already holds (`users` is unique on the document). Names nobody.
   'CITIZEN_IDENTITY_DOC_TAKEN',
+  // A new filing for a file that is archived (`isActive` false): reactivate it first. `details.citizenId`.
+  'CITIZEN_FILE_ARCHIVED',
   // Property entries (domain invariants)
   'OWNER_NAME_REQUIRED',
   'LANDLORD_PHONE_REQUIRED',
