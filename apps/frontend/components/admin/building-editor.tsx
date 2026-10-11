@@ -67,7 +67,8 @@ import { emptyTopFloors } from '@/lib/floor-count';
 import { haversineDistance, pointInGeometry } from '@/lib/map-geometry';
 import { scrollElementToTop } from '@/lib/scroll-to-top';
 import { offlineStorageAvailable } from '@/lib/offline-db';
-import { queueBuilding } from '@/lib/offline-sync';
+import { newSubmissionId, queueBuilding } from '@/lib/offline-sync';
+import { outcomeInDoubt } from '@/lib/request-id';
 import { loadSession, clearSession } from '@/lib/session';
 import { CENSUS_WRITE_ROLES, hasRole } from '@/lib/staff-roles';
 import { Badge } from '@/components/ui/badge';
@@ -371,6 +372,7 @@ export function BuildingEditor({
   const tFloors = useTranslations('floorCount');
   const en = locale === 'en';
   const tFeeExemption = useTranslations('feeExemption');
+  const tEditor = useTranslations('buildingEditor');
   const labels = getLabels(locale);
   const base = `/${tenant}/${locale}/${adminPath}`;
   const editing = Boolean(buildingId);
@@ -511,6 +513,24 @@ export function BuildingEditor({
 
   // Submission State
   const [saving, setSaving] = useState(false);
+  /*
+    Synchronous, unlike `saving`, which lands a render after a fast second
+    press — and a second press on «حفظ» created a second building (STA-4).
+    Never released after a save that landed: the page stays mounted until the
+    next route is ready, and the button must not come back on meanwhile.
+  */
+  const inFlight = useRef(false);
+  /**
+   * The creation's `clientSubmissionId`, which the server makes the building's
+   * id. A retry after an answer that never arrived is sent under the same id
+   * and answered with the building the lost attempt made (`deduplicated`),
+   * rather than a second one on the parcel; queued offline, it goes under the
+   * same id too. Kept across every failure the outcome of which is in doubt
+   * (`outcomeInDoubt`); renewed only after a refusal the server stated, or a
+   * save that landed. Minted on first use (`submissionId`).
+   */
+  const submissionIdRef = useRef<string | null>(null);
+  const submissionId = (): string => (submissionIdRef.current ??= newSubmissionId());
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [pinError, setPinError] = useState<string | null>(null);
@@ -1534,6 +1554,7 @@ export function BuildingEditor({
 
   // Save handler
   const handleSave = async (confirmed = false) => {
+    if (inFlight.current) return;
     if (!trimmedParcel) {
       setFieldErrors({ parcelNumber: en ? 'Parcel number is required' : 'رقم العقار مطلوب' });
       goToStep(0);
@@ -1582,9 +1603,12 @@ export function BuildingEditor({
       return;
     }
 
+    inFlight.current = true;
     setSaving(true);
     setError(null);
     setFieldErrors({});
+    /** Set once a save has landed: the form then stays locked while the page moves on. */
+    let landed = false;
 
     try {
       if (editing && buildingId) {
@@ -1612,6 +1636,7 @@ export function BuildingEditor({
           return;
         }
         await saveEdit(buildingId, token);
+        landed = true;
 
         clearBuildingDraft(tenant, buildingId);
         toast.success(
@@ -1624,6 +1649,12 @@ export function BuildingEditor({
       // 1. Offline branch
       if (offlineNow() && offlineStorageAvailable()) {
         await queueBuilding({
+          /*
+            The id an online attempt at this same building may already have
+            sent: an answer that never arrived often means a request that did,
+            and under the same id the drain is answered with that building.
+          */
+          id: submissionId(),
           tenant,
           parcelNumber: trimmedParcel,
           provisionalCode: codePreview ?? trimmedParcel,
@@ -1655,6 +1686,8 @@ export function BuildingEditor({
           },
           blueprint: null,
         });
+        landed = true;
+        submissionIdRef.current = null;
 
         clearBuildingDraft(tenant, buildingId);
         toast.info(en ? 'Saved on this device' : 'حُفظ على هذا الجهاز', {
@@ -1696,7 +1729,10 @@ export function BuildingEditor({
           : {}),
         ...(!pin && noPinReason?.trim() ? { noPinReason: noPinReason.trim() } : {}),
         units,
+        clientSubmissionId: submissionId(),
       });
+      landed = true;
+      submissionIdRef.current = null;
 
       const saved = response.building;
       const reconciled = response.reconciled;
@@ -1707,13 +1743,24 @@ export function BuildingEditor({
          into a form headed «مبنى جديد» is worse than no restore at all. */
       clearBuildingDraft(tenant, buildingId);
 
+      /*
+        An earlier press reached the server and its answer was lost: this is
+        that building, not a new one, and what it holds is what that press
+        sent — so the officer is told, and checks it on the matrix.
+      */
+      if (response.deduplicated) {
+        toast.warning(tEditor('deduplicated.title'), {
+          description: tEditor('deduplicated.description', { code: saved.code }),
+        });
+      }
+
       if (reconciled) {
         toast.warning(en ? 'Building code allocated' : 'تغيّر رمز المبنى عند الحفظ', {
           description: en
             ? `Another building already claimed that letter. Allocated code: ${saved.code}.`
             : `تم اعتماد الرمز النهائي المخصّص من الخادم: ${saved.code}.`,
         });
-      } else {
+      } else if (!response.deduplicated) {
         toast.success(
           en ? `Building ${saved.code} created` : `تم إنشاء المبنى ${saved.code}`,
           {
@@ -1732,6 +1779,13 @@ export function BuildingEditor({
       router.push(`${base}/buildings/${encodeURIComponent(saved.id)}/matrix`);
     } catch (caught) {
       logApiError(caught);
+      /*
+        A refusal the server stated is final for this attempt, so the next press
+        is a new creation under a new id — the one way past «المعرّف المرسل يخص
+        مبنى على العقار …» after the parcel was retyped. A lost answer (no
+        connection, a timeout, a 5xx) keeps the id: the building may exist.
+      */
+      if (!outcomeInDoubt(caught)) submissionIdRef.current = null;
 
       const candidates = duplicateBuildingsOf(caught);
       if (candidates) {
@@ -1754,7 +1808,11 @@ export function BuildingEditor({
         setError(en ? 'Could not save the building.' : 'تعذّر حفظ المبنى.');
       }
     } finally {
-      setSaving(false);
+      // After a save that landed the button stays off: the page is leaving (see `inFlight`).
+      if (!landed) {
+        inFlight.current = false;
+        setSaving(false);
+      }
     }
   };
 

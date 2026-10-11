@@ -2031,6 +2031,12 @@
     "unlinkedHint": "Flat amounts, or bills from before itemised billing, on whoever owns or lives on the parcel today. Their own debts — not shown to be the parcel's.",
     "unlinkedTotal": "Their total"
   },
+  "buildingEditor": {
+    "deduplicated": {
+      "title": "This building was already saved",
+      "description": "An earlier press reached the server but its answer was lost, so nothing was created twice. What was saved is what that press sent: check {code} on the matrix."
+    }
+  },
   "floorCount": {
     "label": "Roofed floors",
     "aria": "Number of roofed floors",
