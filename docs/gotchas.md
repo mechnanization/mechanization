@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `fix/pr104-review` (PR #104 review fixes merged with `fix/expense-retry-key-race@ff44f27` and `develop@4ad0b27`), 2026-10-09.
+Last verified against the code: `fix/moderate-cadastre-citizens` (on `develop@b034640`; digit-normalised cadastre lookups), 2026-10-11.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -995,16 +995,27 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 ### A رقم العقار typed in Arabic digits misses its Latin twin
 
 - **What happens:** «ما المستحق على العقار» for 420 answers «لا شيء مستحق»
-  although a card and its bill lines say «٤٢٠».
-- **Why:** `propertyNumber` is stored as typed, and the fee lines copy it.
-  The query is normalised to Latin digits (`parcelDuesQuerySchema`), the rows
-  are not.
+  although a card and its bill lines say «٤٢٠». Before 2026-10-11 the same
+  happened at the cadastre: a card typed «١٥٥٣» was flagged «غير موجود في
+  السجل العقاري», got no coordinates, and the live check counted no neighbours.
+- **Why:** `propertyNumber` is stored as typed, and the fee lines copy it; so
+  is a cadastre label (`parcels.parcelNumber`). The query is normalised to
+  Latin digits (`parcelDuesQuerySchema`), the rows are not.
 - **Do this:** compare digit-normalised values on both sides — `normalizeDigits`
-  in TypeScript, `translate(btrim(x), '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹',
-  '01234567890123456789')` in SQL. Over a jsonb array, guard with
-  `CASE WHEN jsonb_typeof(…) = 'array' THEN … END`, not `AND`/`OR`: Postgres
-  does not promise the order it evaluates them in.
-- **Where:** `parcel-dues.service.ts`, `parcel-dues.ts` (`parcelShareOf`).
+  in TypeScript, `translate(btrim(x), ${EASTERN_DIGITS}, ${LATIN_DIGITS})` in
+  SQL, both constants bound from `@mechanization/shared-schemas`. A map keyed
+  by a رقم العقار is keyed by `parcelNumberKey`
+  (`parcel-repository.interface.ts`), and whatever is reported back
+  (`cadastreFlags`, a refusal) keeps the number as typed. Over a jsonb array,
+  guard with `CASE WHEN jsonb_typeof(…) = 'array' THEN … END`, not
+  `AND`/`OR`: Postgres does not promise the order it evaluates them in.
+- **Where:** `parcel-dues.service.ts`, `parcel-dues.ts` (`parcelShareOf`),
+  `PrismaParcelRepository` (`findByNumber`, `findManyByNumber`, `suggest`),
+  `PrismaRegistrationRepository.countRegistrationsForParcel`, and the callers
+  that read the map (`resolveParcels` in `RegistrationService` and
+  `CitizensService`, `ZonesService.validateParcels`). Still compared as typed:
+  `CitizensService.parcelRoster` («من على هذا العقار») and the building
+  matches on `buildings.parcelNumber`.
 
 ### `#` in a plural branch can print Arabic-Indic digits
 

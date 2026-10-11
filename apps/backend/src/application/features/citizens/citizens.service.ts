@@ -37,9 +37,10 @@ import { citizenPhoneRuleError } from '../../../infrastructure/prisma/check-viol
 import { PropertyEntry, PropertyType } from '../../../domain/entities/property-entry.entity';
 import { ReferenceNumber } from '../../../domain/value-objects/reference-number.vo';
 import { PARCEL_REPOSITORY } from '../../../domain/interfaces/base-repository.interface';
-import type {
-  ParcelLocation,
-  ParcelRepository,
+import {
+  parcelNumberKey,
+  type ParcelLocation,
+  type ParcelRepository,
 } from '../../../domain/interfaces/parcel-repository.interface';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { fileChanges, highImpactChanges, type EditableFileView, type FileChanges } from './file-changes';
@@ -2050,7 +2051,7 @@ export class CitizensService {
       const { id, ...values } = property as { id?: string } & Record<string, unknown>;
       const parcel =
         typeof values.propertyNumber === 'string'
-          ? cadastre.get(values.propertyNumber.trim())
+          ? cadastre.get(parcelNumberKey(values.propertyNumber))
           : undefined;
       return {
         id,
@@ -3168,9 +3169,10 @@ export class CitizensService {
   ): Promise<{ found: Map<string, ParcelLocation>; missing: Set<string> }> {
     const found = await this.parcels.findManyByNumber(propertyNumbers);
 
+    // Reported as typed: `cadastreFlags` matches the card's own value.
     const unresolved = propertyNumbers
       .map((number) => number.trim())
-      .filter((number) => !found.has(number));
+      .filter((number) => !found.has(parcelNumberKey(number)));
 
     const hasCadastre = unresolved.length > 0 && (await this.parcels.count()) > 0;
 

@@ -1,6 +1,6 @@
 # Database
 
-Last verified against the code: `fix/pr104-review` (PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; 0083 extended to income vouchers and the urgent-payment ceiling), 2026-10-10.
+Last verified against the code: `fix/moderate-cadastre-citizens` (on `develop@b034640`; digit-normalised cadastre lookups), 2026-10-11.
 
 The rules for anything that reads or writes a database: the schemas, how to
 query them, how to change them, and how data may move between environments.
@@ -114,10 +114,13 @@ takes the prefix off whatever a client sent — a form copies the name it was
 The non-person kinds are `NON_PERSON_RESIDENCE` for a Prisma filter.
 
 **A card's `propertyNumber` is stored as typed**, «٤٢٠» as well as «420», and
-so are the fee lines copied from it. A lookup by رقم العقار compares
+so are the fee lines copied from it and the cadastre's own labels
+(`parcels.parcelNumber`). A lookup by رقم العقار compares
 digit-normalised values on both sides (`normalizeDigits`; in SQL,
-`translate(…, '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹', '01234567890123456789')`, as
-`parcel-dues.service.ts` does).
+`translate(btrim(…), ${EASTERN_DIGITS}, ${LATIN_DIGITS})` with both constants
+bound from `@mechanization/shared-schemas`, as `parcel-dues.service.ts` and
+`PrismaParcelRepository` do). Nothing is normalised on the way in, and there is
+no backfill. A map keyed by the number is keyed by `parcelNumberKey`.
 
 **A flat's billing facts live on `units`** (`0075`, `0077`), beside its status:
 

@@ -7,6 +7,14 @@ export function normalizeDigits(input: string): string {
     .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 1776));
 }
 
+/**
+ * `normalizeDigits` in SQL: `translate(x, EASTERN_DIGITS, LATIN_DIGITS)` maps
+ * each Arabic-Indic and Persian digit to the Latin digit at the same position.
+ * Bind both as parameters; change them together with the function above.
+ */
+export const EASTERN_DIGITS = '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹';
+export const LATIN_DIGITS = '01234567890123456789';
+
 /** Lebanese mobile numbers: +961 3/70/71/76/78/79/81 XXXXXX, stored E.164. */
 export const lebanesePhone = z
   .string({ required_error: 'رقم الهاتف مطلوب' })
