@@ -1,6 +1,6 @@
 # apps/frontend: agent guide
 
-Last verified against the code: `fix/moderate-finance` (on `develop@b034640`; «وصولات الفاتورة» and «عكس الوصل», the receipt API functions, the portal's part-paid figures), 2026-10-11.
+Last verified against the code: `fix/moderate-finance` (on `develop@b034640`; «وصولات الفاتورة» and «عكس الوصل», the receipt API functions, the portal's part-paid figures, the payout history's balances), 2026-10-11.
 
 Next.js 15 app router, React 18, next-intl 4, TanStack Query 5, Tailwind 3.4 with
 tailwind-merge 3, Radix and lucide-react. One app serves the staff dashboard and the
@@ -59,6 +59,8 @@ and today's date, which is a different document from the one the citizen was han
       every movement on the bill, with «عكس الوصل» and its required reason for PAYMENT_REVERSE_ROLES,
       components/admin/finance/bill-receipts.tsx, reverse-receipt-dialog.tsx, `mayReverseReceipt` in lib/bill-receipts.ts)
     inspector/profile/** quality/**
+    (inspector/profile/[staffId]/payouts: «المتبقي بعدها» per payout is earned-by-then less paid-by-then,
+      `payoutHistory` in lib/inspector-payouts.ts, recomputed from today's records; «مدفوع بالزيادة» when overpaid)
 ```
 
 All 61 `page.tsx` files are `'use client'` and read `params` with `use(params)` (counted 2026-10-10).
@@ -361,7 +363,7 @@ are inlined at build time. The local `.env.local` block is in
 ## Tests
 
 Vitest (`apps/frontend/vitest.config.mts`): `environment: 'node'`, only `lib/**/*.test.ts`,
-with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 35 test files (counted on disk
+with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 36 test files (counted on disk
 2026-10-11, `fix/moderate-finance`; cases not recounted).
 No component, accessibility or end-to-end tests exist (no jsdom, no Testing Library); a
 rendered check uses the uncommitted headless harness of UI §16.4. Untested, so add a test

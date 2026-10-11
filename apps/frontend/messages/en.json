@@ -2119,6 +2119,10 @@
       "successBody": "Reversal {reversal} recorded. Now outstanding on the bill: {remaining}."
     }
   },
+  "inspectorPayouts": {
+    "overpaid": "Overpaid",
+    "overpaidAfter": "{amount} overpaid"
+  },
   "settings": {
     "urgentCeiling": {
       "heading": "Urgent-payment ceiling",
