@@ -1,6 +1,6 @@
 # apps/frontend: agent guide
 
-Last verified against the code: `feat/treasury-day-closing@c88c971` (`develop` with the reviewed treasury, #107/#108; PR #106, stage 5: the daily count, the day closing and the closed-day lock; PR #109, inspector payouts and decision D9; PR #111, transfers, exchange and wallets with `0088`; PR #112, bulk settlement, the held selection, `expectedDue`, the consolidated receipt; each merged with its review fixes, and the cross-feature fixes) with the fixes of the final-stack review (uncommitted): the bulk dialog's `previewGate`, a day in a refusal through `formatDay`, the payout dialog's hosts on `readView` and its key before go-live (`payoutRequest`), the key scopes and spending codes listed whole, 2026-10-11.
+Last verified against the code: `fix/pr113-review` (PR #113's «وصولات الفاتورة» and «عكس الوصل» on `develop@5e8f5c3`, with the receipt API functions), 2026-10-13.
 
 Next.js 15 app router, React 18, next-intl 4, TanStack Query 5, Tailwind 3.4 with
 tailwind-merge 3, Radix and lucide-react. One app serves the staff dashboard and the
@@ -72,6 +72,9 @@ and today's date, which is a different document from the one the citizen was han
     citizens/** buildings/** cases/** fees/** (incl. fees/new — إصدار رسم جديد)
     fees/settlements/[settlementId] (وصل قبض بلدي مجمّع — the consolidated receipt of a bulk settlement,
       `GET fees/settlements/:id`; opened right after «تسديد الفواتير المحددة», and a reload reprints)
+    (citizens/[citizenId]/payments/[paymentId]: the counter's cash page, and below it «وصولات الفاتورة»,
+      every movement on the bill, with «عكس الوصل» and its required reason for PAYMENT_REVERSE_ROLES,
+      components/admin/finance/bill-receipts.tsx, reverse-receipt-dialog.tsx, `mayReverseReceipt` in lib/bill-receipts.ts)
     inspector/profile/** quality/**
 ```
 
@@ -423,8 +426,8 @@ are inlined at build time. The local `.env.local` block is in
 ## Tests
 
 Vitest (`apps/frontend/vitest.config.mts`): `environment: 'node'`, only `lib/**/*.test.ts`,
-with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 41 test files, 516 cases (counted
-2026-10-11, with the final-stack review's fixes on `feat/treasury-day-closing`). Five of them read
+with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 42 test files (counted on disk
+2026-10-13 on `fix/pr113-review`; cases not recounted). Five of them read
 components rather than render them: `print-pages.test.ts` and `payout-hosts.test.ts` read every
 print page and every payout-dialog host, `transfer-screens.test.ts` the transfer screens,
 `commission-payout.test.ts` the payout dialog and `bulk-settle.test.ts` the bulk dialog's gate.

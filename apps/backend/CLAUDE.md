@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `feat/treasury-day-closing@c88c971` (`develop` with the reviewed treasury, #107/#108; PR #106, stage 5: the daily count, the day closing and the closed-day lock; PR #109, inspector payouts and decision D9; PR #111, transfers, exchange and wallets with `0088`; PR #112, settling several bills at once, `PaymentLedgerService.recordIn`, `live-collector.ts`; each merged with its review fixes, and the cross-feature fixes) with the fixes of the final-stack review (uncommitted): `assertCanPay`, the count's `lockAccounts`, a settlement pivot's refund, the commission payout's canonical id and its retry key on both paths (`payoutByKey`), `0089`, the fee money routes pinned, 2026-10-11.
+Last verified against the code: `fix/pr113-review` (PR #113's «عكس الوصل» on `develop@5e8f5c3`: the reversal route's named role set, both of its ids through `ParseUUIDPipe`), 2026-10-13.
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -81,7 +81,9 @@ Data access for new code (decided):
   (`treasury.schema.ts`) and `FINANCE_OVERRIDE_ROLES` (`cash-policy.ts`), which `role-sets.ts` points
   to — never a literal list: the frontend's
   `lib/staff-roles.ts` reads the same sets, so a route and its button move together. A new audience is a
-  new named set there. `route-inventory.spec.ts` checks every controller on disk: `@Roles` on every
+  new named set there, and so is a single role a screen gates on (`PAYMENT_REVERSE_ROLES` for
+  `POST fees/transactions/:transactionId/reverse`, «عكس الوصل»).
+  `route-inventory.spec.ts` checks every controller on disk: `@Roles` on every
   non-public route (or a reviewed entry in its `SELF_SERVICE` list), «مشاهد فقط» on no write and no
   side-effecting GET, and no route that deletes a citizen. It also pins, route by route, every treasury
   handler and every handler elsewhere that moves treasury money (`MONEY_HANDLERS_ELSEWHERE`: the

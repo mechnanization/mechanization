@@ -1,6 +1,6 @@
 # packages/shared-schemas
 
-Last verified against the code: `feat/treasury-day-closing@c88c971` (`develop` with the reviewed treasury, #107/#108; PR #106, stage 5: the daily count, the day closing and the closed-day lock; PR #109, inspector payouts and decision D9; PR #111, transfers, exchange and wallets with `0088`; PR #112, `payment-settlement` with the required `expectedDue`, the `BULK_RECEIPT` book, `BULK_SETTLE_ROLES` and ten codes; each merged with its review fixes, and the cross-feature fixes) with the fixes of the final-stack review (uncommitted): `businessDay` shared by every treasury contract, `positiveMoneyAmount` and the payout's bounded amount and retry key on both paths, `TREASURY_INSUFFICIENT_FUNDS_ON_DAY`, the treasury role sets pointed to from `role-sets.ts`, 2026-10-11.
+Last verified against the code: `fix/pr113-review` (PR #113's «عكس الوصل» on `develop@5e8f5c3`: `PAYMENT_REVERSE_ROLES`), 2026-10-13.
 
 `@mechanization/shared-schemas`: the zod schemas, enums, display labels and
 pure rules that the backend and the frontend share. One copy of each contract,

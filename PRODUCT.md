@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية الذكية)
 
-Last verified against the code: `feat/treasury-day-closing@b5993af` (`develop` with the reviewed treasury, #107/#108; PR #106, stage 5: the daily count, the day closing and the closed-day lock; PR #109, inspector payouts and decision D9; PR #111, transfers, exchange and wallets with `0088`; each merged with its review fixes) merged with PR #112 `feat/fees-bulk-settlement-review@a3ce944` (settling several bills at once), then the cross-feature fixes: a bulk settlement refused on a closed day before it writes anything, and its wallets locked in id order (uncommitted), 2026-10-10.
+Last verified against the code: `fix/pr113-review` (PR #113's «عكس الوصل» on `develop@5e8f5c3`), 2026-10-13.
 
 A multi-tenant municipal platform for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastral map, municipal fee billing (رسوم القيمة التأجيرية
@@ -31,6 +31,9 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
     (`COLLECTOR`).
   - Issue official receipts matching Lebanon's printed receipt books (`وصل جباية رسمي`).
   - Share a receipt through the device share sheet, a WhatsApp link, or a PDF download.
+  - See every receipt on a bill, and every reversal, on the bill's own page. Only the manager
+    (`SUPER_ADMIN`) may reverse a receipt («عكس الوصل»), with a written reason. A reversal is an
+    opposing entry beside the receipt, never an edit, and the amount is owed on the bill again.
 - **Field inspectors (`FIELD_INSPECTOR`, مفتّش ميداني)**: survey buildings and units on a
   phone, queuing records offline when the connection drops.
 - **Accountants (`ACCOUNTANT`), administrative officers (`ADMINISTRATIVE_OFFICER`),

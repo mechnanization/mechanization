@@ -19,6 +19,7 @@ import {
   FEE_ADMIN_ROLES,
   FEE_ISSUE_ROLES,
   FEE_READ_ROLES,
+  PAYMENT_REVERSE_ROLES,
   PAYMENT_REVIEW_MARK_ROLES,
   PAYMENT_REVIEW_READ_ROLES,
   billBasisReviewSchema,
@@ -333,7 +334,7 @@ export class FeesController {
    */
   @Roles(...FEE_READ_ROLES)
   @Get('payments/:id/transactions')
-  async transactions(@Param('id') id: string) {
+  async transactions(@Param('id', new ParseUUIDPipe()) id: string) {
     return { items: await this.fees.listTransactions(id) };
   }
 
@@ -345,10 +346,10 @@ export class FeesController {
    * The ledger refuses updates and deletes at the database, so there is no
    * other shape this could take.
    */
-  @Roles('SUPER_ADMIN')
+  @Roles(...PAYMENT_REVERSE_ROLES)
   @Post('transactions/:transactionId/reverse')
   async reverseTransaction(
-    @Param('transactionId') transactionId: string,
+    @Param('transactionId', new ParseUUIDPipe()) transactionId: string,
     @Body(new ZodValidationPipe(reverseTransactionSchema)) body: { note: string },
     @CurrentUser() user: SessionClaims,
   ) {

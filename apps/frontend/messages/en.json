@@ -2644,6 +2644,34 @@
       "retry": "Try again"
     }
   },
+  "billReceipts": {
+    "title": "Receipts on this bill",
+    "loading": "Loading the receipts…",
+    "loadError": "Could not load this bill's receipts.",
+    "retry": "Try again",
+    "emptyTitle": "No receipts on this bill yet",
+    "emptyBody": "Every payment recorded against it, and every reversal of one, appears here.",
+    "recordedBy": "Recorded by {name}",
+    "reversal": "Reversal",
+    "reversed": "Reversed",
+    "reverse": "Reverse receipt",
+    "reverseAria": "Reverse receipt {number}",
+    "dialog": {
+      "title": "Reverse receipt {number}",
+      "body": "An opposing entry for the same amount is recorded, the amount is owed on the bill again, and it is paid out of the treasury if the treasury booked the payment. The original receipt stays on the record with the reversal beside it. A reversal cannot be undone — to correct one, record a new payment.",
+      "amount": "Amount",
+      "paidOn": "Paid on",
+      "method": "Method",
+      "recordedBy": "Recorded by",
+      "reason": "Reason for the reversal",
+      "reasonPlaceholder": "e.g. the payment was recorded against the wrong bill",
+      "confirm": "Reverse the receipt",
+      "cancel": "Cancel",
+      "busy": "Reversing…",
+      "success": "Receipt {number} reversed",
+      "successBody": "Reversal {reversal} recorded. Now outstanding on the bill: {remaining}."
+    }
+  },
   "settings": {
     "urgentCeiling": {
       "heading": "Urgent-payment ceiling",

@@ -1,6 +1,6 @@
 # Security
 
-Last verified against the code: `feat/treasury-day-closing@c88c971` (`develop` with the reviewed treasury, #107/#108; PR #106, stage 5: the daily count, the day closing and the closed-day lock; PR #109, inspector payouts and decision D9; PR #111, transfers, exchange and wallets with `0088`; PR #112, bulk settlement; each merged with its review fixes, and the cross-feature fixes) with the fixes of the final-stack review (uncommitted): a commission payout's inspector id in one spelling, its amount bounded, its retry key before go-live too, `0089`, a back-dated outflow judged against every day's close, the fee routes that move treasury money pinned by name, 2026-10-11.
+Last verified against the code: `fix/pr113-review` (PR #113's «عكس الوصل» on `develop@5e8f5c3`: the reversal's role set and its ids through `ParseUUIDPipe`), 2026-10-13.
 
 Binding for every change that touches authentication, roles, tokens, validation, uploads, logging,
 headers, client storage or secrets. The rules below are correct practice. Where the code differs today,
@@ -238,6 +238,11 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   Tier 2: an event
   after the commit, whose failed write is logged and does not undo the change. How:
   [apps/backend/CLAUDE.md](../apps/backend/CLAUDE.md#events-and-audit).
+- A receipt is reversed by the manager alone (`POST fees/transactions/:transactionId/reverse`,
+  `PAYMENT_REVERSE_ROLES`, pinned by `route-inventory.spec.ts`), with a written reason
+  (`reverseTransactionSchema`), as an opposing row with a Tier 1 `PAYMENT_REVERSED` row. Its id
+  and that of `GET fees/payments/:id/transactions` go through `ParseUUIDPipe`. The bill page shows
+  «عكس الوصل» by the same set (`mayReverseReceipt`).
 - An audit row MUST NOT carry a credential (OWASP Logging Cheat Sheet; NIST SP 800-53 AU-3(3), which
   limits what audit records hold to what the record needs). A citizen is named by id, and the audit screen
   resolves the person at read time (`audit-view.ts`). Where a human needs a hint, the رقم مرجعي goes in
