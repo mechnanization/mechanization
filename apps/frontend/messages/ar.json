@@ -2114,5 +2114,10 @@
       "cancel": "إلغاء",
       "failed": "تعذّر تغيير كلمة المرور."
     }
+  },
+  "citizenImport": {
+    "possibleDuplicatesHeading": "صفوف تشبه أشخاصاً مسجّلين",
+    "possibleDuplicatesNote": "ستُستورد وتبقى في «يتطلب مراجعة» مع ملاحظة «سجل مشابه موجود»، ليتحقّق أحدٌ هل هو الشخص نفسه.",
+    "resembles": "يشبه: {names}"
   }
 }

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Client } from 'pg';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { adminUpdateCitizenSubmissionSchema } from '@mechanization/shared-schemas';
+import { adminUpdateCitizenSubmissionSchema, type ImportRow } from '@mechanization/shared-schemas';
 import { PrismaClient as TenantPrismaClient } from '../../../generated/tenant-client';
 import { ConflictError } from '../../../domain/errors/domain-error';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
@@ -125,6 +125,98 @@ describeIfDb('filing on a citizen file', () => {
     }
     throw new Error('expected a refusal, but the call resolved');
   };
+
+  describe('the import’s dry run asks the duplicate question the import will', () => {
+    /** A household with a house, as a register typed up from paper has it. */
+    const houseRow = (over: Partial<ImportRow>): ImportRow => ({
+      firstName: 'علي',
+      middleName: 'حسين',
+      lastName: 'سرحان',
+      motherName: 'فاطمة سرور',
+      gender: 'ذكر',
+      isLebanese: 'نعم',
+      nationality: 'لبناني',
+      residentStatus: 'من سكان الضيعة',
+      civilRecordNumber: '12',
+      maritalStatus: 'متزوج',
+      phone: '03123456',
+      totalRegisteredMembers: '5',
+      actualHouseholdMembers: '5',
+      occupancyType: 'مالك',
+      neighborhood: 'الحي الشرقي',
+      propertyNumber: '1024',
+      propertyType: 'منزل',
+      buildingName: 'منزل العائلة',
+      unitArea: '180',
+      ...over,
+    });
+    /** A Lebanese mobile no other test uses: typed, and as `lebanesePhone` stores it. */
+    const mobile = () => {
+      const digits = String(100_000 + Math.floor(Math.random() * 899_999));
+      return { typed: `03${digits}`, stored: `+9613${digits}` };
+    };
+    const onFile = (data: Record<string, unknown>) =>
+      db.user.create({
+        data: {
+          id: randomUUID(),
+          kind: 'CITIZEN',
+          tenantSlug: 'cf',
+          referenceNumber: `CF-${randomUUID().slice(0, 10)}`,
+          gender: 'MALE',
+          isLebanese: true,
+          ...data,
+        } as never,
+      });
+    const importRows = (rows: ImportRow[], dryRun: boolean) =>
+      within(() => citizens.importMany({ tenantSlug: 'cf', rows, startRow: 2, dryRun, actor: actor() }));
+
+    it('fails a row that is certainly somebody on file, by code, as the import would', async () => {
+      const phone = mobile();
+      await onFile({
+        firstName: 'علي',
+        middleName: 'حسين',
+        lastName: 'دبوق',
+        motherName: 'فاطمة سرور',
+        phone: phone.stored,
+      });
+      const row = houseRow({ lastName: 'دبوق', phone: phone.typed });
+      const before = await db.user.count({ where: { kind: 'CITIZEN' } });
+
+      const preview = await importRows([row], true);
+      expect(preview).toMatchObject({ dryRun: true, created: 0, failed: 1 });
+      expect(preview.results[0]).toMatchObject({ row: 2, ok: false, code: 'CITIZEN_DUPLICATE_BLOCKED' });
+      expect(preview.results[0]!.params?.name).toContain('علي حسين دبوق');
+      // The words are the screen's: no English log line rides along.
+      expect(preview.results[0]!.error).toBeUndefined();
+      expect(await db.user.count({ where: { kind: 'CITIZEN' } })).toBe(before);
+
+      const imported = await importRows([row], false);
+      expect(imported.results[0]).toMatchObject({ ok: false, code: 'CITIZEN_DUPLICATE_BLOCKED' });
+      expect(await db.user.count({ where: { kind: 'CITIZEN' } })).toBe(before);
+    });
+
+    it('passes a row that only resembles somebody, and says whom', async () => {
+      // The same three names, the father's compared: asked about, never refused.
+      await onFile({ firstName: 'حسن', middleName: 'محمود', lastName: 'شرارة', phone: mobile().stored });
+
+      const preview = await importRows(
+        [houseRow({ firstName: 'حسن', middleName: 'محمود', lastName: 'شرارة', phone: mobile().typed })],
+        true,
+      );
+
+      expect(preview).toMatchObject({ created: 1, failed: 0 });
+      expect(preview.results[0]).toMatchObject({ ok: true, possibleDuplicateOf: ['حسن محمود شرارة'] });
+    });
+
+    it('says nothing about a row that resembles nobody', async () => {
+      const preview = await importRows(
+        [houseRow({ firstName: 'وسيم', middleName: 'كامل', lastName: 'بزي', phone: mobile().typed })],
+        true,
+      );
+
+      expect(preview.results[0]).toEqual({ row: 2, ok: true, name: 'وسيم بزي' });
+    });
+  });
 
   describe('saving a file with a passport number another file holds', () => {
     const foreignerEdit = (identityDocNumber: string) =>

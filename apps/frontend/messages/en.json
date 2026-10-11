@@ -2114,5 +2114,10 @@
       "cancel": "Cancel",
       "failed": "Could not change the password."
     }
+  },
+  "citizenImport": {
+    "possibleDuplicatesHeading": "Rows that resemble someone already on file",
+    "possibleDuplicatesNote": "These will be imported and held at “Requires Review” with «Possible existing record», for someone to check whether it is the same person.",
+    "resembles": "Resembles: {names}"
   }
 }

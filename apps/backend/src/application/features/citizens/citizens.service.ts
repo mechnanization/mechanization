@@ -12,6 +12,7 @@ import {
   internationalPhone,
   isNonPersonRecord,
   isOwnerRecord,
+  isSpecificErrorCode,
   POSSIBLE_DUPLICATE_FLAG_PATH,
   splitInstitutionName,
   statusForFlags,
@@ -42,7 +43,7 @@ import {
   type ParcelLocation,
   type ParcelRepository,
 } from '../../../domain/interfaces/parcel-repository.interface';
-import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
+import { ConflictError, DomainError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { fileChanges, highImpactChanges, type EditableFileView, type FileChanges } from './file-changes';
 import { CensusSyncService, type CardEnding } from '../buildings/census-sync.service';
 import {
@@ -105,6 +106,19 @@ function columnHeaderFor(path: ReadonlyArray<string | number> | undefined): stri
 
   const key = path.includes('units') && leaf === 'floor' ? 'unitFloor' : leaf;
   return IMPORT_COLUMNS.find((column) => column.key === key)?.header;
+}
+
+/**
+ * A row the import could not file, as the dialog reads it: a coded refusal by
+ * its code and params, whose words are the screen's (its `message` is an
+ * English log line), and anything else by the text it carried — Arabic prose
+ * from a throw site not converted yet.
+ */
+function importFailure(caught: unknown): Pick<CitizenImportRowResult, 'error' | 'code' | 'params'> {
+  if (caught instanceof DomainError && isSpecificErrorCode(caught.code)) {
+    return { code: caught.code, ...(caught.params ? { params: caught.params } : {}) };
+  }
+  return { error: caught instanceof Error ? caught.message : 'تعذّر إنشاء السجل' };
 }
 
 /**
@@ -1400,28 +1414,19 @@ export class CitizensService {
     }));
   }
 
-  async create(input: {
-    tenantSlug: string;
-    payload: AdminCitizenSubmission;
-    actor: { id: string; role: string };
-  }) {
-    /*
-      The duplicate question, before anything is written.
-
-      Skipped for a re-delivery: the record a lost response already created is
-      itself the "match", and refusing the retry would strand the officer on a
-      household that is safely on file.
-
-      Refused only when a person is at the screen (`reviewDuplicates`). A
-      filing delivered from the offline queue is written and held at «يتطلب
-      مراجعة» with the match named — see `POSSIBLE_DUPLICATE_FLAG_PATH`.
-    */
-    const replay = input.payload.clientSubmissionId
-      ? await this.db.registration.findUnique({
-          where: { clientSubmissionId: input.payload.clientSubmissionId },
-          select: { id: true },
-        })
-      : null;
+  /**
+   * The duplicate verdict on a new filing, before anything is written: refused
+   * when it is certainly somebody on file (`CITIZEN_DUPLICATE_BLOCKED`), asked
+   * when a person is at the screen, and otherwise filed with «سجل مشابه موجود»
+   * (`serverFlags`). `create` asks it, and so does an import's dry run, with
+   * the payload the import would file, so the preview refuses what the
+   * import would.
+   */
+  private async screenForDuplicates(
+    input: { payload: AdminCitizenSubmission; actor: { id: string; role: string } },
+    /** A re-delivery of a filing already on file: it is its own "match". */
+    replay = false,
+  ) {
     const findings = replay ? NO_FINDINGS : await this.reviewDuplicates(input.payload, input.actor);
     const open = outstandingFindings(findings, input.payload.duplicateReview);
 
@@ -1474,6 +1479,33 @@ export class CitizensService {
       !input.payload.reviewDuplicates && open.possibleDuplicates.length > 0
         ? [possibleDuplicateFlag(open.possibleDuplicates)]
         : [];
+
+    return { findings, open, serverFlags };
+  }
+
+  async create(input: {
+    tenantSlug: string;
+    payload: AdminCitizenSubmission;
+    actor: { id: string; role: string };
+  }) {
+    /*
+      The duplicate question, before anything is written.
+
+      Skipped for a re-delivery: the record a lost response already created is
+      itself the "match", and refusing the retry would strand the officer on a
+      household that is safely on file.
+
+      Refused only when a person is at the screen (`reviewDuplicates`). A
+      filing delivered from the offline queue is written and held at «يتطلب
+      مراجعة» with the match named — see `POSSIBLE_DUPLICATE_FLAG_PATH`.
+    */
+    const replay = input.payload.clientSubmissionId
+      ? await this.db.registration.findUnique({
+          where: { clientSubmissionId: input.payload.clientSubmissionId },
+          select: { id: true },
+        })
+      : null;
+    const { findings, open, serverFlags } = await this.screenForDuplicates(input, Boolean(replay));
 
     const referenceOf = new Map(
       [...findings.possibleDuplicates, ...findings.phoneOwners].map((row) => [
@@ -1755,15 +1787,7 @@ export class CitizensService {
         continue;
       }
 
-      if (input.dryRun) {
-        results.push({ row, ok: true, name });
-        continue;
-      }
-
-      try {
-        const created = await this.create({
-          tenantSlug: input.tenantSlug,
-          /*
+      /*
             A spreadsheet row carries no `UNESTABLISHED` flags, and cannot.
 
             «غير مؤكَّد» is a statement by a named officer about one field they
@@ -1782,38 +1806,59 @@ export class CitizensService {
             with the number intact and the reason attached.
           */
           /*
-            A spreadsheet row carries no blanket reason either, and could not.
-            The reason is a sentence an officer says about a visit they made;
-            a row typed from a ledger years ago has no visit behind it, and
-            inventing one would put words in somebody's mouth on a record that
-            outlives them.
-          */
-          payload: {
-            ...parsed.data,
-            // A register typed up from paper is a register of households; an
-            // owner record is a decision somebody makes at a doorstep.
-            residence: 'RESIDENT',
-            flags: [],
-            blanketFlagReason: undefined,
-            // Nor a note, and for the same reason: a note is something an
-            // officer observed at a door. A spreadsheet row has no visit
-            // behind it to have observed anything.
-            notes: undefined,
-            clientSubmissionId: undefined,
-          },
-          actor: input.actor,
-        });
+        A spreadsheet row carries no blanket reason either, and could not.
+        The reason is a sentence an officer says about a visit they made;
+        a row typed from a ledger years ago has no visit behind it, and
+        inventing one would put words in somebody's mouth on a record that
+        outlives them.
+      */
+      const payload: AdminCitizenSubmission = {
+        ...parsed.data,
+        // A register typed up from paper is a register of households; an
+        // owner record is a decision somebody makes at a doorstep.
+        residence: 'RESIDENT',
+        flags: [],
+        blanketFlagReason: undefined,
+        // Nor a note, and for the same reason: a note is something an
+        // officer observed at a door. A spreadsheet row has no visit
+        // behind it to have observed anything.
+        notes: undefined,
+        clientSubmissionId: undefined,
+      };
+
+      /*
+        The dry run asks the duplicate question the import will, on the payload
+        it will file: a row certainly somebody on file fails here as it would
+        there, and one that only resembles somebody is said to, since it will
+        land at «يتطلب مراجعة». Rows are not compared with each other: a
+        person listed twice in one file passes the preview, and the import
+        refuses or holds the second against the first it has just written.
+      */
+      if (input.dryRun) {
+        try {
+          const { open } = await this.screenForDuplicates({ payload, actor: input.actor });
+          results.push({
+            row,
+            ok: true,
+            name,
+            ...(open.possibleDuplicates.length > 0
+              ? { possibleDuplicateOf: open.possibleDuplicates.map((candidate) => candidate.fullName) }
+              : {}),
+          });
+        } catch (caught) {
+          results.push({ row, ok: false, name, ...importFailure(caught) });
+        }
+        continue;
+      }
+
+      try {
+        const created = await this.create({ tenantSlug: input.tenantSlug, payload, actor: input.actor });
         results.push({ row, ok: true, name, referenceNumber: created.referenceNumber });
       } catch (caught) {
         // A duplicate identity document is the commonest real failure — the
         // same person already on the register, or listed twice in the file —
         // and it is a fact about that row, not a reason to stop the batch.
-        results.push({
-          row,
-          ok: false,
-          name,
-          error: caught instanceof Error ? caught.message : 'تعذّر إنشاء السجل',
-        });
+        results.push({ row, ok: false, name, ...importFailure(caught) });
       }
     }
 
