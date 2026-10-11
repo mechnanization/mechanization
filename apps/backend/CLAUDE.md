@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `fix/pr104-review` (PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; income controls, the salary path and the urgent ceiling), 2026-10-10.
+Last verified against the code: `fix/moderate-cadastre-citizens` (on `develop@b034640`; the cadastre import deviation), 2026-10-11.
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -39,7 +39,7 @@ Data access for new code (decided):
 - Presentation MUST NOT touch Prisma, except at the two composition points: `TenantMiddleware`
   (`TenantContextService`, `TenantPrismaFactory`) and `HealthController` (`RegistryPrismaService`).
 - Deviations today (`ZonesService` → `CadastreAssetsService`, `CadastreImportService` →
-  `buildCadastreGeometryAssets`, `OtpService` / `DocumentService` → `APP_CONFIG`, `registration.repository.ts`
+  `buildCadastreGeometryAssets` and `mergeParcelPoints`, `OtpService` / `DocumentService` → `APP_CONFIG`, `registration.repository.ts`
   → `normalizeSearchText`) are tracked in [docs/code-quality.md](../../docs/code-quality.md).
 
 ## Module wiring

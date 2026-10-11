@@ -1,6 +1,6 @@
 # Code quality
 
-Last verified against the code: `feat/finance-treasury-expenses` (on `develop@4512abf`), 2026-10-09.
+Last verified against the code: `fix/moderate-cadastre-citizens` (on `develop@b034640`; the panel cadastre import's merge), 2026-10-11.
 
 Two parts: the code-pattern rules every change follows, and the debt the code carries today. The debt
 is not a precedent. **Fix an item when you touch its file, and remove its row in the same change.** Add a
@@ -68,7 +68,7 @@ in [docs/ui-ux-standards.md](ui-ux-standards.md) §17.
 | `CitizenController` (`Number(limit) \|\| 200`, `Number(limit ?? 20)`), `AuditController`, `BuildingsController`, `FeesController` | Pagination parsed and clamped differently per controller, unclamped in some | One page-parsing helper in `presentation/controllers/query-params.ts` with a default and a max |
 | `OtpService`, `DocumentService` import `APP_CONFIG` from `presentation/config/app.config.ts` | Application imports presentation | Move `APP_CONFIG` out of presentation (for example into `application/common`) |
 | `registration.repository.ts` imports `normalizeSearchText` from `application/common/search-terms` | Infrastructure imports application | Move the search-term helpers to domain or `packages/shared-schemas` |
-| `ZonesService` → `CadastreAssetsService`; `CadastreImportService` → `buildCadastreGeometryAssets` | Application imports infrastructure outside the allowed entry points | Move `CadastreAssetsService` (it only wraps a port) into application, and the pure geometry into domain or application |
+| `ZonesService` → `CadastreAssetsService`; `CadastreImportService` → `buildCadastreGeometryAssets` and `mergeParcelPoints` (`infrastructure/cadastre/kmz-parser.ts`, so the panel upload merges a split parcel's labels as the CLI does) | Application imports infrastructure outside the allowed entry points | Move `CadastreAssetsService` (it only wraps a port) into application, and the pure geometry and the label merge into domain or application |
 | `ParcelCorrectionService` (inline `P2002`), `UnitCorrectionService` (`P2034` predicate), `PrismaUserRepository.translate`, `PrismaRegistrationRepository.translate` | Each place matches Prisma error codes its own way; there is no shared helper | One unique-violation and serialisation helper in `infrastructure/prisma`, beside `isTransientConnectionError`, added to the application's allowed infrastructure imports ([apps/backend/CLAUDE.md](../apps/backend/CLAUDE.md#layers-and-the-dependency-rule)) |
 | `PrismaUserRepository` `translate` fallback | Any other unique violation reads «هذه الوثيقة مسجّلة مسبقاً لشخص آخر» | A generic «هذه البيانات مسجّلة مسبقاً», as `PrismaRegistrationRepository` does |
 | `PrismaUserRepository` `hideStaff`, `setStaffActive`, `restoreStaff`, `updateStaff` | `where: { id }` only; the STAFF check lives in `StaffService` before the call (check-then-act) | `where: { id, kind: 'STAFF' }` |
