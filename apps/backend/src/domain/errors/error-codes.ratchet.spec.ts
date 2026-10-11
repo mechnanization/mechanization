@@ -14,7 +14,7 @@ import { join } from 'node:path';
  *
  * A throw counts as prose when its first argument is not an object literal.
  */
-const LEGACY_PROSE_THROWS = 203;
+const LEGACY_PROSE_THROWS = 202;
 
 const BACKEND_ROOT = join(__dirname, '..', '..', '..');
 

@@ -73,6 +73,7 @@ import {
 import { normalizeSearchText } from '../../common/search-terms';
 import { landlordNamesToStore } from '../../common/landlord-name';
 import { assertNotMergedAway } from './merged-away';
+import { isUniqueViolationOn } from '../treasury/retry-key';
 
 /**
  * The most register rows one duplicate lookup compares.
@@ -2215,8 +2216,16 @@ export class CitizensService {
             contactPhone: citizen.contactPhone,
           }),
         })
-        // 0072's rules on the numbers, named rather than sent on as a 500.
+        // 0072's rules on the numbers, and the document another file holds,
+        // named rather than sent on as a 500.
         .catch((error: unknown) => {
+          if (isUniqueViolationOn(error, 'identityDocNumber')) {
+            // Says nothing of whose: the other holder is not this form's to learn.
+            throw new ConflictError({
+              code: 'CITIZEN_IDENTITY_DOC_TAKEN',
+              message: 'The identity document number is already held by another file',
+            });
+          }
           throw citizenPhoneRuleError(error) ?? error;
         });
 

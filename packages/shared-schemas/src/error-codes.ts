@@ -175,6 +175,8 @@ export const ERROR_CODES = [
   'MERGE_NOT_FOUND',
   'MERGE_ABSORBED_CHANGED',
   'CITIZEN_MERGED_AWAY',
+  // A passport number another file already holds (`users` is unique on the document). Names nobody.
+  'CITIZEN_IDENTITY_DOC_TAKEN',
   // Property entries (domain invariants)
   'OWNER_NAME_REQUIRED',
   'LANDLORD_PHONE_REQUIRED',

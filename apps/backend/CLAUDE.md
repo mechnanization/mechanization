@@ -385,7 +385,7 @@ Rule: a refusal is thrown with a specific code from `ERROR_CODES` in
   kept beside the top-level code because screens still read them; do not add new ones.
 
 Today: the fee, payment, ownership, tenancy, landlord-link, correction, citizen-file and damage services
-are converted; what is left is counted by `LEGACY_PROSE_THROWS` (203 on 2026-10-11). The block-driven refusals (`plan.block.message` in `LandlordLinkService`,
+are converted; what is left is counted by `LEGACY_PROSE_THROWS` (202 on 2026-10-11). The block-driven refusals (`plan.block.message` in `LandlordLinkService`,
 `blockerMessage` in `UnitCorrectionService`, `blocks[0].message` in `CitizenMergeService`) are not: their
 text is also rendered in the preview endpoints, which need localising first.
 

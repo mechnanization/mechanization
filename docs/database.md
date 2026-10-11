@@ -1,6 +1,6 @@
 # Database
 
-Last verified against the code: `fix/moderate-cadastre-citizens` (on `develop@b034640`; digit-normalised cadastre lookups), 2026-10-11.
+Last verified against the code: `fix/moderate-cadastre-citizens` (on `develop@b034640`; digit-normalised cadastre lookups, where `P2002` is mapped), 2026-10-11.
 
 The rules for anything that reads or writes a database: the schemas, how to
 query them, how to change them, and how data may move between environments.
@@ -380,8 +380,12 @@ and fails intermittently with `42P01`.
   D-errors the error MUST carry a stable code the frontend can localise
   ([apps/backend/CLAUDE.md](../apps/backend/CLAUDE.md#error-codes)).
 - Where `P2002` is mapped today: `PrismaUserRepository.translate`,
-  `PrismaRegistrationRepository.translate`, and inline in
-  `ParcelCorrectionService`. There is no shared helper.
+  `PrismaRegistrationRepository.translate`, inline in
+  `ParcelCorrectionService`, and through `isUniqueViolationOn`
+  (`application/features/treasury/retry-key.ts`) in the treasury's retry keys
+  and `CitizensService.update` (a passport number another file holds:
+  `CITIZEN_IDENTITY_DOC_TAKEN`, naming nobody, as the create path's
+  `translate` now does). No helper is shared by all of them.
 
 ### Deviations
 

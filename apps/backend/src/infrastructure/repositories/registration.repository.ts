@@ -552,7 +552,10 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
       // came back — worth surfacing as the generic conflict rather than as a
       // reassuring message that hides a schema drift.
       if (target.includes('identityDocNumber')) {
-        return new ConflictError('هذه الوثيقة مسجّلة مسبقاً لشخص آخر');
+        return new ConflictError({
+          code: 'CITIZEN_IDENTITY_DOC_TAKEN',
+          message: 'The identity document number is already held by another file',
+        });
       }
       if (target.includes('referenceNumber')) {
         return new ConflictError('تعذّر إنشاء رقم مرجعي فريد — يرجى المحاولة مرة أخرى');
