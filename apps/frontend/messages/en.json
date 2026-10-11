@@ -1213,6 +1213,9 @@
     "discardTitle": "Discard this record?",
     "discardBody": "<strong>{name}</strong> was never sent to the municipality and is stored only on this device. Discarding it deletes the registration entirely — the household would have to be entered again from the beginning.",
     "discardConfirm": "Discard record",
+    "deliveredBeforeRevision": "This record reached the municipality before your later changes, and its answer was lost, so the changes were not sent. Open the file and make them there, then discard this copy.",
+    "openFile": "Open the file",
+    "discardRevisionBody": "<strong>{name}</strong> is already on the register. Discarding this copy drops only the changes made on this device after it was sent — make them on the file first.",
     "buildings": {
       "pending": "{count, plural, one {{count} building} other {{count} buildings}} saved on this device, waiting to sync. Their codes are provisional until they are delivered.",
       "refused": "refused by the server",

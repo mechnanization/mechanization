@@ -109,6 +109,23 @@ export interface QueuedSubmission {
   lastAttemptAt: number | null;
   /** What the server or the network said last, verbatim, for the queue list. */
   lastError: string | null;
+  /**
+   * When the officer last changed the payload after it was queued
+   * (`reviseQueued`). Absent on a record never revised.
+   *
+   * It is what makes a `deduplicated` answer ambiguous: an earlier attempt
+   * under this id (the online save, or a drain whose answer was lost) may have
+   * filed the record as it was *before* the revision, and the server answers a
+   * replay with that file without applying anything. `syncQueue` then keeps
+   * the record, blocked, rather than deleting the only copy of the edit.
+   */
+  revisedAt?: number;
+  /**
+   * The file the server already holds for this id, when a revised record was
+   * answered as delivered before (`revisedAt`): where the officer makes the
+   * revision by hand.
+   */
+  citizenId?: string;
 }
 
 /** Nothing here works server-side, and Next renders these pages there first. */
@@ -259,10 +276,10 @@ function update(
   return updateOn(STORE, id, patch);
 }
 
-/** Records the outcome of one delivery attempt. */
+/** Records the outcome of one delivery attempt, and the file it found when there is one. */
 export function recordAttempt(
   id: string,
-  outcome: { status: QueuedStatus; error: string | null },
+  outcome: { status: QueuedStatus; error: string | null; citizenId?: string },
 ): Promise<boolean> {
   return update(id, (existing) => ({
     ...existing,
@@ -270,6 +287,7 @@ export function recordAttempt(
     attempts: existing.attempts + 1,
     lastAttemptAt: Date.now(),
     lastError: outcome.error,
+    ...(outcome.citizenId ? { citizenId: outcome.citizenId } : {}),
   }));
 }
 
@@ -297,7 +315,8 @@ export function retryLater(id: string): Promise<boolean> {
  *
  * `savedAt` and `attempts` are left untouched — they are the record's own
  * history (when it was first filed, how many times it has been tried), not
- * something a correction should erase.
+ * something a correction should erase. `revisedAt` is stamped, because a
+ * revision is what a replay of an earlier attempt would silently drop.
  */
 export function reviseQueued(
   id: string,
@@ -309,6 +328,7 @@ export function reviseQueued(
     displayName: patch.displayName,
     status: 'pending',
     lastError: null,
+    revisedAt: Date.now(),
   }));
 }
 

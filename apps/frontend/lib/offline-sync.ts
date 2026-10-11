@@ -1,6 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
+import { createTranslator } from 'next-intl';
+import ar from '../messages/ar.json';
+import en from '../messages/en.json';
 import {
   ApiRequestError,
   createBuilding,
@@ -8,6 +11,7 @@ import {
   generateUnits,
   logApiError,
 } from './api-client';
+import { currentLocale, FORMAT_LOCALE } from './api-errors';
 import { loadSession } from './session';
 import { CITIZEN_RECORD_EDIT_ROLES, hasRole } from './staff-roles';
 import {
@@ -106,6 +110,25 @@ interface Engine {
 }
 
 const engines = new Map<string, Engine>();
+
+/*
+  The queue's own words for what it writes onto a record (`lastError`), from
+  `offlineQueue` in the message files, in the page's language at the time — as
+  an `ApiRequestError.message` written there is. A plain module, so a
+  translator rather than a hook (`fee-assessment.ts` does the same).
+*/
+const queueText = {
+  ar: createTranslator({
+    locale: FORMAT_LOCALE.ar,
+    messages: { offlineQueue: ar.offlineQueue },
+    namespace: 'offlineQueue',
+  }),
+  en: createTranslator({
+    locale: FORMAT_LOCALE.en,
+    messages: { offlineQueue: en.offlineQueue },
+    namespace: 'offlineQueue',
+  }),
+};
 
 function engineFor(tenant: string): Engine {
   const existing = engines.get(tenant);
@@ -353,13 +376,30 @@ export async function syncQueue(tenant: string): Promise<void> {
         if (typeof navigator !== 'undefined' && !navigator.onLine) break;
 
         try {
-          await createCitizen(tenant, currentToken(tenant, session.accessToken), {
+          const response = await createCitizen(tenant, currentToken(tenant, session.accessToken), {
             ...item.payload,
             clientSubmissionId: item.id,
           });
+          /*
+            Recognised from an earlier attempt, after the officer revised it.
+
+            The earlier attempt — the online save, or a drain whose answer was
+            lost — filed the record as it stood then, and a replay is answered
+            with that file without applying anything. Dequeuing here deleted
+            the only copy of the revision. It is kept, blocked, with the file
+            it reached, so the officer makes the change there by hand.
+          */
+          if (response.deduplicated && item.revisedAt) {
+            await recordAttempt(item.id, {
+              status: 'blocked',
+              error: queueText[currentLocale()]('deliveredBeforeRevision'),
+              citizenId: response.citizenId,
+            });
+            continue;
+          }
           // Delivered — including the case where the server recognised this
           // id from a previous attempt whose response never arrived. Both mean
-          // the record is on the register, which is all the queue cares about.
+          // the record is on the register as the queue holds it.
           await dequeue(item.id);
           delivered += 1;
         } catch (caught) {

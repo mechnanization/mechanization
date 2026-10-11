@@ -215,6 +215,16 @@ export function OfflineQueuePanel({
               <span className="shrink-0 text-muted-foreground">{t('waiting')}</span>
             )}
 
+            {/* Reached the register before the officer's revision: the file to make it on. */}
+            {item.status === 'blocked' && item.citizenId ? (
+              <ShellLink
+                href={`${base}/citizens/${encodeURIComponent(item.citizenId)}`}
+                className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'h-7 shrink-0 px-2 text-xs')}
+              >
+                {t('openFile')}
+              </ShellLink>
+            ) : null}
+
             {/*
               Shown on every record, not only a blocked one.
 
@@ -271,13 +281,15 @@ export function OfflineQueuePanel({
       {/*
         Discarding is the one irreversible thing this panel can do — the record
         exists nowhere else — so it is the one thing behind a confirmation, and
-        the copy says what is actually lost rather than "are you sure".
+        the copy says what is actually lost rather than "are you sure": for a
+        record that reached the register before its revision, only the
+        revision (`citizenId`).
       */}
       <ConfirmDialog
         open={discarding !== null}
         onOpenChange={(open) => setDiscarding(open ? discarding : null)}
         title={t('discardTitle')}
-        description={t.rich('discardBody', {
+        description={t.rich(discardTarget?.citizenId ? 'discardRevisionBody' : 'discardBody', {
           name: discardTarget?.displayName ?? '',
           strong: (chunks) => <strong>{chunks}</strong>,
         })}

@@ -85,17 +85,20 @@ vi.mock('./offline-db', () => ({
   dequeue: vi.fn(async (id: string) => {
     submissions.delete(id);
   }),
-  recordAttempt: vi.fn(async (id: string, patch: { status: string; error: string }) => {
-    const item = submissions.get(id);
-    if (!item) return false;
-    submissions.set(id, {
-      ...item,
-      status: patch.status,
-      lastError: patch.error,
-      attempts: (item.attempts as number) + 1,
-    });
-    return true;
-  }),
+  recordAttempt: vi.fn(
+    async (id: string, patch: { status: string; error: string; citizenId?: string }) => {
+      const item = submissions.get(id);
+      if (!item) return false;
+      submissions.set(id, {
+        ...item,
+        status: patch.status,
+        lastError: patch.error,
+        attempts: (item.attempts as number) + 1,
+        ...(patch.citizenId ? { citizenId: patch.citizenId } : {}),
+      });
+      return true;
+    },
+  ),
   retryLater: vi.fn(async (id: string) => {
     const item = submissions.get(id);
     if (!item) return false;
@@ -442,6 +445,47 @@ describe('syncQueue — delivering registrations', () => {
     await syncQueue(TENANT);
 
     expect(createCitizen).not.toHaveBeenCalled();
+  });
+});
+
+describe('syncQueue — a revised record the server had already filed', () => {
+  /*
+    The online save (or a drain whose answer was lost) reached the server under
+    this id; the officer then revised the queued copy. The server answers the
+    replay with the file it made from the *earlier* payload and applies nothing,
+    so deleting the queued record on that answer deleted the only copy of the
+    revision.
+  */
+  it('keeps it, blocked, with the file it reached, instead of deleting the revision', async () => {
+    seedSubmission('revised', { revisedAt: Date.now() });
+    createCitizen.mockResolvedValueOnce({ citizenId: 'existing-file', deduplicated: true });
+
+    await syncQueue(TENANT);
+
+    expect(submissions.get('revised')).toMatchObject({
+      status: 'blocked',
+      citizenId: 'existing-file',
+      lastError: expect.any(String),
+    });
+    expect((submissions.get('revised')!.lastError as string).length).toBeGreaterThan(0);
+  });
+
+  it('still removes a revised record the server filed fresh', async () => {
+    seedSubmission('revised', { revisedAt: Date.now() });
+    createCitizen.mockResolvedValueOnce({ citizenId: 'new-file', deduplicated: false });
+
+    await syncQueue(TENANT);
+
+    expect(submissions.has('revised')).toBe(false);
+  });
+
+  it('still removes an unrevised record recognised from a lost answer — it is on file as queued', async () => {
+    seedSubmission('replayed');
+    createCitizen.mockResolvedValueOnce({ citizenId: 'existing-file', deduplicated: true });
+
+    await syncQueue(TENANT);
+
+    expect(submissions.has('replayed')).toBe(false);
   });
 });
 
