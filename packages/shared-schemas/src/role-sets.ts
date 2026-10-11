@@ -11,8 +11,9 @@ import { SEES_ALL_STAFF_WORK, STAFF_ROLE, type StaffRole } from './enums';
  * nobody would see until the role tried the screen. A set named here reaches
  * the route and the button together.
  *
- * `@Roles('SUPER_ADMIN')` stays a literal: it names one role, not a list.
- * The server's `@Roles` is the enforcement; a screen that reads these only
+ * `@Roles('SUPER_ADMIN')` stays a literal: it names one role, not a list —
+ * unless a screen gates a control on it too, which needs a name to import
+ * (`PAYMENT_REVERSE_ROLES`). The server's `@Roles` is the enforcement; a screen that reads these only
  * decides what to show.
  */
 
@@ -111,6 +112,14 @@ export const FEE_ISSUE_ROLES = [
 
 /** The fee settings, notices' active flag, the recurring run and payment review. */
 export const FEE_ADMIN_ROLES = ['SUPER_ADMIN', 'ACCOUNTANT'] as const satisfies readonly StaffRole[];
+
+/**
+ * «عكس الوصل» — reverse one receipt in the payment ledger, with a written
+ * reason (`POST fees/transactions/:transactionId/reverse`). The manager's
+ * alone. A named set although it holds one role, because the bill page shows
+ * the action by the same list.
+ */
+export const PAYMENT_REVERSE_ROLES = ['SUPER_ADMIN'] as const satisfies readonly StaffRole[];
 
 /** Read the payments waiting for verification and the bills a correction affects. */
 export const PAYMENT_REVIEW_READ_ROLES = [

@@ -1,6 +1,6 @@
 # packages/shared-schemas
 
-Last verified against the code: `fix/moderate-finance` (on `develop@b034640`; the `PAYMENT_CLAIM_UNDER_REVIEW` code), 2026-10-11.
+Last verified against the code: `fix/moderate-finance` (on `develop@b034640`; the `PAYMENT_CLAIM_UNDER_REVIEW` code, `PAYMENT_REVERSE_ROLES`), 2026-10-11.
 
 `@mechanization/shared-schemas`: the zod schemas, enums, display labels and
 pure rules that the backend and the frontend share. One copy of each contract,

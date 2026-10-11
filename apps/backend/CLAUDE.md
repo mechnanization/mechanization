@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `fix/moderate-finance` (on `develop@b034640`; the system actor on audit rows, the recurring run's actor), 2026-10-11.
+Last verified against the code: `fix/moderate-finance` (on `develop@b034640`; the system actor on audit rows, the recurring run's actor, the receipt reversal's role set), 2026-10-11.
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -79,7 +79,8 @@ Data access for new code (decided):
   (`EVERY_STAFF_ROLE`, `WORKING_STAFF_ROLES`, `REGISTER_WRITE_ROLES`, `CENSUS_WORKLIST_ROLES`,
   `FEE_ISSUE_ROLES`, `REGISTER_EXPORT_ROLES` and the rest), never a literal list: the frontend's
   `lib/staff-roles.ts` reads the same sets, so a route and its button move together. A new audience is a
-  new named set there. `route-inventory.spec.ts` checks every controller on disk: `@Roles` on every
+  new named set there, and so is a single role a screen gates on (`PAYMENT_REVERSE_ROLES` for
+  `POST fees/transactions/:transactionId/reverse`, «عكس الوصل»). `route-inventory.spec.ts` checks every controller on disk: `@Roles` on every
   non-public route (or a reviewed entry in its `SELF_SERVICE` list), «مشاهد فقط» on no write and no
   side-effecting GET, and no route that deletes a citizen.
 - **Staff sessions.** Rotating refresh tokens in an httpOnly cookie (`StaffRefreshTokenService`,

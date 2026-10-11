@@ -1,10 +1,11 @@
 import 'reflect-metadata';
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { RequestMethod } from '@nestjs/common';
-import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
+import { ParseUUIDPipe, RequestMethod } from '@nestjs/common';
+import { METHOD_METADATA, PATH_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { ROLES_KEY } from '../decorators/roles.decorator';
+import { FeesController } from './fees.controller';
 
 /*
   The route inventory: who can reach every route the API serves.
@@ -156,6 +157,34 @@ describe('the «مشاهد فقط» (VIEWER) role — the municipality leader’
       ),
     );
     expect(forbidden.map((route) => route.name)).toEqual([]);
+  });
+});
+
+/*
+  «عكس الوصل»: the receipts of one bill, and reversing one of them. The bill
+  page offers the action by `PAYMENT_REVERSE_ROLES`, so the route's list is
+  pinned here; and both ids reach the ledger only once they parse as UUIDs — a
+  malformed one used to become a raw database error, a 500 and a Sentry event.
+*/
+describe('the receipts of a bill, and reversing one', () => {
+  const fees = routes().filter((route) => route.name.startsWith('FeesController.'));
+  const pipesOn = (method: string, param: string): unknown[] => {
+    const args = (Reflect.getMetadata(ROUTE_ARGS_METADATA, FeesController, method) ?? {}) as Record<
+      string,
+      { data?: unknown; pipes?: unknown[] }
+    >;
+    return Object.values(args).find((arg) => arg.data === param)?.pipes ?? [];
+  };
+
+  it('lets the manager alone reverse a receipt', () => {
+    expect(fees.find((route) => route.name === 'FeesController.reverseTransaction')?.roles).toEqual(['SUPER_ADMIN']);
+  });
+
+  it.each([
+    ['transactions', 'id'],
+    ['reverseTransaction', 'transactionId'],
+  ])('checks the %s id (%s) is a UUID', (method, param) => {
+    expect(pipesOn(method, param).some((pipe) => pipe instanceof ParseUUIDPipe)).toBe(true);
   });
 });
 

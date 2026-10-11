@@ -307,6 +307,19 @@ from) are settled in the integration tests (see 12.2).
   opposing entry carrying its original's rate.
 - A receipt on a bill that carries a citizen's claim under review is not reversed
   until the claim is confirmed or rejected (`PAYMENT_CLAIM_UNDER_REVIEW`, §3.3).
+- **Where it is done (2026-10-11, M20).** «وصولات الفاتورة» on the staff bill page
+  (`citizens/[citizenId]/payments/[paymentId]`) lists every movement on the bill
+  (`GET fees/payments/:id/transactions`). The manager reverses a receipt there with
+  «عكس الوصل»:
+  - a written reason is required, checked against `reverseTransactionSchema` (3 to 500
+    characters) before the dialog lets him confirm;
+  - the route is `POST fees/transactions/:transactionId/reverse`, on
+    `PAYMENT_REVERSE_ROLES` (the manager alone), both ids through `ParseUUIDPipe`;
+  - it writes the Tier 1 `PAYMENT_REVERSED` row.
+
+  A reversal is not offered on the opposing row itself, nor on a receipt already reversed.
+  The server's refusals (`TRANSACTION_ALREADY_REVERSED`, `PAYMENT_CLAIM_UNDER_REVIEW`,
+  `TREASURY_INSUFFICIENT_FUNDS`) are shown in the dialog.
 - **A collector's payment reversed after he handed the cash in (decided 2026-10-09).**
   - Opposing the custody entry would be refused, because his custody no longer holds
     the money; the safe does. The refund could then never be made.

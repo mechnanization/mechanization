@@ -4,6 +4,7 @@ import {
   Get,
   Logger,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -15,6 +16,7 @@ import {
   FEE_ADMIN_ROLES,
   FEE_ISSUE_ROLES,
   FEE_READ_ROLES,
+  PAYMENT_REVERSE_ROLES,
   PAYMENT_REVIEW_MARK_ROLES,
   PAYMENT_REVIEW_READ_ROLES,
   billBasisReviewSchema,
@@ -32,6 +34,7 @@ import {
   type CreateFeeNotice,
   type DeclarePayment,
   type ParcelDuesQuery,
+  type ReverseTransaction,
   type SettlePayment,
   type SystemSettingsInput,
 } from '@mechanization/shared-schemas';
@@ -296,23 +299,23 @@ export class FeesController {
    */
   @Roles(...FEE_READ_ROLES)
   @Get('payments/:id/transactions')
-  async transactions(@Param('id') id: string) {
+  async transactions(@Param('id', new ParseUUIDPipe()) id: string) {
     return { items: await this.fees.listTransactions(id) };
   }
 
   /**
-   * Reverses one recorded movement.
+   * Reverses one recorded movement — «عكس الوصل» on the staff bill page.
    *
-   * SUPER_ADMIN only, and deliberately not a delete: it appends an opposing
-   * entry, so the original stays on the record with the correction beside it.
-   * The ledger refuses updates and deletes at the database, so there is no
-   * other shape this could take.
+   * The manager only (`PAYMENT_REVERSE_ROLES`), and deliberately not a delete:
+   * it appends an opposing entry, so the original stays on the record with the
+   * correction beside it. The ledger refuses updates and deletes at the
+   * database, so there is no other shape this could take.
    */
-  @Roles('SUPER_ADMIN')
+  @Roles(...PAYMENT_REVERSE_ROLES)
   @Post('transactions/:transactionId/reverse')
   async reverseTransaction(
-    @Param('transactionId') transactionId: string,
-    @Body(new ZodValidationPipe(reverseTransactionSchema)) body: { note: string },
+    @Param('transactionId', new ParseUUIDPipe()) transactionId: string,
+    @Body(new ZodValidationPipe(reverseTransactionSchema)) body: ReverseTransaction,
     @CurrentUser() user: SessionClaims,
   ) {
     return this.fees.reverseTransaction({

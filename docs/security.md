@@ -1,6 +1,6 @@
 # Security
 
-Last verified against the code: `fix/moderate-finance` (on `develop@b034640`; the system actor on audit rows), 2026-10-11.
+Last verified against the code: `fix/moderate-finance` (on `develop@b034640`; the system actor on audit rows, the receipt reversal's roles and ids), 2026-10-11.
 
 Binding for every change that touches authentication, roles, tokens, validation, uploads, logging,
 headers, client storage or secrets. The rules below are correct practice. Where the code differs today,
@@ -210,6 +210,11 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   Tier 2: an event
   after the commit, whose failed write is logged and does not undo the change. How:
   [apps/backend/CLAUDE.md](../apps/backend/CLAUDE.md#events-and-audit).
+- A receipt is reversed by the manager alone (`POST fees/transactions/:transactionId/reverse`,
+  `PAYMENT_REVERSE_ROLES`, pinned by `route-inventory.spec.ts`), with a written reason
+  (`reverseTransactionSchema`), as an opposing row with a Tier 1 `PAYMENT_REVERSED` row. Its id
+  and that of `GET fees/payments/:id/transactions` go through `ParseUUIDPipe`. The bill page shows
+  «عكس الوصل» by the same set (`mayReverseReceipt`).
 - A row no person caused (the recurring biller's scheduled run, a Whish settlement) carries
   `actorId` NULL and `actorType` SYSTEM. `actorId` is a uuid column, so a placeholder string is
   refused, and in Tier 2 silently: until 2026-10-11 (M6) no recurring run had left a row. A run

@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية الذكية)
 
-Last verified against the code: `fix/pr104-review` (PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; the salary path and the urgent ceiling), 2026-10-10.
+Last verified against the code: `fix/moderate-finance` (on `develop@b034640`; «عكس الوصل», the counter refused on a bill under review), 2026-10-11.
 
 A multi-tenant municipal platform for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastral map, municipal fee billing (رسوم القيمة التأجيرية
@@ -28,9 +28,13 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
     credentials the gateway runs in sandbox mode.
 - **Collectors (`COLLECTOR`, جابي) and counter clerks**:
   - Record in-person payments, full or partial, at the counter (`CASH`) or on a round
-    (`COLLECTOR`).
+    (`COLLECTOR`). Not on a bill whose citizen has reported a transfer still awaiting
+    confirmation: the clerk confirms or rejects that report first.
   - Issue official receipts matching Lebanon's printed receipt books (`وصل جباية رسمي`).
   - Share a receipt through the device share sheet, a WhatsApp link, or a PDF download.
+  - See every receipt on a bill, and every reversal, on the bill's own page. Only the manager
+    (`SUPER_ADMIN`) may reverse a receipt («عكس الوصل»), with a written reason. A reversal is an
+    opposing entry beside the receipt, never an edit, and the amount is owed on the bill again.
 - **Field inspectors (`FIELD_INSPECTOR`, مفتّش ميداني)**: survey buildings and units on a
   phone, queuing records offline when the connection drops.
 - **Accountants (`ACCOUNTANT`), administrative officers (`ADMINISTRATIVE_OFFICER`),

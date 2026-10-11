@@ -42,6 +42,7 @@ import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
 import { PaymentReceipt, type RecordedMovement } from '@/components/admin/payment-receipt';
+import { BillReceipts } from '@/components/admin/finance/bill-receipts';
 import { cn } from '@/lib/utils';
 import { PAYMENT_SETTLE_ROLES, hasRole } from '@/lib/staff-roles';
 
@@ -275,6 +276,7 @@ export default function SettleCashPage({
     setBusy(false);
     // The cash is in a wallet now, so every treasury balance read before it is stale.
     void queryClient.invalidateQueries({ queryKey: ['treasury', tenant] });
+    void queryClient.invalidateQueries({ queryKey: ['payment-transactions', tenant, paymentId] });
     if (result.replayed) {
       toast.warning(t('replayedTitle', { number: result.receiptNumber }), {
         description: t('replayedBody', { amount: formatLbp(result.received, locale) }),
@@ -724,6 +726,19 @@ export default function SettleCashPage({
           />
         </div>
       )}
+
+      {/* Every receipt on the bill, paid or not; «عكس الوصل» for the manager (M20). */}
+      {payment ? (
+        <BillReceipts
+          tenant={tenant}
+          base={base}
+          token={token}
+          role={user?.role}
+          locale={locale}
+          citizenId={citizenId}
+          paymentId={payment.id}
+        />
+      ) : null}
     </div>
   );
 }
