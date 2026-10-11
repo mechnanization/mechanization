@@ -131,11 +131,14 @@ vi.mock('./offline-db', () => ({
 
 const {
   acknowledgeBuilding,
+  discardBuilding,
   discardSubmission,
   getQueuedSubmission,
   queueBuilding,
   queueSubmission,
   refreshQueue,
+  registrationsOnBuilding,
+  retryBuilding,
   retrySubmission,
   reviseSubmission,
   syncQueue,
@@ -879,6 +882,78 @@ describe('reviseSubmission', () => {
     await expect(
       reviseSubmission(TENANT, 'gone', submissionPayload() as never, 'x'),
     ).resolves.toBe(false);
+  });
+});
+
+describe('retryBuilding and discardBuilding', () => {
+  /*
+    `drainBuildings` sends only `pending` buildings, so a refused one used to sit
+    on the notice for good: nothing could send it again, and nothing could take
+    it off the device.
+  */
+  it('hands a refused building back to the queue and delivers it at once', async () => {
+    seedBuilding('b', { status: 'blocked', lastError: 'refused' });
+
+    await retryBuilding(TENANT, 'b');
+
+    expect(createBuilding).toHaveBeenCalledTimes(1);
+    expect(createBuilding.mock.calls[0]?.[2]).toMatchObject({ clientSubmissionId: 'b' });
+    expect(buildings.has('b')).toBe(false);
+  });
+
+  it('leaves it pending, without the old refusal, when the retry cannot be sent', async () => {
+    seedBuilding('b', { status: 'blocked', lastError: 'refused' });
+    (globalThis.navigator as { onLine: boolean }).onLine = false;
+
+    await retryBuilding(TENANT, 'b');
+
+    expect(createBuilding).not.toHaveBeenCalled();
+    expect(buildings.get('b')).toMatchObject({ status: 'pending', lastError: null });
+  });
+
+  it('discards a building for good, without sending it', async () => {
+    seedBuilding('b', { status: 'blocked', lastError: 'refused' });
+
+    await discardBuilding(TENANT, 'b');
+
+    expect(buildings.has('b')).toBe(false);
+    expect(createBuilding).not.toHaveBeenCalled();
+  });
+});
+
+describe('registrationsOnBuilding', () => {
+  const building = {
+    id: 'bld-1',
+    payload: {
+      parcelNumber: '1042',
+      structureType: 'RESIDENTIAL',
+      units: [{ id: 'unit-1' }, { id: 'unit-2' }, { floor: 1 }],
+    },
+  };
+  const item = (id: string, properties: Array<Record<string, unknown>>) =>
+    ({ id, tenant: TENANT, payload: { ...submissionPayload(), properties } }) as never;
+
+  it('counts the queued registrations that name the building or one of its flats', () => {
+    const items = [
+      item('on-card', [{ propertyType: 'BUILDING', buildingId: 'bld-1' }]),
+      item('on-flat', [{ propertyType: 'HOUSE', unitId: 'unit-2' }]),
+      item('on-line', [{ propertyType: 'BUILDING', units: [{ unitId: 'unit-1' }] }]),
+      item('two-cards', [
+        { propertyType: 'BUILDING', buildingId: 'bld-1' },
+        { propertyType: 'HOUSE', unitId: 'unit-1' },
+      ]),
+      item('elsewhere', [{ propertyType: 'BUILDING', buildingId: 'bld-2', units: [{ unitId: 'unit-9' }] }]),
+      item('land', [{ propertyType: 'LAND' }]),
+    ];
+
+    expect(registrationsOnBuilding(building as never, items)).toBe(4);
+  });
+
+  it('reads stored payloads defensively', () => {
+    // Opaque records written by another build: a value of the wrong shape is no match, never a throw.
+    const items = [item('odd', [{ buildingId: 7, unitId: null, units: [null, 'unit-1', { unitId: 3 }] }])];
+
+    expect(registrationsOnBuilding(building as never, items)).toBe(0);
   });
 });
 

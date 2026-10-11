@@ -1222,7 +1222,14 @@
       "syncNow": "Sync now",
       "writerRequired": "Kept on this device for another staff member; they are sent when someone who can survey signs in.",
       "reconciled": "The building you created on parcel <ltr>{parcel}</ltr> was saved as <now>{code}</now>, not <was>{provisional}</was>. Another building already held that letter on the parcel.",
-      "acknowledge": "Got it"
+      "acknowledge": "Got it",
+      "retry": "Retry",
+      "discard": "Discard",
+      "discardTitle": "Discard this building?",
+      "discardBody": "The building on parcel <ltr>{parcel}</ltr> was never delivered and is stored only on this device. Discarding it deletes it for good.",
+      "discardAffected": "{count, plural, one {{count} queued registration names} other {{count} queued registrations name}} this building or one of its flats. Sent without it, they will be refused and need editing.",
+      "discardConfirm": "Discard building",
+      "discarding": "Discarding…"
     }
   },
   "finance": {

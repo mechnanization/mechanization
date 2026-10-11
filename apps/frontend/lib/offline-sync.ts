@@ -583,6 +583,57 @@ export async function acknowledgeBuilding(tenant: string, id: string): Promise<v
   await refreshQueue(tenant);
 }
 
+/**
+ * Hands a refused building back to the queue, then tries it immediately.
+ *
+ * `drainBuildings` skips anything not `pending`, so a refused building stayed
+ * refused for good: a refusal that stopped being true (a duplicate on the
+ * parcel removed, a sector drawn) could never be acted on. Not counted as an
+ * attempt, as `retrySubmission` is not.
+ */
+export async function retryBuilding(tenant: string, id: string): Promise<void> {
+  await updateQueuedBuilding(id, { status: 'pending', lastError: null });
+  await refreshQueue(tenant);
+  await syncQueue(tenant);
+}
+
+/**
+ * Abandons a queued building for good. Only ever called behind a confirmation,
+ * which says how many queued registrations name it (`registrationsOnBuilding`):
+ * they go out still naming a building that will never exist, and are refused.
+ */
+export async function discardBuilding(tenant: string, id: string): Promise<void> {
+  await dequeueBuilding(id);
+  await refreshQueue(tenant);
+}
+
+/**
+ * How many queued registrations name this queued building — on a card
+ * (`buildingId`) or through one of the flats it creates (`unitId`, on the
+ * card or on one of its unit lines).
+ *
+ * Read from the payloads as the queue stores them: opaque records, written by
+ * whichever build queued them, so every value is checked before it is used.
+ */
+export function registrationsOnBuilding(
+  building: Pick<QueuedBuilding, 'id' | 'payload'>,
+  items: readonly QueuedSubmission[],
+): number {
+  const ids = new Set<string>([building.id]);
+  for (const unit of building.payload.units ?? []) {
+    if (typeof unit.id === 'string') ids.add(unit.id);
+  }
+  const names = (value: unknown) => typeof value === 'string' && ids.has(value);
+  const namesBuilding = (card: Record<string, unknown>) =>
+    names(card.buildingId) ||
+    names(card.unitId) ||
+    (Array.isArray(card.units) &&
+      card.units.some(
+        (line: unknown) => typeof line === 'object' && line !== null && names((line as { unitId?: unknown }).unitId),
+      ));
+  return items.filter((item) => item.payload.properties.some(namesBuilding)).length;
+}
+
 /** Hands a blocked record back to the queue, then tries it immediately. */
 export async function retrySubmission(tenant: string, id: string): Promise<void> {
   await retryLater(id);
@@ -652,6 +703,8 @@ export function useOfflineQueue(tenant: string): QueueState & {
   sync: () => void;
   retry: (id: string) => void;
   discard: (id: string) => void;
+  retryBuilding: (id: string) => void;
+  discardBuilding: (id: string) => Promise<void>;
 } {
   const engine = engineFor(tenant);
 
@@ -703,6 +756,9 @@ export function useOfflineQueue(tenant: string): QueueState & {
     sync: useCallback(() => void syncQueue(tenant), [tenant]),
     retry: useCallback((id: string) => void retrySubmission(tenant, id), [tenant]),
     discard: useCallback((id: string) => void discardSubmission(tenant, id), [tenant]),
+    retryBuilding: useCallback((id: string) => void retryBuilding(tenant, id), [tenant]),
+    // Awaitable, so the confirmation stays busy until the record is gone.
+    discardBuilding: useCallback((id: string) => discardBuilding(tenant, id), [tenant]),
   };
 }
 
