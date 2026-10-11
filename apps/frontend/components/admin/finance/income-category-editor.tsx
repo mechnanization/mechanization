@@ -124,7 +124,21 @@ export function IncomeCategoryEditor({
   };
 
   return (
-    <div className="space-y-3">
+    <div
+      className="space-y-3"
+      onKeyDown={(event) => {
+        /*
+          Inline in the recording form these inputs sit inside the voucher's
+          `<form>`, so Enter in one of them would submit the voucher — and
+          submitting is recording money. Enter here means «save the category»,
+          as in the expense form's `NewCategoryFields`.
+        */
+        if (event.key === 'Enter' && event.target instanceof HTMLInputElement) {
+          event.preventDefault();
+          void save();
+        }
+      }}
+    >
       <div className="grid gap-3 sm:grid-cols-2">
         <Field htmlFor={`${id}-ar`} label={t('labelAr')} error={errors.labelAr} required>
           <Input
