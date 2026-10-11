@@ -281,6 +281,19 @@ from) are settled in the integration tests (see 12.2).
 - Change handed back is an outflow: if the safe in that currency holds less than the
   change, the whole payment is refused with `TREASURY_INSUFFICIENT_FUNDS`, and
   nothing is written (the integration spec pins this).
+- **A bill under a citizen's claim (2026-10-11, audit item M3).** While a bill is
+  `PENDING_REVIEW` (the citizen says he paid, and no clerk has checked), the ledger
+  refuses every write on it except the two that decide the claim: the clerk's
+  confirmation (`FeesService.review`) and the Whish success callback. Those two pass
+  `resolvesClaim` to `PaymentLedgerService.record`. A counter or round payment
+  (`settleInPerson`) and a reversal are refused with `PAYMENT_CLAIM_UNDER_REVIEW`, and
+  write nothing.
+  - Why: `append` writes PAID or UNPAID. A part payment at the counter put the bill
+    back to UNPAID, so the citizen's transfer was never looked at again, and a
+    reversal did the same.
+  - So the clerk confirms or rejects the claim first (a rejection returns the bill to
+    UNPAID), then takes the cash. Pinned by `payment-ledger.integration.spec.ts` and
+    `treasury-controls.integration.spec.ts`.
 
 ### 3.4 Reversals of citizen payments
 
@@ -292,6 +305,8 @@ from) are settled in the integration tests (see 12.2).
   the integration tests.]**
 - Reversing a post-go-live payment reverses exactly the entries it created, each
   opposing entry carrying its original's rate.
+- A receipt on a bill that carries a citizen's claim under review is not reversed
+  until the claim is confirmed or rejected (`PAYMENT_CLAIM_UNDER_REVIEW`, §3.3).
 - **A collector's payment reversed after he handed the cash in (decided 2026-10-09).**
   - Opposing the custody entry would be refused, because his custody no longer holds
     the money; the safe does. The refund could then never be made.
@@ -916,7 +931,9 @@ the CLAUDE.md routing table or the AGENTS.md section map.
 
 - `WHISH_MONEY` is the real enum value (not `WHISH`).
 - Only settled movements reach `PaymentLedgerService.record`: the confirm path, the
-  Whish callback and the counter/collector path. Pending declarations do not.
+  Whish callback and the counter/collector path. Pending declarations do not. The
+  first two pass `resolvesClaim`; the counter is refused on a bill under review
+  (§3.3, M3).
 - Two simultaneous activations on a municipality whose settings row does not exist yet
   collided on the row's unique key (a raw database error). Fixed: the row is inserted
   with `ON CONFLICT DO NOTHING`, then locked. Pinned by a test.

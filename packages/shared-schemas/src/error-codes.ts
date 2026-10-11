@@ -43,6 +43,8 @@ export const ERROR_CODES = [
   'PAYMENT_NOT_FOUND',
   'PAYMENT_ALREADY_PAID',
   'PAYMENT_ALREADY_UNDER_REVIEW',
+  // Staff side: a counter payment or a reversal on a bill whose citizen claim is still under review.
+  'PAYMENT_CLAIM_UNDER_REVIEW',
   'PAYMENT_STATE_CHANGED',
   'PAYMENT_NO_PENDING_REVIEW',
   'PAYMENT_NOTHING_OUTSTANDING',

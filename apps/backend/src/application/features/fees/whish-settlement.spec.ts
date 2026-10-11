@@ -126,6 +126,13 @@ describe('settleFromWhishCallback — a payment adds to what was already banked'
     expect(record).toHaveBeenCalledWith(expect.objectContaining({ amount: 100_000 }));
   });
 
+  it('settles the claim the checkout put the bill under, as the ledger requires', async () => {
+    // Without the flag the ledger refuses a write on a PENDING_REVIEW bill (PAYMENT_CLAIM_UNDER_REVIEW).
+    const { service, record } = build(UNTOUCHED);
+    await service.settleFromWhishCallback(callback(100_000));
+    expect(record).toHaveBeenCalledWith(expect.objectContaining({ resolvesClaim: true }));
+  });
+
   it('caps against the outstanding balance, not the face value', async () => {
     // The old ceiling was the invoice total, which on a part-settled row is
     // larger than what is actually owed.

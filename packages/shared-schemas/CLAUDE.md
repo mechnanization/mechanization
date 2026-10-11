@@ -1,6 +1,6 @@
 # packages/shared-schemas
 
-Last verified against the code: `fix/pr104-review` (PR #104 review fixes merged with `fix/expense-retry-key-race` and `develop@4ad0b27`; the salary reason, the urgent ceiling and three treasury codes), 2026-10-10.
+Last verified against the code: `fix/moderate-finance` (on `develop@b034640`; the `PAYMENT_CLAIM_UNDER_REVIEW` code), 2026-10-11.
 
 `@mechanization/shared-schemas`: the zod schemas, enums, display labels and
 pure rules that the backend and the frontend share. One copy of each contract,

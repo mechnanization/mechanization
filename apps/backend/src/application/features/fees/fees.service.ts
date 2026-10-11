@@ -2548,6 +2548,8 @@ export class FeesService {
       externalRef: payment.whishTransactionRef,
       recordedById: input.actor.id,
       note: input.note,
+      // This is the decision the claim waits for; every other ledger write is refused while it waits.
+      resolvesClaim: true,
       audit: (movement) => ({
         actorId: input.actor.id,
         actorType: 'STAFF',
@@ -3410,6 +3412,8 @@ export class FeesService {
       method: 'WHISH_MONEY',
       externalRef: callback.transactionRef,
       note: 'دفع إلكتروني عبر Whish',
+      // The provider's verified word settles the claim `startWhishCheckout` put the bill under.
+      resolvesClaim: true,
       /*
         A system row: no staff member acted. `actorId` is a uuid column and
         `actorRole` the staff-role enum, so the provider is named in `after`.
@@ -3488,6 +3492,10 @@ export class FeesService {
    * carries. Anything *more* is refused rather than quietly recorded as
    * credit — this system has no notion of an overpayment to carry forward, so
    * accepting one would silently lose the difference.
+   *
+   * A bill carrying a citizen's claim (PENDING_REVIEW) is refused by the ledger
+   * (`PAYMENT_CLAIM_UNDER_REVIEW`) until a clerk confirms or rejects the claim:
+   * a counter entry would otherwise overwrite it without deciding it.
    */
   async settleInPerson(input: {
     paymentId: string;

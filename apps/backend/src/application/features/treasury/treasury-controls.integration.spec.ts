@@ -362,6 +362,65 @@ describeIfDb('treasury controls', () => {
     expect(await balance(safeLbpId)).toBe(safeBefore + 3_000);
   });
 
+  // ─────────────────────  a bill under a citizen's claim  ─────────────────────
+
+  describe("a bill under a citizen's payment claim (PENDING_REVIEW)", () => {
+    /** A bill the citizen says he paid by Whish, waiting on a clerk. */
+    const claimed = async (amount: number, paidFirst = 0): Promise<{ paymentId: string; receipt?: string }> => {
+      const paymentId = await bill(amount);
+      const receipt = paidFirst
+        ? (await scoped(() => fees.settleInPerson({ paymentId, method: 'CASH', amount: paidFirst, actor: ACCOUNTANT() })))
+            .receiptNumber
+        : undefined;
+      await db.citizenPayment.update({
+        where: { id: paymentId },
+        data: { paymentStatus: 'PENDING_REVIEW', paymentMethod: 'WHISH_MONEY', whishTransactionRef: 'WSH-1' },
+      });
+      return { paymentId, receipt };
+    };
+
+    it('refuses a counter payment until the claim is decided, and moves no money', async () => {
+      const { paymentId } = await claimed(12_000);
+      const safeBefore = await balance(safeLbpId);
+
+      await expect(
+        scoped(() => fees.settleInPerson({ paymentId, method: 'CASH', amount: 5_000, actor: ACCOUNTANT() })),
+      ).rejects.toMatchObject({ code: 'PAYMENT_CLAIM_UNDER_REVIEW' });
+
+      expect(await db.paymentTransaction.count({ where: { paymentId } })).toBe(0);
+      expect(await balance(safeLbpId)).toBe(safeBefore);
+      expect((await db.citizenPayment.findUniqueOrThrow({ where: { id: paymentId } })).paymentStatus).toBe(
+        'PENDING_REVIEW',
+      );
+    });
+
+    it("refuses to reverse a receipt on the bill while the citizen's claim waits", async () => {
+      const { paymentId, receipt } = await claimed(12_000, 4_000);
+      const recorded = await db.paymentTransaction.findFirstOrThrow({ where: { receiptNumber: receipt } });
+      const safeBefore = await balance(safeLbpId);
+
+      await expect(
+        scoped(() => fees.reverseTransaction({ transactionId: recorded.id, note: 'قيد بالخطأ', actor: MANAGER() })),
+      ).rejects.toMatchObject({ code: 'PAYMENT_CLAIM_UNDER_REVIEW' });
+
+      expect(await db.paymentTransaction.count({ where: { paymentId } })).toBe(1);
+      expect(await balance(safeLbpId)).toBe(safeBefore);
+    });
+
+    it('is still settled by the clerk confirming the claim', async () => {
+      const { paymentId } = await claimed(12_000, 4_000);
+      const whish = await db.treasuryAccount.findFirstOrThrow({ where: { type: 'WHISH_ACCOUNT', currency: 'LBP' } });
+      const whishBefore = await balance(whish.id);
+
+      await expect(
+        scoped(() => fees.review({ paymentId, confirmed: true, actor: ACCOUNTANT() })),
+      ).resolves.toMatchObject({ paymentStatus: 'PAID' });
+
+      // The confirmation credits what was still outstanding, into the Whish wallet.
+      expect(await balance(whish.id)).toBe(whishBefore + 8_000);
+    });
+  });
+
   describe('the collector named on a round', () => {
     it.each([
       ['a view-only staff member', 'viewer'],

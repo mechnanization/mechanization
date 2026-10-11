@@ -262,6 +262,15 @@ describe('review — confirming a claim', () => {
     expect(write.data).not.toHaveProperty('paymentStatus');
     expect(write.data).toMatchObject({ reviewedById: 'staff-1', reviewNote: 'حوالة مؤكدة' });
   });
+
+  it('tells the ledger this write resolves the claim, which no counter entry may', async () => {
+    // The ledger refuses every other write on a bill under review (PAYMENT_CLAIM_UNDER_REVIEW).
+    const { service, record } = build({ ...INVOICE, paymentStatus: 'PENDING_REVIEW' });
+
+    await service.review({ paymentId: 'payment-1', confirmed: true, actor: { id: 'staff-1', role: 'ACCOUNTANT' } });
+
+    expect(record).toHaveBeenCalledWith(expect.objectContaining({ resolvesClaim: true }));
+  });
 });
 
 describe('startWhishCheckout', () => {

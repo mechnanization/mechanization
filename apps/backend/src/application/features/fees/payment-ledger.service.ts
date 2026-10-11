@@ -35,6 +35,13 @@ export interface LedgerEntryInput {
    * money twice.
    */
   clientRequestId?: string | null;
+  /**
+   * Set only by the two writes that settle a citizen's claim (PENDING_REVIEW):
+   * the staff confirmation and the Whish success callback. Any other `record`
+   * on a bill under review is refused (`PAYMENT_CLAIM_UNDER_REVIEW`): `append`
+   * writes PAID or UNPAID, and would erase the claim without deciding it.
+   */
+  resolvesClaim?: boolean;
 }
 
 /**
@@ -162,6 +169,7 @@ export class PaymentLedgerService {
           message: 'This payment has already been settled.',
         });
       }
+      if (invoice.paymentStatus === 'PENDING_REVIEW' && !input.resolvesClaim) throw claimUnderReview();
 
       // Money cannot have been taken against a bill before the bill existed.
       if (input.occurredAt && municipalToday(input.occurredAt) < municipalToday(invoice.createdAt)) {
@@ -247,6 +255,8 @@ export class PaymentLedgerService {
       }
 
       const invoice = await this.lock(tx, original.paymentId);
+      // `append` writes PAID or UNPAID, which would erase the citizen's pending claim.
+      if (invoice.paymentStatus === 'PENDING_REVIEW') throw claimUnderReview();
 
       /*
         The unique index on `reversalOfId` enforces this too; checking here
@@ -590,6 +600,14 @@ export class PaymentLedgerService {
       replayed: false,
     };
   }
+}
+
+/** A citizen's payment claim on this bill awaits a clerk's confirmation or refusal. */
+function claimUnderReview(): ConflictError {
+  return new ConflictError({
+    code: 'PAYMENT_CLAIM_UNDER_REVIEW',
+    message: 'A citizen payment claim on this bill is under review; confirm or reject it first.',
+  });
 }
 
 /** Half a pound for ليرة; a tenth of a cent for dollars and euros alike. */

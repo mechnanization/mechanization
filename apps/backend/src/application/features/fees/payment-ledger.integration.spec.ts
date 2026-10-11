@@ -528,6 +528,66 @@ describeIfDb('PaymentLedgerService', () => {
     });
   });
 
+  /*
+    A citizen's claim — «دفعت عبر Whish» — puts the bill under review until a
+    clerk confirms or rejects it. `append` writes PAID or UNPAID, so any other
+    ledger write in between used to erase the claim without deciding it: a part
+    payment at the counter returned the bill to UNPAID, and the citizen's
+    transfer was never looked at again.
+  */
+  describe('a bill under a citizen’s claim (PENDING_REVIEW)', () => {
+    const underReview = () =>
+      db.citizenPayment.update({
+        where: { id: paymentId },
+        data: { paymentStatus: 'PENDING_REVIEW', paymentMethod: 'WHISH_MONEY', whishTransactionRef: 'WSH-CLAIM' },
+      });
+
+    it('refuses a counter entry, and writes nothing', async () => {
+      await underReview();
+
+      await expect(cash(40_000)).rejects.toMatchObject({ code: 'PAYMENT_CLAIM_UNDER_REVIEW' });
+
+      expect(await db.paymentTransaction.count({ where: { paymentId } })).toBe(0);
+      expect((await auditRows('PAYMENT_CONFIRMED')).filter((row) => row.entityId === paymentId)).toHaveLength(0);
+      const invoice = await db.citizenPayment.findUniqueOrThrow({ where: { id: paymentId } });
+      expect(invoice.paymentStatus).toBe('PENDING_REVIEW');
+      expect(Number(invoice.paidAmount)).toBe(0);
+    });
+
+    it('refuses a reversal while the claim waits', async () => {
+      const taken = await cash(30_000);
+      // The citizen then claims to have transferred the rest.
+      await underReview();
+
+      await expect(
+        ledger.reverse({ audit: reversalAudit, transactionId: taken.transactionId, recordedById: clerkId }),
+      ).rejects.toMatchObject({ code: 'PAYMENT_CLAIM_UNDER_REVIEW' });
+
+      expect(await db.paymentTransaction.count({ where: { paymentId } })).toBe(1);
+      const invoice = await db.citizenPayment.findUniqueOrThrow({ where: { id: paymentId } });
+      expect(invoice.paymentStatus).toBe('PENDING_REVIEW');
+      expect(Number(invoice.paidAmount)).toBe(30_000);
+    });
+
+    it('lets the write that resolves the claim settle the bill', async () => {
+      await underReview();
+
+      const settled = await ledger.record({
+        audit,
+        paymentId,
+        amount: 100_000,
+        method: 'WHISH_MONEY',
+        externalRef: 'WSH-CLAIM',
+        recordedById: clerkId,
+        resolvesClaim: true,
+      });
+
+      expect(settled.paymentStatus).toBe('PAID');
+      const invoice = await db.citizenPayment.findUniqueOrThrow({ where: { id: paymentId } });
+      expect(invoice.paymentStatus).toBe('PAID');
+    });
+  });
+
   describe('append-only', () => {
     it('refuses an update to a recorded transaction', async () => {
       const { transactionId } = await cash(25_000);

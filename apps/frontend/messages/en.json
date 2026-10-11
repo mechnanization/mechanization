@@ -211,6 +211,7 @@
     "PAYMENT_NOT_FOUND": "This payment could not be found.",
     "PAYMENT_ALREADY_PAID": "This payment has already been settled.",
     "PAYMENT_ALREADY_UNDER_REVIEW": "This payment is already under review.",
+    "PAYMENT_CLAIM_UNDER_REVIEW": "The citizen has a payment claim under review on this bill. Confirm or reject it first in Fees & billing (“Pending Review”), then try again.",
     "PAYMENT_STATE_CHANGED": "This payment changed since the screen was opened. Refresh the page.",
     "PAYMENT_NO_PENDING_REVIEW": "There is no pending payment to review on this record.",
     "PAYMENT_NOTHING_OUTSTANDING": "Nothing is outstanding on this charge.",
