@@ -523,6 +523,9 @@
       "file": "الملف"
     }
   },
+  "recordReview": {
+    "pages": "صفحات السجلات"
+  },
   "citizens": {
     "families": "إجمالي الأسر",
     "archived": "مؤرشف",

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyUrlPatch, param, readUrlState, toSearch } from './url-state';
+import { applyUrlPatch, pageWithRows, param, readUrlState, toSearch } from './url-state';
 
 const STATUSES = ['', 'PAID', 'UNPAID'] as const;
 
@@ -119,5 +119,23 @@ describe('applyUrlPatch', () => {
       limit: 50,
     };
     expect(read(toSearch(applyUrlPatch('', SCHEMA, patch)).slice(1))).toEqual(patch);
+  });
+});
+
+describe('pageWithRows', () => {
+  it('keeps a page that still holds rows', () => {
+    expect(pageWithRows(0, 30, 0)).toBe(0);
+    expect(pageWithRows(1, 30, 31)).toBe(1);
+    expect(pageWithRows(2, 30, 90)).toBe(2);
+  });
+
+  it('steps back when the last decision on the last page emptied it', () => {
+    // 61 records over three pages of 30; the one on page 3 was approved.
+    expect(pageWithRows(2, 30, 60)).toBe(1);
+  });
+
+  it('steps a stale ?page= back to the last page, or the first when nothing is left', () => {
+    expect(pageWithRows(9, 30, 45)).toBe(1);
+    expect(pageWithRows(3, 30, 0)).toBe(0);
   });
 });

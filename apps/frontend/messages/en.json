@@ -523,6 +523,9 @@
       "file": "File"
     }
   },
+  "recordReview": {
+    "pages": "Pages of records"
+  },
   "citizens": {
     "families": "Total families",
     "archived": "Archived",
