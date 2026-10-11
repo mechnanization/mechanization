@@ -1101,6 +1101,37 @@ describeIfDb('BuildingsService', () => {
     expect(await damage.history(building.id)).toHaveLength(2);
   });
 
+  it('colours a building by the reading recorded last when two were observed the same day', async () => {
+    const sameDay = new Date('2026-05-04');
+    const { building } = await createBuilding(
+      { parcelNumber: '9005', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
+      actor(),
+    );
+    const { units } = await buildings.generateUnits(
+      building.id,
+      { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
+      actor(),
+    );
+
+    // The building's reading first, then its flat's, both dated the same day.
+    await damage.record(
+      { buildingId: building.id, level: 'SAFE_MINOR_DAMAGE', source: 'FIELD_VISIT', assessedAt: sameDay },
+      actor(),
+    );
+    await damage.record(
+      { unitId: units[0]!.id, level: 'UNSAFE_EVACUATE', source: 'FIELD_VISIT', assessedAt: sameDay },
+      actor(),
+    );
+    expect((await buildings.currentDamageLevels([building.id])).get(building.id)).toBe('UNSAFE_EVACUATE');
+
+    // And the other way round: a later reading on the building itself wins.
+    await damage.record(
+      { buildingId: building.id, level: 'NOT_AFFECTED', source: 'FIELD_VISIT', assessedAt: sameDay },
+      actor(),
+    );
+    expect((await buildings.currentDamageLevels([building.id])).get(building.id)).toBe('NOT_AFFECTED');
+  });
+
   // ────────────────────────  «وحدات غير ممسوحة»  ────────────────────────
 
   it('lists the unsurveyed, unlinked units of the buildings an officer added, and every officer’s to an admin', async () => {
