@@ -364,8 +364,8 @@ are inlined at build time. The local `.env.local` block is in
 ## Tests
 
 Vitest (`apps/frontend/vitest.config.mts`): `environment: 'node'`, only `lib/**/*.test.ts`,
-with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 31 test files (counted on disk
-2026-10-10, mid-merge of `fix/expense-retry-key-race`; cases not recounted).
+with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 35 test files, 425 cases (counted
+2026-10-11 on `fix/moderate-cadastre-citizens`).
 No component, accessibility or end-to-end tests exist (no jsdom, no Testing Library); a
 rendered check uses the uncommitted headless harness of UI §16.4. Untested, so add a test
 when you touch them: `lib/sentry-redaction.ts`, `lib/session.ts`, `lib/csv.ts` `csvCell`.
