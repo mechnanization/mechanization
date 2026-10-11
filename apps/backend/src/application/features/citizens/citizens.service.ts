@@ -2194,6 +2194,10 @@ export class CitizensService {
     */
     const unchangedStatements = new Set<string>();
     const unlinkedBySave: Array<{ propertyEntryId: string; report: RevertReport }> = [];
+    /** The owner each undone link named, by card — for the owner's own trail. */
+    const unlinkedOwnerOf = new Map<string, string>();
+    /** The `LANDLORD_UNLINKED` rows this save wrote in its transaction, announced after it. */
+    let unlinkChanges: Array<CitizenChange & { tenantSlug: string }> = [];
 
     // Where the record stands *after* this save. A record whose last gap was
     // just filled in leaves «يتطلب مراجعة» by the same rule that put it there.
@@ -2343,6 +2347,7 @@ export class CitizensService {
         });
         revertEvents.push(...reverted.events);
         unlinkedBySave.push({ propertyEntryId: entryId, report: reverted.report });
+        unlinkedOwnerOf.set(entryId, state.landlordCitizenId);
       };
 
       for (const removedId of removedIds) await undo(removedId);
@@ -2529,6 +2534,30 @@ export class CitizensService {
         }
       }
 
+      /*
+        Tier 1, as «إلغاء الربط» writes it: a link this save undid is recorded
+        on the owner's file and on this tenant's, inside the transaction. What
+        the link put on the owner's file was taken off it here, and the owner's
+        own trail used to say nothing about it.
+      */
+      unlinkChanges = unlinkedBySave.flatMap(({ propertyEntryId, report }) => {
+        const ownerId = unlinkedOwnerOf.get(propertyEntryId)!;
+        const after = { propertyEntryId, via: 'CITIZEN_UPDATED', ...report, kept: report.kept.length };
+        const base = {
+          tenantSlug: input.tenantSlug,
+          action: 'LANDLORD_UNLINKED',
+          actorId: input.actor.id,
+          actorRole: input.actor.role,
+        };
+        return [
+          { ...base, citizenId: ownerId, after },
+          { ...base, citizenId: citizen.id, after: { ...after, ownerId } },
+        ];
+      });
+      for (const payload of unlinkChanges) {
+        await this.auditTrail.recordChangeInTransaction({ channel: 'citizen.changed', payload }, tx);
+      }
+
       return registrationId;
     });
 
@@ -2547,15 +2576,9 @@ export class CitizensService {
       round again.
     */
     this.landlordLinks.emitAll(revertEvents, input.actor);
-    for (const { propertyEntryId, report } of unlinkedBySave) {
-      this.events.emit('citizen.changed', {
-        tenantSlug: input.tenantSlug,
-        citizenId: citizen.id,
-        action: 'LANDLORD_UNLINKED',
-        after: { propertyEntryId, via: 'CITIZEN_UPDATED', ...report, kept: report.kept.length },
-        actorId: input.actor.id,
-        actorRole: input.actor.role,
-      });
+    // The rows are written; the events are for the caches that listen.
+    for (const payload of unlinkChanges) {
+      this.events.emit('citizen.changed', { ...payload, alreadyAudited: true });
     }
 
     const census = await this.census.syncQuietly({

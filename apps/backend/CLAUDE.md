@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `fix/moderate-cadastre-citizens` (on `develop@b034640`; the cadastre import deviation, the cadastre asset's private cache, `GET auth/staff/me`), 2026-10-11.
+Last verified against the code: `fix/moderate-cadastre-citizens` (on `develop@b034640`; the cadastre import deviation, the cadastre asset's private cache, `GET auth/staff/me`, the save-path unlink rows), 2026-10-11.
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -421,7 +421,10 @@ Every state change MUST leave an `audit_log_entries` row, in one of two tiers
    - In `runInTenantTransaction`: `AuditService.recordInTransaction(entry)`, or
      `recordChangeInTransaction({ channel, payload })` for a change that is also a `citizen.changed` /
      `building.changed` event. Emit that event after the commit with `alreadyAudited: true`.
-   - A write that owns its transaction passes its client: `recordInTransaction(entry, tx)`. The payment
+   - A write that owns its transaction passes its client: `recordInTransaction(entry, tx)`, or
+     `recordChangeInTransaction(change, tx)`. `CitizensService.update` does the second for an owner
+     link its save undoes (a linked card removed, or its landlord number changed): `LANDLORD_UNLINKED`
+     on the owner's file and on the tenant's, as `LandlordLinkService.unlink` writes them. The payment
      ledger does this, and `PaymentLedgerService.record` / `reverse` take a **required** `audit` callback,
      so no code path can move money without a row.
    - `recordInTransaction` throws when called outside a transaction.

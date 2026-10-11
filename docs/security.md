@@ -1,6 +1,6 @@
 # Security
 
-Last verified against the code: `fix/moderate-cadastre-citizens` (on `develop@b034640`; signed cadastre layers, `GET auth/staff/me` and the password change), 2026-10-11.
+Last verified against the code: `fix/moderate-cadastre-citizens` (on `develop@b034640`; signed cadastre layers, `GET auth/staff/me` and the password change, the save-path unlink rows), 2026-10-11.
 
 Binding for every change that touches authentication, roles, tokens, validation, uploads, logging,
 headers, client storage or secrets. The rules below are correct practice. Where the code differs today,
@@ -209,7 +209,8 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   `EXPENSE_REQUEST_REJECTED`; `EXPENSE_REQUEST_WITHDRAWN`), recording and cancelling an income
   voucher (`INCOME_RECORDED`, `INCOME_VOIDED`), receiving a collector's custody
   (`CUSTODY_RECEIVED`) and cancelling a transfer, corrections, ownership changes (ending an ownership,
-  owner links, merges), ending a tenancy, review decisions (approve, return, quality check), citizen
+  owner links — including one a citizen save undoes, `LANDLORD_UNLINKED` on the owner's file and on
+  the tenant's —, merges), ending a tenancy, review decisions (approve, return, quality check), citizen
   status changes (archive and restore), how a co-owned flat is billed (`UNIT_OWNER_BILLING_SET`,
   `OwnerBillingService`, which moves every co-owner's bill), and a unit's fee exemption
   (`UNIT_FEE_EXEMPTION_SET` / `_LIFTED`, `FeeExemptionService`, SUPER_ADMIN only). Everything else is
