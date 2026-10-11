@@ -33,7 +33,7 @@ import {
   type OpenItem,
   type RecordCompletion,
 } from '@/components/admin/complete-record-dialog';
-import { BackLink } from '@/components/ui/back-link';
+import { HeaderBackLink } from '@/components/admin/header-back-link';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -569,7 +569,7 @@ export default function ReviewFilePage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <BackLink
+      <HeaderBackLink
         fallbackHref={`${base}/citizens/review`}
         label={en ? 'Back to the review queue' : 'العودة إلى قائمة المراجعة'}
       />

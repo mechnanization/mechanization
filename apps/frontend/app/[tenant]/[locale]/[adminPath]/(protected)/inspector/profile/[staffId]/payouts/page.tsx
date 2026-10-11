@@ -18,7 +18,7 @@ import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { formatDate, formatDateTime } from '@/lib/dates';
 import { InspectorPayoutDialog } from '@/components/admin/inspector-payout-dialog';
-import { BackLink } from '@/components/ui/back-link';
+import { HeaderBackLink } from '@/components/admin/header-back-link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
@@ -141,7 +141,7 @@ export default function InspectorPayoutHistoryPage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <BackLink
+      <HeaderBackLink
         fallbackHref={`${base}/inspector/profile`}
         label={isAr ? 'العودة إلى الأرباح' : 'Back to earnings'}
       />

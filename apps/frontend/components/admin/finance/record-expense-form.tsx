@@ -4,9 +4,8 @@ import { useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useQueryClient } from '@tanstack/react-query';
-import { Plus, Send, Zap } from 'lucide-react';
+import { Loader2, Plus, Send, Zap } from 'lucide-react';
 import {
-  getLabels,
   recordExpenseSchema,
   requestExpenseSchema,
   municipalToday,
@@ -25,6 +24,7 @@ import {
   type TreasuryAccountView,
 } from '@/lib/api-client';
 import { currencyUnit, formatMoney, formatTypedAmount, parseAmount } from '@/lib/currency';
+import { formatDate } from '@/lib/dates';
 import { firstFieldToFix, isExpenseField } from '@/lib/expense-form';
 import { expenseModeFor, paysNow, type ExpenseMode } from '@/lib/expense-order';
 import {
@@ -40,7 +40,6 @@ import { hasRole } from '@/lib/staff-roles';
 import { cn } from '@/lib/utils';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { CurrencyInput } from '@/components/ui/currency-input';
 import { DatePicker } from '@/components/ui/date-picker';
@@ -57,23 +56,8 @@ import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
 import { NewCategoryFields } from './new-category-fields';
+import { FormCard, FormSection, SummaryPanel, TREASURY_FORM_GRID, WalletSelect } from './treasury-form-parts';
 import { TreasuryAmount } from './treasury-amount';
-
-/**
- * A heading over a group of fields.
- *
- * Not a card: the page already frames the form, and a card inside it is the
- * nested frame BAN-4 refuses. No letter-spacing either — Arabic headings do not
- * take tracking (TYP-5).
- */
-function FormSection({ title, children }: { title: string; children: React.ReactNode }): React.JSX.Element {
-  return (
-    <section className="space-y-3">
-      <h2 className="border-b pb-1.5 text-xs font-semibold text-muted-foreground">{title}</h2>
-      {children}
-    </section>
-  );
-}
 
 /**
  * What the form did, for the page to decide where to go next: the register
@@ -83,6 +67,10 @@ export type RecordOutcome = 'PAID' | 'REQUESTED';
 
 /**
  * «سجّل نفقة» — the whole act of paying, as a form on its own page.
+ *
+ * Its frame — one card of fields that scrolls on its own, and beside it a
+ * summary with the buttons that does not move — is `treasury-form-parts.tsx`,
+ * shared with the income form so the two read as one (UX-1).
  *
  * ## Three ways to press the button
  *
@@ -111,7 +99,8 @@ export type RecordOutcome = 'PAID' | 'REQUESTED';
  * ## Why the balance is the loudest thing on it
  *
  * The one fact that decides whether to press the button is what the wallet
- * holds. A municipal safe runs out, and the server refuses an overdraw — so the
+ * holds. A municipal safe runs out, and the server refuses an overdraw — so
+ * every wallet in the list shows its balance before one is chosen, and the
  * summary answers «هل يكفي؟» while the amount is being typed rather than after
  * the submit, and turns red the moment the remainder would go below zero. That
  * holds for a payment only; a request does not move money. The server is still
@@ -173,7 +162,6 @@ export function RecordExpenseForm({
   onRecorded: (outcome: RecordOutcome) => void;
 }): React.JSX.Element {
   const t = useTranslations('finance.expenses.form');
-  const labels = getLabels(locale);
   const queryClient = useQueryClient();
   const toast = useToast();
 
@@ -256,14 +244,7 @@ export function RecordExpenseForm({
     return [...byId.values()];
   }, [categories, added]);
 
-  const accountOptions = useMemo(
-    () =>
-      accounts.map((candidate) => ({
-        value: candidate.id,
-        label: `${candidate.name} · ${labels.treasuryAccountType[candidate.type]}`,
-      })),
-    [accounts, labels],
-  );
+  const category = allCategories.find((candidate) => candidate.id === categoryId);
 
   /** What a failure with nothing better to say reads, for the act this press would be. */
   const failedText = t(mode === 'REQUEST' ? 'errors.requestForm' : 'errors.form');
@@ -452,12 +433,8 @@ export function RecordExpenseForm({
     mode === 'ORDER' ? t('submit') : mode === 'URGENT' ? t('submitUrgent') : t('submitRequest');
 
   return (
-    <form
-      noValidate
-      className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start"
-      onSubmit={submit}
-    >
-      <div className="space-y-6">
+    <form noValidate className={TREASURY_FORM_GRID} onSubmit={submit}>
+      <FormCard disabled={busy || done}>
         {mode !== 'ORDER' ? (
           <FormSection title={t('sections.how')}>
             <div role="radiogroup" aria-label={t('how.aria')} className="grid gap-3 sm:grid-cols-2">
@@ -502,20 +479,16 @@ export function RecordExpenseForm({
         ) : null}
 
         <FormSection title={t('sections.money')}>
-          <Field htmlFor="expense-account" label={t('account')} error={errors.accountId} required>
-            <Select value={accountId} onValueChange={setAccountId}>
-              <SelectTrigger id="expense-account">
-                <SelectValue placeholder={t('accountPlaceholder')} />
-              </SelectTrigger>
-              <SelectContent>
-                {accountOptions.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
+          <WalletSelect
+            id="expense-account"
+            label={t('account')}
+            placeholder={t('accountPlaceholder')}
+            accounts={accounts}
+            value={accountId}
+            onChange={setAccountId}
+            locale={locale}
+            error={errors.accountId}
+          />
 
           <Field htmlFor="expense-amount" label={t('amount')} error={errors.amount} required>
             <CurrencyInput
@@ -530,44 +503,38 @@ export function RecordExpenseForm({
         </FormSection>
 
         <FormSection title={t('sections.what')}>
+          {/* A row of its own: a band's name is long, and beside another field the select clipped it. */}
           <Field htmlFor="expense-category" label={t('category')} error={errors.categoryId} required>
-            {/*
-              Keyed on the number of bands added here, so adding one remounts the
-              select. Radix keeps a controlled value that was present when it
-              mounted — the account select above proves it — but discards one set
-              while its list is closed, because the item backing it has never
-              registered. That left a freshly created band created, listed, and not
-              selected (docs/gotchas.md).
-            */}
-            <Select key={added.length} value={categoryId} onValueChange={setCategoryId}>
-              <SelectTrigger id="expense-category">
-                <SelectValue placeholder={t('categoryPlaceholder')}>
-                  {allCategories.find((category) => category.id === categoryId)?.name}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {allCategories.map((category) => (
-                  <SelectItem key={category.id} value={category.id}>
-                    {category.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
+            <div className="flex flex-wrap gap-2">
+              {/*
+                Keyed on the number of bands added here, so adding one remounts the
+                select. Radix keeps a controlled value that was present when it
+                mounted, but discards one set while its list is closed, because the
+                item backing it has never registered. That left a freshly created
+                band created, listed, and not selected (docs/gotchas.md).
+              */}
+              <Select key={added.length} value={categoryId} onValueChange={setCategoryId}>
+                <SelectTrigger id="expense-category" className="min-w-0 flex-1 basis-40">
+                  <SelectValue placeholder={t('categoryPlaceholder')}>{category?.name}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {allCategories.map((option) => (
+                    <SelectItem key={option.id} value={option.id}>
+                      {option.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
 
-          {canManageCategories && !addingCategory ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-auto px-2 py-1 text-xs"
-              disabled={done}
-              onClick={() => setAddingCategory(true)}
-            >
-              <Plus className="size-3.5" aria-hidden />
-              {t('newCategory')}
-            </Button>
-          ) : null}
+              {/* Beside the list it adds to, and under it when the row is too narrow for both; gone while the fields are open. */}
+              {canManageCategories && !addingCategory ? (
+                <Button type="button" variant="outline" className="shrink-0" onClick={() => setAddingCategory(true)}>
+                  <Plus className="size-4" aria-hidden />
+                  {t('newCategory')}
+                </Button>
+              ) : null}
+            </div>
+          </Field>
 
           {addingCategory ? (
             <NewCategoryFields
@@ -575,7 +542,7 @@ export function RecordExpenseForm({
               token={token}
               existing={allCategories}
               onCancel={() => setAddingCategory(false)}
-              onCreated={(category) => {
+              onCreated={(created) => {
                 /*
                   No refetch while this form is open: reloading the categories
                   query rebuilt the option list under the select, and Radix
@@ -584,8 +551,8 @@ export function RecordExpenseForm({
                   the cached list, so the register's filter and the next form
                   have it without a read.
                 */
-                setAdded((current) => [...current, category]);
-                setCategoryId(category.id);
+                setAdded((current) => [...current, created]);
+                setCategoryId(created.id);
                 setAddingCategory(false);
               }}
             />
@@ -613,9 +580,13 @@ export function RecordExpenseForm({
           </Field>
         </FormSection>
 
-        {/* A request has no date and no back-dating: the money leaves on the day of the order. */}
+        {/*
+          A request has no date and no back-dating: the money leaves on the day of
+          the order. Two columns either way, so switching the mode does not resize
+          the invoice field under the officer's cursor.
+        */}
         <FormSection title={pays ? t('sections.paperwork') : t('sections.documents')}>
-          <div className={cn('grid gap-4', pays && 'sm:grid-cols-2')}>
+          <div className="grid gap-4 sm:grid-cols-2">
             {pays ? (
               <Field htmlFor="expense-date" label={t('paidOn')} error={errors.paidOn} required>
                 <DatePicker
@@ -665,110 +636,107 @@ export function RecordExpenseForm({
             <span>{t('hasPhysicalReceipt')}</span>
           </label>
         </FormSection>
+      </FormCard>
 
-        {formError ? (
-          <Alert variant="destructive" live="alert">
-            {formError}
-          </Alert>
-        ) : null}
-      </div>
-
-      {/*
-        The summary: as tall as the screen, and it stays there while the fields
-        scroll past.
-
-        Sized to the viewport rather than to the row, because those are different
-        heights and only one of them can be stuck. `items-start` on the grid keeps
-        the row from stretching it — a panel stretched to the full row has nowhere
-        to travel and `sticky` does nothing — and the explicit height then fills
-        the screen instead.
-
-        The two numbers come from the shell, not from taste. The page does not
-        scroll the window: `AdminShell` is `h-[100dvh] overflow-hidden` and the
-        content sits in an inner `overflow-y-auto` pane, which is what `sticky`
-        measures against. That pane starts below the `h-14` header, so the
-        viewport left for it is `100dvh - 3.5rem`, and `top-6` plus a matching
-        `6` of air at the foot is the page's own `py-6` — hence
-        `100dvh - 6.5rem`. Measured first: at 900px the pane is 844 and the panel
-        796, so it has somewhere to stick. An earlier version used `top-16` and
-        `100dvh - 5.5rem`, which wanted 876px of an 844px pane and therefore
-        scrolled away instead of sticking. `100dvh`, not `100vh`, so a phone's
-        collapsing address bar does not make it taller than the screen.
-
-        The actions sit at its foot through `mt-auto`, which on a viewport-tall
-        panel means the submit button is on screen the whole way down the form.
-        The body scrolls inside the panel when the figures and a warning outgrow it.
-
-        Below `lg` none of this applies: the panel falls under the fields, at its
-        natural height, directly above the button it qualifies.
-      */}
-      <aside className="lg:sticky lg:top-6 lg:h-[calc(100dvh-6.5rem)]">
-        <Card className={cn('flex h-full flex-col', short && 'border-destructive/30')}>
-          <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
-            <h2 className="text-sm font-semibold">{pays ? t('summaryTitle') : t('summaryRequestTitle')}</h2>
-            {account ? (
-              <SummaryList>
-                <SummaryRow label={t('summaryAccount')}>{account.name}</SummaryRow>
-                <SummaryRow label={t('balanceNow')}>
-                  <TreasuryAmount amount={account.balance} currency={account.currency} locale={locale} />
-                </SummaryRow>
-                <SummaryRow label={t('summaryAmount')}>
-                  <TreasuryAmount amount={spending} currency={account.currency} locale={locale} />
-                </SummaryRow>
-                {pays ? (
-                  <SummaryRow label={t('balanceAfter')} className={cn(short && 'text-destructive')}>
-                    <TreasuryAmount amount={remaining} currency={account.currency} locale={locale} />
-                  </SummaryRow>
-                ) : null}
-              </SummaryList>
-            ) : (
-              <p className="text-sm text-muted-foreground">{t('summaryEmpty')}</p>
-            )}
-
-            {mode === 'REQUEST' ? <p className="text-xs text-muted-foreground">{t('requestNote')}</p> : null}
-            {mode === 'URGENT' ? <p className="text-xs text-muted-foreground">{t('urgentNote')}</p> : null}
-
-            {short ? (
-              <Alert variant="destructive" live="status" title={t('shortTitle')}>
-                {t('shortBody')}
+      <SummaryPanel
+        title={pays ? t('summaryTitle') : t('summaryRequestTitle')}
+        className={cn(short && 'border-destructive/30')}
+        footer={
+          <>
+            {formError ? (
+              <Alert variant="destructive" live="alert">
+                {formError}
               </Alert>
             ) : null}
-
-            {/*
-              Above the ceiling — as typed, or as the server judged it — the way
-              on is the request: one press switches to it and keeps what was typed.
-              Not while a lost press may have paid it: then the way on is the
-              same press again, which the server answers from its key. Gone once
-              the act is recorded: a replay spends the key, and the page moves on.
-            */}
-            {done ? null : overCeiling && retrying && !refusedOverCeiling ? (
-              <Alert variant="warning" live="status" title={t('ceiling.overTitle')}>
-                {t('ceiling.inDoubtBody', { ceiling: ceilingText })}
-              </Alert>
-            ) : (overCeiling || refusedOverCeiling) && mode === 'URGENT' ? (
-              <Alert variant="warning" live="status" title={t('ceiling.overTitle')}>
-                <div className="space-y-2">
-                  <p>{overCeiling ? t('ceiling.overBody', { ceiling: ceilingText }) : t('ceiling.refusedBody')}</p>
-                  <Button type="button" size="sm" variant="outline" disabled={done} onClick={() => choose('REQUEST')}>
-                    <Send className="size-4" aria-hidden />
-                    {t('ceiling.sendAsRequest')}
-                  </Button>
-                </div>
-              </Alert>
-            ) : null}
-
-            {/* `mt-auto` pushes the actions to the foot of a panel taller than its content. */}
-            <div className="mt-auto flex flex-col gap-2 pt-2">
+            <div className="flex flex-col gap-2">
               <Button type="submit" disabled={busy || done}>
+                {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
                 {busy ? (mode === 'REQUEST' ? t('sending') : t('saving')) : submitLabel}
               </Button>
               <Button asChild type="button" variant="outline" disabled={busy}>
                 <Link href={backHref}>{t('cancel')}</Link>
               </Button>
             </div>
-          </CardContent>
-        </Card>
-      </aside>
+          </>
+        }
+      >
+        {account ? (
+          <>
+            {/* The voucher or the request as it will be recorded, to check against the invoice in hand (UX-4). */}
+            <SummaryList>
+              <SummaryRow label={t('summaryAccount')}>{account.name}</SummaryRow>
+              <SummaryRow label={t('category')} className={cn(!category && 'font-normal text-muted-foreground')}>
+                {category?.name ?? '—'}
+              </SummaryRow>
+              <SummaryRow label={t('payee')} className={cn(!payee.trim() && 'font-normal text-muted-foreground')}>
+                {payee.trim() || '—'}
+              </SummaryRow>
+              {pays ? (
+                <SummaryRow label={t('paidOn')}>
+                  <span className="tabular-nums">{formatDate(`${paidOn}T12:00:00.000Z`)}</span>
+                </SummaryRow>
+              ) : null}
+            </SummaryList>
+
+            {/*
+              What it does to the wallet: now, less the amount, equals after — the
+              last line is the answer, red the moment it goes below zero. A request
+              moves no money, so it shows the balance and the amount, and no after.
+            */}
+            <SummaryList className="border-t">
+              <SummaryRow label={t('balanceNow')}>
+                <TreasuryAmount amount={account.balance} currency={account.currency} locale={locale} />
+              </SummaryRow>
+              <SummaryRow label={t('summaryAmount')}>
+                <TreasuryAmount
+                  amount={pays && spending > 0 ? -spending : spending}
+                  currency={account.currency}
+                  locale={locale}
+                />
+              </SummaryRow>
+              {pays ? (
+                <SummaryRow label={t('balanceAfter')} className={cn('text-base', short && 'text-destructive')}>
+                  <TreasuryAmount amount={remaining} currency={account.currency} locale={locale} />
+                </SummaryRow>
+              ) : null}
+            </SummaryList>
+          </>
+        ) : (
+          <p className="py-2 text-sm text-muted-foreground">{t('summaryEmpty')}</p>
+        )}
+
+        {mode === 'REQUEST' ? <p className="text-xs text-muted-foreground">{t('requestNote')}</p> : null}
+        {mode === 'URGENT' ? <p className="text-xs text-muted-foreground">{t('urgentNote')}</p> : null}
+
+        {short ? (
+          <Alert variant="destructive" live="status" title={t('shortTitle')}>
+            {t('shortBody')}
+          </Alert>
+        ) : null}
+
+        {/*
+          Above the ceiling — as typed, or as the server judged it — the way
+          on is the request: one press switches to it and keeps what was typed.
+          Not while a lost press may have paid it: then the way on is the
+          same press again, which the server answers from its key. Gone once
+          the act is recorded: a replay spends the key, and the page moves on.
+        */}
+        {done ? null : overCeiling && retrying && !refusedOverCeiling ? (
+          <Alert variant="warning" live="status" title={t('ceiling.overTitle')}>
+            {t('ceiling.inDoubtBody', { ceiling: ceilingText })}
+          </Alert>
+        ) : (overCeiling || refusedOverCeiling) && mode === 'URGENT' ? (
+          <Alert variant="warning" live="status" title={t('ceiling.overTitle')}>
+            <div className="space-y-2">
+              <p>{overCeiling ? t('ceiling.overBody', { ceiling: ceilingText }) : t('ceiling.refusedBody')}</p>
+              <Button type="button" size="sm" variant="outline" disabled={done} onClick={() => choose('REQUEST')}>
+                <Send className="size-4" aria-hidden />
+                {t('ceiling.sendAsRequest')}
+              </Button>
+            </div>
+          </Alert>
+        ) : null}
+      </SummaryPanel>
     </form>
   );
 }

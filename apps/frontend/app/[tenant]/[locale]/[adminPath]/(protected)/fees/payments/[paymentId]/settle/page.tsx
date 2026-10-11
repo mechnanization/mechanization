@@ -41,7 +41,7 @@ import { tafqeet } from '@/lib/tafqeet';
 import { PaymentReceipt, type RecordedMovement } from '@/components/admin/payment-receipt';
 import { heldKey, keyIsSpent, spendKey } from '@/lib/request-id';
 import { Alert } from '@/components/ui/alert';
-import { BackLink } from '@/components/ui/back-link';
+import { HeaderBackLink } from '@/components/admin/header-back-link';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ChoiceCard, Field } from '@/components/ui/field';
@@ -381,7 +381,7 @@ export default function SettlePaymentPage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <BackLink fallbackHref={`${base}/fees`} label={t('back')} />
+      <HeaderBackLink fallbackHref={`${base}/fees`} label={t('back')} />
 
       <PageHeader
         icon={Banknote}

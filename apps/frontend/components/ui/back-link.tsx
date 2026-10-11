@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useCallback } from 'react';
+import { forwardRef, useCallback, type ComponentPropsWithoutRef } from 'react';
 import { ArrowLeft } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
@@ -35,23 +35,30 @@ import { cn } from '@/lib/utils';
  * its own login page that is rare, and landing on the referring page is a mild
  * surprise rather than lost work — which is the trade being made against
  * sending every officer back to a list they were not looking at.
+ *
+ * A page does not render this above its heading any more: it declares its way
+ * back with `HeaderBackLink` and the admin header draws this. The ref and the
+ * rest props are for that header, whose tooltip trigger attaches both.
  */
-export function BackLink({
-  fallbackHref,
-  label,
-  className,
-}: {
-  /** Where to go when there is no history to go back to. A real destination. */
-  fallbackHref: string;
-  label: string;
-  className?: string;
-}) {
+export const BackLink = forwardRef<
+  HTMLAnchorElement,
+  Omit<ComponentPropsWithoutRef<typeof Link>, 'href' | 'children'> & {
+    /** Where to go when there is no history to go back to. A real destination. */
+    fallbackHref: string;
+    label: string;
+    /** On the label's `span`. `sr-only` hides it from sight only, so the link keeps its name. */
+    labelClassName?: string;
+  }
+>(function BackLink({ fallbackHref, label, className, labelClassName, onClick, ...rest }, ref) {
   const router = useRouter();
 
   return (
     <Link
+      {...rest}
+      ref={ref}
       href={fallbackHref}
       onClick={(event) => {
+        onClick?.(event);
         /*
           Modified clicks belong to the browser. Ctrl/⌘/shift open this in a new
           tab or window, and a fresh tab has no history of its own — hijacking
@@ -77,10 +84,10 @@ export function BackLink({
       )}
     >
       <ArrowLeft className="size-3.5 sm:size-4 rtl:rotate-180" aria-hidden />
-      <span>{label}</span>
+      <span className={labelClassName}>{label}</span>
     </Link>
   );
-}
+});
 
 /**
  * The same decision as `BackLink`, for the places where the control is a

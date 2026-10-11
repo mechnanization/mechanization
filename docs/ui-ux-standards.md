@@ -1,6 +1,6 @@
 # UI/UX standards: binding for every change to `apps/frontend`
 
-Last verified against the code: `feat/fees-bulk-settlement` (cut from `develop@b034640`; the consolidated receipt as a PRIM-28 document page; uncommitted), 2026-10-10.
+Last verified against the code: `fix/ui` (at `9df68e4`; the treasury recording forms' shared frame, `ChoiceCard`'s disabled look; the way back in the header, `HeaderBackLink`; the tables not drawn by `DataTable`, §17.1; uncommitted), 2026-10-10.
 
 This file binds every AI agent and every person who builds or reviews an
 interface in this repository. [CLAUDE.md](../CLAUDE.md) (non-negotiable 9) and
@@ -107,7 +107,7 @@ to, the primitive gets a prop instead.
 | ID | Need | Use | Never |
 |---|---|---|---|
 | PRIM-1 | Page heading | `PageHeader` (icon, title, actions). **No subtitle** — removed from every page on 2026-10-08 and from the component. Something the reader needs goes in the title (a cash screen's title names the bill and the payer) or in the page body, never in a line under the heading | A bespoke `<header>` with its own tile and sizes; a description line under the title |
-| PRIM-2 | Back navigation | `BackLink` with a real `fallbackHref` | A fixed link to the index |
+| PRIM-2 | Back navigation | `HeaderBackLink` with a real `fallbackHref`: the page declares it, and `AdminHeader` draws it as a `BackLink` at the start of the sticky bar (the arrow below `xl`, with the label as tooltip; the label written out from `xl`). An inline `BackLink` only inside a page's own toolbar, beside other controls (`building-editor`, `building-unit-matrix-view`) | A fixed link to the index; a `BackLink` above the `PageHeader` |
 | PRIM-3 | A list or register | `DataTable`. Server paging: `manualPagination manualFiltering sortable={false}`. Shape phone cards with `meta.mobile` | A hand-rolled `<table>`, pager, search or empty row |
 | PRIM-4 | Pagination outside a table | `Pager` (`components/ui/pager.tsx`): strings as props, a `<nav aria-label>` landmark, the position read as one phrase, scroll-to-top through `scrollTarget`, like DataTable's footer | A page-local pager or `‹ ›` text buttons |
 | PRIM-5 | Loading, empty or failed panel | `LoadingState`, `EmptyState`, `ErrorState` from `ui/states` | `<p>جارٍ التحميل…</p>`, a dashed empty `div`, a red `<p>` |
@@ -130,7 +130,7 @@ to, the primitive gets a prop instead.
 | PRIM-24 | A filter control above a table | `FilterSelect`, `FilterInput` (`components/ui/filter-controls.tsx`) | A hand-styled select or search box |
 | PRIM-25 | Typing a money amount | `CurrencyInput`. The unit gets a segment of its own beside the digits, never laid over them: an `dir="ltr"` field on an RTL page reserves its padding on one side while `end-0` pins the unit to the other, and «ل.ل» lands on the «0». `inputClassName` styles the digits, for the cash counter alone | A local `formatLbp(value: string)` that shadows `lib/currency`; an input with the unit absolutely positioned over it |
 | PRIM-26 | A menu of actions | `DropdownMenu` and its parts | A hand-rolled menu panel |
-| PRIM-27 | A yes/no field; a choice drawn as a card | `Checkbox`; `ChoiceCard` (`components/ui/field.tsx`) | A native checkbox or radio (CTL-3, CTL-4) |
+| PRIM-27 | A yes/no field; a choice drawn as a card | `Checkbox`; `ChoiceCard` (`components/ui/field.tsx`). A disabled radio, as in a locked `fieldset`, dims the card | A native checkbox or radio (CTL-3, CTL-4) |
 | PRIM-28 | A page that is a document to print (the statement, the daily register, the consolidated receipt `fees/settlements/[settlementId]`) | `data-print-root` on the one region that is the document (`app/globals.css`): only it reaches the paper, black on white whatever the theme, over as many A4 sheets as it needs. Print-only parts inside it (a sheet heading, signature lines) are `hidden print:block`; controls inside it are `print:hidden`. One per page; the receipt keeps `#receipt-print-area`, released from its dialog the same way (fixed and one screen tall, it printed its top strip on every sheet), and prints on one A5 landscape sheet, zoomed to fit by `fitReceiptToSheet` (`--receipt-print-zoom`, with a width of the sheet divided by it) | A page printed as it is (it printed blank: the receipt rule hides everything else); a second print stylesheet; colour as the only signal on paper (COL-3) |
 
 **PRIM-21. A new primitive** goes in `components/ui/` with a doc comment that
@@ -319,7 +319,8 @@ Font families, the loaded weights and the scale as defined: [DESIGN.md](../DESIG
 Spacing, radius and shadow values as defined: [DESIGN.md](../DESIGN.md) "Layout", "Elevation & Depth", "Shapes".
 
 - **LAY-1. Page root:** `w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8`, then
-  `PageHeader` (or `BackLink` then the header on a detail page).
+  `PageHeader`. A detail page's way back goes in the header bar, through
+  `HeaderBackLink` (PRIM-2), not above the heading.
 - **LAY-2. Spacing rhythm:** `gap-1.5`/`gap-2` inside a control group, `gap-3`
   between related items, `gap-4` between cards, `space-y-6` between page
   sections. Put more space above a heading than below it.
@@ -675,6 +676,22 @@ Code-pattern debt outside the UI rules lives in
   `inspector/profile/[staffId]/payouts/page.tsx`, `inspector-earnings-roster.tsx`
   and `inspector-profile-detail.tsx`; `StatusTile` (`settings/settings-ui.tsx`);
   `StatCard` (`(citizen)/my-file`). `StatStrip` has 8 uses in 7 files.
+- **Tables not drawn by `DataTable`, 13 in 12 files** (PRIM-3). `DataTable`
+  has 18 users. Registers, which PRIM-3 covers: `finance/collector-custody-panel`
+  (`finance/collectors`), `audit-daily` (`audit`; its detail rows are what
+  `renderSubRow` does), the payouts page (`inspector/profile/[staffId]/payouts`),
+  `settings/users-section` (its own search, skeleton and red error `<p>`), and
+  the bills on a citizen's file (`citizens/[citizenId]/page.tsx`: a `<ul>` on a
+  CSS subgrid, with its own header row and paging). Not registers, built from
+  `ui/table`: `bulk-settle/bulk-bills-table` (in a dialog, a remove button per
+  row), `bulk-settle/bulk-payment-receipt` (the printed receipt's items),
+  `settings/numbering-section` (an input in every cell),
+  `settings/security-section` (the account page's login history, drawn from
+  hard-coded `SAMPLE_ROWS`, BAN-13) and `settings/backup-section` (2, not
+  rendered). Not registers, a raw `<table>`: `charts.tsx` (each chart's
+  «عرض البيانات كجدول») and `merge-citizens-dialog.tsx` (the conflicting
+  fields). **Undecided:** whether PRIM-3 names these non-register uses of
+  `ui/table` as allowed, or `DataTable` grows what they need.
 - **Hand-rolled pagers, 3** (PRIM-4): `AuditTrailPage` (`audit/page.tsx`),
   `CorrectionBillsPage` (`fees/corrections/page.tsx`), `AuditDaily`
   (`components/admin/audit-daily.tsx`). `Pager` has 1 user.
@@ -822,9 +839,10 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
   `possible-duplicates.tsx` and `unit-correction-delete-dialog.tsx` (`text-[11px]`).
 - **Other `-[Npx]` values, 159 in 20 files** (LAY-8), 122 of them in
   `property-illustrations.tsx`, an SVG drawing that LAY-8 allows. `-[Nrem]`: 32.
-- **`shadow-xs`/`shadow-2xs`, 34 in 12 files** (LAY-4, CODE-8), including the
-  primitives `field.tsx` (1) and `segmented-control.tsx` (2);
-  `building-editor.tsx` has 11, `bill-type-select.tsx` 5.
+- **`shadow-xs`/`shadow-2xs`, 33 in 11 files** (LAY-4, CODE-8), including the
+  primitive `segmented-control.tsx` (2); `building-editor.tsx` has 11,
+  `bill-type-select.tsx` 5 (recounted 2026-10-10, when `ChoiceCard` in
+  `field.tsx` dropped its `shadow-2xs`).
 - **`rounded-xl`/`2xl`/`3xl`, 139 uses** (LAY-3 applies to new cards).
   `DialogContent`, Button `xl`, `DataTable` and `Skeleton` use `rounded-xl`.
 - **Physical direction utilities, about 53 in 13 files** (RTL-1): `rtl:ml-*
@@ -840,9 +858,10 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
 
 ### 17.5 Motion
 
-- **`transition-all`, 25 in 11 files** (MOT-4): `fullscreen-map.tsx` 9,
-  `bill-type-select.tsx` 6, the primitives `segmented-control.tsx` (2),
-  `field.tsx` and `data-table.tsx`, plus `zone-legend.tsx`,
+- **`transition-all`, 24 in 10 files** (MOT-4; recounted 2026-10-10, when
+  `ChoiceCard` moved to `transition-colors`): `fullscreen-map.tsx` 9,
+  `bill-type-select.tsx` 6, the primitives `segmented-control.tsx` (2) and
+  `data-table.tsx`, plus `zone-legend.tsx`,
   `settings/settings-ui.tsx`, `settings/profile-section.tsx`,
   `settings/cadastre-section.tsx`, `settings/backup-section.tsx` and
   `buildings/page.tsx`.

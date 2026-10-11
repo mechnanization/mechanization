@@ -1,6 +1,6 @@
 # apps/frontend: agent guide
 
-Last verified against the code: `feat/fees-bulk-settlement` (cut from `develop@b034640`; bulk settlement, the consolidated receipt, `renderReceiptPdf` options; uncommitted), 2026-10-10.
+Last verified against the code: `fix/ui` (at `9df68e4`; the recording forms' shared frame, `treasury-form-parts.tsx`; the way back in the header, `HeaderBackLink`; uncommitted), 2026-10-10.
 
 Next.js 15 app router, React 18, next-intl 4, TanStack Query 5, Tailwind 3.4 with
 tailwind-merge 3, Radix and lucide-react. One app serves the staff dashboard and the
@@ -35,6 +35,11 @@ app/[tenant]/[locale]/layout.tsx        TenantLayout (server, force-dynamic) + e
       path shows the wallet currency's ceiling and refuses above it with «أرسلها طلباً», except
       for the retry of a press whose answer was lost)
     finance/income (الإيرادات) · finance/income/new (تسجيل إيراد جديد)
+    (the two recording forms share one frame, components/admin/finance/treasury-form-parts.tsx:
+      from `xl` the page is the screen's height (`xl:flex xl:h-full xl:flex-col` on its root) and
+      the form two panes — the fields card (`FormCard`, which holds the locking fieldset) scrolls,
+      and `SummaryPanel` beside it, which reads the act back and holds the buttons and the last
+      refusal, does not move; `WalletSelect` lists each wallet with its balance)
     finance/income/categories (بنود الإيرادات — every reader sees the list, the manager edits it)
     finance/collectors (الجباة والتحصيل — عهدة الجباة and «استلام الصندوق», moved off the treasury page)
     finance/collectors/[collectorId] (ما حصّله الجابي)
@@ -83,7 +88,8 @@ API client, session, hooks, formatters and offline queue; `public/sw.js` is the 
   `--brand-primary` through `safeHslTriple`, then `NextIntlClientProvider` > `ThemeProvider`
   > `AccentProvider`.
 - `ProtectedAdminLayout`: `QueryProvider` > `TooltipProvider` > `ToastProvider` >
-  `AdminShell` (registers the service worker) > `StaffRouteGuard`. `(citizen)/layout.tsx`
+  `AdminShell` (registers the service worker; holds the page's `HeaderBackLink` for
+  `AdminHeader` to draw) > `StaffRouteGuard`. `(citizen)/layout.tsx`
   mounts none of the three: `useToast` throws there, `useStaffQuery` and `ActionTooltip` fail.
 
 ## Dependency direction
@@ -340,8 +346,9 @@ Model: `app/[tenant]/[locale]/[adminPath]/(protected)/citizens/review/page.tsx` 
    toasts, units and error texts (TXT-2).
 5. **Read**: `useStaffSession`, then `useStaffQuery`; list state from `useUrlPagination`,
    `useTabSearch`, `useUrlState`.
-6. **Layout**: root `w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8`, `PageHeader` (`BackLink`
-   first on a detail page; a title and no subtitle — the prop no longer exists, PRIM-1), `Card` > `CardContent className="p-0"` > borderless `DataTable`
+6. **Layout**: root `w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8`, `PageHeader` (a title and
+   no subtitle — the prop no longer exists, PRIM-1; a page with a way back declares it with
+   `HeaderBackLink`, which the header draws, PRIM-2), `Card` > `CardContent className="p-0"` > borderless `DataTable`
    (`manualPagination manualFiltering sortable={false}`, `loading`, `error`, `onRetry`,
    labels from `useTableLabels`) (LAY-1, BAN-4, PRIM-3).
 7. **Panels and cells**: `LoadingState`, `EmptyState`, `ErrorState`; `CellTag`, `Money`,

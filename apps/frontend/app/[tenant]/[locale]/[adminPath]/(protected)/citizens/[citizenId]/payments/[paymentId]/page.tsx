@@ -29,7 +29,7 @@ import { formatDate } from '@/lib/dates';
 import { formatForeign, formatLbp, formatTypedAmount, parseAmount } from '@/lib/currency';
 import { heldKey, keyIsSpent, spendKey } from '@/lib/request-id';
 import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
-import { BackLink } from '@/components/ui/back-link';
+import { HeaderBackLink } from '@/components/admin/header-back-link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { CurrencyInput } from '@/components/ui/currency-input';
@@ -310,7 +310,7 @@ export default function SettleCashPage({
   if (profile.error && !citizen) {
     return (
       <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-        <BackLink fallbackHref={citizenHref} label={en ? 'Back' : 'رجوع'} />
+        <HeaderBackLink fallbackHref={citizenHref} label={en ? 'Back' : 'رجوع'} />
         <ErrorState
           description={profile.error}
           onRetry={() => void profile.refetch()}
@@ -333,7 +333,7 @@ export default function SettleCashPage({
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <BackLink fallbackHref={citizenHref} label={en ? 'Back' : 'رجوع'} />
+      <HeaderBackLink fallbackHref={citizenHref} label={en ? 'Back' : 'رجوع'} />
 
       {profile.error ? <RefreshFailedAlert message={profile.error} onRetry={() => void profile.refetch()} /> : null}
 

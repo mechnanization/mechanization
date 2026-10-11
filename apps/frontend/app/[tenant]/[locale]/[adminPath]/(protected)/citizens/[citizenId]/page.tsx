@@ -54,7 +54,7 @@ import { flagFieldLabel } from '@/lib/field-flags';
 import { findLocatedProperty, mapHref } from '@/lib/map-link';
 import { ActivityTrail } from '@/components/admin/activity-trail';
 import { AUDIT_ENTITY } from '@/lib/audit-labels';
-import { BackLink } from '@/components/ui/back-link';
+import { HeaderBackLink } from '@/components/admin/header-back-link';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { CollapsibleSection } from '@/components/ui/collapsible-section';
@@ -803,11 +803,7 @@ export default function CitizenProfilePage({
   */
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <BackLink
-        fallbackHref={`${base}/citizens`}
-        label={locale === 'en' ? 'Back' : 'رجوع'}
-        className="text-sm"
-      />
+      <HeaderBackLink fallbackHref={`${base}/citizens`} label={locale === 'en' ? 'Back' : 'رجوع'} />
 
       {/* ── Identity bar ────────────────────────────────────────────── */}
       <header className="space-y-4">

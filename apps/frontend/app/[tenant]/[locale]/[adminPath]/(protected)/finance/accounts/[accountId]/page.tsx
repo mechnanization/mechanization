@@ -14,7 +14,7 @@ import {
   STATEMENT_LIMIT,
 } from '@/components/admin/finance/account-statement-view';
 import { TreasuryAmount } from '@/components/admin/finance/treasury-amount';
-import { BackLink } from '@/components/ui/back-link';
+import { HeaderBackLink } from '@/components/admin/header-back-link';
 import { PageHeader } from '@/components/ui/page-header';
 import { Skeleton } from '@/components/ui/skeleton';
 
@@ -89,7 +89,7 @@ export default function TreasuryAccountStatementPage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <BackLink fallbackHref={`${base}/finance`} label={t('back')} />
+      <HeaderBackLink fallbackHref={`${base}/finance`} label={t('back')} />
 
       <PageHeader
         icon={Landmark}

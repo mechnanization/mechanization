@@ -7,7 +7,7 @@ import { getMunicipalitySettings, getPaymentSettlement, getTenantConfig } from '
 import { RECEIPT_SEND_ROLES, hasRole } from '@/lib/staff-roles';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
-import { BackLink } from '@/components/ui/back-link';
+import { HeaderBackLink } from '@/components/admin/header-back-link';
 import { PageHeader } from '@/components/ui/page-header';
 import { ErrorState, LoadingState } from '@/components/ui/states';
 import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
@@ -77,7 +77,7 @@ export default function SettlementReceiptPage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <BackLink fallbackHref={`${base}/fees`} label={t('back')} />
+      <HeaderBackLink fallbackHref={`${base}/fees`} label={t('back')} />
       <PageHeader icon={ReceiptText} title={receipt ? t('title', { number: receipt.number }) : t('titleLoading')} />
 
       {receiptQuery.error && receipt ? (
