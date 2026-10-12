@@ -1607,7 +1607,10 @@ function FeesPanel({
   } | null>(null);
 
   const labels = getLabels(locale);
-  const outstanding = payments.filter((payment) => payment.paymentStatus !== 'PAID');
+  // A cancelled bill (CANCELLED) owes nothing.
+  const outstanding = payments.filter(
+    (payment) => payment.paymentStatus !== 'PAID' && payment.paymentStatus !== 'CANCELLED',
+  );
   const [{ feesPage: page }, setFeesUrl] = useUrlState(FEES_URL);
   const setPage = useCallback((next: number) => setFeesUrl({ feesPage: next }), [setFeesUrl]);
   const listTop = useRef<HTMLUListElement>(null);

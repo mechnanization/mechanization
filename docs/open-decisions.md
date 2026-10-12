@@ -857,9 +857,10 @@ What the code does now ([finance.md](finance.md) §3.7):
   refuse it on the server: its screens hide the button, but the API takes the money, and the
   Whish callback then finds the bill PAID and records nothing for the transfer that arrived
   (`FeesService.settleFromWhishCallback` returns `{ applied: false }` on a PAID bill).
-  **Undecided:** may cash be taken at the counter for a bill whose citizen has declared a
-  transfer that is still being reviewed? If not, the single settle needs the same refusal;
-  if so, the bulk refusal should go and the transfer that arrives later needs a refund path.
+  **Decided (the owner, 2026-10-12; [finance.md](finance.md) §13.1c, D11):** no. The single
+  settle and a reversal are refused too (`PAYMENT_CLAIM_UNDER_REVIEW`) until a clerk confirms or
+  rejects the claim, and a Whish success for a bill settled another way meanwhile is set aside,
+  MISMATCHED, for a clerk rather than dropped.
 - A settlement row keeps the citizen who paid. A merge of two citizen files moves the bills
   to the file kept, but `payment_settlements` is append-only, so the consolidated receipt
   still names the file merged away, and a retry of that press after the merge is refused as

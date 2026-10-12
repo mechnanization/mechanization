@@ -122,6 +122,13 @@ export const FEE_ISSUE_ROLES = [
 export const FEE_ADMIN_ROLES = ['SUPER_ADMIN', 'ACCOUNTANT'] as const satisfies readonly StaffRole[];
 
 /**
+ * «إلغاء الفاتورة» (finance audit B3): withdrawing a bill nothing was paid on.
+ * The manager's alone, like reversing a receipt — a debt struck off the register
+ * is a decision, not counter work.
+ */
+export const BILL_CANCEL_ROLES = ['SUPER_ADMIN'] as const satisfies readonly StaffRole[];
+
+/**
  * «تسديد الفواتير المحددة»: several of one citizen's bills in one press
  * (docs/finance.md §3.7). The finance roles only, per the phase-4 brief —
  * narrower than `FEE_ISSUE_ROLES`, so a collector still settles the same bills

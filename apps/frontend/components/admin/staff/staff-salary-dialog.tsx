@@ -4,7 +4,12 @@ import { useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useQueryClient } from '@tanstack/react-query';
-import { getLabels, recordStaffSalarySchema, TREASURY_ADMIN_ROLES } from '@mechanization/shared-schemas';
+import {
+  currentSalaryPeriod,
+  getLabels,
+  recordStaffSalarySchema,
+  TREASURY_ADMIN_ROLES,
+} from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
   getTreasuryOverview,
@@ -15,6 +20,7 @@ import {
   type TreasuryAccountView,
 } from '@/lib/api-client';
 import { currencyUnit, formatTypedAmount, parseAmount } from '@/lib/currency';
+import { formatMonth } from '@/lib/dates';
 import {
   heldInDoubt,
   heldKey,
@@ -220,6 +226,23 @@ function SalaryForm({
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
   const [invoiceNumber, setInvoiceNumber] = useState('');
+  /**
+   * The month this salary is for (0091): one per person per month, so the server
+   * refuses a second (`SALARY_PERIOD_ALREADY_PAID`). This month by default; the
+   * eleven before it for a month paid late. Never a month not yet begun.
+   */
+  const [salaryPeriod, setSalaryPeriod] = useState(() => currentSalaryPeriod());
+  const periodOptions = useMemo(() => {
+    const [year, month] = currentSalaryPeriod().split('-').map(Number);
+    return Array.from({ length: 12 }, (_, back) => {
+      const index = year * 12 + (month - 1) - back;
+      const value = `${Math.floor(index / 12)}-${String((index % 12) + 1).padStart(2, '0')}`;
+      return {
+        value,
+        label: formatMonth(`${value}-15T12:00:00.000Z`, { month: 'long', year: 'numeric', timeZone: 'UTC' }, locale),
+      };
+    });
+  }, [locale]);
 
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
@@ -284,6 +307,7 @@ function SalaryForm({
       accountId,
       amount: typed,
       description,
+      salaryPeriod,
       invoiceNumber: invoiceNumber.trim() || undefined,
       clientRequestId: heldKey(tenant, scope),
     });
@@ -309,7 +333,9 @@ function SalaryForm({
       setErrors(next);
       setFormError(null);
       // Put the officer on the first thing to fix (FRM-2).
-      const first = ['accountId', 'amount', 'description', 'invoiceNumber'].find((field) => next[field]);
+      const first = ['accountId', 'amount', 'salaryPeriod', 'description', 'invoiceNumber'].find(
+        (field) => next[field],
+      );
       document.getElementById(`salary-${first ?? 'amount'}`)?.focus();
       return;
     }
@@ -438,6 +464,27 @@ function SalaryForm({
           </Alert>
         )
       ) : null}
+
+      <Field htmlFor="salary-salaryPeriod" label={t('salaryMonth')} error={errors.salaryPeriod} required>
+        <Select
+          value={salaryPeriod}
+          onValueChange={(next) => {
+            setSalaryPeriod(next);
+            setErrors(({ salaryPeriod: _cleared, ...rest }) => rest);
+          }}
+        >
+          <SelectTrigger id="salary-salaryPeriod">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {periodOptions.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </Field>
 
       <Field htmlFor="salary-description" label={t('periodDescription')} error={errors.description} required>
         <Input

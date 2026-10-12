@@ -40,6 +40,7 @@ export type KeyScope =
   | `commission:${string}`
   | `custody:${string}`
   | 'expense:pay'
+  | 'fee-notice:new'
   | 'expense:request'
   | 'income:new'
   | `salary:${string}`
@@ -111,7 +112,9 @@ export function heldInDoubt(tenant: string, scope: KeyScope): boolean {
  * - `PAYMENT_IDEMPOTENCY_KEY_REUSED`: recorded, against another invoice;
  * - `BULK_SETTLE_REQUEST_REUSED`: a settlement of several bills recorded,
  *   with other details — from the dialog, the same bills by another method
- *   (its «BRC-» number in `params.number`).
+ *   (its «BRC-» number in `params.number`);
+ * - `FEE_NOTICE_REQUEST_REUSED`: a notice issued, with other details (the
+ *   wizard was edited after an answer was lost).
  */
 const ACT_RECORDED = new Set<string>([
   'TREASURY_REQUEST_KEY_REUSED',
@@ -121,6 +124,7 @@ const ACT_RECORDED = new Set<string>([
   'TRANSACTION_ALREADY_REVERSED',
   'PAYMENT_IDEMPOTENCY_KEY_REUSED',
   'BULK_SETTLE_REQUEST_REUSED',
+  'FEE_NOTICE_REQUEST_REUSED',
 ]);
 
 /**

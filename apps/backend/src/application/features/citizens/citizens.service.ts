@@ -545,7 +545,7 @@ export class CitizensService {
                      WHERE p."citizenId" = u.id), 0)::float8
             AS "paidTotal",
           COALESCE((SELECT sum(p.amount - p."paidAmount") FROM ${this.S}citizen_payments p
-                     WHERE p."citizenId" = u.id AND p."paymentStatus" <> 'PAID'), 0)::float8
+                     WHERE p."citizenId" = u.id AND p."paymentStatus" NOT IN ('PAID', 'CANCELLED')), 0)::float8
             AS "outstandingTotal",
           COALESCE((SELECT sum(p.amount - p."paidAmount") FROM ${this.S}citizen_payments p
                      WHERE p."citizenId" = u.id
@@ -579,7 +579,7 @@ export class CitizensService {
           count(*)::int AS total,
           COALESCE(sum(
             COALESCE((SELECT sum(p.amount - p."paidAmount") FROM ${this.S}citizen_payments p
-                       WHERE p."citizenId" = u.id AND p."paymentStatus" <> 'PAID'), 0)
+                       WHERE p."citizenId" = u.id AND p."paymentStatus" NOT IN ('PAID', 'CANCELLED')), 0)
           ), 0)::float8 AS "allOutstanding",
           COALESCE(sum(
             COALESCE((SELECT sum(p.amount - p."paidAmount") FROM ${this.S}citizen_payments p

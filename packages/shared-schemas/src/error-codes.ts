@@ -44,6 +44,8 @@ export const ERROR_CODES = [
   'PAYMENT_NOT_FOUND',
   'PAYMENT_ALREADY_PAID',
   'PAYMENT_ALREADY_UNDER_REVIEW',
+  // Staff side: a counter payment or a reversal on a bill whose citizen claim is still under review.
+  'PAYMENT_CLAIM_UNDER_REVIEW',
   'PAYMENT_STATE_CHANGED',
   'PAYMENT_NO_PENDING_REVIEW',
   'PAYMENT_NOTHING_OUTSTANDING',
@@ -65,6 +67,19 @@ export const ERROR_CODES = [
   'TRANSACTION_ALREADY_REVERSED',
   'TRANSACTION_IS_REVERSAL',
   'PAYMENT_IDEMPOTENCY_KEY_REUSED',
+  // A collector settles only into his own custody: method COLLECTOR, himself named (finance audit B1).
+  'COLLECTOR_CANNOT_SELECT_METHOD',
+  // A Whish or bank reference already on a receipt still standing (`params.receiptNumber`).
+  'PAYMENT_EXTERNAL_REF_REUSED',
+  // A counter rate further from the official one than the tolerance (`params.deviation`, `params.tolerance`).
+  'EXCHANGE_RATE_OVERRIDE_BEYOND_TOLERANCE',
+  // A bill cancelled by the manager takes no payment, claim or checkout.
+  'PAYMENT_BILL_CANCELLED',
+  // Cancelling a bill that has money on it, or one already cancelled.
+  'BILL_CANCEL_HAS_PAYMENTS',
+  'BILL_ALREADY_CANCELLED',
+  // A retry key already used to issue a different notice.
+  'FEE_NOTICE_REQUEST_REUSED',
   // Several of one citizen's bills settled in one press (docs/finance.md §3.7)
   'BULK_SETTLE_CITIZEN_MISMATCH',
   // A selected bill was settled since it was ticked (`params.invoice`: its INV- number, or its title).
@@ -266,6 +281,16 @@ export const ERROR_CODES = [
   'EXPENSE_URGENT_OVER_CEILING',
   // Someone other than the manager changing the urgent-payment ceiling in الإعدادات.
   'URGENT_EXPENSE_CEILING_FORBIDDEN',
+  // A second salary for one staff member and one month (`params.period`, `params.voucherNumber`).
+  'SALARY_PERIOD_ALREADY_PAID',
+  // A salary for a month after the municipality's current one: an advance is not a salary (`params.period`).
+  'SALARY_PERIOD_IN_FUTURE',
+  // An accountant's salary payout above the manager's salary ceiling (`params.ceiling`, `params.currency`).
+  'SALARY_OVER_CEILING',
+  // Someone other than the manager changing the official rate or the two currencies.
+  'FINANCE_SETTINGS_MANAGER_ONLY',
+  // The base or second currency changed once the treasury is live: every wallet and rate is read in them.
+  'CURRENCIES_LOCKED_AFTER_GO_LIVE',
   // A query-string value that does not parse (presentation/controllers/query-params.ts)
   'INVALID_QUERY_DATE',
   'INVALID_QUERY_VALUE',

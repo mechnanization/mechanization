@@ -226,6 +226,7 @@
     "PAYMENT_NOT_FOUND": "This payment could not be found.",
     "PAYMENT_ALREADY_PAID": "This payment has already been settled.",
     "PAYMENT_ALREADY_UNDER_REVIEW": "This payment is already under review.",
+    "PAYMENT_CLAIM_UNDER_REVIEW": "The citizen has a payment claim under review on this bill. Confirm or reject it first in Fees & billing (“Pending Review”), then try again.",
     "PAYMENT_STATE_CHANGED": "This payment changed since the screen was opened. Refresh the page.",
     "PAYMENT_NO_PENDING_REVIEW": "There is no pending payment to review on this record.",
     "PAYMENT_NOTHING_OUTSTANDING": "Nothing is outstanding on this charge.",
@@ -246,7 +247,14 @@
     "TRANSACTION_NOT_FOUND": "This transaction could not be found.",
     "TRANSACTION_ALREADY_REVERSED": "This transaction has already been reversed.",
     "TRANSACTION_IS_REVERSAL": "A reversal cannot itself be reversed.",
-    "PAYMENT_IDEMPOTENCY_KEY_REUSED": "This operation’s identifier was already used for another invoice. Reload the page.",
+    "PAYMENT_IDEMPOTENCY_KEY_REUSED": "This operation’s identifier was already used for another payment ({receiptNumber}). Reload the page and check the bill’s receipts.",
+    "COLLECTOR_CANNOT_SELECT_METHOD": "A collector records what he collects as his own collection: method “Collector”, with himself named. Nothing was recorded.",
+    "PAYMENT_EXTERNAL_REF_REUSED": "This reference is already on receipt {receiptNumber}. One transfer is not recorded twice. Nothing was recorded.",
+    "EXCHANGE_RATE_OVERRIDE_BEYOND_TOLERANCE": "The rate is {deviation, number}% away from the official rate, more than the {tolerance, number}% allowed. Beyond that, only the manager may take it.",
+    "PAYMENT_BILL_CANCELLED": "This bill has been cancelled and takes no payment.",
+    "BILL_CANCEL_HAS_PAYMENTS": "Money has been taken on this bill. Reverse its receipts first, then cancel it.",
+    "BILL_ALREADY_CANCELLED": "This bill has already been cancelled.",
+    "FEE_NOTICE_REQUEST_REUSED": "This operation’s identifier was already used to issue a different notice. Check the notices issued before anything else: issuing again issues a new, separate notice.",
     "BULK_SETTLE_CITIZEN_MISMATCH": "The selected bills do not all belong to one citizen. Only one person’s bills can be settled together.",
     "BULK_SETTLE_SOME_ALREADY_PAID": "Bill «{invoice}» was settled after it was selected. Deselect it and try again. Nothing was recorded.",
     "BULK_SETTLE_TENDER_SHORT": "The money received does not cover the selected bills: {shortBy, number} {currency} short. Nothing was recorded.",
@@ -439,6 +447,11 @@
     "INCOME_ALREADY_VOID": "This income was recorded as {voucherNumber}, and that voucher has since been cancelled.",
     "EXPENSE_URGENT_OVER_CEILING": "This is above the urgent-payment ceiling of {ceiling, number} {currency}. Send it as a request for the manager’s payment order.",
     "URGENT_EXPENSE_CEILING_FORBIDDEN": "Only the manager can change the urgent-payment ceiling.",
+    "SALARY_PERIOD_ALREADY_PAID": "The salary for {period} was already paid to this staff member, by voucher {voucherNumber}. Nothing was recorded.",
+    "SALARY_PERIOD_IN_FUTURE": "A salary cannot be paid for a month that has not begun ({period}).",
+    "SALARY_OVER_CEILING": "This is above the salary ceiling of {ceiling, number} {currency}. The manager pays it, or send it as a request for the payment order.",
+    "FINANCE_SETTINGS_MANAGER_ONLY": "Only the manager sets the official exchange rate and the two currencies.",
+    "CURRENCIES_LOCKED_AFTER_GO_LIVE": "The base and second currencies cannot change once the treasury is live.",
     "INVALID_QUERY_DATE": "That date is not valid.",
     "INVALID_QUERY_VALUE": "A value in the request is not valid.",
     "COUNT_DATE_IN_FUTURE": "A day that has not come yet cannot be counted. Pick today or an earlier day.",
@@ -720,8 +733,9 @@
       "amount": "Amount",
       "availableBalance": "Available balance",
       "balanceAfter": "Balance after payment",
-      "periodDescription": "Period / description",
-      "periodPlaceholder": "e.g. October 2026 salary",
+      "salaryMonth": "For the month of",
+      "periodDescription": "Description",
+      "periodPlaceholder": "e.g. October 2026 salary, or overtime pay",
       "receiptRef": "Payroll sheet or paper receipt no.",
       "receiptPlaceholder": "e.g. Payroll sheet 10/2026",
       "optional": "Optional",
@@ -749,7 +763,8 @@
         "description": "Say which month or work this payment is for",
         "invoiceNumber": "The number is too long",
         "form": "Could not pay the salary.",
-        "earlierVoided": "An earlier attempt paid this salary as voucher {number}, and that voucher has since been cancelled. Check the expense register: pressing again pays a new, separate salary."
+        "earlierVoided": "An earlier attempt paid this salary as voucher {number}, and that voucher has since been cancelled. Check the expense register: pressing again pays a new, separate salary.",
+        "salaryPeriod": "Choose the month this salary is for"
       },
       "urgentTitle": "Paid now as an urgent payment (art. 35)",
       "urgentBody": "The money leaves the account as soon as you confirm, and the voucher waits for the manager’s payment order to regularise it. Article 35 allows salaries to be paid before the order.",
@@ -874,6 +889,7 @@
       "title": "Issue a new fee",
       "loadError": "Could not load the fee data.",
       "issued": "The fee was issued and charged to {count, number} citizens.",
+      "alreadyIssued": "This notice had already been issued by this request; nobody was billed again ({count, number} bills).",
       "unassessable": "{count, number} records were not assessed because the census is incomplete: ",
       "exempted": "{count, number} units were not charged, under the bearer rule for this fee.",
       "held": "{count, number} units are held for review (a conflict in the unit status) — no occupancy fee was charged on them this period. Once settled they are charged from the next period; to recover this one, issue an individual fee. They are listed under «جودة البيانات».",
@@ -1071,6 +1087,9 @@
     "PAYMENT_BULK_SETTLED": "Several bills settled on one consolidated receipt",
     "PAYMENT_REJECTED": "Payment rejected",
     "PAYMENT_REVERSED": "Payment reversed",
+    "FEE_INDIVIDUAL_LEVIED": "One-off charge raised",
+    "FEE_BILL_CANCELLED": "Bill cancelled",
+    "WHISH_CHECKOUT_MISMATCHED": "Whish payment not banked (needs review)",
     "BILL_BASIS_REVIEWED": "Bill affected by a correction reviewed",
     "INSPECTOR_PAYOUT_RECORDED": "Inspector payout recorded",
     "LOGIN": "Login",
@@ -2627,7 +2646,21 @@
     "earlierReversed": "An earlier attempt from this page was recorded as receipt {number}, and that payment has since been reversed. Check the citizen’s file: pressing again records a new, separate payment.",
     "paidSoFar": "Paid so far:",
     "recorded": "Amount recorded:",
-    "receiptLine": "Receipt {number}"
+    "receiptLine": "Receipt {number}",
+    "selfCollector": "What you collect is recorded in your name: it stays in your custody until you hand it in to the safe.",
+    "cancelBill": {
+      "action": "Cancel bill",
+      "title": "Cancel this bill?",
+      "description": "The bill stays on the citizen’s file, cancelled, with your name, the date and the reason, and is no longer owed. A bill with money taken on it cannot be cancelled: reverse its receipts first.",
+      "reason": "Reason for cancelling",
+      "reasonPlaceholder": "e.g. the fee was issued twice for this property",
+      "confirm": "Cancel the bill",
+      "keep": "Keep it",
+      "busy": "Cancelling…",
+      "done": "The bill was cancelled.",
+      "cancelledTitle": "This bill has been cancelled",
+      "cancelledBody": "The manager cancelled it; nothing is owed on it."
+    }
   },
   "bulkSettle": {
     "select": {
@@ -2842,6 +2875,12 @@
       "loadFailedTitle": "Could not read your account",
       "loadFailed": "The account details did not load. Two-factor settings stay unavailable until they do.",
       "retry": "Retry"
+    },
+    "salaryCeiling": {
+      "heading": "Salary payout ceiling",
+      "hint": "The most an accountant may pay one staff member as a month’s salary before the payment order (art. 35). Above it the manager pays it, or it goes to him as a request. It does not apply to what the manager pays. Each staff member is paid one salary per month.",
+      "lbp": "Ceiling in Lebanese pounds",
+      "usd": "Ceiling in US dollars"
     }
   },
   "dailyClosing": {

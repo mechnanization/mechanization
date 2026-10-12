@@ -13,8 +13,10 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import {
+  BILL_CANCEL_ROLES,
   BULK_SETTLE_ROLES,
   bulkSettlePaymentsSchema,
+  cancelBillSchema,
   type BulkSettlePayments,
   FEE_ADMIN_ROLES,
   FEE_ISSUE_ROLES,
@@ -33,6 +35,7 @@ import {
   settlePaymentSchema,
   systemSettingsSchema,
   type BillBasisReview,
+  type CancelBill,
   type ChargeCitizen,
   type CreateFeeNotice,
   type DeclarePayment,
@@ -105,6 +108,8 @@ export class FeesController {
     const {
       urgentExpenseCeilingLbp: _lbp,
       urgentExpenseCeilingUsd: _usd,
+      salaryUrgentCeilingLbp: _salaryLbp,
+      salaryUrgentCeilingUsd: _salaryUsd,
       exchangeRateTolerancePercent: _tolerance,
       largeExchangeThreshold: _large,
       ...forCitizen
@@ -185,8 +190,9 @@ export class FeesController {
    */
   @Roles(...FEE_ADMIN_ROLES)
   @Post('recurring/run')
-  async runRecurring() {
-    const result = await this.fees.runRecurringBilling();
+  async runRecurring(@CurrentUser() user: SessionClaims) {
+    // The staff member who pressed it is the actor on the run's audit rows; the cron's run has none.
+    const result = await this.fees.runRecurringBilling(new Date(), { id: user.sub, role: user.role ?? '' });
     return { tenants: 1, ...result };
   }
 
@@ -336,6 +342,21 @@ export class FeesController {
   @Get('payments/:id/transactions')
   async transactions(@Param('id', new ParseUUIDPipe()) id: string) {
     return { items: await this.fees.listTransactions(id) };
+  }
+
+  /**
+   * «إلغاء الفاتورة» — the manager withdraws a bill nothing was paid on (finance
+   * audit B3). Refused when money is on it or a citizen's claim waits on it; the
+   * bill stays on the record, CANCELLED, with who, when and why.
+   */
+  @Roles(...BILL_CANCEL_ROLES)
+  @Post('payments/:id/cancel')
+  async cancelBill(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body(new ZodValidationPipe(cancelBillSchema)) body: CancelBill,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.fees.cancelBill(id, body.reason, { id: user.sub, role: user.role ?? '' });
   }
 
   /**

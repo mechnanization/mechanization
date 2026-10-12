@@ -2,6 +2,7 @@ import {
   citizenDisplayName,
   DEFAULT_EXCHANGE_TOLERANCE_PERCENT,
   DEFAULT_LARGE_EXCHANGE_THRESHOLD,
+  judgeExchange,
   NON_PERSON_RESIDENCE,
 } from '@mechanization/shared-schemas';
 import { Inject, Injectable, Logger } from '@nestjs/common';
@@ -39,13 +40,14 @@ import {
   type BillableUnit,
 } from '../../../domain/entities/billable-unit';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
+import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { allocateDocumentNumber, allocateDocumentNumbers } from '../../common/document-number';
 import { unitsUnderReview } from '../buildings/unit-status';
 import { uninhabitableUnitIds } from '../buildings/habitability';
 import { ownerBillingRules } from '../buildings/owner-billing';
-import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../../common/exceptions';
+import { ConflictError, DomainError, ForbiddenError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { exchangeRuleChangeAllowed } from '../treasury/transfers.plan';
 import { assertNotMergedAway } from '../citizens/merged-away';
 import { likePattern, searchTokens } from '../../common/search-terms';
@@ -610,6 +612,37 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const SETTINGS_CACHE_TTL_SECONDS = 300;
 
+/**
+ * The settings the treasury reads, whose every change the audit row carries with
+ * its value before and after (finance audit A1). The rest are named only.
+ */
+const FINANCE_SETTING_KEYS = [
+  'exchangeRate',
+  'baseCurrency',
+  'secondaryCurrency',
+  'urgentExpenseCeilingLbp',
+  'urgentExpenseCeilingUsd',
+  'salaryUrgentCeilingLbp',
+  'salaryUrgentCeilingUsd',
+  'exchangeRateTolerancePercent',
+  'largeExchangeThreshold',
+] as const;
+
+/**
+ * The ledger's refusals that mean a Whish success cannot be banked as it stands
+ * (finance audit B5): the bill was settled, part-paid or cancelled another way
+ * while the citizen paid online, or the provider's reference is already on a
+ * receipt. The money moved at the provider, so the checkout is set aside,
+ * MISMATCHED, for a clerk — never retried by the provider for ever.
+ */
+const WHISH_UNBANKABLE = new Set<string>([
+  'PAYMENT_ALREADY_PAID',
+  'PAYMENT_EXCEEDS_BALANCE',
+  'PAYMENT_BILL_CANCELLED',
+  'PAYMENT_EXTERNAL_REF_REUSED',
+  'PAYMENT_IDEMPOTENCY_KEY_REUSED',
+]);
+
 /** Days in a UTC month. `day 0` of the next month is the last day of this one. */
 function daysInUtcMonth(year: number, month: number): number {
   return new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
@@ -943,6 +976,9 @@ export class FeesService {
       // «سقف الدفع العاجل» (docs/finance.md §5.1, D6). Null: no ceiling.
       urgentExpenseCeilingLbp: row?.urgentExpenseCeilingLbp == null ? null : Number(row.urgentExpenseCeilingLbp),
       urgentExpenseCeilingUsd: row?.urgentExpenseCeilingUsd == null ? null : Number(row.urgentExpenseCeilingUsd),
+      // «سقف صرف الرواتب» (0091). Null: no ceiling. Stripped for a citizen, like the urgent ceiling.
+      salaryUrgentCeilingLbp: row?.salaryUrgentCeilingLbp == null ? null : Number(row.salaryUrgentCeilingLbp),
+      salaryUrgentCeilingUsd: row?.salaryUrgentCeilingUsd == null ? null : Number(row.salaryUrgentCeilingUsd),
       exchangeRateTolerancePercent: row ? Number(row.exchangeRateTolerancePercent) : DEFAULT_EXCHANGE_TOLERANCE_PERCENT,
       largeExchangeThreshold: row ? Number(row.largeExchangeThreshold) : DEFAULT_LARGE_EXCHANGE_THRESHOLD,
 
@@ -961,24 +997,57 @@ export class FeesService {
     // fields owned by the five it did not render.
     const blankToNull = (value: string | undefined) =>
       value === undefined ? undefined : value.trim() === '' ? null : value.trim();
+    const manager = (TREASURY_ADMIN_ROLES as readonly string[]).includes(actor.role);
 
     /*
-      The exchange rule decides which exchanges an auditor reviews, and the
-      accountant — who may save this section — books them. Moving it is the
-      manager's alone (docs/finance.md §6.3); the same values sent back are fine.
+      The row exists before the transaction opens, so the lock below always has
+      a row to hold: two first saves on a municipality that never saved would
+      otherwise both insert, and the loser's unique violation surface raw
+      (`TreasuryService.activate` does the same).
     */
-    if (input.exchangeRateTolerancePercent !== undefined || input.largeExchangeThreshold !== undefined) {
-      const rule = await withConnectionRetry(() =>
-        this.db.systemSettings.findFirst({
-          where: { singleton: true },
-          select: { exchangeRateTolerancePercent: true, largeExchangeThreshold: true },
-        }),
-      );
+    await this.db.$executeRaw`
+      INSERT INTO ${this.S}system_settings ("id", "singleton", "updatedAt")
+      VALUES (gen_random_uuid(), true, now())
+      ON CONFLICT ("singleton") DO NOTHING
+    `;
+
+    await runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.db as Prisma.TransactionClient;
+      /*
+        Locked, so two saves meet one after the other, the refusals below judge
+        the values a save is about to replace, and the audit row's «before» is
+        what was replaced. A payment reading the rate FOR SHARE waits for this
+        save and is judged by the new rate.
+      */
+      await tx.$queryRaw`SELECT "id" FROM ${this.S}system_settings WHERE "singleton" = true FOR UPDATE`;
+      const previous = await tx.systemSettings.findFirst({
+        where: { singleton: true },
+        select: {
+          treasuryGoLiveAt: true,
+          exchangeRate: true,
+          baseCurrency: true,
+          secondaryCurrency: true,
+          urgentExpenseCeilingLbp: true,
+          urgentExpenseCeilingUsd: true,
+          salaryUrgentCeilingLbp: true,
+          salaryUrgentCeilingUsd: true,
+          exchangeRateTolerancePercent: true,
+          largeExchangeThreshold: true,
+        },
+      });
+
+      /*
+        The exchange rule decides which exchanges an auditor reviews, and the
+        accountant — who may save this section — books them. Moving it is the
+        manager's alone (docs/finance.md §6.3); the same values sent back are fine.
+      */
       const allowed = exchangeRuleChangeAllowed({
         role: actor.role,
         current: {
-          tolerancePercent: rule ? Number(rule.exchangeRateTolerancePercent) : DEFAULT_EXCHANGE_TOLERANCE_PERCENT,
-          largeThreshold: rule ? Number(rule.largeExchangeThreshold) : DEFAULT_LARGE_EXCHANGE_THRESHOLD,
+          tolerancePercent: previous
+            ? Number(previous.exchangeRateTolerancePercent)
+            : DEFAULT_EXCHANGE_TOLERANCE_PERCENT,
+          largeThreshold: previous ? Number(previous.largeExchangeThreshold) : DEFAULT_LARGE_EXCHANGE_THRESHOLD,
         },
         requested: {
           tolerancePercent: input.exchangeRateTolerancePercent,
@@ -991,105 +1060,142 @@ export class FeesService {
           message: 'Only the manager changes the exchange tolerance and the large-exchange threshold.',
         });
       }
-    }
 
-    /*
-     * Stamped here, not by the client.
-     *
-     * The timestamp answers "how stale is this rate", and a browser's clock is
-     * not evidence of when the server accepted a value — nor should a client be
-     * able to claim a rate was refreshed today by sending a date. Only a rate
-     * that actually changes moves it: re-saving the finance section with the
-     * same number must not make a month-old rate look current.
-     */
-    const sendsCeiling =
-      input.urgentExpenseCeilingLbp !== undefined || input.urgentExpenseCeilingUsd !== undefined;
-    const previous =
-      input.exchangeRate === undefined && !sendsCeiling
-        ? null
-        : await withConnectionRetry(() =>
-            this.db.systemSettings.findFirst({
-              where: { singleton: true },
-              select: { exchangeRate: true, urgentExpenseCeilingLbp: true, urgentExpenseCeilingUsd: true },
-            }),
-          );
-    const rateChanged =
-      input.exchangeRate !== undefined &&
-      (previous?.exchangeRate == null
-        ? input.exchangeRate !== null
-        : Number(previous.exchangeRate) !== input.exchangeRate);
+      /*
+        The official rate and the two currencies are the manager's (finance audit
+        A1). Every collector's tender is taken at that rate and every wallet entry
+        stamped with it, so the accountant — who books the money — setting it
+        could move what the notes settle and the change the safe pays out, with
+        each payment then recorded as taken at the official rate. As for the
+        ceilings, the same values sent back are not a change and are not written,
+        so an accountant's save of the section never puts back what the manager
+        changed a moment earlier.
 
-    /*
-     * «سقف الدفع العاجل» is the manager's (docs/finance.md §5.1, decision D6).
-     *
-     * The route admits the accountant for the rest of the settings, and the
-     * ceiling is the limit on the accountant's own urgent payments, so he may
-     * not move it: a change from anyone outside TREASURY_ADMIN_ROLES is refused.
-     * A form that sends the value it read is not a change, and is not written
-     * either — so an accountant's save of the finance section can never put back
-     * a ceiling the manager changed a moment earlier.
-     */
-    const ceilingChanged = (sent: number | null | undefined, stored: Prisma.Decimal | null | undefined) =>
-      sent !== undefined && (stored == null ? sent !== null : sent === null || Number(stored) !== sent);
-    const setsCeiling = (TREASURY_ADMIN_ROLES as readonly string[]).includes(actor.role);
-    if (
-      !setsCeiling &&
-      (ceilingChanged(input.urgentExpenseCeilingLbp, previous?.urgentExpenseCeilingLbp) ||
-        ceilingChanged(input.urgentExpenseCeilingUsd, previous?.urgentExpenseCeilingUsd))
-    ) {
-      throw new ForbiddenError({
-        code: 'URGENT_EXPENSE_CEILING_FORBIDDEN',
-        message: 'Only the manager can change the urgent-payment ceiling.',
+        And once the treasury is live the two currencies are fixed for everyone:
+        every wallet holds one of them and the rate is read as ليرة per one unit
+        of the second, so swapping them would invert the meaning of every rate
+        already stamped.
+      */
+      const valueChanged = (sent: number | null | undefined, stored: Prisma.Decimal | null | undefined) =>
+        sent !== undefined && (stored == null ? sent !== null : sent === null || Number(stored) !== sent);
+      const rateChanged = valueChanged(input.exchangeRate, previous?.exchangeRate);
+      const baseChanged = input.baseCurrency !== undefined && input.baseCurrency !== (previous?.baseCurrency ?? 'LBP');
+      const secondaryChanged =
+        input.secondaryCurrency !== undefined && (input.secondaryCurrency ?? null) !== (previous?.secondaryCurrency ?? null);
+      if (!manager && (rateChanged || baseChanged || secondaryChanged)) {
+        throw new ForbiddenError({
+          code: 'FINANCE_SETTINGS_MANAGER_ONLY',
+          message: 'Only the manager changes the official exchange rate and the two currencies.',
+        });
+      }
+      if (previous?.treasuryGoLiveAt && (baseChanged || secondaryChanged)) {
+        throw new ConflictError({
+          code: 'CURRENCIES_LOCKED_AFTER_GO_LIVE',
+          message: 'The base and second currencies cannot change once the treasury is live.',
+        });
+      }
+
+      /*
+       * «سقف الدفع العاجل» and «سقف صرف الرواتب» are the manager's (docs/finance.md
+       * §5.1, decision D6; the salary ceiling, 2026-10-12). Each is a limit on
+       * the accountant's own payments, so he may not move them: a change from
+       * anyone outside TREASURY_ADMIN_ROLES is refused, and a form that sends the
+       * value it read is not a change, and is not written either.
+       */
+      if (
+        !manager &&
+        (valueChanged(input.urgentExpenseCeilingLbp, previous?.urgentExpenseCeilingLbp) ||
+          valueChanged(input.urgentExpenseCeilingUsd, previous?.urgentExpenseCeilingUsd) ||
+          valueChanged(input.salaryUrgentCeilingLbp, previous?.salaryUrgentCeilingLbp) ||
+          valueChanged(input.salaryUrgentCeilingUsd, previous?.salaryUrgentCeilingUsd))
+      ) {
+        throw new ForbiddenError({
+          code: 'URGENT_EXPENSE_CEILING_FORBIDDEN',
+          message: 'Only the manager can change the urgent-payment and salary ceilings.',
+        });
+      }
+
+      const data = {
+        whishMoneyNumber: blankToNull(input.whishMoneyNumber),
+        cashOfficeHours: blankToNull(input.cashOfficeHours),
+        cashOfficeAddress: blankToNull(input.cashOfficeAddress),
+        contactPhone: blankToNull(input.contactPhone),
+        whatsappNumber: blankToNull(input.whatsappNumber),
+
+        nameAr: blankToNull(input.nameAr),
+        nameEn: blankToNull(input.nameEn),
+        contactEmail: blankToNull(input.contactEmail),
+        website: blankToNull(input.website),
+        governorate: blankToNull(input.governorate),
+        district: blankToNull(input.district),
+        town: blankToNull(input.town),
+        councilDecisionRef: blankToNull(input.councilDecisionRef),
+        logoDataUri: blankToNull(input.logoDataUri),
+
+        defaultFeeFrequency: input.defaultFeeFrequency,
+        defaultDueDays: input.defaultDueDays,
+        priceDisplay: input.priceDisplay,
+        defaultRatePercent: input.defaultRatePercent,
+        // The manager's, checked above; written only by him.
+        baseCurrency: manager ? input.baseCurrency : undefined,
+        secondaryCurrency: manager ? input.secondaryCurrency : undefined,
+        exchangeRate: manager ? input.exchangeRate : undefined,
+        /*
+         * Stamped here, not by the client: the timestamp answers "how stale is
+         * this rate", and only a rate that actually changes moves it.
+         */
+        ...(manager && rateChanged ? { exchangeRateUpdatedAt: input.exchangeRate === null ? null : new Date() } : {}),
+        urgentExpenseCeilingLbp: manager ? input.urgentExpenseCeilingLbp : undefined,
+        urgentExpenseCeilingUsd: manager ? input.urgentExpenseCeilingUsd : undefined,
+        salaryUrgentCeilingLbp: manager ? input.salaryUrgentCeilingLbp : undefined,
+        salaryUrgentCeilingUsd: manager ? input.salaryUrgentCeilingUsd : undefined,
+        // The exchange rule, likewise: checked above, and written only by the manager.
+        exchangeRateTolerancePercent: manager ? input.exchangeRateTolerancePercent : undefined,
+        largeExchangeThreshold: manager ? input.largeExchangeThreshold : undefined,
+
+        numberingSequences: input.numberingSequences,
+        backupSchedule: input.backupSchedule,
+
+        updatedById: actor.id,
+      };
+
+      await tx.systemSettings.update({ where: { singleton: true }, data });
+
+      /*
+        Tier 1, in the save's own transaction (finance audit A1): which fields the
+        save sent, and for the treasury's — the rate, the currencies, the
+        ceilings and the exchange rule — the value before and after, so a rate
+        moved for an afternoon and moved back is on the record with both figures.
+        Before this the row was written after the commit, named the fields only,
+        and could be lost without the change being undone.
+      */
+      const sent = Object.entries(data)
+        .filter(([key, value]) => key !== 'updatedById' && value !== undefined)
+        .map(([key]) => key);
+      const stored = (value: unknown) => (value instanceof Prisma.Decimal ? value.toNumber() : (value ?? null));
+      const financeBefore: Record<string, unknown> = {};
+      const financeAfter: Record<string, unknown> = {};
+      for (const key of FINANCE_SETTING_KEYS) {
+        const next = data[key];
+        if (next === undefined) continue;
+        const before = stored(previous?.[key]);
+        if (before === (next ?? null)) continue;
+        financeBefore[key] = before;
+        financeAfter[key] = next ?? null;
+      }
+      await this.auditTrail.recordInTransaction({
+        actorId: actor.id,
+        actorType: 'STAFF',
+        actorRole: actor.role as never,
+        action: 'SETTINGS_UPDATED',
+        entityType: 'SystemSettings',
+        before: financeBefore,
+        after: { changed: sent, ...financeAfter },
       });
-    }
-
-    const data = {
-      whishMoneyNumber: blankToNull(input.whishMoneyNumber),
-      cashOfficeHours: blankToNull(input.cashOfficeHours),
-      cashOfficeAddress: blankToNull(input.cashOfficeAddress),
-      contactPhone: blankToNull(input.contactPhone),
-      whatsappNumber: blankToNull(input.whatsappNumber),
-
-      nameAr: blankToNull(input.nameAr),
-      nameEn: blankToNull(input.nameEn),
-      contactEmail: blankToNull(input.contactEmail),
-      website: blankToNull(input.website),
-      governorate: blankToNull(input.governorate),
-      district: blankToNull(input.district),
-      town: blankToNull(input.town),
-      councilDecisionRef: blankToNull(input.councilDecisionRef),
-      logoDataUri: blankToNull(input.logoDataUri),
-
-      defaultFeeFrequency: input.defaultFeeFrequency,
-      defaultDueDays: input.defaultDueDays,
-      priceDisplay: input.priceDisplay,
-      defaultRatePercent: input.defaultRatePercent,
-      baseCurrency: input.baseCurrency,
-      secondaryCurrency: input.secondaryCurrency,
-      exchangeRate: input.exchangeRate,
-      ...(rateChanged
-        ? { exchangeRateUpdatedAt: input.exchangeRate === null ? null : new Date() }
-        : {}),
-      urgentExpenseCeilingLbp: setsCeiling ? input.urgentExpenseCeilingLbp : undefined,
-      urgentExpenseCeilingUsd: setsCeiling ? input.urgentExpenseCeilingUsd : undefined,
-      // The exchange rule, likewise: checked above, and written only by the manager.
-      exchangeRateTolerancePercent: setsCeiling ? input.exchangeRateTolerancePercent : undefined,
-      largeExchangeThreshold: setsCeiling ? input.largeExchangeThreshold : undefined,
-
-      numberingSequences: input.numberingSequences,
-      backupSchedule: input.backupSchedule,
-
-      updatedById: actor.id,
-    };
-
-    await this.db.systemSettings.upsert({
-      where: { singleton: true },
-      create: { singleton: true, ...data },
-      update: data,
     });
 
     /*
-     * Dropped before the read below, not left to expire.
+     * Dropped after the commit, not left to expire.
      *
      * Both variants go: a clerk who saves and is then shown the value they
      * replaced would reasonably conclude the save failed and do it again. Five
@@ -1097,18 +1203,6 @@ export class FeesService {
      * path owns the invalidation rather than the TTL.
      */
     await this.cache.invalidatePrefix(`settings:${this.tenantContext.tenantSlug}:`);
-
-    this.events.emit('settings.changed', {
-      tenantSlug: this.tenantContext.tenantSlug,
-      actorId: actor.id,
-      actorRole: actor.role,
-      // Only what was actually sent. Listing every column on every save would
-      // make the audit trail claim a clerk edited the exchange rate whenever
-      // they corrected a phone number.
-      changed: Object.entries(data)
-        .filter(([key, value]) => key !== 'updatedById' && value !== undefined)
-        .map(([key]) => key),
-    });
 
     return this.getSettings(true);
   }
@@ -1157,6 +1251,21 @@ export class FeesService {
    * residents.
    */
   async issue(input: CreateFeeNotice, actor: { id: string; role: string }) {
+    /*
+      A notice is issued once per press of «إصدار» (finance audit B3). A retry
+      after a lost answer — or a double press past the wizard's lock — carries
+      the same key and is answered with the first notice; before this it created
+      a second notice and billed everyone it targets a second time, since a
+      bill's uniqueness is (citizen, notice, period). Asked here, before the
+      assessment, and again under the key's advisory lock inside the write.
+      The route's schema requires the key; a caller inside the server that
+      sends none (a script, a spec) issues as before, unguarded.
+    */
+    const earlier = input.clientRequestId
+      ? await this.replayNotice(this.db as Prisma.TransactionClient, input)
+      : null;
+    if (earlier) return earlier;
+
     const citizenIds = await this.resolveTargets(input);
 
     if (citizenIds.length === 0) {
@@ -1238,6 +1347,14 @@ export class FeesService {
     }
 
     const result = await this.db.$transaction(async (tx) => {
+      // Serialised before anything is written; the key names the schema, so two municipalities never wait on each other.
+      if (input.clientRequestId) {
+        const lockKey = `${this.tenantContext.schemaName}:fee-notice:${input.clientRequestId}`;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
+        const raced = await this.replayNotice(tx, input);
+        if (raced) return { noticeId: raced.noticeId, issued: raced.issued, replayed: true as const };
+      }
+
       const notice = await tx.feeNotice.create({
         data: {
           title: input.title,
@@ -1251,6 +1368,7 @@ export class FeesService {
           dueDate,
           instructions: input.instructions ?? null,
           issuedById: actor.id,
+          clientRequestId: input.clientRequestId ?? null,
         },
         select: { id: true },
       });
@@ -1277,6 +1395,8 @@ export class FeesService {
           // The first period is the one the chosen due date falls in; the
           // recurring job takes over from the next one.
           periodKey: periodKeyFor(input.frequency, dueDate),
+          // Who raised it (0091, finance audit B4).
+          issuedById: actor.id,
         })),
         // The unique (citizenId, feeNoticeId, periodKey) triple means a retried
         // request tops up missing rows instead of failing the whole batch.
@@ -1291,13 +1411,16 @@ export class FeesService {
         raisedAt,
       );
 
-      return { noticeId: notice.id, issued: created.count };
+      return { noticeId: notice.id, issued: created.count, replayed: false as const };
       /*
         `runInTenantTransaction`'s limits rather than Prisma's 5 s default: a
         town-wide notice writes and numbers tens of thousands of bills in here,
         and past five seconds Prisma closes the transaction under the insert.
       */
     }, { maxWait: 15_000, timeout: 60_000 });
+
+    // A press that raced the first one and lost: answered from it, and nothing more is written or emitted.
+    if (result.replayed) return this.replayedNoticeResult(result.noticeId, result.issued);
 
     this.logger.log(
       `Fee "${input.title}" issued to ${result.issued} citizen(s) in ${this.tenantContext.tenantSlug}`,
@@ -1375,13 +1498,76 @@ export class FeesService {
     }
 
     return {
-      ...result,
+      noticeId: result.noticeId,
+      issued: result.issued,
+      replayed: false,
       unassessable,
       exemptedUnits,
       heldUnits,
       uninhabitableUnits,
       feeExemptUnits,
       coOwnerPaidUnits,
+    };
+  }
+
+  /**
+   * The notice a retry key already issued, as `issue` answers it, or null.
+   *
+   * Bound to its act: the same title, figure, basis, bearer, recurrence, target
+   * and due date. A key that issued another notice can only mean a page reused
+   * an id, and answering with that notice would tell the clerk the wrong fee was
+   * raised (`FEE_NOTICE_REQUEST_REUSED`). The counts beside the bills are not
+   * replayed: they described the register as it stood at the first press.
+   */
+  private async replayNotice(tx: Prisma.TransactionClient, input: CreateFeeNotice) {
+    const notice = await tx.feeNotice.findUnique({
+      where: { clientRequestId: input.clientRequestId },
+      select: {
+        id: true,
+        title: true,
+        amount: true,
+        basis: true,
+        bearer: true,
+        frequency: true,
+        targetType: true,
+        targetCategory: true,
+        targetCitizenId: true,
+        dueDate: true,
+        _count: { select: { payments: true } },
+      },
+    });
+    if (!notice) return null;
+    const same =
+      notice.title === input.title &&
+      Number(notice.amount) === input.amount &&
+      notice.basis === input.basis &&
+      notice.bearer === input.bearer &&
+      notice.frequency === input.frequency &&
+      notice.targetType === input.targetType &&
+      (notice.targetCategory ?? null) === (input.targetCategory ?? null) &&
+      (notice.targetCitizenId ?? null)?.toLowerCase() === (input.targetCitizenId ?? null)?.toLowerCase() &&
+      notice.dueDate.getTime() === new Date(input.dueDate).getTime();
+    if (!same) {
+      throw new ConflictError({
+        code: 'FEE_NOTICE_REQUEST_REUSED',
+        message: 'This request id was already used to issue a different notice.',
+      });
+    }
+    return this.replayedNoticeResult(notice.id, notice._count.payments);
+  }
+
+  /** `issue`'s answer for a notice a retry key had already issued. */
+  private replayedNoticeResult(noticeId: string, issued: number) {
+    return {
+      noticeId,
+      issued,
+      replayed: true,
+      unassessable: [] as UnassessableCitizen[],
+      exemptedUnits: 0,
+      heldUnits: 0,
+      uninhabitableUnits: 0,
+      feeExemptUnits: 0,
+      coOwnerPaidUnits: 0,
     };
   }
 
@@ -1396,8 +1582,15 @@ export class FeesService {
    * same month writes nothing; there is no "have I already billed?" flag to
    * get out of step with reality. That also means a municipality that adds a
    * resident mid-month gets them billed on the next run rather than never.
+   *
+   * `actor` is the staff member who pressed «إصدار الفواتير» (`POST
+   * fees/recurring/run`); the scheduled run has none, and its audit rows are the
+   * system's (`actorId` NULL, `actorType` SYSTEM).
    */
-  async runRecurringBilling(now = new Date()): Promise<{
+  async runRecurringBilling(
+    now = new Date(),
+    actor?: { id: string; role: string },
+  ): Promise<{
     noticesConsidered: number;
     invoicesCreated: number;
     /** Notices whose own run threw. The rest still ran; see `billing_run_entries`. */
@@ -1549,6 +1742,8 @@ export class FeesService {
             assessment: (entry.assessment ?? undefined) as never,
             dueDate,
             periodKey,
+            // Who pressed «تشغيل الفوترة الدورية», or nobody for the scheduled run (0091).
+            issuedById: actor?.id ?? null,
           })),
           skipDuplicates: true,
         });
@@ -1574,6 +1769,8 @@ export class FeesService {
           uninhabitableUnitCount: uninhabitableUnits,
           feeExemptUnitCount: feeExemptUnits,
           coOwnerPaidUnitCount: coOwnerPaidUnits,
+          actorId: actor?.id ?? null,
+          actorRole: actor?.role ?? null,
         });
       }
 
@@ -2256,7 +2453,8 @@ export class FeesService {
       title: row.title,
       amount: Number(row.amount),
       paidAmount: Number(row.paidAmount),
-      remaining: Math.max(Number(row.amount) - Number(row.paidAmount), 0),
+      // A cancelled bill (0090) owes nothing.
+      remaining: row.paymentStatus === 'CANCELLED' ? 0 : Math.max(Number(row.amount) - Number(row.paidAmount), 0),
       currency: row.currency,
       dueDate: row.dueDate.toISOString(),
       // OVERDUE is derived on read rather than written by a nightly job: a
@@ -2355,6 +2553,13 @@ export class FeesService {
     // Kept ahead of the write: this is what separates "not yours / no such
     // invoice" from the two specific states a citizen can act on. The
     // predicate below only fires on the genuine race.
+    // A bill the manager cancelled (0090) owes nothing and takes no claim.
+    if (payment.paymentStatus === 'CANCELLED') {
+      throw new ConflictError({
+        code: 'PAYMENT_BILL_CANCELLED',
+        message: 'This bill has been cancelled; it takes no payment.',
+      });
+    }
     if (payment.paymentStatus === 'PAID') {
       throw new ConflictError({
         code: 'PAYMENT_ALREADY_PAID',
@@ -2426,7 +2631,8 @@ export class FeesService {
       title: row.title,
       amount: Number(row.amount),
       paidAmount: Number(row.paidAmount),
-      remaining: Math.max(Number(row.amount) - Number(row.paidAmount), 0),
+      // A cancelled bill (0090) owes nothing.
+      remaining: row.paymentStatus === 'CANCELLED' ? 0 : Math.max(Number(row.amount) - Number(row.paidAmount), 0),
       currency: row.currency,
       dueDate: row.dueDate.toISOString(),
       paymentMethod: row.paymentMethod,
@@ -2583,6 +2789,8 @@ export class FeesService {
       externalRef: payment.whishTransactionRef,
       recordedById: input.actor.id,
       note: input.note,
+      // This is the decision the claim waits for; every other ledger write is refused while it waits.
+      resolvesClaim: true,
       audit: (movement) => ({
         actorId: input.actor.id,
         actorType: 'STAFF',
@@ -2660,19 +2868,57 @@ export class FeesService {
       by, and nothing here is skipped as a duplicate. The transaction is what
       ties the number to the bill: drawn and then not used, it would be printed
       on nothing.
+
+      Tier 1, in the same transaction (finance audit B4): a one-off charge has no
+      notice behind it, so until this the bill was the only trace of it and named
+      nobody. The row names who raised it (`issuedById`, 0091) and the audit row
+      says what and how much; the title is the clerk's own words, not the
+      citizen's data.
     */
-    const created = await this.db.$transaction(async (tx) => {
+    const created = await runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.db as Prisma.TransactionClient;
       const invoiceNumber = await allocateDocumentNumber(tx, this.S, 'INVOICE');
-      return tx.citizenPayment.create({
+      const bill = await tx.citizenPayment.create({
         data: {
           citizenId: citizen.id,
           title: input.title,
           amount: input.amount,
           dueDate: new Date(input.dueDate),
           invoiceNumber,
+          issuedById: input.actor.id,
         },
-        select: { id: true },
+        select: { id: true, currency: true },
       });
+      await this.auditTrail.recordInTransaction({
+        actorId: input.actor.id,
+        actorType: 'STAFF',
+        actorRole: input.actor.role as never,
+        action: 'FEE_INDIVIDUAL_LEVIED',
+        entityType: 'Payment',
+        entityId: bill.id,
+        after: {
+          citizenId: citizen.id,
+          invoiceNumber,
+          title: input.title,
+          amount: input.amount,
+          currency: bill.currency,
+          dueDate: input.dueDate,
+        },
+      });
+      return { id: bill.id };
+    });
+
+    // For the caches that count bills; the audit row is already written.
+    this.events.emit('fee.issued', {
+      tenantSlug: this.tenantContext.tenantSlug,
+      noticeId: null,
+      title: input.title,
+      amount: input.amount,
+      targetType: 'INDIVIDUAL_CITIZEN',
+      issuedCount: 1,
+      actorId: input.actor.id,
+      actorRole: input.actor.role,
+      alreadyAudited: true,
     });
 
     return { id: created.id };
@@ -2768,7 +3014,8 @@ export class FeesService {
       title: row.title,
       amount: Number(row.amount),
       paidAmount: Number(row.paidAmount),
-      remaining: Math.max(Number(row.amount) - Number(row.paidAmount), 0),
+      // A cancelled bill (0090) owes nothing.
+      remaining: row.paymentStatus === 'CANCELLED' ? 0 : Math.max(Number(row.amount) - Number(row.paidAmount), 0),
       currency: row.currency,
       dueDate: row.dueDate.toISOString(),
       /** When the bill was raised — the tie-break of «oldest first» in a bulk settlement. */
@@ -2778,6 +3025,9 @@ export class FeesService {
       paymentMethod: row.paymentMethod,
       whishTransactionRef: row.whishTransactionRef,
       paidAt: row.paidAt?.toISOString() ?? null,
+      /** «إلغاء الفاتورة» (0091): when, and why. Null on every bill still standing. */
+      cancelledAt: row.cancelledAt?.toISOString() ?? null,
+      cancellationReason: row.cancellationReason,
       /**
        * Exposed because `paidAt` is not the whole answer.
        *
@@ -3216,6 +3466,13 @@ export class FeesService {
         message: `Payment ${input.paymentId} was not found`,
       });
     }
+    // A bill the manager cancelled (0090) owes nothing and takes no claim.
+    if (payment.paymentStatus === 'CANCELLED') {
+      throw new ConflictError({
+        code: 'PAYMENT_BILL_CANCELLED',
+        message: 'This bill has been cancelled; it takes no payment.',
+      });
+    }
     if (payment.paymentStatus === 'PAID') {
       throw new ConflictError({
         code: 'CHARGE_ALREADY_PAID',
@@ -3330,12 +3587,15 @@ export class FeesService {
   /**
    * Applies a verified Whish callback.
    *
-   * Idempotent by construction: it matches on `whishTransactionRef` and skips
-   * anything already PAID, because a provider that does not get a 200 will
-   * retry, and a retry must not take the money twice or stamp a second
-   * `paidAt`. A failed callback returns the invoice to UNPAID and clears the
-   * reference, so the citizen can start again rather than being stuck behind a
-   * PENDING_REVIEW that will never resolve.
+   * Idempotent by construction: a callback resolves to one checkout, a closed
+   * checkout takes nothing more, and the ledger write is keyed by the checkout's
+   * id and closes it in the same transaction — a provider that does not get a
+   * 200 retries, and a retry must not take the money twice. A success is banked
+   * only for the amount the checkout quoted and only while the bill can take it;
+   * otherwise the checkout is set aside, MISMATCHED, for a clerk
+   * (`markWhishCheckoutMismatched`). A failed callback returns the invoice to
+   * UNPAID and clears the reference, so the citizen can start again rather than
+   * being stuck behind a PENDING_REVIEW that will never resolve.
    */
   async settleFromWhishCallback(callback: WhishCallback): Promise<{ applied: boolean }> {
     /*
@@ -3362,6 +3622,7 @@ export class FeesService {
         id: true,
         state: true,
         paymentId: true,
+        amount: true,
         payment: {
           select: { id: true, amount: true, paidAmount: true, paymentStatus: true, citizenId: true },
         },
@@ -3383,13 +3644,10 @@ export class FeesService {
     }
 
     const payment = checkout.payment;
-    /**
-     * Idempotent by construction: a provider that does not get a 200 retries,
-     * and a retry must not bank the money twice or stamp a second `paidAt`.
-     */
-    if (payment.paymentStatus === 'PAID') return { applied: false };
 
     if (!callback.succeeded) {
+      // Nothing moved, and a bill settled or cancelled another way has nothing to undo.
+      if (payment.paymentStatus === 'PAID' || payment.paymentStatus === 'CANCELLED') return { applied: false };
       /*
         No money moved, so nothing is written to the ledger. The invoice goes
         back to UNPAID so the citizen can start again rather than being stuck
@@ -3441,82 +3699,77 @@ export class FeesService {
       return { applied: count > 0 };
     }
 
-    /**
-     * The provider is the authority on what it took, but it must not exceed
-     * what was still owed — a mismatch is a bug or a tampered payload, and
-     * banking more than the balance would silently create a credit this system
-     * has no way to represent.
-     *
-     * Capped against the *outstanding* balance rather than the invoice face
-     * value, because `startWhishCheckout` quotes the outstanding figure to the
-     * provider: on a part-settled invoice those two differ, and the face value
-     * is the wrong ceiling.
-     *
-     * The ledger recomputes both under a row lock and refuses an overpayment
-     * itself; this only keeps a legitimate callback from being rejected for
-     * arithmetic the provider did correctly.
-     */
-    const outstanding = Number(payment.amount) - Number(payment.paidAmount);
-    const received = Math.min(callback.amount, outstanding);
-
-    if (received <= 0) return { applied: false };
-
-    const settled = await this.ledger.record({
-      paymentId: payment.id,
-      amount: received,
-      method: 'WHISH_MONEY',
-      externalRef: callback.transactionRef,
-      note: 'دفع إلكتروني عبر Whish',
-      /*
-        A system row: no staff member acted. `actorId` is a uuid column and
-        `actorRole` the staff-role enum, so the provider is named in `after`.
-        Before this, the row was written with `actorId: 'WHISH'`, which the
-        database refused — and the refusal was caught and logged, so no Whish
-        settlement had ever been audited.
-      */
-      audit: (movement) => ({
-        actorId: null,
-        actorType: 'SYSTEM',
-        action: 'PAYMENT_CONFIRMED',
-        entityType: 'Payment',
-        entityId: payment.id,
-        after: {
-          citizenId: payment.citizenId,
-          confirmed: true,
-          provider: 'WHISH',
-          receiptNumber: movement.receiptNumber,
-          amount: movement.received,
-          externalRef: callback.transactionRef ?? null,
-        },
-      }),
-    });
+    /*
+      The provider is the authority on what it took, and what it took must be
+      what was quoted (finance audit B5). `startWhishCheckout` quoted the bill's
+      outstanding balance and wrote it on the checkout; a success for any other
+      amount — a part payment, a tampered payload, or a bill paid another way
+      since — is not banked by arithmetic here but set aside, MISMATCHED, for a
+      clerk. Before this the smaller of the two was credited, so an online
+      overpayment vanished with nothing owed back to the citizen on record.
+    */
+    const quoted = Number(checkout.amount);
+    if (Math.abs(callback.amount - quoted) >= 0.005) {
+      await this.markWhishCheckoutMismatched(checkout, callback, 'AMOUNT_DIFFERS');
+      return { applied: false };
+    }
 
     /*
-      Closed after the ledger, not with it.
-
-      `ledger.record` holds the invoice under `SELECT … FOR UPDATE` and is the
-      authority on whether the money was banked; joining it to this write would
-      mean a failure to close the checkout could roll back a settlement that
-      genuinely happened. The wrong way round: money banked with a checkout
-      still OPEN is a retry that finds `state !== 'OPEN'` and declines, which is
-      correct. Money not banked because bookkeeping failed is not.
+      The money and the checkout's close in one transaction, keyed by the
+      checkout: `clientRequestId` is its id, so a provider retry — or two
+      deliveries of one callback at the same moment — meets the first receipt in
+      the ledger's own replay and never banks it twice. Before this the checkout
+      was closed after the ledger committed, in a step whose failure was only
+      logged, and a retry in that window credited the bill again.
     */
-    await this.db.whishCheckout
-      .updateMany({
-        where: { id: checkout.id, state: 'OPEN' },
-        data: {
-          state: 'SUCCEEDED',
-          settledAt: new Date(),
-          providerTxnRef: callback.transactionRef ?? null,
-        },
-      })
-      .catch((error: unknown) => {
-        this.logger.error(
-          `settled ${callback.externalRef} but could not close its checkout row: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
+    let settled: Awaited<ReturnType<PaymentLedgerService['recordIn']>>;
+    try {
+      settled = await runInTenantTransaction(this.tenantContext, async () => {
+        const tx = this.db as Prisma.TransactionClient;
+        const movement = await this.ledger.recordIn(tx, {
+          paymentId: payment.id,
+          amount: quoted,
+          method: 'WHISH_MONEY',
+          externalRef: callback.transactionRef,
+          note: 'دفع إلكتروني عبر Whish',
+          // The provider's verified word settles the claim `startWhishCheckout` put the bill under.
+          resolvesClaim: true,
+          clientRequestId: checkout.id,
+          /*
+            A system row: no staff member acted. `actorId` is a uuid column and
+            `actorRole` the staff-role enum, so the provider is named in `after`.
+          */
+          audit: (row) => ({
+            actorId: null,
+            actorType: 'SYSTEM',
+            action: 'PAYMENT_CONFIRMED',
+            entityType: 'Payment',
+            entityId: payment.id,
+            after: {
+              citizenId: payment.citizenId,
+              confirmed: true,
+              provider: 'WHISH',
+              receiptNumber: row.receiptNumber,
+              amount: row.received,
+              externalRef: callback.transactionRef ?? null,
+            },
+          }),
+        });
+        await tx.whishCheckout.updateMany({
+          where: { id: checkout.id, state: 'OPEN' },
+          data: { state: 'SUCCEEDED', settledAt: new Date(), providerTxnRef: callback.transactionRef ?? null },
+        });
+        return movement;
       });
+    } catch (error) {
+      // The bill cannot take this money as it stands: a person decides, from the provider's record.
+      if (error instanceof DomainError && WHISH_UNBANKABLE.has(error.code)) {
+        await this.markWhishCheckoutMismatched(checkout, callback, error.code);
+        return { applied: false };
+      }
+      throw error;
+    }
+    if (settled.replayed) return { applied: false };
 
     this.events.emit('payment.reviewed', {
       tenantSlug: this.tenantContext.tenantSlug,
@@ -3529,6 +3782,51 @@ export class FeesService {
     });
 
     return { applied: true };
+  }
+
+  /**
+   * A success callback this system cannot bank as it stands (finance audit B5):
+   * an amount other than the one quoted, or a bill that was settled, cancelled
+   * or part-paid another way while the citizen paid online, or a provider
+   * reference already on a receipt. The money moved at the provider, so the
+   * checkout is neither FAILED nor SUCCEEDED: it becomes MISMATCHED (0090),
+   * nothing is credited, and a Tier 1 row says what came in and why it was not
+   * banked. The bill is left as it is — under review when the checkout put it
+   * there — so a clerk decides from the provider's record: confirm it, refuse
+   * it, or refund the citizen.
+   *
+   * Never throws: the controller answers 200 to every callback so the provider
+   * stops retrying, and a refusal here would be retried for ever.
+   */
+  private async markWhishCheckoutMismatched(
+    checkout: { id: string; amount: Prisma.Decimal; paymentId: string },
+    callback: WhishCallback,
+    reason: string,
+  ): Promise<void> {
+    await runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.db as Prisma.TransactionClient;
+      const { count } = await tx.whishCheckout.updateMany({
+        where: { id: checkout.id, state: 'OPEN' },
+        data: { state: 'MISMATCHED', settledAt: new Date(), providerTxnRef: callback.transactionRef ?? null },
+      });
+      if (count === 0) return;
+      await this.auditTrail.recordInTransaction({
+        actorId: null,
+        actorType: 'SYSTEM',
+        action: 'WHISH_CHECKOUT_MISMATCHED',
+        entityType: 'Payment',
+        entityId: checkout.paymentId,
+        after: {
+          provider: 'WHISH',
+          checkoutId: checkout.id,
+          externalRef: callback.transactionRef ?? null,
+          quoted: Number(checkout.amount),
+          reported: callback.amount,
+          reason,
+        },
+      });
+    });
+    this.logger.warn(`Whish callback for ${callback.externalRef} not banked: ${reason}`);
   }
 
   /**
@@ -3545,6 +3843,10 @@ export class FeesService {
    * carries. Anything *more* is refused rather than quietly recorded as
    * credit — this system has no notion of an overpayment to carry forward, so
    * accepting one would silently lose the difference.
+   *
+   * A bill carrying a citizen's claim (PENDING_REVIEW) is refused by the ledger
+   * (`PAYMENT_CLAIM_UNDER_REVIEW`) until a clerk confirms or rejects the claim:
+   * a counter entry would otherwise overwrite it without deciding it.
    */
   async settleInPerson(input: {
     paymentId: string;
@@ -3567,138 +3869,164 @@ export class FeesService {
     clientRequestId?: string;
     actor: { id: string; role: string };
   }) {
-    /**
-     * The outstanding balance, read only to default `amount`.
-     *
-     * Deliberately *not* the figure the settlement is computed from: this read
-     * is outside any lock, so it can be stale by the time the write happens.
-     * `PaymentLedgerService.record` re-reads under `SELECT … FOR UPDATE` and
-     * validates against that, which is what makes two clerks settling the same
-     * invoice in the same second safe. This value only answers "how much did
-     * they mean, when they typed nothing?".
-     */
-    const invoice = await this.db.citizenPayment.findUnique({
-      where: { id: input.paymentId },
-      select: { amount: true, paidAmount: true, citizenId: true, currency: true },
-    });
-    if (!invoice) throw new NotFoundError({
-      code: 'PAYMENT_NOT_FOUND',
-      message: `Payment ${input.paymentId} was not found`,
-    });
-
     /*
-      «20$ و200,000 ليرة» — the credit is what the notes are worth in the
-      invoice's currency, computed here and never taken from the client, which
-      could send a total that disagrees with its own parts. Rounded to the
-      whole unit for a ليرة invoice, where there are no fractions to pay in,
-      and to the cent otherwise. The ledger then refuses it, under its lock,
-      if it is more than is owed.
+      A collector settles only into his own custody (finance audit B1). Anyone
+      in FEE_ISSUE_ROLES could choose the method, so a collector at a door could
+      book the cash in his pocket as `CASH`, credited to the safe, or as a Whish
+      transfer — leaving nothing on his custody to hand in, and the safe short at
+      the count. His method is COLLECTOR and the collector named is himself.
     */
-    const settings = input.tendered ? await this.getSettings(false) : null;
-    const tender = input.tendered
-      ? toTender(
-          input.tendered,
-          invoice.currency,
-          officialRateFor(settings, invoice.currency, input.tendered.foreignCurrency),
-        )
-      : null;
-    const received = tender
-      ? creditOf(tender, invoice.currency)
-      : (input.amount ?? Number(invoice.amount) - Number(invoice.paidAmount));
-
-    const adjustment = assertCashAdjustment({
-      tender,
-      paidOn: input.paidOn,
-      reason: input.adjustmentReason,
-      role: input.actor.role,
-    });
-
-    /*
-      After go-live, a payment dated before it credits no wallet (docs/finance.md
-      §3.3). That is right for cash already inside the counted opening balance,
-      and a silent hole for anything else: cash taken today and dated last week
-      would settle the bill and print a receipt, and reach no wallet and no
-      custody. A receipt is dated the day the money is taken (decree 5595/1982
-      art. 16 and 98), so after go-live only a finance role — someone answerable
-      for the opening count — may date one before it, and the audit row says no
-      wallet was credited.
-    */
-    const goLiveAt = input.paidOn
-      ? ((await this.db.systemSettings.findFirst({ select: { treasuryGoLiveAt: true } }))?.treasuryGoLiveAt ?? null)
-      : null;
-    const occurredAt = occurredAtFor(input.paidOn, goLiveAt);
-    // The ledger's own test, so the refusal and the credit can never disagree.
-    const beforeGoLive = goLiveAt !== null && occurredAt !== undefined && !creditsWallets(goLiveAt, occurredAt);
-    if (beforeGoLive && !canOverrideCashRules(input.actor.role)) {
-      throw new ValidationError({
-        code: 'PAYMENT_DATE_BEFORE_GO_LIVE',
-        message:
-          'A payment dated before the treasury went live reaches no wallet. Record it as today, or ask an accountant.',
-        params: { date: municipalToday(goLiveAt!) },
-      });
+    if (input.actor.role === 'COLLECTOR') {
+      const self = input.actor.id.toLowerCase();
+      if (input.method !== 'COLLECTOR' || input.collectedById?.toLowerCase() !== self) {
+        throw new ForbiddenError({
+          code: 'COLLECTOR_CANNOT_SELECT_METHOD',
+          message: 'A collector records what he takes as his own collection: method COLLECTOR, himself named.',
+        });
+      }
     }
-
     if (input.method === 'COLLECTOR' && input.collectedById) {
       await this.assertLiveCollector(input.collectedById);
     }
+    const externalRef = input.method === 'WHISH_MONEY' ? (input.whishTransactionRef ?? null) : null;
 
-    const settled = await this.ledger.record({
-      paymentId: input.paymentId,
-      amount: received,
-      method: input.method,
-      /**
-       * Carried on the transaction rather than only on the invoice. A row can
-       * reach here twice — a citizen declares a transfer, it is refused, and
-       * the money arrives at the counter in notes — and the ledger keeps both
-       * movements with their own method and reference instead of the second
-       * overwriting the first.
-       */
-      externalRef: input.method === 'WHISH_MONEY' ? (input.whishTransactionRef ?? null) : null,
-      collectedById: input.method === 'COLLECTOR' ? (input.collectedById ?? null) : null,
-      recordedById: input.actor.id,
-      note: input.note,
-      tendered: tender,
-      occurredAt,
-      adjustmentReason: adjustment.required ? (input.adjustmentReason ?? null) : null,
-      clientRequestId: input.clientRequestId ?? null,
+    /*
+      One transaction (finance audit B8): the bill's row lock, then the settings
+      FOR SHARE — the official rate, the two currencies, the counter's tolerance
+      and the go-live stamp — then the ledger's own work, which re-locks the bill
+      for free. The rate the notes are judged by is the one committed at that
+      moment, never a cached copy up to five minutes old, and it is the rate the
+      wallet entries are stamped with. A Whish reference is serialised first,
+      before any row lock (`lockExternalRef`).
+    */
+    const { settled, invoice, tender } = await runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.db as Prisma.TransactionClient;
+      await this.ledger.lockExternalRef(tx, externalRef);
+      const [invoice] = await this.ledger.lockInvoices(tx, [input.paymentId]);
+      if (!invoice) {
+        throw new NotFoundError({ code: 'PAYMENT_NOT_FOUND', message: `Payment ${input.paymentId} was not found` });
+      }
+      const config = await this.ledger.settings(tx);
+
       /*
-        What a Court of Audit reviewer asks of a cash entry: how much, on which
-        receipt, on what day, in which notes, at what rate against the official
-        one, and — when either departs from the ordinary — why. Written in the
-        ledger's transaction; a retry answered from the first row writes none.
+        «20$ و200,000 ليرة» — the credit is what the notes are worth in the
+        invoice's currency, computed here and never taken from the client, which
+        could send a total that disagrees with its own parts. Rounded to the
+        whole unit for a ليرة invoice, where there are no fractions to pay in,
+        and to the cent otherwise. The ledger then refuses it, under its lock,
+        if it is more than is owed. With no figure typed, the balance this lock
+        holds is what is settled.
       */
-      audit: (movement) => ({
-        actorId: input.actor.id,
-        actorType: 'STAFF',
-        actorRole: input.actor.role as never,
-        action: 'PAYMENT_CONFIRMED',
-        entityType: 'Payment',
-        entityId: input.paymentId,
-        after: {
-          citizenId: invoice.citizenId,
-          confirmed: true,
-          receiptNumber: movement.receiptNumber,
-          method: input.method,
-          amount: movement.received,
-          currency: invoice.currency,
-          occurredAt: movement.occurredAt,
-          ...(input.paidOn ? { paidOn: input.paidOn, backdatedDays: adjustment.backdatedDays } : {}),
-          // Dated before go-live by a finance role: settled, and deliberately in no wallet.
-          ...(beforeGoLive ? { treasuryCredited: false } : {}),
-          ...(tender
-            ? {
-                tenderedLocal: tender.local,
-                tenderedForeign: tender.foreign,
-                tenderedForeignCurrency: tender.foreignCurrency,
-                exchangeRate: tender.exchangeRate,
-                officialExchangeRate: tender.officialExchangeRate,
-                rateOverridden: adjustment.rateOverridden,
-                changeGiven: movement.changeGiven,
-              }
-            : {}),
-          ...(adjustment.required ? { adjustmentReason: input.adjustmentReason } : {}),
-        },
-      }),
+      const tender = input.tendered
+        ? toTender(
+            input.tendered,
+            invoice.currency,
+            officialRateFor(
+              {
+                baseCurrency: config.baseCurrency,
+                secondaryCurrency: config.secondaryCurrency,
+                exchangeRate: config.exchangeRate === null ? null : Number(config.exchangeRate),
+              },
+              invoice.currency,
+              input.tendered.foreignCurrency,
+            ),
+          )
+        : null;
+      const received = tender ? creditOf(tender, invoice.currency) : (input.amount ?? invoice.amount - invoice.paidAmount);
+
+      const adjustment = assertCashAdjustment({
+        tender,
+        paidOn: input.paidOn,
+        reason: input.adjustmentReason,
+        role: input.actor.role,
+        tolerancePercent:
+          config.exchangeRateTolerancePercent === null
+            ? DEFAULT_EXCHANGE_TOLERANCE_PERCENT
+            : Number(config.exchangeRateTolerancePercent),
+      });
+
+      /*
+        After go-live, a payment dated before it credits no wallet (docs/finance.md
+        §3.3). That is right for cash already inside the counted opening balance,
+        and a silent hole for anything else: cash taken today and dated last week
+        would settle the bill and print a receipt, and reach no wallet and no
+        custody. A receipt is dated the day the money is taken (decree 5595/1982
+        art. 16 and 98), so after go-live only a finance role — someone answerable
+        for the opening count — may date one before it, and the audit row says no
+        wallet was credited.
+      */
+      const goLiveAt = input.paidOn ? config.goLiveAt : null;
+      const occurredAt = occurredAtFor(input.paidOn, goLiveAt);
+      // The ledger's own test, so the refusal and the credit can never disagree.
+      const beforeGoLive = goLiveAt !== null && occurredAt !== undefined && !creditsWallets(goLiveAt, occurredAt);
+      if (beforeGoLive && !canOverrideCashRules(input.actor.role)) {
+        throw new ValidationError({
+          code: 'PAYMENT_DATE_BEFORE_GO_LIVE',
+          message:
+            'A payment dated before the treasury went live reaches no wallet. Record it as today, or ask an accountant.',
+          params: { date: municipalToday(goLiveAt!) },
+        });
+      }
+
+      const settled = await this.ledger.recordIn(tx, {
+        paymentId: input.paymentId,
+        amount: received,
+        method: input.method,
+        /**
+         * Carried on the transaction rather than only on the invoice. A row can
+         * reach here twice — a citizen declares a transfer, it is refused, and
+         * the money arrives at the counter in notes — and the ledger keeps both
+         * movements with their own method and reference instead of the second
+         * overwriting the first.
+         */
+        externalRef,
+        collectedById: input.method === 'COLLECTOR' ? (input.collectedById ?? null) : null,
+        recordedById: input.actor.id,
+        note: input.note,
+        tendered: tender,
+        occurredAt,
+        adjustmentReason: adjustment.required ? (input.adjustmentReason ?? null) : null,
+        clientRequestId: input.clientRequestId ?? null,
+        /*
+          What a Court of Audit reviewer asks of a cash entry: how much, on which
+          receipt, on what day, in which notes, at what rate against the official
+          one, and — when either departs from the ordinary — why. Written in the
+          ledger's transaction; a retry answered from the first row writes none.
+        */
+        audit: (movement) => ({
+          actorId: input.actor.id,
+          actorType: 'STAFF',
+          actorRole: input.actor.role as never,
+          action: 'PAYMENT_CONFIRMED',
+          entityType: 'Payment',
+          entityId: input.paymentId,
+          after: {
+            citizenId: invoice.citizenId,
+            confirmed: true,
+            receiptNumber: movement.receiptNumber,
+            method: input.method,
+            amount: movement.received,
+            currency: invoice.currency,
+            occurredAt: movement.occurredAt,
+            ...(input.paidOn ? { paidOn: input.paidOn, backdatedDays: adjustment.backdatedDays } : {}),
+            // Dated before go-live by a finance role: settled, and deliberately in no wallet.
+            ...(beforeGoLive ? { treasuryCredited: false } : {}),
+            ...(tender
+              ? {
+                  tenderedLocal: tender.local,
+                  tenderedForeign: tender.foreign,
+                  tenderedForeignCurrency: tender.foreignCurrency,
+                  exchangeRate: tender.exchangeRate,
+                  officialExchangeRate: tender.officialExchangeRate,
+                  rateOverridden: adjustment.rateOverridden,
+                  changeGiven: movement.changeGiven,
+                }
+              : {}),
+            ...(adjustment.required ? { adjustmentReason: input.adjustmentReason } : {}),
+          },
+        }),
+      });
+      return { settled, invoice, tender };
     });
 
     // For the caches that show this invoice. A replayed retry changed nothing.
@@ -3794,6 +4122,86 @@ export class FeesService {
     });
 
     return reversed;
+  }
+
+  /**
+   * «إلغاء الفاتورة» — the manager withdraws a bill nothing has been paid on
+   * (finance audit B3): a notice issued twice, a charge raised in error. Until
+   * this a wrong bill could not be withdrawn at all and stayed owed, in every
+   * arrears list, for ever.
+   *
+   * Refused when money is on it (`BILL_CANCEL_HAS_PAYMENTS`): its receipts are
+   * reversed first, so the money's own record is corrected before the debt is.
+   * Refused while a citizen's claim waits on it (`PAYMENT_CLAIM_UNDER_REVIEW`):
+   * the claim is decided first, as for a counter payment. The row is never
+   * deleted: it stays on the citizen's record, CANCELLED, with who, when and why
+   * (0091), and a Tier 1 row in the same transaction.
+   */
+  async cancelBill(paymentId: string, reason: string, actor: { id: string; role: string }) {
+    const { citizenId } = await runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.db as Prisma.TransactionClient;
+      const [bill] = await this.ledger.lockInvoices(tx, [paymentId]);
+      if (!bill) {
+        throw new NotFoundError({ code: 'PAYMENT_NOT_FOUND', message: `Payment ${paymentId} was not found` });
+      }
+      if (bill.paymentStatus === 'CANCELLED') {
+        throw new ConflictError({ code: 'BILL_ALREADY_CANCELLED', message: 'This bill has already been cancelled.' });
+      }
+      if (bill.paymentStatus === 'PENDING_REVIEW') {
+        throw new ConflictError({
+          code: 'PAYMENT_CLAIM_UNDER_REVIEW',
+          message: 'A citizen payment claim on this bill is under review; confirm or reject it first.',
+        });
+      }
+      if (bill.paymentStatus === 'PAID' || bill.paidAmount > 0) {
+        throw new ConflictError({
+          code: 'BILL_CANCEL_HAS_PAYMENTS',
+          message: 'Money has been taken on this bill; reverse its receipts before cancelling it.',
+          params: { paidAmount: bill.paidAmount, currency: bill.currency },
+        });
+      }
+
+      const row = await tx.citizenPayment.update({
+        where: { id: paymentId },
+        data: {
+          paymentStatus: 'CANCELLED',
+          cancelledAt: new Date(),
+          cancelledById: actor.id,
+          cancellationReason: reason.trim(),
+        },
+        select: { invoiceNumber: true, title: true, periodKey: true },
+      });
+      await this.auditTrail.recordInTransaction({
+        actorId: actor.id,
+        actorType: 'STAFF',
+        actorRole: actor.role as never,
+        action: 'FEE_BILL_CANCELLED',
+        entityType: 'Payment',
+        entityId: paymentId,
+        before: { paymentStatus: bill.paymentStatus },
+        after: {
+          citizenId: bill.citizenId,
+          invoiceNumber: row.invoiceNumber,
+          title: row.title,
+          periodKey: row.periodKey,
+          amount: bill.amount,
+          currency: bill.currency,
+          reason: reason.trim(),
+        },
+      });
+      return { citizenId: bill.citizenId };
+    });
+
+    // For the caches that count what is owed; the audit row is already written.
+    this.events.emit('payment.cancelled', {
+      tenantSlug: this.tenantContext.tenantSlug,
+      paymentId,
+      citizenId,
+      actorId: actor.id,
+      actorRole: actor.role,
+    });
+
+    return this.getPaymentById(paymentId);
   }
 
   /** Headline numbers for the admin fee screen. */
@@ -3915,6 +4323,8 @@ export function assertCashAdjustment(input: {
   reason: string | undefined;
   role: string;
   today?: string;
+  /** How far a rate may stray from the official one, in percent (`exchangeRateTolerancePercent`, 0084). */
+  tolerancePercent?: number;
 }): { required: boolean; rateOverridden: boolean; backdatedDays: number } {
   const today = input.today ?? municipalToday();
   const tender = input.tender;
@@ -3936,6 +4346,34 @@ export function assertCashAdjustment(input: {
           code: 'EXCHANGE_RATE_NOT_SET',
           message: 'No official exchange rate is set. Ask an accountant or a system administrator to set one.',
         });
+  }
+  /*
+    The exchange rule's band at the counter too (finance audit A2). A finance
+    role may take a rate other than the official one, with a reason; beyond the
+    tolerance (3% unless the manager set another) only the manager may, because
+    the rate decides both what the notes settle and the change the safe pays
+    out: a rate pushed past the market books more change than leaves the
+    drawer. With no official rate there is nothing to measure against, and the
+    reason alone stands, as before.
+  */
+  if (rateOverridden && tender?.officialExchangeRate && tender.exchangeRate !== null) {
+    const judged = judgeExchange({
+      rate: tender.exchangeRate,
+      foreignAmount: tender.foreign ?? 0,
+      officialRate: tender.officialExchangeRate,
+      tolerancePercent: input.tolerancePercent ?? DEFAULT_EXCHANGE_TOLERANCE_PERCENT,
+      largeThreshold: Number.POSITIVE_INFINITY,
+    });
+    if (judged.beyondTolerance && !(TREASURY_ADMIN_ROLES as readonly string[]).includes(input.role)) {
+      throw new ForbiddenError({
+        code: 'EXCHANGE_RATE_OVERRIDE_BEYOND_TOLERANCE',
+        message: `The rate is ${judged.deviationPercent}% from the official one; beyond ${input.tolerancePercent ?? DEFAULT_EXCHANGE_TOLERANCE_PERCENT}% only the manager may take it.`,
+        params: {
+          deviation: judged.deviationPercent ?? 0,
+          tolerance: input.tolerancePercent ?? DEFAULT_EXCHANGE_TOLERANCE_PERCENT,
+        },
+      });
+    }
   }
   if (backdatedDays > BACKDATE_WINDOW_DAYS && !finance) {
     throw new ForbiddenError({

@@ -2,6 +2,8 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { WhishGateway } from '../../../domain/interfaces/whish-gateway.interface';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
+import { ConflictError } from '../../common/exceptions';
+import { AuditService } from '../audit/audit.service';
 import { FeesService } from './fees.service';
 import { PaymentLedgerService } from './payment-ledger.service';
 
@@ -12,14 +14,15 @@ import { PaymentLedgerService } from './payment-ledger.service';
  * invoice nothing had been paid against. `startWhishCheckout` quotes the
  * *outstanding* balance to the provider, so on a part-settled invoice the
  * callback carries the balance and the assignment overwrote the counter cash
- * with a figure that excluded it: 50,000 taken in notes plus 50,000 taken
- * online left a register showing 50,000 still owed, and a citizen who had paid
- * in full still being chased for it.
+ * with a figure that excluded it.
  *
- * The arithmetic now lives in `PaymentLedgerService`, under a row lock, and is
- * covered against a real database in `payment-ledger.integration.spec.ts`.
- * What this file pins is the decision *this* method still owns: which
- * callbacks reach the ledger at all, and with what amount.
+ * The arithmetic lives in `PaymentLedgerService`, under a row lock, and is
+ * covered against a real database in `payment-ledger.integration.spec.ts` and
+ * `finance-audit.integration.spec.ts`. What this file pins is the decision
+ * *this* method still owns: which callbacks reach the ledger at all, with what
+ * amount and key, and what becomes of one the bill cannot take (finance audit
+ * B5): the quoted amount is banked, keyed by the checkout, and the checkout is
+ * closed in the same transaction; anything else is set aside, MISMATCHED.
  */
 
 interface Row {
@@ -35,28 +38,32 @@ function build(
   {
     updatedCount = 1,
     checkoutState = 'OPEN',
-  }: { updatedCount?: number; checkoutState?: string } = {},
+    quoted = row ? row.amount - row.paidAmount : 0,
+    recordIn = jest.fn().mockResolvedValue({
+      receiptNumber: 'RCP-000001',
+      transactionId: 'txn-1',
+      received: 0,
+      paidAmount: 0,
+      remaining: 0,
+      paymentStatus: 'PAID',
+      replayed: false,
+    }),
+  }: { updatedCount?: number; checkoutState?: string; quoted?: number; recordIn?: jest.Mock } = {},
 ) {
   const update = jest.fn().mockResolvedValue({});
   const updateMany = jest.fn().mockResolvedValue({ count: updatedCount });
-  const record = jest.fn().mockResolvedValue({
-    receiptNumber: 'RCP-000001',
-    transactionId: 'txn-1',
-    received: 0,
-    paidAmount: 0,
-    remaining: 0,
-    paymentStatus: 'PAID',
-  });
 
   /**
-   * A callback now resolves through `whish_checkouts` (migration 0057) rather
-   * than through the mutable `citizenPayment.whishTransactionRef` column, so
-   * the fixture hands back a checkout carrying its invoice.
+   * A callback resolves through `whish_checkouts` (migration 0057) rather than
+   * through the mutable `citizenPayment.whishTransactionRef` column, so the
+   * fixture hands back a checkout carrying its invoice and the amount it quoted.
    */
   const checkoutUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
   const whishCheckout = {
     findUnique: jest.fn().mockResolvedValue(
-      row ? { id: 'checkout-1', state: checkoutState, paymentId: row.id, payment: row } : null,
+      row
+        ? { id: 'checkout-1', state: checkoutState, paymentId: row.id, amount: quoted, payment: row }
+        : null,
     ),
     updateMany: checkoutUpdateMany,
   };
@@ -65,15 +72,13 @@ function build(
     citizenPayment: { findFirst: jest.fn().mockResolvedValue(row), update, updateMany },
     whishCheckout,
   };
-  // The failure path writes the invoice and the checkout together.
+  // Every write runs in a transaction; the fixture's is the same client.
   prisma.$transaction = (fn: (tx: unknown) => unknown) => fn(prisma);
 
+  const context = new TenantContextService();
+  const recordInTransaction = jest.fn().mockResolvedValue(undefined);
   const service = new FeesService(
-    {
-      prisma,
-      tenantSlug: 'albazourieh',
-      tenantId: 'tenant-1',
-    } as unknown as TenantContextService,
+    context,
     { emit: jest.fn() } as unknown as EventEmitter2,
     {} as WhishGateway,
     {
@@ -81,12 +86,17 @@ function build(
       set: jest.fn().mockResolvedValue(undefined),
       invalidatePrefix: jest.fn().mockResolvedValue(undefined),
     } as unknown as RedisCacheService,
-    { record } as unknown as PaymentLedgerService,
-    // AuditService: the settlement's row is written by the (mocked) ledger.
-    {} as never,
+    { recordIn } as unknown as PaymentLedgerService,
+    // The settlement's own row is written by the (mocked) ledger; a set-aside writes its own.
+    { recordInTransaction } as unknown as AuditService,
   );
+  const settle = (input: ReturnType<typeof callback>) =>
+    context.run(
+      { tenantId: 'tenant-1', tenantSlug: 'albazourieh', schemaName: 'tenant_albazourieh', prisma: prisma as never },
+      () => service.settleFromWhishCallback(input),
+    );
 
-  return { service, update, updateMany, record, whishCheckout };
+  return { settle, update, updateMany, recordIn, whishCheckout, recordInTransaction };
 }
 
 const UNTOUCHED: Row = {
@@ -103,14 +113,14 @@ function callback(amount: number, succeeded = true) {
 }
 
 describe('settleFromWhishCallback — a payment adds to what was already banked', () => {
-  it('records only the balance still owed, not the invoice face value', async () => {
+  it('banks the balance the checkout quoted on a part-settled invoice, not the face value', async () => {
     // 50,000 already in the drawer; the citizen settles the balance online.
-    // The old code assigned the callback amount over the top of the cash.
-    const { service, record } = build({ ...UNTOUCHED, paidAmount: 50_000 });
+    const { settle, recordIn } = build({ ...UNTOUCHED, paidAmount: 50_000 });
 
-    await service.settleFromWhishCallback(callback(50_000));
+    await settle(callback(50_000));
 
-    expect(record).toHaveBeenCalledWith(
+    expect(recordIn).toHaveBeenCalledWith(
+      expect.anything(),
       expect.objectContaining({
         paymentId: 'payment-1',
         amount: 50_000,
@@ -121,27 +131,62 @@ describe('settleFromWhishCallback — a payment adds to what was already banked'
   });
 
   it('records the full amount on an untouched invoice', async () => {
-    const { service, record } = build(UNTOUCHED);
-    await service.settleFromWhishCallback(callback(100_000));
-    expect(record).toHaveBeenCalledWith(expect.objectContaining({ amount: 100_000 }));
+    const { settle, recordIn } = build(UNTOUCHED);
+    await settle(callback(100_000));
+    expect(recordIn).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ amount: 100_000 }));
   });
 
-  it('caps against the outstanding balance, not the face value', async () => {
-    // The old ceiling was the invoice total, which on a part-settled row is
-    // larger than what is actually owed.
-    const { service, record } = build({ ...UNTOUCHED, paidAmount: 70_000 });
-    await service.settleFromWhishCallback(callback(999_999));
-    expect(record).toHaveBeenCalledWith(expect.objectContaining({ amount: 30_000 }));
+  it('settles the claim the checkout put the bill under, as the ledger requires', async () => {
+    // Without the flag the ledger refuses a write on a PENDING_REVIEW bill (PAYMENT_CLAIM_UNDER_REVIEW).
+    const { settle, recordIn } = build(UNTOUCHED);
+    await settle(callback(100_000));
+    expect(recordIn).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ resolvesClaim: true }));
+  });
+
+  it('keys the ledger write by the checkout, so a retry meets the first receipt', async () => {
+    const { settle, recordIn } = build(UNTOUCHED);
+    await settle(callback(100_000));
+    expect(recordIn).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ clientRequestId: 'checkout-1' }));
+  });
+
+  it('sets aside an amount other than the one quoted, banking nothing', async () => {
+    // The old code banked the smaller of the two; the rest of an overpayment vanished.
+    const { settle, recordIn, whishCheckout, recordInTransaction } = build(
+      { ...UNTOUCHED, paidAmount: 70_000 },
+      { quoted: 30_000 },
+    );
+    await expect(settle(callback(999_999))).resolves.toEqual({ applied: false });
+    expect(recordIn).not.toHaveBeenCalled();
+    expect(whishCheckout.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'checkout-1', state: 'OPEN' }, data: expect.objectContaining({ state: 'MISMATCHED' }) }),
+    );
+    expect(recordInTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'WHISH_CHECKOUT_MISMATCHED',
+        after: expect.objectContaining({ quoted: 30_000, reported: 999_999, reason: 'AMOUNT_DIFFERS' }),
+      }),
+    );
+  });
+
+  it('sets aside a success for a bill settled another way while the checkout was open', async () => {
+    const recordIn = jest
+      .fn()
+      .mockRejectedValue(new ConflictError({ code: 'PAYMENT_ALREADY_PAID', message: 'settled' }));
+    const { settle, whishCheckout } = build({ ...UNTOUCHED, paymentStatus: 'PAID' }, { quoted: 100_000, recordIn });
+    await expect(settle(callback(100_000))).resolves.toEqual({ applied: false });
+    expect(whishCheckout.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ state: 'MISMATCHED' }) }),
+    );
   });
 
   it('writes nothing to the ledger for a failed payment', async () => {
-    const { service, record, updateMany } = build(UNTOUCHED);
+    const { settle, recordIn, updateMany } = build(UNTOUCHED);
 
-    const result = await service.settleFromWhishCallback(callback(100_000, /* succeeded */ false));
+    const result = await settle(callback(100_000, /* succeeded */ false));
 
     // No money moved, so there is no movement to record — but the invoice is
     // released so the citizen can try again.
-    expect(record).not.toHaveBeenCalled();
+    expect(recordIn).not.toHaveBeenCalled();
     expect(result).toEqual({ applied: true });
     expect(updateMany.mock.calls[0][0].data).toMatchObject({
       paymentStatus: 'UNPAID',
@@ -160,9 +205,9 @@ describe('settleFromWhishCallback — a payment adds to what was already banked'
       claimed — and attempt #2's own callback then arrives to an unknown
       reference with its money never banked.
     */
-    const { service, updateMany } = build(UNTOUCHED);
+    const { settle, updateMany } = build(UNTOUCHED);
 
-    await service.settleFromWhishCallback(callback(100_000, false));
+    await settle(callback(100_000, false));
 
     expect(updateMany.mock.calls[0][0].where).toEqual({
       id: 'payment-1',
@@ -177,12 +222,10 @@ describe('settleFromWhishCallback — a payment adds to what was already banked'
       retrying. A refusal thrown from here would be a 409, and a 409 is an
       infinite retry loop — so "changed nothing" has to come back as data.
     */
-    const { service, record } = build(UNTOUCHED, { updatedCount: 0 });
+    const { settle, recordIn } = build(UNTOUCHED, { updatedCount: 0 });
 
-    await expect(
-      service.settleFromWhishCallback(callback(100_000, false)),
-    ).resolves.toEqual({ applied: false });
-    expect(record).not.toHaveBeenCalled();
+    await expect(settle(callback(100_000, false))).resolves.toEqual({ applied: false });
+    expect(recordIn).not.toHaveBeenCalled();
   });
 
   it('declines a callback for a checkout the citizen walked away from', async () => {
@@ -193,18 +236,16 @@ describe('settleFromWhishCallback — a payment adds to what was already banked'
       "we know about this one, and we stopped waiting" — not "unknown
       reference", which is indistinguishable from a real lost payment.
     */
-    const { service, record } = build(UNTOUCHED, { checkoutState: 'ABANDONED' });
+    const { settle, recordIn } = build(UNTOUCHED, { checkoutState: 'ABANDONED' });
 
-    await expect(service.settleFromWhishCallback(callback(100_000))).resolves.toEqual({
-      applied: false,
-    });
-    expect(record).not.toHaveBeenCalled();
+    await expect(settle(callback(100_000))).resolves.toEqual({ applied: false });
+    expect(recordIn).not.toHaveBeenCalled();
   });
 
-  it('closes the checkout row when the money is banked', async () => {
-    const { service, whishCheckout } = build(UNTOUCHED);
+  it('closes the checkout row with the money, in the same transaction', async () => {
+    const { settle, whishCheckout } = build(UNTOUCHED);
 
-    await service.settleFromWhishCallback(callback(100_000));
+    await settle(callback(100_000));
 
     expect(whishCheckout.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -214,31 +255,25 @@ describe('settleFromWhishCallback — a payment adds to what was already banked'
     );
   });
 
-  it('ignores a retry of a callback already applied', async () => {
+  it('ignores a retry of a callback already applied: its checkout is closed', async () => {
     // A provider that does not get a 200 retries; a retry must not bank twice.
-    const { service, record } = build({ ...UNTOUCHED, paymentStatus: 'PAID' });
+    const { settle, recordIn } = build({ ...UNTOUCHED, paymentStatus: 'PAID' }, { checkoutState: 'SUCCEEDED' });
 
-    await expect(service.settleFromWhishCallback(callback(100_000))).resolves.toEqual({
-      applied: false,
-    });
-    expect(record).not.toHaveBeenCalled();
+    await expect(settle(callback(100_000))).resolves.toEqual({ applied: false });
+    expect(recordIn).not.toHaveBeenCalled();
+  });
+
+  it('reports nothing applied when the ledger answers from the checkout’s key', async () => {
+    // Two deliveries at once: the second meets the first receipt in the ledger's replay.
+    const recordIn = jest.fn().mockResolvedValue({ receiptNumber: 'RCP-000001', replayed: true });
+    const { settle } = build(UNTOUCHED, { recordIn });
+    await expect(settle(callback(100_000))).resolves.toEqual({ applied: false });
   });
 
   it('ignores a callback for a reference this municipality does not hold', async () => {
-    const { service, record } = build(null);
+    const { settle, recordIn } = build(null);
 
-    await expect(service.settleFromWhishCallback(callback(100_000))).resolves.toEqual({
-      applied: false,
-    });
-    expect(record).not.toHaveBeenCalled();
-  });
-
-  it('ignores a callback against an invoice with nothing left to pay', async () => {
-    const { service, record } = build({ ...UNTOUCHED, paidAmount: 100_000 });
-
-    await expect(service.settleFromWhishCallback(callback(50_000))).resolves.toEqual({
-      applied: false,
-    });
-    expect(record).not.toHaveBeenCalled();
+    await expect(settle(callback(100_000))).resolves.toEqual({ applied: false });
+    expect(recordIn).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,5 @@
 import {
+  BILL_CANCEL_ROLES as SHARED_BILL_CANCEL_ROLES,
   BULK_SETTLE_ROLES as SHARED_BULK_SETTLE_ROLES,
   CENSUS_WORKLIST_ROLES,
   FEE_ISSUE_ROLES,
@@ -70,6 +71,13 @@ export const PAYMENT_SETTLE_ROLES: readonly string[] = FEE_ISSUE_ROLES;
  * bills one at a time with «تسجيل دفعة».
  */
 export const BULK_SETTLE_ROLES: readonly string[] = SHARED_BULK_SETTLE_ROLES;
+
+/**
+ * «إلغاء الفاتورة» — withdraw a bill nothing was paid on, `POST
+ * fees/payments/:id/cancel` (finance audit B3). `BILL_CANCEL_ROLES`, as the
+ * route: the manager alone.
+ */
+export const BILL_CANCEL_ROLES: readonly string[] = SHARED_BILL_CANCEL_ROLES;
 
 /**
  * Send a citizen a copy of a consolidated receipt over WhatsApp. Every working

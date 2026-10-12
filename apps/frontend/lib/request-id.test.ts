@@ -144,6 +144,8 @@ describe('keyIsSpent', () => {
       'TRANSACTION_ALREADY_REVERSED',
       'PAYMENT_IDEMPOTENCY_KEY_REUSED',
       'BULK_SETTLE_REQUEST_REUSED',
+      // A notice issued under the key, with other details (finance audit B3).
+      'FEE_NOTICE_REQUEST_REUSED',
     ]) {
       expect({ code, spent: keyIsSpent(failed(409, code)) }).toEqual({ code, spent: true });
     }

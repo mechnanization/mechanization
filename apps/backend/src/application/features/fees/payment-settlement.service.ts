@@ -256,6 +256,14 @@ export class PaymentSettlementService {
       await assertLiveCollector(tx, input.collectedById);
     }
 
+    /*
+      One Whish transfer is one receipt (finance audit B2): its reference is
+      serialised before the bills' row locks, the order every payment path takes
+      the two in, and each bill's `recordIn` then refuses it if a receipt outside
+      this settlement still stands on it.
+    */
+    await this.ledger.lockExternalRef(tx, input.method === 'WHISH_MONEY' ? input.whishTransactionRef : null);
+
     const invoices = await this.ledger.lockInvoices(tx, input.paymentIds);
     const found = new Set(invoices.map((invoice) => invoice.id));
     const missing = input.paymentIds.find((id) => !found.has(id));
@@ -280,6 +288,15 @@ export class PaymentSettlementService {
     );
     for (const invoice of invoices) {
       const bill = meta.get(invoice.id);
+      // Cancelled by the manager since it was ticked (0090): it owes nothing.
+      if (invoice.paymentStatus === 'CANCELLED') {
+        throw new ConflictError({
+          code: 'PAYMENT_BILL_CANCELLED',
+          message: `Payment ${invoice.id} has been cancelled.`,
+          params: { invoice: bill?.invoiceNumber ?? bill?.title ?? invoice.id },
+          details: { paymentId: invoice.id },
+        });
+      }
       if (invoice.paymentStatus === 'PAID' || invoice.amount - invoice.paidAmount <= toleranceFor(invoice.currency)) {
         throw new ConflictError({
           code: 'BULK_SETTLE_SOME_ALREADY_PAID',

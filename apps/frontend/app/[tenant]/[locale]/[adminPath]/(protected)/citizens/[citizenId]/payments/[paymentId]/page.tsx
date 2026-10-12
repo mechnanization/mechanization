@@ -5,7 +5,18 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Banknote, CalendarDays, Coins, Eraser, Loader2, Pencil, ReceiptText, RotateCcw } from 'lucide-react';
+import {
+  AlertTriangle,
+  Ban,
+  Banknote,
+  CalendarDays,
+  Coins,
+  Eraser,
+  Loader2,
+  Pencil,
+  ReceiptText,
+  RotateCcw,
+} from 'lucide-react';
 import {
   ADJUSTMENT_REASON_MIN,
   BACKDATE_WINDOW_DAYS,
@@ -17,6 +28,7 @@ import {
 } from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
+  cancelBill,
   getCitizenProfile,
   getMunicipalitySettings,
   getTenantConfig,
@@ -32,6 +44,7 @@ import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
 import { HeaderBackLink } from '@/components/admin/header-back-link';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Card, CardContent } from '@/components/ui/card';
 import { CurrencyInput } from '@/components/ui/currency-input';
 import { DatePicker } from '@/components/ui/date-picker';
@@ -45,7 +58,7 @@ import { useToast } from '@/components/ui/toast';
 import { PaymentReceipt, type RecordedMovement } from '@/components/admin/payment-receipt';
 import { BillReceipts } from '@/components/admin/finance/bill-receipts';
 import { cn } from '@/lib/utils';
-import { PAYMENT_SETTLE_ROLES, hasRole } from '@/lib/staff-roles';
+import { BILL_CANCEL_ROLES, PAYMENT_SETTLE_ROLES, hasRole } from '@/lib/staff-roles';
 
 /** What the citizen is paying in. «BOTH» is «20$ و200,000 ليرة» handed over together. */
 type PayIn = 'LBP' | 'FOREIGN' | 'BOTH';
@@ -133,6 +146,10 @@ export default function SettleCashPage({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<RecordedMovement | null>(null);
+  /** «إلغاء الفاتورة» (finance audit B3): the manager's, on a bill nothing was paid on. */
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const tCancel = useTranslations('counterPayment.cancelBill');
 
   /*
     Double submission: `busy` disables the button after React re-renders, but
@@ -333,6 +350,27 @@ export default function SettleCashPage({
   const statusLabel = payment
     ? (labels.paymentStatus?.[payment.paymentStatus as never] ?? payment.paymentStatus)
     : null;
+  /** Shown to the manager on an open bill with nothing paid on it; the server re-checks both. */
+  const canCancel =
+    Boolean(payment) &&
+    !receipt &&
+    hasRole(BILL_CANCEL_ROLES, user?.role) &&
+    (payment?.paymentStatus === 'UNPAID' || payment?.paymentStatus === 'OVERDUE') &&
+    (payment?.paidAmount ?? 0) === 0;
+
+  /** A refusal is thrown on: the dialog shows the server's coded words beside the action, and stays open. */
+  const confirmCancel = async (): Promise<void> => {
+    if (!token || !payment) return;
+    try {
+      await cancelBill(tenant, token, payment.id, cancelReason.trim());
+    } catch (caught) {
+      logApiError(caught);
+      throw caught;
+    }
+    toast.success(tCancel('done'));
+    setCancelReason('');
+    await queryClient.invalidateQueries({ queryKey: ['citizen-profile', tenant, citizenId] });
+  };
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
@@ -372,6 +410,36 @@ export default function SettleCashPage({
         }
       />
 
+      {canCancel ? (
+        <div className="flex justify-end">
+          <Button type="button" variant="outline" size="sm" onClick={() => setCancelOpen(true)}>
+            <Ban className="size-4" aria-hidden />
+            {tCancel('action')}
+          </Button>
+        </div>
+      ) : null}
+      <ConfirmDialog
+        open={cancelOpen}
+        onOpenChange={setCancelOpen}
+        title={tCancel('title')}
+        description={tCancel('description')}
+        confirmLabel={tCancel('confirm')}
+        cancelLabel={tCancel('keep')}
+        busyLabel={tCancel('busy')}
+        confirmDisabled={cancelReason.trim().length < ADJUSTMENT_REASON_MIN}
+        onConfirm={confirmCancel}
+      >
+        <Field label={tCancel('reason')} htmlFor="cancel-bill-reason" required>
+          <Textarea
+            id="cancel-bill-reason"
+            value={cancelReason}
+            maxLength={500}
+            placeholder={tCancel('reasonPlaceholder')}
+            onChange={(event) => setCancelReason(event.target.value)}
+          />
+        </Field>
+      </ConfirmDialog>
+
       {!payment ? (
         <EmptyState
           icon={ReceiptText}
@@ -382,6 +450,12 @@ export default function SettleCashPage({
               {en ? 'Open the citizen file' : 'فتح ملف المواطن'}
             </Link>
           }
+        />
+      ) : payment.paymentStatus === 'CANCELLED' ? (
+        <EmptyState
+          icon={Ban}
+          title={tCancel('cancelledTitle')}
+          description={payment.cancellationReason ?? tCancel('cancelledBody')}
         />
       ) : payment.paymentStatus === 'PAID' && !receipt ? (
         <EmptyState

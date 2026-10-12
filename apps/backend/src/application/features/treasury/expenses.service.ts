@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
   COMMISSION_URGENT_REASON,
+  currentSalaryPeriod,
   isReservedExpenseCategory,
   municipalToday,
   SALARY_URGENT_REASON,
@@ -58,10 +59,24 @@ interface VoucherPath {
   exemptFromUrgentCeiling: boolean;
   /** `recordCommission` alone files under a reserved category (`RESERVED_EXPENSE_CATEGORY_KEYS`). */
   mayUseReservedCategory: boolean;
+  /**
+   * The month a salary is for, `YYYY-MM` (0091), set by `recordSalary` alone. A
+   * path that carries one is held to one standing salary per staff member per
+   * month (`SALARY_PERIOD_ALREADY_PAID`) and, for an accountant, to the manager's
+   * salary ceiling (`SALARY_OVER_CEILING`) — the owner's decision of 2026-10-12,
+   * which narrows D7 without undoing it: art. 35 still lets the salary go before
+   * the order, up to that ceiling.
+   */
+  salaryPeriod: string | null;
 }
 
 /** The expense form's voucher: no staff payee, held to every control. */
-const FORM_PATH: VoucherPath = { payeeStaffId: null, exemptFromUrgentCeiling: false, mayUseReservedCategory: false };
+const FORM_PATH: VoucherPath = {
+  payeeStaffId: null,
+  exemptFromUrgentCeiling: false,
+  mayUseReservedCategory: false,
+  salaryPeriod: null,
+};
 
 /** The voucher row a list or a read returns, with everything the screen names. */
 const VOUCHER_SELECT = {
@@ -71,6 +86,7 @@ const VOUCHER_SELECT = {
   currency: true,
   payee: true,
   payeeStaffId: true,
+  salaryPeriod: true,
   description: true,
   occurredAt: true,
   invoiceNumber: true,
@@ -425,6 +441,23 @@ export class ExpensesService {
           });
         }
 
+        /*
+          A month not yet reached is an advance, not a salary (finance audit A3):
+          refused on the municipality's own clock. Then the month is serialised for
+          this staff member — two presses for one person and one month, each with
+          its own key, meet in `recordInTransaction`'s check one after the other.
+          Taken before the retry key's own lock, on this path always in that order.
+        */
+        if (input.salaryPeriod > currentSalaryPeriod()) {
+          throw new ValidationError({
+            code: 'SALARY_PERIOD_IN_FUTURE',
+            message: `A salary cannot be paid for ${input.salaryPeriod}, a month that has not begun.`,
+            params: { period: input.salaryPeriod },
+          });
+        }
+        const periodKey = `${this.tenantContext.schemaName}:salary-period:${staff.id}:${input.salaryPeriod}`;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${periodKey}))`;
+
         const salaries: ExpenseCategoryKey = 'SALARIES';
         const category = await tx.expenseCategory.findFirst({ where: { key: salaries }, select: { id: true } });
         if (!category) {
@@ -449,11 +482,18 @@ export class ExpensesService {
           payeeStaffId: staff.id,
           exemptFromUrgentCeiling: true,
           mayUseReservedCategory: false,
+          salaryPeriod: input.salaryPeriod,
         });
       });
     } catch (error) {
       if (built.voucher && isUniqueViolationOn(error, 'clientRequestId')) {
-        const replay = await this.replayVoucher(this.db as Prisma.TransactionClient, built.voucher, actor, staffId);
+        const replay = await this.replayVoucher(
+          this.db as Prisma.TransactionClient,
+          built.voucher,
+          actor,
+          staffId,
+          input.salaryPeriod,
+        );
         if (replay) return replay;
       }
       throw error;
@@ -530,7 +570,7 @@ export class ExpensesService {
           clientRequestId: input.clientRequestId,
         },
         actor,
-        { payeeStaffId: inspector.id, exemptFromUrgentCeiling: true, mayUseReservedCategory: true },
+        { payeeStaffId: inspector.id, exemptFromUrgentCeiling: true, mayUseReservedCategory: true, salaryPeriod: null },
       );
     });
   }
@@ -618,7 +658,7 @@ export class ExpensesService {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
       }
 
-      const replay = await this.replayVoucher(tx, input, actor, payeeStaffId);
+      const replay = await this.replayVoucher(tx, input, actor, payeeStaffId, path.salaryPeriod);
       if (replay) return replay;
 
       const config = await this.ledger.config(tx);
@@ -705,6 +745,44 @@ export class ExpensesService {
         }
       }
 
+      /*
+        A salary (finance audit A3; the owner's decision of 2026-10-12). One per
+        staff member per month among vouchers still standing — a cancelled one
+        frees its month — so a second payout of the same month, under a fresh
+        key, is refused with the voucher that already paid it. The partial unique
+        index of 0091 holds the same line in the database. And an accountant's
+        payout, which leaves before any order (art. 35, D7), is held to the
+        manager's «سقف صرف الرواتب» for the wallet's currency; the manager's own
+        is the order and is not.
+      */
+      if (path.salaryPeriod && payeeStaffId) {
+        const paid = await tx.expenseVoucher.findFirst({
+          where: { payeeStaffId, salaryPeriod: path.salaryPeriod, voidedAt: null },
+          select: { voucherNumber: true },
+        });
+        if (paid) {
+          throw new ConflictError({
+            code: 'SALARY_PERIOD_ALREADY_PAID',
+            message: `The salary for ${path.salaryPeriod} was already paid (${paid.voucherNumber}).`,
+            params: { period: path.salaryPeriod, voucherNumber: paid.voucherNumber },
+          });
+        }
+        if (!ordered) {
+          const breach = urgentCeilingBreached({
+            amount: input.amount,
+            currency: account.currency,
+            ceilings: config.salaryUrgentCeiling,
+          });
+          if (breach) {
+            throw new ConflictError({
+              code: 'SALARY_OVER_CEILING',
+              message: `An accountant's salary payout is capped at ${breach.ceiling} ${breach.currency}; above it, the manager pays it.`,
+              params: breach,
+            });
+          }
+        }
+      }
+
       const occurredAt = documentOccurredAt({
         day: verdict.paidOn,
         today,
@@ -720,7 +798,7 @@ export class ExpensesService {
         press racing this one has either committed or not started.
       */
       await this.ledger.lockAccounts(tx, [account.id]);
-      const lateReplay = await this.replayVoucher(tx, input, actor, payeeStaffId);
+      const lateReplay = await this.replayVoucher(tx, input, actor, payeeStaffId, path.salaryPeriod);
       if (lateReplay) return lateReplay;
 
       // «PV-2610-0001». See `allocateDocumentNumbers` and migration 0079.
@@ -735,6 +813,7 @@ export class ExpensesService {
           amount: new Prisma.Decimal(input.amount),
           payee: input.payee.trim(),
           payeeStaffId,
+          salaryPeriod: path.salaryPeriod,
           description: input.description.trim(),
           occurredAt,
           adjustmentReason: verdict.backdatedDays > 0 ? (input.adjustmentReason?.trim() ?? null) : null,
@@ -862,6 +941,7 @@ export class ExpensesService {
     input: RecordExpenseInput,
     actor: { id: string },
     payeeStaffId: string | null,
+    salaryPeriod: string | null = null,
   ): Promise<RecordExpenseResult | null> {
     if (!input.clientRequestId) return null;
     const earlier = await tx.expenseVoucher.findUnique({
@@ -876,6 +956,7 @@ export class ExpensesService {
         categoryId: true,
         payee: true,
         payeeStaffId: true,
+        salaryPeriod: true,
         description: true,
         orderedAt: true,
         voidedAt: true,
@@ -889,6 +970,7 @@ export class ExpensesService {
       earlier.categoryId !== input.categoryId ||
       earlier.payee !== input.payee.trim() ||
       earlier.payeeStaffId !== payeeStaffId ||
+      (earlier.salaryPeriod ?? null) !== salaryPeriod ||
       earlier.description !== input.description.trim()
     ) {
       throw new ConflictError({
@@ -1532,6 +1614,7 @@ export class ExpensesService {
       currency: row.currency,
       payee: row.payee,
       payeeStaffId: row.payeeStaffId,
+      salaryPeriod: row.salaryPeriod,
       description: row.description,
       occurredAt: row.occurredAt.toISOString(),
       invoiceNumber: row.invoiceNumber,

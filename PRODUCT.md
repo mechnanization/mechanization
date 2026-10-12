@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية الذكية)
 
-Last verified against the code: `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): «أمان الحساب» for every staff role, no new filing — card, flat or sale — on an archived file; an archived file takes no new fee on any path, 2026-10-15.
+Last verified against the code: `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): «أمان الحساب» for every staff role, no new filing — card, flat or sale — on an archived file; an archived file takes no new fee on any path, 2026-10-15; and `bugs-fix` (on `develop@5e8f5c3`; the finance audit remediation: the manager cancels a bill, a salary is paid once a month under the manager's ceiling, a collector settles only into his own custody), 2026-10-12.
 
 A multi-tenant municipal platform for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastral map, municipal fee billing (رسوم القيمة التأجيرية
@@ -32,7 +32,8 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
     credentials the gateway runs in sandbox mode.
 - **Collectors (`COLLECTOR`, جابي) and counter clerks**:
   - Record in-person payments, full or partial, at the counter (`CASH`) or on a round
-    (`COLLECTOR`).
+    (`COLLECTOR`). A collector records only his own collection, into his own custody; the cash
+    desk, Whish and naming another collector are the counter clerks'.
   - Issue official receipts matching Lebanon's printed receipt books (`وصل جباية رسمي`).
   - Share a receipt through the device share sheet, a WhatsApp link, or a PDF download.
   - See every receipt on a bill, and every reversal, on the bill's own page («وصولات الفاتورة»),
@@ -57,6 +58,9 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
   - A cadastral map explorer with parcel numbering and sector zones.
   - CSV export with formula-injection-safe cells.
   - An append-only audit log of staff actions.
+  - **إلغاء الفاتورة** (manager only): withdraw a bill nothing has been paid on — a fee issued twice,
+    a charge raised in error — with a reason. The bill stays on the citizen's file, marked cancelled,
+    and is no longer owed. A bill with money on it has its receipts reversed first.
   - **تسديد الفواتير المحددة** (accountant and manager): tick several unpaid bills of one citizen —
     on «الرسوم» or on the citizen's file — and settle them in one act, in cash (ليرة and dollars at the
     municipality's rate, with the change worked out and checked against the safe), through a
@@ -108,7 +112,9 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
       wallet, the amount and the month, and the voucher is filed under «رواتب وأجور», in the staff
       member's own name and linked to their account. The manager's payout is the order; an
       accountant's is paid at once as an art. 35 payment, with the reason «راتب — يُدفع قبل الحوالة
-      (المادة 35)» written by the system, and waits for the manager's order.
+      (المادة 35)» written by the system, and waits for the manager's order. Each staff member is paid
+      one salary per month, and an accountant's payout is held to the manager's «سقف صرف الرواتب»
+      (set in الإعدادات, per currency); above it the manager pays it.
     - The staff list no longer shows the field inspectors' commission cards; an inspector's earnings
       stay on their own profile.
     - An inspector's commission is paid from his row too («صرف عمولة»): the dialog shows the units

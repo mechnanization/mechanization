@@ -66,7 +66,9 @@ export default function MyAccount({
       });
   }, [tenant, locale, router]);
 
-  const unpaid = summary?.payments.filter((payment) => payment.paymentStatus !== 'PAID') ?? [];
+  // A bill the municipality cancelled (CANCELLED) is not owed, and is not listed as unpaid.
+  const unpaid =
+    summary?.payments.filter((payment) => payment.paymentStatus !== 'PAID' && payment.paymentStatus !== 'CANCELLED') ?? [];
   /*
     What is owed, by the portal's one rule: what is left on the bills the
     citizen can still pay. A bill whose reported transfer waits for a clerk is

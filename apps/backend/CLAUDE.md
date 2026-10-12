@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): the cadastre import deviation, the cadastre asset's private cache, `GET auth/staff/me`, the own-account throttle, the save-path unlink rows, `assertFileOpen`; the audit reads' `?actorId=` and its «النظام» value, the review queue's total, a registration card's missing building, 2026-10-15.
+Last verified against the code: `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): the cadastre import deviation, the cadastre asset's private cache, `GET auth/staff/me`, the own-account throttle, the save-path unlink rows, `assertFileOpen`; the audit reads' `?actorId=` and its «النظام» value, the review queue's total, a registration card's missing building, 2026-10-15; and `bugs-fix` (on `develop@5e8f5c3`; the finance audit remediation: `settleInPerson` in one transaction with the rate read FOR SHARE, `lockExternalRef` and a ledger retry key bound to its act, the Whish callback closed with its money, `cancelBill`, the notice retry key, the one-off charge and the settings save in Tier 1, the salary month and ceiling), 2026-10-12.
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -595,7 +595,9 @@ text is also rendered in the preview endpoints, which need localising first.
 Every state change MUST leave an `audit_log_entries` row, in one of two tiers
 ([docs/security.md](../../docs/security.md#data-integrity-and-transactions)):
 
-1. **Tier 1, inside the transaction.** Payments (declarations, confirmations, refusals, counter and Whish
+1. **Tier 1, inside the transaction.** A one-off charge (`FEE_INDIVIDUAL_LEVIED`), cancelling a bill
+   (`FEE_BILL_CANCELLED`), a Whish success set aside (`WHISH_CHECKOUT_MISMATCHED`), a settings save
+   (`SETTINGS_UPDATED`, the treasury fields with their values before and after). Payments (declarations, confirmations, refusals, counter and Whish
    settlements, and a settlement of several bills: one row per bill and one for the set), payment reversals, activating the treasury, opening a wallet, recording and cancelling an expense
    and every step of its payment order, paying an inspector's commission, recording and cancelling an
    income voucher, adding or editing an expense or income category, receiving a collector's custody,
@@ -623,6 +625,11 @@ Every state change MUST leave an `audit_log_entries` row, in one of two tiers
    `damage.recorded` goes to `AuditService.onDamageRecorded` (`DAMAGE_RECORDED`, filed under the
    building with the unit's id and code in `after`), because a reading can hold or resume a flat's
    fees; «فواتير تأثّرت بتصحيحات» finds the holders by that code (`bill-corrections.ts`).
+
+A row no person caused (the recurring biller's scheduled run, a Whish settlement) MUST carry
+`actorId: null` and `actorType: 'SYSTEM'`, never a placeholder: `actorId` is a uuid, and a string
+there is refused, in Tier 2 silently. The fees page's «إصدار الفواتير» (`POST fees/recurring/run`)
+passes its staff member to `FeesService.runRecurringBilling(now, actor)`; the cron passes none.
 
 Event names are string literals. Emission is synchronous with no wildcards, because listeners rely on the
 request's tenant scope. A misspelt or unheard name is dropped silently. Add each new action's label to

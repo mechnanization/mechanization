@@ -159,6 +159,12 @@ export default function SettlePaymentPage({
   const [collectedById, setCollectedById] = useState('');
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
+  /**
+   * A collector settles only into his own custody (finance audit B1; the server
+   * refuses anything else with `COLLECTOR_CANNOT_SELECT_METHOD`): the method is
+   * «جابٍ» and the collector is himself, shown rather than chosen.
+   */
+  const [selfCollector, setSelfCollector] = useState(false);
 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -195,6 +201,11 @@ export default function SettlePaymentPage({
     }
     const accessToken = session.accessToken;
     setToken(accessToken);
+    if (session.user.role === 'COLLECTOR') {
+      setSelfCollector(true);
+      setMethod('COLLECTOR');
+      setCollectedById(session.user.id);
+    }
     setLoading(true);
     setLoadError(null);
 
@@ -454,26 +465,32 @@ export default function SettlePaymentPage({
             <div className="flex h-full flex-col justify-between space-y-5 rounded-xl border bg-card p-4 shadow-sm">
               <div className="space-y-5">
                 {/* Payment Method */}
-                <Field label={t('method')} htmlFor="settle-method" required>
-                  <div className="grid gap-3 sm:grid-cols-3">
-                    {METHODS.map((option) => (
-                      <ChoiceCard
-                        key={option.value}
-                        name="settle-method"
-                        value={option.value}
-                        checked={method === option.value}
-                        onChange={(next) => {
-                          setMethod(next as Method);
-                          if (next !== 'WHISH_MONEY') setReference('');
-                          if (next !== 'COLLECTOR') setCollectedById('');
-                        }}
-                        title={labels.paymentMethod[option.value]}
-                        description={t(`methodBody.${option.value}`)}
-                        icon={option.icon}
-                      />
-                    ))}
-                  </div>
-                </Field>
+                {selfCollector ? (
+                  <Alert variant="info" title={labels.paymentMethod.COLLECTOR}>
+                    {t('selfCollector')}
+                  </Alert>
+                ) : (
+                  <Field label={t('method')} htmlFor="settle-method" required>
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      {METHODS.map((option) => (
+                        <ChoiceCard
+                          key={option.value}
+                          name="settle-method"
+                          value={option.value}
+                          checked={method === option.value}
+                          onChange={(next) => {
+                            setMethod(next as Method);
+                            if (next !== 'WHISH_MONEY') setReference('');
+                            if (next !== 'COLLECTOR') setCollectedById('');
+                          }}
+                          title={labels.paymentMethod[option.value]}
+                          description={t(`methodBody.${option.value}`)}
+                          icon={option.icon}
+                        />
+                      ))}
+                    </div>
+                  </Field>
+                )}
 
                 {/* Method-specific fields */}
                 {isWhish ? (
@@ -490,7 +507,7 @@ export default function SettlePaymentPage({
                   </Field>
                 ) : null}
 
-                {isCollector ? (
+                {isCollector && !selfCollector ? (
                   <Field label={t('collector')} htmlFor="settle-collector" required>
                     {collectorsFailed ? (
                       <Alert variant="warning">{t('collectorsFailed')}</Alert>

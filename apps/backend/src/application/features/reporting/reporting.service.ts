@@ -855,7 +855,7 @@ export class ReportingService {
           COALESCE((SELECT sum("paidAmount") FROM ${this.S}citizen_payments), 0)::float8
             AS "collectedTotal",
           COALESCE((SELECT sum(amount - "paidAmount") FROM ${this.S}citizen_payments
-                     WHERE "paymentStatus" <> 'PAID'), 0)::float8
+                     WHERE "paymentStatus" NOT IN ('PAID', 'CANCELLED')), 0)::float8
             AS "outstandingTotal",
           -- Derived from the due date on read, never stored: a flag written by
           -- a nightly job is wrong for every hour between a due date passing
@@ -1070,6 +1070,8 @@ export class ReportingService {
             whishTransactionRef: true,
             paidAt: true,
             reviewNote: true,
+            // Why the manager cancelled it, when he did (0091).
+            cancellationReason: true,
             // «ليش عليّ هالمبلغ؟» — see `CitizenProfilePayment.assessment`.
             assessment: true,
             feeNotice: { select: { frequency: true } },
@@ -1253,7 +1255,8 @@ export class ReportingService {
       title: payment.title,
       amount: Number(payment.amount),
       paidAmount: Number(payment.paidAmount),
-      remaining: Math.max(Number(payment.amount) - Number(payment.paidAmount), 0),
+      remaining:
+        payment.paymentStatus === 'CANCELLED' ? 0 : Math.max(Number(payment.amount) - Number(payment.paidAmount), 0),
       currency: payment.currency,
       dueDate: payment.dueDate.toISOString(),
       paymentStatus:
@@ -1265,6 +1268,7 @@ export class ReportingService {
       whishTransactionRef: payment.whishTransactionRef,
       paidAt: payment.paidAt?.toISOString() ?? null,
       reviewNote: payment.reviewNote,
+      cancellationReason: payment.cancellationReason,
       frequency: payment.feeNotice?.frequency ?? null,
       assessment: (payment.assessment as FeeAssessment | null) ?? null,
     }));
@@ -1952,6 +1956,8 @@ export class ReportingService {
   @OnEvent('payment.reviewed')
   /** A reversal moves the same totals back, so it stales the same caches. */
   @OnEvent('payment.reversed')
+  /** A cancelled bill leaves what is owed, so it stales them too. */
+  @OnEvent('payment.cancelled')
   /**
    * The census moves the map, so the census has to clear the map's cache.
    *
