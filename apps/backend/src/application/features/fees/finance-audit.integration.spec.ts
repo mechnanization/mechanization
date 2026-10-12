@@ -157,18 +157,36 @@ describeIfDb('finance audit remediation', () => {
   // ─────────────────────  B1: a collector books into his own custody  ─────────────────────
 
   describe('a collector at the counter (B1)', () => {
-    it('is refused cash into the safe, a Whish transfer, or another collector’s name, and writes nothing', async () => {
+    it('is refused cash into the safe or another collector’s name, and writes nothing', async () => {
       const paymentId = await bill(100_000);
-      const settle = (method: 'CASH' | 'WHISH_MONEY' | 'COLLECTOR', extra: Record<string, unknown> = {}) =>
+      const settle = (method: 'CASH' | 'COLLECTOR', extra: Record<string, unknown> = {}) =>
         scoped(() => fees.settleInPerson({ paymentId, method, amount: 100_000, actor: COLLECTOR(), ...extra }));
       await expect(settle('CASH')).rejects.toMatchObject({ code: 'COLLECTOR_CANNOT_SELECT_METHOD' });
-      await expect(settle('WHISH_MONEY', { whishTransactionRef: 'WSH-B1' })).rejects.toMatchObject({
-        code: 'COLLECTOR_CANNOT_SELECT_METHOD',
-      });
       await expect(settle('COLLECTOR', { collectedById: ids.otherCollector })).rejects.toMatchObject({
         code: 'COLLECTOR_CANNOT_SELECT_METHOD',
       });
       expect(await db.paymentTransaction.count({ where: { paymentId } })).toBe(0);
+    });
+
+    it('records a Whish transfer taken at the door, into the Whish account and not his custody', async () => {
+      const paymentId = await bill(70_000);
+      await expect(
+        scoped(() =>
+          fees.settleInPerson({
+            paymentId,
+            method: 'WHISH_MONEY',
+            whishTransactionRef: 'WSH-B1-DOOR',
+            amount: 70_000,
+            actor: COLLECTOR(),
+          }),
+        ),
+      ).resolves.toMatchObject({ paymentStatus: 'PAID' });
+      const row = await db.paymentTransaction.findFirstOrThrow({ where: { paymentId } });
+      const entries = await db.treasuryEntry.findMany({
+        where: { sourceId: row.id },
+        include: { account: { select: { type: true } } },
+      });
+      expect(entries.map((entry) => entry.account.type)).toEqual(['WHISH_ACCOUNT']);
     });
 
     it('records his own collection into his own custody', async () => {

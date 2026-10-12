@@ -160,9 +160,12 @@ export default function SettlePaymentPage({
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
   /**
-   * A collector settles only into his own custody (finance audit B1; the server
-   * refuses anything else with `COLLECTOR_CANNOT_SELECT_METHOD`): the method is
-   * «جابٍ» and the collector is himself, shown rather than chosen.
+   * A collector (finance audit B1; the owner's decision of 2026-10-12) records
+   * cash as his own collection or a Whish transfer — never cash into the safe,
+   * never another collector (the server refuses both with
+   * `COLLECTOR_CANNOT_SELECT_METHOD`). So he is offered those two methods, and
+   * «عبر المحصّل» is himself, shown rather than chosen: no staff list is read,
+   * which his role may not read anyway.
    */
   const [selfCollector, setSelfCollector] = useState(false);
 
@@ -226,16 +229,19 @@ export default function SettlePaymentPage({
       setLoading(false);
     }
 
-    getStaff(tenant, accessToken)
-      .then(({ items }) => {
-        setCollectors(items);
-        setCollectorsFailed(false);
-      })
-      .catch((caught) => {
-        logApiError(caught);
-        setCollectors([]);
-        setCollectorsFailed(true);
-      });
+    // Only for a role that picks the collector: a collector is himself, and his role cannot read the list.
+    if (session.user.role !== 'COLLECTOR') {
+      getStaff(tenant, accessToken)
+        .then(({ items }) => {
+          setCollectors(items);
+          setCollectorsFailed(false);
+        })
+        .catch((caught) => {
+          logApiError(caught);
+          setCollectors([]);
+          setCollectorsFailed(true);
+        });
+    }
     getTenantConfig(tenant)
       .then((config) => setMunicipalityName(locale === 'en' ? (config.name || config.nameAr) : (config.nameAr || config.name)))
       .catch(() => setMunicipalityName(tenant));
@@ -465,32 +471,27 @@ export default function SettlePaymentPage({
             <div className="flex h-full flex-col justify-between space-y-5 rounded-xl border bg-card p-4 shadow-sm">
               <div className="space-y-5">
                 {/* Payment Method */}
-                {selfCollector ? (
-                  <Alert variant="info" title={labels.paymentMethod.COLLECTOR}>
-                    {t('selfCollector')}
-                  </Alert>
-                ) : (
-                  <Field label={t('method')} htmlFor="settle-method" required>
-                    <div className="grid gap-3 sm:grid-cols-3">
-                      {METHODS.map((option) => (
-                        <ChoiceCard
-                          key={option.value}
-                          name="settle-method"
-                          value={option.value}
-                          checked={method === option.value}
-                          onChange={(next) => {
-                            setMethod(next as Method);
-                            if (next !== 'WHISH_MONEY') setReference('');
-                            if (next !== 'COLLECTOR') setCollectedById('');
-                          }}
-                          title={labels.paymentMethod[option.value]}
-                          description={t(`methodBody.${option.value}`)}
-                          icon={option.icon}
-                        />
-                      ))}
-                    </div>
-                  </Field>
-                )}
+                <Field label={t('method')} htmlFor="settle-method" required>
+                  <div className={selfCollector ? 'grid gap-3 sm:grid-cols-2' : 'grid gap-3 sm:grid-cols-3'}>
+                    {(selfCollector ? METHODS.filter((option) => option.value !== 'CASH') : METHODS).map((option) => (
+                      <ChoiceCard
+                        key={option.value}
+                        name="settle-method"
+                        value={option.value}
+                        checked={method === option.value}
+                        onChange={(next) => {
+                          setMethod(next as Method);
+                          if (next !== 'WHISH_MONEY') setReference('');
+                          // A collector's own name stays: it is the only collector he may record.
+                          if (next !== 'COLLECTOR' && !selfCollector) setCollectedById('');
+                        }}
+                        title={labels.paymentMethod[option.value]}
+                        description={t(`methodBody.${option.value}`)}
+                        icon={option.icon}
+                      />
+                    ))}
+                  </div>
+                </Field>
 
                 {/* Method-specific fields */}
                 {isWhish ? (
@@ -505,6 +506,12 @@ export default function SettlePaymentPage({
                       onChange={(e) => setReference(e.target.value)}
                     />
                   </Field>
+                ) : null}
+
+                {isCollector && selfCollector ? (
+                  <Alert variant="info" title={t('collector')}>
+                    {t('selfCollector')}
+                  </Alert>
                 ) : null}
 
                 {isCollector && !selfCollector ? (

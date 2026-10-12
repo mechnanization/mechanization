@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `fix/pr116-review` (PR #116 merged with `fix/pr115-review`, which stacks #123, #124 and #115 on `develop@5e8f5c3`, with its review fixes): Escape inside a dialog, Tailwind 4 class names on 3.4; digit-normalised cadastre lookups, Latin digits on write, what still compares as stored; a window count on an empty page, 2026-10-15; the previous build and a new enum value against `chore/migration-0090-0091` (on `develop@5e8f5c3`), 2026-10-13, rebased onto `develop@3211140`, 2026-10-15.
+Last verified against the code: `fix/pr116-review` (PR #116 merged with `fix/pr115-review`, which stacks #123, #124 and #115 on `develop@5e8f5c3`, with its review fixes): Escape inside a dialog, Tailwind 4 class names on 3.4; digit-normalised cadastre lookups, Latin digits on write, what still compares as stored; a window count on an empty page, 2026-10-15; the previous build and a new enum value against `chore/migration-0090-0091` (on `develop@5e8f5c3`), 2026-10-13, rebased onto `develop@3211140`, 2026-10-15; the Prisma `now()` clock trap in invoice numbering against `fix/finance-audit-remediation` (on `develop@5e8f5c3`), 2026-10-12.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -418,6 +418,29 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   give one client `options=-c TimeZone=Asia/Beirut` in its URL; changing the database's
   default would move every suite sharing it.
 - **Where:** `fees.service.ts` `numberInvoices`, `invoice-numbering.integration.spec.ts`.
+
+### Prisma's `@default(now())` can read earlier than a `new Date()` taken before it (Windows)
+
+- **What happens:** `numberInvoices` numbers the bills whose `createdAt` is at or after
+  `since`, a `new Date()` taken just before the `createMany`. On a Windows machine a bill
+  can come back stamped a few milliseconds *before* `since` (`createdAt` 06:13:14.962,
+  `since` 06:13:14.964, logged 2026-10-12), so the count check finds 0 of 1 and the whole
+  issue rolls back. It comes and goes with the machine's timer resolution: the full backend
+  suite passed twice and then failed 7 tests on unchanged `develop` (and 33 on the finance
+  audit branch) in the same afternoon. A suite run alone passes.
+- **Why:** Prisma's query engine stamps `now()` with the operating system's coarse clock,
+  while Node's `Date` reads the precise one; on Windows the two can be ~1–16 ms apart. The
+  stamp is Prisma's, not the database's (its `INSERT` sends `createdAt` as a parameter).
+  On Linux both read the same clock, so CI and the Lightsail API are not known to be affected.
+- **Do this:** do not order a just-written row against a JS timestamp. Fix candidates, not
+  made yet: write `createdAt: since` in the `createMany` data so the rows carry the
+  timestamp the filter reads, or return the inserted ids (`createManyAndReturn`, if the
+  installed Prisma has it) and number those. Until then, on Windows, re-run a numbering
+  failure alone before suspecting the change under test.
+- **Where:** `fees.service.ts` `issue` (`raisedAt`) and `runRecurringBilling` (`startedAt`)
+  into `numberInvoices`; seen in the suites that issue notices (`billing-census`,
+  `co-owner-billing`, `correction-bills`, `fee-exemption`, `invoice-numbering`, `ownership`,
+  `tenancy`, `landlord-link`, `finance-audit`).
 
 ### A foreign-key check locks the row it points at
 

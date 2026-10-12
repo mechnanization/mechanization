@@ -1312,6 +1312,7 @@ municipal cash-handling practice, and is pinned by
 | D10 | Are an accountant's salary payouts limited? (decided by the owner on the finance audit, 2026-10-12) | Yes, twice: one salary per staff member per month (`salaryPeriod`, a partial unique index, `SALARY_PERIOD_ALREADY_PAID`), and a manager-set «سقف صرف الرواتب» per currency above which the manager pays it (`SALARY_OVER_CEILING`). D7 stands below the ceiling: the payout leaves before the order and waits for regularisation (§5.8) | The audit found the salary route to be the one art. 35 path with no bound at all: any amount, any number of times, to any account but one's own. Art. 35 lets a salary go before the order; it does not make the amount unchecked |
 | D11 | May counter cash settle a bill that carries a citizen's payment claim under review? (decided by the owner, 2026-10-12; was open-decisions.md §19) | No. The single settle, a reversal and a bulk settlement are refused (`PAYMENT_CLAIM_UNDER_REVIEW`, `BULK_SETTLE_BILL_PENDING_REVIEW`) until a clerk confirms or rejects the claim (§3.3) | A person decides whether the citizen's transfer arrived. Settling over the claim would erase it, and a transfer that did arrive would leave the citizen having paid twice with nothing on record |
 | D12 | Does «حسب الأسهم» divide by 2400 or by the recorded owners' sum? (the owner, 2026-10-12, keeping the decision of 2026-10-07) | By the sum, as before. A flat whose recorded أسهم do not add up to 2400 is reported in «ملاحظات الجودة» (`OWNER_SHARES_INCOMPLETE`, dismissable), never refused | On a building nobody has partitioned the 2400 cover the whole building, so dividing a flat by 2400 would under-bill it; a total short of 2400 is also what a co-owner missing from the census looks like, so a person looks |
+| D13 | Which methods may a collector record a payment by? (decided by the owner, 2026-10-12) | Cash as his own collection (COLLECTOR, himself named), or a Whish transfer made at the door (WHISH_MONEY, credited to the Whish account). Not CASH, which credits the safe, and not another collector's name (`COLLECTOR_CANNOT_SELECT_METHOD`, §14) | Cash he holds must sit on his custody until he hands it in; a Whish transfer is already in the municipality's account, and one reference settles one receipt (B2), so a reference cannot be reused to cover cash kept back |
 
 The decree's text was read at <https://www.baladiyat.org/?page_id=6636> (the
 consolidated text with its 1985–1996 amendments). It should be confirmed against the
@@ -1458,9 +1459,10 @@ The audit of `refactor/ui-kit-adoption@68e3e55`, re-checked against `develop@5e8
 already closed A5 and A6), and the owner's decisions D10–D12. Each item is pinned in
 `finance-audit.integration.spec.ts` on a throwaway Postgres 17 unless named otherwise.
 
-- **A collector books into his own custody (B1).** `settleInPerson` refuses a COLLECTOR any method
-  but COLLECTOR and any collector but himself (`COLLECTOR_CANNOT_SELECT_METHOD`); the settle page
-  shows him «جابٍ», himself, instead of the choice.
+- **What a collector may record (B1, D13).** Cash as his own collection — method COLLECTOR, himself
+  named — or a Whish transfer a citizen makes at the door, credited to the Whish account. Never cash
+  into the safe, never another collector (`COLLECTOR_CANNOT_SELECT_METHOD`). The settle page offers
+  him those two, and «عبر المحصّل» is himself, with no staff list read.
 - **A counter retry key is bound to its act (B6).** Method, collector, reference, and the notes or
   the sum; `PAYMENT_IDEMPOTENCY_KEY_REUSED` now names the receipt the key wrote.
 - **One Whish or bank reference, one receipt (B2).** Refused in `recordIn` on every path while a

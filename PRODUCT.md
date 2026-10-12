@@ -32,8 +32,9 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
     credentials the gateway runs in sandbox mode.
 - **Collectors (`COLLECTOR`, جابي) and counter clerks**:
   - Record in-person payments, full or partial, at the counter (`CASH`) or on a round
-    (`COLLECTOR`). A collector records only his own collection, into his own custody; the cash
-    desk, Whish and naming another collector are the counter clerks'.
+    (`COLLECTOR`). A collector records cash only as his own collection, into his own custody, or a
+    Whish transfer a citizen makes at the door; the cash desk and naming another collector are the
+    counter clerks'.
   - Issue official receipts matching Lebanon's printed receipt books (`وصل جباية رسمي`).
   - Share a receipt through the device share sheet, a WhatsApp link, or a PDF download.
   - See every receipt on a bill, and every reversal, on the bill's own page («وصولات الفاتورة»),

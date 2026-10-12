@@ -248,7 +248,7 @@
     "TRANSACTION_ALREADY_REVERSED": "هذه الحركة معكوسة بالفعل",
     "TRANSACTION_IS_REVERSAL": "لا يمكن عكس حركة عكسية",
     "PAYMENT_IDEMPOTENCY_KEY_REUSED": "معرّف هذه العملية سُجّل لدفعة أخرى ({receiptNumber}) — أعد تحميل الصفحة وراجع وصولات الفاتورة",
-    "COLLECTOR_CANNOT_SELECT_METHOD": "الجابي يسجّل ما يحصّله باسمه هو: طريقة «جابٍ»، وهو الجابي المحدَّد. لم يُسجَّل شيء",
+    "COLLECTOR_CANNOT_SELECT_METHOD": "الجابي يسجّل النقد الذي يحصّله باسمه هو (طريقة «عبر المحصّل»، وهو المحصّل)، أو تحويل Whish. لا يسجّل نقداً إلى الصندوق ولا باسم محصّل آخر. لم يُسجَّل شيء",
     "PAYMENT_EXTERNAL_REF_REUSED": "هذا المرجع مسجّل على الوصل {receiptNumber} — الحوالة الواحدة لا تُقيَّد مرتين. لم يُسجَّل شيء",
     "EXCHANGE_RATE_OVERRIDE_BEYOND_TOLERANCE": "السعر يبتعد عن السعر الرسمي بنسبة {deviation, number}٪، أكثر من المسموح ({tolerance, number}٪). ما فوق ذلك يقرّره المدير وحده",
     "PAYMENT_BILL_CANCELLED": "هذه الفاتورة ملغاة ولا تقبل أي دفعة",

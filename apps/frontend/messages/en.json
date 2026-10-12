@@ -248,7 +248,7 @@
     "TRANSACTION_ALREADY_REVERSED": "This transaction has already been reversed.",
     "TRANSACTION_IS_REVERSAL": "A reversal cannot itself be reversed.",
     "PAYMENT_IDEMPOTENCY_KEY_REUSED": "This operation’s identifier was already used for another payment ({receiptNumber}). Reload the page and check the bill’s receipts.",
-    "COLLECTOR_CANNOT_SELECT_METHOD": "A collector records what he collects as his own collection: method “Collector”, with himself named. Nothing was recorded.",
+    "COLLECTOR_CANNOT_SELECT_METHOD": "A collector records the cash he collects as his own collection (method “Collector”, with himself named), or a Whish transfer — never cash into the safe, nor in another collector’s name. Nothing was recorded.",
     "PAYMENT_EXTERNAL_REF_REUSED": "This reference is already on receipt {receiptNumber}. One transfer is not recorded twice. Nothing was recorded.",
     "EXCHANGE_RATE_OVERRIDE_BEYOND_TOLERANCE": "The rate is {deviation, number}% away from the official rate, more than the {tolerance, number}% allowed. Beyond that, only the manager may take it.",
     "PAYMENT_BILL_CANCELLED": "This bill has been cancelled and takes no payment.",

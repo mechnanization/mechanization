@@ -289,9 +289,10 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
 - Uniqueness is enforced by a database constraint and surfaces as a `ConflictError`, never by a
   check-then-insert alone.
 - **Who books money where (finance audit, 2026-10-12).**
-  - A collector settles only into his own custody: `FeesService.settleInPerson` refuses a COLLECTOR any
-    method but COLLECTOR and any collector but himself (`COLLECTOR_CANNOT_SELECT_METHOD`). Before,
-    he could book the cash in his pocket as `CASH`, credited to the safe, or as a Whish transfer.
+  - A collector records cash only into his own custody: `FeesService.settleInPerson` refuses a
+    COLLECTOR the `CASH` method and any collector but himself (`COLLECTOR_CANNOT_SELECT_METHOD`).
+    Before, he could book the cash in his pocket as `CASH`, credited to the safe. A Whish transfer
+    made at the door he may record (D13); its reference settles one receipt only.
   - One Whish or bank reference is one receipt. `PaymentLedgerService.recordIn` refuses a reference
     already on a receipt still standing (`PAYMENT_EXTERNAL_REF_REUSED`), on every path — the counter,
     a claim confirmed, the Whish callback, a settlement of several bills (whose own rows share one) —

@@ -3870,18 +3870,21 @@ export class FeesService {
     actor: { id: string; role: string };
   }) {
     /*
-      A collector settles only into his own custody (finance audit B1). Anyone
-      in FEE_ISSUE_ROLES could choose the method, so a collector at a door could
-      book the cash in his pocket as `CASH`, credited to the safe, or as a Whish
-      transfer — leaving nothing on his custody to hand in, and the safe short at
-      the count. His method is COLLECTOR and the collector named is himself.
+      What a collector may record (finance audit B1; the owner's decision of
+      2026-10-12). Cash he takes goes into his own custody: method COLLECTOR,
+      himself named — never `CASH`, which credits the safe while the notes are in
+      his pocket, and never another collector, whose custody would then owe money
+      he never held. A citizen who transfers by Whish at the door is recorded as
+      WHISH_MONEY, credited to the Whish account where the money actually is; its
+      reference then settles one receipt only (`PAYMENT_EXTERNAL_REF_REUSED`).
     */
     if (input.actor.role === 'COLLECTOR') {
       const self = input.actor.id.toLowerCase();
-      if (input.method !== 'COLLECTOR' || input.collectedById?.toLowerCase() !== self) {
+      const ownCollection = input.method === 'COLLECTOR' && input.collectedById?.toLowerCase() === self;
+      if (!ownCollection && input.method !== 'WHISH_MONEY') {
         throw new ForbiddenError({
           code: 'COLLECTOR_CANNOT_SELECT_METHOD',
-          message: 'A collector records what he takes as his own collection: method COLLECTOR, himself named.',
+          message: 'A collector records cash as his own collection (method COLLECTOR, himself named), or a Whish transfer.',
         });
       }
     }
