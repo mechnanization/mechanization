@@ -2169,15 +2169,17 @@ model CitizenPayment {
   /// Whether a staff member has marked this pending verification notification as seen.
   isSeen Boolean @default(false)
 
-  /// Who raised this bill (0091): the notice's issuer, or the clerk who charged
-  /// it one-off. NULL for a recurring run (the system) and for every bill raised
-  /// before 0091 — never guessed.
+  /// Who raised this bill (0091): the notice's issuer, the clerk who charged it
+  /// one-off, or the staff member who started a recurring run (`POST
+  /// fees/recurring/run`). NULL for the scheduled recurring run (the system) and
+  /// for every bill raised before 0091 — never guessed.
   issuedById String? @db.Uuid
   issuedBy   User?   @relation("PaymentIssuedBy", fields: [issuedById], references: [id], onDelete: Restrict)
 
   /// «إلغاء الفاتورة» (0091): the manager withdrew this bill before any money was
   /// taken on it. The three move together with `paymentStatus` CANCELLED, and a
-  /// cancelled bill has `paidAmount` 0 (CHECKs in 0091).
+  /// cancelled bill has `paidAmount` 0 (CHECKs in 0091); the reason is never
+  /// blank (CHECK in 0093).
   cancelledAt        DateTime? @db.Timestamptz(3)
   cancelledById      String?   @db.Uuid
   cancelledBy        User?     @relation("PaymentCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict)
@@ -2272,7 +2274,9 @@ model PaymentTransaction {
 
   /// The provider's handle, when the money came through Whish. Per transaction
   /// rather than per invoice, which is what makes a part-Whish, part-cash
-  /// invoice describable at all.
+  /// invoice describable at all. Compared without case or edge spaces through
+  /// an expression index in 0091 (`payment_transactions_externalRef_lower_idx`,
+  /// `lower(btrim("externalRef"))`), which Prisma cannot express.
   externalRef String?
 
   /// The collector holding the money, when `method` is COLLECTOR.
