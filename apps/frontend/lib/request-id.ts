@@ -109,7 +109,9 @@ export function heldInDoubt(tenant: string, scope: KeyScope): boolean {
  *   recorded, and cancelled since;
  * - `TRANSACTION_ALREADY_REVERSED`: a counter payment recorded, and reversed
  *   since;
- * - `PAYMENT_IDEMPOTENCY_KEY_REUSED`: recorded, against another invoice;
+ * - `PAYMENT_IDEMPOTENCY_KEY_REUSED`: a counter payment recorded, with other
+ *   details — the same bill by another method, collector, reference or sum
+ *   (finance audit B6: an edit after a lost answer), or another bill;
  * - `BULK_SETTLE_REQUEST_REUSED`: a settlement of several bills recorded,
  *   with other details — from the dialog, the same bills by another method
  *   (its «BRC-» number in `params.number`);

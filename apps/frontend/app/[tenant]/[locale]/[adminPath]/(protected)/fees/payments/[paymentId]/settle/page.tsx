@@ -7,6 +7,7 @@ import { useTranslations } from 'next-intl';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   ArrowRight,
+  Ban,
   Banknote,
   CheckCircle2,
   CreditCard,
@@ -54,7 +55,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { ErrorState, LoadingState } from '@/components/ui/states';
+import { EmptyState, ErrorState, LoadingState } from '@/components/ui/states';
+import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
 
@@ -122,12 +124,16 @@ function receiptPayment(
  * `settle:<paymentId>` — the citizen cash page settles the same bill and holds
  * the same key — so it outlives this page: a reload of the page's own reads, a
  * trip away and back. Kept across every failure and every edit, because a
- * refusal proves only that *this* attempt took nothing. A counter payment's key
- * is bound to its bill alone, so a retry after a lost answer is answered with
- * the first receipt — which may carry another amount than the form now shows,
- * and the page says so (`replayed`). It is spent on a 2xx, so the next payment
- * on the bill is a new act, and on a refusal `keyIsSpent` names — among them
- * `TRANSACTION_ALREADY_REVERSED`, an earlier receipt that has been reversed since.
+ * refusal proves only that *this* attempt took nothing. The server binds the key
+ * to its act (finance audit B6): this bill, the method, the collector, the
+ * reference and the amount. A retry after a lost answer that sends all of them
+ * again is answered with the first receipt, and the page says so (`replayed`);
+ * one that changed any of them is refused (`PAYMENT_IDEMPOTENCY_KEY_REUSED`)
+ * rather than answered as if the form's figure had been taken. It is spent on a
+ * 2xx, so the next payment on the bill is a new act, and on a refusal
+ * `keyIsSpent` names — that one, and `TRANSACTION_ALREADY_REVERSED`, an earlier
+ * receipt that has been reversed since. Either says the bill moved after it
+ * was loaded, so it is read again before the button is released (`rereadBill`).
  */
 export default function SettlePaymentPage({
   params,
@@ -171,6 +177,8 @@ export default function SettlePaymentPage({
 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  /** The bill moved since it was loaded and reading it again failed: nothing is judged against the old balance. */
+  const [billStale, setBillStale] = useState(false);
 
   /** What the server recorded. Once set, the page is in its success state for good. */
   const [settled, setSettled] = useState<SettleResult | null>(null);
@@ -255,6 +263,27 @@ export default function SettlePaymentPage({
   }, [load]);
 
   /**
+   * Reads the bill again, in place, after a refusal that says the key's payment
+   * exists (`keyIsSpent`). Not `load`: that swaps the page for its spinner, and
+   * a failure there for an error panel, taking the refusal's words with it
+   * (STA-1). The amount typed is left as it is — refilling it with the new
+   * balance would offer the clerk a second payment the citizen never made — and
+   * is judged against the bill as it now stands.
+   */
+  const rereadBill = useCallback(
+    async (accessToken: string) => {
+      try {
+        setPayment(await getPaymentById(tenant, accessToken, paymentId));
+        setBillStale(false);
+      } catch (caught) {
+        logApiError(caught);
+        setBillStale(true);
+      }
+    },
+    [tenant, paymentId],
+  );
+
+  /**
    * Reads the citizen's file for the receipt. Called once the money has moved,
    * and again from «أعد تحميل الوصل» if it failed; it never touches the payment.
    */
@@ -321,7 +350,7 @@ export default function SettlePaymentPage({
   const pickable = collectors.filter((candidate) => candidate.isActive && candidate.role !== 'VIEWER');
 
   const submit = async () => {
-    if (!token || !valid || locked || inFlight.current) return;
+    if (!token || !valid || locked || billStale || inFlight.current) return;
     inFlight.current = true;
     setSubmitting(true);
     setSubmitError(null);
@@ -338,9 +367,15 @@ export default function SettlePaymentPage({
       });
     } catch (caught) {
       logApiError(caught);
-      // A key whose act exists is spent; every other failure keeps it, so a retry is answered from the first.
-      if (keyIsSpent(caught)) spendKey(tenant, keyScope);
       setSubmitError(failureText(caught));
+      // A key whose act exists is spent; every other failure keeps it, so a retry is answered from the first.
+      if (keyIsSpent(caught)) {
+        spendKey(tenant, keyScope);
+        // Money moved under the key: the treasury's figures are behind it, and the bill on screen too.
+        void queryClient.invalidateQueries({ queryKey: ['treasury', tenant] });
+        // Held (`inFlight`, `submitting`) until the bill is read again, so the next press meets its balance.
+        await rereadBill(token);
+      }
       inFlight.current = false;
       setSubmitting(false);
       return;
@@ -361,13 +396,15 @@ export default function SettlePaymentPage({
     await loadReceipt(payment.citizenId);
   };
 
-  /** The words for a failed press: the localised text for the code (TXT-6), or this page's own for a reversed earlier receipt. */
+  /** The words for a failed press: the localised text for the code (TXT-6), or this page's own for an earlier receipt. */
   const failureText = (caught: unknown): string => {
-    if (caught instanceof ApiRequestError && caught.code === 'TRANSACTION_ALREADY_REVERSED') {
+    if (caught instanceof ApiRequestError) {
       const number = caught.payload.params?.receiptNumber;
-      if (number) return t('earlierReversed', { number: String(number) });
+      if (number && caught.code === 'TRANSACTION_ALREADY_REVERSED') return t('earlierReversed', { number: String(number) });
+      if (number && caught.code === 'PAYMENT_IDEMPOTENCY_KEY_REUSED') return t('earlierRecorded', { number: String(number) });
+      return caught.message;
     }
-    return caught instanceof ApiRequestError ? caught.message : t('failed');
+    return t('failed');
   };
 
   /*
@@ -395,6 +432,25 @@ export default function SettlePaymentPage({
           method,
         )
       : null;
+
+  /*
+    A bill the manager cancelled takes no payment (`PAYMENT_BILL_CANCELLED`). It
+    is said so, with his reason, as the citizen cash page says it — not shown as
+    a form with nothing due and a button that stays off without a word.
+  */
+  if (payment.paymentStatus === 'CANCELLED' && !settled) {
+    return (
+      <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
+        <BackLink fallbackHref={`${base}/fees`} label={t('back')} />
+        <PageHeader icon={Banknote} title={t('title')} />
+        <EmptyState
+          icon={Ban}
+          title={t('cancelBill.cancelledTitle')}
+          description={payment.cancellationReason ?? t('cancelBill.cancelledBody')}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
@@ -457,6 +513,11 @@ export default function SettlePaymentPage({
         <Alert variant="destructive" live="alert">
           {submitError}
         </Alert>
+      ) : null}
+
+      {/* The bill moved and could not be read again: the button stays off until it is. */}
+      {billStale && token ? (
+        <RefreshFailedAlert title={t('billStale')} message={t('loadError')} onRetry={() => void rereadBill(token)} />
       ) : null}
 
       {/*
@@ -676,7 +737,7 @@ export default function SettlePaymentPage({
                 <Button
                   size="lg"
                   className="h-12 w-full text-base font-bold shadow-sm"
-                  disabled={!valid || submitting || locked}
+                  disabled={!valid || submitting || locked || billStale}
                   onClick={() => void submit()}
                 >
                   {submitting ? (

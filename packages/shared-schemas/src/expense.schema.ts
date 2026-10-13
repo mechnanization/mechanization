@@ -177,6 +177,24 @@ export function currentSalaryPeriod(now: Date = new Date()): string {
   return municipalToday(now).slice(0, 7);
 }
 
+/** How many months before the current one «صرف راتب» reaches back. */
+export const SALARY_PERIOD_MONTHS_BACK = 11;
+
+/**
+ * The months a salary may be paid for, newest first: the municipality's current
+ * month and the eleven before it. The dialog offers exactly these, and the server
+ * refuses any other (`SALARY_PERIOD_IN_FUTURE`, `SALARY_PERIOD_TOO_OLD`), so one
+ * salary per staff member per month cannot be stepped around through months long
+ * past. An older salary goes through the full expense form, as an ordinary voucher.
+ */
+export function salaryPeriodWindow(now: Date = new Date()): string[] {
+  const [year, month] = currentSalaryPeriod(now).split('-').map(Number) as [number, number];
+  return Array.from({ length: SALARY_PERIOD_MONTHS_BACK + 1 }, (_, back) => {
+    const index = year * 12 + (month - 1) - back;
+    return `${Math.floor(index / 12)}-${String((index % 12) + 1).padStart(2, '0')}`;
+  });
+}
+
 export const recordStaffSalarySchema = z.object({
   accountId: z.string().uuid('اختر الحساب الذي سيُدفع منه'),
   amount: paidAmount,

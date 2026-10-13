@@ -8,6 +8,7 @@ import {
   currentSalaryPeriod,
   getLabels,
   recordStaffSalarySchema,
+  salaryPeriodWindow,
   TREASURY_ADMIN_ROLES,
 } from '@mechanization/shared-schemas';
 import {
@@ -229,20 +230,19 @@ function SalaryForm({
   /**
    * The month this salary is for (0091): one per person per month, so the server
    * refuses a second (`SALARY_PERIOD_ALREADY_PAID`). This month by default; the
-   * eleven before it for a month paid late. Never a month not yet begun.
+   * eleven before it for a month paid late. Never a month not yet begun. The
+   * months offered are the server's own window (`salaryPeriodWindow`), which
+   * refuses any other (`SALARY_PERIOD_IN_FUTURE`, `SALARY_PERIOD_TOO_OLD`).
    */
   const [salaryPeriod, setSalaryPeriod] = useState(() => currentSalaryPeriod());
-  const periodOptions = useMemo(() => {
-    const [year, month] = currentSalaryPeriod().split('-').map(Number);
-    return Array.from({ length: 12 }, (_, back) => {
-      const index = year * 12 + (month - 1) - back;
-      const value = `${Math.floor(index / 12)}-${String((index % 12) + 1).padStart(2, '0')}`;
-      return {
+  const periodOptions = useMemo(
+    () =>
+      salaryPeriodWindow().map((value) => ({
         value,
         label: formatMonth(`${value}-15T12:00:00.000Z`, { month: 'long', year: 'numeric', timeZone: 'UTC' }, locale),
-      };
-    });
-  }, [locale]);
+      })),
+    [locale],
+  );
 
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);

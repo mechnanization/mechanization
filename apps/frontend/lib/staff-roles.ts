@@ -11,6 +11,7 @@ import {
   REGISTER_WRITE_ROLES,
   WORKING_STAFF_ROLES,
   hasStaffRole,
+  type StaffRole,
 } from '@mechanization/shared-schemas';
 
 /**
@@ -63,6 +64,21 @@ export const REFERENCE_SEND_ROLES: readonly string[] = WORKING_STAFF_ROLES;
  * counter and the round. `FEE_ISSUE_ROLES`, as the route.
  */
 export const PAYMENT_SETTLE_ROLES: readonly string[] = FEE_ISSUE_ROLES;
+
+/**
+ * «تسجيل دفعة نقدية» — cash into the safe at the counter, the citizen file's
+ * cash page, which always sends `CASH`. Narrower than `PAYMENT_SETTLE_ROLES`:
+ * a collector records the cash he takes as his own collection, or a Whish
+ * transfer, and the server refuses him `CASH` (`COLLECTOR_CANNOT_SELECT_METHOD`,
+ * finance audit B1, decision D13). That rule lives in `FeesService.settleInPerson`, not
+ * in a `@Roles` — the route is `FEE_ISSUE_ROLES` — so there is no shared set to
+ * take; this mirrors it. A collector is sent to the counter settle page, which
+ * offers him those two methods.
+ */
+export const CASH_COUNTER_ROLES: readonly string[] = [
+  'SUPER_ADMIN',
+  'ACCOUNTANT',
+] as const satisfies readonly StaffRole[];
 
 /**
  * «تسديد الفواتير المحددة» — tick several of one citizen's bills and settle

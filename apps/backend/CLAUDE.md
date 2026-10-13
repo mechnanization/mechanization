@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): the cadastre import deviation, the cadastre asset's private cache, `GET auth/staff/me`, the own-account throttle, the save-path unlink rows, `assertFileOpen`; the audit reads' `?actorId=` and its «النظام» value, the review queue's total, a registration card's missing building, 2026-10-15; and `bugs-fix` (on `develop@5e8f5c3`; the finance audit remediation: `settleInPerson` in one transaction with the rate read FOR SHARE, `lockExternalRef` and a ledger retry key bound to its act, the Whish callback closed with its money, `cancelBill`, the notice retry key, the one-off charge and the settings save in Tier 1, the salary month and ceiling), 2026-10-12.
+Last verified against the code: `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): the cadastre import deviation, the cadastre asset's private cache, `GET auth/staff/me`, the own-account throttle, the save-path unlink rows, `assertFileOpen`; the audit reads' `?actorId=` and its «النظام» value, the review queue's total, a registration card's missing building, 2026-10-15; and `bugs-fix` (on `develop@5e8f5c3`; the finance audit remediation: `settleInPerson` in one transaction with the rate read FOR SHARE, `lockExternalRef` and a ledger retry key bound to its act, the Whish callback closed with its money, `cancelBill`, the notice retry key, the one-off charge and the settings save in Tier 1, the salary month and ceiling), 2026-10-12; the review of PR #120 (a Whish reference cleaned when stored and folded in SQL, a cancelled bill named in every owed filter, the recurring-run route has no screen) against `fix/finance-audit-remediation` rebased on `chore/migration-0090-0091@8d386b5`, 2026-10-13.
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -628,8 +628,9 @@ Every state change MUST leave an `audit_log_entries` row, in one of two tiers
 
 A row no person caused (the recurring biller's scheduled run, a Whish settlement) MUST carry
 `actorId: null` and `actorType: 'SYSTEM'`, never a placeholder: `actorId` is a uuid, and a string
-there is refused, in Tier 2 silently. The fees page's «إصدار الفواتير» (`POST fees/recurring/run`)
-passes its staff member to `FeesService.runRecurringBilling(now, actor)`; the cron passes none.
+there is refused, in Tier 2 silently. `POST fees/recurring/run` passes the staff member who called
+it to `FeesService.runRecurringBilling(now, actor)`; the cron passes none. No screen calls that route
+(the fees page's «إصدار الفواتير» was removed in `d346729`).
 
 Event names are string literals. Emission is synchronous with no wildcards, because listeners rely on the
 request's tenant scope. A misspelt or unheard name is dropped silently. Add each new action's label to

@@ -6,7 +6,7 @@ entry, an opening balance for a wallet added after go-live, and transfer write-o
 built, and every table, column, enum value and error code for them is a *proposal* until its
 migration exists (CLAUDE.md: never invent names; grep first). The built stages' names are
 real: they are in migrations `0073`, `0074`, `0078`, `0079`, `0080`, `0081`, `0082`, `0083`,
-`0084`, `0085`, `0086`, `0087`, `0088`, `0089`, `0090` and `0091` and in the `treasury`, `expense`, `transfer`,
+`0084`, `0085`, `0086`, `0087`, `0088`, `0089`, `0090`, `0091` and `0093` and in the `treasury`, `expense`, `transfer`,
 `income`, `treasury-closing`, `staff` and `payment-settlement` contracts and `exchange-policy`
 of `packages/shared-schemas`.
 Where the code was read, the file is cited. Where a claim could not be verified, it
@@ -870,7 +870,12 @@ is untouched and still reached from the inspector's row (§5.6).
     with the voucher that paid it (`SALARY_PERIOD_ALREADY_PAID`), in the service under
     an advisory lock per person and month and in the database by a partial unique index
     over vouchers not cancelled. A cancelled salary frees its month. A month not yet
-    begun is refused (`SALARY_PERIOD_IN_FUTURE`): an advance is not a salary.
+    begun is refused (`SALARY_PERIOD_IN_FUTURE`): an advance is not a salary. So is a
+    month before the window the dialog offers (`SALARY_PERIOD_TOO_OLD`, the shared
+    `salaryPeriodWindow`), or one salary a month could be stepped around by naming
+    months long past; an older salary goes through the full expense form, which D10
+    does not reach ([open-decisions.md](open-decisions.md) §20.2). A unique violation
+    on the month's index is answered as `SALARY_PERIOD_ALREADY_PAID` too.
   - The retry key is also bound to the staff account (`payeeStaffId`), so a retry for
     another person who shares the name is refused (`TREASURY_REQUEST_KEY_REUSED`), and
     to the month (`salaryPeriod`).
@@ -1465,14 +1470,22 @@ already closed A5 and A6), and the owner's decisions D10–D12. Each item is pin
   him those two, and «عبر المحصّل» is himself, with no staff list read.
 - **A counter retry key is bound to its act (B6).** Method, collector, reference, and the notes or
   the sum; `PAYMENT_IDEMPOTENCY_KEY_REUSED` now names the receipt the key wrote.
-- **One Whish or bank reference, one receipt (B2).** Refused in `recordIn` on every path while a
+- **One Whish reference, one receipt (B2).** Refused in `recordIn` on every path while a
   receipt carrying it still stands (`PAYMENT_EXTERNAL_REF_REUSED`), behind an advisory lock on the
-  reference; one settlement's rows share theirs. Read through an expression index (0091).
+  reference; one settlement's rows share theirs. Only a Whish settlement writes `externalRef`. The
+  reference is stored with its edge whitespace removed (the callback's arrives untrimmed), and both
+  the lookup and the lock key fold case and edge spaces in SQL, in the expression 0091 indexes, so
+  JavaScript's `trim`/`toLowerCase` and Postgres's `btrim`/`lower` never have to agree.
 - **The Whish callback (B5).** Banked only for the amount the checkout quoted, keyed by the checkout
   (`clientRequestId`) and closed in the same transaction. Any other amount, or a bill paid,
   cancelled or reduced another way meanwhile, or a reference already on a receipt, sets the checkout
   aside as MISMATCHED (0090) with a Tier 1 `WHISH_CHECKOUT_MISMATCHED` row, crediting nothing. Pinned
-  also in `whish-settlement.spec.ts`.
+  also in `whish-settlement.spec.ts`. A success settles only its own claim (`claimRef`, the
+  checkout's reference): a claim the citizen declared after the checkout's was refused is left for a
+  clerk, and the checkout set aside. A set-aside checkout's claim cannot be confirmed as it stands
+  (`PAYMENT_CHECKOUT_MISMATCHED`, naming the provider's transaction number): the clerk refuses it and
+  records at the counter what the provider shows, under the provider's reference (decision of
+  2026-10-13). A failure callback for a bill settled or cancelled meanwhile closes its checkout FAILED.
 - **The counter's rate (B8, A2).** Read `FOR SHARE` in the payment's own transaction, behind the
   bill's lock, never from the settings cache; a finance role's own rate stays within the exchange
   rule's tolerance (3% unless the manager set another), beyond it only the manager
@@ -1486,10 +1499,14 @@ already closed A5 and A6), and the owner's decisions D10–D12. Each item is pin
   another is `FEE_NOTICE_REQUEST_REUSED`.
 - **A bill can be cancelled (B3).** `POST fees/payments/:id/cancel`, the manager's
   (`BILL_CANCEL_ROLES`), with a reason: `paymentStatus` CANCELLED (0090) and who, when and why on
-  the row (0091), a Tier 1 `FEE_BILL_CANCELLED` row. Refused with money on it
+  the row (0091; the reason never blank, 0093), a Tier 1 `FEE_BILL_CANCELLED` row. Refused with money on it
   (`BILL_CANCEL_HAS_PAYMENTS`, reverse its receipts first) or a claim waiting
   (`PAYMENT_CLAIM_UNDER_REVIEW`); a cancelled bill takes no payment, claim or checkout
   (`PAYMENT_BILL_CANCELLED`) and owes nothing in every sum. A CHECK keeps money off a cancelled bill.
+  Nor is it billed: the billed totals (the overview's `billedTotal` and its months, the register's
+  and the dossier's `feesTotal`) leave it out, so billed stays collected plus outstanding (decision
+  of 2026-10-13). Every owed filter names it (`NOT IN ('PAID', 'CANCELLED')`, `!== 'CANCELLED'`)
+  rather than leaning on its `remaining` of 0, and no screen offers a cancelled bill a payment.
 - **Who raised a bill (B4).** `citizen_payments.issuedById` (0091) on every bill raised since: the
   notice's issuer, the clerk of a one-off charge, whoever pressed a recurring run (NULL for the
   scheduled one). A one-off charge is Tier 1 (`FEE_INDIVIDUAL_LEVIED`). It still has no retry key

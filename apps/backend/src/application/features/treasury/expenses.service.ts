@@ -1,9 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import {
   COMMISSION_URGENT_REASON,
-  currentSalaryPeriod,
   isReservedExpenseCategory,
   municipalToday,
+  SALARY_PERIOD_MONTHS_BACK,
+  salaryPeriodWindow,
   SALARY_URGENT_REASON,
   TRANSFER_FEE_URGENT_REASON,
   TREASURY_ADMIN_ROLES,
@@ -442,17 +443,30 @@ export class ExpensesService {
         }
 
         /*
-          A month not yet reached is an advance, not a salary (finance audit A3):
-          refused on the municipality's own clock. Then the month is serialised for
-          this staff member — two presses for one person and one month, each with
-          its own key, meet in `recordInTransaction`'s check one after the other.
-          Taken before the retry key's own lock, on this path always in that order.
+          The month is one the dialog offers (finance audit A3), on the
+          municipality's own clock: a month not yet reached is an advance, not a
+          salary; one before the window is refused too, or one salary a month
+          could be stepped around by naming months long past, each a "new" one.
+          An older salary goes through the full expense form. Then the month is
+          serialised for this staff member — two presses for one person and one
+          month, each with its own key, meet in `recordInTransaction`'s check one
+          after the other. Taken before the retry key's own lock, on this path
+          always in that order.
         */
-        if (input.salaryPeriod > currentSalaryPeriod()) {
+        const window = salaryPeriodWindow();
+        if (input.salaryPeriod > window[0]!) {
           throw new ValidationError({
             code: 'SALARY_PERIOD_IN_FUTURE',
             message: `A salary cannot be paid for ${input.salaryPeriod}, a month that has not begun.`,
             params: { period: input.salaryPeriod },
+          });
+        }
+        const oldest = window[window.length - 1]!;
+        if (input.salaryPeriod < oldest) {
+          throw new ValidationError({
+            code: 'SALARY_PERIOD_TOO_OLD',
+            message: `A salary is paid for this month or the ${SALARY_PERIOD_MONTHS_BACK} before it; ${input.salaryPeriod} is before ${oldest}.`,
+            params: { period: input.salaryPeriod, oldest },
           });
         }
         const periodKey = `${this.tenantContext.schemaName}:salary-period:${staff.id}:${input.salaryPeriod}`;
@@ -495,6 +509,23 @@ export class ExpensesService {
           input.salaryPeriod,
         );
         if (replay) return replay;
+      }
+      /*
+        The partial unique index of 0091 (`expense_vouchers_salary_period_key`):
+        a second salary for the month that got past the check above, from a path
+        that did not take the month's lock. Answered as that check answers, not
+        as a server error.
+      */
+      if (isUniqueViolationOn(error, 'salaryPeriod') || isUniqueViolationOn(error, 'salary_period')) {
+        const paid = await this.db.expenseVoucher.findFirst({
+          where: { payeeStaffId: staffId, salaryPeriod: input.salaryPeriod, voidedAt: null },
+          select: { voucherNumber: true },
+        });
+        throw new ConflictError({
+          code: 'SALARY_PERIOD_ALREADY_PAID',
+          message: `The salary for ${input.salaryPeriod} was already paid${paid ? ` (${paid.voucherNumber})` : ''}.`,
+          params: { period: input.salaryPeriod, voucherNumber: paid?.voucherNumber ?? '' },
+        });
       }
       throw error;
     }

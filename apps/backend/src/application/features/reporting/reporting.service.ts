@@ -850,7 +850,10 @@ export class ReportingService {
                      JOIN excluded_entries ee ON ee.id = bu."propertyEntryId"
                     WHERE bu."endedAt" IS NULL))
             AS "duplicateUnitsExcluded",
-          COALESCE((SELECT sum(amount) FROM ${this.S}citizen_payments), 0)::float8
+          -- A cancelled bill (0090) was raised in error and withdrawn: not billed,
+          -- so billed stays collected plus outstanding (decision of 2026-10-13).
+          COALESCE((SELECT sum(amount) FROM ${this.S}citizen_payments
+                     WHERE "paymentStatus" <> 'CANCELLED'), 0)::float8
             AS "billedTotal",
           COALESCE((SELECT sum("paidAmount") FROM ${this.S}citizen_payments), 0)::float8
             AS "collectedTotal",
@@ -872,7 +875,7 @@ export class ReportingService {
           (SELECT COALESCE(json_agg(row_to_json(m) ORDER BY m.month), '[]'::json)
              FROM (
                SELECT to_char(d.m, 'YYYY-MM') AS month,
-                      COALESCE(sum(p.amount), 0)::float8 AS billed,
+                      COALESCE(sum(p.amount) FILTER (WHERE p."paymentStatus" <> 'CANCELLED'), 0)::float8 AS billed,
                       COALESCE(sum(p."paidAmount"), 0)::float8 AS collected,
                       COALESCE(sum(p.amount - p."paidAmount")
                         FILTER (WHERE p."paymentStatus" = 'UNPAID'
@@ -1315,14 +1318,20 @@ export class ReportingService {
       isActive: citizen.isActive,
       payments,
       fees: {
-        feesTotal: sum(payments, 'amount'),
+        // A cancelled bill was withdrawn, not billed (decision of 2026-10-13).
+        feesTotal: sum(
+          payments.filter((payment) => payment.paymentStatus !== 'CANCELLED'),
+          'amount',
+        ),
         // Every pound received, across all rows — a part-payment sitting on an
         // UNPAID invoice is money the municipality has, and filtering to PAID
         // would leave it out.
         paidTotal: sum(payments, 'paidAmount'),
-        // What is left on rows not fully settled, not their face value.
+        // What is left on rows not fully settled, not their face value. A bill
+        // the manager cancelled owes nothing (0090), named here rather than left
+        // to its `remaining` of 0.
         outstandingTotal: sum(
-          payments.filter((payment) => payment.paymentStatus !== 'PAID'),
+          payments.filter((payment) => payment.paymentStatus !== 'PAID' && payment.paymentStatus !== 'CANCELLED'),
           'remaining',
         ),
         overdueTotal: sum(overdue, 'remaining'),

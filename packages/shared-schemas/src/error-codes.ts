@@ -69,8 +69,12 @@ export const ERROR_CODES = [
   'PAYMENT_IDEMPOTENCY_KEY_REUSED',
   // A collector settles only into his own custody: method COLLECTOR, himself named (finance audit B1).
   'COLLECTOR_CANNOT_SELECT_METHOD',
-  // A Whish or bank reference already on a receipt still standing (`params.receiptNumber`).
+  // A Whish reference already on a receipt still standing (`params.receiptNumber`).
   'PAYMENT_EXTERNAL_REF_REUSED',
+  // Confirming from the review queue a bill whose Whish checkout was set aside as MISMATCHED:
+  // the clerk refuses the claim and records what the provider shows (`params.reference`, the provider's
+  // transaction number, or the checkout's own when the provider sent none).
+  'PAYMENT_CHECKOUT_MISMATCHED',
   // A counter rate further from the official one than the tolerance (`params.deviation`, `params.tolerance`).
   'EXCHANGE_RATE_OVERRIDE_BEYOND_TOLERANCE',
   // A bill cancelled by the manager takes no payment, claim or checkout.
@@ -285,6 +289,8 @@ export const ERROR_CODES = [
   'SALARY_PERIOD_ALREADY_PAID',
   // A salary for a month after the municipality's current one: an advance is not a salary (`params.period`).
   'SALARY_PERIOD_IN_FUTURE',
+  // A salary for a month before the window «صرف راتب» offers (`params.period`, `params.oldest`).
+  'SALARY_PERIOD_TOO_OLD',
   // An accountant's salary payout above the manager's salary ceiling (`params.ceiling`, `params.currency`).
   'SALARY_OVER_CEILING',
   // Someone other than the manager changing the official rate or the two currencies.

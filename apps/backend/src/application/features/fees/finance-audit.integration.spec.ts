@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Client } from 'pg';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { currentSalaryPeriod } from '@mechanization/shared-schemas';
+import { currentSalaryPeriod, salaryPeriodWindow } from '@mechanization/shared-schemas';
 import { PrismaClient as TenantPrismaClient } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { migrateTenantSchema } from '../../../infrastructure/prisma/tenant-migrator';
@@ -316,6 +316,102 @@ describeIfDb('finance audit remediation', () => {
       expect((await db.whishCheckout.findUniqueOrThrow({ where: { externalRef } })).state).toBe('MISMATCHED');
       expect(await db.paymentTransaction.count({ where: { paymentId } })).toBe(1);
     });
+
+    it('stores the provider’s reference clean, so the counter cannot bank it again (B2)', async () => {
+      // The callback's `transactionRef` arrives untrimmed; `btrim` would keep the tab and newline.
+      const { paymentId, externalRef } = await checkout(70_000);
+      const transactionRef = `TXN-${randomUUID().slice(0, 8)}`;
+      await expect(
+        scoped(() =>
+          fees.settleFromWhishCallback({ externalRef, transactionRef: `${transactionRef}\t\n`, amount: 70_000, succeeded: true }),
+        ),
+      ).resolves.toEqual({ applied: true });
+      const banked = await db.paymentTransaction.findFirstOrThrow({ where: { paymentId } });
+      expect(banked.externalRef).toBe(transactionRef);
+
+      const other = await bill(70_000);
+      await expect(
+        scoped(() =>
+          fees.settleInPerson({
+            paymentId: other,
+            method: 'WHISH_MONEY',
+            whishTransactionRef: transactionRef.toLowerCase(),
+            actor: MANAGER(),
+          }),
+        ),
+      ).rejects.toMatchObject({ code: 'PAYMENT_EXTERNAL_REF_REUSED', params: { receiptNumber: banked.receiptNumber } });
+      expect(await db.paymentTransaction.count({ where: { paymentId: other } })).toBe(0);
+    });
+
+    it('refuses to confirm a set-aside checkout as it stands; the clerk refuses it and records what Whish shows', async () => {
+      const { paymentId, externalRef } = await checkout(100_000);
+      await expect(callback(externalRef, 50_000)).resolves.toEqual({ applied: false });
+
+      // Confirming would bank 100,000 for the 50,000 the provider reported.
+      await expect(scoped(() => fees.review({ paymentId, confirmed: true, actor: MANAGER() }))).rejects.toMatchObject({
+        code: 'PAYMENT_CHECKOUT_MISMATCHED',
+        params: { reference: `TXN-${externalRef}` },
+      });
+      expect(await db.paymentTransaction.count({ where: { paymentId } })).toBe(0);
+
+      await expect(
+        scoped(() => fees.review({ paymentId, confirmed: false, note: 'المبلغ لا يطابق', actor: MANAGER() })),
+      ).resolves.toMatchObject({ paymentStatus: 'UNPAID' });
+      await expect(
+        scoped(() =>
+          fees.settleInPerson({
+            paymentId,
+            method: 'WHISH_MONEY',
+            amount: 50_000,
+            whishTransactionRef: `TXN-${externalRef}`,
+            actor: MANAGER(),
+          }),
+        ),
+      ).resolves.toMatchObject({ paymentStatus: 'UNPAID' });
+      expect(Number((await db.citizenPayment.findUniqueOrThrow({ where: { id: paymentId } })).paidAmount)).toBe(50_000);
+    });
+
+    it('does not bank a late success over a claim the citizen declared after its own was refused', async () => {
+      const { paymentId, externalRef } = await checkout(80_000);
+      await scoped(() => fees.review({ paymentId, confirmed: false, note: 'لم يصل التحويل', actor: MANAGER() }));
+      await scoped(() =>
+        fees.declare({ paymentId, citizenId, method: 'WHISH_MONEY', whishTransactionRef: 'MANUAL-CLAIM-1' }),
+      );
+
+      await expect(callback(externalRef, 80_000)).resolves.toEqual({ applied: false });
+      expect(await db.paymentTransaction.count({ where: { paymentId } })).toBe(0);
+      expect((await db.whishCheckout.findUniqueOrThrow({ where: { externalRef } })).state).toBe('MISMATCHED');
+      // The citizen's own claim still waits for a clerk, untouched.
+      expect(await db.citizenPayment.findUniqueOrThrow({ where: { id: paymentId } })).toMatchObject({
+        paymentStatus: 'PENDING_REVIEW',
+        whishTransactionRef: 'MANUAL-CLAIM-1',
+      });
+    });
+
+    it('banks a delivery once when a second one read the checkout OPEN before the first closed it', async () => {
+      /*
+        Only the retry key (the checkout's id) can stop this second delivery: it
+        is quoted below the balance, so the bill still owes after the first, and
+        it carries no provider reference, so B2 has nothing to compare. The
+        checkout is put back to OPEN to stand for the second delivery's read,
+        made before the first committed.
+      */
+      const paymentId = await bill(500_000, 'PENDING_REVIEW');
+      const externalRef = `WSH-${randomUUID().slice(0, 8)}`;
+      await db.citizenPayment.update({ where: { id: paymentId }, data: { whishTransactionRef: externalRef } });
+      const row = await db.whishCheckout.create({
+        data: { externalRef, paymentId, citizenId, amount: 200_000, currency: 'LBP' },
+      });
+      const deliver = () =>
+        scoped(() => fees.settleFromWhishCallback({ externalRef, transactionRef: '', amount: 200_000, succeeded: true }));
+
+      await expect(deliver()).resolves.toEqual({ applied: true });
+      await db.whishCheckout.update({ where: { id: row.id }, data: { state: 'OPEN', settledAt: null, providerTxnRef: null } });
+      await expect(deliver()).resolves.toEqual({ applied: false });
+      expect(await db.paymentTransaction.count({ where: { paymentId } })).toBe(1);
+      expect(Number((await db.citizenPayment.findUniqueOrThrow({ where: { id: paymentId } })).paidAmount)).toBe(200_000);
+      expect(await db.auditLogEntry.count({ where: { action: 'WHISH_CHECKOUT_MISMATCHED', entityId: paymentId } })).toBe(0);
+    });
   });
 
   // ─────────────────────  B8 and A2: the counter's rate  ─────────────────────
@@ -456,6 +552,18 @@ describeIfDb('finance audit remediation', () => {
   // ─────────────────────  A3: one salary a month, under the ceiling  ─────────────────────
 
   describe('a salary (A3)', () => {
+    /*
+      Months inside the window «صرف راتب» offers (this month and the eleven before
+      it), kept away from both of its ends so a run that crosses the first of a
+      month on the municipality's clock still lands inside it; and months two
+      beyond each end for the refusals.
+    */
+    const months = salaryPeriodWindow();
+    const shift = (period: string, by: number) => {
+      const [year, month] = period.split('-').map(Number) as [number, number];
+      const index = year * 12 + (month - 1) + by;
+      return `${Math.floor(index / 12)}-${String((index % 12) + 1).padStart(2, '0')}`;
+    };
     const pay = (
       staffId: string,
       actor: { id: string; role: string },
@@ -468,7 +576,7 @@ describeIfDb('finance audit remediation', () => {
             accountId: safeLbpId,
             amount: over.amount ?? 500_000,
             description: 'راتب شهري',
-            salaryPeriod: over.salaryPeriod ?? '2026-01',
+            salaryPeriod: over.salaryPeriod ?? months[6]!,
             clientRequestId: randomUUID(),
           },
           actor,
@@ -476,39 +584,48 @@ describeIfDb('finance audit remediation', () => {
       );
 
     it('is paid once a month per person, and a cancelled one frees its month', async () => {
-      const first = await pay(ids.clerk, MANAGER(), { salaryPeriod: '2026-02' });
-      await expect(pay(ids.clerk, MANAGER(), { salaryPeriod: '2026-02' })).rejects.toMatchObject({
+      const first = await pay(ids.clerk, MANAGER(), { salaryPeriod: months[2]! });
+      await expect(pay(ids.clerk, MANAGER(), { salaryPeriod: months[2]! })).rejects.toMatchObject({
         code: 'SALARY_PERIOD_ALREADY_PAID',
-        params: { period: '2026-02', voucherNumber: first.voucherNumber },
+        params: { period: months[2], voucherNumber: first.voucherNumber },
       });
       await scoped(() => expenses.void(first.id, 'المبلغ خاطئ', MANAGER()));
-      await expect(pay(ids.clerk, MANAGER(), { salaryPeriod: '2026-02' })).resolves.toMatchObject({
+      await expect(pay(ids.clerk, MANAGER(), { salaryPeriod: months[2]! })).resolves.toMatchObject({
         orderStatus: 'ORDERED',
       });
       // Another month is another salary.
-      await expect(pay(ids.clerk, MANAGER(), { salaryPeriod: '2026-03' })).resolves.toMatchObject({
+      await expect(pay(ids.clerk, MANAGER(), { salaryPeriod: months[3]! })).resolves.toMatchObject({
         orderStatus: 'ORDERED',
       });
     });
 
     it('is refused for a month that has not begun', async () => {
-      const [year, month] = currentSalaryPeriod().split('-').map(Number);
-      const next = month === 12 ? `${year + 1}-01` : `${year}-${String(month + 1).padStart(2, '0')}`;
-      await expect(pay(ids.clerk, MANAGER(), { salaryPeriod: next })).rejects.toMatchObject({
+      // Two months ahead, so the server's own clock reaching the next month mid-test changes nothing.
+      await expect(pay(ids.clerk, MANAGER(), { salaryPeriod: shift(currentSalaryPeriod(), 2) })).rejects.toMatchObject({
         code: 'SALARY_PERIOD_IN_FUTURE',
       });
+    });
+
+    it('is refused for a month before the window, so months long past cannot stack salaries', async () => {
+      const longPast = shift(months[months.length - 1]!, -2);
+      const before = await db.expenseVoucher.count({ where: { payeeStaffId: ids.clerk } });
+      await expect(pay(ids.clerk, ACCOUNTANT(), { salaryPeriod: longPast })).rejects.toMatchObject({
+        code: 'SALARY_PERIOD_TOO_OLD',
+        params: { period: longPast },
+      });
+      expect(await db.expenseVoucher.count({ where: { payeeStaffId: ids.clerk } })).toBe(before);
     });
 
     it('holds an accountant to the manager’s salary ceiling, and not the manager', async () => {
       await db.systemSettings.update({ where: { singleton: true }, data: { salaryUrgentCeilingLbp: 1_000_000 } });
       try {
-        await expect(pay(ids.clerk, ACCOUNTANT(), { salaryPeriod: '2026-04', amount: 1_500_000 })).rejects.toMatchObject({
+        await expect(pay(ids.clerk, ACCOUNTANT(), { salaryPeriod: months[4]!, amount: 1_500_000 })).rejects.toMatchObject({
           code: 'SALARY_OVER_CEILING',
         });
-        await expect(pay(ids.clerk, ACCOUNTANT(), { salaryPeriod: '2026-04', amount: 1_000_000 })).resolves.toMatchObject(
+        await expect(pay(ids.clerk, ACCOUNTANT(), { salaryPeriod: months[4]!, amount: 1_000_000 })).resolves.toMatchObject(
           { orderStatus: 'AWAITING_ORDER' },
         );
-        await expect(pay(ids.clerk, MANAGER(), { salaryPeriod: '2026-05', amount: 1_500_000 })).resolves.toMatchObject({
+        await expect(pay(ids.clerk, MANAGER(), { salaryPeriod: months[5]!, amount: 1_500_000 })).resolves.toMatchObject({
           orderStatus: 'ORDERED',
         });
       } finally {

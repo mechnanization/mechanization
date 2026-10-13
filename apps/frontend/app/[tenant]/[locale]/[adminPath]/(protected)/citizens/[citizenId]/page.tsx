@@ -80,7 +80,13 @@ import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/dates';
 import { param, useUrlState } from '@/lib/use-url-state';
 import { buildCitizenWelcomeMessage, buildWhatsappHref } from '@/lib/whatsapp';
-import { BULK_SETTLE_ROLES, DOCUMENT_VIEW_ROLES, REFERENCE_SEND_ROLES, hasRole } from '@/lib/staff-roles';
+import {
+  BULK_SETTLE_ROLES,
+  CASH_COUNTER_ROLES,
+  DOCUMENT_VIEW_ROLES,
+  REFERENCE_SEND_ROLES,
+  hasRole,
+} from '@/lib/staff-roles';
 import { fromCitizenPayment, isBulkSettleable, pageSelection, rowBlock } from '@/lib/bulk-settle';
 import { billPageLink } from '@/lib/bill-receipts';
 import { useBulkSelection, type BulkSelection } from '@/lib/use-bulk-selection';
@@ -463,6 +469,8 @@ export default function CitizenProfilePage({
    *  fees controller), so offering it to an inspector would only earn a 403. */
   const canManage =
     role === 'SUPER_ADMIN' || role === 'COLLECTOR' || role === 'ACCOUNTANT';
+  /** Cash into the safe (`CASH_COUNTER_ROLES`); a collector records his own collection instead (D13). */
+  const canTakeCash = hasRole(CASH_COUNTER_ROLES, role);
 
   const reload = useCallback(async () => {
     if (!token) return;
@@ -1069,6 +1077,7 @@ export default function CitizenProfilePage({
             payments={citizen.payments}
             fees={citizen.fees}
             canManage={canManage}
+            canTakeCash={canTakeCash}
             selection={canBulkSettle ? bulkSelection : null}
             municipalityName={municipalityName}
             governorate={settings?.governorate}
@@ -1567,6 +1576,7 @@ function FeesPanel({
   payments,
   fees,
   canManage,
+  canTakeCash,
   selection,
   municipalityName,
   governorate,
@@ -1580,6 +1590,8 @@ function FeesPanel({
   payments: CitizenProfilePayment[];
   fees: CitizenFeeTotals;
   canManage: boolean;
+  /** Whether a bill's own button opens the cash page (`CASH_COUNTER_ROLES`) or, for a collector, the counter settle page. */
+  canTakeCash: boolean;
   /** The bills ticked for «تسديد الفواتير المحددة», or null for a role that may not settle several at once. */
   selection: BulkSelection | null;
   municipalityName: string;
@@ -1598,9 +1610,15 @@ function FeesPanel({
    * the rate — while it is owed, and under it «وصولات الفاتورة», every receipt
    * on the bill with «عكس الوصل» for the manager. A bill paid in full has no
    * cash to take, so its row links there by the receipts' name instead.
+   *
+   * That page always takes cash into the safe, which the server refuses a
+   * collector (D13), so a collector's button opens the counter settle page
+   * instead: his own collection, or a Whish transfer.
    */
   const settleHref = (paymentId: string) =>
-    `/${tenant}/${locale}/${adminPath}/citizens/${encodeURIComponent(citizen.id)}/payments/${encodeURIComponent(paymentId)}`;
+    canTakeCash
+      ? `/${tenant}/${locale}/${adminPath}/citizens/${encodeURIComponent(citizen.id)}/payments/${encodeURIComponent(paymentId)}`
+      : `/${tenant}/${locale}/${adminPath}/fees/payments/${encodeURIComponent(paymentId)}/settle`;
   const [receipt, setReceipt] = useState<{
     payment: CitizenProfilePayment;
     received: number;
@@ -1820,25 +1838,35 @@ function FeesPanel({
                         {/*
                           Every bill links to its own page, named by what it
                           holds now (`billPageLink`): the cash form while it is
-                          owed, the receipts once it is paid — the way to a paid
-                          bill's «عكس الوصل» (review of PR #113).
+                          owed, the receipts once it is not — the way to a paid
+                          bill's «عكس الوصل» (review of PR #113). A collector
+                          is sent to the counter settle page (D13), and a bill
+                          with no payment to take shows him no link.
                         */}
-                        <Link
-                          href={settleHref(payment.id)}
-                          className={buttonVariants({ size: 'sm', variant: 'outline' })}
-                        >
-                          {billPageLink(payment) === 'settle' ? (
-                            <>
-                              <Banknote className="size-4" aria-hidden />
-                              {locale === 'en' ? 'Record cash' : 'تسجيل دفعة نقدية'}
-                            </>
-                          ) : (
-                            <>
-                              <ReceiptText className="size-4" aria-hidden />
-                              {tReceipts('open')}
-                            </>
-                          )}
-                        </Link>
+                        {canTakeCash || billPageLink(payment) === 'settle' ? (
+                          <Link
+                            href={settleHref(payment.id)}
+                            className={buttonVariants({ size: 'sm', variant: 'outline' })}
+                          >
+                            {billPageLink(payment) === 'settle' ? (
+                              <>
+                                <Banknote className="size-4" aria-hidden />
+                                {canTakeCash
+                                  ? locale === 'en'
+                                    ? 'Record cash'
+                                    : 'تسجيل دفعة نقدية'
+                                  : locale === 'en'
+                                    ? 'Record payment'
+                                    : 'تسجيل دفعة'}
+                              </>
+                            ) : (
+                              <>
+                                <ReceiptText className="size-4" aria-hidden />
+                                {tReceipts('open')}
+                              </>
+                            )}
+                          </Link>
+                        ) : null}
                         {payment.paidAmount > 0 ? (
                           <Button
                             size="sm"

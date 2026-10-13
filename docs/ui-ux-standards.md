@@ -1,6 +1,6 @@
 # UI/UX standards: binding for every change to `apps/frontend`
 
-Last verified against the code: `fix/pr116-review` (PR #116 merged with `fix/pr115-review`, which stacks #123, #124 and #115 on `develop@5e8f5c3`, with its review fixes): `DatePicker`'s Escape and year list (FRM-6), the PRIM-2 guard, TXT-1 on four files #116 touched, the stat tones at zero; phase 1 of the kit adoption, `StatItem`'s `hint`, §17.1 recounted; «أمان الحساب» on the kit `invalid` prop, its error state, `rounded-lg`; the double-submit entries, `Pager` users, 2026-10-15; and `bugs-fix` (on `develop@5e8f5c3`; the finance audit remediation: the fee wizard's retry key, the salary dialog's month, the salary ceiling in الإعدادات, «إلغاء الفاتورة» on the bill page, the collector's fixed method on the settle page), 2026-10-12.
+Last verified against the code: `fix/pr116-review` (PR #116 merged with `fix/pr115-review`, which stacks #123, #124 and #115 on `develop@5e8f5c3`, with its review fixes): `DatePicker`'s Escape and year list (FRM-6), the PRIM-2 guard, TXT-1 on four files #116 touched, the stat tones at zero; phase 1 of the kit adoption, `StatItem`'s `hint`, §17.1 recounted; «أمان الحساب» on the kit `invalid` prop, its error state, `rounded-lg`; the double-submit entries, `Pager` users, 2026-10-15; and `bugs-fix` (on `develop@5e8f5c3`; the finance audit remediation: the fee wizard's retry key, the salary dialog's month, the salary ceiling in الإعدادات, «إلغاء الفاتورة» on the bill page, the collector's fixed method on the settle page), 2026-10-12; the review of PR #120 (a cancelled bill named on every owed screen, the cash page closed to collectors, the counter pages re-read after a refused retry, §17.6) against `fix/finance-audit-remediation` rebased on `chore/migration-0090-0091@8d386b5`, 2026-10-13.
 
 This file binds every AI agent and every person who builds or reviews an
 interface in this repository. [CLAUDE.md](../CLAUDE.md) (non-negotiable 9) and
@@ -1054,7 +1054,7 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
 - **Money in a stat cell** (PRIM-20, LAY-6): `StatItem` no longer truncates, but a `Money`
   passed without `wrap` stays on one line. The treasury's figures pass it; the compact totals
   on the citizens, citizen-detail and dashboard pages do not, and are short enough today.
-- **The citizen cash page** (`citizens/[citizenId]/payments/[paymentId]`, 710 lines, over
+- **The citizen cash page** (`citizens/[citizenId]/payments/[paymentId]`, 878 lines, over
   CODE-6): its new copy is in `counterPayment`; the rest is still inline `en ?` (TXT-1 leaves
   open whether touching a file over the limit means converting all of it).
 

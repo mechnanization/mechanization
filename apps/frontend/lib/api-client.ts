@@ -10,6 +10,7 @@ import { localizeApiError } from './api-errors';
 import { cachedRequest, invalidateRequests, peekCachedRequest } from './request-cache';
 import type {
   BackupSchedule,
+  CancelBill,
   CitizenImportResult,
   CitizenMergePreview,
   CitizenMergeRecord,
@@ -5784,13 +5785,14 @@ export async function settlePayment(
  * «إلغاء الفاتورة» — the manager withdraws a bill nothing was paid on (finance
  * audit B3; `BILL_CANCEL_ROLES`). Refused with `BILL_CANCEL_HAS_PAYMENTS` when
  * money is on it and `PAYMENT_CLAIM_UNDER_REVIEW` while a citizen's claim waits.
- * Answers with the bill as it now stands, CANCELLED.
+ * Answers with the bill as it now stands, CANCELLED. The body is the shared
+ * schema's (`cancelBillSchema`), not re-declared here.
  */
-export async function cancelBill(tenant: string, token: string, id: string, reason: string) {
+export async function cancelBill(tenant: string, token: string, id: string, input: CancelBill) {
   const result = await apiFetch<AdminPaymentItem>(tenant, `/fees/payments/${encodeURIComponent(id)}/cancel`, {
     token,
     method: 'POST',
-    body: JSON.stringify({ reason }),
+    body: JSON.stringify(input),
   });
   invalidateRequests(`fee-summary:${tenant}`);
   return result;

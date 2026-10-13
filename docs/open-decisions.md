@@ -866,3 +866,47 @@ What the code does now ([finance.md](finance.md) §3.7):
   still names the file merged away, and a retry of that press after the merge is refused as
   another act. **Undecided:** is that the receipt as issued (keep it), or should a merge
   carry settlements over (which needs an exception to the append-only trigger)?
+
+## 20. What the PR #120 review left open (2026-10-13)
+
+The finance audit remediation closed what the code could close. These three are the owner's.
+
+### 20.1 A collector's Whish entry is not checked against Whish
+
+What the code does now ([finance.md](finance.md) D13): a collector records cash as his own collection
+(method COLLECTOR, himself named), or a Whish transfer the citizen made at the door (`WHISH_MONEY`),
+credited to the Whish wallet. B2 refuses a reference already on a receipt still standing, so one
+transfer cannot settle two bills. Nothing checks that a reference typed at the door exists at Whish.
+
+The risk: a collector keeps the cash, records the bill as `WHISH_MONEY` with an invented reference, and
+the bill reads PAID while his custody owes nothing and the Whish wallet is overstated
+([security.md](security.md#known-gaps)).
+
+**Undecided:** send a collector's Whish entry to finance confirmation (PENDING_REVIEW, as a citizen's
+claim is), reconcile counter-entered Whish references against the provider's statement, or accept the
+risk as D13 stands.
+
+### 20.2 A salary paid through the full expense form escapes one-salary-a-month
+
+What the code does now ([finance.md](finance.md) §5.8, D10): «صرف راتب» records the month
+(`salaryPeriod`, 0091), refuses a second salary for one person and month, and only offers this month
+or the eleven before it, which the server enforces too (`SALARY_PERIOD_TOO_OLD`). The full expense form
+can still pay a salary as an ordinary voucher under «رواتب وأجور» (`SALARIES`): it carries no
+`payeeStaffId` and no `salaryPeriod`, so D10 does not apply; an accountant's is held only to the
+urgent ceiling, each one, and nothing bounds how many.
+
+**Undecided:** refuse the SALARIES category outside «صرف راتب» (an older salary would then need its own
+path), require a payee and a month on that category in the form too, or keep the form as the
+documented way to pay an old or irregular salary.
+
+### 20.3 A collector cannot record foreign notes into his custody
+
+What the code does now (decision of 2026-10-13): no screen sends a collector to «تسجيل دفعة نقدية»,
+which takes the notes handed over in two currencies (`tendered`) but only as `CASH`, the method a
+collector may not use (`COLLECTOR_CANNOT_SELECT_METHOD`). He records on the settle page, as his own
+collection, an amount in the bill's currency. A collector given $20 for a ليرة bill therefore records
+its value in ليرة, and his custody wallet in ليرة is credited while he holds dollars, so the handover
+count differs in both currencies until he exchanges them.
+
+**Undecided:** allow `tendered` with method COLLECTOR, crediting each currency to that collector's
+custody wallet, or keep collectors on the bill's currency.

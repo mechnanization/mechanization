@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `fix/pr116-review` (PR #116 merged with `fix/pr115-review`, which stacks #123, #124 and #115 on `develop@5e8f5c3`, with its review fixes): Escape inside a dialog, Tailwind 4 class names on 3.4; digit-normalised cadastre lookups, Latin digits on write, what still compares as stored; a window count on an empty page, 2026-10-15; the previous build and a new enum value against `chore/migration-0090-0091` (on `develop@5e8f5c3`), 2026-10-13, rebased onto `develop@3211140`, 2026-10-15; the Prisma `now()` clock trap in invoice numbering against `fix/finance-audit-remediation` (on `develop@5e8f5c3`), 2026-10-12.
+Last verified against the code: `fix/pr116-review` (PR #116 merged with `fix/pr115-review`, which stacks #123, #124 and #115 on `develop@5e8f5c3`, with its review fixes): Escape inside a dialog, Tailwind 4 class names on 3.4; digit-normalised cadastre lookups, Latin digits on write, what still compares as stored; a window count on an empty page, 2026-10-15; the previous build and a new enum value against `chore/migration-0090-0091` (on `develop@5e8f5c3`), 2026-10-13, rebased onto `develop@3211140`, 2026-10-15; the Prisma `now()` clock trap in invoice numbering against `fix/finance-audit-remediation` (on `develop@5e8f5c3`), 2026-10-12; JavaScript and Postgres on `trim` and lower case against `fix/finance-audit-remediation` (rebased on `chore/migration-0090-0091@8d386b5`), 2026-10-13.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -256,6 +256,24 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **Where:** fixed in `record-review.service.ts` (2026-10-14). `PrismaAuditRepository.query` and
   its grouped read still take `total` from `count(*) OVER()`; `citizens.service.ts` `list` explains
   why it stopped doing so.
+
+### JavaScript and Postgres disagree on `trim` and lower case
+
+- **What happens:** a key folded in JavaScript (`value.trim().toLowerCase()`) and
+  compared in SQL with `lower(btrim(column))` misses rows it should match.
+  `btrim(E'TXN-1\t')` keeps the tab, and under the `C` collation `lower('É')` is
+  `'É'`, where JavaScript gives `'TXN-1'` and `'é'`.
+- **Why:** `trim()` removes every Unicode space and line terminator, `btrim()`
+  with no second argument removes spaces only; `toLowerCase()` folds all of
+  Unicode, `lower()` folds what the database's collation says.
+- **Do this:** clean the value once in JavaScript before it is stored, and let
+  Postgres fold both sides of the comparison (`lower(btrim(column)) =
+  lower(btrim($1))`), in the same expression as any index on it. Build an
+  advisory-lock key from the SQL-folded value too, or two values the comparison
+  calls one take two locks.
+- **Where:** `PaymentLedgerService` `cleanExternalRef`, `assertExternalRefFree`,
+  `lockExternalRef`; `payment_transactions_externalRef_lower_idx` (0091); found in
+  the review of PR #120, 2026-10-13.
 
 ### No `CREATE INDEX CONCURRENTLY`
 

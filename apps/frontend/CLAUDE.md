@@ -1,6 +1,6 @@
 # apps/frontend: agent guide
 
-Last verified against the code: `fix/pr116-review` (PR #116 merged with `fix/pr115-review`, which stacks #123, #124 and #115 on `develop@5e8f5c3`, with its review fixes): `DatePicker`'s Escape and year list, the treasury pages' and the case editor's way back in the header, the back-navigation guard, «تكليف مباشر», the case editor, the cases page and «التقرير اليومي» in messages; phase 1 of the kit adoption (`Alert`, `StatStrip`, `Pager`, `HeaderBackLink`, the recording forms' frame), `StatItem`'s `hint`; signed cadastre layers, «أمان الحساب»'s own-account read, error state and password change, the sign-in page's copy in messages, a 401 that is an answer; citizen pickers, the building editor's held creation key and drafts, the offline queue's revised, held and refused records, 2026-10-15; and `bugs-fix` (on `develop@5e8f5c3`; the finance audit remediation: `cancelBill` and the notice retry key (`fee-notice:new`) in `lib/api-client.ts` and `lib/request-id.ts`, `BILL_CANCEL_ROLES` in `lib/staff-roles.ts`, the salary month and ceiling, the collector's fixed method on the settle page), 2026-10-12.
+Last verified against the code: `fix/pr116-review` (PR #116 merged with `fix/pr115-review`, which stacks #123, #124 and #115 on `develop@5e8f5c3`, with its review fixes): `DatePicker`'s Escape and year list, the treasury pages' and the case editor's way back in the header, the back-navigation guard, «تكليف مباشر», the case editor, the cases page and «التقرير اليومي» in messages; phase 1 of the kit adoption (`Alert`, `StatStrip`, `Pager`, `HeaderBackLink`, the recording forms' frame), `StatItem`'s `hint`; signed cadastre layers, «أمان الحساب»'s own-account read, error state and password change, the sign-in page's copy in messages, a 401 that is an answer; citizen pickers, the building editor's held creation key and drafts, the offline queue's revised, held and refused records, 2026-10-15; and `bugs-fix` (on `develop@5e8f5c3`; the finance audit remediation: `cancelBill` and the notice retry key (`fee-notice:new`) in `lib/api-client.ts` and `lib/request-id.ts`, `BILL_CANCEL_ROLES` in `lib/staff-roles.ts`, the salary month and ceiling, the collector's fixed method on the settle page), 2026-10-12; `fix/finance-audit-remediation` (PR #120's review: `CASH_COUNTER_ROLES` and the collector sent to the settle page, the counter pages' re-read after `PAYMENT_IDEMPOTENCY_KEY_REUSED` (B6), a cancelled bill on the settle page and the portal's «مطالباتي», the notice wizard's replay warning, a `YYYY-MM` error param written as a month, `cancelBill` typed by `CancelBill`), 2026-10-13.
 
 Next.js 15 app router, React 18, next-intl 4, TanStack Query 5, Tailwind 3.4 with
 tailwind-merge 3, Radix and lucide-react. One app serves the staff dashboard and the
@@ -211,12 +211,13 @@ component types.
   `components/admin/landlord-proposal-card.tsx`.
   - A write that moves money carries a `clientRequestId` held in `lib/request-id.ts`
     (`heldKey(tenant, scope)`, `spendKey`): module state, so the key outlives every unmount of
-    the form for the life of the tab. Scopes — `KeyScope`, ten of them: `building:<parcel>` (a new
+    the form for the life of the tab. Scopes — `KeyScope`, eleven of them: `building:<parcel>` (a new
     building, whose key is its id; the building editor), `bulk-settle:<ids>` (the
     selected bills' ids, sorted; `bulkKeyScope`), `commission:<staffId>` (one per inspector paid;
     `commissionScope` in `lib/commission-payout.ts`; sent before go-live too, by `payoutRequest`,
     since the payout row keeps it, `0089`), `custody:<accountId>`, `expense:pay`,
-    `expense:request`, `income:new`, `salary:<staffId>` (one per person paid),
+    `expense:request`, `fee-notice:new` (the notice wizard, `fees/new`), `income:new`,
+    `salary:<staffId>` (one per person paid),
     `settle:<paymentId>` (the settle page and the citizen cash page settle the same bill and
     share it), `transfer:new`. The key belongs to one act: it is minted when a screen first asks
     for it and kept across **every** failure (any 4xx, 401, 403, 408 and
@@ -224,15 +225,22 @@ component types.
     wrote nothing, never that an earlier one with the key did not. The server binds a key to its
     act (an expense: wallet, amount, clerk, band, payee, reason; a salary: also the staff
     account; an income voucher: wallet, amount, clerk, category, description, payer; a handover:
-    custody wallet, amount, clerk; a counter payment: the bill), so an edit after a lost answer is refused with
-    `TREASURY_REQUEST_KEY_REUSED` instead of recorded twice. The key is spent (`spendKey`) only
+    custody wallet, amount, clerk; a counter payment: the bill, the method, the collector, the
+    reference and the sum, or the notes handed over (B6); a notice: title, figure, basis, bearer,
+    recurrence, target, due date), so an edit after a lost answer is refused with
+    `TREASURY_REQUEST_KEY_REUSED` (`PAYMENT_IDEMPOTENCY_KEY_REUSED` at the counter,
+    `FEE_NOTICE_REQUEST_REUSED` for a notice) instead of recorded twice. The key is spent (`spendKey`) only
     when the server confirms its act exists: a 2xx, or one of the refusals `keyIsSpent` names —
     `ACT_RECORDED`, the one list: `TREASURY_REQUEST_KEY_REUSED`, `EXPENSE_ALREADY_VOID`,
     `INCOME_ALREADY_VOID`, `TRANSFER_ALREADY_VOID`, `TRANSACTION_ALREADY_REVERSED`,
-    `PAYMENT_IDEMPOTENCY_KEY_REUSED`, `BULK_SETTLE_REQUEST_REUSED`; the commission payout dialog
+    `PAYMENT_IDEMPOTENCY_KEY_REUSED`, `BULK_SETTLE_REQUEST_REUSED`, `FEE_NOTICE_REQUEST_REUSED`; the commission payout dialog
     also spends on `INSPECTOR_PAYOUT_REQUEST_REUSED` (`payoutKeyAfterFailure`) — after which the
     treasury queries are re-read. The expense, income and salary forms also
-    re-read them after a failure `outcomeInDoubt` names, keeping the key. A reversed earlier receipt is said as such on the settle and cash pages. No form
+    re-read them after a failure `outcomeInDoubt` names, keeping the key. On the settle and cash
+    pages such a refusal names the earlier receipt (`earlierRecorded`, `earlierReversed`) and re-reads
+    the bill — the settle page in place (`rereadBill`), the cash page through
+    `['citizen-profile', tenant, citizenId]` — with the button held until the read ends, and off
+    while it has failed (`billStale`), so the next press is not judged against the old balance. No form
     renews a key in an effect on its fields. Regenerating it in a `catch` is how a dropped
     connection paid twice ([gotchas](../../docs/gotchas.md)).
   - A failure `outcomeInDoubt` names also marks the held key in doubt (`markInDoubt`;
@@ -265,8 +273,10 @@ component types.
   - A 2xx with `replayed: true` answers a retry with the act an earlier attempt recorded. The
     screen says so — the document number, and that the first attempt's details stand — with a
     warning toast, never the fresh-success one (expense form, request, income form, salary
-    dialog, handover, order, settle and cash pages). A counter payment's replay can carry another amount than the form shows;
-    the receipt prints the server's.
+    dialog, handover, order, settle and cash pages, and the notice wizard, which names the
+    notice's title and id). Since B6 a counter replay carries the sum, or the notes, the form sent;
+    the rate is not compared, so the cash page's ليرة credit can differ from its preview when the
+    official rate moved in between, and the receipt prints the server's.
   - After a 2xx the form stays locked — the in-flight ref is never released, the button stays
     off — until the page moves on or the form is reset for a new act: a page stays mounted until
     the next route is ready (`fees/new`, the expense form). The settle page reads the citizen's
@@ -338,7 +348,7 @@ component types.
 ## Copy and i18n (decision D-i18n)
 
 - New copy MUST go in next-intl messages, `messages/ar.json` and `messages/en.json`, with
-  the same keys in both (2,657 leaf keys each, counted 2026-10-15 on `fix/pr116-review`). Read it with `useTranslations`.
+  the same keys in both (2,698 leaf keys each, counted 2026-10-15 on PR #120 rebased onto `develop@3211140`). Read it with `useTranslations`.
   `lib/messages-parity.test.ts` checks that both files hold the same keys, the same ICU
   placeholders and the same rich-text tags, and that no Arabic message outside `errors`
   writes a count as `#`: inside a plural branch write `{count}`, because `#` is formatted
@@ -366,7 +376,8 @@ component types.
   `error.message` and nothing else. The server's own text is shown only for a refusal with no code yet,
   a code this build does not know, or params that do not fit. A param that is a calendar day
   (`YYYY-MM-DD`: a closed day, a go-live day) is written through `formatDay` first, so a refusal reads
-  09/10/2026 like the page around it (PRIM-12).
+  09/10/2026 like the page around it (PRIM-12), and a month (`YYYY-MM`: a salary's period) through
+  `formatMonth`, «تشرين الأول 2026», as the salary dialog offers it.
 - Branch on `error.kind` (`CONFLICT`, `VALIDATION_FAILED`, …) for the class and `error.code` for one
   case, never on the message. Offline is `status === 0`, never a string match. The older
   `details.code` / `details.reason` values (`STALE_PREVIEW`, `FIGURE_CHANGED`, `NOT_OPEN`, …) are still
@@ -488,7 +499,9 @@ Model: `app/[tenant]/[locale]/[adminPath]/(protected)/citizens/review/page.tsx` 
    `lib/staff-roles.ts` and `hasRole`. Never a deny-list: the next read-only role, or an
    undefined role on first paint, would get the write controls. A write page that a role
    can reach by its address sends a role that cannot write back to the read page, as
-   `case-editor`, `building-editor` and the settle page do, and a component that offers an
+   `case-editor`, `building-editor` and the settle page do (the citizen cash page sends a
+   collector, who may settle but not into the safe, to the settle page: `CASH_COUNTER_ROLES`,
+   and the citizen file's row button follows it), and a component that offers an
    action takes the permission as a required prop (`canSend`, `canAnswer`, `canOpen`)
    rather than a default that fails open.
 4. **Messages**: a namespace in both message files, including `aria-label`, `title`,

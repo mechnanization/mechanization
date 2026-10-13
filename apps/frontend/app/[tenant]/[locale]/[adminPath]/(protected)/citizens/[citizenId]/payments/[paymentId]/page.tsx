@@ -21,6 +21,7 @@ import {
   ADJUSTMENT_REASON_MIN,
   BACKDATE_WINDOW_DAYS,
   canOverrideCashRules,
+  cancelBillSchema,
   daysBetween,
   getLabels,
   municipalToday,
@@ -58,7 +59,7 @@ import { useToast } from '@/components/ui/toast';
 import { PaymentReceipt, type RecordedMovement } from '@/components/admin/payment-receipt';
 import { BillReceipts } from '@/components/admin/finance/bill-receipts';
 import { cn } from '@/lib/utils';
-import { BILL_CANCEL_ROLES, PAYMENT_SETTLE_ROLES, hasRole } from '@/lib/staff-roles';
+import { BILL_CANCEL_ROLES, CASH_COUNTER_ROLES, PAYMENT_SETTLE_ROLES, hasRole } from '@/lib/staff-roles';
 
 /** What the citizen is paying in. «BOTH» is «20$ و200,000 ليرة» handed over together. */
 type PayIn = 'LBP' | 'FOREIGN' | 'BOTH';
@@ -94,6 +95,8 @@ export default function SettleCashPage({
   const labels = getLabels(locale);
   const base = `/${tenant}/${locale}/${adminPath}`;
   const citizenHref = `${base}/citizens/${encodeURIComponent(citizenId)}`;
+  /** The counter settle page for this bill: any method, and the collector's own collection. */
+  const settleHref = `${base}/fees/payments/${encodeURIComponent(paymentId)}/settle`;
   const today = useMemo(() => municipalToday(), []);
 
   const { token, user } = useStaffSession(tenant, base);
@@ -101,9 +104,16 @@ export default function SettleCashPage({
 
   // A role that cannot settle has nothing to do here; the file is where it came from.
   useEffect(() => {
+    if (!user) return;
     // `PAYMENT_SETTLE_ROLES` mirrors the route's `@Roles`; the server is the enforcement.
-    if (user && !hasRole(PAYMENT_SETTLE_ROLES, user.role)) router.replace(citizenHref);
-  }, [user, router, citizenHref]);
+    if (!hasRole(PAYMENT_SETTLE_ROLES, user.role)) router.replace(citizenHref);
+    /*
+      A collector settles, but never cash into the safe, which is all this page
+      records (D13, `COLLECTOR_CANNOT_SELECT_METHOD`): the counter settle page
+      records his own collection, or a Whish transfer.
+    */
+    else if (!hasRole(CASH_COUNTER_ROLES, user.role)) router.replace(settleHref);
+  }, [user, router, citizenHref, settleHref]);
 
   const profile = useStaffQuery({
     queryKey: ['citizen-profile', tenant, citizenId],
@@ -146,10 +156,20 @@ export default function SettleCashPage({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<RecordedMovement | null>(null);
+  /** A refusal said the key's payment exists, so the bill on screen was read before it. */
+  const [billMoved, setBillMoved] = useState(false);
+  /** …and reading it again failed: the balance shown is not the bill's, so nothing is judged against it. */
+  const billStale = billMoved && Boolean(profile.error);
   /** «إلغاء الفاتورة» (finance audit B3): the manager's, on a bill nothing was paid on. */
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const tCancel = useTranslations('counterPayment.cancelBill');
+  /*
+    The shared contract decides the reason (`cancelBillSchema`, as the route
+    validates it); its message is Arabic by design, so the words under the field
+    are this page's, and they state the minimum.
+  */
+  const cancelInput = cancelBillSchema.safeParse({ reason: cancelReason });
 
   /*
     Double submission: `busy` disables the button after React re-renders, but
@@ -159,11 +179,16 @@ export default function SettleCashPage({
     `settle:<paymentId>`, the same key the counter settle page holds for this
     bill, so it outlives this page. It is kept across every failure and every
     edit: a refusal proves only that this attempt took nothing, never that an
-    earlier one with the key did not. A counter payment's key is bound to its
-    bill, so a retry after a lost answer is answered with the first receipt,
-    whatever the form now says — and the page says so (`replayed`). Once the
-    server has answered with a 2xx the key is spent and the page is done: the
-    receipt opens, and nothing here records again.
+    earlier one with the key did not. The server binds the key to its act
+    (finance audit B6): this bill, the method and these notes. A retry after a
+    lost answer that sends the same notes is answered with the first receipt,
+    and the page says so (`replayed`); the rate is not compared, so its ليرة
+    credit can differ from the preview when the official rate moved meanwhile,
+    and the receipt prints the server's. A retry with other notes is refused
+    (`PAYMENT_IDEMPOTENCY_KEY_REUSED`): the earlier payment was taken, so the
+    key is spent and the bill is read again before the button is released.
+    Once the server has answered with a 2xx the key is spent and the page is
+    done: the receipt opens, and nothing here records again.
   */
   const inFlight = useRef(false);
   const keyScope = `settle:${paymentId}` as const;
@@ -197,8 +222,8 @@ export default function SettleCashPage({
           ? `Enter the ${foreignCurrency} rate for this payment.`
           : 'أدخل سعر الصرف لهذه الدفعة.'
         : en
-          ? `No official ${foreignCurrency} rate is set. An accountant or the system administrator sets it in Settings.`
-          : 'لا يوجد سعر صرف معتمد. يحدّده المحاسب أو مدير النظام من الإعدادات.';
+          ? `No official ${foreignCurrency} rate is set. Only the system administrator sets it, in Settings.`
+          : 'لا يوجد سعر صرف معتمد. يحدّده مدير النظام وحده من الإعدادات.';
     }
     if (worth <= 0) return en ? 'Enter the amount paid.' : 'أدخل المبلغ المدفوع.';
     if (worth > remaining + 0.5 && change === 0) {
@@ -245,8 +270,21 @@ export default function SettleCashPage({
     setLbp(rest > 0 ? formatTypedAmount(String(rest), 0) : '');
   };
 
+  /** The words for a failed press: the localised text for the code (TXT-6), or this page's own for an earlier receipt. */
+  const failureText = (caught: unknown): string => {
+    if (caught instanceof ApiRequestError) {
+      const number = caught.payload.params?.receiptNumber;
+      if (number && caught.code === 'TRANSACTION_ALREADY_REVERSED') return t('earlierReversed', { number: String(number) });
+      if (number && caught.code === 'PAYMENT_IDEMPOTENCY_KEY_REUSED') return t('earlierRecorded', { number: String(number) });
+      return caught.message;
+    }
+    return en
+      ? 'Could not record the payment. Nothing was taken twice — press again to retry.'
+      : 'تعذّر تسجيل الدفعة. لن تُسجَّل مرتين — اضغط مجدداً لإعادة المحاولة.';
+  };
+
   const submit = async () => {
-    if (!token || !payment || problem || receipt || inFlight.current) return;
+    if (!token || !payment || problem || receipt || billStale || inFlight.current) return;
     inFlight.current = true;
     setBusy(true);
     setError(null);
@@ -269,21 +307,21 @@ export default function SettleCashPage({
       });
     } catch (caught) {
       logApiError(caught);
+      setError(failureText(caught));
       // A key whose act exists is spent; every other failure keeps it, so a retry is answered from the first.
-      if (keyIsSpent(caught)) spendKey(tenant, keyScope);
-      const reversedReceipt =
-        caught instanceof ApiRequestError && caught.code === 'TRANSACTION_ALREADY_REVERSED'
-          ? caught.payload.params?.receiptNumber
-          : undefined;
-      setError(
-        reversedReceipt
-          ? t('earlierReversed', { number: String(reversedReceipt) })
-          : caught instanceof ApiRequestError
-          ? caught.message
-          : en
-            ? 'Could not record the payment. Nothing was taken twice — press again to retry.'
-            : 'تعذّر تسجيل الدفعة. لن تُسجَّل مرتين — اضغط مجدداً لإعادة المحاولة.',
-      );
+      if (keyIsSpent(caught)) {
+        spendKey(tenant, keyScope);
+        /*
+          That payment was taken, so the balance on screen is from before it,
+          and so is every treasury figure. The button stays held (`inFlight`,
+          `busy`) until the bill is read again — and stays off after, while
+          that read has failed (`billStale`) — so the next press is never
+          judged against the old balance.
+        */
+        setBillMoved(true);
+        void queryClient.invalidateQueries({ queryKey: ['treasury', tenant] });
+        await queryClient.invalidateQueries({ queryKey: ['citizen-profile', tenant, citizenId] });
+      }
       inFlight.current = false;
       setBusy(false);
       return;
@@ -360,9 +398,9 @@ export default function SettleCashPage({
 
   /** A refusal is thrown on: the dialog shows the server's coded words beside the action, and stays open. */
   const confirmCancel = async (): Promise<void> => {
-    if (!token || !payment) return;
+    if (!token || !payment || !cancelInput.success) return;
     try {
-      await cancelBill(tenant, token, payment.id, cancelReason.trim());
+      await cancelBill(tenant, token, payment.id, cancelInput.data);
     } catch (caught) {
       logApiError(caught);
       throw caught;
@@ -376,7 +414,14 @@ export default function SettleCashPage({
     <div className="mx-auto w-full max-w-5xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <HeaderBackLink fallbackHref={citizenHref} label={en ? 'Back' : 'رجوع'} />
 
-      {profile.error ? <RefreshFailedAlert message={profile.error} onRetry={() => void profile.refetch()} /> : null}
+      {profile.error ? (
+        <RefreshFailedAlert
+          // After a refusal that said the bill moved, the button stays off until it is read (`billStale`).
+          title={billStale ? t('billStale') : undefined}
+          message={profile.error}
+          onRetry={() => void profile.refetch()}
+        />
+      ) : null}
 
       {/*
         Who is paying, for what, and how much is left — the three things the
@@ -426,10 +471,16 @@ export default function SettleCashPage({
         confirmLabel={tCancel('confirm')}
         cancelLabel={tCancel('keep')}
         busyLabel={tCancel('busy')}
-        confirmDisabled={cancelReason.trim().length < ADJUSTMENT_REASON_MIN}
+        confirmDisabled={!cancelInput.success}
         onConfirm={confirmCancel}
       >
-        <Field label={tCancel('reason')} htmlFor="cancel-bill-reason" required>
+        {/* The minimum in the caption from the start; a reason typed short of it says so under the field. */}
+        <Field
+          label={tCancel('reason', { min: ADJUSTMENT_REASON_MIN })}
+          htmlFor="cancel-bill-reason"
+          required
+          error={cancelReason && !cancelInput.success ? tCancel('reasonTooShort', { min: ADJUSTMENT_REASON_MIN }) : undefined}
+        >
           <Textarea
             id="cancel-bill-reason"
             value={cancelReason}
@@ -475,7 +526,7 @@ export default function SettleCashPage({
           description={en ? 'Record its payment from the fees page.' : 'سجّل دفعتها من صفحة الرسوم.'}
           action={
             <Link
-              href={`${base}/fees/payments/${encodeURIComponent(payment.id)}/settle`}
+              href={settleHref}
               className="text-sm font-medium text-primary underline-offset-4 hover:underline"
             >
               {en ? 'Open it in fees' : 'فتحها في صفحة الرسوم'}
@@ -543,8 +594,8 @@ export default function SettleCashPage({
                       <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
                       <span>
                         {en
-                          ? `No official ${foreignCurrency} rate is set, so this counter cannot take ${foreignCurrency}. An accountant or the system administrator sets it in Settings.`
-                          : 'لا يوجد سعر صرف معتمد، فلا يمكن قبض العملة الأجنبية هنا. يحدّده المحاسب أو مدير النظام من الإعدادات.'}
+                          ? `No official ${foreignCurrency} rate is set, so this counter cannot take ${foreignCurrency}. Only the system administrator sets it, in Settings.`
+                          : 'لا يوجد سعر صرف معتمد، فلا يمكن قبض العملة الأجنبية هنا. يحدّده مدير النظام وحده من الإعدادات.'}
                       </span>
                     </p>
                   )
@@ -767,7 +818,7 @@ export default function SettleCashPage({
                   type="button"
                   className="w-full"
                   onClick={() => void submit()}
-                  disabled={busy || Boolean(problem) || receipt !== null}
+                  disabled={busy || Boolean(problem) || receipt !== null || billStale}
                 >
                   {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Banknote className="size-4" aria-hidden />}
                   {en ? 'Record payment' : 'سجّل الدفعة'}

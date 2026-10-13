@@ -100,9 +100,17 @@ export default function IssueFeePage({
         clientRequestId: heldKey(tenant, 'fee-notice:new'),
       });
       spendKey(tenant, 'fee-notice:new');
-      // A retry the server answered from the first notice: nothing new was billed, and the counts are not repeated.
+      /*
+        A retry the server answered from the first notice: nothing new was
+        billed, and the counts are not repeated. Said with a warning, never the
+        fresh-success toast, naming the notice the key issued — its title, which
+        the server only replays when it matches (`FEE_NOTICE_REQUEST_REUSED`
+        otherwise), and its id — and that it stands as first issued.
+      */
       if (res.replayed) {
-        toast.info(t('alreadyIssued', { count: res.issued }));
+        toast.warning(t('alreadyIssuedTitle', { title: values.title }), {
+          description: t('alreadyIssuedBody', { count: res.issued, id: res.noticeId }),
+        });
         router.push(feesHref);
         return;
       }

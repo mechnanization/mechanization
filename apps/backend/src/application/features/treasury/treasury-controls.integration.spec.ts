@@ -5,6 +5,7 @@ import {
   municipalDayStart,
   municipalToday,
   recordExpenseSchema,
+  salaryPeriodWindow,
   SALARY_URGENT_REASON,
   systemSettingsSchema,
   updateExpenseCategorySchema,
@@ -1061,12 +1062,17 @@ describeIfDb('treasury controls', () => {
       month unless a test names one, and a retry key keeps its month, so a
       replay is the same act.
     */
+    const months = salaryPeriodWindow();
     const periods = new Map<string, string>();
-    const periodFor = (key: string) => {
+    const pressesFor = new Map<string, number>();
+    const periodFor = (key: string, staffId: string) => {
       let period = periods.get(key);
       if (!period) {
-        const n = periods.size;
-        period = `${1990 + Math.floor(n / 12)}-${String((n % 12) + 1).padStart(2, '0')}`;
+        // Inside the window «صرف راتب» offers (the server refuses any other), off its
+        // oldest end so a run crossing the first of a month stays inside it.
+        const n = pressesFor.get(staffId) ?? 0;
+        pressesFor.set(staffId, n + 1);
+        period = months[n % (months.length - 1)]!;
         periods.set(key, period);
       }
       return period;
@@ -1081,7 +1087,7 @@ describeIfDb('treasury controls', () => {
             amount: 20_000,
             description: 'راتب تشرين الأول',
             clientRequestId,
-            salaryPeriod: periodFor(clientRequestId),
+            salaryPeriod: periodFor(clientRequestId, staffId),
             ...over,
           } as Parameters<ExpensesService['recordSalary']>[1],
           actor,
@@ -1212,7 +1218,8 @@ describeIfDb('treasury controls', () => {
               amount: CEILING_LBP * 2,
               description: 'راتب',
               clientRequestId: randomUUID(),
-              salaryPeriod: '2026-01',
+              // Last month: inside the window the server accepts, whatever today is.
+              salaryPeriod: salaryPeriodWindow()[1]!,
             },
             ACCOUNTANT(),
           ),

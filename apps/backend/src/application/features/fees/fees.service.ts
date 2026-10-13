@@ -641,6 +641,8 @@ const WHISH_UNBANKABLE = new Set<string>([
   'PAYMENT_BILL_CANCELLED',
   'PAYMENT_EXTERNAL_REF_REUSED',
   'PAYMENT_IDEMPOTENCY_KEY_REUSED',
+  // The checkout's own claim was refused and the citizen has declared another transfer since.
+  'PAYMENT_CLAIM_UNDER_REVIEW',
 ]);
 
 /** Days in a UTC month. `day 0` of the next month is the last day of this one. */
@@ -1346,10 +1348,21 @@ export class FeesService {
       });
     }
 
+    /*
+      A bare transaction (docs/code-quality.md lists it): everything in it writes
+      through `tx`. It takes `runInTenantTransaction`'s limits (15 s / 60 s),
+      not Prisma's 5 s default: a town-wide notice writes and numbers tens of
+      thousands of bills in here, and past five seconds Prisma closes the
+      transaction under the insert.
+    */
     const result = await this.db.$transaction(async (tx) => {
-      // Serialised before anything is written; the key names the schema, so two municipalities never wait on each other.
+      /*
+        Serialised before anything is written; the key names the schema, so two
+        municipalities never wait on each other. Lower-cased: the column is a
+        UUID and compares without case, so the lock key must too.
+      */
       if (input.clientRequestId) {
-        const lockKey = `${this.tenantContext.schemaName}:fee-notice:${input.clientRequestId}`;
+        const lockKey = `${this.tenantContext.schemaName}:fee-notice:${input.clientRequestId.toLowerCase()}`;
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
         const raced = await this.replayNotice(tx, input);
         if (raced) return { noticeId: raced.noticeId, issued: raced.issued, replayed: true as const };
@@ -1412,11 +1425,6 @@ export class FeesService {
       );
 
       return { noticeId: notice.id, issued: created.count, replayed: false as const };
-      /*
-        `runInTenantTransaction`'s limits rather than Prisma's 5 s default: a
-        town-wide notice writes and numbers tens of thousands of bills in here,
-        and past five seconds Prisma closes the transaction under the insert.
-      */
     }, { maxWait: 15_000, timeout: 60_000 });
 
     // A press that raced the first one and lost: answered from it, and nothing more is written or emitted.
@@ -1427,9 +1435,10 @@ export class FeesService {
     );
 
     if (unassessable.length > 0) {
+      // Citizens by id, never by name: a log line leaves the database (docs/security.md, logging).
       this.logger.warn(
         `Fee "${input.title}": ${unassessable.length} citizen(s) could not be assessed — ${unassessable
-          .map((entry) => `${entry.name} (${entry.reason})`)
+          .map((entry) => `${entry.citizenId} (${entry.reason})`)
           .join('; ')}`,
       );
     }
@@ -1533,7 +1542,6 @@ export class FeesService {
         targetCategory: true,
         targetCitizenId: true,
         dueDate: true,
-        _count: { select: { payments: true } },
       },
     });
     if (!notice) return null;
@@ -1553,7 +1561,15 @@ export class FeesService {
         message: 'This request id was already used to issue a different notice.',
       });
     }
-    return this.replayedNoticeResult(notice.id, notice._count.payments);
+    /*
+      What the first press raised: its own period's bills, the ones it wrote,
+      cancelled since or not. Not every bill of the notice — a recurring notice
+      has raised later periods since, and the press did not raise those.
+    */
+    const issued = await tx.citizenPayment.count({
+      where: { feeNoticeId: notice.id, periodKey: periodKeyFor(notice.frequency, notice.dueDate) },
+    });
+    return this.replayedNoticeResult(notice.id, issued);
   }
 
   /** `issue`'s answer for a notice a retry key had already issued. */
@@ -1583,9 +1599,10 @@ export class FeesService {
    * get out of step with reality. That also means a municipality that adds a
    * resident mid-month gets them billed on the next run rather than never.
    *
-   * `actor` is the staff member who pressed «إصدار الفواتير» (`POST
-   * fees/recurring/run`); the scheduled run has none, and its audit rows are the
-   * system's (`actorId` NULL, `actorType` SYSTEM).
+   * `actor` is the staff member who started the run through `POST
+   * fees/recurring/run` (no screen calls it: the fees page lost its button in
+   * `d346729`); the scheduled run has none, and its audit rows are the system's
+   * (`actorId` NULL, `actorType` SYSTEM).
    */
   async runRecurringBilling(
     now = new Date(),
@@ -1718,9 +1735,10 @@ export class FeesService {
       }
 
       if (unassessable.length > 0) {
+        // By id, never by name (docs/security.md, logging).
         this.logger.warn(
           `Recurring "${notice.title}" (${periodKey}): ${unassessable.length} citizen(s) not assessed — ${unassessable
-            .map((entry) => `${entry.name} (${entry.reason})`)
+            .map((entry) => `${entry.citizenId} (${entry.reason})`)
             .join('; ')}`,
         );
       }
@@ -1742,7 +1760,7 @@ export class FeesService {
             assessment: (entry.assessment ?? undefined) as never,
             dueDate,
             periodKey,
-            // Who pressed «تشغيل الفوترة الدورية», or nobody for the scheduled run (0091).
+            // Who started the run (`POST fees/recurring/run`), or nobody for the scheduled run (0091).
             issuedById: actor?.id ?? null,
           })),
           skipDuplicates: true,
@@ -2767,6 +2785,28 @@ export class FeesService {
       return { paymentStatus: 'UNPAID' as const };
     }
 
+    /*
+      A claim that is a Whish checkout set aside as MISMATCHED (0090): the
+      provider reported another amount, or the bill moved on while the citizen
+      paid. Confirming it would bank the whole balance under the checkout's own
+      reference for money nobody has matched to it. The clerk refuses the claim
+      and records what the provider shows at the counter, under the provider's
+      reference (decision of 2026-10-13).
+    */
+    if (payment.whishTransactionRef) {
+      const checkout = await this.db.whishCheckout.findUnique({
+        where: { externalRef: payment.whishTransactionRef },
+        select: { paymentId: true, state: true, externalRef: true, providerTxnRef: true },
+      });
+      if (checkout?.paymentId === payment.id && checkout.state === 'MISMATCHED') {
+        throw new ConflictError({
+          code: 'PAYMENT_CHECKOUT_MISMATCHED',
+          message: 'This Whish payment did not match its checkout and was not banked; refuse the claim and record what Whish shows.',
+          params: { reference: checkout.providerTxnRef ?? checkout.externalRef },
+        });
+      }
+    }
+
     /**
      * The citizen declared a transfer for the whole *outstanding* balance —
      * the portal offers no way to declare part of one — so confirming it
@@ -3646,8 +3686,15 @@ export class FeesService {
     const payment = checkout.payment;
 
     if (!callback.succeeded) {
-      // Nothing moved, and a bill settled or cancelled another way has nothing to undo.
-      if (payment.paymentStatus === 'PAID' || payment.paymentStatus === 'CANCELLED') return { applied: false };
+      // Nothing moved, and a bill settled or cancelled another way has nothing to undo; the
+      // attempt is still over, so the checkout is closed rather than left OPEN for ever.
+      if (payment.paymentStatus === 'PAID' || payment.paymentStatus === 'CANCELLED') {
+        await this.db.whishCheckout.updateMany({
+          where: { id: checkout.id, state: 'OPEN' },
+          data: { state: 'FAILED', settledAt: new Date(), providerTxnRef: callback.transactionRef ?? null },
+        });
+        return { applied: false };
+      }
       /*
         No money moved, so nothing is written to the ledger. The invoice goes
         back to UNPAID so the citizen can start again rather than being stuck
@@ -3732,8 +3779,10 @@ export class FeesService {
           method: 'WHISH_MONEY',
           externalRef: callback.transactionRef,
           note: 'دفع إلكتروني عبر Whish',
-          // The provider's verified word settles the claim `startWhishCheckout` put the bill under.
+          // The provider's verified word settles the claim `startWhishCheckout` put the bill under —
+          // that claim only: one the citizen declared since is not this money's to decide.
           resolvesClaim: true,
+          claimRef: callback.externalRef,
           clientRequestId: checkout.id,
           /*
             A system row: no staff member acted. `actorId` is a uuid column and
@@ -3792,11 +3841,15 @@ export class FeesService {
    * checkout is neither FAILED nor SUCCEEDED: it becomes MISMATCHED (0090),
    * nothing is credited, and a Tier 1 row says what came in and why it was not
    * banked. The bill is left as it is — under review when the checkout put it
-   * there — so a clerk decides from the provider's record: confirm it, refuse
-   * it, or refund the citizen.
+   * there — and a clerk decides from the provider's record: refuse the claim and
+   * record what the provider shows at the counter, under the provider's
+   * reference, or refund the citizen. Confirming the claim as it stands is
+   * refused (`PAYMENT_CHECKOUT_MISMATCHED`, `review`): it would bank the whole
+   * balance for money nobody has matched to it (decision of 2026-10-13).
    *
-   * Never throws: the controller answers 200 to every callback so the provider
-   * stops retrying, and a refusal here would be retried for ever.
+   * Raises no refusal of its own, so the controller answers 200 and the provider
+   * stops retrying; only a database failure escapes, and the provider's retry
+   * then reaches this again.
    */
   private async markWhishCheckoutMismatched(
     checkout: { id: string; amount: Prisma.Decimal; paymentId: string },
