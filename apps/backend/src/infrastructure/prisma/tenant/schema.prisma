@@ -3246,9 +3246,22 @@ model RequestTypeSetting {
   @@map("request_type_settings")
 }
 
-/// One municipal request — «REQ-2610-0001». Its status stamps move in pairs held
-/// by the CHECKs of 0092; one open request per citizen, type and card (a partial
-/// unique index Prisma cannot express, `citizen_requests_one_open_key`).
+/// One municipal request — «REQ-2610-0001». What the database holds, none of
+/// which Prisma can express:
+/// - 0092's CHECKs: each status with its stamps (`citizen_requests_paid_stamp`,
+///   `_ready_stamp`, `_ready_states`, `_completed_stamp`, `_rejected_stamp`,
+///   `_cancelled_stamp`), a counter request names its clerk
+///   (`_counter_names_clerk`), a flat only with a card (`_unit_on_card`), and a
+///   purpose never blank (`_purpose_present`).
+/// - One open request per citizen, type and card: `citizen_requests_one_open_key`,
+///   a partial unique index over AWAITING_PAYMENT, IN_REVIEW and READY_FOR_PICKUP;
+///   a request on no card keys on the nil uuid.
+/// - Its life (0094, `citizen_requests_guard`): only the documented transitions;
+///   nothing changes once COMPLETED, REJECTED or CANCELLED but `citizenId`, which
+///   a merge of two files moves; each step's stamps written by that step; the
+///   bill linked once; no DELETE; a flat on the request's card and the card on
+///   the citizen's file; and CANCELLED with a bill only when that bill is
+///   CANCELLED (the manager's «إلغاء الفاتورة», decision of 2026-10-13).
 model CitizenRequest {
   id            String @id @default(uuid()) @db.Uuid
   /// «REQ-2610-0001», from `document_counters` (kind `REQUEST`).
@@ -3269,6 +3282,7 @@ model CitizenRequest {
   buildingUnit    BuildingUnit?  @relation(fields: [buildingUnitId], references: [id], onDelete: Restrict)
 
   /// The bill the fee was charged on, raised when the citizen went to pay (D10).
+  /// Linked once, while the request waits for payment, and never changed (0094).
   citizenPaymentId String?         @unique @db.Uuid
   citizenPayment   CitizenPayment? @relation(fields: [citizenPaymentId], references: [id], onDelete: Restrict)
 
@@ -3319,8 +3333,10 @@ model CitizenRequest {
   @@map("citizen_requests")
 }
 
-/// A paper on a request: the object's key in the private documents bucket, never
-/// sent to a browser, and its type as sniffed from the bytes.
+/// A paper on a request: the object's key in the private documents bucket and
+/// its type as sniffed from the bytes. The key is never sent as a field; a staff
+/// member's short-lived signed link to the object carries it in its path. The
+/// type is one of 0092's four (`citizen_request_attachments_mime_known`).
 model CitizenRequestAttachment {
   id        String                @id @default(uuid()) @db.Uuid
   requestId String                @db.Uuid
@@ -3334,7 +3350,8 @@ model CitizenRequestAttachment {
   uploadedBy   User   @relation("RequestAttachmentUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
   createdAt DateTime @default(now()) @db.Timestamptz(3)
 
-  @@index([requestId, createdAt])
+  /// 0092 named it for the request alone; `map:` keeps Prisma on that name.
+  @@index([requestId, createdAt], map: "citizen_request_attachments_requestId_idx")
   @@index([uploadedById])
   @@map("citizen_request_attachments")
 }
