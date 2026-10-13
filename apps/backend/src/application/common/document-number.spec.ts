@@ -52,9 +52,9 @@ describe('document numbering', () => {
     });
 
     it('gives each book its own letters', () => {
-      expect(Object.values(DOCUMENT_PREFIX).sort()).toEqual(['BRC', 'INV', 'PV', 'RCP', 'RV', 'TR']);
-      // Six distinct prefixes, so a number read aloud says which book it is from.
-      expect(new Set(Object.values(DOCUMENT_PREFIX)).size).toBe(6);
+      expect(Object.values(DOCUMENT_PREFIX).sort()).toEqual(['BRC', 'INV', 'PV', 'RCP', 'REQ', 'RV', 'TR']);
+      // Seven distinct prefixes, so a number read aloud says which book it is from.
+      expect(new Set(Object.values(DOCUMENT_PREFIX)).size).toBe(7);
     });
   });
 
@@ -64,6 +64,9 @@ describe('document numbering', () => {
       expect(isDocumentNumber('RCP-000014')).toBe(true);
       expect(isDocumentNumber('  TR-2610-0001  ')).toBe(true);
       expect(isDocumentNumber('RV-2610-0001')).toBe(true);
+      // A municipal request (0092): its book began after 0079, so only the new shape.
+      expect(isDocumentNumber('REQ-2610-0001')).toBe(true);
+      expect(isDocumentNumber('REQ-000014')).toBe(false);
     });
 
     it('refuses what is not one', () => {

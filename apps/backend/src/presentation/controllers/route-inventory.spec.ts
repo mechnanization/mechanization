@@ -47,6 +47,13 @@ const SELF_SERVICE: Record<string, string> = {
   'FeesController.mine': "a citizen's own bills; refuses staff",
   'FeesController.whishCheckout': "a citizen paying their own bill; refuses staff",
   'FeesController.declare': "a citizen declaring their own payment; refuses staff",
+  'CitizenRequestsController.mine': "a citizen's own municipal requests; refuses staff",
+  'CitizenRequestsController.mineTypes': "the request types a citizen may file; refuses staff",
+  'CitizenRequestsController.submitMine': "a citizen filing their own request; refuses staff",
+  'CitizenRequestsController.mineOne': "one of a citizen's own requests; refuses staff",
+  'CitizenRequestsController.uploadMine': "a paper on a citizen's own request; refuses staff",
+  'CitizenRequestsController.billMine': "a citizen raising their own request's fee to pay it; refuses staff",
+  'CitizenRequestsController.cancelMine': "a citizen cancelling their own unbilled request; refuses staff",
 };
 
 /**
@@ -262,6 +269,8 @@ describe('the treasury routes (docs/finance.md §9)', () => {
     'TreasuryController.activate': ADMIN,
     // «إضافة حساب» (§6.4): a wallet is opened by the manager alone.
     'TreasuryController.createAccount': ADMIN,
+    // «الإيرادات والنفقات» (§4.6): both voucher registers in one, read by exactly their readers.
+    'TreasuryController.movements': READ,
     'ExpensesController.categories': READ,
     'ExpensesController.createCategory': ADMIN,
     'ExpensesController.updateCategory': ADMIN,
@@ -309,8 +318,8 @@ describe('the treasury routes (docs/finance.md §9)', () => {
       or collector payment credits a safe or a custody wallet (`settleInPerson`), confirming a
       Whish transfer credits the Whish wallet (`review`), and reversing a receipt takes the money
       back out (`reverseTransaction`). Their lists are the fee sets the screens read
-      (`FEE_ISSUE_ROLES`, `FEE_ADMIN_ROLES`, `PAYMENT_REVERSE_ROLES`), pinned here so that
-      widening one — an administrative officer at the counter — fails CI rather than passing
+      (`FEE_ISSUE_ROLES`, `FEE_SETTLE_ROLES`, `FEE_ADMIN_ROLES`, `PAYMENT_REVERSE_ROLES`), pinned here
+      so that widening one — an administrative officer at the counter — fails CI rather than passing
       unseen.
     */
     'FeesController.settle': ['ACCOUNTANT', 'COLLECTOR', 'SUPER_ADMIN'],
@@ -385,5 +394,59 @@ describe('the bulk settlement routes (docs/finance.md §3.7)', () => {
     const reprint = all.find((route) => route.name === 'FeesController.settlement');
     expect([settle?.method, settle?.path]).toEqual([RequestMethod.POST, 'payments/bulk-settle']);
     expect([reprint?.method, reprint?.path]).toEqual([RequestMethod.GET, 'settlements/:id']);
+  });
+});
+
+/*
+  Who raises a bill — issues a fee notice, or charges one citizen — is the manager and the
+  accountant (decided 2026-10-12). A collector collects: it settles bills
+  (`FeesController.settle`, pinned with the treasury routes above) and raises none. Widening
+  either route back is a decision made here, not an edit to a role set.
+*/
+/*
+  Municipal requests (docs/municipal-requests-plan.md; open decisions §20). The papers are
+  identity copies, so «مشاهد فقط» reads none of it (D6). Raising a request's fee is wider than
+  `FEE_ISSUE_ROLES` by the administrative officer, because the amount is the manager's list's,
+  never typed by whoever raises it; taking the money is still `FEE_SETTLE_ROLES`.
+*/
+describe('the municipal request routes', () => {
+  const READ = ['ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'AUDITOR', 'SUPER_ADMIN'];
+  const HANDLE = ['ADMINISTRATIVE_OFFICER', 'SUPER_ADMIN'];
+  const expected: Record<string, string[]> = {
+    'CitizenRequestsController.queue': READ,
+    'CitizenRequestsController.types': READ,
+    'CitizenRequestsController.get': READ,
+    'CitizenRequestsController.attachmentUrl': READ,
+    'CitizenRequestsController.updateType': ['SUPER_ADMIN'],
+    'CitizenRequestsController.submit': HANDLE,
+    'CitizenRequestsController.approve': HANDLE,
+    'CitizenRequestsController.reject': HANDLE,
+    'CitizenRequestsController.complete': HANDLE,
+    'CitizenRequestsController.cancel': HANDLE,
+    'CitizenRequestsController.upload': HANDLE,
+    'CitizenRequestsController.bill': ['ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'SUPER_ADMIN'],
+  };
+  const all = routes();
+
+  it.each(Object.entries(expected))('%s admits exactly its roles', (name, roles) => {
+    const route = all.find((candidate) => candidate.name === name);
+    expect(route).toBeDefined();
+    expect([...(route?.roles ?? [])].sort()).toEqual([...roles].sort());
+  });
+
+  it('reads «mine» and «types» as paths, not as ids', () => {
+    const paths = all.filter((route) => route.name.startsWith('CitizenRequestsController.')).map((route) => route.path);
+    expect(paths.indexOf('mine')).toBeLessThan(paths.indexOf(':id'));
+    expect(paths.indexOf('types')).toBeLessThan(paths.indexOf(':id'));
+  });
+});
+
+describe('the routes that raise a bill', () => {
+  const all = routes();
+
+  it.each(['FeesController.issue', 'FeesController.charge'])('%s admits the manager and the accountant only', (name) => {
+    const route = all.find((candidate) => candidate.name === name);
+    expect(route).toBeDefined();
+    expect([...(route?.roles ?? [])].sort()).toEqual(['ACCOUNTANT', 'SUPER_ADMIN']);
   });
 });

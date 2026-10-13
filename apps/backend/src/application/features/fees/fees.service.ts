@@ -43,13 +43,13 @@ import { TenantContextService } from '../../../infrastructure/context/tenant-con
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
-import { allocateDocumentNumber, allocateDocumentNumbers } from '../../common/document-number';
+import { allocateDocumentNumbers } from '../../common/document-number';
 import { unitsUnderReview } from '../buildings/unit-status';
 import { uninhabitableUnitIds } from '../buildings/habitability';
 import { ownerBillingRules } from '../buildings/owner-billing';
 import { ConflictError, DomainError, ForbiddenError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { exchangeRuleChangeAllowed } from '../treasury/transfers.plan';
-import { assertNotMergedAway } from '../citizens/merged-away';
+import { raiseOneOffBill } from './one-off-bill';
 import { likePattern, searchTokens } from '../../common/search-terms';
 import { citizenSearchText } from '../../common/citizen-search';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
@@ -2900,14 +2900,15 @@ export class FeesService {
     dueDate: string;
     actor: { id: string; role: string };
   }) {
-    const citizen = { id: await this.chargeableCitizen(input.citizenId) };
+    // An archived file takes no new fees (develop, 0a5f6db); `raiseOneOffBill` refuses it too.
+    await this.chargeableCitizen(input.citizenId);
 
     /*
       One bill, so the number goes straight into the row rather than through
       `numberInvoices` — there is no notice to scope an after-the-fact update
-      by, and nothing here is skipped as a duplicate. The transaction is what
-      ties the number to the bill: drawn and then not used, it would be printed
-      on nothing.
+      by, and nothing here is skipped as a duplicate. The checks, the number and
+      the row are `raiseOneOffBill`, which a municipal request also raises its
+      fee through, inside its own transaction.
 
       Tier 1, in the same transaction (finance audit B4): a one-off charge has no
       notice behind it, so until this the bill was the only trace of it and named
@@ -2917,17 +2918,12 @@ export class FeesService {
     */
     const created = await runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
-      const invoiceNumber = await allocateDocumentNumber(tx, this.S, 'INVOICE');
-      const bill = await tx.citizenPayment.create({
-        data: {
-          citizenId: citizen.id,
-          title: input.title,
-          amount: input.amount,
-          dueDate: new Date(input.dueDate),
-          invoiceNumber,
-          issuedById: input.actor.id,
-        },
-        select: { id: true, currency: true },
+      const bill = await raiseOneOffBill(tx, this.S, {
+        citizenId: input.citizenId,
+        title: input.title,
+        amount: input.amount,
+        dueDate: new Date(input.dueDate),
+        issuedById: input.actor.id,
       });
       await this.auditTrail.recordInTransaction({
         actorId: input.actor.id,
@@ -2937,8 +2933,8 @@ export class FeesService {
         entityType: 'Payment',
         entityId: bill.id,
         after: {
-          citizenId: citizen.id,
-          invoiceNumber,
+          citizenId: input.citizenId,
+          invoiceNumber: bill.invoiceNumber,
           title: input.title,
           amount: input.amount,
           currency: bill.currency,
@@ -3474,10 +3470,11 @@ export class FeesService {
    * against somebody else's invoice — which would let them *pay* it, but also
    * disclose its amount and title in the process.
    *
-   * In sandbox the invoice moves to PENDING_REVIEW, which is precisely what the
-   * existing manual declaration does and is the honest state: the citizen has
-   * said they are paying, and nothing has confirmed it. It reaches PAID only
-   * through `settleFromWhishCallback`, behind a verified signature.
+   * Refused with `ONLINE_PAYMENT_UNAVAILABLE` until the gateway is live (below).
+   * Once it is, the invoice moves to PENDING_REVIEW while the citizen is at the
+   * provider, and reaches PAID only through `settleFromWhishCallback`, behind a
+   * verified signature. The sandbox's own path to PENDING_REVIEW — no money, a
+   * reference no statement shows — is no longer reachable from here.
    */
   async startWhishCheckout(input: {
     paymentId: string;
@@ -3485,6 +3482,24 @@ export class FeesService {
     callbackUrl: string;
     returnUrl: string;
   }): Promise<{ redirectUrl: string; pending: boolean }> {
+    /*
+      Paused until Whish gives the municipality its API (the product owner's
+      decision of 2026-10-13, open-decisions §21): citizens pay at the
+      municipality. Refused before anything is read or written, because the
+      sandbox below is not a payment — it moved the bill to PENDING_REVIEW under
+      a WSH- reference of our own that no Whish statement can show, and a bill in
+      review cannot be settled at the counter until a clerk rejects the claim.
+      Lifts when the gateway is live — `isLive` is `WHISH_API_URL` and
+      `WHISH_API_KEY` set, nothing more — which must not happen before
+      `postCheckout` is written (the reopening order in open-decisions §21).
+    */
+    if (!this.whish.isLive) {
+      throw new ConflictError({
+        code: 'ONLINE_PAYMENT_UNAVAILABLE',
+        message: 'Online payment is paused; pay at the municipality.',
+      });
+    }
+
     const payment = await this.db.citizenPayment.findUnique({
       where: { id: input.paymentId },
       select: {

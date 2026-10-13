@@ -6180,10 +6180,11 @@ import type {
   VoidExpenseInput,
   CreateIncomeCategoryInput,
   IncomeCategoryView,
-  IncomeListResult,
   IncomeVoucherView,
   RecordIncomeVoucherInput,
   RecordIncomeVoucherResult,
+  TreasuryMovementDirection,
+  TreasuryMovementsResult,
   UpdateIncomeCategoryInput,
   VoidIncomeVoucherInput,
   CollectorCollectionsResult,
@@ -6236,6 +6237,11 @@ export type {
   RecordIncomeVoucherInput,
   RecordIncomeVoucherResult,
   VoidIncomeVoucherInput,
+  TreasuryMovement,
+  TreasuryMovementDay,
+  TreasuryMovementDirection,
+  TreasuryMovementTotal,
+  TreasuryMovementsResult,
   CollectorCollectionRow,
   CollectorCollectionsResult,
   CollectorCustodyView,
@@ -6716,19 +6722,23 @@ export function updateIncomeCategory(
 }
 
 /**
- * The income register, newest first. `GET /treasury/income`.
+ * «الحركات المالية» — the income and the expense vouchers in one register,
+ * newest first. `GET /treasury/movements`, on `TREASURY_READ_ROLES`.
  *
  * `from` and `to` are days on the municipality's calendar, both inclusive.
- * `totals` covers the whole filtered set rather than the page.
+ * `categoryId` needs `direction`: an income category and an expense band are
+ * rows of two tables. `totals` and `days` cover the whole filtered set, not the
+ * page, so a day split over two pages still reads whole.
  */
-export function getIncomeVouchers(
+export function getTreasuryMovements(
   tenant: string,
   token: string,
   args: {
+    direction?: TreasuryMovementDirection;
     from?: string;
     to?: string;
-    categoryId?: string;
     accountId?: string;
+    categoryId?: string;
     currency?: string;
     search?: string;
     includeVoid?: boolean;
@@ -6738,17 +6748,18 @@ export function getIncomeVouchers(
   signal?: AbortSignal,
 ) {
   const query = new URLSearchParams();
+  if (args.direction) query.set('direction', args.direction);
   if (args.from) query.set('from', args.from);
   if (args.to) query.set('to', args.to);
-  if (args.categoryId) query.set('categoryId', args.categoryId);
   if (args.accountId) query.set('accountId', args.accountId);
+  if (args.categoryId) query.set('categoryId', args.categoryId);
   if (args.currency) query.set('currency', args.currency);
   if (args.search) query.set('search', args.search);
   if (args.includeVoid) query.set('includeVoid', 'true');
   if (args.page !== undefined) query.set('page', String(args.page));
   if (args.pageSize !== undefined) query.set('pageSize', String(args.pageSize));
   const suffix = query.toString() ? `?${query}` : '';
-  return apiFetch<IncomeListResult>(tenant, `/treasury/income${suffix}`, { token, signal });
+  return apiFetch<TreasuryMovementsResult>(tenant, `/treasury/movements${suffix}`, { token, signal });
 }
 
 /** One voucher. `GET /treasury/income/:id`. */

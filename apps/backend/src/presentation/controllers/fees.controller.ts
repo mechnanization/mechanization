@@ -21,6 +21,7 @@ import {
   FEE_ADMIN_ROLES,
   FEE_ISSUE_ROLES,
   FEE_READ_ROLES,
+  FEE_SETTLE_ROLES,
   PAYMENT_REVERSE_ROLES,
   PAYMENT_REVIEW_MARK_ROLES,
   PAYMENT_REVIEW_READ_ROLES,
@@ -136,8 +137,9 @@ export class FeesController {
 
   /**
    * Issuing a fee bills every matching citizen at once, so it is limited to
-   * the roles that own the municipality's billing — SUPER_ADMIN, ACCOUNTANT
-   * and COLLECTOR. An AUDITOR reads the books, it does not add to them.
+   * the roles that own the municipality's billing — SUPER_ADMIN and
+   * ACCOUNTANT. A COLLECTOR collects what is billed and bills nothing
+   * (2026-10-12); an AUDITOR reads the books, it does not add to them.
    */
   @Roles(...FEE_ISSUE_ROLES)
   @Post('notices')
@@ -307,8 +309,10 @@ export class FeesController {
    *
    * An omitted `amount` settles the whole outstanding balance, which is both
    * the common case and the pre-partial-payment behaviour.
+   *
+   * `FEE_SETTLE_ROLES`: the collector settles here, though it raises no bill.
    */
-  @Roles(...FEE_ISSUE_ROLES)
+  @Roles(...FEE_SETTLE_ROLES)
   @Patch('payments/:id/settle')
   async settle(
     @Param('id', new ParseUUIDPipe()) id: string,

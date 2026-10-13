@@ -29,9 +29,10 @@ const URL_STATE = { print: param.flag() };
  * «سند القبض» — one income voucher on an A4 sheet, to print on the
  * municipality's stationery or save as a PDF for whoever paid.
  *
- * Guarded by the `/finance/income` nav row's prefix: the same finance readers
- * as the register. Reached from the register's print button and from the toast
- * after recording — each with `?print=1`, which opens the browser's print
+ * Guarded by «الحركات المالية»'s nav row, which owns `/finance/income` (`also`):
+ * the same finance readers as the register. Reached from the voucher's print
+ * button in the register's voucher pane and from «طباعة» after recording on
+ * «الإيرادات والنفقات» — each with `?print=1`, which opens the browser's print
  * dialog once the voucher and the letterhead are in, then drops the flag so a
  * reload does not print again. «حفظ كملف PDF» is the browser's own destination
  * in that dialog; nothing here renders a PDF of its own.
@@ -68,7 +69,7 @@ export default function IncomeVoucherPrintPage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <HeaderBackLink fallbackHref={`${base}/finance/income`} label={tr('back')} />
+      <HeaderBackLink fallbackHref={`${base}/finance/transactions`} label={tr('back')} />
       <PageHeader
         icon={FileText}
         title={data ? tr('pageTitleNumbered', { number: data.voucherNumber }) : tr('pageTitle')}

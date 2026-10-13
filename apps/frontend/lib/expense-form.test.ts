@@ -19,6 +19,12 @@ describe('firstFieldToFix', () => {
     expect(firstFieldToFix({ invoiceNumber: 'x', accountId: 'x' })).toBe('expense-account');
   });
 
+  it('reads the form row by row: the amount before the wallet, the reason last', () => {
+    expect(firstFieldToFix({ accountId: 'x', amount: 'x' })).toBe('expense-amount');
+    expect(firstFieldToFix({ description: 'x', invoiceNumber: 'x' })).toBe('expense-invoice');
+    expect(firstFieldToFix({ description: 'x', adjustmentReason: 'x' })).toBe('expense-adjustment');
+  });
+
   it('puts the reason for an urgent payment ahead of everything, because it sits above the fields', () => {
     expect(firstFieldToFix({ amount: 'x', urgentReason: 'x' })).toBe('expense-urgent');
   });

@@ -869,8 +869,9 @@ and goes through contract.
 
 ### Document numbering (migration 0079)
 
-Five books — invoices, receipts, expense vouchers, transfers and, since 0080,
-income vouchers («RV-», kind `REVENUE_VOUCHER`) — share one scheme:
+Seven books — invoices, receipts, expense vouchers, transfers, income vouchers
+(«RV-», kind `REVENUE_VOUCHER`, since 0080), bulk receipts («BRC-», `BULK_RECEIPT`,
+since 0085) and municipal requests («REQ-», `REQUEST`, since 0092) — share one scheme:
 «INV-2610-0001» is the book, the year and month it was issued in, and a
 counter that **restarts at 0001 on the first of each month**. `kind` is text,
 so a new book needs no migration; its key is stored and never renamed.

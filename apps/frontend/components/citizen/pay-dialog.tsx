@@ -48,6 +48,7 @@ export function PayDialog({
   locale?: string;
 }) {
   const tCitizen = useTranslations('citizen');
+  const tDialog = useTranslations('payDialog');
   const whishAvailable = Boolean(settings?.whishMoneyNumber);
   const [method, setMethod] = useState<'CASH' | 'WHISH_MONEY'>('CASH');
   const [reference, setReference] = useState('');
@@ -59,8 +60,8 @@ export function PayDialog({
     }
   }, [payment, whishAvailable]);
 
-  const canSubmit =
-    !submitting && (method === 'CASH' || reference.trim().length >= 4);
+  // Only the Whish report is submitted; cash is an instruction, closed with «حسناً».
+  const canSubmit = !submitting && method === 'WHISH_MONEY' && reference.trim().length >= 4;
 
   return (
     <Dialog open={payment !== null} onOpenChange={onOpenChange}>
@@ -201,23 +202,29 @@ export function PayDialog({
         </div>
 
         <DialogFooter className="shrink-0 gap-2 border-t p-6">
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
-            {locale === 'en' ? 'Cancel' : 'إلغاء'}
-          </Button>
-          <Button
-            disabled={!canSubmit}
-            onClick={() =>
-              onDeclare({
-                method,
-                ...(method === 'WHISH_MONEY' ? { whishTransactionRef: reference.trim() } : {}),
-              })
-            }
-          >
-            {submitting ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-            {method === 'CASH'
-              ? (locale === 'en' ? 'I will pay at municipality' : 'سأدفع في البلدية')
-              : (locale === 'en' ? 'Declare Payment' : 'أبلغ عن الدفع')}
-          </Button>
+          {method === 'CASH' ? (
+            /*
+              Cash is an instruction to visit, and nothing more: no declaration. «سأدفع في
+              البلدية» used to declare one, which put the bill «قيد المراجعة» with no money
+              taken — and a bill under review is not settled at the counter until a clerk
+              answers the claim. With online payment paused (lib/online-payment.ts) this
+              dialog is where every citizen is sent to learn how to pay.
+            */
+            <Button onClick={() => onOpenChange(false)}>{tDialog('cashDone')}</Button>
+          ) : (
+            <>
+              <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
+                {locale === 'en' ? 'Cancel' : 'إلغاء'}
+              </Button>
+              <Button
+                disabled={!canSubmit}
+                onClick={() => onDeclare({ method, whishTransactionRef: reference.trim() })}
+              >
+                {submitting ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+                {locale === 'en' ? 'Declare Payment' : 'أبلغ عن الدفع'}
+              </Button>
+            </>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

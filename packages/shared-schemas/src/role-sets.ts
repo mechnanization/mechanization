@@ -111,8 +111,20 @@ export const FEE_READ_ROLES = [
   'VIEWER',
 ] as const satisfies readonly StaffRole[];
 
-/** Issue a fee, charge one citizen, settle at the counter. */
-export const FEE_ISSUE_ROLES = [
+/**
+ * Raise a bill: issue a fee notice (`POST fees/notices`) or charge one citizen
+ * (`POST fees/payments`). The manager and the accountant. A collector collects
+ * what is billed and bills nothing (decided 2026-10-12); settling is
+ * `FEE_SETTLE_ROLES`.
+ */
+export const FEE_ISSUE_ROLES = ['SUPER_ADMIN', 'ACCOUNTANT'] as const satisfies readonly StaffRole[];
+
+/**
+ * Record money against a bill, at the counter or on a round —
+ * `PATCH fees/payments/:id/settle`. Wider than `FEE_ISSUE_ROLES` by the
+ * collector, whose job this is.
+ */
+export const FEE_SETTLE_ROLES = [
   'SUPER_ADMIN',
   'COLLECTOR',
   'ACCOUNTANT',
@@ -129,9 +141,46 @@ export const FEE_ADMIN_ROLES = ['SUPER_ADMIN', 'ACCOUNTANT'] as const satisfies 
 export const BILL_CANCEL_ROLES = ['SUPER_ADMIN'] as const satisfies readonly StaffRole[];
 
 /**
+ * Read the municipal-requests queue, a request, its papers (each view audited)
+ * and the list of request types: the manager, the administrative officer (قلم
+ * البلدية, who handles them), the accountant (who collects their fees) and the
+ * auditor. Not «مشاهد فقط»: the papers are identity copies (open decisions §20
+ * D6). `GET requests`, `GET requests/:id`, `GET requests/:id/attachments/:a/url`,
+ * `GET requests/types`. Decided 2026-10-13.
+ */
+export const REQUEST_READ_ROLES = [
+  'SUPER_ADMIN',
+  'ADMINISTRATIVE_OFFICER',
+  'ACCOUNTANT',
+  'AUDITOR',
+] as const satisfies readonly StaffRole[];
+
+/**
+ * Handle a request: file one at the counter for a citizen who is present, attach
+ * its papers, approve it with what the paper certifies, reject it, hand it over,
+ * cancel it. The manager and the administrative officer. Decided 2026-10-13.
+ */
+export const REQUEST_HANDLE_ROLES = ['SUPER_ADMIN', 'ADMINISTRATIVE_OFFICER'] as const satisfies readonly StaffRole[];
+
+/**
+ * Raise a request's fee as a bill, at the counter — `POST requests/:id/bill`. The
+ * handlers and the accountant. The amount is the manager's, from the list of
+ * request types, never typed by whoever raises it, which is why this is wider
+ * than `FEE_ISSUE_ROLES`. Taking the money is still `FEE_SETTLE_ROLES`.
+ */
+export const REQUEST_BILL_ROLES = [
+  'SUPER_ADMIN',
+  'ADMINISTRATIVE_OFFICER',
+  'ACCOUNTANT',
+] as const satisfies readonly StaffRole[];
+
+/** Which request types are offered and their fees (`PUT requests/types/:type`): the manager (D1). */
+export const REQUEST_SETTINGS_ROLES = ['SUPER_ADMIN'] as const satisfies readonly StaffRole[];
+
+/**
  * «تسديد الفواتير المحددة»: several of one citizen's bills in one press
  * (docs/finance.md §3.7). The finance roles only, per the phase-4 brief —
- * narrower than `FEE_ISSUE_ROLES`, so a collector still settles the same bills
+ * narrower than `FEE_SETTLE_ROLES`, so a collector still settles the same bills
  * one at a time. Its own set because it is its own audience: the dialog reads
  * the treasury's balances to check the change, which a collector cannot.
  */

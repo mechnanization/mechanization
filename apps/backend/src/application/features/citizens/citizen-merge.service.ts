@@ -17,6 +17,7 @@ import {
   type CitizenUnmergePreview,
   type CitizenUnmergeBlockCode,
   citizenDisplayName,
+  OPEN_REQUEST_STATUSES,
 } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
@@ -85,6 +86,11 @@ interface MergeFootprint {
    * billing existed, which re-pointed none.
    */
   responsibleUnits?: string[];
+  /**
+   * The absorbed person's municipal requests (migration 0092), now the kept
+   * person's. Absent on a merge recorded before requests existed.
+   */
+  requests?: string[];
   /**
    * Cards on which somebody had said «ليس هذا المالك» about the absorbed
    * person. The undo maps the kept person back to the absorbed one on these —
@@ -896,6 +902,29 @@ export class CitizenMergeService {
 
   // ─────────────────────────────  Writing  ─────────────────────────────
 
+  /**
+   * The absorbed person's requests that can move to the kept person: all of
+   * them, but an open one whose type and card the kept person already holds an
+   * open request for. A request on no card keys on «no card», as the index does.
+   */
+  private async movableRequests(keepId: string, absorbId: string): Promise<string[]> {
+    const [theirs, kept] = await Promise.all([
+      this.db.citizenRequest.findMany({
+        where: { citizenId: absorbId },
+        select: { id: true, status: true, requestType: true, propertyEntryId: true },
+      }),
+      this.db.citizenRequest.findMany({
+        where: { citizenId: keepId, status: { in: [...OPEN_REQUEST_STATUSES] } },
+        select: { requestType: true, propertyEntryId: true },
+      }),
+    ]);
+    const openKey = (row: { requestType: string; propertyEntryId: string | null }) =>
+      `${row.requestType}:${row.propertyEntryId ?? ''}`;
+    const taken = new Set(kept.map(openKey));
+    const open = new Set<string>(OPEN_REQUEST_STATUSES);
+    return theirs.filter((row) => !(open.has(row.status) && taken.has(openKey(row)))).map((row) => row.id);
+  }
+
   private async apply(loaded: Loaded): Promise<MergeFootprint> {
     const { plan, keep, absorb } = loaded;
     const at = new Date();
@@ -1106,6 +1135,17 @@ export class CitizenMergeService {
           throw citizenPhoneRuleError(error) ?? error;
         });
     }
+    /*
+      Municipal requests follow the person, as their bills do — except an open
+      one that would make two open requests of one type for one card on the kept
+      file (`citizen_requests_one_open_key`), which stays on the absorbed file
+      and is the clerk's to settle, as a colliding bill is the accountant's.
+    */
+    const requests = await this.movableRequests(keep.id, absorb.id);
+    if (requests.length > 0) {
+      await db.citizenRequest.updateMany({ where: { id: { in: requests } }, data: { citizenId: keep.id } });
+    }
+
     await db.user.update({
       where: { id: absorb.id },
       // Deactivated, and any session they hold on the citizen portal ends.
@@ -1136,6 +1176,7 @@ export class CitizenMergeService {
       tenantLinks,
       mints: loaded.mints.map((card) => card.id),
       responsibleUnits: loaded.responsibleUnits,
+      requests,
       dismissals,
       reviewMoves,
       fills: plan.fills.map((fill) => fill.field),
@@ -1298,6 +1339,12 @@ export class CitizenMergeService {
     }
     if (footprint.payments.length > 0) {
       await db.citizenPayment.updateMany({ where: { id: { in: footprint.payments } }, data: { citizenId: absorbId } });
+    }
+    if ((footprint.requests ?? []).length > 0) {
+      await db.citizenRequest.updateMany({
+        where: { id: { in: footprint.requests }, citizenId: keepId },
+        data: { citizenId: absorbId },
+      });
     }
 
     for (const write of footprint.flagWrites) {

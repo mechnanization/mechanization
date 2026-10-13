@@ -594,6 +594,7 @@ export function BuildingUnitMatrixDrawer({
     <Sheet
       open={open}
       onClose={onClose}
+      closeLabel={en ? 'Close' : 'إغلاق'}
       // Wide enough on a reviewer's screen for the floors and the chosen unit side by side.
       className="max-w-3xl lg:max-w-6xl"
       title={building ? building.code : en ? 'Building' : 'المبنى'}

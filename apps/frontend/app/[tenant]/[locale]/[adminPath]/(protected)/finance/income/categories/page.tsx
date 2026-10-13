@@ -44,8 +44,8 @@ type Editing = { mode: 'new' } | { mode: 'edit'; category: IncomeCategoryView } 
  * and says so; it asks no confirmation (DES-2, DES-4).
  *
  * Everyone who may read the register may read this list. It sits under
- * `/finance/income`, so `canAccessPath` matches that nav row by prefix
- * (`TREASURY_READ_ROLES`, CODE-4); the write controls are shown to
+ * `/finance/income`, which «الحركات المالية»'s nav row owns (`also`), so
+ * `canAccessPath` guards it by that row (`TREASURY_READ_ROLES`, CODE-4); the write controls are shown to
  * `TREASURY_ADMIN_ROLES` only, and `IncomeController` enforces the same.
  */
 export default function IncomeCategoriesPage({
@@ -195,7 +195,7 @@ export default function IncomeCategoriesPage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <HeaderBackLink fallbackHref={`${base}/finance/income`} label={t('back')} />
+      <HeaderBackLink fallbackHref={`${base}/finance/transactions`} label={t('back')} />
 
       <PageHeader
         icon={Tags}

@@ -1,6 +1,6 @@
 # apps/frontend: agent guide
 
-Last verified against the code: `fix/pr116-review` (PR #116 merged with `fix/pr115-review`, which stacks #123, #124 and #115 on `develop@5e8f5c3`, with its review fixes): `DatePicker`'s Escape and year list, the treasury pages' and the case editor's way back in the header, the back-navigation guard, «تكليف مباشر», the case editor, the cases page and «التقرير اليومي» in messages; phase 1 of the kit adoption (`Alert`, `StatStrip`, `Pager`, `HeaderBackLink`, the recording forms' frame), `StatItem`'s `hint`; signed cadastre layers, «أمان الحساب»'s own-account read, error state and password change, the sign-in page's copy in messages, a 401 that is an answer; citizen pickers, the building editor's held creation key and drafts, the offline queue's revised, held and refused records, 2026-10-15; and `bugs-fix` (on `develop@5e8f5c3`; the finance audit remediation: `cancelBill` and the notice retry key (`fee-notice:new`) in `lib/api-client.ts` and `lib/request-id.ts`, `BILL_CANCEL_ROLES` in `lib/staff-roles.ts`, the salary month and ceiling, the collector's fixed method on the settle page), 2026-10-12; `fix/finance-audit-remediation` (PR #120's review: `CASH_COUNTER_ROLES` and the collector sent to the settle page, the counter pages' re-read after `PAYMENT_IDEMPOTENCY_KEY_REUSED` (B6), a cancelled bill on the settle page and the portal's «مطالباتي», the notice wizard's replay warning, a `YYYY-MM` error param written as a month, `cancelBill` typed by `CancelBill`), 2026-10-13.
+Last verified against the code: `fix/pr116-review` (PR #116 merged with `fix/pr115-review`, which stacks #123, #124 and #115 on `develop@5e8f5c3`, with its review fixes): `DatePicker`'s Escape and year list, the treasury pages' and the case editor's way back in the header, the back-navigation guard, «تكليف مباشر», the case editor, the cases page and «التقرير اليومي» in messages; phase 1 of the kit adoption (`Alert`, `StatStrip`, `Pager`, `HeaderBackLink`, the recording forms' frame), `StatItem`'s `hint`; signed cadastre layers, «أمان الحساب»'s own-account read, error state and password change, the sign-in page's copy in messages, a 401 that is an answer; citizen pickers, the building editor's held creation key and drafts, the offline queue's revised, held and refused records, 2026-10-15; and `bugs-fix` (on `develop@5e8f5c3`; the finance audit remediation: `cancelBill` and the notice retry key (`fee-notice:new`) in `lib/api-client.ts` and `lib/request-id.ts`, `BILL_CANCEL_ROLES` in `lib/staff-roles.ts`, the salary month and ceiling, the collector's fixed method on the settle page), 2026-10-12; `fix/finance-audit-remediation` (PR #120's review: `CASH_COUNTER_ROLES` and the collector sent to the settle page, the counter pages' re-read after `PAYMENT_IDEMPOTENCY_KEY_REUSED` (B6), a cancelled bill on the settle page and the portal's «مطالباتي», the notice wizard's replay warning, a `YYYY-MM` error param written as a month, `cancelBill` typed by `CancelBill`), 2026-10-13; the feature folders, the `loadSession` count and the message keys rechecked on `fix/fees-page-ux` from `develop@5e8f5c3` (uncommitted), 2026-10-12; the merged «الإيرادات والنفقات» page (`finance/movements`, the old addresses redirecting, `NavItem.also`, `SearchField`, `ChoiceCard`'s `trailing`, `DataTable` without its empty toolbar row, `pushState` for a pane over a list) on the same branch (uncommitted), 2026-10-12; the same day, the register split onto `finance/transactions` («الحركات المالية», its own nav row) and `finance/movements` left as the recording page, `WalletSelect`, the message count (uncommitted); later that day `finance/transactions` as one frame of dated rows with the voucher in a `Sheet`, `Sheet` on Radix Dialog, `pushState` for it at every width, the test and key counts (uncommitted); the recording page at full width, the page and kit counts (uncommitted); municipal requests — the staff queue, panel, counter form, types and paper (`requests/**`), the portal's «طلباتي», wizard and request page (`my-file/requests/**`), `lib/requests-api.ts`, `FileInput`, `CitizenPicker`, `useCitizenSession`, `compressPaper`, the `request:new` and `request:mine:<citizenId>` scopes, the page, kit, test and key counts — on the same branch (uncommitted), 2026-10-13; with the fixes of its review the same day (the fee editor reading the list, the panel re-read after a refusal, the settle page invalidating `requests`, the per-citizen key); online payment paused by the product owner the same day (`ONLINE_PAYMENT_OPEN` in `lib/online-payment.ts`, the three Whish buttons gated, the request copy as an ICU `select` on `online`, «طريقة الدفع» on «ملفّي»).
 
 Next.js 15 app router, React 18, next-intl 4, TanStack Query 5, Tailwind 3.4 with
 tailwind-merge 3, Radix and lucide-react. One app serves the staff dashboard and the
@@ -15,6 +15,23 @@ app/layout.tsx                          RootLayout: metadata, viewport (viewport
 app/not-found.tsx, app/global-error.tsx render outside every provider (global-error bilingual by hand, not-found Arabic only)
 app/[tenant]/[locale]/layout.tsx        TenantLayout (server, force-dynamic) + error.tsx
   (citizen)/                            portal: / login my-account my-file payments payments/login
+                                        my-file/requests/new (the request wizard: four steps, the step
+                                        in `?step=`, what was chosen in memory only, the identity copy
+                                        required, photos shrunk by `compressPaper`; key `request:mine:<citizenId>`)
+                                        my-file/requests/[requestId] (where it stands; while online
+                                        payment is paused no «ادفع الآن» — once open: raise the bill,
+                                        then Whish —, the note says pay at the municipality quoting the
+                                        number; cancel while unbilled, add papers; papers listed by
+                                        type and date, never served back)
+                                        Online payment is paused (2026-10-13, docs/open-decisions.md#21-online-payment-citizen-sign-in-and-notifications-decided-2026-10-13):
+                                        `ONLINE_PAYMENT_OPEN` (lib/online-payment.ts, false) gates
+                                        «ادفع عبر Whish» on my-file and payments and «ادفع الآن» above;
+                                        my-file's open bills say so and link «طريقة الدفع» to payments
+                                        (PayDialog: cash as an instruction only, «حسناً» closes it and
+                                        nothing is declared; and the manual Whish report, which stays).
+                                        The front door links no phone-code sign-in (no SMS provider). The
+                                        request copy that reads differently takes `onlineCopy()` as an
+                                        ICU `select`; the server refuses regardless
   [adminPath]/login, reset-password     outside the protected layout
   [adminPath]/(protected)/layout.tsx    ProtectedAdminLayout + manifest.webmanifest/route.ts
     page.tsx (AdminIndexPage, role landing) · [...unknown] (AdminNotFound)
@@ -28,23 +45,34 @@ app/[tenant]/[locale]/layout.tsx        TenantLayout (server, force-dynamic) + e
       until stage 5 the one-day print was the daily register, now finance/daily/report;
       SUPER_ADMIN cancels a handover from its row, «إلغاء التسليم»,
       components/admin/finance/void-transfer-dialog.tsx, `mayVoidTransfer` in lib/treasury-statement.ts)
-    finance/expenses (النفقات: the register is server-paged, filtered by band, wallet, status and
-      from/to day, every filter, the view and the page in the URL; ?view=queue — «بانتظار أمر الصرف»:
-      requests and urgent payments waiting on the manager's order,
-      components/admin/finance/expense-queue.tsx, expense-dialogs.tsx)
-    finance/expenses/new (تسجيل نفقة: the manager records and orders; an accountant sends a
-      request, or pays urgently under art. 35 — lib/expense-order.ts decides the mode; the urgent
-      path shows the wallet currency's ceiling and refuses above it with «أرسلها طلباً», except
-      for the retry of a press whose answer was lost)
+    finance/movements (الإيرادات والنفقات — recording, 2026-10-12; TREASURY_WORK_ROLES on its nav
+      row, a reader who reaches it through the `/finance` prefix is told so and linked to the
+      register: one card, `movements/movement-composer.tsx`, «قبض | صرف» with the side in `?dir=in|out`,
+      `RecordIncomeForm`/`RecordExpenseForm` across the full width, two columns from `md` and three from
+      `xl`, the wallet a `WalletSelect`,
+      the shared fields carried across the switch, a fresh form after each recorded act with the
+      confirmation above it — «طباعة» to the print page, «عرض» to the voucher in finance/transactions.
+      The manager records and orders; an accountant sends a request, or pays urgently under art. 35
+      — lib/expense-order.ts decides the mode; the urgent path shows the wallet currency's ceiling and
+      refuses above it with «أرسلها طلباً», except for the retry of a press whose answer was lost)
+    finance/transactions (الحركات المالية, 2026-10-12: the income and expense vouchers in one
+      list, newest first, `GET treasury/movements`, server-paged; one frame as `DataTable`'s, the
+      filter bar at its top (`movements/movement-filters.tsx`: search — `useTabSearch` 'movements',
+      `SearchField` — then period, direction, wallet, category (needs a direction), cancelled), the
+      lines (`movements/movement-list.tsx`, the day in a column of its own) and `Pager`; every
+      filter, the page and the open voucher (`voucher`+`kind`) in the URL; ?view=queue —
+      «بانتظار أمر الصرف»: requests and urgent payments waiting on the manager's order,
+      components/admin/finance/expense-queue.tsx, expense-dialogs.tsx. A line opens
+      `movements/voucher-sheet.tsx` (a `Sheet`: every field, who recorded, ordered or cancelled it;
+      print, cancel, issue the order), pushed onto history; header links (from md) and a bottom
+      bar (phones) lead to the recording page. Pure rules: lib/treasury-movements.ts)
+    finance/income · finance/expenses · finance/income/new · finance/expenses/new (old addresses:
+      server redirects — the registers to finance/transactions, `?dir=in|out`, `?view=queue` and its
+      `?status` kept; the «new» pages to finance/movements `?dir=in|out`)
     finance/expenses/[voucherId]/print (أمر الصرف — A4 portrait; `?print=1` opens the print dialog once)
-    finance/income (الإيرادات) · finance/income/new (تسجيل إيراد جديد)
-    (the two recording forms share one frame, components/admin/finance/treasury-form-parts.tsx:
-      from `xl` the page is the screen's height (`xl:flex xl:h-full xl:flex-col` on its root) and
-      the form two panes — the fields card (`FormCard`, which holds the locking fieldset) scrolls,
-      and `SummaryPanel` beside it, which reads the act back and holds the buttons and the last
-      refusal, does not move; `WalletSelect` lists each wallet with its balance)
     finance/income/[voucherId]/print (سند القبض — A4 portrait, QR of the number; `?print=1`)
-    finance/income/categories (بنود الإيرادات — every reader sees the list, the manager edits it)
+    finance/income/categories (بنود الإيرادات — every reader sees the list, the manager edits it;
+      under the «الحركات المالية» nav row through its `also` paths, as are both print pages)
     finance/transfers (المناقلات والمصارفة — the register, the review queue; review on TREASURY_REVIEW_ROLES;
       drawn through `readView`, a failed re-read is a `RefreshFailedAlert`)
     finance/transfers/new (تحويل داخلي or مصارفة, `record-transfer-form.tsx`, sticky summary; the key
@@ -64,6 +92,22 @@ app/[tenant]/[locale]/layout.tsx        TenantLayout (server, force-dynamic) + e
      (`transfer-document.tsx`) — share `components/admin/finance/official-document.tsx`: the
      letterhead and crest from الإعدادات, the signature lines, `documentPrintCss`, `useAutoPrint`)
     my-round (جولتي — the collector's own pocket, phone-first, WORKING_STAFF_ROLES)
+    requests (طلبات المعاملات, 2026-10-13, REQUEST_READ_ROLES on its nav row; docs/municipal-requests-plan.md:
+      the queue, server-paged, status chips and type/channel filters in the URL, a line opens
+      `components/admin/requests/request-sheet.tsx` — a `Sheet`, pushed onto history, the open
+      request in `?request=` — with the steps its status allows the reader's role: «تحصيل الرسم»
+      (REQUEST_BILL_ROLES; raises the bill, then the settle page for PAYMENT_SETTLE_ROLES or the
+      invoice named), «جاهزة للاستلام» with the statement, «رفض الطلب», «تسليم المعاملة», «إلغاء الطلب»
+      (`request-dialogs.tsx`, REQUEST_HANDLE_ROLES), each paper opened through a five-minute link)
+    requests/new (طلب جديد عند الشبّاك — `counter-request-form.tsx`: `CitizenPicker` (search on
+      Enter; name, mother, رقم مرجعي, never the identity number), the offered types, the citizen's held
+      cards from `getCitizenProfile`, the papers sent one at a time after filing; key `request:new`;
+      REQUEST_HANDLE_ROLES, anyone else is told so)
+    requests/types (أنواع الطلبات والرسوم — every reader sees the list; the manager sets each fee in an
+      editor above it and stops or restarts a type, REQUEST_SETTINGS_ROLES)
+    requests/[requestId]/print (the paper — `request-document.tsx`, A4 portrait through
+      `data-print-root`, letterhead, QR of the request number, `readView`; ready or handed-over
+      requests only; `?print=1`)
 
 `CitizenProfilePayment.invoiceNumber` carries «INV-2610-0001» and is what
 `payment-receipt.tsx` prints as the bill's reference. It is null on every bill
@@ -131,10 +175,10 @@ retry the server answers from the key, in words that said nothing was recorded (
 `lib/bulk-receipt-message.ts`, which never carries a رقم مرجعي (its test feeds one in); the button is
 `RECEIPT_SEND_ROLES`.
 
-All 69 `page.tsx` files are `'use client'` and read `params` with `use(params)` (counted 2026-10-10, after PR #106 added `finance/daily` and `finance/daily/report` and PR #112 `fees/settlements/[settlementId]`).
-`components/ui` is the kit (33 files, `alert.tsx` added 2026-10-06); `components/admin` holds staff screens (feature
-folders `bulk-settle/`, `cases/`, `damage/`, `finance/`, `quality/`, `settings/`, `staff/`); `components/citizen` is mostly citizen-record
-form pieces used by staff screens, and only `pay-dialog` serves the portal. `lib` holds the
+Of the 77 `page.tsx` files, 73 are `'use client'` and read `params` with `use(params)`; the other four are the server redirects from the treasury's old addresses (`finance/income`, `finance/expenses` and their `new`), which `await params` (counted 2026-10-13).
+`components/ui` is the kit (35 files, `search-field.tsx` added 2026-10-12, `file-input.tsx` 2026-10-13); `components/admin` holds staff screens (feature
+folders `bulk-settle/`, `cases/`, `damage/`, `fees/` (the fees page's figures and its review dialog), `finance/`, `quality/`, `requests/`, `settings/`, `staff/`; `citizen-picker.tsx` finds a person on the register for a counter screen); `components/citizen` is mostly citizen-record
+form pieces used by staff screens, and only `pay-dialog` and `my-requests` serve the portal. `lib` holds the
 API client, session, hooks, formatters and offline queue; `public/sw.js` is the service worker.
 
 ## Composition roots and provider order
@@ -211,12 +255,14 @@ component types.
   `components/admin/landlord-proposal-card.tsx`.
   - A write that moves money carries a `clientRequestId` held in `lib/request-id.ts`
     (`heldKey(tenant, scope)`, `spendKey`): module state, so the key outlives every unmount of
-    the form for the life of the tab. Scopes — `KeyScope`, eleven of them: `building:<parcel>` (a new
+    the form for the life of the tab. Scopes — `KeyScope`, thirteen of them: `building:<parcel>` (a new
     building, whose key is its id; the building editor), `bulk-settle:<ids>` (the
     selected bills' ids, sorted; `bulkKeyScope`), `commission:<staffId>` (one per inspector paid;
     `commissionScope` in `lib/commission-payout.ts`; sent before go-live too, by `payoutRequest`,
     since the payout row keeps it, `0089`), `custody:<accountId>`, `expense:pay`,
-    `expense:request`, `fee-notice:new` (the notice wizard, `fees/new`), `income:new`,
+    `expense:request`, `fee-notice:new` (the notice wizard, `fees/new`), `income:new`, `request:new`
+    (a municipal request filed at the counter), `request:mine:<citizenId>` (one the citizen files in
+    the portal; per citizen, because a shared phone signs one out and the next in on the same tab),
     `salary:<staffId>` (one per person paid),
     `settle:<paymentId>` (the settle page and the citizen cash page settle the same bill and
     share it), `transfer:new`. The key belongs to one act: it is minted when a screen first asks
@@ -316,7 +362,7 @@ component types.
 - `lib/request-cache.ts` (`cachedRequest`, `invalidateRequests`) is a second, memory-only
   cache inside api-client (tenant config, zones, census, fee summary, settings). Legacy for
   new reads. **Undecided:** retire it for `reference: true` reads, or keep it for non-React callers.
-- Deviations: 16 `(protected)` pages and 7 components (besides `AdminShell` and
+- Deviations: 15 `(protected)` pages and 7 components (besides `AdminShell` and
   `StaffRouteGuard`) still call `loadSession` directly, most of them to fetch in effects (UI §17.1).
   The landlord-links screens invalidate `['landlord-links']`, with no tenant, so the prefix
   over-invalidates.
@@ -337,7 +383,9 @@ component types.
 - Staff pages MUST use `useStaffSession(tenant, base)` (`{token, user}`, null until its
   effect runs; redirects unless `kind === 'STAFF'`) and show a skeleton while the token is
   null (CODE-1). `StaffRouteGuard` checks `canAccessPath`, which opens a path with no
-  `NAV_GROUPS` row to every role (CODE-4). Citizen pages call `loadSession` directly.
+  `NAV_GROUPS` row to every role (CODE-4). Citizen pages call `loadSession` directly; the
+  request pages (2026-10-13) through `useCitizenSession(tenant, base)` (`lib/use-citizen-session.ts`:
+  `{token, citizenId, endIfSignedOut}`, the front door for a staff session or none, and for a 401).
 - A screen about the signed-in account reads `getStaffSelf` (`GET auth/staff/me`), never the
   roster (`getStaff` is `SUPER_ADMIN`'s, and answered every other role 403). A password change
   (`changeStaffPassword`) ends this session too, so «أمان الحساب» signs out as `AdminHeader` does
@@ -348,7 +396,7 @@ component types.
 ## Copy and i18n (decision D-i18n)
 
 - New copy MUST go in next-intl messages, `messages/ar.json` and `messages/en.json`, with
-  the same keys in both (2,698 leaf keys each, counted 2026-10-15 on PR #120 rebased onto `develop@3211140`). Read it with `useTranslations`.
+  the same keys in both (3,115 leaf keys each, counted 2026-10-15 on PR #122 rebased onto `develop@3211140`, with municipal requests: `requests.*` for the staff screens, `citizenRequests.*` for the portal's, `citizenPicker.*`; `finance.movements` holds the copy of both «الإيرادات والنفقات» and «الحركات المالية»). Read it with `useTranslations`.
   `lib/messages-parity.test.ts` checks that both files hold the same keys, the same ICU
   placeholders and the same rich-text tags, and that no Arabic message outside `errors`
   writes a count as `#`: inside a plural branch write `{count}`, because `#` is formatted
@@ -440,10 +488,15 @@ component types.
 `lib/use-url-state.ts` with `param.*` from `lib/url-state.ts`: `useUrlState` (schema at
 module scope), `useUrlPagination`, `PAGE_SIZE_OPTIONS`. The search term lives in tab
 sessionStorage through `useTabSearch`, never in the URL. Two views on one page that each
-page their own table (the expense register and its queue) share `?page=` / `?limit=`, so a
+page their own list (the «الحركات المالية» register and its queue) share `?page=` / `?limit=`, so a
 view switch clears the other view's parameters in the same write. A list whose rows leave it as they
 are acted on steps back to the last page with rows once its answer is in (`pageWithRows` in
 `lib/url-state.ts`; «مراجعة السجلات», which pages its cards with `Pager`).
+
+`useUrlState` writes with `replaceState`: a filter is not a place. A page that opens something
+over its list — the voucher `Sheet` of «الحركات المالية» — writes that one change with `pushState`
+instead (Next keeps `useSearchParams` in step with both), so the back button closes it; closing it
+from its own control steps back the same way. Opened by its address, it closes with a replace.
 
 ## Printing
 
@@ -469,6 +522,11 @@ receipt's `#receipt-print-area` sets to black. `renderReceiptPdf` (`lib/receipt-
 `{ orientation, breakBefore }`: portrait, and a capture taller than one sheet cut between `tr` rows over
 several; the default stays the single receipt's one A4 landscape sheet. Every capture is taken in the
 light theme (`onclone` drops `dark` from the copy, never from the page).
+
+A municipal request's paper (`requests/request-document.tsx`, on `requests/[requestId]/print`) is a
+document page too: one `data-print-root`, A4 portrait, the letterhead and the signature lines of
+`finance/official-document.tsx`, a QR code holding the request number alone (D7), and the citizen's
+identity number — never the رقم مرجعي.
 
 ## Citizen record kinds
 

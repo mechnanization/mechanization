@@ -375,7 +375,7 @@ function SalaryForm({
     setWorking(false);
     spendKey(tenant, scope);
     await refresh();
-    const openRegister = { label: t('openRegister'), onClick: () => router.push(`${base}/finance/expenses`) };
+    const openRegister = { label: t('openRegister'), onClick: () => router.push(`${base}/finance/transactions?dir=out`) };
     // What the server says it recorded, with its number — never a client-side reconstruction (STA-6).
     if (result.replayed) {
       toast.warning(t('replayed', { number: result.voucherNumber }), {

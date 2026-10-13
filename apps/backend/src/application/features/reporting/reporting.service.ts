@@ -1967,6 +1967,8 @@ export class ReportingService {
   @OnEvent('payment.reversed')
   /** A cancelled bill leaves what is owed, so it stales them too. */
   @OnEvent('payment.cancelled')
+  /** A municipal request raising its fee is a new bill on the citizen's profile and the totals (0092). */
+  @OnEvent('request.bill.raised')
   /**
    * The census moves the map, so the census has to clear the map's cache.
    *

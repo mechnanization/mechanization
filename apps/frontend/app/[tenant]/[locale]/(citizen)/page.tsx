@@ -144,15 +144,13 @@ export default function TenantHome({
             {tCitizen('viewMyFile')}
           </Button>
 
+          {/*
+            No link to the phone-code sign-in (`/login`): there is no SMS provider, so the code never
+            arrives (open-decisions §21). The reference is the way in; whoever does not have it asks
+            the municipality, as `/payments/login` already says.
+          */}
           <p className="text-center text-sm text-muted-foreground">
-            {tCitizen('dontKnowReference')}{' '}
-            <button
-              type="button"
-              onClick={() => router.push(`${base}/login`)}
-              className="font-medium text-primary underline-offset-4 hover:underline"
-            >
-              {locale === 'en' ? 'Sign in with phone number' : 'سجّل الدخول برقم الهاتف'}
-            </button>
+            {tCitizen('dontKnowReference')} {tCitizen('askAtMunicipality')}
           </p>
         </CardContent>
       </Card>

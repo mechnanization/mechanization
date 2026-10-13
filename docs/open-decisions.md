@@ -40,9 +40,12 @@ copy of the sensitive fields, but the primary tables hold everything.
 
 ---
 
-## 🔴 2. OTP delivery fallback
+## 2. OTP delivery fallback (not used: decided 2026-10-13)
 
-**Status:** structurally implemented, no provider chosen.
+**Status:** decided by the product owner on 2026-10-13 ([§21](#21-online-payment-citizen-sign-in-and-notifications-decided-2026-10-13)): no SMS or WhatsApp
+provider for now, and citizens sign in with their رقم مرجعي alone, with no code and no second
+factor. What is built below stays in the code for the day a provider is chosen; the portal's
+front door no longer links to it (`/login`, the phone-code sign-in, answers only by address).
 
 SMS delivery to Lebanese networks fails or stalls often enough that a single
 provider makes citizen login a coin flip — and a citizen who never receives a
@@ -69,8 +72,8 @@ code has no other way in. The v1 spec had no answer here at all.
 call cannot be written before a provider is chosen. Everything around it
 (channel selection, failover, masking phone numbers in logs) is real.
 
-**Still to decide:** which two providers, and whether a staff-assisted
-registration path is needed for citizens who cannot complete OTP at all. The
+**Reopened only if [§21](#21-online-payment-citizen-sign-in-and-notifications-decided-2026-10-13) is:** then which two providers, and whether a
+staff-assisted registration path is needed for citizens who cannot complete OTP at all. The
 counter fallback above is a workaround, not a feature.
 
 ---
@@ -621,7 +624,8 @@ misleading while it is open.
 
 ## 🔴 15. An orphaned Whish checkout
 
-**Status:** open, and newly *visible* rather than newly created.
+**Status:** open; deferred with online payment ([§21](#21-online-payment-citizen-sign-in-and-notifications-decided-2026-10-13), 2026-10-13), and to be decided
+before it resumes.
 
 `startWhishCheckout` creates a checkout at the provider, then marks the invoice
 `PENDING_REVIEW`. Those are two steps with a network round-trip between them,
@@ -649,10 +653,10 @@ Three ways to close it, and the choice is the municipality's:
 3. **Cancel the checkout at the provider on refusal.** Correct, and needs a
    `WhishGateway` method that does not exist today.
 
-None of this is urgent while the provider is unimplemented —
-`whish-gateway.service.ts` throws unconditionally and both environments hold
-zero payments — which is exactly why it is cheap to decide now and expensive to
-decide after the first live checkout.
+None of this can happen while online payment is paused ([§21](#21-online-payment-citizen-sign-in-and-notifications-decided-2026-10-13), 2026-10-13):
+`startWhishCheckout` is refused before the provider is called, and `postCheckout` is still
+unwritten (it throws in live mode). Decide before online payment resumes: after the first live
+checkout it stops being cheap.
 
 ---
 
@@ -727,6 +731,12 @@ file.
    is a smaller step than reading, but widens what a guessed reference can do
    ([docs/security.md](security.md#known-gaps)).
 3. **A counter-issued one-time code** for the family, handed over in person.
+
+**While online payment is paused** ([§21](#21-online-payment-citizen-sign-in-and-notifications-decided-2026-10-13), 2026-10-13) no citizen pays online through a
+checkout, with a phone or without. One remote way stays: the report of a transfer made in the
+citizen's own Whish app («أبلغ عن الدفع»), which §21 keeps. `/payments` and `declare` admit any
+citizen session, the reference-only one included, and «ملفّي» now links there, so option 2 is in
+effect for that report. Whether a reference-only session may report a transfer stays open here.
 
 ### 17.2 Whether the head's account sees scanned identity documents
 
@@ -861,11 +871,118 @@ What the code does now ([finance.md](finance.md) §3.7):
   settle and a reversal are refused too (`PAYMENT_CLAIM_UNDER_REVIEW`) until a clerk confirms or
   rejects the claim, and a Whish success for a bill settled another way meanwhile is set aside,
   MISMATCHED, for a clerk rather than dropped.
+  Online payment is paused ([§21](#21-online-payment-citizen-sign-in-and-notifications-decided-2026-10-13)),
+  so no Whish callback arrives; the refusal holds as well for a transfer the citizen declares in the
+  portal («أبلغ عن الدفع»), which puts the bill under review the same way.
 - A settlement row keeps the citizen who paid. A merge of two citizen files moves the bills
   to the file kept, but `payment_settlements` is append-only, so the consolidated receipt
   still names the file merged away, and a retry of that press after the merge is refused as
   another act. **Undecided:** is that the receipt as issued (keep it), or should a merge
   carry settlements over (which needs an exception to the append-only trigger)?
+
+---
+
+## 20. Municipal requests and certificates (decided 2026-10-12 and 2026-10-13)
+
+The plan is [municipal-requests-plan.md](municipal-requests-plan.md) §2, which gives each
+question's reason. D8 was the user's answer (2026-10-12). On 2026-10-13 the user approved in
+advance the plan's recommended option for every other question, so each is recorded here as
+decided; a later answer from the municipality overrides it and is recorded here the same way.
+
+- **D8 — both channels from the first release.** Citizens submit online through the portal, and
+  staff file at the counter for a citizen who is present. One request, one bill and one queue
+  either way; the request records its channel and, at the counter, the clerk. While online
+  payment is paused ([§21](#21-online-payment-citizen-sign-in-and-notifications-decided-2026-10-13)), the fee of a request filed online is paid at the municipality.
+- **D1 — fees: a per-municipality list, set by the manager, in Lebanese pounds.** Each request
+  type is offered only once the manager has switched it on and set its fee
+  (`request_type_settings`). No amount is written in the code. A fee of 0 is a free type: no bill,
+  and the request goes straight to review. The fee is the one in force when the bill is raised, so a
+  request still waiting for its fee, never billed, whose type is made free later goes to review on
+  its next read (`REQUEST_FEE_WAIVED`). Pounds only for now: the portal draws every figure in
+  ل.ل, and a dollar fee waits until it does not.
+- **D2 — eligibility is judged by the clerk, not encoded.** The applicant declares in what
+  capacity they ask (owner, tenant, heir, agent, free occupant) and attaches the papers; the clerk
+  reviews them and rejects with a reason when they fall short. What the system enforces: a type
+  tied to a property names one of the citizen's own cards, and an **online** request carries a
+  copy of an identity paper before its fee can be paid (reference-only sign-in, kept by [§21](#21-online-payment-citizen-sign-in-and-notifications-decided-2026-10-13),
+  means whoever holds the reference can act for that citizen; pickup is against the original card
+  in any case).
+- **D3 — what a paper certifies is written by the clerk.** Approving a request («جاهزة للاستلام»)
+  requires the statement the paper will carry, printed under the letterhead with the request
+  number, the citizen's name and identity number, the property and the date; no validity period is
+  printed unless the clerk writes one. A **براءة ذمة** cannot be approved while anything is owed on
+  the property by its own bills (`ParcelDuesService`); the check, its total and its time are kept
+  on the request and the paper says «حتى تاريخ …».
+- **D4 — a request names the citizen's card.** `PropertyEntry`, and optionally one unit line on it
+  (`BuildingUnit`); the server checks the card is the citizen's. Required for براءة ذمة, إفادة
+  إشغال, إفادة شغور, تسجيل عقد إيجار, ترميم and لافتة; optional for إفادة سكن and طلب عام.
+- **D5 — no automatic refund.** A paid request can be rejected; the fee stays recorded and the
+  request says it was paid, so the accountant can decide; any refund goes through the treasury's
+  existing expense flow. No money moves on its own.
+- **D6 — identity copies: staff readers only, kept with the request.** Attachments open (a signed
+  URL, every view audited) to the request readers — the manager, the administrative officer, the
+  accountant and the auditor — never to «مشاهد فقط» and never back to the portal, which lists their
+  type and date only. They are kept as long as the request; deletion waits for §1.
+- **D7 — the QR code holds the request number only.** No public verification page.
+- **D9 — notifications are not built, and none are planned for now** (confirmed by the product
+  owner on 2026-10-13, [§21](#21-online-payment-citizen-sign-in-and-notifications-decided-2026-10-13): no SMS or WhatsApp provider). The portal shows each request's
+  status. Phase 5 waits until a provider is chosen.
+- **D10 — cancelling, expiry, duplicates.** The citizen (online) or the clerk may cancel a request
+  while no bill has been raised for it. The fee's bill is raised when the citizen goes to pay
+  («تحصيل الرسم» at the counter; online «ادفع الآن» once online payment reopens, [§21](#21-online-payment-citizen-sign-in-and-notifications-decided-2026-10-13)),
+  not when the request is filed. Once a bill exists the request is paid or waits — unless the
+  manager cancels that bill («إلغاء الفاتورة», only on a bill nothing was paid on, finance audit B3):
+  the request waiting on it is then cancelled with it, in the same transaction, so the citizen can
+  file it again (decided 2026-10-13; `0094` lets a request be cancelled once its bill is). Nothing
+  expires on its own. One open request per citizen, type and card (a partial unique index); a
+  cancelled, rejected or completed request frees its place.
+
+---
+
+## 21. Online payment, citizen sign-in and notifications (decided 2026-10-13)
+
+**Status:** decided by the product owner on 2026-10-13.
+
+1. **Online payment through Whish is paused** until Whish gives the municipality its API.
+   Citizens pay at the municipality's cash office or to a collector.
+   - **What the code does.** `FeesService.startWhishCheckout` and a citizen's own request bill
+     (`POST requests/mine/:id/bill`) answer `ONLINE_PAYMENT_UNAVAILABLE` while the Whish gateway
+     is not live, before anything is read or written. The portal shows no «ادفع عبر Whish» or
+     «ادفع الآن» (`ONLINE_PAYMENT_OPEN` in `apps/frontend/lib/online-payment.ts`); it says
+     online payment is paused, and «طريقة الدفع» opens where and how to pay: cash at the office
+     (an instruction only — «حسناً» closes it, nothing is declared), and the Whish report below. A
+     request's fee is raised and paid at the counter («تحصيل الرسم»).
+   - **Why the server refuses too.** Without credentials the gateway runs a sandbox. Pressing
+     «ادفع عبر Whish» moved the bill to «قيد المراجعة» under a `WSH-` reference of our own, with
+     no money taken, and a bill in review cannot be settled at the counter until a clerk rejects
+     the claim.
+   - **Kept.** The citizen's report of a transfer made in their own Whish app to the
+     municipality's number («أبلغ عن الدفع», `POST fees/payments/mine/:id/declare`) stays: it
+     needs no Whish API, and a clerk confirms it against the statement. Any citizen session can
+     send it, the reference-only one included (§17.1). A municipality that does not want it leaves
+     its Whish Money number empty in الإعدادات.
+   - **Before it ships.** Bills already moved to «قيد المراجعة» by the sandbox carry a
+     `whishTransactionRef` beginning `WSH-`, which no Whish statement shows. A clerk rejects each
+     in the review queue, so the citizen can pay at the counter. They were not counted: that needs
+     a query on staging and production.
+   - **To reopen:** write `WhishGatewayService.postCheckout` against Whish's contract, declare
+     `WHISH_*` in the backend's env schema (today in a deployed build a value set only in the `.env` file never reaches the gateway (`validate` copies into `process.env` only the keys `envSchema` returns); on a developer machine the locally generated Prisma client loads `apps/backend/.env` into `process.env` when it is required, so there it does; [gotchas.md](gotchas.md)),
+     set them, decide §15, then set `ONLINE_PAYMENT_OPEN`. `isLive` is the two credentials and
+     nothing more, so they MUST NOT be set before `postCheckout` is written: the server's refusal
+     would lift into 500s.
+2. **Citizen sign-in stays the رقم مرجعي alone** (`POST citizen/reference/open`): no code by SMS
+   and no second factor, because elderly citizens must be able to sign in without help. The risk
+   is accepted: whoever holds a citizen's reference signs in as that citizen, reads their file and
+   acts on their requests ([security.md](security.md#known-gaps)). The rules treat the reference as
+   the credential it is: it is never logged or sent to Sentry (non-negotiable 7), and a request's
+   paper never prints it. One known exception stays open: the single-bill receipt's WhatsApp text
+   carries the full reference (a Medium row of security.md's Known gaps), which this decision makes
+   weigh more. Staff sign-in is not part of this decision.
+3. **No SMS or WhatsApp provider for now.** Nothing is sent to a citizen; the portal shows where
+   each request stands ([§20](#20-municipal-requests-and-certificates-decided-2026-10-12-and-2026-10-13)
+   D9). `SmsProviderService.deliver` stays unwritten, and §2 waits for a provider.
+
+---
 
 ## 22. What the PR #120 review left open (2026-10-13)
 

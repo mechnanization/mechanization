@@ -46,7 +46,7 @@ const INVOICE: Row = {
   paymentStatus: 'UNPAID',
 };
 
-function build(row: Row | null, { updatedCount = 1 }: { updatedCount?: number } = {}) {
+function build(row: Row | null, { updatedCount = 1, isLive = true }: { updatedCount?: number; isLive?: boolean } = {}) {
   const update = jest.fn().mockResolvedValue({});
   const updateMany = jest.fn().mockResolvedValue({ count: updatedCount });
   const record = jest.fn().mockResolvedValue({
@@ -91,7 +91,7 @@ function build(row: Row | null, { updatedCount = 1 }: { updatedCount?: number } 
       tenantId: 'tenant-1',
     } as unknown as TenantContextService,
     { emit: jest.fn() } as unknown as EventEmitter2,
-    { createCheckout, isLive: true } as unknown as WhishGateway,
+    { createCheckout, isLive } as unknown as WhishGateway,
     {
       get: jest.fn().mockResolvedValue(null),
       set: jest.fn().mockResolvedValue(undefined),
@@ -280,6 +280,25 @@ describe('startWhishCheckout', () => {
     callbackUrl: 'https://api.example/callback',
     returnUrl: 'https://portal.example/done',
   };
+
+  it('is refused while the gateway is not live, before anything is read, sent or written', async () => {
+    /*
+      Online payment is paused until Whish's API is wired (open-decisions §21).
+      In sandbox this path used to move the bill to PENDING_REVIEW under a WSH-
+      reference of our own, with no money taken: the refusal must come first.
+    */
+    const { service, prisma, createCheckout, updateMany, checkoutCreate, checkoutUpdateMany } = build(INVOICE, {
+      isLive: false,
+    });
+
+    await expect(service.startWhishCheckout(input)).rejects.toMatchObject({ code: 'ONLINE_PAYMENT_UNAVAILABLE' });
+    const citizenPayment = prisma.citizenPayment as { findUnique: jest.Mock };
+    expect(citizenPayment.findUnique).not.toHaveBeenCalled();
+    expect(createCheckout).not.toHaveBeenCalled();
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(checkoutCreate).not.toHaveBeenCalled();
+    expect(checkoutUpdateMany).not.toHaveBeenCalled();
+  });
 
   it('claims the invoice under the status it was quoted against', async () => {
     const { service, updateMany } = build(INVOICE);

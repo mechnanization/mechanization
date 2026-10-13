@@ -2,7 +2,7 @@ import {
   BILL_CANCEL_ROLES as SHARED_BILL_CANCEL_ROLES,
   BULK_SETTLE_ROLES as SHARED_BULK_SETTLE_ROLES,
   CENSUS_WORKLIST_ROLES,
-  FEE_ISSUE_ROLES,
+  FEE_SETTLE_ROLES,
   LANDLORD_LINK_ANSWER_ROLES as SHARED_LANDLORD_LINK_ANSWER_ROLES,
   PAYMENT_REVERSE_ROLES as SHARED_PAYMENT_REVERSE_ROLES,
   PAYMENT_REVIEW_MARK_ROLES,
@@ -12,6 +12,10 @@ import {
   WORKING_STAFF_ROLES,
   hasStaffRole,
   type StaffRole,
+  REQUEST_BILL_ROLES as SHARED_REQUEST_BILL_ROLES,
+  REQUEST_HANDLE_ROLES as SHARED_REQUEST_HANDLE_ROLES,
+  REQUEST_READ_ROLES as SHARED_REQUEST_READ_ROLES,
+  REQUEST_SETTINGS_ROLES as SHARED_REQUEST_SETTINGS_ROLES,
 } from '@mechanization/shared-schemas';
 
 /**
@@ -61,9 +65,10 @@ export const REFERENCE_SEND_ROLES: readonly string[] = WORKING_STAFF_ROLES;
 
 /**
  * Record a payment against a bill — `PATCH fees/payments/:id/settle`, the
- * counter and the round. `FEE_ISSUE_ROLES`, as the route.
+ * counter and the round. `FEE_SETTLE_ROLES`, as the route: the collector
+ * settles, though it issues no fee (`FEE_ISSUE_ROLES`).
  */
-export const PAYMENT_SETTLE_ROLES: readonly string[] = FEE_ISSUE_ROLES;
+export const PAYMENT_SETTLE_ROLES: readonly string[] = FEE_SETTLE_ROLES;
 
 /**
  * «تسجيل دفعة نقدية» — cash into the safe at the counter, the citizen file's
@@ -94,6 +99,17 @@ export const BULK_SETTLE_ROLES: readonly string[] = SHARED_BULK_SETTLE_ROLES;
  * route: the manager alone.
  */
 export const BILL_CANCEL_ROLES: readonly string[] = SHARED_BILL_CANCEL_ROLES;
+
+/**
+ * المعاملات والإفادات (docs/municipal-requests-plan.md), as the routes: read the
+ * queue, a request and its papers (not «مشاهد فقط»: the papers are identity
+ * copies); handle one (file at the counter, approve, reject, hand over, cancel);
+ * raise its fee as a bill; and set which types are offered and their fees.
+ */
+export const REQUEST_READ_ROLES: readonly string[] = SHARED_REQUEST_READ_ROLES;
+export const REQUEST_HANDLE_ROLES: readonly string[] = SHARED_REQUEST_HANDLE_ROLES;
+export const REQUEST_BILL_ROLES: readonly string[] = SHARED_REQUEST_BILL_ROLES;
+export const REQUEST_SETTINGS_ROLES: readonly string[] = SHARED_REQUEST_SETTINGS_ROLES;
 
 /**
  * Send a citizen a copy of a consolidated receipt over WhatsApp. Every working

@@ -43,6 +43,14 @@ export type KeyScope =
   | 'fee-notice:new'
   | 'expense:request'
   | 'income:new'
+  /** A municipal request filed at the counter. */
+  | 'request:new'
+  /**
+   * A municipal request filed by a citizen through the portal, one scope per citizen: a
+   * shared phone signs one citizen out and another in on the same tab, and the next one
+   * must not inherit a key the last one left in doubt.
+   */
+  | `request:mine:${string}`
   | `salary:${string}`
   | `settle:${string}`
   | 'transfer:new';
@@ -127,6 +135,7 @@ const ACT_RECORDED = new Set<string>([
   'PAYMENT_IDEMPOTENCY_KEY_REUSED',
   'BULK_SETTLE_REQUEST_REUSED',
   'FEE_NOTICE_REQUEST_REUSED',
+  'REQUEST_KEY_REUSED',
 ]);
 
 /**

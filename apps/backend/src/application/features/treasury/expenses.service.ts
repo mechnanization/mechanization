@@ -360,6 +360,19 @@ export class ExpensesService {
   }
 
   /**
+   * The vouchers with these ids, each exactly as `list` and `get` show it, keyed
+   * by id; an id with no voucher is absent. For a register that lists them
+   * beside another table's rows («الإيرادات والنفقات», `TreasuryMovementsService`),
+   * so the select and the view stay here, once. Read through `tx`, the caller's
+   * snapshot, so the lines are the rows its page was chosen from.
+   */
+  async viewsByIds(tx: Prisma.TransactionClient, ids: readonly string[]): Promise<Map<string, ExpenseVoucherView>> {
+    if (ids.length === 0) return new Map();
+    const rows = await tx.expenseVoucher.findMany({ where: { id: { in: [...ids] } }, select: VOUCHER_SELECT });
+    return new Map(rows.map((row) => [row.id, this.view(row)]));
+  }
+
+  /**
    * «سجّل النفقة» — writes the voucher and takes the money out, together.
    *
    * Refuses, writing nothing, when the treasury is not live, an accountant

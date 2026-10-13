@@ -131,7 +131,8 @@ export function IncomeCategoryEditor({
           Inline in the recording form these inputs sit inside the voucher's
           `<form>`, so Enter in one of them would submit the voucher — and
           submitting is recording money. Enter here means «save the category»,
-          as in the expense form's `NewCategoryFields`.
+          wherever the editor is, as in the expense form's
+          `NewCategoryFields`.
         */
         if (event.key === 'Enter' && event.target instanceof HTMLInputElement) {
           event.preventDefault();

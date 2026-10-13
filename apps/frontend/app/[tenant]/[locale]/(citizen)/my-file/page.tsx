@@ -1,6 +1,7 @@
 'use client';
 
 import { use, useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import {
@@ -51,6 +52,7 @@ import { billFigure, citizenPaymentTotals, isPartlyPaid, isSettled, partlyPaidFi
 import { formatLbp } from '@/lib/currency';
 import { formatDate, formatMonthList } from '@/lib/dates';
 import { describeAssessment } from '@/lib/fee-assessment';
+import { ONLINE_PAYMENT_OPEN } from '@/lib/online-payment';
 import { ownerBillingApplies, ownerBillingWording } from '@/lib/owner-billing';
 import { flagFieldLabel } from '@/lib/field-flags';
 import { Alert } from '@/components/ui/alert';
@@ -58,6 +60,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { StatItem, StatStrip } from '@/components/ui/stat-strip';
+import { MyRequests } from '@/components/citizen/my-requests';
 import { cn } from '@/lib/utils';
 
 /**
@@ -147,7 +150,9 @@ function Detail({
  * who typed the URL directly would meet the stricter one, which is backwards.
  *
  * Declaring a payment stays on `/payments`, next to the Whish instructions it
- * needs. This page reports; that one acts.
+ * needs. This page reports; that one acts. While online payment is paused
+ * (`lib/online-payment.ts`, open-decisions §21) the open bills carry no
+ * «ادفع عبر Whish»: they say so, and link to `/payments` for where and how to pay.
  */
 export default function MyFilePage({
   params,
@@ -159,6 +164,7 @@ export default function MyFilePage({
   const base = `/${tenant}/${locale}`;
   const labels = getLabels(locale);
   const tKind = useTranslations('citizenKind');
+  const tPay = useTranslations('onlinePayment');
 
   const [token, setToken] = useState<string | null>(null);
   const [summary, setSummary] = useState<MyCitizenSummary | null>(null);
@@ -228,6 +234,17 @@ export default function MyFilePage({
     clearSession(tenant);
     router.replace(base);
   }, [tenant, base, router]);
+
+  /** «طلباتي»'s read came back 401: the session ended, as `load` handles it. */
+  const endIfSignedOut = useCallback(
+    (caught: unknown): boolean => {
+      if (!(caught instanceof ApiRequestError) || caught.status !== 401) return false;
+      clearSession(tenant);
+      router.replace(base);
+      return true;
+    },
+    [tenant, base, router],
+  );
 
   const payWithWhish = useCallback(
     async (paymentId: string) => {
@@ -595,15 +612,31 @@ export default function MyFilePage({
         </Card>
       ) : null}
 
+      {/* ── Requests and certificates: what they asked the municipality for ── */}
+      <MyRequests tenant={tenant} locale={locale} token={token} base={base} onSignedOut={endIfSignedOut} />
+
       {/* ── Bills still open ── */}
       <PaymentList
         title={locale === 'en' ? 'Outstanding Fees' : 'رسوم مستحقة عليك'}
         icon={Wallet}
         items={outstanding}
         empty={locale === 'en' ? 'No outstanding fees — your file is fully settled.' : 'لا توجد رسوم مستحقة — ملفّك مسدَّد بالكامل.'}
-        onPay={payWithWhish}
+        onPay={ONLINE_PAYMENT_OPEN ? payWithWhish : undefined}
         payingId={payingId}
         locale={locale}
+        footer={
+          ONLINE_PAYMENT_OPEN ? undefined : (
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t p-4">
+              <p className="text-sm text-muted-foreground">{tPay('paused')}</p>
+              <Button asChild variant="outline" size="sm">
+                <Link href={`${base}/payments`}>
+                  <Wallet className="size-4" aria-hidden />
+                  {tPay('howToPay')}
+                </Link>
+              </Button>
+            </div>
+          )
+        }
       />
 
       {/* ── Bills settled ── */}
@@ -990,6 +1023,7 @@ function PaymentList({
   empty,
   onPay,
   payingId,
+  footer,
   locale = 'ar',
 }: {
   title: string;
@@ -998,6 +1032,8 @@ function PaymentList({
   empty: string;
   onPay?: (paymentId: string) => void;
   payingId?: string | null;
+  /** Under the list when it has bills: where to pay them while there is no button here. */
+  footer?: React.ReactNode;
   locale?: string;
 }) {
   const labels = getLabels(locale);
@@ -1104,6 +1140,7 @@ function PaymentList({
             })}
           </ul>
         )}
+        {items.length > 0 ? footer : null}
       </CardContent>
     </Card>
   );

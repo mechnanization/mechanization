@@ -28,9 +28,11 @@ const URL_STATE = { print: param.flag() };
 /**
  * «أمر الصرف» — one expense voucher on an A4 sheet, to print and sign.
  *
- * Guarded by the `/finance/expenses` nav row's prefix: the same finance readers
- * as the register. Reached from the register's print button, from the payout
- * history, and from the toast after a commission is paid — each with `?print=1`,
+ * Guarded by «الحركات المالية»'s nav row, which owns `/finance/expenses`
+ * (`also`): the same finance readers as the register. Reached from the voucher's
+ * print button in the register's voucher pane, from «طباعة» after a payment on
+ * the recording page, from the payout history, and from the toast after a
+ * commission is paid — each with `?print=1`,
  * which opens the browser's print dialog once the voucher and the letterhead
  * are in, then drops the flag so a reload does not print again.
  */
@@ -66,7 +68,7 @@ export default function ExpenseVoucherPrintPage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <HeaderBackLink fallbackHref={`${base}/finance/expenses`} label={tp('back')} />
+      <HeaderBackLink fallbackHref={`${base}/finance/transactions`} label={tp('back')} />
       <PageHeader
         icon={FileText}
         title={data ? tp('pageTitleNumbered', { number: data.voucherNumber }) : tp('pageTitle')}

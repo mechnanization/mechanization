@@ -1,6 +1,6 @@
 # Security
 
-Last verified against the code: `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): `GET auth/staff/me`, the password change and its throttle, the save-path unlink rows, no new filing on an archived file; the offline queue's revised, held and refused records, 2026-10-15; and `bugs-fix` (on `develop@5e8f5c3`; the finance audit remediation: a collector books only into his own custody, one Whish reference one receipt, the Whish callback banked only as quoted, the counter rate band, the finance settings the manager's with a Tier 1 row, bill cancellation, the one-off charge audited), 2026-10-12; the review of PR #120 (a Whish reference cleaned when stored and folded in SQL, a cancelled bill named in every owed filter, the recurring-run route has no screen) against `fix/finance-audit-remediation` rebased on `chore/migration-0090-0091@8d386b5`, 2026-10-13.
+Last verified against the code: `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): `GET auth/staff/me`, the password change and its throttle, the save-path unlink rows, no new filing on an archived file; the offline queue's revised, held and refused records, 2026-10-15; and `bugs-fix` (on `develop@5e8f5c3`; the finance audit remediation: a collector books only into his own custody, one Whish reference one receipt, the Whish callback banked only as quoted, the counter rate band, the finance settings the manager's with a Tier 1 row, bill cancellation, the one-off charge audited), 2026-10-12; the review of PR #120 (a Whish reference cleaned when stored and folded in SQL, a cancelled bill named in every owed filter, the recurring-run route has no screen) against `fix/finance-audit-remediation` rebased on `chore/migration-0090-0091@8d386b5`, 2026-10-13; who raises a bill (`FEE_ISSUE_ROLES`, no collector) and who settles one (`FEE_SETTLE_ROLES`) on `fix/fees-page-ux` from `develop@5e8f5c3` (uncommitted), 2026-10-12; the merged voucher register `GET treasury/movements` on `TREASURY_READ_ROLES`, pinned in `route-inventory.spec.ts`, its `page` capped after review (and the income and transfer registers' unbounded `page` added to the gaps), on `fix/fees-page-ux` (uncommitted), 2026-10-12; the same day, the register's screen moved to «الحركات المالية» and the recording page's nav row narrowed to `TREASURY_WORK_ROLES` (uncommitted); municipal requests (`t/:tenantSlug/requests`, the citizen's `requests/mine/…`, the first upload a citizen can make, `REQUEST_*_ROLES` pinned) and the gap reference-only sign-in opens on them, on `fix/fees-page-ux` (uncommitted), 2026-10-13; the product owner's decisions of the same day (citizen sign-in by reference alone accepted on both rows, the sign-in rule, online Whish payment refused while the gateway is not live, the `WHISH_*` row's consequence) (uncommitted).
 
 Binding for every change that touches authentication, roles, tokens, validation, uploads, logging,
 headers, client storage or secrets. The rules below are correct practice. Where the code differs today,
@@ -89,15 +89,19 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
 - «المستحق على عقار» (`GET fees/parcel-dues`) is read-only and gated like the ledger it reads
   (`FEE_READ_ROLES`); its one query value goes through `parcelDuesQuerySchema`. It names each debtor
   and the remaining amount, nothing a ledger reader does not already see, and never a رقم مرجعي.
+- Raising a bill — issuing a fee notice (`POST fees/notices`) or charging one citizen (`POST fees/payments`) —
+  is `FEE_ISSUE_ROLES`, the manager and the accountant. A collector settles (`FEE_SETTLE_ROLES`, the
+  single settle) and raises no bill: decided 2026-10-12, when the collector was taken off the issue
+  set it had shared with the settle. Both routes are pinned in `route-inventory.spec.ts`.
 - Settling several bills at once (`POST fees/payments/bulk-settle`) is `BULK_SETTLE_ROLES` (manager and
-  accountant), narrower than the single settle's `FEE_ISSUE_ROLES`; its body is `bulkSettlePaymentsSchema`
+  accountant), narrower than the single settle's `FEE_SETTLE_ROLES`; its body is `bulkSettlePaymentsSchema`
   (1–50 distinct UUIDs, each method's one fact, a required retry key, and `expectedDue`, the sums the
   clerk was shown). Every bill must belong to the citizen named, be neither paid nor waiting for review,
   and owe what the clerk was shown, all checked under the bills' locks; a COLLECTOR settlement names
   active, non-view-only staff (`live-collector.ts`, the single settle's own rule — the review of PR #112
   found the bulk path took any user, a citizen included). Both routes' role lists are pinned in
   `route-inventory.spec.ts`, and so, by name, are the single fee routes that post wallet entries once
-  the treasury is live — `FeesController.settle` (`FEE_ISSUE_ROLES`), `review` (`FEE_ADMIN_ROLES`, a
+  the treasury is live — `FeesController.settle` (`FEE_SETTLE_ROLES`), `review` (`FEE_ADMIN_ROLES`, a
   Whish confirmation), `reverseTransaction` (`PAYMENT_REVERSE_ROLES`, the manager alone) and the public, HMAC-checked
   `whishCallback` — so widening one fails CI (review of 2026-10-11). The reprint, `GET fees/settlements/:id`, is
   `FEE_READ_ROLES` with `ParseUUIDPipe`. The consolidated receipt names the citizen with father's name and
@@ -126,6 +130,12 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
 - Scope citizen reads and writes by `user.sub` in the WHERE clause: `findFirst({ where: { id, citizenId } })`
   as in `FeesService.declare`. Where a row is fetched first and compared (`FeesService.startWhishCheckout`),
   another citizen's row MUST get exactly the not-found answer, so ids cannot be probed.
+- Online payment through Whish is paused ([open-decisions.md §21](open-decisions.md#21-online-payment-citizen-sign-in-and-notifications-decided-2026-10-13), 2026-10-13):
+  `POST fees/payments/mine/:id/whish/checkout` answers `ONLINE_PAYMENT_UNAVAILABLE` while the gateway
+  is not live, before any read or write. Without credentials the gateway runs a sandbox, and that route
+  used to move the bill to PENDING_REVIEW under a `WSH-` reference of our own with no money taken — a
+  claim a clerk could confirm against nothing. The citizen's declaration of a transfer made in their own
+  Whish app (`declare`) stays.
 - Every query on `users` MUST filter `kind`, in the WHERE of writes as well as reads
   (`PrismaUserRepository.findCitizenByReference` does; `hideStaff` and friends do not, see
   [docs/code-quality.md](code-quality.md)).
@@ -189,6 +199,12 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   SHOULD accept one step either side, and failed codes SHOULD be counted per account.
 - OTP codes and references come from a CSPRNG (`randomInt`, `ReferenceNumber.generate`). OTP codes are
   bcrypt-hashed, single-use and capped (`APP_CONFIG.otp`).
+- Citizen sign-in is the رقم مرجعي alone (`POST citizen/reference/open`), by the product owner's
+  decision of 2026-10-13 ([open-decisions.md §21](open-decisions.md#21-online-payment-citizen-sign-in-and-notifications-decided-2026-10-13)): no OTP and no second factor, so elderly
+  citizens can sign in. The reference is therefore the whole credential: it MUST NOT be logged or sent
+  to Sentry, put in a URL, a WhatsApp text, an export or a printed paper (one known violation: the
+  single-bill receipt's WhatsApp text, in Known gaps). Adding a code or a second factor to the
+  portal's sign-in needs a new decision; the front door links no code sign-in.
 - One-time tokens travel in a URL fragment or a POST body, never in a query string, and the link format
   MUST match what the landing page parses.
 - JWT sign and verify SHOULD pin `HS256` and set issuer and audience.
@@ -417,7 +433,10 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
       accountant reaches the route through the API alone.
 - **Printed vouchers** (`finance/expenses/:id/print`, `finance/income/:id/print`). Screens, not
   routes: they read `GET treasury/expenses/:id` and `GET treasury/income/:id`, so the finance read
-  roles, and sit under those nav rows' prefixes. The receipt's QR code carries the voucher number
+  roles. Their addresses are owned by the «الحركات المالية» nav row through `NavItem.also`
+  (`/finance/income`, `/finance/expenses`), so `canAccessPath` guards them by that row's
+  `TREASURY_READ_ROLES`; without the `also`, a path under no row would be open to every role
+  (`lib/nav.test.ts` pins it). The receipt's QR code carries the voucher number
   and nothing else; there is no public page to verify it against, which would be a new
   unauthenticated surface. A printed «سند قبض» carries the payer's name, as the paper handed to
   them must.
@@ -432,6 +451,56 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   database (`0083`). `route-inventory.spec.ts` pins every handler's role list. `payerName` (a fine, a rent) may name a citizen: the audit row carries the voucher number and
   figures only. The register's search term goes to the API in the query string, as the other
   registers' do, and so falls under the URL-logging gap below.
+- **«الحركات المالية»** (`GET t/:tenantSlug/treasury/movements`, `TreasuryController.movements`,
+  2026-10-12; the screen is `finance/transactions`). The income and expense vouchers in one read-only register, on `TREASURY_READ_ROLES`:
+  exactly the readers of `GET treasury/income` and `GET treasury/expenses`, so it shows nobody a
+  payer or payee they could not already read, and it lists vouchers only — no citizen payment, no
+  expense request. Every query value through `listTreasuryMovementsQuerySchema` (`ZodValidationPipe`:
+  days that exist, UUIDs, a three-letter currency, a search of at most 120 characters, `pageSize` at
+  most 200, `page` at most 1,000,000 — unbounded, `page=1e20` overflowed the bound offset into a 500
+  that logged the URL; a category only with a direction); there is no id in the path. The page and the figures
+  are raw SQL, schema-qualified (`${this.S}`) with every value bound, and the search term goes
+  through `likePattern`, so `%` and `_` are literals rather than a way to match every row. Each line
+  is the voucher view its own register returns. Read only: no audit row, and nothing written. Its
+  search term travels in the query string like the income register's, under the URL-logging gap
+  below. It is the first search over expense vouchers (payee, description, invoice number): the
+  expense register has none, and this one is open to that register's readers only.
+  `route-inventory.spec.ts` pins the handler at the read list.
+  The recording screen, `finance/movements` («الإيرادات والنفقات»), has its own nav row on
+  `TREASURY_WORK_ROLES`. A reader still reaches the address through the `/finance` row's prefix
+  (`canAccessPath` matches the longest row the role can see), so the page checks the role itself:
+  it shows who records and a link to the register instead of the form, and reads nothing for them.
+  `IncomeController` and `ExpensesController` refuse the writes whatever the screen shows (CODE-4).
+- **Municipal requests** (`t/:tenantSlug/requests`, `CitizenRequestsController`, 2026-10-13;
+  [municipal-requests-plan.md](municipal-requests-plan.md), decisions in
+  [open-decisions.md §20](open-decisions.md#20-municipal-requests-and-certificates-decided-2026-10-12-and-2026-10-13)).
+  - **Staff routes**, each with its set, pinned in `route-inventory.spec.ts`: reading the queue, a
+    request, the request types and a paper's link on `REQUEST_READ_ROLES` (the manager, the
+    administrative officer, the accountant and the auditor — **not «مشاهد فقط»**: the papers are
+    identity copies); filing at the counter, approving, rejecting, handing over, cancelling and adding a
+    paper on `REQUEST_HANDLE_ROLES`; raising the fee's bill on `REQUEST_BILL_ROLES` (the amount is the
+    manager's list's, never typed by whoever raises it); the types and fees on
+    `REQUEST_SETTINGS_ROLES` (the manager).
+  - **The citizen's routes**, `requests/mine/…`, are role-less and on `SELF_SERVICE`: each refuses a
+    staff token (`CITIZENS_ONLY`) and reads only the token's subject — the citizen id is never taken
+    from a body or a path, and a request id that is not the caller's answers `REQUEST_NOT_FOUND`.
+    Filing, uploading and raising the fee are throttled per session (`APP_CONFIG.throttle.submission`
+    with a tracker on the `Authorization` header), because per-IP buckets are shared behind nginx (gap
+    below). Every id goes through `ParseUUIDPipe`, every body through its `citizen-request` schema.
+    While online payment is paused ([open-decisions.md §21](open-decisions.md#21-online-payment-citizen-sign-in-and-notifications-decided-2026-10-13)) the citizen's own
+    `requests/mine/:id/bill` answers `ONLINE_PAYMENT_UNAVAILABLE` before anything is locked, numbered
+    or written; the counter raises the fee.
+  - **Uploads**, the first a citizen can make: `FileInterceptor` caps the size
+    (`REQUEST_ATTACHMENT_MAX_BYTES`, 5 MB) and the count (one file) before the handler runs; the type
+    is sniffed from the bytes (`sniffAttachment`: JPEG, PNG, WebP, PDF), never the declared MIME or the
+    file's name; the object goes to the private documents bucket under
+    `{tenantSlug}/requests/{requestId}/{uuid}{ext}` through `REQUEST_FILE_STORAGE` (`IfNoneMatch`, never
+    overwritten), and is removed again if its row cannot be written.
+  - **Papers are never served back to the portal** (a citizen sees their type and date only). Staff
+    open one through a five-minute signed URL, and each opening writes `REQUEST_ATTACHMENT_VIEWED`.
+  - Every step writes a Tier 1 audit row. The free text — the purpose, the clerk's statement, a
+    rejection reason — stays on the request and out of the audit rows; the rows carry ids, numbers and
+    statuses. A rejection after payment moves no money (D5).
 - **Transfers and exchange** (`t/:tenantSlug/treasury/transfers`, 2026-10-10). `GET` (the register,
   query through `listTransfersQuerySchema`) and `GET :id` on `TREASURY_READ_ROLES`; `POST` (body
   through `createTransferSchema`, a union on `kind`) on `TREASURY_WORK_ROLES`. Every date in both is a
@@ -658,11 +727,12 @@ add a row. Severity is the harm if exploited today.
 | High | Second-factor changes need no re-authentication. Enrolment immediately clears the confirmed factor, and disable checks the password only if one is sent, so a stolen session can remove 2FA and enrol its own | `presentation/controllers/auth.controller.ts` `beginTotpEnrolment`, `disableTotp` (raw `@Body()`); `IdentityService.disableTotp`; `PrismaUserRepository.saveTotpSecret` (`totpConfirmedAt: null`) | Require the current password and a current TOTP code; keep the old factor until the new one is confirmed; zod schema; bump `tokenVersion` |
 | High | SUPER_ADMIN 2FA is not enforced. `User.requiresTotp` has no readers, and a spec asserts an unenrolled SUPER_ADMIN signs in | `domain/entities/user.entity.ts` `requiresTotp`; `IdentityService` `challengeTotp`; `staff-login.spec.ts` | Decide (Undecided below). If mandatory, issue an enrolment-only session until confirmed |
 | High | No `trust proxy`, so `request.ip` is the proxy's address. Throttle buckets are shared by every client per route (5 per minute for staff login across all staff: a lockout), and login audit IPs are wrong. **Unverified:** the nginx side | `presentation/bootstrap.ts` `createApiApp`; `MetricsController` class comment; `AppModule` `ThrottlerModule.forRoot`; `AuthController` (`context: { ip: request.ip }`) | Set `trust proxy` to the exact hop; Redis throttler storage; per-account limits beside per-IP |
-| High | Single-factor citizen login: the رقم مرجعي alone opens a 7-day session that reads phone, mother's name, nationality, resident status and marital status. Distributed guessing needs to hit any one citizen, not a chosen one | `AuthController.openByReference`; `IdentityService.loginByReferenceOnly`; `referenceOnlyLoginSchema` (`fee.schema.ts`); `CitizenController.mySummary` | Product decision (Undecided). Options: a fees-only session unless the phone is also given, a per-tenant failure budget, CAPTCHA after failures, alerting |
+| High | Single-factor citizen login: the رقم مرجعي alone opens a 7-day session that reads phone, mother's name, nationality, resident status and marital status. Distributed guessing needs to hit any one citizen, not a chosen one | `AuthController.openByReference`; `IdentityService.loginByReferenceOnly`; `referenceOnlyLoginSchema` (`fee.schema.ts`); `CitizenController.mySummary` | **Accepted** by the product owner, 2026-10-13 ([open-decisions.md §21](open-decisions.md#21-online-payment-citizen-sign-in-and-notifications-decided-2026-10-13)): no OTP and no second factor, so elderly citizens can sign in; a CAPTCHA or a code would add the step this rules out. Measures that add no step for the citizen (a per-tenant failure budget, alerting, a narrower session) are **Undecided** |
 | High | The CSV export carries `reference_number` (a login credential) with `phone`, the relative's `contact_phone_relative` and `resident_status` for every citizen. Narrowed to `SUPER_ADMIN` and `AUDITOR` (`REGISTER_EXPORT_ROLES`; «مشاهد فقط» was admitted until 2026-10-06) | `ReportingService.exportCsv`; `DashboardController.exportCsv` | Drop the column, or gate it behind its own permission and audit |
 | Medium | Audit rows written before the masking change still hold citizens' رقم مرجعي in plaintext (`CITIZEN_MERGED` / `CITIZEN_MERGED_INTO` `after.other.referenceNumber`, `CITIZEN_DELETED` `before.referenceNumber`). The table is append-only, so they cannot be edited, and anyone who can read the audit log can sign in as those citizens | `audit_log_entries`, rows with those actions; the append-only trigger from `0001_init` | **Undecided:** reissue the affected citizens' references (the leaked ones then sign nobody in), and whether a documented data correction may redact the old rows |
 | High | A gitignored age secret-key file sits in a developer machine's working tree | `.gitignore` age-key entries; confirmed with `git check-ignore`, not opened | Move it offline (password manager) and delete the file. Never open it |
-| Medium | Authorisation defaults to allow: a non-public route without `@Roles` admits any authenticated token, citizens included. Each such route self-checks today. `route-inventory.spec.ts` now fails on a new role-less route that is not on its reviewed self-service list, so forgetting is caught in CI, but the guard itself still fails open | `RolesGuard.canActivate`; `tenant-isolation.spec.ts` "admits requests to routes without role restrictions"; `route-inventory.spec.ts` `SELF_SERVICE` (the role-less routes in `AuthController`, `CadastreController`, `CitizenController.mySummary`, `FeesController`) | Refuse when no metadata is present unless an explicit self-service marker is declared |
+| Medium | Authorisation defaults to allow: a non-public route without `@Roles` admits any authenticated token, citizens included. Each such route self-checks today. `route-inventory.spec.ts` now fails on a new role-less route that is not on its reviewed self-service list, so forgetting is caught in CI, but the guard itself still fails open | `RolesGuard.canActivate`; `tenant-isolation.spec.ts` "admits requests to routes without role restrictions"; `route-inventory.spec.ts` `SELF_SERVICE` (the role-less routes in `AuthController`, `CadastreController`, `CitizenController.mySummary`, `FeesController`, `CitizenRequestsController` `mine…`) | Refuse when no metadata is present unless an explicit self-service marker is declared |
+| Medium | Reference-only citizen sign-in (the sign-in decided on 2026-10-13, open-decisions §21) lets whoever holds a citizen's رقم مرجعي act as that citizen on the municipal requests: file a request, upload papers to it, cancel an unbilled one (and raise its fee, once online payment reopens); and, on `/payments`, which «ملفّي» links, report a Whish transfer on any of the citizen's open bills, sending it to review until a clerk answers (the report §21 keeps). Mitigated, not closed: papers are never served back to the portal, an online request carries an identity copy before its fee can be paid, a paper is collected only against the original identity card, and filing is throttled per session | `CitizenRequestsController` `requests/mine/…`; `AuthController` `citizen/reference/open` | **Accepted** with the sign-in decision ([open-decisions.md §21](open-decisions.md#21-online-payment-citizen-sign-in-and-notifications-decided-2026-10-13), 2026-10-13): the mitigations above stay, and no second factor is planned |
 | Medium | PII in stdout: every 4xx and 5xx logs `request.originalUrl` with its query string, 5xx logs the raw exception message, mail failures log the recipient, and dev SMS logs phone and body | `DomainExceptionFilter.catch`; `AppLogger` (no redaction); `SmtpEmailSender`; `SmsProviderService.send` | Log `redactUrl` / `redactText` output, or redact in `AppLogger.formatMessage`; mask recipients |
 | Medium | Field-device PII at rest: the offline queue and the citizen draft hold full records in plaintext and survive sign-out. A queued record revised after a send that may have landed (`inDoubt`), and then answered as already filed, is kept, blocked, with that file's id (`citizenId`), until the officer discards it | `apps/frontend/lib/offline-db.ts` `QueuedSubmission`; `apps/frontend/lib/citizen-draft.ts` `KEY_PREFIX`; `apps/frontend/lib/session.ts` `clearSession` | Decide (Undecided): encrypt per session, and/or clear on sign-out and on user switch |
 | Medium | No server-side sign-out for citizens: a citizen token lives 7 days and `clearSession` only forgets it locally. (Staff sign-out revokes the refresh family: `AuthController.logoutStaff`.) | `IdentityService.loginByReference`, `loginByReferenceOnly`; `apps/frontend/lib/session.ts` `clearSession` | A citizen logout that bumps `tokenVersion` and calls `SessionRevocationService.forget` |
@@ -679,6 +749,7 @@ add a row. Severity is the harm if exploited today.
 | Low | Raw bodies and ids: `@Body('citizenId')` and `@Body('candidateIds')`, raw `@Body()` on two auth routes, and 56 id params without `ParseUUIDPipe` (counted by grep 2026-10-14, outside the specs: `develop` has 66, and `FeesController`'s ten gained it with PR #113, eight of them in PR #120's own words; still 56 on PR #120 rebased onto `develop@3211140`, 2026-10-15). `route-inventory.spec.ts` fails on any fee route whose path id goes without it. A bad id becomes a 500 and a Sentry event | `CitizenController` `confirmLandlordLink`, `dismissLandlordLink`, `restoreLandlordLink`; `AuthController` `disableTotp`, `sendResetPasswordEmail`; every controller but `CorrectionsController`, `FeesController` and the treasury's | Zod body schemas; `ParseUUIDPipe` |
 | Medium | A citizen save applies the owner agreements it carries (`landlordCitizenId` from «نعم، هو» on a card) through `LandlordLinkService.applyAgreements` → `confirm` with no role rule, while the answer routes admit only `LANDLORD_LINK_ANSWER_ROLES`. A collector (`REGISTER_WRITE_ROLES`) can so link an owner — and put flats and owner-borne fees on that file — by calling `POST`/`PATCH citizens` directly; the citizen editor keeps collectors out | `CitizensService` (agreements → `applyAgreements`); `CitizenController` create/update vs `confirmLandlordLink`, `dismissLandlordLink`, `restoreLandlordLink`, `unlinkLandlord`; `LandlordMatchHint` (no permission prop) | Apply agreements only for a role in `LANDLORD_LINK_ANSWER_ROLES` (refuse or ignore the rest), and give `LandlordMatchHint` a required `canAnswer` |
 | Low | Raw query values on several reads: a repeated `?search=` arrives as an array and `normalizeSearchText` calls `.toLowerCase()` on it, a 500 and a Sentry event; `limit` and `offset` are coerced by hand. The collection worklists had the same bug and now go through `worklistQuerySchema` (2026-10-06) | `CitizenController.list`, `CitizenController.history`, `FeesController.listPayments` (`@Query('search')`, `@Query('limit')`, …), `AuditController` (`@Query('action')` into `parseActions`, which calls `.split`; its `actorId` goes through `auditActorFilterSchema` since 2026-10-11) | A zod query schema through `ZodValidationPipe`, as `worklistQuerySchema` |
+| Low | `page` has no upper bound on the income and transfer registers, so `page=1e20` passes the schema and the offset the server computes fails in the database: a 500, a Sentry event, and the URL with its query string (a payer's name in `search`) in the log line of the gap above. The merged register `GET treasury/movements` caps it at 1,000,000 (found by its review, 2026-10-12; the review reproduced the income list's failure on Postgres 17 with `page=1e17`, and the transfer register's identical line was not exercised) | `listIncomeVouchersQuerySchema` (`income.schema.ts`) and `listTransfersQuerySchema` (`transfer.schema.ts`): `page: z.coerce.number().int().min(1)`; `IncomeService.list`, `TransfersService.list` (`skip: (page - 1) * pageSize`) | `.max(1_000_000)` on both, as `listTreasuryMovementsQuerySchema` has |
 | Low | `POST citizen/otp/verify` has no explicit `@Throttle` and falls under the 120-per-minute default | `AuthController.verifyOtp` | An explicit limit from `APP_CONFIG.throttle` |
 | Low | The accountant can still change the numbering sequences through `PATCH fees/settings` (`FEE_ADMIN_ROLES`). The treasury's own fields — the official rate, the two currencies, both ceilings and the exchange rule — became the manager's on 2026-10-12 (finance audit A1), refused per field when changed, with a Tier 1 row carrying their values before and after | `FeesController.updateSettings` (`@Roles(...FEE_ADMIN_ROLES)`); `FeesService.updateSettings` | **Undecided:** whether the sequences are the manager's too; then refuse them per field, as the rate is |
 | Medium | The single-bill receipt's WhatsApp message carries the citizen's full رقم مرجعي — a sign-in credential that alone opens a citizen session (the High gap above) — in a `wa.me/…?text=` URL, so it reaches the staff browser's history, the messaging provider and whoever the message is forwarded to (found 2026-10-10; the consolidated receipt of §3.7 leaves it out) | `apps/frontend/components/admin/payment-receipt.tsx` (`message`, the `الرقم المرجعي:` line; `waHref`) | Drop the line, or print `ReferenceNumber.mask` as the audit trail does |
@@ -690,7 +761,7 @@ add a row. Severity is the harm if exploited today.
 | Low | Public routes with no explicit throttle decision ride the default | `HealthController`; `TenantController.getPublicConfig`; `RegistrationController.checkPropertyNumber`; `FeesController.whishCallback` | An explicit `@Throttle`, or `@SkipThrottle()` with a reason |
 | Low | The cron bearer secret is compared with `!==` on `@SkipThrottle()` routes | `InternalCronController` `authorise` | Digest plus `timingSafeEqual`, as in `MetricsController` |
 | Low | JWTs have no algorithm pin, issuer or audience | `ApplicationModule` `JwtModule.registerAsync`; `JwtAuthGuard` (`jwt.verify`) | Sign and verify options with `HS256`, issuer, audience |
-| Low | `WHISH_API_URL`, `WHISH_API_KEY`, `WHISH_WEBHOOK_SECRET` are not validated at boot | `WhishGatewayService` constructor; absent from `envSchema` | Declare them with a pair rule |
+| Low | `WHISH_API_URL`, `WHISH_API_KEY`, `WHISH_WEBHOOK_SECRET` are not validated at boot, and in a deployed build a value set only in the `.env` file never reaches the gateway: `ConfigModule`'s `validate` copies into `process.env` only the keys `envSchema` returns (on a developer machine the locally generated Prisma client loads `apps/backend/.env` into `process.env`, so there it does) | `WhishGatewayService` constructor; absent from `envSchema` | Declare them with a pair rule, in the change that writes `postCheckout` (open-decisions §21) |
 | Low | CORS sends `credentials: true`, which bearer auth does not need, and `CORS_ORIGINS` accepts any string | `createApiApp` `enableCors`; `envSchema` `CORS_ORIGINS` | Drop `credentials`; validate each origin as an https URL in production |
 | Low | The dormant document upload trusts the client-declared MIME type; no route calls it today | `DocumentService.attachToRegistration`; `Document.assertUploadable` | When revived: sniff content, cap size in the interceptor, tenant key prefix |
 | Low | `.dockerignore` excludes `.env` files only at the repository root, so `apps/backend/.env` and `apps/frontend/.env.local` enter the build context and the build stage (`COPY . .`); the final stage copies build output only | `.dockerignore`; `apps/backend/Dockerfile`, `apps/frontend/Dockerfile` | Prefix the `.env` patterns with `**/`, and exclude the backup paths |
@@ -732,8 +803,9 @@ add a row. Severity is the harm if exploited today.
 
 These need a human. Long-running product decisions live in [docs/open-decisions.md](open-decisions.md).
 
-- **Reference-only citizen login.** Keep `POST citizen/reference/open` as a single factor that exposes
-  resident status, or reduce what such a session can read, add a failure budget, or add CAPTCHA?
+- **Reference-only citizen login, beyond the decision of 2026-10-13.** The single factor stays
+  ([open-decisions.md §21](open-decisions.md#21-online-payment-citizen-sign-in-and-notifications-decided-2026-10-13)). Should such a session read less, or should a per-tenant failure
+  budget or alerting be added? None of these adds a step for the citizen.
 - **SUPER_ADMIN TOTP.** Mandatory with an enrolment-only session, or officially optional (and fix the
   comments that say otherwise, such as the `User.requiresTotp` docblock)?
 - **Rate-limit topology.** The `trust proxy` hop, a Redis throttler store, and per-account limits.
