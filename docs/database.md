@@ -1,6 +1,6 @@
 # Database
 
-Last verified against the code: `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): a رقم العقار saved in Latin digits, digit-normalised lookups for older rows, where `P2002` is mapped; a foreign-key violation on a registration card, 2026-10-15; the finance audit migrations `0090`, `0091` and `0093`, their table rows, the enum release rule and `0091`'s header corrections against `chore/migration-0090-0091` (on `develop@5e8f5c3`) and the code of PR #120 (`fix/finance-audit-remediation@6169287`), 2026-10-13, rebased onto `develop@3211140`, 2026-10-15.
+Last verified against the code: `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): a رقم العقار saved in Latin digits, digit-normalised lookups for older rows, where `P2002` is mapped; a foreign-key violation on a registration card, 2026-10-15; the finance audit migrations `0090`, `0091` and `0093`, their table rows, the enum release rule and `0091`'s header corrections against `chore/migration-0090-0091` (on `develop@5e8f5c3`) and the code of PR #120 (`fix/finance-audit-remediation@6169287`), 2026-10-13, rebased onto `develop@3211140`, 2026-10-15; `0092_citizen_requests` (municipal requests), shipped alone in `chore/migration-0092` (PR #121) ahead of the code and stacked on #120 with `0093` before it, 2026-10-13.
 
 The rules for anything that reads or writes a database: the schemas, how to
 query them, how to change them, and how data may move between environments.
@@ -672,8 +672,17 @@ reads staging's history from `.env.staging` and nothing else, and
   hand-run `db:deploy:staging` was not checked. `0090`, `0091` and `0093` ship in their own
   `chore/migration-0090-0091` PR (#119), and reach `main` in a release of their own, ahead of the code
   (PR #120), so that the build a rollback lands on already knows `CANCELLED` and `MISMATCHED` (decision of
-  2026-10-13; [Release](#release)). The next free number is `0094`; list every unmerged branch again
-  before you take it.
+  2026-10-13; [Release](#release)).
+  `0092_citizen_requests` (municipal requests: `request_type_settings`, `citizen_requests`,
+  `citizen_request_attachments` and their five enums) took its number on 2026-10-13, after a check of
+  every local and remote branch, before `0093` was taken. It needs nothing newer than `0079` and
+  alters no existing table; its foreign keys hold `SHARE ROW EXCLUSIVE` on `users`, `property_entries`,
+  `building_units` and `citizen_payments` until the file commits (writes to them wait, for
+  milliseconds: the new tables are empty). It ships alone in `chore/migration-0092` (PR #121), ahead of
+  the code that reads it (PR #122). On 2026-10-13 the four PRs became one stack, merged in order —
+  #119, #120, #121, #122 — so `0092` reaches staging and production after `0093`, out of order, with
+  `deploy.mjs`'s warning (the local database took `0092` first). The next free number is `0094`; list
+  every unmerged branch again before you take it.
   - `0091`'s header is wrong in three places, and the file is not edited (it is applied). It says «one
     Whish or bank reference», but only a Whish settlement writes `externalRef`. It lists the
     `ACCESS EXCLUSIVE` locks on the tables it alters, but its two foreign keys also hold
