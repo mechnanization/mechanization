@@ -874,7 +874,7 @@ is untouched and still reached from the inspector's row (§5.6).
     month before the window the dialog offers (`SALARY_PERIOD_TOO_OLD`, the shared
     `salaryPeriodWindow`), or one salary a month could be stepped around by naming
     months long past; an older salary goes through the full expense form, which D10
-    does not reach ([open-decisions.md](open-decisions.md) §20.2). A unique violation
+    does not reach ([open-decisions.md](open-decisions.md) §22.2). A unique violation
     on the month's index is answered as `SALARY_PERIOD_ALREADY_PAID` too.
   - The retry key is also bound to the staff account (`payeeStaffId`), so a retry for
     another person who shares the name is refused (`TREASURY_REQUEST_KEY_REUSED`), and

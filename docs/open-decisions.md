@@ -867,11 +867,11 @@ What the code does now ([finance.md](finance.md) §3.7):
   another act. **Undecided:** is that the receipt as issued (keep it), or should a merge
   carry settlements over (which needs an exception to the append-only trigger)?
 
-## 20. What the PR #120 review left open (2026-10-13)
+## 22. What the PR #120 review left open (2026-10-13)
 
 The finance audit remediation closed what the code could close. These three are the owner's.
 
-### 20.1 A collector's Whish entry is not checked against Whish
+### 22.1 A collector's Whish entry is not checked against Whish
 
 What the code does now ([finance.md](finance.md) D13): a collector records cash as his own collection
 (method COLLECTOR, himself named), or a Whish transfer the citizen made at the door (`WHISH_MONEY`),
@@ -886,7 +886,7 @@ the bill reads PAID while his custody owes nothing and the Whish wallet is overs
 claim is), reconcile counter-entered Whish references against the provider's statement, or accept the
 risk as D13 stands.
 
-### 20.2 A salary paid through the full expense form escapes one-salary-a-month
+### 22.2 A salary paid through the full expense form escapes one-salary-a-month
 
 What the code does now ([finance.md](finance.md) §5.8, D10): «صرف راتب» records the month
 (`salaryPeriod`, 0091), refuses a second salary for one person and month, and only offers this month
@@ -899,7 +899,7 @@ urgent ceiling, each one, and nothing bounds how many.
 path), require a payee and a month on that category in the form too, or keep the form as the
 documented way to pay an old or irregular salary.
 
-### 20.3 A collector cannot record foreign notes into his custody
+### 22.3 A collector cannot record foreign notes into his custody
 
 What the code does now (decision of 2026-10-13): no screen sends a collector to «تسجيل دفعة نقدية»,
 which takes the notes handed over in two currencies (`tendered`) but only as `CASH`, the method a
