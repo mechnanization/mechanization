@@ -38,7 +38,8 @@ import type { GridUnitDraft } from '@/components/admin/unit-grid-picker';
  * (`baseUpdatedAt`), and is restored silently only while the server still
  * holds that version (`draftIsCurrent`). Otherwise the editor says the record
  * changed since and lets the officer choose: the latest version, or the draft
- * saved over it.
+ * saved over it. An edit nobody has touched leaves no draft at all
+ * (`editDraftFingerprint`), so the question is only ever about real edits.
  *
  * ## What is deliberately not stored
  *
@@ -137,6 +138,73 @@ export function draftIsCurrent(
   const server = Date.parse(serverUpdatedAt);
   if (Number.isNaN(base) || Number.isNaN(server)) return draft.baseUpdatedAt === serverUpdatedAt;
   return base === server;
+}
+
+/**
+ * What an edit's save sends from this draft — the building's fields and its
+ * grid — as one string, so two drafts that would save the same are equal.
+ *
+ * The building editor compares it with the building as loaded and keeps no
+ * draft of an edit nobody has made: the form holds the building from the moment
+ * it loads, so every visit used to leave one, and the next visit asked which
+ * version to keep about edits that did not exist (`draftIsCurrent`). Left out:
+ * where the wizard stands (`step`), the sector that only narrows the map
+ * (`zoneId`), and the duplicate questions, which a save of an edit does not send.
+ */
+export type EditDraftFields = Pick<
+  BuildingDraft,
+  | 'name'
+  | 'postedNumber'
+  | 'isPartitioned'
+  | 'partitionNumbers'
+  | 'sharedParcels'
+  | 'structureType'
+  | 'lifecycleStatus'
+  | 'floorsCount'
+  | 'basementsCount'
+  | 'notes'
+  | 'pin'
+  | 'gridSize'
+  | 'gridUnits'
+>;
+
+export function editDraftFingerprint(draft: EditDraftFields): string {
+  return JSON.stringify([
+    draft.name,
+    draft.postedNumber,
+    draft.isPartitioned,
+    draft.partitionNumbers,
+    draft.sharedParcels,
+    draft.structureType,
+    draft.lifecycleStatus,
+    draft.floorsCount,
+    draft.basementsCount,
+    draft.notes,
+    draft.pin,
+    draft.gridSize,
+    draft.gridUnits,
+  ]);
+}
+
+/**
+ * The grid of a draft kept over a newer version («أبقِ مسودتي»), redrawn so the
+ * save is what is on screen.
+ *
+ * The save diffs the grid against the newer version's units (`existing`, the
+ * baseline): a flat added since is removed and one moved since moved back. A
+ * flat removed since, which the draft still draws, carries an id the baseline
+ * no longer has, so it was neither updated nor added — left out of the save
+ * without a word. It is drawn again as a new flat (no id, no code).
+ */
+export function redrawRemovedFlats(
+  gridUnits: readonly GridUnitDraft[],
+  existing: { has(id: string): boolean },
+): GridUnitDraft[] {
+  return gridUnits.map((unit) =>
+    unit.existingId && !existing.has(unit.existingId)
+      ? { ...unit, existingId: undefined, unitCode: undefined }
+      : unit,
+  );
 }
 
 /**

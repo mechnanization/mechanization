@@ -29,7 +29,9 @@ import { cn } from '@/lib/utils';
  *
  * A refused building can be retried or discarded (`retryBuilding`,
  * `discardBuilding`). Editing one is not offered: no editor loads a queued
- * building's payload, and that would need a route of its own.
+ * building's payload, and that would need a route of its own. A registration
+ * that names a building still here is held back until it lands, and blocked
+ * for correction if it is discarded (`syncQueue`).
  */
 export function BuildingQueueNotice({ tenant, canSend }: { tenant: string; canSend: boolean }) {
   const t = useTranslations('offlineQueue.buildings');
@@ -41,7 +43,7 @@ export function BuildingQueueNotice({ tenant, canSend }: { tenant: string; canSe
   const reconciled = queue.buildings.filter((item) => item.status === 'reconciled');
   const blocked = queue.buildings.filter((item) => item.status === 'blocked');
   const discardTarget = blocked.find((item) => item.id === discarding);
-  // Registrations still queued that name it: sent without it, they are refused.
+  // Registrations waiting on this device that name it: held back now, blocked for correction once it goes.
   const affected = discardTarget ? registrationsOnBuilding(discardTarget, queue.items) : 0;
 
   if (queue.buildingsPending === 0 && reconciled.length === 0 && blocked.length === 0) {
@@ -71,7 +73,7 @@ export function BuildingQueueNotice({ tenant, canSend }: { tenant: string; canSe
               <div key={item.id} className="flex flex-wrap items-center gap-2">
                 <p className="min-w-0 flex-1 font-medium text-destructive">
                   <span dir="ltr" className="font-mono">
-                    {item.provisionalCode}
+                    {item.deliveredCode ?? item.provisionalCode}
                   </span>
                   {' — '}
                   {item.lastError ?? t('refused')}
@@ -82,6 +84,11 @@ export function BuildingQueueNotice({ tenant, canSend }: { tenant: string; canSe
                   to leave the queue: `drainBuildings` never sends a refused
                   one again by itself. Gated like «مزامنة الآن».
                 */}
+                {/*
+                  The kit's `sm`, as «مزامنة الآن» beside them, and outline:
+                  red text on this red-tinted strip falls under 4.5:1 (COL-4),
+                  so the danger is the icon's, and the dialog's.
+                */}
                 {canSend ? (
                   <>
                     <Button
@@ -90,18 +97,18 @@ export function BuildingQueueNotice({ tenant, canSend }: { tenant: string; canSe
                       variant="outline"
                       onClick={() => queue.retryBuilding(item.id)}
                       disabled={queue.syncing}
-                      className="h-7 shrink-0 px-2 text-xs"
+                      className="shrink-0"
                     >
                       {t('retry')}
                     </Button>
                     <Button
                       type="button"
                       size="sm"
-                      variant="ghost"
+                      variant="outline"
                       onClick={() => setDiscarding(item.id)}
-                      className="h-7 shrink-0 gap-1 px-2 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      className="shrink-0"
                     >
-                      <Trash2 className="size-3.5" aria-hidden />
+                      <Trash2 className="size-4 text-destructive" aria-hidden />
                       {t('discard')}
                     </Button>
                   </>
@@ -127,7 +134,8 @@ export function BuildingQueueNotice({ tenant, canSend }: { tenant: string; canSe
         >
           <CheckCircle2 className="size-4 shrink-0 text-primary" aria-hidden />
           <p className="min-w-0 flex-1">
-            {t.rich('reconciled', {
+            {/* Delivered as a replay of a press whose answer was lost: what is on file is what that press sent. */}
+            {t.rich(item.deduplicated ? 'deduplicated' : 'reconciled', {
               parcel: item.parcelNumber ?? '',
               code: item.reconciledCode ?? '',
               provisional: item.provisionalCode,
@@ -156,14 +164,20 @@ export function BuildingQueueNotice({ tenant, canSend }: { tenant: string; canSe
         </div>
       ))}
 
-      {/* The building exists nowhere else, so discarding it is confirmed, and says what it takes with it. */}
+      {/*
+        Discarding is confirmed, and says what it takes with it: a building
+        refused before it landed exists nowhere else; one whose shell landed
+        and only its flats were refused (`deliveredCode`) stays on the
+        register, and only the flats this device was to add go.
+      */}
       <ConfirmDialog
         open={discardTarget !== undefined}
         onOpenChange={(open) => setDiscarding(open ? discarding : null)}
         title={t('discardTitle')}
         description={
           <>
-            {t.rich('discardBody', {
+            {t.rich(discardTarget?.deliveredCode ? 'discardDeliveredBody' : 'discardBody', {
+              code: discardTarget?.deliveredCode ?? discardTarget?.provisionalCode ?? '',
               parcel: discardTarget?.parcelNumber ?? '',
               ltr: (chunks) => (
                 <span dir="ltr" className="font-mono">

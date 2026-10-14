@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   draftIsCurrent,
+  editDraftFingerprint,
   loadBuildingDraft,
+  redrawRemovedFlats,
   saveBuildingDraft,
   type BuildingDraft,
 } from '@/lib/building-draft';
@@ -83,5 +85,45 @@ describe('the stored draft keeps the version it was made against', () => {
     expect(restored?.baseUpdatedAt).toBe(LOADED);
     expect(draftIsCurrent(restored!, LOADED)).toBe(true);
     expect(draftIsCurrent(restored!, COLLEAGUE_SAVED)).toBe(false);
+  });
+});
+
+describe('editDraftFingerprint', () => {
+  it('is the same for an edit that only moved between steps, picked a sector or answered a duplicate question', () => {
+    const moved: BuildingDraft = {
+      ...DRAFT,
+      step: 2,
+      zoneId: 'zone-1',
+      acknowledgedDuplicates: true,
+      duplicateReason: 'مبنى منفصل',
+    };
+
+    expect(editDraftFingerprint(moved)).toBe(editDraftFingerprint(DRAFT));
+  });
+
+  it.each([
+    ['the name', { name: 'بناية الأمل' }],
+    ['the notes', { notes: 'سطح مشترك' }],
+    ['the floors', { floorsCount: '4' }],
+    ['the pin', { pin: [35.5, 33.2] as [number, number] }],
+    ['a painted flat', { gridUnits: [{ floor: 1, startCol: 0, endCol: 1, unitType: 'APARTMENT' }] as BuildingDraft['gridUnits'] }],
+  ])('differs once %s changes', (_what, patch) => {
+    expect(editDraftFingerprint({ ...DRAFT, ...patch })).not.toBe(editDraftFingerprint(DRAFT));
+  });
+});
+
+describe('redrawRemovedFlats', () => {
+  const flat = (id: string | undefined, code?: string) =>
+    ({ existingId: id, unitCode: code, floor: 1, startCol: 0, endCol: 1, unitType: 'APARTMENT' }) as BuildingDraft['gridUnits'][number];
+
+  it('draws a flat the newer version removed as a new one, so the save adds it back', () => {
+    const [kept, removed, drawn] = redrawRemovedFlats(
+      [flat('u-1', 'A1'), flat('u-2', 'A2'), flat(undefined)],
+      new Set(['u-1']),
+    );
+
+    expect(kept).toMatchObject({ existingId: 'u-1', unitCode: 'A1' });
+    expect(removed).toMatchObject({ existingId: undefined, unitCode: undefined, floor: 1 });
+    expect(drawn).toMatchObject({ existingId: undefined });
   });
 });

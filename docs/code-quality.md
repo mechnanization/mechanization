@@ -1,6 +1,6 @@
 # Code quality
 
-Last verified against the code: `feat/treasury-day-closing@c88c971` with the fixes of the final-stack review (uncommitted); every figure in the debt tables below recounted on that tree, 2026-10-11.
+Last verified against the code: `fix/pr114-review` (PR #114 merged with `develop@5e8f5c3`, with its review fixes): the debounced citizen searches, 2026-10-14.
 
 Two parts: the code-pattern rules every change follows, and the debt the code carries today. The debt
 is not a precedent. **Fix an item when you touch its file, and remove its row in the same change.** Add a

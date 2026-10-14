@@ -1,3 +1,4 @@
+import { ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import { AUDIT_SYSTEM_ACTOR, auditActorFilterSchema } from '@mechanization/shared-schemas';
 import { ValidationError } from '../../application/common/exceptions';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
@@ -47,7 +48,30 @@ describe('AuditController — the actor filter', () => {
     expect(service.query.mock.calls[0]![0]).not.toHaveProperty('systemActor');
   });
 
-  it.each(['system', 'not-a-uuid', ['SYSTEM', 'SYSTEM']])('refuses %p before it reaches the query', (value) => {
+  it.each(['system', 'not-a-uuid', ['SYSTEM', 'SYSTEM']])('the schema refuses %p', (value) => {
     expect(() => pipe.transform(value)).toThrow(ValidationError);
+  });
+
+  /*
+    The cases above build the pipe themselves, so they hold with the pipe taken
+    off a route. This reads the pipe each route declares on its own `actorId`
+    (Nest's route-argument metadata) and runs it.
+  */
+  it.each([
+    ['query', 'GET audit'],
+    ['daily', 'GET audit/daily'],
+  ] as const)('the %s handler (%s) runs the actor filter on its ?actorId=', (handler, _route) => {
+    const args = Reflect.getMetadata(ROUTE_ARGS_METADATA, AuditController, handler) as
+      | Record<string, { data?: unknown; pipes?: unknown[] }>
+      | undefined;
+    const actorArg = Object.values(args ?? {}).find((arg) => arg.data === 'actorId');
+    const routePipe = actorArg?.pipes?.find((candidate) => candidate instanceof ZodValidationPipe) as
+      | ZodValidationPipe<typeof auditActorFilterSchema>
+      | undefined;
+
+    expect(routePipe).toBeDefined();
+    expect(routePipe!.transform(AUDIT_SYSTEM_ACTOR)).toBe(AUDIT_SYSTEM_ACTOR);
+    expect(routePipe!.transform(person)).toBe(person);
+    expect(() => routePipe!.transform('system')).toThrow(ValidationError);
   });
 });

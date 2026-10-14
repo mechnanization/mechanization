@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { ArrowRight, CloudOff, UserPlus, UserRoundPen, UsersRound } from 'lucide-react';
 import {
   ApiRequestError,
@@ -50,6 +51,7 @@ import {
   loadCitizenDraft,
   saveCitizenDraft,
 } from '@/lib/citizen-draft';
+import { Alert } from '@/components/ui/alert';
 import { buttonVariants } from '@/components/ui/button';
 import type { PropertyDraft, UnitDraft } from '@/components/citizen/property-card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -889,6 +891,15 @@ export function CitizenEditor({
   /** The citizen's own reference, and the filing's beside it — two different numbers. */
   const [reference, setReference] = useState<{ citizen: string | null; filing: string | null } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  /**
+   * The file a queued record already reached (`QueuedSubmission.citizenId`):
+   * the officer revised it after a send whose answer was lost, and the server
+   * answered the replay with that file. This page then shows the copy and
+   * sends nothing — a replay would be answered with the file again — and the
+   * change is made on the file.
+   */
+  const [deliveredAs, setDeliveredAs] = useState<string | null>(null);
+  const tQueue = useTranslations('offlineQueue');
   const [submitting, setSubmitting] = useState(false);
   /**
    * One save at a time, decided synchronously.
@@ -1084,6 +1095,12 @@ export function CitizenEditor({
             // Whatever the officer typed before the phone lost signal.
             notes: queued.payload.notes,
           });
+
+          // Already on the register: the notice above the form says what to do instead.
+          if (queued.citizenId) {
+            setDeliveredAs(queued.citizenId);
+            return;
+          }
 
           // Shown as though it were the result of this visit's own attempt —
           // which it is: it is why this record needed opening at all, and
@@ -1801,6 +1818,11 @@ export function CitizenEditor({
   const submit = useCallback(
     async (...args: Parameters<typeof submitOnce>) => {
       if (inFlightRef.current) return;
+      // The register holds this record already: nothing here is sent (`deliveredAs`).
+      if (deliveredAs) {
+        setError(tQueue('deliveredSaveRefused'));
+        return;
+      }
       inFlightRef.current = true;
       try {
         await submitOnce(...args);
@@ -1808,7 +1830,7 @@ export function CitizenEditor({
         inFlightRef.current = false;
       }
     },
-    [submitOnce],
+    [submitOnce, deliveredAs, tQueue],
   );
 
   /**
@@ -2132,6 +2154,20 @@ export function CitizenEditor({
             </div>
           ) : null}
         </div>
+      ) : null}
+
+      {deliveredAs ? (
+        <Alert variant="warning" live="status" title={tQueue('deliveredNotice.title')}>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <span>{tQueue('deliveredNotice.body')}</span>
+            <ShellLink
+              href={`${base}/citizens/${encodeURIComponent(deliveredAs)}`}
+              className={buttonVariants({ variant: 'outline', size: 'sm' })}
+            >
+              {tQueue('openFile')}
+            </ShellLink>
+          </div>
+        </Alert>
       ) : null}
 
       <CitizenForm

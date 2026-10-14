@@ -12,6 +12,7 @@ import {
   logApiError,
 } from './api-client';
 import { currentLocale, FORMAT_LOCALE } from './api-errors';
+import { outcomeInDoubt } from './request-id';
 import { loadSession } from './session';
 import { CITIZEN_RECORD_EDIT_ROLES, hasRole } from './staff-roles';
 import {
@@ -22,6 +23,7 @@ import {
   getQueued,
   listQueued,
   listQueuedBuildings,
+  noteQueued,
   offlineStorageAvailable,
   recordAttempt,
   reviseQueued,
@@ -258,6 +260,8 @@ export async function queueSubmission(
     attempts: 0,
     lastAttemptAt: null,
     lastError: null,
+    // The online save under this id may have landed: a revision from here on is kept on a replay (`revisedAt`).
+    ...(options.id ? { inDoubt: true } : {}),
   });
 
   await refreshQueue(submission.tenant);
@@ -285,6 +289,18 @@ function isRetryable(caught: unknown): boolean {
   // stays queued for one that may send it (see `sessionCannotSend`).
   if (caught.status === 403) return true;
   return caught.status >= 500;
+}
+
+/**
+ * Whether a failed send may still have filed the record: no answer, a
+ * timeout, a 5xx — what `outcomeInDoubt` calls in doubt — but not a 429,
+ * which the throttle answers before the handler runs, as it does a 401 or a
+ * 403. Marks the record `inDoubt`, which is what makes a later revision of it
+ * wait for a person rather than be dropped by a replay (`revisedAt`).
+ */
+function mayHaveLanded(caught: unknown): boolean {
+  if (caught instanceof ApiRequestError && caught.status === 429) return false;
+  return outcomeInDoubt(caught);
 }
 
 /**
@@ -371,9 +387,27 @@ export async function syncQueue(tenant: string): Promise<void> {
       */
       delivered += await drainBuildings(tenant);
 
+      /*
+        The buildings still on this device after that drain: refused, or not
+        reached yet. A registration naming one, or one of its flats, is not
+        sent — the server would meet a building that is not there, answer a
+        500 and the record would go round again on every drain. It waits,
+        saying which building it waits for, and goes out once that one lands.
+      */
+      const waitingBuildings = (await listQueuedBuildings(tenant)).filter(buildingNotOnRegister);
+
       for (const item of await listQueued(tenant)) {
         if (item.status !== 'pending') continue;
         if (typeof navigator !== 'undefined' && !navigator.onLine) break;
+
+        const waitingFor = waitingBuildings.find((building) => namesQueuedBuilding(building, item));
+        if (waitingFor) {
+          await noteQueued(item.id, {
+            status: 'pending',
+            error: queueText[currentLocale()]('waitingForBuilding', { parcel: waitingFor.parcelNumber }),
+          });
+          continue;
+        }
 
         try {
           const response = await createCitizen(tenant, currentToken(tenant, session.accessToken), {
@@ -406,11 +440,12 @@ export async function syncQueue(tenant: string): Promise<void> {
           logApiError(caught);
           const retryable = isRetryable(caught);
           const message =
-            caught instanceof ApiRequestError ? caught.message : 'تعذّر إرسال السجل';
+            caught instanceof ApiRequestError ? caught.message : queueText[currentLocale()]('sendFailed');
 
           await recordAttempt(item.id, {
             status: retryable ? 'pending' : 'blocked',
             error: message,
+            inDoubt: mayHaveLanded(caught),
           });
 
           // An expired session or a dead network will fail every remaining
@@ -458,6 +493,8 @@ async function drainBuildings(tenant: string): Promise<number> {
     if (typeof navigator !== 'undefined' && !navigator.onLine) break;
 
     const accessToken = currentToken(tenant);
+    /** The code the building landed under, once `createBuilding` answered — what a refused blueprint leaves behind. */
+    let landedCode: string | null = null;
 
     try {
       const response = await createBuilding(tenant, accessToken, {
@@ -490,6 +527,7 @@ async function drainBuildings(tenant: string): Promise<number> {
         // putting a second structure on the parcel.
         clientSubmissionId: item.id,
       });
+      landedCode = response.building.code;
 
       /*
         The matrix, if one was asked for — sent on every delivery, replay or not.
@@ -516,7 +554,20 @@ async function drainBuildings(tenant: string): Promise<number> {
         );
       }
 
-      if (response.reconciled) {
+      if (response.deduplicated && item.afterLostAnswer) {
+        /*
+          Queued after an online press whose answer was lost, under that
+          press's id, and the server had it: the building on file is what the
+          press sent, not this record — edits made in between are not on it.
+          Said, as the editor says it online (`buildingEditor.deduplicated`).
+        */
+        await updateQueuedBuilding(item.id, {
+          status: 'reconciled',
+          reconciledCode: response.building.code,
+          deduplicated: true,
+          lastError: null,
+        });
+      } else if (response.reconciled) {
         await updateQueuedBuilding(item.id, {
           status: 'reconciled',
           reconciledCode: response.building.code,
@@ -531,12 +582,15 @@ async function drainBuildings(tenant: string): Promise<number> {
     } catch (caught) {
       logApiError(caught);
       const retryable = isRetryable(caught);
-      const message = caught instanceof ApiRequestError ? caught.message : 'تعذّر إرسال المبنى';
+      const message =
+        caught instanceof ApiRequestError ? caught.message : queueText[currentLocale()]('buildings.sendFailed');
 
       await updateQueuedBuilding(item.id, {
         status: retryable ? 'pending' : 'blocked',
         lastError: message,
         countAttempt: true,
+        // The shell landed and only its flats failed: the building is on the register.
+        ...(landedCode ? { deliveredCode: landedCode } : {}),
       });
 
       if (sessionCannotSend(caught)) break;
@@ -599,39 +653,78 @@ export async function retryBuilding(tenant: string, id: string): Promise<void> {
 
 /**
  * Abandons a queued building for good. Only ever called behind a confirmation,
- * which says how many queued registrations name it (`registrationsOnBuilding`):
- * they go out still naming a building that will never exist, and are refused.
+ * which says how many queued registrations name it (`registrationsOnBuilding`).
+ *
+ * Those were held back while it waited (`syncQueue`). With it gone they would
+ * go out naming a building that will never exist, so each is blocked, saying
+ * why, for the officer to open and point at the building again — or discard.
+ * A building already on the register (`deliveredCode`) takes nothing with it.
  */
 export async function discardBuilding(tenant: string, id: string): Promise<void> {
+  const building = (await listQueuedBuildings(tenant)).find((item) => item.id === id);
+  if (building && buildingNotOnRegister(building)) {
+    const error = queueText[currentLocale()]('buildingDiscarded', { parcel: building.parcelNumber });
+    for (const item of await listQueued(tenant)) {
+      if (namesQueuedBuilding(building, item)) {
+        await noteQueued(item.id, { status: 'blocked', error });
+      }
+    }
+  }
   await dequeueBuilding(id);
   await refreshQueue(tenant);
 }
 
+/** A queued building that is not on the register: waiting, or refused before its shell landed. */
+function buildingNotOnRegister(building: QueuedBuilding): boolean {
+  return (building.status === 'pending' || building.status === 'blocked') && !building.deliveredCode;
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null;
+
 /**
- * How many queued registrations name this queued building — on a card
+ * Whether a queued registration names this queued building — on a card
  * (`buildingId`) or through one of the flats it creates (`unitId`, on the
  * card or on one of its unit lines).
  *
  * Read from the payloads as the queue stores them: opaque records, written by
- * whichever build queued them, so every value is checked before it is used.
+ * whichever build queued them, so every value is checked before it is used —
+ * a card or a line that is not an object, a list that is not an array.
  */
-export function registrationsOnBuilding(
+export function namesQueuedBuilding(
   building: Pick<QueuedBuilding, 'id' | 'payload'>,
-  items: readonly QueuedSubmission[],
-): number {
+  item: Pick<QueuedSubmission, 'payload'>,
+): boolean {
   const ids = new Set<string>([building.id]);
-  for (const unit of building.payload.units ?? []) {
-    if (typeof unit.id === 'string') ids.add(unit.id);
+  const units: unknown = building.payload.units;
+  if (Array.isArray(units)) {
+    for (const unit of units) {
+      if (isRecord(unit) && typeof unit.id === 'string') ids.add(unit.id);
+    }
   }
   const names = (value: unknown) => typeof value === 'string' && ids.has(value);
-  const namesBuilding = (card: Record<string, unknown>) =>
-    names(card.buildingId) ||
-    names(card.unitId) ||
-    (Array.isArray(card.units) &&
-      card.units.some(
-        (line: unknown) => typeof line === 'object' && line !== null && names((line as { unitId?: unknown }).unitId),
-      ));
-  return items.filter((item) => item.payload.properties.some(namesBuilding)).length;
+  const cards: unknown = isRecord(item.payload) ? item.payload.properties : undefined;
+  if (!Array.isArray(cards)) return false;
+  return cards.some(
+    (card) =>
+      isRecord(card) &&
+      (names(card.buildingId) ||
+        names(card.unitId) ||
+        (Array.isArray(card.units) && card.units.some((line) => isRecord(line) && names(line.unitId)))),
+  );
+}
+
+/**
+ * How many queued registrations a discard of this building would block
+ * (`discardBuilding`): those that name it, unless it is already on the
+ * register (`deliveredCode`).
+ */
+export function registrationsOnBuilding(
+  building: QueuedBuilding,
+  items: readonly QueuedSubmission[],
+): number {
+  if (!buildingNotOnRegister(building)) return 0;
+  return items.filter((item) => namesQueuedBuilding(building, item)).length;
 }
 
 /** Hands a blocked record back to the queue, then tries it immediately. */

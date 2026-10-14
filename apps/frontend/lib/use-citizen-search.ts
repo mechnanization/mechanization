@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { listCitizens, logApiError, type CitizenListItem } from '@/lib/api-client';
+import { useCallback, useEffect, useState } from 'react';
+import { ApiRequestError, listCitizens, logApiError, type CitizenListItem } from '@/lib/api-client';
 
 /** How long a citizen picker waits after the last keystroke before it asks the register. */
 export const SEARCH_DEBOUNCE_MS = 350;
@@ -13,12 +13,26 @@ export const CITIZEN_SEARCH_MIN_LENGTH = 2;
 export const CITIZEN_PICKER_LIMIT = 8;
 
 export interface CitizenSearchState {
-  /** The files the register matched, without those «دمج ملفين» folded into another. */
+  /**
+   * The files the register matched for `searched` and a new act can name: not
+   * one «دمج ملفين» folded into another, and not an archived one (the fee
+   * wizard is refused on it, `CITIZEN_NOT_FOUND`). Emptied as soon as another
+   * term is typed, so a match for the name being corrected is never there to
+   * click.
+   */
   results: CitizenListItem[];
   /** A search is waiting out the debounce or on its way. */
   searching: boolean;
-  /** The last search could not reach the register — which is not finding nobody. */
+  /** The last search could not reach the register, or was refused — which is not finding nobody. */
   failed: boolean;
+  /**
+   * What the failure said, when the API answered (`ApiRequestError.message`,
+   * already in the page's language): a lapsed session or a throttle is not «check
+   * the connection». Null otherwise.
+   */
+  error: string | null;
+  /** The register holds more matches than the picker lists: the clerk should type more of the name. */
+  more: boolean;
   /** The term `results` answer, or `''` when none has been answered. */
   searched: string;
 }
@@ -27,11 +41,16 @@ export const IDLE_CITIZEN_SEARCH: CitizenSearchState = {
   results: [],
   searching: false,
   failed: false,
+  error: null,
+  more: false,
   searched: '',
 };
 
 /** Asks the register for one term; `listCitizens` in the app, a stub in the tests. */
-export type CitizenSearchFetch = (term: string, signal: AbortSignal) => Promise<{ items: CitizenListItem[] }>;
+export type CitizenSearchFetch = (
+  term: string,
+  signal: AbortSignal,
+) => Promise<{ items: CitizenListItem[]; total?: number }>;
 
 /**
  * Schedules one search for `term` after the debounce and returns its cancel.
@@ -59,23 +78,37 @@ export function scheduleCitizenSearch(
     return () => {};
   }
   const controller = new AbortController();
-  update({ searching: true, failed: false });
+  // The previous term's matches go at once: picked while this one is on its way, they charge someone else.
+  update({ results: [], searching: true, failed: false, error: null, more: false });
   const timer = setTimeout(() => {
     search(trimmed, controller.signal)
       .then((page) => {
         if (controller.signal.aborted) return;
         update({
-          // A file «دمج ملفين» folded into another is charged on the file that stays.
-          results: page.items.filter((row) => !row.mergedIntoId),
+          /*
+            A file «دمج ملفين» folded into another is charged on the file that
+            stays, and an archived one is charged on nothing: both are left out.
+            The server has no filter for either, so a page can come back short.
+          */
+          results: page.items.filter((row) => row.isActive && !row.mergedIntoId),
           searching: false,
           failed: false,
+          error: null,
+          more: (page.total ?? 0) > page.items.length,
           searched: trimmed,
         });
       })
       .catch((caught: unknown) => {
         if (controller.signal.aborted) return;
         options.onError?.(caught);
-        update({ results: [], searching: false, failed: true, searched: trimmed });
+        update({
+          results: [],
+          searching: false,
+          failed: true,
+          error: caught instanceof ApiRequestError ? caught.message : null,
+          more: false,
+          searched: trimmed,
+        });
       });
   }, options.delayMs ?? SEARCH_DEBOUNCE_MS);
   return () => {
@@ -84,20 +117,28 @@ export function scheduleCitizenSearch(
   };
 }
 
+/** A picker's search, and the way to ask again after a failure. */
+export interface CitizenSearch extends CitizenSearchState {
+  /** Sends the current term again — what «إعادة المحاولة» under a failed search does. */
+  retry: () => void;
+}
+
 /**
  * A citizen picker's search of the register, debounced, for `term`.
  *
  * `enabled` is false while a file is already chosen or the picker is closed,
- * and the state returns to idle. A failed search says so (`failed`) rather than
- * reading as «no match».
+ * and the state returns to idle. A failed search says so (`failed`, `error`)
+ * rather than reading as «no match», and can be retried without retyping.
  */
 export function useCitizenSearch(
   tenant: string,
   token: string | null,
   term: string,
   enabled = true,
-): CitizenSearchState {
+): CitizenSearch {
   const [state, setState] = useState<CitizenSearchState>(IDLE_CITIZEN_SEARCH);
+  /** Bumped by `retry`, so the effect below schedules the same term again. */
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     if (!enabled || !token) {
@@ -110,7 +151,8 @@ export function useCitizenSearch(
       (patch) => setState((current) => ({ ...current, ...patch })),
       { onError: logApiError },
     );
-  }, [enabled, tenant, token, term]);
+  }, [enabled, tenant, token, term, attempt]);
 
-  return state;
+  const retry = useCallback(() => setAttempt((current) => current + 1), []);
+  return { ...state, retry };
 }

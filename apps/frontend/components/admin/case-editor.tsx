@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowRight, ClipboardList, Loader2, Save } from 'lucide-react';
@@ -18,7 +18,12 @@ import {
   logApiError,
   updateCase,
 } from '@/lib/api-client';
-import { caseCreatePayload, caseUpdatePayload, type CaseFormValues } from '@/lib/case-payload';
+import {
+  caseCreatePayload,
+  caseUpdatePayload,
+  valuesForPropertyType,
+  type CaseFormValues,
+} from '@/lib/case-payload';
 import { clearSession, loadSession } from '@/lib/session';
 import { CASE_WRITE_ROLES, hasRole } from '@/lib/staff-roles';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -148,33 +153,37 @@ export function CaseEditor({
    * Which type-specific fields to show — a plot of land has no floor, a tent
    * has no building name. Switching type also drops whatever the previous
    * type had filled in for a field the new one does not carry, so a stray
-   * «الطابق ٣» left over from a BUILDING card never rides along under LAND.
+   * «الطابق ٣» left over from a BUILDING card never rides along under LAND;
+   * a field the new type carries too is kept (`valuesForPropertyType`).
    */
   const visible: readonly string[] = values.propertyType
     ? (CASE_FIELD_MAP[values.propertyType as keyof typeof CASE_FIELD_MAP] ?? [])
     : [];
 
   const changePropertyType = (propertyType: string) => {
-    setValues((previous) => ({
-      ...EMPTY,
-      notes: previous.notes,
-      propertyNumber: previous.propertyNumber,
-      neighborhood: previous.neighborhood,
-      propertyType,
-    }));
+    setValues((previous) => valuesForPropertyType(previous, propertyType));
   };
 
   const check = createCaseSchema.shape.notes.safeParse(values.notes);
   const notesError = touched && !check.success ? check.error.issues[0]?.message : undefined;
   const complete = values.notes.trim().length >= 3;
 
+  /*
+    Synchronous, unlike `submitting`, which lands a render after a fast second
+    press — and a second press on «حفظ» filed a second حالة (STA-4). Kept after
+    a save that landed: the form stays locked while the page leaves.
+  */
+  const inFlight = useRef(false);
+
   const submit = useCallback(async () => {
-    if (!token) return;
+    if (!token || inFlight.current) return;
     setTouched(true);
     if (!complete) return;
 
+    inFlight.current = true;
     setSubmitting(true);
     setError(null);
+    let landed = false;
     try {
       // An edit sends an emptied field as null so it is cleared (`caseUpdatePayload`).
       if (caseId) {
@@ -182,11 +191,15 @@ export function CaseEditor({
       } else {
         await createCase(tenant, token, caseCreatePayload(values));
       }
+      landed = true;
       router.push(cancelHref);
     } catch (caught) {
       setError(handleApiError(caught, 'تعذّر حفظ الحالة.'));
     } finally {
-      setSubmitting(false);
+      if (!landed) {
+        inFlight.current = false;
+        setSubmitting(false);
+      }
     }
   }, [token, complete, values, caseId, tenant, router, cancelHref, handleApiError]);
 

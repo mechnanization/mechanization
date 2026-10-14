@@ -120,6 +120,7 @@ export function OfflineQueuePanel({
   canSend: boolean;
 }) {
   const t = useTranslations('offlineQueue');
+  const tCommon = useTranslations('common');
   const queue = useOfflineQueue(tenant);
   const [discarding, setDiscarding] = useState<string | null>(null);
 
@@ -237,6 +238,12 @@ export function OfflineQueuePanel({
               that. It is offered for a still-pending record too — an officer
               who spots their own mistake before it was ever attempted should
               not have to wait for a rejection to be allowed to correct it.
+
+              A record the register already holds (`citizenId`) is neither
+              sent again nor corrected here: a replay is answered with that
+              file and lands back here, so «إعادة المحاولة» is not offered and
+              «تعديل» becomes «عرض التعديلات», a page that shows the copy and
+              sends nothing (`CitizenEditor`). The change is made on the file.
             */}
             {canSend ? (
               <ShellLink
@@ -247,21 +254,23 @@ export function OfflineQueuePanel({
                 )}
               >
                 <Pencil className="size-3.5" aria-hidden />
-                {t('edit')}
+                {item.citizenId ? t('viewChanges') : t('edit')}
               </ShellLink>
             ) : null}
 
             {canSend && item.status === 'blocked' ? (
               <>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => queue.retry(item.id)}
-                  className="h-7 shrink-0 px-2 text-xs"
-                >
-                  {t('retry')}
-                </Button>
+                {!item.citizenId ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => queue.retry(item.id)}
+                    className="h-7 shrink-0 px-2 text-xs"
+                  >
+                    {t('retry')}
+                  </Button>
+                ) : null}
                 <Button
                   type="button"
                   size="sm"
@@ -291,9 +300,16 @@ export function OfflineQueuePanel({
         title={t('discardTitle')}
         description={t.rich(discardTarget?.citizenId ? 'discardRevisionBody' : 'discardBody', {
           name: discardTarget?.displayName ?? '',
-          strong: (chunks) => <strong>{chunks}</strong>,
+          // Isolated: an Arabic name in an English sentence, or the other way round (RTL-2).
+          strong: (chunks) => (
+            <strong>
+              <bdi>{chunks}</bdi>
+            </strong>
+          ),
         })}
         confirmLabel={t('discardConfirm')}
+        cancelLabel={tCommon('cancel')}
+        busyLabel={t('buildings.discarding')}
         onConfirm={() => {
           if (discarding) queue.discard(discarding);
           setDiscarding(null);

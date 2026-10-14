@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CitizenListItem } from '@/lib/api-client';
+import { ApiRequestError, type CitizenListItem } from '@/lib/api-client';
 import {
   CITIZEN_SEARCH_MIN_LENGTH,
   IDLE_CITIZEN_SEARCH,
@@ -8,8 +8,8 @@ import {
   type CitizenSearchState,
 } from '@/lib/use-citizen-search';
 
-function row(id: string, mergedIntoId: string | null = null): CitizenListItem {
-  return { id, fullName: `Citizen ${id}`, mergedIntoId } as CitizenListItem;
+function row(id: string, mergedIntoId: string | null = null, isActive = true): CitizenListItem {
+  return { id, fullName: `Citizen ${id}`, mergedIntoId, isActive } as CitizenListItem;
 }
 
 /** Applies each patch the way the hook's `setState` does, and keeps the history. */
@@ -103,6 +103,64 @@ describe('scheduleCitizenSearch', () => {
     await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS);
 
     expect(onError).toHaveBeenCalledWith(failure);
-    expect(state.current()).toMatchObject({ results: [], searching: false, failed: true, searched: 'حسن' });
+    expect(state.current()).toMatchObject({
+      results: [],
+      searching: false,
+      failed: true,
+      error: null,
+      searched: 'حسن',
+    });
+  });
+
+  it("keeps the API's own words for a refusal: a lapsed session is not «check the connection»", async () => {
+    const refusal = new ApiRequestError(429, { code: 'TOO_MANY_REQUESTS', message: 'x' });
+    const search = vi.fn().mockRejectedValue(refusal);
+    const state = recorder();
+
+    scheduleCitizenSearch('حسن', search, state.update);
+    await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS);
+
+    expect(state.current()).toMatchObject({ failed: true, error: refusal.message });
+    expect(state.current().error).toBeTruthy();
+  });
+
+  it('drops archived files: the fee wizard is refused on them', async () => {
+    const search = vi.fn().mockResolvedValue({ items: [row('active'), row('archived', null, false)], total: 2 });
+    const state = recorder();
+
+    scheduleCitizenSearch('محمد', search, state.update);
+    await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS);
+
+    expect(state.current().results.map((r) => r.id)).toEqual(['active']);
+    expect(state.current().more).toBe(false);
+  });
+
+  it('says when the register holds more matches than the picker lists', async () => {
+    const search = vi.fn().mockResolvedValue({ items: [row('a'), row('b')], total: 40 });
+    const state = recorder();
+
+    scheduleCitizenSearch('محمد', search, state.update);
+    await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS);
+
+    expect(state.current().more).toBe(true);
+  });
+
+  it("takes the last term's matches away the moment another term is typed", async () => {
+    const search = vi
+      .fn()
+      .mockResolvedValueOnce({ items: [row('mohammad')] })
+      .mockResolvedValueOnce({ items: [row('mohammad-khalil')] });
+    const state = recorder();
+
+    scheduleCitizenSearch('محمد', search, state.update);
+    await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS);
+    expect(state.current().results.map((r) => r.id)).toEqual(['mohammad']);
+
+    // Corrected to the full name: until its answer is in, nothing is there to click.
+    scheduleCitizenSearch('محمد خليل', search, state.update);
+    expect(state.current()).toMatchObject({ results: [], searching: true });
+
+    await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS);
+    expect(state.current().results.map((r) => r.id)).toEqual(['mohammad-khalil']);
   });
 });

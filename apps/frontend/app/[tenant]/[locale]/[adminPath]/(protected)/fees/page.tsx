@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useCallback, useEffect, useMemo, useState } from 'react';
+import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { BULK_SETTLE_ROLES, REFERENCE_SEND_ROLES, hasRole } from '@/lib/staff-roles';
 import {
@@ -416,8 +416,17 @@ export default function FeesPage({
   );
 
 
+  /*
+    Synchronous, unlike `charging`, which lands a render after a fast second
+    press — and a second press of «تكليف» raised a second bill (STA-4). The
+    route takes no retry key yet (docs/ui-ux-standards.md §17), so a lost
+    answer is still the clerk's to check on the register before pressing again.
+  */
+  const chargeInFlight = useRef(false);
+
   const handleChargeCitizen = async (values: ChargeValues) => {
-    if (!token) return;
+    if (!token || chargeInFlight.current) return;
+    chargeInFlight.current = true;
     setCharging(true);
     try {
       await chargeCitizen(tenant, token, {
@@ -433,6 +442,7 @@ export default function FeesPage({
       logApiError(caught);
       toast.error(caught instanceof ApiRequestError ? caught.message : 'تعذّر تكليف المواطن.');
     } finally {
+      chargeInFlight.current = false;
       setCharging(false);
     }
   };

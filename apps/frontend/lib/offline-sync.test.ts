@@ -34,6 +34,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
   like coverage and is not.
 */
 const { ApiRequestError } = await vi.importActual<typeof import('./api-client')>('./api-client');
+// The queue writes its own words in the page's language; with no document, that is Arabic (`currentLocale`).
+const { default: ar } = await import('../messages/ar.json');
 
 const createCitizen = vi.fn();
 const createBuilding = vi.fn();
@@ -72,6 +74,15 @@ const submissions = new Map<string, Record<string, unknown>>();
 const buildings = new Map<string, Record<string, unknown>>();
 let storageAvailable = true;
 
+/*
+  The two writes whose rules carry M19 — what an attempt records and what a
+  revision stamps — run the module's own pure functions (`withAttempt`,
+  `withRevision`), so the tests below fail if the rule changes, not only if
+  the drain does. A stand-in that set `revisedAt` itself passed with the
+  stamping deleted.
+*/
+const realDb = await vi.importActual<typeof import('./offline-db')>('./offline-db');
+
 vi.mock('./offline-db', () => ({
   offlineStorageAvailable: () => storageAvailable,
 
@@ -85,30 +96,28 @@ vi.mock('./offline-db', () => ({
   dequeue: vi.fn(async (id: string) => {
     submissions.delete(id);
   }),
-  recordAttempt: vi.fn(
-    async (id: string, patch: { status: string; error: string; citizenId?: string }) => {
-      const item = submissions.get(id);
-      if (!item) return false;
-      submissions.set(id, {
-        ...item,
-        status: patch.status,
-        lastError: patch.error,
-        attempts: (item.attempts as number) + 1,
-        ...(patch.citizenId ? { citizenId: patch.citizenId } : {}),
-      });
-      return true;
-    },
-  ),
+  recordAttempt: vi.fn(async (id: string, outcome: Parameters<typeof realDb.withAttempt>[1]) => {
+    const item = submissions.get(id);
+    if (!item) return false;
+    submissions.set(id, { ...realDb.withAttempt(item as never, outcome, Date.now()) });
+    return true;
+  }),
+  noteQueued: vi.fn(async (id: string, note: { status: string; error: string }) => {
+    const item = submissions.get(id);
+    if (!item) return false;
+    submissions.set(id, { ...item, status: note.status, lastError: note.error });
+    return true;
+  }),
   retryLater: vi.fn(async (id: string) => {
     const item = submissions.get(id);
     if (!item) return false;
     submissions.set(id, { ...item, status: 'pending', lastError: null });
     return true;
   }),
-  reviseQueued: vi.fn(async (id: string, patch: Record<string, unknown>) => {
+  reviseQueued: vi.fn(async (id: string, patch: Parameters<typeof realDb.withRevision>[1]) => {
     const item = submissions.get(id);
     if (!item) return false;
-    submissions.set(id, { ...item, ...patch, status: 'pending' });
+    submissions.set(id, { ...realDb.withRevision(item as never, patch, Date.now()) });
     return true;
   }),
 
@@ -460,17 +469,47 @@ describe('syncQueue — a revised record the server had already filed', () => {
     revision.
   */
   it('keeps it, blocked, with the file it reached, instead of deleting the revision', async () => {
-    seedSubmission('revised', { revisedAt: Date.now() });
-    createCitizen.mockResolvedValueOnce({ citizenId: 'existing-file', deduplicated: true });
+    // Queued after an online save that may have landed, then revised.
+    (globalThis.navigator as { onLine: boolean }).onLine = false; // revised with no signal: nothing sent yet
+    await queueSubmission({ tenant: TENANT, displayName: 'A', payload: submissionPayload() }, { id: 'revised' });
+    await reviseSubmission(TENANT, 'revised', { ...submissionPayload(), notes: 'تعديل' }, 'A');
+    await syncQueue(TENANT);
+    expect(submissions.get('revised')).toMatchObject({ inDoubt: true, revisedAt: expect.any(Number) });
 
+    (globalThis.navigator as { onLine: boolean }).onLine = true;
+    createCitizen.mockResolvedValueOnce({ citizenId: 'existing-file', deduplicated: true });
     await syncQueue(TENANT);
 
     expect(submissions.get('revised')).toMatchObject({
       status: 'blocked',
       citizenId: 'existing-file',
-      lastError: expect.any(String),
+      lastError: ar.offlineQueue.deliveredBeforeRevision,
     });
-    expect((submissions.get('revised')!.lastError as string).length).toBeGreaterThan(0);
+  });
+
+  it('dequeues a revision whose own send was the one that landed — nothing it sent before could have', async () => {
+    // Refused outright (nothing filed), revised, then sent with its answer lost: the replay is the revision.
+    seedSubmission('fixed', { status: 'blocked', attempts: 1, lastError: 'رقم العقار غير موجود' });
+    createCitizen.mockRejectedValueOnce(new ApiRequestError(0, { code: 'NETWORK_ERROR', message: 'offline' }));
+    await reviseSubmission(TENANT, 'fixed', { ...submissionPayload(), notes: 'رقم العقار مصحّح' }, 'B');
+    await syncQueue(TENANT); // joins the drain the revision started, whose answer is lost
+    expect(submissions.get('fixed')).toMatchObject({ status: 'pending', inDoubt: true });
+    expect(submissions.get('fixed')).not.toHaveProperty('revisedAt');
+
+    createCitizen.mockResolvedValueOnce({ citizenId: 'its-file', deduplicated: true });
+    await syncQueue(TENANT);
+
+    expect(submissions.has('fixed')).toBe(false);
+  });
+
+  it('marks a send that may have landed, and not one the server refused or throttled', async () => {
+    for (const [id, status] of [['lost', 0], ['fault', 502], ['timeout', 408], ['refused', 400], ['throttled', 429]] as const) {
+      submissions.clear();
+      seedSubmission(id);
+      createCitizen.mockRejectedValueOnce(new ApiRequestError(status, { code: 'X', message: 'x' }));
+      await syncQueue(TENANT);
+      expect(Boolean(submissions.get(id)!.inDoubt)).toBe(status === 0 || status >= 500 || status === 408);
+    }
   });
 
   it('still removes a revised record the server filed fresh', async () => {
@@ -885,6 +924,106 @@ describe('reviseSubmission', () => {
   });
 });
 
+describe('syncQueue — a registration that names a building still on this device', () => {
+  const onBuilding = (buildingId: string) => ({
+    ...submissionPayload(),
+    properties: [{ propertyType: 'BUILDING', buildingId }],
+  });
+
+  it('is held back, saying which building it waits for, while that building is refused', async () => {
+    seedBuilding('bld', { status: 'blocked', lastError: 'refused' });
+    seedSubmission('reg', { payload: onBuilding('bld') });
+
+    await syncQueue(TENANT);
+
+    expect(createCitizen).not.toHaveBeenCalled();
+    expect(submissions.get('reg')).toMatchObject({
+      status: 'pending',
+      attempts: 0,
+      lastError: ar.offlineQueue.waitingForBuilding.replace('{parcel}', '1042'),
+    });
+  });
+
+  it('goes out in the same drain once its building lands', async () => {
+    seedBuilding('bld');
+    seedSubmission('reg', { payload: onBuilding('bld') });
+
+    await syncQueue(TENANT);
+
+    expect(createBuilding).toHaveBeenCalledTimes(1);
+    expect(createCitizen).toHaveBeenCalledTimes(1);
+    expect(submissions.has('reg')).toBe(false);
+  });
+
+  it('is sent when its building reached the register and only the flats were refused', async () => {
+    seedBuilding('bld', { status: 'blocked', deliveredCode: 'A-1042-C' });
+    seedSubmission('reg', { payload: onBuilding('bld') });
+
+    await syncQueue(TENANT);
+
+    expect(createCitizen).toHaveBeenCalledTimes(1);
+  });
+
+  it('is blocked for correction, saying why, when its building is discarded', async () => {
+    seedBuilding('bld', { status: 'blocked', lastError: 'refused' });
+    seedSubmission('reg', { payload: onBuilding('bld') });
+    seedSubmission('other');
+
+    await discardBuilding(TENANT, 'bld');
+
+    expect(submissions.get('reg')).toMatchObject({
+      status: 'blocked',
+      lastError: ar.offlineQueue.buildingDiscarded.replace('{parcel}', '1042'),
+    });
+    expect(submissions.get('other')).toMatchObject({ status: 'pending' });
+  });
+});
+
+describe('drainBuildings — what a delivery leaves behind', () => {
+  it('records the code a building landed under when only its flats were refused', async () => {
+    seedBuilding('bld', { blueprint: { floors: 3 } });
+    createBuilding.mockResolvedValueOnce(buildingResponse({ building: { id: 'bld', code: 'A-1042-C' } }));
+    generateUnits.mockRejectedValueOnce(new ApiRequestError(400, { code: 'X', message: 'شكل غير صالح' }));
+
+    await syncQueue(TENANT);
+
+    expect(buildings.get('bld')).toMatchObject({ status: 'blocked', deliveredCode: 'A-1042-C' });
+  });
+
+  it('keeps a notice when a building queued after a lost answer was already on file', async () => {
+    seedBuilding('bld', { afterLostAnswer: true });
+    createBuilding.mockResolvedValueOnce(
+      buildingResponse({ building: { id: 'bld', code: 'A-1042-B' }, deduplicated: true }),
+    );
+
+    await syncQueue(TENANT);
+
+    expect(buildings.get('bld')).toMatchObject({
+      status: 'reconciled',
+      reconciledCode: 'A-1042-B',
+      deduplicated: true,
+    });
+  });
+
+  it('says nothing about a replay of a building queued with nothing in doubt', async () => {
+    seedBuilding('bld');
+    createBuilding.mockResolvedValueOnce(buildingResponse({ deduplicated: true }));
+
+    await syncQueue(TENANT);
+
+    expect(buildings.has('bld')).toBe(false);
+  });
+
+  it('writes its own fallback words in the page language when the failure is not an API answer', async () => {
+    seedBuilding('bld');
+    createBuilding.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+
+    await syncQueue(TENANT);
+
+    expect(buildings.get('bld')).toMatchObject({ lastError: ar.offlineQueue.buildings.sendFailed });
+  });
+});
+
 describe('retryBuilding and discardBuilding', () => {
   /*
     `drainBuildings` sends only `pending` buildings, so a refused one used to sit
@@ -924,6 +1063,7 @@ describe('retryBuilding and discardBuilding', () => {
 describe('registrationsOnBuilding', () => {
   const building = {
     id: 'bld-1',
+    status: 'blocked',
     payload: {
       parcelNumber: '1042',
       structureType: 'RESIDENTIAL',
@@ -951,9 +1091,21 @@ describe('registrationsOnBuilding', () => {
 
   it('reads stored payloads defensively', () => {
     // Opaque records written by another build: a value of the wrong shape is no match, never a throw.
-    const items = [item('odd', [{ buildingId: 7, unitId: null, units: [null, 'unit-1', { unitId: 3 }] }])];
+    const items = [
+      item('odd', [{ buildingId: 7, unitId: null, units: [null, 'unit-1', { unitId: 3 }] }]),
+      item('null-card', [null as never]),
+      { id: 'no-cards', tenant: TENANT, payload: { ...submissionPayload(), properties: undefined } } as never,
+    ];
+    const oddBuilding = { ...building, payload: { ...building.payload, units: [null, 'x', { id: 4 }] } };
 
     expect(registrationsOnBuilding(building as never, items)).toBe(0);
+    expect(registrationsOnBuilding(oddBuilding as never, items)).toBe(0);
+  });
+
+  it('counts none for a building already on the register: discarding it blocks nobody', () => {
+    const items = [item('on-card', [{ propertyType: 'BUILDING', buildingId: 'bld-1' }])];
+
+    expect(registrationsOnBuilding({ ...building, deliveredCode: 'A-1042-C' } as never, items)).toBe(0);
   });
 });
 
