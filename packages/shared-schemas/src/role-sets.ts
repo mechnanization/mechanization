@@ -83,6 +83,14 @@ export const QUALITY_REVIEWER_ROLES = [
 
 /* Complete a quality check in the field: `QUALITY_CHECK_ROLES`, in `quality.schema.ts`. */
 
+/*
+  The treasury's sets live beside its contract, not here: `TREASURY_READ_ROLES`,
+  `TREASURY_WORK_ROLES`, `TREASURY_ADMIN_ROLES` and `TREASURY_REVIEW_ROLES` (who
+  clears a flagged exchange) in `treasury.schema.ts`, and `FINANCE_OVERRIDE_ROLES`
+  (who may take another rate or date a payment further back) in `cash-policy.ts`.
+  `route-inventory.spec.ts` pins every treasury handler to its list.
+*/
+
 /** See whether a record has an open quality return — everyone who files or reviews one. */
 export const QUALITY_RETURN_READ_ROLES = [
   'SUPER_ADMIN',
@@ -111,6 +119,15 @@ export const FEE_ISSUE_ROLES = [
 
 /** The fee settings, notices' active flag, the recurring run and payment review. */
 export const FEE_ADMIN_ROLES = ['SUPER_ADMIN', 'ACCOUNTANT'] as const satisfies readonly StaffRole[];
+
+/**
+ * «تسديد الفواتير المحددة»: several of one citizen's bills in one press
+ * (docs/finance.md §3.7). The finance roles only, per the phase-4 brief —
+ * narrower than `FEE_ISSUE_ROLES`, so a collector still settles the same bills
+ * one at a time. Its own set because it is its own audience: the dialog reads
+ * the treasury's balances to check the change, which a collector cannot.
+ */
+export const BULK_SETTLE_ROLES = ['SUPER_ADMIN', 'ACCOUNTANT'] as const satisfies readonly StaffRole[];
 
 /** Read the payments waiting for verification and the bills a correction affects. */
 export const PAYMENT_REVIEW_READ_ROLES = [

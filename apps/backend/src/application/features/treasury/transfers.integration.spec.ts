@@ -7,6 +7,7 @@ import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-cli
 import { PrismaAuditRepository } from '../../../infrastructure/repositories/audit.repository';
 import { AuditService } from '../audit/audit.service';
 import { PaymentLedgerService, type LedgerAudit } from '../fees/payment-ledger.service';
+import { ExpensesService } from './expenses.service';
 import { TransfersService } from './transfers.service';
 import { TreasuryLedgerService } from './treasury-ledger.service';
 import { TreasuryService } from './treasury.service';
@@ -103,7 +104,7 @@ describeIfDb('TransfersService — collector handover', () => {
     const auditService = new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never);
     ledger = new TreasuryLedgerService(context);
     payments = new PaymentLedgerService(context, auditService, ledger);
-    transfers = new TransfersService(context, ledger, auditService);
+    transfers = new TransfersService(context, ledger, auditService, new ExpensesService(context, ledger, auditService));
     treasury = new TreasuryService(context, ledger, auditService);
 
     citizenId = randomUUID();
@@ -334,9 +335,12 @@ describeIfDb('TransfersService — collector handover', () => {
 
   describe('the transfer list', () => {
     it('shows each handover with both ends named', async () => {
-      const rows = await scoped(() => transfers.list());
+      const { transfers: rows } = await scoped(() => transfers.list({ kind: 'HANDOVER' }));
       expect(rows.length).toBeGreaterThan(0);
       const handover = rows.find((row) => row.status === 'RECORDED');
+      expect(handover?.kind).toBe('HANDOVER');
+      expect(handover?.fee).toBeNull();
+      expect(handover?.review).toBeNull();
       expect(handover?.to.name).toContain('صندوق النقد');
       expect(handover?.from.name).toContain('عهدة');
       expect(handover?.amount).toBe(handover?.receivedAmount);

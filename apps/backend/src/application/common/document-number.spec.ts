@@ -52,9 +52,9 @@ describe('document numbering', () => {
     });
 
     it('gives each book its own letters', () => {
-      expect(Object.values(DOCUMENT_PREFIX).sort()).toEqual(['INV', 'PV', 'RCP', 'RV', 'TR']);
-      // Five distinct prefixes, so a number read aloud says which book it is from.
-      expect(new Set(Object.values(DOCUMENT_PREFIX)).size).toBe(5);
+      expect(Object.values(DOCUMENT_PREFIX).sort()).toEqual(['BRC', 'INV', 'PV', 'RCP', 'RV', 'TR']);
+      // Six distinct prefixes, so a number read aloud says which book it is from.
+      expect(new Set(Object.values(DOCUMENT_PREFIX)).size).toBe(6);
     });
   });
 
@@ -76,6 +76,12 @@ describe('document numbering', () => {
     // The income book began after 0079, so the six-digit shape was never printed on one.
     it('refuses an RV number in the pre-0079 shape', () => {
       expect(isDocumentNumber('RV-000001')).toBe(false);
+    });
+
+    // So did the consolidated receipt's (0085).
+    it('accepts a BRC number in the new shape only', () => {
+      expect(isDocumentNumber('BRC-2610-0001')).toBe(true);
+      expect(isDocumentNumber('BRC-000001')).toBe(false);
     });
   });
 });

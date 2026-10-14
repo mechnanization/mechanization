@@ -1,12 +1,14 @@
 # Finance (الخزينة والمالية) — design draft
 
-Status: **DESIGN, with stages 1, 2 and 3 built, and of stage 4 the collector handover, the accountant’s collector panel and «جولتي» (see section 14).** It records the design
-agreed in discussion, 2026-10-06. Stage 5 and the rest of stage 4 are not built,
-and every table, column, enum value and error code for them is a *proposal*
-until its migration exists (CLAUDE.md: never invent names; grep first). The
-built stages' names are real: they are in migrations `0073`, `0074`, `0078`,
-`0079`, `0080`, `0081` and `0083` and in the `treasury`, `expense`, `transfer` and `income`
-contracts of `packages/shared-schemas`.
+Status: **DESIGN, with stages 1 to 5 built, and settling several bills at once (§3.7) (see
+section 14).** It records the design agreed in discussion, 2026-10-06. The §7.2 adjustment
+entry, an opening balance for a wallet added after go-live, and transfer write-offs are not
+built, and every table, column, enum value and error code for them is a *proposal* until its
+migration exists (CLAUDE.md: never invent names; grep first). The built stages' names are
+real: they are in migrations `0073`, `0074`, `0078`, `0079`, `0080`, `0081`, `0082`, `0083`,
+`0084`, `0085`, `0086`, `0087`, `0088` and `0089` and in the `treasury`, `expense`, `transfer`,
+`income`, `treasury-closing`, `staff` and `payment-settlement` contracts and `exchange-policy`
+of `packages/shared-schemas`.
 Where the code was read, the file is cited. Where a claim could not be verified, it
 is marked **[unverified]**. Where a choice was assumed and not explicitly confirmed,
 it is marked **[assumed]**.
@@ -136,9 +138,10 @@ wallet today.
 ### 2.6 Rules that shape every change (from CLAUDE.md and apps/backend/CLAUDE.md)
 
 - A migration ships **alone, additive, in its own `chore/migration-NNNN` PR**, merged
-  before the code that needs it. Latest on `develop` as of the last check is
-  `0070_staff_last_seen_at`; the next free number must be rechecked against every
-  open branch and PR before choosing.
+  before the code that needs it. `develop` ends at `0083_treasury_controls` (checked
+  2026-10-11); the live record of what is where, and of the next free number, is
+  [database.md, Numbering](database.md#numbering), rechecked against every open branch
+  and PR before choosing.
 - Tenancy is by Postgres schema. No `tenantId` column. Data access through
   `TenantContextService`; multi-step writes through `runInTenantTransaction`.
 - Every route authenticated and carries `@Roles(...)`. Bodies validated with a shared
@@ -174,6 +177,16 @@ wallet today.
    voucher, an expense voucher, a transfer, an opening balance, an adjustment).
 7. **No negative balances.** Any outflow checks the account's balance under a row
    lock inside the transaction and is refused if it would go below zero.
+   - **Nor any day's close** (review of 2026-10-11). An outflow dated on an earlier day — a
+     back-dated voucher, transfer or cash payment's change — lands on that day and on every
+     close after it, and a close is what is counted, closed and signed (§7). Judged by today's
+     balance alone, an expense dated three days back from a bank account opened and funded
+     today was accepted, and that day closed at −4,000,000 ل.ل, its count forced to a surplus
+     that never existed, on the signed register. It is now refused unless that day's close and
+     every close since cover it (`TREASURY_INSUFFICIENT_FUNDS_ON_DAY`, naming the first short day
+     and its close; `TreasuryLedgerService.assertCanPay`, for `post` and for a transfer's
+     amount + fee). Days, not instants: a back-dated document sits at a nominal midday, so money
+     that reached the wallet later the same day still covers it.
 8. **Locking order.** When two accounts are touched (transfer, exchange), lock them
    in ascending id order so simultaneous transfers cannot deadlock.
    - The order holds across callers, not only inside `post`. Inserting a voucher or a
@@ -195,10 +208,12 @@ wallet today.
    - Two presses carrying one key at the same moment are both answered from the
      winner's row, never with a server error.
    - The screens keep the key across every failure and every edit, and change it only
-     when the server confirms the key's act exists: a success, or
-     `TREASURY_REQUEST_KEY_REUSED`, `EXPENSE_ALREADY_VOID`, `INCOME_ALREADY_VOID`,
-     `TRANSFER_ALREADY_VOID`, `PAYMENT_IDEMPOTENCY_KEY_REUSED`
-     (`apps/frontend/lib/request-id.ts`). A refusal
+     when the server confirms the key's act exists: a success, or a refusal in `ACT_RECORDED`
+     (`apps/frontend/lib/request-id.ts`, the one list) — `TREASURY_REQUEST_KEY_REUSED`,
+     `EXPENSE_ALREADY_VOID`, `INCOME_ALREADY_VOID`, `TRANSFER_ALREADY_VOID`,
+     `TRANSACTION_ALREADY_REVERSED`, `PAYMENT_IDEMPOTENCY_KEY_REUSED`,
+     `BULK_SETTLE_REQUEST_REUSED` — and, in the commission payout dialog,
+     `INSPECTOR_PAYOUT_REQUEST_REUSED`. A refusal
      proves only that that attempt wrote nothing. Renewing on one recorded a payment
      twice after a lost answer followed by a 429; renewing on an edit did the same
      after a lost answer followed by a corrected typo.
@@ -291,7 +306,10 @@ from) are settled in the integration tests (see 12.2).
   in (the error message must say so clearly). **[Edge-case mechanics to be settled in
   the integration tests.]**
 - Reversing a post-go-live payment reverses exactly the entries it created, each
-  opposing entry carrying its original's rate.
+  opposing entry carrying its original's rate — except the bill of a cash settlement whose row
+  carried the set's notes and change (§3.7): it is refunded its own credit, in its currency, from
+  the safe (`planCreditRefund`, the pre-go-live refund's rule), since its notes paid every bill of
+  the set and its change, recycled, paid the older ones (review of 2026-10-11).
 - **A collector's payment reversed after he handed the cash in (decided 2026-10-09).**
   - Opposing the custody entry would be refused, because his custody no longer holds
     the money; the safe does. The refund could then never be made.
@@ -329,6 +347,83 @@ from) are settled in the integration tests (see 12.2).
   rate used. Each ledger entry always keeps its own original currency, amount and
   `exchangeRateAtPosting`, so changing the rate later never rewrites history.
   Official LBP reports use each entry's own stored rate, not today's.
+
+### 3.7 Settling several bills at once — «تسديد الفواتير المحددة» (built 2026-10-10)
+
+From the owner's phase-4 brief (branch `feat/fees-bulk-settlement`). A cashier ticks several unpaid
+bills of **one** citizen, on «الرسوم» or on the citizen's file, and settles them in one press.
+Decided with the owner on 2026-10-10: notes that do not cover every selected bill are **refused**
+(no part-payment of the last one), and each bill keeps its own «RCP-» receipt under a group record.
+
+- **All or nothing.** `PaymentSettlementService.settle` runs one `runInTenantTransaction`: the retry
+  key's advisory lock, every bill `FOR UPDATE` in id order (`PaymentLedgerService.lockInvoices`), the
+  settings row `FOR SHARE`, the closed-day check, the «BRC-» number, the `payment_settlements` row
+  (0085), every bill's «RCP-» number drawn as one block (`reserveReceiptNumbers`), every wallet the
+  set will post to locked in id order (`TreasuryLedgerService.lockPaymentWallets`), then each bill,
+  oldest first, through `PaymentLedgerService.recordIn` — the code a single counter payment runs, with
+  its receipt number, wallet entries (`creditPayment`) and Tier 1 audit row. A refusal on any bill, the
+  change the safe cannot cover included (`TREASURY_INSUFFICIENT_FUNDS`), rolls back every bill.
+- **One lock order with every other writer** (cross-feature review, 2026-10-10). Bill by bill, each
+  bill's `post` locked only its own wallets, so a set with a dollar bill and a ليرة bill took the two
+  safes in the order the bills fell due; an exchange between the same safes takes them in id order,
+  and the two deadlocked (`40P01`, every round of the race in `payment-settlement.integration.spec.ts`).
+  Now every wallet is locked in id order before the first bill posts. They are locked after the
+  RECEIPT counter, because a single counter payment takes the counter before its wallet: taken the
+  other way round, a settlement and a counter payment into the same safe deadlocked too.
+- **A closed day takes nothing** (§7.3). A settlement is dated now, so the case is today's day
+  closed — which the application never does, but a closure row can say so. Refused with
+  `CLOSED_DAY_MUTATION_BLOCKED` after the bill locks and before the «BRC-» number or any row is
+  written; `recordIn` asks again for each bill, as it does for a single counter payment.
+- **One citizen.** A bill of anyone else is refused (`BULK_SETTLE_CITIZEN_MISMATCH`); a bill settled
+  since it was ticked is refused by name (`BULK_SETTLE_SOME_ALREADY_PAID`, `params.invoice`), and so is
+  one sent for review of a Whish transfer since (`BULK_SETTLE_BILL_PENDING_REVIEW`): a claim is settled
+  by confirming it, not by taking the money again (whether the single settle should refuse it too is
+  open-decisions.md §19).
+- **What the clerk was shown.** The press carries `expectedDue`, what the bills owed per currency on
+  the screen. Under the locks the server refuses any difference (`BULK_SETTLE_DUE_CHANGED`,
+  `params.currency`, `expected`, `due`) and the dialog re-reads. Whish and collector settlements carry
+  no other figure: without it, a part-payment at the next desk after the tick was recorded as a smaller
+  transfer than the one that arrived, and the wallet credited less than it received.
+- **The collector** of a COLLECTOR settlement is active staff who can hold cash (`COLLECTOR_NOT_FOUND`
+  otherwise), by the single settle's own rule (`fees/live-collector.ts`, §3.5).
+- **The notes** (`planBulkSettlement`, shared by the dialog and the server; the server's run, under the
+  locks, is the one recorded). WHISH_MONEY and COLLECTOR arrive as one sum per bill in its currency. CASH
+  takes ليرة and the second currency at the **official rate only** (no override, no back-dating here —
+  both stay single-bill acts):
+  1. Bills in the second currency are paid with that currency's notes at face value; too few is
+     `BULK_SETTLE_TENDER_SHORT`.
+  2. Notes of the second currency left over go to the ليرة bills at the official rate
+     (`BULK_SETTLE_RATE_NOT_SET` without one). ليرة above what the ليرة bills owe is refused
+     (`BULK_SETTLE_TENDER_EXCEEDS`), as on a single bill: change comes only from a foreign note.
+  3. Those foreign notes all go on **one** ledger row, the newest ليرة bill, with its change; every other
+     bill is a plain sum. Splitting a note across bills cannot keep each whole to the cent ($20 for
+     900,000 + 890,000 at 89,500 is $10.06 + $9.94, and the second comes out 370 ل.ل short). When the ليرة
+     notes do not cover the older bills, that row's change pays them, as a clerk does it by hand. Every
+     wallet still moves by what physically changed hands (+ليرة in, +dollars, −change), and the safe is
+     judged on that net, so the check is "the safe plus the ليرة handed in covers the change".
+  The settlement row keeps the notes as handed over and the change handed back; the rows' own change can
+  be larger than the settlement's when step 3 recycles it — the net per wallet is the same.
+- **Retry.** `clientRequestId` is required and lives on the settlement, not on the rows (unique per row).
+  It is bound to its act (citizen, method, the set of bills): anything else is `BULK_SETTLE_REQUEST_REUSED`,
+  which names the settlement the key recorded (`params.number`, its «BRC-»). The dialog holds its key per
+  set, so from the screen that refusal means the same bills pressed again another way after a lost
+  answer: the earlier press was recorded, and the clerk is told which receipt it is (review of 2026-10-11;
+  it said the key had settled «other bills» and to reload). A settlement one of whose bills was reversed
+  since is `TRANSACTION_ALREADY_REVERSED`.
+- **Correcting.** A bill of a settlement is reversed on its own, through the ledger, like any receipt;
+  the consolidated receipt then shows it struck through. The settlement row never changes (append-only).
+  The refund is the bill's own credit: a plain row's entries are opposed, as for any receipt, but the row
+  that carried the notes (step 3) is refunded its credit, in its currency, from the safe — its notes paid
+  the whole set and its change, recycled, paid the older bills, so opposing it took back money the citizen
+  never had ($20 out and 1,690,000 ل.ل of change in, for a 100,000 ل.ل bill whose citizen got 790,000;
+  review of 2026-10-11). The reversal's receipt and the safes now say the same thing.
+- **Who.** `BULK_SETTLE_ROLES` (manager and accountant) settle; `FEE_READ_ROLES` reprint
+  (`GET fees/settlements/:id`). A collector still settles the same bills one at a time.
+- **The receipt** «وصل قبض بلدي مجمّع»: the BRC number, the citizen's name, father's name and phone —
+  **never the رقم مرجعي** (a sign-in credential) — each bill with its INV- and RCP- numbers, parcel and
+  unit, period and amount, totals per currency, the notes, the rate and the change, two signatures, and a
+  QR code of the BRC number only (assumption 13.1.3). Printed A4, downloaded as PDF, sent on WhatsApp.
+  **Not built:** a thermal (80 mm) layout.
 
 ---
 
@@ -396,7 +491,9 @@ it one.
 - Income list: searchable and filterable (date, category, wallet, source). It shows
   manual vouchers **and** automatic citizen-fee income, clearly tagged by source and
   never entered twice. Totals per currency, with the convert toggle.
-- Printable official receipt in Arabic. A reprint is stamped «نسخة».
+- Printable official receipt in Arabic. A reprint is stamped «نسخة». **Built 2026-10-10
+  without the «نسخة» stamp** (§14): telling a first print from a reprint needs the server
+  to remember the first, a column nothing writes yet.
 - **[assumed]** The QR code encodes only the voucher number as plain text. No public
   verification page (a public route would be a new unauthenticated surface), and
   never a citizen's رقم مرجعي. **[Not yet checked: whether the existing citizen
@@ -429,8 +526,9 @@ Decree 5595 of 22 September 1982 (تحديد أصول المحاسبة في ال
   through advances approved by the head (art. 37–42).
 
 The first design had no approval step and leaned on "the daily count and close" as the
-control that would make up for it. That count is stage 5, which isn't built. Without it,
-one accountant could record and pay any expense alone, which is exactly the
+control that would make up for it. That count is stage 5, which was not built then (it
+was built on 2026-10-10, §7). Without an approval step, one accountant could record and
+pay any expense alone, which is exactly the
 single-person outflow the decree's separation is there to prevent.
 
 ```
@@ -577,6 +675,64 @@ a unique index.
 - The inspector has no finance access; the accountant who records the payout does.
 - The existing payout flow must keep working for anyone not yet activated
   (before go-live no wallet is touched).
+- **Built 2026-10-10** (§14, «صرف عمولة»). Two decisions taken while building, not stated
+  above: a payout made while the treasury is live is **dated today** like a salary
+  (`INSPECTOR_PAYOUT_DATE_NOT_ALLOWED`); and **cancelling its voucher returns the amount to
+  what the inspector is owed** — the payout stays in his history marked cancelled, and both the
+  profile and the roster leave it out of what was paid. Derived on read from the voucher's
+  `voidedAt`, never a second stamp.
+- **«صرف عمولة» is the only way a commission is paid.** «تعويضات المسح والجباية»
+  (`FIELD_COMMISSIONS`) is reserved to it: the expense form does not offer it, and `record`,
+  `requestPayment` and `orderRequest` refuse it (`EXPENSE_CATEGORY_RESERVED`). The PR #109
+  review found the hole: a commission paid through the form wrote no payout row, so the
+  inspector still read as owed it and «صرف عمولة» paid it again (reproduced: $4 through the
+  form, $19 still owed, then paid in full). Whether a commission may be paid **back-dated** once
+  live is **Undecided** ([open-decisions.md §18](open-decisions.md)); until it is decided there
+  is no road for one.
+- **Who pays it, and the payment order (decision D9, the owner, 2026-10-10).** A commission is
+  paid like a salary (§5.8). Decree 5595/1982 art. 35 names salaries and wages («الرواتب
+  والأجور») among what may be paid before the order, so, once the treasury is live:
+  - the manager's payout is the order (`orderStatus: 'ORDERED'`, no `urgentReason`);
+  - an accountant's is paid at once on the urgent path. The server writes its reason, exactly
+    «عمولة مسح ميداني — تُدفع قبل الحوالة (المادة 35)» (`COMMISSION_URGENT_REASON` in
+    `packages/shared-schemas`), and the voucher waits as «بانتظار أمر الصرف» until the manager
+    regularises it, like any urgent voucher. The body carries no reason field. The inspector's
+    owed balance drops at once, as the money has left; a voucher the manager will not order is
+    cancelled instead, which returns the amount to what is owed;
+  - the urgent-payment ceiling (§5.1, D6) does not apply, as it does not to a salary. The
+    exemption is said by the commission path itself (`VoucherPath.exemptFromUrgentCeiling`, set
+    by `recordSalary` and `recordCommission` alone), never inferred from the voucher naming a
+    staff payee;
+  - an accountant cannot pay a commission to himself (`COMMISSION_SELF_PAYOUT`, the D8 rule),
+    refused before any figure is read;
+  - before go-live a payout is a figure with no wallet, no voucher and so no order to wait for:
+    it stays the manager's (`INSPECTOR_PAYOUT_BEFORE_LIVE_MANAGER_ONLY`), in dollars, dated no
+    later than today (`INSPECTOR_PAYOUT_DATE_IN_FUTURE`), with the amount in its Tier 1 audit row.
+- **The payout row is the record of what was paid** (review of 2026-10-11). What an inspector is
+  owed is read from the payout rows alone, so a payout paid by a voucher is written once at the
+  database (`0089`): never changed, never deleted, linked to its voucher in the insert or never.
+  A mistake is corrected by voiding the voucher, which returns the amount to what is owed. The
+  amount is dollars and cents within the row's `DECIMAL(10,2)`, and the inspector's id is read in
+  one spelling before the self-payout check and the per-inspector lock, so an upper-cased id in the
+  path cannot pass either.
+- **A retried press records once, before go-live too** (review of 2026-10-11). The retry key
+  lives on the payout row (`inspector_payouts.clientRequestId`, `0089`), and once live on its
+  voucher as well. Before, a figure-only payout kept none: the dialog sent no key, the server
+  inserted every press, and a payout whose answer was lost, pressed again, was recorded twice —
+  the inspector read as owed less than he was, with no voucher to void. Now the dialog holds its
+  `commission:<staffId>` key on both paths and marks a lost press in doubt, and the server answers
+  a retry from the key under the inspector's lock, bound to the act (inspector, amount, recorder,
+  statement, and the wallet once live). A press lost before go-live and retried after it is
+  answered with the figure it recorded: no voucher, no money out. One key sent for two
+  inspectors at once meets on the unique index and is refused (`INSPECTOR_PAYOUT_REQUEST_REUSED`),
+  never answered with a server error.
+- **The accountant does not see what is owed.** The inspector's profile lists the citizens he
+  registered and stays `SUPER_ADMIN` or the inspector himself. So the payout's refusal names no
+  figure to the accountant, and once live the balance is judged last, inside the transaction, so
+  no other refusal answers differently for an amount within what is owed. The dialog reads the
+  profile and lives on screens only `SUPER_ADMIN` opens: an accountant pays through the API
+  alone. Whether he should be given the owed figure, and a screen, is **Undecided**
+  ([open-decisions.md §18](open-decisions.md)).
 
 ### 5.7 Step 3b — attachments
 
@@ -632,9 +788,9 @@ is untouched and still reached from the inspector's row (§5.6).
   (`SALARY_PAYEE_NOT_FOUND`); a stopped «رواتب وأجور» (`EXPENSE_CATEGORY_INACTIVE`);
   everything §5.2 refuses. A *disabled* account can still be paid: someone who
   has left may be owed their last month.
-- **Not built.** A printable «أمر صرف»: no printed layout exists for any expense
-  voucher, and its wording and layout are unverified (§13.2). The success toast
-  links to the expense register instead.
+- **Printing.** Built 2026-10-10 for every expense voucher (§14); the salary
+  toast still links to the expense register, where each row now prints. The
+  wording and the layout remain unverified (§13.2).
 
 ---
 
@@ -680,22 +836,84 @@ the category «رسوم تحويل ومصرفية», all in one atomic transacti
 
 ---
 
+### 6.4 As built (2026-10-10)
+
+Built as 6.1 to 6.3 describe, with these decisions taken while building:
+
+- **The rate is derived from the two amounts**, never typed as a third figure the server would
+  have to reconcile: base currency per one unit of the other side (`exchangeRateOf`). The form
+  lets the accountant type either the received amount or the rate the صرّاف quoted; it sends the
+  two amounts. One side of an exchange must be the base currency (`EXCHANGE_PAIR_UNSUPPORTED`).
+- **The large-exchange threshold is on the non-base side** — the dollars, in practice — and an
+  exchange made while **no official rate is set** is booked and flagged, with no reason asked:
+  there is nothing to say it is fair.
+- **Both settings are the manager's** (`EXCHANGE_RULE_MANAGER_ONLY`): the accountant may save the
+  finance settings, but moving the rule that decides which of his exchanges are reviewed is not his.
+- **A fee is allowed on either kind**, in the source's currency, and is its own «PV-» voucher whose
+  payee is the صرّاف, or else the source wallet. It is cancelled with the transfer and never alone
+  (`EXPENSE_IS_TRANSFER_FEE`).
+- **Custody is never an end** of these transfers (`TRANSFER_ACCOUNT_NOT_ALLOWED`); the handover
+  keeps its own act. A stopped wallet is refused too.
+- **A transfer may be dated earlier**, with the expense rules: not in the future, not before
+  go-live, a reason when earlier (`backdateReason`, not `adjustmentReason`, which is the rate's).
+  A closed day refuses it through the ledger, as everything else. The day must exist (`businessDay`,
+  as on every treasury contract; «2026-10-00» answered with a 500 until the review of 2026-10-11), and
+  amount + fee must be covered by the source's close on that day and every day since, not only by its
+  balance now (§3.1, rule 7).
+- **New wallets** (decided by the owner on 2026-10-10): the manager adds a bank account or a
+  petty-cash fund, in the base or secondary currency. It opens at zero and is filled by a transfer;
+  an opening balance for one that already holds money is not built.
+- **Not built:** transfer write-offs and partial-handover shortages (6.3, later), exchange
+  gain/loss (§8), and a currency filter on the register.
+
+Settled on the PR #111 review (2026-10-10), against the treasury controls:
+
+- **The retry key is bound to its act**, as every other money key: both wallets, the amount, the
+  received amount, the fee, the statement and the clerk. Another act under it is
+  `TREASURY_REQUEST_KEY_REUSED` (a collector's handover keyed in the same column included); a
+  key whose transfer was cancelled since is `TRANSFER_ALREADY_VOID`; a unique violation on it is
+  answered as a replay. The form holds its key under `transfer:new` (`lib/request-id.ts`).
+- **The fee is a voucher under the payment order (D3).** The manager's transfer is the order of
+  its fee. An accountant's fee is paid at once on the urgent path with the server's reason
+  «رسوم تحويل — تُدفع مع المناقلة (المادة 35)» (`TRANSFER_FEE_URGENT_REASON`), held to the urgent
+  ceiling (D6), and waits for the manager's regularisation. Whether a fee should be exempt from
+  the ceiling is **Undecided** ([open-decisions.md](open-decisions.md) §18).
+- **The official rate is the secondary currency's.** An exchange whose non-base side is any
+  other currency is refused (`EXCHANGE_PAIR_UNSUPPORTED`) rather than judged against a rate that
+  is not its own.
+- **Dating, locks:** a transfer is dated by `documentOccurredAt` (D5), like every document; the
+  settings row is taken before the wallets in `create` and in `void`.
+- **The review is written once.** `0084` added the stamp without putting it in the 0083
+  write-once trigger's list, so no review could be written; `0088` re-creates the trigger with it
+  and refuses changing a review afterwards. A cancelled transfer is refused
+  (`TRANSFER_ALREADY_VOID`). Whether the manager may clear the review of an exchange he booked
+  himself is **Undecided** (§18).
+- **New wallets:** one per name, kind and currency (`TREASURY_ACCOUNT_NAME_TAKEN`).
+- **The exchange rule** is written only by the manager's save, and a citizen does not read it.
+
 ## 7. Daily count and closing (Step 5)
 
-**Until stage 5 ships (decided 2026-10-09).** The decree has the cashier keep a daily
-register: the opening balance, the day's receipts and payments, and the closing
-balance. A new day's register is not opened until the previous one is closed (art. 101).
+The decree has the cashier keep a daily register: the opening balance, the day's
+receipts and payments, and the closing balance. A new day's register is not opened
+until the previous one is closed (art. 101).
 
-Activation is not held back for stage 5. With the payment order in place (§5.1), the
-expense outflow no longer rests on the count alone. In the meantime:
+**Stage 5 is built (2026-10-10, PR #106; §14).** The count is recorded per wallet in
+the system (§7.1), the day is closed there and refuses anything dated on or before it
+(§7.3), and the register is «تقرير الصندوق اليومي» (§7.4, `finance/daily/report`),
+printed with signature lines for the accountant and the head of the municipality.
 
-- A wallet's statement for a single day is that register. «اليوم» on the statement
+**Before stage 5 (D4, decided 2026-10-09; replaced by the above).** Activation was not
+held back for stage 5: with the payment order in place (§5.1), the expense outflow no
+longer rested on the count alone. In the meantime:
+
+- A wallet's statement for a single day was that register. «اليوم» on the statement
   screen reads one day on Beirut's calendar, from its opening balance to its close.
-- The accountant prints it, counts the cash against it, and signs it with a second
+- The accountant printed it, counted the cash against it, and signed it with a second
   person. «طباعة» on the statement prints it alone on A4 (`data-print-root`): the
   municipality, the wallet, the day, the opening and closing balances, every
   movement, the print time, and signature lines for the cashier and the accountant.
-- A difference is written on the paper, never posted (§7.2).
+  It still prints, as a wallet's statement; it is no longer the register.
+- A difference was written on the paper, never posted (§7.2).
 
 ### 7.1 The count (جرد الصندوق)
 
@@ -709,6 +927,11 @@ One record per wallet per day:
 - **Difference** = counted − expected. **Any** difference (shortage عجز or surplus
   فائض) needs a written reason.
 - Who counted, when.
+- **Locked like a writer** (review of 2026-10-11). A count locks the wallets it records in id order
+  (`lockAccounts`), after the settings row and before it reads their books or writes a line — the
+  order every writer takes them in (§14). A count's line references its wallet, and the foreign key's
+  `FOR KEY SHARE`, taken line by line in the sheet's order, deadlocked against a transfer, an exchange
+  or a cash payment with a dollar note over two counted wallets.
 
 ### 7.2 A difference never changes the books automatically
 
@@ -720,25 +943,63 @@ new entries). A day may be closed with an unresolved difference.
 ### 7.3 Closing the day (إقفال اليومية)
 
 - A day locks **only when explicitly closed**, not by a clock at midnight (closing
-  often happens at 09:00 the next morning).
+  often happens at 09:00 the next morning). **Only a day that has ended can be
+  closed** (decided by the owner on 2026-10-10): closing today would refuse every
+  payment until midnight, the automatic Whish confirmations included, because they
+  are stamped with the real clock. Today can be counted; it closes tomorrow
+  (`DAY_NOT_OVER`).
 - Who closes: `ACCOUNTANT` or `SUPER_ADMIN`. The same person may count and close;
   there is no separate-closer rule and no setting for it.
 - Days **with movements** must be counted and closed **in chronological order**.
 - Days **with no activity** (no entries, balance unchanged) are closed
   **automatically**, lazily, when the next active day is closed — no scheduled job
-  (scheduler ownership is a known trap in `docs/gotchas.md`).
+  (scheduler ownership is a known trap in `docs/gotchas.md`). **Activity means an
+  entry on a counted wallet** (decided by the owner on 2026-10-10): a day on which
+  only collectors' custody moved is swept closed too, because nothing in it could
+  be counted differently from the day before. A swept day locks like any other.
 - Once closed: **hard lock.** Any entry dated on or before a closed day is refused.
   A late entry must be dated on the current open day, with a note. This also applies
   to `PaymentLedgerService` (a backdated citizen payment or a collector round entered
-  into a closed day is refused). **This changes the existing payment path** and needs
-  its own tests.
-- **Reopening a day:** `SUPER_ADMIN` only, with a reason, audited.
+  into a closed day is refused, in `recordIn`, which every way of settling a bill
+  runs) and to a settlement of several bills (§3.7), which is refused before it
+  writes anything. **This changes the existing payment path** and needs its own tests.
+- **Reopening a day:** `SUPER_ADMIN` only, with a reason, audited. **The latest
+  closed day only** (the stage 5 brief): reopening an older one would leave a
+  closed day after an open one. A reopened day must be closed again before any
+  later day can be (`CLOSURE_OUT_OF_CHRONOLOGICAL_ORDER`).
+- **Signed off on what the dialog showed** (PR #106 review, 2026-10-10). The close
+  sends every count its confirm dialog listed, each with its `countedAt`
+  (`closeDaySchema.counts`). A count recorded, replaced or added since — another
+  accountant's recount while the dialog was open — is refused with
+  `COUNT_CHANGED_SINCE_LOADED`, and the screen reads the sheet again. The books'
+  check cannot see this: a recount agrees with the books as well as the count it
+  replaced.
+- **One lock order.** A close takes the day book's advisory lock, then the settings
+  row (`ledger.config`, `FOR SHARE`), then `SHARE` on `treasury_entries`: the
+  settings row before the entries, as every writer takes them. Taken the other way
+  it deadlocked with activation, which holds the row `FOR UPDATE` while it posts the
+  opening balances (reproduced on Postgres 17). A close before go-live is refused
+  (`TREASURY_NOT_ACTIVE`) before anything is locked.
+- **A closure is written once** (migration `0087`). Its day never moves; reopening
+  keeps who closed it and when; the only changes are CLOSED → REOPENED and
+  REOPENED → CLOSED. A count is linked only to its own day's closure, and the link
+  is never moved or removed. Before `0087` an `UPDATE` of `businessDate` silently
+  reopened a day.
 
 ### 7.4 The daily report (تقرير الصندوق اليومي)
 
 Per wallet: opening balance, receipts, payments, closing balance, count, difference.
 A visible summary line "cash held by collectors" (custody balances) — **not**
 required for closing. Printable.
+
+- **The go-live day opens on the counted balances.** Activation's `OPENING_BALANCE`
+  entries are dated inside the go-live day, but they are what the wallets held when
+  the treasury started, not money received that day: the report adds them to the
+  opening balance, never to the receipts (art. 101 keeps the two apart). Opening +
+  receipts − payments = closing still holds (`summariseDay`'s `opening`).
+- **One snapshot.** Every figure on the sheet is read in one `RepeatableRead`
+  transaction, as the wallet statement is, so a voucher or a recount committed
+  while the report is read is on none of it rather than on half of it.
 
 ### 7.5 Whish and bank
 
@@ -772,13 +1033,15 @@ Two working roles. The **accountant** runs the daily work. The **manager
 | Withdraw a request still waiting | **his own** | yes | no | no | no |
 | Issue a payment order, reject a request, regularise an urgent payment | no | **yes** | no | no | no |
 | Record (pay) an expense | **only urgent, with a reason (art. 35), up to the manager's ceiling (D6); it waits for the order** | yes — his recording is the order | no | no | no |
-| Record an inspector payout (picks the wallet) | yes | yes | no | no | no |
+| Record an inspector payout (picks the wallet; §5.6) | **yes, once live, on the urgent path: the server writes the art. 35 reason, no ceiling; it waits for the order (D9). Never his own; before go-live, no.** The dialog is on `SUPER_ADMIN`-only screens | yes — his payout is the order | no | no | no |
 | Pay a staff member's salary (§5.8; the button is on the `SUPER_ADMIN`-only staff page) | **yes, on the urgent path: the server writes the art. 35 reason, no ceiling; it waits for the order** (D7) | yes — his payout is the order | no | no | no |
 | Transfer, exchange, collector handover (never of one's own custody) | yes | yes | no | no | no |
 | Count a wallet | yes | yes | no | no | no |
 | Close a day | yes | yes | no | no | no |
 | Review a flagged exchange | no | yes | yes | no | no |
 | Void any voucher or transfer | no | **yes** | no | no | no |
+| Add a wallet (bank account, petty cash) | no | **yes** | no | no | no |
+| Change the exchange tolerance and threshold | no | **yes** | no | no | no |
 | Activate treasury (opening balances) | no | **yes** | no | no | no |
 | Reopen a closed day, post an adjustment | no | **yes** | no | no | no |
 | Manage categories and finance settings | no | **yes** | no | no | no |
@@ -786,7 +1049,17 @@ Two working roles. The **accountant** runs the daily work. The **manager
 
 `ACCOUNTANT` and `SUPER_ADMIN` can reuse `FINANCE_OVERRIDE_ROLES` from
 `cash-policy.ts`. `@Roles` on **every** handler, and `route-inventory.spec.ts` pins every
-treasury handler to its row of this table, so widening one is a decision made there.
+treasury handler to its row of this table, so widening one is a decision made there. That
+includes stage 5's `TreasuryClosingController` (sheet, history and report read; count and
+close work; reopen the manager's), and reopening a closed day is in its manager-only check
+beside ordering, refusing, regularising, cancelling and activation. Until the PR #106 review
+the pin's filter missed that controller, and all six handlers were unpinned. A handler that
+moves treasury money from another controller is pinned by name
+(`MONEY_HANDLERS_ELSEWHERE`): `StaffController.recordPayout`, at the work roles (D9), which the
+pin's filter missed until the PR #109 review, and the fee routes that post wallet entries once
+live — `FeesController.settle` (`FEE_ISSUE_ROLES`), `review` (`FEE_ADMIN_ROLES`), `reverseTransaction`
+(the manager) and the public, HMAC-checked `whishCallback` — which no pin held until the final-stack
+review (2026-10-11). The bulk settlement's two routes are pinned in their own block.
 `ADMINISTRATIVE_OFFICER` reads `custody/mine` too: the route is on every role but
 «مشاهد فقط», as the next paragraph says.
 
@@ -812,10 +1085,10 @@ inspectors who carry the cash; staff with no custody get an empty round.
 | `income_categories`, `income_vouchers` | Manual income | `RV-` sequence; CHECK currency = account currency (via account FK + trigger or app + constraint) |
 | `expense_categories`, `expense_vouchers` | Expenses | `PV-` number (0079); status (RECORDED, VOID); wallet, recorded by, void reason; invoice fields; the payment order — `orderedAt`/`orderedById`, `urgentReason` for art. 35 (0083); `payeeStaffId` for a salary (0081, built) |
 | `expense_requests` | Payment-order requests (0083) | category, wallet + currency, amount, payee, description; requested by; the decision written once (ORDERED with its voucher, REJECTED with a reason, WITHDRAWN) |
-| `treasury_transfers` | Transfers, exchanges, handovers | `TR-` sequence; from/to accounts; amounts; rate, official rate, `adjustmentReason`; fee amount; money changer name; review flag + reviewed by/at |
-| `treasury_counts` | Daily count per wallet | expected, counted, difference, reason, counter |
-| `treasury_day_closures` | Closed days | business date, closed by/at, reopen history |
-| `system_settings` (existing) | Add columns | `treasuryGoLiveAt`, rate tolerance %, large-exchange threshold |
+| `treasury_transfers` | Transfers, exchanges, handovers | **Built, 0078, 0084 and 0088.** `TR-` number from `document_counters`; from/to accounts each paired with its currency; `amount`, `receivedAmount`; `exchangeRate`, `officialExchangeRate`, `adjustmentReason`; `feeAmount` + `feeVoucherId` (both or neither); `moneyChangerName` (exchanges only); `backdateReason`; `requiresReview` + `reviewedAt`/`reviewedById`/`reviewNote` (only when flagged; a stamp written once, 0088) |
+| `treasury_counts` | Daily count per wallet | **Built, 0082.** `(accountId, currency)` FK, `businessDate`, `expectedAmount`, `countedAmount`, `difference` (CHECK = counted − expected), `varianceReason` (CHECK: required when the difference is not zero), `countedById`/`countedAt`, `closureId`. One per wallet per day |
+| `treasury_day_closures` | Closed days | **Built, 0082.** `businessDate` (unique), `status` (`TreasuryDayStatus`: CLOSED, REOPENED; no row = open), `autoClosed`, `closedById`/`closedAt`, `reopenedById`/`reopenedAt`/`reopenReason` (CHECK: set exactly while REOPENED). Reopen history lives in the audit log |
+| `system_settings` (existing) | Add columns | **Built:** `treasuryGoLiveAt` (0073), `exchangeRateTolerancePercent` (default 3) and `largeExchangeThreshold` (default 1000) (0084) |
 | `inspector_payouts` (existing) | Add column | link to its expense voucher |
 
 Rules for every migration: idempotent, schema-qualified guards, additive,
@@ -890,8 +1163,9 @@ throwaway Postgres 17; the report says what ran, what failed and what was skippe
 wiring, error codes, audit), `docs/security.md` (endpoint checklist, gaps),
 `packages/shared-schemas/CLAUDE.md`, `PRODUCT.md` (new finance capability and
 roles), `docs/gotchas.md` for new traps, and this file moved into the routing table
-in `CLAUDE.md`. "Last verified" lines bumped. This file is **not** yet linked from
-the CLAUDE.md routing table or the AGENTS.md section map.
+in `CLAUDE.md`. "Last verified" lines bumped. Root `CLAUDE.md` links this file from its
+routing table («Money: wallets, …») and from the treasury row of «Keeping the docs true»;
+the AGENTS.md section map does not list it yet (checked 2026-10-11).
 
 ---
 
@@ -935,11 +1209,12 @@ municipal cash-handling practice, and is pinned by
 | D1 | A collector's payment reversed after he handed the cash in: which wallet pays? | His custody while it still holds all of it; otherwise the safe of the same currency (§3.4) | Decree 5595/1982 art. 93: a collector pays nothing out. Municipal policies route refunds through the treasury's disbursement, never out of collections |
 | D2 | Who may date a payment before go-live, once the treasury is live? | A finance role only, and the audit row says no wallet was credited (§3.3) | Art. 16 and 98: a receipt is written when the money is taken. The go-live cut-off is the opening count |
 | D3 | May an accountant pay an expense without the head's order? | No: a request for the manager's order; art. 35 urgent payments first, regularised after (§5.1) | Art. 21, 28, 33, 35, 85, 89 |
-| D4 | Must stage 5 exist before a municipality activates the treasury? | No, with D3 in place; until it ships, the one-day statement is the daily register, printed, counted and signed (§7) | Art. 101: the daily register, closed before the next opens |
+| D4 | Must stage 5 exist before a municipality activates the treasury? | No, with D3 in place; until it shipped, the one-day statement was the daily register, printed, counted and signed. Stage 5 was built on 2026-10-10 (PR #106): the day is now counted and closed in the system and «تقرير الصندوق اليومي» is the register (§7) | Art. 101: the daily register, closed before the next opens |
 | D5 | Which side of go-live is the go-live day itself? | Live, for payments, expenses and income alike. A document dated that day is placed at the opening entry or after it, never before (§3.3) | Cutover practice: every receipt taken before the opening count is entered before activation, so what is entered for that day afterwards is new cash. Art. 16 and 98: a receipt carries the day the money was taken |
 | D6 | Is the accountant's urgent path (art. 35) limited? (decided by the owner, 2026-10-10) | Yes: a per-voucher ceiling per currency (LBP, USD) that the manager sets in الإعدادات. Above it, `EXPENSE_URGENT_OVER_CEILING`, and the expense goes as a request. NULL means none. Not for the manager's voucher, nor for a salary (§5.1) | Art. 35 covers salaries, routine petty expenses and genuinely urgent ones. A ceiling keeps a large purchase on the order path (art. 28, 33) without slowing what the article lets through |
 | D7 | Does an accountant's salary payout need the manager's order first? (decided by the owner, 2026-10-10) | No: it is paid on the urgent path with the server's reason «راتب — يُدفع قبل الحوالة (المادة 35)», and waits for regularisation. The manager's payout is the order (§5.8) | Art. 35 names salaries among what may be paid before the order |
 | D8 | May an accountant pay his own salary on the urgent path? (2026-10-10) | No (`SALARY_SELF_PAYOUT`): the manager records it, or it goes as a request for his order (§5.8) | The separation already decided for custody (`CUSTODY_SELF_RECEIPT`): money that leaves before any order must not rest on the payee's word alone |
+| D9 | How does the payment order apply to an inspector's commission? (decided by the owner, 2026-10-10) | Like a salary: the manager's payout is the order; an accountant's is paid at once on the urgent path with the server's reason «عمولة مسح ميداني — تُدفع قبل الحوالة (المادة 35)» (`COMMISSION_URGENT_REASON`), waits for regularisation, and is exempt from the urgent ceiling (D6). Never his own (`COMMISSION_SELF_PAYOUT`, as D8). Before go-live the figure-only payout stays the manager's (§5.6) | Art. 35 names salaries and wages («الرواتب والأجور») among what may be paid before the order, and a field commission is a wage for work done |
 
 The decree's text was read at <https://www.baladiyat.org/?page_id=6636> (the
 consolidated text with its 1985–1996 amendments). It should be confirmed against the
@@ -988,6 +1263,105 @@ shortage write-off; a scheduled job (none planned).
 ---
 
 ## 14. Implementation status
+
+### Final-stack review (2026-10-11; `feat/treasury-day-closing@c88c971`, fixes not committed)
+
+An adversarial review of the whole stack — `develop` with PRs #106, #109, #111 and #112 merged and
+hardened. Every confirmed finding the stack itself introduced or made worse is fixed, each pinned by a
+test that fails with its fix undone (mutation-checked, the fix restored byte for byte):
+
+- **A past day closed below zero** (P1). An outflow dated on an earlier day was judged by the balance
+  now; an expense dated three days back from a bank opened today, or a back-dated transfer out of Whish,
+  left that day closing negative, and the signed register printed it. Now every close from the dated day
+  on must cover it (`assertCanPay`, `TREASURY_INSUFFICIENT_FUNDS_ON_DAY`; §3.1 rule 7;
+  `treasury-backdated-outflow.integration.spec.ts`).
+- **The count deadlocked with a two-wallet writer** (P3). It locked its wallets through its lines' foreign
+  keys, in the sheet's order; now `lockAccounts` in id order first (§7.1;
+  `daily-count-lock-order.integration.spec.ts`). The cross-feature section below said every writer kept
+  the lock order: the count did not.
+- **Reversing the bill that carried a settlement's notes** (P3) took back the notes and the recycled
+  change; now it refunds the bill's own credit (§3.7; `payment-settlement.integration.spec.ts`).
+- **An upper-cased inspector id** (P1) passed the per-inspector lock and `COMMISSION_SELF_PAYOUT`; now one
+  spelling (§5.6; `inspector-payout.integration.spec.ts`).
+- **A paid payout could be rewritten at the database** (P3); now `0089` (§5.6; the same spec).
+- **«صرف عمولة» before go-live kept no retry key** (P2): a lost answer pressed again recorded the
+  figure twice. Already on `develop`, but this stack rewrote the path, so it is fixed here: the key on
+  the payout row (`0089`), answered under the inspector's lock, and the dialog holding it on both paths
+  (§5.6; `inspector-payout.integration.spec.ts`, `lib/commission-payout.test.ts`).
+- **Contracts**: a transfer's dates are real days (`businessDay`, shared by every treasury contract;
+  `treasury-dates.spec.ts`); a payout's amount is two decimals within its column (`payout-policy.spec.ts`).
+- **Screens**: the bulk dialog no longer refuses, while a press is in doubt, the retry the key would answer
+  (`previewGate`); `BULK_SETTLE_REQUEST_REUSED` names the receipt the key recorded; a closed day in a
+  refusal reads 09/10/2026, not 2026-10-09; the payout dialog's host pages keep it mounted when a re-read
+  fails (`readView`). Pinned in `apps/frontend/lib/*.test.ts`.
+- **Pins and docs**: the fee routes that post wallet entries are pinned by name in
+  `route-inventory.spec.ts` (§9); `0085`'s note about its foreign key's lock is corrected in
+  docs/database.md (the file is not edited).
+
+Left as a recorded follow-up, already on `develop` and not changed by this stack: «تكليف مالي» (a
+one-off charge to a citizen) has no retry key ([security.md](security.md#known-gaps)); it needs a
+column of its own. So do the same path-id comparisons in the staff accounts' self-guards, also
+already on `develop` (security.md), and the unit-sequence lock key (code-quality.md).
+
+### Review of PR #112, settling several bills at once (2026-10-10; branch `feat/fees-bulk-settlement-review`, not committed)
+
+Adversarial review of `9df68e4` against the controls of the PR #104 review. Each fix is pinned by a
+test that fails without it (`payment-settlement.integration.spec.ts`, `payment-settlement.plan.spec.ts`,
+`route-inventory.spec.ts`, `apps/frontend/lib/bulk-settle.test.ts`).
+
+- **A collector who cannot hold cash was accepted.** The bulk path skipped `assertLiveCollector`, so a
+  view-only, deactivated or removed member of staff, or a citizen, was recorded as the collector;
+  before go-live nothing else looked. Now the shared `assertLiveCollector` (`live-collector.ts`).
+- **A bill waiting for review was settled.** The dialog never offers one, the server took one.
+  Refused under the lock (`BULK_SETTLE_BILL_PENDING_REVIEW`).
+- **Whish and collector settlements recorded whatever was owed by the time of the press.** The
+  request now carries `expectedDue`, and a difference is `BULK_SETTLE_DUE_CHANGED`.
+- **A background re-read could orphan an in-doubt press.** The lists drop a ticked bill once it reads
+  as paid; after a press with no answer that committed, a window-focus re-read emptied the set, which
+  unmounted the dialog with its bar and changed the retry key's scope, so the retry that returns the
+  consolidated receipt could not be made. The set is now held while a press of it is on the wire or in
+  doubt (`selectionHeld` in `lib/bulk-settle.ts`).
+- **The routes were not pinned.** `FeesController.bulkSettle` and `FeesController.settlement` now have
+  their role lists pinned in `route-inventory.spec.ts`.
+
+Checked and found sound: all-or-nothing (a refusal on any bill leaves the settlement, the ledger, the
+counters, the wallets and the audit trail as they were); one receipt per bill; the wallet entries per
+bill match the single path's routing, and the pivot row's change nets to what changed hands; reversal
+of one bill of a settlement through `PaymentLedgerService.reverse`, and a replay of a reversed
+settlement refused (`TRANSACTION_ALREADY_REVERSED`); the retry key bound to citizen, method and set;
+migration 0085 idempotent with `CURRENT_SCHEMA()` guards, applied on top of 0073–0083.
+
+### Cross-feature review: PR #112 merged into `feat/treasury-day-closing` (2026-10-10; not committed)
+
+PR #112 was merged on top of stage 5 (PR #106), the inspector payouts (PR #109) and the transfers and
+exchange (PR #111). The two items this section used to leave "for later merges" are closed, each pinned
+by a test in `payment-settlement.integration.spec.ts` that fails without its fix (mutation-checked).
+
+- **A bulk settlement on a closed day.** The stage 5 check sat in `PaymentLedgerService.record`, and a
+  settlement writes through `recordIn`. The merge puts the check in `recordIn`, which every way of
+  settling a bill runs, and `PaymentSettlementService` now asks it itself (`assertPaymentDayOpen`, the
+  moment being now) before the «BRC-» number, the settlement row or any receipt is written. Refused with
+  `CLOSED_DAY_MUTATION_BLOCKED`, the day named; nothing reaches the ledger or the wallets (§3.7).
+- **A settlement against an exchange deadlocked.** The settlement locked its wallets bill by bill; an
+  exchange between the same two safes locks them in id order without the RECEIPT counter. With the
+  older bill in the higher-id safe's currency, each held what the other waited for: `40P01` in every
+  round of the race. Now every wallet of the plan is locked in id order up front
+  (`TreasuryLedgerService.lockPaymentWallets`, after `ledger.config`), once the set's receipt numbers
+  are drawn as one block (`PaymentLedgerService.reserveReceiptNumbers`): a single counter payment takes
+  the RECEIPT counter before its wallet, and locking the wallets before the counter deadlocked against
+  one (also pinned).
+
+Checked, nothing else found: every other writer added by PR #106, #109 and #111 respects the closed-day
+lock and the lock order. Vouchers (an expense, a salary, a commission, a transfer fee, an ordered
+request), income vouchers, handovers, transfers and exchanges are refused on a closed day by
+`TreasuryLedgerService.post`, before any entry, and roll back whole (the document number and row
+included); counts and closes have their own rules and the 0082 triggers. Each takes the settings row,
+then its wallets in one id-ordered `lockAccounts` before the first insert that references them (a
+transfer with a fee, a handover and their cancellations lock both ends together), then its document
+number. Payments and reversals take the RECEIPT counter before their wallets; nothing takes a wallet
+and then the RECEIPT counter. Opening a wallet (`createAccount`) and stamping a transfer's review post
+no entry. (The count did not keep the order — its lines' foreign keys took the wallets in the sheet's
+order — which the final-stack review above found and fixed.)
 
 ### Review fixes (2026-10-09; branch `fix/pr104-review`, not committed)
 
@@ -1094,7 +1468,8 @@ once after the fix.
   (`replayed`).
 - A handover dialog closed and reopened keeps its key (held per wallet by the
   panel), and re-reads the figures after a doubtful failure.
-- The statement prints as the daily register (§7).
+- The statement prints as the daily register (§7); stage 5 has since replaced it with
+  «تقرير الصندوق اليومي» (§7.4).
 - The manager can cancel a mistaken handover from its row on the statement
   («إلغاء التسليم», reason required). The money goes back onto the collector's name;
   it is refused (`TREASURY_INSUFFICIENT_FUNDS`) once the safe no longer holds it.
@@ -1207,7 +1582,7 @@ Built and tested, exactly as §5 describes, with **no approval step**:
 **Not in stage 3**, as agreed: attachments (step 3b), budget lines as their own
 table, approval thresholds, a supplier register, and the inspector-payout link
 of §5.6 — `inspector_payouts` still records a payout with no wallet, and wiring
-it to a voucher is the next piece of this stage.
+it to a voucher is the next piece of this stage (built 2026-10-10: «Stage 3, finished», below).
 
 **Added to stage 3 on 2026-10-09: the salary payout (§5.8).** Migration
 `0081_expense_voucher_payee_staff` (`payeeStaffId`, its foreign key and index),
@@ -1352,10 +1727,226 @@ not citizen-fee income beside them; there is no printable «سند قبض» (nor
 QR code); the totals have no convert toggle. Not rendered in a browser (no check at 360/1440px, light/dark,
 Arabic/English) and not exercised over HTTP.
 
-### Stage 5
+### Stage 5 — the daily count, closing the day and the daily report (built 2026-10-10; branch `feat/treasury-daily-count-and-closure`, PR #106; merged with the PR #104 review on `feat/treasury-day-closing`, not committed)
 
-Not started.
+Built as §7 describes, with the two decisions of 2026-10-10 (only an ended day
+closes; activity means a counted wallet moved):
 
+- Migration `0082_treasury_day_closing`: `treasury_day_closures`,
+  `treasury_counts` and the `TreasuryDayStatus` enum (§10), and three triggers.
+  `treasury_entries_respect_closed_days` refuses an entry inserted, updated or
+  deleted on or before a CLOSED day; `treasury_counts_respect_closed_days`
+  refuses any change to a closed day's count except closing's own link to its
+  closure; `treasury_day_closures_no_delete` makes a closure undeletable. The
+  day is `occurredAt AT TIME ZONE 'Asia/Beirut'` — the database's copy of
+  `MUNICIPAL_TIME_ZONE`. Each function pins its `search_path`.
+- Contracts (`treasury-closing.schema.ts`): `recordDailyCountSchema` (a day
+  begun, any subset of wallets, amounts ≥ 0 with two decimals, and a reason
+  wherever counted ≠ the books' figure the screen showed), `closeDaySchema`,
+  `reopenDaySchema` (`REOPEN_REASON_MIN` = 10), `treasuryDayQuerySchema`,
+  `dailyCashReportQuerySchema`, the response shapes, `sameMoney` and
+  `varianceOf` (both apps compute a difference the same way). Thirteen error
+  codes: the ten of the brief plus `COUNT_EXPECTED_CHANGED`, `DAY_NOT_OVER` and
+  `DAY_BEFORE_GO_LIVE`.
+- Backend: `day-closing.plan.ts` (the rules, 37 unit tests), `DayClosureService`
+  (book state, a day's facts, close with the sweep of quiet days, reopen,
+  history), `DailyCountService` (the sheet, recording), `DailyCashReportService`,
+  `TreasuryClosingController`. `TreasuryLedgerService.post` refuses any entry on
+  a closed day (`CLOSED_DAY_MUTATION_BLOCKED`), so every voucher, transfer,
+  reversal and payment is covered; `PaymentLedgerService.recordIn` (behind `record`
+  and every bill of a settlement) asks the same before it draws a receipt number, for
+  a payment that would reach a wallet, and `PaymentSettlementService` asks it before
+  the «BRC-» number. A
+  trigger refusal that slips past the check is mapped back to the same code
+  (`closedTreasuryDay` in `check-violation.ts`).
+- **The books' figure is the server's, and a count goes stale.** The screen
+  sends the figure it compared against; the server refuses a count whose figure
+  has moved, and a close whose counts no longer match the books
+  (`COUNT_EXPECTED_CHANGED`). A close takes `SHARE` on `treasury_entries`, so an
+  entry already being written into the day is waited for and judged, and no new
+  one lands while the close decides.
+- Which wallets a day counts: active, not custody, and opened by the day's end
+  **or holding an entry before it** — a wallet's `createdAt` is not when it first
+  held money (a custody wallet is created by a round that may be entered days
+  late).
+- Every count, close, sweep and reopen is a Tier 1 audit row filed as
+  `entityType 'TreasuryDay'`, `entityId` the date, so the report reads the
+  day's history — the reopening's reason included — from one place.
+- Frontend: «جرد وإقفال اليومية» (`finance/daily`, the fifth «الخزينة» row) —
+  the day picker, the sheet with the live difference (فائض / عجز) and a reason box
+  only where there is one, the close panel that explains a refusal in the
+  server's own words and confirms with the figures, the manager's reopen with a
+  reason, and the latest closures. «تقرير الصندوق اليومي»
+  (`finance/daily/report?date=`): the official letterhead from الإعدادات, wallets
+  (opening, in, out, closing, counted, difference, notes) with totals per
+  currency, movement by source, collectors' custody apart, the day's history,
+  two signature blocks, «مسودة» on any day not closed, and print rules for A4
+  landscape.
+- Tests: 37 unit (rules), 33 integration on a throwaway Postgres 17 (schema,
+  counting, closing, sweeping, the lock on the ledger, the payment path and the
+  database, reopening, the report, and two races), 2 for the trigger mapper, 10
+  frontend (`lib/daily-count.ts`). Rendered against the local seeded database at
+  360 and 1440px, light and dark, Arabic and English; the closed and closable
+  states with the API's answer rewritten in the test browser, so the local data
+  was not changed.
+
+**Review fixes (2026-10-10, on `feat/treasury-day-closing`, not committed).** The PR #106
+review's confirmed findings, each with a test that fails without its fix (proved by breaking
+the fix in place and restoring it byte for byte):
+
+- The close takes the settings row before `SHARE` on the entries, and refuses a book that is
+  not live first (§7.3, «One lock order»). Integration test: activation holds the row and
+  posts while a close waits; both finish, the close with `TREASURY_NOT_ACTIVE`.
+- The go-live day's opening balances are its opening, not its receipts (§7.4). Unit test on
+  `summariseDay`, integration test on D0's report.
+- The report reads one snapshot (§7.4). Integration test: an entry committed between the
+  report's first read and its openings is on none of it.
+- The close carries the counts the dialog listed (§7.3, `COUNT_CHANGED_SINCE_LOADED`, the
+  fourteenth stage 5 code; `countsChangedSinceShown` in the plan). Unit and integration tests.
+- Migration `0087_treasury_day_closure_written_once` (§7.3). Integration tests: idempotent, the
+  day never moves, who closed it is never rewritten, a reopening's reason is not rewritten, the
+  reopen and re-close transitions pass, and a count links only to its own day's closure, once.
+- `route-inventory.spec.ts` pins the six stage 5 handlers (§9).
+- The count screen: a failed background re-read keeps the sheet and the typed boxes and shows
+  `RefreshFailedAlert`, on the report too (`lib/read-view.ts`); a box corrected while
+  «سجّل الجرد» is in flight is kept, unsaved, and holds the close (`draftsAfterSave`); after
+  `COUNT_EXPECTED_CHANGED` the moved wallets' figure and reason are emptied and marked, so
+  the old reason is never filed against the new difference (`draftsAfterExpectedChanged`); a
+  close whose answer is lost re-reads its own day and says it closed in a toast that outlives
+  the dialog (`closeLanded`); the refusal under the close button names the day as
+  `dd/mm/yyyy` and lists swept days with the locale's comma. Unit tests in
+  `lib/daily-count.test.ts` and `lib/read-view.test.ts`; each flow driven again in the
+  headless harness against a mocked API.
+- Tests now: 40 unit (rules), 41 integration on Postgres 17, 20 frontend for stage 5
+  (`lib/daily-count.ts`, `lib/read-view.ts`).
+
+**Not in stage 5**: the §7.2 adjustment entry (a difference stays recorded and
+unposted), note-by-note counting, statement matching (§7.5), and a date picker
+on the voucher forms that stops before the closed days (a back-dated voucher into
+one is refused by the server, with the day named).
+
+### Stage 3, finished — inspector payouts and the printed vouchers (built 2026-10-10; branch `feat/treasury-inspector-payouts-and-vouchers`, PR #109; merged into `feat/treasury-day-closing` as `6b5b038`; the review fixes and D9 not committed)
+
+The §5.6 link and the printing §4.5 and §5.8 left out, from the owner's brief of 2026-10-10:
+
+- Migration `0086_inspector_payout_voucher`: `inspector_payouts.expenseVoucherId`, nullable,
+  unique, a RESTRICT foreign key to `expense_vouchers`. `inspector_payouts` is in production
+  (0025); the column is additive and every existing payout keeps NULL. PR #109 wrote it as
+  `0083_inspector_payout_voucher`; `develop` already held `0083_treasury_controls`, so it became
+  `0086` in the merge. `0084` and `0085` are left to PR #111 and PR #112, and `0087` is the
+  PR #106 review fix (`docs/database.md` › Numbering).
+- **«صرف عمولة».** `POST staff/inspectors/:id/payouts`, `TREASURY_WORK_ROLES` (D9, §5.6). One
+  transaction under an advisory lock on the inspector. Once live,
+  `ExpensesService.recordCommission` writes a «PV-» voucher under `FIELD_COMMISSIONS` with the
+  inspector as `payeeStaffId` (the manager's ordered, an accountant's on the urgent path), the
+  ledger entry leaves the wallet under its lock, the amount owed is checked
+  (`payoutAllowance`), the payout row points at the voucher, and two Tier 1 audit rows are
+  written (`EXPENSE_RECORDED`, `INSPECTOR_PAYOUT_RECORDED`). The wallet must hold dollars.
+  Before go-live the old path, the manager's, with no wallet; since `0089` it keeps the press's
+  retry key on the payout row, as the live path does (§5.6). Codes:
+  `INSPECTOR_PAYOUT_WALLET_REQUIRED`, `INSPECTOR_PAYOUT_WALLET_NOT_USD`,
+  `INSPECTOR_PAYOUT_DATE_NOT_ALLOWED`, `INSPECTOR_PAYOUT_REQUEST_REUSED` (a retry key that
+  already paid someone else or wrote another voucher), and from the review and D9
+  `EXPENSE_CATEGORY_RESERVED`, `INSPECTOR_PAYOUT_BEFORE_LIVE_MANAGER_ONLY`,
+  `INSPECTOR_PAYOUT_DATE_IN_FUTURE` and `COMMISSION_SELF_PAYOUT`.
+- The dialog (on the staff page's inspector rows, the roster, the profile and the payout
+  history): the units credited, what was earned, what is owed, the dollar wallets with the main
+  dollar safe first, the balance and what would be left as the amount is typed, the button off
+  when the wallet is short or nothing is owed, and a toast whose action prints the order. The
+  payout history gained the order's number, its print button, and the cancelled ones struck
+  through and left out of the running balance.
+- **«أمر صرف / حوالة دفع بلدية»** (`finance/expenses/:id/print`) and **«سند قبض إيرادات
+  بلدية»** (`finance/income/:id/print`), A4 portrait, from each register's rows and each
+  recording form's toast; `?print=1` opens the print dialog once. The letterhead and crest come
+  from الإعدادات, as on the daily report, which now shares the module
+  (`official-document.tsx`). The amount is written out by `tafqeetAmount`, which adds dollars and
+  cents to the existing ليرة `tafqeet` (10 new tests). The category's budget chapter and article
+  print, or «لم يُحدَّدا بعد». Signatures: the accountant, the head of municipality and the
+  beneficiary on an order; the cashier and the accountant on a receipt. The QR code is the
+  voucher number only (assumption 13.1.3). A cancelled voucher prints marked cancelled.
+- Tests: 11 integration on a throwaway Postgres 17 (both paths, every refusal writing nothing,
+  the retry, two payouts racing for one balance — it fails with the lock removed — the cancelled
+  voucher on the profile and the roster, the short wallet). Rendered with a mocked API at 360 and
+  1440px, light and dark, Arabic and English, and printed to PDF from a dark theme.
+
+**The PR #109 review (2026-10-10).** Twelve confirmed findings, each fixed with a test that fails
+without the fix (proved by breaking it in place, running the test and restoring it byte for
+byte):
+
+- *P0* — a commission paid through the expense form never counted as paid, so it was paid again:
+  `FIELD_COMMISSIONS` is reserved to «صرف عمولة» (§5.6, `EXPENSE_CATEGORY_RESERVED`), and the
+  form does not offer it (`formCategories`).
+- *P0/P1* — the dialog minted a new retry key after every failure, so a lost answer and a second
+  press paid twice: it holds `commission:<staffId>` outside the component (`lib/request-id.ts`),
+  keeps it through a lost answer (`payoutKeyAfterFailure`), marks it in doubt and re-reads the
+  figures, stops refusing on figures the lost payout may already carry (`payoutFieldErrors`),
+  locks the form after a 2xx, and announces a `replayed` answer as already paid.
+- *P1* — a failed background re-read unmounted the form: `payoutDialogView` gives the dialog to
+  the error only while nothing has loaded, and shows `RefreshFailedAlert` otherwise.
+- *P2* — the replay was not bound to its act and answered a voided voucher: `replayPayout`
+  compares inspector, amount, wallet, recorder and statement (`TREASURY_REQUEST_KEY_REUSED`) and
+  refuses a voided one (`EXPENSE_ALREADY_VOID`).
+- *P2* — the accountant's only reachable path was the uncontrolled pre-go-live payout: it is the
+  manager's (`INSPECTOR_PAYOUT_BEFORE_LIVE_MANAGER_ONLY`), in dollars only, never dated after today
+  (`INSPECTOR_PAYOUT_DATE_IN_FUTURE`), with the amount in a Tier 1 audit row in the transaction.
+- *P2* — the printed «أمر صرف» of an urgent voucher read as ordered: it now prints «بانتظار أمر
+  الصرف» with the urgent reason, or who ordered it and when (`printedOrder`).
+- *P3* — the ceiling exemption hung on `payeeStaffId`: each path says it
+  (`VoucherPath.exemptFromUrgentCeiling`), and the comments that said only a salary sets a staff
+  payee are corrected.
+- *P3* — `StaffController.recordPayout` was pinned by no route-inventory test: it is pinned by name.
+- *P3* — the refusal told the accountant the owed balance: the figure is named only to a caller
+  the profile admits, and the balance is judged last (§5.6).
+- *P3* — the print pages swapped the document for an error on a failed re-read: both use
+  `readView` and `RefreshFailedAlert` (`lib/print-pages.test.ts`).
+- *P3* — `tafqeet`: ليرة takes feminine numerals and «ليرات» after 3–10 («ثلاث عشرة ليرة»,
+  «مائة وثلاث ليرات»); a dual scale word before the noun is in construct («ألفا دولار»,
+  «مليونا دولار»); a ليرة amount with a fraction writes no words rather than dropping it.
+- Then decision D9 (§5.6, §13.1c): the accountant's commission on the urgent path.
+
+Tests now: 20 integration in `inspector-payout.integration.spec.ts`, the ceiling test in
+`treasury-controls.integration.spec.ts`, the unit tests in `payout-policy.spec.ts`, the route pin, and
+the frontend tests in `lib/commission-payout.test.ts`, `lib/expense-form.test.ts`,
+`lib/expense-order.test.ts`, `lib/print-pages.test.ts` and `lib/tafqeet.test.ts` for the fixes.
+
+**Not built:** the «نسخة» stamp on a reprint (§4.5); a warning in the expense register's
+cancel dialog that the voucher paid a commission; the wording and layout of both papers are
+still to be confirmed by the municipality's accountant (§13.2), and the signatories' titles
+(«رئيس المحاسبة» among them) are the brief's, not the law's.
+
+
+### Stage 4, finished — transfers, fees, exchange and review (built 2026-10-10; branch `feat/treasury-transfers-and-exchange`, not committed)
+
+The rest of §6, from the owner's brief of 2026-10-10, with the decisions of §6.4:
+
+- Migration `0084_treasury_exchange_and_review`: the fee link, the changer, the back-dating reason
+  and the review stamp on `treasury_transfers`; the tolerance and the threshold on
+  `system_settings`.
+- Backend: `TransfersService.create` (both kinds), `review`, `list` with filters and the count
+  awaiting review, `get`; `void` now cancels the fee voucher too. `TreasuryLedgerService.lockAccounts`
+  locks every wallet of an act in ascending id order before it posts. `ExpensesService.recordTransferFee`
+  and `voidTransferFee`. `TreasuryService.createAccount`. The settings guard in `FeesService`.
+  Fourteen error codes.
+- Frontend: «المناقلات والمصارفة» (`finance/transfers`) — the register with kind, review and status
+  filters, the amber «بانتظار المراجعة», the review dialog showing the rates and the reason, the
+  cancel dialog naming the fee voucher; «مناقلة جديدة» (`finance/transfers/new`) with the
+  segmented kind, the live rate against the official one, the tolerance warning and its reason box,
+  and the sticky summary of both wallets before and after; «سند المناقلة» printed A4, each side in
+  figures and Arabic words, the rates, the fee voucher, three signatures. «إضافة حساب» on the
+  treasury page; the two settings in الإعدادات → المالية. «الجباة والتحصيل» moved to the «الرسوم
+  والجباية» group to keep «الخزينة» at five rows.
+- Tests: 18 unit (dates, kinds, the rate, the judgement, the settings guard) and 28 integration on a
+  throwaway Postgres 17 — fees, retries, every refusal writing nothing, each exchange flag, the
+  review, cancelling with the fee, the spent destination, back-dating into a closed day, and a race
+  that fails without the up-front lock. Rendered with a mocked API at 360 and 1440px, light and
+  dark, Arabic and English, and printed to PDF.
+
+Merged into `feat/treasury-day-closing` on 2026-10-10 (`c502b5f`, 20 conflicting files; the
+treasury controls of HEAD kept wherever the two met), with the review fixes of §6.4 and migration
+`0088_treasury_transfer_review_stamp` (not committed): `transfers-review.integration.spec.ts` (12,
+each failing without its fix), `fees-settings-citizen.spec.ts`, the four new handlers pinned in
+`route-inventory.spec.ts`, and `lib/transfer-screens.test.ts` for the form's key policy and the
+pages' `readView`.
 ---
 
 ## 15. The schema found in the local database (2026-10-06)
