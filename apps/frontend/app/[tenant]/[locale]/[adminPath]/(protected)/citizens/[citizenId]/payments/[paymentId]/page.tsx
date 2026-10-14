@@ -727,7 +727,11 @@ export default function SettleCashPage({
         </div>
       )}
 
-      {/* Every receipt on the bill, paid or not; «عكس الوصل» for the manager (M20). */}
+      {/*
+        Every receipt on the bill, paid or not; «عكس الوصل» for the manager,
+        unless a transfer the citizen reported waits for a clerk (the status
+        decides). A paid bill's row on the citizen file links here for these.
+      */}
       {payment ? (
         <BillReceipts
           tenant={tenant}
@@ -737,6 +741,7 @@ export default function SettleCashPage({
           locale={locale}
           citizenId={citizenId}
           paymentId={payment.id}
+          paymentStatus={payment.paymentStatus}
         />
       ) : null}
     </div>

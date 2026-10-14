@@ -346,6 +346,24 @@ describeIfDb('StaffService.recordInspectorPayout', () => {
       expect(refused[0].reason).toMatchObject({ code: 'INSPECTOR_PAYOUT_REQUEST_REUSED' });
       expect(await counts()).toEqual({ ...before, payouts: before.payouts + 1 });
     });
+
+    /*
+      Review of PR #113. Every payout recorded before go-live on one day is
+      stamped with that day's noon (`payoutRequest`), so two of them tie on
+      `paidAt`, and the profile left their order — and «آخر دفعة» — to the plan:
+      a sort of a few rows keeps the order they were written in, oldest first.
+    */
+    it('lists two payouts dated the same day newest written first, though their stamps tie', async () => {
+      const to = await earner('رامي');
+      const noon = new Date('2026-09-14T09:00:00.000Z').toISOString();
+      const first = await pay({ amount: 0.25, paidAt: noon }, MANAGER, to);
+      const second = await pay({ amount: 0.25, paidAt: noon }, MANAGER, to);
+      expect(second.paidAt).toBe(first.paidAt);
+      expect(Date.parse(second.createdAt)).toBeGreaterThan(Date.parse(first.createdAt));
+
+      const { payouts } = await scoped(() => staff.getInspectorProfile('payouts', to));
+      expect(payouts.map((payout) => payout.id)).toEqual([second.id, first.id]);
+    });
   });
 
   // ───────────────────────────  once live  ───────────────────────────

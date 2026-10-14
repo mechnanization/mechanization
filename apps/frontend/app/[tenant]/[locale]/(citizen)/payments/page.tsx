@@ -27,7 +27,7 @@ import {
 import type { CitizenPaymentItem, MunicipalitySettings } from '@/lib/api-client';
 import { clearSession, loadSession } from '@/lib/session';
 import { formatLbp } from '@/lib/currency';
-import { billFigure, citizenPaymentTotals, isPartlyPaid, isPayable } from '@/lib/citizen-payments';
+import { billFigure, citizenPaymentTotals, isPartlyPaid, isPayable, partlyPaidFigures } from '@/lib/citizen-payments';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -271,10 +271,7 @@ export default function CitizenPayments({
                       </div>
                       {isPartlyPaid(item) ? (
                         <p className="text-sm text-muted-foreground">
-                          {tCitizen('partlyPaid', {
-                            paid: formatLbp(item.paidAmount, locale),
-                            total: formatLbp(item.amount, locale),
-                          })}
+                          {tCitizen('partlyPaid', partlyPaidFigures(item, locale))}
                         </p>
                       ) : null}
                     </div>

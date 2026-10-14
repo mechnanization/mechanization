@@ -310,19 +310,46 @@ from) are settled in the integration tests (see 12.2).
   carried the set's notes and change (§3.7): it is refunded its own credit, in its currency, from
   the safe (`planCreditRefund`, the pre-go-live refund's rule), since its notes paid every bill of
   the set and its change, recycled, paid the older ones (review of 2026-10-11).
-- **Where it is done (2026-10-11, M20).** «وصولات الفاتورة» on the staff bill page
-  (`citizens/[citizenId]/payments/[paymentId]`) lists every movement on the bill
-  (`GET fees/payments/:id/transactions`). The manager reverses a receipt there with
-  «عكس الوصل»:
+- **Where it is done: «عكس الوصل» (PR #113; reviewed 2026-10-13).** «وصولات الفاتورة» on the
+  staff bill page (`citizens/[citizenId]/payments/[paymentId]`) lists every movement on the bill
+  (`GET fees/payments/:id/transactions`). The bill's row on the citizen file leads there:
+  «تسجيل دفعة نقدية» while it is owed, «وصولات الفاتورة» once it is paid in full
+  (`billPageLink`). Before that review a paid bill's row led nowhere, so a receipt that wrongly
+  paid a bill in full could be reversed only by typing the address. The manager reverses a
+  receipt there with «عكس الوصل»:
   - a written reason is required, checked against `reverseTransactionSchema` (3 to 500
     characters) before the dialog lets him confirm;
   - the route is `POST fees/transactions/:transactionId/reverse`, on
     `PAYMENT_REVERSE_ROLES` (the manager alone), both ids through `ParseUUIDPipe`;
-  - it writes the Tier 1 `PAYMENT_REVERSED` row.
+  - it writes the Tier 1 `PAYMENT_REVERSED` row;
+  - the dialog says where the money comes from, by the rules above: before go-live no wallet
+    moves; once live, the wallet the payment went into (a collector's custody only while it
+    still holds the money, otherwise the safe), or, for a payment taken before go-live, the safe
+    or the Whish account by its method — and the reversal is refused
+    (`TREASURY_INSUFFICIENT_FUNDS`) when that wallet cannot cover the refund. It used to say the
+    treasury paid out only a payment it had booked, which a pre-go-live receipt reversed after
+    go-live is not.
 
-  A reversal is not offered on the opposing row itself, nor on a receipt already reversed.
-  The server's refusals (`TRANSACTION_ALREADY_REVERSED`, `TREASURY_INSUFFICIENT_FUNDS`) are
-  shown in the dialog.
+  A reversal is not offered on the opposing row itself, nor on a receipt already reversed, nor
+  while the citizen's reported transfer on the bill waits for a clerk (`PENDING_REVIEW`,
+  `claimUnderReview`). Reversing then sets the bill back to unpaid and overwrites the claim's
+  method and Whish reference (`PaymentLedgerService.append`), so the claim leaves the review queue
+  and a transfer that did arrive is left with nothing on record. The manager is told why, and that
+  the transfer is confirmed or rejected on the fees page first. That is the screen's rule only:
+  this branch's server still takes such a reversal. PR #120 refuses it under the bill's lock
+  (`PAYMENT_CLAIM_UNDER_REVIEW`), by PR #120's D11 (the owner, 2026-10-12).
+
+  It carries no retry key, and needs none: the receipt's id is the act's key, since the server
+  reverses a receipt once — asked under the bill's lock, with the unique index on `reversalOfId`
+  behind it. So a press repeated after its answer was lost is refused with
+  `TRANSACTION_ALREADY_REVERSED`, and the dialog answers that as done: a warning that the receipt
+  was already reversed, and the dialog closed. A press the server did not confirm (no answer, a
+  timeout, a 5xx) is judged with the receipts read again, and only if that read answered after the
+  press (`receiptsReadAgain`), since TanStack keeps the list from before the press when it did not.
+  Shown reversed, the press went through: the dialog says so and closes. Not shown, it stays open
+  and says to press again. Not read, it says the receipts could not be read and to press again once
+  the connection is back (`reversalFailure` in `apps/frontend/lib/bill-receipts.ts`). Any other
+  refusal is shown beside the action.
 - **A collector's payment reversed after he handed the cash in (decided 2026-10-09).**
   - Opposing the custody entry would be refused, because his custody no longer holds
     the money; the safe does. The refund could then never be made.
@@ -739,6 +766,33 @@ a unique index.
   answered with the figure it recorded: no voucher, no money out. One key sent for two
   inspectors at once meets on the unique index and is refused (`INSPECTOR_PAYOUT_REQUEST_REUSED`),
   never answered with a server error.
+- **The payout history's balance after each payout** (PR #113; reviewed 2026-10-13). «المتبقي
+  بعدها» is what had been earned by then less what had been paid by then (`payoutHistory`,
+  `apps/frontend/lib/inspector-payouts.ts`), with «زيادة» when a payout went past what had been
+  earned; it used to be today's total earnings less the running paid sum, so an early payout showed
+  a debt that did not exist yet.
+  - A payout whose voucher was cancelled stays listed and is not counted as paid, as on the server.
+  - A payout paid from a voucher is judged at the voucher's moment. A figure-only payout from
+    before go-live is a day stamped at local noon, not a moment: it counts what was filed on or
+    before its municipal day, and no later than the moment its row was written (`createdAt`).
+    Compared with the noon stamp, a same-day payout of everything owed read as overpaid.
+  - The paid sum runs in the order the money moved, never by `paidAt` alone (`byWhenPaid`).
+    Every figure-only payout of a day carries the same noon stamp, and `getInspectorProfile`
+    ordered by `paidAt` only, so the server returned such a tie in whatever order Postgres's plan
+    gave, often the newest written first. Summed in that order, two payouts of exactly what was
+    owed read as «زيادة» on one row and a debt on the other. The order is the municipal day each
+    payout is dated, then a moment it truly has: a voucher's own, and for a figure the moment its
+    row was written; a tie on both goes to the row written first (`createdAt`). Go-live day orders
+    itself that way, since a figure can only be written before activation and a voucher only after.
+    A figure written up on a later day, whose hour is not known, comes after the payouts written on
+    its day. The server now breaks a `paidAt` tie by `createdAt` too, newest written first, so the
+    list it sends and its «آخر دفعة» no longer depend on the plan
+    (`inspector-payout.integration.spec.ts`). That alone would not fix the history: the noon stamp,
+    not the tie, puts a go-live-day figure after the voucher, so the page sorts for itself.
+  - The figures are worked out from today's records, and the page says so under the table: no
+    snapshot of the balance is kept with a payout, so a registration corrected or merged since
+    moves a past row. The summary shows `overpaidBalance` («مدفوع بالزيادة») in place of what is
+    still owed when it is above zero, as the inspector's dashboard does.
 - **The accountant does not see what is owed.** The inspector's profile lists the citizens he
   registered and stays `SUPER_ADMIN` or the inspector himself. So the payout's refusal names no
   figure to the accountant, and once live the balance is judged last, inside the transaction, so
@@ -1276,6 +1330,97 @@ shortage write-off; a scheduled job (none planned).
 ---
 
 ## 14. Implementation status
+
+### Review of PR #113 (2026-10-13 and 14; `fix/pr113-review` on `develop@5e8f5c3`, which supersedes PR #113)
+
+PR #113 (`fix/moderate-finance`) was written on the develop before the treasury review
+(`b034640`). Three of its five commits are taken here as cherry-picks that keep their author,
+with every conflict resolved so develop's controls win: «عكس الوصل» (`cea4f7f` → `d6835cb`), the
+portal's part-paid figures (`11d97d4` → `b552668`) and the payout history's balances (`644065a` →
+`99ae475`). The other two — refusing a counter payment and a reversal on a bill whose citizen
+reported a transfer, PR #120's D11 (the owner, 2026-10-12), and the recurring run's audit actor —
+are carried verbatim by PR #120 and are not taken, nor is any line that depends on them.
+
+The branch was reviewed twice. Each fix below names the test that pins it, and each such test
+was shown to fail with its fix undone: the code broken in place, the test run, the file restored
+byte for byte and checked by sha256 (16 proofs for the first round's fixes; 50 on the final tree,
+12 of them the first round's re-run, one of them against a throwaway Postgres 17). What no test
+pins is said.
+
+- **The payout history counted a cancelled voucher's payout as paid** (P0): a void and a new payout
+  read as «زيادة» while the server said nothing was overpaid. It leaves the paid sum now, and the row
+  stays listed and struck through (§5.6; `lib/inspector-payouts.test.ts`).
+- **A same-day payout from before go-live read as overpaid** (P0): such a payout is a day stamped at
+  local noon, and the afternoon's registrations fell after it. It is judged by its municipal day,
+  bounded by the moment its row was written; a voucher payout by its own moment. The page says under
+  the table that the figures are worked out from today's records (§5.6; the same test file, which
+  also reads the page).
+- **…and two such payouts on one day, or go-live day, still could** (P1, second round): the paid sum
+  ran in `paidAt` order, which every figure-only payout of a day shares, so a tie took the server's
+  order. It runs in the order the money moved now (§5.6, `byWhenPaid`), each case fed in both orders.
+  The profile sends such a tie newest written first too, so «آخر دفعة» no longer depends on the
+  plan (`StaffService.getInspectorProfile`; `inspector-payout.integration.spec.ts`).
+- **«عكس الوصل» could not be reached on a bill paid in full** (P1): the citizen file's row of a paid
+  bill linked nowhere. It links to the bill's page as «وصولات الفاتورة» now, and that page lists the
+  receipts whatever the bill's state (§3.4; `billPageLink` in `lib/bill-receipts.test.ts`, and the
+  two pages, parsed, in `lib/bill-receipts-screens.test.ts`).
+- **«عكس الوصل» was offered over a transfer claim under review** (P2, second round): reversing then
+  erases the claim. It is not offered, and the manager is told why (§3.4; `claimUnderReview` in
+  `lib/bill-receipts.test.ts`, the screens in `lib/bill-receipts-screens.test.ts`). The screen
+  only: the server's refusal is PR #120's.
+- **The reversal dialog's refund copy** (P2) said the treasury paid out only a payment it had
+  booked; a receipt from before go-live reversed after it is refunded from its method's wallet. Both
+  locales now say what `TreasuryLedgerService.reversePayment` does (§3.4; pinned against the old
+  claim in both message files).
+- **A lost answer, pressed again**: `TRANSACTION_ALREADY_REVERSED` is answered as already done, never
+  as a red failure. A reversal carries no retry key: the receipt's id is the act's key. In the second
+  round, each outcome got its own words: a press that went through was told of «an earlier press»,
+  and one whose re-read failed was told what «the receipts read again» did not show, though the
+  cache held the list from before the press. A re-read counts now only if it answered after the
+  press (§3.4; `reversalFailure`, `receiptsReadAgain` on TanStack's real cache).
+- **Tests and pins**: the reason box's tests read the limits off `reverseTransactionSchema` rather
+  than restating them (rule 12: with the limits changed and the code still right, the old tests
+  failed and the new pass); the UUID pin accepts `ParseUUIDPipe` given as a class, pinned on a probe
+  controller; the second pin of who may reverse is dropped, develop's in the treasury table stays.
+  In the second round the UUID pin covers every id a fee route takes from its path, and the eight
+  that took theirs raw carry PR #120's own line for each (its B9), word for word
+  (`route-inventory.spec.ts`).
+- **Copy and money**: «ل.ل» no longer appears in an English sentence on the pay dialog
+  (`partlyPaidFigures`), which asks for what is left; the payout history draws its figures through
+  `Money` and its summary through `StatStrip` (with `StatItem`'s `hint`, the same change PR #116
+  makes), its copy in `staff.commission.history`; «ملفّي» reads the per-bill rule from
+  `lib/citizen-payments.ts`, its one home. Each is pinned on the screen itself
+  (`lib/citizen-payments.test.ts`, `lib/inspector-payouts.test.ts`). `StatItem`'s `hint` is held
+  only by the typecheck.
+- **Speed** (second round): `municipalToday` keeps its formatter, built once. The payout history
+  dates every registration through it, and 5,000 calls took about 0.3 s on this machine before and
+  8 ms after (`lib/inspector-payouts.test.ts` counts the formatters built).
+- **One total owed across the portal** (P3, second round): «ملفّي» and «حسابي» showed the server's
+  `outstandingTotal` (`ReportingService.getCitizenProfile`), which counts a bill whose reported
+  transfer waits for a clerk; «الرسوم والمدفوعات» left it out, as it did on `develop`. So one citizen
+  was told two totals. All three sum `citizenPaymentTotals` now, the payments page's rule, and list
+  such a bill with its status; the pay dialog does not offer it either. The staff screens keep the
+  server's figure (`lib/citizen-payments.test.ts`, which reads both pages).
+
+Left for PR #120's review: the reversal asks about a claim under review before «already reversed»;
+`PAYMENT_CLAIM_UNDER_REVIEW`'s words send a collector to a screen he cannot open; no test pins that
+`POST fees/recurring/run` passes the staff member; whether «سأدفع في البلدية» counts as a claim under
+#120's D11; PRODUCT.md's sentence that the counter is refused on a bill under review; and #120's
+`cancelBill` sits between the reversal's doc comment and its handler, so that comment now documents
+the wrong route (BAN-15). When #120 merges on top:
+
+- `fees.controller.ts` conflicts on one hunk: keep its `cancelBill` block and this branch's
+  `@Roles(...PAYMENT_REVERSE_ROLES)`, and move the reversal's doc comment back to its handler.
+- Its B9's eight `ParseUUIDPipe` lines are this branch's, word for word, so they merge clean.
+- Keep both §3.4 lines and both §14 entries. Recount the backend Tests line (#120 holds 151 spec
+  files, 45 of them integration) and security.md's count of ids without `ParseUUIDPipe`.
+- `billPageLink` sends #120's CANCELLED bill to «تسجيل دفعة نقدية»: map it to the receipts, with a
+  test case.
+- `claimUnderReview` stays beside #120's server refusal. PRODUCT.md and the §3.4 bullet then say the
+  server refuses it too.
+
+Merging #120 first is the safer order: until it lands, only the screen keeps a reversal off a claim
+under review, and the API does not.
 
 ### Final-stack review (2026-10-11; `feat/treasury-day-closing@c88c971`, fixes not committed)
 

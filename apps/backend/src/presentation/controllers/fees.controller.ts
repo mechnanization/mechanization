@@ -153,7 +153,7 @@ export class FeesController {
   @Roles(...FEE_ADMIN_ROLES)
   @Patch('notices/:id/active')
   async setNoticeActive(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body(new ZodValidationPipe(noticeActiveSchema)) body: { isActive: boolean },
   ) {
     return this.fees.setNoticeActive(id, body.isActive);
@@ -303,7 +303,7 @@ export class FeesController {
   @Roles(...FEE_ISSUE_ROLES)
   @Patch('payments/:id/settle')
   async settle(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body(new ZodValidationPipe(settlePaymentSchema)) body: SettlePayment,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -371,7 +371,7 @@ export class FeesController {
   /** Marks a pending payment notification as seen. */
   @Roles(...PAYMENT_REVIEW_MARK_ROLES)
   @Patch('payments/:id/seen')
-  async markAsSeen(@Param('id') id: string) {
+  async markAsSeen(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.fees.markAsSeen(id);
   }
 
@@ -386,7 +386,7 @@ export class FeesController {
   @Roles(...FEE_ADMIN_ROLES)
   @Patch('payments/:id/review')
   async review(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body(new ZodValidationPipe(reviewPaymentSchema))
     body: { confirmed: boolean; note?: string },
     @CurrentUser() user: SessionClaims,
@@ -432,7 +432,7 @@ export class FeesController {
   @Roles(...FEE_ADMIN_ROLES)
   @Post('payments/:id/basis-review')
   async reviewBasis(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body(new ZodValidationPipe(billBasisReviewSchema)) body: BillBasisReview,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -475,7 +475,7 @@ export class FeesController {
    */
   @Roles(...FEE_READ_ROLES)
   @Get('payments/:id')
-  async getPayment(@Param('id') id: string) {
+  async getPayment(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.fees.getPaymentById(id);
   }
 
@@ -490,7 +490,7 @@ export class FeesController {
   @Post('payments/mine/:id/whish/checkout')
   async whishCheckout(
     @Param('tenantSlug') tenantSlug: string,
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @CurrentUser() user: SessionClaims,
   ) {
     if (user.kind !== 'CITIZEN') {
@@ -538,7 +538,7 @@ export class FeesController {
   /** The citizen declaring they have paid — moves to PENDING_REVIEW only. */
   @Post('payments/mine/:id/declare')
   async declare(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body(new ZodValidationPipe(declarePaymentSchema)) body: DeclarePayment,
     @CurrentUser() user: SessionClaims,
   ) {

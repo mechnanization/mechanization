@@ -66,6 +66,16 @@ export function StatStrip({ children, className }: { children: React.ReactNode; 
  * `icon` is decorative and sits inside the `<dd>` above the number: a `<dl>`'s
  * `<div>` may hold only `<dt>` and `<dd>`, so it cannot be a sibling of them.
  *
+ * ## `hint`
+ *
+ * A short line under the label that qualifies the figure: «منها متأخرات» under a
+ * balance, «آخر دفعة: …» under a total paid. Added 2026-10-11 so the six local
+ * stat tiles that carried one (PRIM-20, §17.1) could move here without losing it
+ * (UX-4). It is a second `<dd>`, after the number in the reading order, and drawn
+ * last: `order-first` in this reversed column puts it at the bottom. The hint is
+ * muted text; a tone stays on the number (`className`), so the cell has one
+ * signal colour.
+ *
  * ## A figure is never cut
  *
  * The value wraps rather than truncating (LAY-6). A truncated «1,250,000,00…»
@@ -82,11 +92,14 @@ export function StatItem({
   className,
   icon: Icon,
   href,
+  hint,
 }: {
   value: React.ReactNode;
   /** «م²», «%» — smaller, beside the number, so the number keeps its size. */
   unit?: string;
   label: string;
+  /** A short muted line under the label that qualifies the figure. */
+  hint?: React.ReactNode;
   /** Styles the number — a text colour for a tone. */
   className?: string;
   /** Drawn above the number in a tinted circle. Decorative: the label names the cell. */
@@ -134,6 +147,11 @@ export function StatItem({
           {unit ? <span className="text-xs font-medium text-muted-foreground">{unit}</span> : null}
         </span>
       </dd>
+      {hint ? (
+        <dd className="order-first mt-0.5 max-w-full break-words text-xs leading-tight text-muted-foreground">
+          {hint}
+        </dd>
+      ) : null}
     </div>
   );
 }

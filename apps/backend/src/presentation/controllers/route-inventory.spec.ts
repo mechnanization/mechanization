@@ -1,8 +1,9 @@
 import 'reflect-metadata';
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { ParseUUIDPipe, RequestMethod } from '@nestjs/common';
+import { Param, ParseUUIDPipe, RequestMethod } from '@nestjs/common';
 import { METHOD_METADATA, PATH_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
+import { RouteParamtypes } from '@nestjs/common/enums/route-paramtypes.enum';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { ROLES_KEY } from '../decorators/roles.decorator';
 import { FeesController } from './fees.controller';
@@ -161,30 +162,84 @@ describe('the «مشاهد فقط» (VIEWER) role — the municipality leader’
 });
 
 /*
-  «عكس الوصل»: the receipts of one bill, and reversing one of them. The bill
-  page offers the action by `PAYMENT_REVERSE_ROLES`, so the route's list is
-  pinned here; and both ids reach the ledger only once they parse as UUIDs — a
-  malformed one used to become a raw database error, a 500 and a Sentry event.
-*/
-describe('the receipts of a bill, and reversing one', () => {
-  const fees = routes().filter((route) => route.name.startsWith('FeesController.'));
-  const pipesOn = (method: string, param: string): unknown[] => {
-    const args = (Reflect.getMetadata(ROUTE_ARGS_METADATA, FeesController, method) ?? {}) as Record<
-      string,
-      { data?: unknown; pipes?: unknown[] }
-    >;
-    return Object.values(args).find((arg) => arg.data === param)?.pipes ?? [];
-  };
+  The ids the fee routes take from their path. Each reaches the ledger only
+  once it parses as a UUID — a malformed one becomes a raw database error, a
+  500 and a Sentry event. Every one is checked here, found from the
+  controller's own metadata rather than from a list, so a fee route added
+  tomorrow is covered the day it is written. «عكس الوصل»'s two are also checked
+  by name: the receipts of one bill, and reversing one of them. Who may reverse
+  is pinned with the other fee routes that move treasury money, below
+  (`FeesController.reverseTransaction`).
 
-  it('lets the manager alone reverse a receipt', () => {
-    expect(fees.find((route) => route.name === 'FeesController.reverseTransaction')?.roles).toEqual(['SUPER_ADMIN']);
+  Eight of them took their id raw on `develop`. They carry PR #120's own line
+  for each (its B9), word for word, so the two branches agree on every one
+  (docs/finance.md §14, review of PR #113).
+
+  Nest takes a pipe as an instance (`new ParseUUIDPipe()`, the house form) or
+  as the class itself (`ParseUUIDPipe`, which it instantiates); both validate,
+  so both pass here.
+*/
+describe('the ids the fee routes take from their path', () => {
+  type RouteArg = { data?: unknown; pipes?: unknown[] };
+  const argsOf = (controller: object, method: string): Array<[string, RouteArg]> =>
+    Object.entries((Reflect.getMetadata(ROUTE_ARGS_METADATA, controller, method) ?? {}) as Record<string, RouteArg>);
+  const pipesOn = (controller: object, method: string, param: string): unknown[] =>
+    argsOf(controller, method).find(([, arg]) => arg.data === param)?.[1].pipes ?? [];
+  const checksUuid = (pipes: unknown[]): boolean =>
+    pipes.some((pipe) => pipe === ParseUUIDPipe || pipe instanceof ParseUUIDPipe);
+
+  /** Every path parameter of a FeesController route that names an id (`id`, or a name ending in `Id`). */
+  const feeIds = Object.getOwnPropertyNames(FeesController.prototype)
+    .filter((method) => {
+      const handler: unknown = Object.getOwnPropertyDescriptor(FeesController.prototype, method)?.value;
+      return typeof handler === 'function' && Reflect.getMetadata(METHOD_METADATA, handler) !== undefined;
+    })
+    .flatMap((method) =>
+      argsOf(FeesController, method)
+        .filter(([key, arg]) => key.startsWith(`${RouteParamtypes.PARAM}:`) && /^(id|\w+Id)$/.test(String(arg.data)))
+        .map(([, arg]) => ({ name: `FeesController.${method}(${String(arg.data)})`, checked: checksUuid(arg.pipes ?? []) })),
+    );
+
+  it('finds them, so the checks below are about something', () => {
+    expect(feeIds.length).toBeGreaterThanOrEqual(11);
+    // A staff route, a citizen's own route whose id follows `tenantSlug`, and an id not named `id`.
+    expect(feeIds.map((id) => id.name)).toEqual(
+      expect.arrayContaining([
+        'FeesController.getPayment(id)',
+        'FeesController.whishCheckout(id)',
+        'FeesController.reverseTransaction(transactionId)',
+      ]),
+    );
   });
 
   it.each([
     ['transactions', 'id'],
     ['reverseTransaction', 'transactionId'],
   ])('checks the %s id (%s) is a UUID', (method, param) => {
-    expect(pipesOn(method, param).some((pipe) => pipe instanceof ParseUUIDPipe)).toBe(true);
+    expect(checksUuid(pipesOn(FeesController, method, param))).toBe(true);
+  });
+
+  it('checks every id a fee route takes from its path is a UUID', () => {
+    expect(feeIds.filter((id) => !id.checked).map((id) => id.name)).toEqual([]);
+  });
+
+  it('counts the pipe in either form Nest takes, and an id without it as unchecked', () => {
+    class Probe {
+      instance(@Param('id', new ParseUUIDPipe()) id: string) {
+        return id;
+      }
+      asClass(@Param('id', ParseUUIDPipe) id: string) {
+        return id;
+      }
+      unchecked(@Param('id') id: string) {
+        return id;
+      }
+    }
+    expect(['instance', 'asClass', 'unchecked'].map((method) => checksUuid(pipesOn(Probe, method, 'id')))).toEqual([
+      true,
+      true,
+      false,
+    ]);
   });
 });
 
@@ -254,8 +309,9 @@ describe('the treasury routes (docs/finance.md §9)', () => {
       or collector payment credits a safe or a custody wallet (`settleInPerson`), confirming a
       Whish transfer credits the Whish wallet (`review`), and reversing a receipt takes the money
       back out (`reverseTransaction`). Their lists are the fee sets the screens read
-      (`FEE_ISSUE_ROLES`, `FEE_ADMIN_ROLES`), pinned here so that widening one — an
-      administrative officer at the counter — fails CI rather than passing unseen.
+      (`FEE_ISSUE_ROLES`, `FEE_ADMIN_ROLES`, `PAYMENT_REVERSE_ROLES`), pinned here so that
+      widening one — an administrative officer at the counter — fails CI rather than passing
+      unseen.
     */
     'FeesController.settle': ['ACCOUNTANT', 'COLLECTOR', 'SUPER_ADMIN'],
     'FeesController.review': WORK,
