@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية الذكية)
 
-Last verified against the code: `feat/treasury-day-closing@b5993af` (`develop` with the reviewed treasury, #107/#108; PR #106, stage 5: the daily count, the day closing and the closed-day lock; PR #109, inspector payouts and decision D9; PR #111, transfers, exchange and wallets with `0088`; each merged with its review fixes) merged with PR #112 `feat/fees-bulk-settlement-review@a3ce944` (settling several bills at once), then the cross-feature fixes: a bulk settlement refused on a closed day before it writes anything, and its wallets locked in id order (uncommitted), 2026-10-10.
+Last verified against the code: `fix/pr114-review` (PR #114 merged with `develop@5e8f5c3`, with its review fixes): an archived file takes no new fee on any path, 2026-10-14.
 
 A multi-tenant municipal platform for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastral map, municipal fee billing (رسوم القيمة التأجيرية
@@ -225,7 +225,8 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
 - **A citizen file is archived, never deleted** (decision of 2026-10-05). «أرشفة الملف»
   asks for the reason and who asked for it, both written to the activity log; an archived
   file is billed nothing new and keeps everything it holds, and «إعادة من الأرشيف» brings it
-  back.
+  back. Every way of raising a fee refuses one on an archived file, «تكليف مباشر» included
+  (`FEE_CITIZEN_ARCHIVED`, since 2026-10-14), and the fee pickers do not offer it.
 - **A building's height counts its built floors, never its roof** (the user's decision of
   2026-10-07). «الطوابق المسقوفة» is every level under a roof, the ground floor and a
   «طابق أعمدة» included. The building editor says so, gives the two ways to record a duplex

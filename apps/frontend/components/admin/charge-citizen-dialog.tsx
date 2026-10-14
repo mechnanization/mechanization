@@ -2,8 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import { Loader2, UserPlus } from 'lucide-react';
-import type { CitizenListItem } from '@/lib/api-client';
-import { useCitizenSearch } from '@/lib/use-citizen-search';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -16,7 +14,7 @@ import {
 import { Field } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { BillTypeSelect } from '@/components/admin/bill-type-select';
-import { CitizenSearchStatus } from '@/components/admin/citizen-search-status';
+import { CitizenPicker, type PickedCitizen } from '@/components/admin/citizen-picker';
 
 export interface ChargeValues {
   citizenId: string;
@@ -63,25 +61,18 @@ export function ChargeCitizenDialog({
   existingTitles?: string[];
 }) {
   const [values, setValues] = useState<ChargeValues>(EMPTY);
-  const [query, setQuery] = useState('');
-  /** The file picked from a search, held because the search that found it is cleared. */
-  const [picked, setPicked] = useState<CitizenListItem | null>(null);
+  /** The file chosen in the picker (`CitizenPicker`), whose id `values.citizenId` carries. */
+  const [picked, setPicked] = useState<PickedCitizen | null>(null);
 
   useEffect(() => {
     if (open) {
       setValues(EMPTY);
-      setQuery('');
       setPicked(null);
     }
   }, [open]);
 
   const set = (patch: Partial<ChargeValues>) =>
     setValues((previous) => ({ ...previous, ...patch }));
-
-  const chosen = picked && picked.id === values.citizenId ? picked : undefined;
-  // Searched on the server, so a file filed after any first page is found too.
-  const search = useCitizenSearch(tenant, token, query, open && !chosen);
-  const matches = search.results;
 
   const complete =
     values.citizenId !== '' &&
@@ -122,40 +113,16 @@ export function ChargeCitizenDialog({
             htmlFor="charge-citizen"
             required
           >
-            <div className="space-y-2">
-              <Input
-                id="charge-citizen"
-                placeholder={locale === 'en' ? 'Citizen name or reference number' : 'اسم المواطن أو الرقم المرجعي'}
-                value={chosen ? `${chosen.fullName} — ${chosen.referenceNumber}` : query}
-                onChange={(event) => {
-                  setQuery(event.target.value);
-                  if (values.citizenId) set({ citizenId: '' });
-                }}
-              />
-              {!chosen && matches.length > 0 ? (
-                <ul className="overflow-hidden rounded-lg border">
-                  {matches.map((row) => (
-                    <li key={row.id}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPicked(row);
-                          set({ citizenId: row.id });
-                          setQuery('');
-                        }}
-                        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-start text-sm transition-colors hover:bg-accent"
-                      >
-                        <span className="font-medium">{row.fullName}</span>
-                        <span className="font-mono text-xs text-muted-foreground" dir="ltr">
-                          {row.referenceNumber}
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-              {!chosen ? <CitizenSearchStatus term={query} search={search} /> : null}
-            </div>
+            <CitizenPicker
+              id="charge-citizen"
+              tenant={tenant}
+              token={token}
+              value={picked}
+              onChange={(citizen) => {
+                setPicked(citizen);
+                set({ citizenId: citizen?.id ?? '' });
+              }}
+            />
           </Field>
 
           <Field

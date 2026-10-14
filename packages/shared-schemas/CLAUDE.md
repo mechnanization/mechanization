@@ -1,6 +1,6 @@
 # packages/shared-schemas
 
-Last verified against the code: `fix/pr114-review` (PR #114 merged with `develop@5e8f5c3`, with its review fixes): `audit.schema.ts`; `updateCaseSchema` clears the type and the land type, 2026-10-14.
+Last verified against the code: `fix/pr114-review` (PR #114 merged with `develop@5e8f5c3`, with its review fixes): `audit.schema.ts`; `updateCaseSchema` clears the type and the land type; `FEE_CITIZEN_ARCHIVED` added to `ERROR_CODES` by the recipe below, 2026-10-14.
 
 `@mechanization/shared-schemas`: the zod schemas, enums, display labels and
 pure rules that the backend and the frontend share. One copy of each contract,

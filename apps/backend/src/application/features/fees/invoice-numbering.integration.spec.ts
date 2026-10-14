@@ -219,6 +219,37 @@ describeIfDb('invoice numbering', () => {
     expect(bill.invoiceNumber).toMatch(new RegExp(`^INV-${period}-\\d{4}$`));
   });
 
+  /*
+    An archived file takes no new fees — what archiving promises. A group notice
+    skips it; «تكليف مباشر» and a notice aimed at the one person used to raise
+    the bill (the direct charge) or call the file «غير موجود» (the notice).
+  */
+  it('raises no new fee on an archived file, by either path, and says why', async () => {
+    const id = await citizen('مؤرشف');
+    await db.user.update({ where: { id }, data: { isActive: false } });
+
+    await expect(
+      fees.chargeIndividual({ citizenId: id, title: 'رسم إشغال رصيف', amount: 75_000, dueDate: '2026-12-31', actor: actor() }),
+    ).rejects.toMatchObject({ code: 'FEE_CITIZEN_ARCHIVED' });
+    await expect(
+      fees.issue(
+        {
+          title: 'رسم فردي',
+          amount: 20_000,
+          basis: 'FLAT',
+          bearer: 'OWNER',
+          frequency: 'ONCE',
+          targetType: 'INDIVIDUAL_CITIZEN',
+          targetCitizenId: id,
+          dueDate: '2026-12-31',
+        } as never,
+        actor(),
+      ),
+    ).rejects.toMatchObject({ code: 'FEE_CITIZEN_ARCHIVED' });
+
+    expect(await db.citizenPayment.count({ where: { citizenId: id } })).toBe(0);
+  });
+
   it('never gives two bills the same number', async () => {
     const rows = await db.citizenPayment.findMany({
       where: { invoiceNumber: { not: null } },

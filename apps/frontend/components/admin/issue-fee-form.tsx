@@ -26,8 +26,6 @@ import {
   FEE_TARGET_TYPE,
 } from '@mechanization/shared-schemas';
 import type { FeeBasis, FeeBearer } from '@mechanization/shared-schemas';
-import type { CitizenListItem } from '@/lib/api-client';
-import { useCitizenSearch } from '@/lib/use-citizen-search';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { Alert } from '@/components/ui/alert';
@@ -42,7 +40,7 @@ import {
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { BillTypeSelect } from '@/components/admin/bill-type-select';
-import { CitizenSearchStatus } from '@/components/admin/citizen-search-status';
+import { CitizenPicker, type PickedCitizen } from '@/components/admin/citizen-picker';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/dates';
 
@@ -139,9 +137,8 @@ export function IssueFeeForm({
 }) {
   const labels = getLabels(locale);
   const [values, setValues] = useState<IssueFeeValues>(EMPTY);
-  const [citizenQuery, setCitizenQuery] = useState('');
-  /** The file picked from a search, held because the search that found it is cleared. */
-  const [picked, setPicked] = useState<CitizenListItem | null>(null);
+  /** The file chosen in the picker (`CitizenPicker`), whose id `values.targetCitizenId` carries. */
+  const [picked, setPicked] = useState<PickedCitizen | null>(null);
   const [stepIndex, setStepIndex] = useState(0);
 
   const steps = [
@@ -171,14 +168,6 @@ export function IssueFeeForm({
     setValues((previous) => ({ ...previous, ...patch }));
 
   const chosen = picked && picked.id === values.targetCitizenId ? picked : undefined;
-  // Searched on the server, so a file filed after any first page is found too.
-  const search = useCitizenSearch(
-    tenant,
-    token,
-    citizenQuery,
-    values.targetType === 'INDIVIDUAL_CITIZEN' && !chosen,
-  );
-  const matches = search.results;
   const amount = Number(values.amount.replace(/\D/g, ''));
   const recurring = values.frequency !== 'ONCE';
 
@@ -456,45 +445,16 @@ export function IssueFeeForm({
                   htmlFor="fee-citizen"
                   required
                 >
-                  <div className="space-y-2">
-                    <Input
-                      id="fee-citizen"
-                      placeholder={locale === 'en' ? 'Citizen name or reference number' : 'اسم المواطن أو الرقم المرجعي'}
-                      value={
-                        chosen ? `${chosen.fullName} — ${chosen.referenceNumber}` : citizenQuery
-                      }
-                      onChange={(event) => {
-                        setCitizenQuery(event.target.value);
-                        if (values.targetCitizenId) set({ targetCitizenId: '' });
-                      }}
-                    />
-                    {!chosen && matches.length > 0 ? (
-                      <ul className="overflow-hidden rounded-lg border">
-                        {matches.map((row) => (
-                          <li key={row.id}>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setPicked(row);
-                                set({ targetCitizenId: row.id });
-                                setCitizenQuery('');
-                              }}
-                              className="flex w-full items-center justify-between gap-3 px-3 py-2 text-start text-sm transition-colors hover:bg-accent"
-                            >
-                              <span className="font-medium">{row.fullName}</span>
-                              <span
-                                className="font-mono text-xs text-muted-foreground"
-                                dir="ltr"
-                              >
-                                {row.referenceNumber}
-                              </span>
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : null}
-                    {!chosen ? <CitizenSearchStatus term={citizenQuery} search={search} /> : null}
-                  </div>
+                  <CitizenPicker
+                    id="fee-citizen"
+                    tenant={tenant}
+                    token={token}
+                    value={chosen ?? null}
+                    onChange={(citizen) => {
+                      setPicked(citizen);
+                      set({ targetCitizenId: citizen?.id ?? '' });
+                    }}
+                  />
                 </Field>
               ) : null}
 

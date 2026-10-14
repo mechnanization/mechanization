@@ -23,9 +23,12 @@ import { cn } from '@/lib/utils';
 export function CitizenSearchStatus({
   term,
   search,
+  archivedOffered = false,
 }: {
   term: string;
   search: CitizenSearch;
+  /** The search offers archived files too (`includeArchived`), so «nobody» does not leave them out. */
+  archivedOffered?: boolean;
 }): React.JSX.Element | null {
   const t = useTranslations('citizens.search');
   const tCommon = useTranslations('common');
@@ -43,7 +46,9 @@ export function CitizenSearchStatus({
         : failure
           ? failure
           : search.results.length === 0
-            ? t('noMatches')
+            ? archivedOffered
+              ? t('noMatches')
+              : `${t('noMatches')} ${t('archivedLeftOut')}`
             : search.more
               ? t('more', { count: search.results.length })
               : t('found', { count: search.results.length });

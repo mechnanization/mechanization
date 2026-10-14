@@ -227,16 +227,28 @@ component types.
     `income-categories`: `IncomeCategoryEditor` writes what it saves into both cached lists
     (`['treasury', tenant, 'income-categories']` and `[…, 'all']`) through
     `withSavedCategory` (`lib/category-cache.ts`).
-- A citizen picker searches the register on the server as the clerk types: `useCitizenSearch`
-  (`lib/use-citizen-search.ts`: `SEARCH_DEBOUNCE_MS` 350 ms, an `AbortController`, `limit: 8`). Files
-  folded by «دمج ملفين» and archived files are dropped (the server has no filter for either, so `more`
-  says when the register holds more matches than are listed). The last term's matches are emptied the
-  moment another is typed, so nothing stale is there to click. A failed search is told apart from «no
-  match» (`failed`, with the API's own words in `error`) and can be retried (`retry`).
-  `CitizenSearchStatus` under the field keeps one `role="status"` line mounted and draws a failure as a
-  warning `Alert` with «إعادة المحاولة». The picker holds the chosen `CitizenListItem` in state. Never a
-  `listCitizens({ limit: 200 })` filtered in the browser: a file filed after that page cannot be found
-  (the direct-charge dialog and «إصدار رسم جديد» did that until 2026-10-11).
+- **One citizen picker.** A screen that chooses a citizen's file uses `CitizenPicker`
+  (`components/admin/citizen-picker.tsx`): «تكليف مباشر», «إصدار رسم جديد», a sale's new owner
+  (`BuyerPicker`), a case's people (`LinkCaseCitizenDialog`, which keeps `value` null and adds each
+  pick), and the other half of a merge. It is controlled (`value: PickedCitizen | null`, `onChange`);
+  the chosen file shows as a card with «تغيير». A row shows the name, the mother's name and the رقم
+  مرجعي; never the document number or the phone. Never write another one: a screen with a flow of its
+  own around the results uses the same search, `useCitizenSearch` («إضافة شخص إلى الوحدة» in
+  `AddPersonForm`, whose «ليس بينهم؟» opens a new file). The command palette is a navigation search,
+  not a picker, and keeps its own (code-quality.md).
+- `useCitizenSearch` (`lib/use-citizen-search.ts`) searches the register on the server as the clerk
+  types: `SEARCH_DEBOUNCE_MS` 350 ms, an `AbortController`, `limit: 8`. Files folded by «دمج ملفين» are
+  never offered, archived files only where the screen asks (`includeArchived`: the census and
+  ownership screens, where the person come back is restored, not filed twice; never a fee, which the
+  server refuses on one, `FEE_CITIZEN_ARCHIVED`), and `exclude` drops the files a screen may not offer
+  (the seller, the file being merged into, the people already listed). The server has no filter for
+  either, so `more` says when the register holds more matches than are listed. The last term's
+  matches are emptied the moment another is typed, so nothing stale is there to click. A failed search
+  is told apart from «no match» (`failed`, with the API's own words in `error`) and can be retried
+  (`retry`). `CitizenSearchStatus` under the field keeps one `role="status"` line mounted and draws a
+  failure as a warning `Alert` with «إعادة المحاولة». Never a `listCitizens({ limit: 200 })` filtered in
+  the browser: a file filed after that page cannot be found (the direct-charge dialog and «إصدار رسم
+  جديد» did that until 2026-10-11).
 - `lib/request-cache.ts` (`cachedRequest`, `invalidateRequests`) is a second, memory-only
   cache inside api-client (tenant config, zones, census, fee summary, settings). Legacy for
   new reads. **Undecided:** retire it for `reference: true` reads, or keep it for non-React callers.

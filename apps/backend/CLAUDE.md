@@ -139,7 +139,9 @@ Data access for new code (decided):
   `owner-billing.ts`): «حسب الأسهم» with an owner's أسهم missing (HIGH, every co-owner's bill refused) or a
   responsible owner no longer among the open owners (MEDIUM, split equally). A notice that bills nobody
   because «مالك مسؤول» pays refuses with `FEE_NOTHING_TO_CHARGE` (`coOwnerPaid`), not
-  `FEE_NO_MATCHING_CITIZENS`. The portal gets this owner's part and never the responsible owner's id;
+  `FEE_NO_MATCHING_CITIZENS`. A fee raised on one person — «تكليف مباشر» (`chargeIndividual`) or a
+  notice for `INDIVIDUAL_CITIZEN` — goes through `FeesService.chargeableCitizen`: `CITIZEN_NOT_FOUND`,
+  `CITIZEN_MERGED_AWAY`, or `FEE_CITIZEN_ARCHIVED` for an archived file, which takes no new fees. The portal gets this owner's part and never the responsible owner's id;
   under «مالك مسؤول» the part (1/1 or 0/1) says who pays, read the same way on both sides.
 - **Units exempt from fees.** `units.feeExemption` (`0077`) takes a unit off every rate-based bill, whoever
   bears the fee: `holdingsOf` reads it, `assessCitizen` removes the unit before the review hold and the

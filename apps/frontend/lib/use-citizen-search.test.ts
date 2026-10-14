@@ -5,6 +5,7 @@ import {
   IDLE_CITIZEN_SEARCH,
   SEARCH_DEBOUNCE_MS,
   scheduleCitizenSearch,
+  withoutFiles,
   type CitizenSearchState,
 } from '@/lib/use-citizen-search';
 
@@ -162,5 +163,28 @@ describe('scheduleCitizenSearch', () => {
 
     await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS);
     expect(state.current().results.map((r) => r.id)).toEqual(['mohammad-khalil']);
+  });
+});
+
+describe('the options a screen passes', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('offers archived files, marked by isActive, to a screen that asks (the census, a sale)', async () => {
+    const search = vi.fn().mockResolvedValue({ items: [row('active'), row('archived', null, false), row('folded', 'active')] });
+    const state = recorder();
+
+    scheduleCitizenSearch('محمد', search, state.update, { includeArchived: true });
+    await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS);
+
+    // Archived offered; a file folded into another never is.
+    expect(state.current().results.map((r) => r.id)).toEqual(['active', 'archived']);
+  });
+
+  it('leaves out the files a screen may not offer: the seller, the file being merged into', () => {
+    const rows = [row('seller'), row('buyer'), row('other')];
+
+    expect(withoutFiles(rows, ['seller']).map((r) => r.id)).toEqual(['buyer', 'other']);
+    expect(withoutFiles(rows, undefined).map((r) => r.id)).toEqual(['seller', 'buyer', 'other']);
   });
 });

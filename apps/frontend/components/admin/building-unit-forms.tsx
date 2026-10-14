@@ -52,7 +52,6 @@ import {
 import {
   ApiRequestError,
   createCase,
-  listCitizens,
   logApiError,
   logUnitVisit,
   REPEAT_VISIT_WINDOW_MS,
@@ -71,7 +70,7 @@ import { formatDate, monthNames } from '@/lib/dates';
 import { formatPhone } from '@/lib/phone';
 import { useTableLabels } from '@/lib/use-table-labels';
 import { stashLinkSeed } from '@/lib/tab-search';
-import { SEARCH_DEBOUNCE_MS } from '@/lib/use-citizen-search';
+import { useCitizenSearch } from '@/lib/use-citizen-search';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -898,19 +897,21 @@ export function AddPersonForm({
   }, [ownerIds]);
 
   const [term, setTerm] = useState('');
-  const [results, setResults] = useState<CitizenListItem[]>([]);
-  const [searching, setSearching] = useState(false);
   const [chosen, setChosen] = useState<CitizenListItem | null>(null);
-  /** The term the shown results answer — set when a search comes back. */
-  const [searched, setSearched] = useState('');
-  /**
-   * The last lookup could not reach the register.
-   *
-   * Kept apart from «no results», which it is not: the officer is told the
-   * register is unreachable rather than that nobody matched, because those two
-   * lead to different decisions about whether to open a new file.
-   */
-  const [failed, setFailed] = useState(false);
+  /*
+    The register's citizen search, the one every picker uses (`useCitizenSearch`).
+    An archived file is offered: a person come back is restored, not filed twice.
+
+    `failed` is kept apart from «no results», which it is not: the officer is
+    told the register is unreachable rather than that nobody matched, because
+    those two lead to different decisions about whether to open a new file. A
+    failed search still answers its term (`searched`), so an officer with no
+    signal can reach «ملف جديد» — an unregistered household is worse than a
+    duplicate, and a duplicate here is still detectable by name.
+  */
+  const { results, searching, failed, searched } = useCitizenSearch(tenant, token, term, true, {
+    includeArchived: true,
+  });
   /** The term whose matches the officer has said «ليس بينهم؟» to. */
   const [notAmong, setNotAmong] = useState('');
   /** The shown results answer what is typed now, not a term since changed. */
@@ -991,52 +992,6 @@ export function AddPersonForm({
     vacancy && role && contradictsVacancy(role, answeredStatus),
   );
 
-  useEffect(() => {
-    if (!term.trim()) {
-      setResults([]);
-      setSearched('');
-      setFailed(false);
-      return;
-    }
-    let cancelled = false;
-    setSearching(true);
-    setFailed(false);
-    const timer = setTimeout(() => {
-      listCitizens(tenant, token, { search: term.trim(), limit: 6 })
-        .then((result) => {
-          if (cancelled) return;
-          // A file «دمج ملفين» folded into another is nobody to record in a flat.
-          setResults(result.items.filter((row) => !row.mergedIntoId));
-          setSearched(term.trim());
-        })
-        .catch((caught) => {
-          logApiError(caught);
-          /*
-            A failed search is not a search that found nobody, and the two are
-            told apart by `failed` rather than by withholding the way forward.
-
-            This used to clear the term as well, which left an officer with no
-            signal unable to reach «ملف جديد» at all — on a form used in the
-            field, offline, in settlements nobody is going back to. The honest
-            answer is to say the register could not be reached and let them
-            file the household anyway; an unregistered household is worse than
-            a duplicate, and a duplicate here is still detectable by name.
-          */
-          if (!cancelled) {
-            setResults([]);
-            setSearched(term.trim());
-            setFailed(true);
-          }
-        })
-        .finally(() => {
-          if (!cancelled) setSearching(false);
-        });
-    }, SEARCH_DEBOUNCE_MS);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [term, tenant, token]);
 
   return (
     <div className="space-y-3 rounded-md border bg-background p-3">

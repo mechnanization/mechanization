@@ -346,6 +346,7 @@
     "ORIGIN_NOT_ALLOWED": "This request did not come from the municipality’s portal.",
     "SESSION_REFRESH_UNAVAILABLE": "The session could not be renewed. Check the connection and try again.",
     "FEE_NOTHING_TO_CHARGE": "Nothing to charge — no notice was issued.{held, plural, =0 {} one { 1 unit is held for review (unit status conflict).} other { # units are held for review (unit status conflict).}}{uninhabitable, plural, =0 {} one { 1 unit is uninhabitable — it is exempt from fees until re-inspection.} other { # units are uninhabitable — they are exempt from fees until re-inspection.}}{exempted, plural, =0 {} one { 1 unit is vacant, under construction or exempt by bearer.} other { # units are vacant, under construction or exempt by bearer.}}{feeExempt, plural, =0 {} one { 1 unit is exempt from fees.} other { # units are exempt from fees.}}{coOwnerPaid, plural, =0 {} one { 1 co-owned unit is paid for by its responsible owner.} other { # co-owned units are paid for by their responsible owner.}}{unassessable, plural, =0 {} one { 1 citizen's records need a field survey first.} other { # citizens' records need a field survey first.}}",
+    "FEE_CITIZEN_ARCHIVED": "This citizen's file is archived, and an archived file takes no new fees. Restore it from the archive first if it should be charged.",
     "CITIZEN_NO_PHONE_HAS_NUMBER": "The file is marked «has no phone» but holds a number of the citizen's own — clear the phone and WhatsApp, or untick «Does not have a phone number».",
     "CITIZEN_CONTACT_PHONE_IS_OWN": "The contact number is a relative's, so it cannot be the citizen's own phone — correct one of them.",
     "TREASURY_NOT_ACTIVE": "The treasury is not active yet. Enter the opening balances first.",
@@ -597,11 +598,20 @@
     },
     "search": {
       "searching": "Searching the register…",
-      "noMatches": "No file in the register matches (archived files are not offered). Search by name, phone, reference number or document number.",
+      "noMatches": "No file in the register matches. Search by name, phone, reference number or document number.",
+      "archivedLeftOut": "Archived files are not offered here.",
       "more": "More files match than are listed here. Type more of the name to narrow them.",
       "found": "{count, plural, one {One file found} other {{count} files found}}",
       "failed": "Could not search the register. Check the connection and type again."
     }
+  },
+  "citizenPicker": {
+    "placeholder": "Name, phone or reference number",
+    "results": "Matching files",
+    "mother": "Mother's name: {name}",
+    "motherUnknown": "Mother's name not recorded",
+    "change": "Change",
+    "archived": "Archived"
   },
   "citizenArchive": {
     "title": "Archive the file",
