@@ -153,3 +153,25 @@ export const tenantSlug = z
   .regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, 'Invalid municipality slug');
 
 export const uuid = z.string().uuid();
+
+/**
+ * A real calendar day as `YYYY-MM-DD`: «2026-02-30» or «2026-10-00» is refused,
+ * not rolled into the next month. The pattern alone let both through — `Date`
+ * reads «2026-09-31» as 1 October — so a back-dated document was stored on a day
+ * nobody typed, or reached the server as an Invalid Date and answered with a 500.
+ */
+export function isCalendarDay(day: string): boolean {
+  const parsed = Date.parse(`${day}T00:00:00Z`);
+  return !Number.isNaN(parsed) && new Date(parsed).toISOString().slice(0, 10) === day;
+}
+
+/**
+ * A day on the municipality's own calendar, `YYYY-MM-DD` — what every treasury
+ * form and register sends for a date: a voucher's or a transfer's day, a count's,
+ * a register's `from` and `to`. One schema for all of them, so none checks only
+ * the pattern (the transfer's did, until the review of 2026-10-11).
+ */
+export const businessDay = z
+  .string({ required_error: 'اختر التاريخ' })
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'تاريخ غير صالح')
+  .refine(isCalendarDay, 'تاريخ غير صالح');

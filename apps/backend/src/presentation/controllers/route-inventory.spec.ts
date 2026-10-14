@@ -169,11 +169,15 @@ describe('the treasury routes (docs/finance.md §9)', () => {
   const READ = ['ACCOUNTANT', 'AUDITOR', 'SUPER_ADMIN', 'VIEWER'];
   const WORK = ['ACCOUNTANT', 'SUPER_ADMIN'];
   const ADMIN = ['SUPER_ADMIN'];
+  // Who clears a flagged exchange (§6.3): the auditor and the manager, never the accountant who booked it.
+  const REVIEW = ['AUDITOR', 'SUPER_ADMIN'];
   const ALL_BUT_VIEWER = ['ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'AUDITOR', 'COLLECTOR', 'FIELD_INSPECTOR', 'SUPER_ADMIN'];
   const expected: Record<string, string[]> = {
     'TreasuryController.overview': READ,
     'TreasuryController.statement': READ,
     'TreasuryController.activate': ADMIN,
+    // «إضافة حساب» (§6.4): a wallet is opened by the manager alone.
+    'TreasuryController.createAccount': ADMIN,
     'ExpensesController.categories': READ,
     'ExpensesController.createCategory': ADMIN,
     'ExpensesController.updateCategory': ADMIN,
@@ -201,8 +205,52 @@ describe('the treasury routes (docs/finance.md §9)', () => {
     'TransfersController.list': READ,
     'TransfersController.receiveCustody': WORK,
     'TransfersController.void': ADMIN,
+    // Stage 4 (§6): an internal transfer or an exchange is work; its slip is read; its review is the auditor's.
+    'TransfersController.create': WORK,
+    'TransfersController.get': READ,
+    'TransfersController.review': REVIEW,
+    // Stage 5 (§7): the sheet, the history and the report are read; counting and closing are work;
+    // reopening a closed day is the manager's alone.
+    'TreasuryClosingController.sheet': READ,
+    'TreasuryClosingController.history': READ,
+    'TreasuryClosingController.daily': READ,
+    'TreasuryClosingController.record': WORK,
+    'TreasuryClosingController.close': WORK,
+    'TreasuryClosingController.reopen': ADMIN,
+    // «صرف عمولة» (§5.6): a «PV-» voucher and a ledger debit once live. Paid like a salary (D9):
+    // the accountant's on the urgent path, waiting for the manager's order.
+    'StaffController.recordPayout': WORK,
+    /*
+      The fee routes that post wallet entries once the treasury is live (§3.3, §3.4): a counter
+      or collector payment credits a safe or a custody wallet (`settleInPerson`), confirming a
+      Whish transfer credits the Whish wallet (`review`), and reversing a receipt takes the money
+      back out (`reverseTransaction`). Their lists are the fee sets the screens read
+      (`FEE_ISSUE_ROLES`, `FEE_ADMIN_ROLES`), pinned here so that widening one — an
+      administrative officer at the counter — fails CI rather than passing unseen.
+    */
+    'FeesController.settle': ['ACCOUNTANT', 'COLLECTOR', 'SUPER_ADMIN'],
+    'FeesController.review': WORK,
+    'FeesController.reverseTransaction': ADMIN,
+    // Whish's own callback: no session and no role — `@Public()`, checked by the HMAC over its body.
+    'FeesController.whishCallback': [],
   };
-  const treasury = routes().filter((route) => /^(Treasury|Expenses|Income|Transfers)Controller\./.test(route.name));
+  /*
+    Every treasury controller by name: a new one is added here, or its handlers are pinned by
+    nothing. And, by name, each handler elsewhere that moves treasury money; the bulk settlement's
+    two are pinned in their own block below.
+  */
+  const MONEY_HANDLERS_ELSEWHERE = [
+    'StaffController.recordPayout',
+    'FeesController.settle',
+    'FeesController.review',
+    'FeesController.reverseTransaction',
+    'FeesController.whishCallback',
+  ];
+  const treasury = routes().filter(
+    (route) =>
+      /^(Treasury|TreasuryClosing|Expenses|Income|Transfers)Controller\./.test(route.name) ||
+      MONEY_HANDLERS_ELSEWHERE.includes(route.name),
+  );
 
   it('knows every treasury handler, and no other', () => {
     expect(treasury.map((route) => route.name).sort()).toEqual(Object.keys(expected).sort());
@@ -213,12 +261,44 @@ describe('the treasury routes (docs/finance.md §9)', () => {
     expect([...(route?.roles ?? [])].sort()).toEqual([...roles].sort());
   });
 
-  it('lets no one but the manager order, refuse, regularise or cancel', () => {
+  it('lets no one but the manager order, refuse, regularise, cancel, reopen a closed day or open a wallet', () => {
     // `void` covers an expense, an income voucher and a transfer alike.
-    const managerOnly = ['orderRequest', 'rejectRequest', 'regularize', 'void', 'activate'];
+    const managerOnly = ['orderRequest', 'rejectRequest', 'regularize', 'void', 'activate', 'reopen', 'createAccount'];
     const wider = treasury.filter(
       (route) => managerOnly.includes(route.name.split('.')[1]) && (route.roles ?? []).some((role) => role !== 'SUPER_ADMIN'),
     );
     expect(wider.map((route) => route.name)).toEqual([]);
+  });
+
+  it('never lets the accountant, who books an exchange, clear its review', () => {
+    const route = treasury.find((candidate) => candidate.name === 'TransfersController.review');
+    expect(route?.roles ?? []).not.toContain('ACCOUNTANT');
+  });
+});
+
+/*
+  «تسديد الفواتير المحددة» (docs/finance.md §3.7), pinned as the treasury's
+  routes are: it moves money for up to fifty bills in one press, and the role
+  list is the whole control on who may press it. A collector settles the same
+  bills one at a time; widening this is a decision, not an edit.
+*/
+describe('the bulk settlement routes (docs/finance.md §3.7)', () => {
+  const expected: Record<string, string[]> = {
+    'FeesController.bulkSettle': ['ACCOUNTANT', 'SUPER_ADMIN'],
+    'FeesController.settlement': ['ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'AUDITOR', 'COLLECTOR', 'SUPER_ADMIN', 'VIEWER'],
+  };
+  const all = routes();
+
+  it.each(Object.entries(expected))('%s admits exactly its roles', (name, roles) => {
+    const route = all.find((candidate) => candidate.name === name);
+    expect(route).toBeDefined();
+    expect([...(route?.roles ?? [])].sort()).toEqual([...roles].sort());
+  });
+
+  it('serves the settle as a POST and the reprint as a GET', () => {
+    const settle = all.find((route) => route.name === 'FeesController.bulkSettle');
+    const reprint = all.find((route) => route.name === 'FeesController.settlement');
+    expect([settle?.method, settle?.path]).toEqual([RequestMethod.POST, 'payments/bulk-settle']);
+    expect([reprint?.method, reprint?.path]).toEqual([RequestMethod.GET, 'settlements/:id']);
   });
 });

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { businessDay } from './primitives';
 import {
   BUDGET_CODES_INCOMPLETE,
   budgetCodeSchema,
@@ -68,18 +69,6 @@ const receivedAmount = z
   .max(999_999_999_999, 'المبلغ كبير جداً')
   .refine((value) => Math.abs(value * 100 - Math.round(value * 100)) < 1e-6, 'خانتان عشريتان على الأكثر');
 
-/** `YYYY-MM-DD` on the municipality's own calendar. */
-const businessDate = z
-  .string({ required_error: 'اختر التاريخ' })
-  .regex(/^\d{4}-\d{2}-\d{2}$/, 'تاريخ غير صالح')
-  // A day that exists: «2026-09-31» parses — as 1 October — so it must also come back
-  // unchanged. Without this it was stored on a day nobody typed, or reached Prisma as
-  // an Invalid Date and answered with a 500.
-  .refine((day) => {
-    const parsed = new Date(`${day}T00:00:00Z`);
-    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === day;
-  }, 'تاريخ غير صالح');
-
 /**
  * «سجّل الإيراد» — the whole act, in one request.
  *
@@ -104,7 +93,7 @@ export const recordIncomeVoucherSchema = z.object({
   /** A cheque number, a bank or Whish transfer number. */
   externalReference: z.string().trim().max(100, 'المرجع طويل جداً').optional(),
   /** Defaults to the municipality's today when the screen leaves it out. */
-  receivedOn: businessDate.optional(),
+  receivedOn: businessDay.optional(),
   /** Required by the server for any back-dated voucher. */
   adjustmentReason: z.string().trim().max(500, 'السبب طويل جداً').optional(),
   /** One id per press of the button, so a retry does not credit the wallet twice. */
@@ -176,8 +165,8 @@ export type VoidIncomeVoucherInput = z.infer<typeof voidIncomeVoucherSchema>;
  */
 export const listIncomeVouchersQuerySchema = z
   .object({
-    from: businessDate.optional(),
-    to: businessDate.optional(),
+    from: businessDay.optional(),
+    to: businessDay.optional(),
     categoryId: z.string().uuid().optional(),
     accountId: z.string().uuid().optional(),
     /** ISO 4217, as the wallets store it. */
@@ -225,7 +214,14 @@ export interface IncomeVoucherView {
   /** «RV-2610-0001». */
   voucherNumber: string;
   status: IncomeStatus;
-  category: { id: string; labelAr: string; labelEn: string | null };
+  /** With its budget chapter and article, printed on «سند القبض»; both null until the municipality fills them in. */
+  category: {
+    id: string;
+    labelAr: string;
+    labelEn: string | null;
+    chapterCode: string | null;
+    itemCode: string | null;
+  };
   account: { id: string; name: string; currency: string };
   amount: number;
   currency: string;

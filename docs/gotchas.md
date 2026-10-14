@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `fix/moderate-cadastre-citizens` (on `develop@b034640`; digit-normalised cadastre lookups), 2026-10-11.
+Last verified against the code: `feat/treasury-day-closing@c88c971` (`develop` with the reviewed treasury, #107/#108; PR #106, stage 5: the daily count, the day closing and the closed-day lock; PR #109, inspector payouts and decision D9; PR #111, transfers, exchange and wallets with `0088`; PR #112, the payment ledger's own transaction and a selection that is a retry key's scope; each merged with its review fixes, and the cross-feature fixes) with the fixes of the final-stack review (uncommitted): a path id's case in a lock key and a self-check, the count's foreign-key locks, a back-dated outflow and the balance now, the four printed documents, 2026-10-11.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -74,7 +74,8 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **What happens:** after a schema change and `pnpm db:generate`, the API
   started by `pnpm dev` recompiles the new code and then answers its new
   queries with a 500 (`INTERNAL_ERROR`), while the integration suites, which
-  load the client from `src/`, pass. Seen 2026-10-09 with `payeeStaffId` (0081).
+  load the client from `src/`, pass. Seen 2026-10-09 with `payeeStaffId` (0081), and again
+  2026-10-10 with the 0082 models: every new treasury route answered 500.
 - **Why:** `nest start --watch` runs `dist/`, and the Prisma clients reach
   `dist/generated` only as assets. `nest-cli.json` sets `"watchAssets": false`,
   so the watcher recompiles TypeScript but never re-copies the regenerated
@@ -178,6 +179,27 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   qualify calls with the schema.
 - **Where:** `0030_building_census`, `0048_search_compact_schema_qualified`.
 
+### A closed treasury day is judged in two places, on a calendar written twice
+
+- **What happens:** a back-dated write into a closed day — a voucher, a payment, a
+  collector's round, a test fixture — is refused (`CLOSED_DAY_MUTATION_BLOCKED`, or the trigger's
+  «treasury day … is closed»), however it reaches `treasury_entries`. Change the municipal time
+  zone in one place only and the application and the database disagree about which day an entry
+  is on, for the hours between the two midnights.
+- **Why:** `TreasuryLedgerService.post` judges the day with `municipalToday` (`MUNICIPAL_TIME_ZONE`,
+  shared-schemas), and the 0082 triggers with `AT TIME ZONE 'Asia/Beirut'` written into SQL. The
+  count trigger also lets exactly one write through on a closed day — closing's link to its
+  closure — by comparing the row minus `closureId`, so a column added to `treasury_counts` that
+  closing must also set would be refused.
+- **Do this:** change the zone in both, in the same release. Date a late movement on the day it
+  is entered and say in its note which day it belongs to; reopen only the latest closed day. A new
+  count column that closing writes needs the trigger's exception widened in a new migration.
+  Integration fixtures that need old days move money on them before closing them.
+- **Where:** `0082_treasury_day_closing` (`reject_closed_day_entry`, `reject_closed_day_count`),
+  `0087_treasury_day_closure_written_once` (a closure's day never moves; a count links only to its
+  own day's closure; a repair goes through reopening the day, never an `UPDATE` of either),
+  `treasury-ledger.service.ts` (`assertDayOpen`), `cash-policy.ts` (`MUNICIPAL_TIME_ZONE`).
+
 ### A new enum value cannot be used in its own migration
 
 - **What happens:** a migration that adds a value and then uses it fails.
@@ -240,6 +262,32 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **Do this:** use `runInTenantTransaction`, which joins an open transaction.
 - **Where:** `tenant-transaction.ts`; `BuildingsService.atomic` is the
   workaround.
+- **The payment ledger is one of them.** `PaymentLedgerService.record` (and
+  `reverse`) still open their own `this.db.$transaction`, so calling `record`
+  from inside `runInTenantTransaction` throws. To settle a bill inside a larger
+  act, call `recordIn(tx, input)` with the scope's client, as
+  `PaymentSettlementService` does: same lock, checks and audit, the caller's
+  commit.
+
+### `0083` is held by two branches at once
+
+- **What happens:** `develop`'s `0083_treasury_controls` and
+  `feat/treasury-inspector-payouts-and-vouchers`'s `0083_inspector_payout_voucher`
+  (and the branches cut from it, which add `0082_treasury_day_closing` and
+  `0084_treasury_exchange_and_review`) share a number. A local database that ran
+  those branches has `0082`–`0084` applied and `develop`'s `0083` pending, so
+  `pnpm db:deploy:local` on any branch cut from `develop` applies `0083_treasury_controls`
+  out of order on top of them.
+- **Why:** the two were numbered on separate branches on the same day (found
+  2026-10-10).
+- **Do this:** renumber whichever reaches `develop` second before it merges
+  ([database.md](database.md#numbering)); before deploying a `develop`-based branch
+  to a local database that ran the treasury branches, decide whether to rebuild it.
+  On `feat/treasury-day-closing` the payout migration is renumbered
+  `0086_inspector_payout_voucher` (2026-10-10), so the clash is gone there; a local
+  database that ran the old branch still records `0083_inspector_payout_voucher`, which
+  no file matches any more: decide whether to rebuild it, as above.
+- **Where:** `apps/backend/src/infrastructure/prisma/tenant/migrations`.
 
 ### Side effects inside a transaction are lost or premature
 
@@ -344,9 +392,48 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   row. Upgrading it to `FOR UPDATE` waits for every other holder of the weak lock,
   and each waits for the other.
 - **Do this:** take the strong lock first, in id order, before writing anything that
-  references the row (`TreasuryLedgerService.lockAccounts`).
-- **Where:** `expenses.service.ts`, `transfers.service.ts`,
-  `treasury-ledger.service.ts` (`lockAccounts`, `refundDrafts`).
+  references the row (`TreasuryLedgerService.lockAccounts`). A row that is not money
+  references a wallet too: each line of a daily count (`treasury_counts`) checks its
+  foreign key, so a count written line by line in the sheet's order (type, currency,
+  name) held one wallet and waited for another that a transfer held — `40P01`. The count
+  now calls `lockAccounts` with every wallet it records before it reads their books (review
+  of 2026-10-11). Only a day's first count of a wallet is an INSERT; a recount keeps the key
+  and takes no lock, so a test must start from no count.
+- **Where:** `expenses.service.ts`, `transfers.service.ts`, `daily-count.service.ts`,
+  `treasury-ledger.service.ts` (`lockAccounts`, `refundDrafts`);
+  `daily-count-lock-order.integration.spec.ts`.
+
+### A balance read with no date is today's balance
+
+- **What happens:** an expense dated three days ago, from a bank account opened and funded
+  today, is accepted; the day it is dated on now closes below zero, its count can only be
+  recorded as a surplus that never existed, and the signed «تقرير الصندوق اليومي» prints the
+  negative close. A back-dated transfer, or a back-dated cash payment's change, does the same.
+- **Why:** `balanceOf` sums every entry of the wallet, whatever its date — the balance now.
+  An entry dated on an earlier day lands on that day's close and on every close after it,
+  which the balance now does not show.
+- **Do this:** judge any outflow through `TreasuryLedgerService.assertCanPay` (as `post` and a
+  transfer's amount + fee check do), which also checks every close from the dated day on.
+  Judge by the day's close, not the instant: a back-dated document sits at a nominal midday
+  UTC (`documentOccurredAt`).
+- **Where:** `treasury-ledger.service.ts` (`assertCanPay`, `firstShortClose`),
+  `transfers.service.ts`; `treasury-backdated-outflow.integration.spec.ts`.
+
+### A table lock taken before the settings row deadlocks with activation
+
+- **What happens:** «أقفل اليومية» pressed while «تفعيل الخزينة» is running failed with a 500
+  (`40P01`, deadlock detected), or activation did, whichever Postgres chose. Reproduced on
+  Postgres 17 before the PR #106 review fix.
+- **Why:** activation holds `system_settings` `FOR UPDATE` and then inserts the opening entries,
+  which needs `ROW EXCLUSIVE` on `treasury_entries`. The close took `SHARE` on `treasury_entries`
+  first and then read the settings row `FOR SHARE` (`ledger.config`): each waited on the other.
+  The advisory day-book lock does not help, because activation never takes it.
+- **Do this:** read `ledger.config` before any lock on the ledger table, as every writer does:
+  the settings row, then the wallets (`lockAccounts`), then the entries. A new path that locks
+  `treasury_entries` keeps that order.
+- **Where:** `day-closure.service.ts` (`close`), `treasury.service.ts` (`activate`),
+  `treasury-ledger.service.ts` (`config`); pinned by «refuses a close while activation is
+  posting» in `day-closing.integration.spec.ts`.
 
 ### A statement takes at most 32,767 bind variables
 
@@ -387,15 +474,92 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   version.
 - **Where:** `migrate-database.yml`, step "Install Postgres 17 client and age".
 
+### A lock-order test cannot fail while a document number is drawn first
+
+- **What happens:** a test that runs transfers both ways over one pair of
+  wallets, to prove they cannot deadlock, passes with the wallet lock order
+  removed.
+- **Why:** every transfer draws its «TR-» number from `document_counters`,
+  which row-locks the month's counter. That queues every concurrent transfer
+  before a wallet is touched, so the inversion the test hunts never happens.
+  Any act that draws a document number first has the same cover.
+- **Do this:** pin a lock by what it changes, not by a deadlock: the transfer
+  suite races two transfers for one wallet and checks the loser is refused with
+  amount + fee against the balance the winner left, which only holds when both
+  wallets are locked before the balance is read. Remove the lock and run it to
+  see it fail (docs/code-quality.md, rule 12).
+- **Where:** `TransfersService.create`, `TreasuryLedgerService.lockAccounts`,
+  `transfers-exchange.integration.spec.ts`.
+
+### Several payments in one transaction lock their wallets bill by bill
+
+- **What happens:** a settlement of a dollar bill and a ليرة bill, pressed while
+  an exchange moves money between the two safes, fails with `40P01` (deadlock
+  detected) — every round, once the older bill is in the currency of the safe
+  with the higher id.
+- **Why:** each payment's `post` locks only its own wallets, in id order within
+  that payment. Two payments in one transaction therefore take the safes in the
+  order the bills fell due; an exchange takes both in id order and draws no
+  RECEIPT number, so nothing queues it behind the settlement. The opposite fix
+  has its own trap: a single counter payment takes the RECEIPT counter before its
+  wallet, so locking the wallets before the counter deadlocks against that.
+- **Do this:** an act that records several payments draws the receipt numbers
+  first (`PaymentLedgerService.reserveReceiptNumbers`), then locks every wallet
+  the set will touch in one call (`TreasuryLedgerService.lockPaymentWallets`),
+  then records the bills. To pin a lock order, interleave the two acts by hand
+  (a `jest.spyOn` that lets the first act lock, starts the second, and pauses),
+  rather than hoping a free-running race lands in the window.
+- **Where:** `payment-settlement.service.ts`, `treasury-ledger.service.ts`,
+  `payment-settlement.integration.spec.ts` ("one lock order with the other
+  treasury writers").
+
+### A new stamp column is refused until the write-once trigger names it
+
+- **What happens:** a column added to a treasury document after `0083` — a
+  review stamp, a second approval — is written by an `UPDATE` in the code, and
+  every such `UPDATE` fails with «only its stamps may change after it is
+  written», reaching the user as a server error. The migration that added the
+  column applied cleanly, and a test that inserts the row with the column set
+  passes.
+- **Why:** `reject_treasury_document_mutation(<stamps>)` (0083) compares the
+  whole row before and after, minus the stamps its trigger was created with. A
+  new column is outside that list until the trigger is re-created with it.
+  PR #111's `0084` added `reviewedAt`/`reviewedById`/`reviewNote` to
+  `treasury_transfers` without it, and no exchange could be reviewed until
+  `0088`.
+- **Do this:** in the migration that adds a column some path UPDATEs — or a new
+  one, if that migration may already be applied — `DROP TRIGGER IF EXISTS` and
+  `CREATE TRIGGER` the table's `*_written_once` trigger with the column in its
+  stamp list, and test the `UPDATE` itself against a migrated schema, not the
+  insert. A cancelled document accepts no stamp at all, so refuse the act on a
+  cancelled row with a code before the trigger does.
+- **Where:** `0083_treasury_controls`, `0088_treasury_transfer_review_stamp`,
+  `TransfersService.review`, `transfers-review.integration.spec.ts`.
+
 ### Advisory-lock keys must match character for character
 
 - **What happens:** two writers that build the key differently take different
-  locks, and the building-suffix race returns.
+  locks, and the building-suffix race returns. The same happens inside one
+  writer when the key carries an id from the path: «صرف عمولة» for
+  `3F2A…` and for `3f2a…` took two locks, both read the same balance owed and
+  both paid it, and an accountant's own upper-cased id passed
+  `COMMISSION_SELF_PAYOUT` (review of 2026-10-11).
 - **Why:** the key is a string hashed by `hashtext`, built separately in each
-  service.
-- **Do this:** change both together, or extract one helper.
+  service. `ParseUUIDPipe` accepts any case and passes the id on as typed, while
+  Postgres reads every spelling as the same uuid — so a string comparison with
+  `actor.id` (always lower case, from the database) or a lock key built from it
+  sees two ids where the database sees one.
+- **Do this:** change both together, or extract one helper. Lower-case a path
+  id before it is compared or put in a key, as `StaffService.recordInspectorPayout`
+  does, or compare the id read back from the row.
 - **Where:** `BuildingsService.create`, `ParcelCorrectionService`
-  (`<schema>:building-suffix:<parcel>`).
+  (`<schema>:building-suffix:<parcel>`); `StaffService.recordInspectorPayout`
+  (`<schema>:inspector-payout:<inspectorId>`), pinned in
+  `inspector-payout.integration.spec.ts`. Still open, both already on `develop`:
+  `BuildingsService.addUnit` builds `<schema>:unit-sequence:<buildingId>` from
+  the path as typed ([code-quality.md](code-quality.md)), and the staff accounts'
+  self-guards compare `input.id === input.actor.id`
+  ([security.md](security.md#known-gaps)).
 
 ### A push to `main` migrates production before CI finishes
 
@@ -816,6 +980,25 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **Do this:** use two browser profiles to test both at once.
 - **Where:** `apps/frontend/lib/session.ts` `key`.
 
+### A refusal can tell a caller the figure his role may not read
+
+- **What happens:** a route open to a role that may not read a balance still
+  answers it. The figure leaks in the refusal's words (the commission payout
+  said «المبلغ أكبر من الرصيد المستحق (123.00$)» to an accountant), or in
+  the order of the refusals: when the balance is judged before a check that
+  does not depend on the amount (the wallet exists, is active, covers it), an
+  amount above the balance and one within it answer differently, and a
+  bisection reads the figure without paying anything.
+- **Why:** the role check is on the route, but the refusals were written for
+  the manager, who sees the figure anyway.
+- **Do this:** word the refusal without the figure for a caller the read route
+  refuses, and judge the hidden balance last, inside the transaction that
+  rolls the write back with it. Test both: the words, and that a bad wallet
+  answers alike either side of the balance.
+- **Where:** `StaffService.recordInspectorPayout`, `payoutRefusal`'s
+  `showOwed` (`packages/shared-schemas/src/payout-policy.ts`); PR #109 review,
+  2026-10-10.
+
 ## Frontend
 
 ### A form moved from a dialog to a page stays mounted after it succeeds
@@ -1030,6 +1213,35 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   translator uses `FORMAT_LOCALE` (`ar-u-nu-latn`) from `lib/api-errors.ts`.
 - **Where:** `apps/frontend/messages/ar.json`; `lib/messages-parity.test.ts`
   refuses a `#` in any Arabic message outside `errors`.
+
+### A dark theme prints a black sheet
+
+- **What happens:** a voucher or the daily report printed from a dark screen,
+  with «Background graphics» ticked (which a clerk does to get the crest in
+  colour), comes out as black ink on a black page, margins included.
+- **Why:** the print rules forced the document's own text and boxes to black on
+  transparent, but the page behind it kept the dark theme's background, and
+  Chromium paints the page margins from the root's `color-scheme`, not from any
+  background.
+- **Do this:** print through `documentPrintCss` in
+  `components/admin/finance/official-document.tsx`, which sets
+  `color-scheme: light` and a white `html, body` in print. Check a new printed
+  document with `page.pdf({ printBackground: true })` from a dark theme.
+- **Where:** `official-document.tsx`; the four printed documents share it — the
+  daily report, «أمر الصرف», «سند القبض» and «سند المناقلة» (`transfer-document.tsx`).
+
+### A re-read that tidies a selection can orphan its retry key
+
+- **What happens:** a clerk presses «تسديد الفواتير المحددة», the answer is lost, the settlement
+  committed. He switches window and back; the dialog vanishes, the bills read as paid, and no retry
+  ever shows him the consolidated receipt.
+- **Why:** the lists drop a ticked bill once a read shows it paid (`reconcileSelection`), and the
+  window-focus refetch is such a read. The ticked set is also the retry key's scope
+  (`bulkKeyScope`): emptying it unmounts the bar and its dialog, and any other set is a new key.
+- **Do this:** never drop from a set while a press of it is on the wire or its key is in doubt —
+  `selectionHeld` (`beginPress`/`endPress`, `heldInDoubt`). Any screen whose key scope is derived
+  from state that a background read can rewrite needs the same hold.
+- **Where:** `lib/bulk-settle.ts`, `lib/use-bulk-selection.ts`, `components/admin/bulk-settle/bulk-settle-dialog.tsx`.
 
 ### A poll keeps its user «متصل الآن»
 

@@ -31,7 +31,6 @@ import type {
   FeeFrequency,
   FieldFlag,
   ImportRow,
-  InspectorPayoutItem,
   InspectorProfileResponse,
   NumberingSequence,
   OccupancyEndReason,
@@ -43,10 +42,13 @@ import type {
   PossibleDuplicatesQuery,
   PaymentStatus,
   RecordInspectorPayoutInput,
+  RecordInspectorPayoutResult,
   SequenceKey,
   SetOwnerBillingInput,
   SetUnitFeeExemptionInput,
   SettlePayment,
+  BulkSettlePayments,
+  SettlementReceipt,
   BuildingLifecycle,
   StructureType,
   SurveyStatus,
@@ -4725,14 +4727,14 @@ export function getInspectorProfile(
   );
 }
 
-/** Super Admin records a commission payment made to an inspector */
+/** «صرف عمولة»: the manager pays an inspector's commission; `replayed` when a retried press found it already paid. */
 export function recordInspectorPayout(
   tenant: string,
   token: string,
   id: string,
   input: RecordInspectorPayoutInput,
 ) {
-  return apiFetch<InspectorPayoutItem>(
+  return apiFetch<RecordInspectorPayoutResult>(
     tenant,
     `/staff/inspectors/${encodeURIComponent(id)}/payouts`,
     {
@@ -5019,6 +5021,13 @@ export interface MunicipalitySettings {
    */
   urgentExpenseCeilingLbp?: number | null;
   urgentExpenseCeilingUsd?: number | null;
+  /**
+   * How far an exchange may stray from the rate before it needs a reason, in
+   * percent, and above what (on its non-base side) it is reviewed whatever its
+   * rate (0084). Absent for a citizen, as the ceilings are.
+   */
+  exchangeRateTolerancePercent?: number;
+  largeExchangeThreshold?: number;
 
   numberingSequences: Record<SequenceKey, NumberingSequence> | null;
   backupSchedule: BackupSchedule | null;
@@ -5516,12 +5525,16 @@ export function openByReference(tenant: string, referenceNumber: string) {
 /** One invoice as the admin ledger shows it — who owes it, and where it stands. */
 export interface AdminPaymentItem {
   id: string;
+  /** «INV-2610-0001», or null on a bill raised before migration 0079. */
+  invoiceNumber: string | null;
   title: string;
   amount: number;
   paidAmount: number;
   remaining: number;
   currency: string;
   dueDate: string;
+  /** When the bill was raised — the tie-break of «oldest first» in a bulk settlement (`bulkSettlementOrder`). */
+  createdAt: string;
   paymentStatus: string;
   paymentMethod: string | null;
   whishTransactionRef: string | null;
@@ -5701,6 +5714,31 @@ export async function settlePayment(
   );
   invalidateRequests(`fee-summary:${tenant}`);
   return result;
+}
+
+export type { BulkSettlePayments, SettlementReceipt, SettlementReceiptItem } from '@mechanization/shared-schemas';
+
+/**
+ * «تسديد الفواتير المحددة» — several of one citizen's bills settled in one
+ * press, all or nothing (docs/finance.md §3.7). Each bill gets its own «RCP-»
+ * receipt; the answer is the consolidated receipt, «BRC-…», with `replayed`
+ * when the retry key (`clientRequestId`) answers with a settlement an earlier
+ * attempt recorded. The body is the shared schema's, not re-declared here.
+ */
+export async function bulkSettlePayments(tenant: string, token: string, input: BulkSettlePayments) {
+  const result = await apiFetch<SettlementReceipt>(tenant, '/fees/payments/bulk-settle', {
+    token,
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+  // As `settlePayment`: the fee summary the fees screen caches counts these bills as unpaid.
+  invalidateRequests(`fee-summary:${tenant}`);
+  return result;
+}
+
+/** One consolidated receipt, for a reprint — what `bulkSettlePayments` answered, read again. */
+export function getPaymentSettlement(tenant: string, token: string, id: string, signal?: AbortSignal) {
+  return apiFetch<SettlementReceipt>(tenant, `/fees/settlements/${encodeURIComponent(id)}`, { token, signal });
 }
 
 /**
@@ -6005,6 +6043,13 @@ import type {
   ReceiveCustodyResult,
   TransferView,
   VoidTransferInput,
+  CreateTransferInput,
+  CreateTransferResult,
+  ListTransfersQuery,
+  ReviewTransferInput,
+  TransferListResult,
+  CreateTreasuryAccountInput,
+  TreasuryAccountView,
 } from '@mechanization/shared-schemas';
 
 export type {
@@ -6051,6 +6096,13 @@ export type {
   ReceiveCustodyResult,
   TransferView,
   VoidTransferInput,
+  CreateTransferInput,
+  CreateTransferResult,
+  ListTransfersQuery,
+  ReviewTransferInput,
+  TransferListResult,
+  TransferKind,
+  CreateTreasuryAccountInput,
 } from '@mechanization/shared-schemas';
 
 /** Every wallet with its balance, whether the treasury is live, and the rate to convert with. `GET /treasury`. */
@@ -6080,6 +6132,21 @@ export function getTreasuryStatement(
     `/treasury/accounts/${encodeURIComponent(args.accountId)}/statement${suffix}`,
     { token, signal },
   );
+}
+
+/** «إضافة حساب» — a bank account or a petty-cash fund, opened empty. SUPER_ADMIN. `POST /treasury/accounts`. */
+export function createTreasuryAccount(
+  tenant: string,
+  token: string,
+  args: CreateTreasuryAccountInput,
+  signal?: AbortSignal,
+) {
+  return apiFetch<TreasuryAccountView>(tenant, '/treasury/accounts', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(args),
+    signal,
+  });
 }
 
 /** «تفعيل الخزينة» — the counted opening balances, posted once. SUPER_ADMIN only. `POST /treasury/activate`. */
@@ -6131,15 +6198,60 @@ export function getMyRound(tenant: string, token: string, _args?: undefined, sig
   return apiFetch<CollectorRoundView>(tenant, '/treasury/transfers/custody/mine', { token, signal });
 }
 
-/** The transfers recorded, newest first. `GET /treasury/transfers`. */
+/**
+ * «سجل المناقلات» — newest first, filtered, with the count waiting for review.
+ * `GET /treasury/transfers`.
+ */
 export function getTransfers(
   tenant: string,
   token: string,
-  args: { limit?: number } = {},
+  args: Partial<Omit<ListTransfersQuery, 'includeVoid'>> & { includeVoid?: boolean } = {},
   signal?: AbortSignal,
 ) {
-  const suffix = args.limit === undefined ? '' : `?limit=${args.limit}`;
-  return apiFetch<TransferView[]>(tenant, `/treasury/transfers${suffix}`, { token, signal });
+  const query = new URLSearchParams();
+  if (args.kind) query.set('kind', args.kind);
+  if (args.review) query.set('review', args.review);
+  if (args.from) query.set('from', args.from);
+  if (args.to) query.set('to', args.to);
+  if (args.includeVoid) query.set('includeVoid', 'true');
+  if (args.page) query.set('page', String(args.page));
+  if (args.pageSize) query.set('pageSize', String(args.pageSize));
+  const suffix = query.size > 0 ? `?${query.toString()}` : '';
+  return apiFetch<TransferListResult>(tenant, `/treasury/transfers${suffix}`, { token, signal });
+}
+
+/** One transfer, for its printed «سند». `GET /treasury/transfers/:id`. */
+export function getTransfer(tenant: string, token: string, args: { id: string }, signal?: AbortSignal) {
+  return apiFetch<TransferView>(tenant, `/treasury/transfers/${encodeURIComponent(args.id)}`, { token, signal });
+}
+
+/**
+ * «تحويل داخلي» or «مصارفة» — both legs and any fee, in one call.
+ * ACCOUNTANT or SUPER_ADMIN. `POST /treasury/transfers`.
+ */
+export function createTransfer(tenant: string, token: string, args: CreateTransferInput, signal?: AbortSignal) {
+  return apiFetch<CreateTransferResult>(tenant, '/treasury/transfers', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(args),
+    signal,
+  });
+}
+
+/** «اعتماد المراجعة». AUDITOR or SUPER_ADMIN. `POST /treasury/transfers/:id/review`. */
+export function reviewTransfer(
+  tenant: string,
+  token: string,
+  args: { id: string } & ReviewTransferInput,
+  signal?: AbortSignal,
+) {
+  const { id, ...body } = args;
+  return apiFetch<TransferView>(tenant, `/treasury/transfers/${encodeURIComponent(id)}/review`, {
+    method: 'POST',
+    token,
+    body: JSON.stringify(body),
+    signal,
+  });
 }
 
 /**
@@ -6530,6 +6642,105 @@ export function voidIncomeVoucher(
     method: 'POST',
     token,
     body: JSON.stringify(body),
+    signal,
+  });
+}
+
+// ── جرد الصندوق وإقفال اليومية (stage 5) ────────────────────────────────────
+
+import type {
+  CloseDayInput,
+  CloseDayResult,
+  DailyCashReport,
+  DailyCountSheet,
+  RecordDailyCountInput,
+  ReopenDayInput,
+  TreasuryDayClosureView,
+  TreasuryDayState,
+} from '@mechanization/shared-schemas';
+
+export type {
+  CloseDayInput,
+  CloseDayResult,
+  CountedWalletView,
+  DailyCashReport,
+  DailyCashReportCustody,
+  DailyCashReportTotal,
+  DailyCashReportWallet,
+  DailyCountLineView,
+  DailyCountSheet,
+  DailyCountView,
+  DayClosureVerdict,
+  RecordDailyCountInput,
+  ReopenDayInput,
+  TreasuryDayClosureView,
+  TreasuryDayEvent,
+  TreasuryDayState,
+  TreasuryDayStatus,
+} from '@mechanization/shared-schemas';
+
+/**
+ * «جرد وإقفال اليومية» for one day — or, with no `date`, for the day that needs
+ * closing next. `GET /treasury/counts`.
+ */
+export function getDailyCountSheet(
+  tenant: string,
+  token: string,
+  args: { date?: string } = {},
+  signal?: AbortSignal,
+) {
+  const suffix = args.date ? `?date=${encodeURIComponent(args.date)}` : '';
+  return apiFetch<DailyCountSheet>(tenant, `/treasury/counts${suffix}`, { token, signal });
+}
+
+/**
+ * «سجّل الجرد» — one or more wallets counted for one day; answers with the sheet
+ * as it now stands. ACCOUNTANT or SUPER_ADMIN. `POST /treasury/counts`.
+ */
+export function recordDailyCount(tenant: string, token: string, args: RecordDailyCountInput, signal?: AbortSignal) {
+  return apiFetch<DailyCountSheet>(tenant, '/treasury/counts', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(args),
+    signal,
+  });
+}
+
+/** «أقفل اليومية». ACCOUNTANT or SUPER_ADMIN. `POST /treasury/closures`. */
+export function closeTreasuryDay(tenant: string, token: string, args: CloseDayInput, signal?: AbortSignal) {
+  return apiFetch<CloseDayResult>(tenant, '/treasury/closures', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(args),
+    signal,
+  });
+}
+
+/** «أعد فتح اليومية» — the latest closed day, with a reason. SUPER_ADMIN only. `POST /treasury/closures/reopen`. */
+export function reopenTreasuryDay(tenant: string, token: string, args: ReopenDayInput, signal?: AbortSignal) {
+  return apiFetch<TreasuryDayState>(tenant, '/treasury/closures/reopen', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(args),
+    signal,
+  });
+}
+
+/** The closed and reopened days, latest first. `GET /treasury/closures`. */
+export function getTreasuryClosures(
+  tenant: string,
+  token: string,
+  args: { limit?: number } = {},
+  signal?: AbortSignal,
+) {
+  const suffix = args.limit === undefined ? '' : `?limit=${args.limit}`;
+  return apiFetch<TreasuryDayClosureView[]>(tenant, `/treasury/closures${suffix}`, { token, signal });
+}
+
+/** «تقرير الصندوق اليومي». `GET /treasury/reports/daily`. */
+export function getDailyCashReport(tenant: string, token: string, args: { date: string }, signal?: AbortSignal) {
+  return apiFetch<DailyCashReport>(tenant, `/treasury/reports/daily?date=${encodeURIComponent(args.date)}`, {
+    token,
     signal,
   });
 }

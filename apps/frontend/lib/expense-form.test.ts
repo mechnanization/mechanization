@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { firstFieldToFix, isExpenseField } from './expense-form';
+import type { ExpenseCategoryView } from '@mechanization/shared-schemas';
+import { firstFieldToFix, formCategories, isExpenseField } from './expense-form';
 
 describe('firstFieldToFix', () => {
   it('is null when nothing is wrong', () => {
@@ -50,5 +51,32 @@ describe('isExpenseField', () => {
     expect(isExpenseField('clientRequestId')).toBe(false);
     expect(isExpenseField('hasPhysicalReceipt')).toBe(false);
     expect(isExpenseField('')).toBe(false);
+  });
+});
+
+describe('formCategories', () => {
+  const band = (id: string, key: ExpenseCategoryView['key'], active = true): ExpenseCategoryView => ({
+    id,
+    key,
+    name: id,
+    description: null,
+    chapterCode: null,
+    itemCode: null,
+    active,
+  });
+
+  it('never offers «تعويضات المسح والجباية», which «صرف عمولة» alone pays', () => {
+    const listed = [band('fuel', 'FUEL'), band('commissions', 'FIELD_COMMISSIONS'), band('salaries', 'SALARIES')];
+    expect(formCategories(listed, []).map((category) => category.id)).toEqual(['fuel', 'salaries']);
+  });
+
+  it('offers the active bands and those added here, once each', () => {
+    const own = band('own', null);
+    const listed = [band('fuel', 'FUEL'), band('old', null, false), own];
+    expect(formCategories(listed, [own, band('new', null)]).map((category) => category.id)).toEqual([
+      'fuel',
+      'own',
+      'new',
+    ]);
   });
 });
