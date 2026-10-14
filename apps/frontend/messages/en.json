@@ -611,7 +611,8 @@
     "mother": "Mother's name: {name}",
     "motherUnknown": "Mother's name not recorded",
     "change": "Change",
-    "archived": "Archived"
+    "archived": "Archived",
+    "archivedHint": "Archived: restore it first («Restore from the archive» on the citizens register)."
   },
   "citizenArchive": {
     "title": "Archive the file",

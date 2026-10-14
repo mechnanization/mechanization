@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { CitizenSearchStatus } from '@/components/admin/citizen-search-status';
+import { cn } from '@/lib/utils';
 
 /** The citizen a screen is acting for: what tells two «محمد خليل»s apart, and nothing more. */
 export interface PickedCitizen {
@@ -38,7 +39,9 @@ export function pickedCitizen(row: CitizenListItem): PickedCitizen {
  * apart. The identity document's number and the phone travel with the row and
  * are never drawn: a screen at a public counter is read over shoulders. Files
  * folded into another by «دمج ملفين» are never offered, and archived ones only
- * where the screen asks (`includeArchived`), marked as such.
+ * where the screen asks (`includeArchived`): shown, marked, and not taken — an
+ * archived file takes no new filing (`CITIZEN_FILE_ARCHIVED`), and the row says
+ * to restore it first, so the person is not filed a second time either.
  *
  * Controlled: `value` is the chosen file, shown as a card with «تغيير», and
  * `onChange(null)` puts the search back. A screen that adds several people
@@ -150,13 +153,19 @@ export function CitizenPicker({
         <ul className="divide-y overflow-hidden rounded-lg border" aria-label={t('results')}>
           {search.results.map((row) => (
             <li key={row.id}>
+              {/* `aria-disabled`, not `disabled`: still reached by the keyboard, so its hint is read. */}
               <button
                 type="button"
+                aria-disabled={row.isActive ? undefined : true}
                 onClick={() => {
+                  if (!row.isActive) return;
                   setTerm('');
                   onChange(pickedCitizen(row));
                 }}
-                className="flex min-h-touch w-full items-center gap-3 px-3 py-2 text-start transition-colors hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                className={cn(
+                  'flex min-h-touch w-full items-center gap-3 px-3 py-2 text-start transition-colors focus-visible:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
+                  row.isActive ? 'hover:bg-muted/50' : 'cursor-not-allowed',
+                )}
               >
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium">
@@ -165,6 +174,9 @@ export function CitizenPicker({
                   <span className="block truncate text-xs text-muted-foreground">
                     {row.motherName ? t('mother', { name: row.motherName }) : t('motherUnknown')}
                   </span>
+                  {!row.isActive ? (
+                    <span className="block text-xs text-muted-foreground">{t('archivedHint')}</span>
+                  ) : null}
                 </span>
                 {!row.isActive ? <Badge variant="soft-muted">{t('archived')}</Badge> : null}
                 {row.referenceNumber ? (

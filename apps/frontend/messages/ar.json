@@ -611,7 +611,8 @@
     "mother": "اسم الأم: {name}",
     "motherUnknown": "اسم الأم غير مسجَّل",
     "change": "تغيير",
-    "archived": "مؤرشف"
+    "archived": "مؤرشف",
+    "archivedHint": "مؤرشف: أعِده من الأرشيف أولاً («إعادة من الأرشيف» في سجل المواطنين)."
   },
   "citizenArchive": {
     "title": "أرشفة الملف",

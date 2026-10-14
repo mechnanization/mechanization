@@ -239,8 +239,9 @@ component types.
 - `useCitizenSearch` (`lib/use-citizen-search.ts`) searches the register on the server as the clerk
   types: `SEARCH_DEBOUNCE_MS` 350 ms, an `AbortController`, `limit: 8`. Files folded by «دمج ملفين» are
   never offered, archived files only where the screen asks (`includeArchived`: the census and
-  ownership screens, where the person come back is restored, not filed twice; never a fee, which the
-  server refuses on one, `FEE_CITIZEN_ARCHIVED`), and `exclude` drops the files a screen may not offer
+  ownership screens, where they are shown marked «مؤرشف» and not taken — the row says to restore the
+  file first, so the person is not filed twice, and the server refuses a new filing on an archived
+  file, `CITIZEN_FILE_ARCHIVED`, #115; never a fee, `FEE_CITIZEN_ARCHIVED`), and `exclude` drops the files a screen may not offer
   (the seller, the file being merged into, the people already listed). The server has no filter for
   either, so `more` says when the register holds more matches than are listed. The last term's
   matches are emptied the moment another is typed, so nothing stale is there to click. A failed search

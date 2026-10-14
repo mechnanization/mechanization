@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import type { ColumnDef } from '@tanstack/react-table';
@@ -869,6 +870,7 @@ export function AddPersonForm({
 }) {
   const en = locale === 'en';
   const labels = getLabels(locale);
+  const tPicker = useTranslations('citizenPicker');
   const [acknowledgedVacancy, setAcknowledgedVacancy] = useState(false);
   /**
    * «المالك»: a recorded owner's citizen id, `OTHER` for an owner not recorded
@@ -1046,12 +1048,27 @@ export function AddPersonForm({
             <ul className="max-h-48 space-y-1 overflow-y-auto">
               {results.map((citizen) => (
                 <li key={citizen.id}>
+                  {/*
+                    An archived file is shown, so the person is not filed twice,
+                    and not taken: nobody is put in a flat on one until it is
+                    restored (`CITIZEN_FILE_ARCHIVED`). `aria-disabled` keeps it
+                    reachable, so its hint is read.
+                  */}
                   <button
                     type="button"
-                    onClick={() => setChosen(citizen)}
-                    className="flex w-full flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md px-2.5 py-1.5 text-start text-sm transition-colors hover:bg-accent"
+                    aria-disabled={citizen.isActive ? undefined : true}
+                    onClick={() => {
+                      if (citizen.isActive) setChosen(citizen);
+                    }}
+                    className={cn(
+                      'flex w-full flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md px-2.5 py-1.5 text-start text-sm transition-colors',
+                      citizen.isActive ? 'hover:bg-accent' : 'cursor-not-allowed',
+                    )}
                   >
                     <span className="font-medium">{citizen.fullName}</span>
+                    {!citizen.isActive ? (
+                      <Badge variant="soft-muted">{tPicker('archived')}</Badge>
+                    ) : null}
                     {citizen.phone ? (
                       <span dir="ltr" className="text-xs text-muted-foreground">
                         {citizen.phone}
@@ -1072,6 +1089,9 @@ export function AddPersonForm({
                       <span className="basis-full text-xs text-muted-foreground">
                         {en ? `Mother: ${citizen.motherName}` : `والدته: ${citizen.motherName}`}
                       </span>
+                    ) : null}
+                    {!citizen.isActive ? (
+                      <span className="basis-full text-xs text-muted-foreground">{tPicker('archivedHint')}</span>
                     ) : null}
                   </button>
                 </li>
