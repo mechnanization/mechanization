@@ -1,6 +1,6 @@
 # UI/UX standards: binding for every change to `apps/frontend`
 
-Last verified against the code: `feat/treasury-day-closing@c88c971` (`develop` with the reviewed treasury, #107/#108; PR #106, stage 5: the daily count, the day closing and the closed-day lock; PR #109, inspector payouts and decision D9; PR #111, transfers, exchange and wallets with `0088`; PR #112, the consolidated receipt as a PRIM-28 document page; each merged with its review fixes, and the cross-feature fixes) with the fixes of the final-stack review (uncommitted): the bulk dialog's checks in doubt, the payout dialog's hosts on `readView` and its retry key before go-live, a day in a refusal through `formatDay`, 2026-10-11.
+Last verified against the code: `fix/pr115-review` (PR #115 merged with `develop@5e8f5c3`, with its review fixes): «أمان الحساب» on the kit `invalid` prop, its error state, `rounded-lg`, 2026-10-14.
 
 This file binds every AI agent and every person who builds or reviews an
 interface in this repository. [CLAUDE.md](../CLAUDE.md) (non-negotiable 9) and
@@ -684,8 +684,8 @@ Code-pattern debt outside the UI rules lives in
   `CorrectionBillsPage` (`fees/corrections/page.tsx`), `AuditDaily`
   (`components/admin/audit-daily.tsx`). `Pager` has 1 user.
 - **Red error banners, 60 copies in 45 files** (CTL-12), none of them yet moved
-  to the `Alert` primitive that now exists — the finance screens and the counter
-  settle page (moved 2026-10-09) are its only users. Each is a className holding `border-destructive…`, `bg-destructive/5` or `/10` and
+  to the `Alert` primitive that now exists, which 35 files use (the finance screens, the
+  counter settle page, «أمان الحساب», the staff sign-in page among them). Each is a className holding `border-destructive…`, `bg-destructive/5` or `/10` and
   `text-destructive`. Three each in `import-citizens-dialog`,
   `complete-record-dialog`, `building-unit-forms`; two each in
   `unit-correction-delete-dialog`, `merge-citizens-dialog`, `citizen-form`,
@@ -830,7 +830,8 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
 - **`shadow-xs`/`shadow-2xs`, 34 in 12 files** (LAY-4, CODE-8), including the
   primitives `field.tsx` (1) and `segmented-control.tsx` (2);
   `building-editor.tsx` has 11, `bill-type-select.tsx` 5.
-- **`rounded-xl`/`2xl`/`3xl`, 139 uses** (LAY-3 applies to new cards).
+- **`rounded-xl`/`2xl`/`3xl`, 133 uses** (LAY-3 applies to new cards; `security-section.tsx` moved
+  to `rounded-lg` on 2026-10-14).
   `DialogContent`, Button `xl`, `DataTable` and `Skeleton` use `rounded-xl`.
 - **Physical direction utilities, about 53 in 13 files** (RTL-1): `rtl:ml-*
   ltr:mr-*` pairs instead of `me-*` in `fees/page.tsx` (7 pairs) and

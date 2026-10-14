@@ -712,6 +712,15 @@ async function exchangeStaffToken(
  */
 const SESSION_ROUTES = ['/auth/staff/login', '/auth/staff/refresh', '/auth/staff/logout'];
 
+/**
+ * 401s that answer the request, not the session: the current password typed to
+ * confirm a change to one's own account («أمان الحساب») is wrong. Exchanged and
+ * replayed like an expiry, each wrong guess rotated the refresh cookie and had
+ * the server check the password twice. A 401 with any other code on those
+ * routes is still an expired session and renewed as one.
+ */
+const ANSWERED_401 = new Set<string>(['STAFF_CURRENT_PASSWORD_INCORRECT']);
+
 type ApiFetchInit = RequestInit & {
   token?: string;
   skipTokenRefresh?: boolean;
@@ -800,6 +809,8 @@ async function send<T>(
     which can be sent twice. A streaming body could not, and nothing here uses
     one; if that changes, this is the line that has to know.
   */
+  /** The 401's body, read once to tell an expiry from an answer (`ANSWERED_401`), and reused below. */
+  let refusal: ApiError | undefined;
   if (
     response.status === 401 &&
     token &&
@@ -807,22 +818,27 @@ async function send<T>(
     exchangesLeft > 0 &&
     !SESSION_ROUTES.some((route) => path.startsWith(route))
   ) {
-    const fresh = await exchangeStaffToken(tenant, token);
-    if (fresh && fresh.token !== token) {
-      return send<T>(
-        tenant,
-        path,
-        { ...init, token: fresh.token },
-        fresh.fromNetwork ? 0 : exchangesLeft - 1,
-      );
+    refusal = (await response.json().catch(() => undefined)) as ApiError | undefined;
+    if (!(refusal?.code && ANSWERED_401.has(refusal.code))) {
+      const fresh = await exchangeStaffToken(tenant, token);
+      if (fresh && fresh.token !== token) {
+        return send<T>(
+          tenant,
+          path,
+          { ...init, token: fresh.token },
+          fresh.fromNetwork ? 0 : exchangesLeft - 1,
+        );
+      }
     }
   }
 
   if (!response.ok) {
-    const payload = (await response.json().catch(() => ({
-      code: 'UNKNOWN',
-      message: 'تعذّر إتمام الطلب. حاول مرة أخرى.',
-    }))) as ApiError;
+    const payload =
+      refusal ??
+      ((await response.json().catch(() => ({
+        code: 'UNKNOWN',
+        message: 'تعذّر إتمام الطلب. حاول مرة أخرى.',
+      }))) as ApiError);
     throw new ApiRequestError(response.status, payload);
   }
 

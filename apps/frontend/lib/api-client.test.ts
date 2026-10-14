@@ -532,6 +532,31 @@ describe('apiFetch — when the exchange must not be attempted', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('does not exchange when the current password typed to confirm an own-account change is wrong', async () => {
+    /*
+      «أمان الحساب»: a wrong current password answers 401
+      STAFF_CURRENT_PASSWORD_INCORRECT on a live session. Exchanged like an
+      expiry, every wrong guess rotated the refresh cookie and was checked twice.
+    */
+    fetchMock.mockResolvedValueOnce(
+      reply(401, { code: 'STAFF_CURRENT_PASSWORD_INCORRECT', message: 'The current password does not match' }),
+    );
+
+    await expect(
+      apiFetch(TENANT, '/auth/staff/change-password', { method: 'POST', token: OLD }),
+    ).rejects.toMatchObject({ status: 401, code: 'STAFF_CURRENT_PASSWORD_INCORRECT' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('still renews an expired session on the same route', async () => {
+    serverAccepting(NEW);
+
+    await expect(
+      apiFetch(TENANT, '/auth/staff/change-password', { method: 'POST', token: OLD }),
+    ).resolves.toEqual({ ok: true });
+    expect(refreshCalls()).toHaveLength(1);
+  });
+
   it('leaves non-401 failures completely alone', async () => {
     fetchMock.mockResolvedValueOnce(reply(409, { code: 'CONFLICT', message: 'مكرر' }));
 

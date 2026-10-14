@@ -99,7 +99,21 @@
     "emailChangeConfirmedTitle": "Email address confirmed",
     "emailChangeConfirmedDesc": "Your sign-in email address has already been updated. You can close this page and sign in.",
     "passwordsDontMatch": "Passwords do not match.",
-    "passwordTooShort": "Use at least 10 characters."
+    "passwordTooShort": "Use at least 10 characters.",
+    "staffSignIn": {
+      "invalidCode": "Invalid verification code. Please check your authenticator app.",
+      "invalidCredentials": "Invalid email or password.",
+      "failed": "Unable to sign in.",
+      "brand": "Municipal Platform",
+      "brandSub": "Staff Administration",
+      "portalTitle": "Administration Portal",
+      "portalDescription": "Staff workspace to review, process, and manage municipal records.",
+      "footer": "© 2026 — Access restricted to authorized personnel.",
+      "heading": "Sign in to your account",
+      "help": "Forgot your password or unable to sign in? Contact your system administrator.",
+      "passwordChangedTitle": "Password changed",
+      "passwordChangedBody": "Every session of this account was signed out, on this device and any other. Sign in with the new password."
+    }
   },
   "citizen": {
     "enterReference": "Enter your Reference Number",
@@ -440,7 +454,7 @@
     "REOPEN_REASON_REQUIRED": "Write a clear reason for reopening the day (at least {min} characters).",
     "ONLY_LATEST_CLOSED_DAY_CAN_BE_REOPENED": "Only the latest closed day can be reopened, which is {date}.",
     "CITIZEN_IDENTITY_DOC_TAKEN": "This document number is already recorded for someone else in the register. Check the number.",
-    "CITIZEN_FILE_ARCHIVED": "This person’s file is archived, so no new filing is added to it. Reactivate the file first, then send the filing again.",
+    "CITIZEN_FILE_ARCHIVED": "This person's file is archived, so nothing new is filed on it — no card, no flat, no sale. Restore it first («Restore from the archive» on the citizens register), then try again.",
     "STAFF_CURRENT_PASSWORD_INCORRECT": "The current password is incorrect."
   },
   "damage": {
@@ -2669,6 +2683,11 @@
       "submitting": "Changing the password…",
       "cancel": "Cancel",
       "failed": "Could not change the password."
+    },
+    "ownAccount": {
+      "loadFailedTitle": "Could not read your account",
+      "loadFailed": "The account details did not load. Two-factor settings stay unavailable until they do.",
+      "retry": "Retry"
     }
   },
   "dailyClosing": {
@@ -2835,7 +2854,8 @@
   },
   "citizenImport": {
     "possibleDuplicatesHeading": "Rows that resemble someone already on file",
-    "possibleDuplicatesNote": "These will be imported and held at “Requires Review” with «Possible existing record», for someone to check whether it is the same person.",
-    "resembles": "Resembles: {names}"
+    "possibleDuplicatesNote": "These will be imported and held at “{status}” with “{flag}”, for someone to check whether it is the same person.",
+    "resembles": "Resembles: {names}",
+    "row": "Row {row}"
   }
 }

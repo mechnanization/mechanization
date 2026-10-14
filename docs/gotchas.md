@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `feat/treasury-day-closing@c88c971` (`develop` with the reviewed treasury, #107/#108; PR #106, stage 5: the daily count, the day closing and the closed-day lock; PR #109, inspector payouts and decision D9; PR #111, transfers, exchange and wallets with `0088`; PR #112, the payment ledger's own transaction and a selection that is a retry key's scope; each merged with its review fixes, and the cross-feature fixes) with the fixes of the final-stack review (uncommitted): a path id's case in a lock key and a self-check, the count's foreign-key locks, a back-dated outflow and the balance now, the four printed documents, 2026-10-11.
+Last verified against the code: `fix/pr115-review` (PR #115 merged with `develop@5e8f5c3`, with its review fixes): digit-normalised cadastre lookups and what still compares as typed, 2026-10-14.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves

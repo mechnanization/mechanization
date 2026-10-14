@@ -1,6 +1,6 @@
 # apps/frontend: agent guide
 
-Last verified against the code: `feat/treasury-day-closing@c88c971` (`develop` with the reviewed treasury, #107/#108; PR #106, stage 5: the daily count, the day closing and the closed-day lock; PR #109, inspector payouts and decision D9; PR #111, transfers, exchange and wallets with `0088`; PR #112, bulk settlement, the held selection, `expectedDue`, the consolidated receipt; each merged with its review fixes, and the cross-feature fixes) with the fixes of the final-stack review (uncommitted): the bulk dialog's `previewGate`, a day in a refusal through `formatDay`, the payout dialog's hosts on `readView` and its key before go-live (`payoutRequest`), the key scopes and spending codes listed whole, 2026-10-11.
+Last verified against the code: `fix/pr115-review` (PR #115 merged with `develop@5e8f5c3`, with its review fixes): signed cadastre layers, «أمان الحساب»'s own-account read, error state and password change, the sign-in page's copy in messages, a 401 that is an answer, 2026-10-14.
 
 Next.js 15 app router, React 18, next-intl 4, TanStack Query 5, Tailwind 3.4 with
 tailwind-merge 3, Radix and lucide-react. One app serves the staff dashboard and the
@@ -138,7 +138,8 @@ component types.
 - `lib/api-client.ts` `apiFetch(tenant, path, init)` calls `/t/<tenant><path>` with the
   Bearer token, rethrows `AbortError`, maps a network failure to `ApiRequestError` (status
   0, code `NETWORK_ERROR`), and on a 401 exchanges the token once (`exchangeStaffToken`,
-  one flight per tenant) and replays. Endpoint functions MUST be shaped
+  one flight per tenant) and replays — except on the session routes (`SESSION_ROUTES`) and for a
+  401 that answers the request (`ANSWERED_401`: a wrong current password in «أمان الحساب»). Endpoint functions MUST be shaped
   `fn(tenant, token, args?, signal?)` (model `getReviewQueue`), with shared-schemas types (CODE-3).
   Nothing calls the API with a bare `fetch`: it carries no token, and every route but the
   `@Public()` ones answers 401. The cadastre map layers are read through `fetchCadastreAsset`
@@ -434,8 +435,8 @@ are inlined at build time. The local `.env.local` block is in
 ## Tests
 
 Vitest (`apps/frontend/vitest.config.mts`): `environment: 'node'`, only `lib/**/*.test.ts`,
-with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 41 test files, 516 cases (counted
-2026-10-11, with the final-stack review's fixes on `feat/treasury-day-closing`). Five of them read
+with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 43 test files, 529 cases (counted
+2026-10-14, `fix/pr115-review`). Five of them read
 components rather than render them: `print-pages.test.ts` and `payout-hosts.test.ts` read every
 print page and every payout-dialog host, `transfer-screens.test.ts` the transfer screens,
 `commission-payout.test.ts` the payout dialog and `bulk-settle.test.ts` the bulk dialog's gate.

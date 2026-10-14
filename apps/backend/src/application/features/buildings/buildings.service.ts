@@ -45,7 +45,7 @@ import { runInTenantTransaction } from '../../../infrastructure/context/tenant-t
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
-import { assertNotMergedAway } from '../citizens/merged-away';
+import { assertFileOpen, assertNotMergedAway } from '../citizens/merged-away';
 import { cardClaiming, takesAnotherFlat } from '../../../domain/entities/census-claim';
 import { CasesService } from '../cases/cases.service';
 import type {
@@ -3473,6 +3473,13 @@ export class BuildingsService {
     }
     // A file folded into another is nobody to record in a flat — see `assertNotMergedAway`.
     await assertNotMergedAway(this.db, citizen.id);
+    /*
+      Nor is an archived one, until it is restored: an occupancy writes a card on
+      the file (the dual record), which is a new filing (`assertFileOpen`). Every
+      way a person lands in a flat comes through here — the matrix, a sale's
+      buyer, an owner link.
+    */
+    assertFileOpen(citizen);
 
     assertNonResidentOccupancy({
       residence: citizen.residence,

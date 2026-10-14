@@ -67,6 +67,19 @@ const STAFF_SESSION_THROTTLE = {
   },
 };
 
+/**
+ * The throttle on the own-account writes that check the current password, counted
+ * per `Authorization` header as `STAFF_SESSION_THROTTLE` is (one bucket per
+ * session, not one for everyone behind nginx), at `APP_CONFIG.throttle.ownAccount`.
+ */
+const OWN_ACCOUNT_THROTTLE = {
+  default: {
+    limit: APP_CONFIG.throttle.ownAccount.limit,
+    ttl: APP_CONFIG.throttle.ownAccount.ttlSeconds * 1000,
+    getTracker: STAFF_SESSION_THROTTLE.default.getTracker,
+  },
+};
+
 /** The bearer token on the request, if there is one. Absent is not an error here. */
 function bearer(request: Request): string | undefined {
   const [scheme, value] = (request.header('authorization') ?? '').split(' ');
@@ -226,6 +239,7 @@ export class AuthController {
   }
 
   @Post('staff/totp/disable')
+  @Throttle(OWN_ACCOUNT_THROTTLE)
   async disableTotp(
     @Param('tenantSlug') tenantSlug: string,
     @CurrentUser() user: SessionClaims,
@@ -247,6 +261,7 @@ export class AuthController {
   }
 
   @Post('staff/change-password')
+  @Throttle(OWN_ACCOUNT_THROTTLE)
   async changePassword(
     @Param('tenantSlug') tenantSlug: string,
     @CurrentUser() user: SessionClaims,
@@ -258,6 +273,7 @@ export class AuthController {
   }
 
   @Post('staff/change-email')
+  @Throttle(OWN_ACCOUNT_THROTTLE)
   async changeEmail(
     @Param('tenantSlug') tenantSlug: string,
     @CurrentUser() user: SessionClaims,

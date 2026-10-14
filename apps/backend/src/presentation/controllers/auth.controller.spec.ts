@@ -261,7 +261,9 @@ describe('AuthController — staff/me, the caller’s own account', () => {
 });
 
 describe('AuthController — how the three routes are mounted', () => {
-  const handler = (name: 'loginStaff' | 'refreshStaff' | 'logoutStaff') =>
+  const handler = (
+    name: 'loginStaff' | 'refreshStaff' | 'logoutStaff' | 'changePassword' | 'changeEmail' | 'disableTotp',
+  ) =>
     AuthController.prototype[name] as unknown as object;
 
   it.each(['loginStaff', 'refreshStaff', 'logoutStaff'] as const)(
@@ -280,6 +282,18 @@ describe('AuthController — how the three routes are mounted', () => {
 
   it('answers logout with 200, not the 201 a POST defaults to', () => {
     expect(Reflect.getMetadata(HTTP_CODE_METADATA, handler('logoutStaff'))).toBe(200);
+  });
+
+  it('puts the own-account writes that check the current password on their own tight throttle, per session', () => {
+    // Without it the default (120 a minute) let a stolen session guess the password.
+    const sessionTracker = Reflect.getMetadata('THROTTLER:TRACKERdefault', handler('refreshStaff'));
+    for (const name of ['changePassword', 'changeEmail', 'disableTotp'] as const) {
+      expect(Reflect.getMetadata('THROTTLER:LIMITdefault', handler(name))).toBe(APP_CONFIG.throttle.ownAccount.limit);
+      expect(Reflect.getMetadata('THROTTLER:TTLdefault', handler(name))).toBe(
+        APP_CONFIG.throttle.ownAccount.ttlSeconds * 1000,
+      );
+      expect(Reflect.getMetadata('THROTTLER:TRACKERdefault', handler(name))).toBe(sessionTracker);
+    }
   });
 
   it('keeps sign-in on the login throttle and puts refresh and logout on the session one', () => {

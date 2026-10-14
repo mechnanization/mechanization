@@ -1,6 +1,6 @@
 # Security
 
-Last verified against the code: `feat/treasury-day-closing@c88c971` (`develop` with the reviewed treasury, #107/#108; PR #106, stage 5: the daily count, the day closing and the closed-day lock; PR #109, inspector payouts and decision D9; PR #111, transfers, exchange and wallets with `0088`; PR #112, bulk settlement; each merged with its review fixes, and the cross-feature fixes) with the fixes of the final-stack review (uncommitted): a commission payout's inspector id in one spelling, its amount bounded, its retry key before go-live too, `0089`, a back-dated outflow judged against every day's close, the fee routes that move treasury money pinned by name, 2026-10-11.
+Last verified against the code: `fix/pr115-review` (PR #115 merged with `develop@5e8f5c3`, with its review fixes): `GET auth/staff/me`, the password change and its throttle, the save-path unlink rows, no new filing on an archived file, 2026-10-14.
 
 Binding for every change that touches authentication, roles, tokens, validation, uploads, logging,
 headers, client storage or secrets. The rules below are correct practice. Where the code differs today,
@@ -109,9 +109,10 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   through `PATCH citizens/:id/active` — with a written reason and who asked (`setCitizenActiveSchema`
   requires both), recorded on the Tier 1 audit row, and restored the same way. An archived file takes
   no new filing until it is restored: a filing whose passport attaches it to the same person's
-  archived file (`PrismaRegistrationRepository.submit`) and a save that would mint an archived
-  file's first filing (`CitizensService.update`) are refused with `CITIZEN_FILE_ARCHIVED`
-  (`details.citizenId`; the message names nobody).
+  archived file (`PrismaRegistrationRepository.submit`), a save that would mint an archived
+  file's first filing (`CitizensService.update`), and a person put in a flat or a sale's buyer
+  (`assertFileOpen` in `BuildingsService.recordOccupancy` and `OwnershipService`) are refused with
+  `CITIZEN_FILE_ARCHIVED` (`details.citizenId`; the message names nobody).
 - What the citizen portal sends about anyone else is named, never passed through: `mySummary` sends a
   flat's owners as name and أسهم only (an allowlist, pinned by `citizen-portal.spec.ts`) and drops the
   landlord link's id and رقم مرجعي. A co-owned flat's billing goes as the method and this citizen's own
@@ -134,6 +135,12 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   caller's own session too, so «أمان الحساب» signs out after a password change (`logoutStaff`, then
   `clearSession`) and opens sign-in with `?notice=password-changed`, a fixed value the page
   compares and never shows or follows (`lib/password-change.ts`).
+- The own-account writes that check the current password — change password, change email, disable
+  2FA — have their own throttle (`APP_CONFIG.throttle.ownAccount`, 5 a minute, keyed by the hashed
+  `Authorization` header like the session routes), so a stolen session cannot guess the password at
+  the default 120 a minute. A wrong current password answers 401 `STAFF_CURRENT_PASSWORD_INCORRECT`,
+  which `apiFetch` takes as the answer (`ANSWERED_401`), never as an expired session to renew and
+  replay.
 - A staff member reads their own account through `GET auth/staff/me` (`EVERY_STAFF_ROLE`, scoped by
   `user.sub`, no id in the path), which answers id, email, role and `hasConfirmedTotp` only: no hash,
   no secret, no presence. The roster (`GET staff`) stays `SUPER_ADMIN`'s.

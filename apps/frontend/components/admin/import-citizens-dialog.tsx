@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
 import {
   ArrowLeft,
   ArrowRight,
@@ -16,7 +16,7 @@ import {
   Users,
   XCircle,
 } from 'lucide-react';
-import { IMPORT_COLUMNS } from '@mechanization/shared-schemas';
+import { getLabels, IMPORT_COLUMNS } from '@mechanization/shared-schemas';
 import type { CitizenImportResult, CitizenImportRowResult, ImportRow } from '@mechanization/shared-schemas';
 import { localizeApiError } from '@/lib/api-errors';
 import { buildCitizenTemplate, downloadCsv, parseCitizenCsv } from '@/lib/csv';
@@ -87,6 +87,8 @@ export function ImportCitizensDialog({
   const [error, setError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const t = useTranslations('citizenImport');
+  const locale = useLocale();
+  const labels = getLabels(locale);
 
   useEffect(() => {
     if (!open) return;
@@ -459,19 +461,26 @@ export function ImportCitizensDialog({
                     {resemblingRows.map((result) => (
                       <li key={result.row} className="flex items-start gap-3 p-3 text-sm">
                         <Badge variant="outline" className="shrink-0 tabular-nums">
-                          صف {result.row}
+                          {t('row', { row: result.row })}
                         </Badge>
                         <div className="min-w-0 flex-1">
                           {result.name ? <p className="font-medium">{result.name}</p> : null}
                           <p className="flex items-start gap-1.5">
                             <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
-                            {t('resembles', { names: (result.possibleDuplicateOf ?? []).join('، ') })}
+                            {t('resembles', {
+                              names: (result.possibleDuplicateOf ?? []).join(locale === 'en' ? ', ' : '، '),
+                            })}
                           </p>
                         </div>
                       </li>
                     ))}
                   </ul>
-                  <p className="text-xs text-muted-foreground">{t('possibleDuplicatesNote')}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {t('possibleDuplicatesNote', {
+                      status: labels.citizenRecordStatus.REQUIRES_REVIEW,
+                      flag: labels.citizenField.possibleDuplicate,
+                    })}
+                  </p>
                 </div>
               ) : null}
             </>
