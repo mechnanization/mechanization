@@ -1,5 +1,6 @@
 import { BULK_SETTLE_MAX_BILLS } from '@mechanization/shared-schemas';
 import type { AdminPaymentItem, CitizenProfilePayment } from './api-client';
+import { heldInDoubt } from './request-id';
 
 /**
  * «تسديد الفواتير المحددة» — what the screens decide before the dialog opens:
@@ -157,12 +158,21 @@ export function togglePage(bills: readonly SelectedBill[], rows: readonly Select
  * on screen could untick it. A ticked bill the read does not show (another
  * page of /fees) is kept as it was: the server judges it again under its lock.
  *
+ * **Held** (`selectionHeld`: a press of this set is on the wire, or ended with
+ * no answer): nothing is dropped. The set is the retry key's scope
+ * (`bulkKeyScope`), and a lost press that committed is exactly what a re-read
+ * shows as paid — dropping those bills emptied the set, unmounted the dialog
+ * with the bar, and orphaned the key whose retry is answered with the
+ * consolidated receipt (review of PR #112). Kept, the retry is the same press;
+ * a bill that someone else paid is refused by name, and the clerk unticks it.
+ *
  * Returns the same array when nothing changed, so a page can run it on every
  * read without re-rendering.
  */
 export function reconcileSelection(
   bills: readonly SelectedBill[],
   fresh: ReadonlyArray<{ bill: SelectedBill; settleable: boolean }>,
+  held = false,
 ): readonly SelectedBill[] {
   if (bills.length === 0) return bills;
   const byId = new Map(fresh.map((entry) => [entry.bill.id, entry]));
@@ -175,6 +185,10 @@ export function reconcileSelection(
       continue;
     }
     if (!seen.settleable) {
+      if (held) {
+        next.push(bill);
+        continue;
+      }
       changed = true;
       continue;
     }
@@ -225,6 +239,79 @@ export function dueByCurrency(
  */
 export function bulkKeyScope(ids: readonly string[]): `bulk-settle:${string}` {
   return `bulk-settle:${[...ids].sort().join(',')}`;
+}
+
+/**
+ * The sets with a press on the wire, by `${tenant}:${scope}`. Module state for
+ * the reason the retry keys are (`lib/request-id.ts`): the dialog that pressed
+ * can unmount before the answer comes back.
+ */
+const pressing = new Set<string>();
+
+/** A press of this set has left: until `endPress`, a re-read drops none of its bills. */
+export function beginPress(tenant: string, scope: `bulk-settle:${string}`): void {
+  pressing.add(`${tenant}:${scope}`);
+}
+
+/** The press has its answer (or its failure, which `markInDoubt` records first when it is in doubt). */
+export function endPress(tenant: string, scope: `bulk-settle:${string}`): void {
+  pressing.delete(`${tenant}:${scope}`);
+}
+
+/**
+ * Whether a re-read may drop bills from this set (`reconcileSelection`): not
+ * while a press of it is on the wire, nor while its key is held in doubt —
+ * the bills it would drop are the ones the lost press may have paid.
+ */
+export function selectionHeld(tenant: string, bills: readonly Pick<SelectedBill, 'id'>[]): boolean {
+  if (bills.length === 0) return false;
+  const scope = bulkKeyScope(bills.map((bill) => bill.id));
+  return pressing.has(`${tenant}:${scope}`) || heldInDoubt(tenant, scope);
+}
+
+/** How the dialog says what its preview found: a refusal, or — while the key is in doubt — a warning. */
+export type PreviewNote = 'refusal' | 'inDoubt';
+
+/**
+ * What the dialog's own checks do to a press of the set, before any request.
+ *
+ * Normally they refuse what the server would refuse: notes short of the bills
+ * or a rate that is not set (`planBulkSettlement`, the server's own function),
+ * and change the safe cannot hand back. Without the settings nothing can be
+ * judged, so a cash press waits for them.
+ *
+ * Except while the set's key is held in doubt (`heldInDoubt`, `lib/request-id.ts`):
+ * a press got no answer and may have been recorded, and the server answers a
+ * retry under the key before it plans anything. A preview that has moved since
+ * — the official rate changed or was cleared, the safe's balance already
+ * carries the change the lost press gave — must not stop that retry. Refusing
+ * it, in words that end «لم يُسجَّل شيء», told the clerk nothing was recorded
+ * for a settlement that was, and left him no press to find out (review of
+ * 2026-10-11). In doubt, each check is a warning, and the press goes to the
+ * server, which replays it or judges it.
+ */
+export function previewGate(input: {
+  cash: boolean;
+  /** The currencies and the rate have been read. */
+  settingsRead: boolean;
+  /** `planBulkSettlement` refused the notes as typed. */
+  planRefused: boolean;
+  /** Whether that refusal is said yet: something is typed, or a bill is in a currency no note pays. */
+  planSaid: boolean;
+  /** The main cash safe, with the notes handed in, cannot give the change. */
+  changeShort: boolean;
+  inDoubt: boolean;
+}): { blocksPress: boolean; disablesButton: boolean; plan: PreviewNote | null; change: PreviewNote | null } {
+  if (!input.cash) return { blocksPress: false, disablesButton: false, plan: null, change: null };
+  const note = (found: boolean): PreviewNote | null => (found ? (input.inDoubt ? 'inDoubt' : 'refusal') : null);
+  const refuses = !input.inDoubt;
+  return {
+    blocksPress: !input.settingsRead || (refuses && (input.planRefused || input.changeShort)),
+    disablesButton:
+      !input.settingsRead || (refuses && ((input.planRefused && input.planSaid) || input.changeShort)),
+    plan: input.settingsRead ? note(input.planRefused && input.planSaid) : null,
+    change: note(input.changeShort),
+  };
 }
 
 /** One parcel or unit a bill was assessed on, as the receipt words it. */

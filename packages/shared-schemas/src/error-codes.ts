@@ -38,6 +38,7 @@ export const ERROR_CODES = [
   // Fees and payments
   'FEE_NO_MATCHING_CITIZENS',
   'FEE_NOTHING_TO_CHARGE',
+  'FEE_CITIZEN_ARCHIVED',
   'FEE_DUE_DATE_INVALID',
   'FEE_NOTICE_NOT_FOUND',
   'PAYMENT_NOT_FOUND',
@@ -77,6 +78,10 @@ export const ERROR_CODES = [
   'BULK_SETTLE_RATE_NOT_SET',
   // A retry key already used to settle another set of bills.
   'BULK_SETTLE_REQUEST_REUSED',
+  // A selected bill is a Whish claim waiting for review (`params.invoice`): confirm it, do not take the money again.
+  'BULK_SETTLE_BILL_PENDING_REVIEW',
+  // What the bills owe in a currency is not what the clerk was shown (`params.currency`, `params.expected`, `params.due`).
+  'BULK_SETTLE_DUE_CHANGED',
   'PAYMENT_SETTLEMENT_NOT_FOUND',
   'INVOICE_NOT_FOUND',
   'INVOICE_NOT_OPEN',
@@ -189,6 +194,10 @@ export const ERROR_CODES = [
   'MERGE_NOT_FOUND',
   'MERGE_ABSORBED_CHANGED',
   'CITIZEN_MERGED_AWAY',
+  // A passport number another file already holds (`users` is unique on the document). Names nobody.
+  'CITIZEN_IDENTITY_DOC_TAKEN',
+  // A new filing for a file that is archived (`isActive` false): reactivate it first. `details.citizenId`.
+  'CITIZEN_FILE_ARCHIVED',
   // Property entries (domain invariants)
   'OWNER_NAME_REQUIRED',
   'LANDLORD_PHONE_REQUIRED',
@@ -201,6 +210,9 @@ export const ERROR_CODES = [
   'TREASURY_ACCOUNT_MISSING',
   'TREASURY_OPENING_BALANCES_INCOMPLETE',
   'TREASURY_INSUFFICIENT_FUNDS',
+  // An outflow dated on an earlier day that would leave that day's close, or a later one, below
+  // zero although the wallet holds enough now (`params.date`, the first such day, and its close).
+  'TREASURY_INSUFFICIENT_FUNDS_ON_DAY',
   'EXPENSE_NOT_FOUND',
   'EXPENSE_ALREADY_VOID',
   'EXPENSE_CATEGORY_NOT_FOUND',
@@ -210,6 +222,18 @@ export const ERROR_CODES = [
   'EXPENSE_BACKDATE_REASON_REQUIRED',
   'EXPENSE_CATEGORY_CODE_TAKEN',
   'SALARY_PAYEE_NOT_FOUND',
+  'INSPECTOR_PAYOUT_WALLET_REQUIRED',
+  'INSPECTOR_PAYOUT_WALLET_NOT_USD',
+  'INSPECTOR_PAYOUT_DATE_NOT_ALLOWED',
+  'INSPECTOR_PAYOUT_REQUEST_REUSED',
+  // Before go-live a payout is a figure with no wallet, voucher or order: the manager's alone (finance.md §5.6).
+  'INSPECTOR_PAYOUT_BEFORE_LIVE_MANAGER_ONLY',
+  // A payout recorded before go-live and dated after today.
+  'INSPECTOR_PAYOUT_DATE_IN_FUTURE',
+  // An accountant paying a commission to himself on the urgent path (decision D9, the D8 rule).
+  'COMMISSION_SELF_PAYOUT',
+  // A بند only its own path may file under: «تعويضات المسح والجباية» is the payout's (`params.category`).
+  'EXPENSE_CATEGORY_RESERVED',
   'INCOME_VOUCHER_NOT_FOUND',
   'INCOME_VOUCHER_ALREADY_VOIDED',
   'INCOME_CATEGORY_NOT_FOUND',
@@ -245,6 +269,38 @@ export const ERROR_CODES = [
   // A query-string value that does not parse (presentation/controllers/query-params.ts)
   'INVALID_QUERY_DATE',
   'INVALID_QUERY_VALUE',
+  'TRANSFER_SAME_ACCOUNT_FORBIDDEN',
+  'TRANSFER_CURRENCY_MISMATCH',
+  'EXCHANGE_SAME_CURRENCY_FORBIDDEN',
+  'EXCHANGE_RATE_TOLERANCE_EXCEEDED',
+  'EXCHANGE_PAIR_UNSUPPORTED',
+  'TRANSFER_ACCOUNT_NOT_ALLOWED',
+  'TRANSFER_ALREADY_REVIEWED',
+  'TRANSFER_NOT_FLAGGED',
+  'TRANSFER_DATE_IN_FUTURE',
+  'TRANSFER_DATE_BEFORE_GO_LIVE',
+  'TRANSFER_BACKDATE_REASON_REQUIRED',
+  'EXPENSE_IS_TRANSFER_FEE',
+  'TREASURY_ACCOUNT_CURRENCY_UNSUPPORTED',
+  // «إضافة حساب» naming a wallet of that kind and currency that already exists (`params.name`).
+  'TREASURY_ACCOUNT_NAME_TAKEN',
+  'EXCHANGE_RULE_MANAGER_ONLY',
+  // The daily count and closing the day (docs/finance.md §7)
+  'COUNT_DATE_IN_FUTURE',
+  'COUNT_VARIANCE_REASON_REQUIRED',
+  'COUNT_EXPECTED_CHANGED',
+  // A close whose dialog listed counts that were since recorded, replaced or added (`params.count`).
+  'COUNT_CHANGED_SINCE_LOADED',
+  'COUNT_MISSING_FOR_ACTIVE_ACCOUNTS',
+  'DAY_ALREADY_CLOSED',
+  'DAY_NOT_CLOSED',
+  'DAY_NOT_OVER',
+  'DAY_BEFORE_GO_LIVE',
+  'CLOSURE_OUT_OF_CHRONOLOGICAL_ORDER',
+  'UNRESOLVED_ACTIVE_DAYS_EXIST',
+  'CLOSED_DAY_MUTATION_BLOCKED',
+  'REOPEN_REASON_REQUIRED',
+  'ONLY_LATEST_CLOSED_DAY_CAN_BE_REOPENED',
   // Fixed messages the filter and the tenant layer already send
   'INTERNAL_ERROR',
   'TENANT_MISMATCH',
@@ -254,6 +310,8 @@ export const ERROR_CODES = [
   'SESSION_INVALID',
   'SESSION_ENDED',
   'ORIGIN_NOT_ALLOWED',
+  // A staff member's own account («أمان الحساب»): the password typed to confirm a change is wrong.
+  'STAFF_CURRENT_PASSWORD_INCORRECT',
   // Raised by the portal itself when no response arrives or it cannot be read
   'NETWORK_ERROR',
   'UNKNOWN',

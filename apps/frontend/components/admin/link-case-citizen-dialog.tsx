@@ -1,9 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Check, Link2, Loader2, Search, Unlink, UserRound, X } from 'lucide-react';
-import type { CaseSummary, CaseUnitOccupant, CitizenListItem } from '@/lib/api-client';
-import { listCitizens, logApiError } from '@/lib/api-client';
+import { Check, Link2, Loader2, Unlink, UserRound, X } from 'lucide-react';
+import type { CaseSummary, CaseUnitOccupant } from '@/lib/api-client';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -15,12 +14,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
 import { SegmentedControl } from '@/components/ui/segmented-control';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
+import { CitizenPicker } from '@/components/admin/citizen-picker';
 
-const SEARCH_DEBOUNCE_MS = 350;
 /** One array for "nobody on the unit", so `suggested` keeps its identity across renders. */
 const NO_OCCUPANTS: CaseUnitOccupant[] = [];
 
@@ -174,49 +172,18 @@ export function LinkCaseCitizenDialog({
   const en = locale === 'en';
   const onUnit = unit !== null;
   const unitLabel = unit?.label ?? '';
-  const [term, setTerm] = useState('');
-  const [results, setResults] = useState<CitizenListItem[]>([]);
-  const [searching, setSearching] = useState(false);
   const [people, setPeople] = useState<CaseLinkPerson[]>([]);
   const [primaryId, setPrimaryId] = useState<string | null>(null);
   const [ownerUnitStatus, setOwnerUnitStatus] = useState<'OWNER_OCCUPIED' | 'RENTED' | ''>('');
 
   useEffect(() => {
     if (!open) {
-      setTerm('');
-      setResults([]);
       setPeople([]);
       setPrimaryId(null);
       setOwnerUnitStatus('');
     }
   }, [open]);
 
-  useEffect(() => {
-    if (!open || !term.trim()) {
-      setResults([]);
-      return;
-    }
-    let cancelled = false;
-    setSearching(true);
-    const timer = setTimeout(() => {
-      listCitizens(tenant, token, { search: term.trim(), limit: 8 })
-        .then((result) => {
-          // A file «دمج ملفين» folded into another is not who the door resolves to.
-          if (!cancelled) setResults(result.items.filter((row) => !row.mergedIntoId));
-        })
-        .catch((caught) => {
-          logApiError(caught);
-          if (!cancelled) setResults([]);
-        })
-        .finally(() => {
-          if (!cancelled) setSearching(false);
-        });
-    }, SEARCH_DEBOUNCE_MS);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [open, term, tenant, token]);
 
   const roleLabel: Record<CaseLinkRole, string> = en
     ? { OWNER: 'Owner', TENANT: 'Tenant', FREE_OCCUPANT: 'Free occupant' }
@@ -401,55 +368,36 @@ export function LinkCaseCitizenDialog({
               </section>
             ) : null}
 
-            <div className="relative">
-              <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
-              <Input
-                autoFocus
-                className="ps-9"
-                placeholder={en ? 'Search citizens…' : 'ابحث عن مواطن…'}
-                aria-label={en ? 'Search citizens' : 'ابحث عن مواطن'}
-                value={term}
-                onChange={(event) => setTerm(event.target.value)}
-              />
-            </div>
-
-            {term.trim() ? (
-              <div className="max-h-56 space-y-1.5 overflow-y-auto">
-                {searching ? (
-                  <p className="flex items-center gap-2 p-2 text-sm text-muted-foreground">
-                    <Loader2 className="size-4 animate-spin" aria-hidden />
-                    {en ? 'Searching…' : 'جارٍ البحث…'}
-                  </p>
-                ) : results.length === 0 ? (
-                  <p className="p-2 text-sm text-muted-foreground">{en ? 'No matching citizens.' : 'لا يوجد مواطنون مطابقون.'}</p>
-                ) : (
-                  results.map((citizen) => {
-                    const existing = suggested.find((row) => row.citizenId === citizen.id);
-                    return pickTile(
-                      {
+            {/*
+              The register's one picker, held empty: each file chosen joins the
+              list below, and the search starts over for the next. A file
+              already on the list is not offered again.
+            */}
+            <CitizenPicker
+              id="case-link-search"
+              tenant={tenant}
+              token={token}
+              value={null}
+              onChange={(citizen) => {
+                if (!citizen) return;
+                const existing = suggested.find((row) => row.citizenId === citizen.id);
+                toggle(
+                  existing
+                    ? { citizenId: existing.citizenId, name: existing.name, role: existing.role, onUnit: true }
+                    : {
                         citizenId: citizen.id,
                         name: citizen.fullName,
-                        detail: (
-                          <bdi dir="ltr">{[citizen.phone, citizen.referenceNumber].filter(Boolean).join(' — ')}</bdi>
-                        ),
+                        // A first guess the officer changes: an owner is the commonest answer a case waits for.
+                        role: 'OWNER',
+                        onUnit: false,
                       },
-                      () =>
-                        toggle(
-                          existing
-                            ? { citizenId: existing.citizenId, name: existing.name, role: existing.role, onUnit: true }
-                            : {
-                                citizenId: citizen.id,
-                                name: citizen.fullName,
-                                // A first guess the officer changes: an owner is the commonest answer a case waits for.
-                                role: 'OWNER',
-                                onUnit: false,
-                              },
-                        ),
-                    );
-                  })
-                )}
-              </div>
-            ) : null}
+                );
+              }}
+              exclude={people.map((person) => person.citizenId)}
+              includeArchived
+              ariaLabel={en ? 'Search citizens' : 'ابحث عن مواطن'}
+              autoFocus
+            />
 
             {/* ── Who will be linked, and as what ───────────────────── */}
             {people.length > 0 ? (

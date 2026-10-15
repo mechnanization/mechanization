@@ -4,6 +4,7 @@ import {
   type ErrorParams,
   type ReinspectionsPage,
   type StaffPresenceResponse,
+  type StaffSelf,
 } from '@mechanization/shared-schemas';
 import { localizeApiError } from './api-errors';
 import { cachedRequest, invalidateRequests, peekCachedRequest } from './request-cache';
@@ -30,7 +31,6 @@ import type {
   FeeFrequency,
   FieldFlag,
   ImportRow,
-  InspectorPayoutItem,
   InspectorProfileResponse,
   NumberingSequence,
   OccupancyEndReason,
@@ -42,6 +42,8 @@ import type {
   PossibleDuplicatesQuery,
   PaymentStatus,
   RecordInspectorPayoutInput,
+  RecordInspectorPayoutResult,
+  ReverseTransaction,
   SequenceKey,
   SetOwnerBillingInput,
   SetUnitFeeExemptionInput,
@@ -711,6 +713,15 @@ async function exchangeStaffToken(
  */
 const SESSION_ROUTES = ['/auth/staff/login', '/auth/staff/refresh', '/auth/staff/logout'];
 
+/**
+ * 401s that answer the request, not the session: the current password typed to
+ * confirm a change to one's own account («أمان الحساب») is wrong. Exchanged and
+ * replayed like an expiry, each wrong guess rotated the refresh cookie and had
+ * the server check the password twice. A 401 with any other code on those
+ * routes is still an expired session and renewed as one.
+ */
+const ANSWERED_401 = new Set<string>(['STAFF_CURRENT_PASSWORD_INCORRECT']);
+
 type ApiFetchInit = RequestInit & {
   token?: string;
   skipTokenRefresh?: boolean;
@@ -799,6 +810,8 @@ async function send<T>(
     which can be sent twice. A streaming body could not, and nothing here uses
     one; if that changes, this is the line that has to know.
   */
+  /** The 401's body, read once to tell an expiry from an answer (`ANSWERED_401`), and reused below. */
+  let refusal: ApiError | undefined;
   if (
     response.status === 401 &&
     token &&
@@ -806,22 +819,27 @@ async function send<T>(
     exchangesLeft > 0 &&
     !SESSION_ROUTES.some((route) => path.startsWith(route))
   ) {
-    const fresh = await exchangeStaffToken(tenant, token);
-    if (fresh && fresh.token !== token) {
-      return send<T>(
-        tenant,
-        path,
-        { ...init, token: fresh.token },
-        fresh.fromNetwork ? 0 : exchangesLeft - 1,
-      );
+    refusal = (await response.json().catch(() => undefined)) as ApiError | undefined;
+    if (!(refusal?.code && ANSWERED_401.has(refusal.code))) {
+      const fresh = await exchangeStaffToken(tenant, token);
+      if (fresh && fresh.token !== token) {
+        return send<T>(
+          tenant,
+          path,
+          { ...init, token: fresh.token },
+          fresh.fromNetwork ? 0 : exchangesLeft - 1,
+        );
+      }
     }
   }
 
   if (!response.ok) {
-    const payload = (await response.json().catch(() => ({
-      code: 'UNKNOWN',
-      message: 'تعذّر إتمام الطلب. حاول مرة أخرى.',
-    }))) as ApiError;
+    const payload =
+      refusal ??
+      ((await response.json().catch(() => ({
+        code: 'UNKNOWN',
+        message: 'تعذّر إتمام الطلب. حاول مرة أخرى.',
+      }))) as ApiError);
     throw new ApiRequestError(response.status, payload);
   }
 
@@ -1467,15 +1485,35 @@ export function createCase(tenant: string, token: string, input: CaseWriteInput)
   });
 }
 
+/**
+ * The fields a case PATCH clears with `null` (`updateCaseSchema` takes null for
+ * exactly these): the free-text place fields, and نوع العقار and نوع الأرض when
+ * «غير معروف» is chosen. An omitted field is left as it is, so a field the
+ * officer emptied has to be sent as `null` or it is never cleared.
+ */
+export type CaseClearableField =
+  | 'propertyNumber'
+  | 'neighborhood'
+  | 'propertyType'
+  | 'buildingName'
+  | 'floor'
+  | 'side'
+  | 'landType'
+  | 'tentLocation';
+
+export type CaseUpdateInput = Omit<Partial<CaseWriteInput>, CaseClearableField> & {
+  [K in CaseClearableField]?: string | null;
+} & {
+  status?: CaseStatus;
+  /** Setting this always resolves the case server-side; `null` only clears the link. */
+  resolvedCitizenId?: string | null;
+};
+
 export function updateCase(
   tenant: string,
   token: string,
   id: string,
-  input: Partial<CaseWriteInput> & {
-    status?: CaseStatus;
-    /** Setting this always resolves the case server-side; `null` only clears the link. */
-    resolvedCitizenId?: string | null;
-  },
+  input: CaseUpdateInput,
 ) {
   return apiFetch<CaseSummary>(tenant, `/cases/${encodeURIComponent(id)}`, {
     token,
@@ -4726,14 +4764,14 @@ export function getInspectorProfile(
   );
 }
 
-/** Super Admin records a commission payment made to an inspector */
+/** «صرف عمولة»: the manager pays an inspector's commission; `replayed` when a retried press found it already paid. */
 export function recordInspectorPayout(
   tenant: string,
   token: string,
   id: string,
   input: RecordInspectorPayoutInput,
 ) {
-  return apiFetch<InspectorPayoutItem>(
+  return apiFetch<RecordInspectorPayoutResult>(
     tenant,
     `/staff/inspectors/${encodeURIComponent(id)}/payouts`,
     {
@@ -4818,6 +4856,7 @@ export function getAuditLog(
   tenant: string,
   token: string,
   filter: {
+    /** A person's id, or `AUDIT_SYSTEM_ACTOR` for the entries no person made (no actor id). */
     actorId?: string;
     entityType?: string;
     /** One record's own trail. Pairs with `entityType`; the server indexes both. */
@@ -4923,6 +4962,36 @@ export interface CadastreImportResult {
   linesImported: number;
 }
 
+/** The map layers `GET /cadastre/assets/:assetName` serves — the server refuses any other name. */
+export type CadastreAssetName =
+  | 'cadastre.geojson'
+  | 'parcels.geojson'
+  | 'parcel-polygons.geojson'
+  | 'city-boundary.geojson';
+
+/**
+ * One of the municipality's cadastre map layers, from the API.
+ *
+ * Signed in like every other read: the route is not public, and a bare `fetch`
+ * of it was a 401 wherever `public/tenants/<slug>/` lacks the file. `version`
+ * only busts the browser's cache after an import (the response is cached
+ * privately for an hour); the server ignores it. The static-first lookup the
+ * maps use is `fetchCadastreAsset` (`lib/cadastre-assets.ts`).
+ */
+export function getCadastreAsset(
+  tenant: string,
+  token: string,
+  args: { asset: CadastreAssetName; version?: string | number },
+  signal?: AbortSignal,
+) {
+  const query = args.version ? `?v=${encodeURIComponent(String(args.version))}` : '';
+  return apiFetch<GeoJSON.FeatureCollection>(
+    tenant,
+    `/cadastre/assets/${encodeURIComponent(args.asset)}${query}`,
+    { token, signal },
+  );
+}
+
 /** SUPER_ADMIN only — rebuilds the parcel registry and the map's static
  * cartography layer from an uploaded GeoJSON file. */
 export function importCadastre(tenant: string, token: string, file: File) {
@@ -4990,6 +5059,13 @@ export interface MunicipalitySettings {
    */
   urgentExpenseCeilingLbp?: number | null;
   urgentExpenseCeilingUsd?: number | null;
+  /**
+   * How far an exchange may stray from the rate before it needs a reason, in
+   * percent, and above what (on its non-base side) it is reviewed whatever its
+   * rate (0084). Absent for a citizen, as the ceilings are.
+   */
+  exchangeRateTolerancePercent?: number;
+  largeExchangeThreshold?: number;
 
   numberingSequences: Record<SequenceKey, NumberingSequence> | null;
   backupSchedule: BackupSchedule | null;
@@ -5253,7 +5329,12 @@ export function getFeeSummary(tenant: string, token: string) {
 export interface PendingPayment {
   id: string;
   title: string;
+  /** The bill's face value. */
   amount: number;
+  /** Already taken against it, at the counter or on a round. */
+  paidAmount: number;
+  /** What is left — what confirming the claim credits (`FeesService.review`). */
+  remaining: number;
   currency: string;
   dueDate: string;
   paymentMethod: string | null;
@@ -5704,6 +5785,74 @@ export function getPaymentSettlement(tenant: string, token: string, id: string, 
 }
 
 /**
+ * One movement on a bill (`PaymentLedgerService.listForPayment`): a receipt, or
+ * the opposing row that reversed one.
+ */
+export interface PaymentLedgerEntry {
+  id: string;
+  /** «RCP-2610-0001» — the reversal has its own. */
+  receiptNumber: string;
+  /** In the bill's currency; negative on a reversal. */
+  amount: number;
+  currency: string;
+  method: PaymentMethod;
+  externalRef: string | null;
+  collectedBy: string | null;
+  recordedBy: string | null;
+  /** True for the opposing row itself. */
+  isReversal: boolean;
+  /** True for a receipt that has been reversed. */
+  reversed: boolean;
+  note: string | null;
+  occurredAt: string;
+  tenderedLocal: number | null;
+  tenderedForeign: number | null;
+  tenderedForeignCurrency: string | null;
+  exchangeRate: number | null;
+  officialExchangeRate: number | null;
+  changeGiven: number | null;
+  adjustmentReason: string | null;
+}
+
+/** Every movement on one bill, oldest first — `GET fees/payments/:id/transactions` (`FEE_READ_ROLES`). */
+export function getPaymentTransactions(tenant: string, token: string, paymentId: string, signal?: AbortSignal) {
+  return apiFetch<{ items: PaymentLedgerEntry[] }>(
+    tenant,
+    `/fees/payments/${encodeURIComponent(paymentId)}/transactions`,
+    { token, signal },
+  );
+}
+
+/**
+ * «عكس الوصل» — reverses one receipt with an opposing row, never an edit
+ * (`POST fees/transactions/:id/reverse`, `PAYMENT_REVERSE_ROLES`). The reason
+ * is required (`reverseTransactionSchema`). Answers with the bill's totals
+ * after the reversal and the opposing row's own receipt number.
+ */
+export async function reversePaymentTransaction(
+  tenant: string,
+  token: string,
+  transactionId: string,
+  input: ReverseTransaction,
+) {
+  const result = await apiFetch<{
+    receiptNumber: string;
+    transactionId: string;
+    received: number;
+    paidAmount: number;
+    remaining: number;
+    paymentStatus: 'PAID' | 'UNPAID';
+    occurredAt: string;
+  }>(tenant, `/fees/transactions/${encodeURIComponent(transactionId)}/reverse`, {
+    token,
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+  invalidateRequests(`fee-summary:${tenant}`);
+  return result;
+}
+
+/**
  * Runs the recurring biller now instead of waiting for the nightly cron.
  * Idempotent within a period — pressing it twice yields 0 new invoices.
  */
@@ -5807,6 +5956,20 @@ export async function restoreSnapshot(
   return payload as RestoreReport;
 }
 
+/**
+ * «أمان الحساب»: the signed-in staff member's own account (email, role, whether
+ * a second factor is confirmed). Every staff role may read its own; `getStaff`
+ * is the administrator's roster and refuses everyone else.
+ */
+export function getStaffSelf(tenant: string, token: string, signal?: AbortSignal) {
+  return apiFetch<StaffSelf>(tenant, '/auth/staff/me', { token, signal });
+}
+
+/**
+ * Ends every session of the account, this one included: the server bumps its
+ * token version. After a success the caller signs out (`logoutStaff`,
+ * `clearSession`) and sends the user to the sign-in page.
+ */
 export async function changeStaffPassword(
   tenant: string,
   token: string,
@@ -5991,6 +6154,13 @@ import type {
   ReceiveCustodyResult,
   TransferView,
   VoidTransferInput,
+  CreateTransferInput,
+  CreateTransferResult,
+  ListTransfersQuery,
+  ReviewTransferInput,
+  TransferListResult,
+  CreateTreasuryAccountInput,
+  TreasuryAccountView,
 } from '@mechanization/shared-schemas';
 
 export type {
@@ -6037,6 +6207,13 @@ export type {
   ReceiveCustodyResult,
   TransferView,
   VoidTransferInput,
+  CreateTransferInput,
+  CreateTransferResult,
+  ListTransfersQuery,
+  ReviewTransferInput,
+  TransferListResult,
+  TransferKind,
+  CreateTreasuryAccountInput,
 } from '@mechanization/shared-schemas';
 
 /** Every wallet with its balance, whether the treasury is live, and the rate to convert with. `GET /treasury`. */
@@ -6066,6 +6243,21 @@ export function getTreasuryStatement(
     `/treasury/accounts/${encodeURIComponent(args.accountId)}/statement${suffix}`,
     { token, signal },
   );
+}
+
+/** «إضافة حساب» — a bank account or a petty-cash fund, opened empty. SUPER_ADMIN. `POST /treasury/accounts`. */
+export function createTreasuryAccount(
+  tenant: string,
+  token: string,
+  args: CreateTreasuryAccountInput,
+  signal?: AbortSignal,
+) {
+  return apiFetch<TreasuryAccountView>(tenant, '/treasury/accounts', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(args),
+    signal,
+  });
 }
 
 /** «تفعيل الخزينة» — the counted opening balances, posted once. SUPER_ADMIN only. `POST /treasury/activate`. */
@@ -6117,15 +6309,60 @@ export function getMyRound(tenant: string, token: string, _args?: undefined, sig
   return apiFetch<CollectorRoundView>(tenant, '/treasury/transfers/custody/mine', { token, signal });
 }
 
-/** The transfers recorded, newest first. `GET /treasury/transfers`. */
+/**
+ * «سجل المناقلات» — newest first, filtered, with the count waiting for review.
+ * `GET /treasury/transfers`.
+ */
 export function getTransfers(
   tenant: string,
   token: string,
-  args: { limit?: number } = {},
+  args: Partial<Omit<ListTransfersQuery, 'includeVoid'>> & { includeVoid?: boolean } = {},
   signal?: AbortSignal,
 ) {
-  const suffix = args.limit === undefined ? '' : `?limit=${args.limit}`;
-  return apiFetch<TransferView[]>(tenant, `/treasury/transfers${suffix}`, { token, signal });
+  const query = new URLSearchParams();
+  if (args.kind) query.set('kind', args.kind);
+  if (args.review) query.set('review', args.review);
+  if (args.from) query.set('from', args.from);
+  if (args.to) query.set('to', args.to);
+  if (args.includeVoid) query.set('includeVoid', 'true');
+  if (args.page) query.set('page', String(args.page));
+  if (args.pageSize) query.set('pageSize', String(args.pageSize));
+  const suffix = query.size > 0 ? `?${query.toString()}` : '';
+  return apiFetch<TransferListResult>(tenant, `/treasury/transfers${suffix}`, { token, signal });
+}
+
+/** One transfer, for its printed «سند». `GET /treasury/transfers/:id`. */
+export function getTransfer(tenant: string, token: string, args: { id: string }, signal?: AbortSignal) {
+  return apiFetch<TransferView>(tenant, `/treasury/transfers/${encodeURIComponent(args.id)}`, { token, signal });
+}
+
+/**
+ * «تحويل داخلي» or «مصارفة» — both legs and any fee, in one call.
+ * ACCOUNTANT or SUPER_ADMIN. `POST /treasury/transfers`.
+ */
+export function createTransfer(tenant: string, token: string, args: CreateTransferInput, signal?: AbortSignal) {
+  return apiFetch<CreateTransferResult>(tenant, '/treasury/transfers', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(args),
+    signal,
+  });
+}
+
+/** «اعتماد المراجعة». AUDITOR or SUPER_ADMIN. `POST /treasury/transfers/:id/review`. */
+export function reviewTransfer(
+  tenant: string,
+  token: string,
+  args: { id: string } & ReviewTransferInput,
+  signal?: AbortSignal,
+) {
+  const { id, ...body } = args;
+  return apiFetch<TransferView>(tenant, `/treasury/transfers/${encodeURIComponent(id)}/review`, {
+    method: 'POST',
+    token,
+    body: JSON.stringify(body),
+    signal,
+  });
 }
 
 /**
@@ -6516,6 +6753,105 @@ export function voidIncomeVoucher(
     method: 'POST',
     token,
     body: JSON.stringify(body),
+    signal,
+  });
+}
+
+// ── جرد الصندوق وإقفال اليومية (stage 5) ────────────────────────────────────
+
+import type {
+  CloseDayInput,
+  CloseDayResult,
+  DailyCashReport,
+  DailyCountSheet,
+  RecordDailyCountInput,
+  ReopenDayInput,
+  TreasuryDayClosureView,
+  TreasuryDayState,
+} from '@mechanization/shared-schemas';
+
+export type {
+  CloseDayInput,
+  CloseDayResult,
+  CountedWalletView,
+  DailyCashReport,
+  DailyCashReportCustody,
+  DailyCashReportTotal,
+  DailyCashReportWallet,
+  DailyCountLineView,
+  DailyCountSheet,
+  DailyCountView,
+  DayClosureVerdict,
+  RecordDailyCountInput,
+  ReopenDayInput,
+  TreasuryDayClosureView,
+  TreasuryDayEvent,
+  TreasuryDayState,
+  TreasuryDayStatus,
+} from '@mechanization/shared-schemas';
+
+/**
+ * «جرد وإقفال اليومية» for one day — or, with no `date`, for the day that needs
+ * closing next. `GET /treasury/counts`.
+ */
+export function getDailyCountSheet(
+  tenant: string,
+  token: string,
+  args: { date?: string } = {},
+  signal?: AbortSignal,
+) {
+  const suffix = args.date ? `?date=${encodeURIComponent(args.date)}` : '';
+  return apiFetch<DailyCountSheet>(tenant, `/treasury/counts${suffix}`, { token, signal });
+}
+
+/**
+ * «سجّل الجرد» — one or more wallets counted for one day; answers with the sheet
+ * as it now stands. ACCOUNTANT or SUPER_ADMIN. `POST /treasury/counts`.
+ */
+export function recordDailyCount(tenant: string, token: string, args: RecordDailyCountInput, signal?: AbortSignal) {
+  return apiFetch<DailyCountSheet>(tenant, '/treasury/counts', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(args),
+    signal,
+  });
+}
+
+/** «أقفل اليومية». ACCOUNTANT or SUPER_ADMIN. `POST /treasury/closures`. */
+export function closeTreasuryDay(tenant: string, token: string, args: CloseDayInput, signal?: AbortSignal) {
+  return apiFetch<CloseDayResult>(tenant, '/treasury/closures', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(args),
+    signal,
+  });
+}
+
+/** «أعد فتح اليومية» — the latest closed day, with a reason. SUPER_ADMIN only. `POST /treasury/closures/reopen`. */
+export function reopenTreasuryDay(tenant: string, token: string, args: ReopenDayInput, signal?: AbortSignal) {
+  return apiFetch<TreasuryDayState>(tenant, '/treasury/closures/reopen', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(args),
+    signal,
+  });
+}
+
+/** The closed and reopened days, latest first. `GET /treasury/closures`. */
+export function getTreasuryClosures(
+  tenant: string,
+  token: string,
+  args: { limit?: number } = {},
+  signal?: AbortSignal,
+) {
+  const suffix = args.limit === undefined ? '' : `?limit=${args.limit}`;
+  return apiFetch<TreasuryDayClosureView[]>(tenant, `/treasury/closures${suffix}`, { token, signal });
+}
+
+/** «تقرير الصندوق اليومي». `GET /treasury/reports/daily`. */
+export function getDailyCashReport(tenant: string, token: string, args: { date: string }, signal?: AbortSignal) {
+  return apiFetch<DailyCashReport>(tenant, `/treasury/reports/daily?date=${encodeURIComponent(args.date)}`, {
+    token,
     signal,
   });
 }

@@ -109,6 +109,36 @@ export interface QueuedSubmission {
   lastAttemptAt: number | null;
   /** What the server or the network said last, verbatim, for the queue list. */
   lastError: string | null;
+  /**
+   * A send under this id may have reached the register although no answer
+   * said so: one whose answer never came (`mayHaveLanded` in offline-sync),
+   * or the online save that fell back to the queue under its own id
+   * (`queueSubmission`). From then on the server may hold the record as it
+   * stood at that send, and answers a replay with that file without applying
+   * anything. Never cleared: a later refusal proves only that the later send
+   * wrote nothing.
+   */
+  inDoubt?: boolean;
+  /**
+   * When the officer changed the payload after a send that may have landed
+   * (`inDoubt`) — stamped by `reviseQueued` then, and only then. Absent on a
+   * record never revised, and on one revised while nothing it had sent could
+   * have landed (never sent, or refused outright).
+   *
+   * It is what makes a `deduplicated` answer ambiguous: the file the server
+   * holds may be the record as it was *before* the revision. `syncQueue` then
+   * keeps the record, blocked, rather than deleting the only copy of the edit.
+   * Stamped on every revision instead, it blocked a revision that had itself
+   * been delivered — sent, its answer lost, recognised on the replay — and
+   * told the officer to re-enter changes the file already held.
+   */
+  revisedAt?: number;
+  /**
+   * The file the server already holds for this id, when a revised record was
+   * answered as delivered before (`revisedAt`): where the officer makes the
+   * revision by hand.
+   */
+  citizenId?: string;
 }
 
 /** Nothing here works server-side, and Next renders these pages there first. */
@@ -259,18 +289,42 @@ function update(
   return updateOn(STORE, id, patch);
 }
 
-/** Records the outcome of one delivery attempt. */
-export function recordAttempt(
-  id: string,
-  outcome: { status: QueuedStatus; error: string | null },
-): Promise<boolean> {
-  return update(id, (existing) => ({
+/** One delivery attempt's outcome, as `recordAttempt` writes it. Pure, for the tests. */
+export function withAttempt(
+  existing: QueuedSubmission,
+  outcome: { status: QueuedStatus; error: string | null; citizenId?: string; inDoubt?: boolean },
+  now: number,
+): QueuedSubmission {
+  return {
     ...existing,
     status: outcome.status,
     attempts: existing.attempts + 1,
-    lastAttemptAt: Date.now(),
+    lastAttemptAt: now,
     lastError: outcome.error,
-  }));
+    ...(outcome.citizenId ? { citizenId: outcome.citizenId } : {}),
+    ...(outcome.inDoubt ? { inDoubt: true } : {}),
+  };
+}
+
+/**
+ * Records the outcome of one delivery attempt: the file it found when there is
+ * one, and whether it may have landed unanswered (`inDoubt`).
+ */
+export function recordAttempt(
+  id: string,
+  outcome: { status: QueuedStatus; error: string | null; citizenId?: string; inDoubt?: boolean },
+): Promise<boolean> {
+  return update(id, (existing) => withAttempt(existing, outcome, Date.now()));
+}
+
+/**
+ * Writes what the queue has to say about a record without counting a delivery
+ * attempt, because none was made: held back while the building it names waits
+ * on this device, or blocked once that building was discarded (`syncQueue`,
+ * `discardBuilding`).
+ */
+export function noteQueued(id: string, note: { status: QueuedStatus; error: string }): Promise<boolean> {
+  return update(id, (existing) => ({ ...existing, status: note.status, lastError: note.error }));
 }
 
 /**
@@ -286,6 +340,22 @@ export function retryLater(id: string): Promise<boolean> {
   return update(id, (existing) => ({ ...existing, status: 'pending', lastError: null }));
 }
 
+/** A revision as `reviseQueued` writes it. Pure, for the tests. */
+export function withRevision(
+  existing: QueuedSubmission,
+  patch: { payload: QueuedSubmission['payload']; displayName: string },
+  now: number,
+): QueuedSubmission {
+  return {
+    ...existing,
+    payload: patch.payload,
+    displayName: patch.displayName,
+    status: 'pending',
+    lastError: null,
+    ...(existing.inDoubt ? { revisedAt: now } : {}),
+  };
+}
+
 /**
  * Replaces a queued record's payload — an officer correcting the field the
  * server rejected, or one they caught before it was ever sent.
@@ -297,19 +367,15 @@ export function retryLater(id: string): Promise<boolean> {
  *
  * `savedAt` and `attempts` are left untouched — they are the record's own
  * history (when it was first filed, how many times it has been tried), not
- * something a correction should erase.
+ * something a correction should erase. `revisedAt` is stamped when a send
+ * before this revision may have landed (`inDoubt`), because then a replay of
+ * that send is what would silently drop the revision.
  */
 export function reviseQueued(
   id: string,
   patch: { payload: QueuedSubmission['payload']; displayName: string },
 ): Promise<boolean> {
-  return update(id, (existing) => ({
-    ...existing,
-    payload: patch.payload,
-    displayName: patch.displayName,
-    status: 'pending',
-    lastError: null,
-  }));
+  return update(id, (existing) => withRevision(existing, patch, Date.now()));
 }
 
 // ─────────────────────  Buildings created offline (P3-T8)  ─────────────────────
@@ -413,6 +479,25 @@ export interface QueuedBuilding {
    * `A-1042-B`, and a notice that vanished with the tab would not tell them.
    */
   reconciledCode?: string;
+  /**
+   * The building itself reached the register under this code, and only the
+   * flats generated after it (`blueprint`) were refused. Set on such a refusal,
+   * so the queue neither holds back the registrations that name the building
+   * (it exists) nor says, on «حذف», that it exists only on this device.
+   */
+  deliveredCode?: string;
+  /**
+   * Queued by the editor under the id of an online press whose answer was lost
+   * (`heldInDoubt`): the server may already hold the building as that press
+   * sent it, edits made since not included.
+   */
+  afterLostAnswer?: boolean;
+  /**
+   * Delivered as a replay of that press (`afterLostAnswer`, answered
+   * `deduplicated`): what is on file is what the earlier press sent, so the
+   * notice says to check it on the matrix. Kept, `reconciled`, until read.
+   */
+  deduplicated?: boolean;
 }
 
 export type QueuedBuildingStatus =
@@ -446,7 +531,9 @@ export async function dequeueBuilding(id: string): Promise<void> {
 /** Records one delivery attempt's outcome, or its reconciliation. */
 export function updateQueuedBuilding(
   id: string,
-  patch: Partial<Pick<QueuedBuilding, 'status' | 'lastError' | 'reconciledCode'>> & {
+  patch: Partial<
+    Pick<QueuedBuilding, 'status' | 'lastError' | 'reconciledCode' | 'deliveredCode' | 'deduplicated'>
+  > & {
     countAttempt?: boolean;
   },
 ): Promise<boolean> {
@@ -455,6 +542,8 @@ export function updateQueuedBuilding(
     ...(patch.status ? { status: patch.status } : {}),
     ...(patch.lastError !== undefined ? { lastError: patch.lastError } : {}),
     ...(patch.reconciledCode !== undefined ? { reconciledCode: patch.reconciledCode } : {}),
+    ...(patch.deliveredCode !== undefined ? { deliveredCode: patch.deliveredCode } : {}),
+    ...(patch.deduplicated !== undefined ? { deduplicated: patch.deduplicated } : {}),
     ...(patch.countAttempt
       ? { attempts: existing.attempts + 1, lastAttemptAt: Date.now() }
       : {}),

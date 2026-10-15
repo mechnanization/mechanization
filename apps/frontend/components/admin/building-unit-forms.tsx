@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import type { ColumnDef } from '@tanstack/react-table';
@@ -52,7 +53,6 @@ import {
 import {
   ApiRequestError,
   createCase,
-  listCitizens,
   logApiError,
   logUnitVisit,
   REPEAT_VISIT_WINDOW_MS,
@@ -71,6 +71,7 @@ import { formatDate, monthNames } from '@/lib/dates';
 import { formatPhone } from '@/lib/phone';
 import { useTableLabels } from '@/lib/use-table-labels';
 import { stashLinkSeed } from '@/lib/tab-search';
+import { useCitizenSearch } from '@/lib/use-citizen-search';
 import { cn } from '@/lib/utils';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -119,8 +120,6 @@ import { EndOwnershipDialog } from '@/components/admin/end-ownership-dialog';
  * Extracted rather than duplicated so the two surfaces can never quietly
  * diverge on what "add a person to a unit" or "open a follow-up case" means.
  */
-
-export const SEARCH_DEBOUNCE_MS = 350;
 
 /**
  * What an attempt can have produced.
@@ -873,6 +872,7 @@ export function AddPersonForm({
 }) {
   const en = locale === 'en';
   const labels = getLabels(locale);
+  const tPicker = useTranslations('citizenPicker');
   const [acknowledgedVacancy, setAcknowledgedVacancy] = useState(false);
   /**
    * «المالك»: a recorded owner's citizen id, `OTHER` for an owner not recorded
@@ -901,19 +901,21 @@ export function AddPersonForm({
   }, [ownerIds]);
 
   const [term, setTerm] = useState('');
-  const [results, setResults] = useState<CitizenListItem[]>([]);
-  const [searching, setSearching] = useState(false);
   const [chosen, setChosen] = useState<CitizenListItem | null>(null);
-  /** The term the shown results answer — set when a search comes back. */
-  const [searched, setSearched] = useState('');
-  /**
-   * The last lookup could not reach the register.
-   *
-   * Kept apart from «no results», which it is not: the officer is told the
-   * register is unreachable rather than that nobody matched, because those two
-   * lead to different decisions about whether to open a new file.
-   */
-  const [failed, setFailed] = useState(false);
+  /*
+    The register's citizen search, the one every picker uses (`useCitizenSearch`).
+    An archived file is offered: a person come back is restored, not filed twice.
+
+    `failed` is kept apart from «no results», which it is not: the officer is
+    told the register is unreachable rather than that nobody matched, because
+    those two lead to different decisions about whether to open a new file. A
+    failed search still answers its term (`searched`), so an officer with no
+    signal can reach «ملف جديد» — an unregistered household is worse than a
+    duplicate, and a duplicate here is still detectable by name.
+  */
+  const { results, searching, failed, searched } = useCitizenSearch(tenant, token, term, true, {
+    includeArchived: true,
+  });
   /** The term whose matches the officer has said «ليس بينهم؟» to. */
   const [notAmong, setNotAmong] = useState('');
   /** The shown results answer what is typed now, not a term since changed. */
@@ -994,52 +996,6 @@ export function AddPersonForm({
     vacancy && role && contradictsVacancy(role, answeredStatus),
   );
 
-  useEffect(() => {
-    if (!term.trim()) {
-      setResults([]);
-      setSearched('');
-      setFailed(false);
-      return;
-    }
-    let cancelled = false;
-    setSearching(true);
-    setFailed(false);
-    const timer = setTimeout(() => {
-      listCitizens(tenant, token, { search: term.trim(), limit: 6 })
-        .then((result) => {
-          if (cancelled) return;
-          // A file «دمج ملفين» folded into another is nobody to record in a flat.
-          setResults(result.items.filter((row) => !row.mergedIntoId));
-          setSearched(term.trim());
-        })
-        .catch((caught) => {
-          logApiError(caught);
-          /*
-            A failed search is not a search that found nobody, and the two are
-            told apart by `failed` rather than by withholding the way forward.
-
-            This used to clear the term as well, which left an officer with no
-            signal unable to reach «ملف جديد» at all — on a form used in the
-            field, offline, in settlements nobody is going back to. The honest
-            answer is to say the register could not be reached and let them
-            file the household anyway; an unregistered household is worse than
-            a duplicate, and a duplicate here is still detectable by name.
-          */
-          if (!cancelled) {
-            setResults([]);
-            setSearched(term.trim());
-            setFailed(true);
-          }
-        })
-        .finally(() => {
-          if (!cancelled) setSearching(false);
-        });
-    }, SEARCH_DEBOUNCE_MS);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [term, tenant, token]);
 
   return (
     <div className="space-y-3 rounded-md border bg-background p-3">
@@ -1094,12 +1050,27 @@ export function AddPersonForm({
             <ul className="max-h-48 space-y-1 overflow-y-auto">
               {results.map((citizen) => (
                 <li key={citizen.id}>
+                  {/*
+                    An archived file is shown, so the person is not filed twice,
+                    and not taken: nobody is put in a flat on one until it is
+                    restored (`CITIZEN_FILE_ARCHIVED`). `aria-disabled` keeps it
+                    reachable, so its hint is read.
+                  */}
                   <button
                     type="button"
-                    onClick={() => setChosen(citizen)}
-                    className="flex w-full flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md px-2.5 py-1.5 text-start text-sm transition-colors hover:bg-accent"
+                    aria-disabled={citizen.isActive ? undefined : true}
+                    onClick={() => {
+                      if (citizen.isActive) setChosen(citizen);
+                    }}
+                    className={cn(
+                      'flex w-full flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md px-2.5 py-1.5 text-start text-sm transition-colors',
+                      citizen.isActive ? 'hover:bg-accent' : 'cursor-not-allowed',
+                    )}
                   >
                     <span className="font-medium">{citizen.fullName}</span>
+                    {!citizen.isActive ? (
+                      <Badge variant="soft-muted">{tPicker('archived')}</Badge>
+                    ) : null}
                     {citizen.phone ? (
                       <span dir="ltr" className="text-xs text-muted-foreground">
                         {citizen.phone}
@@ -1120,6 +1091,9 @@ export function AddPersonForm({
                       <span className="basis-full text-xs text-muted-foreground">
                         {en ? `Mother: ${citizen.motherName}` : `والدته: ${citizen.motherName}`}
                       </span>
+                    ) : null}
+                    {!citizen.isActive ? (
+                      <span className="basis-full text-xs text-muted-foreground">{tPicker('archivedHint')}</span>
                     ) : null}
                   </button>
                 </li>

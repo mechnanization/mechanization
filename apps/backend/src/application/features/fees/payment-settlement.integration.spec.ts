@@ -3,14 +3,16 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Client } from 'pg';
-import type { BulkSettlePayments } from '@mechanization/shared-schemas';
+import { municipalToday, type BulkSettlePayments, type CreateTransferInput } from '@mechanization/shared-schemas';
 import { PrismaClient as TenantPrismaClient, Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { migrateTenantSchema } from '../../../infrastructure/prisma/tenant-migrator';
 import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-client';
 import { PrismaAuditRepository } from '../../../infrastructure/repositories/audit.repository';
 import { AuditService } from '../audit/audit.service';
-import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
+import { ExpensesService } from '../treasury/expenses.service';
+import { TransfersService } from '../treasury/transfers.service';
+import { dateColumn, TreasuryLedgerService } from '../treasury/treasury-ledger.service';
 import { TreasuryService } from '../treasury/treasury.service';
 import { PaymentLedgerService, type LedgerAudit } from './payment-ledger.service';
 import { PaymentSettlementService } from './payment-settlement.service';
@@ -49,6 +51,7 @@ describeIfDb('Bulk settlement', () => {
   let ledger: TreasuryLedgerService;
   let treasury: TreasuryService;
   let settlements: PaymentSettlementService;
+  let transfers: TransfersService;
 
   let citizenId: string;
   let otherCitizenId: string;
@@ -95,13 +98,30 @@ describeIfDb('Bulk settlement', () => {
     ).id;
   };
 
-  const settle = (input: Partial<BulkSettlePayments> & Pick<BulkSettlePayments, 'paymentIds' | 'method'>) =>
-    scoped(() =>
+  /** What the selected bills owe now, per currency — what the dialog shows the clerk before the press. */
+  const dueOf = async (paymentIds: string[]): Promise<Record<string, number>> => {
+    const rows = await db.citizenPayment.findMany({
+      where: { id: { in: paymentIds } },
+      select: { amount: true, paidAmount: true, currency: true },
+    });
+    const due: Record<string, number> = {};
+    for (const row of rows) {
+      const sum = (due[row.currency] ?? 0) + Number(row.amount) - Number(row.paidAmount);
+      due[row.currency] = row.currency === 'LBP' ? Math.round(sum) : Math.round(sum * 100) / 100;
+    }
+    return due;
+  };
+
+  /** One press, carrying what the bills owe as the clerk saw them unless the test says otherwise. */
+  const settle = async (input: Partial<BulkSettlePayments> & Pick<BulkSettlePayments, 'paymentIds' | 'method'>) => {
+    const expectedDue = input.expectedDue ?? (await dueOf(input.paymentIds));
+    return scoped(() =>
       settlements.settle(
-        { citizenId, clientRequestId: randomUUID(), ...input } as BulkSettlePayments,
+        { citizenId, clientRequestId: randomUUID(), ...input, expectedDue } as BulkSettlePayments,
         actor(),
       ),
     );
+  };
 
   const account = (type: string, currency: string) =>
     db.treasuryAccount.findFirstOrThrow({ where: { type: type as never, currency, isPrimary: true } });
@@ -134,7 +154,8 @@ describeIfDb('Bulk settlement', () => {
     ledger = new TreasuryLedgerService(context);
     payments = new PaymentLedgerService(context, auditService, ledger);
     treasury = new TreasuryService(context, ledger, auditService);
-    settlements = new PaymentSettlementService(context, new EventEmitter2(), payments, auditService);
+    settlements = new PaymentSettlementService(context, new EventEmitter2(), payments, auditService, ledger);
+    transfers = new TransfersService(context, ledger, auditService, new ExpensesService(context, ledger, auditService));
 
     citizenId = randomUUID();
     otherCitizenId = randomUUID();
@@ -307,6 +328,89 @@ describeIfDb('Bulk settlement', () => {
       expect(await snapshot()).toEqual(before);
     });
 
+    /*
+      Review of PR #112: the single counter payment refuses a collector who
+      cannot hold the cash (`FeesService.assertLiveCollector`); the bulk path
+      named any user. Before go-live nothing else looks at him, so the refusal
+      has to be the settlement's own.
+    */
+    it.each([
+      ['view-only staff', 'VIEWER', true, null],
+      ['deactivated staff', 'COLLECTOR', false, null],
+      ['removed staff', 'COLLECTOR', true, new Date('2026-09-01T00:00:00.000Z')],
+    ] as const)('a collector who cannot hold the cash: %s', async (_label, role, isActive, deletedAt) => {
+      const named = randomUUID();
+      await db.user.create({
+        data: {
+          id: named, kind: 'STAFF', tenantSlug: 'settlement', email: `x-${named}@t.gov.lb`,
+          firstName: 'موظف', lastName: 'سابق', role, isActive, deletedAt,
+        },
+      });
+      const a = await bill(10_000);
+      const before = await snapshot();
+      await expect(settle({ paymentIds: [a], method: 'COLLECTOR', collectedById: named })).rejects.toMatchObject({
+        code: 'COLLECTOR_NOT_FOUND',
+      });
+      expect(await snapshot()).toEqual(before);
+      expect(await status(a)).toBe('UNPAID');
+    });
+
+    it('a citizen named as the collector', async () => {
+      const a = await bill(10_000);
+      const before = await snapshot();
+      await expect(settle({ paymentIds: [a], method: 'COLLECTOR', collectedById: otherCitizenId })).rejects.toMatchObject({
+        code: 'COLLECTOR_NOT_FOUND',
+      });
+      expect(await snapshot()).toEqual(before);
+    });
+
+    /*
+      Review of PR #112: the dialog never offers a bill waiting for review — a
+      Whish claim is settled by confirming it — but the server took one, so a
+      bill the citizen sent for review after it was ticked was settled in cash
+      while his transfer was on its way.
+    */
+    it('a bill sent for review since it was ticked, named in the refusal', async () => {
+      const a = await bill(10_000);
+      const b = await bill(20_000);
+      await db.citizenPayment.update({ where: { id: b }, data: { paymentStatus: 'PENDING_REVIEW' } });
+      const before = await snapshot();
+      await expect(
+        settle({ paymentIds: [a, b], method: 'CASH', tendered: { local: 30_000, foreign: 0, foreignCurrency: 'USD' } }),
+      ).rejects.toMatchObject({ code: 'BULK_SETTLE_BILL_PENDING_REVIEW', params: { invoice: expect.any(String) } });
+      expect(await snapshot()).toEqual(before);
+      expect(await status(a)).toBe('UNPAID');
+    });
+
+    /*
+      Review of PR #112: a Whish or collector settlement carries no figure, so
+      the server recorded whatever the bills owed under its lock. A part-payment
+      taken at the next desk after the tick turned a 15,000 transfer into an
+      11,000 record. The press now carries what the clerk saw.
+    */
+    it('a balance that moved since the clerk saw it', async () => {
+      const a = await bill(10_000);
+      const b = await bill(5_000);
+      const seen = await dueOf([a, b]);
+      await scoped(() => payments.record({ audit, paymentId: a, amount: 4_000, method: 'CASH', recordedById: accountantId }));
+      const before = await snapshot();
+      await expect(
+        settle({ paymentIds: [a, b], method: 'WHISH_MONEY', whishTransactionRef: 'WH-DUE-1', expectedDue: seen }),
+      ).rejects.toMatchObject({ code: 'BULK_SETTLE_DUE_CHANGED', params: { currency: 'LBP', expected: 15_000, due: 11_000 } });
+      expect(await snapshot()).toEqual(before);
+      expect(await status(b)).toBe('UNPAID');
+    });
+
+    it('a currency the clerk was not shown', async () => {
+      const a = await bill(10_000);
+      const usd = await bill(5, 'USD');
+      const before = await snapshot();
+      await expect(
+        settle({ paymentIds: [a, usd], method: 'WHISH_MONEY', whishTransactionRef: 'WH-DUE-2', expectedDue: { LBP: 10_000 } }),
+      ).rejects.toMatchObject({ code: 'BULK_SETTLE_DUE_CHANGED', params: { currency: 'USD' } });
+      expect(await snapshot()).toEqual(before);
+    });
+
     it('a bill that does not exist', async () => {
       const a = await bill(10_000);
       await expect(
@@ -337,15 +441,32 @@ describeIfDb('Bulk settlement', () => {
       expect(await snapshot()).toEqual(before);
     });
 
-    it('refuses a key that settled other bills', async () => {
+    it('refuses a key that settled other bills, naming the receipt it recorded', async () => {
       const a = await bill(10_000);
       const b = await bill(10_000);
       const key = randomUUID();
-      await settle({ clientRequestId: key, paymentIds: [a], method: 'CASH', tendered: { local: 10_000, foreign: 0, foreignCurrency: 'USD' } });
+      const first = await settle({ clientRequestId: key, paymentIds: [a], method: 'CASH', tendered: { local: 10_000, foreign: 0, foreignCurrency: 'USD' } });
       await expect(
         settle({ clientRequestId: key, paymentIds: [b], method: 'CASH', tendered: { local: 10_000, foreign: 0, foreignCurrency: 'USD' } }),
-      ).rejects.toMatchObject({ code: 'BULK_SETTLE_REQUEST_REUSED' });
+      ).rejects.toMatchObject({ code: 'BULK_SETTLE_REQUEST_REUSED', params: { number: first.number } });
       expect(await status(b)).toBe('UNPAID');
+    });
+
+    /*
+      The case the dialog can reach: its key is the set of bills, so a press with
+      no answer and a second press of the same bills by another method meet here.
+      The earlier press was recorded, and the clerk is told which receipt it is —
+      not that the key settled «other bills» (review of 2026-10-11).
+    */
+    it('names the earlier receipt when the same bills come back under the key by another method', async () => {
+      const a = await bill(12_000);
+      const key = randomUUID();
+      const first = await settle({ clientRequestId: key, paymentIds: [a], method: 'CASH', tendered: { local: 12_000, foreign: 0, foreignCurrency: 'USD' } });
+      const before = await snapshot();
+      await expect(
+        settle({ clientRequestId: key, paymentIds: [a], method: 'WHISH_MONEY', whishTransactionRef: 'WH-55501' }),
+      ).rejects.toMatchObject({ code: 'BULK_SETTLE_REQUEST_REUSED', params: { number: first.number } });
+      expect(await snapshot()).toEqual(before);
     });
 
     it('settles once when two identical presses arrive together', async () => {
@@ -512,6 +633,234 @@ describeIfDb('Bulk settlement', () => {
       expect(again.items.find((item) => item.paymentId === b)?.reversed).toBe(true);
       // A retry now would hand over a receipt the ledger has partly cancelled.
       await expect(settle(input)).rejects.toMatchObject({ code: 'TRANSACTION_ALREADY_REVERSED' });
+    });
+
+    /*
+      The bill that carried the set's notes (step 3 of `planBulkSettlement`): $20 at
+      89,500 for 900,000 + 100,000 ل.ل puts +$20 and −1,690,000 ل.ل of change on the
+      newer bill's row, though 790,000 was handed back — the recycled change paid the
+      older bill. Opposing that row on a reversal took the $20 out of the dollar safe
+      and put 1,690,000 into the ليرة safe, money the citizen never had, while the
+      reversal's receipt said 100,000 refunded (review of 2026-10-11). Refunded as
+      its own credit, the safes move by exactly that.
+    */
+    it('refunds the bill that carried the notes its own credit, not the notes and the recycled change', async () => {
+      const older = await bill(900_000);
+      const newer = await bill(100_000);
+      const receipt = await settle({
+        paymentIds: [older, newer],
+        method: 'CASH',
+        tendered: { local: 0, foreign: 20, foreignCurrency: 'USD' },
+      });
+      expect(receipt.tender?.changeGiven).toBe(790_000);
+      const pivot = await db.paymentTransaction.findFirstOrThrow({ where: { settlementId: receipt.id, paymentId: newer } });
+      expect(Number(pivot.changeGiven)).toBe(1_690_000);
+
+      const lbpBefore = await safe('LBP');
+      const usdBefore = await safe('USD');
+      const reversed = await scoped(() =>
+        payments.reverse({ transactionId: pivot.id, recordedById: accountantId, note: 'إلغاء الفاتورة', audit }),
+      );
+      expect(reversed.received).toBe(100_000);
+      expect(await safe('LBP')).toBe(lbpBefore - 100_000);
+      expect(await safe('USD')).toBe(usdBefore);
+      expect(await status(newer)).toBe('UNPAID');
+      expect(await status(older)).toBe('PAID');
+
+      // What the settlement and its reversal left in the safes is what changed hands: $20 in, 890,000 ل.ل out.
+      const net = await db.treasuryEntry.groupBy({
+        by: ['currency'],
+        where: { sourceId: { in: [pivot.id, reversed.transactionId, (await db.paymentTransaction.findFirstOrThrow({ where: { settlementId: receipt.id, paymentId: older } })).id] } },
+        _sum: { amount: true },
+      });
+      expect(Object.fromEntries(net.map((row) => [row.currency, Number(row._sum.amount)]))).toEqual({
+        LBP: 900_000 - 1_690_000 - 100_000,
+        USD: 20,
+      });
+    });
+
+    // ─────────────────────  beside the other treasury writers  ─────────────────────
+
+    describe('one lock order with the other treasury writers', () => {
+      let older: string;
+      let newer: string;
+      let lowSafe: string;
+      let highSafe: string;
+      const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+      beforeAll(async () => {
+        /*
+          A settlement used to lock each bill's safe as it reached the bill,
+          oldest bill first. The race needs that order to be the reverse of the
+          ids: the older bill is in the currency of the safe with the higher id.
+        */
+        const safes = [await account('CASH_SAFE', 'LBP'), await account('CASH_SAFE', 'USD')].sort((a, b) =>
+          a.id < b.id ? -1 : 1,
+        );
+        lowSafe = safes[0]!.id;
+        highSafe = safes[1]!.id;
+        older = safes[1]!.currency;
+        newer = safes[0]!.currency;
+      });
+
+      /** Two bills, the older one in the higher-id safe's currency, and the exact notes for them. */
+      const pair = async () => {
+        const amount = (currency: string) => (currency === 'LBP' ? 100_000 : 5);
+        const first = await bill(amount(older), older);
+        const second = await bill(amount(newer), newer);
+        return {
+          paymentIds: [first, second],
+          method: 'CASH' as const,
+          tendered: { local: 100_000, foreign: 5, foreignCurrency: 'USD' as const },
+        };
+      };
+
+      /** «مصارفة» between the two safes: one dollar out of the dollar safe, its pounds into the ليرة safe. */
+      const exchange = async () => {
+        const [from, to] = [await account('CASH_SAFE', 'USD'), await account('CASH_SAFE', 'LBP')];
+        return scoped(() =>
+          transfers.create(
+            {
+              kind: 'EXCHANGE',
+              fromAccountId: from.id,
+              toAccountId: to.id,
+              amount: 1,
+              receivedAmount: RATE,
+              description: 'مصارفة أثناء التسديد',
+              clientRequestId: randomUUID(),
+            } as CreateTransferInput,
+            actor(),
+          ),
+        );
+      };
+
+      /*
+        Cross-feature review (PR #111 × PR #112): a settlement locked its wallets
+        bill by bill — here the higher-id safe first — while an exchange locks
+        both in id order. Each round lets the settlement post its first bill,
+        then starts the exchange and gives it time to take the lower-id safe and
+        queue on the higher one before the settlement moves to its second bill.
+        Bill by bill, that is a deadlock (40P01) every round; with every wallet
+        locked in id order up front, the exchange simply waits its turn.
+      */
+      it('goes through with an exchange between the same two safes, without a deadlock', async () => {
+        expect(lowSafe < highSafe).toBe(true);
+        const outcomes: string[] = [];
+        for (let round = 0; round < 8; round++) {
+          const input = await pair();
+          let racing: Promise<unknown> | undefined;
+          const post = ledger.post.bind(ledger);
+          const spy = jest.spyOn(ledger, 'post').mockImplementationOnce(async (...args) => {
+            await post(...args);
+            racing = exchange();
+            racing.catch(() => undefined);
+            await pause(250);
+          });
+          let settled: PromiseSettledResult<unknown>;
+          try {
+            [settled] = await Promise.allSettled([settle(input)]);
+          } finally {
+            spy.mockRestore();
+          }
+          const [exchanged] = await Promise.allSettled([racing ?? Promise.reject(new Error('the exchange never started'))]);
+          for (const result of [settled!, exchanged!]) {
+            outcomes.push(result.status === 'fulfilled' ? 'ok' : String((result.reason as Error).message).slice(0, 120));
+          }
+          if (settled!.status === 'fulfilled') for (const id of input.paymentIds) expect(await status(id)).toBe('PAID');
+        }
+        expect(outcomes.filter((outcome) => outcome !== 'ok')).toEqual([]);
+      });
+
+      /*
+        The other half of the order: a single counter payment takes the RECEIPT
+        counter and then its wallet, so a settlement must hold the counter
+        before it locks its wallets too. Each round lets the settlement lock its
+        wallets, then starts a counter payment into one of the same safes: it
+        must queue on the counter, not take the counter and wait on the safe.
+      */
+      it('goes through with a counter payment into the same safe, without a deadlock', async () => {
+        const outcomes: string[] = [];
+        for (let round = 0; round < 4; round++) {
+          const input = await pair();
+          const single = await bill(10_000);
+          let racing: Promise<unknown> | undefined;
+          const lock = ledger.lockPaymentWallets.bind(ledger);
+          const spy = jest.spyOn(ledger, 'lockPaymentWallets').mockImplementationOnce(async (...args) => {
+            await lock(...args);
+            racing = scoped(() =>
+              payments.record({ audit, paymentId: single, amount: 10_000, method: 'CASH', recordedById: accountantId }),
+            );
+            racing.catch(() => undefined);
+            await pause(250);
+          });
+          let settled: PromiseSettledResult<unknown>;
+          try {
+            [settled] = await Promise.allSettled([settle(input)]);
+          } finally {
+            spy.mockRestore();
+          }
+          const [paid] = await Promise.allSettled([racing ?? Promise.reject(new Error('the payment never started'))]);
+          for (const result of [settled!, paid!]) {
+            outcomes.push(result.status === 'fulfilled' ? 'ok' : String((result.reason as Error).message).slice(0, 120));
+          }
+        }
+        expect(outcomes.filter((outcome) => outcome !== 'ok')).toEqual([]);
+      });
+    });
+
+    // ─────────────────────────────  a closed day  ─────────────────────────────
+
+    /*
+      Cross-feature review (PR #106 × PR #112): stage 5's hard lock refuses
+      anything dated on a closed day. A settlement is dated now, so the case is
+      today's day closed, then a press. The application never closes today, so
+      the closure is written straight to the table — the state a clock skew or
+      a hand-written closure would leave. Last in the file: the day stays shut
+      until the test reopens it.
+    */
+    it('refuses a settlement on a closed day before it writes anything, and a counter payment too', async () => {
+      const today = municipalToday();
+      const a = await bill(30_000);
+      const b = await bill(7, 'USD');
+      const closure = await db.treasuryDayClosure.create({
+        data: { businessDate: dateColumn(today), closedById: accountantId },
+        select: { id: true },
+      });
+      const counters = () => db.documentCounter.findMany({ orderBy: [{ kind: 'asc' }, { period: 'asc' }] });
+      const recordIn = jest.spyOn(payments, 'recordIn');
+      const post = jest.spyOn(ledger, 'post');
+      try {
+        const before = { ...(await snapshot()), counters: await counters() };
+        await expect(
+          settle({ paymentIds: [a, b], method: 'CASH', tendered: { local: 30_000, foreign: 7, foreignCurrency: 'USD' } }),
+        ).rejects.toMatchObject({ code: 'CLOSED_DAY_MUTATION_BLOCKED', params: { date: today } });
+        // Refused by the settlement itself: no bill reached the ledger, no wallet was asked to move.
+        // Counted, not printed: a call's arguments carry the transaction client.
+        expect(recordIn.mock.calls.length).toBe(0);
+        expect(post.mock.calls.length).toBe(0);
+        expect({ ...(await snapshot()), counters: await counters() }).toEqual(before);
+        expect(await status(a)).toBe('UNPAID');
+        expect(await status(b)).toBe('UNPAID');
+
+        // A single counter payment, which shares `recordIn`, is refused before it reaches the wallets.
+        await expect(
+          scoped(() => payments.record({ audit, paymentId: a, amount: 30_000, method: 'CASH', recordedById: accountantId })),
+        ).rejects.toMatchObject({ code: 'CLOSED_DAY_MUTATION_BLOCKED', params: { date: today } });
+        expect(post.mock.calls.length).toBe(0);
+        expect({ ...(await snapshot()), counters: await counters() }).toEqual(before);
+      } finally {
+        recordIn.mockRestore();
+        post.mockRestore();
+        // A closure is never deleted (0082); reopening is the way back.
+        await db.treasuryDayClosure.update({
+          where: { id: closure.id },
+          data: { status: 'REOPENED', reopenedAt: new Date(), reopenedById: accountantId, reopenReason: 'إعادة فتح بعد الاختبار' },
+        });
+      }
+
+      // Reopened, the same press goes through.
+      const receipt = await settle({ paymentIds: [a, b], method: 'CASH', tendered: { local: 30_000, foreign: 7, foreignCurrency: 'USD' } });
+      expect(receipt.items).toHaveLength(2);
     });
   });
 });

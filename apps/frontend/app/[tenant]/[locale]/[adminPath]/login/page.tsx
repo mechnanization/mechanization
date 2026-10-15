@@ -14,6 +14,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { ApiRequestError, isTotpRequired, loginStaff, logApiError } from '@/lib/api-client';
+import { openedAfterPasswordChange } from '@/lib/password-change';
 import { loadSession, saveSession } from '@/lib/session';
 import { defaultPathFor } from '@/components/admin/nav';
 import { Alert } from '@/components/ui/alert';
@@ -34,7 +35,7 @@ export default function StaffLogin({
   const router = useRouter();
   const tAuth = useTranslations('auth');
   const tCommon = useTranslations('common');
-  const isEn = locale === 'en';
+  const t = useTranslations('auth.staffSignIn');
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -46,6 +47,8 @@ export default function StaffLogin({
   const [totpToken, setTotpToken] = useState('');
   const [totpStage, setTotpStage] = useState(false);
   const [checking, setChecking] = useState(true);
+  // Sent here by «تغيير كلمة المرور», which ended every session of the account.
+  const [passwordChanged, setPasswordChanged] = useState(false);
 
   useEffect(() => {
     const session = loadSession(tenant);
@@ -53,12 +56,15 @@ export default function StaffLogin({
       router.replace(`/${tenant}/${locale}/${adminPath}${defaultPathFor(session.user.role)}`);
       return;
     }
+    setPasswordChanged(openedAfterPasswordChange(window.location.search));
     setChecking(false);
   }, [tenant, locale, adminPath, router]);
 
   async function submit() {
     setBusy(true);
     setError(null);
+    // Read once: the next attempt is about this sign-in, not the change behind it.
+    setPasswordChanged(false);
 
     try {
       const result = await loginStaff(tenant, {
@@ -83,19 +89,15 @@ export default function StaffLogin({
       if (caught instanceof ApiRequestError) {
         if (caught.status === 401) {
           if (totpStage) {
-            setError(
-              isEn
-                ? 'Invalid verification code. Please check your authenticator app.'
-                : 'رمز التحقق غير صحيح. يرجى مراجعة تطبيق المصادقة.',
-            );
+            setError(t('invalidCode'));
           } else {
-            setError(isEn ? 'Invalid email or password.' : 'بيانات الدخول غير صحيحة.');
+            setError(t('invalidCredentials'));
           }
         } else {
           setError(caught.message);
         }
       } else {
-        setError(isEn ? 'Unable to sign in.' : 'تعذّر تسجيل الدخول.');
+        setError(t('failed'));
       }
       if (caught instanceof ApiRequestError && caught.status === 401 && !totpStage) {
         setTotpStage(false);
@@ -150,10 +152,10 @@ export default function StaffLogin({
           <img src="/logo.png" alt="" className="size-20 shrink-0 object-contain" aria-hidden />
           <div className="space-y-0.5">
             <span className="block text-lg font-bold font-display tracking-tight">
-              {isEn ? 'Municipal Platform' : 'السجل البلدي'}
+              {t('brand')}
             </span>
             <span className="block text-xs font-medium text-primary-foreground/80">
-              {isEn ? 'Staff Administration' : 'منظومة إدارة البلدية'}
+              {t('brandSub')}
             </span>
           </div>
         </div>
@@ -162,12 +164,10 @@ export default function StaffLogin({
         <div className="relative z-10 my-auto max-w-md py-10 space-y-8">
           <div className="space-y-3">
             <h1 className="font-display text-3xl font-bold tracking-tight sm:text-4xl leading-snug">
-              {isEn ? 'Administration Portal' : 'لوحة إدارة المعاملات'}
+              {t('portalTitle')}
             </h1>
             <p className="text-sm sm:text-base leading-relaxed text-primary-foreground/90">
-              {isEn
-                ? 'Staff workspace to review, process, and manage municipal records.'
-                : 'مساحة عمل مخصّصة لموظفي البلدية لمتابعة المعاملات ومراجعتها والبتّ فيها.'}
+              {t('portalDescription')}
             </p>
           </div>
 
@@ -189,9 +189,7 @@ export default function StaffLogin({
         {/* Bottom Footer Notice */}
         <div className="relative z-10 pt-4">
           <p className="text-xs text-primary-foreground/80">
-            {isEn
-              ? '© 2026 — Access restricted to authorized personnel.'
-              : '© 2026 — الدخول مقتصر على الحسابات المصرّح لها.'}
+            {t('footer')}
           </p>
         </div>
       </aside>
@@ -210,10 +208,10 @@ export default function StaffLogin({
             <img src="/logo.png" alt="" className="size-16 shrink-0 object-contain" />
             <div className="space-y-0.5">
               <span className="block text-lg font-bold font-display">
-                {isEn ? 'Municipal Platform' : 'السجل البلدي'}
+                {t('brand')}
               </span>
               <span className="block text-xs text-muted-foreground">
-                {isEn ? 'Staff Administration' : 'منظومة إدارة البلدية'}
+                {t('brandSub')}
               </span>
             </div>
           </div>
@@ -222,7 +220,7 @@ export default function StaffLogin({
             <h2 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">
               {totpStage
                 ? tAuth('totpPrompt')
-                : (isEn ? 'Sign in to your account' : 'تسجيل الدخول إلى حسابك')}
+                : t('heading')}
             </h2>
             <p className="text-sm text-muted-foreground">
               {totpStage
@@ -230,6 +228,12 @@ export default function StaffLogin({
                 : tAuth('staffLoginDesc')}
             </p>
           </div>
+
+          {passwordChanged && !error ? (
+            <Alert variant="success" live="status" title={t('passwordChangedTitle')} className="mb-6">
+              {t('passwordChangedBody')}
+            </Alert>
+          ) : null}
 
           {error ? (
             <Alert
@@ -411,9 +415,7 @@ export default function StaffLogin({
           {/* Admin Help Footer */}
           <div className="mt-8 border-t border-border/70 pt-6 text-center text-xs text-muted-foreground leading-relaxed">
             <p>
-              {isEn
-                ? 'Forgot your password or unable to sign in? Contact your system administrator.'
-                : 'نسيت كلمة المرور أو تعذّر الدخول؟ تواصل مع مسؤول النظام لاستعادة الوصول إلى حسابك.'}
+              {t('help')}
             </p>
           </div>
         </div>
@@ -421,9 +423,7 @@ export default function StaffLogin({
         {/* Mobile Footer */}
         <div className="text-center lg:hidden">
           <p className="text-xs text-muted-foreground">
-            {isEn
-              ? '© 2026 — Access restricted to authorized personnel.'
-              : '© 2026 — الدخول مقتصر على الحسابات المصرّح لها.'}
+            {t('footer')}
           </p>
         </div>
       </main>

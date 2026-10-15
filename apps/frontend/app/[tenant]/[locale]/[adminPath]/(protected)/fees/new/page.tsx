@@ -9,7 +9,6 @@ import {
   ApiRequestError,
   getFeeFilterOptions,
   issueFeeNotice,
-  listCitizens,
   logApiError,
 } from '@/lib/api-client';
 import { hasRole } from '@/lib/staff-roles';
@@ -67,20 +66,6 @@ export default function IssueFeePage({
   const inFlight = useRef(false);
 
   const canIssue = user ? hasRole(FEE_ISSUE_ROLES, user.role) : false;
-
-  /** The citizen picker's list. A file «دمج ملفين» folded into another is charged on the file that stays. */
-  const citizensQuery = useStaffQuery({
-    queryKey: ['fees-issue-citizens', tenant],
-    queryFn: async (accessToken, signal) => {
-      const res = await listCitizens(tenant, accessToken, { limit: 200 }, signal);
-      return res.items.filter((row) => !row.mergedIntoId);
-    },
-    tenant,
-    base,
-    token,
-    reference: true,
-    errorMessage: t('loadError'),
-  });
 
   /** Titles already in use, so the wizard can warn before a second notice repeats one. */
   const titlesQuery = useStaffQuery({
@@ -185,7 +170,8 @@ export default function IssueFeePage({
     }
   };
 
-  const ready = Boolean(token) && Boolean(citizensQuery.data) && Boolean(titlesQuery.data);
+  // The citizen picker searches the register as the clerk types (`useCitizenSearch`), so it waits on nothing here.
+  const ready = Boolean(token) && Boolean(titlesQuery.data);
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
@@ -193,10 +179,10 @@ export default function IssueFeePage({
 
       <PageHeader icon={Receipt} title={t('title')} />
 
-      {citizensQuery.error ? (
+      {titlesQuery.error && !titlesQuery.data ? (
         <Card>
           <CardContent className="p-0">
-            <ErrorState title={citizensQuery.error} onRetry={citizensQuery.refetch} />
+            <ErrorState title={titlesQuery.error} onRetry={titlesQuery.refetch} />
           </CardContent>
         </Card>
       ) : !user || !ready ? (
@@ -207,7 +193,8 @@ export default function IssueFeePage({
         </Alert>
       ) : (
         <IssueFeeForm
-          citizens={citizensQuery.data ?? []}
+          tenant={tenant}
+          token={token}
           submitting={submitting}
           error={error}
           onSubmit={issue}

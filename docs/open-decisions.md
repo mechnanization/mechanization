@@ -760,7 +760,7 @@ the role is one allow-list in `lib/staff-roles.ts`.
 
 **Status:** decided on the PR #104 review, from the municipal accounting decree
 (Decree 5595/1982, read in its consolidated text) and municipal cash-handling
-practice; D6, D7 and the receipt's paper size by the owner on 2026-10-10. Each one
+practice; D6, D7, D9 and the receipt's paper size by the owner on 2026-10-10. Each one
 is written up, with its grounds, in
 [finance.md §13.1c](finance.md), and pinned by
 `treasury-controls.integration.spec.ts`.
@@ -774,8 +774,10 @@ is written up, with its grounds, in
   (art. 28, 33). Urgent payments are paid first and regularised after (art. 35). The
   manager records the order the head signs on paper; the head’s own account stays
   «مشاهد فقط» (decision 16).
-- **D4, stage 5 before activation:** not required with D3 in place. Until it ships, the
-  one-day statement is the daily register (art. 101), printed, counted and signed.
+- **D4, stage 5 before activation:** not required with D3 in place. Until it shipped, the
+  one-day statement was the daily register (art. 101), printed, counted and signed. Stage 5
+  was built on 2026-10-10 (PR #106): the day is counted and closed in the system, and
+  «تقرير الصندوق اليومي» is the register ([finance.md §7](finance.md)).
 - **D5, the go-live day:** live, for payments, expenses and income alike. Whatever was
   taken before the opening count is entered before activation; a document dated that
   day is never placed before the opening entry.
@@ -789,21 +791,77 @@ is written up, with its grounds, in
   so the accountant's «صرف راتب / أجر» is paid at once on the urgent path, with the
   reason «راتب — يُدفع قبل الحوالة (المادة 35)» written by the server, and waits for
   the manager's regularisation. The manager's payout is the order itself.
+- **D8, an accountant's own salary (2026-10-10):** refused (`SALARY_SELF_PAYOUT`); the
+  manager records it, or it goes to him as a request.
+- **D9, an inspector's commission (decided by the owner, 2026-10-10):** paid like a salary.
+  Art. 35 names salaries and wages («الرواتب والأجور»), so the manager's «صرف عمولة» is the
+  order, and the accountant's is paid at once on the urgent path with the reason «عمولة مسح
+  ميداني — تُدفع قبل الحوالة (المادة 35)» written by the server, waits for the manager's
+  regularisation, and is not held to the urgent ceiling. He cannot pay his own commission
+  (`COMMISSION_SELF_PAYOUT`), and before go-live, when a payout is a figure with no voucher to
+  regularise, it stays the manager's. This settles the question PR #109 raised on 2026-10-10
+  ([finance.md §5.6](finance.md)).
 - **The printed receipt (decided 2026-10-10):** A5, scaled in print to fit one sheet,
   rather than running over two or moving to another paper size. The frontend
   implements it ([ui-ux-standards.md](ui-ux-standards.md), the printing entry).
 
 **Still open:**
 
-- **How large a salary may an accountant pay before the order?** Salaries are exempt from
-  the urgent ceiling (D7), so the only bound is the wallet. The manager sees each one in the
-  regularisation queue, after the cash has left. **Undecided:** a salary ceiling, or none.
+- **How large a salary or a commission may an accountant pay before the order?** Both are
+  exempt from the urgent ceiling (D7, D9), so the only bounds are the wallet and, for a
+  commission, what the inspector is owed. The manager sees each one in the regularisation
+  queue, after the cash has left. **Undecided:** a ceiling of their own, or none.
+- **A commission paid on another day, once live.** «صرف عمولة» is dated today, and the expense
+  form may not file under «تعويضات المسح والجباية» (a commission paid there left the inspector
+  owed what he was paid). So a commission handed over yesterday has no road into the system
+  today. **Undecided:** a back-dated payout with a reason, as the expense form has, or none.
+- **Whether the accountant sees what an inspector is owed.** He may pay a commission (D9), but
+  the inspector's profile, which carries the figure, also lists the citizens the inspector
+  registered, and stays the manager's and the inspector's own. So the accountant pays through
+  the API with no screen and no figure, and the refusal names none. **Undecided:** a narrow
+  read of the owed figure for him (and the dialog on a screen he opens), or the manager keeps
+  paying commissions himself.
 - **Which settings the accountant may change.** The settings route admits him for every field
   except the urgent ceilings, including the official exchange rate ([security.md](security.md)
   gaps). **Undecided.**
+- **A transfer's fee and the payment order (PR #111 review, 2026-10-10).** A bank or Whish fee
+  is taken by the provider as the money moves, so it cannot wait for the order. Until decided,
+  the code applies D3 as to any voucher: the manager's transfer is the order of its fee, and an
+  accountant's fee is paid at once on the urgent path with the server's reason «رسوم تحويل —
+  تُدفع مع المناقلة (المادة 35)» (`TRANSFER_FEE_URGENT_REASON`), waits for regularisation, and is
+  **held to the urgent ceiling**: a fee above it refuses the whole transfer, which the manager
+  then records. **Undecided:** whether a fee is exempt from the ceiling like a salary (D7), held
+  to it as now, or needs no regularisation at all because the transfer is the act.
+- **Who may clear the review of an exchange the manager booked himself (PR #111 review,
+  2026-10-10).** The review is `TREASURY_REVIEW_ROLES` (the auditor and the manager), so the
+  manager can approve the review of his own exchange — the self-check D8 and
+  `CUSTODY_SELF_RECEIPT` refuse elsewhere. Refusing it would leave a municipality with no auditor
+  account unable to clear any of the manager's flagged exchanges. **Undecided:** refuse a
+  self-review (`TRANSFER_SELF_REVIEW`), or allow it and let the audit row show who reviewed whom.
 
 - Whether each municipality wants the head’s signature reflected through the
   manager’s account, or a role of its own.
 - Petty-cash advances (art. 37–42).
 - How a backup should carry an append-only ledger ([database.md](database.md),
   **Undecided**).
+
+---
+
+## 19. Settling several bills at once: what the PR #112 review left open (2026-10-10)
+
+What the code does now ([finance.md](finance.md) §3.7):
+
+- «تسديد الفواتير المحددة» refuses a bill waiting for review of a Whish transfer
+  (`BULK_SETTLE_BILL_PENDING_REVIEW`): the screens never offer one, and a citizen can send
+  a bill for review between the tick and the press. The **single** counter settle does not
+  refuse it on the server: its screens hide the button, but the API takes the money, and the
+  Whish callback then finds the bill PAID and records nothing for the transfer that arrived
+  (`FeesService.settleFromWhishCallback` returns `{ applied: false }` on a PAID bill).
+  **Undecided:** may cash be taken at the counter for a bill whose citizen has declared a
+  transfer that is still being reviewed? If not, the single settle needs the same refusal;
+  if so, the bulk refusal should go and the transfer that arrives later needs a refund path.
+- A settlement row keeps the citizen who paid. A merge of two citizen files moves the bills
+  to the file kept, but `payment_settlements` is append-only, so the consolidated receipt
+  still names the file merged away, and a retry of that press after the merge is refused as
+  another act. **Undecided:** is that the receipt as issued (keep it), or should a merge
+  carry settlements over (which needs an exception to the append-only trigger)?

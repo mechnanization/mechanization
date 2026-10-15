@@ -1,10 +1,12 @@
 import 'reflect-metadata';
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { RequestMethod } from '@nestjs/common';
-import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
+import { Param, ParseUUIDPipe, RequestMethod } from '@nestjs/common';
+import { METHOD_METADATA, PATH_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
+import { RouteParamtypes } from '@nestjs/common/enums/route-paramtypes.enum';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { ROLES_KEY } from '../decorators/roles.decorator';
+import { FeesController } from './fees.controller';
 
 /*
   The route inventory: who can reach every route the API serves.
@@ -160,6 +162,88 @@ describe('the «مشاهد فقط» (VIEWER) role — the municipality leader’
 });
 
 /*
+  The ids the fee routes take from their path. Each reaches the ledger only
+  once it parses as a UUID — a malformed one becomes a raw database error, a
+  500 and a Sentry event. Every one is checked here, found from the
+  controller's own metadata rather than from a list, so a fee route added
+  tomorrow is covered the day it is written. «عكس الوصل»'s two are also checked
+  by name: the receipts of one bill, and reversing one of them. Who may reverse
+  is pinned with the other fee routes that move treasury money, below
+  (`FeesController.reverseTransaction`).
+
+  Eight of them took their id raw on `develop`. They carry PR #120's own line
+  for each (its B9), word for word, so the two branches agree on every one
+  (docs/finance.md §14, review of PR #113).
+
+  Nest takes a pipe as an instance (`new ParseUUIDPipe()`, the house form) or
+  as the class itself (`ParseUUIDPipe`, which it instantiates); both validate,
+  so both pass here.
+*/
+describe('the ids the fee routes take from their path', () => {
+  type RouteArg = { data?: unknown; pipes?: unknown[] };
+  const argsOf = (controller: object, method: string): Array<[string, RouteArg]> =>
+    Object.entries((Reflect.getMetadata(ROUTE_ARGS_METADATA, controller, method) ?? {}) as Record<string, RouteArg>);
+  const pipesOn = (controller: object, method: string, param: string): unknown[] =>
+    argsOf(controller, method).find(([, arg]) => arg.data === param)?.[1].pipes ?? [];
+  const checksUuid = (pipes: unknown[]): boolean =>
+    pipes.some((pipe) => pipe === ParseUUIDPipe || pipe instanceof ParseUUIDPipe);
+
+  /** Every path parameter of a FeesController route that names an id (`id`, or a name ending in `Id`). */
+  const feeIds = Object.getOwnPropertyNames(FeesController.prototype)
+    .filter((method) => {
+      const handler: unknown = Object.getOwnPropertyDescriptor(FeesController.prototype, method)?.value;
+      return typeof handler === 'function' && Reflect.getMetadata(METHOD_METADATA, handler) !== undefined;
+    })
+    .flatMap((method) =>
+      argsOf(FeesController, method)
+        .filter(([key, arg]) => key.startsWith(`${RouteParamtypes.PARAM}:`) && /^(id|\w+Id)$/.test(String(arg.data)))
+        .map(([, arg]) => ({ name: `FeesController.${method}(${String(arg.data)})`, checked: checksUuid(arg.pipes ?? []) })),
+    );
+
+  it('finds them, so the checks below are about something', () => {
+    expect(feeIds.length).toBeGreaterThanOrEqual(11);
+    // A staff route, a citizen's own route whose id follows `tenantSlug`, and an id not named `id`.
+    expect(feeIds.map((id) => id.name)).toEqual(
+      expect.arrayContaining([
+        'FeesController.getPayment(id)',
+        'FeesController.whishCheckout(id)',
+        'FeesController.reverseTransaction(transactionId)',
+      ]),
+    );
+  });
+
+  it.each([
+    ['transactions', 'id'],
+    ['reverseTransaction', 'transactionId'],
+  ])('checks the %s id (%s) is a UUID', (method, param) => {
+    expect(checksUuid(pipesOn(FeesController, method, param))).toBe(true);
+  });
+
+  it('checks every id a fee route takes from its path is a UUID', () => {
+    expect(feeIds.filter((id) => !id.checked).map((id) => id.name)).toEqual([]);
+  });
+
+  it('counts the pipe in either form Nest takes, and an id without it as unchecked', () => {
+    class Probe {
+      instance(@Param('id', new ParseUUIDPipe()) id: string) {
+        return id;
+      }
+      asClass(@Param('id', ParseUUIDPipe) id: string) {
+        return id;
+      }
+      unchecked(@Param('id') id: string) {
+        return id;
+      }
+    }
+    expect(['instance', 'asClass', 'unchecked'].map((method) => checksUuid(pipesOn(Probe, method, 'id')))).toEqual([
+      true,
+      true,
+      false,
+    ]);
+  });
+});
+
+/*
   The treasury's permission table (docs/finance.md §9), pinned route by route.
   A role list is the whole control on these handlers — the services trust the
   guard — so widening one must be a decision someone makes here, on purpose,
@@ -169,11 +253,15 @@ describe('the treasury routes (docs/finance.md §9)', () => {
   const READ = ['ACCOUNTANT', 'AUDITOR', 'SUPER_ADMIN', 'VIEWER'];
   const WORK = ['ACCOUNTANT', 'SUPER_ADMIN'];
   const ADMIN = ['SUPER_ADMIN'];
+  // Who clears a flagged exchange (§6.3): the auditor and the manager, never the accountant who booked it.
+  const REVIEW = ['AUDITOR', 'SUPER_ADMIN'];
   const ALL_BUT_VIEWER = ['ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'AUDITOR', 'COLLECTOR', 'FIELD_INSPECTOR', 'SUPER_ADMIN'];
   const expected: Record<string, string[]> = {
     'TreasuryController.overview': READ,
     'TreasuryController.statement': READ,
     'TreasuryController.activate': ADMIN,
+    // «إضافة حساب» (§6.4): a wallet is opened by the manager alone.
+    'TreasuryController.createAccount': ADMIN,
     'ExpensesController.categories': READ,
     'ExpensesController.createCategory': ADMIN,
     'ExpensesController.updateCategory': ADMIN,
@@ -201,8 +289,53 @@ describe('the treasury routes (docs/finance.md §9)', () => {
     'TransfersController.list': READ,
     'TransfersController.receiveCustody': WORK,
     'TransfersController.void': ADMIN,
+    // Stage 4 (§6): an internal transfer or an exchange is work; its slip is read; its review is the auditor's.
+    'TransfersController.create': WORK,
+    'TransfersController.get': READ,
+    'TransfersController.review': REVIEW,
+    // Stage 5 (§7): the sheet, the history and the report are read; counting and closing are work;
+    // reopening a closed day is the manager's alone.
+    'TreasuryClosingController.sheet': READ,
+    'TreasuryClosingController.history': READ,
+    'TreasuryClosingController.daily': READ,
+    'TreasuryClosingController.record': WORK,
+    'TreasuryClosingController.close': WORK,
+    'TreasuryClosingController.reopen': ADMIN,
+    // «صرف عمولة» (§5.6): a «PV-» voucher and a ledger debit once live. Paid like a salary (D9):
+    // the accountant's on the urgent path, waiting for the manager's order.
+    'StaffController.recordPayout': WORK,
+    /*
+      The fee routes that post wallet entries once the treasury is live (§3.3, §3.4): a counter
+      or collector payment credits a safe or a custody wallet (`settleInPerson`), confirming a
+      Whish transfer credits the Whish wallet (`review`), and reversing a receipt takes the money
+      back out (`reverseTransaction`). Their lists are the fee sets the screens read
+      (`FEE_ISSUE_ROLES`, `FEE_ADMIN_ROLES`, `PAYMENT_REVERSE_ROLES`), pinned here so that
+      widening one — an administrative officer at the counter — fails CI rather than passing
+      unseen.
+    */
+    'FeesController.settle': ['ACCOUNTANT', 'COLLECTOR', 'SUPER_ADMIN'],
+    'FeesController.review': WORK,
+    'FeesController.reverseTransaction': ADMIN,
+    // Whish's own callback: no session and no role — `@Public()`, checked by the HMAC over its body.
+    'FeesController.whishCallback': [],
   };
-  const treasury = routes().filter((route) => /^(Treasury|Expenses|Income|Transfers)Controller\./.test(route.name));
+  /*
+    Every treasury controller by name: a new one is added here, or its handlers are pinned by
+    nothing. And, by name, each handler elsewhere that moves treasury money; the bulk settlement's
+    two are pinned in their own block below.
+  */
+  const MONEY_HANDLERS_ELSEWHERE = [
+    'StaffController.recordPayout',
+    'FeesController.settle',
+    'FeesController.review',
+    'FeesController.reverseTransaction',
+    'FeesController.whishCallback',
+  ];
+  const treasury = routes().filter(
+    (route) =>
+      /^(Treasury|TreasuryClosing|Expenses|Income|Transfers)Controller\./.test(route.name) ||
+      MONEY_HANDLERS_ELSEWHERE.includes(route.name),
+  );
 
   it('knows every treasury handler, and no other', () => {
     expect(treasury.map((route) => route.name).sort()).toEqual(Object.keys(expected).sort());
@@ -213,12 +346,44 @@ describe('the treasury routes (docs/finance.md §9)', () => {
     expect([...(route?.roles ?? [])].sort()).toEqual([...roles].sort());
   });
 
-  it('lets no one but the manager order, refuse, regularise or cancel', () => {
+  it('lets no one but the manager order, refuse, regularise, cancel, reopen a closed day or open a wallet', () => {
     // `void` covers an expense, an income voucher and a transfer alike.
-    const managerOnly = ['orderRequest', 'rejectRequest', 'regularize', 'void', 'activate'];
+    const managerOnly = ['orderRequest', 'rejectRequest', 'regularize', 'void', 'activate', 'reopen', 'createAccount'];
     const wider = treasury.filter(
       (route) => managerOnly.includes(route.name.split('.')[1]) && (route.roles ?? []).some((role) => role !== 'SUPER_ADMIN'),
     );
     expect(wider.map((route) => route.name)).toEqual([]);
+  });
+
+  it('never lets the accountant, who books an exchange, clear its review', () => {
+    const route = treasury.find((candidate) => candidate.name === 'TransfersController.review');
+    expect(route?.roles ?? []).not.toContain('ACCOUNTANT');
+  });
+});
+
+/*
+  «تسديد الفواتير المحددة» (docs/finance.md §3.7), pinned as the treasury's
+  routes are: it moves money for up to fifty bills in one press, and the role
+  list is the whole control on who may press it. A collector settles the same
+  bills one at a time; widening this is a decision, not an edit.
+*/
+describe('the bulk settlement routes (docs/finance.md §3.7)', () => {
+  const expected: Record<string, string[]> = {
+    'FeesController.bulkSettle': ['ACCOUNTANT', 'SUPER_ADMIN'],
+    'FeesController.settlement': ['ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'AUDITOR', 'COLLECTOR', 'SUPER_ADMIN', 'VIEWER'],
+  };
+  const all = routes();
+
+  it.each(Object.entries(expected))('%s admits exactly its roles', (name, roles) => {
+    const route = all.find((candidate) => candidate.name === name);
+    expect(route).toBeDefined();
+    expect([...(route?.roles ?? [])].sort()).toEqual([...roles].sort());
+  });
+
+  it('serves the settle as a POST and the reprint as a GET', () => {
+    const settle = all.find((route) => route.name === 'FeesController.bulkSettle');
+    const reprint = all.find((route) => route.name === 'FeesController.settlement');
+    expect([settle?.method, settle?.path]).toEqual([RequestMethod.POST, 'payments/bulk-settle']);
+    expect([reprint?.method, reprint?.path]).toEqual([RequestMethod.GET, 'settlements/:id']);
   });
 });

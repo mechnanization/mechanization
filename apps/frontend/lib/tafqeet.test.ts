@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { tafqeet } from './tafqeet';
+import { tafqeet, tafqeetAmount } from './tafqeet';
 
 /**
  * تفقيط — the written-out amount on a municipal receipt.
@@ -44,24 +44,28 @@ describe('tafqeet', () => {
       expect(tafqeet(10)).toBe('عشر ليرات لبنانية فقط لا غير');
     });
 
-    it('returns to the singular counted noun above ten', () => {
-      // 11+ reverts to «ليرة لبنانية» — the suffix form — so this is the
-      // boundary where the three preceding rules all stop applying.
-      expect(tafqeet(11)).toBe(`أحد عشر ${SUFFIX}`);
+    it('returns to the singular counted noun above ten, with a feminine numeral', () => {
+      // 11+ reverts to «ليرة لبنانية» — the suffix form. The numeral still
+      // agrees with ليرة, which is feminine: «إحدى عشرة», never «أحد عشر».
+      expect(tafqeet(11)).toBe(`إحدى عشرة ${SUFFIX}`);
     });
   });
 
   describe('tens, teens and hundreds', () => {
     it('writes the teens as single words, not as ten-plus-n', () => {
-      expect(tafqeet(12)).toBe(`اثنا عشر ${SUFFIX}`);
-      expect(tafqeet(19)).toBe(`تسعة عشر ${SUFFIX}`);
+      // Feminine, as ليرة is: «ثلاث عشرة ليرة», not «ثلاثة عشر ليرة».
+      expect(tafqeet(12)).toBe(`اثنتا عشرة ${SUFFIX}`);
+      expect(tafqeet(13)).toBe(`ثلاث عشرة ${SUFFIX}`);
+      expect(tafqeet(19)).toBe(`تسع عشرة ${SUFFIX}`);
     });
 
     it('puts the unit before the ten, joined by و', () => {
       // «واحد وعشرون», literally "one and twenty" — the opposite order to
       // English, and the thing a naive implementation gets backwards.
-      expect(tafqeet(21)).toBe(`واحد وعشرون ${SUFFIX}`);
-      expect(tafqeet(99)).toBe(`تسعة وتسعون ${SUFFIX}`);
+      // The unit agrees with ليرة: «إحدى وعشرون»، «خمس وعشرون».
+      expect(tafqeet(21)).toBe(`إحدى وعشرون ${SUFFIX}`);
+      expect(tafqeet(25)).toBe(`خمس وعشرون ${SUFFIX}`);
+      expect(tafqeet(99)).toBe(`تسع وتسعون ${SUFFIX}`);
     });
 
     it('drops the unit entirely at a round ten', () => {
@@ -71,20 +75,27 @@ describe('tafqeet', () => {
 
     it('writes hundreds as their own words, including the dual', () => {
       expect(tafqeet(100)).toBe(`مائة ${SUFFIX}`);
-      // مائتان is a dual form, not «اثنان مائة».
-      expect(tafqeet(200)).toBe(`مائتان ${SUFFIX}`);
+      // A dual, not «اثنان مائة» — in construct with the noun that follows it: «مائتا ليرة».
+      expect(tafqeet(200)).toBe(`مائتا ${SUFFIX}`);
       expect(tafqeet(900)).toBe(`تسعمائة ${SUFFIX}`);
     });
 
     it('joins a hundred to its remainder with و', () => {
-      expect(tafqeet(101)).toBe(`مائة وواحد ${SUFFIX}`);
-      expect(tafqeet(999)).toBe(`تسعمائة وتسعة وتسعون ${SUFFIX}`);
+      expect(tafqeet(101)).toBe(`مائة وواحدة ${SUFFIX}`);
+      expect(tafqeet(999)).toBe(`تسعمائة وتسع وتسعون ${SUFFIX}`);
     });
 
-    it('does not apply the 3–10 noun rule once a hundred is present', () => {
-      // 103 is not «مائة وثلاث ليرات» — the paucity plural applies only when
-      // the whole amount is 3–10, which is the subtlety worth pinning down.
-      expect(tafqeet(103)).toBe(`مائة وثلاثة ${SUFFIX}`);
+    it('keeps the plural of paucity when the amount ends in 3–10, after a hundred too', () => {
+      /*
+        The counted noun agrees with the last numeral spoken, as `countNoun`
+        has it for دولار: 103 ends on ثلاث, so «مائة وثلاث ليرات». This test
+        once pinned «مائة وثلاثة ليرة» — a masculine numeral on a feminine noun,
+        and the singular after three — printed as the operative figure on
+        «أمر الصرف» and on a citizen's وصل.
+      */
+      expect(tafqeet(103)).toBe('مائة وثلاث ليرات لبنانية فقط لا غير');
+      expect(tafqeet(110)).toBe('مائة وعشر ليرات لبنانية فقط لا غير');
+      expect(tafqeet(1_005)).toBe('ألف وخمس ليرات لبنانية فقط لا غير');
     });
   });
 
@@ -94,8 +105,11 @@ describe('tafqeet', () => {
       expect(tafqeet(1_000)).toBe(`ألف ${SUFFIX}`);
     });
 
-    it('uses the dual for two thousand', () => {
-      expect(tafqeet(2_000)).toBe(`ألفان ${SUFFIX}`);
+    it('uses the dual for two thousand, in construct when the noun follows it', () => {
+      // «ألفا ليرة», not «ألفان ليرة»: a dual followed by its noun drops its ن.
+      expect(tafqeet(2_000)).toBe(`ألفا ${SUFFIX}`);
+      // With more after it, it keeps it.
+      expect(tafqeet(2_500)).toBe(`ألفان وخمسمائة ${SUFFIX}`);
     });
 
     it('uses the plural of paucity for three to ten thousand', () => {
@@ -119,13 +133,13 @@ describe('tafqeet', () => {
   describe('millions and billions', () => {
     it('handles the singular, dual and paucity forms of million', () => {
       expect(tafqeet(1_000_000)).toBe(`مليون ${SUFFIX}`);
-      expect(tafqeet(2_000_000)).toBe(`مليونان ${SUFFIX}`);
+      expect(tafqeet(2_000_000)).toBe(`مليونا ${SUFFIX}`);
       expect(tafqeet(3_000_000)).toBe(`ثلاثة ملايين ${SUFFIX}`);
     });
 
     it('handles the singular, dual and paucity forms of billion', () => {
       expect(tafqeet(1_000_000_000)).toBe(`مليار ${SUFFIX}`);
-      expect(tafqeet(2_000_000_000)).toBe(`ملياران ${SUFFIX}`);
+      expect(tafqeet(2_000_000_000)).toBe(`مليارا ${SUFFIX}`);
       expect(tafqeet(3_000_000_000)).toBe(`ثلاثة مليارات ${SUFFIX}`);
     });
 
@@ -161,7 +175,7 @@ describe('tafqeet', () => {
         documented example, which is the same number.
       */
       expect(tafqeet(500_000)).toBe(`خمسمائة ألف ${SUFFIX}`);
-      expect(tafqeet(200_000_000)).toBe(`مائتان مليون ${SUFFIX}`);
+      expect(tafqeet(200_000_000)).toBe(`مائتا مليون ${SUFFIX}`);
     });
 
     it('keeps the plural of paucity when a scale ends on 3–10', () => {
@@ -173,7 +187,7 @@ describe('tafqeet', () => {
     it('skips an empty scale instead of writing a zero for it', () => {
       // 1,000,001 has no millions-to-thousands part; a naive chunker writes
       // «ألف وصفر» or an extra و here.
-      expect(tafqeet(1_000_001)).toBe(`مليون وواحد ${SUFFIX}`);
+      expect(tafqeet(1_000_001)).toBe(`مليون وواحدة ${SUFFIX}`);
       expect(tafqeet(1_000_000_000_0 / 10)).toBe(`مليار ${SUFFIX}`);
     });
   });
@@ -259,5 +273,95 @@ describe('tafqeet', () => {
         expect(occurrences, `currency named ${occurrences}× for ${amount}`).toBe(1);
       }
     });
+  });
+});
+
+/**
+ * The same line on «أمر الصرف» and «سند القبض», in the voucher's own currency.
+ *
+ * دولار is masculine where ليرة is feminine, so every boundary the pound tests
+ * pin moves the other way here: the numeral 3–10 is feminine in form
+ * («ثلاثة دولارات»), and the noun after 11–99 is accusative («دولاراً
+ * أميركياً»). Cents follow the same rule and come after the dollars.
+ */
+describe('tafqeetAmount', () => {
+  it('writes a ليرة amount exactly as tafqeet does, so a voucher and a وصل never disagree', () => {
+    for (const amount of [0, 1, 2, 7, 11, 500_000, 2_500_000, 234_000_000]) {
+      expect(tafqeetAmount(amount, 'LBP')).toBe(tafqeet(amount));
+    }
+  });
+
+  it('names one and two dollars by the noun alone', () => {
+    expect(tafqeetAmount(1, 'USD')).toBe('دولار أميركي واحد فقط لا غير');
+    expect(tafqeetAmount(2, 'USD')).toBe('دولاران أميركيان فقط لا غير');
+  });
+
+  it('uses the feminine numeral and the plural for three to ten', () => {
+    expect(tafqeetAmount(3, 'USD')).toBe('ثلاثة دولارات أميركية فقط لا غير');
+    expect(tafqeetAmount(10, 'USD')).toBe('عشرة دولارات أميركية فقط لا غير');
+  });
+
+  it('takes the accusative after eleven to ninety-nine', () => {
+    expect(tafqeetAmount(11, 'USD')).toBe('أحد عشر دولاراً أميركياً فقط لا غير');
+    expect(tafqeetAmount(25, 'USD')).toBe('خمسة وعشرون دولاراً أميركياً فقط لا غير');
+    expect(tafqeetAmount(150, 'USD')).toBe('مائة وخمسون دولاراً أميركياً فقط لا غير');
+  });
+
+  it('agrees with the last numeral spoken, not with the size of the whole', () => {
+    expect(tafqeetAmount(100, 'USD')).toBe('مائة دولار أميركي فقط لا غير');
+    expect(tafqeetAmount(103, 'USD')).toBe('مائة وثلاثة دولارات أميركية فقط لا غير');
+    expect(tafqeetAmount(1_000, 'USD')).toBe('ألف دولار أميركي فقط لا غير');
+    expect(tafqeetAmount(2_500, 'USD')).toBe('ألفان وخمسمائة دولار أميركي فقط لا غير');
+  });
+
+  it('keeps the cents, after the dollars', () => {
+    expect(tafqeetAmount(1_500.75, 'USD')).toBe(
+      'ألف وخمسمائة دولار أميركي وخمسة وسبعون سنتاً فقط لا غير',
+    );
+    expect(tafqeetAmount(12.05, 'USD')).toBe('اثنا عشر دولاراً أميركياً وخمسة سنتات فقط لا غير');
+    expect(tafqeetAmount(1.01, 'USD')).toBe('دولار أميركي واحد وسنت واحد فقط لا غير');
+  });
+
+  it('writes cents alone when there is no whole dollar', () => {
+    expect(tafqeetAmount(0.5, 'USD')).toBe('خمسون سنتاً فقط لا غير');
+    expect(tafqeetAmount(0.02, 'USD')).toBe('سنتان فقط لا غير');
+  });
+
+  it('rounds to the cent rather than reading a float’s tail', () => {
+    // 0.1 + 0.2 is 0.30000000000000004 in binary; a voucher for 30 cents says 30.
+    expect(tafqeetAmount(0.1 + 0.2, 'USD')).toBe('ثلاثون سنتاً فقط لا غير');
+  });
+
+  it('writes zero out rather than leaving the line blank', () => {
+    expect(tafqeetAmount(0, 'USD')).toBe('صفر دولار أميركي فقط لا غير');
+  });
+
+  it('has no words for a currency it does not know, rather than the pound’s', () => {
+    expect(tafqeetAmount(100, 'EUR')).toBeNull();
+  });
+
+  it('counts ليرة as the feminine noun it is, on a voucher as on a وصل', () => {
+    // What a voucher printed before: «ثلاثة عشر ليرة»، «خمسة وعشرون ليرة»، «مائة وثلاثة ليرة».
+    expect(tafqeetAmount(13, 'LBP')).toBe('ثلاث عشرة ليرة لبنانية فقط لا غير');
+    expect(tafqeetAmount(25, 'LBP')).toBe('خمس وعشرون ليرة لبنانية فقط لا غير');
+    expect(tafqeetAmount(103, 'LBP')).toBe('مائة وثلاث ليرات لبنانية فقط لا غير');
+  });
+
+  it('puts a dual that ends the amount in construct with the currency', () => {
+    // «ألفا دولار», not «ألفان دولار»; the same for million and billion, and for مائتان.
+    expect(tafqeetAmount(2_000, 'USD')).toBe('ألفا دولار أميركي فقط لا غير');
+    expect(tafqeetAmount(2_000_000, 'USD')).toBe('مليونا دولار أميركي فقط لا غير');
+    expect(tafqeetAmount(200, 'USD')).toBe('مائتا دولار أميركي فقط لا غير');
+    expect(tafqeetAmount(2_000_000, 'LBP')).toBe('مليونا ليرة لبنانية فقط لا غير');
+    expect(tafqeetAmount(1_200, 'LBP')).toBe('ألف ومائتا ليرة لبنانية فقط لا غير');
+    // Not when more follows it, or for a count of 2 that is not last.
+    expect(tafqeetAmount(2_000_500, 'USD')).toBe('مليونان وخمسمائة دولار أميركي فقط لا غير');
+    expect(tafqeetAmount(2_002_000, 'USD')).toBe('مليونان وألفا دولار أميركي فقط لا غير');
+  });
+
+  it('writes no words for a ليرة amount with a fraction, rather than words for less than the figure', () => {
+    // The API takes two decimals in any currency; `tafqeet` drops the fraction.
+    expect(tafqeetAmount(1_500.5, 'LBP')).toBeNull();
+    expect(tafqeetAmount(1_500, 'LBP')).toBe('ألف وخمسمائة ليرة لبنانية فقط لا غير');
   });
 });

@@ -45,7 +45,7 @@ import { runInTenantTransaction } from '../../../infrastructure/context/tenant-t
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
-import { assertNotMergedAway } from '../citizens/merged-away';
+import { assertFileOpen, assertNotMergedAway } from '../citizens/merged-away';
 import { cardClaiming, takesAnotherFlat } from '../../../domain/entities/census-claim';
 import { CasesService } from '../cases/cases.service';
 import type {
@@ -3473,6 +3473,13 @@ export class BuildingsService {
     }
     // A file folded into another is nobody to record in a flat — see `assertNotMergedAway`.
     await assertNotMergedAway(this.db, citizen.id);
+    /*
+      Nor is an archived one, until it is restored: an occupancy writes a card on
+      the file (the dual record), which is a new filing (`assertFileOpen`). Every
+      way a person lands in a flat comes through here — the matrix, a sale's
+      buyer, an owner link.
+    */
+    assertFileOpen(citizen);
 
     assertNonResidentOccupancy({
       residence: citizen.residence,
@@ -4706,7 +4713,10 @@ export class BuildingsService {
 
   /**
    * The current damage level per building — the latest assessment on the
-   * building itself or on any of its units, whichever was observed last.
+   * building itself or on any of its units, whichever was observed last, and of
+   * two observed the same day the one recorded last (`createdAt`), as
+   * `habitability.ts` and `DamageService` order them. Without that tie-break
+   * `DISTINCT ON` picks either, and the map's colour flips between reloads.
    *
    * One query for the whole set rather than one per building: the ledger and
    * the map both need this for every row they draw, and a correlated subquery
@@ -4745,16 +4755,16 @@ export class BuildingsService {
     const rows = await this.db.$queryRaw<Array<{ buildingId: string; level: string }>>`
       SELECT DISTINCT ON (t."buildingId") t."buildingId", t."level"
         FROM (
-          SELECT d."buildingId", d."level", d."assessedAt"
+          SELECT d."buildingId", d."level", d."assessedAt", d."createdAt"
             FROM ${S}"damage_assessments" d
            WHERE d."buildingId" = ANY(${ids})
           UNION ALL
-          SELECT u."buildingId", d."level", d."assessedAt"
+          SELECT u."buildingId", d."level", d."assessedAt", d."createdAt"
             FROM ${S}"damage_assessments" d
             JOIN ${S}"units" u ON u."id" = d."unitId"
            WHERE u."buildingId" = ANY(${ids})
         ) t
-       ORDER BY t."buildingId", t."assessedAt" DESC
+       ORDER BY t."buildingId", t."assessedAt" DESC, t."createdAt" DESC
     `;
 
     return new Map(rows.map((row) => [row.buildingId, row.level]));

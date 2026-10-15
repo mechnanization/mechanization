@@ -13,6 +13,7 @@ import {
   Check,
   CheckCircle2,
   Copy,
+  HandCoins,
   KeyRound,
   Loader2,
   Pencil,
@@ -62,6 +63,7 @@ import { StaffForm, type StaffFormValues } from '@/components/admin/staff-form';
 import { PresenceCell } from '@/components/admin/staff/presence-cell';
 import { DeletedStaffSection } from '@/components/admin/staff/deleted-staff-section';
 import { StaffSalaryDialog } from '@/components/admin/staff/staff-salary-dialog';
+import { InspectorPayoutDialog } from '@/components/admin/inspector-payout-dialog';
 import { useStaffPresence } from '@/lib/use-staff-presence';
 
 /** The role chips: «all», or one of the roles the server knows. */
@@ -116,6 +118,8 @@ export default function StaffPage({
   const [pendingDelete, setPendingDelete] = useState<StaffSummary | null>(null);
   /** The staff member a salary is being paid to, or null. */
   const [paying, setPaying] = useState<StaffSummary | null>(null);
+  /** The inspector a commission is being paid to, or null. */
+  const [payingCommission, setPayingCommission] = useState<StaffSummary | null>(null);
   const toast = useToast();
 
   useEffect(() => {
@@ -345,6 +349,12 @@ export default function StaffPage({
     may record an expense, which `ExpensesController` enforces either way.
   */
   const canPaySalary = hasRole(TREASURY_WORK_ROLES, role);
+  /*
+    «صرف عمولة» reads the inspector's figures by id, which only the manager
+    may (`StaffController.getInspectorProfile`); the payout itself is open to
+    the treasury's working roles, and an accountant reaches it by the API.
+  */
+  const canPayCommission = role === 'SUPER_ADMIN';
 
   const columns = useMemo<ColumnDef<StaffSummary>[]>(
     () => [
@@ -496,6 +506,21 @@ export default function StaffPage({
                 </ActionTooltip>
               ) : null}
 
+              {/* Disabled inspectors too: what was earned is owed whether or not they still work here. */}
+              {canPayCommission && staff.role === 'FIELD_INSPECTOR' ? (
+                <ActionTooltip label={tStaff('commission.action')}>
+                  <Button
+                    variant="outline"
+                    size="icon-sm"
+                    aria-label={tStaff('commission.action')}
+                    disabled={busy}
+                    onClick={() => setPayingCommission(staff)}
+                  >
+                    <HandCoins className="size-4" aria-hidden />
+                  </Button>
+                </ActionTooltip>
+              ) : null}
+
               <ActionTooltip label={en ? 'Edit' : 'تعديل'}>
                 <Button
                   variant="outline"
@@ -555,7 +580,7 @@ export default function StaffPage({
         },
       },
     ],
-    [selfId, busyId, toggleActive, en, locale, roleLabel, base, router, presence, tStaff, canPaySalary],
+    [selfId, busyId, toggleActive, en, locale, roleLabel, base, router, presence, tStaff, canPaySalary, canPayCommission],
   );
 
   /*
@@ -709,6 +734,17 @@ export default function StaffPage({
           onClose={() => setPaying(null)}
         />
       ) : null}
+
+      <InspectorPayoutDialog
+        open={payingCommission !== null}
+        onOpenChange={(next) => !next && setPayingCommission(null)}
+        tenant={tenant}
+        base={base}
+        token={token}
+        locale={locale}
+        staff={payingCommission ? { id: payingCommission.id, name: payingCommission.fullName } : null}
+        onRecorded={load}
+      />
 
       <StaffForm
         open={formOpen}

@@ -41,3 +41,19 @@ export async function assertNotMergedAway(
     details: { code: 'MERGED_AWAY', survivorId: survivor.id },
   });
 }
+
+/**
+ * An archived file takes no new filing until it is restored («إعادة من الأرشيف»):
+ * no new card, no flat, no sale, the owner's decision (`CITIZEN_FILE_ARCHIVED`,
+ * as the create and edit paths refuse it). Checked after `assertNotMergedAway`,
+ * whose file is archived too and whose refusal names the file to use instead.
+ * `details.citizenId` is the file to restore.
+ */
+export function assertFileOpen(citizen: { id: string; isActive: boolean }): void {
+  if (citizen.isActive) return;
+  throw new ConflictError({
+    code: 'CITIZEN_FILE_ARCHIVED',
+    message: 'This file is archived. Reactivate it before filing on it.',
+    details: { citizenId: citizen.id },
+  });
+}

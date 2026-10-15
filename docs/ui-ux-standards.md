@@ -1,6 +1,6 @@
 # UI/UX standards: binding for every change to `apps/frontend`
 
-Last verified against the code: `refactor/ui-kit-adoption` (cut from `fix/ui@b60fd4e`; phase 1 of the kit adoption, `StatItem`'s `hint`; uncommitted), 2026-10-11.
+Last verified against the code: `fix/pr116-review` (PR #116 merged with `fix/pr115-review`, which stacks #123, #124 and #115 on `develop@5e8f5c3`): phase 1 of the kit adoption, `StatItem`'s `hint`, §17.1 recounted; «أمان الحساب» on the kit `invalid` prop, its error state, `rounded-lg`; the double-submit entries, `Pager` users, 2026-10-15.
 
 This file binds every AI agent and every person who builds or reviews an
 interface in this repository. [CLAUDE.md](../CLAUDE.md) (non-negotiable 9) and
@@ -117,7 +117,7 @@ to, the primitive gets a prop instead.
 | PRIM-9 | An annotation chip | `Badge` with a `soft-*` variant | `Badge` with colour overrides in `className` |
 | PRIM-10 | LBP on screen | `<Money>`; `formatLbp` only for plain strings (toast, aria, CSV). `Money` isolates the signed figure left to right — a negative keeps its minus, U+2212, on the left of the digits on an Arabic page — and leaves the unit in the page's direction, so «ل.ل» sits after the figure in reading order on every screen. `signed` adds «+» for a ledger movement; `wrap` lets the unit drop under the figure in a narrow box. The treasury's `TreasuryAmount` is `Money` with `exact` | `toLocaleString()` plus «ل.ل» by hand; a figure wrapped in `dir="ltr"` with its unit, which puts «ل.ل» on the other side from every other screen (UX-1) |
 | PRIM-11 | USD/EUR on screen | `<Money currency>` in a figure or a table (drawn as PRIM-10, never compacted); `formatForeign(amount, currency)` or `formatMoney(amount, currency, locale)` from `lib/currency.ts` for plain strings | A page-local USD formatter, `$${x.toFixed(2)}`, or a third spelling |
-| PRIM-12 | Dates | `formatDate` / `formatTime` / `formatDateTime` / `formatMonthList` from `lib/dates` | `toLocaleDateString('ar')`, raw month numbers joined with «، » |
+| PRIM-12 | Dates | `formatDate` / `formatTime` / `formatDateTime` / `formatMonthList` from `lib/dates`; a calendar day (`YYYY-MM-DD`, a business day with no time) through `formatDay` / `formatDayLong`, which never pass it through a zone | `toLocaleDateString('ar')`, raw month numbers joined with «، » |
 | PRIM-13 | A labelled input | `Field` (label, required `*`, «(اختياري)», `caution`, error with `role="alert"`) wrapping `Input`/`Select`/`Textarea`/`DatePicker` | A bare `<label>` plus input; a native `<select>`; a native `type="date"` in new code |
 | PRIM-14 | Two to four options | `SegmentedControl`; three or more filter chips: `ChipGroup` | Hand-rolled toggle buttons |
 | PRIM-15 | Foldable section | `CollapsibleSection` | A `useState` toggle with a chevron |
@@ -125,7 +125,7 @@ to, the primitive gets a prop instead.
 | PRIM-17 | Any other modal | `Dialog`, always with a `closeLabel` in the current locale | `Sheet` for new work: it lacks a focus trap. Fix Sheet before adding users (§17.1) |
 | PRIM-18 | Feedback after a write | `useToast()` | `alert()`, a page-local banner that never clears |
 | PRIM-19 | Icon-only control | `Button size="icon*"` + `aria-label` + `ActionTooltip` | A bare `<button>` with only an icon |
-| PRIM-20 | KPI or stat row | `StatStrip` with `StatItem` (`components/ui/stat-strip.tsx`), up to five figures. `StatItem` takes an optional `icon` (decorative, in a tinted circle above the number), `href` (the whole cell becomes one stretched link named by its label) and `hint` (a short muted line under the label that qualifies the figure, «منها متأخرات»; a second `<dd>`, never a tone — the tone stays on the number). The citizen properties page uses `icon`; `href` has no caller since the treasury's wallets became statement lines (2026-10-09). A list of places money is kept, each opening its own statement, is lines with a total, not a strip. The value wraps and is never truncated: a sum of money in it passes `wrap` to its `Money`, so at 360px the unit drops under the figure rather than the figure losing digits (LAY-6). A PR that touches a page with a local stat component replaces it | An eleventh local copy (§17.1 lists the ten) |
+| PRIM-20 | KPI or stat row | `StatStrip` with `StatItem` (`components/ui/stat-strip.tsx`), up to five figures. `StatItem` takes an optional `icon` (decorative, in a tinted circle above the number), `href` (the whole cell becomes one stretched link named by its label) and `hint` (a short muted line under the label that qualifies the figure, «منها متأخرات», «آخر دفعة: …» on the payout history; a second `<dd>`, never a tone — the tone stays on the number). The citizen properties page uses `icon`; `href` has no caller since the treasury's wallets became statement lines (2026-10-09). A list of places money is kept, each opening its own statement, is lines with a total, not a strip. The value wraps and is never truncated: a sum of money in it passes `wrap` to its `Money`, so at 360px the unit drops under the figure rather than the figure losing digits (LAY-6). A PR that touches a page with a local stat component replaces it | A new local copy (§17.1 lists the ones left) |
 | PRIM-23 | DataTable strings | `useTableLabels(overrides, { columnsMenu })` (`lib/use-table-labels.ts`, reads `messages.table`). `columnsMenu: true` adds the column picker's strings, for a table that keeps its column choice (`columnStorageKey`); it is opt-in because `DataTable` draws the picker whenever its label is set | A page-local `getTableLabels`; the picker's three strings passed by hand |
 | PRIM-24 | A filter control above a table | `FilterSelect`, `FilterInput` (`components/ui/filter-controls.tsx`) | A hand-styled select or search box |
 | PRIM-25 | Typing a money amount | `CurrencyInput`. The unit gets a segment of its own beside the digits, never laid over them: an `dir="ltr"` field on an RTL page reserves its padding on one side while `end-0` pins the unit to the other, and «ل.ل» lands on the «0». `inputClassName` styles the digits, for the cash counter alone | A local `formatLbp(value: string)` that shadows `lib/currency`; an input with the unit absolutely positioned over it |
@@ -275,7 +275,11 @@ Token values, light and dark: [DESIGN.md](../DESIGN.md) "Colors".
     one map-palette module derived from the tokens (today the hex is spread
     over five map files, §17.2).
   - The printed receipt and the receipt PDF canvas, which must print black on
-    white whatever the theme. They should become `--paper` and `--ink` tokens.
+    white whatever the theme, and the printed treasury documents —
+    «تقرير الصندوق اليومي», «أمر الصرف», «سند القبض» and «سند المناقلة» — through one print
+    stylesheet, `documentPrintCss` in
+    `components/admin/finance/official-document.tsx` (on screen they use
+    tokens). They should become `--paper` and `--ink` tokens.
   - QR codes, which need fixed dark-on-light.
   - `app/global-error.tsx`, which renders outside the token tree, and the web
     manifest's `background_color` and `theme_color`.
@@ -378,6 +382,7 @@ Spacing, radius and shadow values as defined: [DESIGN.md](../DESIGN.md) "Layout"
   with data already on screen, the content stays and `RefreshFailedAlert` says
   so above it, with a retry. Swapping a page for `ErrorState` unmounts what is
   open on it — a half-filled form, a dialog in the middle of a payment.
+  `readView(data, error)` (`lib/read-view.ts`) makes the choice in one place.
 - **STA-2. Every interactive control has its states:** default, hover,
   `focus-visible`, active, disabled, loading. A button that starts async work
   is disabled with a spinner until the work ends.
@@ -670,16 +675,17 @@ Code-pattern debt outside the UI rules lives in
 
 ### 17.1 Primitives and controls
 
-- **Local stat and KPI components, 2** (PRIM-20; nine more and the payments
-  page's `SummaryTile` moved to `StatStrip` on 2026-10-11, their second lines as
-  `StatItem`'s `hint`): `KpiCard` (dashboard), whose trend chip, meter, caveat
-  and detail panel a strip cannot hold — it waits on the dashboard's redesign,
-  which is the user's decision; and `StatusTile` (`settings/settings-ui.tsx`),
-  which is a labelled fact holding a date or a list of badges, not a figure
-  (PRIM-7). Also `BreakdownTile` in `inspector-profile-detail.tsx` (six cells,
-  palette classes, §17.2). `StatStrip` has 18 uses in 17 files.
-- **Tables not drawn by `DataTable`, 13 in 12 files** (PRIM-3). `DataTable`
-  has 18 users. Registers, which PRIM-3 covers: `finance/collector-custody-panel`
+- **Local stat and KPI components, 2** (PRIM-20; the others moved to `StatStrip`,
+  their second lines as `StatItem`'s `hint`: the payout history's in PR #113,
+  nine more and the payments page's `SummaryTile` in PR #116): `KpiCard`
+  (dashboard), whose trend chip, meter, caveat and detail panel a strip cannot
+  hold — it waits on the dashboard's redesign, which is the user's decision; and
+  `StatusTile` (`settings/settings-ui.tsx`), which is a labelled fact holding a
+  date or a list of badges, not a figure (PRIM-7). Also `BreakdownTile` in
+  `inspector-profile-detail.tsx` (six cells, palette classes, §17.2).
+  `StatStrip` has 19 uses in 18 files (counted 2026-10-15).
+- **Tables not drawn by `DataTable`, 14 in 13 files** (PRIM-3). `DataTable`
+  has 19 users. Registers, which PRIM-3 covers: `finance/collector-custody-panel`
   (`finance/collectors`), `audit-daily` (`audit`; its detail rows are what
   `renderSubRow` does), the payouts page (`inspector/profile/[staffId]/payouts`),
   `settings/users-section` (its own search, skeleton and red error `<p>`), and
@@ -687,6 +693,7 @@ Code-pattern debt outside the UI rules lives in
   CSS subgrid, with its own header row and paging). Not registers, built from
   `ui/table`: `bulk-settle/bulk-bills-table` (in a dialog, a remove button per
   row), `bulk-settle/bulk-payment-receipt` (the printed receipt's items),
+  `finance/daily-cash-report` (the day's report, `finance/daily/report`),
   `settings/numbering-section` (an input in every cell),
   `settings/security-section` (the account page's login history, drawn from
   hard-coded `SAMPLE_ROWS`, BAN-13) and `settings/backup-section` (2, not
@@ -694,22 +701,26 @@ Code-pattern debt outside the UI rules lives in
   «عرض البيانات كجدول») and `merge-citizens-dialog.tsx` (the conflicting
   fields). **Undecided:** whether PRIM-3 names these non-register uses of
   `ui/table` as allowed, or `DataTable` grows what they need.
-- **`Pager`** (PRIM-4) has 4 users; the three hand-rolled pagers moved to it on
-  2026-10-11. Its button names and position phrase are inline `en ?` strings,
-  not props, and it has no `disabled`, so the audit pagers no longer lock while a
-  page is fetching and say «الصفحة السابقة» where they said «الأحدث».
+- **`Pager`** (PRIM-4) has 5 users; the three hand-rolled pagers (`audit/page.tsx`,
+  `fees/corrections/page.tsx`, `audit-daily.tsx`) moved to it on 2026-10-11.
+  Its button names and position phrase are inline `en ?` strings, not props,
+  and it has no `disabled`, so the audit pagers no longer lock while a page is
+  fetching and say «الصفحة السابقة» where they said «الأحدث».
 - **Red error banners** (CTL-12): 68 moved to `Alert` in 50 files on
-  2026-10-11. Left as they are: `OfflineQueueNotice` (`offline-queue.tsx`, a
-  one-line bar holding a link and a sync button) and the «not found» line in
-  `fullscreen-map.tsx`'s search overlay. Four of the moved ones stand in for a
-  panel whose read failed, which is `ErrorState`'s job (STA-1), and stay `Alert`
-  because `ErrorState`'s default title is Arabic only and they have no retry:
-  `parcel-roster-dialog`, `case-editor`, `citizen-editor`,
-  `settings/users-section`. **Hand-rolled warning and info banners** are not
-  moved yet: `unit-correction-delete-dialog`'s local `Callout`, the warning
-  boxes in `landlord-unlink-dialog`, `import-citizens-dialog`, `building-editor`,
-  both matrix files, `property-card`, the citizen cash page and the staff page's
-  2FA dialog (which also draws a warning-sign emoji, BAN-7).
+  2026-10-11 (PR #116), and `duplicate-review-dialog`'s «stopped» notice in its
+  review. Left as they are: `OfflineQueueNotice` (`offline-queue.tsx`, a
+  one-line bar holding a link and a sync button), the «not found» line in
+  `fullscreen-map.tsx`'s search overlay, and `complete-record-dialog`'s
+  per-path error (a one-line note beside the path it names). Four of the moved
+  ones stand in for a panel whose read failed, which is `ErrorState`'s job
+  (STA-1), and stay `Alert` because `ErrorState`'s default title is Arabic only
+  and they have no retry: `parcel-roster-dialog`, `case-editor`,
+  `citizen-editor`, `settings/users-section`. **Hand-rolled warning and info
+  banners** are not moved yet: `unit-correction-delete-dialog`'s local
+  `Callout`, the warning boxes in `landlord-unlink-dialog`,
+  `import-citizens-dialog`, `building-editor`, both matrix files,
+  `property-card`, the citizen cash page and the staff page's 2FA dialog (which
+  also draws a warning-sign emoji, BAN-7).
 - **Copied `loadSession` effects, 23** (CODE-1): 16 pages under `(protected)`
   (account, audit, buildings, cases, citizens, `citizens/[citizenId]`,
   dashboard, fees, `fees/corrections`, `fees/payments/[paymentId]/settle`, map,
@@ -847,9 +858,10 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
   `property-illustrations.tsx`, an SVG drawing that LAY-8 allows. `-[Nrem]`: 32.
 - **`shadow-xs`/`shadow-2xs`, 33 in 11 files** (LAY-4, CODE-8), including the
   primitive `segmented-control.tsx` (2); `building-editor.tsx` has 11,
-  `bill-type-select.tsx` 5 (recounted 2026-10-10, when `ChoiceCard` in
-  `field.tsx` dropped its `shadow-2xs`).
-- **`rounded-xl`/`2xl`/`3xl`, 139 uses** (LAY-3 applies to new cards).
+  `bill-type-select.tsx` 5 (recounted 2026-10-15; `ChoiceCard` in `field.tsx`
+  dropped its `shadow-2xs` on 2026-10-10).
+- **`rounded-xl`/`2xl`/`3xl`, 127 uses** (LAY-3 applies to new cards; `security-section.tsx` moved
+  to `rounded-lg` on 2026-10-14; counted 2026-10-15).
   `DialogContent`, Button `xl`, `DataTable` and `Skeleton` use `rounded-xl`.
 - **Physical direction utilities, about 53 in 13 files** (RTL-1): `rtl:ml-*
   ltr:mr-*` pairs instead of `me-*` in `fees/page.tsx` (7 pairs) and
@@ -898,24 +910,52 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
   numbers are typed as «١ ٢ ٣» (`citizen-form.tsx`); the audit page counts with
   `toLocaleString('ar')` (`audit/page.tsx`); `audit-daily.tsx` prints times with
   `toLocaleTimeString('ar-LB')` twice. Each sits beside Latin figures.
-- **Copy mechanisms** (TXT-1): about 116 files branch inline on the locale (`en ?`,
-  `locale === 'en' ?`, `isAr ?`), 62 of them through `const en = locale === 'en'`;
-  `settingsCopy` serves settings and account; the 13 `messages.nav` keys are
-  never read.
+- **A shared rule that speaks Arabic** (TXT-1, TXT-6): `payoutRefusal` in
+  `packages/shared-schemas/src/payout-policy.ts` returns «لا يوجد رصيد مستحق…» and
+  «المبلغ أكبر من الرصيد المستحق…» as prose, which the payout dialog shows as the
+  field error and the server throws as an uncoded `ValidationError`, so an
+  English screen reads Arabic. It wants a reason code the screen translates
+  (found 2026-10-10).
+- **Copy mechanisms** (TXT-1): 130 `.ts`/`.tsx` files under `apps/frontend/app`,
+  `components` and `lib` branch inline on the locale (`en ?`, `locale === 'en' ?`,
+  `isAr ?`), 119 of them under `app/` and `components/` and 11 in `lib/`; 62 files
+  declare `const en = locale === 'en'`. Counted by grep 2026-10-15 on
+  `fix/pr116-review`. `settingsCopy` serves settings and account; the 13
+  `messages.nav` keys are never read.
 - **Search hints that offer «مشاهد فقط» the reference** (root rule 9): the
   register, «يتطلب مراجعة», the payments ledger and the fees screen invite a
   search by «الرقم المرجعي» for every role, but for «مشاهد فقط» the search leaves
   the reference out (`citizenSearchText`). Role-aware hints are not built
   (2026-10-06).
-- **Money formatting** (PRIM-11, PRIM-25): `inspector-payout-dialog.tsx` writes
-  `$${x.toFixed(2)}` 5 times; `charge-citizen-dialog.tsx` and
-  `issue-fee-form.tsx` each define a local `formatLbp(value: string)`;
-  `components/citizen/pay-dialog.tsx` builds «ل.ل» by hand in a local `lbp` (PRIM-10).
+- **Money formatting** (PRIM-11, PRIM-25): `charge-citizen-dialog.tsx` and
+  `issue-fee-form.tsx` each define a local `formatLbp(value: string)`. The pay
+  dialog's local `lbp`, which wrote «ل.ل» into the English sentence too (PRIM-10, TXT-2),
+  went on 2026-10-13 (PR #113), and so did the payout history's page-local `$` formatter
+  (PRIM-11); the inspector's dashboard and the earnings roster keep theirs.
   The settle page's own hand-rolled field — an input with «ل.ل» absolutely placed
   over it — was replaced by `CurrencyInput` on 2026-10-07, which is what fixed
   the unit landing on the digits. Check the three above for the same shape.
-- **Double submit** (STA-4): the payouts page with `InspectorPayoutDialog` guards with `busy`
-  state only, with no in-flight ref.
+- **A calendar day through `formatDate`** (PRIM-12): `formatDate('2026-10-09')` reads the
+  string as midnight UTC and shows it in the browser's zone, the day before anywhere west of
+  Greenwich. Found 2026-10-10 in `damage/damage-history.tsx` (`reinspectAt`),
+  `end-ownership-dialog.tsx` (`endedAt`) and the citizen payment page
+  (`citizens/[citizenId]/payments/[paymentId]/page.tsx`, `paidOn`); `formatDay` is the fix.
+  Harmless in Lebanon, wrong on a laptop set to another zone. A day named in an API refusal
+  (`CLOSED_DAY_MUTATION_BLOCKED`, `DAY_ALREADY_CLOSED`, …) printed in its ISO form beside the page's
+  09/10/2026; fixed 2026-10-11: `localizeApiError` writes any `YYYY-MM-DD` param through `formatDay`.
+- **Double submit** (STA-4): the fees register's «تكليف مباشر» (`handleChargeCitizen` in
+  `fees/page.tsx`) takes no retry key: its route accepts none, so after a lost answer the clerk
+  must check the register before pressing again. (This entry used to name `InspectorPayoutDialog`
+  too; it has had an in-flight ref and a retry key since PR #109.)
+  - «تكليف مباشر» and the case editor's save (`case-editor.tsx`) guarded with `busy` state only
+    (found 2026-10-11). Fixed 2026-10-14: an in-flight ref each; the case editor stays locked
+    after a save that landed.
+  - The building editor (`building-editor.tsx`) created a second building on a double click and
+    re-enabled «حفظ» while the page was leaving. Fixed 2026-10-11: an in-flight ref, a
+    `clientSubmissionId` given to the offline queue too, the form locked after a save that landed,
+    and a `deduplicated` answer said. 2026-10-14: the id is a held key per parcel
+    (`building:<parcel>`), kept across every failure as every retry key is; held in the form, it
+    died with a remount the draft survived, and a renewal on a 400 could make a second building.
   - The counter settle page (`fees/payments/[paymentId]/settle`) gained an in-flight ref and a
     retry key on the PR #104 review. It also prints the receipt the server wrote (its RCP number
     and moment), not the bill's reference. Fixed 2026-10-09: the profile read that builds the
@@ -942,17 +982,46 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
     urgent ceiling could likewise turn a retry into a request under a new key. Fixed 2026-10-10:
     `markInDoubt`/`heldInDoubt` in `lib/request-id.ts`; while a key is held in doubt both checks
     are warnings that say to press again unchanged, and the server answers from the key.
+  - «جرد وإقفال اليومية» (PR #106) checked the error before the sheet, so a failed refocus read
+    unmounted the typed counts and an open close dialog; the report page did the same. A save
+    cleared every box, a correction typed while it was in flight included, and offered the close;
+    after `COUNT_EXPECTED_CHANGED` a second press filed the old reason against the new difference;
+    a close with a lost answer lost its message when the page moved on to the next day; the
+    refusal under the button showed an ISO date and Arabic commas in English. Fixed 2026-10-10
+    (seen in the harness): `readView` (`lib/read-view.ts`, STA-1) on both pages,
+    `draftsAfterSave`, `draftsAfterExpectedChanged` (the moved boxes emptied and marked, FRM-2),
+    `closeLanded` and a toast, `verdictParams` and `dayList` in `lib/daily-count.ts`.
   - An income category added inline on the recording form never reached the cached category
     lists (reference reads), so the register's filter and the next form missed it until a
     reload. Fixed 2026-10-10: `IncomeCategoryEditor` writes it into both (`withSavedCategory`).
+  - «تسديد الفواتير المحددة» after a press with no answer: a rate changed or cleared since made the
+    dialog's own preview refuse the same notes, which disabled the retry the server answers from the
+    key and said «لم يُسجَّل شيء» of a settlement that was recorded. Fixed 2026-10-11 (the final-stack
+    review): `previewGate` (`lib/bulk-settle.ts`) makes every check a warning while the key is in
+    doubt, as the change check already was. A press of the same bills by another method after a lost
+    answer was refused as «…لتسديد فواتير أخرى — أعد تحميل الصفحة»; it now says the earlier press was
+    recorded and names its «BRC-».
+  - The payout dialog's hosts (the payout history, the inspector's dashboard, the earnings roster)
+    swapped the page for `ErrorState` when the dialog's own re-read after a lost answer failed, which
+    unmounted the dialog with its amount, statement and message. Fixed 2026-10-11: `readView` on all
+    three, pinned by `lib/payout-hosts.test.ts`.
+  - «صرف عمولة» before go-live sent no retry key, so a lost answer pressed again recorded the
+    payout twice. Fixed 2026-10-11 (the final-stack review): `payoutRequest`
+    (`lib/commission-payout.ts`) sends the held `commission:<staffId>` key on both paths, a lost
+    press is held in doubt before go-live too, and the server keeps the key on the payout row
+    (`0089`).
   - Still open: the fee wizard's issue (`fees/new`) carries no retry key; it needs a server key
-    and a migration.
+    and a migration. So does «تكليف مالي» (docs/security.md, known gaps).
   - The fee wizard (`fees/new`) gained an in-flight ref, and stays locked once it has issued. A
     page, unlike the dialog it replaced, stays mounted until the next route is ready, and a
     second press there would bill every household twice.
 
 - **Printing** (PRIM-28): a page with no print root prints the receipt rule's blank sheet;
-  only the treasury statement has one. «طباعة الوصل» printed only the receipt's top strip,
+  only the treasury statement has one. «تقرير الصندوق اليومي» (`finance/daily/report`, PR #106)
+  was written before PRIM-28 and prints by its own sheet instead (`PRINT_CSS` in
+  `daily-cash-report.tsx`: A4 landscape, `#daily-cash-report` made visible over the receipt
+  rule); it should move to a print root. Not printed in the harness since the merge.
+  «طباعة الوصل» printed only the receipt's top strip,
   repeated on every A5 sheet, because its dialog is fixed and one screen tall (it predates
   PR #104); fixed 2026-10-09 by releasing the dialog in print. The drawn receipt is 653px
   tall at the A5-landscape width against a 484px sheet, so it printed whole over two A5

@@ -19,7 +19,9 @@ import { allocateDocumentNumber } from '../../common/document-number';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { AuditService } from '../audit/audit.service';
 import { isUniqueViolationOn } from '../treasury/retry-key';
+import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
 import { officialRateFor } from './fees.service';
+import { assertLiveCollector } from './live-collector';
 import { PaymentLedgerService, type Tender } from './payment-ledger.service';
 
 /** What the transaction decided, before the receipt is read back. */
@@ -36,8 +38,8 @@ interface SettleOutcome {
  *
  * Built on the payment ledger, not beside it: every bill is settled by
  * `PaymentLedgerService.recordIn`, the same code a single counter payment runs —
- * the row lock, the receipt number, the wallet entries, the closed-day rule
- * where it exists, the Tier 1 audit row — inside one transaction this service
+ * the row lock, the receipt number, the wallet entries, the closed-day rule,
+ * the Tier 1 audit row — inside one transaction this service
  * owns. A refusal on the fortieth bill rolls back the thirty-nine before it.
  *
  * What is new is only what belongs to the set: `payment_settlements` (0085),
@@ -55,6 +57,7 @@ export class PaymentSettlementService {
     private readonly events: EventEmitter2,
     private readonly ledger: PaymentLedgerService,
     private readonly auditTrail: AuditService,
+    private readonly treasury: TreasuryLedgerService,
   ) {}
 
   private get db() {
@@ -70,15 +73,25 @@ export class PaymentSettlementService {
    *
    * Refused when a bill is missing (`PAYMENT_NOT_FOUND`), belongs to someone
    * else (`BULK_SETTLE_CITIZEN_MISMATCH`), was settled since it was ticked
-   * (`BULK_SETTLE_SOME_ALREADY_PAID`), when the notes do not cover the set or
+   * (`BULK_SETTLE_SOME_ALREADY_PAID`) or sent for review since
+   * (`BULK_SETTLE_BILL_PENDING_REVIEW`), when what the bills owe is not what
+   * the clerk was shown (`BULK_SETTLE_DUE_CHANGED`), when the collector cannot
+   * hold cash (`COLLECTOR_NOT_FOUND`), when the notes do not cover the set or
    * cannot be spread over it (`planBulkSettlement`'s refusals), when the safe
    * cannot hand back the change (`TREASURY_INSUFFICIENT_FUNDS`, from the
-   * ledger), and for anything a single counter payment is refused for.
+   * ledger), when today's treasury day is closed (`CLOSED_DAY_MUTATION_BLOCKED`,
+   * before anything is written), and for anything a single counter payment is
+   * refused for.
    *
    * Lock order: the retry key's advisory lock, then every bill in id order,
-   * then the settings row (FOR SHARE), then the document counters and the
-   * wallets as each bill's `recordIn` reaches them — the order a single payment
-   * already takes (bill, counter, settings, wallets), so the two never deadlock.
+   * then the settings row (FOR SHARE), then the «BRC-» counter, then the
+   * RECEIPT counter (every bill's number, drawn as one block), then every
+   * wallet the set will post to, in id order (`lockPaymentWallets`), and only
+   * then the bills' ledger rows and entries. A single payment takes its bill,
+   * the settings row, the RECEIPT counter and then its wallets; a transfer, an
+   * exchange or a voucher takes the settings row and then its wallets in id
+   * order. Every pair of resources is taken in the same order by every writer,
+   * so none of them can deadlock against a settlement.
    */
   async settle(input: BulkSettlePayments, actor: { id: string; role: string }): Promise<SettlementReceipt> {
     let outcome: SettleOutcome;
@@ -232,6 +245,17 @@ export class PaymentSettlementService {
     const earlier = await this.replay(tx, input);
     if (earlier) return earlier;
 
+    /*
+      The collector must be able to hold the cash, as on a single counter
+      payment (`FeesService.settleInPerson`). Asked here, not left to the
+      treasury: before go-live nothing else looks at him, and after it a
+      deactivated or view-only member of staff still got a custody wallet.
+      After the replay, so a retry is answered whatever has happened to him since.
+    */
+    if (input.method === 'COLLECTOR' && input.collectedById) {
+      await assertLiveCollector(tx, input.collectedById);
+    }
+
     const invoices = await this.ledger.lockInvoices(tx, input.paymentIds);
     const found = new Set(invoices.map((invoice) => invoice.id));
     const missing = input.paymentIds.find((id) => !found.has(id));
@@ -255,8 +279,8 @@ export class PaymentSettlementService {
       ).map((row) => [row.id, row]),
     );
     for (const invoice of invoices) {
+      const bill = meta.get(invoice.id);
       if (invoice.paymentStatus === 'PAID' || invoice.amount - invoice.paidAmount <= toleranceFor(invoice.currency)) {
-        const bill = meta.get(invoice.id);
         throw new ConflictError({
           code: 'BULK_SETTLE_SOME_ALREADY_PAID',
           message: `Payment ${invoice.id} was settled before this settlement reached it.`,
@@ -264,9 +288,58 @@ export class PaymentSettlementService {
           details: { paymentId: invoice.id },
         });
       }
+      /*
+        A Whish claim waiting for review is settled by confirming it, not by
+        taking the money a second time — the rule the dialog applies when it
+        offers the boxes (`isBulkSettleable`), applied again here, under the
+        lock: a citizen can send a bill for review between the tick and the press.
+      */
+      if (invoice.paymentStatus === 'PENDING_REVIEW') {
+        throw new ConflictError({
+          code: 'BULK_SETTLE_BILL_PENDING_REVIEW',
+          message: `Payment ${invoice.id} is a transfer waiting for review.`,
+          params: { invoice: bill?.invoiceNumber ?? bill?.title ?? invoice.id },
+          details: { paymentId: invoice.id },
+        });
+      }
+    }
+
+    /*
+      What the bills owe, per currency, against what the clerk was shown. A
+      Whish or collector settlement carries no figure of its own, so without
+      this a part-payment taken at the next desk after the tick was recorded
+      as a smaller transfer than the one that arrived; on cash it would change
+      the change. Refused, never adjusted: the dialog re-reads and shows the new sum.
+    */
+    const due: Record<string, number> = {};
+    for (const invoice of invoices) {
+      due[invoice.currency] = roundIn((due[invoice.currency] ?? 0) + invoice.amount - invoice.paidAmount, invoice.currency);
+    }
+    const expectedDue = input.expectedDue ?? {};
+    for (const currency of [...new Set([...Object.keys(due), ...Object.keys(expectedDue)])].sort()) {
+      const owed = due[currency] ?? 0;
+      const shown = expectedDue[currency] ?? 0;
+      if (Math.abs(owed - shown) > toleranceFor(currency)) {
+        throw new ConflictError({
+          code: 'BULK_SETTLE_DUE_CHANGED',
+          message: `The selected bills owe ${owed} ${currency}, not the ${shown} shown when the button was pressed.`,
+          params: { currency, expected: shown, due: owed },
+        });
+      }
     }
 
     const settings = await this.settings(tx);
+
+    /*
+      A closed treasury day takes nothing (docs/finance.md §7.3). A settlement
+      is dated now, so this is today's day, closed. Refused here, before the
+      «BRC-» number, the settlement row or any bill's receipt is written — not
+      left to each bill's `recordIn`, nor to the 0082 trigger under the
+      ledger's `post`, both of which are reached only after rows are written.
+    */
+    const occurredAt = new Date();
+    await this.treasury.assertPaymentDayOpen(tx, occurredAt);
+
     const foreignCurrency = input.tendered?.foreignCurrency ?? null;
     const result = planBulkSettlement({
       bills: invoices.map((invoice) => ({
@@ -317,9 +390,9 @@ export class PaymentSettlementService {
       part-paid would mean the plan and the ledger disagree, and is refused
       rather than recorded.
     */
-    const receipts: string[] = [];
-    for (const row of plan.rows) {
-      const tender: Tender | null = row.tender
+    const collectedById = input.method === 'COLLECTOR' ? (input.collectedById ?? null) : null;
+    const tenders = plan.rows.map((row): Tender | null =>
+      row.tender
         ? {
             local: row.tender.local,
             foreign: row.tender.foreign > 0 ? row.tender.foreign : null,
@@ -327,18 +400,50 @@ export class PaymentSettlementService {
             exchangeRate: row.tender.foreign > 0 ? plan.exchangeRate : null,
             officialExchangeRate: row.tender.foreign > 0 ? plan.exchangeRate : null,
           }
-        : null;
+        : null,
+    );
+
+    /*
+      Every bill's receipt number, then every wallet the set will touch, before
+      the first bill is written (lock order: see `settle`). Bill by bill, each
+      `post` locked only its own bill's wallets, so the set took them in the
+      order the bills fell due — and an exchange between the same two safes,
+      which takes them in id order, could hold the one this was about to take.
+      The movements are the ones `recordIn` hands the treasury below: the
+      credit, the notes and the change of each row.
+    */
+    const receiptNumbers = await this.ledger.reserveReceiptNumbers(tx, plan.rows.length);
+    await this.treasury.lockPaymentWallets(
+      tx,
+      plan.rows.map((row, index) => {
+        const tender = tenders[index];
+        return {
+          method: input.method,
+          invoiceCurrency: row.currency,
+          amount: roundIn(row.amount - row.changeGiven, row.currency),
+          tendered: tender ? { local: tender.local, foreign: tender.foreign, foreignCurrency: tender.foreignCurrency } : null,
+          changeGiven: row.changeGiven,
+          collectedById,
+        };
+      }),
+      occurredAt,
+    );
+
+    const receipts: string[] = [];
+    for (const [index, row] of plan.rows.entries()) {
+      const tender = tenders[index] ?? null;
 
       const settled = await this.ledger.recordIn(tx, {
         paymentId: row.paymentId,
         amount: row.amount,
         method: input.method,
         externalRef: input.method === 'WHISH_MONEY' ? (input.whishTransactionRef ?? null) : null,
-        collectedById: input.method === 'COLLECTOR' ? (input.collectedById ?? null) : null,
+        collectedById,
         recordedById: actor.id,
         note: input.note,
         tendered: tender,
         settlementId: settlement.id,
+        receiptNumber: receiptNumbers[index],
         audit: (movement) => ({
           actorId: actor.id,
           actorType: 'STAFF',
@@ -432,6 +537,7 @@ export class PaymentSettlementService {
       where: { clientRequestId: input.clientRequestId },
       select: {
         id: true,
+        number: true,
         citizenId: true,
         method: true,
         transactions: {
@@ -449,9 +555,18 @@ export class PaymentSettlementService {
       settled.length === asked.length &&
       settled.every((id, index) => id === asked[index]);
     if (!same) {
+      /*
+        The dialog holds its key per set of bills, so from the screen the one
+        difference left is the method: a cash press lost, then the same bills
+        pressed again as Whish. That earlier press was recorded, and the clerk is
+        given its «BRC-» number to find it by — not told the key settled «other
+        bills», which sent him back to settle these ones again (review of
+        2026-10-11).
+      */
       throw new ConflictError({
         code: 'BULK_SETTLE_REQUEST_REUSED',
-        message: 'This retry key already settled a different set of bills.',
+        message: `This retry key already recorded settlement ${row.number}, with other details.`,
+        params: { number: row.number },
       });
     }
     const reversed = row.transactions.find((tx) => tx.reversedBy !== null);

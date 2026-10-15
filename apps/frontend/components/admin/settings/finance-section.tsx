@@ -15,6 +15,8 @@ import { CURRENCY_NAMES, type SettingsCopy } from '@/lib/settings-i18n';
 import { ceilingChange, ceilingDraft, ceilingToSend } from '@/lib/urgent-ceiling';
 import {
   CURRENCY_CODES as CURRENCIES,
+  DEFAULT_EXCHANGE_TOLERANCE_PERCENT,
+  DEFAULT_LARGE_EXCHANGE_THRESHOLD,
   type CurrencyCode,
   type FeeFrequency,
 } from '@mechanization/shared-schemas';
@@ -57,6 +59,10 @@ interface FinanceDraft {
   /** «سقف الدفع العاجل», as typed (grouped); `''` is no ceiling. */
   urgentCeilingLbp: string;
   urgentCeilingUsd: string;
+  /** How far an exchange may stray from the rate before it needs a reason, in percent (0084). */
+  tolerancePercent: string;
+  /** Above this, in the secondary currency, an exchange is reviewed whatever its rate (0084). */
+  largeExchangeThreshold: string;
 }
 
 const EMPTY: FinanceDraft = {
@@ -71,6 +77,8 @@ const EMPTY: FinanceDraft = {
   exchangeRateUpdatedAt: '',
   urgentCeilingLbp: '',
   urgentCeilingUsd: '',
+  tolerancePercent: String(DEFAULT_EXCHANGE_TOLERANCE_PERCENT),
+  largeExchangeThreshold: String(DEFAULT_LARGE_EXCHANGE_THRESHOLD),
 };
 
 function toDraft(settings: MunicipalitySettings): FinanceDraft {
@@ -86,6 +94,9 @@ function toDraft(settings: MunicipalitySettings): FinanceDraft {
     exchangeRateUpdatedAt: settings.exchangeRateUpdatedAt ?? '',
     urgentCeilingLbp: ceilingDraft(settings.urgentExpenseCeilingLbp, 0),
     urgentCeilingUsd: ceilingDraft(settings.urgentExpenseCeilingUsd, 2),
+    // Always sent to staff; the defaults only cover a response that left them out.
+    tolerancePercent: String(settings.exchangeRateTolerancePercent ?? DEFAULT_EXCHANGE_TOLERANCE_PERCENT),
+    largeExchangeThreshold: String(settings.largeExchangeThreshold ?? DEFAULT_LARGE_EXCHANGE_THRESHOLD),
   };
 }
 
@@ -160,6 +171,12 @@ export function FinanceSection({
   const exchange = parseNumber(local.exchangeRate);
   const exchangeValid = !local.secondaryCurrency || (exchange !== null && exchange > 0);
   const dueDays = parseNumber(local.dueDays);
+  const tolerance = parseNumber(local.tolerancePercent);
+  const toleranceValid = tolerance !== null && tolerance >= 0 && tolerance <= 100;
+  const threshold = parseNumber(local.largeExchangeThreshold);
+  const thresholdValid = threshold !== null && threshold > 0;
+  /* New copy in next-intl (TXT-1); the rest of this section still reads `settingsCopy` (§17.6). */
+  const tRules = useTranslations('finance.exchangeRules');
   const dueDaysValid = dueDays !== null && Number.isInteger(dueDays) && dueDays >= 0 && dueDays <= 365;
   /*
     Judged against what the field showed when read: an untouched ceiling is not
@@ -188,6 +205,10 @@ export function FinanceSection({
       toast.error(tCeiling('invalid'));
       return;
     }
+    if (local.secondaryCurrency && (!toleranceValid || !thresholdValid)) {
+      toast.error(toleranceValid ? tRules('invalidThreshold') : tRules('invalidTolerance'));
+      return;
+    }
 
     setSaving(true);
     try {
@@ -203,6 +224,10 @@ export function FinanceSection({
         // Only a changed ceiling is sent; emptied, it is «بلا سقف» (`null`), which clears it.
         urgentExpenseCeilingLbp: ceilingToSend(ceilingLbp),
         urgentExpenseCeilingUsd: ceilingToSend(ceilingUsd),
+        // Only sent with a secondary currency: with none there is nothing to exchange.
+        ...(local.secondaryCurrency && tolerance !== null && threshold !== null
+          ? { exchangeRateTolerancePercent: tolerance, largeExchangeThreshold: threshold }
+          : {}),
       });
       const next = toDraft(result);
       setSaved(next);
@@ -224,6 +249,11 @@ export function FinanceSection({
     exchange,
     dueDays,
     exchangeValid,
+    tolerance,
+    toleranceValid,
+    threshold,
+    thresholdValid,
+    tRules,
     dueDaysValid,
     ceilingLbp,
     ceilingUsd,
@@ -404,6 +434,55 @@ export function FinanceSection({
                     </div>
                   </SettingsField>
                 </div>
+
+                {/*
+                  The rule an exchange is judged by (docs/finance.md §6.3): beyond
+                  the tolerance it needs a written reason, and beyond it or above
+                  the threshold an auditor reviews it afterwards.
+                */}
+                <AlignedFieldGrid>
+                  <SettingsField
+                    label={tRules('tolerance')}
+                    htmlFor="exchange-tolerance"
+                    error={toleranceValid ? undefined : tRules('invalidTolerance')}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Input
+                        id="exchange-tolerance"
+                        inputMode="decimal"
+                        dir="ltr"
+                        invalid={!toleranceValid}
+                        className="text-start font-mono font-medium"
+                        value={local.tolerancePercent}
+                        onChange={(e) => setLocal({ ...local, tolerancePercent: e.target.value })}
+                      />
+                      <span className="shrink-0 rounded-md bg-muted px-2.5 py-2 text-xs font-semibold text-muted-foreground">
+                        %
+                      </span>
+                    </div>
+                  </SettingsField>
+                  <SettingsField
+                    label={tRules('threshold')}
+                    htmlFor="exchange-threshold"
+                    error={thresholdValid ? undefined : tRules('invalidThreshold')}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Input
+                        id="exchange-threshold"
+                        inputMode="decimal"
+                        dir="ltr"
+                        invalid={!thresholdValid}
+                        className="text-start font-mono font-medium"
+                        value={local.largeExchangeThreshold}
+                        onChange={(e) => setLocal({ ...local, largeExchangeThreshold: e.target.value })}
+                      />
+                      <span className="shrink-0 rounded-md bg-muted px-2.5 py-2 text-xs font-semibold text-muted-foreground">
+                        {local.secondaryCurrency}
+                      </span>
+                    </div>
+                  </SettingsField>
+                </AlignedFieldGrid>
+                <p className="text-xs text-muted-foreground">{tRules('hint')}</p>
               </div>
             ) : null}
           </FieldGroup>

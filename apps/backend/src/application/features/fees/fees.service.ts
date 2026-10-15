@@ -1,4 +1,9 @@
-import { citizenDisplayName, NON_PERSON_RESIDENCE } from '@mechanization/shared-schemas';
+import {
+  citizenDisplayName,
+  DEFAULT_EXCHANGE_TOLERANCE_PERCENT,
+  DEFAULT_LARGE_EXCHANGE_THRESHOLD,
+  NON_PERSON_RESIDENCE,
+} from '@mechanization/shared-schemas';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Prisma, type $Enums } from '../../../generated/tenant-client';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -41,12 +46,14 @@ import { unitsUnderReview } from '../buildings/unit-status';
 import { uninhabitableUnitIds } from '../buildings/habitability';
 import { ownerBillingRules } from '../buildings/owner-billing';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../../common/exceptions';
+import { exchangeRuleChangeAllowed } from '../treasury/transfers.plan';
 import { assertNotMergedAway } from '../citizens/merged-away';
 import { likePattern, searchTokens } from '../../common/search-terms';
 import { citizenSearchText } from '../../common/citizen-search';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
 import { PaymentLedgerService, type Tender } from './payment-ledger.service';
 import { creditsWallets, documentOccurredAt } from '../treasury/treasury.plan';
+import { assertLiveCollector } from './live-collector';
 import { AuditService, type AuditEntryInput } from '../audit/audit.service';
 
 /** Property categories that live on `PropertyEntry.propertyType`. */
@@ -936,6 +943,8 @@ export class FeesService {
       // «سقف الدفع العاجل» (docs/finance.md §5.1, D6). Null: no ceiling.
       urgentExpenseCeilingLbp: row?.urgentExpenseCeilingLbp == null ? null : Number(row.urgentExpenseCeilingLbp),
       urgentExpenseCeilingUsd: row?.urgentExpenseCeilingUsd == null ? null : Number(row.urgentExpenseCeilingUsd),
+      exchangeRateTolerancePercent: row ? Number(row.exchangeRateTolerancePercent) : DEFAULT_EXCHANGE_TOLERANCE_PERCENT,
+      largeExchangeThreshold: row ? Number(row.largeExchangeThreshold) : DEFAULT_LARGE_EXCHANGE_THRESHOLD,
 
       numberingSequences: (row?.numberingSequences as SystemSettingsInput['numberingSequences']) ?? null,
       backupSchedule: (row?.backupSchedule as SystemSettingsInput['backupSchedule']) ?? null,
@@ -952,6 +961,37 @@ export class FeesService {
     // fields owned by the five it did not render.
     const blankToNull = (value: string | undefined) =>
       value === undefined ? undefined : value.trim() === '' ? null : value.trim();
+
+    /*
+      The exchange rule decides which exchanges an auditor reviews, and the
+      accountant — who may save this section — books them. Moving it is the
+      manager's alone (docs/finance.md §6.3); the same values sent back are fine.
+    */
+    if (input.exchangeRateTolerancePercent !== undefined || input.largeExchangeThreshold !== undefined) {
+      const rule = await withConnectionRetry(() =>
+        this.db.systemSettings.findFirst({
+          where: { singleton: true },
+          select: { exchangeRateTolerancePercent: true, largeExchangeThreshold: true },
+        }),
+      );
+      const allowed = exchangeRuleChangeAllowed({
+        role: actor.role,
+        current: {
+          tolerancePercent: rule ? Number(rule.exchangeRateTolerancePercent) : DEFAULT_EXCHANGE_TOLERANCE_PERCENT,
+          largeThreshold: rule ? Number(rule.largeExchangeThreshold) : DEFAULT_LARGE_EXCHANGE_THRESHOLD,
+        },
+        requested: {
+          tolerancePercent: input.exchangeRateTolerancePercent,
+          largeThreshold: input.largeExchangeThreshold,
+        },
+      });
+      if (!allowed) {
+        throw new ForbiddenError({
+          code: 'EXCHANGE_RULE_MANAGER_ONLY',
+          message: 'Only the manager changes the exchange tolerance and the large-exchange threshold.',
+        });
+      }
+    }
 
     /*
      * Stamped here, not by the client.
@@ -1032,6 +1072,9 @@ export class FeesService {
         : {}),
       urgentExpenseCeilingLbp: setsCeiling ? input.urgentExpenseCeilingLbp : undefined,
       urgentExpenseCeilingUsd: setsCeiling ? input.urgentExpenseCeilingUsd : undefined,
+      // The exchange rule, likewise: checked above, and written only by the manager.
+      exchangeRateTolerancePercent: setsCeiling ? input.exchangeRateTolerancePercent : undefined,
+      largeExchangeThreshold: setsCeiling ? input.largeExchangeThreshold : undefined,
 
       numberingSequences: input.numberingSequences,
       backupSchedule: input.backupSchedule,
@@ -1651,15 +1694,7 @@ export class FeesService {
     basis?: string;
   }): Promise<string[]> {
     if (input.targetType === 'INDIVIDUAL_CITIZEN') {
-      const citizen = await this.db.user.findFirst({
-        where: { id: input.targetCitizenId, kind: 'CITIZEN', isActive: true },
-        select: { id: true },
-      });
-      if (!citizen) throw new NotFoundError({
-        code: 'CITIZEN_NOT_FOUND',
-        message: `Citizen ${input.targetCitizenId ?? ''} was not found`,
-      });
-      return [citizen.id];
+      return [await this.chargeableCitizen(input.targetCitizenId)];
     }
 
     if (input.targetType === 'ALL_CITIZENS') {
@@ -2583,6 +2618,33 @@ export class FeesService {
    * Kept separate from `issue` because it is a different act: no rule, no
    * recurrence, nothing to re-run next month.
    */
+  /**
+   * The one citizen a new fee is raised on — «تكليف مباشر», or a notice aimed
+   * at one person — checked the same way for both: on file, not folded into
+   * another by «دمج ملفين» (a bill there is one the person never sees), and
+   * not archived. An archived file takes no new fees: that is what archiving
+   * promises («لا رسوم جديدة»), and the biller and every notice for a group
+   * already skip it. Each refusal says which it is.
+   */
+  private async chargeableCitizen(citizenId: string | undefined): Promise<string> {
+    const citizen = await this.db.user.findFirst({
+      where: { id: citizenId, kind: 'CITIZEN' },
+      select: { id: true, isActive: true },
+    });
+    if (!citizen) throw new NotFoundError({
+      code: 'CITIZEN_NOT_FOUND',
+      message: `Citizen ${citizenId ?? ''} was not found`,
+    });
+    await assertNotMergedAway(this.db, citizen.id);
+    if (!citizen.isActive) {
+      throw new ConflictError({
+        code: 'FEE_CITIZEN_ARCHIVED',
+        message: 'This citizen file is archived, and an archived file takes no new fees',
+      });
+    }
+    return citizen.id;
+  }
+
   async chargeIndividual(input: {
     citizenId: string;
     title: string;
@@ -2590,16 +2652,7 @@ export class FeesService {
     dueDate: string;
     actor: { id: string; role: string };
   }) {
-    const citizen = await this.db.user.findFirst({
-      where: { id: input.citizenId, kind: 'CITIZEN' },
-      select: { id: true },
-    });
-    if (!citizen) throw new NotFoundError({
-      code: 'CITIZEN_NOT_FOUND',
-      message: `Citizen ${input.citizenId} was not found`,
-    });
-    // A bill on a file folded into another is one the person never sees.
-    await assertNotMergedAway(this.db, citizen.id);
+    const citizen = { id: await this.chargeableCitizen(input.citizenId) };
 
     /*
       One bill, so the number goes straight into the row rather than through
@@ -3686,17 +3739,8 @@ export class FeesService {
    * would have a custody wallet opened in his name that nobody can hand in.
    */
   private async assertLiveCollector(collectorId: string): Promise<void> {
-    // `kind` in the WHERE, as on every read of `users`.
-    const collector = await this.db.user.findFirst({
-      where: { id: collectorId, kind: 'STAFF', isActive: true, deletedAt: null, role: { not: 'VIEWER' } },
-      select: { id: true },
-    });
-    if (!collector) {
-      throw new NotFoundError({
-        code: 'COLLECTOR_NOT_FOUND',
-        message: `Collector ${collectorId} is not active staff who can hold cash`,
-      });
-    }
+    // The one rule, shared with the bulk settlement (`live-collector.ts`).
+    await assertLiveCollector(this.db, collectorId);
   }
 
   /** Every movement of money against one invoice, oldest first. */

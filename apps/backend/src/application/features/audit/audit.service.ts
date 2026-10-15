@@ -396,14 +396,20 @@ export class AuditService {
    * now and inside the transaction (see `recordInTransaction`). Emit the
    * event after the commit with `alreadyAudited: true` so the listener does
    * not write it twice; the caches that listen still clear.
+   *
+   * A write that owns its transaction (a bare `$transaction`, outside any
+   * `runInTenantTransaction` scope) passes its client as `transaction`, as it
+   * would to `recordInTransaction`.
    */
   async recordChangeInTransaction(
     change:
       | { channel: 'citizen.changed'; payload: CitizenChange }
       | { channel: 'building.changed'; payload: BuildingChange },
+    transaction?: TransactionHandle,
   ): Promise<void> {
     await this.recordInTransaction(
       change.channel === 'citizen.changed' ? citizenEntry(change.payload) : buildingEntry(change.payload),
+      transaction,
     );
   }
 
@@ -684,7 +690,7 @@ export class AuditService {
 
   private cacheKey(query: AuditQuery): string {
     const parts = [
-      query.actorId ?? 'ALL',
+      query.systemActor ? 'SYSTEM' : (query.actorId ?? 'ALL'),
       query.entityType ?? 'ALL',
       query.entityId ?? 'ALL',
       query.alsoEntityIds?.length ? `also:${query.alsoEntityIds.join('|')}` : '-',

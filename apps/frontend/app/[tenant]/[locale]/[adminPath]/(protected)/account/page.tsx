@@ -96,7 +96,6 @@ export default function AccountSecurityPage({
         <SecuritySection
           tenant={tenant}
           token={session.accessToken}
-          userId={session.user.id}
           locale={locale}
           copy={copy}
           base={base}

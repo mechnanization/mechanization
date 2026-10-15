@@ -190,6 +190,20 @@ export function applyUrlPatch<S extends UrlSchema>(
   return next;
 }
 
+/**
+ * The page a server-paged list should show, 0-based: `pageIndex`, or the last
+ * page that still holds rows when the list has shrunk under it.
+ *
+ * A list whose rows leave it as they are acted on (a record approved leaves
+ * «للمراجعة») empties its last page with its last decision, and a stale
+ * `?page=` can point past the end. Either way the reader is stepped back to
+ * rows, never left on an empty page that reads as «nothing to do».
+ */
+export function pageWithRows(pageIndex: number, pageSize: number, total: number): number {
+  const lastPage = Math.max(0, Math.ceil(total / pageSize) - 1);
+  return Math.min(pageIndex, lastPage);
+}
+
 /** `?a=1` or the empty string — never a lone `?`. */
 export function toSearch(params: URLSearchParams): string {
   const query = params.toString();

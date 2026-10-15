@@ -2,7 +2,7 @@
 
 import { useMemo, useRef, useState } from 'react';
 import { ChevronDown, History, User } from 'lucide-react';
-import { getLabels } from '@mechanization/shared-schemas';
+import { AUDIT_SYSTEM_ACTOR, getLabels } from '@mechanization/shared-schemas';
 import { getAuditDaily, getAuditLog, type AuditDaySummary, type AuditEntry } from '@/lib/api-client';
 import { auditActionLabel, auditEntityLabel } from '@/lib/audit-labels';
 import { describeAudit } from '@/lib/audit-describe';
@@ -392,7 +392,7 @@ function DayDetail({
       'audit-day-detail',
       tenant,
       day,
-      actorId ?? 'system',
+      actorId ?? AUDIT_SYSTEM_ACTOR,
       filter.entityType ?? '',
       filter.actions?.join(',') ?? '',
     ],
@@ -401,7 +401,13 @@ function DayDetail({
         tenant,
         tok,
         {
-          actorId: actorId ?? undefined,
+          /*
+            «النظام» has no id: its entries are the ones with none. Sent as
+            undefined, the filter fell away and the row drilled into every
+            actor's entries for the day — and «first N of M» compared them
+            with the system row's own total.
+          */
+          actorId: actorId ?? AUDIT_SYSTEM_ACTOR,
           entityType: filter.entityType,
           actions: filter.actions,
           from,

@@ -3,7 +3,7 @@ import { municipalToday, type PaymentMethod } from '@mechanization/shared-schema
 import type { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
-import { allocateDocumentNumber } from '../../common/document-number';
+import { allocateDocumentNumber, allocateDocumentNumbers } from '../../common/document-number';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { AuditService, type AuditEntryInput } from '../audit/audit.service';
 import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
@@ -42,6 +42,14 @@ export interface LedgerEntryInput {
    * its settlement at insert or never.
    */
   settlementId?: string | null;
+  /**
+   * The «RCP-» number for this movement, when the caller drew it beforehand
+   * (`reserveReceiptNumbers`, in the same transaction). A settlement of several
+   * bills draws all of its numbers before it locks its wallets, because a single
+   * payment takes the counter before its wallets and the two must agree on that
+   * order. Left out, the number is drawn here, as it always was.
+   */
+  receiptNumber?: string;
 }
 
 /** An invoice as its row lock returns it, as plain numbers. */
@@ -160,7 +168,7 @@ export class PaymentLedgerService {
    * `record`, inside a transaction the caller already holds.
    *
    * For an act that settles several bills and must commit all of them or none
-   * (`FeesService.settleBulk`): the same lock, the same checks, the same
+   * (`PaymentSettlementService.settle`): the same lock, the same checks, the same
    * receipt number, wallet entries and Tier 1 audit row, written through the
    * caller's client. The caller owns the commit, and a refusal here rolls the
    * whole act back.
@@ -188,6 +196,17 @@ export class PaymentLedgerService {
         message: 'This payment has already been settled.',
       });
     }
+
+    /*
+      A closed treasury day takes nothing (docs/finance.md §7.3): a collector's
+      round or a counter payment back-dated into one is refused here, before a
+      receipt number is drawn, rather than by the ledger's own check further
+      down. Here in `recordIn`, not only in `record`, so every path that settles
+      a bill — the counter, a round, a bulk settlement — meets it. Today is
+      never closed by the application — only a day that has ended can be — so
+      an undated payment passes unless a closure says otherwise.
+    */
+    await this.treasury.assertPaymentDayOpen(tx, input.occurredAt ?? new Date());
 
     // Money cannot have been taken against a bill before the bill existed.
     if (input.occurredAt && municipalToday(input.occurredAt) < municipalToday(invoice.createdAt)) {
@@ -232,6 +251,20 @@ export class PaymentLedgerService {
     const settled = await this.append(tx, invoice, credit, input, undefined, changeGiven);
     await this.auditTrail.recordInTransaction(input.audit(settled), tx);
     return settled;
+  }
+
+  /**
+   * Draws `count` consecutive «RCP-» numbers in the caller's transaction, for
+   * `recordIn` calls that pass them back as `receiptNumber`.
+   *
+   * The RECEIPT counter's row stays locked until the caller commits, as it does
+   * for a single payment. Drawing the block up front is what lets a settlement
+   * of several bills hold the counter before it locks its wallets
+   * (`TreasuryLedgerService.lockPaymentWallets`) — the order a single payment
+   * takes them in — and it keeps the set's receipts consecutive.
+   */
+  async reserveReceiptNumbers(tx: Prisma.TransactionClient, count: number): Promise<string[]> {
+    return allocateDocumentNumbers(tx, this.S, 'RECEIPT', count);
   }
 
   /**
@@ -535,7 +568,7 @@ export class PaymentLedgerService {
       **another municipality's** counter, and receipt numbers are printed on
       paper handed to a resident.
     */
-    const receiptNumber = await allocateDocumentNumber(tx, this.S, 'RECEIPT');
+    const receiptNumber = input.receiptNumber ?? (await allocateDocumentNumber(tx, this.S, 'RECEIPT'));
 
     const created = await tx.paymentTransaction.create({
       data: {

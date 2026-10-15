@@ -11,9 +11,10 @@ import { SEES_ALL_STAFF_WORK, STAFF_ROLE, type StaffRole } from './enums';
  * nobody would see until the role tried the screen. A set named here reaches
  * the route and the button together.
  *
- * `@Roles('SUPER_ADMIN')` stays a literal: it names one role, not a list.
- * The server's `@Roles` is the enforcement; a screen that reads these only
- * decides what to show.
+ * `@Roles('SUPER_ADMIN')` stays a literal: it names one role, not a list —
+ * unless a screen gates a control on it too, which needs a name to import
+ * (`PAYMENT_REVERSE_ROLES`). The server's `@Roles` is the enforcement; a
+ * screen that reads these only decides what to show.
  */
 
 /** Every staff role. The register, the census, cases and zones are read by all of them. */
@@ -83,6 +84,14 @@ export const QUALITY_REVIEWER_ROLES = [
 
 /* Complete a quality check in the field: `QUALITY_CHECK_ROLES`, in `quality.schema.ts`. */
 
+/*
+  The treasury's sets live beside its contract, not here: `TREASURY_READ_ROLES`,
+  `TREASURY_WORK_ROLES`, `TREASURY_ADMIN_ROLES` and `TREASURY_REVIEW_ROLES` (who
+  clears a flagged exchange) in `treasury.schema.ts`, and `FINANCE_OVERRIDE_ROLES`
+  (who may take another rate or date a payment further back) in `cash-policy.ts`.
+  `route-inventory.spec.ts` pins every treasury handler to its list.
+*/
+
 /** See whether a record has an open quality return — everyone who files or reviews one. */
 export const QUALITY_RETURN_READ_ROLES = [
   'SUPER_ADMIN',
@@ -120,6 +129,14 @@ export const FEE_ADMIN_ROLES = ['SUPER_ADMIN', 'ACCOUNTANT'] as const satisfies 
  * the treasury's balances to check the change, which a collector cannot.
  */
 export const BULK_SETTLE_ROLES = ['SUPER_ADMIN', 'ACCOUNTANT'] as const satisfies readonly StaffRole[];
+
+/**
+ * «عكس الوصل» — reverse one receipt in the payment ledger, with a written
+ * reason (`POST fees/transactions/:transactionId/reverse`). The manager's
+ * alone. A named set although it holds one role, because the bill page shows
+ * the action by the same list.
+ */
+export const PAYMENT_REVERSE_ROLES = ['SUPER_ADMIN'] as const satisfies readonly StaffRole[];
 
 /** Read the payments waiting for verification and the bills a correction affects. */
 export const PAYMENT_REVIEW_READ_ROLES = [

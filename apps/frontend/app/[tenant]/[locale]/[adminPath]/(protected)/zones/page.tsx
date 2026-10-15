@@ -445,6 +445,7 @@ export default function ZonesPage({
           {token ? (
             <ZoneEditorMap
               tenant={tenant}
+              token={token}
               selected={editorOpen ? selectedParcels : []}
               onSelectedChange={setSelectedParcels}
               assignments={assignments}

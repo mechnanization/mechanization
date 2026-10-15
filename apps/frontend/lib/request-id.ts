@@ -30,15 +30,21 @@ const held = new Map<string, string>();
  * page and the citizen cash page both settle one bill (`settle:<paymentId>`).
  * «تسديد الفواتير المحددة» holds one per set of bills, the ids sorted
  * (`bulk-settle:<id>,<id>,…`, `bulkKeyScope` in `lib/bulk-settle.ts`).
+ * A new building holds one per parcel (`building:<رقم العقار>`, the building
+ * editor): its key is the building's id, and the server refuses an id it
+ * already knows on another parcel.
  */
 export type KeyScope =
+  | `building:${string}`
+  | `bulk-settle:${string}`
+  | `commission:${string}`
   | `custody:${string}`
   | 'expense:pay'
   | 'expense:request'
   | 'income:new'
   | `salary:${string}`
   | `settle:${string}`
-  | `bulk-settle:${string}`;
+  | 'transfer:new';
 
 /** The key held for this act, minted the first time it is asked for. */
 export function heldKey(tenant: string, scope: KeyScope): string {
@@ -104,7 +110,8 @@ export function heldInDoubt(tenant: string, scope: KeyScope): boolean {
  *   since;
  * - `PAYMENT_IDEMPOTENCY_KEY_REUSED`: recorded, against another invoice;
  * - `BULK_SETTLE_REQUEST_REUSED`: a settlement of several bills recorded,
- *   against another set of bills.
+ *   with other details — from the dialog, the same bills by another method
+ *   (its «BRC-» number in `params.number`).
  */
 const ACT_RECORDED = new Set<string>([
   'TREASURY_REQUEST_KEY_REUSED',

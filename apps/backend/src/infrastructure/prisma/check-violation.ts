@@ -17,6 +17,22 @@ export function violatedCheckConstraint(error: unknown): string | null {
 }
 
 /**
+ * The closed day a write was refused for by the 0082 triggers, as `YYYY-MM-DD`,
+ * or null when the error is anything else.
+ *
+ * The triggers raise «treasury day 2026-10-08 is closed: …» — on a ledger entry
+ * dated on or before a closed day, or on a closed day's count. The application
+ * refuses both itself first; this is for the write that reaches the database
+ * anyway (a close committing between the check and the insert), so that it
+ * still answers with the day rather than a 500.
+ */
+export function closedTreasuryDay(error: unknown): string | null {
+  if (!(error instanceof Error)) return null;
+  const match = /treasury day (\d{4}-\d{2}-\d{2}) is closed/.exec(error.message);
+  return match ? match[1]! : null;
+}
+
+/**
  * The two rules migration 0072 keeps on a citizen's numbers, as the refusal a
  * person can read — or null when the error is anything else.
  *

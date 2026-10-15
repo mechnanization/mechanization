@@ -27,7 +27,9 @@ import { getInspectorProfile, getMyInspectorProfile } from '@/lib/api-client';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { param, useUrlState } from '@/lib/use-url-state';
 import { formatDate, formatDateTime } from '@/lib/dates';
+import { readView } from '@/lib/read-view';
 import { InspectorPayoutDialog } from '@/components/admin/inspector-payout-dialog';
+import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
 import { MyQualityTasks } from '@/components/admin/quality/my-tasks';
 import { OfficerQuality } from '@/components/admin/quality/officer-quality';
 import { useGoBack } from '@/components/ui/back-link';
@@ -93,7 +95,7 @@ export function InspectorProfileDetail({
 
   const queryKey = ['staff', tenant, 'inspector-profile', targetId ?? 'me'] as const;
 
-  const { data, loading, fetching, error, refetch } = useStaffQuery<InspectorProfileResponse>({
+  const { data: read, loading, fetching, error, refetch } = useStaffQuery<InspectorProfileResponse>({
     queryKey,
     queryFn: (tok, signal) => {
       /*
@@ -113,6 +115,14 @@ export function InspectorProfileDetail({
     token,
     errorMessage: isAr ? 'تعذّر تحميل بيانات المفتش الميداني' : 'Failed to load the inspector profile',
   });
+  /*
+    A failed re-read keeps the dashboard, and the payout dialog mounted on it
+    (STA-1). After a payout with no answer the dialog re-reads this very key;
+    when that read failed too, the dashboard swapped itself for ErrorState and
+    unmounted the dialog with what was typed in it (review of 2026-10-11).
+  */
+  const view = readView(read, error);
+  const data = view.state === 'ready' ? view.data : undefined;
 
   if (loading || !token) {
     return (
@@ -131,7 +141,7 @@ export function InspectorProfileDetail({
     );
   }
 
-  if (error || !data) {
+  if (view.state !== 'ready' || !data) {
     return (
       <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
         <PageHeader
@@ -141,7 +151,7 @@ export function InspectorProfileDetail({
         <Card>
           <CardContent className="p-0">
             <ErrorState
-              description={error ?? (isAr ? 'المفتش غير موجود' : 'Inspector not found')}
+              description={view.state === 'failed' ? view.error : isAr ? 'المفتش غير موجود' : 'Inspector not found'}
               onRetry={() => refetch()}
               retryLabel={isAr ? 'إعادة المحاولة' : 'Retry'}
             />
@@ -207,6 +217,8 @@ export function InspectorProfileDetail({
           </div>
         }
       />
+
+      {view.refreshFailed ? <RefreshFailedAlert message={view.refreshFailed} onRetry={() => refetch()} /> : null}
 
       {/*
         What is waiting on the person looking at their own screen — records a
@@ -631,6 +643,7 @@ export function InspectorProfileDetail({
         open={payoutOpen}
         onOpenChange={setPayoutOpen}
         tenant={tenant}
+        base={base}
         token={token}
         locale={locale}
         staff={{ id: data.inspector.id, name: data.inspector.name }}

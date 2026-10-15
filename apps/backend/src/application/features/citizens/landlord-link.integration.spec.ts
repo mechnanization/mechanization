@@ -1586,6 +1586,48 @@ describeIfDb('LandlordLinkService', () => {
       expect(await ownerCards(linked.owner.id)).toEqual([]);
     });
 
+    it('records an unlink by save on the owner’s file as well as the tenant’s, once each', async () => {
+      const unlinkRows = (citizenId: string) =>
+        db.auditLogEntry.findMany({ where: { action: 'LANDLORD_UNLINKED', entityId: citizenId } });
+
+      // The number corrected on a card that stays …
+      const corrected = await linkedTenant();
+      await within(async () =>
+        citizens.update({
+          tenantSlug: 'links',
+          citizenId: corrected.tenantId,
+          payload: await payloadFor(corrected.tenantId, [
+            cardFor(corrected.entryId, corrected.building.id, corrected.units[0]!.id, {
+              landlordPhone: freshPhone().typed,
+            }),
+          ]),
+          actor: actor(),
+        }),
+      );
+      // … and a linked card taken off the file.
+      const removed = await linkedTenant();
+      await within(async () =>
+        citizens.update({
+          tenantSlug: 'links',
+          citizenId: removed.tenantId,
+          payload: await payloadFor(removed.tenantId, []),
+          actor: actor(),
+        }),
+      );
+
+      for (const linked of [corrected, removed]) {
+        const owner = await unlinkRows(linked.owner.id);
+        const tenant = await unlinkRows(linked.tenantId);
+        expect(owner).toHaveLength(1);
+        expect(tenant).toHaveLength(1);
+        expect(owner[0]).toMatchObject({
+          actorId: officerId,
+          after: expect.objectContaining({ propertyEntryId: linked.entryId, via: 'CITIZEN_UPDATED' }),
+        });
+        expect(tenant[0]!.after).toMatchObject({ propertyEntryId: linked.entryId, ownerId: linked.owner.id });
+      }
+    });
+
     it('refuses a save from a form opened before somebody else saved the file', async () => {
       /*
         2026-09-16: two officers on one registration for 45 minutes, each save

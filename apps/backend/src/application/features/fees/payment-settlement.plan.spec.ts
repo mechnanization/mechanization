@@ -280,7 +280,18 @@ describe('bulkSettlePaymentsSchema', () => {
     citizenId: '00000000-0000-4000-8000-000000000001',
     paymentIds: ['00000000-0000-4000-8000-000000000002'],
     clientRequestId: '00000000-0000-4000-8000-000000000003',
+    expectedDue: { LBP: 1000 },
   };
+
+  it('asks for what the bills owed when the clerk pressed, per currency', () => {
+    const cash = { ...base, method: 'CASH', tendered: { local: 1000 } };
+    const { expectedDue: _shown, ...without } = cash;
+    expect(bulkSettlePaymentsSchema.safeParse(without).success).toBe(false);
+    expect(bulkSettlePaymentsSchema.safeParse({ ...cash, expectedDue: {} }).success).toBe(false);
+    expect(bulkSettlePaymentsSchema.safeParse({ ...cash, expectedDue: { lbp: 1000 } }).success).toBe(false);
+    expect(bulkSettlePaymentsSchema.safeParse({ ...cash, expectedDue: { LBP: -1 } }).success).toBe(false);
+    expect(bulkSettlePaymentsSchema.safeParse({ ...cash, expectedDue: { LBP: 1000, USD: 12.5 } }).success).toBe(true);
+  });
 
   it('asks a cash settlement for the notes and refuses them on the other methods', () => {
     expect(bulkSettlePaymentsSchema.safeParse({ ...base, method: 'CASH' }).success).toBe(false);

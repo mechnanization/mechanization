@@ -285,9 +285,15 @@ model User {
   expensesOrdered          ExpenseVoucher[]     @relation("ExpenseOrderedBy")
   expenseRequestsFiled     ExpenseRequest[]     @relation("ExpenseRequestFiledBy")
   expenseRequestsDecided   ExpenseRequest[]     @relation("ExpenseRequestDecidedBy")
+  /// Flagged exchanges this staff member reviewed (0084).
+  transfersReviewed        TreasuryTransfer[]   @relation("TransferReviewedBy")
   /// Income vouchers this staff member recorded, and any they cancelled (0080).
   incomeRecorded           IncomeVoucher[]      @relation("IncomeRecordedBy")
   incomeVoided             IncomeVoucher[]      @relation("IncomeVoidedBy")
+  /// Days this staff member closed or reopened, and wallets they counted (0082).
+  treasuryDaysClosed       TreasuryDayClosure[] @relation("TreasuryDayClosedBy")
+  treasuryDaysReopened     TreasuryDayClosure[] @relation("TreasuryDayReopenedBy")
+  treasuryCounts           TreasuryCount[]      @relation("TreasuryCountedBy")
   createdCases          Case[]               @relation("CaseCreatedBy")
   resolvedCases         Case[]               @relation("CaseResolvedCitizen")
   unitOccupancies       UnitOccupancy[]      @relation("UnitOccupant")
@@ -1899,6 +1905,12 @@ model SystemSettings {
   exchangeRate          Decimal?  @db.Decimal(18, 6)
   exchangeRateUpdatedAt DateTime?
 
+  /// How far an exchange's rate may stray from `exchangeRate`, in percent,
+  /// before it needs a written reason and a review (0084).
+  exchangeRateTolerancePercent Decimal @default(3) @db.Decimal(5, 2)
+  /// Above this, on an exchange's non-base side, it is reviewed whatever its rate (0084).
+  largeExchangeThreshold       Decimal @default(1000) @db.Decimal(14, 2)
+
   // ── Configuration held as documents ─────────────────────────────────────
 
   /// Per-document-type reference format: `{ invoice: { prefix, nextNumber,
@@ -2344,6 +2356,19 @@ model InspectorPayout {
   recordedBy   User?    @relation("RecordedInspectorPayouts", fields: [recordedById], references: [id])
   createdAt    DateTime @default(now())
 
+  /// The «PV-» voucher that paid it, written in the same transaction (0086).
+  /// NULL for a payout recorded while the treasury was not live. A payout whose
+  /// voucher is voided no longer counts as paid; the readers filter on it.
+  /// Once set, the row is written once: no update, no delete (0089).
+  expenseVoucherId String?         @unique @db.Uuid
+  expenseVoucher   ExpenseVoucher? @relation(fields: [expenseVoucherId], references: [id], onDelete: Restrict)
+
+  /// The dialog's retry key (0089), on both paths: a press whose answer was
+  /// lost and is pressed again is answered with this row, never recorded twice.
+  /// NULL on a payout written before 0089 (a live one is found through its
+  /// voucher's key).
+  clientRequestId String? @unique @db.Uuid
+
   @@index([inspectorId, paidAt])
   @@map("inspector_payouts")
 }
@@ -2393,6 +2418,7 @@ model TreasuryAccount {
   expenses ExpenseVoucher[]
   expenseRequests ExpenseRequest[]
   incomes  IncomeVoucher[]
+  counts   TreasuryCount[]
   transfersOut TreasuryTransfer[] @relation("TransferFrom")
   transfersIn  TreasuryTransfer[] @relation("TransferTo")
 
@@ -2470,11 +2496,33 @@ model TreasuryTransfer {
   amount         Decimal @db.Decimal(14, 2)
   receivedAmount Decimal @db.Decimal(14, 2)
 
-  /// An exchange's rate, the municipality's own beside it, and why they differ.
-  /// All NULL on a same-currency transfer, which is all this wires today.
+  /// An exchange's rate — base currency per one unit of the other side, derived
+  /// from the two amounts — the municipality's own beside it, and why they
+  /// differ. All NULL on a same-currency transfer.
   exchangeRate         Decimal? @db.Decimal(18, 6)
   officialExchangeRate Decimal? @db.Decimal(18, 6)
   adjustmentReason     String?
+
+  /// What a bank or Whish charged, in the source's currency (0084). The source
+  /// loses amount + fee; the fee is booked as its own «PV-» voucher under
+  /// «رسوم تحويل ومصرفية». Both set or both NULL.
+  feeAmount    Decimal?        @db.Decimal(14, 2)
+  feeVoucherId String?         @unique @db.Uuid
+  feeVoucher   ExpenseVoucher? @relation("TransferFee", fields: [feeVoucherId], references: [id], onDelete: Restrict)
+
+  /// The صرّاف an exchange went through (0084). Exchanges only (CHECK).
+  moneyChangerName String?
+  /// Why it is dated before the day it was written (0084). Not `adjustmentReason`.
+  backdateReason   String?
+
+  /// Set by the server when the exchange is booked: the rate strays beyond the
+  /// tolerance, there was no official rate, or the amount is large (0084). The
+  /// money has moved either way; the flag waits for an auditor.
+  requiresReview Boolean   @default(false)
+  reviewedAt     DateTime? @db.Timestamptz(3)
+  reviewedById   String?   @db.Uuid
+  reviewedBy     User?     @relation("TransferReviewedBy", fields: [reviewedById], references: [id], onDelete: Restrict)
+  reviewNote     String?
 
   description String
 
@@ -2497,6 +2545,7 @@ model TreasuryTransfer {
   @@index([toAccountId, occurredAt(sort: Desc)], map: "treasury_transfers_to_idx")
   @@index([voidedById])
   @@index([recordedById])
+  @@index([reviewedById])
   @@map("treasury_transfers")
 }
 
@@ -2575,11 +2624,18 @@ model ExpenseVoucher {
   recordedById String? @db.Uuid
   recordedBy   User?   @relation("ExpenseRecordedBy", fields: [recordedById], references: [id], onDelete: Restrict)
 
-  /// The staff account a salary or wage voucher paid (0081); NULL on every
-  /// other voucher. `payee` still holds the name as it stood on the day. That
-  /// it is a STAFF row is checked by its one writer, `recordSalary`.
+  /// The staff account a salary, wage or commission voucher paid (0081); NULL
+  /// on every other voucher. `payee` still holds the name as it stood on the
+  /// day. That it is a STAFF row is checked in the WHERE that resolves the
+  /// payee: `recordSalary`'s own, and for a commission
+  /// `StaffService.recordInspectorPayout`'s, before `recordCommission` runs.
   payeeStaffId String? @db.Uuid
   payeeStaff   User?   @relation("ExpensePayeeStaff", fields: [payeeStaffId], references: [id], onDelete: Restrict)
+
+  /// The inspector payout this voucher paid, when it paid one (0086).
+  inspectorPayout InspectorPayout?
+  /// The transfer whose fee this voucher books, when it books one (0084).
+  transferFeeOf   TreasuryTransfer? @relation("TransferFee")
 
   /// One id per press of «سجّل النفقة», so a retry finds the first voucher
   /// instead of paying twice.
@@ -2752,6 +2808,90 @@ model IncomeVoucher {
   @@index([recordedById])
   @@index([voidedById])
   @@map("income_vouchers")
+}
+
+// ─────────────────  Daily count and closing (migration 0082)  ─────────────────
+// Design: docs/finance.md §7.
+
+/// A day with no `TreasuryDayClosure` row is open. CLOSED locks it; REOPENED is
+/// a closed day the manager opened again, which must be closed again before any
+/// later day can be.
+enum TreasuryDayStatus {
+  CLOSED
+  REOPENED
+}
+
+/// «إقفال اليومية» — one municipal business day, closed.
+///
+/// While a day is CLOSED nothing is written into it: triggers in 0082 refuse a
+/// ledger entry dated on or before it and any change to its counts, and refuse
+/// deleting this row. Closures run from go-live in date order with no gaps.
+model TreasuryDayClosure {
+  id           String            @id @default(uuid()) @db.Uuid
+  /// Beirut's calendar day. Read back as midnight UTC of that date.
+  businessDate DateTime          @unique @db.Date
+  status       TreasuryDayStatus @default(CLOSED)
+  /// Swept closed, uncounted, when a later day closed: none of the counted
+  /// wallets moved on it.
+  autoClosed   Boolean           @default(false)
+  closedAt     DateTime          @default(now()) @db.Timestamptz(3)
+  /// For a swept day, the person whose close swept it.
+  closedById   String            @db.Uuid
+  closedBy     User              @relation("TreasuryDayClosedBy", fields: [closedById], references: [id], onDelete: Restrict)
+
+  /// Set while the day stands open again, and only then (CHECK in 0082).
+  reopenedAt   DateTime?         @db.Timestamptz(3)
+  reopenedById String?           @db.Uuid
+  reopenedBy   User?             @relation("TreasuryDayReopenedBy", fields: [reopenedById], references: [id], onDelete: Restrict)
+  reopenReason String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  counts TreasuryCount[]
+
+  @@index([closedById])
+  @@index([reopenedById])
+  @@map("treasury_day_closures")
+}
+
+/// «جرد الصندوق» — one wallet counted on one day.
+///
+/// The books' figure beside the counted one. A difference is explained, never
+/// posted: nothing here moves money. A recount replaces the row until the day
+/// closes, and from then on the trigger in 0082 refuses any change but the
+/// closure link.
+model TreasuryCount {
+  id        String          @id @default(uuid()) @db.Uuid
+  accountId String          @db.Uuid
+  /// Always the wallet's own currency: the foreign key is the pair.
+  currency  String
+  account   TreasuryAccount @relation(fields: [accountId, currency], references: [id, currency], onDelete: Restrict, onUpdate: Restrict, map: "treasury_counts_account_currency_fkey")
+
+  businessDate   DateTime @db.Date
+  /// The wallet's entries summed to the end of `businessDate`, by the server.
+  expectedAmount Decimal  @db.Decimal(14, 2)
+  /// Found in the safe, or read off the Whish app or the bank statement. Not negative.
+  countedAmount  Decimal  @db.Decimal(14, 2)
+  /// counted − expected (CHECK). Positive a surplus, negative a shortage.
+  difference     Decimal  @db.Decimal(14, 2)
+  /// Required whenever `difference` is not zero (CHECK).
+  varianceReason String?
+
+  countedById String   @db.Uuid
+  countedBy   User     @relation("TreasuryCountedBy", fields: [countedById], references: [id], onDelete: Restrict)
+  countedAt   DateTime @default(now()) @db.Timestamptz(3)
+
+  /// The closure that locked it, set when its day closes.
+  closureId String?             @db.Uuid
+  closure   TreasuryDayClosure? @relation(fields: [closureId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([accountId, businessDate])
+  @@index([businessDate])
+  @@index([countedById])
+  @@index([closureId])
+  @@map("treasury_counts")
 }
 
 // ─────────────────────────  Quality review (migration 0049)  ─────────────────────────

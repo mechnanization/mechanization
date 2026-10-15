@@ -3,6 +3,7 @@ import {
   CENSUS_WORKLIST_ROLES,
   FEE_ISSUE_ROLES,
   LANDLORD_LINK_ANSWER_ROLES as SHARED_LANDLORD_LINK_ANSWER_ROLES,
+  PAYMENT_REVERSE_ROLES as SHARED_PAYMENT_REVERSE_ROLES,
   PAYMENT_REVIEW_MARK_ROLES,
   QUALITY_REVIEWER_ROLES as SHARED_QUALITY_REVIEWER_ROLES,
   REGISTER_EXPORT_ROLES as SHARED_REGISTER_EXPORT_ROLES,
@@ -78,6 +79,12 @@ export const BULK_SETTLE_ROLES: readonly string[] = SHARED_BULK_SETTLE_ROLES;
  * `REFERENCE_SEND_ROLES`, though today it is the same list.
  */
 export const RECEIPT_SEND_ROLES: readonly string[] = WORKING_STAFF_ROLES;
+
+/**
+ * «عكس الوصل» on a bill's receipts — `POST fees/transactions/:id/reverse`.
+ * `PAYMENT_REVERSE_ROLES`, as the route: the manager alone.
+ */
+export const PAYMENT_REVERSE_ROLES: readonly string[] = SHARED_PAYMENT_REVERSE_ROLES;
 
 /** The register export, `dashboard/export.csv`. Not «مشاهد فقط». */
 export const REGISTER_EXPORT_ROLES: readonly string[] = SHARED_REGISTER_EXPORT_ROLES;

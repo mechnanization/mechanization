@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { hasAtMostTwoDecimals } from './money-amount';
+import { positiveMoneyAmount } from './money-amount';
+import { businessDay } from './primitives';
 import { BUDGET_CODES_INCOMPLETE, budgetCodeSchema, budgetCodesComplete } from './treasury.schema';
 
 /**
@@ -45,25 +46,29 @@ export const EXPENSE_CATEGORY_KEYS = [
 ] as const;
 export type ExpenseCategoryKey = (typeof EXPENSE_CATEGORY_KEYS)[number];
 
-/** A paid amount: greater than zero, at most two decimals, inside what the column holds. */
-const paidAmount = z
-  .number({ required_error: 'اكتب المبلغ', invalid_type_error: 'المبلغ رقم' })
-  .finite('المبلغ رقم')
-  .positive('المبلغ أكبر من صفر')
-  .max(999_999_999_999, 'المبلغ كبير جداً')
-  .refine(hasAtMostTwoDecimals, 'خانتان عشريتان على الأكثر');
+/**
+ * The seeded categories only their own path may file a voucher under.
+ *
+ * «تعويضات المسح والجباية» (`FIELD_COMMISSIONS`) is «صرف عمولة»'s
+ * (`StaffService.recordInspectorPayout`), because what an inspector is owed is
+ * read from the payout rows that path writes beside its voucher. A commission
+ * paid through the expense form, or ordered from a request, would leave the
+ * wallet with no payout row: the inspector would still read as owed it, and
+ * the payout dialog would pay it again. So the form, a request and an order
+ * refuse it (`EXPENSE_CATEGORY_RESERVED`), and the form does not offer it.
+ *
+ * «رواتب وأجور» is not here: a salary has no balance owed to fall out of step
+ * with, and the full form is how a back-dated one is paid (§5.8).
+ */
+export const RESERVED_EXPENSE_CATEGORY_KEYS = ['FIELD_COMMISSIONS'] as const satisfies readonly ExpenseCategoryKey[];
 
-/** `YYYY-MM-DD` on the municipality's own calendar. */
-const businessDate = z
-  .string({ required_error: 'اختر التاريخ' })
-  .regex(/^\d{4}-\d{2}-\d{2}$/, 'تاريخ غير صالح')
-  // A day that exists: «2026-09-31» parses — as 1 October — so it must also come back
-  // unchanged. Without this it was stored on a day nobody typed, or reached Prisma as
-  // an Invalid Date and answered with a 500.
-  .refine((day) => {
-    const parsed = new Date(`${day}T00:00:00Z`);
-    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === day;
-  }, 'تاريخ غير صالح');
+/** Whether only a dedicated path may file under this category (`RESERVED_EXPENSE_CATEGORY_KEYS`). */
+export function isReservedExpenseCategory(key: ExpenseCategoryKey | null | undefined): boolean {
+  return key != null && (RESERVED_EXPENSE_CATEGORY_KEYS as readonly string[]).includes(key);
+}
+
+/** A paid amount: greater than zero, at most two decimals, inside what `DECIMAL(14,2)` holds. */
+const paidAmount = positiveMoneyAmount(999_999_999_999);
 
 /**
  * «سجّل النفقة» — the whole act, in one request.
@@ -86,8 +91,8 @@ export const recordExpenseSchema = z.object({
     .trim()
     .min(3, 'اكتب سبب الصرف')
     .max(1000, 'الوصف طويل جداً'),
-  /** Defaults to the municipality's today when the screen leaves it out. */
-  paidOn: businessDate.optional(),
+  /** Defaults to the municipality's today when the screen leaves it out. A real calendar day (`businessDay`). */
+  paidOn: businessDay.optional(),
   /** Required by the server for any back-dated voucher. */
   adjustmentReason: z.string().trim().max(500, 'السبب طويل جداً').optional(),
   invoiceNumber: z.string().trim().max(100, 'الرقم طويل جداً').optional(),
@@ -192,6 +197,32 @@ export type RecordStaffSalaryInput = z.infer<typeof recordStaffSalarySchema>;
 export const SALARY_URGENT_REASON = 'راتب — يُدفع قبل الحوالة (المادة 35)';
 
 /**
+ * The reason an accountant's commission payout carries, written by the server.
+ *
+ * Decision D9 (the owner, 2026-10-10): an inspector's commission is paid like a
+ * salary. Decree 5595/1982 art. 35 names salaries and wages («الرواتب
+ * والأجور») among what may be paid before the order, so an accountant's
+ * «صرف عمولة» is paid at once on the urgent path with this reason, waits for
+ * the manager's regularisation, and is not held to the urgent ceiling (D6),
+ * exactly as a salary (docs/finance.md §5.6). The manager's own payout is the
+ * order and carries none. Stored exactly as written here.
+ */
+export const COMMISSION_URGENT_REASON = 'عمولة مسح ميداني — تُدفع قبل الحوالة (المادة 35)';
+
+/**
+ * The reason an accountant's transfer-fee voucher carries, written by the server.
+ *
+ * A bank or Whish fee is taken by the provider as the transfer happens, so it
+ * cannot wait for the payment order (decision D3): an accountant's transfer
+ * pays its fee at once on the urgent path with this reason, held to the urgent
+ * ceiling (D6) like any petty expense, and the voucher waits for the manager's
+ * regularisation (docs/finance.md §6.4). The manager's own transfer is the
+ * order and its fee carries none. Whether a fee should instead be exempt from
+ * the ceiling is open (docs/open-decisions.md §18). Stored exactly as written here.
+ */
+export const TRANSFER_FEE_URGENT_REASON = 'رسوم تحويل — تُدفع مع المناقلة (المادة 35)';
+
+/**
  * A budget code as an edit sends it. Unlike `budgetCodeSchema` (treasury.schema.ts),
  * empty is allowed here and means none: that is how an edit takes the codes off a
  * category (both sent empty). Left out, a code stays as it is.
@@ -279,12 +310,13 @@ export interface ExpenseVoucherView {
   id: string;
   voucherNumber: string;
   status: ExpenseStatus;
-  category: { id: string; name: string };
+  /** With its budget chapter and article, printed on «أمر الصرف»; both null until the municipality fills them in. */
+  category: { id: string; name: string; chapterCode: string | null; itemCode: string | null };
   account: { id: string; name: string; currency: string };
   amount: number;
   currency: string;
   payee: string;
-  /** The staff account a salary voucher paid; null on every other voucher. */
+  /** The staff account a salary or commission voucher paid (0081, 0086); null on every other voucher. */
   payeeStaffId: string | null;
   description: string;
   occurredAt: string;
