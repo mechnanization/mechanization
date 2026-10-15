@@ -18,6 +18,7 @@ import { getLabels } from '@mechanization/shared-schemas';
 import { ApiRequestError, getMySummary, logApiError } from '@/lib/api-client';
 import type { MyCitizenSummary } from '@/lib/api-client';
 import { clearSession, loadSession } from '@/lib/session';
+import { billFigure, citizenPaymentTotals, isUnderReview } from '@/lib/citizen-payments';
 import { formatLbp } from '@/lib/currency';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -65,6 +66,13 @@ export default function MyAccount({
   }, [tenant, locale, router]);
 
   const unpaid = summary?.payments.filter((payment) => payment.paymentStatus !== 'PAID') ?? [];
+  /*
+    What is owed, by the portal's one rule: what is left on the bills the
+    citizen can still pay. A bill whose reported transfer waits for a clerk is
+    listed with its status and is not counted — as on «ملفّي» and the payments
+    page. The summary's `outstandingTotal` counts it (review of PR #113).
+  */
+  const owed = citizenPaymentTotals(summary?.payments ?? []).outstanding;
 
   return (
     <div className="space-y-8">
@@ -142,7 +150,7 @@ export default function MyAccount({
                       {locale === 'en' ? 'Total Unpaid' : 'المجموع غير المسدَّد'}
                     </span>
                     <Money
-                      amount={summary.fees.outstandingTotal}
+                      amount={owed}
                       className="text-2xl font-bold"
                       locale={locale}
                     />
@@ -170,7 +178,14 @@ export default function MyAccount({
                                 {locale === 'en' ? 'Overdue' : 'متأخرة'}
                               </Badge>
                             ) : null}
-                            <Money amount={payment.amount} exact className="font-medium" locale={locale} />
+                            {/* Why it is listed and not in the total above. */}
+                            {isUnderReview(payment) ? (
+                              <Badge variant="soft-warning">
+                                {labels.paymentStatus[payment.paymentStatus as never] ?? payment.paymentStatus}
+                              </Badge>
+                            ) : null}
+                            {/* What is left on it, not its face value (`billFigure`). */}
+                            <Money amount={billFigure(payment)} exact className="font-medium" locale={locale} />
                           </span>
                         </li>
                       ))}

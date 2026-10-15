@@ -10,20 +10,29 @@
 /** The municipality's own clock. The server runs in UTC; its «today» is not. */
 export const MUNICIPAL_TIME_ZONE = 'Asia/Beirut';
 
+/** Built on the first call of `municipalToday`, then kept. */
+let municipalDayFormatter: Intl.DateTimeFormat | undefined;
+
 /**
- * Today's date on the municipality's calendar, as `YYYY-MM-DD`.
+ * Today's date on the municipality's calendar, as `YYYY-MM-DD` — or, given an
+ * instant, the municipal day it fell on.
  *
- * Evaluated per call, never at module load: a value frozen when the process
- * started would refuse today's payments once it has run past midnight.
+ * The day is read per call, never at module load: a value frozen when the
+ * process started would refuse today's payments once it has run past midnight.
+ * The formatter that reads it is kept, since it depends on the zone alone:
+ * built anew per call, it was most of the time a page that dates every
+ * registration took — about 0.3 s for 5,000 on the inspector's payout history
+ * (review of PR #113, 2026-10-13).
  */
 export function municipalToday(now: Date = new Date()): string {
   // en-CA formats as YYYY-MM-DD.
-  return new Intl.DateTimeFormat('en-CA', {
+  municipalDayFormatter ??= new Intl.DateTimeFormat('en-CA', {
     timeZone: MUNICIPAL_TIME_ZONE,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
-  }).format(now);
+  });
+  return municipalDayFormatter.format(now);
 }
 
 /**

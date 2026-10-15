@@ -1,6 +1,6 @@
 # Security
 
-Last verified against the code: `feat/treasury-day-closing@c88c971` (`develop` with the reviewed treasury, #107/#108; PR #106, stage 5: the daily count, the day closing and the closed-day lock; PR #109, inspector payouts and decision D9; PR #111, transfers, exchange and wallets with `0088`; PR #112, bulk settlement; each merged with its review fixes, and the cross-feature fixes) with the fixes of the final-stack review (uncommitted): a commission payout's inspector id in one spelling, its amount bounded, its retry key before go-live too, `0089`, a back-dated outflow judged against every day's close, the fee routes that move treasury money pinned by name, 2026-10-11.
+Last verified against the code: `fix/pr113-review` (PR #113 on `develop@5e8f5c3` with the fixes of both its reviews: the reversal's role set, its ids through `ParseUUIDPipe`, the one pin of who may reverse, every fee route's path id through it, the eight that took theirs raw with PR #120's own lines, and no reversal offered over a claim under review), 2026-10-14.
 
 Binding for every change that touches authentication, roles, tokens, validation, uploads, logging,
 headers, client storage or secrets. The rules below are correct practice. Where the code differs today,
@@ -97,7 +97,7 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   found the bulk path took any user, a citizen included). Both routes' role lists are pinned in
   `route-inventory.spec.ts`, and so, by name, are the single fee routes that post wallet entries once
   the treasury is live — `FeesController.settle` (`FEE_ISSUE_ROLES`), `review` (`FEE_ADMIN_ROLES`, a
-  Whish confirmation), `reverseTransaction` (`SUPER_ADMIN`) and the public, HMAC-checked
+  Whish confirmation), `reverseTransaction` (`PAYMENT_REVERSE_ROLES`, the manager alone) and the public, HMAC-checked
   `whishCallback` — so widening one fails CI (review of 2026-10-11). The reprint, `GET fees/settlements/:id`, is
   `FEE_READ_ROLES` with `ParseUUIDPipe`. The consolidated receipt names the citizen with father's name and
   phone, never the رقم مرجعي — on paper, in the PDF or in the WhatsApp text — and an integration test pins
@@ -238,6 +238,13 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   Tier 2: an event
   after the commit, whose failed write is logged and does not undo the change. How:
   [apps/backend/CLAUDE.md](../apps/backend/CLAUDE.md#events-and-audit).
+- A receipt is reversed by the manager alone (`POST fees/transactions/:transactionId/reverse`,
+  `PAYMENT_REVERSE_ROLES`, pinned with the other fee money routes above), with a written reason
+  (`reverseTransactionSchema`), as an opposing row with a Tier 1 `PAYMENT_REVERSED` row. Its id
+  and that of `GET fees/payments/:id/transactions` go through `ParseUUIDPipe`. The bill page shows
+  «عكس الوصل» by the same set (`mayReverseReceipt`), and not while a transfer the citizen reported
+  on the bill waits for review: the reversal would erase the claim. That hold is the screen's
+  only; the route takes such a reversal until PR #120 refuses it (`PAYMENT_CLAIM_UNDER_REVIEW`).
 - An audit row MUST NOT carry a credential (OWASP Logging Cheat Sheet; NIST SP 800-53 AU-3(3), which
   limits what audit records hold to what the record needs). A citizen is named by id, and the audit screen
   resolves the person at read time (`audit-view.ts`). Where a human needs a hint, the رقم مرجعي goes in
@@ -610,7 +617,7 @@ add a row. Severity is the harm if exploited today.
 | Medium | 21 of the read-only agent role's 26 views are `SELECT *`, so `readonly_claude.property_entries` exposes `landlordPhone`. `readonly_claude.registrations.referenceNumber` is the filing's own number, minted separately from the citizen's login reference (`RegistrationService.submit`), so it is not a credential | `scripts/db/setup-claude-ro.sql` | Column allowlists per view |
 | Medium | `reissue-references` prints `old,new,name,phone` for every citizen to stdout, and its comment expects the run to be redirected to a file: a list of live credentials with phone numbers | `apps/backend/src/scripts/reissue-references.ts` `reissueReferences` | Decide (Undecided below); meanwhile handle the output as a credential dump and delete it once citizens are notified |
 | Low | Anonymous property-number lookup returns `registeredCount` and parcel coordinates, enumerable at the default rate | `RegistrationController.checkPropertyNumber` (`@Public()`); `RegistrationService.checkPropertyNumber` | Staff-only with `@Roles` (Undecided: its comment calls the cadastre a public register) |
-| Low | Raw bodies and ids: `@Body('citizenId')` and `@Body('candidateIds')`, raw `@Body()` on two auth routes, and about 70 id params without `ParseUUIDPipe`. A bad id becomes a 500 and a Sentry event | `CitizenController` `confirmLandlordLink`, `dismissLandlordLink`, `restoreLandlordLink`; `AuthController` `disableTotp`, `sendResetPasswordEmail`; every controller but `CorrectionsController` | Zod body schemas; `ParseUUIDPipe` |
+| Low | Raw bodies and ids: `@Body('citizenId')` and `@Body('candidateIds')`, raw `@Body()` on two auth routes, and 56 id params without `ParseUUIDPipe` (counted by grep 2026-10-14, outside the specs: `develop` has 66, and `FeesController`'s ten gained it with PR #113, eight of them in PR #120's own words). `route-inventory.spec.ts` fails on any fee route whose path id goes without it. A bad id becomes a 500 and a Sentry event | `CitizenController` `confirmLandlordLink`, `dismissLandlordLink`, `restoreLandlordLink`; `AuthController` `disableTotp`, `sendResetPasswordEmail`; every controller but `CorrectionsController` and `FeesController` | Zod body schemas; `ParseUUIDPipe` |
 | Medium | A citizen save applies the owner agreements it carries (`landlordCitizenId` from «نعم، هو» on a card) through `LandlordLinkService.applyAgreements` → `confirm` with no role rule, while the answer routes admit only `LANDLORD_LINK_ANSWER_ROLES`. A collector (`REGISTER_WRITE_ROLES`) can so link an owner — and put flats and owner-borne fees on that file — by calling `POST`/`PATCH citizens` directly; the citizen editor keeps collectors out | `CitizensService` (agreements → `applyAgreements`); `CitizenController` create/update vs `confirmLandlordLink`, `dismissLandlordLink`, `restoreLandlordLink`, `unlinkLandlord`; `LandlordMatchHint` (no permission prop) | Apply agreements only for a role in `LANDLORD_LINK_ANSWER_ROLES` (refuse or ignore the rest), and give `LandlordMatchHint` a required `canAnswer` |
 | Low | Raw query values on several reads: a repeated `?search=` arrives as an array and `normalizeSearchText` calls `.toLowerCase()` on it, a 500 and a Sentry event; `limit` and `offset` are coerced by hand. The collection worklists had the same bug and now go through `worklistQuerySchema` (2026-10-06) | `CitizenController.list`, `CitizenController.history`, `FeesController.listPayments` (`@Query('search')`, `@Query('limit')`, …), `AuditController` (`@Query('action')` into `parseActions`, which calls `.split`) | A zod query schema through `ZodValidationPipe`, as `worklistQuerySchema` |
 | Low | `POST citizen/otp/verify` has no explicit `@Throttle` and falls under the 120-per-minute default | `AuthController.verifyOtp` | An explicit limit from `APP_CONFIG.throttle` |

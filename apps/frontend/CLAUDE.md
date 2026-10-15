@@ -1,6 +1,6 @@
 # apps/frontend: agent guide
 
-Last verified against the code: `feat/treasury-day-closing@c88c971` (`develop` with the reviewed treasury, #107/#108; PR #106, stage 5: the daily count, the day closing and the closed-day lock; PR #109, inspector payouts and decision D9; PR #111, transfers, exchange and wallets with `0088`; PR #112, bulk settlement, the held selection, `expectedDue`, the consolidated receipt; each merged with its review fixes, and the cross-feature fixes) with the fixes of the final-stack review (uncommitted): the bulk dialog's `previewGate`, a day in a refusal through `formatDay`, the payout dialog's hosts on `readView` and its key before go-live (`payoutRequest`), the key scopes and spending codes listed whole, 2026-10-11.
+Last verified against the code: `fix/pr113-review` (PR #113 on `develop@5e8f5c3` with the fixes of both its reviews: «وصولات الفاتورة» and «عكس الوصل» with their way in from a paid bill, no reversal offered over a claim under review, the lost-answer rule with a re-read that must have answered (`receiptsReadAgain`), the portal's part-paid figures and its total owed in one home, the payout history's balances in the order the money moved, `StatItem`'s `hint`, the screens pinned by reading them), 2026-10-14.
 
 Next.js 15 app router, React 18, next-intl 4, TanStack Query 5, Tailwind 3.4 with
 tailwind-merge 3, Radix and lucide-react. One app serves the staff dashboard and the
@@ -72,8 +72,35 @@ and today's date, which is a different document from the one the citizen was han
     citizens/** buildings/** cases/** fees/** (incl. fees/new — إصدار رسم جديد)
     fees/settlements/[settlementId] (وصل قبض بلدي مجمّع — the consolidated receipt of a bulk settlement,
       `GET fees/settlements/:id`; opened right after «تسديد الفواتير المحددة», and a reload reprints)
+    (citizens/[citizenId]/payments/[paymentId]: the counter's cash page, and below it «وصولات الفاتورة»,
+      every movement on the bill, with «عكس الوصل» and its required reason for PAYMENT_REVERSE_ROLES,
+      components/admin/finance/bill-receipts.tsx, reverse-receipt-dialog.tsx, `mayReverseReceipt` in lib/bill-receipts.ts;
+      reached from the bill's row on the citizen file — «تسجيل دفعة نقدية» while it is owed, «وصولات الفاتورة»
+      once it is paid, `billPageLink`; no reversal offered while the citizen's reported transfer waits for a
+      clerk, `claimUnderReview` (the page passes the bill's status; the server's refusal is PR #120's); the
+      dialog carries no retry key, answers TRANSACTION_ALREADY_REVERSED as done, and judges a press the
+      server did not confirm only by a re-read that answered, `reversalFailure`, `receiptsReadAgain` — see
+      Writes below; lib/bill-receipts-screens.test.ts parses both pages for the link and the mount)
     inspector/profile/** quality/**
+    (inspector/profile/[staffId]/payouts: «المتبقي بعدها» per payout is earned-by-then less paid-by-then,
+      `payoutHistory` in lib/inspector-payouts.ts: a payout whose voucher was cancelled listed and not counted
+      as paid, a figure-only payout judged by its municipal day and its row's `createdAt`, a voucher payout at
+      its moment, summed in the order the money moved (`byWhenPaid`: day, then a voucher's moment or a
+      figure's `createdAt` — never `paidAt` alone, which a day's figures share); recomputed from today's
+      records, which the note under the table says; «مدفوع بالزيادة» when overpaid; the figures through
+      `StatStrip` and `Money`, the copy in `staff.commission.history`)
 ```
+
+A bill can be part-paid, so a screen that tells someone what to pay reads the server's
+`remaining` and `paidAmount`, never `amount` alone. The portal's payments page, its pay dialog
+and «ملفّي» read them through `lib/citizen-payments.ts`, the per-bill rule's one home
+(`billFigure`, `isPartlyPaid`, `isSettled`, and `partlyPaidFigures` for the `citizen.partlyPaid`
+message, which writes «LBP» on an English page); the staff bell shows a claim's `remaining`, which
+is what confirming it credits. So are the totals: the payments page, «ملفّي» and «حسابي» sum
+`citizenPaymentTotals`, the payments page's rule on `develop`. A bill whose reported transfer waits
+for a clerk is listed with its status and left out of what is owed. The summary's own
+`outstandingTotal` counts it, and the two pages that showed it told one citizen two totals while a
+transfer waited (docs/finance.md §14, review of PR #113).
 
 «تسديد الفواتير المحددة» (docs/finance.md §3.7) is selection on two existing lists — the `/fees`
 table (a checkbox column; the box beside the name on phone cards) and the citizen file's
@@ -153,7 +180,8 @@ component types.
     re-read fails, and `error` comes back beside it. Show `ErrorState` only when nothing has
     loaded (`error && !data`); with data on screen, keep it and show `RefreshFailedAlert`
     (`components/admin/refresh-failed-alert.tsx`) above it, with a retry. `readView(data, error)`
-    (`lib/read-view.ts`) makes that choice once; the day-closing pages, the print pages and the
+    (`lib/read-view.ts`) makes that choice once; the day-closing pages, the print pages, «وصولات
+    الفاتورة» (which keeps the reversal dialog open on a failed re-read) and the
     commission payout dialog's hosts (the payout history, the inspector's dashboard, the earnings
     roster; `lib/payout-hosts.test.ts` reads every host) use it. Replacing the page unmounted
     whatever was open on it: a failed treasury re-read after an in-doubt handover unmounted the
@@ -208,6 +236,18 @@ component types.
     fetch (STA-6); the page reads the letterhead's names through `['tenant-config', tenant]`.
   - A reopened handover dialog therefore retries the same act. After a failure `outcomeInDoubt` names (status 0, 408, 429, 5xx) it re-reads
     `['treasury', tenant]`, so the reopened dialog prefills what the collector holds now.
+  - «عكس الوصل» moves money and carries no key, by design: the receipt's id is the act's key.
+    The server reverses a receipt once (asked under the bill's lock, with the unique index on
+    `reversalOfId` behind it) and its body takes no key (`reverseTransactionSchema`), so a press
+    repeated after a lost answer is refused with `TRANSACTION_ALREADY_REVERSED` and never recorded
+    twice. The dialog answers that refusal as done — a warning that the receipt was already
+    reversed, the dialog closed — never as a failure. A press the server did not confirm
+    (`outcomeInDoubt`) is judged with the receipts read again, and only if that read answered
+    after the press: after `invalidateQueries` TanStack keeps the list from before the press when
+    the re-read fails or waits for a connection, so `getQueryData` alone is not a re-read
+    (`receiptsReadAgain` checks `getQueryState`). Shown reversed, the press went through; not
+    shown, the dialog stays open and says to press again; not read, it says so (`reversalFailure`
+    in `lib/bill-receipts.ts`, one outcome per wording).
   - A 2xx with `replayed: true` answers a retry with the act an earlier attempt recorded. The
     screen says so — the document number, and that the first attempt's details stand — with a
     warning toast, never the fresh-success one (expense form, request, income form, salary
@@ -256,7 +296,7 @@ component types.
 ## Copy and i18n (decision D-i18n)
 
 - New copy MUST go in next-intl messages, `messages/ar.json` and `messages/en.json`, with
-  the same keys in both (2,434 leaf keys each, counted 2026-10-11 on `feat/treasury-day-closing` with the final-stack review's fixes). Read it with `useTranslations`.
+  the same keys in both (2,497 leaf keys each, counted 2026-10-13 on `fix/pr113-review` with both reviews' fixes). Read it with `useTranslations`.
   `lib/messages-parity.test.ts` checks that both files hold the same keys, the same ICU
   placeholders and the same rich-text tags, and that no Arabic message outside `errors`
   writes a count as `#`: inside a plural branch write `{count}`, because `#` is formatted
@@ -267,9 +307,12 @@ component types.
   `fee-assessment.ts`, `owner-billing.ts` and `audit-describe.ts` do. Plain labels with no placeholders are a lookup
   (`audit-labels.ts` reads `auditActions` and `auditEntities`).
 - Enum and status labels MUST come from `getLabels(locale)` (shared-schemas).
-- Legacy, convert when you touch a file: inline `en ? '…' : '…'` (about 116 files; 62 declare
-  `const en = locale === 'en'`), `lib/settings-i18n.ts` `settingsCopy`, and `labelEn` in
-  `components/admin/nav.ts`. The 13 `messages.nav` keys are never read.
+- Legacy, convert when you touch a file: inline `en ? '…' : '…'` (129 `.ts`/`.tsx` files under
+  `apps/frontend` branch on the locale inline — `en ?`, `locale === 'en' ?` or `isAr ?` — 118 of
+  them under `app/` and `components/`, the rest in `lib/`; 62 files declare
+  `const en = locale === 'en'`; counted by grep 2026-10-13, one file fewer than `develop`'s 130
+  since the payout history moved to messages), `lib/settings-i18n.ts` `settingsCopy`, and
+  `labelEn` in `components/admin/nav.ts`. The 13 `messages.nav` keys are never read.
 - `i18n/routing.ts` `defaultLocale` is `'en'` while `middleware.ts` `DEFAULT_LOCALE` is
   `'ar'`: [docs/gotchas.md](../../docs/gotchas.md).
 
@@ -389,7 +432,8 @@ Model: `app/[tenant]/[locale]/[adminPath]/(protected)/citizens/review/page.tsx` 
    figure left to right (minus U+2212, `moneyParts` in `lib/currency.ts`) and leaves the unit in
    the page's direction; `currency` draws a dollar or euro figure the same way, `signed` adds «+»
    for a ledger movement, and `wrap` lets the unit drop under the figure — a figure in a
-   `StatItem` passes it, because `StatItem` wraps and never truncates. The treasury draws every
+   `StatItem` passes it, because `StatItem` wraps and never truncates; its `hint` is a short muted
+   line that qualifies the figure («آخر دفعة: …»). The treasury draws every
    figure through `TreasuryAmount`, which is `Money` with `exact`.
 8. **Writes**: in-flight ref, `invalidateQueries`, `useToast`; destructive actions through
    `ConfirmDialog`; `closeLabel` on every `DialogContent` (STA-3, STA-4, PRIM-16).
@@ -423,11 +467,16 @@ are inlined at build time. The local `.env.local` block is in
 ## Tests
 
 Vitest (`apps/frontend/vitest.config.mts`): `environment: 'node'`, only `lib/**/*.test.ts`,
-with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 41 test files, 516 cases (counted
-2026-10-11, with the final-stack review's fixes on `feat/treasury-day-closing`). Five of them read
+with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 45 test files, 596 cases (counted
+2026-10-13 on `fix/pr113-review` with both reviews' fixes). Eight of them read
 components rather than render them: `print-pages.test.ts` and `payout-hosts.test.ts` read every
 print page and every payout-dialog host, `transfer-screens.test.ts` the transfer screens,
-`commission-payout.test.ts` the payout dialog and `bulk-settle.test.ts` the bulk dialog's gate.
+`commission-payout.test.ts` the payout dialog, `bulk-settle.test.ts` the bulk dialog's gate,
+`bill-receipts-screens.test.ts` the bill page, the citizen file's bill rows, «وصولات الفاتورة» and
+the reversal dialog, `citizen-payments.test.ts` the portal's pay dialog, «ملفّي», «حسابي» and payments page,
+and `inspector-payouts.test.ts` the payout history page. `bill-receipts-screens.test.ts` parses
+its pages with TypeScript's own parser to ask under which condition an element is drawn, so a
+re-layout does not fail it and a new condition does.
 No component, accessibility or end-to-end tests exist (no jsdom, no Testing Library); a
 rendered check uses the uncommitted headless harness of UI §16.4. Untested, so add a test
 when you touch them: `lib/sentry-redaction.ts`, `lib/session.ts`, `lib/csv.ts` `csvCell`.
