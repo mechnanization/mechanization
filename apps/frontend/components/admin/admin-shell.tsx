@@ -182,8 +182,16 @@ export function AdminShell({
         {/* `min-w-0` on both this and the flex column above it: without it a
             wide table's intrinsic width wins the flex negotiation and pushes
             the whole column past the viewport, which is how a page ends up
-            scrolling horizontally as a whole instead of inside its table. */}
-        <main className="min-w-0 flex-1 overflow-y-auto bg-background">
+            scrolling horizontally as a whole instead of inside its table.
+
+            `relative` makes the scroller the containing block of what scrolls
+            in it. Without it an `absolute` box with no positioned ancestor —
+            every `sr-only` label — is placed against the viewport at its
+            static position, outside this scroller and the shell's clip, and
+            stretches the document instead: on the dashboard the wheel ran on
+            past the last section and slid the whole shell up over an empty
+            body, by up to a screen on a phone. */}
+        <main className="relative min-w-0 flex-1 overflow-y-auto bg-background">
           <HeaderBackContext.Provider value={setBack}>{children}</HeaderBackContext.Provider>
         </main>
       </div>

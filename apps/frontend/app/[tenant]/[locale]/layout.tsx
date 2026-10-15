@@ -152,7 +152,13 @@ export default async function TenantLayout({
           />
         ) : null}
       </head>
-      <body className="min-h-screen bg-muted/30 font-sans antialiased">
+      {/*
+        `100dvh` where it is understood, `100vh` before it. On a phone `100vh`
+        is the viewport with the toolbar hidden, taller than the admin shell's
+        `100dvh` while the toolbar shows, so the page itself could scroll by
+        the toolbar's height under the shell.
+      */}
+      <body className="min-h-screen bg-muted/30 font-sans antialiased supports-[height:100dvh]:min-h-[100dvh]">
         <NextIntlClientProvider locale={locale} messages={messages}>
           <ThemeProvider>
             <AccentProvider>{children}</AccentProvider>

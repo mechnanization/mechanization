@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `fix/pr116-review` (PR #116 merged with `fix/pr115-review`, which stacks #123, #124 and #115 on `develop@5e8f5c3`, with its review fixes): Escape inside a dialog, Tailwind 4 class names on 3.4; digit-normalised cadastre lookups, Latin digits on write, what still compares as stored; a window count on an empty page, 2026-10-15; the previous build and a new enum value against `chore/migration-0090-0091` (on `develop@5e8f5c3`), 2026-10-13, rebased onto `develop@3211140`, 2026-10-15; the Prisma `now()` clock trap in invoice numbering against `fix/finance-audit-remediation` (on `develop@5e8f5c3`), 2026-10-12; JavaScript and Postgres on `trim` and lower case against `fix/finance-audit-remediation` (rebased on `chore/migration-0090-0091@8d386b5`), 2026-10-13; a new RESTRICT key and an existing delete (0092) against `chore/migration-0092` rebased on `fix/finance-audit-remediation@9f7b12b`, 2026-10-13; the CRLF working tree and Enter inside a nested editor added on `fix/fees-page-ux` (uncommitted), 2026-10-12; a Radix dialog with no trigger losing the focus on close, the same day; a `replaceState` made while a page mounts, found on the request wizard (uncommitted), 2026-10-13; the reference-only sign-in recorded as the decided one, and an undeclared env var set only in `.env` never reaching the code of a deployed build (verified in `@nestjs/config`; a locally generated Prisma client loads the file itself), the same day; and, on `fix/fees-page-ux` rebased onto `chore/migration-0092@16473f0` (2026-10-13), the review of PR #122: a request cancelled with its bill (`cancelRequestOfCancelledBill`), a card or a flat a request names never deleted (`PROPERTY_NAMED_BY_REQUEST`, `HAS_REQUESTS`), request bills stamp `issuedById`, the API's log lines without query strings, and the isolation tests; and, on `fix/pr122-review` (2026-10-15), the review's blocker and majors: `ParcelDuesService.dues` normalising its own argument, a request on a cancelled bill cancelled by `reconcile` too (an IN_REVIEW one through AWAITING_PAYMENT), and a request's `fee` null once it will never be billed.
+Last verified against the code: `fix/pr116-review` (PR #116 merged with `fix/pr115-review`, which stacks #123, #124 and #115 on `develop@5e8f5c3`, with its review fixes): Escape inside a dialog, Tailwind 4 class names on 3.4; digit-normalised cadastre lookups, Latin digits on write, what still compares as stored; a window count on an empty page, 2026-10-15; the previous build and a new enum value against `chore/migration-0090-0091` (on `develop@5e8f5c3`), 2026-10-13, rebased onto `develop@3211140`, 2026-10-15; the Prisma `now()` clock trap in invoice numbering against `fix/finance-audit-remediation` (on `develop@5e8f5c3`), 2026-10-12; JavaScript and Postgres on `trim` and lower case against `fix/finance-audit-remediation` (rebased on `chore/migration-0090-0091@8d386b5`), 2026-10-13; a new RESTRICT key and an existing delete (0092) against `chore/migration-0092` rebased on `fix/finance-audit-remediation@9f7b12b`, 2026-10-13; the CRLF working tree and Enter inside a nested editor added on `fix/fees-page-ux` (uncommitted), 2026-10-12; a Radix dialog with no trigger losing the focus on close, the same day; a `replaceState` made while a page mounts, found on the request wizard (uncommitted), 2026-10-13; the reference-only sign-in recorded as the decided one, and an undeclared env var set only in `.env` never reaching the code of a deployed build (verified in `@nestjs/config`; a locally generated Prisma client loads the file itself), the same day; and, on `fix/fees-page-ux` rebased onto `chore/migration-0092@16473f0` (2026-10-13), the review of PR #122: a request cancelled with its bill (`cancelRequestOfCancelledBill`), a card or a flat a request names never deleted (`PROPERTY_NAMED_BY_REQUEST`, `HAS_REQUESTS`), request bills stamp `issuedById`, the API's log lines without query strings, and the isolation tests; and, on `fix/pr122-review` (2026-10-15), the review's blocker and majors: `ParcelDuesService.dues` normalising its own argument, a request on a cancelled bill cancelled by `reconcile` too (an IN_REVIEW one through AWAITING_PAYMENT), and a request's `fee` null once it will never be billed; and an `absolute` box escaping the admin shell's scroller, measured on `develop@4634bdb` (uncommitted), 2026-10-15, and the warnings of `next dev --turbo`, the same day.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -82,6 +82,25 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   into its own `NEXT_DIST_DIR`.
 - **Where:** `apps/frontend/next.config.mjs` (`NEXT_DIST_DIR`),
   `apps/frontend/scripts/build-check.mjs`.
+
+### `next dev --turbo` warns about the workspace root and import-in-the-middle
+
+- **What happens:** the frontend dev server (Turbopack since 2026-10-15) can
+  print "Next.js inferred your workspace root, but it may not be correct", and
+  "Package import-in-the-middle can't be external" (also `require-in-the-middle`)
+  once a page compiles. Pages still compile and serve. Seen 2026-10-15 on
+  Windows.
+- **Why:** Turbopack takes the outermost directory holding a lockfile as the
+  root, so a stray `package-lock.json` in a parent folder (the home directory)
+  wins over `pnpm-lock.yaml`. The two packages are Sentry's and OpenTelemetry's
+  server hooks. pnpm does not hoist them to `apps/frontend`, where Turbopack
+  looks for an external package.
+- **Do this:** delete a lockfile that does not belong to a project above the
+  clone. Treat the second warning as dev-only noise: `next build` compiles with
+  webpack, which does not raise it. Server-side Sentry tracing under
+  `next dev` is the only thing it can cost.
+- **Where:** `apps/frontend/package.json` `dev`, `apps/frontend/next.config.mjs`
+  (`withSentryConfig`).
 
 ### A running API keeps the old Prisma client after `pnpm db:generate`
 
@@ -1222,6 +1241,28 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **Where:** `outline-hidden` was 7 times in `bill-type-select.tsx` and
   `fullscreen-map.tsx`, all `outline-none` since 2026-10-15; `shadow-xs` counts
   in [ui-ux-standards.md](ui-ux-standards.md) §17.4.
+
+### An `absolute` box with no positioned ancestor escapes the scroller it sits in
+
+- **What happens:** the page scrolls on past its last section. Once `<main>`
+  reaches its end, the wheel moves the whole admin shell up over an empty body.
+  On the dashboard this was 196px at 900×800 and 925px at 360×780, enough to
+  carry «الانتقال السريع» off the top of the screen.
+- **Why:** an `overflow` box clips and scrolls only the `absolute` descendants
+  whose containing block it is or contains. With nothing positioned between an
+  `sr-only` label and `<html>`, the label is placed against the viewport at its
+  static position. It is neither clipped by `<main>` nor by the shell's
+  `overflow-hidden`, and it stretches the document to wherever it sits. That was
+  each `FoldSection` header's `sr-only` hint, and each `ChartCard` table's
+  `sr-only` caption once its table is opened.
+- **Do this:** a scroll container is `relative`. The shell's `<main>` is, since
+  2026-10-15, which covers every staff page. A scroller of your own (a pane, a
+  drawer body) needs the same, or its `sr-only` and popovers escape it too. To
+  find an escapee, list the `position: absolute` elements with no non-static
+  ancestor below `<html>` and compare `document.scrollingElement.scrollHeight`
+  with `innerHeight`.
+- **Where:** `apps/frontend/components/admin/admin-shell.tsx` (`<main>`), the
+  dashboard's `FoldSection`, `components/admin/charts.tsx` `ChartCard`.
 
 ### Escape in a popover closes the dialog around it
 
