@@ -222,8 +222,12 @@ export interface CitizenRequestListItem {
   citizenId: string;
   citizenName: string;
   propertyNumber: string | null;
-  /** The fee: the bill's amount once raised, the type's current fee before. */
-  fee: number;
+  /**
+   * The fee: the bill's amount once raised; before, the type's current fee while
+   * the request waits for it (AWAITING_PAYMENT). Null when no bill was raised and
+   * none will be: a free, waived, cancelled or rejected request shows no fee.
+   */
+  fee: number | null;
   billStatus: RequestBillView['paymentStatus'] | null;
   attachmentCount: number;
   createdAt: string;
@@ -250,7 +254,8 @@ export interface CitizenRequestView {
     identityDocNumber: string | null;
   };
   property: RequestPropertyView | null;
-  fee: number;
+  /** As `CitizenRequestListItem.fee`: null when no bill was raised and none will be. */
+  fee: number | null;
   bill: RequestBillView | null;
   purpose: string | null;
   statement: string | null;
@@ -276,7 +281,8 @@ export interface MyCitizenRequestView {
   requestType: RequestType;
   applicantCapacity: ApplicantCapacity;
   property: RequestPropertyView | null;
-  fee: number;
+  /** As `CitizenRequestListItem.fee`: null when no bill was raised and none will be. */
+  fee: number | null;
   bill: RequestBillView | null;
   purpose: string | null;
   rejectionReason: string | null;

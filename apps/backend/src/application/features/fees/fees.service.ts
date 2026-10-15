@@ -47,6 +47,7 @@ import { allocateDocumentNumbers } from '../../common/document-number';
 import { unitsUnderReview } from '../buildings/unit-status';
 import { uninhabitableUnitIds } from '../buildings/habitability';
 import { ownerBillingRules } from '../buildings/owner-billing';
+import { cancelRequestOfCancelledBill } from '../citizen-requests/cancelled-bill';
 import { ConflictError, DomainError, ForbiddenError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { exchangeRuleChangeAllowed } from '../treasury/transfers.plan';
 import { raiseOneOffBill } from './one-off-bill';
@@ -2557,8 +2558,22 @@ export class FeesService {
     paymentId: string;
     citizenId: string;
     method: DeclarePayment['method'];
-    whishTransactionRef?: string;
+    whishTransactionRef: string;
   }) {
+    /*
+      A Whish Money transfer with its reference, and nothing else (open-decisions
+      §21): cash is paid at the office, an instruction and never a claim. A cash
+      "declaration" put the bill in review with no money taken, where the counter
+      cannot settle it until a clerk rejects the claim. `declarePaymentSchema`
+      refuses it at the route; this holds for any caller, before anything is
+      read (review of PR #122).
+    */
+    if ((input.method as string) !== 'WHISH_MONEY' || !input.whishTransactionRef?.trim()) {
+      throw new ValidationError({
+        code: 'PAYMENT_DECLARATION_WHISH_ONLY',
+        message: 'A citizen reports a Whish Money transfer with its reference only; cash is paid at the office.',
+      });
+    }
     const payment = await this.db.citizenPayment.findFirst({
       where: { id: input.paymentId, citizenId: input.citizenId },
       select: { id: true, paymentStatus: true },
@@ -2600,7 +2615,7 @@ export class FeesService {
       guard: { citizenId: input.citizenId },
       data: {
         paymentMethod: input.method as never,
-        whishTransactionRef: input.whishTransactionRef ?? null,
+        whishTransactionRef: input.whishTransactionRef.trim(),
         isSeen: false,
         // Cleared so a previous rejection's note does not sit alongside a
         // fresh claim as though it applied to it.
@@ -4209,7 +4224,7 @@ export class FeesService {
    * (0091), and a Tier 1 row in the same transaction.
    */
   async cancelBill(paymentId: string, reason: string, actor: { id: string; role: string }) {
-    const { citizenId } = await runInTenantTransaction(this.tenantContext, async () => {
+    const { citizenId, cancelledRequest } = await runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
       const [bill] = await this.ledger.lockInvoices(tx, [paymentId]);
       if (!bill) {
@@ -4260,7 +4275,9 @@ export class FeesService {
           reason: reason.trim(),
         },
       });
-      return { citizenId: bill.citizenId };
+      // A municipal request waiting on this bill is cancelled with it (decision of 2026-10-13, 0094).
+      const request = await cancelRequestOfCancelledBill(tx, this.auditTrail, { billId: paymentId, actor });
+      return { citizenId: bill.citizenId, cancelledRequest: request };
     });
 
     // For the caches that count what is owed; the audit row is already written.
@@ -4272,7 +4289,12 @@ export class FeesService {
       actorRole: actor.role,
     });
 
-    return this.getPaymentById(paymentId);
+    /*
+      The request cancelled with the bill, so the page can say so: the manager
+      pressed «إلغاء الفاتورة», and a citizen's request ended with it (review of
+      PR #122). Null when the bill was no open request's fee.
+    */
+    return { ...(await this.getPaymentById(paymentId)), cancelledRequest };
   }
 
   /** Headline numbers for the admin fee screen. */

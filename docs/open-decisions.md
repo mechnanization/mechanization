@@ -960,11 +960,16 @@ decided; a later answer from the municipality overrides it and is recorded here 
      municipality's number («أبلغ عن الدفع», `POST fees/payments/mine/:id/declare`) stays: it
      needs no Whish API, and a clerk confirms it against the statement. Any citizen session can
      send it, the reference-only one included (§17.1). A municipality that does not want it leaves
-     its Whish Money number empty in الإعدادات.
+     its Whish Money number empty in الإعدادات. It is the only claim a citizen makes: the route takes
+     `WHISH_MONEY` with its reference and nothing else, and `FeesService.declare` refuses any other
+     method before any read (`PAYMENT_DECLARATION_WHISH_ONLY`, 2026-10-15). Cash was declarable through
+     the API after the portal stopped offering it, and a cash claim held the bill «قيد المراجعة».
    - **Before it ships.** Bills already moved to «قيد المراجعة» by the sandbox carry a
      `whishTransactionRef` beginning `WSH-`, which no Whish statement shows. A clerk rejects each
      in the review queue, so the citizen can pay at the counter. They were not counted: that needs
-     a query on staging and production.
+     a query on staging and production. The same goes for a bill a citizen declared paid in cash:
+     `paymentMethod` CASH with PENDING_REVIEW. A clerk rejects each, and the citizen pays at the
+     counter; not counted either.
    - **To reopen:** write `WhishGatewayService.postCheckout` against Whish's contract, declare
      `WHISH_*` in the backend's env schema (today in a deployed build a value set only in the `.env` file never reaches the gateway (`validate` copies into `process.env` only the keys `envSchema` returns); on a developer machine the locally generated Prisma client loads `apps/backend/.env` into `process.env` when it is required, so there it does; [gotchas.md](gotchas.md)),
      set them, decide §15, then set `ONLINE_PAYMENT_OPEN`. `isLive` is the two credentials and

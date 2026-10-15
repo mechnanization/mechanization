@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية الذكية)
 
-Last verified against the code: `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): «أمان الحساب» for every staff role, no new filing — card, flat or sale — on an archived file; an archived file takes no new fee on any path, 2026-10-15; and `bugs-fix` (on `develop@5e8f5c3`; the finance audit remediation: the manager cancels a bill, a salary is paid once a month under the manager's ceiling, a collector settles only into his own custody), 2026-10-12; collectors raise no bills on `fix/fees-page-ux` from `develop@5e8f5c3` (uncommitted), 2026-10-12; income and expenses on one page, «الإيرادات والنفقات», on the same branch (uncommitted), 2026-10-12; the same day, the register moved to «الحركات المالية» and «الإيرادات والنفقات» became the recording page (uncommitted); later that day «الحركات المالية» became a filter bar over a dated list, with each voucher in a side panel, and the recording page took the full width (uncommitted); municipal requests and certificates, online and at the counter, with migration `0092` (uncommitted), 2026-10-13; the product owner's decisions of the same day (online Whish payment paused, citizen sign-in by reference alone, no SMS or WhatsApp provider) (uncommitted).
+Last verified against the code: `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): «أمان الحساب» for every staff role, no new filing — card, flat or sale — on an archived file; an archived file takes no new fee on any path, 2026-10-15; and `bugs-fix` (on `develop@5e8f5c3`; the finance audit remediation: the manager cancels a bill, a salary is paid once a month under the manager's ceiling, a collector settles only into his own custody), 2026-10-12; collectors raise no bills on `fix/fees-page-ux` from `develop@5e8f5c3` (uncommitted), 2026-10-12; income and expenses on one page, «الإيرادات والنفقات», on the same branch (uncommitted), 2026-10-12; the same day, the register moved to «الحركات المالية» and «الإيرادات والنفقات» became the recording page (uncommitted); later that day «الحركات المالية» became a filter bar over a dated list, with each voucher in a side panel, and the recording page took the full width (uncommitted); municipal requests and certificates, online and at the counter, with migration `0092` (uncommitted), 2026-10-13; the product owner's decisions of the same day (online Whish payment paused, citizen sign-in by reference alone, no SMS or WhatsApp provider) (uncommitted); and, on `fix/fees-page-ux` rebased onto `chore/migration-0092@16473f0` (2026-10-13), the review of PR #122: a request cancelled with its bill (`cancelRequestOfCancelledBill`), a card or a flat a request names never deleted (`PROPERTY_NAMED_BY_REQUEST`, `HAS_REQUESTS`), request bills stamp `issuedById`, the API's log lines without query strings, and the isolation tests; and, on `fix/pr122-review` (2026-10-15), the review's blocker and majors: a bill cancellation names the request it cancels, and a citizen reports a Whish Money transfer only.
 
 A multi-tenant municipal platform for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastral map, municipal fee billing (رسوم القيمة التأجيرية
@@ -37,8 +37,9 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
     general request; attach a copy of their identity card and the papers that support it, pay
     the fee at the municipality (paying online is paused, below), follow it until it is ready, and
     collect it at the municipality with the original identity card. They see where it stands and why it was refused, never the papers back.
-  - Report a Whish Money transfer made in the Whish app. The report is a declaration
-    that stays pending until a clerk matches and confirms it.
+  - Report a Whish Money transfer made in the Whish app, with its reference. The report is a
+    declaration that stays pending until a clerk matches and confirms it. It is the only payment a
+    citizen reports: cash is paid at the office, and never declared.
   - Paying online through a Whish checkout is **paused** until Whish gives the municipality its
     API (the product owner's decision of 2026-10-13, [open-decisions.md §21](docs/open-decisions.md#21-online-payment-citizen-sign-in-and-notifications-decided-2026-10-13)): the portal
     offers no «ادفع عبر Whish», says online payment is paused, and shows where and how to pay, and
@@ -78,7 +79,9 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
   - An append-only audit log of staff actions.
   - **إلغاء الفاتورة** (manager only): withdraw a bill nothing has been paid on — a fee issued twice,
     a charge raised in error — with a reason. The bill stays on the citizen's file, marked cancelled,
-    and is no longer owed. A bill with money on it has its receipts reversed first.
+    and is no longer owed. A bill with money on it has its receipts reversed first. A municipal
+    request waiting on the bill is cancelled with it: the bill's page names the request, the
+    confirmation warns that it goes too, and the message after names it.
   - **تسديد الفواتير المحددة** (accountant and manager): tick several unpaid bills of one citizen —
     on «الرسوم» or on the citizen's file — and settle them in one act, in cash (ليرة and dollars at the
     municipality's rate, with the change worked out and checked against the safe), through a
@@ -305,7 +308,10 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
   paper certifies, or refuses it with a reason; a براءة ذمة is refused while the property's own
   bills owe anything. The paper prints under the letterhead with a QR code of the request
   number, and is handed over against the original identity card. A request is cancelled only
-  while it has no bill; a fee paid on a refused request is not returned on its own. Readers are
+  while it has no bill, or with its bill when the manager cancels that bill («إلغاء الفاتورة»),
+  which frees the citizen to file it again; a fee paid on a refused request is not returned on
+  its own. A property card or a flat a request names is never deleted from a file: the clerk ends
+  the ownership or the tenancy instead. Readers are
   the manager, the administrative officer, the accountant and the auditor — not «مشاهد فقط»,
   since the papers are identity copies — and every opening of a paper is in the activity log.
   No SMS or WhatsApp notice is sent: there is no provider for now, by the owner's decision of

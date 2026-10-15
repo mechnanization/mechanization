@@ -98,8 +98,8 @@ export function LandlordUnlinkDialog({
       } else if (result.kept.length > 0) {
         toast.warning(en ? 'Link undone — some records were kept' : 'أُلغي الربط — وبقيت بعض السجلات', {
           description: en
-            ? 'They were changed after the link, or another tenant’s link still uses them. Review the owner’s file.'
-            : 'عُدِّلت بعد الربط، أو يعتمد عليها ربط مستأجر آخر. راجع ملف المالك.',
+            ? 'They were changed after the link, a municipal request names them, or another tenant’s link still uses them. Review the owner’s file.'
+            : 'عُدِّلت بعد الربط، أو تذكرها معاملة بلدية، أو يعتمد عليها ربط مستأجر آخر. راجع ملف المالك.',
           duration: 10000,
         });
       } else {

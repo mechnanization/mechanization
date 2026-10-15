@@ -175,7 +175,7 @@ export function RequestSheet({
   const needsIdentity = request.channel === 'ONLINE' && !request.attachments.some((paper) => paper.type === 'IDENTITY');
   const footer = (
     <div className="flex flex-wrap items-center gap-2">
-      {request.status === 'AWAITING_PAYMENT' && !bill && canBill && request.fee > 0 && !needsIdentity ? (
+      {request.status === 'AWAITING_PAYMENT' && !bill && canBill && (request.fee ?? 0) > 0 && !needsIdentity ? (
         <Button type="button" onClick={() => void takeFee()} disabled={billing}>
           <ReceiptText className="size-4" aria-hidden />
           {billing ? t('billing') : t('takeFee')}
@@ -332,7 +332,13 @@ export function RequestSheet({
           </h3>
           <SummaryList>
             <SummaryRow label={t('amount')}>
-              {request.fee > 0 ? <Money amount={request.fee} locale={locale} exact /> : t('free')}
+              {request.fee === null ? (
+                '—'
+              ) : request.fee > 0 ? (
+                <Money amount={request.fee} locale={locale} exact />
+              ) : (
+                t('free')
+              )}
             </SummaryRow>
             {bill ? (
               <>
@@ -346,7 +352,8 @@ export function RequestSheet({
                   </SummaryRow>
                 ) : null}
               </>
-            ) : request.fee > 0 ? (
+            ) : (request.fee ?? 0) > 0 ? (
+              // Only while it waits for its fee: a fee is shown without a bill for nothing else.
               <SummaryRow label={t('billStatus')}>{t('noBillYet')}</SummaryRow>
             ) : null}
           </SummaryList>

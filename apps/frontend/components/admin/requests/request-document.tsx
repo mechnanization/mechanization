@@ -149,7 +149,8 @@ export function RequestDocument({
             ) : null}
           </DocumentRow>
         </SummaryList>
-      ) : request.fee === 0 ? (
+      ) : (request.fee ?? 0) === 0 ? (
+        // No bill, and none to come (null) or none owed (0): it was given without a fee.
         <p className="text-xs text-muted-foreground">{t('free')}</p>
       ) : null}
 

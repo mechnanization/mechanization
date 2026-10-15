@@ -129,7 +129,7 @@ export default function MyRequestPage({
   const canPay =
     ONLINE_PAYMENT_OPEN &&
     request?.status === 'AWAITING_PAYMENT' &&
-    request.fee > 0 &&
+    (request.fee ?? 0) > 0 &&
     !request.needsIdentityCopy &&
     request.bill?.paymentStatus !== 'PENDING_REVIEW';
   /** «إلغاء الطلب», while no bill has been raised (D10). */
@@ -236,7 +236,13 @@ export default function MyRequestPage({
                 <SummaryRow label={t('channel')}>{labels.requestChannel[request.channel]}</SummaryRow>
                 <SummaryRow label={t('filed')}>{formatDate(request.createdAt)}</SummaryRow>
                 <SummaryRow label={t('fee')}>
-                  {request.fee > 0 ? <Money amount={request.fee} locale={locale} exact /> : t('free')}
+                  {request.fee === null ? (
+                    '—'
+                  ) : request.fee > 0 ? (
+                    <Money amount={request.fee} locale={locale} exact />
+                  ) : (
+                    t('free')
+                  )}
                 </SummaryRow>
                 {request.bill ? (
                   <SummaryRow label={t('billStatus')}>

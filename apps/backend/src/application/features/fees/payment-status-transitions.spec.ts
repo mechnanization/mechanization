@@ -1,3 +1,4 @@
+import { declarePaymentSchema } from '@mechanization/shared-schemas';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { WhishGateway } from '../../../domain/interfaces/whish-gateway.interface';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
@@ -115,7 +116,38 @@ function build(row: Row | null, { updatedCount = 1, isLive = true }: { updatedCo
 }
 
 describe('declare', () => {
-  const input = { paymentId: 'payment-1', citizenId: 'citizen-1', method: 'WHISH_MONEY' as const };
+  const input = {
+    paymentId: 'payment-1',
+    citizenId: 'citizen-1',
+    method: 'WHISH_MONEY' as const,
+    whishTransactionRef: ' 7731552 ',
+  };
+
+  it('records a Whish Money report with its reference, trimmed', async () => {
+    const { service, updateMany } = build(INVOICE);
+
+    await expect(service.declare(input)).resolves.toEqual({ paymentStatus: 'PENDING_REVIEW' });
+    expect(updateMany.mock.calls[0][0].data).toMatchObject({
+      paymentMethod: 'WHISH_MONEY',
+      whishTransactionRef: '7731552',
+    });
+  });
+
+  it('refuses a cash declaration, or a Whish report with no reference, before reading the bill (open-decisions §21)', async () => {
+    // A portal tab loaded before the change, or any caller past the route's schema.
+    for (const claim of [
+      { ...input, method: 'CASH' as never },
+      { ...input, method: 'COLLECTOR' as never },
+      { ...input, whishTransactionRef: '   ' },
+      { ...input, whishTransactionRef: undefined as never },
+    ]) {
+      const { service, prisma, updateMany, recordInTransaction } = build(INVOICE);
+      await expect(service.declare(claim)).rejects.toMatchObject({ code: 'PAYMENT_DECLARATION_WHISH_ONLY' });
+      expect((prisma.citizenPayment as { findFirst: jest.Mock }).findFirst).not.toHaveBeenCalled();
+      expect(updateMany).not.toHaveBeenCalled();
+      expect(recordInTransaction).not.toHaveBeenCalled();
+    }
+  });
 
   it('carries the status and the owner into the predicate', async () => {
     const { service, updateMany } = build(INVOICE);
@@ -177,6 +209,24 @@ describe('declare', () => {
 
     await expect(service.declare(input)).rejects.toMatchObject({ code: 'PAYMENT_ALREADY_PAID' });
     expect(updateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('declarePaymentSchema', () => {
+  it('takes a Whish Money transfer with its reference, and nothing else', () => {
+    expect(declarePaymentSchema.parse({ method: 'WHISH_MONEY', whishTransactionRef: ' 7731552 ' })).toEqual({
+      method: 'WHISH_MONEY',
+      whishTransactionRef: '7731552',
+    });
+    for (const body of [
+      { method: 'CASH' },
+      { method: 'CASH', whishTransactionRef: '7731552' },
+      { method: 'COLLECTOR', whishTransactionRef: '7731552' },
+      { method: 'WHISH_MONEY' },
+      { method: 'WHISH_MONEY', whishTransactionRef: ' 1 ' },
+    ]) {
+      expect(declarePaymentSchema.safeParse(body).success).toBe(false);
+    }
   });
 });
 

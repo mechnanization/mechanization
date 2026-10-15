@@ -1,7 +1,7 @@
 # Municipal requests and certificates — implementation plan
 ## منظومة المعاملات والإفادات البلدية
 
-> **Status: Phases 1–4 built, uncommitted, on `fix/fees-page-ux`, 2026-10-13** — the
+> **Status: Phases 1–4 built, on `fix/fees-page-ux` (PR #122), rebased on the stack and reviewed, 2026-10-13; the review's blocker and majors fixed on `fix/pr122-review`, 2026-10-15** — the
 > migration (`0092_citizen_requests`), the backend, the staff screens and the portal, with
 > every Phase 0 decision taken as recorded in
 > [open-decisions.md §20](open-decisions.md#20-municipal-requests-and-certificates-decided-2026-10-12-and-2026-10-13).
@@ -248,13 +248,18 @@ name is not kept: it can hold a name or an ID number.
 
 | From | To | Who | How |
 |---|---|---|---|
-| (new) | `AWAITING_PAYMENT` | the citizen online, or staff at the counter (D8) | `submit`: one transaction draws «REQ-», writes the request and its bill. At the counter the clerk can take the fee in the same visit through the ordinary counter settlement (`settleInPerson`); the request then moves on through the payment hook like any other. |
-| `AWAITING_PAYMENT` | `IN_REVIEW` | the system | The bill reaches `PAID` (see Phase 2, the payment hook). `PENDING_REVIEW` and a part payment do not count. |
-| `AWAITING_PAYMENT` | `CANCELLED` / `EXPIRED` | the citizen or staff / a job | Per D10; the open bill is cancelled with it. |
-| `IN_REVIEW` | `READY_FOR_PICKUP` | staff (**Proposal:** `REQUEST_HANDLE_ROLES`) | The paper is printed; for a براءة ذمة the dues are judged now (D3). |
+| (new) | `AWAITING_PAYMENT`, or `IN_REVIEW` for a free type | the citizen online, or staff at the counter (D8) | `submit`: one transaction draws «REQ-» and writes the request. The fee's bill is raised later, when the citizen goes to pay (`raiseBill`, D10). |
+| `AWAITING_PAYMENT` | `IN_REVIEW` | the system | Its bill reaches `PAID` (Phase 2, the payment hook; `PENDING_REVIEW` and a part payment do not count), or its type is made free before it is billed (`REQUEST_FEE_WAIVED`). |
+| `AWAITING_PAYMENT` | `CANCELLED` | the citizen or staff; the manager | While it has no bill (`cancel`). With one, only when that bill is cancelled: by the manager («إلغاء الفاتورة», `cancelRequestOfCancelledBill`, decision of 2026-10-13), or by the system on the next read (`reconcile`) for a request that press did not reach. Nothing expires. |
+| `AWAITING_PAYMENT` | `REJECTED` | staff | With a reason, while it has no bill (`REQUEST_BILL_OPEN` otherwise). |
+| `IN_REVIEW` | `READY_FOR_PICKUP` | staff (`REQUEST_HANDLE_ROLES`) | The paper is written; for a براءة ذمة the dues are judged now (D3). |
 | `IN_REVIEW` | `REJECTED` | staff | With a reason; what happens to the fee is D5. |
+| `IN_REVIEW` | `AWAITING_PAYMENT` | the system | The payment was reversed (`payment.reversed`); only a billed request. If the reversal's event was lost and the bill is then cancelled, this step is taken late, with its own row, and the request is cancelled straight after: there is no `IN_REVIEW` → `CANCELLED` step. |
 | `READY_FOR_PICKUP` | `COMPLETED` | staff | At the counter, against the original identity card. |
-| `IN_REVIEW` | `AWAITING_PAYMENT` | the system | The payment was reversed (`payment.reversed`). |
+
+These are the only transitions the database accepts: `0094_citizen_request_guard` refuses any
+other, any change once `COMPLETED`, `REJECTED` or `CANCELLED` (but the file a merge moves it to),
+each step's stamps written by another step, and any DELETE.
 
 Every transition writes a Tier 1 audit row in the same transaction
 ([security.md](security.md): an audit row that cannot be written undoes the
@@ -436,16 +441,21 @@ what was skipped.
 
 ## 7. What was built (2026-10-13)
 
-Uncommitted on `fix/fees-page-ux`. **Ship order:** `0092_citizen_requests` and the tenant
-`schema.prisma` models go first, alone, in `chore/migration-0092` (PR #121, opened 2026-10-13),
-merged to `develop` before the rest (non-negotiable 5); the code follows in its own PR.
+On `fix/fees-page-ux` (PR #122). **Ship order:** one stack since 2026-10-13, merged in order —
+#119 (`0090`, `0091`, `0093`), #120 (the finance audit remediation: «إلغاء الفاتورة» among it),
+#121 (`0092_citizen_requests` and its review's `0094_citizen_request_guard`, with the tenant
+`schema.prisma` models, in `chore/migration-0092`), then this code (non-negotiable 5: each
+migration ahead of the code that needs it).
 
 - **Migration `0092_citizen_requests`** (tenant): the enums `RequestType`, `ApplicantCapacity`,
   `RequestStatus`, `RequestChannel`, `RequestAttachmentType`; the tables
   `request_type_settings` (the manager's list, D1), `citizen_requests` (one CHECK per
-  status stamp, a counter request names its clerk, cancelled only without a bill) and
-  `citizen_request_attachments`; the partial unique `citizen_requests_one_open_key` (one
-  open request per citizen, type and card, D10). Applied with `pnpm db:deploy:local`.
+  status stamp, a counter request names its clerk) and `citizen_request_attachments`; the
+  partial unique `citizen_requests_one_open_key` (one open request per citizen, type and
+  card, D10). Its review added `0094_citizen_request_guard`: the request's life held in the
+  database (the transitions of §3.4, stamps written once, no DELETE), and a request
+  cancelled with a bill only once that bill is cancelled, in place of 0092's CHECK that a
+  cancelled request has none. Both applied with `pnpm db:deploy:local`.
 - **Shared** (`packages/shared-schemas`): `citizen-request.schema.ts` (inputs and views),
   the enums and labels, `REQUEST_*_ROLES`, the error codes, the «REQ-» book.
 - **Backend:** `application/features/citizen-requests/citizen-requests.service.ts` and
@@ -454,11 +464,14 @@ merged to `develop` before the rest (non-negotiable 5); the code follows in its 
   papers through `REQUEST_FILE_STORAGE` (S3, sniffed with `sniffAttachment`); the request
   follows its bill on `payment.reviewed` and `payment.reversed`, and is reconciled again
   on every read — which also sends an unbilled request to review once its type is made free
-  (D1: the fee in force when the bill is raised); «دمج ملفين» moves a person's requests with them. Rules in
+  (D1: the fee in force when the bill is raised); a bill the manager cancels cancels its waiting
+  request in the same transaction (`FeesService.cancelBill` → `cancelRequestOfCancelledBill`,
+  decision of 2026-10-13, `0094`), and `reconcile` cancels any request still open on a cancelled bill — one a lost reversal left in review as well, which once went back to waiting on a bill nobody could pay; a request shows a fee only while it waits for its bill (the type's current fee), and `null` once it will never be billed; «دمج ملفين» moves a person's requests with them; a card or a
+  flat a request names is never deleted (`PROPERTY_NAMED_BY_REQUEST`, `HAS_REQUESTS`). Rules in
   [apps/backend/CLAUDE.md](../apps/backend/CLAUDE.md) and [security.md](security.md).
 - **Staff screens:** `requests` (the queue and the request's panel), `requests/new` (the
   counter), `requests/types` (the list and its fees), `requests/[requestId]/print` (the
-  paper). **Portal:** «طلباتي» on `my-file`, `my-file/requests/new` (the wizard),
+  paper); a request with no fee to come shows «—» in the queue, the panel and the portal. **Portal:** «طلباتي» on `my-file`, `my-file/requests/new` (the wizard),
   `my-file/requests/[requestId]`. Rules in [apps/frontend/CLAUDE.md](../apps/frontend/CLAUDE.md).
 - **Verified:** the backend's unit and integration suites (the request lifecycle, the
   payment hook, the race on one open request, a retry key edited after a lost answer, a type

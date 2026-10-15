@@ -152,6 +152,21 @@ function readFlags(value: unknown): FieldFlag[] {
 }
 
 /**
+ * A save that would delete a card or a flat a municipal request names (0092's
+ * RESTRICT keys keep them: a certificate is about that property). Named by the
+ * requests' «REQ-» numbers, never by their free text.
+ */
+function propertyNamedByRequest(named: Array<{ requestNumber: string; propertyEntryId: string | null }>): ConflictError {
+  const numbers = [...new Set(named.map((request) => request.requestNumber))];
+  return new ConflictError({
+    code: 'PROPERTY_NAMED_BY_REQUEST',
+    message: 'A municipal request names a card or a flat this save removes; end the ownership or the tenancy instead.',
+    params: { requests: numbers.join('، '), count: numbers.length },
+    details: { propertyIds: [...new Set(named.map((request) => request.propertyEntryId).filter(Boolean))] },
+  });
+}
+
+/**
  * One row of the staff citizens registry.
  *
  * Deliberately flat and pre-aggregated: this is what a table renders, so the
@@ -2229,6 +2244,23 @@ export class CitizensService {
       });
     }
 
+    /*
+      A card a municipal request names (0092): the certificate is about that
+      card, and the request's key keeps it (RESTRICT), so deleting it would fail
+      the whole save as a 500. The officer is told before anything is written,
+      and pointed to «إنهاء الملكية» / «إنهاء الإيجار», which end a card rather
+      than delete it (decision of 2026-10-13). A flat a request names is held
+      the same way, below, where the save works out which flats it drops.
+    */
+    if (removedIds.length > 0) {
+      const named = await this.db.citizenRequest.findMany({
+        where: { propertyEntryId: { in: removedIds } },
+        select: { requestNumber: true, propertyEntryId: true },
+        orderBy: { createdAt: 'asc' },
+      });
+      if (named.length > 0) throw propertyNamedByRequest(named);
+    }
+
     const endings = await this.removalEndings(removals, removedCards);
 
     /** What undoing links during this save wrote, emitted once it commits. */
@@ -2573,6 +2605,17 @@ export class CitizensService {
             : Date.now() - lines.length;
           const order = (position: number, isNew: boolean) =>
             inStoredOrder && !isNew ? {} : { createdAt: new Date(base + position) };
+
+          // A flat this save drops that a municipal request names is refused, as a card is above.
+          const dropped = stored.filter((row) => !row.endedAt && !kept.has(row.id)).map((row) => row.id);
+          if (dropped.length > 0) {
+            const named = await tx.citizenRequest.findMany({
+              where: { buildingUnitId: { in: dropped } },
+              select: { requestNumber: true, propertyEntryId: true },
+              orderBy: { createdAt: 'asc' },
+            });
+            if (named.length > 0) throw propertyNamedByRequest(named);
+          }
 
           await tx.propertyEntry.update({
             where: { id },

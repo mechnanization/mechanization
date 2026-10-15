@@ -195,7 +195,10 @@ export default function RequestsPage({
         id: 'fee',
         header: t('columns.fee'),
         cell: ({ row }) =>
-          row.original.fee > 0 ? (
+          // Null: never billed and never will be (closed, or past review without a fee).
+          row.original.fee === null ? (
+            <CellTag tone="muted">—</CellTag>
+          ) : row.original.fee > 0 ? (
             <div className="space-y-0.5">
               <Money amount={row.original.fee} locale={locale} className="text-sm" />
               <CellTag

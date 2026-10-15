@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `fix/pr116-review` (PR #116 merged with `fix/pr115-review`, which stacks #123, #124 and #115 on `develop@5e8f5c3`, with its review fixes): Escape inside a dialog, Tailwind 4 class names on 3.4; digit-normalised cadastre lookups, Latin digits on write, what still compares as stored; a window count on an empty page, 2026-10-15; the previous build and a new enum value against `chore/migration-0090-0091` (on `develop@5e8f5c3`), 2026-10-13, rebased onto `develop@3211140`, 2026-10-15; the Prisma `now()` clock trap in invoice numbering against `fix/finance-audit-remediation` (on `develop@5e8f5c3`), 2026-10-12; JavaScript and Postgres on `trim` and lower case against `fix/finance-audit-remediation` (rebased on `chore/migration-0090-0091@8d386b5`), 2026-10-13; a new RESTRICT key and an existing delete (0092) against `chore/migration-0092` rebased on `fix/finance-audit-remediation@9f7b12b`, 2026-10-13; the CRLF working tree and Enter inside a nested editor added on `fix/fees-page-ux` (uncommitted), 2026-10-12; a Radix dialog with no trigger losing the focus on close, the same day; a `replaceState` made while a page mounts, found on the request wizard (uncommitted), 2026-10-13; the reference-only sign-in recorded as the decided one, and an undeclared env var set only in `.env` never reaching the code of a deployed build (verified in `@nestjs/config`; a locally generated Prisma client loads the file itself), the same day.
+Last verified against the code: `fix/pr116-review` (PR #116 merged with `fix/pr115-review`, which stacks #123, #124 and #115 on `develop@5e8f5c3`, with its review fixes): Escape inside a dialog, Tailwind 4 class names on 3.4; digit-normalised cadastre lookups, Latin digits on write, what still compares as stored; a window count on an empty page, 2026-10-15; the previous build and a new enum value against `chore/migration-0090-0091` (on `develop@5e8f5c3`), 2026-10-13, rebased onto `develop@3211140`, 2026-10-15; the Prisma `now()` clock trap in invoice numbering against `fix/finance-audit-remediation` (on `develop@5e8f5c3`), 2026-10-12; JavaScript and Postgres on `trim` and lower case against `fix/finance-audit-remediation` (rebased on `chore/migration-0090-0091@8d386b5`), 2026-10-13; a new RESTRICT key and an existing delete (0092) against `chore/migration-0092` rebased on `fix/finance-audit-remediation@9f7b12b`, 2026-10-13; the CRLF working tree and Enter inside a nested editor added on `fix/fees-page-ux` (uncommitted), 2026-10-12; a Radix dialog with no trigger losing the focus on close, the same day; a `replaceState` made while a page mounts, found on the request wizard (uncommitted), 2026-10-13; the reference-only sign-in recorded as the decided one, and an undeclared env var set only in `.env` never reaching the code of a deployed build (verified in `@nestjs/config`; a locally generated Prisma client loads the file itself), the same day; and, on `fix/fees-page-ux` rebased onto `chore/migration-0092@16473f0` (2026-10-13), the review of PR #122: a request cancelled with its bill (`cancelRequestOfCancelledBill`), a card or a flat a request names never deleted (`PROPERTY_NAMED_BY_REQUEST`, `HAS_REQUESTS`), request bills stamp `issuedById`, the API's log lines without query strings, and the isolation tests; and, on `fix/pr122-review` (2026-10-15), the review's blocker and majors: `ParcelDuesService.dues` normalising its own argument, a request on a cancelled bill cancelled by `reconcile` too (an IN_REVIEW one through AWAITING_PAYMENT), and a request's `fee` null once it will never be billed.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -437,8 +437,9 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   `removeMintedCard`) delete such rows.
 - **Do this:** before adding a RESTRICT key, grep for every `delete`/`deleteMany` of the referenced
   table and its cascades. Each one must refuse first, with a coded error in both locales (as
-  `OWNER_HAS_LINKED_TENANTS_ON_SAVE` does), or keep the row. For `0092` that is PR #122's (decision of
-  2026-10-13: refuse, and point to «إنهاء الملكية»).
+  `OWNER_HAS_LINKED_TENANTS_ON_SAVE` does), or keep the row. For `0092` (decision of 2026-10-13): the
+  save refuses with `PROPERTY_NAMED_BY_REQUEST` and points to «إنهاء الملكية» / «إنهاء الإيجار», and
+  the landlord-link undo keeps the row or card and reports `HAS_REQUESTS`.
 - **Where:** `0092_citizen_requests`; probed on Postgres 17 in the review of PR #121, 2026-10-13.
 
 ### A Prisma `DateTime` with no `@db` attribute may be a `TIMESTAMPTZ` column
@@ -1427,9 +1428,13 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **Why:** `propertyNumber` was stored as typed until 2026-10-14, and the fee
   lines copy it; so is a cadastre label (`parcels.parcelNumber`). The query is
   normalised to Latin digits (`parcelDuesQuerySchema`), the older rows are not.
+  And a caller inside the API skips that schema: a براءة ذمة's `approve` passed
+  the card's own «٤٢٠», matched nothing, and certified a parcel that owed (review
+  of PR #122). Since 2026-10-15 `dues()` normalises its argument itself.
   New writes are saved in Latin digits (`propertyNumberField`, docs/database.md),
   which closes it for new data only.
-- **Do this:** compare digit-normalised values on both sides — `normalizeDigits`
+- **Do this:** compare digit-normalised values on both sides, normalised in the
+  function that compares rather than trusted to each caller — `normalizeDigits`
   in TypeScript, `translate(btrim(x), ${EASTERN_DIGITS}, ${LATIN_DIGITS})` in
   SQL, both constants bound from `@mechanization/shared-schemas`. A map keyed
   by a رقم العقار is keyed by `parcelNumberKey`

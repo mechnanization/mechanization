@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Banknote, Building2, Clock, Loader2, MapPin, Smartphone } from 'lucide-react';
+import type { DeclarePayment } from '@mechanization/shared-schemas';
 import type { CitizenPaymentItem, MunicipalitySettings } from '@/lib/api-client';
 import { Alert } from '@/components/ui/alert';
 import { isPartlyPaid, partlyPaidFigures } from '@/lib/citizen-payments';
@@ -44,7 +45,8 @@ export function PayDialog({
   submitting: boolean;
   error: string | null;
   onOpenChange: (open: boolean) => void;
-  onDeclare: (input: { method: string; whishTransactionRef?: string }) => void;
+  /** A Whish Money report only: cash is an instruction, never declared (open-decisions §21). */
+  onDeclare: (input: DeclarePayment) => void;
   locale?: string;
 }) {
   const tCitizen = useTranslations('citizen');
@@ -218,7 +220,7 @@ export function PayDialog({
               </Button>
               <Button
                 disabled={!canSubmit}
-                onClick={() => onDeclare({ method, whishTransactionRef: reference.trim() })}
+                onClick={() => onDeclare({ method: 'WHISH_MONEY', whishTransactionRef: reference.trim() })}
               >
                 {submitting ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
                 {locale === 'en' ? 'Declare Payment' : 'أبلغ عن الدفع'}

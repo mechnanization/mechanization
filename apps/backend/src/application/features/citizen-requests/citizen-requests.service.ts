@@ -43,6 +43,7 @@ import { assertNotMergedAway } from '../citizens/merged-away';
 import { raiseOneOffBill } from '../fees/one-off-bill';
 import { ParcelDuesService } from '../fees/parcel-dues.service';
 import { isUniqueViolationOn } from '../treasury/retry-key';
+import { cancelRequestOfCancelledBill } from './cancelled-bill';
 
 /** Who is acting: a citizen through the portal, or a member of staff. */
 export type RequestActor = { kind: 'CITIZEN'; id: string } | { kind: 'STAFF'; id: string; role: string };
@@ -128,9 +129,11 @@ type RequestRow = Prisma.CitizenRequestGetPayload<{ select: typeof REQUEST_SELEC
  *
  * The amount is the manager's, from `request_type_settings` (D1). The bill is
  * raised when the citizen goes to pay (`raiseBill`), not when the request is
- * filed (D10): nothing on this branch can cancel a bill, so a request abandoned
- * before payment leaves no open debt behind. A free type has no bill and starts
- * in review.
+ * filed (D10), so a request abandoned before payment leaves no open debt behind.
+ * A free type has no bill and starts in review. A bill the manager cancels
+ * («إلغاء الفاتورة», finance audit B3) cancels the request waiting on it, in the
+ * same transaction (`cancelRequestOfCancelledBill`, decision of 2026-10-13; the
+ * database allows it since 0094), and `reconcile` cancels any request it missed.
  *
  * ## Paid is the bill's word
  *
@@ -140,7 +143,8 @@ type RequestRow = Prisma.CitizenRequestGetPayload<{ select: typeof REQUEST_SELEC
  * listens and re-reads the bill (`reconcile`), because those events also fire
  * for part payments and refusals. A listener's failure is swallowed by the event
  * emitter, so every read of the queue or of a request reconciles again first:
- * a lost event costs a moment, never a request stuck behind a paid bill.
+ * a lost event costs a moment, never a request stuck behind a paid bill or a
+ * cancelled one.
  *
  * ## The papers
  *
@@ -483,7 +487,7 @@ export class CitizenRequestsService {
         citizenId: row.citizenId,
         citizenName: citizenDisplayName(row.citizen),
         propertyNumber: row.propertyEntry?.propertyNumber ?? null,
-        fee: row.citizenPayment ? Number(row.citizenPayment.amount) : (fees.get(row.requestType as RequestType) ?? 0),
+        fee: feeShown(row, fees.get(row.requestType as RequestType)),
         billStatus: row.citizenPayment ? billStatus(row.citizenPayment) : null,
         attachmentCount: row._count.attachments,
         createdAt: row.createdAt.toISOString(),
@@ -496,9 +500,10 @@ export class CitizenRequestsService {
     await this.reconcile({ requestIds: [id] });
     const row = await this.db.citizenRequest.findUnique({ where: { id }, select: REQUEST_SELECT });
     if (!row) throw new NotFoundError({ code: 'REQUEST_NOT_FOUND', message: `Request ${id} was not found` });
-    // Before a bill exists, the fee is the type's current one: what the bill will be when raised.
-    const fee = row.citizenPayment ? Number(row.citizenPayment.amount) : await this.currentFee(row.requestType as RequestType);
-    return this.staffView(row, fee);
+    // The type's current fee is read only for a request still waiting to be billed (`feeShown`).
+    const awaitingBill = !row.citizenPayment && row.status === 'AWAITING_PAYMENT';
+    const currentFee = awaitingBill ? await this.currentFee(row.requestType as RequestType) : undefined;
+    return this.staffView(row, feeShown(row, currentFee));
   }
 
   /** «طلباتي». */
@@ -677,6 +682,13 @@ export class CitizenRequestsService {
    * whose type the manager has since made free. The fee is the one in force when
    * the bill is raised (D1), so there is nothing left to pay, and it goes to review
    * — without this it could be neither billed (`REQUEST_FREE_NO_BILL`) nor approved.
+   *
+   * And a bill that is CANCELLED cancels its request, as «إلغاء الفاتورة» does
+   * (`cancelRequestOfCancelledBill`, a SYSTEM row). That press reaches it in the
+   * same transaction; this catches a request it could not, and heals any left
+   * AWAITING_PAYMENT on a cancelled bill before that step existed. CANCELLED is
+   * kept out of the "not paid" move: it took such a request back to
+   * AWAITING_PAYMENT on a bill nobody can pay (review of PR #122).
    */
   async reconcile(filter: { requestIds?: string[]; citizenId?: string } = {}): Promise<void> {
     const S = this.S;
@@ -684,12 +696,14 @@ export class CitizenRequestsService {
     const byCitizen = filter.citizenId ? Prisma.sql`AND r."citizenId" = ${filter.citizenId}::uuid` : Prisma.empty;
     // `FOR UPDATE OF r` locks the request alone, the preserved side of both outer joins.
     const moved = (lock: boolean) => Prisma.sql`
-      SELECT r."id", r."requestNumber", r."status"::text AS "status", b."paymentStatus"::text AS "paymentStatus"
+      SELECT r."id", r."requestNumber", r."status"::text AS "status", r."citizenPaymentId",
+             b."paymentStatus"::text AS "paymentStatus"
       FROM ${S}citizen_requests r
       LEFT JOIN ${S}citizen_payments b ON b."id" = r."citizenPaymentId"
       LEFT JOIN ${S}request_type_settings t ON t."requestType" = r."requestType"
       WHERE ((r."status" = 'AWAITING_PAYMENT' AND b."paymentStatus" = 'PAID')
-          OR (r."status" = 'IN_REVIEW' AND b."paymentStatus" <> 'PAID')
+          OR (r."status" = 'IN_REVIEW' AND b."paymentStatus" NOT IN ('PAID', 'CANCELLED'))
+          OR (r."status" IN ('AWAITING_PAYMENT', 'IN_REVIEW') AND b."paymentStatus" = 'CANCELLED')
           OR (r."status" = 'AWAITING_PAYMENT' AND r."citizenPaymentId" IS NULL AND t."feeAmount" = 0))
       ${byIds} ${byCitizen}
       ${lock ? Prisma.sql`FOR UPDATE OF r` : Prisma.empty}`;
@@ -699,9 +713,19 @@ export class CitizenRequestsService {
     await runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
       const rows = await tx.$queryRaw<
-        Array<{ id: string; requestNumber: string; status: string; paymentStatus: string | null }>
+        Array<{
+          id: string;
+          requestNumber: string;
+          status: string;
+          citizenPaymentId: string | null;
+          paymentStatus: string | null;
+        }>
       >(moved(true));
       for (const row of rows) {
+        if (row.paymentStatus === 'CANCELLED' && row.citizenPaymentId) {
+          await cancelRequestOfCancelledBill(tx, this.audit, { billId: row.citizenPaymentId, actor: null });
+          continue;
+        }
         if (row.paymentStatus === null) {
           // No bill, and the type is free now: nothing to pay, so no `paidAt` either.
           await tx.citizenRequest.update({ where: { id: row.id }, data: { status: 'IN_REVIEW' } });
@@ -1042,7 +1066,7 @@ export class CitizenRequestsService {
       : { actorId: actor.id, actorType: 'CITIZEN' };
   }
 
-  private staffView(row: RequestRow, fee: number): CitizenRequestView {
+  private staffView(row: RequestRow, fee: number | null): CitizenRequestView {
     return {
       id: row.id,
       requestNumber: row.requestNumber,
@@ -1085,7 +1109,7 @@ export class CitizenRequestsService {
       requestType: type,
       applicantCapacity: row.applicantCapacity,
       property: propertyView(row),
-      fee: row.citizenPayment ? Number(row.citizenPayment.amount) : (fees.get(type) ?? 0),
+      fee: feeShown(row, fees.get(type)),
       bill: billView(row),
       purpose: row.purpose,
       rejectionReason: row.rejectionReason,
@@ -1115,6 +1139,21 @@ function dueDate(): Date {
   const due = new Date(`${municipalToday()}T00:00:00.000Z`);
   due.setUTCDate(due.getUTCDate() + BILL_DUE_DAYS);
   return due;
+}
+
+/**
+ * The fee a request shows: its bill's amount once raised. Before that, the
+ * type's current fee — what the bill will be (D1) — but only while the request
+ * waits for it. Past AWAITING_PAYMENT with no bill, the request was never billed
+ * and never will be (free, waived, cancelled or rejected first): null, not
+ * today's fee for a bill that cannot come (review of PR #122).
+ */
+function feeShown(
+  row: { status: string; citizenPayment: { amount: unknown } | null },
+  currentFee: number | undefined,
+): number | null {
+  if (row.citizenPayment) return Number(row.citizenPayment.amount);
+  return row.status === 'AWAITING_PAYMENT' ? (currentFee ?? 0) : null;
 }
 
 function billStatus(bill: { paymentStatus: string; dueDate: Date }): RequestBillView['paymentStatus'] {

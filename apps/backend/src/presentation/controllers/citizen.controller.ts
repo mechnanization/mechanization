@@ -300,6 +300,7 @@ export class CitizenController {
             ownerBilling: portalOwnerBilling(ownerBilling),
           })),
         })),
+      // Each bill's `request` (0092) is the citizen's own: its number, type and status, as «طلباتي» shows them.
       payments: citizen.payments,
       fees: citizen.fees,
     };

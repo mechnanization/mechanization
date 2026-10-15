@@ -2301,6 +2301,12 @@ export class LandlordLinkService {
           keptRowCards.add(unit.row.propertyEntryId);
           continue;
         }
+        // A flat a municipal request names stays: the certificate is about it (0092, decision of 2026-10-13).
+        if (pristine && (await client.citizenRequest.count({ where: { buildingUnitId: pristine.id } })) > 0) {
+          report.kept.push({ unitCode: unit.unitCode, reason: 'HAS_REQUESTS' });
+          keptRowCards.add(unit.row.propertyEntryId);
+          continue;
+        }
         if (pristine) {
           await client.buildingUnit.delete({ where: { id: pristine.id } });
           report.rowsRemoved += 1;
@@ -2446,6 +2452,11 @@ export class LandlordLinkService {
       }
       if (!sameCard(cardSnapshot(card), mint.snapshot)) {
         report.kept.push({ unitCode: null, reason: 'EDITED', propertyEntryId: card.id });
+        continue;
+      }
+      // The owner filed a municipal request on the card the link minted: it stays with the request.
+      if ((await client.citizenRequest.count({ where: { propertyEntryId: card.id } })) > 0) {
+        report.kept.push({ unitCode: null, reason: 'HAS_REQUESTS', propertyEntryId: card.id });
         continue;
       }
 
@@ -3561,7 +3572,7 @@ export interface RevertReport {
   /** What was deliberately left standing, and why. */
   kept: Array<{
     unitCode: string | null;
-    reason: 'EDITED' | 'SHARED' | 'OWNER_FILE_CLAIMS' | 'HAS_DOCUMENTS' | 'FLAGGED';
+    reason: 'EDITED' | 'SHARED' | 'OWNER_FILE_CLAIMS' | 'HAS_DOCUMENTS' | 'HAS_REQUESTS' | 'FLAGGED';
     propertyEntryId?: string;
   }>;
 }

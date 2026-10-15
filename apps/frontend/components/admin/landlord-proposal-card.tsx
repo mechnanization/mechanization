@@ -967,8 +967,8 @@ export function useLandlordResolutions({
           if (result.kept.length > 0) {
             toast.warning(en ? 'Link undone — some records were kept' : 'أُلغي الربط — وبقيت بعض السجلات', {
               description: en
-                ? 'Somebody changed them after the link. Review the owner’s file.'
-                : 'عُدِّلت بعد الربط فلم تُحذف. راجع ملف المالك.',
+                ? 'They were changed after the link, or a municipal request names them. Review the owner’s file.'
+                : 'عُدِّلت بعد الربط أو تذكرها معاملة بلدية فلم تُحذف. راجع ملف المالك.',
             });
           }
         } else {

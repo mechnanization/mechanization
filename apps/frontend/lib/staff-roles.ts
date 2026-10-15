@@ -76,9 +76,9 @@ export const PAYMENT_SETTLE_ROLES: readonly string[] = FEE_SETTLE_ROLES;
  * a collector records the cash he takes as his own collection, or a Whish
  * transfer, and the server refuses him `CASH` (`COLLECTOR_CANNOT_SELECT_METHOD`,
  * finance audit B1, decision D13). That rule lives in `FeesService.settleInPerson`, not
- * in a `@Roles` — the route is `FEE_ISSUE_ROLES` — so there is no shared set to
- * take; this mirrors it. A collector is sent to the counter settle page, which
- * offers him those two methods.
+ * in a `@Roles` — the route is `FEE_SETTLE_ROLES`, the collector included — so there
+ * is no shared set to take; this mirrors it. A collector is sent to the counter
+ * settle page, which offers him those two methods.
  */
 export const CASH_COUNTER_ROLES: readonly string[] = [
   'SUPER_ADMIN',

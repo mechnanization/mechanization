@@ -1572,6 +1572,9 @@ already closed A5 and A6), and the owner's decisions D10–D12. Each item is pin
   and the dossier's `feesTotal`) leave it out, so billed stays collected plus outstanding (decision
   of 2026-10-13). Every owed filter names it (`NOT IN ('PAID', 'CANCELLED')`, `!== 'CANCELLED'`)
   rather than leaning on its `remaining` of 0, and no screen offers a cancelled bill a payment.
+  A municipal request still open on the bill is cancelled in the same transaction
+  (`cancelRequestOfCancelledBill`, 0094), and the answer names it (`cancelledRequest`) so the page
+  can; the bill's page warns before the press (review of PR #122, 2026-10-15).
 - **Who raised a bill (B4).** `citizen_payments.issuedById` (0091) on every bill raised since: the
   notice's issuer, the clerk of a one-off charge, whoever pressed a recurring run (NULL for the
   scheduled one). A one-off charge is Tier 1 (`FEE_INDIVIDUAL_LEVIED`). It still has no retry key

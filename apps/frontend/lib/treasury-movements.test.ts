@@ -39,6 +39,7 @@ const expense = (id: string, overrides: Partial<ExpenseVoucherView> = {}): Expen
   currency: 'LBP',
   payee: 'محطة الأمانة للمحروقات',
   payeeStaffId: null,
+  salaryPeriod: null,
   description: 'مازوت للمولّد',
   occurredAt: '2026-10-12T07:00:00.000Z',
   invoiceNumber: null,

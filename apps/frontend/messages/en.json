@@ -227,6 +227,7 @@
     "PAYMENT_NOT_FOUND": "This payment could not be found.",
     "PAYMENT_ALREADY_PAID": "This payment has already been settled.",
     "PAYMENT_ALREADY_UNDER_REVIEW": "This payment is already under review.",
+    "PAYMENT_DECLARATION_WHISH_ONLY": "Only a Whish Money transfer, with its reference number, can be reported here. Cash is paid at the municipality's cash office and is not reported here.",
     "PAYMENT_CLAIM_UNDER_REVIEW": "The citizen has a payment claim under review on this bill. Confirm or reject it first in Fees & billing (“Pending Review”), then try again.",
     "PAYMENT_STATE_CHANGED": "This payment changed since the screen was opened. Refresh the page.",
     "PAYMENT_NO_PENDING_REVIEW": "There is no pending payment to review on this record.",
@@ -352,6 +353,7 @@
     "REMOVAL_REASON_FOR_KEPT_CARD": "A card has a removal reason but was not removed. Refresh the page.",
     "SALE_REASON_OWNER_ONLY": "“Sale or transfer” applies only to an owner’s card.",
     "OWNER_HAS_LINKED_TENANTS_ON_SAVE": "{names} {count, plural, =1 {is} other {are}} linked to this person as the owner of a unit this save removes from their file. Remove the link from {count, plural, =1 {the tenant’s card} other {the tenants’ cards}} first and then save, or use “End ownership” if they sold it.",
+    "PROPERTY_NAMED_BY_REQUEST": "{count, plural, =1 {Request {requests} names} other {Requests {requests} name}} a card or a unit this save removes, and the certificate rests on it, so it is not deleted. Use “End ownership” or “End tenancy” instead. Nothing was saved.",
     "CITIZEN_FILE_CHANGED_DURING_SAVE": "This file changed while it was being saved (another file was merged into it). Reopen the file, then save.",
     "TENANCY_ENDED_ON_CARD_SINCE_OPENED": "A tenancy on one of this card’s units ended after this form was opened. Refresh the page.",
     "CITIZEN_IN_MERGE": "This file is part of an active merge, so it cannot be deleted. Undo the merge first if it must be deleted.",
@@ -3151,6 +3153,10 @@
       "keep": "Keep it",
       "busy": "Cancelling…",
       "done": "The bill was cancelled.",
+      "doneWithRequest": "The bill was cancelled, and request {number} with it.",
+      "request": "Request",
+      "requestWarning": "This bill is the fee for request <code>{number}</code> ({type}). Cancelling it cancels the request too, which cannot be undone; the citizen can file the request again.",
+      "openRequest": "Open the request",
       "cancelledTitle": "This bill has been cancelled",
       "cancelledBody": "The manager cancelled it; nothing is owed on it."
     }

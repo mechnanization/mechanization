@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Client } from 'pg';
 import { PrismaClient as TenantPrismaClient } from '../../../generated/tenant-client';
@@ -15,8 +15,9 @@ import { CitizenRequestsService, type RequestActor } from './citizen-requests.se
  * Municipal requests against a real tenant schema (migration 0092): the CHECKs
  * and the open-request index, filing online and at the counter, the retry key
  * and its race, the fee's bill raised once, the request following its bill to
- * PAID and back, a براءة ذمة judged against what the property owes, the staff
- * decisions, and the papers. Synthetic people only.
+ * PAID and back and to CANCELLED, the fee shown only while one is owed, a
+ * براءة ذمة judged against what the property owes, the staff decisions, and the
+ * papers. Synthetic people only.
  *
  * Set `TEST_DATABASE_URL` to run it (Postgres 17). Never point it at staging.
  */
@@ -94,12 +95,11 @@ describeIfDb('CitizenRequestsService', () => {
     await ddl?.end();
   }, SETUP_TIMEOUT_MS);
 
-  /** A citizen with one card on a parcel of their own. */
-  const citizenWithCard = async () => {
+  /** A citizen with one card on a parcel of their own; its رقم العقار as typed, when given. */
+  const citizenWithCard = async (propertyNumber = `5${randomUUID().slice(0, 5)}`) => {
     const id = randomUUID();
     await db.user.create({ data: { id, kind: 'CITIZEN', tenantSlug: 'cr', firstName: 'سامر', lastName: 'تجربة' } });
     const registration = await db.registration.create({ data: { citizenId: id, referenceNumber: `CR-${randomUUID()}` } });
-    const propertyNumber = `5${randomUUID().slice(0, 5)}`;
     const card = await db.propertyEntry.create({
       data: { registrationId: registration.id, occupancyType: 'OWNER', propertyType: 'LAND', propertyNumber },
     });
@@ -123,30 +123,98 @@ describeIfDb('CitizenRequestsService', () => {
 
   const raw = (sql: string, values: unknown[] = []) => ddl.query(sql.replaceAll('%s', `"${SCHEMA}"`), values);
 
+  /** A bill withdrawn as `FeesService.cancelBill` writes it, by a path that did not reach its request. */
+  const cancelBillAlone = (citizenPaymentId: string) =>
+    db.citizenPayment.update({
+      where: { id: citizenPaymentId },
+      data: {
+        paymentStatus: 'CANCELLED',
+        cancelledAt: new Date(),
+        cancelledById: clerk.id,
+        cancellationReason: 'رسم الطلب صدر خطأً',
+      },
+    });
+
+  describe('isolation', () => {
+    it('answers another citizen\'s request as not found on every portal call, and writes nothing', async () => {
+      const owner = await citizenWithCard();
+      const other = await citizenWithCard();
+      const filed = await fileOnline(owner);
+      const scope = { citizenId: other.id };
+      const notFound = { code: 'REQUEST_NOT_FOUND' };
+
+      await expect(within(() => service.mineOne(other.id, filed.id))).rejects.toMatchObject(notFound);
+      expect((await within(() => service.mine(other.id))).map((row: { id: string }) => row.id)).not.toContain(filed.id);
+      const puts = files.put.mock.calls.length;
+      await expect(
+        within(() => service.addAttachment(filed.id, { buffer: PDF, size: PDF.length }, 'IDENTITY', other.actor, scope)),
+      ).rejects.toMatchObject(notFound);
+      expect(files.put.mock.calls.length).toBe(puts);
+      // Online payment opened for this call, so the refusal is the scope's and not the pause's.
+      whish.isLive = true;
+      try {
+        await expect(within(() => service.raiseBill(filed.id, other.actor, scope))).rejects.toMatchObject(notFound);
+      } finally {
+        whish.isLive = false;
+      }
+      await expect(within(() => service.cancel(filed.id, other.actor, scope))).rejects.toMatchObject(notFound);
+
+      expect(await db.citizenRequest.findUniqueOrThrow({ where: { id: filed.id } })).toMatchObject({
+        status: 'AWAITING_PAYMENT',
+        citizenPaymentId: null,
+      });
+      expect(await db.citizenRequestAttachment.count({ where: { requestId: filed.id } })).toBe(0);
+    });
+
+    it('does not reach a request from another municipality\'s schema, even with its citizen\'s id', async () => {
+      const OTHER_SCHEMA = 'tenant_citizen_requests_spec_other';
+      await ddl.query(`DROP SCHEMA IF EXISTS "${OTHER_SCHEMA}" CASCADE`);
+      await migrateTenantSchema(ddl, OTHER_SCHEMA);
+      const otherDb = tenantTestClient(TEST_DATABASE_URL!, OTHER_SCHEMA);
+      try {
+        const owner = await citizenWithCard();
+        const filed = await fileOnline(owner);
+        const elsewhere = <T>(work: () => Promise<T>): Promise<T> =>
+          context.run({ tenantId: 'tenant-other', tenantSlug: 'other', schemaName: OTHER_SCHEMA, prisma: otherDb }, work);
+
+        await expect(elsewhere(() => service.mineOne(owner.id, filed.id))).rejects.toMatchObject({ code: 'REQUEST_NOT_FOUND' });
+        await expect(elsewhere(() => service.cancel(filed.id, owner.actor, { citizenId: owner.id }))).rejects.toMatchObject({
+          code: 'REQUEST_NOT_FOUND',
+        });
+        expect((await elsewhere(() => service.queue({ page: 1, pageSize: 50 } as never))).items).toHaveLength(0);
+        expect((await db.citizenRequest.findUniqueOrThrow({ where: { id: filed.id } })).status).toBe('AWAITING_PAYMENT');
+      } finally {
+        await otherDb.$disconnect();
+        await ddl.query(`DROP SCHEMA IF EXISTS "${OTHER_SCHEMA}" CASCADE`);
+      }
+    }, SETUP_TIMEOUT_MS);
+  });
+
   describe('the table', () => {
-    it('refuses a counter request that names no clerk, a rejection with no reason, and a cancelled request with a bill', async () => {
+    it('refuses a counter request that names no clerk, a rejection with no reason, a request that skips a step, and a cancellation over a live bill', async () => {
       const citizen = await citizenWithCard();
-      const insert = (columns: string, values: string) =>
+      const insert = (channel: string, extraColumns = '', extraValues = '', extra: unknown[] = []) =>
         raw(
-          `INSERT INTO %s.citizen_requests ("requestNumber","citizenId","channel","requestType","applicantCapacity","clientRequestId"${columns})
-           VALUES ($1,$2,$3,'OTHER','OWNER',gen_random_uuid()${values})`,
-          [`REQ-T-${randomUUID().slice(0, 6)}`, citizen.id, 'COUNTER'],
+          `INSERT INTO %s.citizen_requests ("requestNumber","citizenId","channel","requestType","applicantCapacity","clientRequestId"${extraColumns})
+           VALUES ($1,$2,$3,'OTHER','OWNER',gen_random_uuid()${extraValues}) RETURNING "id"`,
+          [`REQ-T-${randomUUID().slice(0, 6)}`, citizen.id, channel, ...extra],
         );
-      await expect(insert('', '')).rejects.toThrow(/citizen_requests_counter_names_clerk/);
+      // 0092's CHECKs.
+      await expect(insert('COUNTER')).rejects.toThrow(/citizen_requests_counter_names_clerk/);
+      const { rows } = await insert('ONLINE');
+      const id = rows[0].id as string;
       await expect(
-        raw(
-          `INSERT INTO %s.citizen_requests ("requestNumber","citizenId","channel","requestType","applicantCapacity","clientRequestId","status","rejectedAt","rejectedById")
-           VALUES ($1,$2,'ONLINE','OTHER','OWNER',gen_random_uuid(),'REJECTED',now(),$3)`,
-          [`REQ-T-${randomUUID().slice(0, 6)}`, citizen.id, clerk.id],
-        ),
+        raw(`UPDATE %s.citizen_requests SET "status"='REJECTED',"rejectedAt"=now(),"rejectedById"=$2 WHERE "id"=$1`, [id, clerk.id]),
       ).rejects.toThrow(/citizen_requests_rejected_stamp/);
+      // 0094's guard: a request starts AWAITING_PAYMENT or IN_REVIEW, and is not cancelled over a live bill.
+      await expect(insert('ONLINE', ',"status"', `,'READY_FOR_PICKUP'`)).rejects.toThrow(/a request starts AWAITING_PAYMENT or IN_REVIEW/);
+      const live = await db.citizenPayment.create({
+        data: { citizenId: citizen.id, title: 'رسم الطلب', amount: 100_000, dueDate: new Date('2030-12-31') },
+      });
+      await raw(`UPDATE %s.citizen_requests SET "citizenPaymentId"=$2 WHERE "id"=$1`, [id, live.id]);
       await expect(
-        raw(
-          `INSERT INTO %s.citizen_requests ("requestNumber","citizenId","channel","requestType","applicantCapacity","clientRequestId","status","cancelledAt")
-           VALUES ($1,$2,'ONLINE','OTHER','OWNER',gen_random_uuid(),'READY_FOR_PICKUP',now())`,
-          [`REQ-T-${randomUUID().slice(0, 6)}`, citizen.id],
-        ),
-      ).rejects.toThrow(/citizen_requests_(ready|cancelled)_stamp/);
+        raw(`UPDATE %s.citizen_requests SET "status"='CANCELLED',"cancelledAt"=now() WHERE "id"=$1`, [id]),
+      ).rejects.toThrow(/cancelled while its bill .* still stands/);
     });
   });
 
@@ -343,18 +411,104 @@ describeIfDb('CitizenRequestsService', () => {
 
       await within(() => service.updateType('OCCUPANCY', { enabled: true, feeAmount: 0 }, manager));
       const view = await within(() => service.get(unbilled.id));
-      expect(view).toMatchObject({ status: 'IN_REVIEW', fee: 0, bill: null });
+      // Past the wait with no bill: it shows no fee, not the type's (`feeShown`).
+      expect(view).toMatchObject({ status: 'IN_REVIEW', fee: null, bill: null });
       const row = await db.citizenRequest.findUniqueOrThrow({ where: { id: unbilled.id } });
       expect(row.paidAt).toBeNull();
       expect(await db.auditLogEntry.count({ where: { action: 'REQUEST_FEE_WAIVED', entityId: unbilled.id } })).toBe(1);
       // A request already billed keeps its bill and its wait: the fee was the one in force then (D1).
       expect(await within(() => service.get(billed.id))).toMatchObject({ status: 'AWAITING_PAYMENT', fee: 75_000 });
     });
+
+    it('shows the type’s fee only while a request waits for its bill, and none once it never will be billed', async () => {
+      const citizen = await citizenWithCard();
+      const filed = await fileOnline(citizen);
+      // Waiting, not yet billed: what the bill will be.
+      expect(await within(() => service.get(filed.id))).toMatchObject({ status: 'AWAITING_PAYMENT', fee: 200_000, bill: null });
+
+      await within(() => service.cancel(filed.id, citizen.actor, { citizenId: citizen.id }));
+      // Cancelled before any bill: no fee on any of the three reads, whatever the type costs today.
+      expect(await within(() => service.get(filed.id))).toMatchObject({ status: 'CANCELLED', fee: null });
+      const [mine] = await within(() => service.mine(citizen.id));
+      expect(mine).toMatchObject({ id: filed.id, fee: null });
+      const queue = await within(() => service.queue({ page: 1, pageSize: 100, search: filed.requestNumber } as never));
+      expect(queue.items).toMatchObject([{ id: filed.id, fee: null, billStatus: null }]);
+
+      const rejected = await fileOnline(await citizenWithCard());
+      await within(() => service.reject(rejected.id, 'الطلب لا يخص هذا العقار', clerk));
+      expect(await within(() => service.get(rejected.id))).toMatchObject({ status: 'REJECTED', fee: null });
+    });
+  });
+
+  describe('a cancelled bill', () => {
+    it('cancels a request a lost reversal left in review once its bill is cancelled, on the next read, and frees its place', async () => {
+      const citizen = await citizenWithCard();
+      const residency = () =>
+        within(() =>
+          service.submit(
+            { citizenId: citizen.id, requestType: 'RESIDENCY', applicantCapacity: 'OWNER', clientRequestId: randomUUID() },
+            staffActor,
+          ),
+        );
+      const filed = await residency();
+      const bill = await within(() => service.raiseBill(filed.id, staffActor));
+      await db.citizenPayment.update({
+        where: { id: bill.citizenPaymentId },
+        data: { paidAmount: 100_000, paymentStatus: 'PAID', paidAt: new Date() },
+      });
+      await within(() => service.onPaymentReviewed({ paymentId: bill.citizenPaymentId }));
+      expect((await db.citizenRequest.findUniqueOrThrow({ where: { id: filed.id } })).status).toBe('IN_REVIEW');
+
+      // The receipt reversed, and its event lost (`onPaymentReversed` is never called: a restart).
+      await db.citizenPayment.update({
+        where: { id: bill.citizenPaymentId },
+        data: { paidAmount: 0, paymentStatus: 'UNPAID', paidAt: null },
+      });
+      await cancelBillAlone(bill.citizenPaymentId);
+      expect((await db.citizenRequest.findUniqueOrThrow({ where: { id: filed.id } })).status).toBe('IN_REVIEW');
+
+      // The next read: cancelled, where it once went back to AWAITING_PAYMENT on a bill nobody can pay.
+      expect(await within(() => service.get(filed.id))).toMatchObject({ status: 'CANCELLED', bill: { paymentStatus: 'CANCELLED' } });
+      expect(await db.citizenRequest.findUniqueOrThrow({ where: { id: filed.id } })).toMatchObject({
+        paidAt: null,
+        cancelledById: null,
+      });
+      const cancelled = await db.auditLogEntry.findFirstOrThrow({ where: { action: 'REQUEST_CANCELLED', entityId: filed.id } });
+      expect(cancelled).toMatchObject({
+        actorId: null,
+        actorType: 'SYSTEM',
+        after: { status: 'CANCELLED', cause: 'BILL_CANCELLED', citizenPaymentId: bill.citizenPaymentId },
+      });
+      expect(await db.auditLogEntry.count({ where: { action: 'REQUEST_PAYMENT_REVERSED', entityId: filed.id } })).toBe(1);
+      // `citizen_requests_one_open_key` no longer holds it: the citizen can file it again.
+      expect(await residency()).toMatchObject({ status: 'AWAITING_PAYMENT', replayed: false });
+    });
+
+    it('heals a request already left waiting on a cancelled bill, on the citizen’s own read', async () => {
+      const citizen = await citizenWithCard();
+      const filed = await within(() =>
+        service.submit(
+          { citizenId: citizen.id, requestType: 'RESIDENCY', applicantCapacity: 'OWNER', clientRequestId: randomUUID() },
+          staffActor,
+        ),
+      );
+      const bill = await within(() => service.raiseBill(filed.id, staffActor));
+      // The state the old reconcile left behind: AWAITING_PAYMENT on a CANCELLED bill.
+      await cancelBillAlone(bill.citizenPaymentId);
+      expect((await db.citizenRequest.findUniqueOrThrow({ where: { id: filed.id } })).status).toBe('AWAITING_PAYMENT');
+
+      const [mine] = await within(() => service.mine(citizen.id));
+      expect(mine).toMatchObject({ id: filed.id, status: 'CANCELLED' });
+      expect(await db.auditLogEntry.count({ where: { action: 'REQUEST_PAYMENT_REVERSED', entityId: filed.id } })).toBe(0);
+      expect(
+        await db.auditLogEntry.findFirstOrThrow({ where: { action: 'REQUEST_CANCELLED', entityId: filed.id } }),
+      ).toMatchObject({ actorType: 'SYSTEM', after: { cause: 'BILL_CANCELLED' } });
+    });
   });
 
   describe('the staff decisions', () => {
-    const paidRequest = async (type: 'CLEARANCE' | 'RESIDENCY') => {
-      const citizen = await citizenWithCard();
+    const paidRequest = async (type: 'CLEARANCE' | 'RESIDENCY', holder?: Awaited<ReturnType<typeof citizenWithCard>>) => {
+      const citizen = holder ?? (await citizenWithCard());
       const filed = await within(() =>
         service.submit(
           {
@@ -406,6 +560,72 @@ describeIfDb('CitizenRequestsService', () => {
       expect(ready.status).toBe('READY_FOR_PICKUP');
       expect(ready.clearance).toMatchObject({ propertyNumber: citizen.propertyNumber, total: 0 });
       expect(ready.statement).toBe('لا رسوم مستحقة على العقار.');
+    });
+
+    it('refuses a براءة ذمة on a card typed in Arabic-Indic digits while the property owes, and checks it in Latin digits', async () => {
+      const latin = `7${randomInt(10 ** 8, 10 ** 9)}`;
+      const typed = latin.replace(/\d/g, (digit) => String.fromCharCode(0x0660 + Number(digit)));
+      const { citizen, filed } = await paidRequest('CLEARANCE', await citizenWithCard(typed));
+      expect(citizen.propertyNumber).toBe(typed);
+      // The bill's line copies the card as it was typed, «٧…».
+      const owing = await db.citizenPayment.create({
+        data: {
+          citizenId: citizen.id,
+          title: 'رسم القيمة التأجيرية',
+          amount: 40_000,
+          dueDate: new Date('2030-12-31'),
+          assessment: {
+            basis: 'PER_AREA',
+            rate: 1000,
+            unitCount: 1,
+            totalArea: 40,
+            excludedUnitCount: 0,
+            heldUnitCount: 0,
+            uninhabitableUnitCount: 0,
+            lines: [{ propertyNumber: typed, propertyType: 'LAND', unitType: 'APARTMENT', unitArea: 40 }],
+          } as never,
+        },
+      });
+      // `approve` passes the card's own value, not the HTTP route's normalised one.
+      await expect(within(() => service.approve(filed.id, 'لا رسوم مستحقة على العقار.', clerk))).rejects.toMatchObject({
+        code: 'REQUEST_CLEARANCE_DUES_OUTSTANDING',
+        params: { total: 40_000 },
+      });
+      expect((await db.citizenRequest.findUniqueOrThrow({ where: { id: filed.id } })).status).toBe('IN_REVIEW');
+
+      await db.citizenPayment.update({ where: { id: owing.id }, data: { paidAmount: 40_000, paymentStatus: 'PAID' } });
+      const ready = await within(() => service.approve(filed.id, 'لا رسوم مستحقة على العقار.', clerk));
+      expect(ready.clearance).toMatchObject({ propertyNumber: latin, total: 0 });
+    });
+
+    it('does not hold a براءة ذمة on a bill the manager cancelled: it owes nothing (0090)', async () => {
+      const { citizen, filed } = await paidRequest('CLEARANCE');
+      // Raised on the property and then withdrawn («إلغاء الفاتورة»), as `FeesService.cancelBill` writes it.
+      await db.citizenPayment.create({
+        data: {
+          citizenId: citizen.id,
+          title: 'رسم صدر خطأً',
+          amount: 55_000,
+          dueDate: new Date('2030-12-31'),
+          paymentStatus: 'CANCELLED',
+          cancelledAt: new Date(),
+          cancelledById: clerk.id,
+          cancellationReason: 'صدر الرسم مرتين',
+          assessment: {
+            basis: 'PER_AREA',
+            rate: 1000,
+            unitCount: 1,
+            totalArea: 55,
+            excludedUnitCount: 0,
+            heldUnitCount: 0,
+            uninhabitableUnitCount: 0,
+            lines: [{ propertyNumber: citizen.propertyNumber, propertyType: 'LAND', unitType: 'APARTMENT', unitArea: 55 }],
+          } as never,
+        },
+      });
+      const ready = await within(() => service.approve(filed.id, 'لا رسوم مستحقة على العقار.', clerk));
+      expect(ready.status).toBe('READY_FOR_PICKUP');
+      expect(ready.clearance).toMatchObject({ propertyNumber: citizen.propertyNumber, total: 0, unlinkedTotal: 0 });
     });
 
     it('hands over an approved request, and refuses a step from the wrong status', async () => {

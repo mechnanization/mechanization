@@ -30,6 +30,7 @@ import {
 import {
   ApiRequestError,
   cancelBill,
+  type CancelBillResult,
   getCitizenProfile,
   getMunicipalitySettings,
   getTenantConfig,
@@ -59,7 +60,13 @@ import { useToast } from '@/components/ui/toast';
 import { PaymentReceipt, type RecordedMovement } from '@/components/admin/payment-receipt';
 import { BillReceipts } from '@/components/admin/finance/bill-receipts';
 import { cn } from '@/lib/utils';
-import { BILL_CANCEL_ROLES, CASH_COUNTER_ROLES, PAYMENT_SETTLE_ROLES, hasRole } from '@/lib/staff-roles';
+import {
+  BILL_CANCEL_ROLES,
+  CASH_COUNTER_ROLES,
+  PAYMENT_SETTLE_ROLES,
+  REQUEST_READ_ROLES,
+  hasRole,
+} from '@/lib/staff-roles';
 
 /** What the citizen is paying in. «BOTH» is «20$ و200,000 ليرة» handed over together. */
 type PayIn = 'LBP' | 'FOREIGN' | 'BOTH';
@@ -396,17 +403,40 @@ export default function SettleCashPage({
     (payment?.paymentStatus === 'UNPAID' || payment?.paymentStatus === 'OVERDUE') &&
     (payment?.paidAmount ?? 0) === 0;
 
+  /** The municipal request this bill is the fee of (0092); null for any other bill. */
+  const linkedRequest = payment?.request ?? null;
+  /** Cancelling the bill cancels the request while it is open (`cancelRequestOfCancelledBill`), so the dialog says so. */
+  const requestOpen = linkedRequest?.status === 'AWAITING_PAYMENT' || linkedRequest?.status === 'IN_REVIEW';
+  /** The request's panel in the queue, for a role that may read it. */
+  const requestHref =
+    linkedRequest && hasRole(REQUEST_READ_ROLES, user?.role)
+      ? `${base}/requests?request=${encodeURIComponent(linkedRequest.id)}`
+      : null;
+  const requestCode = (number: string) => (
+    <bdi dir="ltr" className="font-mono">
+      {number}
+    </bdi>
+  );
+
   /** A refusal is thrown on: the dialog shows the server's coded words beside the action, and stays open. */
   const confirmCancel = async (): Promise<void> => {
     if (!token || !payment || !cancelInput.success) return;
+    let result: CancelBillResult;
     try {
-      await cancelBill(tenant, token, payment.id, cancelInput.data);
+      result = await cancelBill(tenant, token, payment.id, cancelInput.data);
     } catch (caught) {
       logApiError(caught);
       throw caught;
     }
-    toast.success(tCancel('done'));
+    // The server's answer names the request it cancelled, whatever this page read before the press.
+    toast.success(
+      result.cancelledRequest
+        ? tCancel('doneWithRequest', { number: result.cancelledRequest.requestNumber })
+        : tCancel('done'),
+    );
     setCancelReason('');
+    // The queue and its panel drop the request now, not when their cache next goes stale.
+    void queryClient.invalidateQueries({ queryKey: ['requests', tenant] });
     await queryClient.invalidateQueries({ queryKey: ['citizen-profile', tenant, citizenId] });
   };
 
@@ -474,6 +504,19 @@ export default function SettleCashPage({
         confirmDisabled={!cancelInput.success}
         onConfirm={confirmCancel}
       >
+        {requestOpen && linkedRequest ? (
+          <Alert variant="warning">
+            {tCancel.rich('requestWarning', {
+              number: linkedRequest.requestNumber,
+              type: labels.requestType[linkedRequest.requestType],
+              code: (chunks) => (
+                <bdi dir="ltr" className="font-mono">
+                  {chunks}
+                </bdi>
+              ),
+            })}
+          </Alert>
+        ) : null}
         {/* The minimum in the caption from the start; a reason typed short of it says so under the field. */}
         <Field
           label={tCancel('reason', { min: ADJUSTMENT_REASON_MIN })}
@@ -507,6 +550,13 @@ export default function SettleCashPage({
           icon={Ban}
           title={tCancel('cancelledTitle')}
           description={payment.cancellationReason ?? tCancel('cancelledBody')}
+          action={
+            linkedRequest && requestHref ? (
+              <Link href={requestHref} className="text-sm font-medium text-primary underline-offset-4 hover:underline">
+                {tCancel('openRequest')} {requestCode(linkedRequest.requestNumber)}
+              </Link>
+            ) : undefined
+          }
         />
       ) : payment.paymentStatus === 'PAID' && !receipt ? (
         <EmptyState
@@ -758,6 +808,19 @@ export default function SettleCashPage({
                 <SummaryList>
                   <SummaryRow label={en ? 'Due' : 'الاستحقاق'}>{formatDate(payment.dueDate)}</SummaryRow>
                   <SummaryRow label={en ? 'Status' : 'الحالة'}>{statusLabel}</SummaryRow>
+                  {linkedRequest ? (
+                    <SummaryRow label={tCancel('request')}>
+                      {labels.requestType[linkedRequest.requestType]} ·{' '}
+                      {requestHref ? (
+                        <Link href={requestHref} className="text-primary underline-offset-4 hover:underline">
+                          {requestCode(linkedRequest.requestNumber)}
+                        </Link>
+                      ) : (
+                        requestCode(linkedRequest.requestNumber)
+                      )}{' '}
+                      · {labels.requestStatus[linkedRequest.status]}
+                    </SummaryRow>
+                  ) : null}
                   <SummaryRow label={en ? 'Billed' : 'قيمة الفاتورة'} className="tabular-nums">
                     {formatLbp(payment.amount, locale)}
                   </SummaryRow>

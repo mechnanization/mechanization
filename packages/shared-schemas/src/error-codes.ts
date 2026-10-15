@@ -44,6 +44,8 @@ export const ERROR_CODES = [
   'PAYMENT_NOT_FOUND',
   'PAYMENT_ALREADY_PAID',
   'PAYMENT_ALREADY_UNDER_REVIEW',
+  // A citizen reports a Whish Money transfer only, with its reference; cash is paid at the office (open-decisions §21).
+  'PAYMENT_DECLARATION_WHISH_ONLY',
   // Staff side: a counter payment or a reversal on a bill whose citizen claim is still under review.
   'PAYMENT_CLAIM_UNDER_REVIEW',
   'PAYMENT_STATE_CHANGED',
@@ -202,6 +204,8 @@ export const ERROR_CODES = [
   'REMOVAL_REASON_FOR_KEPT_CARD',
   'SALE_REASON_OWNER_ONLY',
   'OWNER_HAS_LINKED_TENANTS_ON_SAVE',
+  // A save that deletes a card or a flat a municipal request names (0092); end it instead (`params.requests`, `params.count`).
+  'PROPERTY_NAMED_BY_REQUEST',
   'CITIZEN_FILE_CHANGED_DURING_SAVE',
   'TENANCY_ENDED_ON_CARD_SINCE_OPENED',
   // The two rules migration 0072 keeps on a citizen's numbers.

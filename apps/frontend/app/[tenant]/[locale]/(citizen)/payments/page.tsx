@@ -16,7 +16,7 @@ import {
   Wallet,
   XCircle,
 } from 'lucide-react';
-import { getLabels } from '@mechanization/shared-schemas';
+import { getLabels, type DeclarePayment } from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
   declarePayment,
@@ -120,7 +120,7 @@ export default function CitizenPayments({
   }, [load]);
 
   const submitDeclaration = useCallback(
-    async (input: { method: string; whishTransactionRef?: string }) => {
+    async (input: DeclarePayment) => {
       if (!token || !paying) return;
       setDeclaring(true);
       setDeclareError(null);

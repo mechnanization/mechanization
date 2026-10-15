@@ -3,6 +3,7 @@ import {
   EASTERN_DIGITS,
   LATIN_DIGITS,
   citizenDisplayName,
+  normalizeDigits,
   type FeeAssessment,
   type ParcelDues,
   type ParcelDuesBill,
@@ -53,14 +54,17 @@ export class ParcelDuesService {
     return tenantSchemaRef(this.tenantContext.schemaName);
   }
 
-  async dues(propertyNumber: string): Promise<ParcelDues> {
+  async dues(asked: string): Promise<ParcelDues> {
     const S = this.S;
     /*
-      Compared digit-normalised on both sides. The query arrives in Latin
-      digits (`parcelDuesQuerySchema`), but a card's رقم العقار — and the bill
-      lines copied from it — are stored as typed, so «٤٢٠» would otherwise miss
-      «420» and answer a false «لا شيء مستحق».
+      Compared digit-normalised on both sides. A card's رقم العقار — and the
+      bill lines copied from it — are stored as typed, so «٤٢٠» would otherwise
+      miss «420» and answer a false «لا شيء مستحق». The argument is normalised
+      here, not by each caller: the HTTP route's schema does it, but a
+      براءة ذمة's approval passes the card's own value, and a raw «٤٢٠» there
+      matched nothing and certified a parcel that owes (review of PR #122).
     */
+    const propertyNumber = normalizeDigits(asked.trim());
     const [linked, unlinkedRows] = await Promise.all([
       withConnectionRetry(() =>
         this.db.$queryRaw<OpenBillRow[]>`
