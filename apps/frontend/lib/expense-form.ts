@@ -5,21 +5,22 @@ import { isReservedExpenseCategory, type ExpenseCategoryView } from '@mechanizat
  * the id of the control to focus.
  *
  * A failed submit puts the officer on the first thing to fix rather than
- * leaving them to hunt for it (FRM-2), and "first" is the order on the screen:
- * the reason for an urgent payment is at the top of the form; at the foot, the
- * date and the invoice number share a row, and the reason for a back-dated
- * payment sits under them.
+ * leaving them to hunt for it (FRM-2), and "first" is the order on the screen,
+ * the form read row by row, in two columns or three (2026-10-12): the reason for
+ * an urgent payment at the top; the amount, the wallet, the band; the payee, the
+ * date, the invoice number; the reason for a back-dated payment under them; and
+ * the reason for the expense across the foot.
  */
 const FIELDS = [
   ['urgentReason', 'expense-urgent'],
-  ['accountId', 'expense-account'],
   ['amount', 'expense-amount'],
+  ['accountId', 'expense-account'],
   ['categoryId', 'expense-category'],
   ['payee', 'expense-payee'],
-  ['description', 'expense-description'],
   ['paidOn', 'expense-date'],
   ['invoiceNumber', 'expense-invoice'],
   ['adjustmentReason', 'expense-adjustment'],
+  ['description', 'expense-description'],
 ] as const;
 
 export type ExpenseField = (typeof FIELDS)[number][0];

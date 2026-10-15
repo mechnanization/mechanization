@@ -15,6 +15,7 @@ import {
 import { formatDate } from '@/lib/dates';
 import {
   mayDecideRequest,
+  mayIssueOrders,
   mayRegularize,
   mayWithdrawRequest,
   type OrderActor,
@@ -347,6 +348,13 @@ export function ExpenseQueue({
           />
         ),
       },
+      /*
+        Only the head issues an order or cancels (`mayIssueOrders`, as
+        `ExpensesController` does): for anyone else the column would be a header
+        over empty cells, so it is not drawn.
+      */
+      ...(mayIssueOrders(actor?.role)
+        ? ([
       {
         id: 'actions',
         header: tx('columns.actions'),
@@ -381,6 +389,8 @@ export function ExpenseQueue({
           );
         },
       },
+          ] satisfies ColumnDef<ExpenseVoucherView>[])
+        : []),
     ],
     [t, tx, locale, actor],
   );

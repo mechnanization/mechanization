@@ -1396,6 +1396,7 @@ export function UnitGridPicker({
       <Sheet
         open={Boolean(panel)}
         onClose={() => setPanel(null)}
+        closeLabel={en ? 'Close' : 'إغلاق'}
         title={panelTitle}
       >
         {panel ? (

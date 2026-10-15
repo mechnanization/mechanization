@@ -27,6 +27,12 @@ describe('the sidebar’s shape', () => {
     expect(new Set(paths).size).toBe(paths.length);
   });
 
+  // An older address two rows claimed would light whichever was declared first.
+  it('lets no older address belong to two rows, or shadow a row of its own', () => {
+    const owned = rows.flatMap((row) => [row.path, ...(row.also ?? [])]);
+    expect(new Set(owned).size).toBe(owned.length);
+  });
+
   // Past five, a heading stops helping the eye find a row (NAV_GROUPS header).
   it('holds no group of more than five rows', () => {
     for (const group of NAV_GROUPS) expect(group.items.length).toBeLessThanOrEqual(5);
@@ -101,8 +107,18 @@ describe('visibleGroups', () => {
 
   it('shows the accountant the treasury and no map', () => {
     const paths = visibleGroups('ACCOUNTANT').flatMap((group) => group.items.map((item) => item.path));
-    expect(paths).toEqual(expect.arrayContaining(['/finance', '/finance/income', '/finance/expenses']));
+    expect(paths).toEqual(expect.arrayContaining(['/finance', '/finance/movements', '/finance/transactions']));
+    // One register for money in and out (2026-10-12): the two old rows are gone from the sidebar.
+    expect(paths).not.toContain('/finance/income');
+    expect(paths).not.toContain('/finance/expenses');
     expect(paths).not.toContain('/map');
+  });
+
+  // Recording is the accountant's and the manager's; the auditor reads the register.
+  it('shows the auditor the register and not the recording page', () => {
+    const paths = visibleGroups('AUDITOR').flatMap((group) => group.items.map((item) => item.path));
+    expect(paths).toContain('/finance/transactions');
+    expect(paths).not.toContain('/finance/movements');
   });
 });
 
@@ -135,6 +151,23 @@ describe('canAccessPath', () => {
     expect(canAccessPath(`${BASE}/finance/income/categories`, BASE, 'COLLECTOR')).toBe(false);
   });
 
+  // The printed vouchers kept their addresses when the registers merged; the register's row guards them.
+  it('guards a page under an older address by the row that owns it', () => {
+    expect(canAccessPath(`${BASE}/finance/expenses/abc/print`, BASE, 'VIEWER')).toBe(true);
+    expect(canAccessPath(`${BASE}/finance/expenses/abc/print`, BASE, 'COLLECTOR')).toBe(false);
+    expect(canAccessPath(`${BASE}/finance/transactions`, BASE, 'FIELD_INSPECTOR')).toBe(false);
+    expect(canAccessPath(`${BASE}/finance/movements`, BASE, 'FIELD_INSPECTOR')).toBe(false);
+  });
+
+  // The papers on a request are identity copies: «مشاهد فقط» and the collector do not reach the queue.
+  it('opens the municipal requests to their readers only', () => {
+    expect(canAccessPath(`${BASE}/requests`, BASE, 'ADMINISTRATIVE_OFFICER')).toBe(true);
+    expect(canAccessPath(`${BASE}/requests/abc/print`, BASE, 'AUDITOR')).toBe(true);
+    expect(canAccessPath(`${BASE}/requests`, BASE, 'VIEWER')).toBe(false);
+    expect(canAccessPath(`${BASE}/requests/new`, BASE, 'COLLECTOR')).toBe(false);
+    expect(activeNavItem(`${BASE}/requests/abc/print`, BASE, 'SUPER_ADMIN')?.path).toBe('/requests');
+  });
+
   it('refuses a known section while the role is still unknown', () => {
     expect(canAccessPath(`${BASE}/citizens`, BASE, undefined)).toBe(false);
   });
@@ -144,12 +177,21 @@ describe('activeNavItem', () => {
   // The longest match wins, so a detail page lights its own row and not a prefix of it.
   it('attributes a page to the most specific row', () => {
     expect(activeNavItem(`${BASE}/finance`, BASE, 'SUPER_ADMIN')?.path).toBe('/finance');
-    expect(activeNavItem(`${BASE}/finance/income/new`, BASE, 'SUPER_ADMIN')?.path).toBe('/finance/income');
+    expect(activeNavItem(`${BASE}/finance/movements`, BASE, 'SUPER_ADMIN')?.path).toBe('/finance/movements');
+    expect(activeNavItem(`${BASE}/finance/transactions`, BASE, 'SUPER_ADMIN')?.path).toBe('/finance/transactions');
     expect(activeNavItem(`${BASE}/finance/collectors/abc`, BASE, 'SUPER_ADMIN')?.path).toBe('/finance/collectors');
     expect(activeNavItem(`${BASE}/citizens/review`, BASE, 'SUPER_ADMIN')?.path).toBe('/citizens/review');
   });
 
+  // An older address counts as the row's own, and beats the shorter `/finance`.
+  it('attributes a page under an older address to the row that owns it', () => {
+    expect(activeNavItem(`${BASE}/finance/income/abc/print`, BASE, 'ACCOUNTANT')?.path).toBe('/finance/transactions');
+    expect(activeNavItem(`${BASE}/finance/expenses/new`, BASE, 'ACCOUNTANT')?.path).toBe('/finance/transactions');
+    expect(activeNavItem(`${BASE}/finance/income/categories`, BASE, 'AUDITOR')?.path).toBe('/finance/transactions');
+  });
+
   it('does not match a path that only shares a prefix of letters', () => {
     expect(activeNavItem(`${BASE}/financed`, BASE, 'SUPER_ADMIN')).toBeUndefined();
+    expect(activeNavItem(`${BASE}/finance/incomes`, BASE, 'SUPER_ADMIN')?.path).toBe('/finance');
   });
 });

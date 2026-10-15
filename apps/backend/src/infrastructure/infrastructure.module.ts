@@ -20,6 +20,8 @@ import {
 import { WHISH_GATEWAY } from '../domain/interfaces/whish-gateway.interface';
 import { WhishGatewayService } from './payments/whish-gateway.service';
 import { S3CadastreStorageService } from './aws/s3-cadastre-storage.service';
+import { S3RequestFileStorageService } from './aws/s3-request-file-storage.service';
+import { REQUEST_FILE_STORAGE } from '../domain/interfaces/request-file-storage.interface';
 import { SmtpEmailSender } from './email/smtp-email.sender';
 import { S3StorageService } from './aws/s3-storage.service';
 import { RedisCacheService } from './cache/redis-cache.service';
@@ -78,6 +80,8 @@ import { SmsProviderService } from './sms/sms-provider.service';
     // nobody notices until a scan cannot be found.
     { provide: IMAGE_STORAGE_SERVICE, useClass: S3StorageService },
     { provide: CADASTRE_STORAGE_SERVICE, useClass: S3CadastreStorageService },
+    // The papers on a municipal request: the same private bucket, keys of their own (0092).
+    { provide: REQUEST_FILE_STORAGE, useClass: S3RequestFileStorageService },
     { provide: EMAIL_SENDER, useClass: SmtpEmailSender },
     { provide: SMS_SENDER, useClass: SmsProviderService },
     { provide: WHISH_GATEWAY, useClass: WhishGatewayService },
@@ -102,6 +106,7 @@ import { SmsProviderService } from './sms/sms-provider.service';
     CASE_REPOSITORY,
     IMAGE_STORAGE_SERVICE,
     CADASTRE_STORAGE_SERVICE,
+    REQUEST_FILE_STORAGE,
     EMAIL_SENDER,
     SMS_SENDER,
     WHISH_GATEWAY,

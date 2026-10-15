@@ -10,6 +10,7 @@ import { CorrectionsController } from './controllers/corrections.controller';
 import { TreasuryController } from './controllers/treasury.controller';
 import { ExpensesController } from './controllers/expenses.controller';
 import { IncomeController } from './controllers/income.controller';
+import { CitizenRequestsController } from './controllers/citizen-requests.controller';
 import { TransfersController } from './controllers/transfers.controller';
 import { TreasuryClosingController } from './controllers/treasury-closing.controller';
 import { CasesController } from './controllers/cases.controller';
@@ -55,6 +56,7 @@ import { MetricsModule } from './metrics.module';
     TreasuryController,
     ExpensesController,
     IncomeController,
+    CitizenRequestsController,
     TransfersController,
     TreasuryClosingController,
     /*

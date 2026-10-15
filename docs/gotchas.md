@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `fix/pr116-review` (PR #116 merged with `fix/pr115-review`, which stacks #123, #124 and #115 on `develop@5e8f5c3`, with its review fixes): Escape inside a dialog, Tailwind 4 class names on 3.4; digit-normalised cadastre lookups, Latin digits on write, what still compares as stored; a window count on an empty page, 2026-10-15; the previous build and a new enum value against `chore/migration-0090-0091` (on `develop@5e8f5c3`), 2026-10-13, rebased onto `develop@3211140`, 2026-10-15; the Prisma `now()` clock trap in invoice numbering against `fix/finance-audit-remediation` (on `develop@5e8f5c3`), 2026-10-12; JavaScript and Postgres on `trim` and lower case against `fix/finance-audit-remediation` (rebased on `chore/migration-0090-0091@8d386b5`), 2026-10-13; a new RESTRICT key and an existing delete (0092) against `chore/migration-0092` rebased on `fix/finance-audit-remediation@9f7b12b`, 2026-10-13.
+Last verified against the code: `fix/pr116-review` (PR #116 merged with `fix/pr115-review`, which stacks #123, #124 and #115 on `develop@5e8f5c3`, with its review fixes): Escape inside a dialog, Tailwind 4 class names on 3.4; digit-normalised cadastre lookups, Latin digits on write, what still compares as stored; a window count on an empty page, 2026-10-15; the previous build and a new enum value against `chore/migration-0090-0091` (on `develop@5e8f5c3`), 2026-10-13, rebased onto `develop@3211140`, 2026-10-15; the Prisma `now()` clock trap in invoice numbering against `fix/finance-audit-remediation` (on `develop@5e8f5c3`), 2026-10-12; JavaScript and Postgres on `trim` and lower case against `fix/finance-audit-remediation` (rebased on `chore/migration-0090-0091@8d386b5`), 2026-10-13; a new RESTRICT key and an existing delete (0092) against `chore/migration-0092` rebased on `fix/finance-audit-remediation@9f7b12b`, 2026-10-13; the CRLF working tree and Enter inside a nested editor added on `fix/fees-page-ux` (uncommitted), 2026-10-12; a Radix dialog with no trigger losing the focus on close, the same day; a `replaceState` made while a page mounts, found on the request wizard (uncommitted), 2026-10-13; the reference-only sign-in recorded as the decided one, and an undeclared env var set only in `.env` never reaching the code of a deployed build (verified in `@nestjs/config`; a locally generated Prisma client loads the file itself), the same day; and, on `fix/fees-page-ux` rebased onto `chore/migration-0092@16473f0` (2026-10-13), the review of PR #122: a request cancelled with its bill (`cancelRequestOfCancelledBill`), a card or a flat a request names never deleted (`PROPERTY_NAMED_BY_REQUEST`, `HAS_REQUESTS`), request bills stamp `issuedById`, the API's log lines without query strings, and the isolation tests; and, on `fix/pr122-review` (2026-10-15), the review's blocker and majors: `ParcelDuesService.dues` normalising its own argument, a request on a cancelled bill cancelled by `reconcile` too (an IN_REVIEW one through AWAITING_PAYMENT), and a request's `fee` null once it will never be billed.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -11,6 +11,20 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 [Backend runtime](#backend-runtime) · [Auth](#auth) · [Frontend](#frontend)
 
 ## Toolchain
+
+### On Windows the working tree is CRLF, so a scripted edit that matches `\n` finds nothing
+
+- **What happens:** with `core.autocrlf=true` (the Windows default this repo is cloned with),
+  sources and message files are checked out with CRLF line endings. A script that replaces a
+  multi-line string written with `\n` matches nothing and exits cleanly, and a JSON file
+  rewritten with `JSON.stringify` turns every line ending to LF.
+- **Why:** git stores LF and converts on checkout; the editor tools convert for you, a plain
+  `fs.readFileSync` does not.
+- **Do this:** edit through the editor tools, or normalise in the script: match on
+  `text.replace(/\r\n/g, '\n')` and write back with `\r\n`. A message-file rewrite is safe only
+  if `(JSON.stringify(data, null, 2) + '\n').replace(/\n/g, '\r\n')` reproduces the file
+  byte for byte before you change it.
+- **Where:** every file under `apps/frontend` on a Windows clone, `messages/*.json` included.
 
 ### pnpm 10 and later ignore `pnpm.overrides` in `package.json`
 
@@ -423,8 +437,9 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   `removeMintedCard`) delete such rows.
 - **Do this:** before adding a RESTRICT key, grep for every `delete`/`deleteMany` of the referenced
   table and its cascades. Each one must refuse first, with a coded error in both locales (as
-  `OWNER_HAS_LINKED_TENANTS_ON_SAVE` does), or keep the row. For `0092` that is PR #122's (decision of
-  2026-10-13: refuse, and point to «إنهاء الملكية»).
+  `OWNER_HAS_LINKED_TENANTS_ON_SAVE` does), or keep the row. For `0092` (decision of 2026-10-13): the
+  save refuses with `PROPERTY_NAMED_BY_REQUEST` and points to «إنهاء الملكية» / «إنهاء الإيجار», and
+  the landlord-link undo keeps the row or card and reports `HAS_REQUESTS`.
 - **Where:** `0092_citizen_requests`; probed on Postgres 17 in the review of PR #121, 2026-10-13.
 
 ### A Prisma `DateTime` with no `@db` attribute may be a `TIMESTAMPTZ` column
@@ -939,9 +954,18 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 
 ### Undeclared env vars are never validated
 
-- **What happens:** a misspelt `WHISH_*` variable boots fine and is only logged.
+- **What happens:** a misspelt `WHISH_*` variable boots fine and is only logged. And in a
+  deployed build a `WHISH_*` value written only in the `.env` file never reaches the code at all:
+  the gateway stays in sandbox however the file is filled. On a developer machine it does reach it,
+  by another road (below), so a local test says nothing about production.
 - **Why:** `ConfigService.get` falls back to `process.env` for keys `envSchema`
-  does not declare.
+  does not declare, and `ConfigModule.forRoot({ validate })` copies into `process.env` only
+  the keys `validateEnv` returns (`assignVariablesToProcess`, `@nestjs/config` 3). The
+  zod object drops the rest, so an undeclared key reaches the code only if the process's own
+  environment (pm2, the shell) sets it. Locally, the Prisma client generated with an
+  `apps/backend/.env` present records it (`relativeEnvPaths.schemaEnvPath`) and loads it into
+  `process.env` when the client is required, before `ConfigModule` runs; CI generates the deployed
+  client with no `.env`, so the build that ships carries no such path.
 - **Do this:** declare every variable in `envSchema`.
 - **Where:** the `WhishGatewayService` constructor.
 
@@ -1074,7 +1098,10 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   real front door. With `OTP_ENABLED=false` (refused in production), a phone
   number alone signs a citizen in.
 - **Why:** `SmsProviderService` has no provider; its `deliver` throws.
-- **Do this:** account for it when you judge the reference-only path.
+- **Do this:** treat the reference-only route as the citizen sign-in: it is the decided one
+  (the product owner, 2026-10-13, [open-decisions.md §21](open-decisions.md#21-online-payment-citizen-sign-in-and-notifications-decided-2026-10-13):
+  no OTP or second factor, no SMS provider). Do not build a portal flow that needs a code, and
+  do not add one to sign-in without a new decision.
 - **Where:** `SmsProviderService`, `OtpService.issue` and `verify`,
   `envSchema`.
 
@@ -1107,6 +1134,34 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 
 ## Frontend
 
+### A Radix dialog opened from state gives the focus to nobody when it closes
+
+- **What happens:** close a `Dialog` (or the `Sheet`) that was opened by setting `open`
+  rather than by a `Dialog.Trigger`, and the focus lands on the page's body: a keyboard user
+  starts again from the top of the page instead of on the row they opened it from.
+- **Why:** Radix's modal content prevents the focus scope's own restore and focuses
+  `context.triggerRef` instead (`DialogContentModal`'s `onCloseAutoFocus`), and with no trigger
+  that ref is empty.
+- **Do this:** remember `document.activeElement` when it opens and give the focus back in
+  `onCloseAutoFocus` (calling `preventDefault()` first), as `components/ui/sheet.tsx` does.
+  `DialogContent` (`components/ui/dialog.tsx`) does not yet: its controlled users lose the
+  focus the same way.
+- **Where:** `components/ui/sheet.tsx`; `@radix-ui/react-dialog` 1.1.x.
+
+### Enter in an editor inside a money form submits the money form
+
+- **What happens:** the inline «بند جديد» editor of the income form sat inside the voucher's
+  `<form>`. Enter in one of its inputs submitted the voucher — recording the money — instead
+  of saving the category. The expense form's `NewCategoryFields` already caught it; the income
+  editor did not until 2026-10-12.
+- **Why:** an `<input>` inside a `<form>` submits that form on Enter (implicit submission), and
+  a nested component cannot have a `<form>` of its own (forms do not nest).
+- **Do this:** a sub-editor rendered inside another form catches Enter on its root
+  (`onKeyDown`: `event.key === 'Enter'` on an `HTMLInputElement` → `preventDefault()`, then its
+  own save), as `income-category-editor.tsx` and `new-category-fields.tsx` do.
+- **Where:** `components/admin/finance/income-category-editor.tsx`,
+  `components/admin/finance/new-category-fields.tsx`.
+
 ### A form moved from a dialog to a page stays mounted after it succeeds
 
 - **What happens:** the fee wizard, once a dialog that closed itself on success, became the
@@ -1129,6 +1184,18 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   or when the figures change (`apps/frontend/lib/request-id.ts`, as the settle page does).
 - **Where:** `record-expense-form.tsx`, `collector-custody-panel.tsx`, and the citizen payment
   page that first did it right.
+
+### A size passed to `CurrencyInput`'s `inputClassName` stops at 640px
+
+- **What happens:** `inputClassName="text-xl font-bold"` draws the figure large on a phone and at
+  14px from `sm` up. `twMerge('… text-base sm:text-sm', '… text-xl')` returns
+  `sm:text-sm … text-xl` (checked 2026-10-12): the unprefixed size replaces `text-base`, and
+  `sm:text-sm` — another variant — survives and wins from 640px.
+- **Why:** `Input` sets `text-base sm:text-sm` (16px on phones so Safari does not zoom, TYP-6), and
+  tailwind-merge only drops a class of the same group **and** the same variant.
+- **Do this:** give the size at both breakpoints, `text-xl sm:text-xl`, as the treasury's record
+  forms do. Six callers still pass it once (UI §17.4).
+- **Where:** `components/ui/input.tsx`, `components/ui/currency-input.tsx`.
 
 ### `cn()` uses tailwind-merge 3 on Tailwind 3.4
 
@@ -1361,9 +1428,13 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **Why:** `propertyNumber` was stored as typed until 2026-10-14, and the fee
   lines copy it; so is a cadastre label (`parcels.parcelNumber`). The query is
   normalised to Latin digits (`parcelDuesQuerySchema`), the older rows are not.
+  And a caller inside the API skips that schema: a براءة ذمة's `approve` passed
+  the card's own «٤٢٠», matched nothing, and certified a parcel that owed (review
+  of PR #122). Since 2026-10-15 `dues()` normalises its argument itself.
   New writes are saved in Latin digits (`propertyNumberField`, docs/database.md),
   which closes it for new data only.
-- **Do this:** compare digit-normalised values on both sides — `normalizeDigits`
+- **Do this:** compare digit-normalised values on both sides, normalised in the
+  function that compares rather than trusted to each caller — `normalizeDigits`
   in TypeScript, `translate(btrim(x), ${EASTERN_DIGITS}, ${LATIN_DIGITS})` in
   SQL, both constants bound from `@mechanization/shared-schemas`. A map keyed
   by a رقم العقار is keyed by `parcelNumberKey`
@@ -1434,3 +1505,18 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   timer; it sends `x-background-request`, and `JwtAuthGuard` skips the stamp.
 - **Where:** `lib/api-client.ts` `apiFetch`; `getStaffPresence` and the
   notifications bell's `getPendingPayments` are the callers today.
+
+### A `replaceState` made while a page mounts is not seen by `useSearchParams`
+
+- **What happens:** the citizen's request wizard, reloaded on `?step=review` with nothing
+  chosen, corrected its address to `?step=type` in an effect — and went on showing the empty
+  review step. The address said one step, the screen another (found by the render harness).
+- **Why:** Next's App Router hears `history.pushState`/`replaceState` through a patch it
+  installs in an effect of its own, and a page's effects run before its ancestors'. A
+  `replaceState` in the first effect of a page can land before anything listens, so
+  `useSearchParams` keeps the old value. The same call made later, from a click, is heard.
+- **Do this:** when the URL must be corrected on arrival, derive what the screen shows from
+  state (`step = urlStep past firstMissing ? firstMissing : urlStep`) and treat the
+  `replaceState` as tidying the address only; never let the screen wait for the URL to change.
+- **Where:** `apps/frontend/app/[tenant]/[locale]/(citizen)/my-file/requests/new/page.tsx`;
+  any page that redirects within itself from a mount effect.

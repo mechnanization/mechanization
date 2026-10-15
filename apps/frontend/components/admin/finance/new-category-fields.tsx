@@ -77,7 +77,7 @@ export function NewCategoryFields({
         option list with an empty selection. Appended, the list the select is
         drawn from keeps its order.
       */
-      queryClient.setQueryData<ExpenseCategoryView[]>(['treasury', tenant, 'expense-categories'], (current) =>
+      queryClient.setQueryData<ExpenseCategoryView[]>(['treasury', tenant, 'expense-categories', 'all'], (current) =>
         current ? [...current.filter((category) => category.id !== created.id), created] : current,
       );
       onCreated(created);

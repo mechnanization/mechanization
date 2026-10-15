@@ -1,7 +1,7 @@
 ---
 name: Mechanization
 description: Operate-mode municipal register, Arabic and RTL first, on warm neutrals with one blue accent and status colours that each mean one thing.
-# Last verified against the code: fix/pr104-review (uncommitted review fixes), 2026-10-10. Source: apps/frontend/app/globals.css, apps/frontend/tailwind.config.ts.
+# Last verified against the code: fix/pr104-review (uncommitted review fixes), 2026-10-10; components re-checked on fix/fees-page-ux (uncommitted), 2026-10-12; FileInput and the municipal request screens on the same branch (uncommitted), 2026-10-13. Source: apps/frontend/app/globals.css, apps/frontend/tailwind.config.ts.
 colors:
   background: "hsl(40 20% 98%)"
   foreground: "hsl(0 0% 4%)"
@@ -163,7 +163,7 @@ components:
 
 # Design System: Mechanization
 
-Last verified against the code: `fix/pr104-review` (with the PR #104 review fixes uncommitted), 2026-10-10.
+Last verified against the code: `fix/pr104-review` (with the PR #104 review fixes uncommitted), 2026-10-10; the components of the merged «الإيرادات والنفقات» register (movement money, `ChoiceCard`, `WalletPicker`, `SearchField`, the register by day and its work pane) on `fix/fees-page-ux` (uncommitted), 2026-10-12; the same day, the register split onto its own page «الحركات المالية» with a voucher pane only, the recording page as one card, `WalletSelect` in place of `WalletPicker` and `ChoiceCard` without `trailing` (uncommitted); later that day «الحركات المالية» as one frame of dated rows with the voucher in a `Sheet`, and `Sheet` on Radix at 200ms in and 150ms out (uncommitted); the recording page at the full width, its forms in three columns from `xl`, and the amount field at the height of every other field (uncommitted); `FileInput`, the citizen picker, the counter request form, the request status tones and the request's paper (uncommitted), 2026-10-13.
 
 This file records the visual system **as the code defines it**. The values come from
 `apps/frontend/app/globals.css`, `apps/frontend/tailwind.config.ts` and the primitives in
@@ -350,17 +350,76 @@ Tailwind's default shadows. The shadow scale is not customised.
   A negative carries U+2212, as wide as «+», on the left of its digits. One line by default;
   `wrap` lets the unit drop under the figure (the treasury's wallet strip at 360px). Dollars
   and euros take the same shape (`currency`), with the symbol after the figure.
+- **A treasury movement** is `signed`: money received in `success` with «+» and a
+  banknote-up icon on a `success/10` tile; money paid out in `foreground` with «−» and a
+  banknote-down icon on a `muted` tile. A cancelled one is struck through in
+  `muted-foreground`. Paid money is never `destructive` (COL-2).
 
 ### Inputs and fields
 - **Input**, **Select** trigger: 40px (48px coarse), `rounded-md`, `border-input`,
   `bg-background`, ring on `focus-visible`; invalid swaps the border to `destructive`.
 - **Field**: label, required mark, «(اختياري)», caution text and an error line with
   `role="alert"`.
+- **ChoiceCard**: `rounded-lg` border, the checked one `border-primary/80 bg-primary/5`
+  with a 1px `primary/40` ring; colour transitions only. Its description takes a node.
+- **WalletSelect** (treasury record forms): a `Select`; the trigger and every item show the
+  wallet's type icon in `muted-foreground`, its name, and its balance in 12px muted. Under
+  the trigger, once a figure is typed, a 12px line gives the chosen wallet's balance after the
+  entry, the figure medium in `foreground`; a payment that would overdraw it turns the line and
+  the trigger's border `destructive`, and the form's «الرصيد لا يكفي» alert under it says so.
+- **CurrencyInput** in the treasury record forms: the height of every other field (40px, 48px on
+  a touch screen), its digits `text-lg font-semibold` at every width.
+- **The treasury record forms**: two columns from `md` and three from `xl` (`gap-x-4 gap-y-5`) in
+  the order the voucher is read, the amount first and the wallet beside it; the description and
+  anything conditional (the urgent reason, the back-dating reason, a new category) across the
+  row. One column on a phone.
+- **SearchField**: the `DataTable` search box as its own primitive — `h-9 text-xs`, a search
+  icon at the start, an «Enter» key hint at the end while a draft is pending, a clear
+  control once it has run.
+- **FileInput**: a drop zone at least 48px tall, `rounded-lg`, a 2px dashed `border-input`
+  on `bg-muted/20`, a 20px muted upload icon over a medium 14px label and a 12px muted hint;
+  the `focus-visible` ring when its hidden input has the focus, a `primary/50` border on hover,
+  `primary/60` and a `primary/5` wash while a file is dragged over it, `destructive/60` when
+  invalid, colour transitions only. A
+  picked file is listed by the caller as a row: a file icon, the name (truncated) over its
+  size in 12px muted, then its type `Select` and a ghost remove button; on a phone the
+  `Select` takes its own line under the name.
+- **CitizenPicker** (counter screens): a `SearchField`, then up to eight rows at least 48px
+  tall, each the name over the mother's name in 12px muted with the رقم مرجعي at the end in
+  12px mono; once chosen, one muted row (`bg-muted/30`) with «تغيير». Never the identity number.
+- **The counter request form**: one column of sections, each a 12px muted heading over a
+  rule, beside a 20rem summary card that sticks from `lg` (the fee in it, «تقديم الطلب»
+  full width at its foot); the types and the citizen's properties as `ChoiceCard`s, two
+  columns from `sm` and three from `xl` for the types.
+- **Request status** (`lib/request-status.ts`): one tone per status, the word always beside
+  it — awaiting the fee `warning`, in review `primary` (`soft-info` as a badge), ready
+  `success`, rejected `destructive`, handed over neutral, cancelled muted.
 
 ### Tables
 - **DataTable**: sticky header on `bg-muted/95` with backdrop blur, 12px cell padding
   (`p-3`), row hover on `muted/50`; no zebra striping. Phone layouts come from column
   `meta.mobile`.
+- **The transactions list** («الحركات المالية»): one `rounded-lg border bg-card` frame, as
+  `DataTable`'s: a `p-3` search row (the box up to 28rem), a `bg-muted/20` filter band of
+  `FilterSelect`s (period, direction, wallet, category, status; two «من / إلى» `DatePicker`s
+  beside the period for a range), the lines divided by 1px `border`, and `Pager` in a `p-3`
+  footer. A line is a button: the day in a 96px column at its start (`dd/mm/yyyy`, 14px muted
+  `tabular-nums`; on a phone it heads the 12px line instead), a 32px `rounded-md` direction
+  tile, the party in 14px medium (its own direction, `dir="auto"`) over a 12px muted line led
+  by the status chip (voucher number in `font-mono`, category, wallet, each in `<bdi>`; two
+  lines on a phone), the signed amount in 14px semibold at the end with «قبض»/«صرف» under it.
+  Hover `muted/50`, the open voucher's line `primary/10` with `aria-current`.
+- **The voucher sheet**: a `Sheet` from the inline end, 512px (`sm:max-w-lg`), the whole
+  screen on a phone. Its title the voucher's kind and number (`font-mono`); the body the status
+  chips, the signed amount in 24px semibold, «قبض · wallet» under it, and a `SummaryList`
+  of every field, who recorded it, its order and its cancellation; the footer «طباعة»,
+  «إصدار أمر الصرف» and, at the far end, «إلغاء السند».
+- **The recording page** («الإيرادات والنفقات»): the page's full width, as every other page; one
+  `Card` (`p-4 sm:p-6`) holding «قبض | صرف» (`SegmentedControl`, default size) and the form,
+  the form's actions in a sticky footer on the card's bottom edge (`border-t bg-card`,
+  safe-area padding). After a press, a `success` `Alert` (a `warning` one for a replay) above
+  the fresh form with the voucher's number in `font-mono`, «طباعة · عرض» as links and a close
+  control. No toast.
 
 ### Overlays and motion
 Durations and easing are Tailwind and tailwindcss-animate defaults unless a class says
@@ -371,25 +430,32 @@ otherwise: `transition-*` runs 150ms on `cubic-bezier(0.4, 0, 0.2, 1)`; `animate
   only. Tooltips open after 200ms (`TooltipProvider delayDuration={200}`) and are drawn in
   inverted colours (`foreground` fill, `background` text).
 - **Toast**: 200ms slide from the bottom plus fade, polite live region.
-- **Sheet**: 300ms slide from the inline end.
+- **Sheet**: 200ms in and 150ms out, `ease-out`, a slide from its edge (the inline end by
+  default) over a `bg-black/50` scrim that fades. Focus is trapped while it is open and goes
+  back to what opened it.
 - **CollapsibleSection**: 200ms `ease-out`.
 - **Reduced motion**: globals.css cuts every animation and transition to 0.01ms; only
   `.animate-spin` keeps turning, slowed to 2s.
 - **Theme switch**: `disableTransitionOnChange`, so no colour transition on toggle.
 
-### Print
-- **Receipt** (`#receipt-print-area`): A5 landscape, 10mm margins, a 2px black border, lifted
-  out of its dialog, on one sheet: zoomed by `--receipt-print-zoom` (measured per receipt by
-  `fitReceiptToSheet`, never above 1, fallback 0.68) at a width of 190mm divided by the zoom, so
-  it is exactly the sheet's width once scaled. Fields that truncate on screen wrap on paper.
-- **A page's document** (`data-print-root`, today the treasury statement): the named page
-  `register`, A4 portrait with 12mm margins (A5 landscape where named pages are not supported).
-  Black text on white whatever the theme, no shadows or surfaces, tokens' borders kept; table
-  cells may wrap and padding tightens to 4×6px at 12px type, the heading row repeats on each
-  sheet and no row splits across two. Print-only parts — the sheet heading, the signature lines
-  drawn as a 1px rule in the text colour — are `hidden print:block`.
-
-### Icons
+### Print
+- **Receipt** (`#receipt-print-area`): A5 landscape, 10mm margins, a 2px black border, lifted
+  out of its dialog, on one sheet: zoomed by `--receipt-print-zoom` (measured per receipt by
+  `fitReceiptToSheet`, never above 1, fallback 0.68) at a width of 190mm divided by the zoom, so
+  it is exactly the sheet's width once scaled. Fields that truncate on screen wrap on paper.
+- **A page's document** (`data-print-root`, today the treasury statement): the named page
+  `register`, A4 portrait with 12mm margins (A5 landscape where named pages are not supported).
+  Black text on white whatever the theme, no shadows or surfaces, tokens' borders kept; table
+  cells may wrap and padding tightens to 4×6px at 12px type, the heading row repeats on each
+  sheet and no row splits across two. Print-only parts — the sheet heading, the signature lines
+  drawn as a 1px rule in the text colour — are `hidden print:block`.
+- **A municipal request's paper** (`requests/[requestId]/print`): the same named page; under a
+  2px rule the letterhead lines and crest, then the request's type (18px bold), its number in
+  mono and the issue date beside an 80px QR code of the number; the facts in two columns of
+  labelled rows, «إلى من يهمّه الأمر،» over the clerk's statement (line breaks kept), the fee in
+  a bordered row, two signature blocks, and a centred 12px line about the stamp.
+
+### Icons
 - `lucide-react` only, one stroke family. `size-4` by default, `size-3.5` in dense rows,
   `size-5` in card and section titles and in the page-header tile.
 

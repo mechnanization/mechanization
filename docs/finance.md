@@ -1,7 +1,7 @@
 # Finance (الخزينة والمالية) — design draft
 
-Status: **DESIGN, with stages 1 to 5 built, and settling several bills at once (§3.7) (see
-section 14).** It records the design agreed in discussion, 2026-10-06. The §7.2 adjustment
+Status: **DESIGN, with stages 1 to 5 built, settling several bills at once (§3.7), and one
+register for income and expenses with its own recording page (§4.6, 2026-10-12) (see section 14).** It records the design agreed in discussion, 2026-10-06. The §7.2 adjustment
 entry, an opening balance for a wallet added after go-live, and transfer write-offs are not
 built, and every table, column, enum value and error code for them is a *proposal* until its
 migration exists (CLAUDE.md: never invent names; grep first). The built stages' names are
@@ -555,6 +555,64 @@ it one.
 - Terminology (سند قبض إيرادات, رقم أمر القبض) lives in the translation files. The
   exact wording and the printed layout must be confirmed by the municipality's
   accountant.
+
+### 4.6 One register for money in and out — «الحركات المالية», and one page to record — «الإيرادات والنفقات» (built 2026-10-12)
+
+The income register (§4.5) and the expense register (§5) were twin pages, each with its own
+«new» page. Recording a receipt and then a payment took four page loads, and «what came in and
+went out on Friday» needed both registers with a date filter on each. Now there are two pages,
+each a row in «الخزينة»:
+
+- **«الإيرادات والنفقات»** (`finance/movements`) records: one form, «قبض | صرف», for those who
+  record (`TREASURY_WORK_ROLES`).
+- **«الحركات المالية»** (`finance/transactions`) reads: every voucher of both kinds in one
+  register, for every treasury reader (`TREASURY_READ_ROLES`).
+
+They were one page for a day, the form in a pane beside the register. Each wanted the width
+the other took, so the form ran past the fold beside a register squeezed to make room, and
+they were split the same day. Each page links to the other.
+
+- **The register.** Income vouchers and expense vouchers in one list, newest first
+  (`occurredAt`, then `createdAt`, then id), each line with its municipal day (Asia/Beirut) in a
+  column of its own. The page is the filter bar and the list, nothing else (2026-10-12): the
+  day headings with their totals and the period's figures above the list were taken out, though
+  `GET treasury/movements` still returns `totals` and `days`. Cancelled vouchers never count
+  in any total. They are listed, struck through, only when asked for.
+- **Filters**, in a bar at the top of the list. Period: this month (the default), last month,
+  this year, last year, all, or a range. Then direction, wallet, a category (it needs a direction: income categories and
+  expense bands are two tables), cancelled, and a search over the voucher number, the payer
+  or payee, the description and the cheque, transfer or invoice number. The expense register
+  had no search before; it has one now, the same as income.
+- **Vouchers only.** A citizen's payment credits a wallet without a voucher and stays on the
+  fees pages and the wallet's statement (decided 2026-10-12). §4.5's wish to tag citizen-fee
+  income in this list stays open. The expense requests are not vouchers either: «بانتظار
+  أمر الصرف» swaps the register for the queue of §5.1.
+- **The picked voucher.** A line of the register opens its voucher in a side panel over the
+  list (the whole screen on a phone; the back button closes it): every field, who recorded
+  it, who ordered it and who cancelled it. It can be printed, cancelled (manager) or given its
+  order for an urgent payment (manager).
+- **Recording.** «قبض | صرف» over `RecordIncomeForm` or `RecordExpenseForm`, with every rule
+  of §4.4 and §5.1–5.2 unchanged: the order, the request, the urgent payment and its ceiling,
+  the retry keys. The amount, the wallet, the other party and the wording are carried across
+  the switch. The wallet is a dropdown whose every option shows its balance, and under it the
+  chosen wallet's balance after the entry; a payment that would overdraw it is refused before
+  the round trip, and the server checks again. After a voucher is recorded the page says what
+  was written (number, print, and «عرض», which opens it in «الحركات المالية») above a fresh
+  form for the next one.
+- **Who sees what.** A reader who reaches the recording page by its address is told who
+  records and sent to the register. On the register, «تسجيل قبض» and «تسجيل صرف» lead to the
+  recording page for those who record: in the heading, and on a phone in a bar at the foot.
+- **Addresses.** The recording page's side is `?dir=in|out`; on the register
+  `?voucher=…&kind=in|out` is a voucher's address. The old addresses redirect:
+  `finance/income` → `finance/transactions?dir=in`, `finance/expenses` →
+  `finance/transactions?dir=out` (`?view=queue` and its `status` kept), and
+  `finance/income/new` / `finance/expenses/new` → `finance/movements?dir=in` / `?dir=out`. The
+  printed vouchers and «بنود الإيرادات» kept their addresses, and the register's nav row owns
+  them (`NavItem.also`).
+- **Read.** `GET t/:tenantSlug/treasury/movements` on `TreasuryController`, for
+  `TREASURY_READ_ROLES`, the same readers as both lists. Contract:
+  `packages/shared-schemas/src/treasury-movements.schema.ts`. No migration: the
+  `occurredAt` indexes of both voucher tables serve it.
 
 ---
 
@@ -1154,7 +1212,7 @@ the pin's filter missed that controller, and all six handlers were unpinned. A h
 moves treasury money from another controller is pinned by name
 (`MONEY_HANDLERS_ELSEWHERE`): `StaffController.recordPayout`, at the work roles (D9), which the
 pin's filter missed until the PR #109 review, and the fee routes that post wallet entries once
-live — `FeesController.settle` (`FEE_ISSUE_ROLES`), `review` (`FEE_ADMIN_ROLES`), `reverseTransaction`
+live — `FeesController.settle` (`FEE_SETTLE_ROLES`), `review` (`FEE_ADMIN_ROLES`), `reverseTransaction`
 (the manager) and the public, HMAC-checked `whishCallback` — which no pin held until the final-stack
 review (2026-10-11). The bulk settlement's two routes are pinned in their own block.
 `ADMINISTRATIVE_OFFICER` reads `custody/mine` too: the route is on every role but
@@ -1514,6 +1572,9 @@ already closed A5 and A6), and the owner's decisions D10–D12. Each item is pin
   and the dossier's `feesTotal`) leave it out, so billed stays collected plus outstanding (decision
   of 2026-10-13). Every owed filter names it (`NOT IN ('PAID', 'CANCELLED')`, `!== 'CANCELLED'`)
   rather than leaning on its `remaining` of 0, and no screen offers a cancelled bill a payment.
+  A municipal request still open on the bill is cancelled in the same transaction
+  (`cancelRequestOfCancelledBill`, 0094), and the answer names it (`cancelledRequest`) so the page
+  can; the bill's page warns before the press (review of PR #122, 2026-10-15).
 - **Who raised a bill (B4).** `citizen_payments.issuedById` (0091) on every bill raised since: the
   notice's issuer, the clerk of a one-off charge, whoever pressed a recurring run (NULL for the
   scheduled one). A one-off charge is Tier 1 (`FEE_INDIVIDUAL_LEVIED`). It still has no retry key
@@ -1528,6 +1589,44 @@ not modelled), a catch-up for billing periods the scheduler missed and a screen 
 `billing_run_entries`, a refund voucher behind a payment reversal, and a reviewer who differs from
 the recorder of a flagged exchange.
 
+### One register for income and expenses, and a recording page (2026-10-12; `fix/fees-page-ux`, not committed)
+
+§4.6, built on top of the fees-page work on the same branch.
+
+- **Backend.** `GET treasury/movements` (`TreasuryMovementsService`, on `TreasuryController`,
+  `TREASURY_READ_ROLES`, pinned in `route-inventory.spec.ts`).
+  - The page comes from a schema-qualified `UNION ALL` of the two voucher tables. The
+    count, the per-currency sums and the day totals are built by one function, so they share
+    one filter.
+  - Every read runs in one REPEATABLE READ transaction, so a voucher cancelled mid-read
+    cannot appear when cancelled ones were not asked for.
+  - `IncomeService` and `ExpensesService` gained `viewsByIds(tx, ids)`, and their lists are
+    unchanged.
+  - `page` is capped at 1,000,000. The income and transfer registers' unbounded `page` is a
+    gap in [security.md](security.md).
+  - Tests: `treasury-movements.integration.spec.ts`, 20 tests on a throwaway Postgres 17. They
+    cover interleaving and ties, every filter, a search with `%` and `_`, cancelled vouchers
+    listed but never summed, a day split over pages, and both Beirut clock changes. The full
+    backend suite passed afterwards: 149 suites, 2,912 tests.
+- **Frontend.** Two pages and two nav rows:
+  - `finance/transactions`: the list with its filter bar (`movements/movement-list.tsx`,
+    `movement-filters.tsx`), the queue, and the voucher in a side panel (`voucher-sheet.tsx`, on
+    the kit's `Sheet`, moved onto Radix Dialog for it);
+  - `finance/movements`: the composer (`movement-composer.tsx` over the two record forms, in two
+    columns from `md` and three from `xl` across the page's full width, the amount field at the
+    height of the others, the wallet a `WalletSelect` dropdown);
+  - redirects from the four old addresses, and the register's nav row with `also`.
+
+  The two were first built as one page, the composer in a pane beside the register, and split
+  the same day on review. Later the same day the register lost its day headings and period
+  figures for a dated column and a filter bar, and the voucher moved from a pane to a side panel. The record forms' rules, keys and refusals are
+  unchanged; their layout and the next-entry reset are new.
+  - Fixed on the way: Enter in the inline income-category editor submitted the income
+    voucher ([gotchas](gotchas.md)).
+  - Tests: `lib/treasury-movements.test.ts`, the nav cases and the expense form's field
+    order, 42 files and 530 cases in all (the day-grouping and net cases went with their helpers).
+  - Rendered on a mocked API at 1440, 1280, 1024, 390 and 360, light and dark, Arabic and
+    English (UI §16.4), both pages and the path from a recorded voucher to its line.
 
 ### Final-stack review (2026-10-11; `feat/treasury-day-closing@c88c971`, fixes not committed)
 
@@ -1831,7 +1930,7 @@ Built and tested, exactly as §5 describes, with **no approval step**:
   voucher and the money committing together, a refused outflow leaving no
   voucher, two simultaneous vouchers against one wallet, the retry key, the void
   returning the money, and two simultaneous cancellations.
-- Frontend: the `finance/expenses` register (filters, per-currency totals over
+- Frontend (as built then; since 2026-10-12 one page with income, §4.6): the `finance/expenses` register (filters, per-currency totals over
   the whole filtered set, cancelled vouchers shown struck through rather than
   hidden), the record dialog and the cancel dialog, its own nav row, and a link
   from the treasury page. Recording lives on its own page, `finance/expenses/new`,
@@ -1975,7 +2074,7 @@ Built as §4 describes, with the differences listed after:
   before and after.
 - Tests: 12 unit (dates, Beirut midnights across both clock changes, periods)
   and 38 integration on a throwaway Postgres 17.
-- Frontend: the `finance/income` register (search on the server, period,
+- Frontend (as built then; since 2026-10-12 one page with expenses, §4.6): the `finance/income` register (search on the server, period,
   category, currency and status filters, per-currency totals over the whole
   filtered set, cancelled vouchers struck through with their reason), the
   cancel dialog, its own nav row «الإيرادات», and the recording page

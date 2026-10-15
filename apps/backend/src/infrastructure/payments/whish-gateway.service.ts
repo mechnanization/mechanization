@@ -15,11 +15,12 @@ import type {
  * masking in logs — is real and tested, and `postCheckout()` is the single
  * method to fill in when the API contract arrives.
  *
- * **Sandbox is not a fake payment.** With no credentials configured, starting a
- * checkout does not pretend money moved: it records the citizen's *intent* and
- * leaves the invoice awaiting the municipality's confirmation, which is exactly
- * what the existing manual declaration does. Nothing in this file can move an
- * invoice to PAID without a signature that verifies — see `parseCallback`.
+ * **Sandbox is not a fake payment.** With no credentials configured,
+ * `createCheckout` does not pretend money moved: it returns to the portal with a
+ * reference of our own. No caller reaches it that way today: online payment is
+ * paused (open-decisions §21), and `FeesService.startWhishCheckout` refuses with
+ * `ONLINE_PAYMENT_UNAVAILABLE` while `isLive` is false. Nothing in this file can
+ * move an invoice to PAID without a signature that verifies — see `parseCallback`.
  */
 @Injectable()
 export class WhishGatewayService implements WhishGateway {
@@ -35,9 +36,9 @@ export class WhishGatewayService implements WhishGateway {
 
     if (!this.isLive) {
       this.logger.warn(
-        'Whish is in sandbox: online payments will be recorded as declarations ' +
-          'awaiting staff confirmation. Set WHISH_API_URL, WHISH_API_KEY and ' +
-          'WHISH_WEBHOOK_SECRET to go live.',
+        'Whish is not configured: online checkout is refused (ONLINE_PAYMENT_UNAVAILABLE, ' +
+          'open-decisions §21). Write postCheckout first, then set WHISH_API_URL, ' +
+          'WHISH_API_KEY and WHISH_WEBHOOK_SECRET.',
       );
     } else if (!this.webhookSecret) {
       // Credentials without a secret is the dangerous half-configuration: the

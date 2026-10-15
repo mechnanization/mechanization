@@ -8,6 +8,7 @@ import { migrateTenantSchema } from '../../../infrastructure/prisma/tenant-migra
 import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-client';
 import { PrismaAuditRepository } from '../../../infrastructure/repositories/audit.repository';
 import { AuditService } from '../audit/audit.service';
+import { ReportingService } from '../reporting/reporting.service';
 import { ExpensesService } from '../treasury/expenses.service';
 import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
 import { TreasuryService } from '../treasury/treasury.service';
@@ -514,6 +515,8 @@ describeIfDb('finance audit remediation', () => {
         paymentStatus: 'CANCELLED',
         remaining: 0,
         cancellationReason: 'صدر الرسم مرتين',
+        // No municipal request waited on it.
+        cancelledRequest: null,
       });
       await expect(scoped(() => fees.cancelBill(paymentId, 'مرة ثانية', MANAGER()))).rejects.toMatchObject({
         code: 'BILL_ALREADY_CANCELLED',
@@ -546,6 +549,104 @@ describeIfDb('finance audit remediation', () => {
           },
         }),
       ).rejects.toThrow(/citizen_payments_cancelled_status/);
+    });
+
+    it('cancels the municipal request waiting on a cancelled bill, names it before and after, and frees its place (0094)', async () => {
+      // A request filed online and billed at the counter, as `CitizenRequestsService.raiseBill` links it.
+      const request = await db.citizenRequest.create({
+        data: {
+          requestNumber: `REQ-${randomUUID().slice(0, 8)}`,
+          citizenId,
+          channel: 'ONLINE',
+          requestType: 'CLEARANCE',
+          applicantCapacity: 'OWNER',
+          clientRequestId: randomUUID(),
+        },
+      });
+      const paymentId = await bill(200_000);
+      await db.citizenRequest.update({ where: { id: request.id }, data: { citizenPaymentId: paymentId } });
+
+      // The bill's page reads it off the citizen's profile, and names the request before the press.
+      const reporting = new ReportingService(
+        context,
+        new EventEmitter2(),
+        { get: async () => null, set: async () => undefined } as never,
+        { get: () => undefined } as never,
+      );
+      const onProfile = async () =>
+        (await scoped(() => reporting.getCitizenProfile(citizenId)))!.payments.find((row) => row.id === paymentId);
+      expect(await onProfile()).toMatchObject({
+        request: { id: request.id, requestNumber: request.requestNumber, requestType: 'CLEARANCE', status: 'AWAITING_PAYMENT' },
+      });
+
+      // …and the answer names the request cancelled with it, for the toast.
+      await expect(scoped(() => fees.cancelBill(paymentId, 'رسم الطلب صدر خطأً', MANAGER()))).resolves.toMatchObject({
+        paymentStatus: 'CANCELLED',
+        cancelledRequest: { requestId: request.id, requestNumber: request.requestNumber },
+      });
+      expect(await onProfile()).toMatchObject({ request: { id: request.id, status: 'CANCELLED' } });
+
+      expect(await db.citizenRequest.findUniqueOrThrow({ where: { id: request.id } })).toMatchObject({
+        status: 'CANCELLED',
+        cancelledById: ids.manager,
+        citizenPaymentId: paymentId,
+      });
+      const row = await db.auditLogEntry.findFirstOrThrow({ where: { action: 'REQUEST_CANCELLED', entityId: request.id } });
+      expect(row).toMatchObject({ actorId: ids.manager, after: { status: 'CANCELLED', cause: 'BILL_CANCELLED' } });
+      // The citizen can file the same request again: `citizen_requests_one_open_key` no longer holds it.
+      await expect(
+        db.citizenRequest.create({
+          data: {
+            requestNumber: `REQ-${randomUUID().slice(0, 8)}`,
+            citizenId,
+            channel: 'ONLINE',
+            requestType: 'CLEARANCE',
+            applicantCapacity: 'OWNER',
+            clientRequestId: randomUUID(),
+          },
+        }),
+      ).resolves.toMatchObject({ status: 'AWAITING_PAYMENT' });
+    });
+
+    it('cancels a request left in review by a lost reversal, through the step the reversal missed', async () => {
+      // Paid, so in review; then its receipt reversed, and the reversal's reconcile lost (this spec's
+      // events go nowhere): the bill is back to unpaid, and the request still says IN_REVIEW.
+      const request = await db.citizenRequest.create({
+        data: {
+          requestNumber: `REQ-${randomUUID().slice(0, 8)}`,
+          citizenId,
+          channel: 'COUNTER',
+          requestType: 'RESIDENCY',
+          applicantCapacity: 'OWNER',
+          createdById: ids.clerk,
+          clientRequestId: randomUUID(),
+        },
+      });
+      const paymentId = await bill(100_000);
+      await db.citizenRequest.update({ where: { id: request.id }, data: { citizenPaymentId: paymentId } });
+      await db.citizenRequest.update({ where: { id: request.id }, data: { status: 'IN_REVIEW', paidAt: new Date() } });
+
+      await expect(scoped(() => fees.cancelBill(paymentId, 'رسم الطلب صدر خطأً', MANAGER()))).resolves.toMatchObject({
+        cancelledRequest: { requestId: request.id, requestNumber: request.requestNumber },
+      });
+
+      expect(await db.citizenRequest.findUniqueOrThrow({ where: { id: request.id } })).toMatchObject({
+        status: 'CANCELLED',
+        paidAt: null,
+        cancelledById: ids.manager,
+      });
+      // The reversal's row, which the lost reconcile never wrote, and then the manager's.
+      const step = (action: string) => db.auditLogEntry.findFirstOrThrow({ where: { entityId: request.id, action } });
+      expect(await step('REQUEST_PAYMENT_REVERSED')).toMatchObject({
+        actorType: 'SYSTEM',
+        before: { status: 'IN_REVIEW' },
+        after: { status: 'AWAITING_PAYMENT' },
+      });
+      expect(await step('REQUEST_CANCELLED')).toMatchObject({
+        actorId: ids.manager,
+        before: { status: 'AWAITING_PAYMENT' },
+        after: { status: 'CANCELLED', cause: 'BILL_CANCELLED' },
+      });
     });
   });
 

@@ -387,6 +387,8 @@ export default function SettlePaymentPage({
     setSubmitting(false);
     // Cash, a Whish transfer or a collector's custody just moved: every treasury balance read before it is stale.
     void queryClient.invalidateQueries({ queryKey: ['treasury', tenant] });
+    // A municipal request's fee may be this bill: its queue and panel, reached back from here, read it again.
+    void queryClient.invalidateQueries({ queryKey: ['requests', tenant] });
     if (result.replayed) {
       // Over the receipt, which opens next: the first receipt stands, as first recorded.
       toast.warning(t('replayedTitle', { number: result.receiptNumber }), {

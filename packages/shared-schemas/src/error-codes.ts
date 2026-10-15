@@ -44,6 +44,8 @@ export const ERROR_CODES = [
   'PAYMENT_NOT_FOUND',
   'PAYMENT_ALREADY_PAID',
   'PAYMENT_ALREADY_UNDER_REVIEW',
+  // A citizen reports a Whish Money transfer only, with its reference; cash is paid at the office (open-decisions §21).
+  'PAYMENT_DECLARATION_WHISH_ONLY',
   // Staff side: a counter payment or a reversal on a bill whose citizen claim is still under review.
   'PAYMENT_CLAIM_UNDER_REVIEW',
   'PAYMENT_STATE_CHANGED',
@@ -52,6 +54,8 @@ export const ERROR_CODES = [
   'CHARGE_ALREADY_PAID',
   'CHARGE_PAYMENT_PENDING',
   'CHARGE_CHANGED_DURING_CHECKOUT',
+  // Paying online through Whish is paused until the provider is wired (open-decisions §21).
+  'ONLINE_PAYMENT_UNAVAILABLE',
   'PAYMENT_CURRENCY_MISMATCH',
   'EXCHANGE_RATE_MISSING',
   'EXCHANGE_RATE_OVERRIDE_FORBIDDEN',
@@ -200,6 +204,8 @@ export const ERROR_CODES = [
   'REMOVAL_REASON_FOR_KEPT_CARD',
   'SALE_REASON_OWNER_ONLY',
   'OWNER_HAS_LINKED_TENANTS_ON_SAVE',
+  // A save that deletes a card or a flat a municipal request names (0092); end it instead (`params.requests`, `params.count`).
+  'PROPERTY_NAMED_BY_REQUEST',
   'CITIZEN_FILE_CHANGED_DURING_SAVE',
   'TENANCY_ENDED_ON_CARD_SINCE_OPENED',
   // The two rules migration 0072 keeps on a citizen's numbers.
@@ -332,6 +338,34 @@ export const ERROR_CODES = [
   'CLOSED_DAY_MUTATION_BLOCKED',
   'REOPEN_REASON_REQUIRED',
   'ONLY_LATEST_CLOSED_DAY_CAN_BE_REOPENED',
+  // Municipal requests (docs/municipal-requests-plan.md)
+  'REQUEST_NOT_FOUND',
+  // A type the municipality has not switched on (`params.type` is the enum value).
+  'REQUEST_TYPE_NOT_OFFERED',
+  'REQUEST_PROPERTY_REQUIRED',
+  // A card or unit line that is not the citizen's own, or no longer current.
+  'REQUEST_PROPERTY_NOT_YOURS',
+  // One open request per citizen, type and card (`params.number` is the open one, when known).
+  'REQUEST_ALREADY_OPEN',
+  // The same retry key sent for a different request (`params.number` is the first).
+  'REQUEST_KEY_REUSED',
+  // The request is no longer where this act starts (`params.status`).
+  'REQUEST_STATE_CHANGED',
+  // A request whose fee bill is raised and unpaid cannot be cancelled or rejected yet.
+  'REQUEST_BILL_OPEN',
+  'REQUEST_FREE_NO_BILL',
+  'REQUEST_IDENTITY_COPY_REQUIRED',
+  // A براءة ذمة refused while the property owes (`params.total`, in pounds).
+  'REQUEST_CLEARANCE_DUES_OUTSTANDING',
+  'REQUEST_CLEARANCE_NO_PROPERTY_NUMBER',
+  'REQUEST_ATTACHMENT_NOT_FOUND',
+  'REQUEST_ATTACHMENT_UNSUPPORTED',
+  'REQUEST_ATTACHMENT_EMPTY',
+  // `params.max`: how many papers one request may carry.
+  'REQUEST_ATTACHMENT_LIMIT',
+  'REQUEST_ATTACHMENTS_CLOSED',
+  'FILE_UPLOAD_FAILED',
+  'FILE_OPEN_FAILED',
   // Fixed messages the filter and the tenant layer already send
   'INTERNAL_ERROR',
   'TENANT_MISMATCH',

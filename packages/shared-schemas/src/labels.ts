@@ -15,6 +15,11 @@ import type {
   OccupancyType,
   OwnerBillingMode,
   FeeExemptionReason,
+  ApplicantCapacity,
+  RequestAttachmentType,
+  RequestChannel,
+  RequestStatus,
+  RequestType,
   PropertyType,
   ResidentStatus,
   StaffRole,
@@ -343,6 +348,50 @@ export const ar = {
     PUBLIC_FACILITY: 'مرفق عام',
     OTHER: 'سبب آخر',
   } satisfies Record<FeeExemptionReason, string>,
+
+  /** المعاملات والإفادات (0092). See `REQUEST_TYPE`. */
+  requestType: {
+    CLEARANCE: 'براءة ذمة بلدية',
+    RESIDENCY: 'إفادة سكن',
+    OCCUPANCY: 'إفادة إشغال',
+    VACANCY: 'إفادة شغور',
+    LEASE_REGISTRATION: 'تسجيل عقد إيجار',
+    RENOVATION: 'رخصة ترميم',
+    SIGNAGE: 'رخصة لافتة',
+    OTHER: 'طلب عام',
+  } satisfies Record<RequestType, string>,
+
+  applicantCapacity: {
+    OWNER: 'مالك',
+    TENANT: 'مستأجر',
+    ESTATE_HEIR: 'وريث',
+    LEGAL_AGENT: 'وكيل قانوني',
+    FREE_OCCUPANT: 'شاغل بلا عقد',
+  } satisfies Record<ApplicantCapacity, string>,
+
+  requestStatus: {
+    AWAITING_PAYMENT: 'بانتظار تسديد الرسم',
+    IN_REVIEW: 'قيد المعالجة',
+    READY_FOR_PICKUP: 'جاهزة للاستلام',
+    COMPLETED: 'مُنجزة',
+    REJECTED: 'مرفوضة',
+    CANCELLED: 'مُلغاة',
+  } satisfies Record<RequestStatus, string>,
+
+  requestChannel: {
+    ONLINE: 'عبر البوابة',
+    COUNTER: 'في قلم البلدية',
+  } satisfies Record<RequestChannel, string>,
+
+  requestAttachmentType: {
+    IDENTITY: 'بطاقة الهوية أو إخراج القيد',
+    OWNERSHIP_PROOF: 'سند ملكية',
+    LEASE_CONTRACT: 'عقد إيجار',
+    POWER_OF_ATTORNEY: 'وكالة قانونية',
+    INHERITANCE_PROOF: 'حصر إرث',
+    MUKHTAR_STATEMENT: 'إفادة مختار',
+    OTHER: 'مستند آخر',
+  } satisfies Record<RequestAttachmentType, string>,
 
   /** «توزيع الرسم على المالكين» on a flat with several owners. See `OWNER_BILLING_MODE`. */
   ownerBillingMode: {
@@ -706,6 +755,49 @@ export const en = {
     PUBLIC_FACILITY: 'Public facility',
     OTHER: 'Other reason',
   } satisfies Record<FeeExemptionReason, string>,
+
+  requestType: {
+    CLEARANCE: 'Municipal clearance',
+    RESIDENCY: 'Residence certificate',
+    OCCUPANCY: 'Occupancy certificate',
+    VACANCY: 'Vacancy certificate',
+    LEASE_REGISTRATION: 'Lease registration',
+    RENOVATION: 'Renovation permit',
+    SIGNAGE: 'Sign permit',
+    OTHER: 'General request',
+  } satisfies Record<RequestType, string>,
+
+  applicantCapacity: {
+    OWNER: 'Owner',
+    TENANT: 'Tenant',
+    ESTATE_HEIR: 'Heir',
+    LEGAL_AGENT: 'Legal agent',
+    FREE_OCCUPANT: 'Occupant without a lease',
+  } satisfies Record<ApplicantCapacity, string>,
+
+  requestStatus: {
+    AWAITING_PAYMENT: 'Awaiting the fee',
+    IN_REVIEW: 'In review',
+    READY_FOR_PICKUP: 'Ready for pickup',
+    COMPLETED: 'Completed',
+    REJECTED: 'Rejected',
+    CANCELLED: 'Cancelled',
+  } satisfies Record<RequestStatus, string>,
+
+  requestChannel: {
+    ONLINE: 'Online',
+    COUNTER: 'At the counter',
+  } satisfies Record<RequestChannel, string>,
+
+  requestAttachmentType: {
+    IDENTITY: 'Identity card or civil record',
+    OWNERSHIP_PROOF: 'Title deed',
+    LEASE_CONTRACT: 'Lease contract',
+    POWER_OF_ATTORNEY: 'Power of attorney',
+    INHERITANCE_PROOF: 'Inheritance record',
+    MUKHTAR_STATEMENT: "Mukhtar's statement",
+    OTHER: 'Other document',
+  } satisfies Record<RequestAttachmentType, string>,
 
   ownerBillingMode: {
     EQUAL: 'Split equally between the owners',

@@ -2,7 +2,7 @@ import { citizenDisplayName } from '@mechanization/shared-schemas';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
-import type { FeeAssessment } from '@mechanization/shared-schemas';
+import type { FeeAssessment, RequestStatus, RequestType } from '@mechanization/shared-schemas';
 import { effectiveOwnerBilling, isCoOwned, ownerShareOf } from '@mechanization/shared-schemas';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
@@ -543,6 +543,13 @@ export interface CitizenProfilePayment {
    * before per-unit billing existed.
    */
   assessment: FeeAssessment | null;
+  /**
+   * The municipal request whose fee this bill is (0092), or null. Named on the
+   * bill's page and in «إلغاء الفاتورة»'s dialog: cancelling the bill cancels
+   * a request still open on it (review of PR #122). Its status moves with the
+   * bill's money events, which clear this cache.
+   */
+  request: { id: string; requestNumber: string; requestType: RequestType; status: RequestStatus } | null;
 }
 
 /**
@@ -1078,6 +1085,7 @@ export class ReportingService {
             // «ليش عليّ هالمبلغ؟» — see `CitizenProfilePayment.assessment`.
             assessment: true,
             feeNotice: { select: { frequency: true } },
+            citizenRequest: { select: { id: true, requestNumber: true, requestType: true, status: true } },
           },
         },
         registrations: {
@@ -1274,6 +1282,14 @@ export class ReportingService {
       cancellationReason: payment.cancellationReason,
       frequency: payment.feeNotice?.frequency ?? null,
       assessment: (payment.assessment as FeeAssessment | null) ?? null,
+      request: payment.citizenRequest
+        ? {
+            id: payment.citizenRequest.id,
+            requestNumber: payment.citizenRequest.requestNumber,
+            requestType: payment.citizenRequest.requestType as RequestType,
+            status: payment.citizenRequest.status as RequestStatus,
+          }
+        : null,
     }));
 
     // Summed from the rows just mapped rather than by a second set of
@@ -1967,6 +1983,8 @@ export class ReportingService {
   @OnEvent('payment.reversed')
   /** A cancelled bill leaves what is owed, so it stales them too. */
   @OnEvent('payment.cancelled')
+  /** A municipal request raising its fee is a new bill on the citizen's profile and the totals (0092). */
+  @OnEvent('request.bill.raised')
   /**
    * The census moves the map, so the census has to clear the map's cache.
    *

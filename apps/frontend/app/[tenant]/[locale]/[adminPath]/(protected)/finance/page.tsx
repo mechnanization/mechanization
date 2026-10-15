@@ -3,23 +3,8 @@
 import { use, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
-import {
-  Banknote,
-  ChevronLeft,
-  HandCoins,
-  Landmark,
-  Lock,
-  Plus,
-  Smartphone,
-  Wallet,
-  type LucideIcon,
-} from 'lucide-react';
-import {
-  getLabels,
-  TREASURY_ADMIN_ROLES,
-  type TreasuryAccountType,
-  type TreasuryRate,
-} from '@mechanization/shared-schemas';
+import { ChevronLeft, Landmark, Lock, Plus, Wallet } from 'lucide-react';
+import { getLabels, TREASURY_ADMIN_ROLES, type TreasuryRate } from '@mechanization/shared-schemas';
 import { getTreasuryOverview, type TreasuryAccountView, type TreasuryOverview } from '@/lib/api-client';
 import { formatMoney } from '@/lib/currency';
 import { formatDate } from '@/lib/dates';
@@ -32,6 +17,7 @@ import { ActivateTreasuryDialog } from '@/components/admin/finance/activate-trea
 import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
 import { AddAccountDialog } from '@/components/admin/finance/add-account-dialog';
 import { TreasuryAmount } from '@/components/admin/finance/treasury-amount';
+import { walletIcon } from '@/components/admin/finance/wallet-icon';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -71,7 +57,7 @@ import { EmptyState, ErrorState } from '@/components/ui/states';
  * What collectors still hold is not here at all: it is not the treasury's
  * until it is handed in, and it has its own page, «الجباة والتحصيل»
  * (`/finance/collectors`), where it is received into the safe. That page and
- * the expense register («النفقات») are reached from the sidebar, not from
+ * the register of income and expenses («الحركات المالية») are reached from the sidebar, not from
  * buttons here. The one exception is `OrdersNotice`: when requests or
  * urgent payments are waiting for the manager's payment order, a line says so
  * and leads straight to that queue.
@@ -146,7 +132,7 @@ export default function FinancePage({
       ) : (
         <>
           <OrdersNotice
-            href={`${base}/finance/expenses?view=queue`}
+            href={`${base}/finance/transactions?view=queue`}
             requests={overview.pendingExpenseRequests}
             urgent={overview.vouchersAwaitingOrder}
           />
@@ -185,7 +171,7 @@ export default function FinancePage({
  *
  * Two debts, counted apart: requests an accountant prepared (nothing has left a
  * wallet) and urgent payments made before the order (the money has moved,
- * art. 35). Both lead to the same queue on the expense register, and the notice
+ * art. 35). Both lead to the same queue on «الحركات المالية», and the notice
  * is gone when neither has anything in it. Shown to everyone who reads the
  * treasury: it is a fact about the treasury, and for the manager it is the next
  * thing to do.
@@ -251,22 +237,6 @@ function BalancesSkeleton(): React.JSX.Element {
     </Card>
   );
 }
-
-/**
- * Which picture a wallet gets, by what it is.
- *
- * Whish has no mark of its own here on purpose: its logo is a third party's
- * trademark, and drawing it from memory would put a wrong version of somebody
- * else's brand on a municipal screen. A phone-wallet says what it is. If the
- * municipality supplies the official mark, it replaces `Smartphone` here.
- */
-const WALLET_ICON: Record<TreasuryAccountType, LucideIcon> = {
-  CASH_SAFE: Banknote,
-  WHISH_ACCOUNT: Smartphone,
-  BANK_ACCOUNT: Landmark,
-  COLLECTOR_CUSTODY: HandCoins,
-  PETTY_CASH: Wallet,
-};
 
 /**
  * «أرصدة الخزينة» — the wallets, one per line, and their total in the footer.
@@ -371,7 +341,7 @@ function WalletLine({
   locale: string;
 }): React.JSX.Element {
   const t = useTranslations('finance.view');
-  const Icon = WALLET_ICON[account.type] ?? Wallet;
+  const Icon = walletIcon(account.type);
   const equivalent = account.currency === target ? null : convertAmount(account.balance, account.currency, target, rate);
 
   return (

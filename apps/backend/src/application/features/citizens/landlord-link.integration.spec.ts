@@ -630,6 +630,83 @@ describeIfDb('LandlordLinkService', () => {
     expect(await ownerCards(owner.id)).toEqual([]);
   });
 
+  it('keeps the card a link minted when the owner has filed a municipal request on it (0092)', async () => {
+    /*
+      A منزل bills its single unit from its own columns: a card left saying
+      nothing reads as "nobody was asked", and the owner would be charged the
+      occupancy fee the tenant already pays.
+    */
+    const { building } = await within(() =>
+      buildings.create(
+        { parcelNumber: 'LNK-HOUSE-REQ', structureType: 'INDEPENDENT_HOUSE', lifecycleStatus: 'IN_USE', floorsCount: 1 },
+        actor(),
+      ),
+    );
+    const onlyUnit = await db.unit.findFirst({ where: { buildingId: building.id } });
+    const unitId =
+      onlyUnit?.id ??
+      (
+        await within(() =>
+          buildings.generateUnits(
+            building.id,
+            { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
+            actor(),
+          ),
+        )
+      ).units[0]!.id;
+
+    const phone = freshPhone();
+    const tenantId = await citizen('مستأجر', freshPhone().stored);
+    const registration = await db.registration.create({
+      data: {
+        citizenId: tenantId,
+        referenceNumber: `REF-${randomUUID().slice(0, 10)}`,
+        properties: {
+          create: {
+            occupancyType: 'TENANT',
+            landlordName: 'مالك البيت',
+            landlordPhone: phone.stored,
+            propertyType: 'HOUSE',
+            neighborhood: 'الحي الشرقي',
+            propertyNumber: 'LNK-HOUSE-REQ',
+            buildingId: building.id,
+            unitType: 'APARTMENT',
+            unitArea: 110,
+          },
+        },
+      },
+      select: { id: true, properties: { select: { id: true } } },
+    });
+    await within(() =>
+      census.syncRegistration({ registrationId: registration.id, citizenId: tenantId, actor: actor() }),
+    );
+    const entryId = registration.properties[0]!.id;
+    const owner = await ownerWithFile(phone.stored);
+
+    await within(() => links.confirm({ propertyEntryId: entryId, citizenId: owner.id, actor: actor() }));
+    const [card] = await ownerCards(owner.id);
+    expect(card).toMatchObject({ propertyType: 'HOUSE', occupancyType: 'OWNER', unitStatus: 'RENTED' });
+    expect((await ownerSpells(owner.id))[0]).toMatchObject({ unitId, toDate: null });
+
+    // The owner asks for a paper on the card the link minted; the request's key keeps the card (RESTRICT).
+    await db.citizenRequest.create({
+      data: {
+        requestNumber: `REQ-${randomUUID().slice(0, 8)}`,
+        citizenId: owner.id,
+        channel: 'ONLINE',
+        requestType: 'RESIDENCY',
+        applicantCapacity: 'OWNER',
+        propertyEntryId: card!.id,
+        clientRequestId: randomUUID(),
+      },
+    });
+
+    // Before this the undo deleted the card and the key answered with an unmapped 500.
+    const undone = await within(() => links.unlink({ propertyEntryId: entryId, actor: actor() }));
+    expect(undone).toMatchObject({ cardsRemoved: 0, kept: [{ unitCode: null, reason: 'HAS_REQUESTS', propertyEntryId: card!.id }] });
+    expect(await ownerCards(owner.id)).toHaveLength(1);
+  });
+
   it('reopens a case the link closed, when the link is undone', async () => {
     const { units, building } = await surveyedBlock('LNK-CASE');
     const phone = freshPhone();

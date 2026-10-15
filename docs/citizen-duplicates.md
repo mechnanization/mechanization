@@ -132,8 +132,9 @@ third-party card locked:
   landlord links (and their footprints and mints) and «ليس هذا المالك» answers
   follow the person. Open «مُعاد للتصحيح» returns move to the newest filing.
 - **A bill both files carry for the same notice and period stays on the
-  absorbed file, untouched.** The register allows one per person per period,
-  and no tool cancels a bill. The accountant sees it in «فواتير تأثّرت
+  absorbed file, untouched.** The register allows one per person per period;
+  the manager may withdraw the duplicate with «إلغاء الفاتورة» (finance audit
+  B3) when nothing was paid on it. The accountant sees it in «فواتير تأثّرت
   بتصحيحات» (merges count as corrections).
 - Fields the kept file lacks are filled from the other; fields both answer
   differently keep the kept file's answer (listed in the dialog, a yes-or-no and

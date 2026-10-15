@@ -32,12 +32,14 @@ import { TenantService } from './features/tenant/tenant.service';
 import { FeesService } from './features/fees/fees.service';
 import { CorrectionBillsService } from './features/fees/correction-bills.service';
 import { ParcelDuesService } from './features/fees/parcel-dues.service';
+import { CitizenRequestsService } from './features/citizen-requests/citizen-requests.service';
 import { PaymentLedgerService } from './features/fees/payment-ledger.service';
 import { PaymentSettlementService } from './features/fees/payment-settlement.service';
 import { TreasuryLedgerService } from './features/treasury/treasury-ledger.service';
 import { TreasuryService } from './features/treasury/treasury.service';
 import { ExpensesService } from './features/treasury/expenses.service';
 import { IncomeService } from './features/treasury/income.service';
+import { TreasuryMovementsService } from './features/treasury/treasury-movements.service';
 import { TransfersService } from './features/treasury/transfers.service';
 import { DayClosureService } from './features/treasury/day-closure.service';
 import { DailyCountService } from './features/treasury/daily-count.service';
@@ -90,6 +92,8 @@ import { RecordReviewService } from './features/quality/record-review.service';
     TreasuryService,
     ExpensesService,
     IncomeService,
+    CitizenRequestsService,
+    TreasuryMovementsService,
     TransfersService,
     DayClosureService,
     DailyCountService,
@@ -137,6 +141,8 @@ import { RecordReviewService } from './features/quality/record-review.service';
     TreasuryService,
     ExpensesService,
     IncomeService,
+    CitizenRequestsService,
+    TreasuryMovementsService,
     TransfersService,
     DayClosureService,
     DailyCountService,

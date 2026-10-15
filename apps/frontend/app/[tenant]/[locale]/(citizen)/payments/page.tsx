@@ -16,7 +16,7 @@ import {
   Wallet,
   XCircle,
 } from 'lucide-react';
-import { getLabels } from '@mechanization/shared-schemas';
+import { getLabels, type DeclarePayment } from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
   declarePayment,
@@ -30,6 +30,7 @@ import { clearSession, loadSession } from '@/lib/session';
 import { formatLbp } from '@/lib/currency';
 import { Alert } from '@/components/ui/alert';
 import { billFigure, citizenPaymentTotals, isPartlyPaid, isPayable, partlyPaidFigures } from '@/lib/citizen-payments';
+import { ONLINE_PAYMENT_OPEN } from '@/lib/online-payment';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -67,6 +68,7 @@ export default function CitizenPayments({
   const router = useRouter();
   const labels = getLabels(locale);
   const tCitizen = useTranslations('citizen');
+  const tPay = useTranslations('onlinePayment');
 
   const [token, setToken] = useState<string | null>(null);
   const [name, setName] = useState('');
@@ -118,7 +120,7 @@ export default function CitizenPayments({
   }, [load]);
 
   const submitDeclaration = useCallback(
-    async (input: { method: string; whishTransactionRef?: string }) => {
+    async (input: DeclarePayment) => {
       if (!token || !paying) return;
       setDeclaring(true);
       setDeclareError(null);
@@ -322,23 +324,36 @@ export default function CitizenPayments({
                   ) : null}
 
                   {payable ? (
-                    <div className="flex flex-wrap justify-end gap-2">
-                      <Button
-                        size="sm"
-                        disabled={payingOnlineId === item.id}
-                        onClick={() => void payWithWhish(item.id)}
-                      >
-                        {payingOnlineId === item.id ? (
-                          <Loader2 className="size-4 animate-spin" aria-hidden />
-                        ) : (
-                          <CreditCard className="size-4" aria-hidden />
-                        )}
-                        {locale === 'en' ? 'Pay with Whish' : 'ادفع عبر Whish'}
-                      </Button>
-                      <Button variant="outline" size="sm" onClick={() => setPaying(item)}>
-                        <Wallet className="size-4" aria-hidden />
-                        {locale === 'en' ? 'Other Methods' : 'طرق أخرى'}
-                      </Button>
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      {ONLINE_PAYMENT_OPEN ? (
+                        <>
+                          <Button
+                            size="sm"
+                            disabled={payingOnlineId === item.id}
+                            onClick={() => void payWithWhish(item.id)}
+                          >
+                            {payingOnlineId === item.id ? (
+                              <Loader2 className="size-4 animate-spin" aria-hidden />
+                            ) : (
+                              <CreditCard className="size-4" aria-hidden />
+                            )}
+                            {locale === 'en' ? 'Pay with Whish' : 'ادفع عبر Whish'}
+                          </Button>
+                          <Button variant="outline" size="sm" onClick={() => setPaying(item)}>
+                            <Wallet className="size-4" aria-hidden />
+                            {locale === 'en' ? 'Other Methods' : 'طرق أخرى'}
+                          </Button>
+                        </>
+                      ) : (
+                        <>
+                          {/* Paused with online payment (lib/online-payment.ts): the dialog says where and how to pay. */}
+                          <span className="me-auto text-xs text-muted-foreground">{tPay('paused')}</span>
+                          <Button size="sm" onClick={() => setPaying(item)}>
+                            <Wallet className="size-4" aria-hidden />
+                            {tPay('howToPay')}
+                          </Button>
+                        </>
+                      )}
                     </div>
                   ) : null}
                 </CardContent>

@@ -31,7 +31,6 @@ import {
   X,
 } from 'lucide-react';
 import { Button } from './button';
-import { Input } from './input';
 import {
   Select,
   SelectContent,
@@ -57,6 +56,7 @@ import {
   DropdownMenuTrigger,
 } from './dropdown-menu';
 import { EmptyState, ErrorState } from './states';
+import { SearchField } from './search-field';
 import { Skeleton } from './skeleton';
 import { scrollElementToTop } from '@/lib/scroll-to-top';
 import { cn } from '@/lib/utils';
@@ -178,8 +178,8 @@ export interface DataTableLabels {
    * The key that runs the search, shown inside the box while a typed term is
    * still uncommitted. Defaults to «Enter».
    *
-   * The box commits on Enter rather than as you type (see the note by
-   * `commitSearch`), which is defensible and completely invisible: a clerk
+   * The box commits on Enter rather than as you type (see `SearchField`),
+   * which is defensible and completely invisible: a clerk
    * types a name, nothing moves, and the reasonable conclusion is that search
    * is broken. This is the label that says otherwise.
    */
@@ -564,20 +564,9 @@ export function DataTable<TData, TValue = unknown>({
   const pagination = controlledPagination ?? internalPagination;
   const sorting = controlledSorting ?? internalSorting;
 
-  // Two values, deliberately: the box shows every keystroke, while the
-  // committed term — the one that filters, or is sent to the API — changes
-  // only when the reader asks for it with Enter. Neither a slow backend nor a
-  // large in-memory table is touched while someone is still typing a name.
+  // The committed term — the one that filters, or is sent to the API. The box
+  // that drafts it is `SearchField`, which commits on Enter.
   const committedSearch = searchValue ?? internalGlobalFilter;
-  const [searchInput, setSearchInput] = React.useState(committedSearch);
-  const searchInputRef = React.useRef(searchInput);
-  searchInputRef.current = searchInput;
-
-  // Keep the visible input in sync if the committed value changes from
-  // outside (e.g. a "clear filters" action elsewhere on the page).
-  React.useEffect(() => {
-    setSearchInput(committedSearch);
-  }, [committedSearch]);
 
   const commitSearch = React.useCallback(
     (value: string) => {
@@ -600,20 +589,6 @@ export function DataTable<TData, TValue = unknown>({
     },
     [onSearchChange, onPaginationChange],
   );
-
-  /*
-   * Typing no longer searches; Enter does.
-   *
-   * The box used to fire on a timer after every keystroke, which meant a
-   * ten-character name was one query if you typed it quickly and three or four
-   * if you paused — each one a full round trip, each one replacing the results
-   * under a reader's eyes mid-scan. Committing on Enter makes the request
-   * something the clerk asks for, so a search costs exactly one query and the
-   * table only moves when they meant it to.
-   *
-   * Clearing the box is the one exception: emptying a filter is unambiguous and
-   * nobody presses Enter to say "show everything again".
-   */
 
   const handlePaginationChange = React.useCallback<OnChangeFn<PaginationState>>(
     (updater) => {
@@ -728,15 +703,6 @@ export function DataTable<TData, TValue = unknown>({
     else setInternalPagination(last);
   }, [loading, error, resolvedTotal, resolvedPageCount, pagination, onPaginationChange]);
   const hasSearchTerm = committedSearch.trim().length > 0;
-  /**
-   * The box holds a term the table has not been filtered by yet.
-   *
-   * Compared trimmed, because that is what `commitSearch` sends: a draft of
-   * `"أحمد "` against an applied `"أحمد"` is the same search, and
-   * flagging it as pending would leave an Enter prompt on a box that has
-   * already run.
-   */
-  const isDraft = searchInput.trim() !== committedSearch.trim();
   // Visible, not declared: a `colSpan` counted off the full column list leaves
   // the empty state and every expanded sub-row spanning more cells than the
   // header has, which stretches the table past its own border.
@@ -783,61 +749,28 @@ export function DataTable<TData, TValue = unknown>({
     */
     <div ref={rootRef} className={cn('overflow-hidden rounded-lg border bg-card', className)}>
       {searchable || toolbar || showColumnsMenu || filterBar ? (
-        <div className="flex flex-col gap-3 border-b p-3 sm:flex-row sm:items-center sm:justify-between">
+        <div
+          className={cn(
+            'flex flex-col gap-3 border-b p-3 sm:flex-row sm:items-center sm:justify-between',
+            /*
+              With no search, toolbar or columns menu, this row holds only the
+              phone's «الفلاتر» toggle; from `sm` the filter bar shows on its own
+              row below, and this one was an empty bordered band above it.
+            */
+            !searchable && !toolbar && !showColumnsMenu && 'sm:hidden',
+          )}
+        >
           {searchable ? (
-            <div className="relative w-full sm:w-80 md:w-96 lg:w-[26rem]">
-              <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                type="search"
-                role="searchbox"
-                aria-label={labels.searchAriaLabel}
-                className="h-9 ps-9 pe-9 text-xs"
-                placeholder={labels.searchPlaceholder}
-                value={searchInput}
-                onChange={(event) => {
-                  const next = event.target.value;
-                  setSearchInput(next);
-                  // Emptying the box applies straight away. It is unambiguous,
-                  // and it also covers the native clear button WebKit renders
-                  // inside `type="search"` — which would otherwise leave a
-                  // blank field still filtering by the previous term.
-                  if (next === '' && committedSearch !== '') commitSearch('');
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    event.preventDefault();
-                    commitSearch(searchInput.trim());
-                  }
-                }}
-              />
-              {/*
-                Two controls sharing the end edge, and only ever one at a
-                time: the key that would run the search while the draft is
-                uncommitted, the control that clears it once it has run. They
-                cannot both apply — a draft equal to the applied term has
-                nothing left to commit — so the field never has to fit both.
-              */}
-              {isDraft ? (
-                <kbd
-                  aria-hidden
-                  className="pointer-events-none absolute end-2 top-1/2 -translate-y-1/2 rounded border border-border bg-muted px-1.5 py-0.5 font-sans text-xs font-medium leading-none text-muted-foreground"
-                >
-                  {labels.searchHint ?? 'Enter'}
-                </kbd>
-              ) : searchInput ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSearchInput('');
-                    commitSearch('');
-                  }}
-                  aria-label={labels.clearSearch}
-                  className="absolute end-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              ) : null}
-            </div>
+            // Enter commits; emptying the box applies at once (`SearchField`).
+            <SearchField
+              className="sm:w-80 md:w-96 lg:w-[26rem]"
+              value={committedSearch}
+              onCommit={commitSearch}
+              ariaLabel={labels.searchAriaLabel}
+              placeholder={labels.searchPlaceholder}
+              clearLabel={labels.clearSearch}
+              hint={labels.searchHint ?? 'Enter'}
+            />
           ) : null}
           <div className="flex flex-wrap items-center gap-2 self-end sm:self-auto">
             {filterBar ? (
@@ -946,10 +879,7 @@ export function DataTable<TData, TValue = unknown>({
             </span>
             <button
               type="button"
-              onClick={() => {
-                setSearchInput('');
-                commitSearch('');
-              }}
+              onClick={() => commitSearch('')}
               aria-label={labels.clearSearch}
               className="-me-1 flex size-4 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >

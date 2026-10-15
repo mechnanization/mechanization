@@ -42,6 +42,13 @@ export class DomainExceptionFilter implements ExceptionFilter {
     const correlationId = request.correlationId;
 
     const { status, body } = this.describe(exception, correlationId);
+    /*
+      The path as Sentry gets it (`redactUrl`): ids masked, the query string
+      dropped. A search term is a name, a phone, or a رقم مرجعي — a credential
+      that alone signs a citizen in (open decisions §21) — and none of them is
+      written to a log line (non-negotiable 7).
+    */
+    const where = `${request.method} ${redactUrl(request.originalUrl ?? '')}`;
 
     // Leads with `error (STATUS): message` so the terminal reads the same way
     // as the frontend's own console output — the request context (method,
@@ -52,7 +59,7 @@ export class DomainExceptionFilter implements ExceptionFilter {
       // real exception detail (and full stack, never sent to the client).
       const detail = exception instanceof Error ? exception.message : String(exception);
       this.logger.error(
-        `error (${status}): ${detail} — ${request.method} ${request.originalUrl} [${correlationId}]`,
+        `error (${status}): ${detail} — ${where} [${correlationId}]`,
         exception instanceof Error ? exception.stack : undefined,
       );
 
@@ -80,7 +87,7 @@ export class DomainExceptionFilter implements ExceptionFilter {
       });
     } else {
       this.logger.warn(
-        `error (${status}): ${body.message} — ${request.method} ${request.originalUrl} [${correlationId}]`,
+        `error (${status}): ${body.message} — ${where} [${correlationId}]`,
       );
     }
 

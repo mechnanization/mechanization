@@ -1,15 +1,15 @@
 import {
+  ArrowDownUp,
   ArrowLeftRight,
   ArrowRightLeft,
   BadgeDollarSign,
-  BanknoteArrowDown,
-  BanknoteArrowUp,
   Building2,
   CalendarCheck,
   CalendarClock,
   ClipboardCheck,
   ClipboardList,
   DoorClosed,
+  FileCheck,
   FileQuestion,
   FileWarning,
   HandCoins,
@@ -22,6 +22,7 @@ import {
   Map as MapIcon,
   ReceiptText,
   ScanSearch,
+  ScrollText,
   Settings,
   ShieldCheck,
   ShieldQuestion,
@@ -39,7 +40,9 @@ import {
   FEE_READ_ROLES,
   MAP_READ_ROLES,
   PAYMENT_REVIEW_READ_ROLES,
+  REQUEST_READ_ROLES,
   TREASURY_READ_ROLES,
+  TREASURY_WORK_ROLES,
   WORKING_STAFF_ROLES,
 } from '@mechanization/shared-schemas';
 import { QUALITY_REVIEWER_ROLES, WORKLIST_ROLES } from '@/lib/staff-roles';
@@ -88,6 +91,14 @@ export interface NavItem {
   roles: readonly string[];
   /** Extra words the command palette matches on, beyond the label. */
   keywords?: string[];
+  /**
+   * Older addresses this row still owns: pages under them are guarded by this
+   * row's roles and light it up, as if they sat under `path`. For a section
+   * whose documents kept their addresses when its register moved — the printed
+   * vouchers under `/finance/income` and `/finance/expenses` belong to
+   * «الحركات المالية» (`/finance/transactions`). Never listed in the sidebar.
+   */
+  also?: readonly string[];
 }
 
 export interface NavGroup {
@@ -296,6 +307,22 @@ export const NAV_GROUPS: NavGroup[] = [
           'tenant',
         ],
       },
+      /*
+        «طلبات المعاملات» — what citizens ask the municipality for (a براءة ذمة,
+        a إفادة سكن…), filed online or at the counter, with the paper printed
+        and handed over here (docs/municipal-requests-plan.md). The readers of
+        `REQUEST_READ_ROLES`, as `CitizenRequestsController`: not «مشاهد فقط»,
+        because the papers on a request are identity copies. Filing at the
+        counter, approving and handing over are narrower and gated on the pages.
+      */
+      {
+        path: '/requests',
+        label: 'طلبات المعاملات',
+        labelEn: 'Requests & certificates',
+        icon: FileCheck,
+        roles: REQUEST_READ_ROLES,
+        keywords: ['طلب', 'معاملة', 'إفادة', 'براءة ذمة', 'إفادة سكن', 'شغور', 'requests', 'certificate', 'clearance'],
+      },
     ],
   },
   {
@@ -469,7 +496,8 @@ export const NAV_GROUPS: NavGroup[] = [
   },
   /*
     «الخزينة» — the municipality's books: where its money is, what reached it
-    and what left it. The accountant's job, on `TREASURY_READ_ROLES` throughout.
+    and what left it. The accountant's job, on `TREASURY_READ_ROLES` but for the
+    recording page, which only those who record see (`TREASURY_WORK_ROLES`).
     No row, no guard: `canAccessPath` opens a path nobody listed to every role,
     which is why each treasury page has a row here.
   */
@@ -491,34 +519,75 @@ export const NAV_GROUPS: NavGroup[] = [
         keywords: ['خزينة', 'صندوق', 'رصيد', 'أرصدة', 'حساب', 'نقد', 'treasury', 'safe', 'balance', 'cash'],
       },
       /*
-        Money in that no citizen's bill brought: the Independent Municipal
-        Fund, permits, rent, grants, fines. Before النفقات, so the group reads
-        money in, then money out — and their icons say it: a note going up,
-        a note going down. Recording and cancelling are narrower and are gated
-        on the pages and by `IncomeController`.
+        Recording money in that no citizen's bill brought — the Independent
+        Municipal Fund, permits, rent, grants, fines — and money out on «أمر صرف»:
+        one form, «قبض | صرف». Its own row, not a child of /finance: it is where an
+        accountant spends the day. Only for those who record
+        (`TREASURY_WORK_ROLES`, as `IncomeController` and `ExpensesController`
+        enforce); a reader who reaches the address through the `/finance` prefix
+        is told so on the page and sent to the register.
       */
       {
-        path: '/finance/income',
-        label: 'الإيرادات',
-        labelEn: 'Income',
-        icon: BanknoteArrowUp,
-        roles: TREASURY_READ_ROLES,
-        keywords: ['إيرادات', 'إيراد', 'قبض', 'سند قبض', 'صندوق بلدي', 'رخص', 'هبات', 'غرامات', 'income', 'revenue', 'receipt'],
+        path: '/finance/movements',
+        label: 'الإيرادات والنفقات',
+        labelEn: 'Income & expenses',
+        icon: ArrowDownUp,
+        roles: TREASURY_WORK_ROLES,
+        keywords: [
+          'إيرادات',
+          'إيراد',
+          'قبض',
+          'سند قبض',
+          'صندوق بلدي',
+          'رخص',
+          'هبات',
+          'غرامات',
+          'نفقات',
+          'صرف',
+          'مصاريف',
+          'فاتورة',
+          'تسجيل',
+          'income',
+          'revenue',
+          'receipt',
+          'expense',
+          'spending',
+          'record',
+        ],
       },
       /*
-        Its own row, not a child of /finance: it is where an accountant spends
-        the day, and `activeNavItem` matches the longest path, so this lights up
-        instead of the balances when the register is open. Recording and
-        cancelling are narrower and are gated on the page and by
-        `ExpensesController`.
+        Every voucher written, money in and out, as one dated list under a filter
+        bar, the voucher behind each line in a side panel, and what waits on the
+        head's order (split from the recording page 2026-10-12; before that the
+        two were «الإيرادات» and «النفقات», each a register with its form). Every
+        finance reader sees it. `also` keeps the printed vouchers, the income
+        categories and the old registers' addresses (which lead here) under it.
+        Cancelling and ordering are narrower and are gated on the page and by
+        `IncomeController` and `ExpensesController`.
       */
       {
-        path: '/finance/expenses',
-        label: 'النفقات',
-        labelEn: 'Expenses',
-        icon: BanknoteArrowDown,
+        path: '/finance/transactions',
+        also: ['/finance/income', '/finance/expenses'],
+        label: 'الحركات المالية',
+        labelEn: 'Transactions',
+        icon: ScrollText,
         roles: TREASURY_READ_ROLES,
-        keywords: ['نفقات', 'صرف', 'مصاريف', 'سند صرف', 'فاتورة', 'expense', 'spending', 'voucher', 'payout'],
+        keywords: [
+          'حركات',
+          'سجل',
+          'دفتر',
+          'سندات',
+          'أمر صرف',
+          'بانتظار الأمر',
+          'إيرادات',
+          'نفقات',
+          'transactions',
+          'ledger',
+          'register',
+          'voucher',
+          'payout',
+          'payment order',
+        ],
       },
       /*
         Money between the municipality's own wallets: a Whish cash-out, a bank
@@ -723,13 +792,23 @@ export function canAccessPath(pathname: string, base: string, role: string | und
 
   // Matched against every section, ignoring role: this answers "is there a
   // page here at all", which is a different question from "may they see it".
-  const known = NAV_GROUPS.flatMap((group) => group.items).some((item) => {
-    const href = `${base}${item.path}`;
-    return pathname === href || pathname.startsWith(`${href}/`);
-  });
+  const known = NAV_GROUPS.flatMap((group) => group.items).some((item) => matchLength(item, pathname, base) >= 0);
   if (!known) return true;
 
   return Boolean(activeNavItem(pathname, base, role));
+}
+
+/**
+ * How long a prefix of `pathname` a row claims: the longest of its `path` and
+ * its `also` paths that the pathname is, or sits under; -1 for none.
+ */
+function matchLength(item: NavItem, pathname: string, base: string): number {
+  let longest = -1;
+  for (const path of [item.path, ...(item.also ?? [])]) {
+    const href = `${base}${path}`;
+    if ((pathname === href || pathname.startsWith(`${href}/`)) && path.length > longest) longest = path.length;
+  }
+  return longest;
 }
 
 /**
@@ -739,6 +818,10 @@ export function canAccessPath(pathname: string, base: string, role: string | und
  * another, and `/citizens` became such a prefix the moment `/citizens/:id`
  * existed. Matching on the longest candidate keeps a detail page attributed to
  * its own section rather than to whichever prefix was declared first.
+ *
+ * A row's `also` paths count as its own: a printed voucher under
+ * `/finance/income/…` belongs to `/finance/transactions`, not to `/finance`,
+ * because `/finance/income` is the longer match.
  *
  * Takes the full pathname and the tenant's admin base so callers do not each
  * rebuild `/{tenant}/{locale}/{adminPath}` and get the trailing slash wrong.
@@ -751,12 +834,10 @@ export function activeNavItem(
   if (!pathname) return undefined;
   const candidates = visibleGroups(role)
     .flatMap((group) => group.items)
-    .filter((item) => {
-      const href = `${base}${item.path}`;
-      return pathname === href || pathname.startsWith(`${href}/`);
-    })
-    .sort((a, b) => b.path.length - a.path.length);
-  return candidates[0];
+    .map((item) => ({ item, length: matchLength(item, pathname, base) }))
+    .filter((candidate) => candidate.length >= 0)
+    .sort((a, b) => b.length - a.length);
+  return candidates[0]?.item;
 }
 
 export function localizedLabel(item: NavItem, locale: string = 'ar'): string {

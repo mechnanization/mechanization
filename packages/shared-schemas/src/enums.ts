@@ -926,6 +926,66 @@ export const FEE_EXEMPTION_REASON = ['PLACE_OF_WORSHIP', 'PUBLIC_FACILITY', 'OTH
 export const feeExemptionReasonSchema = arabicEnum(FEE_EXEMPTION_REASON, 'اختر سبب الإعفاء');
 export type FeeExemptionReason = z.infer<typeof feeExemptionReasonSchema>;
 
+// ─────────────────────  Municipal requests (migration 0092)  ─────────────────────
+
+/**
+ * What a citizen asks the municipality for (docs/municipal-requests-plan.md).
+ * Which of them a municipality offers, and at what fee, is its manager's list
+ * (`request_type_settings`, open decisions §20 D1); the list itself is for the
+ * municipality to confirm.
+ */
+export const REQUEST_TYPE = [
+  'CLEARANCE',
+  'RESIDENCY',
+  'OCCUPANCY',
+  'VACANCY',
+  'LEASE_REGISTRATION',
+  'RENOVATION',
+  'SIGNAGE',
+  'OTHER',
+] as const;
+export const requestTypeSchema = arabicEnum(REQUEST_TYPE, 'اختر نوع المعاملة');
+export type RequestType = z.infer<typeof requestTypeSchema>;
+
+/**
+ * In what capacity the applicant asks. Declared by the applicant and judged by
+ * the clerk against the papers (open decisions §20 D2); nothing here encodes
+ * who may ask for what.
+ */
+export const APPLICANT_CAPACITY = ['OWNER', 'TENANT', 'ESTATE_HEIR', 'LEGAL_AGENT', 'FREE_OCCUPANT'] as const;
+export const applicantCapacitySchema = arabicEnum(APPLICANT_CAPACITY, 'اختر صفة مقدّم الطلب');
+export type ApplicantCapacity = z.infer<typeof applicantCapacitySchema>;
+
+/** Where a request stands. The transitions are in migration 0092's header. */
+export const REQUEST_STATUS = [
+  'AWAITING_PAYMENT',
+  'IN_REVIEW',
+  'READY_FOR_PICKUP',
+  'COMPLETED',
+  'REJECTED',
+  'CANCELLED',
+] as const;
+export const requestStatusSchema = arabicEnum(REQUEST_STATUS, 'اختر حالة الطلب');
+export type RequestStatus = z.infer<typeof requestStatusSchema>;
+
+/** Online through the portal, or filed by a clerk at the counter (open decisions §20 D8). */
+export const REQUEST_CHANNEL = ['ONLINE', 'COUNTER'] as const;
+export const requestChannelSchema = arabicEnum(REQUEST_CHANNEL, 'اختر طريقة تقديم الطلب');
+export type RequestChannel = z.infer<typeof requestChannelSchema>;
+
+/** What a paper on a request is. */
+export const REQUEST_ATTACHMENT_TYPE = [
+  'IDENTITY',
+  'OWNERSHIP_PROOF',
+  'LEASE_CONTRACT',
+  'POWER_OF_ATTORNEY',
+  'INHERITANCE_PROOF',
+  'MUKHTAR_STATEMENT',
+  'OTHER',
+] as const;
+export const requestAttachmentTypeSchema = arabicEnum(REQUEST_ATTACHMENT_TYPE, 'اختر نوع المستند');
+export type RequestAttachmentType = z.infer<typeof requestAttachmentTypeSchema>;
+
 /**
  * What a «تأكيد الشغور» rests on — asked every time one is recorded.
  *

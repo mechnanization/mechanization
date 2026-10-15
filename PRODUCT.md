@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية الذكية)
 
-Last verified against the code: `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): «أمان الحساب» for every staff role, no new filing — card, flat or sale — on an archived file; an archived file takes no new fee on any path, 2026-10-15; and `bugs-fix` (on `develop@5e8f5c3`; the finance audit remediation: the manager cancels a bill, a salary is paid once a month under the manager's ceiling, a collector settles only into his own custody), 2026-10-12.
+Last verified against the code: `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): «أمان الحساب» for every staff role, no new filing — card, flat or sale — on an archived file; an archived file takes no new fee on any path, 2026-10-15; and `bugs-fix` (on `develop@5e8f5c3`; the finance audit remediation: the manager cancels a bill, a salary is paid once a month under the manager's ceiling, a collector settles only into his own custody), 2026-10-12; collectors raise no bills on `fix/fees-page-ux` from `develop@5e8f5c3` (uncommitted), 2026-10-12; income and expenses on one page, «الإيرادات والنفقات», on the same branch (uncommitted), 2026-10-12; the same day, the register moved to «الحركات المالية» and «الإيرادات والنفقات» became the recording page (uncommitted); later that day «الحركات المالية» became a filter bar over a dated list, with each voucher in a side panel, and the recording page took the full width (uncommitted); municipal requests and certificates, online and at the counter, with migration `0092` (uncommitted), 2026-10-13; the product owner's decisions of the same day (online Whish payment paused, citizen sign-in by reference alone, no SMS or WhatsApp provider) (uncommitted); and, on `fix/fees-page-ux` rebased onto `chore/migration-0092@16473f0` (2026-10-13), the review of PR #122: a request cancelled with its bill (`cancelRequestOfCancelledBill`), a card or a flat a request names never deleted (`PROPERTY_NAMED_BY_REQUEST`, `HAS_REQUESTS`), request bills stamp `issuedById`, the API's log lines without query strings, and the isolation tests; and, on `fix/pr122-review` (2026-10-15), the review's blocker and majors: a bill cancellation names the request it cancels, and a citizen reports a Whish Money transfer only.
 
 A multi-tenant municipal platform for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastral map, municipal fee billing (رسوم القيمة التأجيرية
@@ -25,16 +25,33 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
     reported transfer waits for review is listed with its status and not counted in what is owed,
     on every portal page alike.
   - View their registered properties, apartments, shops and land parcels.
+  - Sign in with their رقم مرجعي alone, with no code by SMS and no second factor, so elderly
+    citizens can sign in (the product owner's decision of 2026-10-13,
+    [open-decisions.md §21](docs/open-decisions.md#21-online-payment-citizen-sign-in-and-notifications-decided-2026-10-13)). The risk that whoever holds the reference can act for the
+    citizen is accepted ([docs/security.md](docs/security.md#known-gaps)). Nothing is sent to them by
+    SMS or WhatsApp. Whoever does not have their reference asks for it at the municipality, with
+    their ID card.
   - Pay in cash at the municipality or to a collector, and receive an official receipt.
-  - Report a Whish Money transfer made in the Whish app. The report is a declaration
-    that stays pending until a clerk matches and confirms it. There is no live online
-    checkout: `WhishGatewayService.postCheckout` is not implemented, and without
-    credentials the gateway runs in sandbox mode.
+  - Ask the municipality for a paper online («طلباتي» on their file): a براءة ذمة, a residency,
+    occupancy or vacancy certificate, a lease registration, a renovation or sign permit, or a
+    general request; attach a copy of their identity card and the papers that support it, pay
+    the fee at the municipality (paying online is paused, below), follow it until it is ready, and
+    collect it at the municipality with the original identity card. They see where it stands and why it was refused, never the papers back.
+  - Report a Whish Money transfer made in the Whish app, with its reference. The report is a
+    declaration that stays pending until a clerk matches and confirms it. It is the only payment a
+    citizen reports: cash is paid at the office, and never declared.
+  - Paying online through a Whish checkout is **paused** until Whish gives the municipality its
+    API (the product owner's decision of 2026-10-13, [open-decisions.md §21](docs/open-decisions.md#21-online-payment-citizen-sign-in-and-notifications-decided-2026-10-13)): the portal
+    offers no «ادفع عبر Whish», says online payment is paused, and shows where and how to pay, and
+    the server refuses the checkout. Reporting a transfer made in the Whish app, above, stays; «نقداً
+    في البلدية» is an instruction only and declares nothing.
 - **Collectors (`COLLECTOR`, جابي) and counter clerks**:
   - Record in-person payments, full or partial, at the counter (`CASH`) or on a round
     (`COLLECTOR`). A collector records cash only as his own collection, into his own custody, or a
     Whish transfer a citizen makes at the door; the cash desk and naming another collector are the
     counter clerks'.
+  - Raise no bills. Issuing a fee and charging one citizen («تكليف مباشر») are the manager's and the
+    accountant's; a collector settles what they bill (decided 2026-10-12).
   - Issue official receipts matching Lebanon's printed receipt books (`وصل جباية رسمي`).
   - Share a receipt through the device share sheet, a WhatsApp link, or a PDF download.
   - See every receipt on a bill, and every reversal, on the bill's own page («وصولات الفاتورة»),
@@ -62,7 +79,9 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
   - An append-only audit log of staff actions.
   - **إلغاء الفاتورة** (manager only): withdraw a bill nothing has been paid on — a fee issued twice,
     a charge raised in error — with a reason. The bill stays on the citizen's file, marked cancelled,
-    and is no longer owed. A bill with money on it has its receipts reversed first.
+    and is no longer owed. A bill with money on it has its receipts reversed first. A municipal
+    request waiting on the bill is cancelled with it: the bill's page names the request, the
+    confirmation warns that it goes too, and the message after names it.
   - **تسديد الفواتير المحددة** (accountant and manager): tick several unpaid bills of one citizen —
     on «الرسوم» or on the citizen's file — and settle them in one act, in cash (ليرة and dollars at the
     municipality's rate, with the change worked out and checked against the safe), through a
@@ -95,7 +114,29 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
       accountant). Only the manager cancels one; its fee goes back with it, and a cancellation is
       refused while the destination no longer holds the money.
     - The two exchange settings are the manager's alone, and a citizen does not see them.
-  - **النفقات**: an expense register and «أمر صرف».
+  - **الإيرادات والنفقات**: where the accountant or the manager records a receipt or a payment
+    (2026-10-12; income and expenses were two pages, each with its own «new» page).
+    - One form, «قبض | صرف». The amount, the wallet, the other party and the wording survive a
+      switch between the two.
+    - The wallet is a dropdown in which each wallet shows what it holds; once an amount is typed,
+      the chosen one shows what it will hold after the entry, and a payment that would overdraw
+      it is stopped with «الرصيد لا يكفي».
+    - After each voucher the page says what was written, with its number, print, and a link to it
+      in «الحركات المالية», over an empty form for the next one.
+    - Other treasury readers who open it are told who records, and sent to «الحركات المالية».
+  - **الحركات المالية**: every voucher of both kinds, for every treasury reader.
+    - One list, newest first, each line with its date, under a filter bar: the period (this
+      month unless another is chosen), the direction, the wallet, the category and whether
+      cancelled vouchers are shown.
+    - One search covers both kinds of voucher: the number, the payer or payee, the description,
+      and the cheque, transfer or invoice number.
+    - Picking a line opens that voucher in a side panel over the list (on a phone, the whole
+      screen): every field, who recorded it, who ordered or cancelled it; print, cancel (manager)
+      or order (manager).
+    - What waits on the head's order is one switch away («بانتظار أمر الصرف»).
+    - Those who record have «تسجيل قبض» and «تسجيل صرف» in the heading, and on a phone at the
+      foot.
+  - **النفقات**: the expense side of «الإيرادات والنفقات» and «الحركات المالية», and «أمر صرف».
     - Money leaves on the payment order, as the municipal accounting decree requires (Decree
       5595/1982 art. 28 and 33). The accountant prepares «طلب أمر صرف»: what, to whom, from which
       wallet, against which budget category. The manager orders it, and the voucher is written and
@@ -149,7 +190,7 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
     municipality and the beneficiary on a payment order; the cashier and the accountant on a
     receipt, which also carries a QR code of its number. A cancelled voucher still prints, marked
     cancelled with its reason. «حفظ كملف PDF» is the browser's own print destination.
-  - **الإيرادات**: a register of «سند قبض إيرادات» — money that reaches the treasury without a
+  - **الإيرادات**: the income side of «الإيرادات والنفقات» and «الحركات المالية», its «سند قبض إيرادات» — money that reaches the treasury without a
     citizen's bill: the Independent Municipal Fund, the state's share of telephone, electricity and
     water revenue, permits, rent on municipal property, grants, fines.
     - The accountant or the manager records the amount, the wallet it arrived in (a cash safe, Whish
@@ -226,7 +267,9 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
   record «لا يملك رقم هاتف» from «استكمال البيانات الناقصة». Such a citizen opens their page
   with the reference number alone: the payments portal and the code sent to a phone need a
   number of their own, and a relative's is never accepted in its place. How their family
-  pays online is an open decision ([docs/open-decisions.md](docs/open-decisions.md)).
+  pays online is an open decision ([docs/open-decisions.md](docs/open-decisions.md)); while
+  online payment is paused (2026-10-13) they pay at the counter or to a collector, or report a
+  transfer made in the Whish app, like everyone.
   Wherever a phone is shown — the register, a parcel's registrants on the map, a flat's
   owners — the answer «لا يملك رقم هاتف» and the relative's number are shown as such,
   never as the citizen's own, and a search that found a file through the relative's
@@ -252,10 +295,31 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
   unit of the people on the parcel today. It answers «is anything owed» before a براءة ذمّة
   and issues no certificate; a bill that names no parcel cannot be found by it, and the
   empty answer says so rather than claiming nothing is owed.
+- **Citizens ask for papers, online or at the counter** («طلبات المعاملات», 2026-10-13;
+  [docs/municipal-requests-plan.md](docs/municipal-requests-plan.md), decisions in
+  [open-decisions.md §20](docs/open-decisions.md#20-municipal-requests-and-certificates-decided-2026-10-12-and-2026-10-13)).
+  The manager keeps the list of what the municipality offers and the fee of each, in pounds,
+  0 for free. A citizen files online with an identity copy; a clerk (the manager or the
+  administrative officer) files for a citizen at the counter, for one of the properties on
+  their file where the paper is about a property. The fee becomes a bill only when the person
+  is ready to pay, at the counter («تحصيل الرسم»): paying online is paused until Whish gives the
+  municipality its API, so the portal tells a citizen to pay at the municipality, quoting the
+  request number. A paid request goes to review: the clerk writes what the
+  paper certifies, or refuses it with a reason; a براءة ذمة is refused while the property's own
+  bills owe anything. The paper prints under the letterhead with a QR code of the request
+  number, and is handed over against the original identity card. A request is cancelled only
+  while it has no bill, or with its bill when the manager cancels that bill («إلغاء الفاتورة»),
+  which frees the citizen to file it again; a fee paid on a refused request is not returned on
+  its own. A property card or a flat a request names is never deleted from a file: the clerk ends
+  the ownership or the tenancy instead. Readers are
+  the manager, the administrative officer, the accountant and the auditor — not «مشاهد فقط»,
+  since the papers are identity copies — and every opening of a paper is in the activity log.
+  No SMS or WhatsApp notice is sent: there is no provider for now, by the owner's decision of
+  2026-10-13 (D9), and the portal shows where each request stands.
 - **A citizen file is archived, never deleted** (decision of 2026-10-05). «أرشفة الملف»
   asks for the reason and who asked for it, both written to the activity log; an archived
   file is billed nothing new and keeps everything it holds, and «إعادة من الأرشيف» brings it
-  back. Every way of raising a fee refuses one on an archived file, «تكليف مباشر» included
+  back. Every way of raising a fee refuses one on an archived file, «تكليف مباشر» and a municipal request's fee included
   (`FEE_CITIZEN_ARCHIVED`, since 2026-10-14), and the fee pickers do not offer it. It takes no
   new filing either — no card, no flat, no sale: a registration that would join it, a person
   put in a flat, or a sale's buyer is refused with «أعِده من الأرشيف أولاً», on the form, from

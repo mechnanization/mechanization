@@ -594,32 +594,29 @@ export type SystemSettingsInput = z.infer<typeof systemSettingsSchema>;
  * string they read off their own receipt, and only a clerk holding the
  * municipality's account statement can confirm the money arrived.
  */
-export const declarePaymentSchema = z
-  .object({
-    /**
-     * Narrower than `paymentMethodSchema` on purpose: COLLECTOR is a fact only
-     * the municipality can assert. A citizen who hands notes to a محصّل has no
-     * way to prove it and nothing to quote, so accepting the value here would
-     * queue a claim no clerk could ever verify — the collector's own entry is
-     * what records that money.
-     */
-    method: z.enum(['CASH', 'WHISH_MONEY'], { errorMap: () => ({ message: 'طريقة الدفع مطلوبة' }) }),
-    whishTransactionRef: z
-      .string()
-      .trim()
-      .min(4, 'رقم العملية قصير جداً')
-      .max(60, 'رقم العملية طويل جداً')
-      .optional(),
-  })
-  .superRefine((data, ctx) => {
-    if (data.method === 'WHISH_MONEY' && !data.whishTransactionRef) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['whishTransactionRef'],
-        message: 'أدخل رقم عملية التحويل',
-      });
-    }
-  });
+export const declarePaymentSchema = z.object({
+  /**
+   * A Whish Money transfer only, made in the citizen's own app to the
+   * municipality's number — the one claim a clerk can check against the
+   * statement (open-decisions §21, «Kept»).
+   *
+   * Not CASH: cash is paid at the office, and «طريقة الدفع» says so as an
+   * instruction, not a claim. A cash "declaration" moved the bill to
+   * PENDING_REVIEW with no money taken, and a bill in review is not settled at
+   * the counter until a clerk rejects the claim (review of PR #122; the server
+   * refuses it too, `PAYMENT_DECLARATION_WHISH_ONLY`). Not COLLECTOR either: a
+   * citizen who hands notes to a محصّل has nothing to quote, and the collector's
+   * own entry is what records that money.
+   */
+  method: z.literal('WHISH_MONEY', {
+    errorMap: () => ({ message: 'يُبلَّغ هنا عن تحويل Whish Money وحده؛ الدفع النقدي في صندوق البلدية' }),
+  }),
+  whishTransactionRef: z
+    .string({ required_error: 'أدخل رقم عملية التحويل' })
+    .trim()
+    .min(4, 'رقم العملية قصير جداً')
+    .max(60, 'رقم العملية طويل جداً'),
+});
 
 export type DeclarePayment = z.infer<typeof declarePaymentSchema>;
 

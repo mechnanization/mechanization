@@ -2,7 +2,7 @@
 
 import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { BULK_SETTLE_ROLES, REFERENCE_SEND_ROLES, hasRole } from '@/lib/staff-roles';
+import { BULK_SETTLE_ROLES, PAYMENT_SETTLE_ROLES, REFERENCE_SEND_ROLES, hasRole } from '@/lib/staff-roles';
 import {
   fromAdminPayment,
   isBulkSettleable,
@@ -11,22 +11,25 @@ import {
 } from '@/lib/bulk-settle';
 import { useBulkSelection } from '@/lib/use-bulk-selection';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import type { ColumnDef } from '@tanstack/react-table';
 import {
   Banknote,
   CheckCircle2,
-  Clock3,
   FileWarning,
   Loader2,
   Plus,
   Receipt,
   RefreshCw,
   UserPlus,
-  Wallet,
 } from 'lucide-react';
-import { getLabels, PAYMENT_STATUS } from '@mechanization/shared-schemas';
+import {
+  FEE_ADMIN_ROLES,
+  FEE_ISSUE_ROLES,
+  getLabels,
+  PAYMENT_REVIEW_READ_ROLES,
+  PAYMENT_STATUS,
+} from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
   chargeCitizen,
@@ -44,14 +47,12 @@ import type {
   CitizenProfile,
   CitizenProfilePayment,
 } from '@/lib/api-client';
-import { loadSession } from '@/lib/session';
+import { useStaffSession } from '@/lib/use-staff-session';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useTableLabels } from '@/lib/use-table-labels';
 import { param, useTabSearch, useUrlPagination, useUrlState } from '@/lib/use-url-state';
-import { formatLbp } from '@/lib/currency';
 import { describeAssessment } from '@/lib/fee-assessment';
 import { formatDate } from '@/lib/dates';
-import { Alert } from '@/components/ui/alert';
 import { CellTag } from '@/components/ui/cell-tag';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -59,14 +60,15 @@ import { DataTable } from '@/components/ui/data-table';
 import { Money } from '@/components/ui/money';
 import { PageHeader } from '@/components/ui/page-header';
 import { SegmentedControl } from '@/components/ui/segmented-control';
-import { Skeleton } from '@/components/ui/skeleton';
-import { StatItem, StatStrip } from '@/components/ui/stat-strip';
+import { LoadingState } from '@/components/ui/states';
 import { useToast } from '@/components/ui/toast';
 import { ChargeCitizenDialog, type ChargeValues } from '@/components/admin/charge-citizen-dialog';
 import { BillTypeFilter } from '@/components/admin/bill-type-select';
 import { PaymentReceipt } from '@/components/admin/payment-receipt';
 import { BillCheckbox } from '@/components/admin/bulk-settle/bill-checkbox';
 import { BulkSettleBar } from '@/components/admin/bulk-settle/bulk-settle-bar';
+import { FeesSummaryStrip } from '@/components/admin/fees/fees-summary-strip';
+import { PaymentReviewDialog } from '@/components/admin/fees/payment-review-dialog';
 import { cn } from '@/lib/utils';
 
 /**
@@ -125,11 +127,10 @@ export default function FeesPage({
   params: Promise<{ tenant: string; locale: string; adminPath: string }>;
 }) {
   const { tenant, locale, adminPath } = use(params);
-  const router = useRouter();
   const base = `/${tenant}/${locale}/${adminPath}`;
 
-  const [token, setToken] = useState<string | null>(null);
-  const [role, setRole] = useState<string | undefined>();
+  const { token, user } = useStaffSession(tenant, base);
+  const role = user?.role;
 
   // Table Data State — survives a reload: status and page in the URL, the two
   // free-text values in this tab's storage.
@@ -148,6 +149,7 @@ export default function FeesPage({
   const [chargeOpen, setChargeOpen] = useState(false);
   const [charging, setCharging] = useState(false);
   const [busyPaymentId, setBusyPaymentId] = useState<string | null>(null);
+  const [review, setReview] = useState<{ payment: AdminPaymentItem; confirmed: boolean } | null>(null);
 
   // Receipt State
   const [receipt, setReceipt] = useState<{
@@ -186,7 +188,16 @@ export default function FeesPage({
           totalRows: '{count} مطالبة',
         }),
   }, { columnsMenu: true });
-  const canManage = role === 'SUPER_ADMIN';
+  const tReview = useTranslations('fees.register.review');
+  const tCommon = useTranslations('common');
+  /** «تأكيد» / «رفض» on a declared transfer — `FEE_ADMIN_ROLES`, as `PATCH fees/payments/:id/review`. */
+  const canDecide = hasRole(FEE_ADMIN_ROLES, role);
+  /** «تكليف مباشر» and «إصدار رسم جديد» — `FEE_ISSUE_ROLES`, as `POST fees/payments`, `POST fees/notices` and the `fees/new` page. */
+  const canIssue = hasRole(FEE_ISSUE_ROLES, role);
+  /** «فواتير تأثّرت بتصحيحات» — `PAYMENT_REVIEW_READ_ROLES`, as the nav row of `/fees/corrections`. */
+  const canReadCorrections = hasRole(PAYMENT_REVIEW_READ_ROLES, role);
+  /** «تسجيل دفعة» — `PAYMENT_SETTLE_ROLES` (`SUPER_ADMIN`, `ACCOUNTANT`, `COLLECTOR`). */
+  const canSettle = hasRole(PAYMENT_SETTLE_ROLES, role);
   /** «تسديد الفواتير المحددة» — `BULK_SETTLE_ROLES`, as the route's `@Roles`; the server is the enforcement. */
   const canBulkSettle = hasRole(BULK_SETTLE_ROLES, role);
   /*
@@ -199,16 +210,6 @@ export default function FeesPage({
   useEffect(() => {
     clearSelection();
   }, [statusFilter, feeTitleFilter, appliedSearch, clearSelection]);
-
-  useEffect(() => {
-    const session = loadSession(tenant);
-    if (!session || session.user.kind !== 'STAFF') {
-      router.replace(`${base}/login`);
-      return;
-    }
-    setToken(session.accessToken);
-    setRole(session.user.role);
-  }, [tenant, base, router]);
 
   /**
    * What the filters above the ledger may offer — the bill titles that exist
@@ -321,17 +322,6 @@ export default function FeesPage({
   const municipalityName = contextQuery.data?.municipalityName ?? '';
   const loading = paymentsQuery.loading;
   const refreshing = paymentsQuery.fetching || contextQuery.fetching;
-  /*
-    The banner above the page and the state inside the table say different
-    things, and used to say the same one twice.
-
-    A failed *read* belongs to the table: it is the table that has no rows to
-    show, it is the table that needs the retry button, and a table rendering
-    «لا توجد نتائج» after a request failed is telling the reader the register is
-    empty when it is only unreachable. A failed *write* has no such home — the
-    rows are fine, an action was refused — so that is what the banner is for.
-  */
-  const error = contextQuery.error;
 
   /** Re-reads both halves of the screen after a write. */
   const queryClient = useQueryClient();
@@ -374,24 +364,27 @@ export default function FeesPage({
     [tenant, token, toast],
   );
 
-  const handleReview = useCallback(
+  /**
+   * The decision `PaymentReviewDialog` asked for. A refusal is rethrown for
+   * the dialog to show under its question; a conflict — another clerk decided
+   * first, or the counter settled the bill — re-reads the register as well.
+   */
+  const decideReview = useCallback(
     async (paymentId: string, confirmed: boolean) => {
-      if (!token || busyPaymentId) return;
-      setBusyPaymentId(paymentId);
+      if (!token) return;
       try {
         await reviewPayment(tenant, token, paymentId, { confirmed });
-        // Confirming puts the money in a wallet, so the treasury's balances are stale; a refusal moves none.
-        if (confirmed) void queryClient.invalidateQueries({ queryKey: ['treasury', tenant] });
-        toast.success(confirmed ? 'تم تأكيد الدفعة بنجاح.' : 'تم رفض الدفعة.');
-        void load();
       } catch (caught) {
         logApiError(caught);
-        toast.error(caught instanceof ApiRequestError ? caught.message : 'تعذّر مراجعة الدفعة.');
-      } finally {
-        setBusyPaymentId(null);
+        if (caught instanceof ApiRequestError && caught.kind === 'CONFLICT') void load();
+        throw caught;
       }
+      // Confirming puts the money in a wallet, so the treasury's balances are stale; a refusal moves none.
+      if (confirmed) void queryClient.invalidateQueries({ queryKey: ['treasury', tenant] });
+      toast.success(confirmed ? tReview('confirmed') : tReview('rejected'));
+      void load();
     },
-    [tenant, token, busyPaymentId, toast, load, queryClient],
+    [tenant, token, toast, load, queryClient, tReview],
   );
 
 
@@ -567,10 +560,15 @@ export default function FeesPage({
         accessorKey: 'amount',
         header: locale === 'en' ? 'Fee Amount' : 'قيمة الرسم',
         meta: { align: 'end' },
+        // In the bill's own currency, exact: the figure a clerk reads back to the payer (PRIM-10, PRIM-11).
         cell: ({ row }) => (
-          <span className="font-mono text-sm tabular-nums text-foreground whitespace-nowrap">
-            {formatLbp(row.original.amount, locale)}
-          </span>
+          <Money
+            amount={row.original.amount}
+            currency={row.original.currency}
+            exact
+            locale={locale}
+            className="text-sm text-foreground"
+          />
         ),
       },
       {
@@ -579,15 +577,16 @@ export default function FeesPage({
         meta: { align: 'end' },
         cell: ({ row }) => {
           const paid = row.original.paidAmount;
-          return (
-            <span
-              className={cn(
-                'font-mono text-sm tabular-nums whitespace-nowrap',
-                paid > 0 ? 'font-semibold text-success' : 'text-muted-foreground',
-              )}
-            >
-              {paid > 0 ? formatLbp(paid, locale) : '—'}
-            </span>
+          return paid > 0 ? (
+            <Money
+              amount={paid}
+              currency={row.original.currency}
+              exact
+              locale={locale}
+              className="text-sm font-semibold text-success"
+            />
+          ) : (
+            <span className="text-sm text-muted-foreground">—</span>
           );
         },
       },
@@ -600,18 +599,16 @@ export default function FeesPage({
           // Settled or cancelled: nothing is owed on it either way.
           const isClosed = row.original.paymentStatus === 'PAID' || row.original.paymentStatus === 'CANCELLED';
           return (
-            <span
+            <Money
+              amount={remaining}
+              currency={row.original.currency}
+              exact
+              locale={locale}
               className={cn(
-                'font-mono text-sm font-bold tabular-nums whitespace-nowrap',
-                isClosed
-                  ? 'text-muted-foreground line-through opacity-70'
-                  : remaining > 0
-                    ? 'text-foreground'
-                    : 'text-success',
+                'text-sm font-semibold',
+                isClosed ? 'text-muted-foreground line-through opacity-70' : remaining > 0 ? 'text-foreground' : 'text-success',
               )}
-            >
-              {formatLbp(remaining, locale)}
-            </span>
+            />
           );
         },
       },
@@ -651,20 +648,16 @@ export default function FeesPage({
 
           return (
             <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
-              {isPendingReview && canManage ? (
+              {isPendingReview && canDecide ? (
                 <>
                   <Button
                     size="sm"
                     variant="outline"
                     className="h-8 text-xs border-success/40 text-success hover:bg-success/10"
                     disabled={isBusy}
-                    onClick={() => void handleReview(payment.id, true)}
+                    onClick={() => setReview({ payment, confirmed: true })}
                   >
-                    {isBusy ? (
-                      <Loader2 className="size-3.5 animate-spin" />
-                    ) : (
-                      <CheckCircle2 className="size-3.5 rtl:ml-1 ltr:mr-1" />
-                    )}
+                    <CheckCircle2 className="size-3.5" aria-hidden />
                     {locale === 'en' ? 'Confirm' : 'تأكيد'}
                   </Button>
                   <Button
@@ -672,19 +665,19 @@ export default function FeesPage({
                     variant="ghost"
                     className="h-8 text-xs text-destructive hover:bg-destructive/10"
                     disabled={isBusy}
-                    onClick={() => void handleReview(payment.id, false)}
+                    onClick={() => setReview({ payment, confirmed: false })}
                   >
                     {locale === 'en' ? 'Reject' : 'رفض'}
                   </Button>
                 </>
               ) : null}
 
-              {canManage && !isPaid && !isPendingReview && !isCancelled ? (
+              {canSettle && !isPaid && !isPendingReview && !isCancelled ? (
                 <Link
                   href={`${base}/fees/payments/${payment.id}/settle`}
                   className={buttonVariants({ variant: 'default', size: 'sm' })}
                 >
-                  <Banknote className="size-3.5 rtl:ml-1.5 ltr:mr-1.5" />
+                  <Banknote className="size-3.5" aria-hidden />
                   {locale === 'en' ? 'Record Payment' : 'تسجيل دفعة'}
                 </Link>
               ) : null}
@@ -700,9 +693,9 @@ export default function FeesPage({
                   }
                 >
                   {isBusy ? (
-                    <Loader2 className="size-3.5 animate-spin" />
+                    <Loader2 className="size-3.5 animate-spin" aria-hidden />
                   ) : (
-                    <Receipt className="size-3.5 rtl:ml-1.5 ltr:mr-1.5" />
+                    <Receipt className="size-3.5" aria-hidden />
                   )}
                   {locale === 'en' ? 'Receipt' : 'وصل القبض'}
                 </Button>
@@ -712,13 +705,11 @@ export default function FeesPage({
         },
       },
     ],
-    [base, canManage, busyPaymentId, openReceipt, handleReview, locale, labels, canBulkSettle, pageBox, rowBox, tSelect],
+    [base, canDecide, canSettle, busyPaymentId, openReceipt, locale, labels, canBulkSettle, pageBox, rowBox, tSelect],
   );
 
-  if (!token) return null;
+  if (!token) return <LoadingState fullHeight label={tCommon('loading')} />;
 
-  /** The strip's placeholder until the ledger's first read answers. */
-  const figurePending = loading ? <Skeleton className="h-5 w-16" /> : null;
   const statusFilters = buildStatusFilters(locale, filterOptionsQuery.data?.statuses ?? [], labels);
 
   return (
@@ -734,29 +725,26 @@ export default function FeesPage({
               onClick={() => void load()}
               disabled={refreshing}
             >
-              <RefreshCw
-                className={cn('size-4 rtl:ml-1.5 ltr:mr-1.5', refreshing && 'animate-spin')}
-                aria-hidden
-              />
+              <RefreshCw className={cn('size-4', refreshing && 'animate-spin')} aria-hidden />
               {locale === 'en' ? 'Refresh' : 'تحديث'}
             </Button>
 
-            {role === 'SUPER_ADMIN' || role === 'ACCOUNTANT' || role === 'AUDITOR' || role === 'VIEWER' ? (
+            {canReadCorrections ? (
               <Link href={`${base}/fees/corrections`} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
-                <FileWarning className="size-4 rtl:ml-1.5 ltr:mr-1.5" aria-hidden />
+                <FileWarning className="size-4" aria-hidden />
                 {locale === 'en' ? 'Bills affected by corrections' : 'فواتير تأثّرت بتصحيحات'}
               </Link>
             ) : null}
 
-            {canManage ? (
+            {canIssue ? (
               <>
                 <Button variant="outline" size="sm" onClick={() => setChargeOpen(true)}>
-                  <UserPlus className="size-4 rtl:ml-1.5 ltr:mr-1.5" />
+                  <UserPlus className="size-4" aria-hidden />
                   {locale === 'en' ? 'Direct Charge' : 'تكليف مباشر'}
                 </Button>
                 <Button asChild size="sm">
                   <Link href={`${base}/fees/new`}>
-                    <Plus className="me-1.5 size-4" />
+                    <Plus className="size-4" aria-hidden />
                     {locale === 'en' ? 'Issue New Fee' : 'إصدار رسم جديد'}
                   </Link>
                 </Button>
@@ -766,70 +754,13 @@ export default function FeesPage({
         }
       />
 
-      {error ? (
-        <Alert variant="destructive" live="alert">
-          {error}
-        </Alert>
-      ) : null}
-
-      <StatStrip>
-        <StatItem
-          label={locale === 'en' ? 'Total Collected' : 'إجمالي المحصّل'}
-          value={figurePending ?? <Money amount={summary?.paidTotal ?? 0} locale={locale} exact wrap />}
-          hint={
-            summary && !loading
-              ? (locale === 'en' ? `${summary.paidCount} payments settled` : `${summary.paidCount} دفعة مسددة`)
-              : undefined
-          }
-          icon={Wallet}
-          // A tone says something (COL-2): none on a zero, and none while the figure loads.
-          className={!figurePending && (summary?.paidTotal ?? 0) > 0 ? 'text-success' : undefined}
-        />
-        {/*
-          «قائمة» rather than «مطلوبة», and the difference is not wording.
-
-          This figure is every unpaid invoice, late ones included —
-          `summary()` counts the column with no date predicate. The tab row
-          directly below it splits that same set in two: «غير مدفوعة» is the
-          invoices not yet due and «متأخرة» the ones past due. Left saying
-          «مطالبة مطلوبة», the card was the tab's label over a larger number,
-          on the same screen, which is how a clerk comes to distrust both.
-        */}
-        <StatItem
-          label={locale === 'en' ? 'Unpaid Balance' : 'المستحقات غير المسددة'}
-          value={figurePending ?? <Money amount={summary?.unpaidTotal ?? 0} locale={locale} exact wrap />}
-          hint={
-            summary && !loading
-              ? (locale === 'en'
-                  ? `${summary.unpaidCount} outstanding, due and overdue`
-                  : `${summary.unpaidCount} مطالبة قائمة، مستحقة ومتأخرة`)
-              : undefined
-          }
-          icon={Banknote}
-        />
-        <StatItem
-          label={locale === 'en' ? 'Pending Review' : 'دفعات بانتظار التحقق'}
-          value={figurePending ?? (summary?.pendingReviewCount ?? 0).toLocaleString('en-US')}
-          hint={loading ? undefined : locale === 'en' ? 'Transfers awaiting verification' : 'تحويلات تحتاج موافقة الموظف'}
-          icon={Clock3}
-          className={!figurePending && (summary?.pendingReviewCount ?? 0) > 0 ? 'text-warning' : undefined}
-        />
-        <StatItem
-          label={locale === 'en' ? 'Total Billed' : 'إجمالي الرسوم الصادرة'}
-          value={
-            figurePending ?? (
-              <Money
-                amount={(summary?.paidTotal ?? 0) + (summary?.unpaidTotal ?? 0)}
-                locale={locale}
-                exact
-                wrap
-              />
-            )
-          }
-          hint={loading ? undefined : locale === 'en' ? 'Gross billed charges' : 'المجموع الكلي للمطالبات'}
-          icon={Receipt}
-        />
-      </StatStrip>
+      <FeesSummaryStrip
+        summary={summary}
+        loading={contextQuery.loading}
+        onRetry={() => void contextQuery.refetch()}
+        pendingHref={statusFilter === 'PENDING_REVIEW' ? undefined : `${base}/fees?status=PENDING_REVIEW`}
+        locale={locale}
+      />
 
       {/* Main Table Card */}
       <Card className="overflow-hidden">
@@ -872,6 +803,7 @@ export default function FeesPage({
           </div>
         </CardHeader>
 
+        {/* One frame: the card's, around a borderless table (BAN-4). */}
         <CardContent className="p-0">
           {/* The phone cards have no heading row, so «تحديد الكل» stands above them. */}
           {canBulkSettle && pageState.eligible > 0 ? (
@@ -940,6 +872,15 @@ export default function FeesPage({
         contactPhone={settings?.contactPhone}
         officeWhatsapp={settings?.whatsappNumber}
         receivedAmount={receipt?.received}
+        locale={locale}
+      />
+
+      <PaymentReviewDialog
+        review={review}
+        onOpenChange={(next) => {
+          if (!next) setReview(null);
+        }}
+        onConfirm={decideReview}
         locale={locale}
       />
 

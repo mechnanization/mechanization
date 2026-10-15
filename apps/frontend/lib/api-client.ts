@@ -21,6 +21,7 @@ import type {
   CitizenRecordStatus,
   CitizenResidence,
   CurrencyCode,
+  DeclarePayment,
   DamageLevel,
   DamageSource,
   DuplicateMatchedOn,
@@ -44,6 +45,8 @@ import type {
   PaymentStatus,
   RecordInspectorPayoutInput,
   RecordInspectorPayoutResult,
+  RequestStatus,
+  RequestType,
   ReverseTransaction,
   SequenceKey,
   SetOwnerBillingInput,
@@ -3399,6 +3402,12 @@ export interface CitizenProfilePayment {
   reviewNote: string | null;
   /** Why the manager cancelled the bill (0091); null unless `paymentStatus` is CANCELLED. */
   cancellationReason?: string | null;
+  /**
+   * The municipal request whose fee this bill is (0092), or null. Cancelling the
+   * bill cancels the request while it is still open (AWAITING_PAYMENT or
+   * IN_REVIEW). Optional: a profile cached before the field existed has none.
+   */
+  request?: { id: string; requestNumber: string; requestType: RequestType; status: RequestStatus } | null;
   frequency: string | null;
   /**
    * How this amount was arrived at, when it was not simply the notice's own.
@@ -4381,7 +4390,7 @@ export interface UnlinkResult {
   casesReopened: number;
   kept: Array<{
     unitCode: string | null;
-    reason: 'EDITED' | 'SHARED' | 'OWNER_FILE_CLAIMS' | 'HAS_DOCUMENTS' | 'FLAGGED';
+    reason: 'EDITED' | 'SHARED' | 'OWNER_FILE_CLAIMS' | 'HAS_DOCUMENTS' | 'HAS_REQUESTS' | 'FLAGGED';
     propertyEntryId?: string;
   }>;
   reviewUnits: Array<{ unitId: string; unitCode: string; buildingId: string }>;
@@ -5541,13 +5550,11 @@ export function startWhishCheckout(tenant: string, token: string, paymentId: str
   );
 }
 
-/** Declares a payment — moves it to PENDING_REVIEW, never straight to PAID. */
-export function declarePayment(
-  tenant: string,
-  token: string,
-  id: string,
-  input: { method: string; whishTransactionRef?: string },
-) {
+/**
+ * Reports a Whish Money transfer, with its reference: moves the bill to
+ * PENDING_REVIEW, never straight to PAID. Cash is never declared (open-decisions §21).
+ */
+export function declarePayment(tenant: string, token: string, id: string, input: DeclarePayment) {
   return apiFetch<{ paymentStatus: string }>(
     tenant,
     `/fees/payments/mine/${encodeURIComponent(id)}/declare`,
@@ -5788,8 +5795,13 @@ export async function settlePayment(
  * Answers with the bill as it now stands, CANCELLED. The body is the shared
  * schema's (`cancelBillSchema`), not re-declared here.
  */
+/** The cancelled bill, and the municipal request cancelled with it — null when it was no open request's fee. */
+export interface CancelBillResult extends AdminPaymentItem {
+  cancelledRequest: { requestId: string; requestNumber: string } | null;
+}
+
 export async function cancelBill(tenant: string, token: string, id: string, input: CancelBill) {
-  const result = await apiFetch<AdminPaymentItem>(tenant, `/fees/payments/${encodeURIComponent(id)}/cancel`, {
+  const result = await apiFetch<CancelBillResult>(tenant, `/fees/payments/${encodeURIComponent(id)}/cancel`, {
     token,
     method: 'POST',
     body: JSON.stringify(input),
@@ -6180,10 +6192,11 @@ import type {
   VoidExpenseInput,
   CreateIncomeCategoryInput,
   IncomeCategoryView,
-  IncomeListResult,
   IncomeVoucherView,
   RecordIncomeVoucherInput,
   RecordIncomeVoucherResult,
+  TreasuryMovementDirection,
+  TreasuryMovementsResult,
   UpdateIncomeCategoryInput,
   VoidIncomeVoucherInput,
   CollectorCollectionsResult,
@@ -6236,6 +6249,11 @@ export type {
   RecordIncomeVoucherInput,
   RecordIncomeVoucherResult,
   VoidIncomeVoucherInput,
+  TreasuryMovement,
+  TreasuryMovementDay,
+  TreasuryMovementDirection,
+  TreasuryMovementTotal,
+  TreasuryMovementsResult,
   CollectorCollectionRow,
   CollectorCollectionsResult,
   CollectorCustodyView,
@@ -6716,19 +6734,23 @@ export function updateIncomeCategory(
 }
 
 /**
- * The income register, newest first. `GET /treasury/income`.
+ * «الحركات المالية» — the income and the expense vouchers in one register,
+ * newest first. `GET /treasury/movements`, on `TREASURY_READ_ROLES`.
  *
  * `from` and `to` are days on the municipality's calendar, both inclusive.
- * `totals` covers the whole filtered set rather than the page.
+ * `categoryId` needs `direction`: an income category and an expense band are
+ * rows of two tables. `totals` and `days` cover the whole filtered set, not the
+ * page, so a day split over two pages still reads whole.
  */
-export function getIncomeVouchers(
+export function getTreasuryMovements(
   tenant: string,
   token: string,
   args: {
+    direction?: TreasuryMovementDirection;
     from?: string;
     to?: string;
-    categoryId?: string;
     accountId?: string;
+    categoryId?: string;
     currency?: string;
     search?: string;
     includeVoid?: boolean;
@@ -6738,17 +6760,18 @@ export function getIncomeVouchers(
   signal?: AbortSignal,
 ) {
   const query = new URLSearchParams();
+  if (args.direction) query.set('direction', args.direction);
   if (args.from) query.set('from', args.from);
   if (args.to) query.set('to', args.to);
-  if (args.categoryId) query.set('categoryId', args.categoryId);
   if (args.accountId) query.set('accountId', args.accountId);
+  if (args.categoryId) query.set('categoryId', args.categoryId);
   if (args.currency) query.set('currency', args.currency);
   if (args.search) query.set('search', args.search);
   if (args.includeVoid) query.set('includeVoid', 'true');
   if (args.page !== undefined) query.set('page', String(args.page));
   if (args.pageSize !== undefined) query.set('pageSize', String(args.pageSize));
   const suffix = query.toString() ? `?${query}` : '';
-  return apiFetch<IncomeListResult>(tenant, `/treasury/income${suffix}`, { token, signal });
+  return apiFetch<TreasuryMovementsResult>(tenant, `/treasury/movements${suffix}`, { token, signal });
 }
 
 /** One voucher. `GET /treasury/income/:id`. */

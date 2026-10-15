@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): the cadastre import deviation, the cadastre asset's private cache, `GET auth/staff/me`, the own-account throttle, the save-path unlink rows, `assertFileOpen`; the audit reads' `?actorId=` and its «النظام» value, the review queue's total, a registration card's missing building, 2026-10-15; and `bugs-fix` (on `develop@5e8f5c3`; the finance audit remediation: `settleInPerson` in one transaction with the rate read FOR SHARE, `lockExternalRef` and a ledger retry key bound to its act, the Whish callback closed with its money, `cancelBill`, the notice retry key, the one-off charge and the settings save in Tier 1, the salary month and ceiling), 2026-10-12; the review of PR #120 (a Whish reference cleaned when stored and folded in SQL, a cancelled bill named in every owed filter, the recurring-run route has no screen) against `fix/finance-audit-remediation` rebased on `chore/migration-0090-0091@8d386b5`, 2026-10-13.
+Last verified against the code: `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): the cadastre import deviation, the cadastre asset's private cache, `GET auth/staff/me`, the own-account throttle, the save-path unlink rows, `assertFileOpen`; the audit reads' `?actorId=` and its «النظام» value, the review queue's total, a registration card's missing building, 2026-10-15; and `bugs-fix` (on `develop@5e8f5c3`; the finance audit remediation: `settleInPerson` in one transaction with the rate read FOR SHARE, `lockExternalRef` and a ledger retry key bound to its act, the Whish callback closed with its money, `cancelBill`, the notice retry key, the one-off charge and the settings save in Tier 1, the salary month and ceiling), 2026-10-12; the review of PR #120 (a Whish reference cleaned when stored and folded in SQL, a cancelled bill named in every owed filter, the recurring-run route has no screen) against `fix/finance-audit-remediation` rebased on `chore/migration-0090-0091@8d386b5`, 2026-10-13; `FEE_ISSUE_ROLES` without the collector and `FEE_SETTLE_ROLES` for the settle, the bill-raising routes pinned on `fix/fees-page-ux` from `develop@5e8f5c3` (uncommitted), 2026-10-12; `GET treasury/movements` («الإيرادات والنفقات»: `TreasuryMovementsService`, `IncomeService.viewsByIds` / `ExpensesService.viewsByIds`, `TreasuryController.movements` pinned; after review, one REPEATABLE READ snapshot and `page` capped) on `fix/fees-page-ux` (uncommitted), 2026-10-12; its screen renamed «الحركات المالية» the same day; municipal requests (`CitizenRequestsService`, `CitizenRequestsController`, the `REQUEST_FILE_STORAGE` port, `raiseOneOffBill`, `sniffAttachment`, `REQUEST_*_ROLES` pinned, a merge moving requests) on `fix/fees-page-ux` (uncommitted), 2026-10-13; online payment paused by the product owner the same day (`ONLINE_PAYMENT_UNAVAILABLE` on the Whish checkout and a citizen's own request bill while the gateway is not live; what an undeclared `WHISH_*` in `.env` really does) (uncommitted); and, on `fix/fees-page-ux` rebased onto `chore/migration-0092@16473f0` (2026-10-13), the review of PR #122: a request cancelled with its bill (`cancelRequestOfCancelledBill`), a card or a flat a request names never deleted (`PROPERTY_NAMED_BY_REQUEST`, `HAS_REQUESTS`), request bills stamp `issuedById`, the API's log lines without query strings, and the isolation tests; and, on `fix/pr122-review` (2026-10-15), the review's blocker and majors: `cancelBill`'s answer carries `cancelledRequest`, the profile's bills carry `request` (kept in `mySummary`, the citizen's own), and `FeesService.declare` refuses anything but a Whish Money report with its reference (`PAYMENT_DECLARATION_WHISH_ONLY`).
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -49,7 +49,10 @@ Data access for new code (decided):
   (in-memory, 120 requests per 60 s), then `DomainModule`, `InfrastructureModule`, `ApplicationModule`,
   `PresentationModule`. A fifth import means something escaped its layer.
 - `InfrastructureModule` is `@Global()` and binds each port symbol in use to its adapter
-  (`SUPABASE_AUTH_SERVICE` is declared but unbound). `ApplicationModule`
+  (`SUPABASE_AUTH_SERVICE` is declared but unbound). `REQUEST_FILE_STORAGE` →
+  `S3RequestFileStorageService`: the papers on a municipal request, in the private documents bucket
+  under `{tenantSlug}/requests/{requestId}/{uuid}{ext}` — a port of its own because
+  `IMAGE_STORAGE_SERVICE`'s key shape is frozen. `ApplicationModule`
   registers `JwtModule` (`JWT_SECRET`) and every service and job (`ParcelDuesService` among the fee
   services). In both, a new entry goes in `providers` AND `exports`.
 - `PresentationModule` registers the controllers, `APP_FILTER` = `DomainExceptionFilter`,
@@ -88,7 +91,11 @@ Data access for new code (decided):
   side-effecting GET, and no route that deletes a citizen. It also pins, route by route, every treasury
   handler and every handler elsewhere that moves treasury money (`MONEY_HANDLERS_ELSEWHERE`: the
   commission payout, and the fee routes that post wallet entries — `settle`, `review`,
-  `reverseTransaction`, `whishCallback`; the bulk settlement's two in their own block). And it checks
+  `reverseTransaction`, `whishCallback`; the bulk settlement's two in their own block), and the two
+  routes that raise a bill, `issue` and `charge`, at the manager and the accountant (a municipal
+  request's fee, `CitizenRequestsController.bill`, is pinned with the request routes at
+  `REQUEST_BILL_ROLES`: its amount is the manager's list's, never typed): a collector settles
+  (`FEE_SETTLE_ROLES`) and bills nothing (2026-10-12). And it checks
   that every id a `FeesController` route takes from its path (`id`, or a name ending in `Id`) goes
   through `ParseUUIDPipe`, as an instance or as the class. The eight that took theirs raw on `develop`
   carry PR #120's own line for each (its B9), word for word, so the two branches agree.
@@ -247,6 +254,27 @@ Data access for new code (decided):
     (`exchangeRuleChangeAllowed`, `EXCHANGE_RULE_MANAGER_ONLY`), and, like the ceilings, it is
     written only when the manager saves, so an accountant's save of the section never writes it
     back or is recorded as changing it. `FeesController.getSettings` strips it for a citizen.
+  - «الحركات المالية» (the screen `finance/transactions`) is `GET movements` on `TreasuryController` (`TREASURY_READ_ROLES`, the readers
+    of both registers; query through `listTreasuryMovementsQuerySchema`, contract
+    `treasury-movements.schema.ts`), read by `TreasuryMovementsService.list`: the income and the
+    expense vouchers in one register, vouchers only (no citizen payment, no expense request). The
+    page is chosen in raw SQL over a `UNION ALL` of `income_vouchers` and `expense_vouchers` under the
+    same filters, ordered `occurredAt`, `createdAt`, `id`, all descending — the id is the tie-break
+    across the two tables, since back-dated vouchers share a nominal midday — each table limited to
+    its newest `offset + pageSize`. Each line is then read through `IncomeService.viewsByIds` /
+    `ExpensesService.viewsByIds`, so the voucher is exactly what its own register returns (the select
+    and the view stay in those services). `from`/`to` are `incomePeriod`'s Beirut midnights; a line's
+    `day` is `to_char("occurredAt" AT TIME ZONE 'Asia/Beirut', …)`, the 0082 trigger's day. The
+    search escapes `%`, `_` and `\` with `likePattern` and matches each table's own columns (payer and
+    external reference, or payee and invoice number). `total` counts every match, cancelled ones when
+    `includeVoid`; `totals` (per currency, in and out) and `days` (each day on the page, summed over
+    the whole filtered set, so a day split across pages reads whole on both) never count a cancelled
+    voucher. All of it is one REPEATABLE READ snapshot (`viewsByIds(tx, ids)` reads through the
+    caller's transaction), as `TreasuryService.statement` reads its page: read apart, a voucher
+    cancelled between the page and its line was listed as cancelled without `includeVoid`, which
+    neither register can do (each filters and builds its lines in one `findMany`), and the figures
+    could disagree with the lines. `page` is capped at 1,000,000 in the schema, so the bound
+    offset stays a number Postgres reads (unbounded, `page=1e20` was a 500).
 
   Design and rules: [docs/finance.md](../../docs/finance.md).
 - **Expenses.** `ExpensesService` and `ExpensesController` (`t/:tenantSlug/treasury/expenses`), with
@@ -602,7 +630,9 @@ Every state change MUST leave an `audit_log_entries` row, in one of two tiers
    and every step of its payment order, paying an inspector's commission, recording and cancelling an
    income voucher, adding or editing an expense or income category, receiving a collector's custody,
    recording a transfer or an exchange, clearing an exchange's review and cancelling a transfer,
-   counting the treasury, closing (and sweeping) and reopening a day, corrections, ownership changes (ending an ownership, making, updating
+   counting the treasury, closing (and sweeping) and reopening a day, every step of a municipal
+   request (filing it, raising its fee, its paid and reversed sync, approving, rejecting, handing over,
+   cancelling, adding a paper, each staff view of a paper, a change to the request types), corrections, ownership changes (ending an ownership, making, updating
    or ending an owner link, a merge or its undo), ending a tenancy, review decisions (approving or returning
    a record, completing a quality check) and citizen status changes (archive and restore; a citizen file
    is never deleted). The row is written in the same transaction as the change; if it fails, the change
@@ -685,7 +715,10 @@ Declared in `envSchema` (`presentation/config/env.schema.ts`). Names only; never
 | `SMS_PROVIDER_API_KEY`, `SMS_PROVIDER_FALLBACK_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_STORAGE_BUCKET` | Inert: no SMS provider is implemented, and the Supabase adapters are unbound |
 
 Read but not declared: `WHISH_API_URL`, `WHISH_API_KEY`, `WHISH_WEBHOOK_SECRET` (a deviation: declare
-them), and `VERCEL`, `VERCEL_GIT_COMMIT_SHA`, `NODE_APP_INSTANCE`, `MIGRATION_LOCK_TIMEOUT`,
+them, in the change that writes `postCheckout`; until then, in a deployed build, a value set only in
+the `.env` file never reaches the gateway, because `validate` copies into `process.env` only the keys
+`envSchema` returns — locally the generated Prisma client loads `apps/backend/.env` itself, so there it
+does), and `VERCEL`, `VERCEL_GIT_COMMIT_SHA`, `NODE_APP_INSTANCE`, `MIGRATION_LOCK_TIMEOUT`,
 `MIGRATION_STATEMENT_TIMEOUT`, `SEED_CITIZENS`, `TEST_DATABASE_URL`.
 
 ## Commands
@@ -704,7 +737,7 @@ points at does not exist. `src/scripts/reset-2fa.ts` has no script entry and MUS
 
 ## Tests
 
-- Jest with ts-jest (`jest.config.js`: `rootDir` `src`, `*.spec.ts` beside the source): 156 spec files, 47 of them `*.integration.spec.ts` (counted on disk 2026-10-15, PR #120 rebased onto `develop@3211140`).
+- Jest with ts-jest (`jest.config.js`: `rootDir` `src`, `*.spec.ts` beside the source): 160 spec files, 49 of them `*.integration.spec.ts` (counted on disk 2026-10-15, PR #122 rebased onto `develop@3211140`).
 - Integration specs run only when `TEST_DATABASE_URL` is set (`describeIfDb`) and skip silently otherwise.
   They `DROP SCHEMA … CASCADE` and rebuild fixed `tenant_*_spec` schemas on whatever database it names,
   and nothing checks the target. Point it ONLY at a throwaway Postgres 17 container (migration `0044`
@@ -716,6 +749,54 @@ points at does not exist. `src/scripts/reset-2fa.ts` has no script entry and MUS
   `tenant-isolation.spec.ts`, `env.schema.spec.ts`, `route-inventory.spec.ts` (`@Public` / `@Roles` over
   every controller, and the «مشاهد فقط» boundary). Missing: HTTP-level tests (only `metrics.spec.ts` boots
   an app), an every-event-has-a-listener test.
+
+## Municipal requests (0092)
+
+`application/features/citizen-requests/citizen-requests.service.ts`; design: [docs/municipal-requests-plan.md](../../docs/municipal-requests-plan.md), decisions: [docs/open-decisions.md §20](../../docs/open-decisions.md#20-municipal-requests-and-certificates-decided-2026-10-12-and-2026-10-13).
+
+- **One `submit` for both ways in.** The portal (`POST requests/mine`, the citizen from the token) and the
+  counter (`POST requests`, `REQUEST_HANDLE_ROLES`, the clerk recorded as `createdById`) take the same
+  checks, the advisory lock and `clientRequestId` replay of the treasury forms — bound to every field the
+  paper reads (citizen, type, capacity, card, unit, purpose, channel), so an edit after a lost answer is
+  `REQUEST_KEY_REUSED`, never answered as the first — and a «REQ-» number
+  (`DOCUMENT_PREFIX.REQUEST`). A type is filed only once the manager has switched it on in
+  `request_type_settings`; a card must be the citizen's and current.
+- **The fee's bill is raised when the citizen goes to pay** (`raiseBill`), through
+  `fees/one-off-bill.ts` (`raiseOneOffBill(tx, schema, …)`, the body of `FeesService.chargeIndividual`,
+  callable inside a transaction), which stamps who raised it (`issuedById`: the clerk at the counter,
+  nobody for a citizen's own press). A request abandoned before payment leaves no open debt; a request
+  is cancelled by the citizen or a clerk only while it has no bill, and by the manager's «إلغاء الفاتورة»
+  once it has one: `FeesService.cancelBill` cancels the request waiting on the bill in its own
+  transaction (`cancelRequestOfCancelledBill`, decision of 2026-10-13), which `0094`'s guard allows only
+  once the bill is CANCELLED.
+- **A card or a flat a request names is never deleted.** `0092`'s keys onto `property_entries` and
+  `building_units` are RESTRICT. The citizen-file save refuses before writing to delete one
+  (`PROPERTY_NAMED_BY_REQUEST`, pointing to «إنهاء الملكية» / «إنهاء الإيجار»), and a landlord-link undo
+  keeps it and reports it (`HAS_REQUESTS`). Any new path that deletes either table must do the same
+  (docs/gotchas.md, "A new RESTRICT key turns an existing delete into a 500").
+- **Online payment is paused** (the product owner, 2026-10-13, [open-decisions §21](../../docs/open-decisions.md#21-online-payment-citizen-sign-in-and-notifications-decided-2026-10-13)).
+  While the Whish gateway is not live (`WhishGateway.isLive`: `WHISH_API_URL` and `WHISH_API_KEY` set,
+  nothing more — so they must not be set before `postCheckout` is written, or the refusal lifts into
+  500s), `FeesService.startWhishCheckout` and a citizen's own `raiseBill` refuse with
+  `ONLINE_PAYMENT_UNAVAILABLE` before anything is read or written; the counter raises the fee. The
+  sandbox the gateway runs without credentials is unreachable from the checkout: it moved a bill to
+  PENDING_REVIEW under a `WSH-` reference of our own, with no money taken.
+- **Paid is the bill's word.** `@OnEvent('payment.reviewed')` and `@OnEvent('payment.reversed')`
+  (resolving the bill through `payment_transactions`, whose event carries no `paymentId`) call
+  `reconcile`, which moves AWAITING_PAYMENT ↔ IN_REVIEW only on a PAID bill and writes a SYSTEM audit
+  row. The event emitter swallows a listener's failure, so the queue, a request and «طلباتي» reconcile
+  again on every read (one indexed query when nothing moved). The same pass moves an unbilled request
+  still waiting for its fee to IN_REVIEW once the manager has made its type free (`REQUEST_FEE_WAIVED`,
+  no `paidAt`): the fee is the one in force when the bill is raised (D1), and otherwise it could be
+  neither billed nor approved.
+- **A براءة ذمة is judged on approval** with `ParcelDuesService.dues`: refused while the parcel owes
+  (`REQUEST_CLEARANCE_DUES_OUTSTANDING`), and the check kept on the request (`clearanceSnapshot`).
+- **Papers**: `FileInterceptor` caps the size (`REQUEST_ATTACHMENT_MAX_BYTES`, one file), the bytes are
+  typed by `application/common/file-sniff.ts` (JPEG, PNG, WebP, PDF; never the declared type), the object
+  is written before the row and removed if the row cannot be recorded. Staff open one through a
+  five-minute signed URL with an audit row; the portal never gets one.
+- **A citizen merge** moves the absorbed person's requests to the kept file (`requests` in the footprint,
+  put back by the undo), except an open one that would break the one-open index.
 
 ## Current state and known issues
 
