@@ -107,6 +107,7 @@ export const ar = {
     PENDING_REVIEW: 'قيد المراجعة',
     PAID: 'مدفوع',
     OVERDUE: 'متأخّر',
+    CANCELLED: 'ملغاة',
   },
 
   paymentMethod: {
@@ -519,6 +520,7 @@ export const en = {
     PENDING_REVIEW: 'Pending Review',
     PAID: 'Paid',
     OVERDUE: 'Overdue',
+    CANCELLED: 'Cancelled',
   },
 
   paymentMethod: {

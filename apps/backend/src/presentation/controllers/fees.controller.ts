@@ -13,8 +13,10 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import {
+  BILL_CANCEL_ROLES,
   BULK_SETTLE_ROLES,
   bulkSettlePaymentsSchema,
+  cancelBillSchema,
   type BulkSettlePayments,
   FEE_ADMIN_ROLES,
   FEE_ISSUE_ROLES,
@@ -33,6 +35,7 @@ import {
   settlePaymentSchema,
   systemSettingsSchema,
   type BillBasisReview,
+  type CancelBill,
   type ChargeCitizen,
   type CreateFeeNotice,
   type DeclarePayment,
@@ -105,6 +108,8 @@ export class FeesController {
     const {
       urgentExpenseCeilingLbp: _lbp,
       urgentExpenseCeilingUsd: _usd,
+      salaryUrgentCeilingLbp: _salaryLbp,
+      salaryUrgentCeilingUsd: _salaryUsd,
       exchangeRateTolerancePercent: _tolerance,
       largeExchangeThreshold: _large,
       ...forCitizen
@@ -173,7 +178,9 @@ export class FeesController {
    * reads and writes only that one. An ACCOUNTANT in Albazourieh pressing it
    * issued invoices in Zahle and in every other municipality on the platform,
    * synchronously, with the audit rows there attributed to SYSTEM rather than
-   * to them. Nothing in the UI said so; the button reads «إصدار الفواتير».
+   * to them. Nothing in the UI said so; the button read «إصدار الفواتير». No
+   * screen calls this route any more: the fees page lost that button in
+   * `d346729`, and `runRecurringBilling` in `lib/api-client.ts` has no caller.
    *
    * The platform-wide run has not been removed, it just is not here: the
    * scheduler drives it through `InternalCronController`, behind `CRON_SECRET`
@@ -185,8 +192,9 @@ export class FeesController {
    */
   @Roles(...FEE_ADMIN_ROLES)
   @Post('recurring/run')
-  async runRecurring() {
-    const result = await this.fees.runRecurringBilling();
+  async runRecurring(@CurrentUser() user: SessionClaims) {
+    // The staff member who called it is the actor on the run's audit rows; the cron's run has none.
+    const result = await this.fees.runRecurringBilling(new Date(), { id: user.sub, role: user.role ?? '' });
     return { tenants: 1, ...result };
   }
 
@@ -336,6 +344,21 @@ export class FeesController {
   @Get('payments/:id/transactions')
   async transactions(@Param('id', new ParseUUIDPipe()) id: string) {
     return { items: await this.fees.listTransactions(id) };
+  }
+
+  /**
+   * «إلغاء الفاتورة» — the manager withdraws a bill nothing was paid on (finance
+   * audit B3). Refused when money is on it or a citizen's claim waits on it; the
+   * bill stays on the record, CANCELLED, with who, when and why.
+   */
+  @Roles(...BILL_CANCEL_ROLES)
+  @Post('payments/:id/cancel')
+  async cancelBill(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body(new ZodValidationPipe(cancelBillSchema)) body: CancelBill,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.fees.cancelBill(id, body.reason, { id: user.sub, role: user.role ?? '' });
   }
 
   /**
@@ -516,8 +539,12 @@ export class FeesController {
    *
    * `@Public()` because the provider holds no session — the signature over the
    * raw body is the authentication, and `parseCallback` returns nothing at all
-   * unless it verifies. Always answers 200: a provider that gets an error
-   * retries, and there is nothing to retry when the payload was never genuine.
+   * unless it verifies. Answers 200 whenever the outcome is decided — banked, set
+   * aside as MISMATCHED, ignored, or a payload that was never genuine — since a
+   * provider that gets an error retries. Two causes are not caught, on purpose: a
+   * database failure, and a bill whose currency has no Whish wallet after go-live
+   * (`TREASURY_ACCOUNT_MISSING`). The money can still be banked once either is
+   * fixed, so the provider's retry is the right answer to both.
    */
   @Public()
   @Post('whish/callback')

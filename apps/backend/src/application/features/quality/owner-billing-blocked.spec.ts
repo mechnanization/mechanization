@@ -145,4 +145,22 @@ describe('the OWNER_BILLING_BLOCKED scan', () => {
       at: '2026-10-08T08:00:00.000Z',
     });
   });
+
+  it('lists a flat whose أسهم are all recorded but short of 2400 as OWNER_SHARES_INCOMPLETE (A8)', async () => {
+    const short = shop({
+      occupancies: [
+        { citizenId: 'ali', shares: 800, createdAt: new Date('2026-10-01T08:00:00Z') },
+        { citizenId: 'maarouf', shares: 800, createdAt: new Date('2026-10-02T08:00:00Z') },
+      ],
+    });
+    const findings = await scanWith([short]).run();
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ kind: 'OWNER_SHARES_INCOMPLETE', subjectKey: 'u-1' });
+  });
+
+  it('reports a blocked flat as blocked only: a missing share is the finding, not the sum it leaves', async () => {
+    // 1200 + nothing is short of 2400 too, but billing refuses it outright, and that is what the office must hear.
+    const findings = await scanWith([shop({})]).run();
+    expect(findings.map((finding) => finding.kind)).toEqual(['OWNER_BILLING_BLOCKED']);
+  });
 });

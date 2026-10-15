@@ -597,12 +597,13 @@ export default function FeesPage({
         meta: { align: 'end' },
         cell: ({ row }) => {
           const remaining = row.original.remaining;
-          const isPaid = row.original.paymentStatus === 'PAID';
+          // Settled or cancelled: nothing is owed on it either way.
+          const isClosed = row.original.paymentStatus === 'PAID' || row.original.paymentStatus === 'CANCELLED';
           return (
             <span
               className={cn(
                 'font-mono text-sm font-bold tabular-nums whitespace-nowrap',
-                isPaid
+                isClosed
                   ? 'text-muted-foreground line-through opacity-70'
                   : remaining > 0
                     ? 'text-foreground'
@@ -644,6 +645,8 @@ export default function FeesPage({
           const payment = row.original;
           const isPaid = payment.paymentStatus === 'PAID';
           const isPendingReview = payment.paymentStatus === 'PENDING_REVIEW';
+          // A cancelled bill takes no payment (0090); the server refuses one anyway.
+          const isCancelled = payment.paymentStatus === 'CANCELLED';
           const isBusy = busyPaymentId === payment.id;
 
           return (
@@ -676,7 +679,7 @@ export default function FeesPage({
                 </>
               ) : null}
 
-              {canManage && !isPaid && !isPendingReview ? (
+              {canManage && !isPaid && !isPendingReview && !isCancelled ? (
                 <Link
                   href={`${base}/fees/payments/${payment.id}/settle`}
                   className={buttonVariants({ variant: 'default', size: 'sm' })}

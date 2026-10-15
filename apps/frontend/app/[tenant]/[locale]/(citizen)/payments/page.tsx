@@ -6,6 +6,7 @@ import { useTranslations } from 'next-intl';
 import {
   AlertTriangle,
   BadgeCheck,
+  Ban,
   CalendarClock,
   CheckCircle2,
   Clock,
@@ -36,11 +37,17 @@ import { PayDialog } from '@/components/citizen/pay-dialog';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/dates';
 
+/*
+  A bill the municipality cancelled (CANCELLED) is muted: it stays on the list,
+  with its status, and is not owed — never counted in the dues, never offered a
+  payment, its amount struck through.
+*/
 const STATUS_TONE: Record<string, string> = {
   UNPAID: 'border-warning/30 bg-warning/10 text-warning',
   OVERDUE: 'border-destructive/30 bg-destructive/10 text-destructive',
   PENDING_REVIEW: 'border-warning/30 bg-warning/10 text-warning',
   PAID: 'border-success/30 bg-success/10 text-success',
+  CANCELLED: 'border-border bg-muted text-muted-foreground',
 };
 
 const STATUS_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -48,6 +55,7 @@ const STATUS_ICON: Record<string, React.ComponentType<{ className?: string }>> =
   OVERDUE: AlertTriangle,
   PENDING_REVIEW: Clock,
   PAID: CheckCircle2,
+  CANCELLED: Ban,
 };
 
 export default function CitizenPayments({
@@ -248,6 +256,7 @@ export default function CitizenPayments({
           {items.map((item) => {
             const Icon = STATUS_ICON[item.paymentStatus] ?? Clock;
             const payable = isPayable(item);
+            const cancelled = item.paymentStatus === 'CANCELLED';
 
             return (
               <Card key={item.id}>
@@ -275,7 +284,10 @@ export default function CitizenPayments({
                     </div>
 
                     <div className="flex flex-col items-end gap-2">
-                      <p className="text-xl font-bold">{formatLbp(billFigure(item), locale)}</p>
+                      <p className={cn('text-xl font-bold', cancelled && 'text-muted-foreground line-through')}>
+                        {/* A cancelled bill shows what it was, struck through; it owes nothing. */}
+                        {formatLbp(cancelled ? item.amount : billFigure(item), locale)}
+                      </p>
                       <Badge
                         variant="outline"
                         className={cn('gap-1.5 py-1', STATUS_TONE[item.paymentStatus])}
@@ -286,7 +298,8 @@ export default function CitizenPayments({
                     </div>
                   </div>
 
-                  {item.reviewNote && item.paymentStatus !== 'PAID' ? (
+                  {/* A note on a refused claim is about paying; a cancelled bill takes no payment. */}
+                  {item.reviewNote && item.paymentStatus !== 'PAID' && !cancelled ? (
                     <Alert variant="destructive" icon={XCircle}>
                       {item.reviewNote}
                     </Alert>
@@ -297,6 +310,14 @@ export default function CitizenPayments({
                       {locale === 'en'
                         ? 'Your payment declaration was received. A staff member will confirm it after verifying the transfer.'
                         : 'تم استلام إبلاغك بالدفع. سيؤكّده موظف البلدية بعد التحقق من وصول المبلغ.'}
+                    </p>
+                  ) : null}
+
+                  {cancelled ? (
+                    <p className="rounded-lg border bg-muted/40 p-3 text-sm text-muted-foreground">
+                      {locale === 'en'
+                        ? 'The municipality cancelled this charge. Nothing is owed on it.'
+                        : 'ألغت البلدية هذه المطالبة، ولا مبلغ مستحقاً عليها.'}
                     </p>
                   ) : null}
 

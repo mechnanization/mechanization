@@ -123,6 +123,16 @@ export const QUALITY_FINDING_KIND = [
    * closes when the أسهم are recorded or another method is chosen.
    */
   'OWNER_BILLING_BLOCKED',
+  /**
+   * A flat billed «حسب الأسهم» whose owners' recorded أسهم do not add up to
+   * the register's 2400. Billing goes ahead — each owner pays their أسهم over
+   * the sum (the decision of 2026-10-07, kept on 2026-10-12) — so a co-owner
+   * missing from the census has their part billed to the others, and this is
+   * how the office hears of it. MEDIUM, and dismissable: on a building nobody
+   * has partitioned the 2400 cover the whole building, and a flat's owners can
+   * legitimately hold less of it.
+   */
+  'OWNER_SHARES_INCOMPLETE',
   'BUILDING_WITHOUT_PIN',
   'UNITS_WITHOUT_AREA',
   'UNLINKED_LANDLORDS',
@@ -181,6 +191,7 @@ export function qualityLabels(locale: string) {
       UNIT_STATUS_CONTRADICTION: en ? 'Unit and owner card disagree' : 'حالة الوحدة تخالف بطاقة المالك',
       UNIT_UNDER_REVIEW: en ? 'Unit status to review' : 'حالة الوحدة للمراجعة',
       OWNER_BILLING_BLOCKED: en ? 'Co-owner billing not applied' : 'توزيع على المالكين لا يُطبَّق',
+      OWNER_SHARES_INCOMPLETE: en ? 'Owners’ shares do not add up to 2400' : 'أسهم المالكين لا تبلغ 2400',
       BUILDING_WITHOUT_PIN: en ? 'Building with no entrance pin' : 'مبنى بلا مدخل مُثبت',
       UNITS_WITHOUT_AREA: en ? 'Occupied units with no area' : 'وحدات مشغولة بلا مساحة',
       UNLINKED_LANDLORDS: en ? 'Owners named but not linked' : 'مالكون مذكورون غير مربوطين',

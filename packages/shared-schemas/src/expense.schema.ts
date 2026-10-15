@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { municipalToday } from './cash-policy';
 import { positiveMoneyAmount } from './money-amount';
 import { businessDay } from './primitives';
 import { BUDGET_CODES_INCOMPLETE, budgetCodeSchema, budgetCodesComplete } from './treasury.schema';
@@ -168,6 +169,32 @@ export type RejectExpenseRequestInput = z.infer<typeof rejectExpenseRequestSchem
  * `SALARY_URGENT_REASON`, which the server writes, and the manager's is the
  * payment order itself.
  */
+/** `YYYY-MM`, a real month. The CHECK on `expense_vouchers.salaryPeriod` (0091) is the same pattern. */
+export const SALARY_PERIOD_PATTERN = /^(19|20)\d{2}-(0[1-9]|1[0-2])$/;
+
+/** The municipality's current month, `YYYY-MM`, on its own clock. */
+export function currentSalaryPeriod(now: Date = new Date()): string {
+  return municipalToday(now).slice(0, 7);
+}
+
+/** How many months before the current one «صرف راتب» reaches back. */
+export const SALARY_PERIOD_MONTHS_BACK = 11;
+
+/**
+ * The months a salary may be paid for, newest first: the municipality's current
+ * month and the eleven before it. The dialog offers exactly these, and the server
+ * refuses any other (`SALARY_PERIOD_IN_FUTURE`, `SALARY_PERIOD_TOO_OLD`), so one
+ * salary per staff member per month cannot be stepped around through months long
+ * past. An older salary goes through the full expense form, as an ordinary voucher.
+ */
+export function salaryPeriodWindow(now: Date = new Date()): string[] {
+  const [year, month] = currentSalaryPeriod(now).split('-').map(Number) as [number, number];
+  return Array.from({ length: SALARY_PERIOD_MONTHS_BACK + 1 }, (_, back) => {
+    const index = year * 12 + (month - 1) - back;
+    return `${Math.floor(index / 12)}-${String((index % 12) + 1).padStart(2, '0')}`;
+  });
+}
+
 export const recordStaffSalarySchema = z.object({
   accountId: z.string().uuid('اختر الحساب الذي سيُدفع منه'),
   amount: paidAmount,
@@ -177,6 +204,14 @@ export const recordStaffSalarySchema = z.object({
     .trim()
     .min(3, 'اكتب عن أي فترة يُصرف')
     .max(1000, 'الوصف طويل جداً'),
+  /**
+   * The month this salary is for, `YYYY-MM` (migration 0091). One salary per
+   * staff member per month: a second one is refused (`SALARY_PERIOD_ALREADY_PAID`)
+   * until the first is cancelled. Not after the municipality's current month —
+   * an advance on a month not yet worked is not a salary (checked by the server,
+   * on its own clock).
+   */
+  salaryPeriod: z.string({ required_error: 'اختر الشهر' }).regex(SALARY_PERIOD_PATTERN, 'اختر الشهر'),
   /** The paper behind it: a payroll sheet or a signed receipt number. */
   invoiceNumber: z.string().trim().max(100, 'الرقم طويل جداً').optional(),
   /** Required: one id per press, so a retry does not pay a salary twice. */
@@ -318,6 +353,8 @@ export interface ExpenseVoucherView {
   payee: string;
   /** The staff account a salary or commission voucher paid (0081, 0086); null on every other voucher. */
   payeeStaffId: string | null;
+  /** The month a salary voucher is for, `YYYY-MM` (0091); null on every other voucher and on salaries paid before it. */
+  salaryPeriod: string | null;
   description: string;
   occurredAt: string;
   invoiceNumber: string | null;

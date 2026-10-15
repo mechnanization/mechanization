@@ -9,7 +9,7 @@ import { AuditService } from '../audit/audit.service';
 import { ExpensesService } from './expenses.service';
 import { TreasuryLedgerService } from './treasury-ledger.service';
 import { TreasuryService } from './treasury.service';
-import { municipalPeriod } from '@mechanization/shared-schemas';
+import { municipalPeriod, salaryPeriodWindow } from '@mechanization/shared-schemas';
 
 /**
  * Expenses against a real Postgres.
@@ -410,20 +410,43 @@ describeIfDb('ExpensesService', () => {
         .then((row) => row.id);
     };
 
-    const pay = (staffId: string, over: Partial<Parameters<ExpensesService['recordSalary']>[1]> = {}) =>
-      scoped(() =>
+    /*
+      One salary per staff member per month (0091): each press here is its own
+      month unless a test names one, and a retry key keeps its month, so a
+      replay is the same act.
+    */
+    const months = salaryPeriodWindow();
+    const periods = new Map<string, string>();
+    const pressesFor = new Map<string, number>();
+    const periodFor = (key: string, staffId: string) => {
+      let period = periods.get(key);
+      if (!period) {
+        // Inside the window «صرف راتب» offers (the server refuses any other), off its
+        // oldest end so a run crossing the first of a month stays inside it.
+        const n = pressesFor.get(staffId) ?? 0;
+        pressesFor.set(staffId, n + 1);
+        period = months[n % (months.length - 1)]!;
+        periods.set(key, period);
+      }
+      return period;
+    };
+    const pay = (staffId: string, over: Partial<Parameters<ExpensesService['recordSalary']>[1]> = {}) => {
+      const clientRequestId = over.clientRequestId ?? randomUUID();
+      return scoped(() =>
         expenses.recordSalary(
           staffId,
           {
             accountId: safeLbpId,
             amount: 300_000,
             description: 'راتب تشرين الأول 2026',
-            clientRequestId: randomUUID(),
+            clientRequestId,
+            salaryPeriod: periodFor(clientRequestId, staffId),
             ...over,
           },
           MANAGER,
         ),
       );
+    };
 
     beforeAll(async () => {
       clerkId = await staffRow();

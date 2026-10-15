@@ -261,7 +261,8 @@ export default function MyFilePage({
     );
   }
 
-  const outstanding = payments.filter((payment) => !isSettled(payment));
+  // A bill the municipality cancelled (CANCELLED) is not owed, and takes no payment.
+  const outstanding = payments.filter((payment) => !isSettled(payment) && payment.paymentStatus !== 'CANCELLED');
   const settled = payments.filter(isSettled);
   const notes = payments.filter((payment) => payment.reviewNote);
   /*

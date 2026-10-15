@@ -1,4 +1,5 @@
 import {
+  BILL_CANCEL_ROLES as SHARED_BILL_CANCEL_ROLES,
   BULK_SETTLE_ROLES as SHARED_BULK_SETTLE_ROLES,
   CENSUS_WORKLIST_ROLES,
   FEE_ISSUE_ROLES,
@@ -10,6 +11,7 @@ import {
   REGISTER_WRITE_ROLES,
   WORKING_STAFF_ROLES,
   hasStaffRole,
+  type StaffRole,
 } from '@mechanization/shared-schemas';
 
 /**
@@ -64,12 +66,34 @@ export const REFERENCE_SEND_ROLES: readonly string[] = WORKING_STAFF_ROLES;
 export const PAYMENT_SETTLE_ROLES: readonly string[] = FEE_ISSUE_ROLES;
 
 /**
+ * «تسجيل دفعة نقدية» — cash into the safe at the counter, the citizen file's
+ * cash page, which always sends `CASH`. Narrower than `PAYMENT_SETTLE_ROLES`:
+ * a collector records the cash he takes as his own collection, or a Whish
+ * transfer, and the server refuses him `CASH` (`COLLECTOR_CANNOT_SELECT_METHOD`,
+ * finance audit B1, decision D13). That rule lives in `FeesService.settleInPerson`, not
+ * in a `@Roles` — the route is `FEE_ISSUE_ROLES` — so there is no shared set to
+ * take; this mirrors it. A collector is sent to the counter settle page, which
+ * offers him those two methods.
+ */
+export const CASH_COUNTER_ROLES: readonly string[] = [
+  'SUPER_ADMIN',
+  'ACCOUNTANT',
+] as const satisfies readonly StaffRole[];
+
+/**
  * «تسديد الفواتير المحددة» — tick several of one citizen's bills and settle
  * them in one press, `POST fees/payments/bulk-settle`. `BULK_SETTLE_ROLES`, as
  * the route: the finance roles only, so a collector still settles the same
  * bills one at a time with «تسجيل دفعة».
  */
 export const BULK_SETTLE_ROLES: readonly string[] = SHARED_BULK_SETTLE_ROLES;
+
+/**
+ * «إلغاء الفاتورة» — withdraw a bill nothing was paid on, `POST
+ * fees/payments/:id/cancel` (finance audit B3). `BILL_CANCEL_ROLES`, as the
+ * route: the manager alone.
+ */
+export const BILL_CANCEL_ROLES: readonly string[] = SHARED_BILL_CANCEL_ROLES;
 
 /**
  * Send a citizen a copy of a consolidated receipt over WhatsApp. Every working

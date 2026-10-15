@@ -57,6 +57,10 @@ describe('billPageLink', () => {
     expect(billPageLink({ paymentStatus: 'PAID' })).toBe('receipts');
   });
 
+  it('links a cancelled bill to its receipts, never to a cash form that would take nothing', () => {
+    expect(billPageLink({ paymentStatus: 'CANCELLED' })).toBe('receipts');
+  });
+
   it.each(['UNPAID', 'OVERDUE', 'PENDING_REVIEW'])('links an owed bill (%s) to the cash form, its receipts under it', (paymentStatus) => {
     expect(billPageLink({ paymentStatus })).toBe('settle');
   });

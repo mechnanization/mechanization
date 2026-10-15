@@ -119,6 +119,26 @@ describe('localizeApiError', () => {
   });
 
   /*
+    A salary's month travels as `YYYY-MM`. The salary dialog offers it by name
+    («عن شهر»), and the refusal under that field read «2026-11» beside it.
+  */
+  it('writes a month the server names by its name, never the wire’s YYYY-MM', () => {
+    const future = { code: 'SALARY_PERIOD_IN_FUTURE', message: 'x', params: { period: '2026-11' } };
+    expect(localizeApiError(future, 'ar')).toContain('تشرين الثاني 2026');
+    expect(localizeApiError(future, 'en')).toContain('November 2026');
+    const tooOld = { code: 'SALARY_PERIOD_TOO_OLD', message: 'x', params: { period: '2025-09', oldest: '2025-11' } };
+    for (const locale of ['ar', 'en'] as const) {
+      expect({ locale, text: localizeApiError(tooOld, locale) }).toEqual({
+        locale,
+        text: expect.not.stringMatching(/\d{4}-\d{2}/),
+      });
+    }
+    expect(localizeApiError(tooOld, 'ar')).toContain('أيلول 2025');
+    expect(localizeApiError(tooOld, 'en')).toContain('September 2025');
+    expect(localizeApiError(tooOld, 'en')).toContain('November 2025');
+  });
+
+  /*
     The bulk dialog's key is its set of bills, so from the screen this refusal
     means the same bills pressed again another way after a lost answer: the
     earlier press was recorded. It said the key had settled «other bills» and to

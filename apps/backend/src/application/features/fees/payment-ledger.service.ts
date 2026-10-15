@@ -36,6 +36,22 @@ export interface LedgerEntryInput {
    */
   clientRequestId?: string | null;
   /**
+   * Set only by the two writes that settle a citizen's claim (PENDING_REVIEW):
+   * the staff confirmation and the Whish success callback. Any other `record`
+   * on a bill under review is refused (`PAYMENT_CLAIM_UNDER_REVIEW`): `append`
+   * writes PAID or UNPAID, and would erase the claim without deciding it.
+   */
+  resolvesClaim?: boolean;
+  /**
+   * With `resolvesClaim`, the claim this write decides: a bill under review is
+   * settled only while its claim is still this reference (`whishTransactionRef`).
+   * The Whish callback names its checkout, so a success that arrives after its
+   * own claim was refused and the citizen declared another transfer meets that
+   * other claim and is refused (`PAYMENT_CLAIM_UNDER_REVIEW`), not banked over
+   * it. The staff confirmation names none: it decides whichever claim is there.
+   */
+  claimRef?: string | null;
+  /**
    * The settlement this movement belongs to, when one press settles several
    * of a citizen's bills (migration 0085). The settlement row must already be
    * written in the same transaction: the ledger refuses UPDATE, so a row joins
@@ -178,6 +194,9 @@ export class PaymentLedgerService {
     input: LedgerEntryInput & { audit: LedgerAudit },
   ): Promise<SettledTotals> {
     assertPositiveAmount(input.amount);
+    // Before the bill's row lock, as every caller takes it (`lockExternalRef`).
+    const externalRef = cleanExternalRef(input.externalRef);
+    if (externalRef) await this.lockExternalRef(tx, externalRef);
     const invoice = await this.lock(tx, input.paymentId);
 
     /*
@@ -185,10 +204,11 @@ export class PaymentLedgerService {
       here one after the other and the second finds the first's row.
     */
     if (input.clientRequestId) {
-      const earlier = await this.replay(tx, invoice, input.clientRequestId);
+      const earlier = await this.replay(tx, invoice, input.clientRequestId, input);
       if (earlier) return earlier;
     }
 
+    if (invoice.paymentStatus === 'CANCELLED') throw billCancelled();
     const outstanding = invoice.amount - invoice.paidAmount;
     if (invoice.paymentStatus === 'PAID' || outstanding <= 0) {
       throw new ConflictError({
@@ -196,6 +216,23 @@ export class PaymentLedgerService {
         message: 'This payment has already been settled.',
       });
     }
+    if (invoice.paymentStatus === 'PENDING_REVIEW') {
+      const decidesThisClaim =
+        input.resolvesClaim && (input.claimRef == null || input.claimRef === invoice.whishTransactionRef);
+      if (!decidesThisClaim) throw claimUnderReview();
+    }
+
+    /*
+      One Whish transfer is one receipt (finance audit B2). A reference already
+      on a receipt still standing — not reversed — is
+      refused, whichever path brings it: the counter, a citizen's claim being
+      confirmed, the Whish callback, a settlement of several bills. Only the
+      rows of one settlement share a reference, since one transfer paid them
+      all. Asked after the retry key's replay, so a retry finds its own row
+      first, and behind the reference's advisory lock, so two clerks typing one
+      reference at the same moment meet here one after the other.
+    */
+    if (externalRef) await this.assertExternalRefFree(tx, externalRef, input.settlementId ?? null);
 
     /*
       A closed treasury day takes nothing (docs/finance.md §7.3): a collector's
@@ -265,6 +302,70 @@ export class PaymentLedgerService {
    */
   async reserveReceiptNumbers(tx: Prisma.TransactionClient, count: number): Promise<string[]> {
     return allocateDocumentNumbers(tx, this.S, 'RECEIPT', count);
+  }
+
+  /**
+   * Serialises every write that carries one Whish reference (finance audit B2),
+   * so two clerks typing the same reference at once meet in
+   * `assertExternalRefFree` one after the other. A transaction-scoped advisory
+   * lock, named by the schema so two municipalities never wait on each other.
+   * The key folds case and edge spaces in SQL, with the expression that
+   * comparison uses, so two references it calls one always take one lock.
+   *
+   * Taken before any row lock, like the retry key's: `recordIn` takes it ahead of
+   * the bill's, and a caller that locks bills itself first (`settleInPerson`, a
+   * settlement of several bills) takes it before them. Re-taking it in the same
+   * transaction is free (`pg_advisory_xact_lock` is re-entrant).
+   */
+  async lockExternalRef(tx: Prisma.TransactionClient, externalRef: string | null | undefined): Promise<void> {
+    const ref = cleanExternalRef(externalRef);
+    if (!ref) return;
+    const prefix = `${this.tenantContext.schemaName}:external-ref:`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${prefix}::text || lower(btrim(${ref}::text))))`;
+  }
+
+  /**
+   * Refuses a reference already on a receipt still standing (`PAYMENT_EXTERNAL_REF_REUSED`,
+   * naming that receipt). A reversed receipt frees its reference; the rows of
+   * `settlementId` share one by design. Compared without case or edge spaces,
+   * both sides folded by Postgres in the expression of
+   * `payment_transactions_externalRef_lower_idx` (0091), so the comparison never
+   * depends on JavaScript and Postgres agreeing on what `trim` or lower case is.
+   */
+  private async assertExternalRefFree(
+    tx: Prisma.TransactionClient,
+    externalRef: string,
+    settlementId: string | null,
+  ): Promise<void> {
+    const rows = await tx.$queryRaw<Array<{ receiptNumber: string }>>`
+      SELECT t."receiptNumber"
+        FROM ${this.S}payment_transactions t
+       WHERE lower(btrim(t."externalRef")) = lower(btrim(${externalRef}::text))
+         AND t."externalRef" IS NOT NULL
+         AND t."amount" > 0
+         AND NOT EXISTS (
+               SELECT 1 FROM ${this.S}payment_transactions r WHERE r."reversalOfId" = t."id"
+             )
+         AND (${settlementId}::uuid IS NULL OR t."settlementId" IS NULL OR t."settlementId" <> ${settlementId}::uuid)
+       LIMIT 1
+    `;
+    if (rows[0]) {
+      throw new ConflictError({
+        code: 'PAYMENT_EXTERNAL_REF_REUSED',
+        message: `This reference is already on receipt ${rows[0].receiptNumber}.`,
+        params: { receiptNumber: rows[0].receiptNumber },
+      });
+    }
+  }
+
+  /**
+   * The settings a payment is judged by — the official rate, the two
+   * currencies, the counter's rate tolerance and the go-live stamp — read FOR
+   * SHARE in the caller's transaction (finance audit B8). Take it after the
+   * bill's row lock: that is the order every payment path takes the two in.
+   */
+  async settings(tx: Prisma.TransactionClient) {
+    return this.treasury.config(tx);
   }
 
   /**
@@ -352,6 +453,8 @@ export class PaymentLedgerService {
       }
 
       const invoice = await this.lock(tx, original.paymentId);
+      // `append` writes PAID or UNPAID, which would erase the citizen's pending claim.
+      if (invoice.paymentStatus === 'PENDING_REVIEW') throw claimUnderReview();
 
       /*
         The unique index on `reversalOfId` enforces this too; checking here
@@ -454,6 +557,8 @@ export class PaymentLedgerService {
     paymentStatus: string;
     citizenId: string;
     createdAt: Date;
+    /** The claim the bill is under review for, when it is (`declare`, `startWhishCheckout`). */
+    whishTransactionRef: string | null;
   }> {
     const rows = await tx.$queryRaw<
       Array<{
@@ -464,10 +569,11 @@ export class PaymentLedgerService {
         paymentStatus: string;
         citizenId: string;
         createdAt: Date;
+        whishTransactionRef: string | null;
       }>
     >`
       SELECT "id", "amount"::text, "paidAmount"::text, "currency",
-             "paymentStatus"::text, "citizenId", "createdAt"
+             "paymentStatus"::text, "citizenId", "createdAt", "whishTransactionRef"
         FROM ${this.S}citizen_payments
        WHERE "id" = ${paymentId}::uuid
        FOR UPDATE
@@ -487,19 +593,28 @@ export class PaymentLedgerService {
       paymentStatus: row.paymentStatus,
       citizenId: row.citizenId,
       createdAt: row.createdAt,
+      whishTransactionRef: row.whishTransactionRef,
     };
   }
 
   /**
    * The totals of a movement already recorded under this retry key, or null.
-   * A key used for a different invoice is refused rather than answered: it can
-   * only mean a page reused an id, and replaying another bill's receipt would
-   * tell the clerk the wrong money was taken.
+   *
+   * A key names one act (finance audit B6): this bill, by this method, with this
+   * collector and reference, for this sum — or these notes, when cash came in
+   * two currencies. Replayed with all of them it answers with the first receipt.
+   * Anything else under the key is refused (`PAYMENT_IDEMPOTENCY_KEY_REUSED`)
+   * rather than answered: the screens keep a key across every edit, so a figure
+   * corrected after a lost answer arrives here, and answering it with the first
+   * receipt would tell the clerk the corrected sum was taken when it was not.
+   * The rate is not compared: a retry carries the official rate as it stands,
+   * which may have moved since, and the notes are what changed hands.
    */
   private async replay(
     tx: Prisma.TransactionClient,
     invoice: { id: string; amount: number; paidAmount: number; paymentStatus: string },
     clientRequestId: string,
+    input: LedgerEntryInput,
   ): Promise<SettledTotals | null> {
     const row = await tx.paymentTransaction.findUnique({
       where: { clientRequestId },
@@ -508,16 +623,23 @@ export class PaymentLedgerService {
         paymentId: true,
         receiptNumber: true,
         amount: true,
+        method: true,
+        collectedById: true,
+        externalRef: true,
+        tenderedLocal: true,
+        tenderedForeign: true,
+        tenderedForeignCurrency: true,
         changeGiven: true,
         occurredAt: true,
         reversedBy: { select: { id: true } },
       },
     });
     if (!row) return null;
-    if (row.paymentId !== invoice.id) {
+    if (row.paymentId !== invoice.id || !sameAct(row, input)) {
       throw new ConflictError({
         code: 'PAYMENT_IDEMPOTENCY_KEY_REUSED',
-        message: 'This operation’s identifier was already used for another invoice. Reload the page.',
+        message: `This operation’s identifier was already used for another payment (${row.receiptNumber}). Reload the page.`,
+        params: { receiptNumber: row.receiptNumber },
       });
     }
     // Not answered as recorded once reversed: the clerk would hand over a receipt the ledger has cancelled.
@@ -569,6 +691,8 @@ export class PaymentLedgerService {
       paper handed to a resident.
     */
     const receiptNumber = input.receiptNumber ?? (await allocateDocumentNumber(tx, this.S, 'RECEIPT'));
+    // Stored clean, whichever path brought it (the Whish callback's is untrimmed).
+    const externalRef = cleanExternalRef(input.externalRef);
 
     const created = await tx.paymentTransaction.create({
       data: {
@@ -577,7 +701,7 @@ export class PaymentLedgerService {
         currency: invoice.currency,
         method: input.method as never,
         receiptNumber,
-        externalRef: input.externalRef ?? null,
+        externalRef,
         collectedById: input.collectedById ?? null,
         recordedById: input.recordedById ?? null,
         ...(reversalOfId ? { reversalOfId } : {}),
@@ -642,7 +766,7 @@ export class PaymentLedgerService {
          * above, so overwriting these loses nothing.
          */
         paymentMethod: input.method as never,
-        whishTransactionRef: input.externalRef ?? null,
+        whishTransactionRef: externalRef,
         collectedById: input.collectedById ?? null,
       },
     });
@@ -709,6 +833,74 @@ function assertPositiveAmount(amount: number): void {
       },
     });
   }
+}
+
+/**
+ * Whether a row recorded under a retry key is the act a retry now describes
+ * (`replay`): the same method, collector and reference, and the same notes —
+ * or, with no notes, the same sum. Ids and references compared as written
+ * apart from case and edge spaces.
+ */
+function sameAct(
+  row: {
+    amount: Prisma.Decimal;
+    method: string;
+    collectedById: string | null;
+    externalRef: string | null;
+    tenderedLocal: Prisma.Decimal | null;
+    tenderedForeign: Prisma.Decimal | null;
+    tenderedForeignCurrency: string | null;
+  },
+  input: LedgerEntryInput,
+): boolean {
+  const id = (value: string | null | undefined) => value?.trim().toLowerCase() || null;
+  if (row.method !== input.method) return false;
+  if (id(row.collectedById) !== id(input.collectedById)) return false;
+  if (normaliseExternalRef(row.externalRef) !== normaliseExternalRef(input.externalRef)) return false;
+  const near = (a: number, b: number) => Math.abs(a - b) < 0.005;
+  if (input.tendered) {
+    if (row.tenderedLocal === null) return false;
+    return (
+      near(Number(row.tenderedLocal), input.tendered.local) &&
+      near(Number(row.tenderedForeign ?? 0), input.tendered.foreign ?? 0) &&
+      (row.tenderedForeignCurrency ?? null) === (input.tendered.foreignCurrency ?? null)
+    );
+  }
+  return row.tenderedLocal === null && near(Number(row.amount), input.amount);
+}
+
+/**
+ * A Whish reference as it is stored, locked on and looked up: edge whitespace of
+ * every kind removed, case kept; null when empty. The provider's callback hands
+ * its `transactionRef` over untrimmed, and JavaScript's `trim()` takes tabs,
+ * newlines and no-break spaces that Postgres's `btrim()` leaves, so the
+ * reference is cleaned once here. The comparison itself (case, edge spaces) is
+ * Postgres's, in the expression 0091 indexes (`assertExternalRefFree`,
+ * `lockExternalRef`).
+ */
+function cleanExternalRef(value: string | null | undefined): string | null {
+  return value?.trim() || null;
+}
+
+/** Two references compared in JavaScript (`sameAct`, a retry's replay): clean, then case-folded. */
+function normaliseExternalRef(value: string | null | undefined): string | null {
+  return cleanExternalRef(value)?.toLowerCase() ?? null;
+}
+
+/** A bill the manager cancelled (0090): it owes nothing and takes nothing. */
+function billCancelled(): ConflictError {
+  return new ConflictError({
+    code: 'PAYMENT_BILL_CANCELLED',
+    message: 'This bill has been cancelled; it takes no payment.',
+  });
+}
+
+/** A citizen's payment claim on this bill awaits a clerk's confirmation or refusal. */
+function claimUnderReview(): ConflictError {
+  return new ConflictError({
+    code: 'PAYMENT_CLAIM_UNDER_REVIEW',
+    message: 'A citizen payment claim on this bill is under review; confirm or reject it first.',
+  });
 }
 
 /** Half a pound for ليرة; a tenth of a cent for dollars and euros alike. */

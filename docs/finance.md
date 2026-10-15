@@ -6,7 +6,7 @@ entry, an opening balance for a wallet added after go-live, and transfer write-o
 built, and every table, column, enum value and error code for them is a *proposal* until its
 migration exists (CLAUDE.md: never invent names; grep first). The built stages' names are
 real: they are in migrations `0073`, `0074`, `0078`, `0079`, `0080`, `0081`, `0082`, `0083`,
-`0084`, `0085`, `0086`, `0087`, `0088` and `0089` and in the `treasury`, `expense`, `transfer`,
+`0084`, `0085`, `0086`, `0087`, `0088`, `0089`, `0090`, `0091` and `0093` and in the `treasury`, `expense`, `transfer`,
 `income`, `treasury-closing`, `staff` and `payment-settlement` contracts and `exchange-policy`
 of `packages/shared-schemas`.
 Where the code was read, the file is cited. Where a claim could not be verified, it
@@ -296,6 +296,19 @@ from) are settled in the integration tests (see 12.2).
 - Change handed back is an outflow: if the safe in that currency holds less than the
   change, the whole payment is refused with `TREASURY_INSUFFICIENT_FUNDS`, and
   nothing is written (the integration spec pins this).
+- **A bill under a citizen's claim (2026-10-11, audit item M3).** While a bill is
+  `PENDING_REVIEW` (the citizen says he paid, and no clerk has checked), the ledger
+  refuses every write on it except the two that decide the claim: the clerk's
+  confirmation (`FeesService.review`) and the Whish success callback. Those two pass
+  `resolvesClaim` to `PaymentLedgerService.record`. A counter or round payment
+  (`settleInPerson`) and a reversal are refused with `PAYMENT_CLAIM_UNDER_REVIEW`, and
+  write nothing.
+  - Why: `append` writes PAID or UNPAID. A part payment at the counter put the bill
+    back to UNPAID, so the citizen's transfer was never looked at again, and a
+    reversal did the same.
+  - So the clerk confirms or rejects the claim first (a rejection returns the bill to
+    UNPAID), then takes the cash. Pinned by `payment-ledger.integration.spec.ts` and
+    `treasury-controls.integration.spec.ts`.
 
 ### 3.4 Reversals of citizen payments
 
@@ -310,6 +323,8 @@ from) are settled in the integration tests (see 12.2).
   carried the set's notes and change (§3.7): it is refunded its own credit, in its currency, from
   the safe (`planCreditRefund`, the pre-go-live refund's rule), since its notes paid every bill of
   the set and its change, recycled, paid the older ones (review of 2026-10-11).
+- A receipt on a bill that carries a citizen's claim under review is not reversed
+  until the claim is confirmed or rejected (`PAYMENT_CLAIM_UNDER_REVIEW`, §3.3).
 - **Where it is done: «عكس الوصل» (PR #113; reviewed 2026-10-13).** «وصولات الفاتورة» on the
   staff bill page (`citizens/[citizenId]/payments/[paymentId]`) lists every movement on the bill
   (`GET fees/payments/:id/transactions`). The bill's row on the citizen file leads there:
@@ -335,9 +350,8 @@ from) are settled in the integration tests (see 12.2).
   `claimUnderReview`). Reversing then sets the bill back to unpaid and overwrites the claim's
   method and Whish reference (`PaymentLedgerService.append`), so the claim leaves the review queue
   and a transfer that did arrive is left with nothing on record. The manager is told why, and that
-  the transfer is confirmed or rejected on the fees page first. That is the screen's rule only:
-  this branch's server still takes such a reversal. PR #120 refuses it under the bill's lock
-  (`PAYMENT_CLAIM_UNDER_REVIEW`), by PR #120's D11 (the owner, 2026-10-12).
+  the transfer is confirmed or rejected on the fees page first. The server refuses it too, under
+  the bill's lock (`PAYMENT_CLAIM_UNDER_REVIEW`), by PR #120's D11 (the owner, 2026-10-12).
 
   It carries no retry key, and needs none: the receipt's id is the act's key, since the server
   reverses a receipt once — asked under the bill's lock, with the unique index on `reversalOfId`
@@ -846,9 +860,25 @@ is untouched and still reached from the inspector's row (§5.6).
     manager records it, or it goes as a request.
   - The urgent-payment ceiling (§5.1, D6) does not apply: art. 35 names salaries.
     It applies to a salary paid through the full expense form, which is an ordinary
-    voucher.
+    voucher. Its own ceiling does (D10): «سقف صرف الرواتب», one per currency, set by
+    the manager in الإعدادات (`system_settings.salaryUrgentCeilingLbp` / `Usd`, 0091).
+    An accountant's payout above it is refused (`SALARY_OVER_CEILING`); the manager's
+    is the order and is not held to it. NULL is no ceiling.
+  - One salary per staff member per month (D10). The dialog asks «عن شهر» (this month
+    or the eleven before it); the voucher keeps it (`expense_vouchers.salaryPeriod`,
+    `YYYY-MM`, 0091), and a second standing salary for that person and month is refused
+    with the voucher that paid it (`SALARY_PERIOD_ALREADY_PAID`), in the service under
+    an advisory lock per person and month and in the database by a partial unique index
+    over vouchers not cancelled. A cancelled salary frees its month. A month not yet
+    begun is refused (`SALARY_PERIOD_IN_FUTURE`): an advance is not a salary. So is a
+    month before the window the dialog offers (`SALARY_PERIOD_TOO_OLD`, the shared
+    `salaryPeriodWindow`), or one salary a month could be stepped around by naming
+    months long past; an older salary goes through the full expense form, which D10
+    does not reach ([open-decisions.md](open-decisions.md) §22.2). A unique violation
+    on the month's index is answered as `SALARY_PERIOD_ALREADY_PAID` too.
   - The retry key is also bound to the staff account (`payeeStaffId`), so a retry for
-    another person who shares the name is refused (`TREASURY_REQUEST_KEY_REUSED`).
+    another person who shares the name is refused (`TREASURY_REQUEST_KEY_REUSED`), and
+    to the month (`salaryPeriod`).
 
   The button is on «الموظفون», which only `SUPER_ADMIN` opens today.
 - **Refused.** A citizen's id, a deleted account or an unknown id
@@ -1257,7 +1287,9 @@ the AGENTS.md section map does not list it yet (checked 2026-10-11).
 
 - `WHISH_MONEY` is the real enum value (not `WHISH`).
 - Only settled movements reach `PaymentLedgerService.record`: the confirm path, the
-  Whish callback and the counter/collector path. Pending declarations do not.
+  Whish callback and the counter/collector path. Pending declarations do not. The
+  first two pass `resolvesClaim`; the counter is refused on a bill under review
+  (§3.3, M3).
 - Two simultaneous activations on a municipality whose settings row does not exist yet
   collided on the row's unique key (a raw database error). Fixed: the row is inserted
   with `ON CONFLICT DO NOTHING`, then locked. Pinned by a test.
@@ -1282,6 +1314,10 @@ municipal cash-handling practice, and is pinned by
 | D7 | Does an accountant's salary payout need the manager's order first? (decided by the owner, 2026-10-10) | No: it is paid on the urgent path with the server's reason «راتب — يُدفع قبل الحوالة (المادة 35)», and waits for regularisation. The manager's payout is the order (§5.8) | Art. 35 names salaries among what may be paid before the order |
 | D8 | May an accountant pay his own salary on the urgent path? (2026-10-10) | No (`SALARY_SELF_PAYOUT`): the manager records it, or it goes as a request for his order (§5.8) | The separation already decided for custody (`CUSTODY_SELF_RECEIPT`): money that leaves before any order must not rest on the payee's word alone |
 | D9 | How does the payment order apply to an inspector's commission? (decided by the owner, 2026-10-10) | Like a salary: the manager's payout is the order; an accountant's is paid at once on the urgent path with the server's reason «عمولة مسح ميداني — تُدفع قبل الحوالة (المادة 35)» (`COMMISSION_URGENT_REASON`), waits for regularisation, and is exempt from the urgent ceiling (D6). Never his own (`COMMISSION_SELF_PAYOUT`, as D8). Before go-live the figure-only payout stays the manager's (§5.6) | Art. 35 names salaries and wages («الرواتب والأجور») among what may be paid before the order, and a field commission is a wage for work done |
+| D10 | Are an accountant's salary payouts limited? (decided by the owner on the finance audit, 2026-10-12) | Yes, twice: one salary per staff member per month (`salaryPeriod`, a partial unique index, `SALARY_PERIOD_ALREADY_PAID`), and a manager-set «سقف صرف الرواتب» per currency above which the manager pays it (`SALARY_OVER_CEILING`). D7 stands below the ceiling: the payout leaves before the order and waits for regularisation (§5.8) | The audit found the salary route to be the one art. 35 path with no bound at all: any amount, any number of times, to any account but one's own. Art. 35 lets a salary go before the order; it does not make the amount unchecked |
+| D11 | May counter cash settle a bill that carries a citizen's payment claim under review? (decided by the owner, 2026-10-12; was open-decisions.md §19) | No. The single settle, a reversal and a bulk settlement are refused (`PAYMENT_CLAIM_UNDER_REVIEW`, `BULK_SETTLE_BILL_PENDING_REVIEW`) until a clerk confirms or rejects the claim (§3.3) | A person decides whether the citizen's transfer arrived. Settling over the claim would erase it, and a transfer that did arrive would leave the citizen having paid twice with nothing on record |
+| D12 | Does «حسب الأسهم» divide by 2400 or by the recorded owners' sum? (the owner, 2026-10-12, keeping the decision of 2026-10-07) | By the sum, as before. A flat whose recorded أسهم do not add up to 2400 is reported in «ملاحظات الجودة» (`OWNER_SHARES_INCOMPLETE`, dismissable), never refused | On a building nobody has partitioned the 2400 cover the whole building, so dividing a flat by 2400 would under-bill it; a total short of 2400 is also what a co-owner missing from the census looks like, so a person looks |
+| D13 | Which methods may a collector record a payment by? (decided by the owner, 2026-10-12) | Cash as his own collection (COLLECTOR, himself named), or a Whish transfer made at the door (WHISH_MONEY, credited to the Whish account). Not CASH, which credits the safe, and not another collector's name (`COLLECTOR_CANNOT_SELECT_METHOD`, §14) | Cash he holds must sit on his custody until he hands it in; a Whish transfer is already in the municipality's account, and one reference settles one receipt (B2), so a reference cannot be reused to cover cash kept back |
 
 The decree's text was read at <https://www.baladiyat.org/?page_id=6636> (the
 consolidated text with its 1985–1996 amendments). It should be confirmed against the
@@ -1421,6 +1457,77 @@ the wrong route (BAN-15). When #120 merges on top:
 
 Merging #120 first is the safer order: until it lands, only the screen keeps a reversal off a claim
 under review, and the API does not.
+
+Done on 2026-10-15, when #120 was rebased onto `develop@3211140`: the controller hunk as above,
+both §3.4 lines and both §14 entries kept, the backend Tests line recounted (156 spec files, 47
+integration) and security.md's count rechecked (still 56), `billPageLink` sending a cancelled bill to
+its receipts (`lib/bill-receipts.test.ts`), and PRODUCT.md and §3.4 saying the server refuses the
+reversal too. #120's cancelled-bill branch of the counter settle page takes this branch's
+`HeaderBackLink`.
+
+### Finance audit remediation (2026-10-12; branch `bugs-fix`, not committed)
+
+The audit of `refactor/ui-kit-adoption@68e3e55`, re-checked against `develop@5e8f5c3` (which had
+already closed A5 and A6), and the owner's decisions D10–D12. Each item is pinned in
+`finance-audit.integration.spec.ts` on a throwaway Postgres 17 unless named otherwise.
+
+- **What a collector may record (B1, D13).** Cash as his own collection — method COLLECTOR, himself
+  named — or a Whish transfer a citizen makes at the door, credited to the Whish account. Never cash
+  into the safe, never another collector (`COLLECTOR_CANNOT_SELECT_METHOD`). The settle page offers
+  him those two, and «عبر المحصّل» is himself, with no staff list read.
+- **A counter retry key is bound to its act (B6).** Method, collector, reference, and the notes or
+  the sum; `PAYMENT_IDEMPOTENCY_KEY_REUSED` now names the receipt the key wrote.
+- **One Whish reference, one receipt (B2).** Refused in `recordIn` on every path while a
+  receipt carrying it still stands (`PAYMENT_EXTERNAL_REF_REUSED`), behind an advisory lock on the
+  reference; one settlement's rows share theirs. Only a Whish settlement writes `externalRef`. The
+  reference is stored with its edge whitespace removed (the callback's arrives untrimmed), and both
+  the lookup and the lock key fold case and edge spaces in SQL, in the expression 0091 indexes, so
+  JavaScript's `trim`/`toLowerCase` and Postgres's `btrim`/`lower` never have to agree.
+- **The Whish callback (B5).** Banked only for the amount the checkout quoted, keyed by the checkout
+  (`clientRequestId`) and closed in the same transaction. Any other amount, or a bill paid,
+  cancelled or reduced another way meanwhile, or a reference already on a receipt, sets the checkout
+  aside as MISMATCHED (0090) with a Tier 1 `WHISH_CHECKOUT_MISMATCHED` row, crediting nothing. Pinned
+  also in `whish-settlement.spec.ts`. A success settles only its own claim (`claimRef`, the
+  checkout's reference): a claim the citizen declared after the checkout's was refused is left for a
+  clerk, and the checkout set aside. A set-aside checkout's claim cannot be confirmed as it stands
+  (`PAYMENT_CHECKOUT_MISMATCHED`, naming the provider's transaction number): the clerk refuses it and
+  records at the counter what the provider shows, under the provider's reference (decision of
+  2026-10-13). A failure callback for a bill settled or cancelled meanwhile closes its checkout FAILED.
+- **The counter's rate (B8, A2).** Read `FOR SHARE` in the payment's own transaction, behind the
+  bill's lock, never from the settings cache; a finance role's own rate stays within the exchange
+  rule's tolerance (3% unless the manager set another), beyond it only the manager
+  (`EXCHANGE_RATE_OVERRIDE_BEYOND_TOLERANCE`). Pinned also in `tendered-cash.spec.ts`.
+- **The finance settings (A1).** The official rate and the two currencies are the manager's
+  (`FINANCE_SETTINGS_MANAGER_ONLY`), as both ceilings are, and the currencies are fixed once the
+  treasury is live (`CURRENCIES_LOCKED_AFTER_GO_LIVE`). A save is one transaction with a Tier 1
+  `SETTINGS_UPDATED` row carrying the treasury fields' values before and after.
+- **A notice is issued once (B3).** `fee_notices.clientRequestId` (0091), required by the route,
+  held by the wizard (`fee-notice:new`); a retry answers with the first notice, the key reused for
+  another is `FEE_NOTICE_REQUEST_REUSED`.
+- **A bill can be cancelled (B3).** `POST fees/payments/:id/cancel`, the manager's
+  (`BILL_CANCEL_ROLES`), with a reason: `paymentStatus` CANCELLED (0090) and who, when and why on
+  the row (0091; the reason never blank, 0093), a Tier 1 `FEE_BILL_CANCELLED` row. Refused with money on it
+  (`BILL_CANCEL_HAS_PAYMENTS`, reverse its receipts first) or a claim waiting
+  (`PAYMENT_CLAIM_UNDER_REVIEW`); a cancelled bill takes no payment, claim or checkout
+  (`PAYMENT_BILL_CANCELLED`) and owes nothing in every sum. A CHECK keeps money off a cancelled bill.
+  Nor is it billed: the billed totals (the overview's `billedTotal` and its months, the register's
+  and the dossier's `feesTotal`) leave it out, so billed stays collected plus outstanding (decision
+  of 2026-10-13). Every owed filter names it (`NOT IN ('PAID', 'CANCELLED')`, `!== 'CANCELLED'`)
+  rather than leaning on its `remaining` of 0, and no screen offers a cancelled bill a payment.
+- **Who raised a bill (B4).** `citizen_payments.issuedById` (0091) on every bill raised since: the
+  notice's issuer, the clerk of a one-off charge, whoever pressed a recurring run (NULL for the
+  scheduled one). A one-off charge is Tier 1 (`FEE_INDIVIDUAL_LEVIED`). It still has no retry key
+  (docs/security.md, Known gaps).
+- **Salaries (A3, D10)** and **the co-owners' أسهم (A8, D12)**: §5.8 and §13.1c.
+- **Brought in from the unmerged fix branches:** M3 (a counter payment or a reversal on a bill under
+  review is refused, D11) and M6 (the recurring run's audit row with a NULL system actor). M4 had
+  reached `develop` already.
+
+Not done here, from the same audit: the four stages of decree 5595 (commitment and liquidation are
+not modelled), a catch-up for billing periods the scheduler missed and a screen for
+`billing_run_entries`, a refund voucher behind a payment reversal, and a reviewer who differs from
+the recorder of a flagged exchange.
+
 
 ### Final-stack review (2026-10-11; `feat/treasury-day-closing@c88c971`, fixes not committed)
 

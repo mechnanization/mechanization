@@ -340,9 +340,13 @@ describeIfDb('TransfersService — the PR #111 review', () => {
   // ───────────────────────────  the exchange rule in الإعدادات  ───────────────────────────
 
   describe('the exchange rule', () => {
-    const changedKeys = (): string[] => {
-      const call = emit.mock.calls.filter(([event]) => event === 'settings.changed').at(-1);
-      return (call?.[1] as { changed: string[] }).changed;
+    // The fields the latest save sent, as its Tier 1 row records them (finance audit A1).
+    const changedKeys = async (): Promise<string[]> => {
+      const row = await db.auditLogEntry.findFirst({
+        where: { action: 'SETTINGS_UPDATED' },
+        orderBy: { createdAt: 'desc' },
+      });
+      return ((row?.after ?? {}) as { changed?: string[] }).changed ?? [];
     };
 
     it('is moved by the manager alone, and an accountant’s save of the section does not write it', async () => {
@@ -352,11 +356,11 @@ describeIfDb('TransfersService — the PR #111 review', () => {
 
       await scoped(() => fees.updateSettings({ defaultDueDays: 30, exchangeRateTolerancePercent: 3, largeExchangeThreshold: 1000 }, ACCOUNTANT));
       // The audit trail must not say the accountant edited the rule he sent back unchanged.
-      expect(changedKeys()).not.toEqual(expect.arrayContaining(['exchangeRateTolerancePercent']));
-      expect(changedKeys()).not.toEqual(expect.arrayContaining(['largeExchangeThreshold']));
+      expect(await changedKeys()).not.toEqual(expect.arrayContaining(['exchangeRateTolerancePercent']));
+      expect(await changedKeys()).not.toEqual(expect.arrayContaining(['largeExchangeThreshold']));
 
       await scoped(() => fees.updateSettings({ exchangeRateTolerancePercent: 4 }, MANAGER));
-      expect(changedKeys()).toContain('exchangeRateTolerancePercent');
+      expect(await changedKeys()).toContain('exchangeRateTolerancePercent');
       expect((await db.systemSettings.findFirstOrThrow()).exchangeRateTolerancePercent.toNumber()).toBe(4);
       await scoped(() => fees.updateSettings({ exchangeRateTolerancePercent: 3 }, MANAGER));
     });

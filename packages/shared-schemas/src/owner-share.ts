@@ -151,6 +151,29 @@ export function ownerShareOf(rule: OwnerBillingRule, citizenId: string): OwnerSh
   }
 }
 
+/** The cadastre's أسهم in one whole property: every owner's part of a deed is out of these. */
+export const DEED_SHARES = 2400;
+
+/**
+ * A flat billed «حسب الأسهم» whose owners' أسهم, all recorded, do not add up to
+ * `DEED_SHARES` — or null when they do, when some are missing (that is
+ * `UNDECIDABLE`, refused by billing), or when the method is another.
+ *
+ * Billing still divides by the sum (the decision of 2026-10-07, kept by the
+ * owner on 2026-10-12): on a building nobody has partitioned the 2400 cover the
+ * whole building, and a flat's owners may hold less of it. But a total short of
+ * 2400 is also exactly what a co-owner missing from the census looks like, with
+ * their part then billed to the others, so it is reported for a person to look
+ * at (`OWNER_SHARES_INCOMPLETE` in «ملاحظات الجودة»), never refused.
+ */
+export function sharesOffDeed(rule: OwnerBillingRule): { total: number } | null {
+  const effective = effectiveOwnerBilling(rule);
+  if (effective.mode !== 'BY_SHARES' || effective.owners.length < 2) return null;
+  if (!effective.owners.every((owner) => usableShares(owner.shares))) return null;
+  const total = effective.owners.reduce((sum, owner) => sum + (owner.shares as number), 0);
+  return total === DEED_SHARES ? null : { total };
+}
+
 /** The weight a share multiplies a unit by — 1 for a whole flat. */
 export function shareWeight(share: OwnerShare | null | undefined): number {
   return share ? share.numerator / share.denominator : 1;

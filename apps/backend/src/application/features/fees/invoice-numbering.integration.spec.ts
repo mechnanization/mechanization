@@ -6,6 +6,8 @@ import { PrismaClient as TenantPrismaClient } from '../../../generated/tenant-cl
 import { migrateTenantSchema } from '../../../infrastructure/prisma/tenant-migrator';
 import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
+import { PrismaAuditRepository } from '../../../infrastructure/repositories/audit.repository';
+import { AuditService } from '../audit/audit.service';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
 import type { WhishGateway } from '../../../domain/interfaces/whish-gateway.interface';
 import { FeesService } from './fees.service';
@@ -204,13 +206,31 @@ describeIfDb('invoice numbering', () => {
   it('numbers a one-off charge raised straight against a citizen', async () => {
     const id = await citizen('نادية');
 
-    const created = await fees.chargeIndividual({
-      citizenId: id,
-      title: 'رسم إشغال رصيف',
-      amount: 75_000,
-      dueDate: '2026-12-31',
-      actor: actor(),
-    });
+    // A one-off charge writes its Tier 1 row in its own transaction (finance audit B4): a real tenant scope.
+    const context = new TenantContextService();
+    const charging = new FeesService(
+      context,
+      { emit: jest.fn() } as unknown as EventEmitter2,
+      {} as WhishGateway,
+      {
+        get: jest.fn().mockResolvedValue(null),
+        set: jest.fn().mockResolvedValue(undefined),
+        invalidatePrefix: jest.fn().mockResolvedValue(undefined),
+      } as unknown as RedisCacheService,
+      {} as PaymentLedgerService,
+      new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
+    );
+    const created = await context.run(
+      { tenantId: 'tenant-1', tenantSlug: 'numbering', schemaName: SCHEMA, prisma: db },
+      () =>
+        charging.chargeIndividual({
+          citizenId: id,
+          title: 'رسم إشغال رصيف',
+          amount: 75_000,
+          dueDate: '2026-12-31',
+          actor: actor(),
+        }),
+    );
 
     const bill = await db.citizenPayment.findUniqueOrThrow({
       where: { id: created.id },

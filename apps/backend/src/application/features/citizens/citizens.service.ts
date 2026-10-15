@@ -538,14 +538,15 @@ export class CitizensService {
              FROM ${this.S}registrations r
             WHERE r."citizenId" = u.id ORDER BY r."submittedAt" DESC LIMIT 1), 0)::int
             AS "unestablishedFieldCount",
+          -- Not a cancelled bill (0090): withdrawn, it was never billed (decision of 2026-10-13).
           COALESCE((SELECT sum(p.amount) FROM ${this.S}citizen_payments p
-                     WHERE p."citizenId" = u.id), 0)::float8
+                     WHERE p."citizenId" = u.id AND p."paymentStatus" <> 'CANCELLED'), 0)::float8
             AS "feesTotal",
           COALESCE((SELECT sum(p."paidAmount") FROM ${this.S}citizen_payments p
                      WHERE p."citizenId" = u.id), 0)::float8
             AS "paidTotal",
           COALESCE((SELECT sum(p.amount - p."paidAmount") FROM ${this.S}citizen_payments p
-                     WHERE p."citizenId" = u.id AND p."paymentStatus" <> 'PAID'), 0)::float8
+                     WHERE p."citizenId" = u.id AND p."paymentStatus" NOT IN ('PAID', 'CANCELLED')), 0)::float8
             AS "outstandingTotal",
           COALESCE((SELECT sum(p.amount - p."paidAmount") FROM ${this.S}citizen_payments p
                      WHERE p."citizenId" = u.id
@@ -579,7 +580,7 @@ export class CitizensService {
           count(*)::int AS total,
           COALESCE(sum(
             COALESCE((SELECT sum(p.amount - p."paidAmount") FROM ${this.S}citizen_payments p
-                       WHERE p."citizenId" = u.id AND p."paymentStatus" <> 'PAID'), 0)
+                       WHERE p."citizenId" = u.id AND p."paymentStatus" NOT IN ('PAID', 'CANCELLED')), 0)
           ), 0)::float8 AS "allOutstanding",
           COALESCE(sum(
             COALESCE((SELECT sum(p.amount - p."paidAmount") FROM ${this.S}citizen_payments p

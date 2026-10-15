@@ -415,7 +415,8 @@ export class AuditService {
 
   @OnEvent('fee.issued')
   async onFeeIssued(payload: {
-    noticeId: string;
+    /** Null for a one-off charge, which has no notice. */
+    noticeId: string | null;
     title: string;
     amount: number;
     targetType: string;
@@ -424,9 +425,18 @@ export class AuditService {
     actorRole?: string | null;
     recurring?: boolean;
     periodKey?: string;
+    /** A one-off charge writes its own Tier 1 row (`FEE_INDIVIDUAL_LEVIED`); the event is for the caches. */
+    alreadyAudited?: boolean;
   }): Promise<void> {
+    if (payload.alreadyAudited || !payload.noticeId) return;
     await this.record({
-      actorId: payload.actorId ?? 'SYSTEM',
+      /*
+        A scheduled run has no actor: NULL, typed SYSTEM, as the Whish settlement
+        writes it. `actorId` is a uuid column, and the literal 'SYSTEM' it used to
+        carry was refused — and swallowed by `write` — so no recurring run had
+        ever left a row.
+      */
+      actorId: payload.actorId ?? null,
       actorType: payload.actorId ? 'STAFF' : 'SYSTEM',
       actorRole: (payload.actorRole ?? null) as never,
       action: payload.recurring ? 'FEE_RECURRING_ISSUED' : 'FEE_ISSUED',
@@ -449,24 +459,6 @@ export class AuditService {
     `recordInTransaction`, so no payment moves without one. `payment.*`
     events still fire, for the caches that listen to them.
   */
-
-  @OnEvent('settings.changed')
-  async onSettingsChanged(payload: {
-    actorId: string;
-    actorRole: string;
-    changed: string[];
-  }): Promise<void> {
-    await this.record({
-      actorId: payload.actorId,
-      actorType: 'STAFF',
-      actorRole: payload.actorRole as never,
-      action: 'SETTINGS_UPDATED',
-      entityType: 'SystemSettings',
-      after: {
-        changed: payload.changed,
-      },
-    });
-  }
 
   /**
    * A municipality's register replaced wholesale.

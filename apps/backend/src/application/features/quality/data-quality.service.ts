@@ -11,7 +11,9 @@ import {
   type FieldFlag,
   type QualityFindingKind,
   citizenDisplayName,
+  DEED_SHARES,
   NON_PERSON_RESIDENCE,
+  sharesOffDeed,
 } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
@@ -920,13 +922,28 @@ export class DataQualityService {
         occupancies: activeOwnerSpells({ citizenId: true, shares: true, createdAt: true }),
       },
     });
-    const blocked = units.flatMap((unit) => {
-      const block = ownerBillingBlock({
+    /*
+      Beside each blocked flat, one billed «حسب الأسهم» whose recorded أسهم do not
+      add up to 2400 (`OWNER_SHARES_INCOMPLETE`, finance audit A8): billing goes
+      ahead, dividing by the sum, and this is how the office hears that a
+      co-owner missing from the census may have had their part billed to the
+      others. The same read, the same rule billing applies (`sharesOffDeed`).
+    */
+    type Flagged = {
+      unit: (typeof units)[number];
+      block: OwnerBillingBlock | null;
+      off: { total: number } | null;
+    };
+    const blocked = units.flatMap((unit): Flagged[] => {
+      const rule = {
         mode: unit.ownerBillingMode,
         responsibleOwnerId: unit.responsibleOwnerId,
         owners: unit.occupancies.map((spell) => ({ citizenId: spell.citizenId, shares: spell.shares })),
-      });
-      return block ? [{ unit, block }] : [];
+      };
+      const block = ownerBillingBlock(rule);
+      if (block) return [{ unit, block, off: null }];
+      const off = sharesOffDeed(rule);
+      return off ? [{ unit, block: null, off }] : [];
     });
     if (blocked.length === 0) return [];
 
@@ -935,13 +952,15 @@ export class DataQualityService {
       select: { id: true, code: true, name: true, parcelNumber: true },
     });
     const byId = new Map(buildings.map((building) => [building.id, building]));
-    return blocked.flatMap(({ unit, block }) => {
+    return blocked.flatMap(({ unit, block, off }) => {
       const building = byId.get(unit.buildingId);
       if (!building) return [];
       const at = [unit.updatedAt, ...unit.occupancies.map((spell) => spell.createdAt)].sort(
         (a, b) => b.getTime() - a.getTime(),
       )[0]!;
-      return [ownerBillingBlockedFinding({ unitId: unit.id, unitCode: unit.unitCode, at }, block, building)];
+      const subject = { unitId: unit.id, unitCode: unit.unitCode, at };
+      if (block) return [ownerBillingBlockedFinding(subject, block, building)];
+      return off ? [ownerSharesIncompleteFinding(subject, off, building)] : [];
     });
   }
 
@@ -1073,6 +1092,37 @@ export class DataQualityService {
 }
 
 export type RawFinding = Omit<QualityFinding, 'officers' | 'dismissal'> & { officerIds: string[] };
+
+/**
+ * One `OWNER_SHARES_INCOMPLETE` finding (finance audit A8): a flat billed «حسب
+ * الأسهم» whose owners' recorded أسهم total something other than 2400. Billing
+ * divides by what is recorded, so this is not a refused bill — it is a question
+ * for a person: is a co-owner missing from the census, or does this building
+ * simply hold its 2400 across several flats? Dismissable for that reason.
+ */
+export function ownerSharesIncompleteFinding(
+  unit: { unitId: string; unitCode: string; at: Date },
+  off: { total: number },
+  building: { id: string; code: string; name: string | null; parcelNumber: string },
+): RawFinding {
+  return {
+    kind: 'OWNER_SHARES_INCOMPLETE',
+    subjectKey: unit.unitId,
+    severity: 'MEDIUM',
+    detail: `الوحدة ${unit.unitCode}: يتوزّع رسمها حسب الأسهم، ومجموع أسهم مالكيها المسجَّلين ${off.total} من ${DEED_SHARES} — يُقسَم الرسم على المسجَّلين وحدهم، فإن كان أحد المالكين غير مسجَّل حُمِّلت حصّته على الآخرين`,
+    subjects: [
+      {
+        kind: 'building',
+        id: building.id,
+        label: building.name ? `${building.code} — ${building.name}` : building.code,
+        secondary: `عقار ${building.parcelNumber}`,
+      },
+    ],
+    officerIds: [],
+    at: unit.at.toISOString(),
+    dismissable: true,
+  };
+}
 
 /**
  * One `OWNER_BILLING_BLOCKED` finding: the flat, what stops its saved method,

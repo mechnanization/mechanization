@@ -88,13 +88,36 @@ describe('assertCashAdjustment — who may depart from the ordinary', () => {
     ).toThrow(ForbiddenError);
   });
 
-  it('lets an accountant override the rate only with a reason', () => {
+  // Inside the exchange rule's 3% band (finance audit A2): 91,000 is 1.7% from 89,500.
+  const withinBand = toTender({ local: 0, foreign: 10, foreignCurrency: 'USD', exchangeRate: 91_000 }, 'LBP', OFFICIAL);
+
+  it('lets an accountant override the rate within the tolerance, only with a reason', () => {
     expect(() =>
-      assertCashAdjustment({ tender: overridden, paidOn: undefined, reason: undefined, role: 'ACCOUNTANT', today }),
+      assertCashAdjustment({ tender: withinBand, paidOn: undefined, reason: undefined, role: 'ACCOUNTANT', today }),
     ).toThrow(ValidationError);
     expect(
-      assertCashAdjustment({ tender: overridden, paidOn: undefined, reason: 'قرار المجلس 12/2026', role: 'ACCOUNTANT', today }),
+      assertCashAdjustment({ tender: withinBand, paidOn: undefined, reason: 'قرار المجلس 12/2026', role: 'ACCOUNTANT', today }),
     ).toMatchObject({ required: true, rateOverridden: true });
+  });
+
+  it('keeps a rate beyond the tolerance to the manager, even with a reason (A2)', () => {
+    expect(() =>
+      assertCashAdjustment({ tender: overridden, paidOn: undefined, reason: 'قرار المجلس 12/2026', role: 'ACCOUNTANT', today }),
+    ).toThrow(expect.objectContaining({ code: 'EXCHANGE_RATE_OVERRIDE_BEYOND_TOLERANCE' }));
+    expect(
+      assertCashAdjustment({ tender: overridden, paidOn: undefined, reason: 'قرار المجلس 12/2026', role: 'SUPER_ADMIN', today }),
+    ).toMatchObject({ required: true, rateOverridden: true });
+    // The band is the manager's setting: narrowed to 1%, the same 1.7% is his alone.
+    expect(() =>
+      assertCashAdjustment({
+        tender: withinBand,
+        paidOn: undefined,
+        reason: 'قرار المجلس 12/2026',
+        role: 'ACCOUNTANT',
+        today,
+        tolerancePercent: 1,
+      }),
+    ).toThrow(expect.objectContaining({ code: 'EXCHANGE_RATE_OVERRIDE_BEYOND_TOLERANCE' }));
   });
 
   it('treats any rate as an override when the municipality has set none', () => {

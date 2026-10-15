@@ -11,6 +11,7 @@ import {
   issueFeeNotice,
   logApiError,
 } from '@/lib/api-client';
+import { heldKey, keyIsSpent, spendKey } from '@/lib/request-id';
 import { hasRole } from '@/lib/staff-roles';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
@@ -95,7 +96,24 @@ export default function IssueFeePage({
         targetCitizenId: values.targetCitizenId || undefined,
         dueDate: values.dueDate,
         instructions: values.instructions || undefined,
+        // Kept across every failure and edit, spent once the server confirms the notice exists.
+        clientRequestId: heldKey(tenant, 'fee-notice:new'),
       });
+      spendKey(tenant, 'fee-notice:new');
+      /*
+        A retry the server answered from the first notice: nothing new was
+        billed, and the counts are not repeated. Said with a warning, never the
+        fresh-success toast, naming the notice the key issued — its title, which
+        the server only replays when it matches (`FEE_NOTICE_REQUEST_REUSED`
+        otherwise), and its id — and that it stands as first issued.
+      */
+      if (res.replayed) {
+        toast.warning(t('alreadyIssuedTitle', { title: values.title }), {
+          description: t('alreadyIssuedBody', { count: res.issued, id: res.noticeId }),
+        });
+        router.push(feesHref);
+        return;
+      }
       toast.success(t('issued', { count: res.issued }));
 
       /*
@@ -163,6 +181,8 @@ export default function IssueFeePage({
       router.push(feesHref);
     } catch (caught) {
       logApiError(caught);
+      // A key whose notice exists is spent; every other failure keeps it, so a retry is answered from the first.
+      if (keyIsSpent(caught)) spendKey(tenant, 'fee-notice:new');
       // Shown inside the wizard, on the review step the clerk pressed from (TXT-6).
       setError(caught instanceof ApiRequestError ? caught.message : t('failed'));
       inFlight.current = false;

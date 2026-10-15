@@ -233,6 +233,7 @@ export function fixHref(finding: QualityFinding, base: string): string | null {
       return building ? `${base}/buildings/${encodeURIComponent(building.id)}/edit` : null;
     // Keyed by the unit: the matrix opens on it, where «توزيع الرسم على المالكين» is chosen.
     case 'OWNER_BILLING_BLOCKED':
+    case 'OWNER_SHARES_INCOMPLETE':
       return building
         ? `${base}/buildings/${encodeURIComponent(building.id)}/matrix?unit=${encodeURIComponent(finding.subjectKey)}`
         : null;

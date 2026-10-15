@@ -850,12 +850,15 @@ export class ReportingService {
                      JOIN excluded_entries ee ON ee.id = bu."propertyEntryId"
                     WHERE bu."endedAt" IS NULL))
             AS "duplicateUnitsExcluded",
-          COALESCE((SELECT sum(amount) FROM ${this.S}citizen_payments), 0)::float8
+          -- A cancelled bill (0090) was raised in error and withdrawn: not billed,
+          -- so billed stays collected plus outstanding (decision of 2026-10-13).
+          COALESCE((SELECT sum(amount) FROM ${this.S}citizen_payments
+                     WHERE "paymentStatus" <> 'CANCELLED'), 0)::float8
             AS "billedTotal",
           COALESCE((SELECT sum("paidAmount") FROM ${this.S}citizen_payments), 0)::float8
             AS "collectedTotal",
           COALESCE((SELECT sum(amount - "paidAmount") FROM ${this.S}citizen_payments
-                     WHERE "paymentStatus" <> 'PAID'), 0)::float8
+                     WHERE "paymentStatus" NOT IN ('PAID', 'CANCELLED')), 0)::float8
             AS "outstandingTotal",
           -- Derived from the due date on read, never stored: a flag written by
           -- a nightly job is wrong for every hour between a due date passing
@@ -872,7 +875,7 @@ export class ReportingService {
           (SELECT COALESCE(json_agg(row_to_json(m) ORDER BY m.month), '[]'::json)
              FROM (
                SELECT to_char(d.m, 'YYYY-MM') AS month,
-                      COALESCE(sum(p.amount), 0)::float8 AS billed,
+                      COALESCE(sum(p.amount) FILTER (WHERE p."paymentStatus" <> 'CANCELLED'), 0)::float8 AS billed,
                       COALESCE(sum(p."paidAmount"), 0)::float8 AS collected,
                       COALESCE(sum(p.amount - p."paidAmount")
                         FILTER (WHERE p."paymentStatus" = 'UNPAID'
@@ -1070,6 +1073,8 @@ export class ReportingService {
             whishTransactionRef: true,
             paidAt: true,
             reviewNote: true,
+            // Why the manager cancelled it, when he did (0091).
+            cancellationReason: true,
             // «ليش عليّ هالمبلغ؟» — see `CitizenProfilePayment.assessment`.
             assessment: true,
             feeNotice: { select: { frequency: true } },
@@ -1253,7 +1258,8 @@ export class ReportingService {
       title: payment.title,
       amount: Number(payment.amount),
       paidAmount: Number(payment.paidAmount),
-      remaining: Math.max(Number(payment.amount) - Number(payment.paidAmount), 0),
+      remaining:
+        payment.paymentStatus === 'CANCELLED' ? 0 : Math.max(Number(payment.amount) - Number(payment.paidAmount), 0),
       currency: payment.currency,
       dueDate: payment.dueDate.toISOString(),
       paymentStatus:
@@ -1265,6 +1271,7 @@ export class ReportingService {
       whishTransactionRef: payment.whishTransactionRef,
       paidAt: payment.paidAt?.toISOString() ?? null,
       reviewNote: payment.reviewNote,
+      cancellationReason: payment.cancellationReason,
       frequency: payment.feeNotice?.frequency ?? null,
       assessment: (payment.assessment as FeeAssessment | null) ?? null,
     }));
@@ -1311,14 +1318,20 @@ export class ReportingService {
       isActive: citizen.isActive,
       payments,
       fees: {
-        feesTotal: sum(payments, 'amount'),
+        // A cancelled bill was withdrawn, not billed (decision of 2026-10-13).
+        feesTotal: sum(
+          payments.filter((payment) => payment.paymentStatus !== 'CANCELLED'),
+          'amount',
+        ),
         // Every pound received, across all rows — a part-payment sitting on an
         // UNPAID invoice is money the municipality has, and filtering to PAID
         // would leave it out.
         paidTotal: sum(payments, 'paidAmount'),
-        // What is left on rows not fully settled, not their face value.
+        // What is left on rows not fully settled, not their face value. A bill
+        // the manager cancelled owes nothing (0090), named here rather than left
+        // to its `remaining` of 0.
         outstandingTotal: sum(
-          payments.filter((payment) => payment.paymentStatus !== 'PAID'),
+          payments.filter((payment) => payment.paymentStatus !== 'PAID' && payment.paymentStatus !== 'CANCELLED'),
           'remaining',
         ),
         overdueTotal: sum(overdue, 'remaining'),
@@ -1952,6 +1965,8 @@ export class ReportingService {
   @OnEvent('payment.reviewed')
   /** A reversal moves the same totals back, so it stales the same caches. */
   @OnEvent('payment.reversed')
+  /** A cancelled bill leaves what is owed, so it stales them too. */
+  @OnEvent('payment.cancelled')
   /**
    * The census moves the map, so the census has to clear the map's cache.
    *

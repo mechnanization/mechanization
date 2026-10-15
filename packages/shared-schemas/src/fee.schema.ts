@@ -67,7 +67,12 @@ export const feeTargetTypeSchema = z.enum(FEE_TARGET_TYPE, {
 });
 export type FeeTargetType = (typeof FEE_TARGET_TYPE)[number];
 
-export const PAYMENT_STATUS = ['UNPAID', 'PENDING_REVIEW', 'PAID', 'OVERDUE'] as const;
+/**
+ * `CANCELLED` (migration 0090): a bill the manager withdrew before any money was
+ * taken on it — issued twice, or by mistake. It owes nothing and takes nothing;
+ * the row stays, with who cancelled it and why (`cancelBillSchema`).
+ */
+export const PAYMENT_STATUS = ['UNPAID', 'PENDING_REVIEW', 'PAID', 'OVERDUE', 'CANCELLED'] as const;
 export const paymentStatusSchema = z.enum(PAYMENT_STATUS);
 export type PaymentStatus = (typeof PAYMENT_STATUS)[number];
 
@@ -364,6 +369,13 @@ export const createFeeNoticeSchema = z
       .string({ required_error: 'تاريخ الاستحقاق مطلوب' })
       .min(1, 'تاريخ الاستحقاق مطلوب'),
     instructions: z.string().trim().max(1000).optional(),
+    /**
+     * The wizard's id for this issue (migration 0091). A notice bills everyone
+     * it targets, so a retry after a lost answer must answer with the first
+     * notice rather than bill the town a second time. Required: a press with no
+     * key is the one case the server could not tell from a new notice.
+     */
+    clientRequestId: uuid,
   })
   .superRefine((data, ctx) => {
     if (data.targetType === 'BUILDING_CATEGORY' && !data.targetCategory) {
@@ -523,6 +535,15 @@ export const systemSettingsSchema = z.object({
    */
   urgentExpenseCeilingLbp: urgentCeiling,
   urgentExpenseCeilingUsd: urgentCeiling,
+  /**
+   * «سقف صرف الرواتب» (migration 0091, the owner's decision of 2026-10-12): the
+   * most an accountant may pay one staff member as a month's salary on the art.
+   * 35 path, per currency; above it the manager pays it, or it goes as a
+   * request. `null` clears it (no ceiling). The manager's alone, like the
+   * urgent ceiling (`URGENT_EXPENSE_CEILING_FORBIDDEN`).
+   */
+  salaryUrgentCeilingLbp: urgentCeiling,
+  salaryUrgentCeilingUsd: urgentCeiling,
 
   // ── Configuration held as documents ───────────────────────────────────
   /**
@@ -803,6 +824,18 @@ export const reverseTransactionSchema = z.object({
 });
 
 export type ReverseTransaction = z.infer<typeof reverseTransactionSchema>;
+
+/**
+ * «إلغاء الفاتورة» — the manager withdraws a bill nothing has been paid on
+ * (a notice issued twice, a charge raised in error). The reason is required for
+ * the same reason a reversal's is: the bill stays on the citizen's record,
+ * struck through, and this is the only place "why" can live.
+ */
+export const cancelBillSchema = z.object({
+  reason: z.string().trim().min(ADJUSTMENT_REASON_MIN, 'اذكر سبب إلغاء الفاتورة').max(500),
+});
+
+export type CancelBill = z.infer<typeof cancelBillSchema>;
 
 /**
  * Citizen sign-in by رقم مرجعي.

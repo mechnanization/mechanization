@@ -57,6 +57,20 @@ export interface TreasuryConfig {
    * order. NULL is no ceiling; a currency with no column has none.
    */
   urgentExpenseCeiling: { LBP: Prisma.Decimal | null; USD: Prisma.Decimal | null };
+  /**
+   * «سقف صرف الرواتب» per currency (0091, the owner's decision of 2026-10-12):
+   * the most an accountant may pay one staff member as a month's salary on the
+   * art. 35 path. NULL is no ceiling.
+   */
+  salaryUrgentCeiling: { LBP: Prisma.Decimal | null; USD: Prisma.Decimal | null };
+  /**
+   * The municipality's two currencies and how far a counter rate may stray from
+   * the official one (0084's exchange rule), read with the rate itself so a
+   * payment judges its notes by one consistent row (finance audit B8, A2).
+   */
+  baseCurrency: string;
+  secondaryCurrency: string | null;
+  exchangeRateTolerancePercent: Prisma.Decimal | null;
 }
 
 /**
@@ -178,9 +192,16 @@ export class TreasuryLedgerService {
         exchangeRate: Prisma.Decimal | null;
         urgentExpenseCeilingLbp: Prisma.Decimal | null;
         urgentExpenseCeilingUsd: Prisma.Decimal | null;
+        salaryUrgentCeilingLbp: Prisma.Decimal | null;
+        salaryUrgentCeilingUsd: Prisma.Decimal | null;
+        baseCurrency: string;
+        secondaryCurrency: string | null;
+        exchangeRateTolerancePercent: Prisma.Decimal | null;
       }>
     >`
-      SELECT "treasuryGoLiveAt", "exchangeRate", "urgentExpenseCeilingLbp", "urgentExpenseCeilingUsd"
+      SELECT "treasuryGoLiveAt", "exchangeRate", "urgentExpenseCeilingLbp", "urgentExpenseCeilingUsd",
+             "salaryUrgentCeilingLbp", "salaryUrgentCeilingUsd", "baseCurrency", "secondaryCurrency",
+             "exchangeRateTolerancePercent"
         FROM ${this.S}system_settings
        LIMIT 1
          FOR SHARE
@@ -192,6 +213,13 @@ export class TreasuryLedgerService {
         LBP: rows[0]?.urgentExpenseCeilingLbp ?? null,
         USD: rows[0]?.urgentExpenseCeilingUsd ?? null,
       },
+      salaryUrgentCeiling: {
+        LBP: rows[0]?.salaryUrgentCeilingLbp ?? null,
+        USD: rows[0]?.salaryUrgentCeilingUsd ?? null,
+      },
+      baseCurrency: rows[0]?.baseCurrency ?? 'LBP',
+      secondaryCurrency: rows[0]?.secondaryCurrency ?? null,
+      exchangeRateTolerancePercent: rows[0]?.exchangeRateTolerancePercent ?? null,
     };
   }
 

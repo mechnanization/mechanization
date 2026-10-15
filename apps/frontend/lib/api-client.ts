@@ -10,6 +10,7 @@ import { localizeApiError } from './api-errors';
 import { cachedRequest, invalidateRequests, peekCachedRequest } from './request-cache';
 import type {
   BackupSchedule,
+  CancelBill,
   CitizenImportResult,
   CitizenMergePreview,
   CitizenMergeRecord,
@@ -3396,6 +3397,8 @@ export interface CitizenProfilePayment {
   whishTransactionRef: string | null;
   paidAt: string | null;
   reviewNote: string | null;
+  /** Why the manager cancelled the bill (0091); null unless `paymentStatus` is CANCELLED. */
+  cancellationReason?: string | null;
   frequency: string | null;
   /**
    * How this amount was arrived at, when it was not simply the notice's own.
@@ -5060,6 +5063,13 @@ export interface MunicipalitySettings {
   urgentExpenseCeilingLbp?: number | null;
   urgentExpenseCeilingUsd?: number | null;
   /**
+   * «سقف صرف الرواتب» (0091): the most an accountant may pay one staff member as
+   * a month's salary before the manager's order, in that currency; `null` for
+   * none. Absent for a citizen, as the urgent ceilings are.
+   */
+  salaryUrgentCeilingLbp?: number | null;
+  salaryUrgentCeilingUsd?: number | null;
+  /**
    * How far an exchange may stray from the rate before it needs a reason, in
    * percent, and above what (on its non-base side) it is reviewed whatever its
    * rate (0084). Absent for a citizen, as the ceilings are.
@@ -5153,6 +5163,9 @@ export async function updateMunicipalitySettings(
      */
     urgentExpenseCeilingLbp: number | null;
     urgentExpenseCeilingUsd: number | null;
+    /** The salary ceilings (0091), the manager's alone like the urgent ones. */
+    salaryUrgentCeilingLbp: number | null;
+    salaryUrgentCeilingUsd: number | null;
 
     numberingSequences: Record<SequenceKey, NumberingSequence>;
     backupSchedule: BackupSchedule;
@@ -5257,11 +5270,15 @@ export async function issueFeeNotice(
     targetCitizenId?: string;
     dueDate: string;
     instructions?: string;
+    /** One id per issue (`fee-notice:new` in `lib/request-id.ts`): a retry is answered with the first notice. */
+    clientRequestId: string;
   },
 ) {
   const result = await apiFetch<{
     noticeId: string;
     issued: number;
+    /** True when the key had already issued this notice: nothing new was billed. */
+    replayed?: boolean;
     /**
      * Targeted citizens whose holdings could not be measured — a building
      * whose units were never surveyed, or a unit with no recorded area. They
@@ -5489,6 +5506,8 @@ export interface CitizenPaymentItem {
   whishTransactionRef: string | null;
   paidAt: string | null;
   reviewNote: string | null;
+  /** Why the manager cancelled the bill (0091); null unless `paymentStatus` is CANCELLED. */
+  cancellationReason?: string | null;
   frequency: string | null;
   /**
    * How this amount was arrived at — «6 محل تجاري × 100,000 ل.ل».
@@ -5582,6 +5601,9 @@ export interface AdminPaymentItem {
   paymentMethod: string | null;
   whishTransactionRef: string | null;
   paidAt: string | null;
+  /** «إلغاء الفاتورة» (0091): when, and why; null on a bill still standing. Optional for an older API. */
+  cancelledAt?: string | null;
+  cancellationReason?: string | null;
   /**
    * Last write to the row. Stands in for the payment time on a *partial*
    * settlement, which never gets a `paidAt` — see the note on the server.
@@ -5755,6 +5777,23 @@ export async function settlePayment(
     // still means cash, as it did before the counter could bank a transfer.
     { token, method: 'PATCH', body: JSON.stringify({ method: 'CASH', ...input }) },
   );
+  invalidateRequests(`fee-summary:${tenant}`);
+  return result;
+}
+
+/**
+ * «إلغاء الفاتورة» — the manager withdraws a bill nothing was paid on (finance
+ * audit B3; `BILL_CANCEL_ROLES`). Refused with `BILL_CANCEL_HAS_PAYMENTS` when
+ * money is on it and `PAYMENT_CLAIM_UNDER_REVIEW` while a citizen's claim waits.
+ * Answers with the bill as it now stands, CANCELLED. The body is the shared
+ * schema's (`cancelBillSchema`), not re-declared here.
+ */
+export async function cancelBill(tenant: string, token: string, id: string, input: CancelBill) {
+  const result = await apiFetch<AdminPaymentItem>(tenant, `/fees/payments/${encodeURIComponent(id)}/cancel`, {
+    token,
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
   invalidateRequests(`fee-summary:${tenant}`);
   return result;
 }
