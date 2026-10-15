@@ -81,12 +81,17 @@ Data access for new code (decided):
   (`treasury.schema.ts`) and `FINANCE_OVERRIDE_ROLES` (`cash-policy.ts`), which `role-sets.ts` points
   to — never a literal list: the frontend's
   `lib/staff-roles.ts` reads the same sets, so a route and its button move together. A new audience is a
-  new named set there. `route-inventory.spec.ts` checks every controller on disk: `@Roles` on every
+  new named set there, and so is a single role a screen gates on (`PAYMENT_REVERSE_ROLES` for
+  `POST fees/transactions/:transactionId/reverse`, «عكس الوصل»).
+  `route-inventory.spec.ts` checks every controller on disk: `@Roles` on every
   non-public route (or a reviewed entry in its `SELF_SERVICE` list), «مشاهد فقط» on no write and no
   side-effecting GET, and no route that deletes a citizen. It also pins, route by route, every treasury
   handler and every handler elsewhere that moves treasury money (`MONEY_HANDLERS_ELSEWHERE`: the
   commission payout, and the fee routes that post wallet entries — `settle`, `review`,
-  `reverseTransaction`, `whishCallback`; the bulk settlement's two in their own block).
+  `reverseTransaction`, `whishCallback`; the bulk settlement's two in their own block). And it checks
+  that every id a `FeesController` route takes from its path (`id`, or a name ending in `Id`) goes
+  through `ParseUUIDPipe`, as an instance or as the class. The eight that took theirs raw on `develop`
+  carry PR #120's own line for each (its B9), word for word, so the two branches agree.
 - **Staff sessions.** Rotating refresh tokens in an httpOnly cookie (`StaffRefreshTokenService`,
   `presentation/http/staff-refresh-cookie.ts`), checked by family in `JwtAuthGuard`; expired rows are
   pruned by `StaffRefreshTokenCleanupJob`. Rules: [docs/security.md](../../docs/security.md#tokens-passwords-and-totp).
@@ -682,7 +687,7 @@ points at does not exist. `src/scripts/reset-2fa.ts` has no script entry and MUS
 
 ## Tests
 
-- Jest with ts-jest (`jest.config.js`: `rootDir` `src`, `*.spec.ts` beside the source): 150 spec files, 43 of them `*.integration.spec.ts` (counted on disk 2026-10-14, `fix/pr114-review`).
+- Jest with ts-jest (`jest.config.js`: `rootDir` `src`, `*.spec.ts` beside the source): 150 spec files, 43 of them `*.integration.spec.ts` (counted on disk 2026-10-15, `fix/pr114-review` with PR #123 merged in).
 - Integration specs run only when `TEST_DATABASE_URL` is set (`describeIfDb`) and skip silently otherwise.
   They `DROP SCHEMA … CASCADE` and rebuild fixed `tenant_*_spec` schemas on whatever database it names,
   and nothing checks the target. Point it ONLY at a throwaway Postgres 17 container (migration `0044`

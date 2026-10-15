@@ -203,11 +203,12 @@ export function NotificationsBell({
                 <div className="min-w-0 flex-1 space-y-0.5">
                   <div className="flex items-baseline justify-between gap-3">
                     <span className="truncate text-sm font-semibold">{payment.citizenName}</span>
+                    {/* What confirming the claim credits: the balance left, not the bill's face value. */}
                     <span
-                      title={formatLbp(payment.amount, locale)}
+                      title={formatLbp(payment.remaining, locale)}
                       className="shrink-0 text-sm font-semibold tabular-nums"
                     >
-                      {formatLbpCompact(payment.amount, locale)}
+                      {formatLbpCompact(payment.remaining, locale)}
                     </span>
                   </div>
                   <p className="truncate text-xs text-muted-foreground">

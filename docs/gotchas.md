@@ -675,6 +675,16 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **Do this:** put the pipe on `@Body(new ZodValidationPipe(schema))`.
 - **Where:** the comment on `AuthController.loginStaff`.
 
+### A pipe passed as a class is not an instance of it
+
+- **What happens:** a test that looks for `ParseUUIDPipe` in a route's parameter metadata with
+  `instanceof` fails for `@Param('id', ParseUUIDPipe)`, a route Nest validates correctly.
+- **Why:** Nest stores the pipe as it was given: `new ParseUUIDPipe()` is stored as an instance,
+  `ParseUUIDPipe` as the class itself, which Nest instantiates per request.
+- **Do this:** accept both, `pipe === ParseUUIDPipe || pipe instanceof ParseUUIDPipe`.
+- **Where:** `route-inventory.spec.ts` (`checksUuid`, and the probe controller that pins it);
+  `StaffController` passes the class.
+
 ### A static path after `:id` is read as an id
 
 - **What happens:** `GET review-queue` declared after `@Get(':id')` reaches the
@@ -1064,6 +1074,45 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **Where:** for example `building-unit-forms.tsx`, `end-tenancy-dialog.tsx`,
   `quality/checks-panel.tsx` `isoDaysAgo`; the full list is in
   [code-quality.md](code-quality.md#frontend-code-level).
+
+### A payout from before go-live is dated by day, not by the moment it was paid
+
+- **What happens:** the inspector's payout history read «زيادة $15» for a payout of exactly what
+  he was owed that day: the registrations he filed that afternoon counted as earned after it.
+  Fixed for one payout, it still did for two on one day: the earlier one was charged with the
+  later one's money, «زيادة» on one row and a debt on the other, whenever the server sent the
+  later one first. On go-live day a figure recorded at 07:30 sorted after a voucher paid at 10:00.
+- **Why:** before the treasury is live «صرف عمولة» is a figure dated with a day picker, and
+  `payoutRequest` stamps the picked day at local noon, so `inspector_payouts.paidAt` reads
+  midday whatever the hour of the payout. Once live, a payout's `paidAt` is its voucher's own
+  moment. Every figure of one day therefore ties on `paidAt`, and `getInspectorProfile` orders
+  by `paidAt` alone, so Postgres returns a tie in whatever order its plan gives: insertion order
+  under a sort of few rows, often the newest written first otherwise.
+- **Do this:** judge a payout with no voucher by the municipality's calendar day
+  (`municipalToday`), bounded by the moment its row was written (`createdAt`), and a voucher
+  payout by its instant, as `payoutHistory` does (`earnedBy`). Sum them in the order the money
+  moved, never by `paidAt` alone: by day, then a voucher's moment or a figure's `createdAt`
+  (`byWhenPaid`). A tie-break on the server would not fix go-live day, where the noon stamp
+  itself is out of order; test any such order with the rows fed both ways round.
+- **Where:** `lib/commission-payout.ts` (`payoutRequest`),
+  `StaffService.recordPayoutWithoutTreasury`, `StaffService.getInspectorProfile`,
+  `lib/inspector-payouts.ts`; `lib/inspector-payouts.test.ts`.
+
+### A re-read that did not answer still hands back the old list
+
+- **What happens:** «عكس الوصل» pressed with the network down told the manager «the receipts read
+  again do not show it», though nothing had been read again: the list it judged was the one from
+  before the press.
+- **Why:** `await queryClient.invalidateQueries(...)` resolves when the re-read fails (after its
+  retries) and at once when it is paused for want of a connection, and TanStack keeps the last
+  data in both cases: `getQueryData` returns the list from before the press, with the query's
+  `status` at `'error'` or its `fetchStatus` at `'paused'`.
+- **Do this:** read `getQueryState` after the invalidation and take the data only when `status`
+  is `'success'`, `fetchStatus` is `'idle'` and `dataUpdatedAt` is after the press, as
+  `receiptsReadAgain` does; otherwise say the list could not be read again.
+- **Where:** `lib/bill-receipts.ts` (`receiptsReadAgain`, `reversalFailure`),
+  `components/admin/finance/reverse-receipt-dialog.tsx`; `lib/bill-receipts.test.ts` runs the
+  dialog's sequence on TanStack's real cache.
 
 ### The two default locales disagree
 

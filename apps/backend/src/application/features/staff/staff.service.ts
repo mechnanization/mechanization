@@ -474,9 +474,17 @@ export class StaffService {
       },
     });
 
+    /*
+      Newest first, and a tie on `paidAt` broken by the row written last. Every
+      payout recorded before go-live on one day carries that day's noon stamp
+      (`payoutRequest`), so `paidAt` alone left their order, and the list's
+      «آخر دفعة», to whatever Postgres's plan returned (review of PR #113). The
+      payout history does not rely on this order: it sorts by when the money
+      moved (`payoutHistory` in apps/frontend/lib/inspector-payouts.ts).
+    */
     const payouts = await this.db.inspectorPayout.findMany({
       where: { inspectorId },
-      orderBy: { paidAt: 'desc' },
+      orderBy: [{ paidAt: 'desc' }, { createdAt: 'desc' }],
       include: PAYOUT_INCLUDE,
     });
 
