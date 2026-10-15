@@ -1,6 +1,6 @@
 # Database
 
-Last verified against the code: `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): a رقم العقار saved in Latin digits, digit-normalised lookups for older rows, where `P2002` is mapped; a foreign-key violation on a registration card, 2026-10-15; the finance audit migrations `0090`, `0091` and `0093`, their table rows, the enum release rule and `0091`'s header corrections against `chore/migration-0090-0091` (on `develop@5e8f5c3`) and the code of PR #120 (`fix/finance-audit-remediation@6169287`), 2026-10-13, rebased onto `develop@3211140`, 2026-10-15.
+Last verified against the code: `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): a رقم العقار saved in Latin digits, digit-normalised lookups for older rows, where `P2002` is mapped; a foreign-key violation on a registration card, 2026-10-15; the finance audit migrations `0090`, `0091` and `0093`, their table rows, the enum release rule and `0091`'s header corrections against `chore/migration-0090-0091` (on `develop@5e8f5c3`) and the code of PR #120 (`fix/finance-audit-remediation@6169287`), 2026-10-13, rebased onto `develop@3211140`, 2026-10-15; `0092_citizen_requests` (municipal requests), shipped alone in `chore/migration-0092` (PR #121) ahead of the code and stacked on #120 with `0093` before it, 2026-10-13; and `feat/treasury-day-closing@c88c971` (`develop` with the reviewed treasury, #107/#108; PR #106, stage 5: the daily count, the day closing and the closed-day lock; PR #109, inspector payouts and decision D9; PR #111, transfers, exchange and wallets with `0088`; PR #112, bulk settlement with `0085`; each merged with its review fixes, and the cross-feature fixes) with the fixes of the final-stack review (uncommitted): `0089` (a paid commission payout written once, and the payout's retry key on its row), a back-dated outflow judged against every day's close, the count's wallet locks in id order, the migrator's lock note, 2026-10-11; the finance audit migrations `0090`, `0091` and `0093`, their table rows, the enum release rule and `0091`'s header corrections against `chore/migration-0090-0091` (on `develop@5e8f5c3`) and the code of PR #120 (`fix/finance-audit-remediation@6169287`), 2026-10-13; `0092_citizen_requests` and, from its review, `0094_citizen_request_guard`, the municipal requests tables, their guard, backup and numbering notes and `0092`'s header corrections, against `chore/migration-0092` rebased on `fix/finance-audit-remediation@9f7b12b` and the code of PR #122 (`fix/fees-page-ux@c28f437`), 2026-10-13.
 
 The rules for anything that reads or writes a database: the schemas, how to
 query them, how to change them, and how data may move between environments.
@@ -53,6 +53,7 @@ every municipality ([security.md](security.md)).
 | Document numbers (0079) | `document_counters`, one row per (book, month) | `allocateDocumentNumbers` |
 | Daily count and closing (0082, 0087) | `treasury_day_closures` (one row per closed or reopened day; written once, 0087), `treasury_counts` (one count per wallet per day; linked only to its own day's closure, 0087) | `DayClosureService` (close, sweep, reopen), `DailyCountService` (counts) |
 | Treasury (0073, 0083, 0091) | `treasury_accounts`, `treasury_entries`, `system_settings.treasuryGoLiveAt`, `system_settings.urgentExpenseCeilingLbp` / `urgentExpenseCeilingUsd` (0083: the manager's ceiling on an accountant's urgent payment, `DECIMAL(14,2)`, NULL = none, CHECK NULL or > 0), and `system_settings.salaryUrgentCeilingLbp` / `salaryUrgentCeilingUsd` (0091: «سقف صرف الرواتب», the most an accountant may pay one staff member as a month's salary, typed and CHECKed as the urgent ceiling; set in `FeesService.updateSettings`) | `TreasuryService` (activation, reads), `TreasuryLedgerService` (entries; called from `PaymentLedgerService` inside its transaction) |
+| Municipal requests (0092, 0094) | `request_type_settings` (the manager's list: `enabled`, `feeAmount` in whole pounds, 0 for a free type, who set it), `citizen_requests` (the «REQ-» number, `channel`, the card and flat it is about, the status with its stamps by CHECK, `citizenPaymentId`: the fee's bill, unique; one open request per citizen, type and card; its life held by `citizen_requests_guard`, 0094) and `citizen_request_attachments` (the object's key in the private documents bucket, its sniffed type). Citizen data: `purpose`, `statement`, `clearanceSnapshot` and `rejectionReason` are free text about a person, and the attachments are identity copies and deeds. Every link to `users`, `property_entries`, `building_units` and `citizen_payments` is RESTRICT | nothing until PR #122: `CitizenRequestsService`, and `CitizenMergeService`, which moves a person's requests with them |
 | Ledger | `_tenant_migrations` (no Prisma model) | `migrateTenantSchema` |
 
 Each schema also carries plpgsql functions created by migrations:
@@ -63,8 +64,9 @@ to its schema); since 0083 `reject_treasury_document_mutation`; since 0085
 `reject_settlement_mutation`; since 0087 `reject_day_closure_rewrite` (reads only its row,
 pinned to `pg_catalog`) and `reject_count_link_elsewhere` (pinned to its schema); since 0088
 `reject_transfer_review_rewrite` (keeps a transfer's review from being rewritten; reads only its row,
-pinned to `pg_catalog`); and since 0089 `reject_inspector_payout_rewrite` (reads only its row, pinned
-to `pg_catalog`).
+pinned to `pg_catalog`); since 0089 `reject_inspector_payout_rewrite` (reads only its row, pinned
+to `pg_catalog`); and since 0094 `guard_citizen_request` (a citizen request's life; reads its bill,
+card and flat, so pinned to its schema).
 
 ### `users` holds staff AND citizens
 
@@ -252,6 +254,20 @@ chain, so it reports an officer who worked all morning as last seen at eight.
   the trigger around its `UPDATE`. The same file adds `inspector_payouts.clientRequestId` (unique), the
   press's retry key on the payout row: a figure-only payout had nowhere to keep one, and a lost answer
   pressed again was recorded twice (`StaffService.recordInspectorPayout` answers a retry from it).
+- **A citizen request's life is held in the database** (`0094_citizen_request_guard`), as the
+  treasury's papers are. `citizen_requests_guard` (`guard_citizen_request()`) allows a request to start
+  AWAITING_PAYMENT or IN_REVIEW with no bill and no stamp, on one of the citizen's own cards and a flat on
+  that card; then only AWAITING_PAYMENT → IN_REVIEW, REJECTED or CANCELLED; IN_REVIEW → READY_FOR_PICKUP,
+  REJECTED, or back to AWAITING_PAYMENT when its payment is reversed; READY_FOR_PICKUP → COMPLETED. The
+  bill is linked once, while the request waits for payment; each step's stamps are written by that step
+  alone; what was asked, for what and by whom never changes; a COMPLETED, REJECTED or CANCELLED request
+  changes no more. Only `citizenId` moves, in any status: a merge «دمج ملفين» carries a person's
+  requests, and its undo brings them back. No request is deleted. A CANCELLED request has no bill, or a
+  bill that is itself CANCELLED: the manager's «إلغاء الفاتورة» cancels the request waiting on it
+  (decision of 2026-10-13), which `0092`'s `citizen_requests_cancelled_without_bill` refused. The card
+  check runs on insert only, since a merge moves registrations and requests in separate statements.
+  Every refusal starts «citizen request» and raises `check_violation`: each is a code path that broke
+  a rule, not a user's mistake to localise.
 - No trigger covers `TRUNCATE`. Using `TRUNCATE`, or
   `session_replication_role`, to get past them is circumventing a control. If a
   trigger stops you, stop and report it
@@ -570,8 +586,9 @@ reads staging's history from `.env.staging` and nothing else, and
 
 - `main` ends at `0072_users_no_phone_rules`: `0067`–`0072` went to `main` in their own
   migrations-only PR, ahead of the release that carries the code reading them (root rule 5; the
-  PR #61 and #86 pattern). `develop` ends at `0083_treasury_controls`, with no `0082` (the
-  treasury set, below). `0075`–`0077` (`chore/migration-0075-0077`: co-owner billing, the estate
+  PR #61 and #86 pattern). `develop` ended at `0083_treasury_controls`, with no `0082`, until the
+  treasury set below reached it (#117, #118, 2026-10-11); it now ends at
+  `0089_inspector_payout_key_and_written_once` (checked 2026-10-13). `0075`–`0077` (`chore/migration-0075-0077`: co-owner billing, the estate
   and institution record types, the unit fee exemption) followed the same path, their own PR into
   `develop`, then to `main` alone, before any release that writes the new columns or values.
 - The treasury's are `0073_treasury_ledger`, `0074_expense_vouchers`,
@@ -665,15 +682,27 @@ reads staging's history from `.env.staging` and nothing else, and
   (`payeeStaffId`) and `0083` (the urgent ceilings it mirrors). Its review (2026-10-13) added
   `0093_citizen_payment_cancellation_reason_present`: `0091` let a blank `cancellationReason` in, where
   every reason column since `0060` refuses one, and `0091` was already applied to the local database, so
-  it is not edited. `0093` needs `0091`. `0092` is held by `chore/migration-0092` (PR #121, municipal
-  requests) and depends on none of the three, so a database that takes `0090`, `0091` and `0093` first
-  takes `0092` out of order, with `deploy.mjs`'s warning, and one that takes `0092` first takes the three
-  out of order. None of the four has reached `main`, so CI has applied none to staging or production; a
-  hand-run `db:deploy:staging` was not checked. `0090`, `0091` and `0093` ship in their own
+  it is not edited. `0093` needs `0091`. `0090`, `0091` and `0093` ship in their own
   `chore/migration-0090-0091` PR (#119), and reach `main` in a release of their own, ahead of the code
   (PR #120), so that the build a rollback lands on already knows `CANCELLED` and `MISMATCHED` (decision of
-  2026-10-13; [Release](#release)). The next free number is `0094`; list every unmerged branch again
-  before you take it.
+  2026-10-13; [Release](#release)).
+  `0092_citizen_requests` (municipal requests: `request_type_settings`, `citizen_requests`,
+  `citizen_request_attachments` and their five enums) took its number on 2026-10-13, after a check of
+  every local and remote branch, before `0093` was taken. It needs nothing newer than `0079` and
+  alters no existing table; its foreign keys hold `SHARE ROW EXCLUSIVE` on `users`, `property_entries`,
+  `building_units` and `citizen_payments` until the file commits (writes to them wait, for
+  milliseconds: the new tables are empty). Its review (2026-10-13) added `0094_citizen_request_guard`,
+  which needs `0092` and `0090` (`CANCELLED`): `0092` was already applied to the local database, so it
+  is not edited. `0092` and `0094` ship alone in `chore/migration-0092` (PR #121), ahead of the code
+  that reads them (PR #122).
+  On 2026-10-13 the four PRs became one stack, merged to `develop` in order: #119, #120, #121, #122.
+  Staging migrates itself on every push to `develop` that touches a migration (`deploy-staging.yml`),
+  and production from `main`, so `0090`, `0091` and `0093` reach both first and `0092` follows them out
+  of order, with `deploy.mjs`'s warning (it flags a pending migration that sorts before one already
+  applied). A database that took `0092` before `0090` and `0091`, as a developer's may have, flags those
+  two only, not `0093`. None of the five is on `develop` yet, so CI has applied none to staging or
+  production; a hand-run `db:deploy:staging` was not checked. The next free number is `0095`; list
+  every unmerged branch again before you take it.
   - `0091`'s header is wrong in three places, and the file is not edited (it is applied). It says «one
     Whish or bank reference», but only a Whish settlement writes `externalRef`. It lists the
     `ACCESS EXCLUSIVE` locks on the tables it alters, but its two foreign keys also hold
@@ -681,6 +710,14 @@ reads staging's history from `.env.staging` and nothing else, and
     included) waits for the file, for well under a second. And it says a recurring run's bills name
     nobody, but a run a staff member starts (`POST fees/recurring/run`, `FeesService.runRecurringBilling`)
     names that staff member; only the scheduled run leaves `issuedById` NULL.
+  - `0092`'s header is wrong on the stack in two places, and the file is not edited (it is applied). It
+    says the fee's bill is raised only when the citizen goes to pay because «nothing on this branch can
+    cancel a bill». Since #120, below it, the manager's «إلغاء الفاتورة» (`FeesService.cancelBill`) can, and
+    a request waiting on such a bill could then be neither paid, nor rejected or cancelled
+    (`citizen_requests_cancelled_without_bill`), and held `citizen_requests_one_open_key` for ever.
+    `0094` replaces that CHECK with its guard, and the code cancels the request with its bill (decision of
+    2026-10-13, PR #122). It also cites `docs/municipal-requests-plan.md` and `docs/open-decisions.md`
+    §20, which arrive with PR #122; §20 is kept for them (the PR #120 review's decisions are §22).
 - Before you pick a number, MUST list the migrations on every unmerged branch
   and open PR:
 
@@ -976,6 +1013,17 @@ Rare: only `0001_init` exists.
     schemas at run time and carries every table.
   - **Undecided:** how the in-app backup should carry an append-only ledger and the vouchers
     that explain it.
+- **`BackupService` does not export the municipal requests tables either** (0092):
+  `request_type_settings`, `citizen_requests` and `citizen_request_attachments` are not in
+  `TABLE_ORDER` (checked 2026-10-13).
+  - Every link from them to `users` is RESTRICT, and the restore deletes `users`: so it aborts for a
+    tenant with a single request, and for one whose manager has set a single request type
+    (`request_type_settings.updatedById`), money or not, as it does once the treasury is live. The
+    guard of 0094 refuses deleting a request too.
+  - A backup of such a tenant carries no requests, no request types and no keys to the identity
+    copies; disaster recovery is the `pg_dump` path, which carries them.
+  - **Undecided:** whether the in-app snapshot should carry them (a downloadable file would then hold
+    the citizens' free text and the keys to their identity copies), with the ledger question above.
 - **`dump-tenant.js`, the `reissue-references` CSV, the `claude_ro` views**:
   see [Moving data](#moving-data-between-environments).
 - **Database roles.** One role per environment runs both DDL and DML for every

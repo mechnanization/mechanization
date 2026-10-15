@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `fix/pr116-review` (PR #116 merged with `fix/pr115-review`, which stacks #123, #124 and #115 on `develop@5e8f5c3`, with its review fixes): Escape inside a dialog, Tailwind 4 class names on 3.4; digit-normalised cadastre lookups, Latin digits on write, what still compares as stored; a window count on an empty page, 2026-10-15; the previous build and a new enum value against `chore/migration-0090-0091` (on `develop@5e8f5c3`), 2026-10-13, rebased onto `develop@3211140`, 2026-10-15; the Prisma `now()` clock trap in invoice numbering against `fix/finance-audit-remediation` (on `develop@5e8f5c3`), 2026-10-12; JavaScript and Postgres on `trim` and lower case against `fix/finance-audit-remediation` (rebased on `chore/migration-0090-0091@8d386b5`), 2026-10-13.
+Last verified against the code: `fix/pr116-review` (PR #116 merged with `fix/pr115-review`, which stacks #123, #124 and #115 on `develop@5e8f5c3`, with its review fixes): Escape inside a dialog, Tailwind 4 class names on 3.4; digit-normalised cadastre lookups, Latin digits on write, what still compares as stored; a window count on an empty page, 2026-10-15; the previous build and a new enum value against `chore/migration-0090-0091` (on `develop@5e8f5c3`), 2026-10-13, rebased onto `develop@3211140`, 2026-10-15; the Prisma `now()` clock trap in invoice numbering against `fix/finance-audit-remediation` (on `develop@5e8f5c3`), 2026-10-12; JavaScript and Postgres on `trim` and lower case against `fix/finance-audit-remediation` (rebased on `chore/migration-0090-0091@8d386b5`), 2026-10-13; a new RESTRICT key and an existing delete (0092) against `chore/migration-0092` rebased on `fix/finance-audit-remediation@9f7b12b`, 2026-10-13.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -407,6 +407,25 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   foreign keys are RESTRICT, so deleting a staff member or a wallet that moved money is refused.
 - **Where:** `0017_payment_ledger`, the `BackupService` comment above
   `TABLE_ORDER`.
+
+### A new RESTRICT key turns an existing delete into a 500
+
+- **What happens:** a migration adds a foreign key `ON DELETE RESTRICT` onto a table some existing
+  code hard-deletes from, and that code starts failing with Prisma `P2003` the first time a new row
+  points at the one it deletes. Nothing in the application maps `P2003`, so the clerk sees «حدث خطأ غير
+  متوقع», and the same save fails on every retry.
+- **Why:** every earlier dependent of `property_entries` and `building_units` cascades
+  (`building_units_propertyEntryId_fkey`, `documents_propertyEntryId_fkey`); `0092`'s
+  `citizen_requests_propertyEntryId_fkey` and `citizen_requests_buildingUnitId_fkey` are the first
+  RESTRICT ones. RESTRICT is right there (a certificate keeps the property it was about), but the
+  citizen-file save (`CitizensService.update`: `propertyEntry.deleteMany` for a removed card,
+  `units.deleteMany` for an unticked flat) and the landlord-link undo (`LandlordLinkService.revertUnits`,
+  `removeMintedCard`) delete such rows.
+- **Do this:** before adding a RESTRICT key, grep for every `delete`/`deleteMany` of the referenced
+  table and its cascades. Each one must refuse first, with a coded error in both locales (as
+  `OWNER_HAS_LINKED_TENANTS_ON_SAVE` does), or keep the row. For `0092` that is PR #122's (decision of
+  2026-10-13: refuse, and point to «إنهاء الملكية»).
+- **Where:** `0092_citizen_requests`; probed on Postgres 17 in the review of PR #121, 2026-10-13.
 
 ### A Prisma `DateTime` with no `@db` attribute may be a `TIMESTAMPTZ` column
 

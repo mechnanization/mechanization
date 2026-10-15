@@ -297,6 +297,15 @@ model User {
   treasuryDaysClosed       TreasuryDayClosure[] @relation("TreasuryDayClosedBy")
   treasuryDaysReopened     TreasuryDayClosure[] @relation("TreasuryDayReopenedBy")
   treasuryCounts           TreasuryCount[]      @relation("TreasuryCountedBy")
+  /// Municipal requests (0092): a citizen's own, and the steps staff took on any.
+  citizenRequests          CitizenRequest[]     @relation("RequestCitizen")
+  requestsFiled            CitizenRequest[]     @relation("RequestCreatedBy")
+  requestsReadied          CitizenRequest[]     @relation("RequestReadyBy")
+  requestsCompleted        CitizenRequest[]     @relation("RequestCompletedBy")
+  requestsRejected         CitizenRequest[]     @relation("RequestRejectedBy")
+  requestsCancelled        CitizenRequest[]     @relation("RequestCancelledBy")
+  requestAttachments       CitizenRequestAttachment[] @relation("RequestAttachmentUploadedBy")
+  requestTypesUpdated      RequestTypeSetting[] @relation("RequestTypeUpdatedBy")
   createdCases          Case[]               @relation("CaseCreatedBy")
   resolvedCases         Case[]               @relation("CaseResolvedCitizen")
   unitOccupancies       UnitOccupancy[]      @relation("UnitOccupant")
@@ -786,6 +795,8 @@ model PropertyEntry {
 
   documents Document[]
   units     BuildingUnit[]
+  /// Municipal requests filed for this card (0092).
+  citizenRequests CitizenRequest[]
 
   /// The registration this card was filed on, when a merge has since moved it
   /// onto another (migration 0061). Null means `registrationId`. Read by the
@@ -853,6 +864,9 @@ model BuildingUnit {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  /// Municipal requests filed for this unit line (0092).
+  citizenRequests CitizenRequest[]
 
   @@index([propertyEntryId])
   @@index([unitId])
@@ -2196,6 +2210,8 @@ model CitizenPayment {
   /// monthly fee could only ever be charged once.
   /// Checkouts opened at the provider against this invoice (migration 0057).
   whishCheckouts WhishCheckout[]
+  /// The municipal request whose fee this bill charges, if any (0092).
+  citizenRequest CitizenRequest?
 
   @@unique([citizenId, feeNoticeId, periodKey])
   /// The portal's main read: this citizen's outstanding balance.
@@ -3155,4 +3171,187 @@ model DocumentCounter {
 
   @@id([kind, period])
   @@map("document_counters")
+}
+
+// ─────────────────────  Municipal requests (0092)  ─────────────────────
+
+/// What a citizen asks the municipality for. Design: docs/municipal-requests-plan.md.
+enum RequestType {
+  /// براءة ذمة بلدية
+  CLEARANCE
+  /// إفادة سكن / إقامة
+  RESIDENCY
+  /// إفادة إشغال
+  OCCUPANCY
+  /// إفادة شغور
+  VACANCY
+  /// تسجيل وتصديق عقد إيجار
+  LEASE_REGISTRATION
+  /// رخصة / تصريح ترميم
+  RENOVATION
+  /// رخصة لافتة إعلانية
+  SIGNAGE
+  /// طلب عام
+  OTHER
+}
+
+/// In what capacity the applicant asks. Declared, then judged by the clerk (D2).
+enum ApplicantCapacity {
+  OWNER
+  TENANT
+  ESTATE_HEIR
+  LEGAL_AGENT
+  FREE_OCCUPANT
+}
+
+/// Where a request stands. Transitions: migration 0092's header.
+enum RequestStatus {
+  AWAITING_PAYMENT
+  IN_REVIEW
+  READY_FOR_PICKUP
+  COMPLETED
+  REJECTED
+  CANCELLED
+}
+
+/// Online through the portal, or filed by a clerk at the counter (D8).
+enum RequestChannel {
+  ONLINE
+  COUNTER
+}
+
+/// What a paper on a request is.
+enum RequestAttachmentType {
+  IDENTITY
+  OWNERSHIP_PROOF
+  LEASE_CONTRACT
+  POWER_OF_ATTORNEY
+  INHERITANCE_PROOF
+  MUKHTAR_STATEMENT
+  OTHER
+}
+
+/// Which request types this municipality offers, and each one's fee (D1). A type
+/// with no row, or with `enabled` false, is not offered.
+model RequestTypeSetting {
+  requestType RequestType @id
+  enabled     Boolean     @default(false)
+  /// Whole Lebanese pounds (CHECK in 0092). 0 is a free type: no bill is raised.
+  feeAmount   Decimal     @default(0) @db.Decimal(14, 2)
+  updatedAt   DateTime    @default(now()) @updatedAt @db.Timestamptz(3)
+  updatedById String?     @db.Uuid
+  updatedBy   User?       @relation("RequestTypeUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  @@index([updatedById])
+  @@map("request_type_settings")
+}
+
+/// One municipal request — «REQ-2610-0001». What the database holds, none of
+/// which Prisma can express:
+/// - 0092's CHECKs: each status with its stamps (`citizen_requests_paid_stamp`,
+///   `_ready_stamp`, `_ready_states`, `_completed_stamp`, `_rejected_stamp`,
+///   `_cancelled_stamp`), a counter request names its clerk
+///   (`_counter_names_clerk`), a flat only with a card (`_unit_on_card`), and a
+///   purpose never blank (`_purpose_present`).
+/// - One open request per citizen, type and card: `citizen_requests_one_open_key`,
+///   a partial unique index over AWAITING_PAYMENT, IN_REVIEW and READY_FOR_PICKUP;
+///   a request on no card keys on the nil uuid.
+/// - Its life (0094, `citizen_requests_guard`): only the documented transitions;
+///   nothing changes once COMPLETED, REJECTED or CANCELLED but `citizenId`, which
+///   a merge of two files moves; each step's stamps written by that step; the
+///   bill linked once; no DELETE; a flat on the request's card and the card on
+///   the citizen's file; and CANCELLED with a bill only when that bill is
+///   CANCELLED (the manager's «إلغاء الفاتورة», decision of 2026-10-13).
+model CitizenRequest {
+  id            String @id @default(uuid()) @db.Uuid
+  /// «REQ-2610-0001», from `document_counters` (kind `REQUEST`).
+  requestNumber String @unique
+
+  citizenId String @db.Uuid
+  citizen   User   @relation("RequestCitizen", fields: [citizenId], references: [id], onDelete: Restrict)
+
+  channel           RequestChannel
+  requestType       RequestType
+  applicantCapacity ApplicantCapacity
+  status            RequestStatus     @default(AWAITING_PAYMENT)
+
+  /// The citizen's card, and optionally one unit line on it (D4).
+  propertyEntryId String?        @db.Uuid
+  propertyEntry   PropertyEntry? @relation(fields: [propertyEntryId], references: [id], onDelete: Restrict)
+  buildingUnitId  String?        @db.Uuid
+  buildingUnit    BuildingUnit?  @relation(fields: [buildingUnitId], references: [id], onDelete: Restrict)
+
+  /// The bill the fee was charged on, raised when the citizen went to pay (D10).
+  /// Linked once, while the request waits for payment, and never changed (0094).
+  citizenPaymentId String?         @unique @db.Uuid
+  citizenPayment   CitizenPayment? @relation(fields: [citizenPaymentId], references: [id], onDelete: Restrict)
+
+  /// What the citizen needs the paper for. Free text: kept out of audit rows.
+  purpose           String?
+  /// What the paper certifies, written by the clerk on approval (D3).
+  statement         String?
+  /// For a براءة ذمة: `{ total, unlinkedTotal, propertyNumber, checkedAt }` at approval.
+  clearanceSnapshot Json?
+  rejectionReason   String?
+
+  /// One id per press of «إرسال الطلب». A retry finds the first request.
+  clientRequestId String @unique @db.Uuid
+
+  /// The clerk who filed a counter request; null online.
+  createdById   String?   @db.Uuid
+  createdBy     User?     @relation("RequestCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  paidAt        DateTime? @db.Timestamptz(3)
+  readyAt       DateTime? @db.Timestamptz(3)
+  readyById     String?   @db.Uuid
+  readyBy       User?     @relation("RequestReadyBy", fields: [readyById], references: [id], onDelete: Restrict)
+  completedAt   DateTime? @db.Timestamptz(3)
+  completedById String?   @db.Uuid
+  completedBy   User?     @relation("RequestCompletedBy", fields: [completedById], references: [id], onDelete: Restrict)
+  rejectedAt    DateTime? @db.Timestamptz(3)
+  rejectedById  String?   @db.Uuid
+  rejectedBy    User?     @relation("RequestRejectedBy", fields: [rejectedById], references: [id], onDelete: Restrict)
+  cancelledAt   DateTime? @db.Timestamptz(3)
+  /// The clerk who cancelled; null when the citizen cancelled their own.
+  cancelledById String?   @db.Uuid
+  cancelledBy   User?     @relation("RequestCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+
+  attachments CitizenRequestAttachment[]
+
+  @@index([status, createdAt(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
+  @@index([citizenId, createdAt(sort: Desc)])
+  @@index([propertyEntryId])
+  @@index([buildingUnitId])
+  @@index([createdById])
+  @@index([readyById])
+  @@index([completedById])
+  @@index([rejectedById])
+  @@index([cancelledById])
+  @@map("citizen_requests")
+}
+
+/// A paper on a request: the object's key in the private documents bucket and
+/// its type as sniffed from the bytes. The key is never sent as a field; a staff
+/// member's short-lived signed link to the object carries it in its path. The
+/// type is one of 0092's four (`citizen_request_attachments_mime_known`).
+model CitizenRequestAttachment {
+  id        String                @id @default(uuid()) @db.Uuid
+  requestId String                @db.Uuid
+  request   CitizenRequest        @relation(fields: [requestId], references: [id], onDelete: Restrict)
+  type      RequestAttachmentType
+  storagePath String              @unique
+  mimeType    String
+  sizeBytes   Int
+  /// The citizen (online) or the clerk who uploaded it.
+  uploadedById String @db.Uuid
+  uploadedBy   User   @relation("RequestAttachmentUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  /// 0092 named it for the request alone; `map:` keeps Prisma on that name.
+  @@index([requestId, createdAt], map: "citizen_request_attachments_requestId_idx")
+  @@index([uploadedById])
+  @@map("citizen_request_attachments")
 }
