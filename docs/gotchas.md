@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `fix/pr114-review` (PR #114 merged with `develop@5e8f5c3`, with its review fixes): a window count on an empty page, 2026-10-14.
+Last verified against the code: `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): digit-normalised cadastre lookups, Latin digits on write, what still compares as stored; a window count on an empty page, 2026-10-15.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -1242,16 +1242,31 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 ### A رقم العقار typed in Arabic digits misses its Latin twin
 
 - **What happens:** «ما المستحق على العقار» for 420 answers «لا شيء مستحق»
-  although a card and its bill lines say «٤٢٠».
-- **Why:** `propertyNumber` is stored as typed, and the fee lines copy it.
-  The query is normalised to Latin digits (`parcelDuesQuerySchema`), the rows
-  are not.
+  although a card and its bill lines say «٤٢٠». Before 2026-10-11 the same
+  happened at the cadastre: a card typed «١٥٥٣» was flagged «غير موجود في
+  السجل العقاري», got no coordinates, and the live check counted no neighbours.
+- **Why:** `propertyNumber` was stored as typed until 2026-10-14, and the fee
+  lines copy it; so is a cadastre label (`parcels.parcelNumber`). The query is
+  normalised to Latin digits (`parcelDuesQuerySchema`), the older rows are not.
+  New writes are saved in Latin digits (`propertyNumberField`, docs/database.md),
+  which closes it for new data only.
 - **Do this:** compare digit-normalised values on both sides — `normalizeDigits`
-  in TypeScript, `translate(btrim(x), '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹',
-  '01234567890123456789')` in SQL. Over a jsonb array, guard with
-  `CASE WHEN jsonb_typeof(…) = 'array' THEN … END`, not `AND`/`OR`: Postgres
-  does not promise the order it evaluates them in.
-- **Where:** `parcel-dues.service.ts`, `parcel-dues.ts` (`parcelShareOf`).
+  in TypeScript, `translate(btrim(x), ${EASTERN_DIGITS}, ${LATIN_DIGITS})` in
+  SQL, both constants bound from `@mechanization/shared-schemas`. A map keyed
+  by a رقم العقار is keyed by `parcelNumberKey`
+  (`parcel-repository.interface.ts`), and whatever is reported back
+  (`cadastreFlags`, a refusal) keeps the number as typed. Over a jsonb array,
+  guard with `CASE WHEN jsonb_typeof(…) = 'array' THEN … END`, not
+  `AND`/`OR`: Postgres does not promise the order it evaluates them in.
+- **Where:** `parcel-dues.service.ts`, `parcel-dues.ts` (`parcelShareOf`),
+  `PrismaParcelRepository` (`findByNumber`, `findManyByNumber`, `suggest`),
+  `PrismaRegistrationRepository.countRegistrationsForParcel`, and the callers
+  that read the map (`resolveParcels` in `RegistrationService` and
+  `CitizensService`, `ZonesService.validateParcels`). Still compared as stored:
+  `CitizensService.parcelRoster` («من على هذا العقار») and the building
+  matches on `buildings.parcelNumber`, which agree for everything saved since
+  2026-10-14 and miss only a pair where one side is older and typed in Arabic
+  digits.
 
 ### `#` in a plural branch can print Arabic-Indic digits
 

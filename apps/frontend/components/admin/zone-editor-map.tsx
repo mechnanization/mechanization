@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
-import type { FeatureCollection, Polygon } from 'geojson';
+import type { Polygon } from 'geojson';
 import { Loader2, MousePointerClick, SquareDashedMousePointer } from 'lucide-react';
+import { fetchCadastreAsset } from '@/lib/cadastre-assets';
 import { MapLayerControl } from './map-layer-control';
 import {
   basemapById,
@@ -42,6 +43,8 @@ export interface ZoneEditorAssignments {
 
 export interface ZoneEditorMapProps {
   tenant: string;
+  /** The session token: a cadastre layer the portal has no copy of comes from the API. */
+  token: string;
   selected: string[];
   onSelectedChange: (next: string[]) => void;
   assignments: ZoneEditorAssignments;
@@ -52,6 +55,7 @@ export interface ZoneEditorMapProps {
 
 export function ZoneEditorMap({
   tenant,
+  token,
   selected,
   onSelectedChange,
   assignments,
@@ -78,6 +82,8 @@ export function ZoneEditorMap({
   onSelectedChangeRef.current = onSelectedChange;
   const onNoticeRef = useRef(onNotice);
   onNoticeRef.current = onNotice;
+  const tokenRef = useRef(token);
+  tokenRef.current = token;
 
   const selectedSet = useMemo(() => new Set(selected), [selected]);
 
@@ -116,11 +122,9 @@ export function ZoneEditorMap({
   // ── Layers ─────────────────────────────────────────────────────────
   const attachLayers = useCallback(
     async (map: mapboxgl.Map, force = false) => {
-      const base = `/tenants/${encodeURIComponent(tenant)}`;
-      const apiBase = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/t/${encodeURIComponent(tenant)}/cadastre/assets`;
       const [polygons, labels] = await Promise.all([
-        fetchGeoJson(`${base}/parcel-polygons.geojson`, `${apiBase}/parcel-polygons.geojson`),
-        fetchGeoJson(`${base}/parcels.geojson`, `${apiBase}/parcels.geojson`),
+        fetchCadastreAsset(tenant, tokenRef.current, 'parcel-polygons.geojson'),
+        fetchCadastreAsset(tenant, tokenRef.current, 'parcels.geojson'),
       ]);
 
       if (!mapRef.current || mapRef.current !== map) return;
@@ -547,26 +551,4 @@ export function ZoneEditorMap({
       <MapLayerControl value={basemap} onChange={setBasemap} locale={locale} />
     </div>
   );
-}
-
-/** A 404 means this municipality has no cadastre imported yet, not a failure. */
-async function fetchGeoJson(url: string, fallbackUrl?: string): Promise<FeatureCollection | null> {
-  try {
-    let response = await fetch(url);
-    if (!response.ok && fallbackUrl) {
-      response = await fetch(fallbackUrl);
-    }
-    if (!response.ok) return null;
-    return (await response.json()) as FeatureCollection;
-  } catch {
-    if (fallbackUrl) {
-      try {
-        const response = await fetch(fallbackUrl);
-        if (response.ok) return (await response.json()) as FeatureCollection;
-      } catch {
-        return null;
-      }
-    }
-    return null;
-  }
 }

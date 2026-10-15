@@ -4,6 +4,7 @@ import {
   type ErrorParams,
   type ReinspectionsPage,
   type StaffPresenceResponse,
+  type StaffSelf,
 } from '@mechanization/shared-schemas';
 import { localizeApiError } from './api-errors';
 import { cachedRequest, invalidateRequests, peekCachedRequest } from './request-cache';
@@ -712,6 +713,15 @@ async function exchangeStaffToken(
  */
 const SESSION_ROUTES = ['/auth/staff/login', '/auth/staff/refresh', '/auth/staff/logout'];
 
+/**
+ * 401s that answer the request, not the session: the current password typed to
+ * confirm a change to one's own account («أمان الحساب») is wrong. Exchanged and
+ * replayed like an expiry, each wrong guess rotated the refresh cookie and had
+ * the server check the password twice. A 401 with any other code on those
+ * routes is still an expired session and renewed as one.
+ */
+const ANSWERED_401 = new Set<string>(['STAFF_CURRENT_PASSWORD_INCORRECT']);
+
 type ApiFetchInit = RequestInit & {
   token?: string;
   skipTokenRefresh?: boolean;
@@ -800,6 +810,8 @@ async function send<T>(
     which can be sent twice. A streaming body could not, and nothing here uses
     one; if that changes, this is the line that has to know.
   */
+  /** The 401's body, read once to tell an expiry from an answer (`ANSWERED_401`), and reused below. */
+  let refusal: ApiError | undefined;
   if (
     response.status === 401 &&
     token &&
@@ -807,22 +819,27 @@ async function send<T>(
     exchangesLeft > 0 &&
     !SESSION_ROUTES.some((route) => path.startsWith(route))
   ) {
-    const fresh = await exchangeStaffToken(tenant, token);
-    if (fresh && fresh.token !== token) {
-      return send<T>(
-        tenant,
-        path,
-        { ...init, token: fresh.token },
-        fresh.fromNetwork ? 0 : exchangesLeft - 1,
-      );
+    refusal = (await response.json().catch(() => undefined)) as ApiError | undefined;
+    if (!(refusal?.code && ANSWERED_401.has(refusal.code))) {
+      const fresh = await exchangeStaffToken(tenant, token);
+      if (fresh && fresh.token !== token) {
+        return send<T>(
+          tenant,
+          path,
+          { ...init, token: fresh.token },
+          fresh.fromNetwork ? 0 : exchangesLeft - 1,
+        );
+      }
     }
   }
 
   if (!response.ok) {
-    const payload = (await response.json().catch(() => ({
-      code: 'UNKNOWN',
-      message: 'تعذّر إتمام الطلب. حاول مرة أخرى.',
-    }))) as ApiError;
+    const payload =
+      refusal ??
+      ((await response.json().catch(() => ({
+        code: 'UNKNOWN',
+        message: 'تعذّر إتمام الطلب. حاول مرة أخرى.',
+      }))) as ApiError);
     throw new ApiRequestError(response.status, payload);
   }
 
@@ -4945,6 +4962,36 @@ export interface CadastreImportResult {
   linesImported: number;
 }
 
+/** The map layers `GET /cadastre/assets/:assetName` serves — the server refuses any other name. */
+export type CadastreAssetName =
+  | 'cadastre.geojson'
+  | 'parcels.geojson'
+  | 'parcel-polygons.geojson'
+  | 'city-boundary.geojson';
+
+/**
+ * One of the municipality's cadastre map layers, from the API.
+ *
+ * Signed in like every other read: the route is not public, and a bare `fetch`
+ * of it was a 401 wherever `public/tenants/<slug>/` lacks the file. `version`
+ * only busts the browser's cache after an import (the response is cached
+ * privately for an hour); the server ignores it. The static-first lookup the
+ * maps use is `fetchCadastreAsset` (`lib/cadastre-assets.ts`).
+ */
+export function getCadastreAsset(
+  tenant: string,
+  token: string,
+  args: { asset: CadastreAssetName; version?: string | number },
+  signal?: AbortSignal,
+) {
+  const query = args.version ? `?v=${encodeURIComponent(String(args.version))}` : '';
+  return apiFetch<GeoJSON.FeatureCollection>(
+    tenant,
+    `/cadastre/assets/${encodeURIComponent(args.asset)}${query}`,
+    { token, signal },
+  );
+}
+
 /** SUPER_ADMIN only — rebuilds the parcel registry and the map's static
  * cartography layer from an uploaded GeoJSON file. */
 export function importCadastre(tenant: string, token: string, file: File) {
@@ -5909,6 +5956,20 @@ export async function restoreSnapshot(
   return payload as RestoreReport;
 }
 
+/**
+ * «أمان الحساب»: the signed-in staff member's own account (email, role, whether
+ * a second factor is confirmed). Every staff role may read its own; `getStaff`
+ * is the administrator's roster and refuses everyone else.
+ */
+export function getStaffSelf(tenant: string, token: string, signal?: AbortSignal) {
+  return apiFetch<StaffSelf>(tenant, '/auth/staff/me', { token, signal });
+}
+
+/**
+ * Ends every session of the account, this one included: the server bumps its
+ * token version. After a success the caller signs out (`logoutStaff`,
+ * `clearSession`) and sends the user to the sign-in page.
+ */
 export async function changeStaffPassword(
   tenant: string,
   token: string,

@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `fix/pr114-review` (PR #114 merged with `develop@5e8f5c3`, with its review fixes): the audit reads' `?actorId=` and its «النظام» value, the review queue's total, a registration card's missing building, 2026-10-14.
+Last verified against the code: `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): the cadastre import deviation, the cadastre asset's private cache, `GET auth/staff/me`, the own-account throttle, the save-path unlink rows, `assertFileOpen`; the audit reads' `?actorId=` and its «النظام» value, the review queue's total, a registration card's missing building, 2026-10-15.
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -39,7 +39,7 @@ Data access for new code (decided):
 - Presentation MUST NOT touch Prisma, except at the two composition points: `TenantMiddleware`
   (`TenantContextService`, `TenantPrismaFactory`) and `HealthController` (`RegistryPrismaService`).
 - Deviations today (`ZonesService` → `CadastreAssetsService`, `CadastreImportService` →
-  `buildCadastreGeometryAssets`, `OtpService` / `DocumentService` → `APP_CONFIG`, `registration.repository.ts`
+  `buildCadastreGeometryAssets` and `mergeParcelPoints`, `OtpService` / `DocumentService` → `APP_CONFIG`, `registration.repository.ts`
   → `normalizeSearchText`) are tracked in [docs/code-quality.md](../../docs/code-quality.md).
 
 ## Module wiring
@@ -95,6 +95,12 @@ Data access for new code (decided):
 - **Staff sessions.** Rotating refresh tokens in an httpOnly cookie (`StaffRefreshTokenService`,
   `presentation/http/staff-refresh-cookie.ts`), checked by family in `JwtAuthGuard`; expired rows are
   pruned by `StaffRefreshTokenCleanupJob`. Rules: [docs/security.md](../../docs/security.md#tokens-passwords-and-totp).
+- **A staff member's own account.** `GET auth/staff/me` (`IdentityService.staffSelf`,
+  `@Roles(...EVERY_STAFF_ROLE)`) answers `StaffSelf` — id, email, role, `hasConfirmedTotp` and
+  nothing else — read by `user.sub`. «أمان الحساب» reads it; `GET staff` is the administrator's
+  roster and refuses every other role. The own-account writes beside it (`staff/change-password`,
+  `staff/change-email`, `staff/totp/disable`) refuse a wrong current password with
+  `STAFF_CURRENT_PASSWORD_INCORRECT`.
 - **Staff presence.** `StaffPresenceService.touch` stamps `users.lastSeenAt` from `JwtAuthGuard`, after
   every check has passed, without the guard awaiting it. It is the only write on the authenticated hot
   path, and it stays affordable through a Redis gate: one UPDATE a minute per account, not one per
@@ -563,7 +569,7 @@ Rule: a refusal is thrown with a specific code from `ERROR_CODES` in
   kept beside the top-level code because screens still read them; do not add new ones.
 
 Today: the fee, payment, ownership, tenancy, landlord-link, correction, citizen-file and damage services
-are converted; what is left is counted by `LEGACY_PROSE_THROWS` (206 on 2026-10-06). The block-driven refusals (`plan.block.message` in `LandlordLinkService`,
+are converted; what is left is counted by `LEGACY_PROSE_THROWS` (202 on 2026-10-11). The block-driven refusals (`plan.block.message` in `LandlordLinkService`,
 `blockerMessage` in `UnitCorrectionService`, `blocks[0].message` in `CitizenMergeService`) are not: their
 text is also rendered in the preview endpoints, which need localising first.
 
@@ -602,7 +608,10 @@ Every state change MUST leave an `audit_log_entries` row, in one of two tiers
    - In `runInTenantTransaction`: `AuditService.recordInTransaction(entry)`, or
      `recordChangeInTransaction({ channel, payload })` for a change that is also a `citizen.changed` /
      `building.changed` event. Emit that event after the commit with `alreadyAudited: true`.
-   - A write that owns its transaction passes its client: `recordInTransaction(entry, tx)`. The payment
+   - A write that owns its transaction passes its client: `recordInTransaction(entry, tx)`, or
+     `recordChangeInTransaction(change, tx)`. `CitizensService.update` does the second for an owner
+     link its save undoes (a linked card removed, or its landlord number changed): `LANDLORD_UNLINKED`
+     on the owner's file and on the tenant's, as `LandlordLinkService.unlink` writes them. The payment
      ledger does this, and `PaymentLedgerService.record` / `reverse` take a **required** `audit` callback,
      so no code path can move money without a row.
    - `recordInTransaction` throws when called outside a transaction.
@@ -687,7 +696,7 @@ points at does not exist. `src/scripts/reset-2fa.ts` has no script entry and MUS
 
 ## Tests
 
-- Jest with ts-jest (`jest.config.js`: `rootDir` `src`, `*.spec.ts` beside the source): 150 spec files, 43 of them `*.integration.spec.ts` (counted on disk 2026-10-15, `fix/pr114-review` with PR #123 merged in).
+- Jest with ts-jest (`jest.config.js`: `rootDir` `src`, `*.spec.ts` beside the source): 153 spec files, 45 of them `*.integration.spec.ts` (counted on disk 2026-10-15, `fix/pr115-review` with PRs #123 and #124 merged in).
 - Integration specs run only when `TEST_DATABASE_URL` is set (`describeIfDb`) and skip silently otherwise.
   They `DROP SCHEMA … CASCADE` and rebuild fixed `tenant_*_spec` schemas on whatever database it names,
   and nothing checks the target. Point it ONLY at a throwaway Postgres 17 container (migration `0044`

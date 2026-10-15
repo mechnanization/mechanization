@@ -60,6 +60,14 @@ export const APP_CONFIG = {
      */
     staffSession: { ttlSeconds: 60, limit: 30 },
     /**
+     * A staff member's own-account writes that check the current password —
+     * «تغيير كلمة المرور», the email, turning off 2FA. What it bounds is a
+     * stolen session guessing the password to take the account over: without
+     * it the default (120 a minute) applied. Five a minute is room to mistype
+     * it twice.
+     */
+    ownAccount: { ttlSeconds: 60, limit: 5 },
+    /**
      * Citizen sign-in by رقم مرجعي alone.
      *
      * Tighter than every other bar because the reference *is* the whole

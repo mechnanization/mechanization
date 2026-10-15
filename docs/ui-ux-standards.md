@@ -1,6 +1,6 @@
 # UI/UX standards: binding for every change to `apps/frontend`
 
-Last verified against the code: `fix/pr114-review` (PR #114 merged with `develop@5e8f5c3`, with its review fixes): the double-submit entries, `Pager` users, 2026-10-14.
+Last verified against the code: `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): «أمان الحساب» on the kit `invalid` prop, its error state, `rounded-lg`; the double-submit entries, `Pager` users, 2026-10-15.
 
 This file binds every AI agent and every person who builds or reviews an
 interface in this repository. [CLAUDE.md](../CLAUDE.md) (non-negotiable 9) and
@@ -686,8 +686,8 @@ Code-pattern debt outside the UI rules lives in
   (`components/admin/audit-daily.tsx`). `Pager` has 2 users (the citizen file's bills, and
   «مراجعة السجلات», `quality/review-queue.tsx`, since 2026-10-11).
 - **Red error banners, 60 copies in 45 files** (CTL-12), none of them yet moved
-  to the `Alert` primitive that now exists — the finance screens and the counter
-  settle page (moved 2026-10-09) are its only users. Each is a className holding `border-destructive…`, `bg-destructive/5` or `/10` and
+  to the `Alert` primitive that now exists, which 35 files use (the finance screens, the
+  counter settle page, «أمان الحساب», the staff sign-in page among them). Each is a className holding `border-destructive…`, `bg-destructive/5` or `/10` and
   `text-destructive`. Three each in `import-citizens-dialog`,
   `complete-record-dialog`, `building-unit-forms`; two each in
   `unit-correction-delete-dialog`, `merge-citizens-dialog`, `citizen-form`,
@@ -832,7 +832,8 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
 - **`shadow-xs`/`shadow-2xs`, 34 in 12 files** (LAY-4, CODE-8), including the
   primitives `field.tsx` (1) and `segmented-control.tsx` (2);
   `building-editor.tsx` has 11, `bill-type-select.tsx` 5.
-- **`rounded-xl`/`2xl`/`3xl`, 139 uses** (LAY-3 applies to new cards).
+- **`rounded-xl`/`2xl`/`3xl`, 133 uses** (LAY-3 applies to new cards; `security-section.tsx` moved
+  to `rounded-lg` on 2026-10-14).
   `DialogContent`, Button `xl`, `DataTable` and `Skeleton` use `rounded-xl`.
 - **Physical direction utilities, about 53 in 13 files** (RTL-1): `rtl:ml-*
   ltr:mr-*` pairs instead of `me-*` in `fees/page.tsx` (7 pairs) and

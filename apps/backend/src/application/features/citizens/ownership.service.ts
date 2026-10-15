@@ -7,7 +7,7 @@ import { runInTenantTransaction } from '../../../infrastructure/context/tenant-t
 import { AuditService, type CitizenChange } from '../audit/audit.service';
 import { settleUnit, type UnitStatusEvent } from '../buildings/unit-status';
 import { ConflictError, NotFoundError, ValidationError } from '../../../domain/errors/domain-error';
-import { assertNotMergedAway } from './merged-away';
+import { assertFileOpen, assertNotMergedAway } from './merged-away';
 import { claimsFlat } from '../../../domain/entities/census-claim';
 import { BuildingsService } from '../buildings/buildings.service';
 import { CasesService } from '../cases/cases.service';
@@ -505,7 +505,7 @@ export class OwnershipService {
       }
       const buyer = await this.db.user.findFirst({
         where: { id: input.newOwnerId, kind: 'CITIZEN' },
-        select: { id: true },
+        select: { id: true, isActive: true },
       });
       if (!buyer) throw new ValidationError({
         code: 'NEW_OWNER_NOT_FOUND',
@@ -513,6 +513,8 @@ export class OwnershipService {
         details: { newOwnerId: input.newOwnerId },
       });
       await assertNotMergedAway(this.db, buyer.id);
+      // The sale writes the buyer's owner card: a new filing, refused on an archived file.
+      assertFileOpen(buyer);
     }
 
     /*

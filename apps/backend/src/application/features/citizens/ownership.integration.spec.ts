@@ -253,6 +253,22 @@ describeIfDb('OwnershipService', () => {
     expect(cases.some((row) => /سجِّل المالك الجديد/.test(row.notes ?? ''))).toBe(false);
   });
 
+  it('sells to nobody whose file is archived: no card, no flat, nothing ended', async () => {
+    const { building, units } = await block('OWN-2A');
+    const owner = await ownerOn({ parcelNumber: 'OWN-2A', buildingId: building.id, unitIds: [units[0]!.id] });
+    const buyerId = await citizen('مؤرشف');
+    await db.user.update({ where: { id: buyerId }, data: { isActive: false } });
+
+    const refusal = await within(() =>
+      ownership.endCard(owner.cardId, { reason: 'OWNERSHIP_TRANSFERRED', endedAt: today(), newOwnerId: buyerId }, actor()),
+    ).then(() => null, (caught: unknown) => caught);
+
+    expect(refusal).toMatchObject({ code: 'CITIZEN_FILE_ARCHIVED', details: { citizenId: buyerId } });
+    expect(await db.unitOccupancy.count({ where: { citizenId: buyerId } })).toBe(0);
+    // The seller still owns it: the sale is refused whole.
+    expect((await db.unitOccupancy.findFirstOrThrow({ where: { unitId: units[0]!.id, role: 'OWNER' } })).toDate).toBeNull();
+  });
+
   it('asks what a flat the seller lived in is now, and acts on the answer', async () => {
     const { building, units } = await block('OWN-3');
     const owner = await ownerOn({

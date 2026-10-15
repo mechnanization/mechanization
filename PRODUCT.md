@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية الذكية)
 
-Last verified against the code: `fix/pr114-review` (PR #114 merged with `develop@5e8f5c3`, with its review fixes): an archived file takes no new fee on any path, 2026-10-14.
+Last verified against the code: `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): «أمان الحساب» for every staff role, no new filing — card, flat or sale — on an archived file; an archived file takes no new fee on any path, 2026-10-15.
 
 A multi-tenant municipal platform for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastral map, municipal fee billing (رسوم القيمة التأجيرية
@@ -248,7 +248,11 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
   asks for the reason and who asked for it, both written to the activity log; an archived
   file is billed nothing new and keeps everything it holds, and «إعادة من الأرشيف» brings it
   back. Every way of raising a fee refuses one on an archived file, «تكليف مباشر» included
-  (`FEE_CITIZEN_ARCHIVED`, since 2026-10-14), and the fee pickers do not offer it.
+  (`FEE_CITIZEN_ARCHIVED`, since 2026-10-14), and the fee pickers do not offer it. It takes no
+  new filing either — no card, no flat, no sale: a registration that would join it, a person
+  put in a flat, or a sale's buyer is refused with «أعِده من الأرشيف أولاً», on the form, from
+  the offline queue (which parks it as refused) and in an import; the census and ownership
+  pickers show it marked «مؤرشف» and do not take it.
 - **A building's height counts its built floors, never its roof** (the user's decision of
   2026-10-07). «الطوابق المسقوفة» is every level under a roof, the ground floor and a
   «طابق أعمدة» included. The building editor says so, gives the two ways to record a duplex
@@ -296,6 +300,10 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
   when a chosen method cannot be carried out — «حسب الأسهم» with an owner's أسهم missing, which
   stops every co-owner's bill, or a responsible owner who no longer owns the flat, which bills it
   equally instead — and opens the unit where the method is chosen.
+- **Every staff member manages their own account.** «أمان الحساب» shows each role its own
+  sign-in email and whether its second factor is on, and changes the email or the password
+  with the current password typed again. A password change signs the account out
+  everywhere, this screen included, and the sign-in page says why.
 - **Staff accounts have three states, and none of them loses history.** An account is
   active, disabled, or deleted. Disabling blocks sign-in and moves the account out of the
   staff directory into «الأرشيف», where a system administrator reads it and can bring it

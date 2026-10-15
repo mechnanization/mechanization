@@ -737,3 +737,65 @@ describe('loginStaff — the refresh-token family a sign-in starts', () => {
     expect(grant.refresh.cookieName).toBe(refreshTokens.cookieNameFor(STAFF.id));
   });
 });
+
+describe('staffSelf — «أمان الحساب» reads the caller’s own account', () => {
+  it('answers any staff role with its own email, role and second factor, and nothing else', async () => {
+    const collector = staff({ id: 'staff-9', role: 'COLLECTOR', email: 'collector@albazourieh.gov.lb' });
+    const { service, users } = build({ findById: jest.fn().mockResolvedValue(collector) });
+
+    await expect(service.staffSelf('staff-9')).resolves.toEqual({
+      id: 'staff-9',
+      email: 'collector@albazourieh.gov.lb',
+      role: 'COLLECTOR',
+      hasConfirmedTotp: true,
+    });
+    expect(users.findById).toHaveBeenCalledWith('staff-9');
+  });
+
+  it('says a factor issued but never confirmed is not on', async () => {
+    const { service } = build({
+      findById: jest.fn().mockResolvedValue(staff({ role: 'AUDITOR', totpConfirmedAt: null })),
+    });
+
+    await expect(service.staffSelf(STAFF.id)).resolves.toMatchObject({ hasConfirmedTotp: false });
+  });
+
+  it('refuses a session that names a citizen, or nobody', async () => {
+    const citizen = User.citizen({
+      id: 'citizen-1',
+      tenantSlug: 'albazourieh',
+      phone: '+96170000000',
+      firstName: 'سامي',
+      lastName: 'تجربة',
+      referenceNumber: 'BZR-0000-000000',
+      identityDocType: 'PASSPORT',
+      identityDocNumber: 'N1',
+      isActive: true,
+    });
+    for (const found of [citizen, null]) {
+      const { service } = build({ findById: jest.fn().mockResolvedValue(found) });
+      const refusal = await rejection(service.staffSelf('someone'));
+      expect(refusal).toBeInstanceOf(UnauthorizedError);
+      expect((refusal as UnauthorizedError).code).toBe('SESSION_INVALID');
+    }
+  });
+});
+
+describe('changeStaffPassword — a wrong current password is refused by code', () => {
+  it('refuses with STAFF_CURRENT_PASSWORD_INCORRECT and writes nothing', async () => {
+    const updateStaff = jest.fn();
+    const { service, events } = build(
+      { findById: jest.fn().mockResolvedValue(unenrolled()), updateStaff } as Partial<UserRepository>,
+      { passwordVerifies: false },
+    );
+
+    const refusal = await rejection(
+      service.changeStaffPassword(STAFF.id, 'albazourieh', 'not-the-password', 'a-new-password-1'),
+    );
+
+    expect(refusal).toBeInstanceOf(UnauthorizedError);
+    expect((refusal as UnauthorizedError).code).toBe('STAFF_CURRENT_PASSWORD_INCORRECT');
+    expect(updateStaff).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+  });
+});

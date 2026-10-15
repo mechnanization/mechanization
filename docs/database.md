@@ -1,6 +1,6 @@
 # Database
 
-Last verified against the code: `fix/pr114-review` (PR #114 merged with `develop@5e8f5c3`, with its review fixes): a foreign-key violation on a registration card, 2026-10-14.
+Last verified against the code: `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): a رقم العقار saved in Latin digits, digit-normalised lookups for older rows, where `P2002` is mapped; a foreign-key violation on a registration card, 2026-10-15.
 
 The rules for anything that reads or writes a database: the schemas, how to
 query them, how to change them, and how data may move between environments.
@@ -120,11 +120,17 @@ takes the prefix off whatever a client sent — a form copies the name it was
 *shown* — and, for a card linked to an owner, stores that owner's own name.
 The non-person kinds are `NON_PERSON_RESIDENCE` for a Prisma filter.
 
-**A card's `propertyNumber` is stored as typed**, «٤٢٠» as well as «420», and
-so are the fee lines copied from it. A lookup by رقم العقار compares
-digit-normalised values on both sides (`normalizeDigits`; in SQL,
-`translate(…, '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹', '01234567890123456789')`, as
-`parcel-dues.service.ts` does).
+**A رقم العقار is saved in Latin digits since 2026-10-14**: every schema it is
+written through (`propertyNumberField` for a card, a building, its shared
+parcels and a parcel correction; a zone's parcels; a case; the blur check and
+the building filter) normalises it, so «٤٢٠» is saved «420». Rows saved
+before keep what was typed, and so do the fee lines copied from them and the
+cadastre's own labels (`parcels.parcelNumber`), so a lookup by رقم العقار still
+compares digit-normalised values on both sides (`normalizeDigits`; in SQL,
+`translate(btrim(…), ${EASTERN_DIGITS}, ${LATIN_DIGITS})` with both constants
+bound from `@mechanization/shared-schemas`, as `parcel-dues.service.ts` and
+`PrismaParcelRepository` do). There is no backfill. A map keyed by the number
+is keyed by `parcelNumberKey`.
 
 **A flat's billing facts live on `units`** (`0075`, `0077`), beside its status:
 
@@ -428,8 +434,12 @@ and fails intermittently with `42P01`.
   D-errors the error MUST carry a stable code the frontend can localise
   ([apps/backend/CLAUDE.md](../apps/backend/CLAUDE.md#error-codes)).
 - Where `P2002` is mapped today: `PrismaUserRepository.translate`,
-  `PrismaRegistrationRepository.translate`, and inline in
-  `ParcelCorrectionService`. There is no shared helper.
+  `PrismaRegistrationRepository.translate`, inline in
+  `ParcelCorrectionService`, and through `isUniqueViolationOn`
+  (`application/features/treasury/retry-key.ts`) in the treasury's retry keys
+  and `CitizensService.update` (a passport number another file holds:
+  `CITIZEN_IDENTITY_DOC_TAKEN`, naming nobody, as the create path's
+  `translate` now does). No helper is shared by all of them.
 - A foreign-key violation (Prisma `P2003`) is a 500 unless mapped the same way.
   `PrismaRegistrationRepository.translate` maps the two a registration card can
   break — a building or a flat the register does not hold, which a queued

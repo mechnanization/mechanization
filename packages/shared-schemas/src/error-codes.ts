@@ -194,6 +194,10 @@ export const ERROR_CODES = [
   'MERGE_NOT_FOUND',
   'MERGE_ABSORBED_CHANGED',
   'CITIZEN_MERGED_AWAY',
+  // A passport number another file already holds (`users` is unique on the document). Names nobody.
+  'CITIZEN_IDENTITY_DOC_TAKEN',
+  // A new filing for a file that is archived (`isActive` false): reactivate it first. `details.citizenId`.
+  'CITIZEN_FILE_ARCHIVED',
   // Property entries (domain invariants)
   'OWNER_NAME_REQUIRED',
   'LANDLORD_PHONE_REQUIRED',
@@ -306,6 +310,8 @@ export const ERROR_CODES = [
   'SESSION_INVALID',
   'SESSION_ENDED',
   'ORIGIN_NOT_ALLOWED',
+  // A staff member's own account («أمان الحساب»): the password typed to confirm a change is wrong.
+  'STAFF_CURRENT_PASSWORD_INCORRECT',
   // Raised by the portal itself when no response arrives or it cannot be read
   'NETWORK_ERROR',
   'UNKNOWN',

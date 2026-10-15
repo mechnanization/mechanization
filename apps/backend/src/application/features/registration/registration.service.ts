@@ -16,9 +16,10 @@ import {
   PARCEL_REPOSITORY,
   REGISTRATION_REPOSITORY,
 } from '../../../domain/interfaces/base-repository.interface';
-import type {
-  ParcelLocation,
-  ParcelRepository,
+import {
+  parcelNumberKey,
+  type ParcelLocation,
+  type ParcelRepository,
 } from '../../../domain/interfaces/parcel-repository.interface';
 import { RegistrationRepository } from '../../../domain/interfaces/registration-repository.interface';
 import { ConflictError } from '../../common/exceptions';
@@ -158,7 +159,7 @@ export class RegistrationService {
     // actually named.
     const properties = input.payload.properties.map((entry, index) => {
       const parcel = entry.propertyNumber
-        ? cadastre.get(entry.propertyNumber.trim())
+        ? cadastre.get(parcelNumberKey(entry.propertyNumber))
         : undefined;
       return PropertyEntry.create(
         {
@@ -305,9 +306,10 @@ export class RegistrationService {
   ): Promise<{ found: Map<string, ParcelLocation>; missing: Set<string> }> {
     const found = await this.parcels.findManyByNumber(propertyNumbers);
 
+    // Reported as typed: `cadastreFlags` matches the card's own value.
     const unresolved = propertyNumbers
       .map((number) => number.trim())
-      .filter((number) => !found.has(number));
+      .filter((number) => !found.has(parcelNumberKey(number)));
 
     // Only asked when something is missing: with every number resolved there is
     // nothing for the count to decide.

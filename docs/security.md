@@ -1,6 +1,6 @@
 # Security
 
-Last verified against the code: `fix/pr114-review` (PR #114 merged with `develop@5e8f5c3`, with its review fixes): the offline queue's revised, held and refused records, 2026-10-14.
+Last verified against the code: `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): `GET auth/staff/me`, the password change and its throttle, the save-path unlink rows, no new filing on an archived file; the offline queue's revised, held and refused records, 2026-10-15.
 
 Binding for every change that touches authentication, roles, tokens, validation, uploads, logging,
 headers, client storage or secrets. The rules below are correct practice. Where the code differs today,
@@ -108,7 +108,12 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   not «مشاهد فقط»), which only hides it — the receipt itself is `FEE_READ_ROLES`.
 - A citizen file is never hard-deleted (decision of 2026-10-05). It is archived — `isActive: false`
   through `PATCH citizens/:id/active` — with a written reason and who asked (`setCitizenActiveSchema`
-  requires both), recorded on the Tier 1 audit row, and restored the same way.
+  requires both), recorded on the Tier 1 audit row, and restored the same way. An archived file takes
+  no new filing until it is restored: a filing whose passport attaches it to the same person's
+  archived file (`PrismaRegistrationRepository.submit`), a save that would mint an archived
+  file's first filing (`CitizensService.update`), and a person put in a flat or a sale's buyer
+  (`assertFileOpen` in `BuildingsService.recordOccupancy` and `OwnershipService`) are refused with
+  `CITIZEN_FILE_ARCHIVED` (`details.citizenId`; the message names nobody).
 - What the citizen portal sends about anyone else is named, never passed through: `mySummary` sends a
   flat's owners as name and أسهم only (an allowlist, pinned by `citizen-portal.spec.ts`) and drops the
   landlord link's id and رقم مرجعي. A co-owned flat's billing goes as the method and this citizen's own
@@ -127,7 +132,19 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
 - The token's tenant MUST equal the URL's tenant (`JwtAuthGuard`, `TenantMismatchError`). MUST NOT
   accept a tenant, slug or schema from a body or query string.
 - Any change to a password, role, active flag or second factor MUST bump `tokenVersion` and call
-  `SessionRevocationService.forget`, as `IdentityService.changeStaffPassword` does.
+  `SessionRevocationService.forget`, as `IdentityService.changeStaffPassword` does. That ends the
+  caller's own session too, so «أمان الحساب» signs out after a password change (`logoutStaff`, then
+  `clearSession`) and opens sign-in with `?notice=password-changed`, a fixed value the page
+  compares and never shows or follows (`lib/password-change.ts`).
+- The own-account writes that check the current password — change password, change email, disable
+  2FA — have their own throttle (`APP_CONFIG.throttle.ownAccount`, 5 a minute, keyed by the hashed
+  `Authorization` header like the session routes), so a stolen session cannot guess the password at
+  the default 120 a minute. A wrong current password answers 401 `STAFF_CURRENT_PASSWORD_INCORRECT`,
+  which `apiFetch` takes as the answer (`ANSWERED_401`), never as an expired session to renew and
+  replay.
+- A staff member reads their own account through `GET auth/staff/me` (`EVERY_STAFF_ROLE`, scoped by
+  `user.sub`, no id in the path), which answers id, email, role and `hasConfirmedTotp` only: no hash,
+  no secret, no presence. The roster (`GET staff`) stays `SUPER_ADMIN`'s.
 - Changing a second factor (enrol, confirm, disable) MUST require re-authentication: the current
   password and a current TOTP code. A confirmed factor MUST stay active until its replacement is confirmed.
 - Non-session tokens MUST be signed with a derived purpose key (`IdentityService.resetSigningKey`),
@@ -232,7 +249,8 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   (`TRANSFER_VOIDED`), counting the treasury and closing, sweeping and
   reopening a day (`TREASURY_COUNT_RECORDED`, `TREASURY_DAY_CLOSED`, `TREASURY_DAY_AUTO_CLOSED`,
   `TREASURY_DAY_REOPENED`), corrections, ownership changes (ending an ownership,
-  owner links, merges), ending a tenancy, review decisions (approve, return, quality check), citizen
+  owner links — including one a citizen save undoes, `LANDLORD_UNLINKED` on the owner's file and on
+  the tenant's —, merges), ending a tenancy, review decisions (approve, return, quality check), citizen
   status changes (archive and restore), how a co-owned flat is billed (`UNIT_OWNER_BILLING_SET`,
   `OwnerBillingService`, which moves every co-owner's bill), and a unit's fee exemption
   (`UNIT_FEE_EXEMPTION_SET` / `_LIFTED`, `FeeExemptionService`, SUPER_ADMIN only). Everything else is
@@ -508,6 +526,11 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
 - Access tokens: `sessionStorage` by default, `localStorage` only with "remember me" (`saveSession`,
   `apps/frontend/lib/session.ts`). Sent as `Authorization: Bearer` by `apiFetch`. MUST NOT put a token
   in a URL. The staff refresh credential is the httpOnly cookie above, which page script cannot read.
+- An API read goes through `apiFetch`, never a bare `fetch`, so it carries the token and is renewed
+  like the rest. The cadastre map layers (`GET cadastre/assets/:assetName`, not public: any signed-in
+  token, `SELF_SERVICE` in `route-inventory.spec.ts`) are read through `fetchCadastreAsset` →
+  `getCadastreAsset`, and the API answers them `Cache-Control: private`, so no shared cache keeps a
+  signed-in response.
 - `dangerouslySetInnerHTML` only with constants or sanitised values (`ACCENT_INIT_SCRIPT`, `safeHslTriple`).
 - MUST NOT take a redirect target from a query parameter. `window.location.href` only to a URL the
   server built (the Whish checkout) or an internal route.

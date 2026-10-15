@@ -4,7 +4,10 @@ import * as turf from '@turf/turf';
 import type { Feature, MultiPolygon, Polygon } from 'geojson';
 import type { CreateZoneInput, UpdateZoneInput } from '@mechanization/shared-schemas';
 import { PARCEL_REPOSITORY, ZONE_REPOSITORY } from '../../../domain/interfaces/base-repository.interface';
-import type { ParcelRepository } from '../../../domain/interfaces/parcel-repository.interface';
+import {
+  parcelNumberKey,
+  type ParcelRepository,
+} from '../../../domain/interfaces/parcel-repository.interface';
 import type { Zone, ZoneRepository } from '../../../domain/interfaces/zone-repository.interface';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { CadastreAssetsService } from '../../../infrastructure/cadastre/cadastre-assets.service';
@@ -252,7 +255,7 @@ export class ZonesService {
     const cadastreSize = await this.parcels.count();
     if (cadastreSize > 0) {
       const known = await this.parcels.findManyByNumber(parcelNumbers);
-      const missing = parcelNumbers.filter((n) => !known.has(n));
+      const missing = parcelNumbers.filter((n) => !known.has(parcelNumberKey(n)));
       if (missing.length > 0) {
         throw new ValidationError(
           `${describe(missing)} غير موجود في السجل العقاري للبلدية`,
@@ -262,7 +265,7 @@ export class ZonesService {
       const boundary = await this.assets.getCityBoundary(tenantSlug);
       if (boundary) {
         const outside = parcelNumbers.filter((parcelNumber) => {
-          const parcel = known.get(parcelNumber);
+          const parcel = known.get(parcelNumberKey(parcelNumber));
           if (!parcel) return false;
           return !turf.booleanPointInPolygon([parcel.longitude, parcel.latitude], boundary);
         });

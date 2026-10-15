@@ -49,6 +49,7 @@ import {
   lifecycleOpacityExpression,
   surveyFillExpression,
 } from './building-map-layer';
+import { fetchCadastreAsset } from '@/lib/cadastre-assets';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -497,6 +498,9 @@ export function FullscreenMap({
   zonesVisibleRef.current = zonesVisible;
   const activeZoneIdRef = useRef(activeZoneId);
   activeZoneIdRef.current = activeZoneId;
+  // Read when a cadastre layer falls back to the API, which needs it.
+  const tokenRef = useRef(token);
+  tokenRef.current = token;
 
   const dark = basemapById(basemap).dark;
   const trimmedQuery = query.trim();
@@ -517,12 +521,9 @@ export function FullscreenMap({
 
   const attachCadastre = useCallback(
     async (map: mapboxgl.Map, force = false) => {
-      const base = `/tenants/${encodeURIComponent(tenant)}`;
-      const apiBase = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/t/${encodeURIComponent(tenant)}/cadastre/assets`;
-      const bust = refreshToken ? `?v=${refreshToken}` : '';
       const [cadastre, parcelPoints] = await Promise.all([
-        fetchGeoJson(`${base}/cadastre.geojson${bust}`, `${apiBase}/cadastre.geojson${bust}`),
-        fetchGeoJson(`${base}/parcels.geojson${bust}`, `${apiBase}/parcels.geojson${bust}`),
+        fetchCadastreAsset(tenant, tokenRef.current, 'cadastre.geojson', refreshToken),
+        fetchCadastreAsset(tenant, tokenRef.current, 'parcels.geojson', refreshToken),
       ]);
 
       if (!mapRef.current || mapRef.current !== map) return;
@@ -695,12 +696,7 @@ export function FullscreenMap({
     async (map: mapboxgl.Map) => {
       if (map.getSource(BUILDING_SOURCE.polygons)) return;
 
-      const base = `/tenants/${encodeURIComponent(tenant)}`;
-      const apiBase = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/t/${encodeURIComponent(tenant)}/cadastre/assets`;
-      const polygons = await fetchGeoJson(
-        `${base}/parcel-polygons.geojson`,
-        `${apiBase}/parcel-polygons.geojson`,
-      );
+      const polygons = await fetchCadastreAsset(tenant, tokenRef.current, 'parcel-polygons.geojson');
       if (!polygons || !mapRef.current || mapRef.current !== map) return;
       if (map.getSource(BUILDING_SOURCE.polygons)) return;
 
@@ -2465,25 +2461,4 @@ export function FullscreenMap({
       />
     </div>
   );
-}
-
-async function fetchGeoJson(url: string, fallbackUrl?: string): Promise<FeatureCollection | null> {
-  try {
-    let response = await fetch(url);
-    if (!response.ok && fallbackUrl) {
-      response = await fetch(fallbackUrl);
-    }
-    if (!response.ok) return null;
-    return (await response.json()) as FeatureCollection;
-  } catch {
-    if (fallbackUrl) {
-      try {
-        const response = await fetch(fallbackUrl);
-        if (response.ok) return (await response.json()) as FeatureCollection;
-      } catch {
-        return null;
-      }
-    }
-    return null;
-  }
 }

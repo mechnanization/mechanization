@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
+  EASTERN_DIGITS,
+  LATIN_DIGITS,
   citizenDisplayName,
   type FeeAssessment,
   type ParcelDues,
@@ -27,10 +29,6 @@ interface OpenBillRow {
 
 /** Owed and not yet settled — the statuses `CorrectionBillsService` reads as open. */
 const OPEN = ['UNPAID', 'OVERDUE', 'PENDING_REVIEW'];
-
-/** Arabic-Indic and Persian digits, and the Latin digit each maps to — `normalizeDigits` in SQL. */
-const EASTERN_DIGITS = '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹';
-const LATIN_DIGITS = '01234567890123456789';
 
 /**
  * «ما المستحق على العقار» — what is still owed on one رقم العقار.

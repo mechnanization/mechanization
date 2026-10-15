@@ -16,7 +16,7 @@ import {
 } from './enums';
 import { habitabilityFor, isReinspectDayAhead } from './damage-rule';
 import { areaField, propertyNumberField } from './property.schema';
-import { arabicOrLatinName, internationalPhone, uuid } from './primitives';
+import { arabicOrLatinName, internationalPhone, normalizeDigits, uuid } from './primitives';
 
 /**
  * "Not in the future", judged when the date arrives rather than when this
@@ -1418,7 +1418,13 @@ export const buildingFilterSchema = z.object({
    * their `sharedParcelNumbers`. The sector filter, by contrast, reads only the
    * parcel a building is filed under (D13).
    */
-  parcelNumber: z.string().trim().max(40).optional(),
+  // In Latin digits, as a building's own رقم العقار is saved (`propertyNumberField`).
+  parcelNumber: z
+    .string()
+    .trim()
+    .max(40)
+    .transform((value) => normalizeDigits(value))
+    .optional(),
   zoneId: uuid.optional(),
   structureType: structureTypeSchema.optional(),
   lifecycleStatus: buildingLifecycleSchema.optional(),

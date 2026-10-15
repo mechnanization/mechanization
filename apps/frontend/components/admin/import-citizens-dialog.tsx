@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { useLocale, useTranslations } from 'next-intl';
 import {
   ArrowLeft,
   ArrowRight,
@@ -15,8 +16,9 @@ import {
   Users,
   XCircle,
 } from 'lucide-react';
-import { IMPORT_COLUMNS } from '@mechanization/shared-schemas';
-import type { CitizenImportResult, ImportRow } from '@mechanization/shared-schemas';
+import { getLabels, IMPORT_COLUMNS } from '@mechanization/shared-schemas';
+import type { CitizenImportResult, CitizenImportRowResult, ImportRow } from '@mechanization/shared-schemas';
+import { localizeApiError } from '@/lib/api-errors';
 import { buildCitizenTemplate, downloadCsv, parseCitizenCsv } from '@/lib/csv';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -29,6 +31,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
+
+/** A failed row's reason: a coded refusal in the page's language, else the text the server sent. */
+function rowError(result: CitizenImportRowResult): string | undefined {
+  return result.code
+    ? localizeApiError({ code: result.code, message: result.error, params: result.params })
+    : result.error;
+}
 
 const STEPS = [
   { id: 'file', step: '١', title: 'الملف', icon: Upload },
@@ -77,6 +86,9 @@ export function ImportCitizensDialog({
   const [outcome, setOutcome] = useState<CitizenImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const t = useTranslations('citizenImport');
+  const locale = useLocale();
+  const labels = getLabels(locale);
 
   useEffect(() => {
     if (!open) return;
@@ -172,6 +184,7 @@ export function ImportCitizensDialog({
   const blocked = missingColumns.length > 0 || rows.length === 0;
   const okCount = preview?.results.filter((result) => result.ok).length ?? 0;
   const badRows = preview?.results.filter((result) => !result.ok) ?? [];
+  const resemblingRows = preview?.results.filter((result) => result.ok && result.possibleDuplicateOf?.length) ?? [];
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -423,7 +436,7 @@ export function ImportCitizensDialog({
                             {result.column ? (
                               <span className="font-semibold">{result.column}: </span>
                             ) : null}
-                            {result.error}
+                            {rowError(result)}
                           </p>
                         </div>
                       </li>
@@ -440,6 +453,36 @@ export function ImportCitizensDialog({
                   كل الصفوف صالحة.
                 </p>
               )}
+
+              {resemblingRows.length > 0 ? (
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">{t('possibleDuplicatesHeading')}</p>
+                  <ul className="divide-y overflow-hidden rounded-lg border">
+                    {resemblingRows.map((result) => (
+                      <li key={result.row} className="flex items-start gap-3 p-3 text-sm">
+                        <Badge variant="outline" className="shrink-0 tabular-nums">
+                          {t('row', { row: result.row })}
+                        </Badge>
+                        <div className="min-w-0 flex-1">
+                          {result.name ? <p className="font-medium">{result.name}</p> : null}
+                          <p className="flex items-start gap-1.5">
+                            <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
+                            {t('resembles', {
+                              names: (result.possibleDuplicateOf ?? []).join(locale === 'en' ? ', ' : '، '),
+                            })}
+                          </p>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="text-xs text-muted-foreground">
+                    {t('possibleDuplicatesNote', {
+                      status: labels.citizenRecordStatus.REQUIRES_REVIEW,
+                      flag: labels.citizenField.possibleDuplicate,
+                    })}
+                  </p>
+                </div>
+              ) : null}
             </>
           ) : null}
 
@@ -470,7 +513,7 @@ export function ImportCitizensDialog({
                           </Badge>
                           <div className="min-w-0 flex-1">
                             {result.name ? <p className="font-medium">{result.name}</p> : null}
-                            <p className="text-destructive">{result.error}</p>
+                            <p className="text-destructive">{rowError(result)}</p>
                           </div>
                         </li>
                       ))}

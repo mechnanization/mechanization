@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
+  EASTERN_DIGITS,
+  LATIN_DIGITS,
   POSSIBLE_DUPLICATE_FLAG_PATH,
   type FieldFlag,
   isNonPersonRecord,
@@ -9,6 +11,7 @@ import { Prisma } from '../../generated/tenant-client';
 import { PropertyEntry } from '../../domain/entities/property-entry.entity';
 import { Registration } from '../../domain/entities/registration.entity';
 import { ConflictError, NotFoundError } from '../../domain/errors/domain-error';
+import { parcelNumberKey } from '../../domain/interfaces/parcel-repository.interface';
 import {
   RegistrationRepository,
   SubmitRegistrationInput,
@@ -16,6 +19,7 @@ import {
 } from '../../domain/interfaces/registration-repository.interface';
 import { TenantContextService } from '../context/tenant-context.service';
 import { citizenPhoneRuleError } from '../prisma/check-violation';
+import { tenantSchemaRef } from '../prisma/tenant-schema-ref';
 import { normalizeSearchText } from '../../application/common/search-terms';
 
 /** Where an identity-document clash is recorded on the new citizen's file. */
@@ -49,6 +53,10 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
 
   private get db() {
     return this.tenantContext.prisma;
+  }
+
+  private get S() {
+    return tenantSchemaRef(this.tenantContext.schemaName);
   }
 
   /**
@@ -173,7 +181,15 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
                 identityDocNumber,
               },
             },
-            select: { id: true, kind: true, firstName: true, middleName: true, lastName: true, residence: true },
+            select: {
+              id: true,
+              kind: true,
+              firstName: true,
+              middleName: true,
+              lastName: true,
+              residence: true,
+              isActive: true,
+            },
           });
 
           /*
@@ -188,7 +204,15 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
               where: { absorbedId: holder.id, undoneAt: null },
               select: {
                 survivor: {
-                  select: { id: true, kind: true, firstName: true, middleName: true, lastName: true, residence: true },
+                  select: {
+                    id: true,
+                    kind: true,
+                    firstName: true,
+                    middleName: true,
+                    lastName: true,
+                    residence: true,
+                    isActive: true,
+                  },
                 },
               },
             });
@@ -205,6 +229,20 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
             !isNonPersonRecord(holder.residence) &&
             isSamePerson(holder, input.citizen)
           ) {
+            /*
+              The same person, on a file that is archived: no new filing joins
+              it. The file is reactivated first, on purpose and with its reason
+              (`setActive`); attaching here would put flats and bills on a file
+              the register says is closed. Refused rather than filed beside it,
+              which would make the same person twice.
+            */
+            if (!holder.isActive) {
+              throw new ConflictError({
+                code: 'CITIZEN_FILE_ARCHIVED',
+                message: 'The file this filing belongs to is archived. Reactivate it first.',
+                details: { citizenId: holder.id },
+              });
+            }
             identity = 'ATTACHED';
             attachedTo = holder.id;
           } else {
@@ -464,12 +502,19 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
    * Reported to the entry form as context ("three neighbours are already
    * registered here") rather than used to refuse the write — a building is one
    * cadastral number shared by everyone inside it.
+   *
+   * Compared digit-normalised on both sides: a card's رقم العقار is stored as
+   * typed, so a neighbour who wrote «١٥٥٣» is counted on 1553 too.
    */
   async countRegistrationsForParcel(propertyNumber: string): Promise<number> {
-    return this.db.propertyEntry.count({
-      // Who is registered here now — a tenancy that ended is history (0046).
-      where: { propertyNumber: propertyNumber.trim(), endedAt: null },
-    });
+    // Who is registered here now — a tenancy that ended is history (0046).
+    const [row] = await this.db.$queryRaw<Array<{ count: number }>>`
+      SELECT count(*)::int AS count
+        FROM ${this.S}property_entries
+       WHERE translate(btrim("propertyNumber"), ${EASTERN_DIGITS}, ${LATIN_DIGITS})
+             = ${parcelNumberKey(propertyNumber)}
+         AND "endedAt" IS NULL`;
+    return row?.count ?? 0;
   }
 
   private toDomain(row: {
@@ -559,7 +604,10 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
       // came back — worth surfacing as the generic conflict rather than as a
       // reassuring message that hides a schema drift.
       if (target.includes('identityDocNumber')) {
-        return new ConflictError('هذه الوثيقة مسجّلة مسبقاً لشخص آخر');
+        return new ConflictError({
+          code: 'CITIZEN_IDENTITY_DOC_TAKEN',
+          message: 'The identity document number is already held by another file',
+        });
       }
       if (target.includes('referenceNumber')) {
         return new ConflictError('تعذّر إنشاء رقم مرجعي فريد — يرجى المحاولة مرة أخرى');

@@ -12,6 +12,7 @@ import {
 import {
   arabicOrLatinName,
   internationalPhone,
+  normalizeDigits,
   optionalInternationalPhone,
   uuid,
 } from './primitives';
@@ -174,11 +175,20 @@ export const sharesField = z.coerce
  */
 export const unitStatusField = unitStatusSchema.optional();
 
+/**
+ * رقم العقار as it is saved: trimmed, and in Latin digits whatever keyboard
+ * typed it («١٥٥٣» is saved «1553»). The same number typed two ways was two
+ * parcels to every lookup that compares as stored — two buildings on one
+ * parcel went unseen, a parcel's zone was not found. Rows saved before
+ * 2026-10-14 keep what was typed, so the lookups still compare digit-normalised
+ * on both sides (`parcelNumberKey`, docs/gotchas.md).
+ */
 export const propertyNumberField = z
   .string({ required_error: 'رقم العقار مطلوب' })
   .trim()
   .min(1, 'رقم العقار مطلوب')
-  .max(40);
+  .max(40)
+  .transform((value) => normalizeDigits(value));
 
 /**
  * الحي — common to every property type, unlike رقم العقار it is not checked

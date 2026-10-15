@@ -1,7 +1,11 @@
-import { GUARDS_METADATA, HTTP_CODE_METADATA } from '@nestjs/common/constants';
+import { RequestMethod, type ExecutionContext } from '@nestjs/common';
+import { GUARDS_METADATA, HTTP_CODE_METADATA, METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
+import { Reflector } from '@nestjs/core';
 import type { Request, Response } from 'express';
+import { EVERY_STAFF_ROLE, STAFF_ROLE } from '@mechanization/shared-schemas';
 import {
   IdentityService,
+  SessionClaims,
   SessionResult,
   StaffRefreshOutcome,
   StaffSessionGrant,
@@ -9,6 +13,8 @@ import {
 import { ForbiddenError, UnauthorizedError } from '../../application/common/exceptions';
 import { APP_CONFIG } from '../config/app.config';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
+import { ROLES_KEY } from '../decorators/roles.decorator';
+import { RolesGuard } from '../guards/roles.guard';
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard';
 import { AuthController } from './auth.controller';
 
@@ -216,8 +222,48 @@ describe('AuthController — staff/logout', () => {
   });
 });
 
+describe('AuthController — staff/me, the caller’s own account', () => {
+  const handler = AuthController.prototype.staffMe as unknown as object;
+
+  /** `RolesGuard` over the real handler and class, as Nest runs it after `JwtAuthGuard`. */
+  const admits = (user: Partial<SessionClaims>) =>
+    new RolesGuard(new Reflector()).canActivate({
+      switchToHttp: () => ({ getRequest: () => ({ user }) }),
+      getHandler: () => handler,
+      getClass: () => AuthController,
+    } as unknown as ExecutionContext);
+
+  it('reads the account the token names, and nothing the caller sends', async () => {
+    const own = { id: 'staff-1', email: 'clerk@zahle.gov.lb', role: 'COLLECTOR', hasConfirmedTotp: true };
+    const staffSelf = jest.fn().mockResolvedValue(own);
+    const controller = build({ staffSelf });
+
+    await expect(
+      controller.staffMe({ sub: 'staff-1', kind: 'STAFF', tenantSlug: 'zahle', role: 'COLLECTOR' }),
+    ).resolves.toEqual(own);
+    expect(staffSelf).toHaveBeenCalledWith('staff-1');
+  });
+
+  it('is GET staff/me, signed in, for every staff role', () => {
+    expect(Reflect.getMetadata(METHOD_METADATA, handler)).toBe(RequestMethod.GET);
+    expect(Reflect.getMetadata(PATH_METADATA, handler)).toBe('staff/me');
+    expect(Reflect.getMetadata(IS_PUBLIC_KEY, handler)).toBeUndefined();
+    expect([...(Reflect.getMetadata(ROLES_KEY, handler) as string[])].sort()).toEqual([...EVERY_STAFF_ROLE].sort());
+  });
+
+  it.each(STAFF_ROLE)('admits %s', (role) => {
+    expect(admits({ sub: 's1', kind: 'STAFF', tenantSlug: 'zahle', role })).toBe(true);
+  });
+
+  it('refuses a citizen token, which the role-less routes beside it admit', () => {
+    expect(() => admits({ sub: 'c1', kind: 'CITIZEN', tenantSlug: 'zahle' })).toThrow(ForbiddenError);
+  });
+});
+
 describe('AuthController — how the three routes are mounted', () => {
-  const handler = (name: 'loginStaff' | 'refreshStaff' | 'logoutStaff') =>
+  const handler = (
+    name: 'loginStaff' | 'refreshStaff' | 'logoutStaff' | 'changePassword' | 'changeEmail' | 'disableTotp',
+  ) =>
     AuthController.prototype[name] as unknown as object;
 
   it.each(['loginStaff', 'refreshStaff', 'logoutStaff'] as const)(
@@ -236,6 +282,18 @@ describe('AuthController — how the three routes are mounted', () => {
 
   it('answers logout with 200, not the 201 a POST defaults to', () => {
     expect(Reflect.getMetadata(HTTP_CODE_METADATA, handler('logoutStaff'))).toBe(200);
+  });
+
+  it('puts the own-account writes that check the current password on their own tight throttle, per session', () => {
+    // Without it the default (120 a minute) let a stolen session guess the password.
+    const sessionTracker = Reflect.getMetadata('THROTTLER:TRACKERdefault', handler('refreshStaff'));
+    for (const name of ['changePassword', 'changeEmail', 'disableTotp'] as const) {
+      expect(Reflect.getMetadata('THROTTLER:LIMITdefault', handler(name))).toBe(APP_CONFIG.throttle.ownAccount.limit);
+      expect(Reflect.getMetadata('THROTTLER:TTLdefault', handler(name))).toBe(
+        APP_CONFIG.throttle.ownAccount.ttlSeconds * 1000,
+      );
+      expect(Reflect.getMetadata('THROTTLER:TRACKERdefault', handler(name))).toBe(sessionTracker);
+    }
   });
 
   it('keeps sign-in on the login throttle and puts refresh and logout on the session one', () => {
