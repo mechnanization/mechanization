@@ -319,7 +319,7 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
 - **A citizen file is archived, never deleted** (decision of 2026-10-05). «أرشفة الملف»
   asks for the reason and who asked for it, both written to the activity log; an archived
   file is billed nothing new and keeps everything it holds, and «إعادة من الأرشيف» brings it
-  back. Every way of raising a fee refuses one on an archived file, «تكليف مباشر» included
+  back. Every way of raising a fee refuses one on an archived file, «تكليف مباشر» and a municipal request's fee included
   (`FEE_CITIZEN_ARCHIVED`, since 2026-10-14), and the fee pickers do not offer it. It takes no
   new filing either — no card, no flat, no sale: a registration that would join it, a person
   put in a flat, or a sale's buyer is refused with «أعِده من الأرشيف أولاً», on the form, from

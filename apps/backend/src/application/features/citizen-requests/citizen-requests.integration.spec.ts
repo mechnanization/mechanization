@@ -309,6 +309,22 @@ describeIfDb('CitizenRequestsService', () => {
   });
 
   describe('the fee', () => {
+    it('raises no bill on a file archived since it was filed, as no other fee is (FEE_CITIZEN_ARCHIVED)', async () => {
+      const citizen = await citizenWithCard();
+      const filed = await within(() =>
+        service.submit(
+          { citizenId: citizen.id, requestType: 'RESIDENCY', applicantCapacity: 'OWNER', clientRequestId: randomUUID() },
+          staffActor,
+        ),
+      );
+      await db.user.update({ where: { id: citizen.id }, data: { isActive: false } });
+      await expect(within(() => service.raiseBill(filed.id, staffActor))).rejects.toMatchObject({
+        code: 'FEE_CITIZEN_ARCHIVED',
+      });
+      expect(await db.citizenPayment.count({ where: { citizenId: citizen.id } })).toBe(0);
+      expect((await db.citizenRequest.findUniqueOrThrow({ where: { id: filed.id } })).citizenPaymentId).toBeNull();
+    });
+
     it('is not raised by the citizen while online payment is paused, and leaves the request cancellable', async () => {
       const citizen = await citizenWithCard();
       const filed = await fileOnline(citizen);

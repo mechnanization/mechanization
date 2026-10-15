@@ -21,7 +21,7 @@ import { scrollElementToTop } from '@/lib/scroll-to-top';
 import { MovementComposer } from '@/components/admin/finance/movements/movement-composer';
 import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
 import { Alert } from '@/components/ui/alert';
-import { BackLink } from '@/components/ui/back-link';
+import { HeaderBackLink } from '@/components/admin/header-back-link';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
@@ -142,7 +142,7 @@ export default function MovementsPage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <BackLink fallbackHref={`${base}/finance`} label={t('back')} />
+      <HeaderBackLink fallbackHref={`${base}/finance`} label={t('back')} />
 
       <PageHeader
         icon={ArrowDownUp}

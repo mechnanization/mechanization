@@ -48,6 +48,7 @@ import { unitsUnderReview } from '../buildings/unit-status';
 import { uninhabitableUnitIds } from '../buildings/habitability';
 import { ownerBillingRules } from '../buildings/owner-billing';
 import { cancelRequestOfCancelledBill } from '../citizen-requests/cancelled-bill';
+import { assertNotMergedAway } from '../citizens/merged-away';
 import { ConflictError, DomainError, ForbiddenError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { exchangeRuleChangeAllowed } from '../treasury/transfers.plan';
 import { raiseOneOffBill } from './one-off-bill';

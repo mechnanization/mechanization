@@ -13,7 +13,7 @@ import { hasRole, REQUEST_SETTINGS_ROLES } from '@/lib/staff-roles';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { useTableLabels } from '@/lib/use-table-labels';
-import { BackLink } from '@/components/ui/back-link';
+import { HeaderBackLink } from '@/components/admin/header-back-link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { CellTag } from '@/components/ui/cell-tag';
@@ -180,7 +180,7 @@ export default function RequestTypesPage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <BackLink fallbackHref={`${base}/requests`} label={t('back')} />
+      <HeaderBackLink fallbackHref={`${base}/requests`} label={t('back')} />
       <PageHeader icon={Tags} title={t('title')} />
 
       {canManage && edited && token ? (

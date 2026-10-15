@@ -466,7 +466,7 @@ migration ahead of the code that needs it).
   on every read — which also sends an unbilled request to review once its type is made free
   (D1: the fee in force when the bill is raised); a bill the manager cancels cancels its waiting
   request in the same transaction (`FeesService.cancelBill` → `cancelRequestOfCancelledBill`,
-  decision of 2026-10-13, `0094`), and `reconcile` cancels any request still open on a cancelled bill — one a lost reversal left in review as well, which once went back to waiting on a bill nobody could pay; a request shows a fee only while it waits for its bill (the type's current fee), and `null` once it will never be billed; «دمج ملفين» moves a person's requests with them; a card or a
+  decision of 2026-10-13, `0094`), and `reconcile` cancels any request still open on a cancelled bill — one a lost reversal left in review as well, which once went back to waiting on a bill nobody could pay; a request shows a fee only while it waits for its bill (the type's current fee), and `null` once it will never be billed; a request's fee is not raised on a file archived since it was filed (`FEE_CITIZEN_ARCHIVED`, as every fee since 2026-10-14; `raiseOneOffBill`); «دمج ملفين» moves a person's requests with them; a card or a
   flat a request names is never deleted (`PROPERTY_NAMED_BY_REQUEST`, `HAS_REQUESTS`). Rules in
   [apps/backend/CLAUDE.md](../apps/backend/CLAUDE.md) and [security.md](security.md).
 - **Staff screens:** `requests` (the queue and the request's panel), `requests/new` (the

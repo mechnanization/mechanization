@@ -399,7 +399,6 @@ export function ChoiceCard({
   title,
   description,
   icon: Icon,
-  disabled,
   className,
   disabled,
   children,
@@ -413,7 +412,6 @@ export function ChoiceCard({
   title: string;
   description?: React.ReactNode;
   icon?: React.ComponentType<{ className?: string }>;
-  disabled?: boolean;
   className?: string;
   /**
    * This one answer is not available, with `description` saying why. Dims the

@@ -396,7 +396,7 @@ component types.
 ## Copy and i18n (decision D-i18n)
 
 - New copy MUST go in next-intl messages, `messages/ar.json` and `messages/en.json`, with
-  the same keys in both (3,115 leaf keys each, counted 2026-10-15 on PR #122 rebased onto `develop@3211140`, with municipal requests: `requests.*` for the staff screens, `citizenRequests.*` for the portal's, `citizenPicker.*`; `finance.movements` holds the copy of both «الإيرادات والنفقات» and «الحركات المالية»). Read it with `useTranslations`.
+  the same keys in both (3,121 leaf keys each, counted 2026-10-15 on PR #122 rebased onto `develop@3211140`, with municipal requests: `requests.*` for the staff screens, `citizenRequests.*` for the portal's, `citizenPicker.*`; `finance.movements` holds the copy of both «الإيرادات والنفقات» and «الحركات المالية»). Read it with `useTranslations`.
   `lib/messages-parity.test.ts` checks that both files hold the same keys, the same ICU
   placeholders and the same rich-text tags, and that no Arabic message outside `errors`
   writes a count as `#`: inside a plural branch write `{count}`, because `#` is formatted
@@ -613,8 +613,8 @@ are inlined at build time. The local `.env.local` block is in
 ## Tests
 
 Vitest (`apps/frontend/vitest.config.mts`): `environment: 'node'`, only `lib/**/*.test.ts`,
-with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 52 test files, 679 cases (counted
-2026-10-15, PR #120 rebased onto `develop@3211140`). Several read components rather than render them:
+with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 55 test files, 705 cases (counted
+2026-10-15, PR #122 rebased onto `develop@3211140`). Several read components rather than render them:
 `back-navigation.test.ts` every page and component under `app/` and `components/`, so that only
 the header and the two toolbars PRIM-2 names draw a `BackLink`; `print-pages.test.ts` and `payout-hosts.test.ts` read every
 print page and every payout-dialog host, `transfer-screens.test.ts` the transfer screens,

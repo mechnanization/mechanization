@@ -10,7 +10,7 @@ import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { CounterRequestForm } from '@/components/admin/requests/counter-request-form';
 import { Alert } from '@/components/ui/alert';
-import { BackLink } from '@/components/ui/back-link';
+import { HeaderBackLink } from '@/components/admin/header-back-link';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/ui/page-header';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -49,7 +49,7 @@ export default function NewCounterRequestPage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <BackLink fallbackHref={`${base}/requests`} label={t('back')} />
+      <HeaderBackLink fallbackHref={`${base}/requests`} label={t('back')} />
       <PageHeader icon={FilePlus2} title={t('title')} />
 
       {!user ? (

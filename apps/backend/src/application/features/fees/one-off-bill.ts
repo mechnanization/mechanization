@@ -1,6 +1,6 @@
 import type { Prisma } from '../../../generated/tenant-client';
 import { allocateDocumentNumber } from '../../common/document-number';
-import { NotFoundError } from '../../common/exceptions';
+import { ConflictError, NotFoundError } from '../../common/exceptions';
 import { assertNotMergedAway } from '../citizens/merged-away';
 
 /**
@@ -28,12 +28,20 @@ export async function raiseOneOffBill(
 ): Promise<{ id: string; invoiceNumber: string; currency: string }> {
   const citizen = await tx.user.findFirst({
     where: { id: input.citizenId, kind: 'CITIZEN' },
-    select: { id: true },
+    select: { id: true, isActive: true },
   });
   if (!citizen) {
     throw new NotFoundError({ code: 'CITIZEN_NOT_FOUND', message: `Citizen ${input.citizenId} was not found` });
   }
   await assertNotMergedAway(tx, citizen.id);
+  // An archived file takes no new fees, whichever way the fee is raised: «تكليف مباشر» or a
+  // municipal request's (`FeesService.chargeableCitizen`, develop's rule since 2026-10-14).
+  if (!citizen.isActive) {
+    throw new ConflictError({
+      code: 'FEE_CITIZEN_ARCHIVED',
+      message: 'This citizen file is archived, and an archived file takes no new fees',
+    });
+  }
 
   const invoiceNumber = await allocateDocumentNumber(tx, schema, 'INVOICE');
   const created = await tx.citizenPayment.create({

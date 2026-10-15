@@ -34,7 +34,7 @@ import { MovementList, MovementListSkeleton } from '@/components/admin/finance/m
 import { VoucherSheet } from '@/components/admin/finance/movements/voucher-sheet';
 import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
 import { Alert } from '@/components/ui/alert';
-import { BackLink } from '@/components/ui/back-link';
+import { HeaderBackLink } from '@/components/admin/header-back-link';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/ui/page-header';
 import { Pager } from '@/components/ui/pager';
@@ -328,7 +328,7 @@ export default function TransactionsPage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <BackLink fallbackHref={`${base}/finance`} label={t('back')} />
+      <HeaderBackLink fallbackHref={`${base}/finance`} label={t('back')} />
 
       <PageHeader
         icon={ScrollText}

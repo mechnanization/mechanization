@@ -13,7 +13,7 @@ import { BLANK_LETTERHEAD, useAutoPrint, useMunicipalLetterhead } from '@/compon
 import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
 import { RequestDocument } from '@/components/admin/requests/request-document';
 import { Alert } from '@/components/ui/alert';
-import { BackLink } from '@/components/ui/back-link';
+import { HeaderBackLink } from '@/components/admin/header-back-link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
@@ -68,7 +68,7 @@ export default function RequestPrintPage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <BackLink fallbackHref={`${base}/requests?request=${requestId}`} label={t('back')} />
+      <HeaderBackLink fallbackHref={`${base}/requests?request=${requestId}`} label={t('back')} />
       <PageHeader
         icon={FileCheck}
         title={data ? t('pageTitleNumbered', { number: data.requestNumber }) : t('pageTitle')}
