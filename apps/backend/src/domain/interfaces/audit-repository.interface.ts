@@ -2,6 +2,13 @@ import { AuditLogEntry } from '../entities/audit-log-entry.entity';
 
 export interface AuditQuery {
   actorId?: string;
+  /**
+   * Only the entries no person made — `actorId` NULL: the scheduler, a payment
+   * provider's callback. «النظام» has no id to filter by, and without this the
+   * daily report's «النظام» row drilled down into everyone's entries. Never
+   * sent together with `actorId`.
+   */
+  systemActor?: boolean;
   entityType?: string;
   entityId?: string;
   /**

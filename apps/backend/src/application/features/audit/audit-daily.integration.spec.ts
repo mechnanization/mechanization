@@ -200,3 +200,111 @@ describeIfDb('Audit daily roll-up', () => {
     expect(second.items[0]!.actorId).not.toBe(first.items[0]!.actorId);
   });
 });
+
+/**
+ * «النظام» in the daily report: the entries no person made (the scheduler's
+ * recurring billing, a Whish callback) carry no `actorId`, so they roll up into
+ * one row with a null actor. Its drill-down used to send no actor filter at
+ * all, and listed every actor's entries for the day under «النظام».
+ *
+ * A schema of its own, so the counts the block above asserts stay its own.
+ */
+const SYSTEM_SCHEMA = 'tenant_audit_system_spec';
+
+describeIfDb('Audit daily roll-up: the system row', () => {
+  let ddl: Client;
+  let db: TenantPrismaClient;
+  let context: TenantContextService;
+  let repository: PrismaAuditRepository;
+
+  const officer = randomUUID();
+  const from = new Date('2026-09-20T00:00:00.000Z');
+  const to = new Date('2026-09-20T20:59:59.999Z');
+
+  const within = <T>(work: () => Promise<T>): Promise<T> =>
+    context.run(
+      { tenantId: 'tenant-audit-system', tenantSlug: 'audit-system', schemaName: SYSTEM_SCHEMA, prisma: db },
+      work,
+    );
+
+  const entry = (actorId: string | null, action: string, at: string) =>
+    db.auditLogEntry.create({
+      data: {
+        actorId,
+        actorType: actorId ? 'STAFF' : 'SYSTEM',
+        action,
+        entityType: 'FeeNotice',
+        entityId: randomUUID(),
+        createdAt: new Date(at),
+      },
+    });
+
+  beforeAll(async () => {
+    ddl = new Client({ connectionString: TEST_DATABASE_URL });
+    await ddl.connect();
+    await ddl.query(`DROP SCHEMA IF EXISTS "${SYSTEM_SCHEMA}" CASCADE`);
+    await migrateTenantSchema(ddl, SYSTEM_SCHEMA);
+
+    db = tenantTestClient(TEST_DATABASE_URL!, SYSTEM_SCHEMA);
+    context = new TenantContextService();
+    repository = new PrismaAuditRepository(context);
+
+    await db.user.create({
+      data: {
+        id: officer,
+        kind: 'STAFF',
+        tenantSlug: 'audit-system',
+        email: `${officer}@audit.gov.lb`,
+        firstName: 'جواد',
+        lastName: 'موظف',
+        role: 'ACCOUNTANT',
+        passwordHash: 'x',
+      },
+    });
+
+    // 2026-09-20 in Beirut (UTC+3): two by the officer, three by nobody.
+    await entry(officer, 'FEE_ISSUED', '2026-09-20T07:00:00.000Z');
+    await entry(officer, 'FEE_ISSUED', '2026-09-20T08:00:00.000Z');
+    await entry(null, 'FEE_RECURRING_ISSUED', '2026-09-20T03:00:00.000Z');
+    await entry(null, 'FEE_RECURRING_ISSUED', '2026-09-20T03:00:01.000Z');
+    await entry(null, 'PAYMENT_WHISH_SETTLED', '2026-09-20T11:00:00.000Z');
+  }, SETUP_TIMEOUT_MS);
+
+  afterAll(async () => {
+    await db?.$disconnect();
+    await ddl?.query(`DROP SCHEMA IF EXISTS "${SYSTEM_SCHEMA}" CASCADE`);
+    await ddl?.end();
+  });
+
+  it('rolls the entries with no actor into one row', async () => {
+    const result = await within(() => repository.daily({ timeZone: 'Asia/Beirut', limit: 50, offset: 0 }));
+
+    expect(result.total).toBe(2);
+    expect(result.items.find((row) => row.actorId === null)?.total).toBe(3);
+    expect(result.items.find((row) => row.actorId === officer)?.total).toBe(2);
+  });
+
+  it('drills the system row down to its own entries only', async () => {
+    const system = await within(() =>
+      repository.query({ systemActor: true, from, to, limit: 200, offset: 0 }),
+    );
+
+    // As many as the summary row counted, and none of the officer's.
+    expect(system.total).toBe(3);
+    expect(system.items).toHaveLength(3);
+    expect(system.items.every((row) => row.actorId === null)).toBe(true);
+
+    // What the drill-down returned with no actor filter: the whole day.
+    const unfiltered = await within(() => repository.query({ from, to, limit: 200, offset: 0 }));
+    expect(unfiltered.total).toBe(5);
+  });
+
+  it('narrows the summary the same way', async () => {
+    const result = await within(() =>
+      repository.daily({ systemActor: true, timeZone: 'Asia/Beirut', limit: 50, offset: 0 }),
+    );
+
+    expect(result.total).toBe(1);
+    expect(result.items[0]).toMatchObject({ actorId: null, total: 3 });
+  });
+});

@@ -30,8 +30,12 @@ const held = new Map<string, string>();
  * page and the citizen cash page both settle one bill (`settle:<paymentId>`).
  * «تسديد الفواتير المحددة» holds one per set of bills, the ids sorted
  * (`bulk-settle:<id>,<id>,…`, `bulkKeyScope` in `lib/bulk-settle.ts`).
+ * A new building holds one per parcel (`building:<رقم العقار>`, the building
+ * editor): its key is the building's id, and the server refuses an id it
+ * already knows on another parcel.
  */
 export type KeyScope =
+  | `building:${string}`
   | `bulk-settle:${string}`
   | `commission:${string}`
   | `custody:${string}`

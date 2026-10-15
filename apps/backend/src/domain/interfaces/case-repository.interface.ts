@@ -117,11 +117,11 @@ export interface CaseRepository {
       notes?: string;
       propertyNumber?: string | null;
       neighborhood?: string | null;
-      propertyType?: string;
+      propertyType?: string | null;
       buildingName?: string | null;
       floor?: string | null;
       side?: string | null;
-      landType?: string;
+      landType?: string | null;
       tentLocation?: string | null;
       status?: string;
       resolvedCitizenId?: string | null;

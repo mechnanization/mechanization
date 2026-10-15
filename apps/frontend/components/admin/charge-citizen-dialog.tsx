@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import { Loader2, UserPlus } from 'lucide-react';
-import type { CitizenListItem } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -15,6 +14,7 @@ import {
 import { Field } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { BillTypeSelect } from '@/components/admin/bill-type-select';
+import { CitizenPicker, type PickedCitizen } from '@/components/admin/citizen-picker';
 
 export interface ChargeValues {
   citizenId: string;
@@ -41,7 +41,8 @@ function formatLbp(value: string): string {
 export function ChargeCitizenDialog({
   open,
   onOpenChange,
-  citizens,
+  tenant,
+  token,
   submitting,
   error,
   onSubmit,
@@ -50,7 +51,9 @@ export function ChargeCitizenDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  citizens: CitizenListItem[];
+  tenant: string;
+  /** The staff session's token; the picker searches the register with it. */
+  token: string | null;
   submitting: boolean;
   error: string | null;
   onSubmit: (values: ChargeValues) => void;
@@ -58,36 +61,18 @@ export function ChargeCitizenDialog({
   existingTitles?: string[];
 }) {
   const [values, setValues] = useState<ChargeValues>(EMPTY);
-  const [query, setQuery] = useState('');
+  /** The file chosen in the picker (`CitizenPicker`), whose id `values.citizenId` carries. */
+  const [picked, setPicked] = useState<PickedCitizen | null>(null);
 
   useEffect(() => {
     if (open) {
       setValues(EMPTY);
-      setQuery('');
+      setPicked(null);
     }
   }, [open]);
 
   const set = (patch: Partial<ChargeValues>) =>
     setValues((previous) => ({ ...previous, ...patch }));
-
-  const q = query.trim().toLowerCase();
-  const digitsOnly = q.replace(/\D/g, '');
-  const matches = q
-    ? citizens
-        .filter(
-          (row) =>
-            row.fullName.toLowerCase().includes(q) ||
-            (row.referenceNumber ?? '').toLowerCase().includes(q) ||
-            (row.phone ?? '').toLowerCase().includes(q) ||
-            (digitsOnly.length > 0 && (row.phone ?? '').replace(/\D/g, '').includes(digitsOnly)) ||
-            (row.whatsapp ?? '').toLowerCase().includes(q) ||
-            (row.identityDocNumber ?? '').toLowerCase().includes(q) ||
-            row.id.toLowerCase().includes(q),
-        )
-        .slice(0, 8)
-    : [];
-
-  const chosen = citizens.find((row) => row.id === values.citizenId);
 
   const complete =
     values.citizenId !== '' &&
@@ -128,38 +113,16 @@ export function ChargeCitizenDialog({
             htmlFor="charge-citizen"
             required
           >
-            <div className="space-y-2">
-              <Input
-                id="charge-citizen"
-                placeholder={locale === 'en' ? 'Citizen name or reference number' : 'اسم المواطن أو الرقم المرجعي'}
-                value={chosen ? `${chosen.fullName} — ${chosen.referenceNumber}` : query}
-                onChange={(event) => {
-                  setQuery(event.target.value);
-                  if (values.citizenId) set({ citizenId: '' });
-                }}
-              />
-              {!chosen && matches.length > 0 ? (
-                <ul className="overflow-hidden rounded-lg border">
-                  {matches.map((row) => (
-                    <li key={row.id}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          set({ citizenId: row.id });
-                          setQuery('');
-                        }}
-                        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-start text-sm transition-colors hover:bg-accent"
-                      >
-                        <span className="font-medium">{row.fullName}</span>
-                        <span className="font-mono text-xs text-muted-foreground" dir="ltr">
-                          {row.referenceNumber}
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-            </div>
+            <CitizenPicker
+              id="charge-citizen"
+              tenant={tenant}
+              token={token}
+              value={picked}
+              onChange={(citizen) => {
+                setPicked(citizen);
+                set({ citizenId: citizen?.id ?? '' });
+              }}
+            />
           </Field>
 
           <Field

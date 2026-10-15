@@ -1,6 +1,6 @@
 # Database
 
-Last verified against the code: `feat/treasury-day-closing@c88c971` (`develop` with the reviewed treasury, #107/#108; PR #106, stage 5: the daily count, the day closing and the closed-day lock; PR #109, inspector payouts and decision D9; PR #111, transfers, exchange and wallets with `0088`; PR #112, bulk settlement with `0085`; each merged with its review fixes, and the cross-feature fixes) with the fixes of the final-stack review (uncommitted): `0089` (a paid commission payout written once, and the payout's retry key on its row), a back-dated outflow judged against every day's close, the count's wallet locks in id order, the migrator's lock note, 2026-10-11.
+Last verified against the code: `fix/pr114-review` (PR #114 merged with `develop@5e8f5c3`, with its review fixes): a foreign-key violation on a registration card, 2026-10-14.
 
 The rules for anything that reads or writes a database: the schemas, how to
 query them, how to change them, and how data may move between environments.
@@ -430,6 +430,13 @@ and fails intermittently with `42P01`.
 - Where `P2002` is mapped today: `PrismaUserRepository.translate`,
   `PrismaRegistrationRepository.translate`, and inline in
   `ParcelCorrectionService`. There is no shared helper.
+- A foreign-key violation (Prisma `P2003`) is a 500 unless mapped the same way.
+  `PrismaRegistrationRepository.translate` maps the two a registration card can
+  break — a building or a flat the register does not hold, which a queued
+  registration can name — to `BUILDING_NOT_FOUND` and `UNIT_NOT_FOUND`
+  (`NotFoundError`). Prisma 5 on Postgres names the constraint in
+  `error.meta.field_name`, as `property_entries_buildingId_fkey (index)` and
+  `building_units_unitId_fkey (index)` (`registration-references.spec.ts`).
 
 ### Deviations
 

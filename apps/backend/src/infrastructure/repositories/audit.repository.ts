@@ -112,6 +112,7 @@ export class PrismaAuditRepository implements AuditRepository {
       }
       conditions.push(Prisma.sql`"actorId" = ${query.actorId}::uuid`);
     }
+    if (query.systemActor) conditions.push(Prisma.sql`"actorId" IS NULL`);
     if (query.entityType) conditions.push(Prisma.sql`"entityType" = ${query.entityType}`);
     if (query.actions?.length) conditions.push(Prisma.sql`"action" = ANY(${query.actions}::text[])`);
     if (query.excludeActions?.length) {

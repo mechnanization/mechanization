@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `fix/pr113-review` (PR #113 on `develop@5e8f5c3` with the fixes of both its reviews: the reversal route's named role set, both of its ids through `ParseUUIDPipe`, its role pinned once in `route-inventory.spec.ts`, the pipe found in either form, and every fee route's path id through it, the eight that took theirs raw with PR #120's own lines), 2026-10-14.
+Last verified against the code: `fix/pr114-review` (PR #114 merged with `develop@5e8f5c3`, with its review fixes): the audit reads' `?actorId=` and its «النظام» value, the review queue's total, a registration card's missing building, 2026-10-14.
 
 NestJS 10, Prisma 5, zod 3. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -144,7 +144,9 @@ Data access for new code (decided):
   `owner-billing.ts`): «حسب الأسهم» with an owner's أسهم missing (HIGH, every co-owner's bill refused) or a
   responsible owner no longer among the open owners (MEDIUM, split equally). A notice that bills nobody
   because «مالك مسؤول» pays refuses with `FEE_NOTHING_TO_CHARGE` (`coOwnerPaid`), not
-  `FEE_NO_MATCHING_CITIZENS`. The portal gets this owner's part and never the responsible owner's id;
+  `FEE_NO_MATCHING_CITIZENS`. A fee raised on one person — «تكليف مباشر» (`chargeIndividual`) or a
+  notice for `INDIVIDUAL_CITIZEN` — goes through `FeesService.chargeableCitizen`: `CITIZEN_NOT_FOUND`,
+  `CITIZEN_MERGED_AWAY`, or `FEE_CITIZEN_ARCHIVED` for an archived file, which takes no new fees. The portal gets this owner's part and never the responsible owner's id;
   under «مالك مسؤول» the part (1/1 or 0/1) says who pays, read the same way on both sides.
 - **Units exempt from fees.** `units.feeExemption` (`0077`) takes a unit off every rate-based bill, whoever
   bears the fee: `holdingsOf` reads it, `assessCitizen` removes the unit before the review hold and the
@@ -620,6 +622,13 @@ request's tenant scope. A misspelt or unheard name is dropped silently. Add each
 credential: a رقم مرجعي goes in only as `ReferenceNumber.mask(...)`
 ([docs/security.md](../../docs/security.md#data-integrity-and-transactions)).
 
+Reading the log (`AuditController`, `AUDIT_READ_ROLES`): `GET audit` and `GET audit/daily` take
+`?actorId=` through `auditActorFilterSchema` (shared-schemas): a person's id, or `AUDIT_SYSTEM_ACTOR`
+(`SYSTEM`) for the entries no person made, whose `actorId` is NULL (a Whish callback, the scheduler's
+billing). The controller maps `SYSTEM` to `AuditQuery.systemActor`, which
+`PrismaAuditRepository.where()` reads as `"actorId" IS NULL`; it is how the daily report's «النظام» row
+drills down to its own entries (`audit-daily.integration.spec.ts`). The actor facets list staff only.
+
 ## Recipe: add an endpoint
 
 Model: commit `f9fd805` — `CorrectionsController`, `UnitCorrectionService`, `unit-correction.plan.ts`.
@@ -678,7 +687,7 @@ points at does not exist. `src/scripts/reset-2fa.ts` has no script entry and MUS
 
 ## Tests
 
-- Jest with ts-jest (`jest.config.js`: `rootDir` `src`, `*.spec.ts` beside the source): 148 spec files, 43 of them `*.integration.spec.ts` (counted on disk 2026-10-13 on `fix/pr113-review`; unchanged by it).
+- Jest with ts-jest (`jest.config.js`: `rootDir` `src`, `*.spec.ts` beside the source): 150 spec files, 43 of them `*.integration.spec.ts` (counted on disk 2026-10-15, `fix/pr114-review` with PR #123 merged in).
 - Integration specs run only when `TEST_DATABASE_URL` is set (`describeIfDb`) and skip silently otherwise.
   They `DROP SCHEMA … CASCADE` and rebuild fixed `tenant_*_spec` schemas on whatever database it names,
   and nothing checks the target. Point it ONLY at a throwaway Postgres 17 container (migration `0044`

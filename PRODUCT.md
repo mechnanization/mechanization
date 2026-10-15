@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية الذكية)
 
-Last verified against the code: `fix/pr113-review` (PR #113 on `develop@5e8f5c3` with the fixes of both its reviews: «عكس الوصل», its way in from a paid bill and its hold while a reported transfer waits for review, the portal's part-paid figures, the payout history's balances in the order the money moved), 2026-10-14.
+Last verified against the code: `fix/pr114-review` (PR #114 merged with `develop@5e8f5c3`, with its review fixes): an archived file takes no new fee on any path, 2026-10-14.
 
 A multi-tenant municipal platform for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastral map, municipal fee billing (رسوم القيمة التأجيرية
@@ -247,7 +247,8 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
 - **A citizen file is archived, never deleted** (decision of 2026-10-05). «أرشفة الملف»
   asks for the reason and who asked for it, both written to the activity log; an archived
   file is billed nothing new and keeps everything it holds, and «إعادة من الأرشيف» brings it
-  back.
+  back. Every way of raising a fee refuses one on an archived file, «تكليف مباشر» included
+  (`FEE_CITIZEN_ARCHIVED`, since 2026-10-14), and the fee pickers do not offer it.
 - **A building's height counts its built floors, never its roof** (the user's decision of
   2026-10-07). «الطوابق المسقوفة» is every level under a roof, the ground floor and a
   «طابق أعمدة» included. The building editor says so, gives the two ways to record a duplex

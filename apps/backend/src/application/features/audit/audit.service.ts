@@ -684,7 +684,7 @@ export class AuditService {
 
   private cacheKey(query: AuditQuery): string {
     const parts = [
-      query.actorId ?? 'ALL',
+      query.systemActor ? 'SYSTEM' : (query.actorId ?? 'ALL'),
       query.entityType ?? 'ALL',
       query.entityId ?? 'ALL',
       query.alsoEntityIds?.length ? `also:${query.alsoEntityIds.join('|')}` : '-',

@@ -233,6 +233,29 @@ describeIfDb('Quality review', () => {
     expect(returned.target).toMatchObject({ type: 'User', label: 'ريم مراجعة', link: { kind: 'citizen', id: citizenId } });
   });
 
+  it("reports the tab's size on every page, a page past the end included", async () => {
+    await filing(staff.hussein, { firstName: 'سارة', lastName: 'صفحات' });
+    await filing(staff.hussein, { firstName: 'سامر', lastName: 'صفحات' });
+
+    const first = await within(() =>
+      reviews.queue({ states: ['NEW'], officerId: staff.hussein, limit: 1, offset: 0 }),
+    );
+    expect(first.items).toHaveLength(1);
+    expect(first.total).toBeGreaterThanOrEqual(2);
+    expect(first.total).toBe(first.counts.NEW);
+
+    /*
+      The last card of the last page decided, or a stale ?page=: no row on the
+      page. The tab still holds records, and «مراجعة السجلات» steps back to
+      them only if `total` says so (`pageWithRows`).
+    */
+    const beyond = await within(() =>
+      reviews.queue({ states: ['NEW'], officerId: staff.hussein, limit: 1, offset: first.total + 5 }),
+    );
+    expect(beyond.items).toHaveLength(0);
+    expect(beyond.total).toBe(first.total);
+  });
+
   it('closes a return for the phone once the officer answers «لا يملك رقم هاتف»', async () => {
     /*
       The return asked for a number; «لا يملك رقم هاتف» is the complete answer

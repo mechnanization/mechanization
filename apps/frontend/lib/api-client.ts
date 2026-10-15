@@ -1468,15 +1468,35 @@ export function createCase(tenant: string, token: string, input: CaseWriteInput)
   });
 }
 
+/**
+ * The fields a case PATCH clears with `null` (`updateCaseSchema` takes null for
+ * exactly these): the free-text place fields, and نوع العقار and نوع الأرض when
+ * «غير معروف» is chosen. An omitted field is left as it is, so a field the
+ * officer emptied has to be sent as `null` or it is never cleared.
+ */
+export type CaseClearableField =
+  | 'propertyNumber'
+  | 'neighborhood'
+  | 'propertyType'
+  | 'buildingName'
+  | 'floor'
+  | 'side'
+  | 'landType'
+  | 'tentLocation';
+
+export type CaseUpdateInput = Omit<Partial<CaseWriteInput>, CaseClearableField> & {
+  [K in CaseClearableField]?: string | null;
+} & {
+  status?: CaseStatus;
+  /** Setting this always resolves the case server-side; `null` only clears the link. */
+  resolvedCitizenId?: string | null;
+};
+
 export function updateCase(
   tenant: string,
   token: string,
   id: string,
-  input: Partial<CaseWriteInput> & {
-    status?: CaseStatus;
-    /** Setting this always resolves the case server-side; `null` only clears the link. */
-    resolvedCitizenId?: string | null;
-  },
+  input: CaseUpdateInput,
 ) {
   return apiFetch<CaseSummary>(tenant, `/cases/${encodeURIComponent(id)}`, {
     token,
@@ -4819,6 +4839,7 @@ export function getAuditLog(
   tenant: string,
   token: string,
   filter: {
+    /** A person's id, or `AUDIT_SYSTEM_ACTOR` for the entries no person made (no actor id). */
     actorId?: string;
     entityType?: string;
     /** One record's own trail. Pairs with `entityType`; the server indexes both. */

@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `fix/pr113-review` (PR #113 on `develop@5e8f5c3` with the fixes of both its reviews: a payout from before go-live dated by day and summed in the order the money moved, a re-read that did not answer, a pipe passed as a class), 2026-10-14.
+Last verified against the code: `fix/pr114-review` (PR #114 merged with `develop@5e8f5c3`, with its review fixes): a window count on an empty page, 2026-10-14.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -220,6 +220,21 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   NULL` first), and prove every CHECK refuses the row it exists for before shipping.
 - **Where:** `0075_unit_owner_billing` (`units_responsible_owner_needs_mode`), `0077`'s
   `units_fee_exemption_other_note` (`IS DISTINCT FROM`).
+
+### `count(*) OVER()` is 0 on a page past the end
+
+- **What happens:** «مراجعة السجلات» read `total` off its page rows, so once the last card of the
+  last page was decided (or a stale `?page=` pointed past the end) the answer was `{ items: [],
+  total: 0 }`: the screen said «لا سجلات تنتظر المراجعة» beside a tab badge of 60, and
+  `pageWithRows` sent the reviewer to page one.
+- **Why:** a window function is computed over the rows the query returns. A page with no row has
+  nowhere to carry the count.
+- **Do this:** take a list's total from a count that does not depend on `LIMIT`/`OFFSET` (a second
+  query, or counts the screen already reads), as `RecordReviewService.queue` does from its per-state
+  counts. Read `total` off the page only where nothing pages past the end.
+- **Where:** fixed in `record-review.service.ts` (2026-10-14). `PrismaAuditRepository.query` and
+  its grouped read still take `total` from `count(*) OVER()`; `citizens.service.ts` `list` explains
+  why it stopped doing so.
 
 ### No `CREATE INDEX CONCURRENTLY`
 

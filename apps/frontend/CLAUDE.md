@@ -1,6 +1,6 @@
 # apps/frontend: agent guide
 
-Last verified against the code: `fix/pr113-review` (PR #113 on `develop@5e8f5c3` with the fixes of both its reviews: «وصولات الفاتورة» and «عكس الوصل» with their way in from a paid bill, no reversal offered over a claim under review, the lost-answer rule with a re-read that must have answered (`receiptsReadAgain`), the portal's part-paid figures and its total owed in one home, the payout history's balances in the order the money moved, `StatItem`'s `hint`, the screens pinned by reading them), 2026-10-14.
+Last verified against the code: `fix/pr114-review` (PR #114 merged with `develop@5e8f5c3`, with its review fixes: citizen pickers, the building editor's held creation key and drafts, the offline queue's revised, held and refused records), 2026-10-14.
 
 Next.js 15 app router, React 18, next-intl 4, TanStack Query 5, Tailwind 3.4 with
 tailwind-merge 3, Radix and lucide-react. One app serves the staff dashboard and the
@@ -198,7 +198,8 @@ component types.
   `components/admin/landlord-proposal-card.tsx`.
   - A write that moves money carries a `clientRequestId` held in `lib/request-id.ts`
     (`heldKey(tenant, scope)`, `spendKey`): module state, so the key outlives every unmount of
-    the form for the life of the tab. Scopes — `KeyScope`, nine of them: `bulk-settle:<ids>` (the
+    the form for the life of the tab. Scopes — `KeyScope`, ten of them: `building:<parcel>` (a new
+    building, whose key is its id; the building editor), `bulk-settle:<ids>` (the
     selected bills' ids, sorted; `bulkKeyScope`), `commission:<staffId>` (one per inspector paid;
     `commissionScope` in `lib/commission-payout.ts`; sent before go-live too, by `payoutRequest`,
     since the payout row keeps it, `0089`), `custody:<accountId>`, `expense:pay`,
@@ -266,6 +267,29 @@ component types.
     `income-categories`: `IncomeCategoryEditor` writes what it saves into both cached lists
     (`['treasury', tenant, 'income-categories']` and `[…, 'all']`) through
     `withSavedCategory` (`lib/category-cache.ts`).
+- **One citizen picker.** A screen that chooses a citizen's file uses `CitizenPicker`
+  (`components/admin/citizen-picker.tsx`): «تكليف مباشر», «إصدار رسم جديد», a sale's new owner
+  (`BuyerPicker`), a case's people (`LinkCaseCitizenDialog`, which keeps `value` null and adds each
+  pick), and the other half of a merge. It is controlled (`value: PickedCitizen | null`, `onChange`);
+  the chosen file shows as a card with «تغيير». A row shows the name, the mother's name and the رقم
+  مرجعي; never the document number or the phone. Never write another one: a screen with a flow of its
+  own around the results uses the same search, `useCitizenSearch` («إضافة شخص إلى الوحدة» in
+  `AddPersonForm`, whose «ليس بينهم؟» opens a new file). The command palette is a navigation search,
+  not a picker, and keeps its own (code-quality.md).
+- `useCitizenSearch` (`lib/use-citizen-search.ts`) searches the register on the server as the clerk
+  types: `SEARCH_DEBOUNCE_MS` 350 ms, an `AbortController`, `limit: 8`. Files folded by «دمج ملفين» are
+  never offered, archived files only where the screen asks (`includeArchived`: the census and
+  ownership screens, where they are shown marked «مؤرشف» and not taken — the row says to restore the
+  file first, so the person is not filed twice, and the server refuses a new filing on an archived
+  file, `CITIZEN_FILE_ARCHIVED`, #115; never a fee, `FEE_CITIZEN_ARCHIVED`), and `exclude` drops the files a screen may not offer
+  (the seller, the file being merged into, the people already listed). The server has no filter for
+  either, so `more` says when the register holds more matches than are listed. The last term's
+  matches are emptied the moment another is typed, so nothing stale is there to click. A failed search
+  is told apart from «no match» (`failed`, with the API's own words in `error`) and can be retried
+  (`retry`). `CitizenSearchStatus` under the field keeps one `role="status"` line mounted and draws a
+  failure as a warning `Alert` with «إعادة المحاولة». Never a `listCitizens({ limit: 200 })` filtered in
+  the browser: a file filed after that page cannot be found (the direct-charge dialog and «إصدار رسم
+  جديد» did that until 2026-10-11).
 - `lib/request-cache.ts` (`cachedRequest`, `invalidateRequests`) is a second, memory-only
   cache inside api-client (tenant config, zones, census, fee summary, settings). Legacy for
   new reads. **Undecided:** retire it for `reference: true` reads, or keep it for non-React callers.
@@ -342,11 +366,39 @@ component types.
 - `lib/offline-db.ts`: IndexedDB `mechanization.offline` (`DB_VERSION = 2`), stores
   `citizenSubmissions` and `buildingSubmissions`, keyed by `id`, a `clientSubmissionId` from
   `newSubmissionId` (`lib/offline-sync.ts`) that the server's unique index deduplicates. `lib/offline-sync.ts` runs one engine per tenant (`queueSubmission`,
-  `queueBuilding`, `syncQueue`, `retrySubmission`, `useOfflineQueue`, …).
+  `queueBuilding`, `syncQueue`, `retrySubmission`, `retryBuilding`, `discardBuilding`, `useOfflineQueue`, …).
+- The building editor sends a creation's `clientSubmissionId` (also the building's id) from a held key,
+  one per parcel (`heldKey(tenant, 'building:<parcel>')`, `lib/request-id.ts`), so the key outlives a
+  remount the draft survives. The key policy is every retry key's (`keyIsSpent`): kept across every
+  failure, marked in doubt after a lost answer, spent once the building is on file or handed to the
+  queue. An offline save is queued under the same id, flagged `afterLostAnswer` when it is in doubt. An
+  `inFlight` ref guards the save, and after one that landed the form stays locked while the page moves
+  on. A `deduplicated` answer is said as such (`buildingEditor.deduplicated`).
+- A queued registration is marked `inDoubt` once a send under its id may have landed unanswered (no
+  answer, a 408, a 5xx; not a 429) or it was queued by an online save that fell back under its own id.
+  A revision made after that carries `revisedAt` (`withRevision`), and only then. Answered `deduplicated`,
+  such a record is kept, `blocked`, with the `citizenId` it reached, never dequeued: the file may hold
+  the record as it stood before the revision. `OfflineQueuePanel` then offers «فتح الملف»,
+  «عرض التعديلات» (the editor shows the copy and sends nothing) and «حذف», and no «إعادة المحاولة»,
+  which could only replay it. These fields are optional and unindexed, so `DB_VERSION` did not change.
+- A registration that names a building still queued on the device (pending, or refused before its
+  shell landed) is not sent: it waits, saying which building, and goes out once that building lands
+  (`namesQueuedBuilding` in `syncQueue`). A building whose shell landed and only its flats were refused
+  carries `deliveredCode` and holds nobody back.
+- A refused queued building is retried or discarded from `BuildingQueueNotice`; the discard
+  confirmation names it, says whether it reached the register, and counts the registrations that name
+  it or its flats (`registrationsOnBuilding`); `discardBuilding` blocks those, saying why. A building
+  queued after a lost answer and found on file is kept as a notice (`deduplicated`). No screen edits a
+  queued building's payload.
 - `public/sw.js`: `VERSION` is bumped by hand; GET only, never `/api/`, never localhost;
   network-first navigations with `/offline.html`. `useServiceWorker` registers it (staff
   side) and unregisters it in development.
-- Drafts: `lib/citizen-draft.ts` (localStorage), `lib/building-draft.ts` (sessionStorage).
+- Drafts: `lib/citizen-draft.ts` (localStorage), `lib/building-draft.ts` (sessionStorage). A building
+  draft of an edit is written only once it differs from the building as loaded (`editDraftFingerprint`),
+  stores `baseUpdatedAt`, the version its edits were made against, and is restored silently only while
+  the server holds that version (`draftIsCurrent`). Otherwise the editor keeps the draft on screen,
+  disables «حفظ», and asks: the latest version (read again, the draft deleted), or the draft saved over
+  it (flats removed since are drawn again as new, so the save is what is on screen).
 - A session that cannot write the register (`CITIZEN_RECORD_EDIT_ROLES`: «مشاهد فقط», an
   auditor, the accountant, on a device an officer queued records on) never drains:
   `syncQueue` reports `writerRequired` and leaves every record as it was, and a 403 leaves a
@@ -360,7 +412,9 @@ component types.
 module scope), `useUrlPagination`, `PAGE_SIZE_OPTIONS`. The search term lives in tab
 sessionStorage through `useTabSearch`, never in the URL. Two views on one page that each
 page their own table (the expense register and its queue) share `?page=` / `?limit=`, so a
-view switch clears the other view's parameters in the same write.
+view switch clears the other view's parameters in the same write. A list whose rows leave it as they
+are acted on steps back to the last page with rows once its answer is in (`pageWithRows` in
+`lib/url-state.ts`; «مراجعة السجلات», which pages its cards with `Pager`).
 
 ## Printing
 
@@ -467,8 +521,8 @@ are inlined at build time. The local `.env.local` block is in
 ## Tests
 
 Vitest (`apps/frontend/vitest.config.mts`): `environment: 'node'`, only `lib/**/*.test.ts`,
-with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 45 test files, 596 cases (counted
-2026-10-13 on `fix/pr113-review` with both reviews' fixes). Eight of them read
+with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 48 test files, 657 cases (counted
+2026-10-15, `fix/pr114-review` with PR #123 merged in). Five of them read
 components rather than render them: `print-pages.test.ts` and `payout-hosts.test.ts` read every
 print page and every payout-dialog host, `transfer-screens.test.ts` the transfer screens,
 `commission-payout.test.ts` the payout dialog, `bulk-settle.test.ts` the bulk dialog's gate,

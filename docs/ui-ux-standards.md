@@ -1,6 +1,6 @@
 # UI/UX standards: binding for every change to `apps/frontend`
 
-Last verified against the code: `fix/pr113-review` (PR #113 on `develop@5e8f5c3` with the fixes of both its reviews: `StatItem`'s `hint`, the payout history on `StatStrip` and `Money`, the pay dialog's figures through `formatLbp`/`Money`, «عكس الوصل» answering an already-reversed receipt as done and wording each outcome on its own, the inline-locale count restated with its scope), 2026-10-14.
+Last verified against the code: `fix/pr114-review` (PR #114 merged with `develop@5e8f5c3`, with its review fixes): the double-submit entries, `Pager` users, 2026-10-14.
 
 This file binds every AI agent and every person who builds or reviews an
 interface in this repository. [CLAUDE.md](../CLAUDE.md) (non-negotiable 9) and
@@ -683,7 +683,8 @@ Code-pattern debt outside the UI rules lives in
   (counted 2026-10-13).
 - **Hand-rolled pagers, 3** (PRIM-4): `AuditTrailPage` (`audit/page.tsx`),
   `CorrectionBillsPage` (`fees/corrections/page.tsx`), `AuditDaily`
-  (`components/admin/audit-daily.tsx`). `Pager` has 1 user.
+  (`components/admin/audit-daily.tsx`). `Pager` has 2 users (the citizen file's bills, and
+  «مراجعة السجلات», `quality/review-queue.tsx`, since 2026-10-11).
 - **Red error banners, 60 copies in 45 files** (CTL-12), none of them yet moved
   to the `Alert` primitive that now exists — the finance screens and the counter
   settle page (moved 2026-10-09) are its only users. Each is a className holding `border-destructive…`, `bg-destructive/5` or `/10` and
@@ -911,8 +912,19 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
   Harmless in Lebanon, wrong on a laptop set to another zone. A day named in an API refusal
   (`CLOSED_DAY_MUTATION_BLOCKED`, `DAY_ALREADY_CLOSED`, …) printed in its ISO form beside the page's
   09/10/2026; fixed 2026-10-11: `localizeApiError` writes any `YYYY-MM-DD` param through `formatDay`.
-- **Double submit** (STA-4): the payouts page with `InspectorPayoutDialog` guards with `busy`
-  state only, with no in-flight ref.
+- **Double submit** (STA-4): the fees register's «تكليف مباشر» (`handleChargeCitizen` in
+  `fees/page.tsx`) takes no retry key: its route accepts none, so after a lost answer the clerk
+  must check the register before pressing again. (This entry used to name `InspectorPayoutDialog`
+  too; it has had an in-flight ref and a retry key since PR #109.)
+  - «تكليف مباشر» and the case editor's save (`case-editor.tsx`) guarded with `busy` state only
+    (found 2026-10-11). Fixed 2026-10-14: an in-flight ref each; the case editor stays locked
+    after a save that landed.
+  - The building editor (`building-editor.tsx`) created a second building on a double click and
+    re-enabled «حفظ» while the page was leaving. Fixed 2026-10-11: an in-flight ref, a
+    `clientSubmissionId` given to the offline queue too, the form locked after a save that landed,
+    and a `deduplicated` answer said. 2026-10-14: the id is a held key per parcel
+    (`building:<parcel>`), kept across every failure as every retry key is; held in the form, it
+    died with a remount the draft survived, and a renewal on a 400 could make a second building.
   - The counter settle page (`fees/payments/[paymentId]/settle`) gained an in-flight ref and a
     retry key on the PR #104 review. It also prints the receipt the server wrote (its RCP number
     and moment), not the bill's reference. Fixed 2026-10-09: the profile read that builds the

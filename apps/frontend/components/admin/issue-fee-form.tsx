@@ -26,7 +26,6 @@ import {
   FEE_TARGET_TYPE,
 } from '@mechanization/shared-schemas';
 import type { FeeBasis, FeeBearer } from '@mechanization/shared-schemas';
-import type { CitizenListItem } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { Alert } from '@/components/ui/alert';
@@ -41,6 +40,7 @@ import {
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { BillTypeSelect } from '@/components/admin/bill-type-select';
+import { CitizenPicker, type PickedCitizen } from '@/components/admin/citizen-picker';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/dates';
 
@@ -115,7 +115,8 @@ function formatLbp(value: string): string {
  * unbilled); this owns the steps and the fields.
  */
 export function IssueFeeForm({
-  citizens,
+  tenant,
+  token,
   submitting,
   error,
   onSubmit,
@@ -123,7 +124,9 @@ export function IssueFeeForm({
   locale = 'ar',
   existingTitles = [],
 }: {
-  citizens: CitizenListItem[];
+  tenant: string;
+  /** The staff session's token; the citizen picker searches the register with it. */
+  token: string | null;
   submitting: boolean;
   error: string | null;
   onSubmit: (values: IssueFeeValues) => void;
@@ -134,7 +137,8 @@ export function IssueFeeForm({
 }) {
   const labels = getLabels(locale);
   const [values, setValues] = useState<IssueFeeValues>(EMPTY);
-  const [citizenQuery, setCitizenQuery] = useState('');
+  /** The file chosen in the picker (`CitizenPicker`), whose id `values.targetCitizenId` carries. */
+  const [picked, setPicked] = useState<PickedCitizen | null>(null);
   const [stepIndex, setStepIndex] = useState(0);
 
   const steps = [
@@ -163,24 +167,7 @@ export function IssueFeeForm({
   const set = (patch: Partial<IssueFeeValues>) =>
     setValues((previous) => ({ ...previous, ...patch }));
 
-  const q = citizenQuery.trim().toLowerCase();
-  const digitsOnly = q.replace(/\D/g, '');
-  const matches = q
-    ? citizens
-        .filter(
-          (row) =>
-            row.fullName.toLowerCase().includes(q) ||
-            (row.referenceNumber ?? '').toLowerCase().includes(q) ||
-            (row.phone ?? '').toLowerCase().includes(q) ||
-            (digitsOnly.length > 0 && (row.phone ?? '').replace(/\D/g, '').includes(digitsOnly)) ||
-            (row.whatsapp ?? '').toLowerCase().includes(q) ||
-            (row.identityDocNumber ?? '').toLowerCase().includes(q) ||
-            row.id.toLowerCase().includes(q),
-        )
-        .slice(0, 8)
-    : [];
-
-  const chosen = citizens.find((row) => row.id === values.targetCitizenId);
+  const chosen = picked && picked.id === values.targetCitizenId ? picked : undefined;
   const amount = Number(values.amount.replace(/\D/g, ''));
   const recurring = values.frequency !== 'ONCE';
 
@@ -458,43 +445,16 @@ export function IssueFeeForm({
                   htmlFor="fee-citizen"
                   required
                 >
-                  <div className="space-y-2">
-                    <Input
-                      id="fee-citizen"
-                      placeholder={locale === 'en' ? 'Citizen name or reference number' : 'اسم المواطن أو الرقم المرجعي'}
-                      value={
-                        chosen ? `${chosen.fullName} — ${chosen.referenceNumber}` : citizenQuery
-                      }
-                      onChange={(event) => {
-                        setCitizenQuery(event.target.value);
-                        if (values.targetCitizenId) set({ targetCitizenId: '' });
-                      }}
-                    />
-                    {!chosen && matches.length > 0 ? (
-                      <ul className="overflow-hidden rounded-lg border">
-                        {matches.map((row) => (
-                          <li key={row.id}>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                set({ targetCitizenId: row.id });
-                                setCitizenQuery('');
-                              }}
-                              className="flex w-full items-center justify-between gap-3 px-3 py-2 text-start text-sm transition-colors hover:bg-accent"
-                            >
-                              <span className="font-medium">{row.fullName}</span>
-                              <span
-                                className="font-mono text-xs text-muted-foreground"
-                                dir="ltr"
-                              >
-                                {row.referenceNumber}
-                              </span>
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : null}
-                  </div>
+                  <CitizenPicker
+                    id="fee-citizen"
+                    tenant={tenant}
+                    token={token}
+                    value={chosen ?? null}
+                    onChange={(citizen) => {
+                      setPicked(citizen);
+                      set({ targetCitizenId: citizen?.id ?? '' });
+                    }}
+                  />
                 </Field>
               ) : null}
 

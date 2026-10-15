@@ -232,9 +232,9 @@ export class RecordReviewService {
       )`;
 
     const [page, counts] = await Promise.all([
-      this.db.$queryRaw<Array<{ id: string; state: ReviewState; total: number }>>`
+      this.db.$queryRaw<Array<{ id: string; state: ReviewState }>>`
         ${classified}
-        SELECT id, state, count(*) OVER()::int AS total
+        SELECT id, state
         FROM classified
         WHERE state = ANY(${[...filter.states]}::text[]) AND ${narrow}
         ORDER BY "submittedAt" DESC, id
@@ -249,12 +249,20 @@ export class RecordReviewService {
     const stateById = new Map(page.map((row) => [row.id, row.state]));
     const items = await this.hydrate(page.map((row) => row.id));
 
+    const countOf = Object.fromEntries(
+      REVIEW_STATES.map((state) => [state, counts.find((row) => row.state === state)?.count ?? 0]),
+    ) as Record<ReviewState, number>;
     const result: QueuePage = {
       items: items.map((item) => ({ ...item, state: stateById.get(item.registrationId)! })),
-      total: page[0]?.total ?? 0,
-      counts: Object.fromEntries(
-        REVIEW_STATES.map((state) => [state, counts.find((row) => row.state === state)?.count ?? 0]),
-      ) as Record<ReviewState, number>,
+      /*
+        The tab's size, summed from the per-state counts, which read the same
+        `narrow`. Not `count(*) OVER()` on the page: a page past the end has no
+        row to carry it, and read as 0 the screen said «لا سجلات تنتظر المراجعة»
+        and sent the reviewer to the first page after the last card of a page
+        was decided.
+      */
+      total: filter.states.reduce((sum, state) => sum + countOf[state], 0),
+      counts: countOf,
     };
 
     if (ttl > 0) await this.cache.set(cacheKey, result, ttl);
