@@ -170,7 +170,8 @@ export function LandlordMatchHint({
               checked={selectedId === candidate.id}
               onChange={setChosen}
               title={candidate.name}
-              className="min-h-11"
+              // A lone match is already the answer: no radio to press, as before the card (still read as checked).
+              className={alone ? 'min-h-11 [&_input]:sr-only' : 'min-h-11'}
             >
               <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
                 {match === 'SAME' ? (

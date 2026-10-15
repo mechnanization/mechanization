@@ -880,6 +880,16 @@
       "failed": "The fee could not be issued.",
       "notAllowedTitle": "You may not issue fees",
       "notAllowedBody": "Issuing fees is limited to certain roles. You can read the register without issuing."
+    },
+    "charge": {
+      "title": "Direct Charge Citizen",
+      "description": "One-off individual charge without periodic billing recurrence.",
+      "citizen": "Citizen",
+      "billType": "Fee / Bill Type",
+      "billTypePlaceholder": "Select from previous bills or type a new title…",
+      "amount": "Amount (LBP)",
+      "dueDate": "Due Date",
+      "submit": "Add Charge"
     }
   },
   "parcelDrawer": {
@@ -1291,6 +1301,28 @@
       "rowsRemoved": "{count} removed",
       "rowsChanged": "{count} changed",
       "recordedFields": "{count} recorded field(s)"
+    },
+    "daily": {
+      "loadFailed": "Failed to load the daily report.",
+      "emptyTitle": "Nothing in this range",
+      "emptyBody": "Widen the date range or clear a filter.",
+      "colDay": "Day",
+      "colStaff": "Staff member",
+      "colWhat": "What they did",
+      "colCount": "Actions",
+      "colLast": "Last",
+      "today": "Today",
+      "yesterday": "Yesterday",
+      "system": "System",
+      "unknown": "Unknown",
+      "more": "+{count} more",
+      "viewDetails": "View details",
+      "dayLoadFailed": "Could not load this day.",
+      "colTime": "Time",
+      "colAction": "Action",
+      "colRecord": "Record",
+      "colChanges": "What changed",
+      "truncated": "Showing the first {shown} of {expected}. Use the detailed view for the rest."
     }
   },
   "duplicateReview": {
@@ -2979,5 +3011,71 @@
     "possibleDuplicatesNote": "These will be imported and held at “{status}” with “{flag}”, for someone to check whether it is the same person.",
     "resembles": "Resembles: {names}",
     "row": "Row {row}"
+  },
+  "cases": {
+    "editor": {
+      "back": "Back to Cases",
+      "titleEdit": "Edit Case",
+      "titleNew": "Open a follow-up case",
+      "intro": "For a visit that could not become a citizen registration — record what was observed so the next visit does not start from zero.",
+      "loadFailed": "Could not load the case.",
+      "saveFailed": "Could not save the case.",
+      "notes": "What happened",
+      "propertyNumber": "Property Number",
+      "neighborhood": "Neighborhood",
+      "propertyType": "Property Type",
+      "unknown": "Unknown",
+      "buildingName": "Building / House Name",
+      "side": "Side / Orientation",
+      "sidePlaceholder": "e.g. North, South",
+      "floor": "Floor",
+      "landType": "Land Type",
+      "tentLocation": "Tent Location Description",
+      "tentLocationPlaceholder": "e.g. North Camp — Plot 4",
+      "saveChanges": "Save Changes",
+      "saveCase": "Save Case"
+    },
+    "page": {
+      "title": "Cases",
+      "open": "Open a follow-up case",
+      "loadFailed": "Failed to load cases.",
+      "markedResolved": "Marked resolved",
+      "markedScheduled": "Marked as a scheduled revisit",
+      "reopened": "Case reopened",
+      "updateFailed": "Could not update the case.",
+      "updateFailedTitle": "Could not update the case",
+      "sessionEnded": "Your session has ended.",
+      "deleted": "Case deleted",
+      "deleteFailed": "Could not delete the case.",
+      "logged": "Logged cases",
+      "shownOf": "({shown} of {total})",
+      "conversionFigure": "{percent}%",
+      "conversionText": "conversion — {linked} of {resolved} resolved cases led to a registered citizen",
+      "filter": "Filter:",
+      "sector": "Sector",
+      "allSectors": "All sectors",
+      "parcelFilter": "Filter by parcel number",
+      "parcelPlaceholder": "Parcel #",
+      "parcelClear": "Clear parcel number",
+      "buildingFilter": "Filter by building code",
+      "buildingPlaceholder": "Building code",
+      "buildingClear": "Clear building code",
+      "opened": "Opened",
+      "from": "From",
+      "to": "To",
+      "clearFilters": "Clear {count} filter(s)",
+      "deleteTitle": "Delete Case",
+      "deleteBody": "This case will be removed permanently. This does not affect any citizen record.",
+      "working": "Working…",
+      "table": {
+        "searchAriaLabel": "Search cases",
+        "searchPlaceholder": "Search by property number, neighborhood, or notes…",
+        "searchApplied": "Search: \"{term}\"",
+        "empty": "No cases logged yet.",
+        "emptySearch": "No results match your search.",
+        "loadError": "Failed to load cases.",
+        "totalRows": "{count} cases"
+      }
+    }
   }
 }

@@ -770,13 +770,14 @@ export default function CitizensPage({
           label={locale === 'en' ? 'Overdue Arrears' : 'متأخرات مستحقة'}
           value={figurePending ?? <Money amount={totals.overdue} wrap />}
           icon={Banknote}
-          className="text-destructive"
+          // A tone says something (COL-2): none on a zero, and none while the figure loads.
+          className={!figurePending && totals.overdue > 0 ? 'text-destructive' : undefined}
         />
         <StatItem
           label={locale === 'en' ? 'Citizens in Arrears' : 'مواطنون متأخرون'}
           value={figurePending ?? totals.inArrears.toLocaleString('en-US')}
           icon={TriangleAlert}
-          className="text-warning"
+          className={!figurePending && totals.inArrears > 0 ? 'text-warning' : undefined}
         />
       </StatStrip>
 

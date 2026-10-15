@@ -13,7 +13,7 @@ import { readView } from '@/lib/read-view';
 import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
 import { RecordTransferForm } from '@/components/admin/finance/record-transfer-form';
 import { Alert } from '@/components/ui/alert';
-import { BackLink } from '@/components/ui/back-link';
+import { HeaderBackLink } from '@/components/admin/header-back-link';
 import { Card, CardContent } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -62,7 +62,7 @@ export default function NewTransferPage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <BackLink fallbackHref={registerHref} label={t('backToRegister')} />
+      <HeaderBackLink fallbackHref={registerHref} label={t('backToRegister')} />
 
       <PageHeader icon={ArrowRightLeft} title={t('form.title')} />
 

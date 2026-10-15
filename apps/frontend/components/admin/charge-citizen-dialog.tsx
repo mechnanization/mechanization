@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Loader2, UserPlus } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
@@ -62,6 +63,8 @@ export function ChargeCitizenDialog({
   locale?: string;
   existingTitles?: string[];
 }) {
+  const t = useTranslations('fees.charge');
+  const tCommon = useTranslations('common');
   const [values, setValues] = useState<ChargeValues>(EMPTY);
   /** The file chosen in the picker (`CitizenPicker`), whose id `values.citizenId` carries. */
   const [picked, setPicked] = useState<PickedCitizen | null>(null);
@@ -85,19 +88,15 @@ export function ChargeCitizenDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        closeLabel={locale === 'en' ? 'Close' : 'إغلاق'}
+        closeLabel={tCommon('close')}
         className="flex max-h-[85dvh] flex-col gap-0 p-0 sm:max-w-lg"
       >
         <DialogHeader className="shrink-0 space-y-1 border-b p-6 text-start">
           <DialogTitle className="flex items-center gap-2">
             <UserPlus className="size-5 text-primary" aria-hidden />
-            {locale === 'en' ? 'Direct Charge Citizen' : 'إضافة مطالبة لمواطن'}
+            {t('title')}
           </DialogTitle>
-          <DialogDescription>
-            {locale === 'en'
-              ? 'One-off individual charge without periodic billing recurrence.'
-              : 'مطالبة فردية لمرة واحدة، دون إشعار أو تكرار.'}
-          </DialogDescription>
+          <DialogDescription>{t('description')}</DialogDescription>
         </DialogHeader>
 
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-6">
@@ -107,11 +106,7 @@ export function ChargeCitizenDialog({
             </Alert>
           ) : null}
 
-          <Field
-            label={locale === 'en' ? 'Citizen' : 'المواطن'}
-            htmlFor="charge-citizen"
-            required
-          >
+          <Field label={t('citizen')} htmlFor="charge-citizen" required>
             <CitizenPicker
               id="charge-citizen"
               tenant={tenant}
@@ -124,31 +119,19 @@ export function ChargeCitizenDialog({
             />
           </Field>
 
-          <Field
-            label={locale === 'en' ? 'Fee / Bill Type' : 'نوع الرسم / سبب المطالبة'}
-            htmlFor="charge-title"
-            required
-          >
+          <Field label={t('billType')} htmlFor="charge-title" required>
             <BillTypeSelect
               id="charge-title"
               locale={locale}
               value={values.title}
               onChange={(title) => set({ title })}
               existingTitles={existingTitles}
-              placeholder={
-                locale === 'en'
-                  ? 'Select from previous bills or type a new title…'
-                  : 'اختر من الرسوم السابقة أو اكتب اسماً جديداً…'
-              }
+              placeholder={t('billTypePlaceholder')}
             />
           </Field>
 
           <div className="grid gap-5">
-            <Field
-              label={locale === 'en' ? 'Amount (LBP)' : 'المبلغ بالليرة اللبنانية'}
-              htmlFor="charge-amount"
-              required
-            >
+            <Field label={t('amount')} htmlFor="charge-amount" required>
               <Input
                 id="charge-amount"
                 inputMode="numeric"
@@ -159,11 +142,7 @@ export function ChargeCitizenDialog({
                 onChange={(event) => set({ amount: formatLbp(event.target.value) })}
               />
             </Field>
-            <Field
-              label={locale === 'en' ? 'Due Date' : 'تاريخ الاستحقاق'}
-              htmlFor="charge-due"
-              required
-            >
+            <Field label={t('dueDate')} htmlFor="charge-due" required>
               <DatePicker
                 id="charge-due"
                 value={values.dueDate}
@@ -176,11 +155,11 @@ export function ChargeCitizenDialog({
 
         <DialogFooter className="shrink-0 gap-2 border-t p-6">
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
-            {locale === 'en' ? 'Cancel' : 'إلغاء'}
+            {tCommon('cancel')}
           </Button>
           <Button disabled={!complete || submitting} onClick={() => onSubmit(values)}>
             {submitting ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-            {locale === 'en' ? 'Add Charge' : 'إضافة المطالبة'}
+            {t('submit')}
           </Button>
         </DialogFooter>
       </DialogContent>

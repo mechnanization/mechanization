@@ -779,7 +779,8 @@ export default function FeesPage({
               : undefined
           }
           icon={Wallet}
-          className="text-success"
+          // A tone says something (COL-2): none on a zero, and none while the figure loads.
+          className={!figurePending && (summary?.paidTotal ?? 0) > 0 ? 'text-success' : undefined}
         />
         {/*
           «قائمة» rather than «مطلوبة», and the difference is not wording.
@@ -808,7 +809,7 @@ export default function FeesPage({
           value={figurePending ?? (summary?.pendingReviewCount ?? 0).toLocaleString('en-US')}
           hint={loading ? undefined : locale === 'en' ? 'Transfers awaiting verification' : 'تحويلات تحتاج موافقة الموظف'}
           icon={Clock3}
-          className="text-warning"
+          className={!figurePending && (summary?.pendingReviewCount ?? 0) > 0 ? 'text-warning' : undefined}
         />
         <StatItem
           label={locale === 'en' ? 'Total Billed' : 'إجمالي الرسوم الصادرة'}

@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `fix/pr116-review` (PR #116 merged with `fix/pr115-review`, which stacks #123, #124 and #115 on `develop@5e8f5c3`): Tailwind 4 class names on 3.4; digit-normalised cadastre lookups, Latin digits on write, what still compares as stored; a window count on an empty page, 2026-10-15.
+Last verified against the code: `fix/pr116-review` (PR #116 merged with `fix/pr115-review`, which stacks #123, #124 and #115 on `develop@5e8f5c3`, with its review fixes): Escape inside a dialog, Tailwind 4 class names on 3.4; digit-normalised cadastre lookups, Latin digits on write, what still compares as stored; a window count on an empty page, 2026-10-15.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -1071,9 +1071,27 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   2026-10-11 by compiling a probe with the app's config.
 - **Do this:** use the 3.4 name. Before trusting a class you remember from
   Tailwind 4 docs, compile it (`npx tailwindcss --content <file> -c tailwind.config.ts`).
-- **Where:** `outline-hidden` 7 times in `bill-type-select.tsx` and
-  `fullscreen-map.tsx`; `shadow-xs` counts in
-  [ui-ux-standards.md](ui-ux-standards.md) §17.4.
+- **Where:** `outline-hidden` was 7 times in `bill-type-select.tsx` and
+  `fullscreen-map.tsx`, all `outline-none` since 2026-10-15; `shadow-xs` counts
+  in [ui-ux-standards.md](ui-ux-standards.md) §17.4.
+
+### Escape in a popover closes the dialog around it
+
+- **What happens:** an officer opens the calendar in a dialog and presses
+  Escape to close it; the whole dialog closes, and a dialog that resets on
+  close (`end-tenancy-dialog`) loses what was typed in it.
+- **Why:** Radix closes a dialog from a `keydown` listener on `document` in the
+  capture phase. A popover drawn in the tree that listens on `document` — in
+  the bubble phase, or in the capture phase but added after the dialog's —
+  hears the key after the dialog has already closed.
+- **Do this:** while the popover is open, listen on `window` in the capture
+  phase, which runs before anything on `document`, and stop the key there.
+  A list inside the popover listens on `window` too, after it, so Escape
+  closes the innermost open thing first.
+- **Where:** `components/ui/date-picker.tsx` (`DatePicker` and its
+  `JumpDropdown`), since 2026-10-15. `bill-type-select.tsx` and
+  `notifications-bell.tsx` are hand-rolled popovers as well (CTL-11, [ui-ux-standards.md](ui-ux-standards.md) §17.1) and were
+  not checked.
 
 ### `toISOString().slice(0, 10)` is the UTC date
 

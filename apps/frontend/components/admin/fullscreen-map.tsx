@@ -1844,7 +1844,7 @@ export function FullscreenMap({
             </Button>
 
             {financeMenuOpen ? (
-              <div className="absolute inset-x-0 top-full mt-1.5 z-50 w-auto rounded-xl sm:inset-x-auto sm:end-0 sm:w-60 border border-border/80 bg-popover p-1.5 text-popover-foreground shadow-xl backdrop-blur-md outline-hidden animate-in fade-in-0 zoom-in-95">
+              <div className="absolute inset-x-0 top-full mt-1.5 z-50 w-auto rounded-xl sm:inset-x-auto sm:end-0 sm:w-60 border border-border/80 bg-popover p-1.5 text-popover-foreground shadow-xl backdrop-blur-md outline-none animate-in fade-in-0 zoom-in-95">
                 <div className="px-2 py-1 text-xs font-bold text-muted-foreground border-b border-border/40 mb-1">
                   {locale === 'en' ? 'Point Color Mode' : 'وضع تلوين وتصنيف النقاط'}
                 </div>
@@ -2001,7 +2001,7 @@ export function FullscreenMap({
             </Button>
 
             {measureMenuOpen ? (
-              <div className="absolute inset-x-0 top-full mt-1.5 z-50 w-auto rounded-xl sm:inset-x-auto sm:end-0 sm:w-52 border border-border/80 bg-popover p-1.5 text-popover-foreground shadow-xl backdrop-blur-md outline-hidden animate-in fade-in-0 zoom-in-95">
+              <div className="absolute inset-x-0 top-full mt-1.5 z-50 w-auto rounded-xl sm:inset-x-auto sm:end-0 sm:w-52 border border-border/80 bg-popover p-1.5 text-popover-foreground shadow-xl backdrop-blur-md outline-none animate-in fade-in-0 zoom-in-95">
                 <div className="px-2 py-1 text-xs font-bold text-muted-foreground border-b border-border/40 mb-1">
                   {locale === 'en' ? 'Measurement Mode' : 'نوع القياس'}
                 </div>

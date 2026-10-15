@@ -814,19 +814,20 @@ export default function BuildingsPage({
                 `${s.unitsSurveyed.toLocaleString('en-US')} ${en ? 'of' : 'من'} ${s.unitsTotal.toLocaleString('en-US')}`,
             )}
             icon={ClipboardCheck}
-            className="text-success"
+            // A tone says something (COL-2): none on a zero, which is neither progress nor a problem.
+            className={summary && summary.unitsSurveyed > 0 ? 'text-success' : undefined}
           />
           <StatItem
             label={en ? 'Damaged buildings' : 'مبانٍ متضررة'}
             value={figure((s) => s.damaged.toLocaleString('en-US'))}
             icon={ShieldAlert}
-            className="text-destructive"
+            className={summary && summary.damaged > 0 ? 'text-destructive' : undefined}
           />
           <StatItem
             label={en ? 'Unsurveyed units' : 'وحدات غير ممسوحة'}
             value={figure((s) => s.unitsUnsurveyed.toLocaleString('en-US'))}
             icon={DoorOpen}
-            className="text-warning"
+            className={summary && summary.unitsUnsurveyed > 0 ? 'text-warning' : undefined}
           />
           <StatItem
             label={en ? 'No entrance placed' : 'بلا مدخل مُثبت'}

@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState } from 'react';
 import { ChevronDown, History, User } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import { AUDIT_SYSTEM_ACTOR, getLabels } from '@mechanization/shared-schemas';
 import { getAuditDaily, getAuditLog, type AuditDaySummary, type AuditEntry } from '@/lib/api-client';
 import { auditActionLabel, auditEntityLabel } from '@/lib/audit-labels';
@@ -63,7 +64,8 @@ export function AuditDaily({
   /** The page's filter bar, applied to the summary and to every drill-down. */
   filter: AuditFilter;
 }): React.JSX.Element {
-  const en = locale === 'en';
+  const t = useTranslations('audit.daily');
+  const tCommon = useTranslations('common');
   const [page, setPage] = useState(0);
   const [openKey, setOpenKey] = useState<string | null>(null);
   /** The top of the table, which the pager brings back into view after a page change. */
@@ -92,7 +94,7 @@ export function AuditDaily({
     tenant,
     base,
     token,
-    errorMessage: en ? 'Failed to load the daily report.' : 'تعذّر تحميل التقرير اليومي.',
+    errorMessage: t('loadFailed'),
     keepPrevious: true,
   });
 
@@ -107,7 +109,7 @@ export function AuditDaily({
       <ErrorState
         description={query.error}
         onRetry={query.refetch}
-        retryLabel={en ? 'Retry' : 'إعادة المحاولة'}
+        retryLabel={tCommon('retry')}
       />
     );
   }
@@ -126,12 +128,8 @@ export function AuditDaily({
     return (
       <EmptyState
         icon={History}
-        title={en ? 'Nothing in this range' : 'لا نشاط في هذا النطاق'}
-        description={
-          en
-            ? 'Widen the date range or clear a filter.'
-            : 'وسِّع نطاق التاريخ أو امسح أحد الفلاتر.'
-        }
+        title={t('emptyTitle')}
+        description={t('emptyBody')}
       />
     );
   }
@@ -147,11 +145,11 @@ export function AuditDaily({
         <Table>
           <TableHeader>
             <TableRow className="hover:bg-transparent">
-              <TableHead>{en ? 'Day' : 'اليوم'}</TableHead>
-              <TableHead>{en ? 'Staff member' : 'الموظف'}</TableHead>
-              <TableHead>{en ? 'What they did' : 'ما قام به'}</TableHead>
-              <TableHead className="text-center">{en ? 'Actions' : 'عدد الإجراءات'}</TableHead>
-              <TableHead className="text-center">{en ? 'Last' : 'آخر إجراء'}</TableHead>
+              <TableHead>{t('colDay')}</TableHead>
+              <TableHead>{t('colStaff')}</TableHead>
+              <TableHead>{t('colWhat')}</TableHead>
+              <TableHead className="text-center">{t('colCount')}</TableHead>
+              <TableHead className="text-center">{t('colLast')}</TableHead>
               <TableHead />
             </TableRow>
           </TableHeader>
@@ -225,23 +223,13 @@ function RowPair({
   todayKey: string;
   yesterdayKey: string;
 }): React.JSX.Element {
+  const t = useTranslations('audit.daily');
   const en = locale === 'en';
   const labels = getLabels(locale);
 
-  const when =
-    row.day === todayKey
-      ? en
-        ? 'Today'
-        : 'اليوم'
-      : row.day === yesterdayKey
-        ? en
-          ? 'Yesterday'
-          : 'أمس'
-        : null;
+  const when = row.day === todayKey ? t('today') : row.day === yesterdayKey ? t('yesterday') : null;
 
-  const actorName =
-    row.actor.name ??
-    (row.actor.kind === 'SYSTEM' ? (en ? 'System' : 'النظام') : en ? 'Unknown' : 'غير معروف');
+  const actorName = row.actor.name ?? (row.actor.kind === 'SYSTEM' ? t('system') : t('unknown'));
 
   /*
     The headline: the three commonest acts of the day with their counts, which
@@ -304,7 +292,8 @@ function RowPair({
             ))}
             {rest > 0 ? (
               <span className="text-muted-foreground">
-                {en ? ` · +${rest} more` : ` · و${rest} أخرى`}
+                {' · '}
+                {t('more', { count: rest })}
               </span>
             ) : null}
           </span>
@@ -313,7 +302,7 @@ function RowPair({
         <TableCell className="text-center align-top font-semibold tabular-nums">{row.total}</TableCell>
 
         <TableCell className="text-center align-top text-xs tabular-nums text-muted-foreground" dir="ltr">
-          {new Date(row.lastAt).toLocaleTimeString(en ? 'en-GB' : 'ar-LB', {
+          {new Date(row.lastAt).toLocaleTimeString(en ? 'en-GB' : 'ar-LB-u-nu-latn', {
             hour: '2-digit',
             minute: '2-digit',
             hour12: false,
@@ -322,7 +311,7 @@ function RowPair({
 
         <TableCell className="align-top text-end">
           <Button variant="outline" size="sm" className="gap-1.5" onClick={onToggle} aria-expanded={open}>
-            {en ? 'View details' : 'عرض التفاصيل'}
+            {t('viewDetails')}
             <ChevronDown
               className={`size-4 transition-transform ${open ? 'rotate-180' : ''}`}
               aria-hidden
@@ -377,7 +366,7 @@ function DayDetail({
   actorId: string | null;
   expected: number;
 }): React.JSX.Element {
-  const en = locale === 'en';
+  const t = useTranslations('audit.daily');
 
   /*
     The day's own bounds, in the reader's zone — `new Date('2026-09-20T00:00:00')`
@@ -419,7 +408,7 @@ function DayDetail({
     tenant,
     base,
     token,
-    errorMessage: en ? 'Could not load this day.' : 'تعذّر تحميل تفاصيل هذا اليوم.',
+    errorMessage: t('dayLoadFailed'),
   });
 
   if (query.error) {
@@ -447,10 +436,10 @@ function DayDetail({
       <Table>
         <TableHeader>
           <TableRow className="hover:bg-transparent">
-            <TableHead className="w-20">{en ? 'Time' : 'الوقت'}</TableHead>
-            <TableHead className="w-48">{en ? 'Action' : 'الإجراء'}</TableHead>
-            <TableHead className="w-56">{en ? 'Record' : 'السجل'}</TableHead>
-            <TableHead>{en ? 'What changed' : 'ما الذي تغيّر'}</TableHead>
+            <TableHead className="w-20">{t('colTime')}</TableHead>
+            <TableHead className="w-48">{t('colAction')}</TableHead>
+            <TableHead className="w-56">{t('colRecord')}</TableHead>
+            <TableHead>{t('colChanges')}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -467,9 +456,7 @@ function DayDetail({
       */}
       {expected > entries.length ? (
         <p className="border-t px-4 py-2 text-xs text-muted-foreground">
-          {en
-            ? `Showing the first ${entries.length} of ${expected}. Use the detailed view for the rest.`
-            : `تُعرض أول ${entries.length} من ${expected}. افتح العرض المفصّل لبقيتها.`}
+          {t('truncated', { shown: entries.length, expected })}
         </p>
       ) : null}
     </div>
@@ -498,7 +485,7 @@ function DetailRow({ entry, locale }: { entry: AuditEntry; locale: string }): Re
     <TableRow>
       <TableCell className="align-top text-xs tabular-nums text-muted-foreground">
         <bdi dir="ltr">
-          {new Date(entry.createdAt).toLocaleTimeString(en ? 'en-GB' : 'ar-LB', {
+          {new Date(entry.createdAt).toLocaleTimeString(en ? 'en-GB' : 'ar-LB-u-nu-latn', {
             hour: '2-digit',
             minute: '2-digit',
             hour12: false,
