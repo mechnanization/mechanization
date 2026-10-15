@@ -32,7 +32,7 @@ import { mapHref } from '@/lib/map-link';
 import { formatPhone } from '@/lib/phone';
 import { PageHeader } from '@/components/ui/page-header';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/states';
-import { BackLink } from '@/components/ui/back-link';
+import { HeaderBackLink } from '@/components/admin/header-back-link';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { ChipGroup, SegmentedControl } from '@/components/ui/segmented-control';
@@ -196,7 +196,7 @@ export default function CitizenPropertiesPage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <BackLink fallbackHref={`${base}/citizens`} label={en ? 'Back' : 'رجوع'} />
+      <HeaderBackLink fallbackHref={`${base}/citizens`} label={en ? 'Back' : 'رجوع'} />
 
       {profile.error ? (
         <ErrorState description={profile.error} onRetry={() => void profile.refetch()} retryLabel={en ? 'Try again' : 'إعادة المحاولة'} />

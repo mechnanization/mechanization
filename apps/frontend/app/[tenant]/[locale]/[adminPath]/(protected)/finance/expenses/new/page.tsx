@@ -11,12 +11,12 @@ import { activeAccounts } from '@/lib/treasury-accounts';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { RecordExpenseForm } from '@/components/admin/finance/record-expense-form';
+import { TreasuryFormSkeleton } from '@/components/admin/finance/treasury-form-parts';
 import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
 import { Alert } from '@/components/ui/alert';
-import { BackLink } from '@/components/ui/back-link';
+import { HeaderBackLink } from '@/components/admin/header-back-link';
 import { Card, CardContent } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
-import { Skeleton } from '@/components/ui/skeleton';
 import { ErrorState } from '@/components/ui/states';
 
 /**
@@ -107,9 +107,14 @@ export default function NewExpensePage({
   };
 
   return (
-    <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
+    /*
+      The screen's height from `xl`, so the form below can split what the heading
+      leaves into two panes: the fields scroll, the summary does not move
+      (`treasury-form-parts.tsx`).
+    */
+    <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8 xl:flex xl:h-full xl:flex-col">
       {/* Named for where it goes — the register, not the treasury the register sits under. */}
-      <BackLink fallbackHref={registerHref} label={t('backToRegister')} />
+      <HeaderBackLink fallbackHref={registerHref} label={t('backToRegister')} />
 
       <PageHeader icon={Receipt} title={t('form.title')} />
 
@@ -122,7 +127,7 @@ export default function NewExpensePage({
           </CardContent>
         </Card>
       ) : !user || !ready ? (
-        <FormSkeleton />
+        <TreasuryFormSkeleton />
       ) : !canRecord ? (
         <Alert variant="warning" title={t('notAllowedTitle')}>
           {t('notAllowedBody')}
@@ -147,24 +152,6 @@ export default function NewExpensePage({
           onPrint={(voucherId) => router.push(`${base}/finance/expenses/${voucherId}/print?print=1`)}
         />
       )}
-    </div>
-  );
-}
-
-/** The shape the form leaves, so the page does not jump when the wallets land. */
-function FormSkeleton(): React.JSX.Element {
-  return (
-    <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start" aria-hidden>
-      <div className="space-y-6">
-        {Array.from({ length: 3 }, (_, section) => (
-          <div key={section} className="space-y-3">
-            <Skeleton className="h-4 w-32" />
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
-          </div>
-        ))}
-      </div>
-      <Skeleton className="h-64 w-full rounded-lg" />
     </div>
   );
 }

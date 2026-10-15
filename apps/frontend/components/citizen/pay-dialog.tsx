@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Banknote, Building2, Clock, Loader2, MapPin, Smartphone } from 'lucide-react';
 import type { CitizenPaymentItem, MunicipalitySettings } from '@/lib/api-client';
+import { Alert } from '@/components/ui/alert';
 import { isPartlyPaid, partlyPaidFigures } from '@/lib/citizen-payments';
 import { Button } from '@/components/ui/button';
 import {
@@ -83,12 +84,9 @@ export function PayDialog({
 
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-6">
           {error ? (
-            <p
-              role="alert"
-              className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
-            >
+            <Alert variant="destructive" live="alert">
               {error}
-            </p>
+            </Alert>
           ) : null}
 
           <div className="grid gap-3">

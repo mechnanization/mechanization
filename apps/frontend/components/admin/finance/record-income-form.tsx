@@ -4,10 +4,9 @@ import { useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useQueryClient } from '@tanstack/react-query';
-import { Plus } from 'lucide-react';
+import { Loader2, Plus } from 'lucide-react';
 import {
   canReceiveIncome,
-  getLabels,
   municipalToday,
   recordIncomeVoucherSchema,
   TREASURY_ADMIN_ROLES,
@@ -21,12 +20,13 @@ import {
   type TreasuryAccountView,
 } from '@/lib/api-client';
 import { currencyUnit, formatTypedAmount, parseAmount } from '@/lib/currency';
+import { formatDate } from '@/lib/dates';
 import { incomeCategoryLabel } from '@/lib/income-category-label';
 import { heldKey, keyIsSpent, outcomeInDoubt, spendKey, type KeyScope } from '@/lib/request-id';
 import { hasRole } from '@/lib/staff-roles';
+import { cn } from '@/lib/utils';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
 import { CurrencyInput } from '@/components/ui/currency-input';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Field } from '@/components/ui/field';
@@ -42,6 +42,7 @@ import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
 import { IncomeCategoryEditor } from './income-category-editor';
+import { FormCard, FormSection, SummaryPanel, TREASURY_FORM_GRID, WalletSelect } from './treasury-form-parts';
 import { TreasuryAmount } from './treasury-amount';
 
 /**
@@ -52,27 +53,16 @@ import { TreasuryAmount } from './treasury-amount';
 const KEY_SCOPE: KeyScope = 'income:new';
 
 /**
- * A heading over a group of fields. Not a card: the page frames the form, and a
- * card inside it is the nested frame BAN-4 refuses.
- */
-function FormSection({ title, children }: { title: string; children: React.ReactNode }): React.JSX.Element {
-  return (
-    <section className="space-y-3">
-      <h2 className="border-b pb-1.5 text-xs font-semibold text-muted-foreground">{title}</h2>
-      {children}
-    </section>
-  );
-}
-
-/**
  * «تسجيل إيراد جديد» — the whole act of receiving, as a form on its own page.
  *
  * The expense form's twin (`RecordExpenseForm`), run the other way, and laid
- * out the same so an accountant who knows one knows the other (UX-1): the fields
- * on one side, and beside them a summary that stays on screen and answers what
- * the wallet holds now and what it will hold once this is recorded. Unlike an
- * expense, nothing here can be short — receiving only ever raises a balance —
- * so the summary is a read-back, never a warning.
+ * out the same so an accountant who knows one knows the other (UX-1): the
+ * frame is `treasury-form-parts.tsx`, shared by both. The fields sit in one
+ * card that scrolls on its own; beside it a summary that does not move reads
+ * back the voucher as it will be recorded — the wallet,
+ * the category, the payer, the day — and what the wallet holds now and once
+ * this is recorded. Unlike an expense, nothing here can be short — receiving
+ * only ever raises a balance — so the summary is a read-back, never a warning.
  *
  * Only wallets that may receive income are offered (`canReceiveIncome`): the
  * cash safes, Whish and a bank account, never a collector's custody. The server
@@ -118,7 +108,6 @@ export function RecordIncomeForm({
   onPrint: (voucherId: string) => void;
 }): React.JSX.Element {
   const t = useTranslations('finance.income.form');
-  const labels = getLabels(locale);
   const queryClient = useQueryClient();
   const toast = useToast();
 
@@ -158,6 +147,7 @@ export function RecordIncomeForm({
   const inFlight = useRef(false);
 
   const account = receiving.find((candidate) => candidate.id === accountId);
+  const category = activeCategories.find((candidate) => candidate.id === categoryId);
   const backdated = receivedOn < today;
 
   const typed = parseAmount(amount);
@@ -289,23 +279,19 @@ export function RecordIncomeForm({
   }
 
   return (
-    <form noValidate className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start" onSubmit={submit}>
-      <div className="space-y-6">
+    <form noValidate className={TREASURY_FORM_GRID} onSubmit={submit}>
+      <FormCard disabled={busy || done}>
         <FormSection title={t('sections.money')}>
-          <Field htmlFor="income-account" label={t('account')} error={errors.accountId} required>
-            <Select value={accountId} onValueChange={setAccountId}>
-              <SelectTrigger id="income-account">
-                <SelectValue placeholder={t('accountPlaceholder')} />
-              </SelectTrigger>
-              <SelectContent>
-                {receiving.map((candidate) => (
-                  <SelectItem key={candidate.id} value={candidate.id}>
-                    {`${candidate.name} · ${labels.treasuryAccountType[candidate.type]}`}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
+          <WalletSelect
+            id="income-account"
+            label={t('account')}
+            placeholder={t('accountPlaceholder')}
+            accounts={receiving}
+            value={accountId}
+            onChange={setAccountId}
+            locale={locale}
+            error={errors.accountId}
+          />
 
           <Field htmlFor="income-amount" label={t('amount')} error={errors.amount} required>
             <CurrencyInput
@@ -320,45 +306,39 @@ export function RecordIncomeForm({
         </FormSection>
 
         <FormSection title={t('sections.what')}>
+          {/* A row of its own: a category's name is long, and beside another field the select clipped it. */}
           <Field htmlFor="income-category" label={t('category')} error={errors.categoryId} required>
-            {/*
-              Keyed on the number of categories added here, so adding one remounts
-              the select: Radix discards a controlled value set while its list is
-              closed, because the item backing it has never registered — the
-              expense form met it first (docs/gotchas.md).
-            */}
-            <Select key={added.length} value={categoryId} onValueChange={setCategoryId}>
-              <SelectTrigger id="income-category">
-                <SelectValue placeholder={t('categoryPlaceholder')}>
-                  {(() => {
-                    const selected = activeCategories.find((category) => category.id === categoryId);
-                    return selected ? incomeCategoryLabel(selected, locale) : undefined;
-                  })()}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {activeCategories.map((category) => (
-                  <SelectItem key={category.id} value={category.id}>
-                    {incomeCategoryLabel(category, locale)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
+            <div className="flex flex-wrap gap-2">
+              {/*
+                Keyed on the number of categories added here, so adding one remounts
+                the select: Radix discards a controlled value set while its list is
+                closed, because the item backing it has never registered — the
+                expense form met it first (docs/gotchas.md).
+              */}
+              <Select key={added.length} value={categoryId} onValueChange={setCategoryId}>
+                <SelectTrigger id="income-category" className="min-w-0 flex-1 basis-40">
+                  <SelectValue placeholder={t('categoryPlaceholder')}>
+                    {category ? incomeCategoryLabel(category, locale) : undefined}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {activeCategories.map((option) => (
+                    <SelectItem key={option.id} value={option.id}>
+                      {incomeCategoryLabel(option, locale)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
 
-          {canManageCategories && !addingCategory ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-auto px-2 py-1 text-xs"
-              disabled={done}
-              onClick={() => setAddingCategory(true)}
-            >
-              <Plus className="size-3.5" aria-hidden />
-              {t('newCategory')}
-            </Button>
-          ) : null}
+              {/* Beside the list it adds to, and under it when the row is too narrow for both; gone while the editor is open. */}
+              {canManageCategories && !addingCategory ? (
+                <Button type="button" variant="outline" className="shrink-0" onClick={() => setAddingCategory(true)}>
+                  <Plus className="size-4" aria-hidden />
+                  {t('newCategory')}
+                </Button>
+              ) : null}
+            </div>
+          </Field>
 
           {addingCategory ? (
             /*
@@ -374,7 +354,7 @@ export function RecordIncomeForm({
                 token={token}
                 existing={activeCategories}
                 onCancel={() => setAddingCategory(false)}
-                onSaved={(category) => {
+                onSaved={(saved) => {
                   /*
                     No refetch while this form is open — reloading the list
                     rebuilt the options under the select, and Radix answered the
@@ -385,8 +365,8 @@ export function RecordIncomeForm({
                     reads, and nothing here re-reads them (`refreshFigures`
                     leaves them out).
                   */
-                  setAdded((current) => [...current, category]);
-                  setCategoryId(category.id);
+                  setAdded((current) => [...current, saved]);
+                  setCategoryId(saved.id);
                   setAddingCategory(false);
                 }}
               />
@@ -458,60 +438,62 @@ export function RecordIncomeForm({
             </Field>
           ) : null}
         </FormSection>
+      </FormCard>
 
-        {formError ? (
-          <Alert variant="destructive" live="alert">
-            {formError}
-          </Alert>
-        ) : null}
-      </div>
-
-      {/*
-        The summary, sticky beside the fields on a wide screen. The heights are
-        the expense form's, for the reason measured there: `AdminShell` scrolls an
-        inner pane that starts below the `h-14` header, so the room left is
-        `100dvh - 3.5rem`, less the page's own `py-6` — `100dvh - 6.5rem`. Below
-        `lg` it falls under the fields at its natural height, directly above the
-        button it qualifies.
-      */}
-      <aside className="lg:sticky lg:top-6 lg:h-[calc(100dvh-6.5rem)]">
-        <Card className="flex h-full flex-col">
-          <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
-            <h2 className="text-sm font-semibold">{t('summaryTitle')}</h2>
-            {account ? (
-              <SummaryList>
-                <SummaryRow label={t('summaryAccount')}>{account.name}</SummaryRow>
-                <SummaryRow label={t('balanceNow')}>
-                  <TreasuryAmount amount={account.balance} currency={account.currency} locale={locale} />
-                </SummaryRow>
-                <SummaryRow label={t('summaryAmount')}>
-                  <TreasuryAmount amount={receivingAmount} currency={account.currency} locale={locale} />
-                </SummaryRow>
-                <SummaryRow label={t('balanceAfter')}>
-                  <TreasuryAmount
-                    amount={after}
-                    currency={account.currency}
-                    locale={locale}
-                    className="font-semibold"
-                  />
-                </SummaryRow>
-              </SummaryList>
-            ) : (
-              <p className="text-sm text-muted-foreground">{t('summaryEmpty')}</p>
-            )}
-
-            {/* `mt-auto` pushes the actions to the foot of a panel taller than its content. */}
-            <div className="mt-auto flex flex-col gap-2 pt-2">
+      <SummaryPanel
+        title={t('summaryTitle')}
+        footer={
+          <>
+            {formError ? (
+              <Alert variant="destructive" live="alert">
+                {formError}
+              </Alert>
+            ) : null}
+            <div className="flex flex-col gap-2">
               <Button type="submit" disabled={busy || done}>
+                {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
                 {busy ? t('saving') : t('submit')}
               </Button>
               <Button asChild type="button" variant="outline" disabled={busy}>
                 <Link href={backHref}>{t('cancel')}</Link>
               </Button>
             </div>
-          </CardContent>
-        </Card>
-      </aside>
+          </>
+        }
+      >
+        {account ? (
+          <>
+            {/* The voucher as it will be recorded, to check against the slip in hand (UX-4). */}
+            <SummaryList>
+              <SummaryRow label={t('summaryAccount')}>{account.name}</SummaryRow>
+              <SummaryRow label={t('category')} className={cn(!category && 'font-normal text-muted-foreground')}>
+                {category ? incomeCategoryLabel(category, locale) : '—'}
+              </SummaryRow>
+              <SummaryRow label={t('payer')} className={cn(!payerName.trim() && 'font-normal text-muted-foreground')}>
+                {payerName.trim() || '—'}
+              </SummaryRow>
+              <SummaryRow label={t('receivedOn')}>
+                <span className="tabular-nums">{formatDate(`${receivedOn}T12:00:00.000Z`)}</span>
+              </SummaryRow>
+            </SummaryList>
+
+            {/* What it does to the wallet: now, plus the amount, equals after — the last line is the answer. */}
+            <SummaryList className="border-t">
+              <SummaryRow label={t('balanceNow')}>
+                <TreasuryAmount amount={account.balance} currency={account.currency} locale={locale} />
+              </SummaryRow>
+              <SummaryRow label={t('summaryAmount')}>
+                <TreasuryAmount amount={receivingAmount} currency={account.currency} locale={locale} signed />
+              </SummaryRow>
+              <SummaryRow label={t('balanceAfter')} className="text-base">
+                <TreasuryAmount amount={after} currency={account.currency} locale={locale} />
+              </SummaryRow>
+            </SummaryList>
+          </>
+        ) : (
+          <p className="py-2 text-sm text-muted-foreground">{t('summaryEmpty')}</p>
+        )}
+      </SummaryPanel>
     </form>
   );
 }

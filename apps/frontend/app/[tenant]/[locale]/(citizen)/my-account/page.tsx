@@ -20,6 +20,7 @@ import type { MyCitizenSummary } from '@/lib/api-client';
 import { clearSession, loadSession } from '@/lib/session';
 import { billFigure, citizenPaymentTotals, isUnderReview } from '@/lib/citizen-payments';
 import { formatLbp } from '@/lib/currency';
+import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -99,12 +100,9 @@ export default function MyAccount({
       </header>
 
       {error ? (
-        <p
-          role="alert"
-          className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-destructive"
-        >
+        <Alert variant="destructive" live="alert">
           {error}
-        </p>
+        </Alert>
       ) : null}
 
       {summary === null && !error ? <LoadingState /> : null}
@@ -157,11 +155,11 @@ export default function MyAccount({
                   </div>
 
                   {summary.fees.overdueTotal > 0 ? (
-                    <p className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+                    <Alert variant="destructive">
                       {locale === 'en'
                         ? `${formatLbp(summary.fees.overdueTotal, locale)} is past the due date.`
                         : `منها ${formatLbp(summary.fees.overdueTotal, locale)} تجاوزت تاريخ الاستحقاق.`}
-                    </p>
+                    </Alert>
                   ) : null}
 
                   {unpaid.length > 0 ? (

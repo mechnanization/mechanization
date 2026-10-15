@@ -32,6 +32,7 @@ import {
   type PossibleDuplicateMatch,
 } from '@mechanization/shared-schemas';
 import type { PublicTenantConfig } from '@/lib/api-client';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/states';
@@ -2154,12 +2155,9 @@ export function CitizenForm({
       {/* ── Desktop Fixed Bottom Actions Bar ── */}
       <div className="sticky bottom-0 z-30 hidden sm:block -mx-4 -mb-6 mt-8 border-t border-border/80 bg-background/95 px-4 py-3 shadow-md backdrop-blur supports-[backdrop-filter]:bg-background/85 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
         {error ? (
-          <p
-            role="alert"
-            className="mb-2.5 rounded-lg border border-destructive/30 bg-destructive/5 p-2 text-xs text-destructive"
-          >
+          <Alert variant="destructive" live="alert" className="mb-2.5">
             {error}
-          </p>
+          </Alert>
         ) : null}
 
         <div className="flex flex-wrap items-center justify-between gap-3">

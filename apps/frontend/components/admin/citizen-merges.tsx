@@ -12,6 +12,7 @@ import {
   undoCitizenMerge,
 } from '@/lib/api-client';
 import { formatDate } from '@/lib/dates';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -228,11 +229,13 @@ function UndoMergeDialog({
         ) : null}
 
         {preview && preview.blocks.length > 0 ? (
-          <ul className="list-disc space-y-1 rounded-lg border border-destructive/40 bg-destructive/5 p-3 ps-7 text-sm">
-            {preview.blocks.map((block) => (
-              <li key={block.code}>{block.message}</li>
-            ))}
-          </ul>
+          <Alert variant="destructive" live="status">
+            <ul className="list-disc space-y-1 ps-4">
+              {preview.blocks.map((block) => (
+                <li key={block.code}>{block.message}</li>
+              ))}
+            </ul>
+          </Alert>
         ) : null}
 
         {preview && preview.blocks.length === 0 ? (
@@ -251,9 +254,9 @@ function UndoMergeDialog({
         ) : null}
 
         {failure ? (
-          <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 p-2.5 text-sm text-destructive">
+          <Alert variant="destructive" live="alert">
             {failure}
-          </p>
+          </Alert>
         ) : null}
 
         <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">

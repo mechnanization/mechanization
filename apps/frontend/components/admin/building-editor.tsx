@@ -2220,16 +2220,13 @@ export function BuildingEditor({
 
       {/* Global Error Banner */}
       {error ? (
-        <div
-          role="alert"
-          className="flex items-start gap-2.5 rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm leading-relaxed text-destructive"
+        <Alert
+          variant="destructive"
+          live="alert"
+          title={en ? 'Unable to save building' : 'تعذّر حفظ المبنى'}
         >
-          <AlertTriangle className="size-4 shrink-0 mt-0.5" aria-hidden />
-          <div className="space-y-1">
-            <p className="font-semibold">{en ? 'Unable to save building' : 'تعذّر حفظ المبنى'}</p>
-            <p className="text-xs">{error}</p>
-          </div>
-        </div>
+          {error}
+        </Alert>
       ) : null}
 
       {/* ── Active Wizard Step Content ── */}
@@ -2352,13 +2349,9 @@ export function BuildingEditor({
                 />
 
                 {pinError ? (
-                  <div
-                    role="alert"
-                    className="mt-2 flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-2.5 text-xs text-destructive"
-                  >
-                    <AlertTriangle className="size-3.5 shrink-0 mt-0.5" aria-hidden />
-                    <p>{pinError}</p>
-                  </div>
+                  <Alert variant="destructive" live="alert" className="mt-2">
+                    {pinError}
+                  </Alert>
                 ) : null}
 
                 {pin ? (

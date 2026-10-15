@@ -22,7 +22,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Field } from '@/components/ui/field';
+import { DatePicker } from '@/components/ui/date-picker';
+import { ChoiceCard, Field } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
@@ -82,7 +83,7 @@ export function ResidenceChangeDialog({
 }) {
   const en = locale === 'en';
   const labels = getLabels(locale);
-  const ids = { date: useId(), place: useId(), reason: useId(), requestedBy: useId() };
+  const ids = { date: useId(), place: useId(), reason: useId(), requestedBy: useId(), livesIn: useId() };
   const tArchive = useTranslations('citizenArchive');
   const tKind = useTranslations('citizenKind');
   /** Out of the household: a move away, or a death. */
@@ -206,13 +207,12 @@ export function ResidenceChangeDialog({
 
           <div className="space-y-4">
             <Field label={death ? tKind('death.date') : en ? 'Moved on' : 'تاريخ الانتقال'} htmlFor={ids.date} required>
-              <Input
+              <DatePicker
                 id={ids.date}
-                type="date"
                 value={movedOn}
                 max={today()}
-                onChange={(event) => setMovedOn(event.target.value)}
-                className="h-10"
+                onChange={setMovedOn}
+                locale={en ? 'en' : 'ar'}
               />
             </Field>
 
@@ -351,22 +351,22 @@ export function ResidenceChangeDialog({
             {/* ── Moving back: where they live ── */}
             {!leaving ? (
               <fieldset className="space-y-2 rounded-lg border p-3">
-                <legend className="px-1 text-sm font-semibold">{en ? 'Where do they live?' : 'أين يسكن؟'}</legend>
-                {[...plan.homes.map((home) => ({ key: home.key, label: homeLabel(home) })), {
-                  key: ELSEWHERE,
-                  label: en ? 'Somewhere else in the town — add the card under Properties' : 'في مكان آخر في البلدة — تُضاف بطاقته في «العقارات»',
-                }].map((choice) => (
-                  <label key={choice.key} className="flex cursor-pointer items-start gap-2 text-sm">
-                    <input
-                      type="radio"
+                <legend id={ids.livesIn} className="px-1 text-sm font-semibold">{en ? 'Where do they live?' : 'أين يسكن؟'}</legend>
+                <div role="radiogroup" aria-labelledby={ids.livesIn} className="grid gap-2">
+                  {[...plan.homes.map((home) => ({ key: home.key, label: homeLabel(home) })), {
+                    key: ELSEWHERE,
+                    label: en ? 'Somewhere else in the town — add the card under Properties' : 'في مكان آخر في البلدة — تُضاف بطاقته في «العقارات»',
+                  }].map((choice) => (
+                    <ChoiceCard
+                      key={choice.key}
                       name="lives-in"
-                      className="mt-1 size-4 accent-primary"
+                      value={choice.key}
                       checked={livesIn === choice.key}
                       onChange={() => setLivesIn(choice.key)}
+                      title={choice.label}
                     />
-                    <span>{choice.label}</span>
-                  </label>
-                ))}
+                  ))}
+                </div>
               </fieldset>
             ) : null}
 

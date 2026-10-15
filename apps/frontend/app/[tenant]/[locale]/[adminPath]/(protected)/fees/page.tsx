@@ -46,17 +46,21 @@ import type {
 } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { useTableLabels } from '@/lib/use-table-labels';
 import { param, useTabSearch, useUrlPagination, useUrlState } from '@/lib/use-url-state';
 import { formatLbp } from '@/lib/currency';
 import { describeAssessment } from '@/lib/fee-assessment';
 import { formatDate } from '@/lib/dates';
+import { Alert } from '@/components/ui/alert';
 import { CellTag } from '@/components/ui/cell-tag';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { DataTable, type DataTableLabels } from '@/components/ui/data-table';
+import { DataTable } from '@/components/ui/data-table';
+import { Money } from '@/components/ui/money';
 import { PageHeader } from '@/components/ui/page-header';
 import { SegmentedControl } from '@/components/ui/segmented-control';
 import { Skeleton } from '@/components/ui/skeleton';
+import { StatItem, StatStrip } from '@/components/ui/stat-strip';
 import { useToast } from '@/components/ui/toast';
 import { ChargeCitizenDialog, type ChargeValues } from '@/components/admin/charge-citizen-dialog';
 import { BillTypeFilter } from '@/components/admin/bill-type-select';
@@ -64,59 +68,6 @@ import { PaymentReceipt } from '@/components/admin/payment-receipt';
 import { BillCheckbox } from '@/components/admin/bulk-settle/bill-checkbox';
 import { BulkSettleBar } from '@/components/admin/bulk-settle/bulk-settle-bar';
 import { cn } from '@/lib/utils';
-
-function getTableLabels(locale: string): DataTableLabels {
-  if (locale === 'en') {
-    return {
-      searchAriaLabel: 'Search fees and demands',
-      searchPlaceholder: 'Search by citizen name, fee title, or reference code…',
-      clearSearch: 'Clear search',
-      searchHint: 'Enter',
-      searchApplied: 'Search: "{term}"',
-      empty: 'No fees or demands registered yet.',
-      emptyHint: 'Issue your first fee using the "Issue Fee Notice" button above.',
-      emptySearch: 'No results match your search.',
-      emptySearchHint: 'Try searching by citizen name, fee title, or reference code.',
-      loadError: 'Failed to load fees and payments register.',
-      retry: 'Retry',
-      previous: 'Previous',
-      next: 'Next',
-      pageOf: 'Page {current} of {total}',
-      rowsPerPage: 'Rows per page',
-      totalRows: '{count} demands',
-      sortAscending: 'Sort ascending',
-      sortDescending: 'Sort descending',
-      sortNone: 'Clear sorting',
-      columns: 'Columns',
-      columnsHint: 'Visible columns',
-      resetColumns: 'Reset to default',
-    };
-  }
-  return {
-    searchAriaLabel: 'بحث في الرسوم والمطالبات',
-    searchPlaceholder: 'ابحث باسم المواطن أو الرسم أو الرقم المرجعي…',
-    clearSearch: 'مسح البحث',
-    searchHint: 'Enter',
-    searchApplied: 'بحث: «{term}»',
-    empty: 'لا توجد رسوم أو مطالبات مسجّلة بعد.',
-    emptyHint: 'أصدر أول رسم من زر «إصدار رسم جديد» أعلاه.',
-    emptySearch: 'لا توجد نتائج مطابقة لبحثك.',
-    emptySearchHint: 'جرّب البحث باسم المواطن، أو نوع الرسم، أو الرقم المرجعي.',
-    loadError: 'تعذّر تحميل سجل الرسوم والمدفوعات.',
-    retry: 'إعادة المحاولة',
-    previous: 'السابق',
-    next: 'التالي',
-    pageOf: 'صفحة {current} من {total}',
-    rowsPerPage: 'عدد الصفوف',
-    totalRows: '{count} مطالبة',
-    sortAscending: 'ترتيب تصاعدي',
-    sortDescending: 'ترتيب تنازلي',
-    sortNone: 'إلغاء الترتيب',
-    columns: 'الأعمدة',
-    columnsHint: 'الأعمدة الظاهرة',
-    resetColumns: 'استعادة الافتراضي',
-  };
-}
 
 /**
  * The order the status tabs read in, which is not alphabetical and not the
@@ -207,6 +158,34 @@ export default function FeesPage({
 
   const toast = useToast();
   const tSelect = useTranslations('bulkSettle.select');
+  /*
+    Only what this ledger says that the shared `table` strings do not: what it
+    searches by, what it is empty of, and what it counts. The column picker
+    is asked for (`columnsMenu`): this ledger keeps its choice of columns.
+  */
+  const tableLabels = useTableLabels({
+    ...(locale === 'en'
+      ? {
+          searchAriaLabel: 'Search fees and demands',
+          searchPlaceholder: 'Search by citizen name, fee title, or reference code…',
+          searchApplied: 'Search: "{term}"',
+          empty: 'No fees or demands registered yet.',
+          emptyHint: 'Issue your first fee using the "Issue Fee Notice" button above.',
+          emptySearchHint: 'Try searching by citizen name, fee title, or reference code.',
+          loadError: 'Failed to load fees and payments register.',
+          totalRows: '{count} demands',
+        }
+      : {
+          searchAriaLabel: 'بحث في الرسوم والمطالبات',
+          searchPlaceholder: 'ابحث باسم المواطن أو الرسم أو الرقم المرجعي…',
+          searchApplied: 'بحث: «{term}»',
+          empty: 'لا توجد رسوم أو مطالبات مسجّلة بعد.',
+          emptyHint: 'أصدر أول رسم من زر «إصدار رسم جديد» أعلاه.',
+          emptySearchHint: 'جرّب البحث باسم المواطن، أو نوع الرسم، أو الرقم المرجعي.',
+          loadError: 'تعذّر تحميل سجل الرسوم والمدفوعات.',
+          totalRows: '{count} مطالبة',
+        }),
+  }, { columnsMenu: true });
   const canManage = role === 'SUPER_ADMIN';
   /** «تسديد الفواتير المحددة» — `BULK_SETTLE_ROLES`, as the route's `@Roles`; the server is the enforcement. */
   const canBulkSettle = hasRole(BULK_SETTLE_ROLES, role);
@@ -735,7 +714,8 @@ export default function FeesPage({
 
   if (!token) return null;
 
-  const tableLabels = getTableLabels(locale);
+  /** The strip's placeholder until the ledger's first read answers. */
+  const figurePending = loading ? <Skeleton className="h-5 w-16" /> : null;
   const statusFilters = buildStatusFilters(locale, filterOptionsQuery.data?.statuses ?? [], labels);
 
   return (
@@ -784,27 +764,23 @@ export default function FeesPage({
       />
 
       {error ? (
-        <p
-          role="alert"
-          className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive"
-        >
+        <Alert variant="destructive" live="alert">
           {error}
-        </p>
+        </Alert>
       ) : null}
 
-      {/* KPI Cards Summary Row */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <MetricCard
+      <StatStrip>
+        <StatItem
           label={locale === 'en' ? 'Total Collected' : 'إجمالي المحصّل'}
-          value={formatLbp(summary?.paidTotal ?? 0, locale)}
-          subtext={
-            summary
+          value={figurePending ?? <Money amount={summary?.paidTotal ?? 0} locale={locale} exact wrap />}
+          hint={
+            summary && !loading
               ? (locale === 'en' ? `${summary.paidCount} payments settled` : `${summary.paidCount} دفعة مسددة`)
               : undefined
           }
-          loading={loading}
-          icon={<Wallet className="size-6 text-success" />}
-          accent="bg-success/10"
+          icon={Wallet}
+          // A tone says something (COL-2): none on a zero, and none while the figure loads.
+          className={!figurePending && (summary?.paidTotal ?? 0) > 0 ? 'text-success' : undefined}
         />
         {/*
           «قائمة» rather than «مطلوبة», and the difference is not wording.
@@ -816,35 +792,41 @@ export default function FeesPage({
           «مطالبة مطلوبة», the card was the tab's label over a larger number,
           on the same screen, which is how a clerk comes to distrust both.
         */}
-        <MetricCard
+        <StatItem
           label={locale === 'en' ? 'Unpaid Balance' : 'المستحقات غير المسددة'}
-          value={formatLbp(summary?.unpaidTotal ?? 0, locale)}
-          subtext={
-            summary
+          value={figurePending ?? <Money amount={summary?.unpaidTotal ?? 0} locale={locale} exact wrap />}
+          hint={
+            summary && !loading
               ? (locale === 'en'
                   ? `${summary.unpaidCount} outstanding, due and overdue`
                   : `${summary.unpaidCount} مطالبة قائمة، مستحقة ومتأخرة`)
               : undefined
           }
-          loading={loading}
-          icon={<Banknote className="size-6 text-primary" />}
+          icon={Banknote}
         />
-        <MetricCard
+        <StatItem
           label={locale === 'en' ? 'Pending Review' : 'دفعات بانتظار التحقق'}
-          value={(summary?.pendingReviewCount ?? 0).toLocaleString('en-US')}
-          subtext={locale === 'en' ? 'Transfers awaiting verification' : 'تحويلات تحتاج موافقة الموظف'}
-          loading={loading}
-          icon={<Clock3 className="size-6 text-warning" />}
-          accent="bg-warning/10"
+          value={figurePending ?? (summary?.pendingReviewCount ?? 0).toLocaleString('en-US')}
+          hint={loading ? undefined : locale === 'en' ? 'Transfers awaiting verification' : 'تحويلات تحتاج موافقة الموظف'}
+          icon={Clock3}
+          className={!figurePending && (summary?.pendingReviewCount ?? 0) > 0 ? 'text-warning' : undefined}
         />
-        <MetricCard
+        <StatItem
           label={locale === 'en' ? 'Total Billed' : 'إجمالي الرسوم الصادرة'}
-          value={formatLbp((summary?.paidTotal ?? 0) + (summary?.unpaidTotal ?? 0), locale)}
-          subtext={locale === 'en' ? 'Gross billed charges' : 'المجموع الكلي للمطالبات'}
-          loading={loading}
-          icon={<Receipt className="size-6 text-primary" />}
+          value={
+            figurePending ?? (
+              <Money
+                amount={(summary?.paidTotal ?? 0) + (summary?.unpaidTotal ?? 0)}
+                locale={locale}
+                exact
+                wrap
+              />
+            )
+          }
+          hint={loading ? undefined : locale === 'en' ? 'Gross billed charges' : 'المجموع الكلي للمطالبات'}
+          icon={Receipt}
         />
-      </div>
+      </StatStrip>
 
       {/* Main Table Card */}
       <Card className="overflow-hidden">
@@ -887,10 +869,10 @@ export default function FeesPage({
           </div>
         </CardHeader>
 
-        <CardContent className="p-6">
+        <CardContent className="p-0">
           {/* The phone cards have no heading row, so «تحديد الكل» stands above them. */}
           {canBulkSettle && pageState.eligible > 0 ? (
-            <div className="mb-3 flex items-center gap-2 sm:hidden">
+            <div className="flex items-center gap-2 px-6 pb-3 pt-6 sm:hidden">
               {pageBox('fees-select-page')}
               <label htmlFor="fees-select-page" className="text-sm">
                 {pageState.allSelected ? tSelect('pageClear') : tSelect('page')}
@@ -898,6 +880,7 @@ export default function FeesPage({
             </div>
           ) : null}
           <DataTable
+            className="rounded-none border-0 shadow-none"
             columns={columns}
             data={items}
             labels={tableLabels}
@@ -970,47 +953,5 @@ export default function FeesPage({
         />
       ) : null}
     </div>
-  );
-}
-
-function MetricCard({
-  label,
-  value,
-  subtext,
-  loading,
-  icon,
-  accent,
-}: {
-  label: string;
-  value: React.ReactNode;
-  subtext?: string;
-  loading: boolean;
-  icon: React.ReactNode;
-  accent?: string;
-}) {
-  return (
-    <Card>
-      <CardContent className="flex items-center justify-between p-5">
-        <div className="space-y-1">
-          <p className="text-xs font-medium text-muted-foreground">{label}</p>
-          {loading ? (
-            <Skeleton className="h-7 w-28" />
-          ) : (
-            <div className="text-xl font-bold tracking-tight text-foreground">{value}</div>
-          )}
-          {subtext && !loading ? (
-            <p className="text-xs text-muted-foreground">{subtext}</p>
-          ) : null}
-        </div>
-        <div
-          className={cn(
-            'flex size-11 items-center justify-center rounded-xl bg-primary/10',
-            accent,
-          )}
-        >
-          {icon}
-        </div>
-      </CardContent>
-    </Card>
   );
 }

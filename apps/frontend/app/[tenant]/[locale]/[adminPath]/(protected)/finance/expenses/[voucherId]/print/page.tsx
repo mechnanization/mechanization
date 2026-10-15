@@ -16,7 +16,7 @@ import {
 } from '@/components/admin/finance/official-document';
 import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
 import { ExpenseVoucherDocument } from '@/components/admin/finance/voucher-documents';
-import { BackLink } from '@/components/ui/back-link';
+import { HeaderBackLink } from '@/components/admin/header-back-link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
@@ -66,7 +66,7 @@ export default function ExpenseVoucherPrintPage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <BackLink fallbackHref={`${base}/finance/expenses`} label={tp('back')} />
+      <HeaderBackLink fallbackHref={`${base}/finance/expenses`} label={tp('back')} />
       <PageHeader
         icon={FileText}
         title={data ? tp('pageTitleNumbered', { number: data.voucherNumber }) : tp('pageTitle')}

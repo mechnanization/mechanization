@@ -16,7 +16,7 @@ import {
 } from '@/components/admin/finance/official-document';
 import { TransferDocument } from '@/components/admin/finance/transfer-document';
 import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
-import { BackLink } from '@/components/ui/back-link';
+import { HeaderBackLink } from '@/components/admin/header-back-link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
@@ -83,7 +83,7 @@ export default function TransferPrintPage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <BackLink fallbackHref={`${base}/finance/transfers`} label={t('backToRegister')} />
+      <HeaderBackLink fallbackHref={`${base}/finance/transfers`} label={t('backToRegister')} />
       <PageHeader
         icon={FileText}
         title={transfer.data ? t('document.pageTitleNumbered', { number: transfer.data.transferNumber }) : t('document.pageTitle')}

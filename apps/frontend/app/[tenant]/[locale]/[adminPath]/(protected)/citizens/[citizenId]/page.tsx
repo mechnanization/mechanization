@@ -55,7 +55,8 @@ import { flagFieldLabel } from '@/lib/field-flags';
 import { findLocatedProperty, mapHref } from '@/lib/map-link';
 import { ActivityTrail } from '@/components/admin/activity-trail';
 import { AUDIT_ENTITY } from '@/lib/audit-labels';
-import { BackLink } from '@/components/ui/back-link';
+import { HeaderBackLink } from '@/components/admin/header-back-link';
+import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { CollapsibleSection } from '@/components/ui/collapsible-section';
@@ -535,9 +536,9 @@ export default function CitizenProfilePage({
   if (error) {
     return (
       <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-        <p role="alert" className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-destructive">
+        <Alert variant="destructive" live="alert">
           {error}
-        </p>
+        </Alert>
         <Link href={`${base}/dashboard`} className={buttonVariants({ variant: 'outline' })}>
           {locale === 'en' ? 'Back to Dashboard' : 'رجوع إلى اللوحة'}
         </Link>
@@ -805,11 +806,7 @@ export default function CitizenProfilePage({
   */
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <BackLink
-        fallbackHref={`${base}/citizens`}
-        label={locale === 'en' ? 'Back' : 'رجوع'}
-        className="text-sm"
-      />
+      <HeaderBackLink fallbackHref={`${base}/citizens`} label={locale === 'en' ? 'Back' : 'رجوع'} />
 
       {/* ── Identity bar ────────────────────────────────────────────── */}
       <header className="space-y-4">
@@ -975,26 +972,19 @@ export default function CitizenProfilePage({
 
           The three numbers somebody came to this page for, answered before any
           section is read. The balance leads because it is the only one of the
-          three that is ever urgent, and it carries the same tone the ledger
-          gives it — destructive where something is overdue, emerald where there
-          is nothing owed — so the page never says «لا مستحقات» in the colour of
-          a debt.
+          three that is ever urgent. Only a debt gets a colour: the balance is
+          destructive where something is overdue and plain otherwise, so the page
+          never says «لا مستحقات» in the colour of a debt, and a file where
+          nothing is owed does not shout. The tone is on the figure, never the
+          cell — a red tile for a routine unpaid fee reads as an emergency.
         */}
-        {/*
-          One strip, divided — not three floating cards. Three bordered boxes
-          carrying three short values read as three separate things to deal
-          with; ruled cells of one panel read as one summary line, which is what
-          they are. `border-s` and not `border-l`, so the rules fall between the
-          cells in Arabic as well as English.
-        */}
-        <dl className="grid grid-cols-1 overflow-hidden rounded-lg border bg-card sm:grid-cols-3 [&>*+*]:border-t sm:[&>*+*]:border-s sm:[&>*+*]:border-t-0">
-          <StatTile
-            icon={Wallet}
+        <StatStrip>
+          <StatItem
             label={en ? 'Outstanding' : 'الرصيد المستحق'}
-            tone={citizen.fees.overdueTotal > 0 ? 'bad' : 'plain'}
+            className={citizen.fees.overdueTotal > 0 ? 'text-destructive' : undefined}
             value={
               citizen.fees.outstandingTotal > 0 ? (
-                <Money amount={citizen.fees.outstandingTotal} />
+                <Money amount={citizen.fees.outstandingTotal} wrap />
               ) : (
                 <span>{en ? 'Nothing due' : 'لا مستحقات'}</span>
               )
@@ -1007,19 +997,17 @@ export default function CitizenProfilePage({
                 : undefined
             }
           />
-          <StatTile
-            icon={Building2}
+          <StatItem
             label={en ? 'Properties' : 'العقارات'}
             value={propertyCount}
             hint={en ? 'Currently held' : 'قائمة حالياً'}
           />
-          <StatTile
-            icon={FileText}
+          <StatItem
             label={en ? 'Applications' : 'الطلبات'}
             value={citizen.registrations.length}
             hint={formatDate(citizen.registeredAt)}
           />
-        </dl>
+        </StatStrip>
       </header>
 
       <div className="space-y-5">
@@ -1284,58 +1272,6 @@ export default function CitizenProfilePage({
           onStale={() => void reload().catch(logApiError)}
         />
       ) : null}
-    </div>
-  );
-}
-
-/**
- * One number from the top of the file, said plainly.
- *
- * Three of these sit above the fold and answer the three questions this page is
- * opened with — what is owed, how much property, how many filings — so that the
- * commonest visit needs no section opened at all.
- *
- * `tone` colours only the value, never the tile: a red card for an overdue
- * balance turns the whole page into an alert, and the next person to open a file
- * with a routine unpaid fee reads it as an emergency.
- */
-function StatTile({
-  icon: Icon,
-  label,
-  value,
-  hint,
-  tone = 'plain',
-  className,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  value: React.ReactNode;
-  hint?: string;
-  tone?: 'plain' | 'bad';
-  className?: string;
-}) {
-  return (
-    <div className={cn('px-4 py-3', className)}>
-      <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <Icon className="size-3.5 shrink-0" aria-hidden />
-        {label}
-      </dt>
-      <dd
-        className={cn(
-          'mt-1 text-base font-semibold tracking-tight',
-          /*
-            Only a debt gets a colour. «لا مستحقات» used to be emerald, which
-            made the calmest fact on the file the loudest thing on the screen —
-            and a page where nothing-owed shouts has no louder register left for
-            the file where something is. Nothing due now reads as ordinary text,
-            which is what it is.
-          */
-          tone === 'bad' && 'text-destructive',
-        )}
-      >
-        {value}
-      </dd>
-      {hint ? <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p> : null}
     </div>
   );
 }

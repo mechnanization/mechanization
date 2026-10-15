@@ -45,74 +45,25 @@ import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useTabSearch, useUrlPagination } from '@/lib/use-url-state';
 import { CellTag } from '@/components/ui/cell-tag';
+import { Alert } from '@/components/ui/alert';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { DataTable, type DataTableLabels } from '@/components/ui/data-table';
+import { DataTable } from '@/components/ui/data-table';
 import { Money } from '@/components/ui/money';
+import { Skeleton } from '@/components/ui/skeleton';
+import { StatItem, StatStrip } from '@/components/ui/stat-strip';
 import { useToast } from '@/components/ui/toast';
 import { ActionTooltip } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { ACTION_TINT } from '@/lib/action-tint';
 import { formatDate } from '@/lib/dates';
 import { formatPhone } from '@/lib/phone';
+import { useTableLabels } from '@/lib/use-table-labels';
 import { buildCitizenWelcomeMessage, buildWhatsappHref } from '@/lib/whatsapp';
 import { getLabels } from '@mechanization/shared-schemas';
 
 /** Roles allowed to write. Mirrors the server; the server is the enforcement. */
 const CAN_WRITE = ['SUPER_ADMIN', 'FIELD_INSPECTOR', 'ADMINISTRATIVE_OFFICER'];
-
-function getTableLabels(locale: string): DataTableLabels {
-  if (locale === 'en') {
-    return {
-      searchAriaLabel: 'Search citizens',
-      searchPlaceholder: 'Search by name, phone, reference code, or ID…',
-      clearSearch: 'Clear search',
-      searchHint: 'Enter',
-      searchApplied: 'Search: "{term}"',
-      empty: 'No citizens registered yet.',
-      emptyHint: 'Add your first citizen, or import records from an Excel spreadsheet.',
-      emptySearch: 'No results match your search.',
-      emptySearchHint: 'Try the first name alone, the reference number, or the phone number without leading zeros.',
-      loadError: 'Failed to load citizens registry.',
-      retry: 'Retry',
-      previous: 'Previous',
-      next: 'Next',
-      pageOf: 'Page {current} of {total}',
-      rowsPerPage: 'Rows per page',
-      totalRows: '{count} citizens',
-      sortAscending: 'Sort ascending',
-      sortDescending: 'Sort descending',
-      sortNone: 'Clear sorting',
-      columns: 'Columns',
-      columnsHint: 'Visible columns',
-      resetColumns: 'Reset to default',
-    };
-  }
-  return {
-    searchAriaLabel: 'بحث في المواطنين',
-    searchPlaceholder: 'ابحث بالاسم، رقم الهاتف، الرقم المرجعي، أو رقم الهوية…',
-    clearSearch: 'مسح البحث',
-    searchHint: 'Enter',
-    searchApplied: 'بحث: «{term}»',
-    empty: 'لا يوجد مواطنون مسجّلون بعد.',
-    emptyHint: 'أضف أول مواطن، أو استورد سجلاً من ملف Excel.',
-    emptySearch: 'لا نتائج مطابقة لبحثك.',
-    emptySearchHint: 'جرّب الاسم الأول وحده، أو الرقم المرجعي، أو رقم الهاتف بدون صفر البداية.',
-    loadError: 'تعذّر تحميل سجل المواطنين.',
-    retry: 'إعادة المحاولة',
-    previous: 'السابق',
-    next: 'التالي',
-    pageOf: 'صفحة {current} من {total}',
-    rowsPerPage: 'عدد الصفوف',
-    totalRows: '{count} مواطن',
-    sortAscending: 'ترتيب تصاعدي',
-    sortDescending: 'ترتيب تنازلي',
-    sortNone: 'إلغاء الترتيب',
-    columns: 'الأعمدة',
-    columnsHint: 'الأعمدة الظاهرة',
-    resetColumns: 'استعادة الافتراضي',
-  };
-}
 
 /**
  * The citizen registry — the municipality's own record of who is registered,
@@ -162,6 +113,35 @@ export default function CitizensPage({
   const [pendingArchive, setPendingArchive] = useState<CitizenListItem | null>(null);
   const t = useTranslations('citizens');
   const toast = useToast();
+  /*
+    Only what this register says that the shared `table` strings do not: what
+    it searches by, what it is empty of, and what it counts. The column picker
+    is asked for (`columnsMenu`): this register keeps its choice of columns.
+  */
+  const tableLabels = useTableLabels({
+    ...(locale === 'en'
+      ? {
+          searchAriaLabel: 'Search citizens',
+          searchPlaceholder: 'Search by name, phone, reference code, or ID…',
+          searchApplied: 'Search: "{term}"',
+          empty: 'No citizens registered yet.',
+          emptyHint: 'Add your first citizen, or import records from an Excel spreadsheet.',
+          emptySearchHint: 'Try the first name alone, the reference number, or the phone number without leading zeros.',
+          loadError: 'Failed to load citizens registry.',
+          totalRows: '{count} citizens',
+        }
+      : {
+          searchAriaLabel: 'بحث في المواطنين',
+          searchPlaceholder: 'ابحث بالاسم، رقم الهاتف، الرقم المرجعي، أو رقم الهوية…',
+          searchApplied: 'بحث: «{term}»',
+          empty: 'لا يوجد مواطنون مسجّلون بعد.',
+          emptyHint: 'أضف أول مواطن، أو استورد سجلاً من ملف Excel.',
+          emptySearch: 'لا نتائج مطابقة لبحثك.',
+          emptySearchHint: 'جرّب الاسم الأول وحده، أو الرقم المرجعي، أو رقم الهاتف بدون صفر البداية.',
+          loadError: 'تعذّر تحميل سجل المواطنين.',
+          totalRows: '{count} مواطن',
+        }),
+  }, { columnsMenu: true });
   /** Prefixed with «بلدية» in the WhatsApp reference-number message below. */
   const [municipalityName, setMunicipalityName] = useState('');
 
@@ -738,7 +718,8 @@ export default function CitizensPage({
 
   if (!token) return null;
 
-  const tableLabels = getTableLabels(locale);
+  /** The strip's placeholder until the first read answers. */
+  const figurePending = query.loading ? <Skeleton className="h-5 w-16" /> : null;
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
@@ -763,48 +744,42 @@ export default function CitizensPage({
       />
 
       {error ? (
-        <p
-          role="alert"
-          className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-destructive"
-        >
+        <Alert variant="destructive" live="alert">
           {error}
-        </p>
+        </Alert>
       ) : null}
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <StatStrip>
         {/*
           «إجمالي الأسر» — live household files over the whole register (the
           server's `totals.families`): not a non-resident owner's record, not an
           archived or merged-away file, and not narrowed by the search. A
           server that predates it sends none, and the matching count stands in.
         */}
-        <MetricCard
+        <StatItem
           label={t('families')}
-          value={(totals.families ?? total).toLocaleString('en-US')}
-          loading={query.loading}
-          icon={<Users className="size-6 text-primary" aria-hidden />}
+          value={figurePending ?? (totals.families ?? total).toLocaleString('en-US')}
+          icon={Users}
         />
-        <MetricCard
+        <StatItem
           label={locale === 'en' ? 'Unpaid Fees' : 'رسوم غير مسدّدة'}
-          value={<Money amount={totals.outstanding} />}
-          loading={query.loading}
-          icon={<Wallet className="size-6 text-primary" aria-hidden />}
+          value={figurePending ?? <Money amount={totals.outstanding} wrap />}
+          icon={Wallet}
         />
-        <MetricCard
+        <StatItem
           label={locale === 'en' ? 'Overdue Arrears' : 'متأخرات مستحقة'}
-          value={<Money amount={totals.overdue} />}
-          loading={query.loading}
-          icon={<Banknote className="size-6 text-destructive" aria-hidden />}
-          accent="bg-destructive/10"
+          value={figurePending ?? <Money amount={totals.overdue} wrap />}
+          icon={Banknote}
+          // A tone says something (COL-2): none on a zero, and none while the figure loads.
+          className={!figurePending && totals.overdue > 0 ? 'text-destructive' : undefined}
         />
-        <MetricCard
+        <StatItem
           label={locale === 'en' ? 'Citizens in Arrears' : 'مواطنون متأخرون'}
-          value={totals.inArrears.toLocaleString('en-US')}
-          loading={query.loading}
-          icon={<TriangleAlert className="size-6 text-warning" aria-hidden />}
-          accent="bg-warning/10"
+          value={figurePending ?? totals.inArrears.toLocaleString('en-US')}
+          icon={TriangleAlert}
+          className={!figurePending && totals.inArrears > 0 ? 'text-warning' : undefined}
         />
-      </div>
+      </StatStrip>
 
       {/*
         Records this device is still holding, above the table rather than
@@ -850,8 +825,9 @@ export default function CitizensPage({
           </CardTitle>
 
         </CardHeader>
-        <CardContent className="p-6">
+        <CardContent className="p-0">
           <DataTable
+            className="rounded-none border-0 shadow-none"
             columns={columns}
             data={items}
             labels={tableLabels}
@@ -930,42 +906,5 @@ export default function CitizensPage({
         }}
       />
     </div>
-  );
-}
-
-/**
- * A single KPI widget: label, value, and an accent icon chip.
- *
- * The value block takes `value` as a node rather than a string so a money
- * tile can hand it a `<Money>` — compacted, with the exact figure on hover.
- * It also carries no `truncate`: clipping "1,250,000,000 ل.ل" to
- * "1,250,000,0…" is strictly worse than the shorthand, and with `Money`
- * doing the shortening there is nothing left to clip. The icon chip is the
- * part that yields (`shrink-0` on the chip, `min-w-0` on the text) so a long
- * figure never pushes it out of the card.
- */
-function MetricCard({
-  label,
-  value,
-  loading,
-  icon,
-  accent = 'bg-accent',
-}: {
-  label: string;
-  value: React.ReactNode;
-  loading: boolean;
-  icon: React.ReactNode;
-  accent?: string;
-}) {
-  return (
-    <Card className="transition-shadow hover:shadow-md">
-      <CardContent className="flex items-center justify-between gap-3 p-5">
-        <div className="min-w-0 space-y-1">
-          <p className="text-sm text-muted-foreground">{label}</p>
-          <div className="text-2xl font-bold tabular-nums">{loading ? '—' : value}</div>
-        </div>
-        <div className={`shrink-0 rounded-lg p-3 ${accent}`}>{icon}</div>
-      </CardContent>
-    </Card>
   );
 }

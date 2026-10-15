@@ -384,6 +384,9 @@ export function Field({
 
 /**
  * Compact card-style choice for radio options.
+ *
+ * A disabled radio — a locked `fieldset` around the form — dims the whole card
+ * and drops the pointer, so a card no longer looks pressable once it is not.
  */
 export function ChoiceCard({
   name,
@@ -394,6 +397,8 @@ export function ChoiceCard({
   description,
   icon: Icon,
   className,
+  disabled,
+  children,
 }: {
   name: string;
   value: string;
@@ -403,13 +408,25 @@ export function ChoiceCard({
   description?: string;
   icon?: React.ComponentType<{ className?: string }>;
   className?: string;
+  /**
+   * This one answer is not available, with `description` saying why. Dims the
+   * card the way a locked `fieldset` does, without locking its siblings.
+   */
+  disabled?: boolean;
+  /**
+   * More than one line of description — badges, a comparison, a warning —
+   * rendered under the title inside the same label, so the whole card still
+   * selects.
+   */
+  children?: React.ReactNode;
 }) {
   return (
     <label
       className={cn(
-        'flex cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2 text-sm transition-all select-none',
+        'flex cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2 text-sm transition-colors select-none',
+        'has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60',
         checked
-          ? 'border-primary/80 bg-primary/5 ring-1 ring-primary/40 shadow-2xs font-medium text-foreground'
+          ? 'border-primary/80 bg-primary/5 ring-1 ring-primary/40 font-medium text-foreground'
           : 'border-border/80 bg-card hover:bg-muted/40 hover:border-border text-foreground/80',
         className,
       )}
@@ -419,6 +436,7 @@ export function ChoiceCard({
         name={name}
         value={value}
         checked={checked}
+        disabled={disabled}
         onChange={() => onChange(value)}
         className="size-4 shrink-0 accent-[hsl(var(--primary))]"
       />
@@ -436,6 +454,7 @@ export function ChoiceCard({
         {description ? (
           <span className="block text-xs text-muted-foreground leading-normal mt-0.5">{description}</span>
         ) : null}
+        {children}
       </span>
     </label>
   );

@@ -2,7 +2,6 @@
 
 import * as React from 'react';
 import {
-  AlertTriangle,
   ArrowLeft,
   ArrowRight,
   Ban,
@@ -23,6 +22,7 @@ import {
   type UnitCorrectionResult,
 } from '@mechanization/shared-schemas';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -403,9 +403,9 @@ function PreviewBody({
 
         {loadError ? (
           <div className="space-y-3">
-            <Callout tone="destructive" icon={AlertTriangle} role="alert">
+            <Alert variant="destructive" live="alert">
               {loadError}
-            </Callout>
+            </Alert>
             <Button variant="outline" size="sm" onClick={onRetry}>
               <RefreshCw className="size-4" aria-hidden />
               {en ? 'Try again' : 'أعد المحاولة'}
@@ -416,10 +416,10 @@ function PreviewBody({
         {preview ? (
           <div className={cn('space-y-5', loading && 'opacity-60')}>
             {preview.blockers.length > 0 ? (
-              <Callout
-                tone="destructive"
+              <Alert
+                variant="destructive"
                 icon={Ban}
-                role="alert"
+                live="alert"
                 title={en ? 'This unit cannot be deleted' : 'لا يمكن حذف هذه الوحدة'}
               >
                 <ul className="list-disc space-y-1 ps-4">
@@ -427,7 +427,7 @@ function PreviewBody({
                     <li key={index}>{blockerText(blocker, en)}</li>
                   ))}
                 </ul>
-              </Callout>
+              </Alert>
             ) : (
               <Callout tone="warning" icon={ShieldAlert}>
                 {en
@@ -716,11 +716,11 @@ function ConfirmBody({
       }}
       noValidate
     >
-      <Callout tone="destructive" icon={AlertTriangle}>
+      <Alert variant="destructive">
         {en
           ? `Unit ${unitCode} is deleted from ${preview.building.code} for good${lines > 0 ? `, and ${lines} line(s) close on ${preview.files.length} file(s)` : ''}. This cannot be undone from the app; the audit trail keeps a full copy.`
           : `ستُحذف الوحدة ${unitCode} من ${preview.building.code} نهائياً${lines > 0 ? `، ويُغلق ${lines} بند في ${preview.files.length} ملف` : ''}. لا يمكن التراجع عن ذلك من التطبيق، ويحفظ سجل التعديلات نسخة كاملة.`}
-      </Callout>
+      </Alert>
 
       <div className="space-y-2">
         <Label htmlFor={`${reasonId}-reason`}>
@@ -795,9 +795,9 @@ function ConfirmBody({
       </div>
 
       {submitError ? (
-        <Callout tone="destructive" icon={AlertTriangle} role="alert">
+        <Alert variant="destructive" live="alert">
           {submitError}
-        </Callout>
+        </Alert>
       ) : null}
 
       {/* Enter in the code box submits; the visible button lives in the dialog's footer. */}
@@ -864,24 +864,21 @@ const CALLOUT_TONES = {
   info: 'border-info/30 bg-info/10 text-foreground [&_svg]:text-info',
   warning: 'border-warning/40 bg-warning/10 text-foreground [&_svg]:text-warning',
   success: 'border-success/30 bg-success/10 text-foreground [&_svg]:text-success',
-  destructive: 'border-destructive/30 bg-destructive/10 text-foreground [&_svg]:text-destructive',
 } as const;
 
 function Callout({
   tone,
   icon: Icon,
   title,
-  role,
   children,
 }: {
   tone: keyof typeof CALLOUT_TONES;
   icon: LucideIcon;
   title?: string;
-  role?: 'alert' | 'status';
   children: React.ReactNode;
 }): React.JSX.Element {
   return (
-    <div role={role} className={cn('flex gap-2.5 rounded-lg border p-3 text-sm', CALLOUT_TONES[tone])}>
+    <div className={cn('flex gap-2.5 rounded-lg border p-3 text-sm', CALLOUT_TONES[tone])}>
       <Icon className="mt-0.5 size-4 shrink-0" aria-hidden />
       <div className="min-w-0 space-y-1">
         {title ? <p className="font-semibold">{title}</p> : null}

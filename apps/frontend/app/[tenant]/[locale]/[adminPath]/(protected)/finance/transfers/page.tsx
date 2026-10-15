@@ -29,7 +29,7 @@ import { useTableLabels } from '@/lib/use-table-labels';
 import { cn } from '@/lib/utils';
 import { TreasuryAmount } from '@/components/admin/finance/treasury-amount';
 import { Alert } from '@/components/ui/alert';
-import { BackLink } from '@/components/ui/back-link';
+import { HeaderBackLink } from '@/components/admin/header-back-link';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -227,7 +227,7 @@ export default function TransfersPage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <BackLink fallbackHref={`${base}/finance`} label={t('back')} />
+      <HeaderBackLink fallbackHref={`${base}/finance`} label={t('back')} />
 
       <PageHeader
         icon={ArrowRightLeft}

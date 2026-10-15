@@ -16,7 +16,7 @@ import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { IssueFeeForm, type IssueFeeValues } from '@/components/admin/issue-fee-form';
 import { Alert } from '@/components/ui/alert';
-import { BackLink } from '@/components/ui/back-link';
+import { HeaderBackLink } from '@/components/admin/header-back-link';
 import { Card, CardContent } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -175,7 +175,7 @@ export default function IssueFeePage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <BackLink fallbackHref={feesHref} label={t('back')} />
+      <HeaderBackLink fallbackHref={feesHref} label={t('back')} />
 
       <PageHeader icon={Receipt} title={t('title')} />
 

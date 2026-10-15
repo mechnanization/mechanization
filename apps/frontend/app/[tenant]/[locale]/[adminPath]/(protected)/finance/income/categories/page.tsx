@@ -17,7 +17,7 @@ import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { useTableLabels } from '@/lib/use-table-labels';
 import { IncomeCategoryEditor } from '@/components/admin/finance/income-category-editor';
-import { BackLink } from '@/components/ui/back-link';
+import { HeaderBackLink } from '@/components/admin/header-back-link';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -195,7 +195,7 @@ export default function IncomeCategoriesPage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <BackLink fallbackHref={`${base}/finance/income`} label={t('back')} />
+      <HeaderBackLink fallbackHref={`${base}/finance/income`} label={t('back')} />
 
       <PageHeader
         icon={Tags}

@@ -16,7 +16,7 @@ import {
 } from '@/components/admin/finance/official-document';
 import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
 import { IncomeVoucherDocument } from '@/components/admin/finance/voucher-documents';
-import { BackLink } from '@/components/ui/back-link';
+import { HeaderBackLink } from '@/components/admin/header-back-link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
@@ -68,7 +68,7 @@ export default function IncomeVoucherPrintPage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <BackLink fallbackHref={`${base}/finance/income`} label={tr('back')} />
+      <HeaderBackLink fallbackHref={`${base}/finance/income`} label={tr('back')} />
       <PageHeader
         icon={FileText}
         title={data ? tr('pageTitleNumbered', { number: data.voucherNumber }) : tr('pageTitle')}

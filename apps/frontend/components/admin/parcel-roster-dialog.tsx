@@ -11,6 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 
@@ -105,9 +106,9 @@ export function ParcelRosterDialog({
         ) : null}
 
         {error ? (
-          <p role="alert" className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive">
+          <Alert variant="destructive" live="alert">
             {error}
-          </p>
+          </Alert>
         ) : null}
 
         {roster && roster.citizens.length === 0 ? (

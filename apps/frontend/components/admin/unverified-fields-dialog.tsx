@@ -6,9 +6,9 @@ import {
   FileQuestion,
   Search,
   Sparkles,
-  TriangleAlert,
 } from 'lucide-react';
 import { getLabels, isFlaggablePath } from '@mechanization/shared-schemas';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -316,10 +316,9 @@ export function UnverifiedFieldsDialog({
 
         <div className="flex-1 overflow-y-auto p-5 space-y-5">
           {validationError ? (
-            <div className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs font-medium text-destructive">
-              <TriangleAlert className="size-4 shrink-0" />
-              <span>{validationError}</span>
-            </div>
+            <Alert variant="destructive" live="alert">
+              {validationError}
+            </Alert>
           ) : null}
 
           {groupedFields.length === 0 ? (

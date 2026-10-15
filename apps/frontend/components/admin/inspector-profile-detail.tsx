@@ -10,7 +10,6 @@ import {
   BadgeDollarSign,
   Building,
   Building2,
-  Clock,
   FileText,
   HandCoins,
   Home,
@@ -20,10 +19,7 @@ import {
   RefreshCw,
   Store,
   Tent,
-  TrendingUp,
   User,
-  Users,
-  Wallet,
 } from 'lucide-react';
 import { getLabels } from '@mechanization/shared-schemas';
 import type { InspectorProfileResponse } from '@mechanization/shared-schemas';
@@ -42,6 +38,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
 import { Skeleton } from '@/components/ui/skeleton';
+import { StatItem, StatStrip } from '@/components/ui/stat-strip';
 import { EmptyState, ErrorState } from '@/components/ui/states';
 import { ActionTooltip } from '@/components/ui/tooltip';
 
@@ -137,11 +134,7 @@ export function InspectorProfileDetail({
             <Skeleton className="h-4 w-96" />
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-          {Array.from({ length: 5 }).map((_, index) => (
-            <Skeleton key={index} className="h-24 rounded-lg" />
-          ))}
-        </div>
+        <Skeleton className="h-52 rounded-lg sm:h-20" />
         <Skeleton className="h-48 rounded-xl" />
         <Skeleton className="h-96 rounded-xl" />
       </div>
@@ -307,30 +300,26 @@ export function InspectorProfileDetail({
       </Card>
 
       {/*
-        Five figures, one row, plain tiles. One accent, on the balance still
-        owed, which is the only figure here that asks somebody to do something.
+        Five figures, one strip. One accent, on the balance still owed, which
+        is the only figure here that asks somebody to do something.
       */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <Stat
-          icon={Users}
+      <StatStrip>
+        <StatItem
           label={isAr ? 'المواطنون المسجلون' : 'Citizens registered'}
           value={data.totalCitizens.toLocaleString(locale)}
         />
-        <Stat
-          icon={Home}
+        <StatItem
           label={isAr ? 'الوحدات المحتسبة' : 'Billable units'}
           value={data.totalProperties.toLocaleString(locale)}
         />
-        <Stat
-          icon={TrendingUp}
+        <StatItem
           label={isAr ? 'إجمالي الأرباح' : 'Total earned'}
           value={`$${money(data.totalEarnings)}`}
         />
-        <Stat
-          icon={Wallet}
+        <StatItem
           label={isAr ? 'المدفوع' : 'Paid'}
           value={`$${money(data.paidBalance)}`}
-          note={`${data.payouts.length} ${isAr ? 'دفعة مسجلة' : 'payouts'}`}
+          hint={`${data.payouts.length} ${isAr ? 'دفعة مسجلة' : 'payouts'}`}
         />
         {/*
           Two balances, never both: `pendingBalance` clamps at zero, so an
@@ -340,21 +329,19 @@ export function InspectorProfileDetail({
           is the one figure on this row that asks for something back.
         */}
         {(data.overpaidBalance ?? 0) > 0 ? (
-          <Stat
-            icon={Clock}
+          <StatItem
             label={isAr ? 'مدفوع بالزيادة' : 'Overpaid'}
             value={`$${money(data.overpaidBalance ?? 0)}`}
-            emphasis
+            className="text-warning"
           />
         ) : (
-          <Stat
-            icon={Clock}
+          <StatItem
             label={isAr ? 'المتبقي المستحق' : 'Pending'}
             value={`$${money(data.pendingBalance)}`}
-            emphasis
+            className="text-warning"
           />
         )}
-      </div>
+      </StatStrip>
 
       {/*
         The work beside its quality — the same figures «مراجعة الجودة» shows,
@@ -729,42 +716,6 @@ function BreakdownTile({
       </span>
       <span className="text-2xl font-bold tabular-nums">{value.toLocaleString(locale)}</span>
       <span className="mt-1 text-xs font-medium text-muted-foreground">{label}</span>
-    </div>
-  );
-}
-
-function Stat({
-  icon: Icon,
-  label,
-  value,
-  note,
-  emphasis,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  value: string;
-  note?: string;
-  emphasis?: boolean;
-}): React.JSX.Element {
-  return (
-    <div className="rounded-lg border bg-card p-4">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Icon className="size-4 shrink-0" aria-hidden />
-        <span className="min-w-0 truncate">{label}</span>
-      </div>
-      {/*
-        `<bdi>` rather than `dir="ltr"`: the label sits above its value, and a
-        value carrying its own direction lands on the opposite edge from the
-        word naming it — see `FactGrid` for why this keeps catching us out.
-      */}
-      <div
-        className={`mt-2 text-2xl font-bold tabular-nums ${
-          emphasis ? 'text-warning' : 'text-foreground'
-        }`}
-      >
-        <bdi>{value}</bdi>
-      </div>
-      {note ? <p className="mt-1 text-xs text-muted-foreground">{note}</p> : null}
     </div>
   );
 }

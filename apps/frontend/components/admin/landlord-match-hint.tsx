@@ -7,7 +7,7 @@ import { getLandlordCandidates, logApiError, type LandlordCandidate } from '@/li
 import { compareNames } from '@/lib/landlord-display';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
+import { ChoiceCard } from '@/components/ui/field';
 
 const LOOKUP_DEBOUNCE_MS = 500;
 
@@ -69,6 +69,7 @@ export function LandlordMatchHint({
   const t = useTranslations('landlordLink.hint');
   const tLink = useTranslations('landlordLink');
   const group = useId();
+  const questionId = useId();
   const [candidates, setCandidates] = useState<LandlordCandidate[]>([]);
   const [looking, setLooking] = useState(false);
   /**
@@ -149,7 +150,7 @@ export function LandlordMatchHint({
 
   return (
     <div className="mt-2 space-y-2.5 rounded-lg border border-primary/30 bg-primary/10 p-3 text-sm">
-      <p className="flex items-start gap-2 font-medium">
+      <p id={questionId} className="flex items-start gap-2 font-medium">
         <UserCheck className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
         {single
           ? candidates[0]!.matchedBy === 'CONTACT'
@@ -158,50 +159,42 @@ export function LandlordMatchHint({
           : t('questionMany', { count: candidates.length })}
       </p>
 
-      <div role="radiogroup" className="space-y-1.5">
+      <div role="radiogroup" aria-labelledby={questionId} className="space-y-1.5">
         {candidates.map((candidate) => {
           const match = compareNames(typedName, candidate.name);
-          const isSelected = selectedId === candidate.id;
           return (
-            <label
+            <ChoiceCard
               key={candidate.id}
-              className={cn(
-                'flex min-h-11 cursor-pointer items-center gap-2.5 rounded-md border bg-card px-2.5 py-2 transition-colors duration-150',
-                isSelected ? 'border-primary ring-1 ring-primary' : 'hover:border-primary/50',
-              )}
+              name={group}
+              value={candidate.id}
+              checked={selectedId === candidate.id}
+              onChange={setChosen}
+              title={candidate.name}
+              // A lone match is already the answer: no radio to press, as before the card (still read as checked).
+              className={alone ? 'min-h-11 [&_input]:sr-only' : 'min-h-11'}
             >
-              <input
-                type="radio"
-                name={group}
-                checked={isSelected}
-                onChange={() => setChosen(candidate.id)}
-                className={cn('size-4 shrink-0 accent-[hsl(var(--primary))]', alone && 'sr-only')}
-              />
-              <span className="min-w-0 flex-1">
-                <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                  <span className="font-semibold">{candidate.name}</span>
-                  {match === 'SAME' ? (
-                    <Badge variant="soft-success">{t('sameName')}</Badge>
-                  ) : match === 'SIMILAR' ? (
-                    <Badge variant="soft-info">{t('similarName')}</Badge>
-                  ) : match === 'DIFFERENT' ? (
-                    <Badge variant="soft-warning">{t('differentName')}</Badge>
-                  ) : null}
-                  {candidate.matchedBy === 'CONTACT' ? (
-                    <Badge variant="soft-warning">{tLink('provenance.CONTACT')}</Badge>
-                  ) : null}
-                </span>
-                <span className="flex flex-wrap gap-x-3 text-xs text-muted-foreground">
-                  {candidate.referenceNumber ? (
-                    <bdi dir="ltr" className="font-mono">
-                      {candidate.referenceNumber}
-                    </bdi>
-                  ) : null}
-                  {candidate.fatherName ? <span>{t('father', { name: candidate.fatherName })}</span> : null}
-                  {candidate.motherName ? <span>{t('mother', { name: candidate.motherName })}</span> : null}
-                </span>
+              <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                {match === 'SAME' ? (
+                  <Badge variant="soft-success">{t('sameName')}</Badge>
+                ) : match === 'SIMILAR' ? (
+                  <Badge variant="soft-info">{t('similarName')}</Badge>
+                ) : match === 'DIFFERENT' ? (
+                  <Badge variant="soft-warning">{t('differentName')}</Badge>
+                ) : null}
+                {candidate.matchedBy === 'CONTACT' ? (
+                  <Badge variant="soft-warning">{tLink('provenance.CONTACT')}</Badge>
+                ) : null}
               </span>
-            </label>
+              <span className="flex flex-wrap gap-x-3 text-xs text-muted-foreground">
+                {candidate.referenceNumber ? (
+                  <bdi dir="ltr" className="font-mono">
+                    {candidate.referenceNumber}
+                  </bdi>
+                ) : null}
+                {candidate.fatherName ? <span>{t('father', { name: candidate.fatherName })}</span> : null}
+                {candidate.motherName ? <span>{t('mother', { name: candidate.motherName })}</span> : null}
+              </span>
+            </ChoiceCard>
           );
         })}
       </div>

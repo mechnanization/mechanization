@@ -17,7 +17,7 @@ import { hasRole, LANDLORD_LINK_ANSWER_ROLES } from '@/lib/staff-roles';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { cn } from '@/lib/utils';
-import { BackLink } from '@/components/ui/back-link';
+import { HeaderBackLink } from '@/components/admin/header-back-link';
 import { Badge } from '@/components/ui/badge';
 import { buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -113,7 +113,7 @@ export default function LandlordLinkPage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <BackLink fallbackHref={queue} label={en ? 'Back to owner links' : 'العودة إلى روابط المالكين'} />
+      <HeaderBackLink fallbackHref={queue} label={en ? 'Back to owner links' : 'العودة إلى روابط المالكين'} />
 
       {/*
         Whose claim this is, by the identifiers a clerk is asked for: the

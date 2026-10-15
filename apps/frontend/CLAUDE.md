@@ -1,6 +1,6 @@
 # apps/frontend: agent guide
 
-Last verified against the code: `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): signed cadastre layers, «أمان الحساب»'s own-account read, error state and password change, the sign-in page's copy in messages, a 401 that is an answer; citizen pickers, the building editor's held creation key and drafts, the offline queue's revised, held and refused records, 2026-10-15.
+Last verified against the code: `fix/pr116-review` (PR #116 merged with `fix/pr115-review`, which stacks #123, #124 and #115 on `develop@5e8f5c3`, with its review fixes): `DatePicker`'s Escape and year list, the treasury pages' and the case editor's way back in the header, the back-navigation guard, «تكليف مباشر», the case editor, the cases page and «التقرير اليومي» in messages; phase 1 of the kit adoption (`Alert`, `StatStrip`, `Pager`, `HeaderBackLink`, the recording forms' frame), `StatItem`'s `hint`; signed cadastre layers, «أمان الحساب»'s own-account read, error state and password change, the sign-in page's copy in messages, a 401 that is an answer; citizen pickers, the building editor's held creation key and drafts, the offline queue's revised, held and refused records, 2026-10-15.
 
 Next.js 15 app router, React 18, next-intl 4, TanStack Query 5, Tailwind 3.4 with
 tailwind-merge 3, Radix and lucide-react. One app serves the staff dashboard and the
@@ -38,6 +38,11 @@ app/[tenant]/[locale]/layout.tsx        TenantLayout (server, force-dynamic) + e
       for the retry of a press whose answer was lost)
     finance/expenses/[voucherId]/print (أمر الصرف — A4 portrait; `?print=1` opens the print dialog once)
     finance/income (الإيرادات) · finance/income/new (تسجيل إيراد جديد)
+    (the two recording forms share one frame, components/admin/finance/treasury-form-parts.tsx:
+      from `xl` the page is the screen's height (`xl:flex xl:h-full xl:flex-col` on its root) and
+      the form two panes — the fields card (`FormCard`, which holds the locking fieldset) scrolls,
+      and `SummaryPanel` beside it, which reads the act back and holds the buttons and the last
+      refusal, does not move; `WalletSelect` lists each wallet with its balance)
     finance/income/[voucherId]/print (سند القبض — A4 portrait, QR of the number; `?print=1`)
     finance/income/categories (بنود الإيرادات — every reader sees the list, the manager edits it)
     finance/transfers (المناقلات والمصارفة — the register, the review queue; review on TREASURY_REVIEW_ROLES;
@@ -140,7 +145,8 @@ API client, session, hooks, formatters and offline queue; `public/sw.js` is the 
   `--brand-primary` through `safeHslTriple`, then `NextIntlClientProvider` > `ThemeProvider`
   > `AccentProvider`.
 - `ProtectedAdminLayout`: `QueryProvider` > `TooltipProvider` > `ToastProvider` >
-  `AdminShell` (registers the service worker) > `StaffRouteGuard`. `(citizen)/layout.tsx`
+  `AdminShell` (registers the service worker; holds the page's `HeaderBackLink` for
+  `AdminHeader` to draw) > `StaffRouteGuard`. `(citizen)/layout.tsx`
   mounts none of the three: `useToast` throws there, `useStaffQuery` and `ActionTooltip` fail.
 
 ## Dependency direction
@@ -332,7 +338,7 @@ component types.
 ## Copy and i18n (decision D-i18n)
 
 - New copy MUST go in next-intl messages, `messages/ar.json` and `messages/en.json`, with
-  the same keys in both (2,571 leaf keys each, counted 2026-10-15 on `fix/pr115-review` with PRs #123 and #124 merged in). Read it with `useTranslations`.
+  the same keys in both (2,657 leaf keys each, counted 2026-10-15 on `fix/pr116-review`). Read it with `useTranslations`.
   `lib/messages-parity.test.ts` checks that both files hold the same keys, the same ICU
   placeholders and the same rich-text tags, and that no Arabic message outside `errors`
   writes a count as `#`: inside a plural branch write `{count}`, because `#` is formatted
@@ -489,17 +495,20 @@ Model: `app/[tenant]/[locale]/[adminPath]/(protected)/citizens/review/page.tsx` 
    toasts, units and error texts (TXT-2).
 5. **Read**: `useStaffSession`, then `useStaffQuery`; list state from `useUrlPagination`,
    `useTabSearch`, `useUrlState`.
-6. **Layout**: root `w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8`, `PageHeader` (`BackLink`
-   first on a detail page; a title and no subtitle — the prop no longer exists, PRIM-1), `Card` > `CardContent className="p-0"` > borderless `DataTable`
+6. **Layout**: root `w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8`, `PageHeader` (a title and
+   no subtitle — the prop no longer exists, PRIM-1; a page with a way back declares it with
+   `HeaderBackLink`, which the header draws, PRIM-2), `Card` > `CardContent className="p-0"` > borderless `DataTable`
    (`manualPagination manualFiltering sortable={false}`, `loading`, `error`, `onRetry`,
-   labels from `useTableLabels`) (LAY-1, BAN-4, PRIM-3).
+   labels from `useTableLabels`, with `{ columnsMenu: true }` when the table passes
+   `columnStorageKey`) (LAY-1, BAN-4, PRIM-3). A failed write above it is `Alert`
+   (`variant="destructive" live="alert"`), never a red `<p>` (CTL-12).
 7. **Panels and cells**: `LoadingState`, `EmptyState`, `ErrorState`; `CellTag`, `Money`,
    `formatDate` and friends, `formatPhone` (PRIM-5 to PRIM-12). `Money` isolates the signed
    figure left to right (minus U+2212, `moneyParts` in `lib/currency.ts`) and leaves the unit in
    the page's direction; `currency` draws a dollar or euro figure the same way, `signed` adds «+»
    for a ledger movement, and `wrap` lets the unit drop under the figure — a figure in a
    `StatItem` passes it, because `StatItem` wraps and never truncates; its `hint` is a short muted
-   line that qualifies the figure («آخر دفعة: …»). The treasury draws every
+   line that qualifies the figure («منها متأخرات», «آخر دفعة: …»), not a local tile. The treasury draws every
    figure through `TreasuryAmount`, which is `Money` with `exact`.
 8. **Writes**: in-flight ref, `invalidateQueries`, `useToast`; destructive actions through
    `ConfirmDialog`; `closeLabel` on every `DialogContent` (STA-3, STA-4, PRIM-16).
@@ -533,9 +542,10 @@ are inlined at build time. The local `.env.local` block is in
 ## Tests
 
 Vitest (`apps/frontend/vitest.config.mts`): `environment: 'node'`, only `lib/**/*.test.ts`,
-with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 51 test files, 674 cases (counted
-2026-10-15, `fix/pr115-review` with PRs #123 and #124 merged in). Five of them read
-components rather than render them: `print-pages.test.ts` and `payout-hosts.test.ts` read every
+with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 52 test files, 677 cases (counted
+2026-10-15, `fix/pr116-review`). Several read components rather than render them:
+`back-navigation.test.ts` every page and component under `app/` and `components/`, so that only
+the header and the two toolbars PRIM-2 names draw a `BackLink`; `print-pages.test.ts` and `payout-hosts.test.ts` read every
 print page and every payout-dialog host, `transfer-screens.test.ts` the transfer screens,
 `commission-payout.test.ts` the payout dialog, `bulk-settle.test.ts` the bulk dialog's gate,
 `bill-receipts-screens.test.ts` the bill page, the citizen file's bill rows, «وصولات الفاتورة» and

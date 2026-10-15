@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { ArrowLeftRight, GitMerge, Loader2, TriangleAlert } from 'lucide-react';
+import { ArrowLeftRight, GitMerge, Loader2 } from 'lucide-react';
 import {
   getLabels,
   type CitizenMergePreview,
@@ -12,6 +12,7 @@ import {
 import { ApiRequestError, logApiError, mergeCitizens, previewCitizenMerge } from '@/lib/api-client';
 import { formatDate } from '@/lib/dates';
 import { cn } from '@/lib/utils';
+import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -186,9 +187,9 @@ export function MergeCitizensDialog({
         ) : null}
 
         {loadError ? (
-          <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 p-2.5 text-sm text-destructive">
+          <Alert variant="destructive" live="alert">
             {loadError}
-          </p>
+          </Alert>
         ) : null}
 
         {preview ? (
@@ -196,17 +197,13 @@ export function MergeCitizensDialog({
             <Sides preview={preview} onSwap={swap} swapped={chosen} disabled={loading || busy} />
 
             {preview.blocks.length > 0 ? (
-              <section className="space-y-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3">
-                <p className="flex items-center gap-1.5 font-semibold text-destructive">
-                  <TriangleAlert className="size-4 shrink-0" aria-hidden />
-                  {t('blocked')}
-                </p>
+              <Alert variant="destructive" live="status" title={t('blocked')}>
                 <ul className="list-disc space-y-1 ps-5 leading-relaxed">
                   {preview.blocks.map((block) => (
                     <li key={`${block.code}:${block.message}`}>{block.message}</li>
                   ))}
                 </ul>
-              </section>
+              </Alert>
             ) : null}
 
             <WhatHappens preview={preview} />
@@ -251,9 +248,9 @@ export function MergeCitizensDialog({
         ) : null}
 
         {failure ? (
-          <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 p-2.5 text-sm text-destructive">
+          <Alert variant="destructive" live="alert">
             {failure}
-          </p>
+          </Alert>
         ) : null}
 
         <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">

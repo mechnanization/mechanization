@@ -13,7 +13,7 @@ import { useUrlState } from '@/lib/use-url-state';
 import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
 import { DailyCashReport } from '@/components/admin/finance/daily-cash-report';
 import { BLANK_LETTERHEAD, useMunicipalLetterhead } from '@/components/admin/finance/official-document';
-import { BackLink } from '@/components/ui/back-link';
+import { HeaderBackLink } from '@/components/admin/header-back-link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
@@ -59,7 +59,7 @@ export default function DailyCashReportPage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <BackLink fallbackHref={`${base}/finance/daily?date=${date}`} label={t('back')} />
+      <HeaderBackLink fallbackHref={`${base}/finance/daily?date=${date}`} label={t('back')} />
       <PageHeader
         icon={ScrollText}
         title={t('title')}

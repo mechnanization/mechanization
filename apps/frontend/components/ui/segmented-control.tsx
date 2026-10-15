@@ -64,7 +64,7 @@ export function SegmentedControl({
             disabled={disabled}
             onClick={() => onChange(option.value)}
             className={cn(
-              'inline-flex items-center justify-center gap-1.5 rounded-md font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50',
+              'inline-flex items-center justify-center gap-1.5 rounded-md font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50',
               /*
                 `min-w-0` is what makes `truncate` below work at all. A flex
                 item's `min-width` is `auto`, so a button refuses to shrink
@@ -137,7 +137,7 @@ export function ChipGroup({
             aria-checked={isSelected}
             onClick={() => onChange(option.value)}
             className={cn(
-              'inline-flex items-center justify-center gap-1.5 rounded-lg border font-medium transition-all select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+              'inline-flex items-center justify-center gap-1.5 rounded-lg border font-medium transition-colors select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
               size === 'sm' && 'min-h-[34px] coarse:min-h-touch px-3 py-1 text-xs',
               size === 'default' && 'min-h-[40px] coarse:min-h-touch px-3.5 py-1.5 text-xs sm:text-sm',
               isSelected

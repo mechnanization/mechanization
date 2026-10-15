@@ -10,6 +10,7 @@ import {
 } from '@/lib/api-client';
 import type { MunicipalitySettings } from '@/lib/api-client';
 import type { SettingsCopy } from '@/lib/settings-i18n';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 
 import { Input } from '@/components/ui/input';
@@ -213,12 +214,9 @@ export function ProfileSection({
   return (
     <div className="space-y-4">
       {error ? (
-        <p
-          role="alert"
-          className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive"
-        >
+        <Alert variant="destructive" live="alert">
           {error}
-        </p>
+        </Alert>
       ) : null}
 
       {/*
@@ -490,7 +488,7 @@ export function ProfileSection({
                   if (file) readLogo(file);
                 }}
                 className={cn(
-                  'group flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed p-6 text-center transition-all',
+                  'group flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed p-6 text-center transition-colors',
                   dragging
                     ? 'border-primary/60 bg-muted/30'
                     : 'border-muted-foreground/25 bg-muted/10 hover:border-primary/60 hover:bg-muted/30',

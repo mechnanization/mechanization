@@ -29,6 +29,7 @@ import type { FeeBasis, FeeBearer } from '@mechanization/shared-schemas';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { Alert } from '@/components/ui/alert';
+import { DatePicker } from '@/components/ui/date-picker';
 import { ChoiceCard, Field } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import {
@@ -357,13 +358,11 @@ export function IssueFeeForm({
                   htmlFor="fee-due"
                   required
                 >
-                  <Input
+                  <DatePicker
                     id="fee-due"
-                    type="date"
-                    dir="ltr"
-                    className="text-start"
                     value={values.dueDate}
-                    onChange={(event) => set({ dueDate: event.target.value })}
+                    onChange={(dueDate) => set({ dueDate })}
+                    locale={locale === 'en' ? 'en' : 'ar'}
                   />
                 </Field>
               </div>

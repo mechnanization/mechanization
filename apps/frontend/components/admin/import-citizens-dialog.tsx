@@ -14,12 +14,12 @@ import {
   TriangleAlert,
   Upload,
   Users,
-  XCircle,
 } from 'lucide-react';
 import { getLabels, IMPORT_COLUMNS } from '@mechanization/shared-schemas';
 import type { CitizenImportResult, CitizenImportRowResult, ImportRow } from '@mechanization/shared-schemas';
 import { localizeApiError } from '@/lib/api-errors';
 import { buildCitizenTemplate, downloadCsv, parseCitizenCsv } from '@/lib/csv';
+import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -246,12 +246,9 @@ export function ImportCitizensDialog({
 
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-6">
           {error ? (
-            <p
-              role="alert"
-              className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
-            >
+            <Alert variant="destructive" live="alert">
               {error}
-            </p>
+            </Alert>
           ) : null}
 
           {/* A large file is sent in batches, so there is real progress to
@@ -337,20 +334,16 @@ export function ImportCitizensDialog({
               </button>
 
               {parseError ? (
-                <p className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-                  <XCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
+                <Alert variant="destructive" live="alert">
                   {parseError}
-                </p>
+                </Alert>
               ) : null}
 
               {missingColumns.length > 0 ? (
-                <p className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-                  <XCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-                  <span>
-                    أعمدة إلزامية غير موجودة في الملف:{' '}
-                    <span className="font-semibold">{missingColumns.join('، ')}</span>
-                  </span>
-                </p>
+                <Alert variant="destructive" live="alert">
+                  أعمدة إلزامية غير موجودة في الملف:{' '}
+                  <span className="font-semibold">{missingColumns.join('، ')}</span>
+                </Alert>
               ) : null}
 
               {unknownHeaders.length > 0 ? (

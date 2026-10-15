@@ -3,7 +3,6 @@
 import { use, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  AlertCircle,
   ArrowRight,
   Eye,
   EyeOff,
@@ -237,13 +236,13 @@ export default function StaffLogin({
           ) : null}
 
           {error ? (
-            <div
-              role="alert"
-              className="mb-6 flex items-start gap-3 rounded-xl border border-destructive/40 bg-destructive/10 p-3.5 text-sm leading-relaxed text-destructive animate-in fade-in-0 duration-200"
+            <Alert
+              variant="destructive"
+              live="alert"
+              className="mb-6 animate-in fade-in-0 duration-200"
             >
-              <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-              <span>{error}</span>
-            </div>
+              {error}
+            </Alert>
           ) : null}
 
           <form

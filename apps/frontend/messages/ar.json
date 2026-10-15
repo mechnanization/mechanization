@@ -880,6 +880,16 @@
       "failed": "تعذّر إصدار الرسم.",
       "notAllowedTitle": "لا صلاحية لإصدار الرسوم",
       "notAllowedBody": "إصدار الرسوم لأدوار محدّدة. يمكنك الاطّلاع على السجل دون إصدار."
+    },
+    "charge": {
+      "title": "إضافة مطالبة لمواطن",
+      "description": "مطالبة فردية لمرة واحدة، دون إشعار أو تكرار.",
+      "citizen": "المواطن",
+      "billType": "نوع الرسم / سبب المطالبة",
+      "billTypePlaceholder": "اختر من الرسوم السابقة أو اكتب اسماً جديداً…",
+      "amount": "المبلغ بالليرة اللبنانية",
+      "dueDate": "تاريخ الاستحقاق",
+      "submit": "إضافة المطالبة"
     }
   },
   "parcelDrawer": {
@@ -1291,6 +1301,28 @@
       "rowsRemoved": "حُذفت {count}",
       "rowsChanged": "عُدِّلت {count}",
       "recordedFields": "{count} حقلاً مسجَّلاً"
+    },
+    "daily": {
+      "loadFailed": "تعذّر تحميل التقرير اليومي.",
+      "emptyTitle": "لا نشاط في هذا النطاق",
+      "emptyBody": "وسِّع نطاق التاريخ أو امسح أحد الفلاتر.",
+      "colDay": "اليوم",
+      "colStaff": "الموظف",
+      "colWhat": "ما قام به",
+      "colCount": "عدد الإجراءات",
+      "colLast": "آخر إجراء",
+      "today": "اليوم",
+      "yesterday": "أمس",
+      "system": "النظام",
+      "unknown": "غير معروف",
+      "more": "و{count} أخرى",
+      "viewDetails": "عرض التفاصيل",
+      "dayLoadFailed": "تعذّر تحميل تفاصيل هذا اليوم.",
+      "colTime": "الوقت",
+      "colAction": "الإجراء",
+      "colRecord": "السجل",
+      "colChanges": "ما الذي تغيّر",
+      "truncated": "تُعرض أول {shown} من {expected}. افتح العرض المفصّل لبقيتها."
     }
   },
   "duplicateReview": {
@@ -2979,5 +3011,71 @@
     "possibleDuplicatesNote": "ستُستورد وتبقى في «{status}» مع ملاحظة «{flag}»، ليتحقّق أحدٌ هل هو الشخص نفسه.",
     "resembles": "يشبه: {names}",
     "row": "صف {row}"
+  },
+  "cases": {
+    "editor": {
+      "back": "رجوع إلى الحالات",
+      "titleEdit": "تعديل الحالة",
+      "titleNew": "فتح حالة متابعة",
+      "intro": "لزيارة لم تنتهِ بتسجيل مواطن — سجّل ما أمكن ملاحظته حتى لا تبدأ الزيارة القادمة من الصفر.",
+      "loadFailed": "تعذّر تحميل الحالة.",
+      "saveFailed": "تعذّر حفظ الحالة.",
+      "notes": "ماذا حصل",
+      "propertyNumber": "رقم العقار",
+      "neighborhood": "الحي",
+      "propertyType": "نوع العقار",
+      "unknown": "غير معروف",
+      "buildingName": "اسم المبنى/المنزل",
+      "side": "الجهة",
+      "sidePlaceholder": "مثال: شمالي، جنوبي",
+      "floor": "الطابق",
+      "landType": "نوع الأرض",
+      "tentLocation": "وصف موقع الخيمة",
+      "tentLocationPlaceholder": "مثال: المخيم الشمالي — قطعة 4",
+      "saveChanges": "حفظ التعديلات",
+      "saveCase": "حفظ الحالة"
+    },
+    "page": {
+      "title": "الحالات",
+      "open": "فتح حالة متابعة",
+      "loadFailed": "تعذّر تحميل الحالات.",
+      "markedResolved": "تم وضع علامة مُعالجة",
+      "markedScheduled": "تم وضعها كزيارة مجدولة",
+      "reopened": "تمت إعادة فتح الحالة",
+      "updateFailed": "تعذّر تحديث الحالة.",
+      "updateFailedTitle": "تعذّر تحديث الحالة",
+      "sessionEnded": "انتهت الجلسة.",
+      "deleted": "تم حذف الحالة",
+      "deleteFailed": "تعذّر حذف الحالة.",
+      "logged": "الحالات المسجّلة",
+      "shownOf": "({shown} من {total})",
+      "conversionFigure": "{percent}٪",
+      "conversionText": "نسبة التحويل — {linked} من {resolved} حالة محلولة انتهت بتسجيل مواطن",
+      "filter": "تصفية:",
+      "sector": "القطاع",
+      "allSectors": "كل القطاعات",
+      "parcelFilter": "تصفية حسب رقم العقار",
+      "parcelPlaceholder": "رقم العقار",
+      "parcelClear": "مسح رقم العقار",
+      "buildingFilter": "تصفية حسب رمز المبنى",
+      "buildingPlaceholder": "رمز المبنى",
+      "buildingClear": "مسح رمز المبنى",
+      "opened": "فُتحت",
+      "from": "من",
+      "to": "إلى",
+      "clearFilters": "مسح {count} فلتر",
+      "deleteTitle": "حذف الحالة",
+      "deleteBody": "ستُحذف هذه الحالة نهائياً. هذا لا يؤثر على أي سجل مواطن.",
+      "working": "جارٍ التنفيذ…",
+      "table": {
+        "searchAriaLabel": "بحث في الحالات",
+        "searchPlaceholder": "ابحث برقم العقار أو الحي أو الملاحظات…",
+        "searchApplied": "بحث: «{term}»",
+        "empty": "لا توجد حالات مسجّلة بعد.",
+        "emptySearch": "لا نتائج مطابقة لبحثك.",
+        "loadError": "تعذّر تحميل الحالات.",
+        "totalRows": "{count} حالة"
+      }
+    }
   }
 }
