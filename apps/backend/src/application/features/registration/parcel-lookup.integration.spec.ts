@@ -141,7 +141,7 @@ describeIfDb('looking a رقم العقار up whatever digits it was typed in',
     expect(suggestions).toEqual([arabic('9000003'), '9000000']);
   });
 
-  it('places a card typed «١٥٥٣» on parcel 1553 and flags, as typed, only the number the cadastre lacks', async () => {
+  it('places a card typed «١٥٥٣» on parcel 1553, saves it in Latin digits, and flags only the number the cadastre lacks', async () => {
     const latin = fresh();
     const unknown = fresh();
     await parcel(latin, 33.5, 35.5);
@@ -183,12 +183,10 @@ describeIfDb('looking a رقم العقار up whatever digits it was typed in',
       where: { id: result.registrationId },
       include: { properties: { orderBy: { propertyNumber: 'asc' } } },
     });
-    const placed = registration.properties.find((entry) => entry.propertyNumber === arabic(latin));
+    const placed = registration.properties.find((entry) => entry.propertyNumber === latin);
     expect(placed).toMatchObject({ latitude: 33.5, longitude: 35.5 });
-    // Stored as typed: nothing is rewritten on the way in.
-    expect(registration.properties.map((entry) => entry.propertyNumber).sort()).toEqual(
-      [arabic(latin), arabic(unknown)].sort(),
-    );
+    // Saved in Latin digits (`propertyNumberField`, since 2026-10-14): the same parcel typed two ways is one number.
+    expect(registration.properties.map((entry) => entry.propertyNumber).sort()).toEqual([latin, unknown].sort());
     expect(registration.flaggedFields).toEqual([
       expect.objectContaining({ path: 'properties.1.propertyNumber', kind: 'UNVERIFIED' }),
     ]);

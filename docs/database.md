@@ -1,6 +1,6 @@
 # Database
 
-Last verified against the code: `fix/pr115-review` (PR #115 merged with `develop@5e8f5c3`, with its review fixes): digit-normalised cadastre lookups, where `P2002` is mapped, 2026-10-14.
+Last verified against the code: `fix/pr115-review` (PR #115 merged with `develop@5e8f5c3`, with its review fixes): a رقم العقار saved in Latin digits, digit-normalised lookups for older rows, where `P2002` is mapped, 2026-10-14.
 
 The rules for anything that reads or writes a database: the schemas, how to
 query them, how to change them, and how data may move between environments.
@@ -120,14 +120,17 @@ takes the prefix off whatever a client sent — a form copies the name it was
 *shown* — and, for a card linked to an owner, stores that owner's own name.
 The non-person kinds are `NON_PERSON_RESIDENCE` for a Prisma filter.
 
-**A card's `propertyNumber` is stored as typed**, «٤٢٠» as well as «420», and
-so are the fee lines copied from it and the cadastre's own labels
-(`parcels.parcelNumber`). A lookup by رقم العقار compares
-digit-normalised values on both sides (`normalizeDigits`; in SQL,
+**A رقم العقار is saved in Latin digits since 2026-10-14**: every schema it is
+written through (`propertyNumberField` for a card, a building, its shared
+parcels and a parcel correction; a zone's parcels; a case; the blur check and
+the building filter) normalises it, so «٤٢٠» is saved «420». Rows saved
+before keep what was typed, and so do the fee lines copied from them and the
+cadastre's own labels (`parcels.parcelNumber`), so a lookup by رقم العقار still
+compares digit-normalised values on both sides (`normalizeDigits`; in SQL,
 `translate(btrim(…), ${EASTERN_DIGITS}, ${LATIN_DIGITS})` with both constants
 bound from `@mechanization/shared-schemas`, as `parcel-dues.service.ts` and
-`PrismaParcelRepository` do). Nothing is normalised on the way in, and there is
-no backfill. A map keyed by the number is keyed by `parcelNumberKey`.
+`PrismaParcelRepository` do). There is no backfill. A map keyed by the number
+is keyed by `parcelNumberKey`.
 
 **A flat's billing facts live on `units`** (`0075`, `0077`), beside its status:
 

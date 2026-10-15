@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `fix/pr115-review` (PR #115 merged with `develop@5e8f5c3`, with its review fixes): digit-normalised cadastre lookups and what still compares as typed, 2026-10-14.
+Last verified against the code: `fix/pr115-review` (PR #115 merged with `develop@5e8f5c3`, with its review fixes): digit-normalised cadastre lookups, Latin digits on write, what still compares as stored, 2026-10-14.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -1181,9 +1181,11 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   although a card and its bill lines say «٤٢٠». Before 2026-10-11 the same
   happened at the cadastre: a card typed «١٥٥٣» was flagged «غير موجود في
   السجل العقاري», got no coordinates, and the live check counted no neighbours.
-- **Why:** `propertyNumber` is stored as typed, and the fee lines copy it; so
-  is a cadastre label (`parcels.parcelNumber`). The query is normalised to
-  Latin digits (`parcelDuesQuerySchema`), the rows are not.
+- **Why:** `propertyNumber` was stored as typed until 2026-10-14, and the fee
+  lines copy it; so is a cadastre label (`parcels.parcelNumber`). The query is
+  normalised to Latin digits (`parcelDuesQuerySchema`), the older rows are not.
+  New writes are saved in Latin digits (`propertyNumberField`, docs/database.md),
+  which closes it for new data only.
 - **Do this:** compare digit-normalised values on both sides — `normalizeDigits`
   in TypeScript, `translate(btrim(x), ${EASTERN_DIGITS}, ${LATIN_DIGITS})` in
   SQL, both constants bound from `@mechanization/shared-schemas`. A map keyed
@@ -1196,9 +1198,11 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   `PrismaParcelRepository` (`findByNumber`, `findManyByNumber`, `suggest`),
   `PrismaRegistrationRepository.countRegistrationsForParcel`, and the callers
   that read the map (`resolveParcels` in `RegistrationService` and
-  `CitizensService`, `ZonesService.validateParcels`). Still compared as typed:
+  `CitizensService`, `ZonesService.validateParcels`). Still compared as stored:
   `CitizensService.parcelRoster` («من على هذا العقار») and the building
-  matches on `buildings.parcelNumber`.
+  matches on `buildings.parcelNumber`, which agree for everything saved since
+  2026-10-14 and miss only a pair where one side is older and typed in Arabic
+  digits.
 
 ### `#` in a plural branch can print Arabic-Indic digits
 

@@ -5,9 +5,10 @@ import { normalizeDigits } from '@mechanization/shared-schemas';
  * cadastre. Like every other port here it takes no tenant argument — the
  * implementation reads the tenant-scoped client out of the request scope.
  *
- * A رقم العقار is stored as typed («١٥٥٣» as well as «1553»), here and on the
- * cards, so every lookup compares digit-normalised values on both sides
- * (docs/database.md). `parcelNumberKey` is the form a number is compared in.
+ * A رقم العقار is saved in Latin digits since 2026-10-14 (`propertyNumberField`),
+ * but older cards and the cadastre's own labels keep what was typed («١٥٥٣» as
+ * well as «1553»), so every lookup compares digit-normalised values on both
+ * sides (docs/database.md). `parcelNumberKey` is the form a number is compared in.
  */
 
 /** A رقم العقار as lookups compare it: trimmed, Latin digits. */

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { caseTypeSchema, landTypeSchema, propertyTypeSchema } from './enums';
-import { uuid } from './primitives';
+import { normalizeDigits, uuid } from './primitives';
 
 /**
  * حالات — field visits that could not become a citizen registration.
@@ -37,6 +37,11 @@ const notesField = z
 
 const optionalText = (max: number) => z.string().trim().max(max).optional();
 
+/** A case's رقم العقار, saved in Latin digits like a card's (`propertyNumberField`). */
+const optionalPropertyNumber = optionalText(40).transform((value) =>
+  value === undefined ? value : normalizeDigits(value),
+);
+
 /**
  * The census links a case may carry.
  *
@@ -68,7 +73,7 @@ const censusLinks = {
 
 export const createCaseSchema = z.object({
   notes: notesField,
-  propertyNumber: optionalText(40),
+  propertyNumber: optionalPropertyNumber,
   neighborhood: optionalText(80),
   propertyType: propertyTypeSchema.optional(),
   buildingName: optionalText(120),
@@ -103,7 +108,7 @@ export const CASE_FIELD_MAP = {
 export const updateCaseSchema = z
   .object({
     notes: notesField.optional(),
-    propertyNumber: optionalText(40).nullable(),
+    propertyNumber: optionalPropertyNumber.nullable(),
     neighborhood: optionalText(80).nullable(),
     propertyType: propertyTypeSchema.optional(),
     buildingName: optionalText(120).nullable(),
