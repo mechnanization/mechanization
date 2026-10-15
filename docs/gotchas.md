@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `fix/pr116-review` (PR #116 merged with `fix/pr115-review`, which stacks #123, #124 and #115 on `develop@5e8f5c3`, with its review fixes): Escape inside a dialog, Tailwind 4 class names on 3.4; digit-normalised cadastre lookups, Latin digits on write, what still compares as stored; a window count on an empty page, 2026-10-15.
+Last verified against the code: `fix/pr116-review` (PR #116 merged with `fix/pr115-review`, which stacks #123, #124 and #115 on `develop@5e8f5c3`, with its review fixes): Escape inside a dialog, Tailwind 4 class names on 3.4; digit-normalised cadastre lookups, Latin digits on write, what still compares as stored; a window count on an empty page, 2026-10-15; the previous build and a new enum value against `chore/migration-0090-0091` (on `develop@5e8f5c3`), 2026-10-13, rebased onto `develop@3211140`, 2026-10-15.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -208,6 +208,27 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **Do this:** `ADD VALUE` alone in one migration, its use in the next.
 - **Where:** `0062_status_conflict_case`, `0063_status_conflict_one_open`,
   `tenant-migrator.ts` `migrateTenantSchema`.
+
+### The previous build cannot read a value it does not know
+
+- **What happens:** once a release has written a new enum value, rolling the API
+  back to a build from before the value breaks every Prisma read that returns
+  such a row: `Value 'CANCELLED' not found in enum 'PaymentStatus'`, a 500. A
+  filter on the column (`where: { paymentStatus: { in: […] } }`) still runs;
+  returning the column does not.
+- **Why:** the generated client checks every enum value it reads against the enum
+  it was generated from. `rollback-production.yml` (on `main`) points production
+  at an earlier release directory, which carries that release's client, and
+  undoes no migration, so the rows stay. Expand/contract keeps the *schema*
+  compatible with the previous build, not the *data* the new build has written.
+- **Do this:** ship the value, migration and Prisma enum, to `main` in a release
+  before the one whose code writes it, so the build a rollback lands on already
+  knows it. If the two shipped together and the value has been written, roll
+  forward.
+- **Where:** confirmed on 2026-10-13 by reading a cancelled bill on a scratch
+  schema with `develop@5e8f5c3`'s tenant client; `0090_finance_audit_enum_values`
+  (`PaymentStatus.CANCELLED`, `WhishCheckoutState.MISMATCHED`);
+  [database.md](database.md#release).
 
 ### A CHECK passes on NULL, so `=` against a nullable column lets the row in
 

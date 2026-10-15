@@ -1,6 +1,6 @@
 # Database
 
-Last verified against the code: `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): a رقم العقار saved in Latin digits, digit-normalised lookups for older rows, where `P2002` is mapped; a foreign-key violation on a registration card, 2026-10-15.
+Last verified against the code: `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): a رقم العقار saved in Latin digits, digit-normalised lookups for older rows, where `P2002` is mapped; a foreign-key violation on a registration card, 2026-10-15; the finance audit migrations `0090`, `0091` and `0093`, their table rows, the enum release rule and `0091`'s header corrections against `chore/migration-0090-0091` (on `develop@5e8f5c3`) and the code of PR #120 (`fix/finance-audit-remediation@6169287`), 2026-10-13, rebased onto `develop@3211140`, 2026-10-15.
 
 The rules for anything that reads or writes a database: the schemas, how to
 query them, how to change them, and how data may move between environments.
@@ -44,15 +44,15 @@ every municipality ([security.md](security.md)).
 | Map | `parcels`, `zones` | `CadastreImportService`, `ZonesService` |
 | Building census | `buildings`, `building_code_aliases`, `units`, `unit_occupancies`, `unit_visits`, `unit_vacancy_confirmations`, `damage_assessments` | `BuildingsService`, `CensusSyncService`, `DamageService`, `ParcelCorrectionService`, `UnitCorrectionService` |
 | Cases | `cases` | `CasesService` |
-| Fees and money | `fee_notices`, `citizen_payments`, `payment_transactions` (`settlementId`, 0085: the settlement a row was taken in, NULL on a bill settled alone), `payment_settlements` (0085: one press that settled several of one citizen's bills — the «BRC-» number, the notes, the change, the retry key), `billing_run_entries`, `whish_checkouts`, `system_settings`, `inspector_payouts` (`expenseVoucherId`, 0086: the «PV-» voucher that paid it once the treasury is live, unique, NULL before; a payout whose voucher is voided is not counted as paid, a filter both readers apply; a payout with a voucher is written once and never deleted, and the link is made at insert or never, 0089; `clientRequestId`, 0089: the dialog’s retry key, unique, on both paths, so a retried press is answered with its payout before go-live too) | `FeesService`, `PaymentLedgerService`, `PaymentSettlementService` (settlements; each bill through `PaymentLedgerService.recordIn`), `CorrectionBillsService`, `StaffService` (payouts; once live through `ExpensesService.recordCommission`) |
+| Fees and money | `fee_notices` (`clientRequestId`, 0091: the issue wizard's retry key, unique, so a retried «إصدار» is answered with its notice instead of billing everyone twice), `citizen_payments` (`issuedById`, 0091: who raised the bill — the notice's issuer, the clerk of a one-off charge, or the staff member who started a recurring run; NULL for the scheduled run and for every bill raised before 0091; «إلغاء الفاتورة», 0090/0091: `paymentStatus` `CANCELLED` with `cancelledAt`, `cancelledById` and `cancellationReason`, all four together and only on a bill with `paidAmount` 0, by CHECK, the reason never blank, 0093; both user links RESTRICT), `payment_transactions` (`settlementId`, 0085: the settlement a row was taken in, NULL on a bill settled alone; `externalRef`, Whish only, compared as `lower(btrim(…))` through 0091's expression index so that one reference stands on one receipt), `payment_settlements` (0085: one press that settled several of one citizen's bills — the «BRC-» number, the notes, the change, the retry key), `billing_run_entries`, `whish_checkouts` (`state` `MISMATCHED`, 0090: a success callback for an amount other than the one quoted; nothing is credited), `system_settings`, `inspector_payouts` (`expenseVoucherId`, 0086: the «PV-» voucher that paid it once the treasury is live, unique, NULL before; a payout whose voucher is voided is not counted as paid, a filter both readers apply; a payout with a voucher is written once and never deleted, and the link is made at insert or never, 0089; `clientRequestId`, 0089: the dialog’s retry key, unique, on both paths, so a retried press is answered with its payout before go-live too) | `FeesService`, `PaymentLedgerService`, `PaymentSettlementService` (settlements; each bill through `PaymentLedgerService.recordIn`), `CorrectionBillsService`, `StaffService` (payouts; once live through `ExpensesService.recordCommission`) |
 | Review and quality | `record_reviews`, `quality_checks`, `data_quality_dismissals` | `RecordReviewService`, `DataQualityService` |
 | Audit | `audit_log_entries` | `AuditService`, `PrismaAuditRepository` |
 | Transfers (0078, 0084, 0088) | `treasury_transfers` (0084: `feeAmount` and `feeVoucherId`, the «PV-» voucher that books a fee, both set or both NULL; `moneyChangerName`, exchanges only; `backdateReason`; `requiresReview` and the review stamp `reviewedAt`/`reviewedById`/`reviewNote`, only on a flagged transfer, and in the write-once trigger's stamp list since 0088) and, on `system_settings`, `exchangeRateTolerancePercent` (default 3) and `largeExchangeThreshold` (default 1000) | `TransfersService` (the collector handover, internal transfers with their fee, exchanges, the review); `ExpensesService.recordTransferFee` writes the fee voucher |
-| Expenses (0074, 0081, 0083) | `expense_categories`, `expense_vouchers` (the payment order: `orderedAt`, `orderedById`, `urgentReason`, 0083; `payeeStaffId`, 0081: the staff account a salary or commission voucher paid, NULL otherwise; a FK to `users` that cannot say STAFF, so `recordSalary` and, for a commission, `StaffService.recordInspectorPayout` filter `kind`), `expense_requests` (requests for the manager's order, 0083) | `ExpensesService` |
+| Expenses (0074, 0081, 0083, 0091) | `expense_categories`, `expense_vouchers` (the payment order: `orderedAt`, `orderedById`, `urgentReason`, 0083; `payeeStaffId`, 0081: the staff account a salary or commission voucher paid, NULL otherwise; a FK to `users` that cannot say STAFF, so `recordSalary` and, for a commission, `StaffService.recordInspectorPayout` filter `kind`; `salaryPeriod`, 0091: the `YYYY-MM` a salary voucher pays, written only by `recordSalary` and only with `payeeStaffId`, one per staff member per month among vouchers not cancelled — the partial unique index `expense_vouchers_salary_period_key`; NULL on every other voucher and on salaries paid before 0091), `expense_requests` (requests for the manager's order, 0083) | `ExpensesService` |
 | Income (0080, 0083) | `income_categories`, `income_vouchers` (`payerName` is free text that may name a citizen; written once, 0083) | `IncomeService` |
 | Document numbers (0079) | `document_counters`, one row per (book, month) | `allocateDocumentNumbers` |
 | Daily count and closing (0082, 0087) | `treasury_day_closures` (one row per closed or reopened day; written once, 0087), `treasury_counts` (one count per wallet per day; linked only to its own day's closure, 0087) | `DayClosureService` (close, sweep, reopen), `DailyCountService` (counts) |
-| Treasury (0073, 0083) | `treasury_accounts`, `treasury_entries`, `system_settings.treasuryGoLiveAt`, and `system_settings.urgentExpenseCeilingLbp` / `urgentExpenseCeilingUsd` (0083: the manager's ceiling on an accountant's urgent payment, `DECIMAL(14,2)`, NULL = none, CHECK NULL or > 0) | `TreasuryService` (activation, reads), `TreasuryLedgerService` (entries; called from `PaymentLedgerService` inside its transaction) |
+| Treasury (0073, 0083, 0091) | `treasury_accounts`, `treasury_entries`, `system_settings.treasuryGoLiveAt`, `system_settings.urgentExpenseCeilingLbp` / `urgentExpenseCeilingUsd` (0083: the manager's ceiling on an accountant's urgent payment, `DECIMAL(14,2)`, NULL = none, CHECK NULL or > 0), and `system_settings.salaryUrgentCeilingLbp` / `salaryUrgentCeilingUsd` (0091: «سقف صرف الرواتب», the most an accountant may pay one staff member as a month's salary, typed and CHECKed as the urgent ceiling; set in `FeesService.updateSettings`) | `TreasuryService` (activation, reads), `TreasuryLedgerService` (entries; called from `PaymentLedgerService` inside its transaction) |
 | Ledger | `_tenant_migrations` (no Prisma model) | `migrateTenantSchema` |
 
 Each schema also carries plpgsql functions created by migrations:
@@ -654,8 +654,33 @@ reads staging's history from `.env.staging` and nothing else, and
   which collided with `develop`'s), `0087_treasury_day_closure_written_once` (PR #106 review),
   `0088_treasury_transfer_review_stamp` (PR #111 review) and `0089_inspector_payout_key_and_written_once`
   (the final-stack review, 2026-10-11). `0085` needs nothing newer than `0079` (the `BULK_RECEIPT`
-  book) and touches only `payment_transactions` and its own table. The next free number is `0090`;
-  list every unmerged branch again before you take it.
+  book) and touches only `payment_transactions` and its own table. The finance audit remediation
+  (2026-10-12, the audit of `refactor/ui-kit-adoption@68e3e55`) took `0090_finance_audit_enum_values`
+  (`PaymentStatus.CANCELLED`, `WhishCheckoutState.MISMATCHED`, alone because a new value cannot be
+  used in the transaction that adds it) and `0091_finance_audit_controls` (`fee_notices.clientRequestId`;
+  `citizen_payments.issuedById` and the cancellation stamp with their CHECKs; `expense_vouchers.salaryPeriod`
+  with a partial unique index over vouchers not cancelled; the salary ceilings on `system_settings`; an
+  expression index on `lower(btrim(payment_transactions."externalRef"))`), after a check of every local
+  and remote branch: none held `0090` or later. `0091` needs `0090` (its CHECK names `CANCELLED`), `0081`
+  (`payeeStaffId`) and `0083` (the urgent ceilings it mirrors). Its review (2026-10-13) added
+  `0093_citizen_payment_cancellation_reason_present`: `0091` let a blank `cancellationReason` in, where
+  every reason column since `0060` refuses one, and `0091` was already applied to the local database, so
+  it is not edited. `0093` needs `0091`. `0092` is held by `chore/migration-0092` (PR #121, municipal
+  requests) and depends on none of the three, so a database that takes `0090`, `0091` and `0093` first
+  takes `0092` out of order, with `deploy.mjs`'s warning, and one that takes `0092` first takes the three
+  out of order. None of the four has reached `main`, so CI has applied none to staging or production; a
+  hand-run `db:deploy:staging` was not checked. `0090`, `0091` and `0093` ship in their own
+  `chore/migration-0090-0091` PR (#119), and reach `main` in a release of their own, ahead of the code
+  (PR #120), so that the build a rollback lands on already knows `CANCELLED` and `MISMATCHED` (decision of
+  2026-10-13; [Release](#release)). The next free number is `0094`; list every unmerged branch again
+  before you take it.
+  - `0091`'s header is wrong in three places, and the file is not edited (it is applied). It says «one
+    Whish or bank reference», but only a Whish settlement writes `externalRef`. It lists the
+    `ACCESS EXCLUSIVE` locks on the tables it alters, but its two foreign keys also hold
+    `SHARE ROW EXCLUSIVE` on `users` until it commits, so every write to `users` (a staff presence stamp
+    included) waits for the file, for well under a second. And it says a recurring run's bills name
+    nobody, but a run a staff member starts (`POST fees/recurring/run`, `FeesService.runRecurringBilling`)
+    names that staff member; only the scheduled run leaves `issuedById` NULL.
 - Before you pick a number, MUST list the migrations on every unmerged branch
   and open PR:
 
@@ -679,6 +704,11 @@ reads staging's history from `.env.staging` and nothing else, and
   ships, and the previous release keeps serving against the new schema for a
   few minutes. Prefer shipping the migration to `main` on its own, ahead of the
   code.
+- A new enum value MUST reach `main`, migration and Prisma enum, in a release
+  before the one whose code writes it. A rollback (`rollback-production.yml`, on
+  `main`) points production at an earlier build, whose Prisma client throws on
+  any row holding a value it does not know
+  ([gotchas.md](gotchas.md#the-previous-build-cannot-read-a-value-it-does-not-know)).
 
 ## Moving data between environments
 
@@ -773,7 +803,8 @@ Model: `0061_citizen_merges` (`CitizenMerge`).
 3. Change the Prisma `enum`, the shared enum in `packages/shared-schemas`, both
    locales in `labels.ts`, and the domain union where one exists
    ([packages/shared-schemas/CLAUDE.md](../packages/shared-schemas/CLAUDE.md)).
-4. Ship the migrations before the code that writes the value.
+4. Ship the migrations before the code that writes the value, and to `main` in
+   an earlier release than that code ([Release](#release)).
 
 Removing or renaming an enum value is destructive (`DROP TYPE`, a type change)
 and goes through contract.

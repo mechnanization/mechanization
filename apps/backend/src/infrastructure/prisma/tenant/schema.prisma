@@ -257,6 +257,9 @@ model User {
   payments              CitizenPayment[]
   reviewedPayments      CitizenPayment[]     @relation("PaymentReviewedBy")
   collectedPayments     CitizenPayment[]     @relation("PaymentCollectedBy")
+  /// Bills this staff member raised (0091), and bills they cancelled.
+  issuedPayments        CitizenPayment[]     @relation("PaymentIssuedBy")
+  cancelledPayments     CitizenPayment[]     @relation("PaymentCancelledBy")
   collectedTransactions PaymentTransaction[] @relation("TransactionCollectedBy")
   recordedTransactions  PaymentTransaction[] @relation("TransactionRecordedBy")
   /// Settlements of several bills at once (0085): as the citizen who paid, the
@@ -1952,6 +1955,11 @@ model SystemSettings {
   /// salary is not held to it. Greater than zero when set (CHECK in 0083).
   urgentExpenseCeilingLbp Decimal? @db.Decimal(14, 2)
   urgentExpenseCeilingUsd Decimal? @db.Decimal(14, 2)
+  /// «سقف صرف الرواتب» (0091, the owner's decision of 2026-10-12): the most an
+  /// accountant may pay one staff member as a month's salary on the art. 35
+  /// path, per currency. NULL is no ceiling. Greater than zero when set (CHECK).
+  salaryUrgentCeilingLbp Decimal? @db.Decimal(14, 2)
+  salaryUrgentCeilingUsd Decimal? @db.Decimal(14, 2)
 
   updatedAt   DateTime @updatedAt
   updatedById String?  @db.Uuid
@@ -1977,6 +1985,9 @@ enum PaymentStatus {
   PENDING_REVIEW
   PAID
   OVERDUE
+  /// «إلغاء الفاتورة» (0090): withdrawn by the manager before any money was
+  /// taken on it. Owes nothing, takes nothing; `cancelledAt` says who and why.
+  CANCELLED
 }
 
 enum PaymentMethod {
@@ -2060,6 +2071,10 @@ model FeeNotice {
 
   issuedById String? @db.Uuid
   issuedBy   User?   @relation("FeeIssuedBy", fields: [issuedById], references: [id])
+
+  /// The wizard's id for one press of «إصدار» (0091): a retry after a lost
+  /// answer finds this notice instead of billing everyone it targets twice.
+  clientRequestId String? @unique @db.Uuid
 
   createdAt DateTime         @default(now())
   payments  CitizenPayment[]
@@ -2154,6 +2169,22 @@ model CitizenPayment {
   /// Whether a staff member has marked this pending verification notification as seen.
   isSeen Boolean @default(false)
 
+  /// Who raised this bill (0091): the notice's issuer, the clerk who charged it
+  /// one-off, or the staff member who started a recurring run (`POST
+  /// fees/recurring/run`). NULL for the scheduled recurring run (the system) and
+  /// for every bill raised before 0091 — never guessed.
+  issuedById String? @db.Uuid
+  issuedBy   User?   @relation("PaymentIssuedBy", fields: [issuedById], references: [id], onDelete: Restrict)
+
+  /// «إلغاء الفاتورة» (0091): the manager withdrew this bill before any money was
+  /// taken on it. The three move together with `paymentStatus` CANCELLED, and a
+  /// cancelled bill has `paidAmount` 0 (CHECKs in 0091); the reason is never
+  /// blank (CHECK in 0093).
+  cancelledAt        DateTime? @db.Timestamptz(3)
+  cancelledById      String?   @db.Uuid
+  cancelledBy        User?     @relation("PaymentCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict)
+  cancellationReason String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -2179,6 +2210,8 @@ model CitizenPayment {
   @@index([whishTransactionRef])
   /// The admin queue: what is awaiting verification, oldest first.
   @@index([paymentStatus, dueDate])
+  @@index([issuedById])
+  @@index([cancelledById])
   @@map("citizen_payments")
 }
 
@@ -2241,7 +2274,9 @@ model PaymentTransaction {
 
   /// The provider's handle, when the money came through Whish. Per transaction
   /// rather than per invoice, which is what makes a part-Whish, part-cash
-  /// invoice describable at all.
+  /// invoice describable at all. Compared without case or edge spaces through
+  /// an expression index in 0091 (`payment_transactions_externalRef_lower_idx`,
+  /// `lower(btrim("externalRef"))`), which Prisma cannot express.
   externalRef String?
 
   /// The collector holding the money, when `method` is COLLECTOR.
@@ -2631,6 +2666,11 @@ model ExpenseVoucher {
   /// `StaffService.recordInspectorPayout`'s, before `recordCommission` runs.
   payeeStaffId String? @db.Uuid
   payeeStaff   User?   @relation("ExpensePayeeStaff", fields: [payeeStaffId], references: [id], onDelete: Restrict)
+  /// The month a salary voucher is for, `YYYY-MM` (0091), written only by
+  /// `recordSalary`. One per staff member per month among vouchers still
+  /// standing: a partial unique index in 0091 (`expense_vouchers_salary_period_key`,
+  /// WHERE "voidedAt" IS NULL), which Prisma cannot express.
+  salaryPeriod String? @db.VarChar(7)
 
   /// The inspector payout this voucher paid, when it paid one (0086).
   inspectorPayout InspectorPayout?
@@ -3043,6 +3083,10 @@ enum WhishCheckoutState {
   SUCCEEDED
   FAILED
   ABANDONED
+  /// A success callback for an amount other than the one quoted (0090). The
+  /// money moved at the provider, so it is neither FAILED nor SUCCEEDED: nothing
+  /// is credited, and the bill stays under review for a clerk to decide.
+  MISMATCHED
 }
 
 /// One immutable row per checkout opened at the provider (migration 0057).
