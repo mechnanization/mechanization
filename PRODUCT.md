@@ -39,7 +39,7 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
   - Share a receipt through the device share sheet, a WhatsApp link, or a PDF download.
   - See every receipt on a bill, and every reversal, on the bill's own page («وصولات الفاتورة»),
     reached from the bill's row on the citizen's file: «تسجيل دفعة نقدية» while it is owed,
-    «وصولات الفاتورة» once it is paid in full. Only the manager (`SUPER_ADMIN`) may reverse a
+    «وصولات الفاتورة» once it is paid in full or cancelled. Only the manager (`SUPER_ADMIN`) may reverse a
     receipt («عكس الوصل»), with a written reason. A reversal is an opposing entry beside the
     receipt, never an edit, and the amount is owed on the bill again. Once the treasury is live
     the money is paid back out of a wallet — the one the payment went into, a collector's custody
@@ -48,7 +48,8 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
     it. A receipt is never reversed twice: pressed again after an answer was lost, the screen says
     it is already reversed. While a Whish transfer the citizen reported on the bill waits for
     review, no receipt on it is offered for reversal: the transfer is confirmed or rejected on the
-    fees page first, since a reversal would erase the report.
+    fees page first, since a reversal would erase the report; the server refuses such a reversal
+    too (`PAYMENT_CLAIM_UNDER_REVIEW`).
 - **Field inspectors (`FIELD_INSPECTOR`, مفتّش ميداني)**: survey buildings and units on a
   phone, queuing records offline when the connection drops.
 - **Accountants (`ACCOUNTANT`), administrative officers (`ADMINISTRATIVE_OFFICER`),

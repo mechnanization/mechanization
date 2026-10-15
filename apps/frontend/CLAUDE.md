@@ -555,8 +555,8 @@ are inlined at build time. The local `.env.local` block is in
 ## Tests
 
 Vitest (`apps/frontend/vitest.config.mts`): `environment: 'node'`, only `lib/**/*.test.ts`,
-with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 52 test files, 677 cases (counted
-2026-10-15, `fix/pr116-review`). Several read components rather than render them:
+with `vitest.setup.ts` stubbing `navigator.onLine` and `window`. 52 test files, 679 cases (counted
+2026-10-15, PR #120 rebased onto `develop@3211140`). Several read components rather than render them:
 `back-navigation.test.ts` every page and component under `app/` and `components/`, so that only
 the header and the two toolbars PRIM-2 names draw a `BackLink`; `print-pages.test.ts` and `payout-hosts.test.ts` read every
 print page and every payout-dialog host, `transfer-screens.test.ts` the transfer screens,

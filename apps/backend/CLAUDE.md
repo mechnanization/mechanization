@@ -704,7 +704,7 @@ points at does not exist. `src/scripts/reset-2fa.ts` has no script entry and MUS
 
 ## Tests
 
-- Jest with ts-jest (`jest.config.js`: `rootDir` `src`, `*.spec.ts` beside the source): 153 spec files, 45 of them `*.integration.spec.ts` (counted on disk 2026-10-15, `fix/pr115-review` with PRs #123 and #124 merged in).
+- Jest with ts-jest (`jest.config.js`: `rootDir` `src`, `*.spec.ts` beside the source): 156 spec files, 47 of them `*.integration.spec.ts` (counted on disk 2026-10-15, PR #120 rebased onto `develop@3211140`).
 - Integration specs run only when `TEST_DATABASE_URL` is set (`describeIfDb`) and skip silently otherwise.
   They `DROP SCHEMA … CASCADE` and rebuild fixed `tenant_*_spec` schemas on whatever database it names,
   and nothing checks the target. Point it ONLY at a throwaway Postgres 17 container (migration `0044`

@@ -48,7 +48,8 @@ export function mayReverseReceipt(
  * by typing the address (review of PR #113).
  */
 export function billPageLink(bill: { paymentStatus: string }): 'settle' | 'receipts' {
-  return bill.paymentStatus === 'PAID' ? 'receipts' : 'settle';
+  // A cancelled bill (0090) takes no cash either: what is left to see is its receipts, if any.
+  return bill.paymentStatus === 'PAID' || bill.paymentStatus === 'CANCELLED' ? 'receipts' : 'settle';
 }
 
 /** The longest reason the server takes, read off its own schema — the box's `maxLength`. */

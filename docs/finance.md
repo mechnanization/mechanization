@@ -1458,6 +1458,13 @@ the wrong route (BAN-15). When #120 merges on top:
 Merging #120 first is the safer order: until it lands, only the screen keeps a reversal off a claim
 under review, and the API does not.
 
+Done on 2026-10-15, when #120 was rebased onto `develop@3211140`: the controller hunk as above,
+both §3.4 lines and both §14 entries kept, the backend Tests line recounted (156 spec files, 47
+integration) and security.md's count rechecked (still 56), `billPageLink` sending a cancelled bill to
+its receipts (`lib/bill-receipts.test.ts`), and PRODUCT.md and §3.4 saying the server refuses the
+reversal too. #120's cancelled-bill branch of the counter settle page takes this branch's
+`HeaderBackLink`.
+
 ### Finance audit remediation (2026-10-12; branch `bugs-fix`, not committed)
 
 The audit of `refactor/ui-kit-adoption@68e3e55`, re-checked against `develop@5e8f5c3` (which had

@@ -441,7 +441,7 @@ export default function SettlePaymentPage({
   if (payment.paymentStatus === 'CANCELLED' && !settled) {
     return (
       <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-        <BackLink fallbackHref={`${base}/fees`} label={t('back')} />
+        <HeaderBackLink fallbackHref={`${base}/fees`} label={t('back')} />
         <PageHeader icon={Banknote} title={t('title')} />
         <EmptyState
           icon={Ban}
