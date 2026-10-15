@@ -1,6 +1,6 @@
 # Database
 
-Last verified against the code: `fix/pr115-review` (PR #115 merged with `develop@5e8f5c3`, with its review fixes): a رقم العقار saved in Latin digits, digit-normalised lookups for older rows, where `P2002` is mapped, 2026-10-14.
+Last verified against the code: `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): a رقم العقار saved in Latin digits, digit-normalised lookups for older rows, where `P2002` is mapped; a foreign-key violation on a registration card, 2026-10-15.
 
 The rules for anything that reads or writes a database: the schemas, how to
 query them, how to change them, and how data may move between environments.
@@ -440,6 +440,13 @@ and fails intermittently with `42P01`.
   and `CitizensService.update` (a passport number another file holds:
   `CITIZEN_IDENTITY_DOC_TAKEN`, naming nobody, as the create path's
   `translate` now does). No helper is shared by all of them.
+- A foreign-key violation (Prisma `P2003`) is a 500 unless mapped the same way.
+  `PrismaRegistrationRepository.translate` maps the two a registration card can
+  break — a building or a flat the register does not hold, which a queued
+  registration can name — to `BUILDING_NOT_FOUND` and `UNIT_NOT_FOUND`
+  (`NotFoundError`). Prisma 5 on Postgres names the constraint in
+  `error.meta.field_name`, as `property_entries_buildingId_fkey (index)` and
+  `building_units_unitId_fkey (index)` (`registration-references.spec.ts`).
 
 ### Deviations
 

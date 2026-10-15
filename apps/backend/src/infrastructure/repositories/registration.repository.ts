@@ -10,7 +10,7 @@ import {
 import { Prisma } from '../../generated/tenant-client';
 import { PropertyEntry } from '../../domain/entities/property-entry.entity';
 import { Registration } from '../../domain/entities/registration.entity';
-import { ConflictError } from '../../domain/errors/domain-error';
+import { ConflictError, NotFoundError } from '../../domain/errors/domain-error';
 import { parcelNumberKey } from '../../domain/interfaces/parcel-repository.interface';
 import {
   RegistrationRepository,
@@ -574,6 +574,28 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
     // 0072's rules on a citizen's numbers, named rather than sent on as a 500.
     const phoneRule = citizenPhoneRuleError(error);
     if (phoneRule) return phoneRule;
+    /*
+      A card naming a building, or a flat, that is not on the register — a
+      queued registration whose building was refused or discarded on the
+      device (offline-sync holds those back; this is the answer when one gets
+      through). Named, so it is a refusal the queue shows a person: as a 500 it
+      was retried on every drain, and reported to Sentry each time.
+    */
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003') {
+      const constraint = String(error.meta?.field_name ?? '');
+      if (constraint.includes('buildingId_fkey')) {
+        return new NotFoundError({
+          code: 'BUILDING_NOT_FOUND',
+          message: 'A property card names a building that is not on the register',
+        });
+      }
+      if (constraint.includes('unitId_fkey')) {
+        return new NotFoundError({
+          code: 'UNIT_NOT_FOUND',
+          message: 'A property card names a unit that is not on the register',
+        });
+      }
+    }
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
       const target = (error.meta?.target as string[] | undefined)?.join(', ') ?? '';
 

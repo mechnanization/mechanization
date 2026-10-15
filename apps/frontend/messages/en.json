@@ -131,6 +131,7 @@
     "declarePayment": "Submit Payment Receipt",
     "unsettled": "Unsettled",
     "totalOwed": "Total Amount Due",
+    "partlyPaid": "Paid {paid} of {total}",
     "noBills": "No unpaid bills found",
     "propertiesSummary": "Registered Properties & Units",
     "invoicesSummary": "Invoices & Demands"
@@ -360,6 +361,7 @@
     "ORIGIN_NOT_ALLOWED": "This request did not come from the municipality’s portal.",
     "SESSION_REFRESH_UNAVAILABLE": "The session could not be renewed. Check the connection and try again.",
     "FEE_NOTHING_TO_CHARGE": "Nothing to charge — no notice was issued.{held, plural, =0 {} one { 1 unit is held for review (unit status conflict).} other { # units are held for review (unit status conflict).}}{uninhabitable, plural, =0 {} one { 1 unit is uninhabitable — it is exempt from fees until re-inspection.} other { # units are uninhabitable — they are exempt from fees until re-inspection.}}{exempted, plural, =0 {} one { 1 unit is vacant, under construction or exempt by bearer.} other { # units are vacant, under construction or exempt by bearer.}}{feeExempt, plural, =0 {} one { 1 unit is exempt from fees.} other { # units are exempt from fees.}}{coOwnerPaid, plural, =0 {} one { 1 co-owned unit is paid for by its responsible owner.} other { # co-owned units are paid for by their responsible owner.}}{unassessable, plural, =0 {} one { 1 citizen's records need a field survey first.} other { # citizens' records need a field survey first.}}",
+    "FEE_CITIZEN_ARCHIVED": "This citizen's file is archived, and an archived file takes no new fees. Restore it from the archive first if it should be charged.",
     "CITIZEN_NO_PHONE_HAS_NUMBER": "The file is marked «has no phone» but holds a number of the citizen's own — clear the phone and WhatsApp, or untick «Does not have a phone number».",
     "CITIZEN_CONTACT_PHONE_IS_OWN": "The contact number is a relative's, so it cannot be the citizen's own phone — correct one of them.",
     "TREASURY_NOT_ACTIVE": "The treasury is not active yet. Enter the opening balances first.",
@@ -588,6 +590,9 @@
       "file": "File"
     }
   },
+  "recordReview": {
+    "pages": "Pages of records"
+  },
   "citizens": {
     "families": "Total families",
     "archived": "Archived",
@@ -608,7 +613,24 @@
       "title": "File restored from the archive",
       "description": "{name} — new fees can now be issued on this file.",
       "failed": "Could not restore the file from the archive."
+    },
+    "search": {
+      "searching": "Searching the register…",
+      "noMatches": "No file in the register matches. Search by name, phone, reference number or document number.",
+      "archivedLeftOut": "Archived files are not offered here.",
+      "more": "More files match than are listed here. Type more of the name to narrow them.",
+      "found": "{count, plural, one {One file found} other {{count} files found}}",
+      "failed": "Could not search the register. Check the connection and type again."
     }
+  },
+  "citizenPicker": {
+    "placeholder": "Name, phone or reference number",
+    "results": "Matching files",
+    "mother": "Mother's name: {name}",
+    "motherUnknown": "Mother's name not recorded",
+    "change": "Change",
+    "archived": "Archived",
+    "archivedHint": "Archived: restore it first («Restore from the archive» on the citizens register)."
   },
   "citizenArchive": {
     "title": "Archive the file",
@@ -794,7 +816,34 @@
         "order": "Payment order",
         "cancelled": "Cancelled",
         "print": "Print payment order",
-        "printFor": "Print payment order {number}"
+        "printFor": "Print payment order {number}",
+        "title": "Payout history: {name}",
+        "titleLoading": "Payout history",
+        "loadError": "Failed to load the payout history",
+        "back": "Back to earnings",
+        "dashboard": "Dashboard",
+        "pay": "Pay",
+        "refresh": "Refresh",
+        "notFound": "Staff member not found",
+        "retry": "Retry",
+        "totalEarned": "Total earned",
+        "billableUnits": "{count, plural, one {{count} billable unit} other {{count} billable units}}",
+        "totalPaid": "Total paid",
+        "payoutCount": "Payouts recorded",
+        "latest": "Latest: {date}",
+        "stillOwed": "Still owed",
+        "overpaid": "Overpaid",
+        "emptyTitle": "No payouts recorded",
+        "emptyBody": "Nothing has been handed to {name} yet. {amount} is outstanding.",
+        "payFirst": "Record the first payout",
+        "paidOn": "Paid on",
+        "amount": "Amount",
+        "receipt": "Receipt",
+        "recordedBy": "Recorded by",
+        "owedAfter": "Owed after",
+        "notes": "Notes",
+        "overpaidAfter": "{amount} overpaid",
+        "recomputed": "“Owed after” is what was still owed once each payout was made, recomputed from today’s records: a registration corrected or merged since the payout changes what its row shows from what it showed on the day. A payout whose payment order was cancelled does not count as paid."
       }
     }
   },
@@ -1324,7 +1373,7 @@
   },
   "offlineQueue": {
     "pending": "{count, plural, one {{count} record} other {{count} records}} saved on this device, waiting to sync.",
-    "blocked": "{count, plural, one {{count} record was} other {{count} records were}} refused by the server and need attention.",
+    "blocked": "{count, plural, one {{count} record needs} other {{count} records need}} attention.",
     "authRequiredShort": "Your session has ended — sign in again to send these records.",
     "viewQueue": "View queue",
     "syncNow": "Sync now",
@@ -1341,13 +1390,35 @@
     "discardTitle": "Discard this record?",
     "discardBody": "<strong>{name}</strong> was never sent to the municipality and is stored only on this device. Discarding it deletes the registration entirely — the household would have to be entered again from the beginning.",
     "discardConfirm": "Discard record",
+    "deliveredBeforeRevision": "The register already holds this record, filed by an earlier send whose answer was lost — your later changes may not be on it. Open the file, make any change that is missing, then discard this copy.",
+    "openFile": "Open file",
+    "viewChanges": "View changes",
+    "discardRevisionBody": "<strong>{name}</strong> is already on the register. Discarding this copy drops only the changes made on this device after it was sent — check the file has them first.",
+    "waitingForBuilding": "Waiting for the building on parcel {parcel}, saved on this device, to reach the municipality first.",
+    "buildingDiscarded": "The building this record names, on parcel {parcel}, was discarded from this device. Edit the record and choose the building again.",
+    "sendFailed": "Could not send the record.",
+    "deliveredSaveRefused": "This copy is not sent again: make the changes on the file.",
+    "deliveredNotice": {
+      "title": "Already on the register",
+      "body": "An earlier send of this record reached the municipality and its answer was lost, so the changes below may not be on its file. Saving here sends nothing: make any that are missing on the file, then discard this copy from the queue."
+    },
     "buildings": {
       "pending": "{count, plural, one {{count} building} other {{count} buildings}} saved on this device, waiting to sync. Their codes are provisional until they are delivered.",
       "refused": "refused by the server",
       "syncNow": "Sync now",
       "writerRequired": "Kept on this device for another staff member; they are sent when someone who can survey signs in.",
       "reconciled": "The building you created on parcel <ltr>{parcel}</ltr> was saved as <now>{code}</now>, not <was>{provisional}</was>. Another building already held that letter on the parcel.",
-      "acknowledge": "Got it"
+      "deduplicated": "An earlier press had already saved the building on parcel <ltr>{parcel}</ltr> as <now>{code}</now>, and its answer was lost. What is on file is what that press sent — check it on the matrix.",
+      "acknowledge": "Got it",
+      "retry": "Retry",
+      "discard": "Discard",
+      "discardTitle": "Discard this building?",
+      "discardBody": "The municipality refused building <ltr>{code}</ltr> on parcel <ltr>{parcel}</ltr>, and it is kept only on this device. Discarding it deletes this copy for good.",
+      "discardDeliveredBody": "Building <ltr>{code}</ltr> on parcel <ltr>{parcel}</ltr> reached the register; only the flats this device was to add to it were refused. Discarding drops that request: the building stays, and its flats can be added on the matrix.",
+      "discardAffected": "{count, plural, one {{count} record waiting on this device names} other {{count} records waiting on this device name}} this building or one of its flats. They are held back until it is sent; once it is discarded, each is marked for correction, to be opened and pointed at the building again.",
+      "discardConfirm": "Discard building",
+      "discarding": "Discarding…",
+      "sendFailed": "Could not send the building."
     }
   },
   "finance": {
@@ -2451,6 +2522,18 @@
     "unlinkedHint": "Flat amounts, or bills from before itemised billing, on whoever owns or lives on the parcel today. Their own debts — not shown to be the parcel's.",
     "unlinkedTotal": "Their total"
   },
+  "buildingEditor": {
+    "deduplicated": {
+      "title": "This building was already saved",
+      "description": "An earlier press reached the server but its answer was lost, so nothing was created twice. What was saved is what that press sent: check {code} on the matrix."
+    },
+    "staleDraft": {
+      "title": "This building changed after your draft",
+      "body": "This building was saved — on the matrix, or by a colleague — after the edits restored here were made. Load the latest version to see it: your unsaved edits are deleted. Or keep your draft: saving it then makes the building what is on screen, so flats added since are removed and flats removed since are added back.",
+      "loadLatest": "Load the latest version",
+      "keepDraft": "Keep my draft"
+    }
+  },
   "floorCount": {
     "label": "Roofed floors",
     "aria": "Number of roofed floors",
@@ -2659,6 +2742,45 @@
       "loading": "Loading the receipt…",
       "loadError": "The combined receipt could not be loaded.",
       "retry": "Try again"
+    }
+  },
+  "billReceipts": {
+    "title": "Receipts on this bill",
+    "open": "Bill receipts",
+    "loading": "Loading the receipts…",
+    "loadError": "Could not load this bill's receipts.",
+    "retry": "Try again",
+    "emptyTitle": "No receipts on this bill yet",
+    "emptyBody": "Every payment recorded against it, and every reversal of one, appears here.",
+    "recordedBy": "Recorded by {name}",
+    "reversal": "Reversal",
+    "reversed": "Reversed",
+    "reverse": "Reverse receipt",
+    "reverseAria": "Reverse receipt {number}",
+    "claimTitle": "A reported transfer on this bill awaits review",
+    "claimBody": "The citizen reported a transfer that has not been confirmed or rejected yet. No receipt on this bill can be reversed until the transfer is confirmed or rejected on the fees page: a reversal before that erases the report, and a transfer that did arrive would be left with nothing on record.",
+    "dialog": {
+      "title": "Reverse receipt {number}",
+      "body": "An opposing entry for the same amount is recorded, and the amount is owed on the bill again. The original receipt stays on the record with the reversal beside it. A reversal cannot be undone — to correct one, record a new payment.",
+      "refund": "Once the treasury is live, the amount is paid back out of a wallet: the one the payment went into — a collector’s custody only while it still holds the money, otherwise the cash safe — or, for a payment taken before go-live, the cash safe or the Whish account, by how it was paid. If that wallet cannot cover it, the reversal is refused. Before go-live, no wallet moves.",
+      "amount": "Amount",
+      "paidOn": "Paid on",
+      "method": "Method",
+      "recordedBy": "Recorded by",
+      "reason": "Reason for the reversal",
+      "reasonPlaceholder": "e.g. the payment was recorded against the wrong bill",
+      "confirm": "Reverse the receipt",
+      "cancel": "Cancel",
+      "busy": "Reversing…",
+      "success": "Receipt {number} reversed",
+      "successBody": "Reversal {reversal} recorded. Now outstanding on the bill: {remaining}.",
+      "alreadyReversed": "Receipt {number} was already reversed",
+      "alreadyReversedBody": "The receipt is reversed on the record; this attempt recorded no second reversal.",
+      "inDoubt": "The server did not confirm the reversal — no answer came, or an error did — and the receipts read again do not show it. Press “Reverse the receipt” again: a receipt is never reversed twice, so if the reversal was recorded, the answer will say so.",
+      "nowReversed": "This receipt is reversed now — there is nothing left to reverse.",
+      "nowUnderReview": "The citizen reported a transfer on this bill that awaits review — no reversal until it is confirmed or rejected.",
+      "wentThroughBody": "The server did not confirm the reversal when it was pressed, but the receipts read again show it reversed: the reversal is on record.",
+      "unread": "The server did not confirm the reversal — no answer came, or an error did — and the receipts could not be read again, so whether it was recorded is not known. Press “Reverse the receipt” again once the connection is back: a receipt is never reversed twice, so if the reversal was recorded, the answer will say so."
     }
   },
   "settings": {

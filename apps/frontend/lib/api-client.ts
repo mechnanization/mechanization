@@ -43,6 +43,7 @@ import type {
   PaymentStatus,
   RecordInspectorPayoutInput,
   RecordInspectorPayoutResult,
+  ReverseTransaction,
   SequenceKey,
   SetOwnerBillingInput,
   SetUnitFeeExemptionInput,
@@ -1484,15 +1485,35 @@ export function createCase(tenant: string, token: string, input: CaseWriteInput)
   });
 }
 
+/**
+ * The fields a case PATCH clears with `null` (`updateCaseSchema` takes null for
+ * exactly these): the free-text place fields, and نوع العقار and نوع الأرض when
+ * «غير معروف» is chosen. An omitted field is left as it is, so a field the
+ * officer emptied has to be sent as `null` or it is never cleared.
+ */
+export type CaseClearableField =
+  | 'propertyNumber'
+  | 'neighborhood'
+  | 'propertyType'
+  | 'buildingName'
+  | 'floor'
+  | 'side'
+  | 'landType'
+  | 'tentLocation';
+
+export type CaseUpdateInput = Omit<Partial<CaseWriteInput>, CaseClearableField> & {
+  [K in CaseClearableField]?: string | null;
+} & {
+  status?: CaseStatus;
+  /** Setting this always resolves the case server-side; `null` only clears the link. */
+  resolvedCitizenId?: string | null;
+};
+
 export function updateCase(
   tenant: string,
   token: string,
   id: string,
-  input: Partial<CaseWriteInput> & {
-    status?: CaseStatus;
-    /** Setting this always resolves the case server-side; `null` only clears the link. */
-    resolvedCitizenId?: string | null;
-  },
+  input: CaseUpdateInput,
 ) {
   return apiFetch<CaseSummary>(tenant, `/cases/${encodeURIComponent(id)}`, {
     token,
@@ -4835,6 +4856,7 @@ export function getAuditLog(
   tenant: string,
   token: string,
   filter: {
+    /** A person's id, or `AUDIT_SYSTEM_ACTOR` for the entries no person made (no actor id). */
     actorId?: string;
     entityType?: string;
     /** One record's own trail. Pairs with `entityType`; the server indexes both. */
@@ -5307,7 +5329,12 @@ export function getFeeSummary(tenant: string, token: string) {
 export interface PendingPayment {
   id: string;
   title: string;
+  /** The bill's face value. */
   amount: number;
+  /** Already taken against it, at the counter or on a round. */
+  paidAmount: number;
+  /** What is left — what confirming the claim credits (`FeesService.review`). */
+  remaining: number;
   currency: string;
   dueDate: string;
   paymentMethod: string | null;
@@ -5755,6 +5782,74 @@ export async function bulkSettlePayments(tenant: string, token: string, input: B
 /** One consolidated receipt, for a reprint — what `bulkSettlePayments` answered, read again. */
 export function getPaymentSettlement(tenant: string, token: string, id: string, signal?: AbortSignal) {
   return apiFetch<SettlementReceipt>(tenant, `/fees/settlements/${encodeURIComponent(id)}`, { token, signal });
+}
+
+/**
+ * One movement on a bill (`PaymentLedgerService.listForPayment`): a receipt, or
+ * the opposing row that reversed one.
+ */
+export interface PaymentLedgerEntry {
+  id: string;
+  /** «RCP-2610-0001» — the reversal has its own. */
+  receiptNumber: string;
+  /** In the bill's currency; negative on a reversal. */
+  amount: number;
+  currency: string;
+  method: PaymentMethod;
+  externalRef: string | null;
+  collectedBy: string | null;
+  recordedBy: string | null;
+  /** True for the opposing row itself. */
+  isReversal: boolean;
+  /** True for a receipt that has been reversed. */
+  reversed: boolean;
+  note: string | null;
+  occurredAt: string;
+  tenderedLocal: number | null;
+  tenderedForeign: number | null;
+  tenderedForeignCurrency: string | null;
+  exchangeRate: number | null;
+  officialExchangeRate: number | null;
+  changeGiven: number | null;
+  adjustmentReason: string | null;
+}
+
+/** Every movement on one bill, oldest first — `GET fees/payments/:id/transactions` (`FEE_READ_ROLES`). */
+export function getPaymentTransactions(tenant: string, token: string, paymentId: string, signal?: AbortSignal) {
+  return apiFetch<{ items: PaymentLedgerEntry[] }>(
+    tenant,
+    `/fees/payments/${encodeURIComponent(paymentId)}/transactions`,
+    { token, signal },
+  );
+}
+
+/**
+ * «عكس الوصل» — reverses one receipt with an opposing row, never an edit
+ * (`POST fees/transactions/:id/reverse`, `PAYMENT_REVERSE_ROLES`). The reason
+ * is required (`reverseTransactionSchema`). Answers with the bill's totals
+ * after the reversal and the opposing row's own receipt number.
+ */
+export async function reversePaymentTransaction(
+  tenant: string,
+  token: string,
+  transactionId: string,
+  input: ReverseTransaction,
+) {
+  const result = await apiFetch<{
+    receiptNumber: string;
+    transactionId: string;
+    received: number;
+    paidAmount: number;
+    remaining: number;
+    paymentStatus: 'PAID' | 'UNPAID';
+    occurredAt: string;
+  }>(tenant, `/fees/transactions/${encodeURIComponent(transactionId)}/reverse`, {
+    token,
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+  invalidateRequests(`fee-summary:${tenant}`);
+  return result;
 }
 
 /**

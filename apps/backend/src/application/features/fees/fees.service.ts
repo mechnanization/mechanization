@@ -1694,15 +1694,7 @@ export class FeesService {
     basis?: string;
   }): Promise<string[]> {
     if (input.targetType === 'INDIVIDUAL_CITIZEN') {
-      const citizen = await this.db.user.findFirst({
-        where: { id: input.targetCitizenId, kind: 'CITIZEN', isActive: true },
-        select: { id: true },
-      });
-      if (!citizen) throw new NotFoundError({
-        code: 'CITIZEN_NOT_FOUND',
-        message: `Citizen ${input.targetCitizenId ?? ''} was not found`,
-      });
-      return [citizen.id];
+      return [await this.chargeableCitizen(input.targetCitizenId)];
     }
 
     if (input.targetType === 'ALL_CITIZENS') {
@@ -2626,6 +2618,33 @@ export class FeesService {
    * Kept separate from `issue` because it is a different act: no rule, no
    * recurrence, nothing to re-run next month.
    */
+  /**
+   * The one citizen a new fee is raised on — «تكليف مباشر», or a notice aimed
+   * at one person — checked the same way for both: on file, not folded into
+   * another by «دمج ملفين» (a bill there is one the person never sees), and
+   * not archived. An archived file takes no new fees: that is what archiving
+   * promises («لا رسوم جديدة»), and the biller and every notice for a group
+   * already skip it. Each refusal says which it is.
+   */
+  private async chargeableCitizen(citizenId: string | undefined): Promise<string> {
+    const citizen = await this.db.user.findFirst({
+      where: { id: citizenId, kind: 'CITIZEN' },
+      select: { id: true, isActive: true },
+    });
+    if (!citizen) throw new NotFoundError({
+      code: 'CITIZEN_NOT_FOUND',
+      message: `Citizen ${citizenId ?? ''} was not found`,
+    });
+    await assertNotMergedAway(this.db, citizen.id);
+    if (!citizen.isActive) {
+      throw new ConflictError({
+        code: 'FEE_CITIZEN_ARCHIVED',
+        message: 'This citizen file is archived, and an archived file takes no new fees',
+      });
+    }
+    return citizen.id;
+  }
+
   async chargeIndividual(input: {
     citizenId: string;
     title: string;
@@ -2633,16 +2652,7 @@ export class FeesService {
     dueDate: string;
     actor: { id: string; role: string };
   }) {
-    const citizen = await this.db.user.findFirst({
-      where: { id: input.citizenId, kind: 'CITIZEN' },
-      select: { id: true },
-    });
-    if (!citizen) throw new NotFoundError({
-      code: 'CITIZEN_NOT_FOUND',
-      message: `Citizen ${input.citizenId} was not found`,
-    });
-    // A bill on a file folded into another is one the person never sees.
-    await assertNotMergedAway(this.db, citizen.id);
+    const citizen = { id: await this.chargeableCitizen(input.citizenId) };
 
     /*
       One bill, so the number goes straight into the row rather than through

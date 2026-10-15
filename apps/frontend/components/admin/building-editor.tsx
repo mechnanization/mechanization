@@ -60,16 +60,23 @@ import { ParcelCorrectionDialog } from '@/components/admin/parcel-correction-dia
 import { BuildingReviewDialog } from '@/components/admin/building-review-dialog';
 import {
   clearBuildingDraft,
+  draftIsCurrent,
+  editDraftFingerprint,
   loadBuildingDraft,
+  redrawRemovedFlats,
   saveBuildingDraft,
+  type BuildingDraft,
+  type EditDraftFields,
 } from '@/lib/building-draft';
 import { emptyTopFloors } from '@/lib/floor-count';
 import { haversineDistance, pointInGeometry } from '@/lib/map-geometry';
 import { scrollElementToTop } from '@/lib/scroll-to-top';
 import { offlineStorageAvailable } from '@/lib/offline-db';
 import { queueBuilding } from '@/lib/offline-sync';
+import { heldInDoubt, heldKey, keyIsSpent, markInDoubt, outcomeInDoubt, spendKey } from '@/lib/request-id';
 import { loadSession, clearSession } from '@/lib/session';
 import { CENSUS_WRITE_ROLES, hasRole } from '@/lib/staff-roles';
+import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -371,6 +378,7 @@ export function BuildingEditor({
   const tFloors = useTranslations('floorCount');
   const en = locale === 'en';
   const tFeeExemption = useTranslations('feeExemption');
+  const tEditor = useTranslations('buildingEditor');
   const labels = getLabels(locale);
   const base = `/${tenant}/${locale}/${adminPath}`;
   const editing = Boolean(buildingId);
@@ -511,11 +519,39 @@ export function BuildingEditor({
 
   // Submission State
   const [saving, setSaving] = useState(false);
+  /*
+    Synchronous, unlike `saving`, which lands a render after a fast second
+    press — and a second press on «حفظ» created a second building (STA-4).
+    Never released after a save that landed: the page stays mounted until the
+    next route is ready, and the button must not come back on meanwhile.
+  */
+  const inFlight = useRef(false);
+  /*
+    The creation's `clientSubmissionId`, which the server makes the building's
+    id, is a held key (`heldKey`, lib/request-id.ts), one per parcel
+    (`building:<parcel>`): a retry after an answer that never arrived goes
+    under the same id and is answered with the building the lost attempt made
+    (`deduplicated`), not a second one on the parcel — queued offline too.
+
+    Held there, not in this form: a key in a ref died with the form, and the
+    draft did not — a locale switch or a look at «سجل المباني» brought back the
+    ticked «مبنى منفصل» with a new id, and the server, seeing the tick, made a
+    second building. Per parcel, because the server refuses an id it knows on
+    another parcel. Kept across every failure, as every retry key is
+    (`keyIsSpent`): a 400 proves only that this attempt wrote nothing. Spent
+    once the building is on file or handed to the queue.
+  */
+  const creationScope = `building:${parcelNumber.trim()}` as const;
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [pinError, setPinError] = useState<string | null>(null);
 
   const trimmedParcel = parcelNumber.trim();
+
+  /** The wizard's outermost element — what a step change scrolls back to. */
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  /** The page heading: where the focus goes once the stale-draft question, which held it, is answered (A11Y-6). */
+  const headingRef = useRef<HTMLHeadingElement | null>(null);
 
   /**
    * Restoring across a locale switch.
@@ -527,16 +563,39 @@ export function BuildingEditor({
    *
    * Runs once, before the edit-mode fetch resolves, and `restoredRef` stops the
    * autosave below from writing the blank initial state over a good draft in
-   * the same tick. See `lib/building-draft.ts` for why this is session-scoped.
+   * the same tick. See `lib/building-draft.ts` for why this is session-scoped,
+   * and `loadDetail` for the draft of an edit the server has moved past.
    */
-  /** The wizard's outermost element — what a step change scrolls back to. */
-  const rootRef = useRef<HTMLDivElement | null>(null);
-
   const restoredRef = useRef(false);
   /** Whether the values on screen came from a draft rather than the server —
    *  read by `loadDetail` so the refetch does not overwrite them. A ref, not
    *  state: `loadDetail` must not be rebuilt when it flips. */
   const draftRestoredRef = useRef(false);
+  /**
+   * On an edit, the building's `updatedAt` the values on screen were made
+   * against — stored with the draft (`baseUpdatedAt`) so a restore can tell
+   * whether a colleague has saved since. State for the autosave, mirrored in a
+   * ref for `loadDetail`, which must not be rebuilt when it changes.
+   */
+  const [draftBase, setDraftBase] = useState<string | null>(null);
+  const draftBaseRef = useRef<string | null>(null);
+  const markDraftBase = useCallback((updatedAt: string | null) => {
+    draftBaseRef.current = updatedAt;
+    setDraftBase(updatedAt);
+  }, []);
+  /**
+   * The server's copy, while a restored draft was made against an older
+   * version of it and the officer has not yet said which one to keep. Nothing
+   * is saved meanwhile (`handleSave`).
+   */
+  const [staleDraft, setStaleDraft] = useState<BuildingDetail | null>(null);
+  const staleDraftRef = useRef<HTMLDivElement | null>(null);
+  /**
+   * The edit as loaded, as `editDraftFingerprint` writes it — taken by
+   * `hydrate` from the very values it puts on screen. The autosave writes no
+   * draft of an edit that still matches it.
+   */
+  const pristineRef = useRef<string | null>(null);
   useEffect(() => {
     if (restoredRef.current) return;
     restoredRef.current = true;
@@ -544,6 +603,7 @@ export function BuildingEditor({
     const draft = loadBuildingDraft(tenant, buildingId);
     if (!draft) return;
 
+    markDraftBase(draft.baseUpdatedAt ?? null);
     setStep(draft.step);
     setParcelNumber(draft.parcelNumber);
     pinParcelRef.current = draft.parcelNumber.trim() || null;
@@ -565,7 +625,7 @@ export function BuildingEditor({
     setDuplicateReason(draft.duplicateReason ?? '');
     setNoPinReason(draft.noPinReason ?? null);
     draftRestoredRef.current = true;
-  }, [tenant, buildingId]);
+  }, [tenant, buildingId, markDraftBase]);
 
   /**
    * Autosave, on every change to anything the officer typed, dropped or
@@ -573,7 +633,7 @@ export function BuildingEditor({
    */
   useEffect(() => {
     if (!restoredRef.current) return;
-    saveBuildingDraft(tenant, buildingId, {
+    const draft: BuildingDraft = {
       step,
       parcelNumber,
       name,
@@ -593,10 +653,24 @@ export function BuildingEditor({
       acknowledgedDuplicates,
       duplicateReason,
       ...(noPinReason !== null ? { noPinReason } : {}),
-    });
+      baseUpdatedAt: draftBase,
+    };
+    /*
+      An edit is kept only once it differs from the building as loaded. The
+      form holds the building from the moment it loads, so every visit used to
+      leave a draft — and the next visit within the hour, after any save to
+      the building (a colleague's, or the officer's own on the matrix), asked
+      which version to keep about edits nobody had made.
+    */
+    if (buildingId && editDraftFingerprint(draft) === pristineRef.current) {
+      clearBuildingDraft(tenant, buildingId);
+      return;
+    }
+    saveBuildingDraft(tenant, buildingId, draft);
   }, [
     tenant,
     buildingId,
+    draftBase,
     step,
     parcelNumber,
     name,
@@ -619,19 +693,10 @@ export function BuildingEditor({
   ]);
 
   /**
-   * Fills the whole wizard from the building on file.
-   *
-   * `keepEdits` is the locale-switch case. The remount refetches the building,
-   * and this would then write the server's copy over the corrections the
-   * officer had already typed — so when a draft was restored, only the parts
-   * the server owns are applied: the allocated code, the suffix, the baseline
-   * the save diffs against, and the units the grid cannot draw. What the
-   * officer typed stays theirs.
-   */
-  /**
    * The building's `updatedAt` as last loaded, sent with the save so a colleague's
-   * change made since is not silently replaced. Refreshed on every load,
-   * including the reload after a half-refused save.
+   * change made since is not silently replaced. Refreshed on every load — except
+   * under a restored draft made against an older version, where it stays that
+   * version until the officer chooses (`loadDetail`, `staleDraft`).
    */
   const loadedUpdatedAtRef = useRef<string | null>(null);
   /** The building as loaded — what «مراجعة التعديلات» compares the save with. */
@@ -667,17 +732,31 @@ export function BuildingEditor({
       setSuffix(result.building.codeSuffix);
       setSavedCode(result.building.code);
       loadedUpdatedAtRef.current = result.building.updatedAt;
+      // The officer made this version, on top of what is on screen.
+      markDraftBase(result.building.updatedAt);
       setPreviousCodes((current) => [
         { code: result.previousCode, parcelNumber: oldParcel, reason: '', retiredAt: new Date().toISOString() },
         ...current.filter((row) => row.code !== result.building.code),
       ]);
     },
-    [],
+    [markDraftBase],
   );
 
+  /**
+   * Fills the whole wizard from the building on file.
+   *
+   * `keepEdits` is the locale-switch case. The remount refetches the building,
+   * and this would then write the server's copy over the corrections the
+   * officer had already typed — so when a draft was restored, only the parts
+   * the server owns are applied: the allocated code, the suffix, the baseline
+   * the save diffs against, and the units the grid cannot draw. What the
+   * officer typed stays theirs. Whether the draft may be kept without asking
+   * is `loadDetail`'s question (`draftIsCurrent`), not this one's.
+   */
   const hydrate = useCallback(
     (detail: BuildingDetail, keepEdits = false) => {
       loadedUpdatedAtRef.current = detail.updatedAt ?? null;
+      if (!keepEdits) markDraftBase(detail.updatedAt ?? null);
       loadedDetailRef.current = detail;
       setLoadedLifecycle(detail.lifecycleStatus);
       setLiveOccupants(
@@ -694,44 +773,53 @@ export function BuildingEditor({
       setParcelNumber(detail.parcelNumber);
       pinParcelRef.current = detail.parcelNumber;
       setPreviousCodes(detail.previousCodes ?? []);
-      if (!keepEdits) {
-        setName(detail.name ?? '');
-        setPostedNumber(detail.postedNumber ?? '');
-        setIsPartitioned(detail.isPartitioned === true);
-        setPartitionNumbers(detail.partitionNumbers ?? []);
-        setSharedParcels(detail.sharedParcelNumbers ?? []);
-        setStructureType(detail.structureType);
-        setLifecycleStatus(detail.lifecycleStatus);
-        setNotes(detail.notes ?? '');
-        setPin(
-          detail.latitude != null && detail.longitude != null
-            ? [detail.longitude, detail.latitude]
-            : null,
-        );
-      }
       setSuffix(detail.codeSuffix);
       setSavedCode(detail.code);
 
       const { drafts, hidden, columns, floors, basements } = gridFromUnits(detail.units, en);
-      if (!keepEdits) {
-        setGridUnits(drafts);
-        setGridSize(columns);
-      }
       setHiddenUnits(hidden);
-      /*
-        The taller of the two answers wins. A matrix carrying a unit on floor 5
-        of a building recorded as three storeys is a building whose floor count
-        is behind its own units, and a grid that only drew three rows would
-        strand the other two outside it.
-
-        The same reconciliation downward: a building declaring no basement but
-        holding a unit on B2 has two levels the register has not caught up with.
-        This is the case that made the column worth adding — those units existed
-        long before anywhere could say the basement did.
-      */
       if (!keepEdits) {
-        setFloorsCount(String(Math.max(detail.floorsCount, floors)));
-        setBasementsCount(String(Math.max(detail.basementsCount ?? 0, basements)));
+        const loaded: EditDraftFields = {
+          name: detail.name ?? '',
+          postedNumber: detail.postedNumber ?? '',
+          isPartitioned: detail.isPartitioned === true,
+          partitionNumbers: detail.partitionNumbers ?? [],
+          sharedParcels: detail.sharedParcelNumbers ?? [],
+          structureType: detail.structureType,
+          lifecycleStatus: detail.lifecycleStatus,
+          notes: detail.notes ?? '',
+          pin: detail.latitude != null && detail.longitude != null ? [detail.longitude, detail.latitude] : null,
+          gridUnits: drafts,
+          gridSize: columns,
+          /*
+            The taller of the two answers wins. A matrix carrying a unit on floor 5
+            of a building recorded as three storeys is a building whose floor count
+            is behind its own units, and a grid that only drew three rows would
+            strand the other two outside it.
+
+            The same reconciliation downward: a building declaring no basement but
+            holding a unit on B2 has two levels the register has not caught up with.
+            This is the case that made the column worth adding — those units existed
+            long before anywhere could say the basement did.
+          */
+          floorsCount: String(Math.max(detail.floorsCount, floors)),
+          basementsCount: String(Math.max(detail.basementsCount ?? 0, basements)),
+        };
+        setName(loaded.name);
+        setPostedNumber(loaded.postedNumber);
+        setIsPartitioned(loaded.isPartitioned);
+        setPartitionNumbers(loaded.partitionNumbers);
+        setSharedParcels(loaded.sharedParcels);
+        setStructureType(loaded.structureType);
+        setLifecycleStatus(loaded.lifecycleStatus);
+        setNotes(loaded.notes);
+        setPin(loaded.pin);
+        setGridUnits(loaded.gridUnits);
+        setGridSize(loaded.gridSize);
+        setFloorsCount(loaded.floorsCount);
+        setBasementsCount(loaded.basementsCount);
+        // The building as it is on file: what «nothing typed» means to the autosave.
+        pristineRef.current = editDraftFingerprint(loaded);
       }
 
       baselineRef.current = new Map(
@@ -749,7 +837,7 @@ export function BuildingEditor({
           ]),
       );
     },
-    [en],
+    [en, markDraftBase],
   );
 
   const loadDetail = useCallback(async () => {
@@ -757,7 +845,26 @@ export function BuildingEditor({
     setLoadingDetail(true);
     setLoadError(null);
     try {
-      hydrate(await getBuilding(tenant, token, buildingId), draftRestoredRef.current);
+      const detail = await getBuilding(tenant, token, buildingId);
+      const keepEdits = draftRestoredRef.current;
+      hydrate(detail, keepEdits);
+      /*
+        A restored draft made against an older version than the server holds:
+        a colleague has saved this building since. Keeping it silently, with
+        the fresh `updatedAt` as the save's `expectedUpdatedAt`, overwrote their
+        change without a word. The draft stays on screen, the save still names
+        the version the draft was made against (so it is refused as stale), and
+        the officer is asked which to keep (`staleDraft`).
+      */
+      if (keepEdits && !draftIsCurrent({ baseUpdatedAt: draftBaseRef.current }, detail.updatedAt)) {
+        /*
+          A draft from before `baseUpdatedAt` existed names no version: the
+          fresh one stays, so «تصحيح رقم العقار» still sends a version to be
+          checked against. The save waits for the answer either way.
+        */
+        loadedUpdatedAtRef.current = draftBaseRef.current ?? detail.updatedAt;
+        setStaleDraft(detail);
+      }
     } catch (caught) {
       logApiError(caught);
       if (caught instanceof ApiRequestError && caught.status === 401) {
@@ -780,6 +887,39 @@ export function BuildingEditor({
   useEffect(() => {
     void loadDetail();
   }, [loadDetail]);
+
+  /**
+   * «حمّل النسخة الأحدث»: the draft is dropped and the building read again, as
+   * on a fresh open — read, not taken from the copy the question was asked
+   * about, which a third save may have passed since.
+   */
+  const loadLatestVersion = () => {
+    if (!staleDraft) return;
+    clearBuildingDraft(tenant, buildingId);
+    draftRestoredRef.current = false;
+    setAcknowledgedDuplicates(false);
+    setDuplicateReason('');
+    setNoPinReason(null);
+    setStep(initialStep);
+    setStaleDraft(null);
+    void loadDetail();
+    headingRef.current?.focus();
+  };
+
+  /**
+   * «أبقِ مسودتي»: an informed choice — the draft stays, and its save makes the
+   * building what is on screen. `hydrate` rebuilt the baseline from the newer
+   * version, so a flat removed since is drawn again as new (`redrawRemovedFlats`).
+   */
+  const keepDraftOverLatest = () => {
+    if (!staleDraft) return;
+    loadedUpdatedAtRef.current = staleDraft.updatedAt;
+    markDraftBase(staleDraft.updatedAt);
+    const baseline = baselineRef.current;
+    setGridUnits((current) => redrawRemovedFlats(current, baseline));
+    setStaleDraft(null);
+    headingRef.current?.focus();
+  };
 
   /*
     The two things the sector step needs, fetched once per mount.
@@ -1535,6 +1675,12 @@ export function BuildingEditor({
 
   // Save handler
   const handleSave = async (confirmed = false) => {
+    if (inFlight.current) return;
+    // Which version to keep is asked first (`staleDraft`); the question is where the answer is.
+    if (staleDraft) {
+      staleDraftRef.current?.focus();
+      return;
+    }
     if (!trimmedParcel) {
       setFieldErrors({ parcelNumber: en ? 'Parcel number is required' : 'رقم العقار مطلوب' });
       goToStep(0);
@@ -1583,9 +1729,12 @@ export function BuildingEditor({
       return;
     }
 
+    inFlight.current = true;
     setSaving(true);
     setError(null);
     setFieldErrors({});
+    /** Set once a save has landed: the form then stays locked while the page moves on. */
+    let landed = false;
 
     try {
       if (editing && buildingId) {
@@ -1613,6 +1762,7 @@ export function BuildingEditor({
           return;
         }
         await saveEdit(buildingId, token);
+        landed = true;
 
         clearBuildingDraft(tenant, buildingId);
         toast.success(
@@ -1625,6 +1775,14 @@ export function BuildingEditor({
       // 1. Offline branch
       if (offlineNow() && offlineStorageAvailable()) {
         await queueBuilding({
+          /*
+            The id an online attempt at this same building may already have
+            sent: an answer that never arrived often means a request that did,
+            and under the same id the drain is answered with that building —
+            as that press sent it, so the queue says so (`afterLostAnswer`).
+          */
+          id: heldKey(tenant, creationScope),
+          ...(heldInDoubt(tenant, creationScope) ? { afterLostAnswer: true } : {}),
           tenant,
           parcelNumber: trimmedParcel,
           provisionalCode: codePreview ?? trimmedParcel,
@@ -1656,6 +1814,9 @@ export function BuildingEditor({
           },
           blueprint: null,
         });
+        landed = true;
+        // The queue holds the id now; the next building on this parcel is another act.
+        spendKey(tenant, creationScope);
 
         clearBuildingDraft(tenant, buildingId);
         toast.info(en ? 'Saved on this device' : 'حُفظ على هذا الجهاز', {
@@ -1697,7 +1858,10 @@ export function BuildingEditor({
           : {}),
         ...(!pin && noPinReason?.trim() ? { noPinReason: noPinReason.trim() } : {}),
         units,
+        clientSubmissionId: heldKey(tenant, creationScope),
       });
+      landed = true;
+      spendKey(tenant, creationScope);
 
       const saved = response.building;
       const reconciled = response.reconciled;
@@ -1708,13 +1872,24 @@ export function BuildingEditor({
          into a form headed «مبنى جديد» is worse than no restore at all. */
       clearBuildingDraft(tenant, buildingId);
 
+      /*
+        An earlier press reached the server and its answer was lost: this is
+        that building, not a new one, and what it holds is what that press
+        sent — so the officer is told, and checks it on the matrix.
+      */
+      if (response.deduplicated) {
+        toast.warning(tEditor('deduplicated.title'), {
+          description: tEditor('deduplicated.description', { code: saved.code }),
+        });
+      }
+
       if (reconciled) {
         toast.warning(en ? 'Building code allocated' : 'تغيّر رمز المبنى عند الحفظ', {
           description: en
             ? `Another building already claimed that letter. Allocated code: ${saved.code}.`
             : `تم اعتماد الرمز النهائي المخصّص من الخادم: ${saved.code}.`,
         });
-      } else {
+      } else if (!response.deduplicated) {
         toast.success(
           en ? `Building ${saved.code} created` : `تم إنشاء المبنى ${saved.code}`,
           {
@@ -1733,6 +1908,15 @@ export function BuildingEditor({
       router.push(`${base}/buildings/${encodeURIComponent(saved.id)}/matrix`);
     } catch (caught) {
       logApiError(caught);
+      /*
+        A creation's key is kept across every failure (`keyIsSpent` names none
+        a building can meet), and marked when the answer was lost: the building
+        may exist, and a fall-back to the queue says so (`afterLostAnswer`).
+      */
+      if (!editing) {
+        if (keyIsSpent(caught)) spendKey(tenant, creationScope);
+        else if (outcomeInDoubt(caught)) markInDoubt(tenant, creationScope);
+      }
 
       const candidates = duplicateBuildingsOf(caught);
       if (candidates) {
@@ -1755,7 +1939,11 @@ export function BuildingEditor({
         setError(en ? 'Could not save the building.' : 'تعذّر حفظ المبنى.');
       }
     } finally {
-      setSaving(false);
+      // After a save that landed the button stays off: the page is leaving (see `inFlight`).
+      if (!landed) {
+        inFlight.current = false;
+        setSaving(false);
+      }
     }
   };
 
@@ -1875,7 +2063,11 @@ export function BuildingEditor({
           </div>
           <div className="space-y-0.5 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground">
+              <h1
+                ref={headingRef}
+                tabIndex={-1}
+                className="text-xl sm:text-2xl font-bold tracking-tight text-foreground outline-none"
+              >
                 {editing
                   ? en
                     ? 'Edit Building'
@@ -1926,7 +2118,8 @@ export function BuildingEditor({
           ) : (
             <Button
               onClick={() => void handleSave()}
-              disabled={saving || !canGoNext}
+              disabled={saving || !canGoNext || staleDraft !== null}
+              aria-describedby={staleDraft ? 'building-stale-draft' : undefined}
               size="sm"
               className="gap-1.5 min-w-32 shadow-xs"
             >
@@ -2001,6 +2194,29 @@ export function BuildingEditor({
           {step + 1} / {visibleSteps.length}
         </span>
       </div>
+
+      {staleDraft ? (
+        <Alert
+          ref={staleDraftRef}
+          id="building-stale-draft"
+          tabIndex={-1}
+          variant="warning"
+          live="status"
+          title={tEditor('staleDraft.title')}
+        >
+          <div className="space-y-3">
+            <p>{tEditor('staleDraft.body')}</p>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" size="sm" onClick={loadLatestVersion}>
+                {tEditor('staleDraft.loadLatest')}
+              </Button>
+              <Button type="button" size="sm" variant="outline" onClick={keepDraftOverLatest}>
+                {tEditor('staleDraft.keepDraft')}
+              </Button>
+            </div>
+          </div>
+        </Alert>
+      ) : null}
 
       {/* Global Error Banner */}
       {error ? (
@@ -3173,7 +3389,8 @@ export function BuildingEditor({
             ) : (
               <Button
                 onClick={() => void handleSave()}
-                disabled={saving || !canGoNext}
+                disabled={saving || !canGoNext || staleDraft !== null}
+                aria-describedby={staleDraft ? 'building-stale-draft' : undefined}
                 size="sm"
                 className="gap-1.5 min-w-36 shadow-xs"
               >
@@ -3213,7 +3430,8 @@ export function BuildingEditor({
         ) : (
           <Button
             onClick={() => void handleSave()}
-            disabled={saving || !canGoNext}
+            disabled={saving || !canGoNext || staleDraft !== null}
+            aria-describedby={staleDraft ? 'building-stale-draft' : undefined}
             className="flex-1 h-11 text-xs gap-1.5 shadow-xs"
           >
             {saving ? (

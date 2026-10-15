@@ -24,6 +24,7 @@ import {
   Pencil,
   Phone,
   Receipt as ReceiptIcon,
+  ReceiptText,
   Signpost,
   StickyNote,
   Unlink,
@@ -80,6 +81,7 @@ import { param, useUrlState } from '@/lib/use-url-state';
 import { buildCitizenWelcomeMessage, buildWhatsappHref } from '@/lib/whatsapp';
 import { BULK_SETTLE_ROLES, DOCUMENT_VIEW_ROLES, REFERENCE_SEND_ROLES, hasRole } from '@/lib/staff-roles';
 import { fromCitizenPayment, isBulkSettleable, pageSelection, rowBlock } from '@/lib/bulk-settle';
+import { billPageLink } from '@/lib/bill-receipts';
 import { useBulkSelection, type BulkSelection } from '@/lib/use-bulk-selection';
 import { BillCheckbox } from '@/components/admin/bulk-settle/bill-checkbox';
 import { BulkSettleBar } from '@/components/admin/bulk-settle/bulk-settle-bar';
@@ -1654,7 +1656,13 @@ function FeesPanel({
 }) {
   const { tenant, adminPath } = useParams<{ tenant: string; adminPath: string }>();
   const tSelect = useTranslations('bulkSettle.select');
-  /** «تسجيل دفعة نقدية» is its own page now — ليرة, dollars, the rate — see payments/[paymentId]. */
+  const tReceipts = useTranslations('billReceipts');
+  /**
+   * The bill's own page, payments/[paymentId]: «تسجيل دفعة نقدية» — ليرة, dollars,
+   * the rate — while it is owed, and under it «وصولات الفاتورة», every receipt
+   * on the bill with «عكس الوصل» for the manager. A bill paid in full has no
+   * cash to take, so its row links there by the receipts' name instead.
+   */
   const settleHref = (paymentId: string) =>
     `/${tenant}/${locale}/${adminPath}/citizens/${encodeURIComponent(citizen.id)}/payments/${encodeURIComponent(paymentId)}`;
   const [receipt, setReceipt] = useState<{
@@ -1870,15 +1878,28 @@ function FeesPanel({
 
                     {canManage ? (
                       <div className="col-span-2 col-start-1 row-start-3 flex items-center gap-2 lg:col-span-1 lg:col-start-auto lg:row-start-auto lg:justify-end">
-                        {!settled ? (
-                          <Link
-                            href={settleHref(payment.id)}
-                            className={buttonVariants({ size: 'sm', variant: 'outline' })}
-                          >
-                            <Banknote className="size-4" aria-hidden />
-                            {locale === 'en' ? 'Record cash' : 'تسجيل دفعة نقدية'}
-                          </Link>
-                        ) : null}
+                        {/*
+                          Every bill links to its own page, named by what it
+                          holds now (`billPageLink`): the cash form while it is
+                          owed, the receipts once it is paid — the way to a paid
+                          bill's «عكس الوصل» (review of PR #113).
+                        */}
+                        <Link
+                          href={settleHref(payment.id)}
+                          className={buttonVariants({ size: 'sm', variant: 'outline' })}
+                        >
+                          {billPageLink(payment) === 'settle' ? (
+                            <>
+                              <Banknote className="size-4" aria-hidden />
+                              {locale === 'en' ? 'Record cash' : 'تسجيل دفعة نقدية'}
+                            </>
+                          ) : (
+                            <>
+                              <ReceiptText className="size-4" aria-hidden />
+                              {tReceipts('open')}
+                            </>
+                          )}
+                        </Link>
                         {payment.paidAmount > 0 ? (
                           <Button
                             size="sm"

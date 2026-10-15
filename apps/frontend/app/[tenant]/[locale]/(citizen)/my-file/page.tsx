@@ -48,6 +48,7 @@ import type {
   MyCitizenSummary,
 } from '@/lib/api-client';
 import { clearSession, loadSession } from '@/lib/session';
+import { billFigure, citizenPaymentTotals, isPartlyPaid, isSettled, partlyPaidFigures } from '@/lib/citizen-payments';
 import { formatLbp } from '@/lib/currency';
 import { formatDate, formatMonthList } from '@/lib/dates';
 import { describeAssessment } from '@/lib/fee-assessment';
@@ -57,11 +58,6 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
-
-/** A bill is settled, or it is not — everything else is a shade of "not". */
-function isSettled(payment: CitizenPaymentItem): boolean {
-  return payment.paymentStatus === 'PAID';
-}
 
 /**
  * First letters of the first two words, for the avatar.
@@ -267,6 +263,14 @@ export default function MyFilePage({
   const outstanding = payments.filter((payment) => !isSettled(payment));
   const settled = payments.filter(isSettled);
   const notes = payments.filter((payment) => payment.reviewNote);
+  /*
+    What is owed and what was paid, by the portal's one rule — the payments
+    page sums the same bills the same way. A bill whose reported transfer
+    waits for a clerk is listed below with its status and is not counted as
+    owed. The summary's `outstandingTotal` counts it, so the two pages told
+    one citizen two totals (review of PR #113).
+  */
+  const totals = citizenPaymentTotals(payments);
 
   return (
     <div className="space-y-6">
@@ -506,15 +510,13 @@ export default function MyFilePage({
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <StatCard
           label={locale === 'en' ? 'Amount Due' : 'المستحق عليك'}
-          value={formatLbp(summary?.fees.outstandingTotal ?? 0, locale)}
+          value={formatLbp(totals.outstanding, locale)}
           icon={<Wallet className="size-5" aria-hidden />}
-          tone={
-            (summary?.fees.outstandingTotal ?? 0) > 0 ? 'destructive' : 'success'
-          }
+          tone={totals.outstanding > 0 ? 'destructive' : 'success'}
         />
         <StatCard
           label={locale === 'en' ? 'Settled' : 'المسدَّد'}
-          value={formatLbp(summary?.fees.paidTotal ?? 0, locale)}
+          value={formatLbp(totals.paid, locale)}
           icon={<BadgeCheck className="size-5" aria-hidden />}
           tone="success"
         />
@@ -1051,6 +1053,7 @@ function PaymentList({
   locale?: string;
 }) {
   const labels = getLabels(locale);
+  const tCitizen = useTranslations('citizen');
 
   return (
     <Card>
@@ -1067,7 +1070,6 @@ function PaymentList({
           <ul className="divide-y">
             {items.map((payment) => {
               const settled = isSettled(payment);
-              const partly = !settled && payment.paidAmount > 0;
               const breakdown = describeAssessment(payment.assessment, locale);
               return (
                 <li
@@ -1103,10 +1105,8 @@ function PaymentList({
                         <>
                           {locale === 'en' ? 'Due ' : 'استحقاق '}
                           {formatDate(payment.dueDate)}
-                          {partly
-                            ? (locale === 'en'
-                                ? ` · Paid ${formatLbp(payment.paidAmount, locale)} of ${formatLbp(payment.amount, locale)}`
-                                : ` · سدّدت ${formatLbp(payment.paidAmount, locale)} من ${formatLbp(payment.amount, locale)}`)
+                          {isPartlyPaid(payment)
+                            ? ` · ${tCitizen('partlyPaid', partlyPaidFigures(payment, locale))}`
                             : ''}
                         </>
                       )}
@@ -1117,7 +1117,7 @@ function PaymentList({
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-sm font-semibold tabular-nums">
-                      {formatLbp(settled ? payment.amount : payment.remaining, locale)}
+                      {formatLbp(billFigure(payment), locale)}
                     </span>
                     <Badge
                       variant="outline"

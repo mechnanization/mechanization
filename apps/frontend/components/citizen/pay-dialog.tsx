@@ -1,8 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Banknote, Building2, Clock, Loader2, MapPin, Smartphone } from 'lucide-react';
 import type { CitizenPaymentItem, MunicipalitySettings } from '@/lib/api-client';
+import { isPartlyPaid, partlyPaidFigures } from '@/lib/citizen-payments';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -14,11 +16,8 @@ import {
 } from '@/components/ui/dialog';
 import { Field } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
+import { Money } from '@/components/ui/money';
 import { cn } from '@/lib/utils';
-
-function lbp(amount: number): string {
-  return `${amount.toLocaleString('en-US')} ل.ل`;
-}
 
 /**
  * How to pay one bill.
@@ -47,6 +46,7 @@ export function PayDialog({
   onDeclare: (input: { method: string; whishTransactionRef?: string }) => void;
   locale?: string;
 }) {
+  const tCitizen = useTranslations('citizen');
   const whishAvailable = Boolean(settings?.whishMoneyNumber);
   const [method, setMethod] = useState<'CASH' | 'WHISH_MONEY'>('CASH');
   const [reference, setReference] = useState('');
@@ -70,7 +70,14 @@ export function PayDialog({
           </DialogTitle>
           <DialogDescription>
             {locale === 'en' ? 'Amount due: ' : 'المبلغ المستحق: '}
-            <span className="font-semibold">{payment ? lbp(payment.amount) : ''}</span>
+            {/* What is left: a confirmed claim credits only the outstanding balance, never the face value. */}
+            {payment ? <Money amount={payment.remaining} locale={locale} exact className="font-semibold" /> : null}
+            {payment && isPartlyPaid(payment) ? (
+              <>
+                {' · '}
+                {tCitizen('partlyPaid', partlyPaidFigures(payment, locale))}
+              </>
+            ) : null}
           </DialogDescription>
         </DialogHeader>
 
@@ -144,7 +151,9 @@ export function PayDialog({
                     {locale === 'en'
                       ? 'Open Whish Money app and transfer '
                       : 'افتح تطبيق Whish Money وحوّل '}
-                    <span className="font-semibold">{payment ? lbp(payment.amount) : ''}</span>
+                    {payment ? (
+                      <Money amount={payment.remaining} locale={locale} exact className="font-semibold" />
+                    ) : null}
                     {locale === 'en' ? ' to number:' : ' إلى الرقم:'}
                   </span>
                 </li>

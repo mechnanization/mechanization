@@ -3,7 +3,7 @@
 import { useEffect, useId, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { AlertTriangle, CheckCircle2, ExternalLink, KeyRound, Loader2, Search, UserRound } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ExternalLink, KeyRound, Loader2, UserRound } from 'lucide-react';
 import { getLabels } from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
@@ -12,10 +12,8 @@ import {
   getOccupancyOwnershipPreview,
   getOwnershipEndPreview,
   isOwnershipResult,
-  listCitizens,
   logApiError,
   type AfterTenancyAnswer,
-  type CitizenListItem,
   type EndOwnershipResult,
   type OwnershipLinkedTenant,
   type OwnershipPreview,
@@ -32,6 +30,7 @@ import {
 } from '@/components/ui/dialog';
 import { Field } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
+import { CitizenPicker, type PickedCitizen } from '@/components/admin/citizen-picker';
 import { useToast } from '@/components/ui/toast';
 import { formatDate } from '@/lib/dates';
 import { cn } from '@/lib/utils';
@@ -45,11 +44,9 @@ import {
 type Reason = 'OWNERSHIP_TRANSFERRED' | 'RECORDED_IN_ERROR';
 
 /** Who the new owner is: a registered citizen, or «not registered yet». */
-type Buyer = { kind: 'citizen'; id: string; name: string } | { kind: 'unregistered' };
+type Buyer = { kind: 'citizen'; id: string; name: string; citizen: PickedCitizen } | { kind: 'unregistered' };
 
 const today = () => new Date().toISOString().slice(0, 10);
-const SEARCH_DEBOUNCE_MS = 350;
-
 /**
  * «إنهاء الملكية» — an owner sold, or a property passed on, or it was never theirs.
  *
@@ -812,164 +809,59 @@ function BuyerPicker({
 }) {
   const en = locale === 'en';
   const searchId = useId();
-  const [term, setTerm] = useState('');
-  const [results, setResults] = useState<CitizenListItem[]>([]);
-  const [searching, setSearching] = useState(false);
-  const [failed, setFailed] = useState(false);
-  const [searched, setSearched] = useState('');
-
-  useEffect(() => {
-    const trimmed = term.trim();
-    if (trimmed.length < 2) {
-      setResults([]);
-      setSearched('');
-      setSearching(false);
-      setFailed(false);
-      return;
-    }
-    let cancelled = false;
-    setSearching(true);
-    setFailed(false);
-    const timer = setTimeout(() => {
-      listCitizens(tenant, token, { search: trimmed, limit: 6 })
-        .then((found) => {
-          if (cancelled) return;
-          // Not the seller, and not a file «دمج ملفين» folded into another.
-          setResults(found.items.filter((row) => row.id !== sellerId && !row.mergedIntoId));
-          setSearched(trimmed);
-        })
-        .catch((caught) => {
-          logApiError(caught);
-          if (!cancelled) setFailed(true);
-        })
-        .finally(() => {
-          if (!cancelled) setSearching(false);
-        });
-    }, SEARCH_DEBOUNCE_MS);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [term, tenant, token, sellerId]);
-
-  if (value?.kind === 'citizen') {
-    return (
-      <div className="space-y-1.5">
-        <p className="text-sm font-medium">
-          {en ? 'New owner' : 'المالك الجديد'} <span className="text-destructive">*</span>
-        </p>
-        <div className="flex min-h-11 items-center gap-3 rounded-md border border-primary bg-primary/10 px-3 py-2 text-sm">
-          <UserRound className="size-4 shrink-0 text-primary" aria-hidden />
-          <span className="min-w-0 flex-1 truncate font-medium text-primary">{value.name}</span>
-          <Button variant="ghost" size="sm" className="h-9 shrink-0" onClick={() => onChange(null)}>
-            {en ? 'Change' : 'تغيير'}
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
   const unregistered = value?.kind === 'unregistered';
 
   return (
     <fieldset className="space-y-1.5">
       <legend className="mb-1 text-sm font-medium">
-        {en ? 'Who is the new owner?' : 'من المالك الجديد؟'} <span className="text-destructive">*</span>
+        {value?.kind === 'citizen'
+          ? en
+            ? 'New owner'
+            : 'المالك الجديد'
+          : en
+            ? 'Who is the new owner?'
+            : 'من المالك الجديد؟'}{' '}
+        <span className="text-destructive">*</span>
       </legend>
 
-      <div className="relative">
-        <Search
-          className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-          aria-hidden
-        />
-        <Input
-          id={searchId}
-          type="search"
-          value={term}
-          onChange={(event) => {
-            setTerm(event.target.value);
-            if (unregistered) onChange(null);
-          }}
-          placeholder={en ? 'Name, phone or reference number' : 'الاسم أو الهاتف أو الرقم المرجعي'}
-          aria-label={en ? 'Search the register for the new owner' : 'ابحث في السجل عن المالك الجديد'}
-          className="ps-9"
-          autoComplete="off"
-        />
-        {searching ? (
-          <Loader2
-            className="absolute end-3 top-1/2 size-4 -translate-y-1/2 animate-spin text-muted-foreground"
-            aria-hidden
-          />
-        ) : null}
-      </div>
+      {/*
+        The register's one picker. The seller is never offered; an archived
+        file is, marked, because a buyer who left and came back is restored,
+        not filed twice.
+      */}
+      <CitizenPicker
+        id={searchId}
+        tenant={tenant}
+        token={token}
+        value={value?.kind === 'citizen' ? value.citizen : null}
+        onChange={(citizen) =>
+          onChange(citizen ? { kind: 'citizen', id: citizen.id, name: citizen.fullName, citizen } : null)
+        }
+        exclude={[sellerId]}
+        includeArchived
+        ariaLabel={en ? 'Search the register for the new owner' : 'ابحث في السجل عن المالك الجديد'}
+      />
 
-      {failed ? (
-        <p className="text-xs text-destructive">
-          {en ? 'The search failed — check the connection, or choose «not registered yet».' : 'تعذّر البحث — تحقّق من الاتصال، أو اختر «ليس مسجَّلاً بعد».'}
-        </p>
-      ) : results.length > 0 ? (
-        <ul className="grid gap-1.5" aria-label={en ? 'Matching citizens' : 'مواطنون مطابقون'}>
-          {results.map((row) => {
-            const name = row.fullName;
-            return (
-              <li key={row.id}>
-                <button
-                  type="button"
-                  onClick={() => onChange({ kind: 'citizen', id: row.id, name })}
-                  className="flex min-h-11 w-full items-center gap-3 rounded-md border px-3 py-2 text-start text-sm transition-colors duration-150 hover:bg-accent"
-                >
-                  <UserRound className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium">{name}</span>
-                    {/* The one thing that tells two «محمد خليل»s apart. */}
-                    {row.motherName ? (
-                      <span className="block truncate text-xs text-muted-foreground">
-                        {en ? `Mother: ${row.motherName}` : `والدته: ${row.motherName}`}
-                      </span>
-                    ) : null}
-                    <span className="block text-xs text-muted-foreground">
-                      {row.phone ? (
-                        <bdi dir="ltr" className="font-mono">
-                          {row.phone}
-                        </bdi>
-                      ) : null}
-                      {row.phone && row.referenceNumber ? ' · ' : null}
-                      {row.referenceNumber ? (
-                        <bdi dir="ltr" className="font-mono">
-                          {row.referenceNumber}
-                        </bdi>
-                      ) : null}
-                    </span>
-                  </span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      ) : searched && !searching ? (
-        <p className="text-xs text-muted-foreground">
-          {en ? `Nobody on the register matches «${searched}».` : `لا أحد في السجل يطابق «${searched}».`}
-        </p>
-      ) : null}
-
-      <button
-        type="button"
-        aria-pressed={unregistered}
-        onClick={() => onChange(unregistered ? null : { kind: 'unregistered' })}
-        className={cn(
-          'min-h-11 w-full rounded-md border px-3 py-2.5 text-start text-sm transition-colors duration-150',
-          unregistered ? 'border-primary bg-primary/10' : 'border-dashed hover:bg-accent',
-        )}
-      >
-        <span className={cn('block font-medium', unregistered && 'text-primary')}>
-          {en ? 'Not registered yet' : 'ليس مسجَّلاً بعد'}
-        </span>
-        <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">
-          {en
-            ? 'A task is opened on the unit, and you can open a file for them straight after saving.'
-            : 'تُفتح مهمة على الوحدة، ويمكنك فتح ملف له مباشرة بعد الحفظ.'}
-        </span>
-      </button>
+      {value?.kind === 'citizen' ? null : (
+        <button
+          type="button"
+          aria-pressed={unregistered}
+          onClick={() => onChange(unregistered ? null : { kind: 'unregistered' })}
+          className={cn(
+            'min-h-11 w-full rounded-md border px-3 py-2.5 text-start text-sm transition-colors duration-150',
+            unregistered ? 'border-primary bg-primary/10' : 'border-dashed hover:bg-accent',
+          )}
+        >
+          <span className={cn('block font-medium', unregistered && 'text-primary')}>
+            {en ? 'Not registered yet' : 'ليس مسجَّلاً بعد'}
+          </span>
+          <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">
+            {en
+              ? 'A task is opened on the unit, and you can open a file for them straight after saving.'
+              : 'تُفتح مهمة على الوحدة، ويمكنك فتح ملف له مباشرة بعد الحفظ.'}
+          </span>
+        </button>
+      )}
     </fieldset>
   );
 }

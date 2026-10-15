@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية الذكية)
 
-Last verified against the code: `fix/pr115-review` (PR #115 merged with `develop@5e8f5c3`, with its review fixes): «أمان الحساب» for every staff role, no new filing — card, flat or sale — on an archived file, 2026-10-14.
+Last verified against the code: `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): «أمان الحساب» for every staff role, no new filing — card, flat or sale — on an archived file; an archived file takes no new fee on any path, 2026-10-15.
 
 A multi-tenant municipal platform for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastral map, municipal fee billing (رسوم القيمة التأجيرية
@@ -19,7 +19,11 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
 `users` table.
 
 - **Citizens (المواطنون والمكلفون)**:
-  - Check outstanding fees and charges without visiting the municipal hall.
+  - Check outstanding fees and charges without visiting the municipal hall. A bill paid in part
+    shows what is left on it and what was paid of it («سدّدت X من Y»), and the transfer the pay
+    dialog asks for is what is left, which is all a confirmed report credits. A bill whose
+    reported transfer waits for review is listed with its status and not counted in what is owed,
+    on every portal page alike.
   - View their registered properties, apartments, shops and land parcels.
   - Pay in cash at the municipality or to a collector, and receive an official receipt.
   - Report a Whish Money transfer made in the Whish app. The report is a declaration
@@ -31,6 +35,18 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
     (`COLLECTOR`).
   - Issue official receipts matching Lebanon's printed receipt books (`وصل جباية رسمي`).
   - Share a receipt through the device share sheet, a WhatsApp link, or a PDF download.
+  - See every receipt on a bill, and every reversal, on the bill's own page («وصولات الفاتورة»),
+    reached from the bill's row on the citizen's file: «تسجيل دفعة نقدية» while it is owed,
+    «وصولات الفاتورة» once it is paid in full. Only the manager (`SUPER_ADMIN`) may reverse a
+    receipt («عكس الوصل»), with a written reason. A reversal is an opposing entry beside the
+    receipt, never an edit, and the amount is owed on the bill again. Once the treasury is live
+    the money is paid back out of a wallet — the one the payment went into, a collector's custody
+    only while it still holds it and otherwise the cash safe; for a payment taken before go-live,
+    the cash safe or the Whish account — and the reversal is refused if that wallet cannot cover
+    it. A receipt is never reversed twice: pressed again after an answer was lost, the screen says
+    it is already reversed. While a Whish transfer the citizen reported on the bill waits for
+    review, no receipt on it is offered for reversal: the transfer is confirmed or rejected on the
+    fees page first, since a reversal would erase the report.
 - **Field inspectors (`FIELD_INSPECTOR`, مفتّش ميداني)**: survey buildings and units on a
   phone, queuing records offline when the connection drops.
 - **Accountants (`ACCOUNTANT`), administrative officers (`ADMINISTRATIVE_OFFICER`),
@@ -102,6 +118,12 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
       Cancelling that voucher puts the amount back on what the inspector is owed. Before the
       treasury is live, the manager records a payout as he always did, with no wallet, dated no
       later than today.
+    - An inspector's payout history shows, after each payout, what was still owed then: what he had
+      earned by then less what had been paid by then, with «زيادة» where a payout went past what he
+      had earned. A payout whose voucher was cancelled stays listed and is not counted as paid. The
+      figures are worked out from today's records, which the page says, so a registration
+      corrected since can move a past row. When he has been paid more than he earned, the summary
+      shows «مدفوع بالزيادة» in place of what is still owed.
     - A commission is paid like a salary (decided 2026-10-10): an accountant may pay one once the
       treasury is live, at once, as an art. 35 payment with the reason «عمولة مسح ميداني — تُدفع
       قبل الحوالة (المادة 35)» written by the system, and it waits for the manager's order. He
@@ -225,9 +247,12 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
 - **A citizen file is archived, never deleted** (decision of 2026-10-05). «أرشفة الملف»
   asks for the reason and who asked for it, both written to the activity log; an archived
   file is billed nothing new and keeps everything it holds, and «إعادة من الأرشيف» brings it
-  back. It takes no new filing either — no card, no flat, no sale: a registration that would
-  join it, a person put in a flat, or a sale's buyer is refused with «أعِده من الأرشيف أولاً»,
-  on the form, from the offline queue (which parks it as refused) and in an import.
+  back. Every way of raising a fee refuses one on an archived file, «تكليف مباشر» included
+  (`FEE_CITIZEN_ARCHIVED`, since 2026-10-14), and the fee pickers do not offer it. It takes no
+  new filing either — no card, no flat, no sale: a registration that would join it, a person
+  put in a flat, or a sale's buyer is refused with «أعِده من الأرشيف أولاً», on the form, from
+  the offline queue (which parks it as refused) and in an import; the census and ownership
+  pickers show it marked «مؤرشف» and do not take it.
 - **A building's height counts its built floors, never its roof** (the user's decision of
   2026-10-07). «الطوابق المسقوفة» is every level under a roof, the ground floor and a
   «طابق أعمدة» included. The building editor says so, gives the two ways to record a duplex
