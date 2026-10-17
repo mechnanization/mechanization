@@ -143,6 +143,18 @@ export const QUALITY_FINDING_KIND = [
    * someone is billed for a home the register itself calls uninhabitable.
    */
   'UNINHABITED_WITHOUT_READING',
+  /**
+   * A «منزل» card on a structure that now holds more than one unit (decision
+   * D28). The card names no unit; it claims the one unit of a one-unit
+   * structure, so once there are two it claims nothing the census can see —
+   * the household's occupancy is not released (`CensusSyncService` holds it as
+   * unresolved), but it is not backed either, and recording them on another
+   * unit would open a second card. HIGH, not dismissable: the house-growth
+   * question converts such cards as they arise, so one here came from an older
+   * client or from before the question existed, and the fix is to make it a
+   * «مبنى» card naming its flat.
+   */
+  'HOUSE_CARD_ON_MULTI_UNIT_BUILDING',
 ] as const;
 export type QualityFindingKind = (typeof QUALITY_FINDING_KIND)[number];
 
@@ -198,6 +210,9 @@ export function qualityLabels(locale: string) {
       UNINHABITED_WITHOUT_READING: en
         ? 'Labelled uninhabited, still billed'
         : 'مبنى مصنَّف غير مسكون وما زال يُفوتر',
+      HOUSE_CARD_ON_MULTI_UNIT_BUILDING: en
+        ? 'House card on a building with several units'
+        : 'بطاقة «منزل» على مبنى من عدّة وحدات',
     } satisfies Record<QualityFindingKind, string>,
     /**
      * What the re-check found, as one word.

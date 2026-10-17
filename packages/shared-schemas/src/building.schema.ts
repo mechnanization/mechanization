@@ -17,6 +17,7 @@ import {
 import { habitabilityFor, isReinspectDayAhead } from './damage-rule';
 import { areaField, propertyNumberField } from './property.schema';
 import { arabicOrLatinName, internationalPhone, normalizeDigits, uuid } from './primitives';
+import { unitLevelsField } from './unit-levels';
 
 /**
  * "Not in the future", judged when the date arrives rather than when this
@@ -223,6 +224,29 @@ const floorField = z.coerce
   .max(100, 'الطابق خارج النطاق المقبول');
 
 /**
+ * «هذا المنزل يصبح مبنى» — the answer an officer gives when a house that is on
+ * somebody's file as a «منزل» gets a second unit (decision D28, 2026-10-17).
+ *
+ * A «منزل» card names no unit: it claims the one unit of a one-unit structure,
+ * and every reader infers that from the unit count. A second unit silently
+ * breaks it — the next save of the file closes the household's occupancy, and
+ * recording them on the new unit opens a second card beside the first. Five
+ * production files went that way before this question existed.
+ *
+ *  - `EXTRA_LEVEL` — the new floor is another level of the same home. No unit
+ *    is created: the house's unit rises a level (`Unit.levels`), so a flat
+ *    becomes a «دوبلكس» and a house gains a full roof.
+ *  - `SEPARATE_UNIT` — it is another unit. It is created, and every «منزل» card
+ *    on the structure becomes a «مبنى» card naming the house's unit, in the
+ *    same transaction, so nothing has to infer it again.
+ *
+ * Asked by the server (`HOUSE_GROWTH_UNANSWERED`), never assumed.
+ */
+export const HOUSE_GROWTH = ['EXTRA_LEVEL', 'SEPARATE_UNIT'] as const;
+export const houseGrowthSchema = z.enum(HOUSE_GROWTH);
+export type HouseGrowth = z.infer<typeof houseGrowthSchema>;
+
+/**
  * A single unit, created or corrected by hand from the matrix.
  *
  * `floor` and `sequence` are the durable pair and `unitCode` is derived from
@@ -290,6 +314,8 @@ export const upsertUnitSchema = z.object({
    * form.
    */
   acknowledgedDuplicates: z.boolean().optional(),
+  /** See `HOUSE_GROWTH`. Only read when the structure is a house on somebody's file. */
+  houseGrowth: houseGrowthSchema.optional(),
 });
 
 export type UpsertUnitInput = z.infer<typeof upsertUnitSchema>;
@@ -461,7 +487,7 @@ export const createBuildingSchema = z
           of its floors to be a duplicate of, which is the same reason `create`
           takes no advisory lock for these sequences.
         */
-        upsertUnitSchema.omit({ acknowledgedDuplicates: true }).extend({
+        upsertUnitSchema.omit({ acknowledgedDuplicates: true, houseGrowth: true }).extend({
           /**
            * The browser's own id for this unit, for the same reason the
            * building has one: a phone with no signal has to be able to put a
@@ -590,10 +616,14 @@ const uniformBlueprint = z.object({
     .min(1, 'وحدة واحدة على الأقل في كل طابق')
     .max(20, 'عدد الوحدات في الطابق كبير جداً'),
   unitType: unitTypeSchema,
+  /** See `HOUSE_GROWTH`. A blueprint only ever creates units, so only `SEPARATE_UNIT` is accepted. */
+  houseGrowth: houseGrowthSchema.optional(),
 });
 
 const explicitBlueprint = z.object({
   kind: z.literal('explicit'),
+  /** See `uniformBlueprint.houseGrowth`. */
+  houseGrowth: houseGrowthSchema.optional(),
   floors: z
     .array(
       z.object({
@@ -649,8 +679,14 @@ export const updateUnitSchema = upsertUnitSchema
     counts any present key as a change, so a PATCH carrying nothing but this
     flag would pass the "at least one field" guard and then save nothing.
   */
-  .omit({ acknowledgedDuplicates: true })
+  .omit({ acknowledgedDuplicates: true, houseGrowth: true })
   .extend({
+    /**
+     * «عدد طوابق المسكن» — how many levels this one home spans, upward from its
+     * floor (`Unit.levels`, 0095): 2 is a «دوبلكس». Dwellings only; the server
+     * refuses it on any other type and when the floors above are drawn on.
+     */
+    levels: unitLevelsField,
     /**
      * «مسكن موسمي» — the facts a council needs to decide how a seasonal home is
      * billed, recorded rather than decided here (see `UNIT_STATUS.SEASONAL`).
@@ -705,6 +741,8 @@ export const saveBuildingMatrixSchema = z
       .max(200)
       .default([]),
     add: z.array(matrixCell).max(200).default([]),
+    /** See `HOUSE_GROWTH`; forwarded to every unit this save adds. */
+    houseGrowth: houseGrowthSchema.optional(),
     expectedUpdatedAt: z.string().datetime().optional(),
     dryRun: z.boolean().optional(),
   })

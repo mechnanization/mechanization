@@ -3,6 +3,7 @@ import { normalizeDigits, uuid } from './primitives';
 import { OWNER_BILLING_MODE } from './enums';
 import { ADJUSTMENT_REASON_MIN, municipalToday } from './cash-policy';
 import { hasAtMostTwoDecimals } from './money-amount';
+import { levelFactorsSchema } from './unit-levels';
 
 /**
  * Fees, and the per-citizen invoices they produce.
@@ -233,6 +234,18 @@ export const feeAssessmentLineSchema = z.object({
     })
     .nullable()
     .optional(),
+  /**
+   * The unit's levels when it spans more than one — a «دوبلكس» is 2
+   * (`Unit.levels`, 0095). Absent on a one-level unit and on every bill
+   * raised before 0095.
+   */
+  levels: z.number().int().min(2).optional(),
+  /**
+   * How many roofs this unit counted for under PER_UNIT when that is not 1 — a
+   * duplex flat at the municipality's factor (1.8 by default), a house at one
+   * roof per storey (decision D28). `chargedUnits` is the sum of these.
+   */
+  levelFactor: z.number().positive().optional(),
 });
 
 export const feeAssessmentSchema = z.object({
@@ -301,9 +314,11 @@ export const feeAssessmentSchema = z.object({
    */
   exemptUnitCount: z.number().default(0),
   /**
-   * The unit count the rate multiplies under PER_UNIT when a co-owned flat is
-   * charged at a part — 2.25 for two whole shops and a quarter of a third.
-   * Absent when every charged flat is whole, where it equals `unitCount`.
+   * The unit count the rate multiplies under PER_UNIT when it is not simply the
+   * number of units: a co-owned flat charged at a part — 2.25 for two whole
+   * shops and a quarter of a third — or a unit on several levels weighed in
+   * roofs (a duplex at 1.8, `levelFactor`). Absent when every charged unit
+   * counts exactly one, where it equals `unitCount`.
    */
   chargedUnits: z.number().optional(),
   lines: z.array(feeAssessmentLineSchema),
@@ -544,6 +559,14 @@ export const systemSettingsSchema = z.object({
    */
   salaryUrgentCeilingLbp: urgentCeiling,
   salaryUrgentCeilingUsd: urgentCeiling,
+
+  /**
+   * «معامل السقوف» (migration 0095, decision D28): what a flat on N levels
+   * weighs in roofs under a per-unit notice — `{"2": 1.8}` makes a duplex 1.8
+   * roofs. Replaced whole when sent. A level count left out of the table is not
+   * priced, and a citizen holding such a flat is reported unassessable.
+   */
+  levelFactors: levelFactorsSchema.optional(),
 
   // ── Configuration held as documents ───────────────────────────────────
   /**

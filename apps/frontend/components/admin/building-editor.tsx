@@ -34,6 +34,7 @@ import {
   STRUCTURE_TYPE,
   UNZONED_CODE,
   type BuildingLifecycle,
+  type HouseGrowth,
   type StructureType,
   type UnitType,
 } from '@mechanization/shared-schemas';
@@ -46,18 +47,22 @@ import {
   getBuildings,
   getZoneParcelIndex,
   getZones,
+  houseGrowthQuestionOf,
   logApiError,
   saveBuildingMatrix,
   type BuildingDetail,
   type BuildingMatrixSave,
   type BuildingMatrixSaveResult,
   type DuplicateBuildingCandidate,
+  type HouseGrowthQuestion,
   type ParcelCorrectionResult,
   type UnitWithOccupants,
   type ZoneSummary,
 } from '@/lib/api-client';
 import { ParcelCorrectionDialog } from '@/components/admin/parcel-correction-dialog';
 import { BuildingReviewDialog } from '@/components/admin/building-review-dialog';
+import { HouseGrowthPrompt } from '@/components/admin/unit-levels';
+import { floorLabel } from '@/components/admin/building-unit-forms';
 import {
   clearBuildingDraft,
   draftIsCurrent,
@@ -277,12 +282,14 @@ function gridFromUnits(
   }
 
   let colorIndex = 0;
+  /** Columns a home's upper levels take on the floors above its entrance (0095). */
+  const rising = new Map<number, Set<number>>();
   let columns = 0;
   let floors = 0;
   let basements = 0;
 
   for (const [floor, floorUnits] of [...byFloor.entries()].sort((a, b) => a[0] - b[0])) {
-    const taken = new Set<number>();
+    const taken = new Set<number>(rising.get(floor) ?? []);
     const ordered = [...floorUnits].sort((a, b) => a.sequence - b.sequence);
     const positioned = ordered.filter((unit) => unit.startCol != null && unit.endCol != null);
     const loose = ordered.filter((unit) => unit.startCol == null || unit.endCol == null);
@@ -300,10 +307,17 @@ function gridFromUnits(
         unitCode: unit.unitCode,
         undeletableReason: undeletableReason(unit, en),
         unitStatus: effectiveUnitStatus(unit),
+        levels: unit.levels ?? 1,
       });
+      const levels = unit.levels ?? 1;
+      for (let level = 1; level < levels; level += 1) {
+        const above = rising.get(floor + level) ?? new Set<number>();
+        for (let col = startCol; col <= endCol; col += 1) above.add(col);
+        rising.set(floor + level, above);
+      }
       columns = Math.max(columns, endCol);
       if (floor < 0) basements = Math.max(basements, -floor);
-      else floors = Math.max(floors, floor + 1);
+      else floors = Math.max(floors, floor + levels);
     };
 
     for (const unit of positioned) {
@@ -706,6 +720,13 @@ export function BuildingEditor({
     save: BuildingMatrixSave;
     result: BuildingMatrixSaveResult;
   } | null>(null);
+  /**
+   * «هذا المنزل يصبح مبنى» (D28): asked by the server's rehearsal when this save
+   * would give a house on somebody's file a second unit, and the answer sent
+   * with every rehearsal and save after it.
+   */
+  const [growthQuestion, setGrowthQuestion] = useState<HouseGrowthQuestion | null>(null);
+  const [houseGrowth, setHouseGrowth] = useState<HouseGrowth | null>(null);
   /**
    * The lifecycle as loaded, and how many people are recorded in the units
    * right now — so moving a lived-in building to «مهدوم» says what it leaves
@@ -1666,6 +1687,7 @@ export function BuildingEditor({
         : gridUnits
             .filter((unit) => !unit.existingId)
             .map((unit) => ({ floor: unit.floor, startCol: unit.startCol, endCol: unit.endCol, unitType: unit.unitType })),
+      ...(houseGrowth ? { houseGrowth } : {}),
     };
   };
 
@@ -1918,6 +1940,13 @@ export function BuildingEditor({
         else if (outcomeInDoubt(caught)) markInDoubt(tenant, creationScope);
       }
 
+      // A house on somebody's file would grow: ask, then rehearse again with the answer (D28).
+      const question = houseGrowthQuestionOf(caught);
+      if (question) {
+        setGrowthQuestion(question);
+        return;
+      }
+
       const candidates = duplicateBuildingsOf(caught);
       if (candidates) {
         setDuplicates(candidates);
@@ -1946,6 +1975,20 @@ export function BuildingEditor({
       }
     }
   };
+
+  /*
+    The answer to «هذا المنزل يصبح مبنى» goes straight back into the rehearsal:
+    once the state holds it, so the next `matrixSave()` sends it. The officer
+    sees the review, not a second press of «حفظ» with nothing to say why.
+  */
+  const rehearseAfterAnswer = useRef(false);
+  useEffect(() => {
+    if (!houseGrowth || !rehearseAfterAnswer.current) return;
+    rehearseAfterAnswer.current = false;
+    void handleSave();
+    // Fires on the answer only; `handleSave` is rebuilt every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [houseGrowth]);
 
   const cancelHref = `${base}/buildings`;
   /**
@@ -2216,6 +2259,27 @@ export function BuildingEditor({
             </div>
           </div>
         </Alert>
+      ) : null}
+
+      {growthQuestion ? (
+        <HouseGrowthPrompt
+          question={growthQuestion}
+          // The lowest floor this save paints on — where a level of the house would go.
+          floor={Math.min(
+            ...gridUnits.filter((unit) => !unit.existingId).map((unit) => unit.floor),
+            growthQuestion.nextLevelFloor,
+          )}
+          floorText={(floor) => floorLabel(floor, en)}
+          structureIsHouse={structureType === 'INDEPENDENT_HOUSE'}
+          busy={saving}
+          locale={locale}
+          onAnswer={(growth) => {
+            rehearseAfterAnswer.current = true;
+            setHouseGrowth(growth);
+            setGrowthQuestion(null);
+          }}
+          onCancel={() => setGrowthQuestion(null)}
+        />
       ) : null}
 
       {/* Global Error Banner */}
