@@ -121,3 +121,83 @@ export interface UnitCorrectionResult {
   citizensAffected: number;
   auditEntries: number;
 }
+
+// ─────────────────────────────  «دمج كدوبلكس»  ─────────────────────────────
+
+/**
+ * «دمج مع الوحدة العلوية كدوبلكس» — a SUPER_ADMIN folds the flat directly above
+ * a flat into it, when the two were recorded as two flats but are one home on
+ * two levels (decision D28, migration 0095).
+ *
+ * It is «حذف تصحيحي» of the upper flat, plus what makes it a merge: the lower
+ * flat rises by the upper one's levels and takes both areas, the upper flat's
+ * visits and follow-up cases move down, and the lower flat's file lines take
+ * the new area. Previewed, fingerprinted, one transaction, audited inside it —
+ * exactly as the delete is.
+ *
+ * `confirmCode` is the UPPER flat's code: the one that disappears.
+ * `totalArea` overrides the summed area — the officer measured the whole home —
+ * and is required when either flat has none.
+ */
+export const duplexMergeSchema = unitCorrectionDeleteSchema.extend({
+  totalArea: z.coerce
+    .number({ invalid_type_error: 'المساحة يجب أن تكون رقماً' })
+    .positive('المساحة يجب أن تكون أكبر من صفر')
+    .max(100_000, 'المساحة كبيرة جداً')
+    .optional(),
+});
+
+export type DuplexMergeInput = z.infer<typeof duplexMergeSchema>;
+
+/** Why two stacked flats cannot be merged as one home, even by an admin. */
+export type DuplexMergeBlocker =
+  /** Only flats (شقة) are merged; a house's storeys are its levels already. */
+  | { kind: 'NOT_FLATS' }
+  /** The merged home would span more levels than a unit may. */
+  | { kind: 'TOO_MANY_LEVELS'; max: number }
+  /** Someone recorded in the upper flat is not recorded in the lower one, in the same capacity. */
+  | { kind: 'OTHER_HOUSEHOLD'; citizenName: string }
+  /** A card names the upper flat but not the lower one, so it would lose its flat. */
+  | { kind: 'CARD_WITHOUT_LOWER'; citizenName: string }
+  /** The upper flat carries a standing «تأكيد الشغور». */
+  | { kind: 'STANDING_VACANCY' }
+  /** The two flats are billed differently (exemption or co-owner method) — one home cannot be both. */
+  | { kind: 'BILLING_DIFFERS' }
+  /** Neither flat's area is known, nor was the whole home's given. */
+  | { kind: 'AREA_UNKNOWN' }
+  | UnitCorrectionBlocker;
+
+export interface DuplexMergePreview {
+  lower: { id: string; unitCode: string; floor: number; levels: number; unitArea: string | null };
+  upper: { id: string; unitCode: string; floor: number; levels: number; unitArea: string | null };
+  building: { id: string; code: string };
+  /** Recomputed under lock; the merge is refused if it differs. */
+  fingerprint: string;
+  blockers: DuplexMergeBlocker[];
+  /** What the lower flat becomes. `areaAfter` is null when it must be given (`AREA_UNKNOWN`). */
+  levelsAfter: number;
+  areaAfter: string | null;
+  /** Moved onto the lower flat. */
+  visitsMoved: number;
+  casesMoved: number;
+  /** The upper flat's spells, removed with it — each one duplicated on the lower flat. */
+  occupanciesRemoved: number;
+  /** The upper flat's file lines, closed «سُجِّل بالخطأ»: the cards keep their line on the lower flat. */
+  files: UnitCorrectionPreview['files'];
+  /** Officers whose billable units fall: the upper flat was one more unit than the home is. */
+  pay: UnitCorrectionPreview['pay'];
+  /** Standing «دمج ملفين» of a file this changes — final once it does (as for «حذف تصحيحي»). */
+  mergesEnded: UnitCorrectionPreview['mergesEnded'];
+}
+
+export interface DuplexMergeResult {
+  unitCode: string;
+  removedUnitCode: string;
+  buildingId: string;
+  levels: number;
+  unitArea: string | null;
+  linesEnded: number;
+  visitsMoved: number;
+  casesMoved: number;
+  citizensAffected: number;
+}

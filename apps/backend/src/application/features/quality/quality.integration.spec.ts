@@ -602,6 +602,54 @@ describeIfDb('Quality review', () => {
     expect(found.has(responsible.id)).toBe(true);
   });
 
+  it('names homes whose levels look wrong, and «منزل» cards on buildings of several units (D28)', async () => {
+    const tag = randomUUID().slice(0, 8);
+    const structure = (code: string, structureType: 'RESIDENTIAL_BUILDING' | 'INDEPENDENT_HOUSE', floorsCount: number) =>
+      db.building.create({
+        data: { parcelNumber: `LV${code}${tag}`, codeSuffix: 'A', code: `LV-${code}-${tag}`, structureType, floorsCount, createdById: staff.jawad },
+      });
+    const flat = (buildingId: string, unitCode: string, floor: number, extra: Record<string, unknown> = {}) =>
+      db.unit.create({
+        data: { buildingId, unitCode, floor, sequence: 1, startCol: 1, endCol: 1, unitType: 'APARTMENT', unitStatus: 'OWNER_OCCUPIED', ...extra },
+      });
+
+    // One owner-occupier in two stacked flats — a duplex recorded as two flats.
+    const block = await structure('S', 'RESIDENTIAL_BUILDING', 2);
+    const lower = await flat(block.id, '0001', 0);
+    const upper = await flat(block.id, '0101', 1);
+    const { citizenId: nafe } = await filing(staff.jawad, { firstName: 'نافع', lastName: `ط${tag}` });
+    await db.unitOccupancy.createMany({
+      data: [
+        { unitId: lower.id, citizenId: nafe, role: 'OWNER' },
+        { unitId: upper.id, citizenId: nafe, role: 'OWNER' },
+      ],
+    });
+
+    // D27's note on a one-level flat, and a two-storey house whose unit says one level.
+    const noted = await structure('N', 'RESIDENTIAL_BUILDING', 1);
+    const notedFlat = await flat(noted.id, '0001', 0, { notes: 'شقة دوبلكس مع الطابق العلوي' });
+    const house = await structure('H', 'INDEPENDENT_HOUSE', 2);
+    const houseUnit = await flat(house.id, '0001', 0, { unitType: 'INDEPENDENT_HOUSE' });
+
+    // A «منزل» card left on a structure of two units.
+    const { registrationId } = await filing(staff.jawad, { firstName: 'جهاد', lastName: `ط${tag}` });
+    await db.propertyEntry.create({
+      data: { registrationId, occupancyType: 'OWNER', propertyType: 'HOUSE', buildingId: block.id, unitArea: 160 },
+    });
+
+    const items = (await within(() => quality.findings())).items;
+    const keys = new Set(items.map((finding) => `${finding.kind}|${finding.subjectKey}`));
+    expect(keys.has(`UNIT_LEVELS_TO_CONFIRM|STACKED:${lower.id}:${upper.id}`)).toBe(true);
+    expect(keys.has(`UNIT_LEVELS_TO_CONFIRM|NOTE:${notedFlat.id}`)).toBe(true);
+    expect(keys.has(`UNIT_LEVELS_TO_CONFIRM|HOUSE:${houseUnit.id}`)).toBe(true);
+    expect(items.some((finding) => finding.kind === 'HOUSE_CARD_ON_MULTI_UNIT_BUILDING' && finding.subjects.some((s) => s.id === block.id))).toBe(true);
+
+    // Recorded as one home on two levels, the house stops being named.
+    await db.unit.update({ where: { id: houseUnit.id }, data: { levels: 2 } });
+    const after = (await within(() => quality.findings())).items;
+    expect(after.some((finding) => finding.subjectKey === `HOUSE:${houseUnit.id}`)).toBe(false);
+  });
+
   it('hides a phone number inside a hand-written audit snapshot when the row is read', async () => {
     await db.auditLogEntry.create({
       data: {
