@@ -1,6 +1,6 @@
 # Database
 
-Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06.
+Last verified against the code: `chore/migration-0095` (on `develop@a7e62087`): `0095_unit_levels`, its row in the units billing facts and its numbering note, 2026-10-17; `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): a رقم العقار saved in Latin digits, digit-normalised lookups for older rows, where `P2002` is mapped; a foreign-key violation on a registration card, 2026-10-15; the finance audit migrations `0090`, `0091` and `0093`, their table rows, the enum release rule and `0091`'s header corrections against `chore/migration-0090-0091` (on `develop@5e8f5c3`) and the code of PR #120 (`fix/finance-audit-remediation@6169287`), 2026-10-13, rebased onto `develop@3211140`, 2026-10-15; `0092_citizen_requests` (municipal requests), shipped alone in `chore/migration-0092` (PR #121) ahead of the code and stacked on #120 with `0093` before it, 2026-10-13; and `feat/treasury-day-closing@c88c971` (`develop` with the reviewed treasury, #107/#108; PR #106, stage 5: the daily count, the day closing and the closed-day lock; PR #109, inspector payouts and decision D9; PR #111, transfers, exchange and wallets with `0088`; PR #112, bulk settlement with `0085`; each merged with its review fixes, and the cross-feature fixes) with the fixes of the final-stack review (uncommitted): `0089` (a paid commission payout written once, and the payout's retry key on its row), a back-dated outflow judged against every day's close, the count's wallet locks in id order, the migrator's lock note, 2026-10-11; the finance audit migrations `0090`, `0091` and `0093`, their table rows, the enum release rule and `0091`'s header corrections against `chore/migration-0090-0091` (on `develop@5e8f5c3`) and the code of PR #120 (`fix/finance-audit-remediation@6169287`), 2026-10-13; `0092_citizen_requests` and, from its review, `0094_citizen_request_guard`, the municipal requests tables, their guard, backup and numbering notes and `0092`'s header corrections, against `chore/migration-0092` rebased on `fix/finance-audit-remediation@9f7b12b` and the code of PR #122 (`fix/fees-page-ux@c28f437`), 2026-10-13; and, on `fix/fees-page-ux` rebased onto `chore/migration-0092@16473f0` (2026-10-13), the review of PR #122: a request cancelled with its bill (`cancelRequestOfCancelledBill`), a card or a flat a request names never deleted (`PROPERTY_NAMED_BY_REQUEST`, `HAS_REQUESTS`), request bills stamp `issuedById`, the API's log lines without query strings, and the isolation tests.
 
 The rules for anything that reads or writes a database: the schemas, how to
 query them, how to change them, and how data may move between environments.
@@ -44,14 +44,29 @@ every municipality ([security.md](security.md)).
 | Map | `parcels`, `zones` | `CadastreImportService`, `ZonesService` |
 | Building census | `buildings`, `building_code_aliases`, `units`, `unit_occupancies`, `unit_visits`, `unit_vacancy_confirmations`, `damage_assessments` | `BuildingsService`, `CensusSyncService`, `DamageService`, `ParcelCorrectionService`, `UnitCorrectionService` |
 | Cases | `cases` | `CasesService` |
-| Fees and money | `fee_notices`, `citizen_payments`, `payment_transactions`, `billing_run_entries`, `whish_checkouts`, `system_settings`, `inspector_payouts` | `FeesService`, `PaymentLedgerService`, `CorrectionBillsService`, `StaffService` (payouts) |
+| Fees and money | `fee_notices` (`clientRequestId`, 0091: the issue wizard's retry key, unique, so a retried «إصدار» is answered with its notice instead of billing everyone twice), `citizen_payments` (`issuedById`, 0091: who raised the bill — the notice's issuer, the clerk of a one-off charge, or the staff member who started a recurring run; NULL for the scheduled run and for every bill raised before 0091; «إلغاء الفاتورة», 0090/0091: `paymentStatus` `CANCELLED` with `cancelledAt`, `cancelledById` and `cancellationReason`, all four together and only on a bill with `paidAmount` 0, by CHECK, the reason never blank, 0093; both user links RESTRICT), `payment_transactions` (`settlementId`, 0085: the settlement a row was taken in, NULL on a bill settled alone; `externalRef`, Whish only, compared as `lower(btrim(…))` through 0091's expression index so that one reference stands on one receipt), `payment_settlements` (0085: one press that settled several of one citizen's bills — the «BRC-» number, the notes, the change, the retry key), `billing_run_entries`, `whish_checkouts` (`state` `MISMATCHED`, 0090: a success callback for an amount other than the one quoted; nothing is credited), `system_settings`, `inspector_payouts` (`expenseVoucherId`, 0086: the «PV-» voucher that paid it once the treasury is live, unique, NULL before; a payout whose voucher is voided is not counted as paid, a filter both readers apply; a payout with a voucher is written once and never deleted, and the link is made at insert or never, 0089; `clientRequestId`, 0089: the dialog’s retry key, unique, on both paths, so a retried press is answered with its payout before go-live too) | `FeesService`, `PaymentLedgerService`, `PaymentSettlementService` (settlements; each bill through `PaymentLedgerService.recordIn`), `CorrectionBillsService`, `StaffService` (payouts; once live through `ExpensesService.recordCommission`) |
 | Review and quality | `record_reviews`, `quality_checks`, `data_quality_dismissals` | `RecordReviewService`, `DataQualityService` |
 | Audit | `audit_log_entries` | `AuditService`, `PrismaAuditRepository` |
+| Transfers (0078, 0084, 0088) | `treasury_transfers` (0084: `feeAmount` and `feeVoucherId`, the «PV-» voucher that books a fee, both set or both NULL; `moneyChangerName`, exchanges only; `backdateReason`; `requiresReview` and the review stamp `reviewedAt`/`reviewedById`/`reviewNote`, only on a flagged transfer, and in the write-once trigger's stamp list since 0088) and, on `system_settings`, `exchangeRateTolerancePercent` (default 3) and `largeExchangeThreshold` (default 1000) | `TransfersService` (the collector handover, internal transfers with their fee, exchanges, the review); `ExpensesService.recordTransferFee` writes the fee voucher |
+| Expenses (0074, 0081, 0083, 0091) | `expense_categories`, `expense_vouchers` (the payment order: `orderedAt`, `orderedById`, `urgentReason`, 0083; `payeeStaffId`, 0081: the staff account a salary or commission voucher paid, NULL otherwise; a FK to `users` that cannot say STAFF, so `recordSalary` and, for a commission, `StaffService.recordInspectorPayout` filter `kind`; `salaryPeriod`, 0091: the `YYYY-MM` a salary voucher pays, written only by `recordSalary` and only with `payeeStaffId`, one per staff member per month among vouchers not cancelled — the partial unique index `expense_vouchers_salary_period_key`; NULL on every other voucher and on salaries paid before 0091), `expense_requests` (requests for the manager's order, 0083) | `ExpensesService` |
+| Income (0080, 0083) | `income_categories`, `income_vouchers` (`payerName` is free text that may name a citizen; written once, 0083) | `IncomeService` |
+| Document numbers (0079) | `document_counters`, one row per (book, month) | `allocateDocumentNumbers` |
+| Daily count and closing (0082, 0087) | `treasury_day_closures` (one row per closed or reopened day; written once, 0087), `treasury_counts` (one count per wallet per day; linked only to its own day's closure, 0087) | `DayClosureService` (close, sweep, reopen), `DailyCountService` (counts) |
+| Treasury (0073, 0083, 0091) | `treasury_accounts`, `treasury_entries`, `system_settings.treasuryGoLiveAt`, `system_settings.urgentExpenseCeilingLbp` / `urgentExpenseCeilingUsd` (0083: the manager's ceiling on an accountant's urgent payment, `DECIMAL(14,2)`, NULL = none, CHECK NULL or > 0), and `system_settings.salaryUrgentCeilingLbp` / `salaryUrgentCeilingUsd` (0091: «سقف صرف الرواتب», the most an accountant may pay one staff member as a month's salary, typed and CHECKed as the urgent ceiling; set in `FeesService.updateSettings`) | `TreasuryService` (activation, reads), `TreasuryLedgerService` (entries; called from `PaymentLedgerService` inside its transaction) |
+| Municipal requests (0092, 0094) | `request_type_settings` (the manager's list: `enabled`, `feeAmount` in whole pounds, 0 for a free type, who set it), `citizen_requests` (the «REQ-» number, `channel`, the card and flat it is about, the status with its stamps by CHECK, `citizenPaymentId`: the fee's bill, unique; one open request per citizen, type and card; its life held by `citizen_requests_guard`, 0094) and `citizen_request_attachments` (the object's key in the private documents bucket, its sniffed type). Citizen data: `purpose`, `statement`, `clearanceSnapshot` and `rejectionReason` are free text about a person, and the attachments are identity copies and deeds. Every link to `users`, `property_entries`, `building_units` and `citizen_payments` is RESTRICT | `CitizenRequestsService`; `CitizenMergeService`, which moves a person's requests with them; `FeesService.cancelBill`, which cancels the request waiting on a bill it cancels (`cancelRequestOfCancelledBill`). A card or a flat a request names is never deleted: `CitizensService.update` refuses first (`PROPERTY_NAMED_BY_REQUEST`), a landlord-link undo keeps it (`HAS_REQUESTS`) |
 | Ledger | `_tenant_migrations` (no Prisma model) | `migrateTenantSchema` |
 
 Each schema also carries plpgsql functions created by migrations:
-`reject_audit_mutation`, `reject_ledger_mutation`, `search_normalize`,
-`search_compact`, `sync_building_unit_counts`.
+`reject_audit_mutation`, `reject_ledger_mutation`, `reject_treasury_mutation`,
+`search_normalize`, `search_compact`, `sync_building_unit_counts`; since 0082
+`reject_closed_day_entry`, `reject_closed_day_count` and `reject_day_closure_delete` (each pinned
+to its schema); since 0083 `reject_treasury_document_mutation`; since 0085
+`reject_settlement_mutation`; since 0087 `reject_day_closure_rewrite` (reads only its row,
+pinned to `pg_catalog`) and `reject_count_link_elsewhere` (pinned to its schema); since 0088
+`reject_transfer_review_rewrite` (keeps a transfer's review from being rewritten; reads only its row,
+pinned to `pg_catalog`); since 0089 `reject_inspector_payout_rewrite` (reads only its row, pinned
+to `pg_catalog`); and since 0094 `guard_citizen_request` (a citizen request's life; reads its bill,
+card and flat, so pinned to its schema).
 
 ### `users` holds staff AND citizens
 
@@ -88,6 +103,46 @@ request's tenant (`IdentityService`).
   `users_contact_phone_not_own` (`contactPhone` is never the row's own `phone`).
   Every writer goes through them, the merge included.
 
+**`users.residence` names owners that are not a living person** (`0076`).
+Besides `RESIDENT` and `NON_RESIDENT_OWNER`, `CitizenResidence` holds `ESTATE`
+«تركة (ورثة المرحوم …)», the file of an owner who died, converted in place so
+his cards, flats and bills stay on it, and `INSTITUTION` «جهة / وقف», a waqf,
+council or public body. Neither is a household: no mother's name, gender or
+residency is asked of either, and every population count that filters
+`residence = 'RESIDENT'` already leaves both out. An institution's name is one
+line on the form and is stored across `firstName`/`lastName` (first word, the
+rest; `splitInstitutionName`), so any screen that joins the parts reads it
+whole. An estate keeps the deceased's own name: «ورثة المرحوم …» is added when
+it is shown (`citizenDisplayName`), never written into the row — nor into
+another row: a name copied onto a tenancy card is `citizenStoredName`. Every
+write of `property_entries.landlordName` from a submitted card goes through
+`storedLandlordName` (the entity's `normalise`; `landlordNamesToStore` in the
+registration create and the citizen update; the census tenant card), which
+takes the prefix off whatever a client sent — a form copies the name it was
+*shown* — and, for a card linked to an owner, stores that owner's own name.
+The non-person kinds are `NON_PERSON_RESIDENCE` for a Prisma filter.
+
+**A رقم العقار is saved in Latin digits since 2026-10-14**: every schema it is
+written through (`propertyNumberField` for a card, a building, its shared
+parcels and a parcel correction; a zone's parcels; a case; the blur check and
+the building filter) normalises it, so «٤٢٠» is saved «420». Rows saved
+before keep what was typed, and so do the fee lines copied from them and the
+cadastre's own labels (`parcels.parcelNumber`), so a lookup by رقم العقار still
+compares digit-normalised values on both sides (`normalizeDigits`; in SQL,
+`translate(btrim(…), ${EASTERN_DIGITS}, ${LATIN_DIGITS})` with both constants
+bound from `@mechanization/shared-schemas`, as `parcel-dues.service.ts` and
+`PrismaParcelRepository` do). There is no backfill. A map keyed by the number
+is keyed by `parcelNumberKey`.
+
+**A flat's billing facts live on `units`** (`0075`, `0077`, `0095`), beside its status:
+
+| Column | What it means |
+|---|---|
+| `ownerBillingMode` | «توزيع الرسم على المالكين» when the flat has several current owners: `EQUAL`, `BY_SHARES` (each owner's `unit_occupancies.shares` over the sum of all of them) or `RESPONSIBLE_OWNER`. NULL means nobody chose, and is billed as `EQUAL` (decision of 2026-10-07). |
+| `responsibleOwnerId` | The owner who pays the whole under `RESPONSIBLE_OWNER`, and only then. `units_responsible_owner_needs_mode` uses `IS NOT DISTINCT FROM`: with `=`, a CHECK passes on the NULL that `NULL = 'RESPONSIBLE_OWNER'` yields. |
+| `feeExemption`, `feeExemptionNote`, `feeExemptedById`, `feeExemptedAt` | «معفاة من الرسوم»: `PLACE_OF_WORSHIP`, `PUBLIC_FACILITY` or `OTHER` (which needs the note). Set and lifted together (`units_fee_exemption_fields`). An exempt unit is charged nothing by a rate-based notice; a rented waqf shop is not exempt, its tenant pays. |
+| `levels` | How many levels the one unit spans, upward from `floor` (its entrance): 2 is a «دوبلكس», 3 a «تريبلكس» (decision D28, 2026-10-17). 1 on every unit before 0095. Between 1 and 6 (`units_levels_range`), and above 1 only on a شقة or a منزل مستقل (`units_levels_dwelling_only`). Under a PER_UNIT notice a multi-level flat weighs `system_settings.levelFactors[levels]` roofs (`{"2": 1.8}` by default; JSONB object by CHECK `system_settings_level_factors_object`, shape by `levelFactorsSchema`), and a house on N storeys weighs N. |
+
 **A damage reading has two answers** (`0071`). `damage_assessments.level` is the
 UN-Habitat scale, untouched; `habitable` is «صالحة للسكن؟», asked beside it and
 prefilled from the level where the level decides it (decision of 2026-10-05).
@@ -104,12 +159,12 @@ CHECKs keep the rest:
 
 «غير صالحة للسكن» is `habitable = false`, or no answer on a collapse or an
 evacuation (`isUninhabitableReading`, and its SQL twin `uninhabitableSql`). The
-fee assessment holds an occupant-borne fee on a unit whose current reading
-says so — the latest of the unit's and its building's readings *that answers*:
+fee assessment charges no fee at all — occupant-borne or owner-borne (decision
+of 2026-10-07) — on a unit whose current reading says so — the latest of the unit's and its building's readings *that answers*:
 `UNCLASSIFIED` with `habitable` NULL judged nothing and is passed over
 (`answersHabitability`, its SQL twin `answersHabitabilitySql`, and
 `currentReadingForUnit(…, { answering: true })` in
-`application/features/buildings/habitability.ts`), so it never ends a hold.
+`application/features/buildings/habitability.ts`), so it never ends the exemption.
 
 **`lastSeenAt` is staff presence, and the one write on the authenticated hot
 path** (`0070`). `StaffPresenceService` stamps it from `JwtAuthGuard` behind a
@@ -133,7 +188,88 @@ chain, so it reports an officer who worked all morning as last seen at eight.
   `payment_transactions_no_delete` call `reject_ledger_mutation()`
   (`0017_payment_ledger`). Deleting a `citizen_payments` row cascades into it
   and raises.
-- Neither trigger covers `TRUNCATE`. Using `TRUNCATE`, or
+- `payment_settlements`: `payment_settlements_no_update` and `payment_settlements_no_delete`
+  call `reject_settlement_mutation()` (`0085`). A ledger row joins its settlement at insert
+  (`payment_transactions.settlementId`, RESTRICT), since the ledger refuses UPDATE, so
+  `PaymentSettlementService` writes the settlement first. Its foreign keys to `users`
+  (citizen, collector, clerk) are RESTRICT.
+- `treasury_entries`: `treasury_entries_no_update` and `treasury_entries_no_delete` call
+  `reject_treasury_mutation()` (`0073`). A wallet balance is the SUM of its entries; there is no
+  balance column. Its foreign keys to `users` and `treasury_accounts` are RESTRICT, so erasing a staff
+  member or a wallet that has moved money fails instead of cascading into the trigger. An entry's
+  currency equals its account's because the foreign key is the pair `(accountId, currency)`.
+- `expense_vouchers`, `income_vouchers`, `treasury_transfers` and `expense_requests` are the
+  documents behind those entries, and are written once (`0083`).
+  - Triggers `expense_vouchers_written_once`, `income_vouchers_written_once`,
+    `treasury_transfers_written_once` and `expense_requests_written_once` call
+    `reject_treasury_document_mutation(<stamps>)`. An income voucher's stamps are its
+    cancellation (`voidedAt`, `voidedById`, `voidReason`); its `voidedById` index is 0080's.
+  - No row is deleted, and no column changes after insert except the trigger's named stamps.
+    Those are the cancellation, the payment order, a request's decision and, on a transfer since
+    `0088`, the review (`reviewedAt`, `reviewedById`, `reviewNote`); each goes from empty to a
+    value once. `treasury_transfers_review_once` (`0088`) also refuses any change to a review once
+    `reviewedAt` is set, so a note cannot be added to a review made without one.
+  - A migration that adds a column some code path UPDATEs after insert must re-create the table's
+    `*_written_once` trigger with that column in its stamp list, in a new migration — or every such
+    UPDATE is refused. 0084 added the review stamp without it, and no review could be written until
+    0088 (docs/gotchas.md).
+  - A cancelled document, and a decided request, accepts nothing further: a reason a
+    withdrawal never gave cannot be added to it later.
+  - The function pins `search_path` and reads no table.
+  - A later migration that backfills a new column on one of these tables wraps its
+    `UPDATE` in `ALTER TABLE … DISABLE TRIGGER …_written_once` / `ENABLE TRIGGER`, in the same
+    file. Without that the backfill is refused like any other edit.
+  - `0083`'s own backfill stamps the order on vouchers written before it, and skips cancelled
+    ones: they are closed and wait for nothing, and the trigger would refuse the stamp when the
+    file runs a second time.
+- **A closed treasury day takes nothing** (0082). `treasury_entries_respect_closed_days` refuses an
+  entry inserted, updated or deleted whose day — `occurredAt AT TIME ZONE 'Asia/Beirut'`, the database's
+  copy of `MUNICIPAL_TIME_ZONE` — is on or before a CLOSED `treasury_day_closures` row.
+  `treasury_counts_respect_closed_days` refuses any write to a closed day's count except the one
+  closing makes (linking it to its own day's closure, compared as the row minus `closureId`), and
+  `treasury_day_closures_no_delete` refuses deleting a closure: a day is reopened, never erased. The
+  application refuses first (`TreasuryLedgerService.post`, `CLOSED_DAY_MUTATION_BLOCKED`); a trigger
+  refusal is read back by `closedTreasuryDay` (`check-violation.ts`). Closing takes `SHARE` on
+  `treasury_entries` for the length of the close, so writers already in the day finish first. It
+  reads the settings row (`FOR SHARE`) before that lock: settings row, then entries, the order
+  every writer takes them in, or a close deadlocks with activation.
+  - Since `0087`, `treasury_day_closures_written_once` (`reject_day_closure_rewrite()`) keeps a
+    closure's `id`, `businessDate` and `createdAt` fixed and allows only CLOSED → REOPENED (who
+    closed it unchanged) and REOPENED → CLOSED; any other change to a row is refused. Before it,
+    an `UPDATE` of `businessDate` silently reopened a closed day.
+  - `treasury_counts_link_own_day` (`reject_count_link_elsewhere()`) accepts a `closureId` only
+    of the count's own day's closure, and never moves or clears one once set. It sorts before
+    `treasury_counts_respect_closed_days`, so a wrong-day link is refused for what it is.
+  - Neither message starts «treasury day … is closed», so `closedTreasuryDay` never reads them as
+    the closed-day lock. A later migration that backfills a new column on `treasury_day_closures`
+    disables the trigger around its `UPDATE`, as for the 0083 tables.
+- **A commission payout paid by a voucher is written once** (`0089_inspector_payout_key_and_written_once`). What an inspector is still
+  owed is read from the `inspector_payouts` rows alone, so `inspector_payouts_written_once`
+  (`reject_inspector_payout_rewrite()`) refuses any change to a payout whose `expenseVoucherId` is
+  set, and its `DELETE`: the money is corrected by voiding the voucher. A link is made in the insert
+  or never (setting `expenseVoucherId` on a payout without one is refused). A payout recorded before
+  go-live (no voucher) is left alone, so deleting a staff account still cascades to his figure-only
+  payouts (`inspectorId`) and clears `recordedById` (SET NULL), and the in-app restore can still
+  replace them; a linked payout never meets either cascade, because its voucher names the same two
+  accounts (RESTRICT). A later migration that backfills a new column on `inspector_payouts` disables
+  the trigger around its `UPDATE`. The same file adds `inspector_payouts.clientRequestId` (unique), the
+  press's retry key on the payout row: a figure-only payout had nowhere to keep one, and a lost answer
+  pressed again was recorded twice (`StaffService.recordInspectorPayout` answers a retry from it).
+- **A citizen request's life is held in the database** (`0094_citizen_request_guard`), as the
+  treasury's papers are. `citizen_requests_guard` (`guard_citizen_request()`) allows a request to start
+  AWAITING_PAYMENT or IN_REVIEW with no bill and no stamp, on one of the citizen's own cards and a flat on
+  that card; then only AWAITING_PAYMENT → IN_REVIEW, REJECTED or CANCELLED; IN_REVIEW → READY_FOR_PICKUP,
+  REJECTED, or back to AWAITING_PAYMENT when its payment is reversed; READY_FOR_PICKUP → COMPLETED. The
+  bill is linked once, while the request waits for payment; each step's stamps are written by that step
+  alone; what was asked, for what and by whom never changes; a COMPLETED, REJECTED or CANCELLED request
+  changes no more. Only `citizenId` moves, in any status: a merge «دمج ملفين» carries a person's
+  requests, and its undo brings them back. No request is deleted. A CANCELLED request has no bill, or a
+  bill that is itself CANCELLED: the manager's «إلغاء الفاتورة» cancels the request waiting on it
+  (decision of 2026-10-13), which `0092`'s `citizen_requests_cancelled_without_bill` refused. The card
+  check runs on insert only, since a merge moves registrations and requests in separate statements.
+  Every refusal starts «citizen request» and raises `check_violation`: each is a code path that broke
+  a rule, not a user's mistake to localise.
+- No trigger covers `TRUNCATE`. Using `TRUNCATE`, or
   `session_replication_role`, to get past them is circumventing a control. If a
   trigger stops you, stop and report it
   ([CLAUDE.md](../CLAUDE.md#how-to-work-here)).
@@ -315,8 +451,19 @@ and fails intermittently with `42P01`.
   D-errors the error MUST carry a stable code the frontend can localise
   ([apps/backend/CLAUDE.md](../apps/backend/CLAUDE.md#error-codes)).
 - Where `P2002` is mapped today: `PrismaUserRepository.translate`,
-  `PrismaRegistrationRepository.translate`, and inline in
-  `ParcelCorrectionService`. There is no shared helper.
+  `PrismaRegistrationRepository.translate`, inline in
+  `ParcelCorrectionService`, and through `isUniqueViolationOn`
+  (`application/features/treasury/retry-key.ts`) in the treasury's retry keys
+  and `CitizensService.update` (a passport number another file holds:
+  `CITIZEN_IDENTITY_DOC_TAKEN`, naming nobody, as the create path's
+  `translate` now does). No helper is shared by all of them.
+- A foreign-key violation (Prisma `P2003`) is a 500 unless mapped the same way.
+  `PrismaRegistrationRepository.translate` maps the two a registration card can
+  break — a building or a flat the register does not hold, which a queued
+  registration can name — to `BUILDING_NOT_FOUND` and `UNIT_NOT_FOUND`
+  (`NotFoundError`). Prisma 5 on Postgres names the constraint in
+  `error.meta.field_name`, as `property_entries_buildingId_fkey (index)` and
+  `building_units_unitId_fkey (index)` (`registration-references.spec.ts`).
 
 ### Deviations
 
@@ -406,6 +553,20 @@ Consequences you MUST design for:
   plus a non-transactional migrator mode, which does not exist. Today, use a
   plain index and justify the lock in the header by the table's size (see
   `0066`). **Undecided:** whether to add that mode.
+- **Every lock a file takes is held until that file commits.** A statement's lock
+  does not end with the statement: the migrator commits once per file. So once a
+  file has run `ALTER TABLE … ADD COLUMN` on a table, it holds `ACCESS EXCLUSIVE` on
+  that table to its last line, and every read and write of the table waits for the
+  whole file. Adding a foreign key `NOT VALID` and `VALIDATE`-ing it later in the
+  same file then gains nothing; only a `VALIDATE` in a later file of its own runs
+  under `SHARE UPDATE EXCLUSIVE` without blocking readers and writers. `0085`'s
+  header says the opposite («the check of existing rows … does not block the
+  counter»): probed on Postgres 17, the file held `AccessExclusiveLock` on
+  `payment_transactions` to its commit, and a second session's `SELECT` and
+  `INSERT` timed out behind it (review of 2026-10-11). It is harmless at today's
+  few thousand rows (sub-second), and the file is not edited (it may be applied);
+  a table large enough to matter needs the column in one file and the `VALIDATE` in
+  the next, or the size in the header to justify the lock, as for an index.
 - A new enum value cannot be used in the transaction that adds it. Put
   `ALTER TYPE … ADD VALUE IF NOT EXISTS` alone in one migration and use the
   value in a later one (`0062_status_conflict_case`, then
@@ -424,18 +585,145 @@ reads staging's history from `.env.staging` and nothing else, and
 
 ### Numbering
 
-- The latest tenant migration on `develop` is `0070_staff_last_seen_at`;
-  `0071_damage_habitable` and `0072_users_no_phone_rules` are on
-  `fix/pr88-review`, waiting for their own PR. `main` stops at `0066` (and
-  `0059`), so `0067`–`0070`, already on `develop`, have not reached
-  production either: all six go to `main` in a migrations-only PR, staging
-  first, before the release that carries the code reading them (root rule 5;
-  the PR #61 and #86 pattern).
+- `main` ends at `0072_users_no_phone_rules`: `0067`–`0072` went to `main` in their own
+  migrations-only PR, ahead of the release that carries the code reading them (root rule 5; the
+  PR #61 and #86 pattern). `develop` ended at `0083_treasury_controls`, with no `0082`, until the
+  treasury set below reached it (#117, #118, 2026-10-11); it now ends at
+  `0089_inspector_payout_key_and_written_once` (checked 2026-10-13). `0075`–`0077` (`chore/migration-0075-0077`: co-owner billing, the estate
+  and institution record types, the unit fee exemption) followed the same path, their own PR into
+  `develop`, then to `main` alone, before any release that writes the new columns or values.
+- The treasury's are `0073_treasury_ledger`, `0074_expense_vouchers`,
+  `0078_treasury_transfers`, `0079_document_numbering`, `0080_income_vouchers`,
+  `0081_expense_voucher_payee_staff` (PR #104 and its review), `0082_treasury_day_closing`
+  (PR #106, stage 5: the daily count and the day closing), `0083_treasury_controls` (PR #104's
+  review), `0087_treasury_day_closure_written_once` (PR #106's review),
+  `0086_inspector_payout_voucher` (PR #109: an inspector's commission paid as a voucher),
+  `0084_treasury_exchange_and_review` (PR #111: transfers' fees, exchange and review, the exchange
+  rule on `system_settings`), `0088_treasury_transfer_review_stamp` (PR #111's review: the
+  review stamp in the write-once trigger) and `0089_inspector_payout_key_and_written_once` (the
+  final-stack review: the payout’s retry key on its row, and a paid commission payout written once).
+  `0073`–`0081` and `0083` reached `develop` in their own migrations-only PR (#107,
+  `chore/migration-0073-0083`), merged before the code that reads them (#108). Seven are not on
+  `develop` yet and follow the same path, in one migrations-only PR ahead of this branch's code:
+  `0082_treasury_day_closing`, `0084_treasury_exchange_and_review`, `0085_payment_settlements`,
+  `0086_inspector_payout_voucher`, `0087_treasury_day_closure_written_once`,
+  `0088_treasury_transfer_review_stamp` and `0089_inspector_payout_key_and_written_once`. Their needs:
+  `0082` needs `0073`; `0084` needs `0074` and `0078`; `0085` needs nothing newer than `0079` (the
+  `BULK_RECEIPT` book); `0086` needs `0074`; `0087` needs `0082`; `0088` needs `0083` (the trigger
+  function) and `0084` (the columns); `0089` needs `0086` (the link). None ships ahead of the
+  finance set.
+  - The PRs for `0073`/`0074` (#94, #93) were closed unmerged on 2026-10-08, but the branches are
+    still on `origin`, so those numbers stay reserved and are never reused.
+  - `0078` is not `0075` because `chore/migration-0075-0077` took that number mid-flight: the
+    second time a number was taken mid-flight on that branch (the out-of-order landing is below).
+  - `0082_treasury_day_closing` was numbered on 2026-10-10 on `feat/treasury-daily-count-and-closure`
+    (cut from `fix/expense-retry-key-race`, which carries `0073`–`0081`), after a fetch showed no
+    branch holding an `0082` or later.
+  - `0083_treasury_controls` was first written as `0080`, renumbered to `0082` when
+    `0080_income_vouchers` and `0081_expense_voucher_payee_staff` landed on the same PR, and to
+    `0083` when PR #106 brought `0082_treasury_day_closing` (2026-10-10). It had been applied
+    nowhere but throwaway databases. The two touch different tables, so either merge order works:
+    a database that already has `0083` takes `0082` out of order, with `deploy.mjs`'s warning.
+    That is now the case on `develop`, which has `0083` and no `0082`.
+  - On 2026-10-10, in the merge of PR #109 into `feat/treasury-day-closing`, every number from
+    `0083` to `0087` was given out so that none is used twice across `develop` and the open PRs:
+    `0083_treasury_controls` is `develop`'s (PR #107); `0084` is PR #111's
+    (`0084_treasury_exchange_and_review`) and `0085` PR #112's (`0085_payment_settlements`), both
+    left free on this branch on purpose and since merged into it, PR #111 then PR #112 (2026-10-10,
+    `0085` unchanged); `0086` and `0087` are this branch's, below. `0084`,
+    `0085`, `0086` and `0087` do not depend on one another, so they apply alike in any order.
+    `0086` and `0087` have not been applied to staging or production.
+  - `0087_treasury_day_closure_written_once` was written as `0084` in the review fix for PR #106,
+    and renumbered `0087` in that merge, since `0084` and `0085` belong to PR #111 and PR #112 and
+    `0086` to PR #109. It needs `0082` (its tables) and never edits it: `0082` may already be on
+    staging.
+  - `0086_inspector_payout_voucher` was written as `0083_inspector_payout_voucher` on
+    `feat/treasury-inspector-payouts-and-vouchers` (PR #109, cut from
+    `feat/treasury-daily-count-and-closure`), and renumbered `0086` in that merge, because
+    `develop`'s `0083_treasury_controls` already held `0083`. PR #109's branch on `origin` still
+    carries the old name until the merge is pushed, and so does PR #111's, which was cut from it:
+    PR #111 must take `0086` in place of its `0083_inspector_payout_voucher` when it lands, or the
+    column is created twice under two names (harmless, being `IF NOT EXISTS`, but a second
+    history row). It is one nullable column on `inspector_payouts`, which is in production
+    (0025), with a unique index built without CONCURRENTLY on a table of tens of rows. It needs
+    `0074`, and ships in its own migrations-only PR after the finance migrations.
+  - `0084_treasury_exchange_and_review` keeps PR #111's number. It may be on staging, so it is not
+    edited; what its review found in the database is fixed forward by `0088`, which needs `0083`
+    (the trigger function) and `0084` (the columns) and ships after both. `0088` has not been applied to staging or production;
+    whether staging holds `0084` was not checked. `0088` was the next free number on 2026-10-10,
+    with `0085` reserved for PR #112, which has since been merged.
+  - `0089_inspector_payout_key_and_written_once` (the final-stack review, 2026-10-11) took the next free
+    number after a check of every branch, local and remote (`git ls-remote` matched every ref as last
+    fetched), and of every open PR (#106, #109–#116): none held an `0089` or later. It needs `0086` and
+    has not been applied to staging or production.
+  - The treasury migration was itself first written as `0071` and renumbered when
+    `0071_damage_habitable` and `0072_users_no_phone_rules` landed on `develop`.
+  - A branch cut before a release is a branch whose numbers can be taken while you work:
+    re-check before you open the PR, not only when you pick.
 - Parallel branches reuse numbers and nothing errors: `0016_*` and `0017_*`
   each exist twice. `0059_staff_refresh_tokens` was merged to `develop` after
-  `0066`, so it applies out of order: `deploy.mjs` warns and applies it. As of
-  this check (2026-10-06, the four unmerged branches and the two open PRs
-  listed) the next free number is `0073`.
+  `0066`, so it applies out of order: `deploy.mjs` warns and applies it. `0073` and
+  `0074` reach a database that already has `0075`–`0077` the same way, with the same
+  warning; the two sets touch different tables (checked on a scratch schema on the
+  PR #104 review, 2026-10-09). On 2026-10-10 `feat/treasury-day-closing` holds the whole
+  treasury run after `develop`'s `0083_treasury_controls`, in this order: `0082_treasury_day_closing`
+  (PR #106), `0084_treasury_exchange_and_review` (PR #111), `0085_payment_settlements` (PR #112),
+  `0086_inspector_payout_voucher` (PR #109, renumbered from its old `0083_inspector_payout_voucher`,
+  which collided with `develop`'s), `0087_treasury_day_closure_written_once` (PR #106 review),
+  `0088_treasury_transfer_review_stamp` (PR #111 review) and `0089_inspector_payout_key_and_written_once`
+  (the final-stack review, 2026-10-11). `0085` needs nothing newer than `0079` (the `BULK_RECEIPT`
+  book) and touches only `payment_transactions` and its own table. The finance audit remediation
+  (2026-10-12, the audit of `refactor/ui-kit-adoption@68e3e55`) took `0090_finance_audit_enum_values`
+  (`PaymentStatus.CANCELLED`, `WhishCheckoutState.MISMATCHED`, alone because a new value cannot be
+  used in the transaction that adds it) and `0091_finance_audit_controls` (`fee_notices.clientRequestId`;
+  `citizen_payments.issuedById` and the cancellation stamp with their CHECKs; `expense_vouchers.salaryPeriod`
+  with a partial unique index over vouchers not cancelled; the salary ceilings on `system_settings`; an
+  expression index on `lower(btrim(payment_transactions."externalRef"))`), after a check of every local
+  and remote branch: none held `0090` or later. `0091` needs `0090` (its CHECK names `CANCELLED`), `0081`
+  (`payeeStaffId`) and `0083` (the urgent ceilings it mirrors). Its review (2026-10-13) added
+  `0093_citizen_payment_cancellation_reason_present`: `0091` let a blank `cancellationReason` in, where
+  every reason column since `0060` refuses one, and `0091` was already applied to the local database, so
+  it is not edited. `0093` needs `0091`. `0090`, `0091` and `0093` ship in their own
+  `chore/migration-0090-0091` PR (#119), and reach `main` in a release of their own, ahead of the code
+  (PR #120), so that the build a rollback lands on already knows `CANCELLED` and `MISMATCHED` (decision of
+  2026-10-13; [Release](#release)).
+  `0092_citizen_requests` (municipal requests: `request_type_settings`, `citizen_requests`,
+  `citizen_request_attachments` and their five enums) took its number on 2026-10-13, after a check of
+  every local and remote branch, before `0093` was taken. It needs nothing newer than `0079` and
+  alters no existing table; its foreign keys hold `SHARE ROW EXCLUSIVE` on `users`, `property_entries`,
+  `building_units` and `citizen_payments` until the file commits (writes to them wait, for
+  milliseconds: the new tables are empty). Its review (2026-10-13) added `0094_citizen_request_guard`,
+  which needs `0092` and `0090` (`CANCELLED`): `0092` was already applied to the local database, so it
+  is not edited. `0092` and `0094` ship alone in `chore/migration-0092` (PR #121), ahead of the code
+  that reads them (PR #122).
+  On 2026-10-13 the four PRs became one stack, merged to `develop` in order: #119, #120, #121, #122.
+- `0095_unit_levels` (`units.levels`, `system_settings.levelFactors`: duplexes and the per-roof
+  factor, decision D28) took its number on 2026-10-17 after a check of every remote branch (none
+  carried `0095` or later). It needs nothing newer than `0083` and is additive: two columns with
+  constant defaults (no rewrite) and three CHECKs every existing row passes. It ships alone in
+  `chore/migration-0095`, ahead of `feat/unit-levels`, which reads it.
+  Staging migrates itself on every push to `develop` that touches a migration (`deploy-staging.yml`),
+  and production from `main`, so `0090`, `0091` and `0093` reach both first and `0092` follows them out
+  of order, with `deploy.mjs`'s warning (it flags a pending migration that sorts before one already
+  applied). A database that took `0092` before `0090` and `0091`, as a developer's may have, flags those
+  two only, not `0093`. None of the five is on `develop` yet, so CI has applied none to staging or
+  production; a hand-run `db:deploy:staging` was not checked. The next free number is `0095`; list
+  every unmerged branch again before you take it.
+  - `0091`'s header is wrong in three places, and the file is not edited (it is applied). It says «one
+    Whish or bank reference», but only a Whish settlement writes `externalRef`. It lists the
+    `ACCESS EXCLUSIVE` locks on the tables it alters, but its two foreign keys also hold
+    `SHARE ROW EXCLUSIVE` on `users` until it commits, so every write to `users` (a staff presence stamp
+    included) waits for the file, for well under a second. And it says a recurring run's bills name
+    nobody, but a run a staff member starts (`POST fees/recurring/run`, `FeesService.runRecurringBilling`)
+    names that staff member; only the scheduled run leaves `issuedById` NULL.
+  - `0092`'s header is wrong on the stack in two places, and the file is not edited (it is applied). It
+    says the fee's bill is raised only when the citizen goes to pay because «nothing on this branch can
+    cancel a bill». Since #120, below it, the manager's «إلغاء الفاتورة» (`FeesService.cancelBill`) can, and
+    a request waiting on such a bill could then be neither paid, nor rejected or cancelled
+    (`citizen_requests_cancelled_without_bill`), and held `citizen_requests_one_open_key` for ever.
+    `0094` replaces that CHECK with its guard, and the code cancels the request with its bill (decision of
+    2026-10-13, PR #122). It also cites `docs/municipal-requests-plan.md` and `docs/open-decisions.md`
+    §20, which arrive with PR #122; §20 is kept for them (the PR #120 review's decisions are §22).
 - Before you pick a number, MUST list the migrations on every unmerged branch
   and open PR:
 
@@ -459,6 +747,11 @@ reads staging's history from `.env.staging` and nothing else, and
   ships, and the previous release keeps serving against the new schema for a
   few minutes. Prefer shipping the migration to `main` on its own, ahead of the
   code.
+- A new enum value MUST reach `main`, migration and Prisma enum, in a release
+  before the one whose code writes it. A rollback (`rollback-production.yml`, on
+  `main`) points production at an earlier build, whose Prisma client throws on
+  any row holding a value it does not know
+  ([gotchas.md](gotchas.md#the-previous-build-cannot-read-a-value-it-does-not-know)).
 
 ## Moving data between environments
 
@@ -553,7 +846,8 @@ Model: `0061_citizen_merges` (`CitizenMerge`).
 3. Change the Prisma `enum`, the shared enum in `packages/shared-schemas`, both
    locales in `labels.ts`, and the domain union where one exists
    ([packages/shared-schemas/CLAUDE.md](../packages/shared-schemas/CLAUDE.md)).
-4. Ship the migrations before the code that writes the value.
+4. Ship the migrations before the code that writes the value, and to `main` in
+   an earlier release than that code ([Release](#release)).
 
 Removing or renaming an enum value is destructive (`DROP TYPE`, a type change)
 and goes through contract.
@@ -578,6 +872,37 @@ and goes through contract.
   `_prisma_migrations` holds the registry's history. **Unverified:** expected
   to report drift and offer to reset `public`; reasoned from the code, not run.
 - `pnpm db:generate` after changing `schema.prisma`.
+
+### Document numbering (migration 0079)
+
+Seven books — invoices, receipts, expense vouchers, transfers, income vouchers
+(«RV-», kind `REVENUE_VOUCHER`, since 0080), bulk receipts («BRC-», `BULK_RECEIPT`,
+since 0085) and municipal requests («REQ-», `REQUEST`, since 0092) — share one scheme:
+«INV-2610-0001» is the book, the year and month it was issued in, and a
+counter that **restarts at 0001 on the first of each month**. `kind` is text,
+so a new book needs no migration; its key is stored and never renamed.
+
+The counter is a row in `document_counters` keyed by `(kind, period)`, not a
+Postgres sequence, and the reason is the reset: `nextval` only ever climbs, and
+anything that resets it on the first races whatever is drawing from it. One
+atomic `INSERT … ON CONFLICT DO UPDATE … RETURNING` both starts a month and
+advances it, and hands back the block it reserved.
+
+- **Draw through `allocateDocumentNumbers`** (`application/common/document-number.ts`),
+  never by hand, and always with the caller's `tx`: the number and the document
+  it goes on must commit or roll back together.
+- **It serialises issuance within a month.** The counter row stays locked until
+  the caller commits. At a municipality's volume that is nothing; the
+  alternative is two residents holding the same receipt number.
+- **It gaps less than a sequence did** — a sequence keeps its advance through a
+  rollback and this does not — but it is still not a gapless book, and nothing
+  may be built on the assumption that it is.
+- **The old sequences stay.** `payment_receipt_seq`, `expense_voucher_seq` and
+  `treasury_transfer_seq` are simply no longer drawn from. Dropping them is
+  destructive DDL for its own later release.
+- **Two shapes coexist.** Documents issued before 0079 keep «RCP-000014», and
+  bills raised before it stay unnumbered (`invoiceNumber` is nullable). Nothing
+  in the code parses or orders by either shape; `isDocumentNumber` accepts both.
 
 ### Test a migration on a throwaway Postgres 17
 
@@ -669,7 +994,43 @@ Rare: only `0001_init` exists.
   into "absent" (`.catch(() => ({ rows: [] }))`).
 - **`BackupService` restore** aborts for any tenant with `payment_transactions`
   rows (the append-only trigger fires through the cascade). Documented in its
-  own comment as a design decision.
+  own comment as a design decision. `payment_settlements` (0085) is not in
+  `TABLE_ORDER` either, for the same reason, and it names the citizen who paid.
+- **`BackupService` does not export the treasury tables:** `treasury_accounts`,
+  `treasury_entries` (0073), `expense_categories`, `expense_vouchers` (0074), `treasury_transfers`
+  (0078), `document_counters` (0079), `income_categories`, `income_vouchers` (0080),
+  `treasury_day_closures`, `treasury_counts` (0082) and `expense_requests` (0083) are not in
+  `TABLE_ORDER` (checked 2026-10-10).
+  - Their rows are append-only or written once, and RESTRICT-linked to `users`. So a restore,
+    which deletes users, aborts for any tenant that has activated its treasury, exactly as for
+    `payment_transactions`; even the opening balances carry the activating manager's id. A
+    restore would also meet the no-delete trigger on `treasury_day_closures`.
+  - A backup of such a tenant therefore does not contain its wallets, nor the documents that
+    explain them, nor its counts and closed days. The free-text payee and payer columns may
+    name a citizen.
+  - `inspector_payouts` *is* exported, and since `0086` carries `expenseVoucherId`. A non-NULL
+    link exists only once a voucher does, and such a tenant already cannot be restored, so the
+    column adds no new failure (the snapshot version is unchanged). Nor does `0089`: its
+    `clientRequestId` is one more nullable column (an older snapshot reads as NULL), and its
+    trigger refuses deleting a linked payout only — the restore empties the table, and a tenant
+    with a linked payout already fails on its voucher's RESTRICT; figure-only payouts are deleted
+    as before.
+  - The in-app restore is not reachable: `BackupController` is not registered
+    (`presentation.module.ts`), and disaster recovery is the `pg_dump` path, which discovers
+    schemas at run time and carries every table.
+  - **Undecided:** how the in-app backup should carry an append-only ledger and the vouchers
+    that explain it.
+- **`BackupService` does not export the municipal requests tables either** (0092):
+  `request_type_settings`, `citizen_requests` and `citizen_request_attachments` are not in
+  `TABLE_ORDER` (checked 2026-10-13).
+  - Every link from them to `users` is RESTRICT, and the restore deletes `users`: so it aborts for a
+    tenant with a single request, and for one whose manager has set a single request type
+    (`request_type_settings.updatedById`), money or not, as it does once the treasury is live. The
+    guard of 0094 refuses deleting a request too.
+  - A backup of such a tenant carries no requests, no request types and no keys to the identity
+    copies; disaster recovery is the `pg_dump` path, which carries them.
+  - **Undecided:** whether the in-app snapshot should carry them (a downloadable file would then hold
+    the citizens' free text and the keys to their identity copies), with the ledger question above.
 - **`dump-tenant.js`, the `reissue-references` CSV, the `claude_ro` views**:
   see [Moving data](#moving-data-between-environments).
 - **Database roles.** One role per environment runs both DDL and DML for every

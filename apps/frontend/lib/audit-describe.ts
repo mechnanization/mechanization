@@ -160,6 +160,15 @@ const REDACTED = '[redacted]';
 /** Keys that name rows rather than describe them — kept out of the sentence. */
 const isIdKey = (key: string) => /^id$|Id$|Ids$|^subjectKey$/.test(key);
 
+/**
+ * Lists of citizen ids kept for a reader on the server, never for a person:
+ * `UNIT_OWNER_BILLING_SET` names every co-owner in `citizens` so «فواتير تأثّرت
+ * بتصحيحات» reaches each one's bill (`bill-corrections.ts` reads it), and a unit
+ * correction names whose files it touched. The entry's own target already says
+ * whose record it is; a row of UUIDs under an English key says nothing more.
+ */
+const HIDDEN_KEYS = new Set(['citizens']);
+
 /** Structures too internal to read; summarised under «كل التفاصيل» only. */
 const INTERNAL_KEYS = new Set(['footprint', 'snapshot', 'census', 'written', 'filter', 'release', 'fileLink', 'figure']);
 
@@ -231,6 +240,8 @@ export function describeAudit(entry: AuditEntry, locale: string): AuditDescripti
     nextStatus: [labels.citizenRecordStatus],
     caseType: [labels.caseType],
     basis: [labels.vacancyBasis],
+    ownerBillingMode: [labels.ownerBillingMode],
+    feeExemption: [labels.feeExemptionReason],
     residence: [labels.citizenResidence],
     documentType: [labels.documentType],
     method: [labels.paymentMethod],
@@ -272,7 +283,22 @@ export function describeAudit(entry: AuditEntry, locale: string): AuditDescripti
     }
     if (Array.isArray(value)) {
       if (value.length === 0) return '—';
-      const shown = value.slice(0, 6).map((item) => (typeof item === 'object' ? summarize(item, t) : format(key, item)));
+      /*
+        A list of rows that each carry the key itself — `shares` on
+        `UNIT_OWNER_BILLING_SET` is `[{ citizenId, shares }]`, one per owner in
+        the order the flat's owners are read — is that key's figures, in that
+        order: «1200، —» to «1200، 1200». An audit row names nobody, so the
+        figure is what an auditor can compare.
+      */
+      const shown = value
+        .slice(0, 6)
+        .map((item) =>
+          item && typeof item === 'object' && !Array.isArray(item) && key in item
+            ? format(key, (item as Json)[key])
+            : typeof item === 'object'
+              ? summarize(item, t)
+              : format(key, item),
+        );
       return value.length > 6 ? `${shown.join(separator)} +${value.length - 6}` : shown.join(separator);
     }
     return summarize(value, t);
@@ -451,7 +477,7 @@ export function describeAudit(entry: AuditEntry, locale: string): AuditDescripti
   // ── before → after, and what only one side holds ──
   const keys = [...new Set([...Object.keys(before ?? {}), ...Object.keys(after ?? {})])];
   for (const key of keys) {
-    if (SPECIAL_KEYS.has(key) || seen.has(key)) continue;
+    if (SPECIAL_KEYS.has(key) || HIDDEN_KEYS.has(key) || seen.has(key)) continue;
     seen.add(key);
     const b = before?.[key];
     const a = after?.[key];

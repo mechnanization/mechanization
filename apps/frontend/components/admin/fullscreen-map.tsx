@@ -49,6 +49,7 @@ import {
   lifecycleOpacityExpression,
   surveyFillExpression,
 } from './building-map-layer';
+import { fetchCadastreAsset } from '@/lib/cadastre-assets';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -497,6 +498,9 @@ export function FullscreenMap({
   zonesVisibleRef.current = zonesVisible;
   const activeZoneIdRef = useRef(activeZoneId);
   activeZoneIdRef.current = activeZoneId;
+  // Read when a cadastre layer falls back to the API, which needs it.
+  const tokenRef = useRef(token);
+  tokenRef.current = token;
 
   const dark = basemapById(basemap).dark;
   const trimmedQuery = query.trim();
@@ -517,12 +521,9 @@ export function FullscreenMap({
 
   const attachCadastre = useCallback(
     async (map: mapboxgl.Map, force = false) => {
-      const base = `/tenants/${encodeURIComponent(tenant)}`;
-      const apiBase = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/t/${encodeURIComponent(tenant)}/cadastre/assets`;
-      const bust = refreshToken ? `?v=${refreshToken}` : '';
       const [cadastre, parcelPoints] = await Promise.all([
-        fetchGeoJson(`${base}/cadastre.geojson${bust}`, `${apiBase}/cadastre.geojson${bust}`),
-        fetchGeoJson(`${base}/parcels.geojson${bust}`, `${apiBase}/parcels.geojson${bust}`),
+        fetchCadastreAsset(tenant, tokenRef.current, 'cadastre.geojson', refreshToken),
+        fetchCadastreAsset(tenant, tokenRef.current, 'parcels.geojson', refreshToken),
       ]);
 
       if (!mapRef.current || mapRef.current !== map) return;
@@ -695,12 +696,7 @@ export function FullscreenMap({
     async (map: mapboxgl.Map) => {
       if (map.getSource(BUILDING_SOURCE.polygons)) return;
 
-      const base = `/tenants/${encodeURIComponent(tenant)}`;
-      const apiBase = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/t/${encodeURIComponent(tenant)}/cadastre/assets`;
-      const polygons = await fetchGeoJson(
-        `${base}/parcel-polygons.geojson`,
-        `${apiBase}/parcel-polygons.geojson`,
-      );
+      const polygons = await fetchCadastreAsset(tenant, tokenRef.current, 'parcel-polygons.geojson');
       if (!polygons || !mapRef.current || mapRef.current !== map) return;
       if (map.getSource(BUILDING_SOURCE.polygons)) return;
 
@@ -1610,7 +1606,7 @@ export function FullscreenMap({
         <div className="flex items-center gap-2 sm:contents">
           {/* Search by رقم العقار */}
           <div className="relative min-w-0 flex-1 shrink sm:w-[15rem] sm:flex-none md:w-[17rem]">
-            <div className="flex items-center gap-1.5 rounded-xl border border-border/80 bg-card/95 p-1 shadow-lg backdrop-blur-md transition-all focus-within:ring-2 focus-within:ring-primary/20">
+            <div className="flex items-center gap-1.5 rounded-xl border border-border/80 bg-card/95 p-1 shadow-lg backdrop-blur-md transition-shadow focus-within:ring-2 focus-within:ring-primary/20">
               <Search className="ms-2.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
               <Input
                 value={query}
@@ -1720,7 +1716,7 @@ export function FullscreenMap({
             aria-expanded={toolsOpen}
             aria-label={locale === 'en' ? 'Map tools' : 'أدوات الخريطة'}
             className={cn(
-              'size-11 shrink-0 rounded-xl border border-border/80 bg-card/95 shadow-lg backdrop-blur-md sm:hidden transition-all flex items-center justify-center',
+              'size-11 shrink-0 rounded-xl border border-border/80 bg-card/95 shadow-lg backdrop-blur-md sm:hidden transition flex items-center justify-center',
               toolsOpen || colorMode !== 'default' || measureMode !== 'none' || !registeredVisible
                 ? 'border-primary/60 bg-primary/10 text-primary ring-2 ring-primary/20'
                 : 'text-muted-foreground hover:text-foreground hover:bg-accent',
@@ -1752,7 +1748,7 @@ export function FullscreenMap({
                 : (locale === 'en' ? 'Show Registered Points' : 'إظهار نقاط العقارات')
             }
             className={cn(
-              'h-9 shrink-0 gap-1.5 px-2.5 text-xs font-semibold cursor-pointer rounded-xl transition-all sm:h-8 sm:rounded-lg',
+              'h-9 shrink-0 gap-1.5 px-2.5 text-xs font-semibold cursor-pointer rounded-xl transition-colors sm:h-8 sm:rounded-lg',
               registeredVisible
                 ? 'bg-primary/10 text-primary hover:bg-primary/20'
                 : 'text-muted-foreground hover:bg-accent hover:text-foreground',
@@ -1785,7 +1781,7 @@ export function FullscreenMap({
                   : 'إظهار سجل المباني'
             }
             className={cn(
-              'h-9 shrink-0 gap-1.5 px-2.5 text-xs font-semibold cursor-pointer rounded-xl transition-all sm:h-8 sm:rounded-lg',
+              'h-9 shrink-0 gap-1.5 px-2.5 text-xs font-semibold cursor-pointer rounded-xl transition-colors sm:h-8 sm:rounded-lg',
               buildingsVisible
                 ? 'bg-primary/10 text-primary hover:bg-primary/20'
                 : 'text-muted-foreground hover:bg-accent hover:text-foreground',
@@ -1805,7 +1801,7 @@ export function FullscreenMap({
               aria-expanded={buildingLegendOpen}
               title={locale === 'en' ? 'Census legend' : 'مفتاح سجل المباني'}
               className={cn(
-                'h-9 shrink-0 gap-1.5 px-2.5 text-xs font-semibold cursor-pointer rounded-xl transition-all sm:h-8 sm:rounded-lg',
+                'h-9 shrink-0 gap-1.5 px-2.5 text-xs font-semibold cursor-pointer rounded-xl transition-colors sm:h-8 sm:rounded-lg',
                 buildingLegendOpen
                   ? 'bg-primary/10 text-primary hover:bg-primary/20'
                   : 'text-muted-foreground hover:bg-accent hover:text-foreground',
@@ -1828,7 +1824,7 @@ export function FullscreenMap({
               }}
               title={locale === 'en' ? 'Point Color & Filter Mode' : 'وضع تلوين وتصفية النقاط'}
               className={cn(
-                'h-9 shrink-0 gap-1.5 px-2.5 text-xs font-semibold cursor-pointer rounded-xl transition-all sm:h-8 sm:rounded-lg',
+                'h-9 shrink-0 gap-1.5 px-2.5 text-xs font-semibold cursor-pointer rounded-xl transition-colors sm:h-8 sm:rounded-lg',
                 colorMode !== 'default'
                   ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 hover:bg-amber-500/25 border border-amber-500/30'
                   : 'text-muted-foreground hover:bg-accent hover:text-foreground',
@@ -1848,7 +1844,7 @@ export function FullscreenMap({
             </Button>
 
             {financeMenuOpen ? (
-              <div className="absolute inset-x-0 top-full mt-1.5 z-50 w-auto rounded-xl sm:inset-x-auto sm:end-0 sm:w-60 border border-border/80 bg-popover p-1.5 text-popover-foreground shadow-xl backdrop-blur-md outline-hidden animate-in fade-in-0 zoom-in-95">
+              <div className="absolute inset-x-0 top-full mt-1.5 z-50 w-auto rounded-xl sm:inset-x-auto sm:end-0 sm:w-60 border border-border/80 bg-popover p-1.5 text-popover-foreground shadow-xl backdrop-blur-md outline-none animate-in fade-in-0 zoom-in-95">
                 <div className="px-2 py-1 text-xs font-bold text-muted-foreground border-b border-border/40 mb-1">
                   {locale === 'en' ? 'Point Color Mode' : 'وضع تلوين وتصنيف النقاط'}
                 </div>
@@ -1987,7 +1983,7 @@ export function FullscreenMap({
               }}
               title={locale === 'en' ? 'GIS Measurement Tools (Distance & Area)' : 'أدوات القياس (مسافات ومساحات)'}
               className={cn(
-                'h-9 gap-1.5 px-2 text-xs font-semibold cursor-pointer rounded-lg transition-all sm:h-8',
+                'h-9 gap-1.5 px-2 text-xs font-semibold cursor-pointer rounded-lg transition-colors sm:h-8',
                 measureMode !== 'none'
                   ? 'bg-primary/20 text-primary font-bold border border-primary/30'
                   : 'text-muted-foreground hover:bg-accent hover:text-foreground',
@@ -2005,7 +2001,7 @@ export function FullscreenMap({
             </Button>
 
             {measureMenuOpen ? (
-              <div className="absolute inset-x-0 top-full mt-1.5 z-50 w-auto rounded-xl sm:inset-x-auto sm:end-0 sm:w-52 border border-border/80 bg-popover p-1.5 text-popover-foreground shadow-xl backdrop-blur-md outline-hidden animate-in fade-in-0 zoom-in-95">
+              <div className="absolute inset-x-0 top-full mt-1.5 z-50 w-auto rounded-xl sm:inset-x-auto sm:end-0 sm:w-52 border border-border/80 bg-popover p-1.5 text-popover-foreground shadow-xl backdrop-blur-md outline-none animate-in fade-in-0 zoom-in-95">
                 <div className="px-2 py-1 text-xs font-bold text-muted-foreground border-b border-border/40 mb-1">
                   {locale === 'en' ? 'Measurement Mode' : 'نوع القياس'}
                 </div>
@@ -2072,7 +2068,7 @@ export function FullscreenMap({
             size="sm"
             onClick={handleExportMap}
             title={locale === 'en' ? 'Export & Print Map View' : 'طباعة وتصدير المخطط'}
-            className="h-9 gap-1.5 px-2 text-xs font-semibold text-muted-foreground hover:bg-accent hover:text-foreground cursor-pointer rounded-lg transition-all sm:h-8"
+            className="h-9 gap-1.5 px-2 text-xs font-semibold text-muted-foreground hover:bg-accent hover:text-foreground cursor-pointer rounded-lg transition-colors sm:h-8"
           >
             <Printer className="size-3.5" />
             <span className="hidden lg:inline">{locale === 'en' ? 'Export' : 'طباعة'}</span>
@@ -2085,7 +2081,7 @@ export function FullscreenMap({
             size="icon"
             onClick={handleResetView}
             title={locale === 'en' ? 'Reset to full municipality view' : 'إعادة التمركز للبلدية'}
-            className="size-9 text-muted-foreground hover:bg-accent hover:text-foreground cursor-pointer rounded-lg transition-all sm:size-8"
+            className="size-9 text-muted-foreground hover:bg-accent hover:text-foreground cursor-pointer rounded-lg transition-colors sm:size-8"
           >
             <Crosshair className="size-3.5" />
           </Button>
@@ -2465,25 +2461,4 @@ export function FullscreenMap({
       />
     </div>
   );
-}
-
-async function fetchGeoJson(url: string, fallbackUrl?: string): Promise<FeatureCollection | null> {
-  try {
-    let response = await fetch(url);
-    if (!response.ok && fallbackUrl) {
-      response = await fetch(fallbackUrl);
-    }
-    if (!response.ok) return null;
-    return (await response.json()) as FeatureCollection;
-  } catch {
-    if (fallbackUrl) {
-      try {
-        const response = await fetch(fallbackUrl);
-        if (response.ok) return (await response.json()) as FeatureCollection;
-      } catch {
-        return null;
-      }
-    }
-    return null;
-  }
 }

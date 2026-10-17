@@ -10,20 +10,63 @@
 /** The municipality's own clock. The server runs in UTC; its «today» is not. */
 export const MUNICIPAL_TIME_ZONE = 'Asia/Beirut';
 
+/** Built on the first call of `municipalToday`, then kept. */
+let municipalDayFormatter: Intl.DateTimeFormat | undefined;
+
 /**
- * Today's date on the municipality's calendar, as `YYYY-MM-DD`.
+ * Today's date on the municipality's calendar, as `YYYY-MM-DD` — or, given an
+ * instant, the municipal day it fell on.
  *
- * Evaluated per call, never at module load: a value frozen when the process
- * started would refuse today's payments once it has run past midnight.
+ * The day is read per call, never at module load: a value frozen when the
+ * process started would refuse today's payments once it has run past midnight.
+ * The formatter that reads it is kept, since it depends on the zone alone:
+ * built anew per call, it was most of the time a page that dates every
+ * registration took — about 0.3 s for 5,000 on the inspector's payout history
+ * (review of PR #113, 2026-10-13).
  */
 export function municipalToday(now: Date = new Date()): string {
   // en-CA formats as YYYY-MM-DD.
-  return new Intl.DateTimeFormat('en-CA', {
+  municipalDayFormatter ??= new Intl.DateTimeFormat('en-CA', {
     timeZone: MUNICIPAL_TIME_ZONE,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
-  }).format(now);
+  });
+  return municipalDayFormatter.format(now);
+}
+
+/**
+ * The instant a municipal day (`YYYY-MM-DD`) begins on the municipality's clock.
+ *
+ * Beirut is UTC+2 in winter and UTC+3 in summer, so the offset is read for the
+ * day itself rather than assumed: start from UTC midnight of that date, ask what
+ * the municipal clock reads then, and step back by the difference — twice,
+ * which also settles a day whose offset changes during it. A range sent as
+ * days (`to=2026-10-08`) is read through this, so the 8th is the 8th in Beirut.
+ */
+export function municipalDayStart(day: string): Date {
+  const target = Date.UTC(Number(day.slice(0, 4)), Number(day.slice(5, 7)) - 1, Number(day.slice(8, 10)));
+  let instant = target;
+  for (let pass = 0; pass < 2; pass++) {
+    instant = target - (municipalWallClock(instant) - instant);
+  }
+  return new Date(instant);
+}
+
+/** What the municipal clock reads at `instant`, written as if that wall time were UTC. */
+function municipalWallClock(instant: number): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: MUNICIPAL_TIME_ZONE,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).formatToParts(new Date(instant));
+  const part = (type: Intl.DateTimeFormatPartTypes): number => Number(parts.find((p) => p.type === type)?.value);
+  return Date.UTC(part('year'), part('month') - 1, part('day'), part('hour'), part('minute'), part('second'));
 }
 
 /** Whole days from `from` to `to`, both `YYYY-MM-DD`. Negative when `to` is earlier. */

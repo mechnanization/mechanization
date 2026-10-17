@@ -2,6 +2,7 @@ import { createTranslator } from 'next-intl';
 import { isSpecificErrorCode, type ErrorParams } from '@mechanization/shared-schemas';
 import ar from '../messages/ar.json';
 import en from '../messages/en.json';
+import { formatDay, formatMonth } from './dates';
 
 /**
  * The words for an API refusal, in the language of the page.
@@ -66,6 +67,42 @@ export interface ApiErrorText {
   params?: ErrorParams;
 }
 
+/** A calendar day as the server sends one: `2026-10-09`. */
+const WIRE_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** A calendar month as the server sends one: `2026-10`, a salary's period. */
+const WIRE_MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+/**
+ * The params as the page writes its values. A day the server names — the
+ * closed day in `CLOSED_DAY_MUTATION_BLOCKED`, `DAY_ALREADY_CLOSED`,
+ * `DAY_NOT_OVER`, a go-live day, the short day of
+ * `TREASURY_INSUFFICIENT_FUNDS_ON_DAY` — travels as `YYYY-MM-DD`, and is shown
+ * as `09/10/2026` through `formatDay` (PRIM-12), like every day on the page
+ * around it. Passed through untouched, it read «يومية 2026-10-09 مقفلة» under a
+ * sheet that said «يمكن إقفال يومية 09/10/2026» (review of 2026-10-11).
+ *
+ * A month — the salary period of `SALARY_PERIOD_ALREADY_PAID`,
+ * `SALARY_PERIOD_IN_FUTURE` and `SALARY_PERIOD_TOO_OLD` — travels as `YYYY-MM`
+ * and is shown as its name, «تشرين الأول 2026», the way the salary dialog's
+ * «عن شهر» offers it, never as `2026-10` beside that field.
+ */
+function displayParams(params: ErrorParams | undefined, locale: Locale): Record<string, string | number> {
+  const values: Record<string, string | number> = {};
+  for (const [key, value] of Object.entries(params ?? {})) {
+    values[key] =
+      typeof value !== 'string'
+        ? value
+        : WIRE_DAY.test(value)
+          ? formatDay(value)
+          : WIRE_MONTH.test(value)
+            ? // Midday of the 15th, formatted in UTC: no zone the reader is in can move it into another month.
+              formatMonth(`${value}-15T12:00:00.000Z`, { month: 'long', year: 'numeric', timeZone: 'UTC' }, locale)
+            : value;
+  }
+  return values;
+}
+
 /** The text to show for an API error: the translated code when there is one, else the server's message. */
 export function localizeApiError(payload: ApiErrorText, locale: Locale = currentLocale()): string {
   const { code } = payload;
@@ -75,7 +112,7 @@ export function localizeApiError(payload: ApiErrorText, locale: Locale = current
       (key: string, values?: Record<string, string | number>): string;
     };
     if (translate.has(code)) {
-      const text = translate(code, { ...(payload.params ?? {}) });
+      const text = translate(code, displayParams(payload.params, locale));
       if (text && text !== NO_MESSAGE && !text.includes(NO_MESSAGE)) return text;
     }
   }

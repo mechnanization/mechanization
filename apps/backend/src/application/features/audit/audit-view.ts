@@ -1,3 +1,4 @@
+import { citizenDisplayName } from '@mechanization/shared-schemas';
 import { AuditLogEntry } from '../../../domain/entities/audit-log-entry.entity';
 import { ReferenceNumber } from '../../../domain/value-objects/reference-number.vo';
 import type { AuditRow } from '../../../domain/interfaces/audit-repository.interface';
@@ -48,8 +49,8 @@ export interface AuditView extends AuditRow {
   target: AuditTargetView;
 }
 
-const fullName = (row: { firstName: string; middleName?: string | null; lastName: string }) =>
-  [row.firstName, row.middleName, row.lastName].filter(Boolean).join(' ');
+/** A citizen's name as shown — «ورثة المرحوم …» for an estate (0076). */
+const fullName = (row: { firstName: string; middleName?: string | null; lastName: string; residence?: string | null }) => citizenDisplayName(row);
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -90,6 +91,7 @@ export async function toAuditViews(db: PrismaClient, rows: readonly AuditRow[]):
             firstName: true,
             middleName: true,
             lastName: true,
+            residence: true,
             role: true,
             email: true,
             referenceNumber: true,
@@ -117,7 +119,7 @@ export async function toAuditViews(db: PrismaClient, rows: readonly AuditRow[]):
           select: {
             id: true,
             referenceNumber: true,
-            citizen: { select: { id: true, firstName: true, middleName: true, lastName: true } },
+            citizen: { select: { id: true, firstName: true, middleName: true, lastName: true, residence: true } },
           },
         })
       : [],
@@ -130,7 +132,7 @@ export async function toAuditViews(db: PrismaClient, rows: readonly AuditRow[]):
           select: {
             id: true,
             title: true,
-            citizen: { select: { id: true, firstName: true, middleName: true, lastName: true } },
+            citizen: { select: { id: true, firstName: true, middleName: true, lastName: true, residence: true } },
           },
         })
       : [],
@@ -141,7 +143,7 @@ export async function toAuditViews(db: PrismaClient, rows: readonly AuditRow[]):
             id: true,
             type: true,
             registration: {
-              select: { citizen: { select: { id: true, firstName: true, middleName: true, lastName: true } } },
+              select: { citizen: { select: { id: true, firstName: true, middleName: true, lastName: true, residence: true } } },
             },
           },
         })

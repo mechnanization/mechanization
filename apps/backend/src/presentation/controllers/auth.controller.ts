@@ -13,6 +13,7 @@ import { Throttle } from '@nestjs/throttler';
 import { Request, Response } from 'express';
 import { createHash } from 'node:crypto';
 import {
+  EVERY_STAFF_ROLE,
   changeEmailSchema,
   changePasswordSchema,
   confirmPasswordResetSchema,
@@ -27,6 +28,7 @@ import { IdentityService } from '../../application/features/identity/identity.se
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { Public } from '../decorators/public.decorator';
+import { Roles } from '../decorators/roles.decorator';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
 import { APP_CONFIG } from '../config/app.config';
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard';
@@ -62,6 +64,19 @@ const STAFF_SESSION_THROTTLE = {
       const key = typeof authorization === 'string' ? authorization : `ip:${String(request.ip)}`;
       return `staff-session:${createHash('sha256').update(key).digest('hex')}`;
     },
+  },
+};
+
+/**
+ * The throttle on the own-account writes that check the current password, counted
+ * per `Authorization` header as `STAFF_SESSION_THROTTLE` is (one bucket per
+ * session, not one for everyone behind nginx), at `APP_CONFIG.throttle.ownAccount`.
+ */
+const OWN_ACCOUNT_THROTTLE = {
+  default: {
+    limit: APP_CONFIG.throttle.ownAccount.limit,
+    ttl: APP_CONFIG.throttle.ownAccount.ttlSeconds * 1000,
+    getTracker: STAFF_SESSION_THROTTLE.default.getTracker,
   },
 };
 
@@ -224,6 +239,7 @@ export class AuthController {
   }
 
   @Post('staff/totp/disable')
+  @Throttle(OWN_ACCOUNT_THROTTLE)
   async disableTotp(
     @Param('tenantSlug') tenantSlug: string,
     @CurrentUser() user: SessionClaims,
@@ -233,7 +249,19 @@ export class AuthController {
     return { disabled: true };
   }
 
+  /**
+   * «أمان الحساب»: the caller's own staff account — email, role, and whether a
+   * second factor is confirmed. Every staff role, because every staff member
+   * has that screen; scoped by the token's `sub`, with no id in the path.
+   */
+  @Roles(...EVERY_STAFF_ROLE)
+  @Get('staff/me')
+  staffMe(@CurrentUser() user: SessionClaims) {
+    return this.identity.staffSelf(user.sub);
+  }
+
   @Post('staff/change-password')
+  @Throttle(OWN_ACCOUNT_THROTTLE)
   async changePassword(
     @Param('tenantSlug') tenantSlug: string,
     @CurrentUser() user: SessionClaims,
@@ -245,6 +273,7 @@ export class AuthController {
   }
 
   @Post('staff/change-email')
+  @Throttle(OWN_ACCOUNT_THROTTLE)
   async changeEmail(
     @Param('tenantSlug') tenantSlug: string,
     @CurrentUser() user: SessionClaims,

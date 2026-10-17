@@ -2,27 +2,29 @@
 
 import { use, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import { useQueryClient } from '@tanstack/react-query';
-import {
-  BadgeDollarSign,
-  Clock,
-  HandCoins,
-  Receipt,
-  RefreshCw,
-  TrendingUp,
-  Wallet,
-} from 'lucide-react';
-import type { InspectorProfileResponse } from '@mechanization/shared-schemas';
+import { BadgeDollarSign, HandCoins, Printer, Receipt, RefreshCw } from 'lucide-react';
+import { TREASURY_READ_ROLES, type InspectorProfileResponse } from '@mechanization/shared-schemas';
 import { getInspectorProfile, getMyInspectorProfile } from '@/lib/api-client';
+import { formatMoney } from '@/lib/currency';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { formatDate, formatDateTime } from '@/lib/dates';
+import { payoutHistory } from '@/lib/inspector-payouts';
+import { readView } from '@/lib/read-view';
+import { hasRole } from '@/lib/staff-roles';
+import { cn } from '@/lib/utils';
 import { InspectorPayoutDialog } from '@/components/admin/inspector-payout-dialog';
-import { BackLink } from '@/components/ui/back-link';
+import { HeaderBackLink } from '@/components/admin/header-back-link';
+import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { Money } from '@/components/ui/money';
 import { PageHeader } from '@/components/ui/page-header';
 import { Skeleton } from '@/components/ui/skeleton';
+import { StatItem, StatStrip } from '@/components/ui/stat-strip';
 import { EmptyState, ErrorState } from '@/components/ui/states';
 import {
   Table,
@@ -44,6 +46,9 @@ import { ActionTooltip } from '@/components/ui/tooltip';
  * balance column is why: each row shows what was still owed once that payout
  * had been made, so a disputed figure can be pinned to the payment that
  * produced it.
+ *
+ * Commissions are counted in dollars, so every figure here is drawn as one
+ * (`Money` with `currency`, PRIM-11), and the copy is `staff.commission.history`.
  */
 export default function InspectorPayoutHistoryPage({
   params,
@@ -52,18 +57,17 @@ export default function InspectorPayoutHistoryPage({
 }): React.JSX.Element {
   const { tenant, locale, adminPath, staffId } = use(params);
   const base = `/${tenant}/${locale}/${adminPath}`;
-  const isAr = locale !== 'en';
 
   const queryClient = useQueryClient();
+  const t = useTranslations('staff.commission.history');
   const { token, user } = useStaffSession(tenant, base);
   const [payoutOpen, setPayoutOpen] = useState(false);
 
   const isSuperAdmin = user?.role === 'SUPER_ADMIN';
-  const money = (value: number): string =>
-    value.toLocaleString(locale === 'en' ? 'en-US' : 'en-GB', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    });
+  /* A payment order is a treasury document: its print-out sits behind the expense register's guard. */
+  const canPrintOrders = user ? hasRole(TREASURY_READ_ROLES, user.role) : false;
+  /** A dollar figure inside a sentence, where a `Money` cannot go (PRIM-11). */
+  const dollars = (amount: number): string => formatMoney(amount, 'USD', locale);
 
   /*
     The same key the dashboard uses, because it is the same response — this
@@ -72,7 +76,7 @@ export default function InspectorPayoutHistoryPage({
   */
   const queryKey = ['staff', tenant, 'inspector-profile', staffId] as const;
 
-  const { data, loading, fetching, error, refetch } = useStaffQuery<InspectorProfileResponse>({
+  const { data: read, loading, fetching, error, refetch } = useStaffQuery<InspectorProfileResponse>({
     queryKey,
     queryFn: (tok, signal) => {
       // See `InspectorProfileDetail`: every role can read its own figures
@@ -85,38 +89,35 @@ export default function InspectorPayoutHistoryPage({
     tenant,
     base,
     token,
-    errorMessage: isAr ? 'تعذّر تحميل سجل الدفعات' : 'Failed to load the payout history',
+    errorMessage: t('loadError'),
   });
+  /*
+    A failed re-read keeps the page, and the payout dialog mounted on it (STA-1).
+    After a payout with no answer the dialog re-reads this very key; when that
+    read failed too, the page swapped itself for ErrorState and unmounted the
+    dialog — the amount, the statement and the failure message — and reopened it
+    empty (review of 2026-10-11).
+  */
+  const view = readView(read, error);
+  const data = view.state === 'ready' ? view.data : undefined;
 
   /*
-    Oldest first, with the balance carried down the column. The API returns
-    payouts newest-first, which is the right order to *read* but the wrong one
-    to accumulate against: a running balance only means anything if it is
-    computed in the order the money actually moved.
+    Each payout with the balance as it stood once it was made: earned by then
+    less paid by then, not today's total less the running sum. A payout whose
+    voucher was cancelled stays listed and is not counted as paid, as on the
+    server. Recomputed from today's records, which the note under the table
+    says — see `payoutHistory`.
   */
-  const rows = useMemo(() => {
-    if (!data) return [];
-    const chronological = [...data.payouts].sort(
-      (a, b) => new Date(a.paidAt).getTime() - new Date(b.paidAt).getTime(),
-    );
-    let paidSoFar = 0;
-    const withBalance = chronological.map((payout) => {
-      paidSoFar += payout.amount;
-      return { payout, remaining: Math.max(0, data.totalEarnings - paidSoFar) };
-    });
-    return withBalance.reverse();
-  }, [data]);
+  const rows = useMemo(
+    () => (data ? payoutHistory(data.payouts, data.recentRegistrations) : []),
+    [data],
+  );
+  const overpaid = data?.overpaidBalance ?? 0;
 
   /** The API already orders payouts newest-first, so this is the most recent. */
   const latestPayout = data?.payouts[0];
 
-  const title = data
-    ? isAr
-      ? `سجل دفعات: ${data.inspector.name}`
-      : `Payout history: ${data.inspector.name}`
-    : isAr
-      ? 'سجل الدفعات'
-      : 'Payout history';
+  const title = data ? t('title', { name: data.inspector.name }) : t('titleLoading');
 
   if (loading || !token) {
     return (
@@ -129,11 +130,7 @@ export default function InspectorPayoutHistoryPage({
             <Skeleton className="h-4 w-96" />
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, index) => (
-            <Skeleton key={index} className="h-24 rounded-lg" />
-          ))}
-        </div>
+        <Skeleton className="h-36 rounded-lg sm:h-20" />
         <Skeleton className="h-80 rounded-xl" />
       </div>
     );
@@ -141,26 +138,18 @@ export default function InspectorPayoutHistoryPage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <BackLink
-        fallbackHref={`${base}/inspector/profile`}
-        label={isAr ? 'العودة إلى الأرباح' : 'Back to earnings'}
-      />
+      <HeaderBackLink fallbackHref={`${base}/inspector/profile`} label={t('back')} />
 
       <PageHeader
         icon={Receipt}
         title={title}
-        subtitle={
-          isAr
-            ? 'كل مبلغ سُلّم لهذا الموظف عن مسحه الميداني، بتاريخه ورقم إيصاله ومن سجّله'
-            : 'Every amount handed to this staff member for their field survey, with its date, receipt number and who recorded it'
-        }
         actions={
           <div className="flex items-center gap-2">
             {data ? (
               <Button asChild variant="outline" size="sm" className="gap-1.5">
                 <Link href={`${base}/inspector/profile/${data.inspector.id}`}>
                   <BadgeDollarSign className="size-4" aria-hidden />
-                  {isAr ? 'لوحة المفتش' : 'Dashboard'}
+                  {t('dashboard')}
                 </Link>
               </Button>
             ) : null}
@@ -172,73 +161,76 @@ export default function InspectorPayoutHistoryPage({
                 onClick={() => setPayoutOpen(true)}
               >
                 <HandCoins className="size-4" aria-hidden />
-                {isAr ? 'تسجيل دفعة' : 'Pay'}
+                {t('pay')}
               </Button>
             ) : null}
 
-            <ActionTooltip label={isAr ? 'تحديث البيانات' : 'Refresh'}>
+            <ActionTooltip label={t('refresh')}>
               <Button variant="outline" size="icon-sm" disabled={fetching} onClick={() => refetch()}>
                 <RefreshCw className={`size-4 ${fetching ? 'animate-spin' : ''}`} aria-hidden />
-                <span className="sr-only">{isAr ? 'تحديث' : 'Refresh'}</span>
+                <span className="sr-only">{t('refresh')}</span>
               </Button>
             </ActionTooltip>
           </div>
         }
       />
 
-      {error || !data ? (
+      {view.state !== 'ready' || !data ? (
         <Card>
           <CardContent className="p-0">
             <ErrorState
-              description={error ?? (isAr ? 'الموظف غير موجود' : 'Staff member not found')}
+              description={view.state === 'failed' ? view.error : t('notFound')}
               onRetry={() => refetch()}
-              retryLabel={isAr ? 'إعادة المحاولة' : 'Retry'}
+              retryLabel={t('retry')}
             />
           </CardContent>
         </Card>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Stat
-              icon={TrendingUp}
-              label={isAr ? 'إجمالي الأرباح' : 'Total earned'}
-              value={`$${money(data.totalEarnings)}`}
-              note={`${data.totalProperties.toLocaleString(locale)} ${isAr ? 'وحدة محتسبة' : 'billable units'}`}
+          {view.refreshFailed ? <RefreshFailedAlert message={view.refreshFailed} onRetry={() => refetch()} /> : null}
+
+          {/* PRIM-20: the kit's strip, each sum with `wrap` so its unit drops under it at 360px. */}
+          <StatStrip>
+            <StatItem
+              label={t('totalEarned')}
+              value={<Money amount={data.totalEarnings} currency="USD" locale={locale} wrap />}
+              hint={t('billableUnits', { count: data.totalProperties })}
             />
-            <Stat
-              icon={Wallet}
-              label={isAr ? 'إجمالي المدفوع' : 'Total paid'}
-              value={`$${money(data.paidBalance)}`}
+            <StatItem
+              label={t('totalPaid')}
+              value={<Money amount={data.paidBalance} currency="USD" locale={locale} wrap />}
             />
-            <Stat
-              icon={Receipt}
-              label={isAr ? 'عدد الدفعات' : 'Payouts recorded'}
-              value={data.payouts.length.toLocaleString(locale)}
-              note={
-                latestPayout
-                  ? `${isAr ? 'آخر دفعة:' : 'Latest:'} ${formatDate(latestPayout.paidAt)}`
-                  : undefined
-              }
+            <StatItem
+              label={t('payoutCount')}
+              value={data.payouts.length.toLocaleString('en-US')}
+              hint={latestPayout ? t('latest', { date: formatDate(latestPayout.paidAt) }) : undefined}
             />
-            <Stat
-              icon={Clock}
-              label={isAr ? 'المتبقي المستحق' : 'Still owed'}
-              value={`$${money(data.pendingBalance)}`}
-              emphasis
-            />
-          </div>
+            {/* Two balances, never both, as on the inspector's dashboard: `pendingBalance` clamps at zero. */}
+            {overpaid > 0 ? (
+              <StatItem
+                label={t('overpaid')}
+                value={<Money amount={overpaid} currency="USD" locale={locale} wrap />}
+                className="text-warning"
+              />
+            ) : (
+              <StatItem
+                label={t('stillOwed')}
+                value={<Money amount={data.pendingBalance} currency="USD" locale={locale} wrap />}
+                className="text-warning"
+              />
+            )}
+          </StatStrip>
 
           <Card className="overflow-hidden border-border/70">
             <CardContent className="p-0">
               {rows.length === 0 ? (
                 <EmptyState
                   icon={Receipt}
-                  title={isAr ? 'لا دفعات مسجلة' : 'No payouts recorded'}
-                  description={
-                    isAr
-                      ? `لم يُسلَّم أي مبلغ لـ ${data.inspector.name} بعد. الرصيد المستحق $${money(data.pendingBalance)}.`
-                      : `Nothing has been handed to ${data.inspector.name} yet. $${money(data.pendingBalance)} is outstanding.`
-                  }
+                  title={t('emptyTitle')}
+                  description={t('emptyBody', {
+                    name: data.inspector.name,
+                    amount: dollars(data.pendingBalance),
+                  })}
                   action={
                     isSuperAdmin ? (
                       <Button
@@ -247,7 +239,7 @@ export default function InspectorPayoutHistoryPage({
                         onClick={() => setPayoutOpen(true)}
                       >
                         <HandCoins className="size-4" aria-hidden />
-                        {isAr ? 'تسجيل أول دفعة' : 'Record the first payout'}
+                        {t('payFirst')}
                       </Button>
                     ) : undefined
                   }
@@ -255,7 +247,7 @@ export default function InspectorPayoutHistoryPage({
               ) : (
                 /*
                   `Table` is a bare `<table>` by design — it leaves the scroll
-                  container to whoever knows how wide the screen is. Six
+                  container to whoever knows how wide the screen is. Seven
                   columns do not fit a phone, and without this the card's
                   `overflow-hidden` would clip the notes rather than let them
                   be reached.
@@ -264,32 +256,69 @@ export default function InspectorPayoutHistoryPage({
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>{isAr ? 'تاريخ الدفع' : 'Paid on'}</TableHead>
-                        <TableHead>{isAr ? 'المبلغ' : 'Amount'}</TableHead>
-                        <TableHead>{isAr ? 'رقم الإيصال' : 'Receipt'}</TableHead>
-                        <TableHead>{isAr ? 'سُجّلت بواسطة' : 'Recorded by'}</TableHead>
-                        <TableHead>{isAr ? 'المتبقي بعدها' : 'Owed after'}</TableHead>
-                        <TableHead>{isAr ? 'ملاحظات' : 'Notes'}</TableHead>
+                        <TableHead>{t('paidOn')}</TableHead>
+                        <TableHead>{t('amount')}</TableHead>
+                        <TableHead>{t('order')}</TableHead>
+                        <TableHead>{t('receipt')}</TableHead>
+                        <TableHead>{t('recordedBy')}</TableHead>
+                        <TableHead>{t('owedAfter')}</TableHead>
+                        <TableHead>{t('notes')}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {rows.map(({ payout, remaining }) => (
+                      {rows.map(({ payout, owedAfter, overpaidAfter }) => (
                         <TableRow key={payout.id}>
                           <TableCell className="whitespace-nowrap">
                             {formatDateTime(payout.paidAt)}
                           </TableCell>
                           {/*
-                            `<bdi>` on the figures rather than `dir="ltr"` on
-                            the cell, so each one sits under the heading that
-                            names it — see `FactGrid` for the whole story. The
-                            receipt number is plain text for the same reason a
-                            payout amount is: it is a value being read off a
+                            `Money` isolates each figure left to right and
+                            leaves its unit in the page's direction, so each
+                            one sits under the heading that names it. The
+                            receipt number is plain text for the same reason
+                            a payout amount is: it is a value being read off a
                             paper slip, not a control.
                           */}
-                          <TableCell className="whitespace-nowrap font-bold tabular-nums text-success">
-                            <bdi>
-                              ${money(payout.amount)} {payout.currency}
-                            </bdi>
+                          <TableCell
+                            className={cn(
+                              'whitespace-nowrap font-bold tabular-nums text-success',
+                              payout.voucher?.voided && 'text-muted-foreground line-through',
+                            )}
+                          >
+                            <Money amount={payout.amount} currency={payout.currency} locale={locale} />
+                          </TableCell>
+                          {/*
+                            The «PV-» voucher that paid it, once the treasury
+                            is live; a payout from before has none. A cancelled
+                            one is struck through on the amount and badged
+                            here, and stays listed: it happened, and so did
+                            its cancellation.
+                          */}
+                          <TableCell className="whitespace-nowrap">
+                            {payout.voucher ? (
+                              <div className="flex items-center gap-2">
+                                <span dir="ltr" className="font-mono text-xs">
+                                  {payout.voucher.voucherNumber}
+                                </span>
+                                {payout.voucher.voided ? (
+                                  <Badge variant="soft-warning">{t('cancelled')}</Badge>
+                                ) : null}
+                                {canPrintOrders ? (
+                                  <ActionTooltip label={t('print')}>
+                                    <Button asChild variant="ghost" size="icon-sm">
+                                      <Link
+                                        href={`${base}/finance/expenses/${payout.voucher.id}/print?print=1`}
+                                        aria-label={t('printFor', { number: payout.voucher.voucherNumber })}
+                                      >
+                                        <Printer className="size-4" aria-hidden />
+                                      </Link>
+                                    </Button>
+                                  </ActionTooltip>
+                                ) : null}
+                              </div>
+                            ) : (
+                              <span className="text-muted-foreground">—</span>
+                            )}
                           </TableCell>
                           <TableCell className="whitespace-nowrap font-mono text-xs">
                             {payout.reference ? (
@@ -302,7 +331,11 @@ export default function InspectorPayoutHistoryPage({
                             {payout.recordedByName ?? '—'}
                           </TableCell>
                           <TableCell className="whitespace-nowrap tabular-nums">
-                            <bdi>${money(remaining)}</bdi>
+                            {overpaidAfter > 0 ? (
+                              <span className="text-warning">{t('overpaidAfter', { amount: dollars(overpaidAfter) })}</span>
+                            ) : (
+                              <Money amount={owedAfter} currency="USD" locale={locale} />
+                            )}
                           </TableCell>
                           {/*
                             The one cell here that is prose rather than a
@@ -324,10 +357,17 @@ export default function InspectorPayoutHistoryPage({
             </CardContent>
           </Card>
 
+          {/*
+            Each row's balance is worked out on the page from today's records
+            (`payoutHistory`), and a reader settling a dispute from it must know that.
+          */}
+          {rows.length > 0 ? <p className="text-xs text-muted-foreground">{t('recomputed')}</p> : null}
+
           <InspectorPayoutDialog
             open={payoutOpen}
             onOpenChange={setPayoutOpen}
             tenant={tenant}
+            base={base}
             token={token}
             locale={locale}
             staff={{ id: data.inspector.id, name: data.inspector.name }}
@@ -340,44 +380,6 @@ export default function InspectorPayoutHistoryPage({
           />
         </>
       )}
-    </div>
-  );
-}
-
-function Stat({
-  icon: Icon,
-  label,
-  value,
-  note,
-  emphasis,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  value: string;
-  note?: string;
-  emphasis?: boolean;
-}): React.JSX.Element {
-  return (
-    <div className="rounded-lg border bg-card p-4">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Icon className="size-4 shrink-0" aria-hidden />
-        <span className="min-w-0 truncate">{label}</span>
-      </div>
-      {/*
-        `<bdi>` rather than a `dir` override: the label sits above the value,
-        and a value with its own direction lands on the opposite edge from the
-        word naming it. The isolate keeps «$412.00» in the right order without
-        moving where it starts — so counts and amounts now line up with each
-        other too, which the `plain` flag used to exist to work around.
-      */}
-      <div
-        className={`mt-2 text-2xl font-bold tabular-nums ${
-          emphasis ? 'text-warning' : 'text-foreground'
-        }`}
-      >
-        <bdi>{value}</bdi>
-      </div>
-      {note ? <p className="mt-1 truncate text-xs text-muted-foreground">{note}</p> : null}
     </div>
   );
 }

@@ -13,6 +13,13 @@ import type {
   OccupancyEndReason,
   OccupancyRole,
   OccupancyType,
+  OwnerBillingMode,
+  FeeExemptionReason,
+  ApplicantCapacity,
+  RequestAttachmentType,
+  RequestChannel,
+  RequestStatus,
+  RequestType,
   PropertyType,
   ResidentStatus,
   StaffRole,
@@ -24,6 +31,7 @@ import type {
   VacancyEndReason,
 } from './enums';
 import type { CaseStatus } from './case.schema';
+import type { TreasuryDayStatus } from './treasury-closing.schema';
 import type { FeeBasis, FeeBearer, FeeTargetCategory } from './fee.schema';
 
 /** Arabic display labels. Keep UI copy here, not inside the schemas. */
@@ -104,6 +112,7 @@ export const ar = {
     PENDING_REVIEW: 'قيد المراجعة',
     PAID: 'مدفوع',
     OVERDUE: 'متأخّر',
+    CANCELLED: 'ملغاة',
   },
 
   paymentMethod: {
@@ -111,6 +120,32 @@ export const ar = {
     WHISH_MONEY: 'تحويل Whish Money',
     COLLECTOR: 'عبر المحصّل',
   },
+
+  /** Where the municipality's money is held (الخزينة). */
+  treasuryAccountType: {
+    CASH_SAFE: 'صندوق النقد',
+    WHISH_ACCOUNT: 'حساب Whish',
+    BANK_ACCOUNT: 'حساب مصرفي',
+    COLLECTOR_CUSTODY: 'عهدة جابٍ',
+    PETTY_CASH: 'سلفة مصاريف نثرية',
+  },
+
+  /** Why a wallet's balance moved. */
+  treasuryEntrySource: {
+    OPENING_BALANCE: 'رصيد افتتاحي',
+    CITIZEN_PAYMENT: 'دفعة مواطن',
+    INCOME_VOUCHER: 'سند قبض',
+    EXPENSE_VOUCHER: 'سند صرف',
+    TRANSFER: 'مناقلة',
+    ADJUSTMENT: 'تسوية',
+  },
+
+  /** Where a municipal day stands: open, locked by «إقفال اليومية», or opened again by the manager. */
+  treasuryDayStatus: {
+    OPEN: 'مفتوحة',
+    CLOSED: 'مقفلة',
+    REOPENED: 'أُعيد فتحها',
+  } satisfies Record<TreasuryDayStatus, string>,
 
   /** Staff roles as the municipality names them, not as the enum spells them. */
   staffRole: {
@@ -307,6 +342,64 @@ export const ar = {
     RECORDED_IN_ERROR: 'سُجِّل بالخطأ',
   } satisfies Record<OccupancyEndReason, string>,
 
+  /** «معفاة من الرسوم» — why a unit is charged nothing. See `FEE_EXEMPTION_REASON`. */
+  feeExemptionReason: {
+    PLACE_OF_WORSHIP: 'دار عبادة',
+    PUBLIC_FACILITY: 'مرفق عام',
+    OTHER: 'سبب آخر',
+  } satisfies Record<FeeExemptionReason, string>,
+
+  /** المعاملات والإفادات (0092). See `REQUEST_TYPE`. */
+  requestType: {
+    CLEARANCE: 'براءة ذمة بلدية',
+    RESIDENCY: 'إفادة سكن',
+    OCCUPANCY: 'إفادة إشغال',
+    VACANCY: 'إفادة شغور',
+    LEASE_REGISTRATION: 'تسجيل عقد إيجار',
+    RENOVATION: 'رخصة ترميم',
+    SIGNAGE: 'رخصة لافتة',
+    OTHER: 'طلب عام',
+  } satisfies Record<RequestType, string>,
+
+  applicantCapacity: {
+    OWNER: 'مالك',
+    TENANT: 'مستأجر',
+    ESTATE_HEIR: 'وريث',
+    LEGAL_AGENT: 'وكيل قانوني',
+    FREE_OCCUPANT: 'شاغل بلا عقد',
+  } satisfies Record<ApplicantCapacity, string>,
+
+  requestStatus: {
+    AWAITING_PAYMENT: 'بانتظار تسديد الرسم',
+    IN_REVIEW: 'قيد المعالجة',
+    READY_FOR_PICKUP: 'جاهزة للاستلام',
+    COMPLETED: 'مُنجزة',
+    REJECTED: 'مرفوضة',
+    CANCELLED: 'مُلغاة',
+  } satisfies Record<RequestStatus, string>,
+
+  requestChannel: {
+    ONLINE: 'عبر البوابة',
+    COUNTER: 'في قلم البلدية',
+  } satisfies Record<RequestChannel, string>,
+
+  requestAttachmentType: {
+    IDENTITY: 'بطاقة الهوية أو إخراج القيد',
+    OWNERSHIP_PROOF: 'سند ملكية',
+    LEASE_CONTRACT: 'عقد إيجار',
+    POWER_OF_ATTORNEY: 'وكالة قانونية',
+    INHERITANCE_PROOF: 'حصر إرث',
+    MUKHTAR_STATEMENT: 'إفادة مختار',
+    OTHER: 'مستند آخر',
+  } satisfies Record<RequestAttachmentType, string>,
+
+  /** «توزيع الرسم على المالكين» on a flat with several owners. See `OWNER_BILLING_MODE`. */
+  ownerBillingMode: {
+    EQUAL: 'بالتساوي بين المالكين',
+    BY_SHARES: 'حسب الأسهم',
+    RESPONSIBLE_OWNER: 'مالك مسؤول يدفع عن الجميع',
+  } satisfies Record<OwnerBillingMode, string>,
+
   /** ما يستند إليه «تأكيد الشغور». See `VACANCY_BASIS`. */
   vacancyBasis: {
     FIELD_INSPECTION: 'معاينة ميدانية — وُجدت خالية',
@@ -330,6 +423,8 @@ export const ar = {
   citizenResidence: {
     RESIDENT: 'أسرة مقيمة في البلدة',
     NON_RESIDENT_OWNER: 'غير مقيم في البلدة',
+    ESTATE: 'تركة (ورثة المرحوم)',
+    INSTITUTION: 'جهة أو وقف',
   } satisfies Record<CitizenResidence, string>,
 
   documentType: {
@@ -474,6 +569,7 @@ export const en = {
     PENDING_REVIEW: 'Pending Review',
     PAID: 'Paid',
     OVERDUE: 'Overdue',
+    CANCELLED: 'Cancelled',
   },
 
   paymentMethod: {
@@ -481,6 +577,29 @@ export const en = {
     WHISH_MONEY: 'Whish Money Transfer',
     COLLECTOR: 'Via Collector',
   },
+
+  treasuryAccountType: {
+    CASH_SAFE: 'Cash safe',
+    WHISH_ACCOUNT: 'Whish account',
+    BANK_ACCOUNT: 'Bank account',
+    COLLECTOR_CUSTODY: 'Collector custody',
+    PETTY_CASH: 'Petty cash',
+  },
+
+  treasuryEntrySource: {
+    OPENING_BALANCE: 'Opening balance',
+    CITIZEN_PAYMENT: 'Citizen payment',
+    INCOME_VOUCHER: 'Receipt voucher',
+    EXPENSE_VOUCHER: 'Payment voucher',
+    TRANSFER: 'Transfer',
+    ADJUSTMENT: 'Adjustment',
+  },
+
+  treasuryDayStatus: {
+    OPEN: 'Open',
+    CLOSED: 'Closed',
+    REOPENED: 'Reopened',
+  } satisfies Record<TreasuryDayStatus, string>,
 
   staffRole: {
     SUPER_ADMIN: 'System Administrator',
@@ -631,6 +750,61 @@ export const en = {
     RECORDED_IN_ERROR: 'Recorded in error',
   } satisfies Record<OccupancyEndReason, string>,
 
+  feeExemptionReason: {
+    PLACE_OF_WORSHIP: 'Place of worship',
+    PUBLIC_FACILITY: 'Public facility',
+    OTHER: 'Other reason',
+  } satisfies Record<FeeExemptionReason, string>,
+
+  requestType: {
+    CLEARANCE: 'Municipal clearance',
+    RESIDENCY: 'Residence certificate',
+    OCCUPANCY: 'Occupancy certificate',
+    VACANCY: 'Vacancy certificate',
+    LEASE_REGISTRATION: 'Lease registration',
+    RENOVATION: 'Renovation permit',
+    SIGNAGE: 'Sign permit',
+    OTHER: 'General request',
+  } satisfies Record<RequestType, string>,
+
+  applicantCapacity: {
+    OWNER: 'Owner',
+    TENANT: 'Tenant',
+    ESTATE_HEIR: 'Heir',
+    LEGAL_AGENT: 'Legal agent',
+    FREE_OCCUPANT: 'Occupant without a lease',
+  } satisfies Record<ApplicantCapacity, string>,
+
+  requestStatus: {
+    AWAITING_PAYMENT: 'Awaiting the fee',
+    IN_REVIEW: 'In review',
+    READY_FOR_PICKUP: 'Ready for pickup',
+    COMPLETED: 'Completed',
+    REJECTED: 'Rejected',
+    CANCELLED: 'Cancelled',
+  } satisfies Record<RequestStatus, string>,
+
+  requestChannel: {
+    ONLINE: 'Online',
+    COUNTER: 'At the counter',
+  } satisfies Record<RequestChannel, string>,
+
+  requestAttachmentType: {
+    IDENTITY: 'Identity card or civil record',
+    OWNERSHIP_PROOF: 'Title deed',
+    LEASE_CONTRACT: 'Lease contract',
+    POWER_OF_ATTORNEY: 'Power of attorney',
+    INHERITANCE_PROOF: 'Inheritance record',
+    MUKHTAR_STATEMENT: "Mukhtar's statement",
+    OTHER: 'Other document',
+  } satisfies Record<RequestAttachmentType, string>,
+
+  ownerBillingMode: {
+    EQUAL: 'Split equally between the owners',
+    BY_SHARES: 'By shares',
+    RESPONSIBLE_OWNER: 'One responsible owner pays for all',
+  } satisfies Record<OwnerBillingMode, string>,
+
   vacancyBasis: {
     FIELD_INSPECTION: 'Field inspection — found empty',
     OWNER_STATEMENT: 'The owner says so',
@@ -646,6 +820,8 @@ export const en = {
   citizenResidence: {
     RESIDENT: 'Household living in the town',
     NON_RESIDENT_OWNER: 'Lives outside the town',
+    ESTATE: 'Estate (heirs of the late)',
+    INSTITUTION: 'Institution or waqf',
   } satisfies Record<CitizenResidence, string>,
 
   documentType: {

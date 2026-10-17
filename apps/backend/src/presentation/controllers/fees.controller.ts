@@ -4,6 +4,7 @@ import {
   Get,
   Logger,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -12,9 +13,16 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import {
+  BILL_CANCEL_ROLES,
+  BULK_SETTLE_ROLES,
+  bulkSettlePaymentsSchema,
+  cancelBillSchema,
+  type BulkSettlePayments,
   FEE_ADMIN_ROLES,
   FEE_ISSUE_ROLES,
   FEE_READ_ROLES,
+  FEE_SETTLE_ROLES,
+  PAYMENT_REVERSE_ROLES,
   PAYMENT_REVIEW_MARK_ROLES,
   PAYMENT_REVIEW_READ_ROLES,
   billBasisReviewSchema,
@@ -22,19 +30,24 @@ import {
   createFeeNoticeSchema,
   declarePaymentSchema,
   noticeActiveSchema,
+  parcelDuesQuerySchema,
   reverseTransactionSchema,
   reviewPaymentSchema,
   settlePaymentSchema,
   systemSettingsSchema,
   type BillBasisReview,
+  type CancelBill,
   type ChargeCitizen,
   type CreateFeeNotice,
   type DeclarePayment,
+  type ParcelDuesQuery,
   type SettlePayment,
   type SystemSettingsInput,
 } from '@mechanization/shared-schemas';
 import { FeesService } from '../../application/features/fees/fees.service';
 import { CorrectionBillsService } from '../../application/features/fees/correction-bills.service';
+import { ParcelDuesService } from '../../application/features/fees/parcel-dues.service';
+import { PaymentSettlementService } from '../../application/features/fees/payment-settlement.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { Public } from '../decorators/public.decorator';
@@ -61,6 +74,8 @@ export class FeesController {
   constructor(
     private readonly fees: FeesService,
     private readonly correctionBills: CorrectionBillsService,
+    private readonly parcelDues: ParcelDuesService,
+    private readonly settlements: PaymentSettlementService,
   ) {}
 
   // ───────────────────────────  Settings  ───────────────────────────
@@ -86,7 +101,21 @@ export class FeesController {
     @Query('includeLogo') includeLogo?: string,
   ) {
     // Still staff-only when asked for — a citizen cannot opt in.
-    return this.fees.getSettings(includeLogo === 'true' && Boolean(user.role));
+    const settings = await this.fees.getSettings(includeLogo === 'true' && Boolean(user.role));
+    if (user.role) return settings;
+    // A citizen reads how to pay, not the limits the treasury sets on its own staff:
+    // the urgent-payment ceilings (D6) and the exchange rule that decides which
+    // exchanges an auditor reviews (0084).
+    const {
+      urgentExpenseCeilingLbp: _lbp,
+      urgentExpenseCeilingUsd: _usd,
+      salaryUrgentCeilingLbp: _salaryLbp,
+      salaryUrgentCeilingUsd: _salaryUsd,
+      exchangeRateTolerancePercent: _tolerance,
+      largeExchangeThreshold: _large,
+      ...forCitizen
+    } = settings;
+    return forCitizen;
   }
 
   @Roles(...FEE_ADMIN_ROLES)
@@ -108,8 +137,9 @@ export class FeesController {
 
   /**
    * Issuing a fee bills every matching citizen at once, so it is limited to
-   * the roles that own the municipality's billing — SUPER_ADMIN, ACCOUNTANT
-   * and COLLECTOR. An AUDITOR reads the books, it does not add to them.
+   * the roles that own the municipality's billing — SUPER_ADMIN and
+   * ACCOUNTANT. A COLLECTOR collects what is billed and bills nothing
+   * (2026-10-12); an AUDITOR reads the books, it does not add to them.
    */
   @Roles(...FEE_ISSUE_ROLES)
   @Post('notices')
@@ -130,7 +160,7 @@ export class FeesController {
   @Roles(...FEE_ADMIN_ROLES)
   @Patch('notices/:id/active')
   async setNoticeActive(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body(new ZodValidationPipe(noticeActiveSchema)) body: { isActive: boolean },
   ) {
     return this.fees.setNoticeActive(id, body.isActive);
@@ -150,7 +180,9 @@ export class FeesController {
    * reads and writes only that one. An ACCOUNTANT in Albazourieh pressing it
    * issued invoices in Zahle and in every other municipality on the platform,
    * synchronously, with the audit rows there attributed to SYSTEM rather than
-   * to them. Nothing in the UI said so; the button reads «إصدار الفواتير».
+   * to them. Nothing in the UI said so; the button read «إصدار الفواتير». No
+   * screen calls this route any more: the fees page lost that button in
+   * `d346729`, and `runRecurringBilling` in `lib/api-client.ts` has no caller.
    *
    * The platform-wide run has not been removed, it just is not here: the
    * scheduler drives it through `InternalCronController`, behind `CRON_SECRET`
@@ -162,8 +194,9 @@ export class FeesController {
    */
   @Roles(...FEE_ADMIN_ROLES)
   @Post('recurring/run')
-  async runRecurring() {
-    const result = await this.fees.runRecurringBilling();
+  async runRecurring(@CurrentUser() user: SessionClaims) {
+    // The staff member who called it is the actor on the run's audit rows; the cron's run has none.
+    const result = await this.fees.runRecurringBilling(new Date(), { id: user.sub, role: user.role ?? '' });
     return { tenants: 1, ...result };
   }
 
@@ -248,15 +281,41 @@ export class FeesController {
   }
 
   /**
+   * «تسديد الفواتير المحددة» — several of one citizen's bills in one press,
+   * all of them or none, with one consolidated receipt (docs/finance.md §3.7).
+   *
+   * `BULK_SETTLE_ROLES`, the finance roles only: narrower than the single
+   * settle below, so a collector still settles the same bills one at a time.
+   * Declared before the `payments/:id/...` routes, static path first.
+   */
+  @Roles(...BULK_SETTLE_ROLES)
+  @Post('payments/bulk-settle')
+  async bulkSettle(
+    @Body(new ZodValidationPipe(bulkSettlePaymentsSchema)) body: BulkSettlePayments,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.settlements.settle(body, { id: user.sub, role: user.role ?? '' });
+  }
+
+  /** A consolidated receipt, for a reprint. Readable by whoever reads the fee ledger. */
+  @Roles(...FEE_READ_ROLES)
+  @Get('settlements/:id')
+  async settlement(@Param('id', new ParseUUIDPipe()) id: string) {
+    return this.settlements.get(id);
+  }
+
+  /**
    * Records money taken at the counter — in full, or in part.
    *
    * An omitted `amount` settles the whole outstanding balance, which is both
    * the common case and the pre-partial-payment behaviour.
+   *
+   * `FEE_SETTLE_ROLES`: the collector settles here, though it raises no bill.
    */
-  @Roles(...FEE_ISSUE_ROLES)
+  @Roles(...FEE_SETTLE_ROLES)
   @Patch('payments/:id/settle')
   async settle(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body(new ZodValidationPipe(settlePaymentSchema)) body: SettlePayment,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -287,8 +346,23 @@ export class FeesController {
    */
   @Roles(...FEE_READ_ROLES)
   @Get('payments/:id/transactions')
-  async transactions(@Param('id') id: string) {
+  async transactions(@Param('id', new ParseUUIDPipe()) id: string) {
     return { items: await this.fees.listTransactions(id) };
+  }
+
+  /**
+   * «إلغاء الفاتورة» — the manager withdraws a bill nothing was paid on (finance
+   * audit B3). Refused when money is on it or a citizen's claim waits on it; the
+   * bill stays on the record, CANCELLED, with who, when and why.
+   */
+  @Roles(...BILL_CANCEL_ROLES)
+  @Post('payments/:id/cancel')
+  async cancelBill(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body(new ZodValidationPipe(cancelBillSchema)) body: CancelBill,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.fees.cancelBill(id, body.reason, { id: user.sub, role: user.role ?? '' });
   }
 
   /**
@@ -299,10 +373,10 @@ export class FeesController {
    * The ledger refuses updates and deletes at the database, so there is no
    * other shape this could take.
    */
-  @Roles('SUPER_ADMIN')
+  @Roles(...PAYMENT_REVERSE_ROLES)
   @Post('transactions/:transactionId/reverse')
   async reverseTransaction(
-    @Param('transactionId') transactionId: string,
+    @Param('transactionId', new ParseUUIDPipe()) transactionId: string,
     @Body(new ZodValidationPipe(reverseTransactionSchema)) body: { note: string },
     @CurrentUser() user: SessionClaims,
   ) {
@@ -324,7 +398,7 @@ export class FeesController {
   /** Marks a pending payment notification as seen. */
   @Roles(...PAYMENT_REVIEW_MARK_ROLES)
   @Patch('payments/:id/seen')
-  async markAsSeen(@Param('id') id: string) {
+  async markAsSeen(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.fees.markAsSeen(id);
   }
 
@@ -339,7 +413,7 @@ export class FeesController {
   @Roles(...FEE_ADMIN_ROLES)
   @Patch('payments/:id/review')
   async review(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body(new ZodValidationPipe(reviewPaymentSchema))
     body: { confirmed: boolean; note?: string },
     @CurrentUser() user: SessionClaims,
@@ -370,11 +444,22 @@ export class FeesController {
     });
   }
 
+  /**
+   * «ما المستحق على العقار» — open bills with a line on one رقم العقار, and
+   * the part of each that is the parcel's; asked before a براءة ذمّة. Read-only:
+   * every role that reads the ledger may ask it.
+   */
+  @Roles(...FEE_READ_ROLES)
+  @Get('parcel-dues')
+  async parcelDuesOf(@Query(new ZodValidationPipe(parcelDuesQuerySchema)) query: ParcelDuesQuery) {
+    return this.parcelDues.dues(query.propertyNumber);
+  }
+
   /** Recording what was decided about one of them. The bill itself is never changed. */
   @Roles(...FEE_ADMIN_ROLES)
   @Post('payments/:id/basis-review')
   async reviewBasis(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body(new ZodValidationPipe(billBasisReviewSchema)) body: BillBasisReview,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -417,7 +502,7 @@ export class FeesController {
    */
   @Roles(...FEE_READ_ROLES)
   @Get('payments/:id')
-  async getPayment(@Param('id') id: string) {
+  async getPayment(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.fees.getPaymentById(id);
   }
 
@@ -432,7 +517,7 @@ export class FeesController {
   @Post('payments/mine/:id/whish/checkout')
   async whishCheckout(
     @Param('tenantSlug') tenantSlug: string,
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @CurrentUser() user: SessionClaims,
   ) {
     if (user.kind !== 'CITIZEN') {
@@ -458,8 +543,12 @@ export class FeesController {
    *
    * `@Public()` because the provider holds no session — the signature over the
    * raw body is the authentication, and `parseCallback` returns nothing at all
-   * unless it verifies. Always answers 200: a provider that gets an error
-   * retries, and there is nothing to retry when the payload was never genuine.
+   * unless it verifies. Answers 200 whenever the outcome is decided — banked, set
+   * aside as MISMATCHED, ignored, or a payload that was never genuine — since a
+   * provider that gets an error retries. Two causes are not caught, on purpose: a
+   * database failure, and a bill whose currency has no Whish wallet after go-live
+   * (`TREASURY_ACCOUNT_MISSING`). The money can still be banked once either is
+   * fixed, so the provider's retry is the right answer to both.
    */
   @Public()
   @Post('whish/callback')
@@ -480,7 +569,7 @@ export class FeesController {
   /** The citizen declaring they have paid — moves to PENDING_REVIEW only. */
   @Post('payments/mine/:id/declare')
   async declare(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body(new ZodValidationPipe(declarePaymentSchema)) body: DeclarePayment,
     @CurrentUser() user: SessionClaims,
   ) {

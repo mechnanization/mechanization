@@ -2,9 +2,11 @@
 
 import { use, useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import {
   AlertTriangle,
   BadgeCheck,
+  Ban,
   CalendarClock,
   CheckCircle2,
   Clock,
@@ -14,7 +16,7 @@ import {
   Wallet,
   XCircle,
 } from 'lucide-react';
-import { getLabels } from '@mechanization/shared-schemas';
+import { getLabels, type DeclarePayment } from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
   declarePayment,
@@ -26,6 +28,9 @@ import {
 import type { CitizenPaymentItem, MunicipalitySettings } from '@/lib/api-client';
 import { clearSession, loadSession } from '@/lib/session';
 import { formatLbp } from '@/lib/currency';
+import { Alert } from '@/components/ui/alert';
+import { billFigure, citizenPaymentTotals, isPartlyPaid, isPayable, partlyPaidFigures } from '@/lib/citizen-payments';
+import { ONLINE_PAYMENT_OPEN } from '@/lib/online-payment';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -33,11 +38,17 @@ import { PayDialog } from '@/components/citizen/pay-dialog';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/dates';
 
+/*
+  A bill the municipality cancelled (CANCELLED) is muted: it stays on the list,
+  with its status, and is not owed — never counted in the dues, never offered a
+  payment, its amount struck through.
+*/
 const STATUS_TONE: Record<string, string> = {
   UNPAID: 'border-warning/30 bg-warning/10 text-warning',
   OVERDUE: 'border-destructive/30 bg-destructive/10 text-destructive',
   PENDING_REVIEW: 'border-warning/30 bg-warning/10 text-warning',
   PAID: 'border-success/30 bg-success/10 text-success',
+  CANCELLED: 'border-border bg-muted text-muted-foreground',
 };
 
 const STATUS_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -45,6 +56,7 @@ const STATUS_ICON: Record<string, React.ComponentType<{ className?: string }>> =
   OVERDUE: AlertTriangle,
   PENDING_REVIEW: Clock,
   PAID: CheckCircle2,
+  CANCELLED: Ban,
 };
 
 export default function CitizenPayments({
@@ -55,6 +67,8 @@ export default function CitizenPayments({
   const { tenant, locale } = use(params);
   const router = useRouter();
   const labels = getLabels(locale);
+  const tCitizen = useTranslations('citizen');
+  const tPay = useTranslations('onlinePayment');
 
   const [token, setToken] = useState<string | null>(null);
   const [name, setName] = useState('');
@@ -106,7 +120,7 @@ export default function CitizenPayments({
   }, [load]);
 
   const submitDeclaration = useCallback(
-    async (input: { method: string; whishTransactionRef?: string }) => {
+    async (input: DeclarePayment) => {
       if (!token || !paying) return;
       setDeclaring(true);
       setDeclareError(null);
@@ -151,13 +165,9 @@ export default function CitizenPayments({
 
   if (!token) return null;
 
-  const outstanding = items.filter(
-    (item) => item.paymentStatus === 'UNPAID' || item.paymentStatus === 'OVERDUE',
-  );
-  const unpaidTotal = outstanding.reduce((total, item) => total + item.amount, 0);
-  const paidTotal = items
-    .filter((item) => item.paymentStatus === 'PAID')
-    .reduce((total, item) => total + item.amount, 0);
+  const outstanding = items.filter(isPayable);
+  // What is left on each bill and everything paid, part-payments included — not the face values.
+  const { outstanding: unpaidTotal, paid: paidTotal } = citizenPaymentTotals(items);
   const nextDue = outstanding
     .map((item) => item.dueDate)
     .sort()
@@ -189,12 +199,9 @@ export default function CitizenPayments({
       </header>
 
       {error ? (
-        <p
-          role="alert"
-          className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-destructive"
-        >
+        <Alert variant="destructive" live="alert">
           {error}
-        </p>
+        </Alert>
       ) : null}
 
       <div className="grid gap-4 sm:grid-cols-3">
@@ -250,8 +257,8 @@ export default function CitizenPayments({
         <div className="space-y-3">
           {items.map((item) => {
             const Icon = STATUS_ICON[item.paymentStatus] ?? Clock;
-            const payable =
-              item.paymentStatus === 'UNPAID' || item.paymentStatus === 'OVERDUE';
+            const payable = isPayable(item);
+            const cancelled = item.paymentStatus === 'CANCELLED';
 
             return (
               <Card key={item.id}>
@@ -271,10 +278,18 @@ export default function CitizenPayments({
                           </Badge>
                         ) : null}
                       </div>
+                      {isPartlyPaid(item) ? (
+                        <p className="text-sm text-muted-foreground">
+                          {tCitizen('partlyPaid', partlyPaidFigures(item, locale))}
+                        </p>
+                      ) : null}
                     </div>
 
                     <div className="flex flex-col items-end gap-2">
-                      <p className="text-xl font-bold">{formatLbp(item.amount, locale)}</p>
+                      <p className={cn('text-xl font-bold', cancelled && 'text-muted-foreground line-through')}>
+                        {/* A cancelled bill shows what it was, struck through; it owes nothing. */}
+                        {formatLbp(cancelled ? item.amount : billFigure(item), locale)}
+                      </p>
                       <Badge
                         variant="outline"
                         className={cn('gap-1.5 py-1', STATUS_TONE[item.paymentStatus])}
@@ -285,11 +300,11 @@ export default function CitizenPayments({
                     </div>
                   </div>
 
-                  {item.reviewNote && item.paymentStatus !== 'PAID' ? (
-                    <p className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">
-                      <XCircle className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
+                  {/* A note on a refused claim is about paying; a cancelled bill takes no payment. */}
+                  {item.reviewNote && item.paymentStatus !== 'PAID' && !cancelled ? (
+                    <Alert variant="destructive" icon={XCircle}>
                       {item.reviewNote}
-                    </p>
+                    </Alert>
                   ) : null}
 
                   {item.paymentStatus === 'PENDING_REVIEW' ? (
@@ -300,24 +315,45 @@ export default function CitizenPayments({
                     </p>
                   ) : null}
 
+                  {cancelled ? (
+                    <p className="rounded-lg border bg-muted/40 p-3 text-sm text-muted-foreground">
+                      {locale === 'en'
+                        ? 'The municipality cancelled this charge. Nothing is owed on it.'
+                        : 'ألغت البلدية هذه المطالبة، ولا مبلغ مستحقاً عليها.'}
+                    </p>
+                  ) : null}
+
                   {payable ? (
-                    <div className="flex flex-wrap justify-end gap-2">
-                      <Button
-                        size="sm"
-                        disabled={payingOnlineId === item.id}
-                        onClick={() => void payWithWhish(item.id)}
-                      >
-                        {payingOnlineId === item.id ? (
-                          <Loader2 className="size-4 animate-spin" aria-hidden />
-                        ) : (
-                          <CreditCard className="size-4" aria-hidden />
-                        )}
-                        {locale === 'en' ? 'Pay with Whish' : 'ادفع عبر Whish'}
-                      </Button>
-                      <Button variant="outline" size="sm" onClick={() => setPaying(item)}>
-                        <Wallet className="size-4" aria-hidden />
-                        {locale === 'en' ? 'Other Methods' : 'طرق أخرى'}
-                      </Button>
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      {ONLINE_PAYMENT_OPEN ? (
+                        <>
+                          <Button
+                            size="sm"
+                            disabled={payingOnlineId === item.id}
+                            onClick={() => void payWithWhish(item.id)}
+                          >
+                            {payingOnlineId === item.id ? (
+                              <Loader2 className="size-4 animate-spin" aria-hidden />
+                            ) : (
+                              <CreditCard className="size-4" aria-hidden />
+                            )}
+                            {locale === 'en' ? 'Pay with Whish' : 'ادفع عبر Whish'}
+                          </Button>
+                          <Button variant="outline" size="sm" onClick={() => setPaying(item)}>
+                            <Wallet className="size-4" aria-hidden />
+                            {locale === 'en' ? 'Other Methods' : 'طرق أخرى'}
+                          </Button>
+                        </>
+                      ) : (
+                        <>
+                          {/* Paused with online payment (lib/online-payment.ts): the dialog says where and how to pay. */}
+                          <span className="me-auto text-xs text-muted-foreground">{tPay('paused')}</span>
+                          <Button size="sm" onClick={() => setPaying(item)}>
+                            <Wallet className="size-4" aria-hidden />
+                            {tPay('howToPay')}
+                          </Button>
+                        </>
+                      )}
                     </div>
                   ) : null}
                 </CardContent>

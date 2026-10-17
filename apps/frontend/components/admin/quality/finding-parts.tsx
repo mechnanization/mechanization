@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { getLabels, type QualityFindingKind } from '@mechanization/shared-schemas';
 import type { FindingSubject, QualityFinding } from '@/lib/quality-api';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -230,9 +231,17 @@ export function fixHref(finding: QualityFinding, base: string): string | null {
       return citizen ? `${base}/citizens/${encodeURIComponent(citizen.id)}/edit` : null;
     case 'BUILDING_WITHOUT_PIN':
       return building ? `${base}/buildings/${encodeURIComponent(building.id)}/edit` : null;
+    // Keyed by the unit: the matrix opens on it, where «توزيع الرسم على المالكين» is chosen.
+    case 'OWNER_BILLING_BLOCKED':
+    case 'OWNER_SHARES_INCOMPLETE':
+      return building
+        ? `${base}/buildings/${encodeURIComponent(building.id)}/matrix?unit=${encodeURIComponent(finding.subjectKey)}`
+        : null;
+    // UNINHABITED_WITHOUT_READING: the reading is recorded from the matrix («كشف ضرر على المبنى»).
     case 'UNITS_WITHOUT_AREA':
     case 'UNIT_STATUS_CONTRADICTION':
     case 'UNIT_UNDER_REVIEW':
+    case 'UNINHABITED_WITHOUT_READING':
       return building ? `${base}/buildings/${encodeURIComponent(building.id)}/matrix` : null;
     default:
       return citizen ? subjectHref(citizen, base) : building ? subjectHref(building, base) : null;
@@ -569,12 +578,9 @@ export function ResolveDialog({
           </div>
 
           {failure ? (
-            <p
-              role="alert"
-              className="rounded-md border border-destructive/30 bg-destructive/10 p-2.5 text-sm text-destructive"
-            >
+            <Alert variant="destructive" live="alert">
               {failure}
-            </p>
+            </Alert>
           ) : null}
         </div>
 

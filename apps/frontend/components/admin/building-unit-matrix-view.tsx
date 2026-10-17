@@ -3,6 +3,8 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
+import type { SetOwnerBillingInput, SetUnitFeeExemptionInput } from '@mechanization/shared-schemas';
 import {
   AlertTriangle,
   ArrowLeftToLine,
@@ -50,6 +52,8 @@ import {
   recordDamage,
   recordOccupancy,
   resizeUnitSpan,
+  setOwnerBilling,
+  setUnitFeeExemption,
   updateUnit,
   type BuildingDetail,
   type DamageAssessmentRow,
@@ -58,6 +62,7 @@ import {
   type UnitWithOccupants,
 } from '@/lib/api-client';
 import { clearSession, loadSession } from '@/lib/session';
+import { Alert } from '@/components/ui/alert';
 import { BackLink } from '@/components/ui/back-link';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -101,11 +106,14 @@ import {
   VisitForm,
   withDeclaredBasements,
 } from './building-unit-forms';
+import { OwnerBillingPanel } from './owner-billing-panel';
+import { FeeExemptionPanel } from './fee-exemption-panel';
+import { showsOwnerBilling } from '@/lib/owner-billing';
 import { CENSUS_WRITE_ROLES, hasRole } from '@/lib/staff-roles';
 import { DamageForm } from './damage/damage-form';
 import { DamageHistory } from './damage/damage-history';
 import { ReinspectNotice } from './damage/reinspect-notice';
-import { damageInput } from '@/lib/damage-reading';
+import { damageInput, isUninhabitableNow } from '@/lib/damage-reading';
 
 
 type ActionKind = 'occupant' | 'case' | 'damage' | 'visit' | 'vacancy' | 'resize' | null;
@@ -169,6 +177,8 @@ export function BuildingUnitMatrixView({
   const router = useRouter();
   const toast = useToast();
   const en = locale === 'en';
+  const tOwnerBilling = useTranslations('ownerBilling');
+  const tFeeExemption = useTranslations('feeExemption');
   const labels = getLabels(locale);
   const base = `/${tenant}/${locale}/${adminPath}`;
 
@@ -610,6 +620,28 @@ export function BuildingUnitMatrixView({
         return en ? 'Seasonal details saved' : 'تم حفظ بيانات السكن الموسمي';
       },
       en ? 'Could not save the seasonal details.' : 'تعذّر حفظ بيانات السكن الموسمي.',
+    );
+
+  /** «معفاة من الرسوم» — granted or lifted by a SUPER_ADMIN (0077). */
+  const saveFeeExemption = (unit: UnitWithOccupants, input: SetUnitFeeExemptionInput) =>
+    run(
+      async () => {
+        if (!token) throw new Error('unauthenticated');
+        await setUnitFeeExemption(tenant, token, unit.id, input);
+        return input.reason ? tFeeExemption('granted') : tFeeExemption('lifted');
+      },
+      tFeeExemption('failed'),
+    );
+
+  /** «توزيع الرسم على المالكين» — the officer's choice for a co-owned flat (0075). */
+  const saveOwnerBilling = (unit: UnitWithOccupants, input: SetOwnerBillingInput, kind: 'save' | 'withdraw') =>
+    run(
+      async () => {
+        if (!token) throw new Error('unauthenticated');
+        await setOwnerBilling(tenant, token, unit.id, input);
+        return kind === 'withdraw' ? tOwnerBilling('withdrawn') : tOwnerBilling('saved');
+      },
+      tOwnerBilling('failed'),
     );
 
   const cancelHref = `${base}/buildings`;
@@ -1436,6 +1468,7 @@ export function BuildingUnitMatrixView({
                   // painted from the street records that a flat exists, not
                   // that anyone has measured it.
                   unitArea={selectedUnit.unitArea}
+                  unitType={selectedUnit.unitType}
                   onSubmit={({ citizen, role: occRole, endsVacancy, ...rest }) =>
                     void run(
                       async () => {
@@ -1546,13 +1579,9 @@ export function BuildingUnitMatrixView({
               ) : null}
 
               {actionError ? (
-                <p
-                  role="alert"
-                  className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"
-                >
-                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                <Alert variant="destructive" live="alert">
                   {actionError}
-                </p>
+                </Alert>
               ) : null}
 
               <SummaryList>
@@ -1597,6 +1626,27 @@ export function BuildingUnitMatrixView({
                 canWrite={canWrite}
                 onEnd={(values) => liftVacancy(selectedUnit, values)}
               />
+
+              {/* «معفاة من الرسوم» — shown to all; granted and lifted by a SUPER_ADMIN. */}
+              <FeeExemptionPanel
+                unit={selectedUnit}
+                locale={locale}
+                busy={busy}
+                canGrant={role === 'SUPER_ADMIN'}
+                onSave={(input) => void saveFeeExemption(selectedUnit, input)}
+              />
+
+              {/* «توزيع الرسم على المالكين» — a flat several people own. */}
+              {showsOwnerBilling(selectedUnit) ? (
+                <OwnerBillingPanel
+                  unit={selectedUnit}
+                  locale={locale}
+                  busy={busy}
+                  canWrite={canWrite}
+                  uninhabitable={isUninhabitableNow(damage?.history ?? [], { unitId: selectedUnit.id })}
+                  onSave={(input, kind) => void saveOwnerBilling(selectedUnit, input, kind)}
+                />
+              ) : null}
 
               {effectiveUnitStatus(selectedUnit) === 'SEASONAL' ? (
                 <SeasonalHomePanel

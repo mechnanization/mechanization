@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import type { ColumnDef } from '@tanstack/react-table';
@@ -11,6 +12,7 @@ import {
   DoorClosed,
   EllipsisVertical,
   Footprints,
+  Landmark,
   Loader2,
   MapPin,
   Ruler,
@@ -28,6 +30,7 @@ import {
   isStructuralUnitType,
   isUnoccupied,
   layoutFloorSpans,
+  NON_PERSON_RESIDENCE,
   OCCUPANCY_ROLE,
   SURVEY_STATUS,
   UNIT_STATUS,
@@ -45,11 +48,11 @@ import {
   type UnitStatus,
   type VacancyBasis,
   type VacancyEndReason,
+  isDwellingUnitType,
 } from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
   createCase,
-  listCitizens,
   logApiError,
   logUnitVisit,
   REPEAT_VISIT_WINDOW_MS,
@@ -68,7 +71,9 @@ import { formatDate, monthNames } from '@/lib/dates';
 import { formatPhone } from '@/lib/phone';
 import { useTableLabels } from '@/lib/use-table-labels';
 import { stashLinkSeed } from '@/lib/tab-search';
+import { useCitizenSearch } from '@/lib/use-citizen-search';
 import { cn } from '@/lib/utils';
+import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import {
@@ -88,6 +93,7 @@ import {
 import { CellTag } from '@/components/ui/cell-tag';
 import { Checkbox } from '@/components/ui/checkbox';
 import { DataTable } from '@/components/ui/data-table';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Field, FieldFlagProvider } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import {
@@ -114,8 +120,6 @@ import { EndOwnershipDialog } from '@/components/admin/end-ownership-dialog';
  * Extracted rather than duplicated so the two surfaces can never quietly
  * diverge on what "add a person to a unit" or "open a follow-up case" means.
  */
-
-export const SEARCH_DEBOUNCE_MS = 350;
 
 /**
  * What an attempt can have produced.
@@ -822,11 +826,14 @@ export function AddPersonForm({
   vacancy,
   owners = [],
   unitArea: recordedArea,
+  unitType,
   onSubmit,
 }: {
   tenant: string;
   token: string;
   busy: boolean;
+  /** The unit's type: a body («جهة أو وقف») is offered as a tenant only of what nobody lives in. */
+  unitType?: string | null;
   locale: string;
   /**
    * The registration form, pointed at this unit, with نوع الملف preset. The
@@ -865,6 +872,7 @@ export function AddPersonForm({
 }) {
   const en = locale === 'en';
   const labels = getLabels(locale);
+  const tPicker = useTranslations('citizenPicker');
   const [acknowledgedVacancy, setAcknowledgedVacancy] = useState(false);
   /**
    * «المالك»: a recorded owner's citizen id, `OTHER` for an owner not recorded
@@ -893,19 +901,21 @@ export function AddPersonForm({
   }, [ownerIds]);
 
   const [term, setTerm] = useState('');
-  const [results, setResults] = useState<CitizenListItem[]>([]);
-  const [searching, setSearching] = useState(false);
   const [chosen, setChosen] = useState<CitizenListItem | null>(null);
-  /** The term the shown results answer — set when a search comes back. */
-  const [searched, setSearched] = useState('');
-  /**
-   * The last lookup could not reach the register.
-   *
-   * Kept apart from «no results», which it is not: the officer is told the
-   * register is unreachable rather than that nobody matched, because those two
-   * lead to different decisions about whether to open a new file.
-   */
-  const [failed, setFailed] = useState(false);
+  /*
+    The register's citizen search, the one every picker uses (`useCitizenSearch`).
+    An archived file is offered: a person come back is restored, not filed twice.
+
+    `failed` is kept apart from «no results», which it is not: the officer is
+    told the register is unreachable rather than that nobody matched, because
+    those two lead to different decisions about whether to open a new file. A
+    failed search still answers its term (`searched`), so an officer with no
+    signal can reach «ملف جديد» — an unregistered household is worse than a
+    duplicate, and a duplicate here is still detectable by name.
+  */
+  const { results, searching, failed, searched } = useCitizenSearch(tenant, token, term, true, {
+    includeArchived: true,
+  });
   /** The term whose matches the officer has said «ليس بينهم؟» to. */
   const [notAmong, setNotAmong] = useState('');
   /** The shown results answer what is typed now, not a term since changed. */
@@ -986,52 +996,6 @@ export function AddPersonForm({
     vacancy && role && contradictsVacancy(role, answeredStatus),
   );
 
-  useEffect(() => {
-    if (!term.trim()) {
-      setResults([]);
-      setSearched('');
-      setFailed(false);
-      return;
-    }
-    let cancelled = false;
-    setSearching(true);
-    setFailed(false);
-    const timer = setTimeout(() => {
-      listCitizens(tenant, token, { search: term.trim(), limit: 6 })
-        .then((result) => {
-          if (cancelled) return;
-          // A file «دمج ملفين» folded into another is nobody to record in a flat.
-          setResults(result.items.filter((row) => !row.mergedIntoId));
-          setSearched(term.trim());
-        })
-        .catch((caught) => {
-          logApiError(caught);
-          /*
-            A failed search is not a search that found nobody, and the two are
-            told apart by `failed` rather than by withholding the way forward.
-
-            This used to clear the term as well, which left an officer with no
-            signal unable to reach «ملف جديد» at all — on a form used in the
-            field, offline, in settlements nobody is going back to. The honest
-            answer is to say the register could not be reached and let them
-            file the household anyway; an unregistered household is worse than
-            a duplicate, and a duplicate here is still detectable by name.
-          */
-          if (!cancelled) {
-            setResults([]);
-            setSearched(term.trim());
-            setFailed(true);
-          }
-        })
-        .finally(() => {
-          if (!cancelled) setSearching(false);
-        });
-    }, SEARCH_DEBOUNCE_MS);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [term, tenant, token]);
 
   return (
     <div className="space-y-3 rounded-md border bg-background p-3">
@@ -1086,12 +1050,27 @@ export function AddPersonForm({
             <ul className="max-h-48 space-y-1 overflow-y-auto">
               {results.map((citizen) => (
                 <li key={citizen.id}>
+                  {/*
+                    An archived file is shown, so the person is not filed twice,
+                    and not taken: nobody is put in a flat on one until it is
+                    restored (`CITIZEN_FILE_ARCHIVED`). `aria-disabled` keeps it
+                    reachable, so its hint is read.
+                  */}
                   <button
                     type="button"
-                    onClick={() => setChosen(citizen)}
-                    className="flex w-full flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md px-2.5 py-1.5 text-start text-sm transition-colors hover:bg-accent"
+                    aria-disabled={citizen.isActive ? undefined : true}
+                    onClick={() => {
+                      if (citizen.isActive) setChosen(citizen);
+                    }}
+                    className={cn(
+                      'flex w-full flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md px-2.5 py-1.5 text-start text-sm transition-colors',
+                      citizen.isActive ? 'hover:bg-accent' : 'cursor-not-allowed',
+                    )}
                   >
                     <span className="font-medium">{citizen.fullName}</span>
+                    {!citizen.isActive ? (
+                      <Badge variant="soft-muted">{tPicker('archived')}</Badge>
+                    ) : null}
                     {citizen.phone ? (
                       <span dir="ltr" className="text-xs text-muted-foreground">
                         {citizen.phone}
@@ -1112,6 +1091,9 @@ export function AddPersonForm({
                       <span className="basis-full text-xs text-muted-foreground">
                         {en ? `Mother: ${citizen.motherName}` : `والدته: ${citizen.motherName}`}
                       </span>
+                    ) : null}
+                    {!citizen.isActive ? (
+                      <span className="basis-full text-xs text-muted-foreground">{tPicker('archivedHint')}</span>
                     ) : null}
                   </button>
                 </li>
@@ -1181,6 +1163,27 @@ export function AddPersonForm({
                   <MapPin className="size-4" aria-hidden />
                   {labels.citizenResidence.NON_RESIDENT_OWNER}
                 </Link>
+                {/*
+                  Not a living person (0076): an estate owns and nothing else,
+                  so it is offered for an owner only; a waqf or a public body
+                  may also rent what nobody lives in.
+                */}
+                {(role === 'OWNER'
+                  ? NON_PERSON_RESIDENCE
+                  : isDwellingUnitType(unitType ?? '')
+                    ? ([] as const)
+                    : (['INSTITUTION'] as const)
+                ).map((kind) => (
+                  <Link
+                    key={kind}
+                    href={newFileHref(kind)}
+                    onClick={() => stashLinkSeed(tenant, newFileHref(kind), term)}
+                    className={cn(buttonVariants({ variant: 'outline', size: 'sm' }))}
+                  >
+                    <Landmark className="size-4" aria-hidden />
+                    {labels.citizenResidence[kind]}
+                  </Link>
+                ))}
               </div>
             </div>
           ) : (
@@ -2095,15 +2098,13 @@ export function EndOccupancyDialog({
 
           {reason !== 'RECORDED_IN_ERROR' ? (
             <Field label={en ? 'Left on' : 'تاريخ الانتهاء'} htmlFor="end-occupancy-date">
-              <Input
+              <DatePicker
                 id="end-occupancy-date"
-                type="date"
                 min={occupant.fromDate.slice(0, 10)}
                 max={today()}
                 value={toDate}
-                onChange={(event) => setToDate(event.target.value)}
-                dir="ltr"
-                className="text-start"
+                onChange={setToDate}
+                locale={en ? 'en' : 'ar'}
               />
             </Field>
           ) : null}
@@ -2120,12 +2121,9 @@ export function EndOccupancyDialog({
           ) : null}
 
           {failure ? (
-            <p
-              role="alert"
-              className="rounded-md border border-destructive/30 bg-destructive/10 p-2.5 text-sm text-destructive"
-            >
+            <Alert variant="destructive" live="alert">
               {failure}
-            </p>
+            </Alert>
           ) : null}
         </div>
 
@@ -2718,12 +2716,9 @@ function LinkOwnerDialog({
         ) : null}
 
         {failure ? (
-          <p
-            role="alert"
-            className="rounded-md border border-destructive/30 bg-destructive/10 p-2.5 text-sm text-destructive"
-          >
+          <Alert variant="destructive" live="alert">
             {failure}
-          </p>
+          </Alert>
         ) : null}
 
         <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
@@ -2876,14 +2871,12 @@ export function ConfirmVacancyForm({
         label={en ? 'Seen empty on' : 'تاريخ المعاينة'}
         htmlFor="vacancy-observed"
       >
-        <Input
+        <DatePicker
           id="vacancy-observed"
-          type="date"
           max={today()}
           value={observedAt}
-          onChange={(event) => setObservedAt(event.target.value)}
-          dir="ltr"
-          className="text-start"
+          onChange={setObservedAt}
+          locale={en ? 'en' : 'ar'}
         />
       </Field>
 
@@ -3060,15 +3053,13 @@ export function EndVacancyDialog({
 
           {reason === 'NO_LONGER_VACANT' ? (
             <Field label={en ? 'Occupied again since' : 'تاريخ انتهاء الشغور'} htmlFor="vacancy-ended">
-              <Input
+              <DatePicker
                 id="vacancy-ended"
-                type="date"
                 min={vacancy.observedAt.slice(0, 10)}
                 max={today()}
                 value={endedAt}
-                onChange={(event) => setEndedAt(event.target.value)}
-                dir="ltr"
-                className="text-start"
+                onChange={setEndedAt}
+                locale={en ? 'en' : 'ar'}
               />
             </Field>
           ) : null}
@@ -3086,12 +3077,9 @@ export function EndVacancyDialog({
           </Field>
 
           {failure ? (
-            <p
-              role="alert"
-              className="rounded-md border border-destructive/30 bg-destructive/10 p-2.5 text-sm text-destructive"
-            >
+            <Alert variant="destructive" live="alert">
               {failure}
-            </p>
+            </Alert>
           ) : null}
         </div>
 

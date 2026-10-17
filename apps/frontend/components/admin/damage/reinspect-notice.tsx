@@ -14,7 +14,7 @@ import { cn } from '@/lib/utils';
  *
  * For a flat the reading that decides is the one that applies to it now — its
  * own, or a later whole-building one — among those that make a finding
- * (`governingReading`), which is what the biller holds the occupancy fee on. It
+ * (`governingReading`), which is what the biller exempts every fee on. It
  * stays until the next reading of that target that answers habitability; a
  * «غير مصنّف» with no answer judged nothing and leaves it standing. The
  * history keeps every reading.

@@ -1,7 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowLeftRight, Coins, Smartphone } from 'lucide-react';
+import { useTranslations } from 'next-intl';
+import { ArrowLeftRight, Coins, Smartphone, UserCheck, Zap } from 'lucide-react';
 import {
   ApiRequestError,
   getMunicipalitySettings,
@@ -9,13 +10,19 @@ import {
   updateMunicipalitySettings,
 } from '@/lib/api-client';
 import type { MunicipalitySettings } from '@/lib/api-client';
+import { currencyUnit, formatTypedAmount } from '@/lib/currency';
 import { CURRENCY_NAMES, type SettingsCopy } from '@/lib/settings-i18n';
+import { ceilingChange, ceilingDraft, ceilingToSend } from '@/lib/urgent-ceiling';
 import {
   CURRENCY_CODES as CURRENCIES,
+  DEFAULT_EXCHANGE_TOLERANCE_PERCENT,
+  DEFAULT_LARGE_EXCHANGE_THRESHOLD,
   type CurrencyCode,
   type FeeFrequency,
 } from '@mechanization/shared-schemas';
 
+import { Alert } from '@/components/ui/alert';
+import { CurrencyInput } from '@/components/ui/currency-input';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -49,6 +56,16 @@ interface FinanceDraft {
   exchangeRate: string;
   /** Read-only here: the server stamps it, and only when the rate changes. */
   exchangeRateUpdatedAt: string;
+  /** «سقف الدفع العاجل», as typed (grouped); `''` is no ceiling. */
+  urgentCeilingLbp: string;
+  urgentCeilingUsd: string;
+  /** «سقف صرف الرواتب» (0091), as typed (grouped); `''` is no ceiling. */
+  salaryCeilingLbp: string;
+  salaryCeilingUsd: string;
+  /** How far an exchange may stray from the rate before it needs a reason, in percent (0084). */
+  tolerancePercent: string;
+  /** Above this, in the secondary currency, an exchange is reviewed whatever its rate (0084). */
+  largeExchangeThreshold: string;
 }
 
 const EMPTY: FinanceDraft = {
@@ -61,6 +78,12 @@ const EMPTY: FinanceDraft = {
   secondaryCurrency: '',
   exchangeRate: '',
   exchangeRateUpdatedAt: '',
+  urgentCeilingLbp: '',
+  urgentCeilingUsd: '',
+  salaryCeilingLbp: '',
+  salaryCeilingUsd: '',
+  tolerancePercent: String(DEFAULT_EXCHANGE_TOLERANCE_PERCENT),
+  largeExchangeThreshold: String(DEFAULT_LARGE_EXCHANGE_THRESHOLD),
 };
 
 function toDraft(settings: MunicipalitySettings): FinanceDraft {
@@ -74,6 +97,13 @@ function toDraft(settings: MunicipalitySettings): FinanceDraft {
     secondaryCurrency: settings.secondaryCurrency ?? '',
     exchangeRate: settings.exchangeRate === null ? '' : String(settings.exchangeRate),
     exchangeRateUpdatedAt: settings.exchangeRateUpdatedAt ?? '',
+    urgentCeilingLbp: ceilingDraft(settings.urgentExpenseCeilingLbp, 0),
+    urgentCeilingUsd: ceilingDraft(settings.urgentExpenseCeilingUsd, 2),
+    salaryCeilingLbp: ceilingDraft(settings.salaryUrgentCeilingLbp, 0),
+    salaryCeilingUsd: ceilingDraft(settings.salaryUrgentCeilingUsd, 2),
+    // Always sent to staff; the defaults only cover a response that left them out.
+    tolerancePercent: String(settings.exchangeRateTolerancePercent ?? DEFAULT_EXCHANGE_TOLERANCE_PERCENT),
+    largeExchangeThreshold: String(settings.largeExchangeThreshold ?? DEFAULT_LARGE_EXCHANGE_THRESHOLD),
   };
 }
 
@@ -94,7 +124,12 @@ function formatNumber(amount: number, currency: CurrencyCode): string {
 }
 
 /**
- * المالية — what a new invoice assumes before anyone edits it.
+ * المالية — what a new invoice assumes before anyone edits it, and the one
+ * limit the treasury sets on its own staff: the urgent-payment ceiling.
+ *
+ * The ceiling's copy is in next-intl (`settings.urgentCeiling`); the rest of the
+ * section still reads `settingsCopy`, the legacy TXT-1 names, whose conversion
+ * is left whole for the file rather than started here.
  */
 export function FinanceSection({
   tenant,
@@ -108,6 +143,8 @@ export function FinanceSection({
   copy: SettingsCopy;
 }) {
   const toast = useToast();
+  const tCeiling = useTranslations('settings.urgentCeiling');
+  const tSalary = useTranslations('settings.salaryCeiling');
 
   const [saved, setSaved] = useState<FinanceDraft | null>(null);
   const [local, setLocal] = useState<FinanceDraft>(EMPTY);
@@ -142,7 +179,23 @@ export function FinanceSection({
   const exchange = parseNumber(local.exchangeRate);
   const exchangeValid = !local.secondaryCurrency || (exchange !== null && exchange > 0);
   const dueDays = parseNumber(local.dueDays);
+  const tolerance = parseNumber(local.tolerancePercent);
+  const toleranceValid = tolerance !== null && tolerance >= 0 && tolerance <= 100;
+  const threshold = parseNumber(local.largeExchangeThreshold);
+  const thresholdValid = threshold !== null && threshold > 0;
+  /* New copy in next-intl (TXT-1); the rest of this section still reads `settingsCopy` (§17.6). */
+  const tRules = useTranslations('finance.exchangeRules');
   const dueDaysValid = dueDays !== null && Number.isInteger(dueDays) && dueDays >= 0 && dueDays <= 365;
+  /*
+    Judged against what the field showed when read: an untouched ceiling is not
+    sent, so a save about something else never rewrites it (the field shows a
+    stored LBP ceiling rounded, and sending that back would round the ceiling).
+  */
+  const ceilingLbp = ceilingChange(local.urgentCeilingLbp, saved?.urgentCeilingLbp);
+  const ceilingUsd = ceilingChange(local.urgentCeilingUsd, saved?.urgentCeilingUsd);
+  const salaryLbp = ceilingChange(local.salaryCeilingLbp, saved?.salaryCeilingLbp);
+  const salaryUsd = ceilingChange(local.salaryCeilingUsd, saved?.salaryCeilingUsd);
+  const ceilingsValid = [ceilingLbp, ceilingUsd, salaryLbp, salaryUsd].every((change) => change.kind !== 'invalid');
 
   const dirty = useMemo(
     () => saved !== null && JSON.stringify(local) !== JSON.stringify(saved),
@@ -158,6 +211,14 @@ export function FinanceSection({
       toast.error(copy.finance.invalidDueDays);
       return;
     }
+    if (!ceilingsValid) {
+      toast.error(tCeiling('invalid'));
+      return;
+    }
+    if (local.secondaryCurrency && (!toleranceValid || !thresholdValid)) {
+      toast.error(toleranceValid ? tRules('invalidThreshold') : tRules('invalidTolerance'));
+      return;
+    }
 
     setSaving(true);
     try {
@@ -170,6 +231,15 @@ export function FinanceSection({
         baseCurrency: local.baseCurrency,
         secondaryCurrency: local.secondaryCurrency === '' ? null : local.secondaryCurrency,
         exchangeRate: local.secondaryCurrency === '' ? null : exchange,
+        // Only a changed ceiling is sent; emptied, it is «بلا سقف» (`null`), which clears it.
+        urgentExpenseCeilingLbp: ceilingToSend(ceilingLbp),
+        urgentExpenseCeilingUsd: ceilingToSend(ceilingUsd),
+        salaryUrgentCeilingLbp: ceilingToSend(salaryLbp),
+        salaryUrgentCeilingUsd: ceilingToSend(salaryUsd),
+        // Only sent with a secondary currency: with none there is nothing to exchange.
+        ...(local.secondaryCurrency && tolerance !== null && threshold !== null
+          ? { exchangeRateTolerancePercent: tolerance, largeExchangeThreshold: threshold }
+          : {}),
       });
       const next = toDraft(result);
       setSaved(next);
@@ -191,9 +261,20 @@ export function FinanceSection({
     exchange,
     dueDays,
     exchangeValid,
+    tolerance,
+    toleranceValid,
+    threshold,
+    thresholdValid,
+    tRules,
     dueDaysValid,
+    ceilingLbp,
+    ceilingUsd,
+    salaryLbp,
+    salaryUsd,
+    ceilingsValid,
     toast,
     copy,
+    tCeiling,
   ]);
 
   const discard = useCallback(() => {
@@ -209,12 +290,9 @@ export function FinanceSection({
   return (
     <div className="space-y-4">
       {error ? (
-        <p
-          role="alert"
-          className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive"
-        >
+        <Alert variant="destructive" live="alert">
           {error}
-        </p>
+        </Alert>
       ) : null}
 
       <SettingsCard icon={Coins} title={copy.finance.title} hint={copy.finance.description}>
@@ -370,8 +448,137 @@ export function FinanceSection({
                     </div>
                   </SettingsField>
                 </div>
+
+                {/*
+                  The rule an exchange is judged by (docs/finance.md §6.3): beyond
+                  the tolerance it needs a written reason, and beyond it or above
+                  the threshold an auditor reviews it afterwards.
+                */}
+                <AlignedFieldGrid>
+                  <SettingsField
+                    label={tRules('tolerance')}
+                    htmlFor="exchange-tolerance"
+                    error={toleranceValid ? undefined : tRules('invalidTolerance')}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Input
+                        id="exchange-tolerance"
+                        inputMode="decimal"
+                        dir="ltr"
+                        invalid={!toleranceValid}
+                        className="text-start font-mono font-medium"
+                        value={local.tolerancePercent}
+                        onChange={(e) => setLocal({ ...local, tolerancePercent: e.target.value })}
+                      />
+                      <span className="shrink-0 rounded-md bg-muted px-2.5 py-2 text-xs font-semibold text-muted-foreground">
+                        %
+                      </span>
+                    </div>
+                  </SettingsField>
+                  <SettingsField
+                    label={tRules('threshold')}
+                    htmlFor="exchange-threshold"
+                    error={thresholdValid ? undefined : tRules('invalidThreshold')}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Input
+                        id="exchange-threshold"
+                        inputMode="decimal"
+                        dir="ltr"
+                        invalid={!thresholdValid}
+                        className="text-start font-mono font-medium"
+                        value={local.largeExchangeThreshold}
+                        onChange={(e) => setLocal({ ...local, largeExchangeThreshold: e.target.value })}
+                      />
+                      <span className="shrink-0 rounded-md bg-muted px-2.5 py-2 text-xs font-semibold text-muted-foreground">
+                        {local.secondaryCurrency}
+                      </span>
+                    </div>
+                  </SettingsField>
+                </AlignedFieldGrid>
+                <p className="text-xs text-muted-foreground">{tRules('hint')}</p>
               </div>
             ) : null}
+          </FieldGroup>
+
+          {/*
+            The manager's limit on the accountant's art. 35 path (D6,
+            docs/finance.md §5.1): per voucher, per currency, empty for none.
+            Above it the accountant's expense goes as a request for the order.
+          */}
+          <FieldGroup icon={Zap} title={tCeiling('heading')}>
+            <p className="text-xs leading-relaxed text-muted-foreground">{tCeiling('hint')}</p>
+            <AlignedFieldGrid>
+              <SettingsField
+                label={tCeiling('lbp')}
+                htmlFor="urgent-ceiling-lbp"
+                error={ceilingLbp.kind === 'invalid' ? tCeiling('invalid') : undefined}
+              >
+                <CurrencyInput
+                  id="urgent-ceiling-lbp"
+                  unit={currencyUnit('LBP', locale)}
+                  value={local.urgentCeilingLbp}
+                  placeholder={tCeiling('none')}
+                  invalid={ceilingLbp.kind === 'invalid'}
+                  onChange={(raw) => setLocal({ ...local, urgentCeilingLbp: formatTypedAmount(raw, 0) })}
+                />
+              </SettingsField>
+              <SettingsField
+                label={tCeiling('usd')}
+                htmlFor="urgent-ceiling-usd"
+                error={ceilingUsd.kind === 'invalid' ? tCeiling('invalid') : undefined}
+              >
+                <CurrencyInput
+                  id="urgent-ceiling-usd"
+                  unit={currencyUnit('USD', locale)}
+                  value={local.urgentCeilingUsd}
+                  placeholder={tCeiling('none')}
+                  invalid={ceilingUsd.kind === 'invalid'}
+                  onChange={(raw) => setLocal({ ...local, urgentCeilingUsd: formatTypedAmount(raw, 2) })}
+                />
+              </SettingsField>
+            </AlignedFieldGrid>
+            <p className="text-xs leading-relaxed text-muted-foreground">{tCeiling('emptyHint')}</p>
+          </FieldGroup>
+
+          {/*
+            «سقف صرف الرواتب» (0091, the owner's decision of 2026-10-12): an
+            accountant's salary payout leaves before the order (art. 35, D7) up to
+            this, per currency, empty for none. Above it the manager pays it.
+          */}
+          <FieldGroup icon={UserCheck} title={tSalary('heading')}>
+            <p className="text-xs leading-relaxed text-muted-foreground">{tSalary('hint')}</p>
+            <AlignedFieldGrid>
+              <SettingsField
+                label={tSalary('lbp')}
+                htmlFor="salary-ceiling-lbp"
+                error={salaryLbp.kind === 'invalid' ? tCeiling('invalid') : undefined}
+              >
+                <CurrencyInput
+                  id="salary-ceiling-lbp"
+                  unit={currencyUnit('LBP', locale)}
+                  value={local.salaryCeilingLbp}
+                  placeholder={tCeiling('none')}
+                  invalid={salaryLbp.kind === 'invalid'}
+                  onChange={(raw) => setLocal({ ...local, salaryCeilingLbp: formatTypedAmount(raw, 0) })}
+                />
+              </SettingsField>
+              <SettingsField
+                label={tSalary('usd')}
+                htmlFor="salary-ceiling-usd"
+                error={salaryUsd.kind === 'invalid' ? tCeiling('invalid') : undefined}
+              >
+                <CurrencyInput
+                  id="salary-ceiling-usd"
+                  unit={currencyUnit('USD', locale)}
+                  value={local.salaryCeilingUsd}
+                  placeholder={tCeiling('none')}
+                  invalid={salaryUsd.kind === 'invalid'}
+                  onChange={(raw) => setLocal({ ...local, salaryCeilingUsd: formatTypedAmount(raw, 2) })}
+                />
+              </SettingsField>
+            </AlignedFieldGrid>
+            <p className="text-xs leading-relaxed text-muted-foreground">{tCeiling('emptyHint')}</p>
           </FieldGroup>
 
           <FieldGroup icon={Smartphone} title={copy.finance.whishHeading}>

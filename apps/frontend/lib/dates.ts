@@ -55,6 +55,32 @@ export function formatDateTime(value: string | Date): string {
   return `${formatDate(value)} · ${formatTime(value)}`;
 }
 
+/**
+ * `09/10/2026` for the calendar day `2026-10-09` — a municipal business day,
+ * not an instant.
+ *
+ * `formatDate('2026-10-09')` reads the string as midnight UTC and then shows it
+ * in the browser's zone, which is the day before anywhere west of Greenwich.
+ * A business day has no time and no zone to shift, so it is rearranged, not
+ * converted.
+ */
+export function formatDay(day: string): string {
+  const [year, month, date] = day.split('-');
+  return `${date}/${month}/${year}`;
+}
+
+/** `الجمعة، 9 تشرين الأول 2026` / `Friday, 9 October 2026` for a calendar day — a report's heading. */
+export function formatDayLong(day: string, locale: string = 'ar'): string {
+  // Midday UTC, formatted in UTC: no zone the reader is in can move it.
+  return new Date(`${day}T12:00:00.000Z`).toLocaleDateString(locale === 'en' ? 'en-GB' : WORDS, {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+}
+
 /** Month name with year, respecting locale. */
 export function formatMonth(
   value: string | Date,

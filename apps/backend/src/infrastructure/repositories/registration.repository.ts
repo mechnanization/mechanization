@@ -1,9 +1,17 @@
 import { Injectable } from '@nestjs/common';
-import { POSSIBLE_DUPLICATE_FLAG_PATH, type FieldFlag } from '@mechanization/shared-schemas';
+import {
+  EASTERN_DIGITS,
+  LATIN_DIGITS,
+  POSSIBLE_DUPLICATE_FLAG_PATH,
+  type FieldFlag,
+  isNonPersonRecord,
+  storedLandlordName,
+} from '@mechanization/shared-schemas';
 import { Prisma } from '../../generated/tenant-client';
 import { PropertyEntry } from '../../domain/entities/property-entry.entity';
 import { Registration } from '../../domain/entities/registration.entity';
-import { ConflictError } from '../../domain/errors/domain-error';
+import { ConflictError, NotFoundError } from '../../domain/errors/domain-error';
+import { parcelNumberKey } from '../../domain/interfaces/parcel-repository.interface';
 import {
   RegistrationRepository,
   SubmitRegistrationInput,
@@ -11,6 +19,7 @@ import {
 } from '../../domain/interfaces/registration-repository.interface';
 import { TenantContextService } from '../context/tenant-context.service';
 import { citizenPhoneRuleError } from '../prisma/check-violation';
+import { tenantSchemaRef } from '../prisma/tenant-schema-ref';
 import { normalizeSearchText } from '../../application/common/search-terms';
 
 /** Where an identity-document clash is recorded on the new citizen's file. */
@@ -44,6 +53,10 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
 
   private get db() {
     return this.tenantContext.prisma;
+  }
+
+  private get S() {
+    return tenantSchemaRef(this.tenantContext.schemaName);
   }
 
   /**
@@ -168,7 +181,15 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
                 identityDocNumber,
               },
             },
-            select: { id: true, kind: true, firstName: true, middleName: true, lastName: true },
+            select: {
+              id: true,
+              kind: true,
+              firstName: true,
+              middleName: true,
+              lastName: true,
+              residence: true,
+              isActive: true,
+            },
           });
 
           /*
@@ -182,7 +203,17 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
             const merge = await tx.citizenMerge.findFirst({
               where: { absorbedId: holder.id, undoneAt: null },
               select: {
-                survivor: { select: { id: true, kind: true, firstName: true, middleName: true, lastName: true } },
+                survivor: {
+                  select: {
+                    id: true,
+                    kind: true,
+                    firstName: true,
+                    middleName: true,
+                    lastName: true,
+                    residence: true,
+                    isActive: true,
+                  },
+                },
               },
             });
             if (!merge) break;
@@ -191,7 +222,27 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
 
           if (!holder) {
             identity = 'NEW';
-          } else if (holder.kind === 'CITIZEN' && isSamePerson(holder, input.citizen)) {
+          } else if (
+            holder.kind === 'CITIZEN' &&
+            // An estate or a body is no person to attach a filing to (0076): a deceased's
+            // document filed again is a conflict to look at, never his heirs' file growing.
+            !isNonPersonRecord(holder.residence) &&
+            isSamePerson(holder, input.citizen)
+          ) {
+            /*
+              The same person, on a file that is archived: no new filing joins
+              it. The file is reactivated first, on purpose and with its reason
+              (`setActive`); attaching here would put flats and bills on a file
+              the register says is closed. Refused rather than filed beside it,
+              which would make the same person twice.
+            */
+            if (!holder.isActive) {
+              throw new ConflictError({
+                code: 'CITIZEN_FILE_ARCHIVED',
+                message: 'The file this filing belongs to is archived. Reactivate it first.',
+                details: { citizenId: holder.id },
+              });
+            }
             identity = 'ATTACHED';
             attachedTo = holder.id;
           } else {
@@ -267,13 +318,17 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
         });
 
         const propertyIds: string[] = [];
-        for (const property of input.properties) {
+        const landlordNames = await this.landlordNamesToStore(
+          tx,
+          input.properties.map((property) => property.props),
+        );
+        for (const [index, property] of input.properties.entries()) {
           const p = property.props;
           const created = await tx.propertyEntry.create({
             data: {
               registrationId: registration.id,
               occupancyType: p.occupancyType as never,
-              landlordName: p.landlordName ?? null,
+              landlordName: landlordNames[index] ?? null,
               landlordPhone: p.landlordPhone ?? null,
               propertyType: p.propertyType as never,
               neighborhood: p.neighborhood,
@@ -347,6 +402,43 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
    * the point: a queued record that reaches the server twice should leave the
    * phone in exactly the state one delivery would have.
    */
+  /**
+   * The owner's name each card writes to `property_entries.landlordName`:
+   * `storedLandlordName`, given the owner the card names in `landlordCitizenId`,
+   * so a name the form was *shown* for that owner is stored as the owner's own.
+   * Every linked owner of the submission is read in one query.
+   *
+   * The citizen update path does the same through `application/common/landlord-name.ts`;
+   * this one reads the owners itself because infrastructure imports only the
+   * domain and the pure shared rules, never application code (docs/code-quality.md).
+   */
+  private async landlordNamesToStore(
+    tx: Prisma.TransactionClient,
+    cards: ReadonlyArray<{ landlordName?: string | null; landlordCitizenId?: unknown }>,
+  ): Promise<Array<string | null>> {
+    const ids = [
+      ...new Set(
+        cards
+          .filter((card) => card.landlordName)
+          .map((card) => card.landlordCitizenId)
+          .filter((id): id is string => typeof id === 'string'),
+      ),
+    ];
+    const owners = ids.length
+      ? await tx.user.findMany({
+          where: { id: { in: ids }, kind: 'CITIZEN' },
+          select: { id: true, firstName: true, middleName: true, lastName: true, residence: true },
+        })
+      : [];
+    const byId = new Map(owners.map((owner) => [owner.id, owner]));
+    return cards.map((card) =>
+      storedLandlordName(
+        card.landlordName,
+        typeof card.landlordCitizenId === 'string' ? byId.get(card.landlordCitizenId) : null,
+      ),
+    );
+  }
+
   private async findByClientSubmissionId(
     clientSubmissionId: string,
   ): Promise<SubmitRegistrationResult | null> {
@@ -410,12 +502,19 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
    * Reported to the entry form as context ("three neighbours are already
    * registered here") rather than used to refuse the write — a building is one
    * cadastral number shared by everyone inside it.
+   *
+   * Compared digit-normalised on both sides: a card's رقم العقار is stored as
+   * typed, so a neighbour who wrote «١٥٥٣» is counted on 1553 too.
    */
   async countRegistrationsForParcel(propertyNumber: string): Promise<number> {
-    return this.db.propertyEntry.count({
-      // Who is registered here now — a tenancy that ended is history (0046).
-      where: { propertyNumber: propertyNumber.trim(), endedAt: null },
-    });
+    // Who is registered here now — a tenancy that ended is history (0046).
+    const [row] = await this.db.$queryRaw<Array<{ count: number }>>`
+      SELECT count(*)::int AS count
+        FROM ${this.S}property_entries
+       WHERE translate(btrim("propertyNumber"), ${EASTERN_DIGITS}, ${LATIN_DIGITS})
+             = ${parcelNumberKey(propertyNumber)}
+         AND "endedAt" IS NULL`;
+    return row?.count ?? 0;
   }
 
   private toDomain(row: {
@@ -475,6 +574,28 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
     // 0072's rules on a citizen's numbers, named rather than sent on as a 500.
     const phoneRule = citizenPhoneRuleError(error);
     if (phoneRule) return phoneRule;
+    /*
+      A card naming a building, or a flat, that is not on the register — a
+      queued registration whose building was refused or discarded on the
+      device (offline-sync holds those back; this is the answer when one gets
+      through). Named, so it is a refusal the queue shows a person: as a 500 it
+      was retried on every drain, and reported to Sentry each time.
+    */
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003') {
+      const constraint = String(error.meta?.field_name ?? '');
+      if (constraint.includes('buildingId_fkey')) {
+        return new NotFoundError({
+          code: 'BUILDING_NOT_FOUND',
+          message: 'A property card names a building that is not on the register',
+        });
+      }
+      if (constraint.includes('unitId_fkey')) {
+        return new NotFoundError({
+          code: 'UNIT_NOT_FOUND',
+          message: 'A property card names a unit that is not on the register',
+        });
+      }
+    }
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
       const target = (error.meta?.target as string[] | undefined)?.join(', ') ?? '';
 
@@ -483,7 +604,10 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
       // came back — worth surfacing as the generic conflict rather than as a
       // reassuring message that hides a schema drift.
       if (target.includes('identityDocNumber')) {
-        return new ConflictError('هذه الوثيقة مسجّلة مسبقاً لشخص آخر');
+        return new ConflictError({
+          code: 'CITIZEN_IDENTITY_DOC_TAKEN',
+          message: 'The identity document number is already held by another file',
+        });
       }
       if (target.includes('referenceNumber')) {
         return new ConflictError('تعذّر إنشاء رقم مرجعي فريد — يرجى المحاولة مرة أخرى');

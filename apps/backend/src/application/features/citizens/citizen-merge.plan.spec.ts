@@ -332,6 +332,27 @@ describe('planMerge — what refuses a merge', () => {
     expect(planMerge({ ...input, cards }).blocks.map((block) => block.code)).toContain('SELF_LINK');
   });
 
+  it('refuses to fold a person into an estate or an institution, or one kind of body into the other (0076)', () => {
+    const input = fixture();
+    // Flats nobody lives in, so the owner-record rule on «مشغولة من المالك» has nothing to say.
+    const cards = input.cards.map((entry) => ({
+      ...entry,
+      units: entry.units.map((unit) => ({ ...unit, unitStatus: 'VACANT' })),
+    }));
+    const codes = (keep: string, absorb: string) =>
+      planMerge({
+        ...input,
+        cards,
+        keep: { ...input.keep, residence: keep as never },
+        absorb: { ...input.absorb, residence: absorb as never },
+      }).blocks.map((block) => block.code);
+    expect(codes('ESTATE', 'RESIDENT')).toContain('RESIDENCE_CONFLICT');
+    expect(codes('RESIDENT', 'INSTITUTION')).toContain('RESIDENCE_CONFLICT');
+    expect(codes('ESTATE', 'INSTITUTION')).toContain('RESIDENCE_CONFLICT');
+    // Two copies of one estate are one estate.
+    expect(codes('ESTATE', 'ESTATE')).not.toContain('RESIDENCE_CONFLICT');
+  });
+
   it('refuses a deactivated file and one already folded into another', () => {
     expect(planMerge(fixture({ absorb: { ...fixture().absorb, isActive: false } })).blocks[0]?.code).toBe('INACTIVE');
     expect(planMerge(fixture({ keepMerged: true })).blocks[0]?.code).toBe('ALREADY_MERGED');

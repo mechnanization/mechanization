@@ -10,8 +10,9 @@ import { DamageService } from './damage.service';
 /*
   A damage reading leaves a row in the trail (2026-10-06). It was emitted as
   `damage.recorded` from the start and heard only by the dashboard cache; since
-  a reading can hold a flat's occupant-borne fees («غير صالحة للسكن»), who read
-  what and when is what a resident disputing a held or resumed bill asks.
+  a reading of «غير صالحة للسكن» exempts a flat from every fee (2026-10-05,
+  2026-10-07), who read what and when is what a resident disputing an exempt or
+  resumed bill asks.
 */
 
 const BUILDING = '0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d5e';

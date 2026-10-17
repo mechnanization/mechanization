@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { ArrowRight, CloudOff, UserPlus, UserRoundPen, UsersRound } from 'lucide-react';
 import {
   ApiRequestError,
@@ -50,6 +51,7 @@ import {
   loadCitizenDraft,
   saveCitizenDraft,
 } from '@/lib/citizen-draft';
+import { Alert } from '@/components/ui/alert';
 import { buttonVariants } from '@/components/ui/button';
 import type { PropertyDraft, UnitDraft } from '@/components/citizen/property-card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -86,6 +88,7 @@ import {
   type CitizenFormValues,
 } from './citizen-form';
 import {
+  citizenDisplayName,
   parseFloorLabel,
   POSSIBLE_DUPLICATE_FLAG_PATH,
   qualityLabels,
@@ -102,11 +105,13 @@ function text(value: unknown): string | undefined {
 /** The server's `landlordLink` for a card, or nothing when there is none. */
 function readLandlordLink(value: unknown): PropertyDraft['landlordLink'] {
   if (!value || typeof value !== 'object') return undefined;
-  const link = value as { citizenId?: unknown; name?: unknown; referenceNumber?: unknown };
+  const link = value as { citizenId?: unknown; name?: unknown; displayName?: unknown; referenceNumber?: unknown };
   if (typeof link.citizenId !== 'string' || typeof link.name !== 'string') return undefined;
   return {
     citizenId: link.citizenId,
     name: link.name,
+    // A response from before `displayName` existed shows the stored name.
+    displayName: typeof link.displayName === 'string' ? link.displayName : link.name,
     referenceNumber: typeof link.referenceNumber === 'string' ? link.referenceNumber : null,
   };
 }
@@ -886,6 +891,15 @@ export function CitizenEditor({
   /** The citizen's own reference, and the filing's beside it — two different numbers. */
   const [reference, setReference] = useState<{ citizen: string | null; filing: string | null } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  /**
+   * The file a queued record already reached (`QueuedSubmission.citizenId`):
+   * the officer revised it after a send whose answer was lost, and the server
+   * answered the replay with that file. This page then shows the copy and
+   * sends nothing — a replay would be answered with the file again — and the
+   * change is made on the file.
+   */
+  const [deliveredAs, setDeliveredAs] = useState<string | null>(null);
+  const tQueue = useTranslations('offlineQueue');
   const [submitting, setSubmitting] = useState(false);
   /**
    * One save at a time, decided synchronously.
@@ -1082,6 +1096,12 @@ export function CitizenEditor({
             notes: queued.payload.notes,
           });
 
+          // Already on the register: the notice above the form says what to do instead.
+          if (queued.citizenId) {
+            setDeliveredAs(queued.citizenId);
+            return;
+          }
+
           // Shown as though it were the result of this visit's own attempt —
           // which it is: it is why this record needed opening at all, and
           // repeating it here saves a trip back to the queue panel to recall.
@@ -1134,8 +1154,16 @@ export function CitizenEditor({
           }
 
           const fresh = seeded ? { ...empty, properties: seeded } : empty;
-          const withFile = initialResidence ? withResidence(fresh, initialResidence) : fresh;
-          setInitial(initialSearch ? withSeededSearch(withFile, initialSearch) : withFile);
+          /*
+            Seeded first, then the kind: an institution's name is one line, and
+            `withResidence` joins the parts the search term was split into
+            («وقف مسجد البلدة» would otherwise keep only «وقف»). The kind goes
+            in too, so a name holding a digit («مدرسة رسمية 2») is still seeded.
+          */
+          const withSearch = initialSearch
+            ? withSeededSearch(fresh, initialSearch, initialResidence)
+            : fresh;
+          setInitial(initialResidence ? withResidence(withSearch, initialResidence) : withSearch);
           return;
         }
 
@@ -1490,11 +1518,16 @@ export function CitizenEditor({
 
       const payload = toSubmission(materialised);
 
+      // «ورثة المرحوم …» for an estate (0076), as the register will show it.
       const displayName =
-        [values.personal.firstName, values.personal.lastName]
-          .filter(Boolean)
-          .join(' ')
-          .trim() || (locale === 'en' ? 'Unnamed record' : 'سجل بلا اسم');
+        citizenDisplayName(
+          {
+            firstName: typeof values.personal.firstName === 'string' ? values.personal.firstName : null,
+            lastName: typeof values.personal.lastName === 'string' ? values.personal.lastName : null,
+            residence: values.residence ?? null,
+          },
+          { locale, middleName: false },
+        ) || (locale === 'en' ? 'Unnamed record' : 'سجل بلا اسم');
 
       /*
         Correcting a record that is already sitting in the queue.
@@ -1785,6 +1818,11 @@ export function CitizenEditor({
   const submit = useCallback(
     async (...args: Parameters<typeof submitOnce>) => {
       if (inFlightRef.current) return;
+      // The register holds this record already: nothing here is sent (`deliveredAs`).
+      if (deliveredAs) {
+        setError(tQueue('deliveredSaveRefused'));
+        return;
+      }
       inFlightRef.current = true;
       try {
         await submitOnce(...args);
@@ -1792,7 +1830,7 @@ export function CitizenEditor({
         inFlightRef.current = false;
       }
     },
-    [submitOnce],
+    [submitOnce, deliveredAs, tQueue],
   );
 
   /**
@@ -1901,12 +1939,9 @@ export function CitizenEditor({
   if (loadError) {
     return (
       <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-        <p
-          role="alert"
-          className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-destructive"
-        >
+        <Alert variant="destructive" live="alert">
           {loadError}
-        </p>
+        </Alert>
         <ShellLink href={`${base}/citizens`} className={buttonVariants({ variant: 'outline' })}>
           {locale === 'en' ? 'Back to Citizens Registry' : 'رجوع إلى سجل المواطنين'}
         </ShellLink>
@@ -2116,6 +2151,20 @@ export function CitizenEditor({
             </div>
           ) : null}
         </div>
+      ) : null}
+
+      {deliveredAs ? (
+        <Alert variant="warning" live="status" title={tQueue('deliveredNotice.title')}>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <span>{tQueue('deliveredNotice.body')}</span>
+            <ShellLink
+              href={`${base}/citizens/${encodeURIComponent(deliveredAs)}`}
+              className={buttonVariants({ variant: 'outline', size: 'sm' })}
+            >
+              {tQueue('openFile')}
+            </ShellLink>
+          </div>
+        </Alert>
       ) : null}
 
       <CitizenForm

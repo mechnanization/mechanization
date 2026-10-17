@@ -10,7 +10,6 @@ import {
   BadgeDollarSign,
   Building,
   Building2,
-  Clock,
   FileText,
   HandCoins,
   Home,
@@ -20,10 +19,7 @@ import {
   RefreshCw,
   Store,
   Tent,
-  TrendingUp,
   User,
-  Users,
-  Wallet,
 } from 'lucide-react';
 import { getLabels } from '@mechanization/shared-schemas';
 import type { InspectorProfileResponse } from '@mechanization/shared-schemas';
@@ -31,7 +27,9 @@ import { getInspectorProfile, getMyInspectorProfile } from '@/lib/api-client';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { param, useUrlState } from '@/lib/use-url-state';
 import { formatDate, formatDateTime } from '@/lib/dates';
+import { readView } from '@/lib/read-view';
 import { InspectorPayoutDialog } from '@/components/admin/inspector-payout-dialog';
+import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
 import { MyQualityTasks } from '@/components/admin/quality/my-tasks';
 import { OfficerQuality } from '@/components/admin/quality/officer-quality';
 import { useGoBack } from '@/components/ui/back-link';
@@ -40,6 +38,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
 import { Skeleton } from '@/components/ui/skeleton';
+import { StatItem, StatStrip } from '@/components/ui/stat-strip';
 import { EmptyState, ErrorState } from '@/components/ui/states';
 import { ActionTooltip } from '@/components/ui/tooltip';
 
@@ -96,7 +95,7 @@ export function InspectorProfileDetail({
 
   const queryKey = ['staff', tenant, 'inspector-profile', targetId ?? 'me'] as const;
 
-  const { data, loading, fetching, error, refetch } = useStaffQuery<InspectorProfileResponse>({
+  const { data: read, loading, fetching, error, refetch } = useStaffQuery<InspectorProfileResponse>({
     queryKey,
     queryFn: (tok, signal) => {
       /*
@@ -116,6 +115,14 @@ export function InspectorProfileDetail({
     token,
     errorMessage: isAr ? 'تعذّر تحميل بيانات المفتش الميداني' : 'Failed to load the inspector profile',
   });
+  /*
+    A failed re-read keeps the dashboard, and the payout dialog mounted on it
+    (STA-1). After a payout with no answer the dialog re-reads this very key;
+    when that read failed too, the dashboard swapped itself for ErrorState and
+    unmounted the dialog with what was typed in it (review of 2026-10-11).
+  */
+  const view = readView(read, error);
+  const data = view.state === 'ready' ? view.data : undefined;
 
   if (loading || !token) {
     return (
@@ -127,18 +134,14 @@ export function InspectorProfileDetail({
             <Skeleton className="h-4 w-96" />
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-          {Array.from({ length: 5 }).map((_, index) => (
-            <Skeleton key={index} className="h-24 rounded-lg" />
-          ))}
-        </div>
+        <Skeleton className="h-52 rounded-lg sm:h-20" />
         <Skeleton className="h-48 rounded-xl" />
         <Skeleton className="h-96 rounded-xl" />
       </div>
     );
   }
 
-  if (error || !data) {
+  if (view.state !== 'ready' || !data) {
     return (
       <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
         <PageHeader
@@ -148,7 +151,7 @@ export function InspectorProfileDetail({
         <Card>
           <CardContent className="p-0">
             <ErrorState
-              description={error ?? (isAr ? 'المفتش غير موجود' : 'Inspector not found')}
+              description={view.state === 'failed' ? view.error : isAr ? 'المفتش غير موجود' : 'Inspector not found'}
               onRetry={() => refetch()}
               retryLabel={isAr ? 'إعادة المحاولة' : 'Retry'}
             />
@@ -172,11 +175,6 @@ export function InspectorProfileDetail({
             : isAr
               ? `أرباح المفتش: ${data.inspector.name}`
               : `Inspector earnings: ${data.inspector.name}`
-        }
-        subtitle={
-          isAr
-            ? 'نشاط المسح الميداني، والعمولة المستحقة عنه بمعدل 1.00$ لكل عقار أو وحدة'
-            : 'Field survey activity and the commission owed against it, at $1.00 per property or unit'
         }
         actions={
           <div className="flex items-center gap-2">
@@ -219,6 +217,8 @@ export function InspectorProfileDetail({
           </div>
         }
       />
+
+      {view.refreshFailed ? <RefreshFailedAlert message={view.refreshFailed} onRetry={() => refetch()} /> : null}
 
       {/*
         What is waiting on the person looking at their own screen — records a
@@ -300,30 +300,26 @@ export function InspectorProfileDetail({
       </Card>
 
       {/*
-        Five figures, one row, plain tiles. One accent, on the balance still
-        owed, which is the only figure here that asks somebody to do something.
+        Five figures, one strip. One accent, on the balance still owed, which
+        is the only figure here that asks somebody to do something.
       */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <Stat
-          icon={Users}
+      <StatStrip>
+        <StatItem
           label={isAr ? 'المواطنون المسجلون' : 'Citizens registered'}
           value={data.totalCitizens.toLocaleString(locale)}
         />
-        <Stat
-          icon={Home}
+        <StatItem
           label={isAr ? 'الوحدات المحتسبة' : 'Billable units'}
           value={data.totalProperties.toLocaleString(locale)}
         />
-        <Stat
-          icon={TrendingUp}
+        <StatItem
           label={isAr ? 'إجمالي الأرباح' : 'Total earned'}
           value={`$${money(data.totalEarnings)}`}
         />
-        <Stat
-          icon={Wallet}
+        <StatItem
           label={isAr ? 'المدفوع' : 'Paid'}
           value={`$${money(data.paidBalance)}`}
-          note={`${data.payouts.length} ${isAr ? 'دفعة مسجلة' : 'payouts'}`}
+          hint={`${data.payouts.length} ${isAr ? 'دفعة مسجلة' : 'payouts'}`}
         />
         {/*
           Two balances, never both: `pendingBalance` clamps at zero, so an
@@ -333,21 +329,19 @@ export function InspectorProfileDetail({
           is the one figure on this row that asks for something back.
         */}
         {(data.overpaidBalance ?? 0) > 0 ? (
-          <Stat
-            icon={Clock}
+          <StatItem
             label={isAr ? 'مدفوع بالزيادة' : 'Overpaid'}
             value={`$${money(data.overpaidBalance ?? 0)}`}
-            emphasis
+            className="text-warning"
           />
         ) : (
-          <Stat
-            icon={Clock}
+          <StatItem
             label={isAr ? 'المتبقي المستحق' : 'Pending'}
             value={`$${money(data.pendingBalance)}`}
-            emphasis
+            className="text-warning"
           />
         )}
-      </div>
+      </StatStrip>
 
       {/*
         The work beside its quality — the same figures «مراجعة الجودة» shows,
@@ -649,6 +643,7 @@ export function InspectorProfileDetail({
         open={payoutOpen}
         onOpenChange={setPayoutOpen}
         tenant={tenant}
+        base={base}
         token={token}
         locale={locale}
         staff={{ id: data.inspector.id, name: data.inspector.name }}
@@ -721,42 +716,6 @@ function BreakdownTile({
       </span>
       <span className="text-2xl font-bold tabular-nums">{value.toLocaleString(locale)}</span>
       <span className="mt-1 text-xs font-medium text-muted-foreground">{label}</span>
-    </div>
-  );
-}
-
-function Stat({
-  icon: Icon,
-  label,
-  value,
-  note,
-  emphasis,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  value: string;
-  note?: string;
-  emphasis?: boolean;
-}): React.JSX.Element {
-  return (
-    <div className="rounded-lg border bg-card p-4">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Icon className="size-4 shrink-0" aria-hidden />
-        <span className="min-w-0 truncate">{label}</span>
-      </div>
-      {/*
-        `<bdi>` rather than `dir="ltr"`: the label sits above its value, and a
-        value carrying its own direction lands on the opposite edge from the
-        word naming it — see `FactGrid` for why this keeps catching us out.
-      */}
-      <div
-        className={`mt-2 text-2xl font-bold tabular-nums ${
-          emphasis ? 'text-warning' : 'text-foreground'
-        }`}
-      >
-        <bdi>{value}</bdi>
-      </div>
-      {note ? <p className="mt-1 text-xs text-muted-foreground">{note}</p> : null}
     </div>
   );
 }

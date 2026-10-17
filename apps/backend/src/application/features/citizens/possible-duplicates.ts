@@ -1,3 +1,4 @@
+import { isNonPersonRecord } from '@mechanization/shared-schemas';
 import {
   POSSIBLE_DUPLICATE_FLAG_PATH,
   type DuplicateMatchedOn,
@@ -617,6 +618,12 @@ export function assessFindings(input: {
   const phoneOwners: PhoneOwner[] = [];
 
   for (const row of input.rows) {
+    /*
+      An estate or an institution (0076) is not a person, so it is never
+      "the same person" as anyone — the mother, gender and phone signals mean
+      nothing for «وقف مسجد البلدة», and an estate is the deceased's own file.
+    */
+    if (isNonPersonRecord(row.residence)) continue;
     const signals = duplicateSignals(input.incoming, row);
     const latest = row.registrations[0] ?? null;
 

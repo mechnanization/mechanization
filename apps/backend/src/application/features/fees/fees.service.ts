@@ -1,3 +1,10 @@
+import {
+  citizenDisplayName,
+  DEFAULT_EXCHANGE_TOLERANCE_PERCENT,
+  DEFAULT_LARGE_EXCHANGE_THRESHOLD,
+  judgeExchange,
+  NON_PERSON_RESIDENCE,
+} from '@mechanization/shared-schemas';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Prisma, type $Enums } from '../../../generated/tenant-client';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -22,7 +29,9 @@ import {
   isOccupiedByOthers,
   isUnoccupied,
   municipalToday,
+  ownerShareOf,
   roundRate,
+  TREASURY_ADMIN_ROLES,
 } from '@mechanization/shared-schemas';
 import {
   billableUnits,
@@ -31,16 +40,24 @@ import {
   type BillableUnit,
 } from '../../../domain/entities/billable-unit';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
+import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
+import { allocateDocumentNumbers } from '../../common/document-number';
 import { unitsUnderReview } from '../buildings/unit-status';
 import { uninhabitableUnitIds } from '../buildings/habitability';
-import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../../common/exceptions';
+import { ownerBillingRules } from '../buildings/owner-billing';
+import { cancelRequestOfCancelledBill } from '../citizen-requests/cancelled-bill';
 import { assertNotMergedAway } from '../citizens/merged-away';
+import { ConflictError, DomainError, ForbiddenError, NotFoundError, ValidationError } from '../../common/exceptions';
+import { exchangeRuleChangeAllowed } from '../treasury/transfers.plan';
+import { raiseOneOffBill } from './one-off-bill';
 import { likePattern, searchTokens } from '../../common/search-terms';
 import { citizenSearchText } from '../../common/citizen-search';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
 import { PaymentLedgerService, type Tender } from './payment-ledger.service';
+import { creditsWallets, documentOccurredAt } from '../treasury/treasury.plan';
+import { assertLiveCollector } from './live-collector';
 import { AuditService, type AuditEntryInput } from '../audit/audit.service';
 
 /** Property categories that live on `PropertyEntry.propertyType`. */
@@ -65,6 +82,10 @@ export interface CitizenAssessment {
   heldUnitIds?: string[];
   /** The flats held as «غير صالحة للسكن» on this bill, for the same reason. Not stored. */
   uninhabitableUnitIds?: string[];
+  /** The units «معفاة من الرسوم» on this bill, for the same reason. Not stored. */
+  exemptUnitIds?: string[];
+  /** The co-owned flats another owner pays for, for the same reason. Not stored. */
+  coOwnerPaidUnitIds?: string[];
 }
 
 /** What one citizen holds today, as billing reads it. See `FeesService.holdingsOf`. */
@@ -143,9 +164,22 @@ function bearsFee(unit: BillableUnit, bearer: FeeBearer): boolean {
   return !isOccupiedByOthers(unit.unitStatus) && !isUnoccupied(unit.unitStatus);
 }
 
+/**
+ * The part of a unit this person is billed for: their share of a co-owned
+ * flat on an owner's card (`ownerShareOf`), else the whole of it. 0 means
+ * another co-owner — the responsible one under «مالك مسؤول» — pays for it.
+ */
+function ownerWeight(unit: BillableUnit): number {
+  return unit.occupancyType === 'OWNER' && unit.ownerShare
+    ? unit.ownerShare.numerator / unit.ownerShare.denominator
+    : 1;
+}
+
 type HeldEntry = {
   heldUnitIds?: readonly string[];
   uninhabitableUnitIds?: readonly string[];
+  exemptUnitIds?: readonly string[];
+  coOwnerPaidUnitIds?: readonly string[];
   assessment?: FeeAssessment | null;
 };
 
@@ -170,12 +204,34 @@ function distinctHeld(assessed: readonly HeldEntry[]): number {
   return distinctUnits(assessed, (entry) => entry.heldUnitIds, (assessment) => assessment.heldUnitCount);
 }
 
+/** Units «معفاة من الرسوم» across a run (`assessCitizen`). */
+function distinctExempt(assessed: readonly HeldEntry[]): number {
+  return distinctUnits(
+    assessed,
+    (entry) => entry.exemptUnitIds,
+    (assessment) => assessment.exemptUnitCount,
+  );
+}
+
 /** Flats held as «غير صالحة للسكن» across a run (`assessCitizen`). */
 function distinctUninhabitable(assessed: readonly HeldEntry[]): number {
   return distinctUnits(
     assessed,
     (entry) => entry.uninhabitableUnitIds,
     (assessment) => assessment.uninhabitableUnitCount,
+  );
+}
+
+/**
+ * Co-owned flats another owner — the responsible one — pays for, across a run
+ * (`assessCitizen`). Each flat once: three brothers who pay nothing for one shop
+ * are one shop paid by the fourth, not three.
+ */
+function distinctCoOwnerPaid(assessed: readonly HeldEntry[]): number {
+  return distinctUnits(
+    assessed,
+    (entry) => entry.coOwnerPaidUnitIds,
+    (assessment) => assessment.coOwnerPaidUnitCount,
   );
 }
 
@@ -254,6 +310,8 @@ export function assessCitizen(
       assessment: FeeAssessment;
       heldUnitIds?: string[];
       uninhabitableUnitIds?: string[];
+      exemptUnitIds?: string[];
+      coOwnerPaidUnitIds?: string[];
     }
   | { kind: 'unassessable'; reason: string } {
   /*
@@ -278,6 +336,9 @@ export function assessCitizen(
         excludedUnitCount: 0,
         heldUnitCount: 0,
         uninhabitableUnitCount: 0,
+        sharedUnitCount: 0,
+        coOwnerPaidUnitCount: 0,
+        exemptUnitCount: 0,
         lines: [],
       },
     };
@@ -293,9 +354,18 @@ export function assessCitizen(
     };
   }
 
-  const held = entries
+  const matching = entries
     .flatMap(billableUnits)
     .filter((unit) => unitMatches(unit, notice.targetCategory));
+  /*
+    «معفاة من الرسوم» comes off first, under every notice and whoever bears it
+    (migration 0077; the user's decision, 2026-10-07): the mosque on a waqf
+    parcel, a public building. Before the review hold and the bearer rule, so
+    an exempt unit is reported as exempt and nothing else. Counted, so the bill
+    says so rather than reading as a smaller holding.
+  */
+  const exemptUnits = matching.filter((unit) => unit.exempt);
+  const held = matching.filter((unit) => !unit.exempt);
 
   /*
     Split rather than filtered, so the ones left out can be counted.
@@ -330,33 +400,67 @@ export function assessCitizen(
     counting it as an exemption would report as settled what is not.
   */
   const reviewing = bearer === 'OCCUPANT' ? held.filter((unit) => unit.underReview) : [];
+  /** Held under review for this notice — the occupancy fee only, as above. */
+  const inReview = (unit: BillableUnit) => bearer === 'OCCUPANT' && unit.underReview;
   /*
-    A flat nobody can live in is not charged its occupancy fee — to anybody —
-    until a re-inspection reads it habitable (the user's decision, 2026-10-05).
+    A flat nobody can live in is charged nothing — to anybody, under any
+    rate-based notice — until a re-inspection reads it habitable (the user's
+    decisions of 2026-10-05 and 2026-10-07: «غير صالحة للسكن» exempts).
 
     The rental-value fee is due only for actual occupancy (Law 60/1988 Art.
     11), and the annual maintenance fee follows it (Art. 79); a flat whose
     current damage reading says «غير صالحة للسكن» cannot be occupied in the
-    sense either article means. Held rather than dropped, and counted apart
-    from the review hold: the clerk settles a review in the register and an
-    uninhabitable flat with a visit. A flat that is both is counted as under
+    sense either article means. Since 2026-10-07 the owner-borne fees are not
+    charged on it either: the user decided «not habitable → exempt», not
+    «occupancy fee held». Counted apart from the review hold: the clerk
+    settles a review in the register and an uninhabitable flat with a visit.
+    A flat that is both, under an occupancy notice, is counted as under
     review — that is the hold someone in the office can lift.
 
-    Only the occupancy fee, for the reason the review hold gives: an
-    owner-borne fee follows the deed, and the deed does not depend on whether
-    the roof is on.
+    Not back-billed: a period's invoice is written once, so the months a flat
+    was uninhabitable are simply not charged.
   */
-  const unlivable =
-    bearer === 'OCCUPANT' ? held.filter((unit) => !unit.underReview && unit.uninhabitable) : [];
-  const decided =
-    bearer === 'OCCUPANT' ? held.filter((unit) => !unit.underReview && !unit.uninhabitable) : held;
-  const units = decided.filter((unit) => bearsFee(unit, bearer));
-  const excludedUnitCount = decided.length - units.length;
+  const unlivable = held.filter((unit) => !inReview(unit) && unit.uninhabitable);
+  const decided = held.filter((unit) => !inReview(unit) && !unit.uninhabitable);
+  const owed = decided.filter((unit) => bearsFee(unit, bearer));
+  const excludedUnitCount = decided.length - owed.length;
+  /*
+    A flat several people own is divided between them, not billed to each in
+    full («توزيع الرسم على المالكين», the user's decision, 2026-10-07).
+
+    Every co-owner's own file claims the flat, and this function sees one
+    citizen at a time — so before this, each was billed for the whole of it:
+    four brothers, one shop, four bills for it. `holdingsOf` attaches this
+    owner's part (`ownerShareOf`): 1/N by default, their أسهم over everyone's
+    under «حسب الأسهم», all or nothing under «مالك مسؤول». Only an owner's
+    unit carries one — a tenant pays for what they occupy whatever the deed
+    says — and only a unit this owner already owes for reaches here, so the
+    bearer rule has decided first that the owners pay at all.
+
+    «حسب الأسهم» with an owner whose أسهم nobody recorded cannot be divided.
+    Refused rather than guessed, as a flat with no area is: the officer
+    records the أسهم, or chooses another method.
+  */
+  const undecidable = owed.find((unit) => unit.occupancyType === 'OWNER' && unit.ownerShareUndecidable);
+  if (undecidable) {
+    return {
+      kind: 'unassessable',
+      reason: `وحدة ${undecidable.unitCode ?? ''} على العقار ${undecidable.propertyNumber ?? '—'} يتوزّع رسمها «حسب الأسهم» وأسهم أحد مالكيها غير مسجّلة`,
+    };
+  }
+  // Paid by the responsible owner named on the flat — not this person's to pay.
+  const paidByCoOwner = owed.filter((unit) => ownerWeight(unit) === 0);
+  const units = owed.filter((unit) => ownerWeight(unit) > 0);
+  const shared = units.filter((unit) => unit.occupancyType === 'OWNER' && unit.ownerShare);
   const heldUnitCount = reviewing.length;
   const uninhabitableUnitCount = unlivable.length;
   // Which flats, so a run can count each once — an owner and a tenant hold the same one.
   const heldUnitIds = reviewing.map((unit) => unit.unitId).filter((id): id is string => Boolean(id));
   const uninhabitableUnitIds = unlivable
+    .map((unit) => unit.unitId)
+    .filter((id): id is string => Boolean(id));
+  const exemptUnitIds = exemptUnits.map((unit) => unit.unitId).filter((id): id is string => Boolean(id));
+  const coOwnerPaidUnitIds = paidByCoOwner
     .map((unit) => unit.unitId)
     .filter((id): id is string => Boolean(id));
 
@@ -378,10 +482,12 @@ export function assessCitizen(
     }
   }
 
-  const totalArea = units.reduce((sum, unit) => sum + (unit.unitArea ?? 0), 0);
+  // A co-owned flat counts for this owner's part of its area, or of one unit.
+  const totalArea = units.reduce((sum, unit) => sum + (unit.unitArea ?? 0) * ownerWeight(unit), 0);
+  const chargedUnits = units.reduce((sum, unit) => sum + ownerWeight(unit), 0);
 
   // Only the two rate bases reach here; FLAT returned above.
-  const multiplier = notice.basis === 'PER_AREA' ? totalArea : units.length;
+  const multiplier = notice.basis === 'PER_AREA' ? totalArea : chargedUnits;
 
   return {
     kind: 'assessed',
@@ -394,6 +500,8 @@ export function assessCitizen(
     amount: Math.round(notice.amount * multiplier),
     heldUnitIds,
     uninhabitableUnitIds,
+    exemptUnitIds,
+    coOwnerPaidUnitIds,
     assessment: {
       basis: notice.basis,
       rate: notice.amount,
@@ -402,12 +510,96 @@ export function assessCitizen(
       excludedUnitCount,
       heldUnitCount,
       uninhabitableUnitCount,
+      sharedUnitCount: shared.length,
+      coOwnerPaidUnitCount: paidByCoOwner.length,
+      exemptUnitCount: exemptUnits.length,
+      ...(shared.length > 0 && notice.basis === 'PER_UNIT' ? { chargedUnits } : {}),
       lines: units.map((unit) => ({
         propertyNumber: unit.propertyNumber,
         propertyType: unit.propertyType,
         unitType: unit.unitType,
         unitArea: notice.basis === 'PER_AREA' ? unit.unitArea : null,
+        ...(unit.unitCode ? { unitCode: unit.unitCode } : {}),
+        ...(unit.occupancyType === 'OWNER' && unit.ownerShare
+          ? {
+              ownerShare: {
+                mode: unit.ownerShare.mode as 'EQUAL' | 'BY_SHARES' | 'RESPONSIBLE_OWNER',
+                numerator: unit.ownerShare.numerator,
+                denominator: unit.ownerShare.denominator,
+              },
+            }
+          : {}),
       })),
+    },
+  };
+}
+
+/**
+ * A FLAT notice aimed at a category («رسم المحلات», one amount per shop
+ * holder), for one holder.
+ *
+ * The notice's own amount, as every FLAT notice charges — per holder, whatever
+ * they hold of it — except a holder every one of whose units of that category
+ * is charged nothing: «معفاة من الرسوم» (0077), «غير صالحة للسكن», or paid by
+ * another co-owner under «مالك مسؤول» (this owner's part is 0). The waqf whose
+ * one office is the mosque is not a holder of offices for this notice, a family
+ * whose one shop is a ruin is not a shop holder (the user's decisions of
+ * 2026-10-07: «not habitable → exempt», and the mosque exempt), and of four
+ * brothers whose one shop the eldest pays for, only the eldest is (the user's
+ * decision, 2026-10-08). Under «بالتساوي» and «حسب الأسهم» every co-owner is
+ * still a holder and pays the amount once: a flat amount is not divided.
+ *
+ * Only that. The review hold and the bearer rule stay out of FLAT, as they
+ * always have: a flat amount is a person's charge, not a flat's. A notice to
+ * every citizen names no category and never reaches here. A holder with no
+ * matching unit at all — `resolveTargets` is a superset — is charged, as
+ * before: this decides exemption, not targeting.
+ *
+ * Counted when it lets someone off, so the issue summary says how many units
+ * the notice was not charged for; a unit without a register row has no id to
+ * count once by, so the assessment carries the counts too.
+ */
+export function flatCategoryCharge(
+  entries: readonly BillablePropertyEntry[],
+  notice: { amount: number; targetCategory: string },
+): {
+  amount: number;
+  assessment: FeeAssessment | null;
+  uninhabitableUnitIds?: string[];
+  exemptUnitIds?: string[];
+  coOwnerPaidUnitIds?: string[];
+} {
+  const matching = entries
+    .flatMap(billableUnits)
+    .filter((unit) => unitMatches(unit, notice.targetCategory));
+  const exempt = matching.filter((unit) => unit.exempt);
+  const unlivable = matching.filter((unit) => !unit.exempt && unit.uninhabitable);
+  // In the order `assessCitizen` reports them: exempt, then uninhabitable, then another owner's to pay.
+  const paidByCoOwner = matching.filter((unit) => !unit.exempt && !unit.uninhabitable && ownerWeight(unit) === 0);
+
+  if (matching.length === 0 || exempt.length + unlivable.length + paidByCoOwner.length < matching.length) {
+    return { amount: notice.amount, assessment: null };
+  }
+
+  const ids = (units: readonly BillableUnit[]) =>
+    units.map((unit) => unit.unitId).filter((id): id is string => Boolean(id));
+  return {
+    amount: 0,
+    uninhabitableUnitIds: ids(unlivable),
+    exemptUnitIds: ids(exempt),
+    coOwnerPaidUnitIds: ids(paidByCoOwner),
+    assessment: {
+      basis: 'FLAT',
+      rate: notice.amount,
+      unitCount: 0,
+      totalArea: 0,
+      excludedUnitCount: 0,
+      heldUnitCount: 0,
+      uninhabitableUnitCount: unlivable.length,
+      sharedUnitCount: 0,
+      coOwnerPaidUnitCount: paidByCoOwner.length,
+      exemptUnitCount: exempt.length,
+      lines: [],
     },
   };
 }
@@ -421,6 +613,39 @@ export function assessCitizen(
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const SETTINGS_CACHE_TTL_SECONDS = 300;
+
+/**
+ * The settings the treasury reads, whose every change the audit row carries with
+ * its value before and after (finance audit A1). The rest are named only.
+ */
+const FINANCE_SETTING_KEYS = [
+  'exchangeRate',
+  'baseCurrency',
+  'secondaryCurrency',
+  'urgentExpenseCeilingLbp',
+  'urgentExpenseCeilingUsd',
+  'salaryUrgentCeilingLbp',
+  'salaryUrgentCeilingUsd',
+  'exchangeRateTolerancePercent',
+  'largeExchangeThreshold',
+] as const;
+
+/**
+ * The ledger's refusals that mean a Whish success cannot be banked as it stands
+ * (finance audit B5): the bill was settled, part-paid or cancelled another way
+ * while the citizen paid online, or the provider's reference is already on a
+ * receipt. The money moved at the provider, so the checkout is set aside,
+ * MISMATCHED, for a clerk — never retried by the provider for ever.
+ */
+const WHISH_UNBANKABLE = new Set<string>([
+  'PAYMENT_ALREADY_PAID',
+  'PAYMENT_EXCEEDS_BALANCE',
+  'PAYMENT_BILL_CANCELLED',
+  'PAYMENT_EXTERNAL_REF_REUSED',
+  'PAYMENT_IDEMPOTENCY_KEY_REUSED',
+  // The checkout's own claim was refused and the citizen has declared another transfer since.
+  'PAYMENT_CLAIM_UNDER_REVIEW',
+]);
 
 /** Days in a UTC month. `day 0` of the next month is the last day of this one. */
 function daysInUtcMonth(year: number, month: number): number {
@@ -752,6 +977,14 @@ export class FeesService {
       secondaryCurrency: row?.secondaryCurrency ?? null,
       exchangeRate: row?.exchangeRate == null ? null : Number(row.exchangeRate),
       exchangeRateUpdatedAt: row?.exchangeRateUpdatedAt?.toISOString() ?? null,
+      // «سقف الدفع العاجل» (docs/finance.md §5.1, D6). Null: no ceiling.
+      urgentExpenseCeilingLbp: row?.urgentExpenseCeilingLbp == null ? null : Number(row.urgentExpenseCeilingLbp),
+      urgentExpenseCeilingUsd: row?.urgentExpenseCeilingUsd == null ? null : Number(row.urgentExpenseCeilingUsd),
+      // «سقف صرف الرواتب» (0091). Null: no ceiling. Stripped for a citizen, like the urgent ceiling.
+      salaryUrgentCeilingLbp: row?.salaryUrgentCeilingLbp == null ? null : Number(row.salaryUrgentCeilingLbp),
+      salaryUrgentCeilingUsd: row?.salaryUrgentCeilingUsd == null ? null : Number(row.salaryUrgentCeilingUsd),
+      exchangeRateTolerancePercent: row ? Number(row.exchangeRateTolerancePercent) : DEFAULT_EXCHANGE_TOLERANCE_PERCENT,
+      largeExchangeThreshold: row ? Number(row.largeExchangeThreshold) : DEFAULT_LARGE_EXCHANGE_THRESHOLD,
 
       numberingSequences: (row?.numberingSequences as SystemSettingsInput['numberingSequences']) ?? null,
       backupSchedule: (row?.backupSchedule as SystemSettingsInput['backupSchedule']) ?? null,
@@ -768,73 +1001,205 @@ export class FeesService {
     // fields owned by the five it did not render.
     const blankToNull = (value: string | undefined) =>
       value === undefined ? undefined : value.trim() === '' ? null : value.trim();
+    const manager = (TREASURY_ADMIN_ROLES as readonly string[]).includes(actor.role);
 
     /*
-     * Stamped here, not by the client.
-     *
-     * The timestamp answers "how stale is this rate", and a browser's clock is
-     * not evidence of when the server accepted a value — nor should a client be
-     * able to claim a rate was refreshed today by sending a date. Only a rate
-     * that actually changes moves it: re-saving the finance section with the
-     * same number must not make a month-old rate look current.
-     */
-    const previous =
-      input.exchangeRate === undefined
-        ? null
-        : await withConnectionRetry(() =>
-            this.db.systemSettings.findFirst({
-              where: { singleton: true },
-              select: { exchangeRate: true },
-            }),
-          );
-    const rateChanged =
-      input.exchangeRate !== undefined &&
-      (previous?.exchangeRate == null
-        ? input.exchangeRate !== null
-        : Number(previous.exchangeRate) !== input.exchangeRate);
+      The row exists before the transaction opens, so the lock below always has
+      a row to hold: two first saves on a municipality that never saved would
+      otherwise both insert, and the loser's unique violation surface raw
+      (`TreasuryService.activate` does the same).
+    */
+    await this.db.$executeRaw`
+      INSERT INTO ${this.S}system_settings ("id", "singleton", "updatedAt")
+      VALUES (gen_random_uuid(), true, now())
+      ON CONFLICT ("singleton") DO NOTHING
+    `;
 
-    const data = {
-      whishMoneyNumber: blankToNull(input.whishMoneyNumber),
-      cashOfficeHours: blankToNull(input.cashOfficeHours),
-      cashOfficeAddress: blankToNull(input.cashOfficeAddress),
-      contactPhone: blankToNull(input.contactPhone),
-      whatsappNumber: blankToNull(input.whatsappNumber),
+    await runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.db as Prisma.TransactionClient;
+      /*
+        Locked, so two saves meet one after the other, the refusals below judge
+        the values a save is about to replace, and the audit row's «before» is
+        what was replaced. A payment reading the rate FOR SHARE waits for this
+        save and is judged by the new rate.
+      */
+      await tx.$queryRaw`SELECT "id" FROM ${this.S}system_settings WHERE "singleton" = true FOR UPDATE`;
+      const previous = await tx.systemSettings.findFirst({
+        where: { singleton: true },
+        select: {
+          treasuryGoLiveAt: true,
+          exchangeRate: true,
+          baseCurrency: true,
+          secondaryCurrency: true,
+          urgentExpenseCeilingLbp: true,
+          urgentExpenseCeilingUsd: true,
+          salaryUrgentCeilingLbp: true,
+          salaryUrgentCeilingUsd: true,
+          exchangeRateTolerancePercent: true,
+          largeExchangeThreshold: true,
+        },
+      });
 
-      nameAr: blankToNull(input.nameAr),
-      nameEn: blankToNull(input.nameEn),
-      contactEmail: blankToNull(input.contactEmail),
-      website: blankToNull(input.website),
-      governorate: blankToNull(input.governorate),
-      district: blankToNull(input.district),
-      town: blankToNull(input.town),
-      councilDecisionRef: blankToNull(input.councilDecisionRef),
-      logoDataUri: blankToNull(input.logoDataUri),
+      /*
+        The exchange rule decides which exchanges an auditor reviews, and the
+        accountant — who may save this section — books them. Moving it is the
+        manager's alone (docs/finance.md §6.3); the same values sent back are fine.
+      */
+      const allowed = exchangeRuleChangeAllowed({
+        role: actor.role,
+        current: {
+          tolerancePercent: previous
+            ? Number(previous.exchangeRateTolerancePercent)
+            : DEFAULT_EXCHANGE_TOLERANCE_PERCENT,
+          largeThreshold: previous ? Number(previous.largeExchangeThreshold) : DEFAULT_LARGE_EXCHANGE_THRESHOLD,
+        },
+        requested: {
+          tolerancePercent: input.exchangeRateTolerancePercent,
+          largeThreshold: input.largeExchangeThreshold,
+        },
+      });
+      if (!allowed) {
+        throw new ForbiddenError({
+          code: 'EXCHANGE_RULE_MANAGER_ONLY',
+          message: 'Only the manager changes the exchange tolerance and the large-exchange threshold.',
+        });
+      }
 
-      defaultFeeFrequency: input.defaultFeeFrequency,
-      defaultDueDays: input.defaultDueDays,
-      priceDisplay: input.priceDisplay,
-      defaultRatePercent: input.defaultRatePercent,
-      baseCurrency: input.baseCurrency,
-      secondaryCurrency: input.secondaryCurrency,
-      exchangeRate: input.exchangeRate,
-      ...(rateChanged
-        ? { exchangeRateUpdatedAt: input.exchangeRate === null ? null : new Date() }
-        : {}),
+      /*
+        The official rate and the two currencies are the manager's (finance audit
+        A1). Every collector's tender is taken at that rate and every wallet entry
+        stamped with it, so the accountant — who books the money — setting it
+        could move what the notes settle and the change the safe pays out, with
+        each payment then recorded as taken at the official rate. As for the
+        ceilings, the same values sent back are not a change and are not written,
+        so an accountant's save of the section never puts back what the manager
+        changed a moment earlier.
 
-      numberingSequences: input.numberingSequences,
-      backupSchedule: input.backupSchedule,
+        And once the treasury is live the two currencies are fixed for everyone:
+        every wallet holds one of them and the rate is read as ليرة per one unit
+        of the second, so swapping them would invert the meaning of every rate
+        already stamped.
+      */
+      const valueChanged = (sent: number | null | undefined, stored: Prisma.Decimal | null | undefined) =>
+        sent !== undefined && (stored == null ? sent !== null : sent === null || Number(stored) !== sent);
+      const rateChanged = valueChanged(input.exchangeRate, previous?.exchangeRate);
+      const baseChanged = input.baseCurrency !== undefined && input.baseCurrency !== (previous?.baseCurrency ?? 'LBP');
+      const secondaryChanged =
+        input.secondaryCurrency !== undefined && (input.secondaryCurrency ?? null) !== (previous?.secondaryCurrency ?? null);
+      if (!manager && (rateChanged || baseChanged || secondaryChanged)) {
+        throw new ForbiddenError({
+          code: 'FINANCE_SETTINGS_MANAGER_ONLY',
+          message: 'Only the manager changes the official exchange rate and the two currencies.',
+        });
+      }
+      if (previous?.treasuryGoLiveAt && (baseChanged || secondaryChanged)) {
+        throw new ConflictError({
+          code: 'CURRENCIES_LOCKED_AFTER_GO_LIVE',
+          message: 'The base and second currencies cannot change once the treasury is live.',
+        });
+      }
 
-      updatedById: actor.id,
-    };
+      /*
+       * «سقف الدفع العاجل» and «سقف صرف الرواتب» are the manager's (docs/finance.md
+       * §5.1, decision D6; the salary ceiling, 2026-10-12). Each is a limit on
+       * the accountant's own payments, so he may not move them: a change from
+       * anyone outside TREASURY_ADMIN_ROLES is refused, and a form that sends the
+       * value it read is not a change, and is not written either.
+       */
+      if (
+        !manager &&
+        (valueChanged(input.urgentExpenseCeilingLbp, previous?.urgentExpenseCeilingLbp) ||
+          valueChanged(input.urgentExpenseCeilingUsd, previous?.urgentExpenseCeilingUsd) ||
+          valueChanged(input.salaryUrgentCeilingLbp, previous?.salaryUrgentCeilingLbp) ||
+          valueChanged(input.salaryUrgentCeilingUsd, previous?.salaryUrgentCeilingUsd))
+      ) {
+        throw new ForbiddenError({
+          code: 'URGENT_EXPENSE_CEILING_FORBIDDEN',
+          message: 'Only the manager can change the urgent-payment and salary ceilings.',
+        });
+      }
 
-    await this.db.systemSettings.upsert({
-      where: { singleton: true },
-      create: { singleton: true, ...data },
-      update: data,
+      const data = {
+        whishMoneyNumber: blankToNull(input.whishMoneyNumber),
+        cashOfficeHours: blankToNull(input.cashOfficeHours),
+        cashOfficeAddress: blankToNull(input.cashOfficeAddress),
+        contactPhone: blankToNull(input.contactPhone),
+        whatsappNumber: blankToNull(input.whatsappNumber),
+
+        nameAr: blankToNull(input.nameAr),
+        nameEn: blankToNull(input.nameEn),
+        contactEmail: blankToNull(input.contactEmail),
+        website: blankToNull(input.website),
+        governorate: blankToNull(input.governorate),
+        district: blankToNull(input.district),
+        town: blankToNull(input.town),
+        councilDecisionRef: blankToNull(input.councilDecisionRef),
+        logoDataUri: blankToNull(input.logoDataUri),
+
+        defaultFeeFrequency: input.defaultFeeFrequency,
+        defaultDueDays: input.defaultDueDays,
+        priceDisplay: input.priceDisplay,
+        defaultRatePercent: input.defaultRatePercent,
+        // The manager's, checked above; written only by him.
+        baseCurrency: manager ? input.baseCurrency : undefined,
+        secondaryCurrency: manager ? input.secondaryCurrency : undefined,
+        exchangeRate: manager ? input.exchangeRate : undefined,
+        /*
+         * Stamped here, not by the client: the timestamp answers "how stale is
+         * this rate", and only a rate that actually changes moves it.
+         */
+        ...(manager && rateChanged ? { exchangeRateUpdatedAt: input.exchangeRate === null ? null : new Date() } : {}),
+        urgentExpenseCeilingLbp: manager ? input.urgentExpenseCeilingLbp : undefined,
+        urgentExpenseCeilingUsd: manager ? input.urgentExpenseCeilingUsd : undefined,
+        salaryUrgentCeilingLbp: manager ? input.salaryUrgentCeilingLbp : undefined,
+        salaryUrgentCeilingUsd: manager ? input.salaryUrgentCeilingUsd : undefined,
+        // The exchange rule, likewise: checked above, and written only by the manager.
+        exchangeRateTolerancePercent: manager ? input.exchangeRateTolerancePercent : undefined,
+        largeExchangeThreshold: manager ? input.largeExchangeThreshold : undefined,
+
+        numberingSequences: input.numberingSequences,
+        backupSchedule: input.backupSchedule,
+
+        updatedById: actor.id,
+      };
+
+      await tx.systemSettings.update({ where: { singleton: true }, data });
+
+      /*
+        Tier 1, in the save's own transaction (finance audit A1): which fields the
+        save sent, and for the treasury's — the rate, the currencies, the
+        ceilings and the exchange rule — the value before and after, so a rate
+        moved for an afternoon and moved back is on the record with both figures.
+        Before this the row was written after the commit, named the fields only,
+        and could be lost without the change being undone.
+      */
+      const sent = Object.entries(data)
+        .filter(([key, value]) => key !== 'updatedById' && value !== undefined)
+        .map(([key]) => key);
+      const stored = (value: unknown) => (value instanceof Prisma.Decimal ? value.toNumber() : (value ?? null));
+      const financeBefore: Record<string, unknown> = {};
+      const financeAfter: Record<string, unknown> = {};
+      for (const key of FINANCE_SETTING_KEYS) {
+        const next = data[key];
+        if (next === undefined) continue;
+        const before = stored(previous?.[key]);
+        if (before === (next ?? null)) continue;
+        financeBefore[key] = before;
+        financeAfter[key] = next ?? null;
+      }
+      await this.auditTrail.recordInTransaction({
+        actorId: actor.id,
+        actorType: 'STAFF',
+        actorRole: actor.role as never,
+        action: 'SETTINGS_UPDATED',
+        entityType: 'SystemSettings',
+        before: financeBefore,
+        after: { changed: sent, ...financeAfter },
+      });
     });
 
     /*
-     * Dropped before the read below, not left to expire.
+     * Dropped after the commit, not left to expire.
      *
      * Both variants go: a clerk who saves and is then shown the value they
      * replaced would reasonably conclude the save failed and do it again. Five
@@ -842,18 +1207,6 @@ export class FeesService {
      * path owns the invalidation rather than the TTL.
      */
     await this.cache.invalidatePrefix(`settings:${this.tenantContext.tenantSlug}:`);
-
-    this.events.emit('settings.changed', {
-      tenantSlug: this.tenantContext.tenantSlug,
-      actorId: actor.id,
-      actorRole: actor.role,
-      // Only what was actually sent. Listing every column on every save would
-      // make the audit trail claim a clerk edited the exchange rate whenever
-      // they corrected a phone number.
-      changed: Object.entries(data)
-        .filter(([key, value]) => key !== 'updatedById' && value !== undefined)
-        .map(([key]) => key),
-    });
 
     return this.getSettings(true);
   }
@@ -865,7 +1218,7 @@ export class FeesService {
       this.db.feeNotice.findMany({
         orderBy: { createdAt: 'desc' },
         include: {
-          targetCitizen: { select: { firstName: true, lastName: true } },
+          targetCitizen: { select: { firstName: true, lastName: true, residence: true } },
           _count: { select: { payments: true } },
         },
       }),
@@ -883,9 +1236,7 @@ export class FeesService {
       frequency: row.frequency,
       targetType: row.targetType,
       targetCategory: row.targetCategory,
-      targetCitizenName: row.targetCitizen
-        ? `${row.targetCitizen.firstName} ${row.targetCitizen.lastName}`
-        : null,
+      targetCitizenName: row.targetCitizen ? citizenDisplayName(row.targetCitizen, { middleName: false }) : null,
       dueDate: row.dueDate.toISOString(),
       instructions: row.instructions,
       /** How many citizens this notice actually billed. */
@@ -904,6 +1255,21 @@ export class FeesService {
    * residents.
    */
   async issue(input: CreateFeeNotice, actor: { id: string; role: string }) {
+    /*
+      A notice is issued once per press of «إصدار» (finance audit B3). A retry
+      after a lost answer — or a double press past the wizard's lock — carries
+      the same key and is answered with the first notice; before this it created
+      a second notice and billed everyone it targets a second time, since a
+      bill's uniqueness is (citizen, notice, period). Asked here, before the
+      assessment, and again under the key's advisory lock inside the write.
+      The route's schema requires the key; a caller inside the server that
+      sends none (a script, a spec) issues as before, unguarded.
+    */
+    const earlier = input.clientRequestId
+      ? await this.replayNotice(this.db as Prisma.TransactionClient, input)
+      : null;
+    if (earlier) return earlier;
+
     const citizenIds = await this.resolveTargets(input);
 
     if (citizenIds.length === 0) {
@@ -937,8 +1303,12 @@ export class FeesService {
     );
     /** Flats whose occupancy fee is held under review — see `assessCitizen`. Each flat once. */
     const heldUnits = distinctHeld(assessed);
-    /** Flats whose occupancy fee is held as «غير صالحة للسكن» — see `assessCitizen`. Each flat once. */
+    /** Flats held as «غير صالحة للسكن» — exempt from every fee; see `assessCitizen`. Each flat once. */
     const uninhabitableUnits = distinctUninhabitable(assessed);
+    /** Units «معفاة من الرسوم» (0077) — see `assessCitizen`. Each unit once. */
+    const feeExemptUnits = distinctExempt(assessed);
+    /** Co-owned flats the responsible owner pays for, not the person assessed — see `assessCitizen`. Each flat once. */
+    const coOwnerPaidUnits = distinctCoOwnerPaid(assessed);
 
     if (billable.length === 0) {
       /*
@@ -952,9 +1322,14 @@ export class FeesService {
       /*
         Every reason that applies, not the first one: a notice that held three
         flats and exempted five was reported as "everything held", and the
-        clerk went looking for the wrong thing.
+        clerk went looking for the wrong thing. A flat «مالك مسؤول» pays for is
+        a reason too: a notice aimed at the brother who pays nothing matched
+        him, and «لا يوجد مواطنون مطابقون» sent the clerk to the wrong place.
       */
-      if (heldUnits + uninhabitableUnits + exemptedUnits + unassessable.length === 0) {
+      if (
+        heldUnits + uninhabitableUnits + exemptedUnits + feeExemptUnits + coOwnerPaidUnits + unassessable.length ===
+        0
+      ) {
         throw new ConflictError({
           code: 'FEE_NO_MATCHING_CITIZENS',
           message: 'No citizen matches this notice, so nothing was issued',
@@ -962,17 +1337,39 @@ export class FeesService {
       }
       throw new ConflictError({
         code: 'FEE_NOTHING_TO_CHARGE',
-        message: 'Every unit this notice targets is held, exempted or unassessable, so nothing was issued',
+        message:
+          'Every unit this notice targets is held, exempted, paid by another co-owner or unassessable, so nothing was issued',
         params: {
           held: heldUnits,
           uninhabitable: uninhabitableUnits,
           exempted: exemptedUnits,
+          feeExempt: feeExemptUnits,
+          coOwnerPaid: coOwnerPaidUnits,
           unassessable: unassessable.length,
         },
       });
     }
 
+    /*
+      A bare transaction (docs/code-quality.md lists it): everything in it writes
+      through `tx`. It takes `runInTenantTransaction`'s limits (15 s / 60 s),
+      not Prisma's 5 s default: a town-wide notice writes and numbers tens of
+      thousands of bills in here, and past five seconds Prisma closes the
+      transaction under the insert.
+    */
     const result = await this.db.$transaction(async (tx) => {
+      /*
+        Serialised before anything is written; the key names the schema, so two
+        municipalities never wait on each other. Lower-cased: the column is a
+        UUID and compares without case, so the lock key must too.
+      */
+      if (input.clientRequestId) {
+        const lockKey = `${this.tenantContext.schemaName}:fee-notice:${input.clientRequestId.toLowerCase()}`;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
+        const raced = await this.replayNotice(tx, input);
+        if (raced) return { noticeId: raced.noticeId, issued: raced.issued, replayed: true as const };
+      }
+
       const notice = await tx.feeNotice.create({
         data: {
           title: input.title,
@@ -986,10 +1383,13 @@ export class FeesService {
           dueDate,
           instructions: input.instructions ?? null,
           issuedById: actor.id,
+          clientRequestId: input.clientRequestId ?? null,
         },
         select: { id: true },
       });
 
+      // Taken before the insert; see `numberInvoices`.
+      const raisedAt = new Date();
       const created = await tx.citizenPayment.createMany({
         data: billable.map((entry) => ({
           citizenId: entry.citizenId,
@@ -1010,23 +1410,37 @@ export class FeesService {
           // The first period is the one the chosen due date falls in; the
           // recurring job takes over from the next one.
           periodKey: periodKeyFor(input.frequency, dueDate),
+          // Who raised it (0091, finance audit B4).
+          issuedById: actor.id,
         })),
         // The unique (citizenId, feeNoticeId, periodKey) triple means a retried
         // request tops up missing rows instead of failing the whole batch.
         skipDuplicates: true,
       });
 
-      return { noticeId: notice.id, issued: created.count };
-    });
+      await this.numberInvoices(
+        tx,
+        notice.id,
+        periodKeyFor(input.frequency, dueDate),
+        created.count,
+        raisedAt,
+      );
+
+      return { noticeId: notice.id, issued: created.count, replayed: false as const };
+    }, { maxWait: 15_000, timeout: 60_000 });
+
+    // A press that raced the first one and lost: answered from it, and nothing more is written or emitted.
+    if (result.replayed) return this.replayedNoticeResult(result.noticeId, result.issued);
 
     this.logger.log(
       `Fee "${input.title}" issued to ${result.issued} citizen(s) in ${this.tenantContext.tenantSlug}`,
     );
 
     if (unassessable.length > 0) {
+      // Citizens by id, never by name: a log line leaves the database (docs/security.md, logging).
       this.logger.warn(
         `Fee "${input.title}": ${unassessable.length} citizen(s) could not be assessed — ${unassessable
-          .map((entry) => `${entry.name} (${entry.reason})`)
+          .map((entry) => `${entry.citizenId} (${entry.reason})`)
           .join('; ')}`,
       );
     }
@@ -1058,6 +1472,8 @@ export class FeesService {
       exemptedUnitCount: exemptedUnits,
       heldUnitCount: heldUnits,
       uninhabitableUnitCount: uninhabitableUnits,
+      feeExemptUnitCount: feeExemptUnits,
+      coOwnerPaidUnitCount: coOwnerPaidUnits,
       actorId: actor.id,
       actorRole: actor.role,
     });
@@ -1079,11 +1495,98 @@ export class FeesService {
     }
     if (uninhabitableUnits > 0) {
       this.logger.log(
-        `Fee "${input.title}": ${uninhabitableUnits} unit(s) held as uninhabitable (غير صالحة للسكن)`,
+        `Fee "${input.title}": ${uninhabitableUnits} unit(s) not charged as uninhabitable (غير صالحة للسكن)`,
+      );
+    }
+    if (feeExemptUnits > 0) {
+      this.logger.log(`Fee "${input.title}": ${feeExemptUnits} unit(s) exempt from fees (معفاة من الرسوم)`);
+    }
+
+    if (coOwnerPaidUnits > 0) {
+      this.logger.log(
+        `Fee "${input.title}": ${coOwnerPaidUnits} co-owned unit(s) paid by their responsible owner (مالك مسؤول)`,
       );
     }
 
-    return { ...result, unassessable, exemptedUnits, heldUnits, uninhabitableUnits };
+    return {
+      noticeId: result.noticeId,
+      issued: result.issued,
+      replayed: false,
+      unassessable,
+      exemptedUnits,
+      heldUnits,
+      uninhabitableUnits,
+      feeExemptUnits,
+      coOwnerPaidUnits,
+    };
+  }
+
+  /**
+   * The notice a retry key already issued, as `issue` answers it, or null.
+   *
+   * Bound to its act: the same title, figure, basis, bearer, recurrence, target
+   * and due date. A key that issued another notice can only mean a page reused
+   * an id, and answering with that notice would tell the clerk the wrong fee was
+   * raised (`FEE_NOTICE_REQUEST_REUSED`). The counts beside the bills are not
+   * replayed: they described the register as it stood at the first press.
+   */
+  private async replayNotice(tx: Prisma.TransactionClient, input: CreateFeeNotice) {
+    const notice = await tx.feeNotice.findUnique({
+      where: { clientRequestId: input.clientRequestId },
+      select: {
+        id: true,
+        title: true,
+        amount: true,
+        basis: true,
+        bearer: true,
+        frequency: true,
+        targetType: true,
+        targetCategory: true,
+        targetCitizenId: true,
+        dueDate: true,
+      },
+    });
+    if (!notice) return null;
+    const same =
+      notice.title === input.title &&
+      Number(notice.amount) === input.amount &&
+      notice.basis === input.basis &&
+      notice.bearer === input.bearer &&
+      notice.frequency === input.frequency &&
+      notice.targetType === input.targetType &&
+      (notice.targetCategory ?? null) === (input.targetCategory ?? null) &&
+      (notice.targetCitizenId ?? null)?.toLowerCase() === (input.targetCitizenId ?? null)?.toLowerCase() &&
+      notice.dueDate.getTime() === new Date(input.dueDate).getTime();
+    if (!same) {
+      throw new ConflictError({
+        code: 'FEE_NOTICE_REQUEST_REUSED',
+        message: 'This request id was already used to issue a different notice.',
+      });
+    }
+    /*
+      What the first press raised: its own period's bills, the ones it wrote,
+      cancelled since or not. Not every bill of the notice — a recurring notice
+      has raised later periods since, and the press did not raise those.
+    */
+    const issued = await tx.citizenPayment.count({
+      where: { feeNoticeId: notice.id, periodKey: periodKeyFor(notice.frequency, notice.dueDate) },
+    });
+    return this.replayedNoticeResult(notice.id, issued);
+  }
+
+  /** `issue`'s answer for a notice a retry key had already issued. */
+  private replayedNoticeResult(noticeId: string, issued: number) {
+    return {
+      noticeId,
+      issued,
+      replayed: true,
+      unassessable: [] as UnassessableCitizen[],
+      exemptedUnits: 0,
+      heldUnits: 0,
+      uninhabitableUnits: 0,
+      feeExemptUnits: 0,
+      coOwnerPaidUnits: 0,
+    };
   }
 
   /**
@@ -1097,8 +1600,16 @@ export class FeesService {
    * same month writes nothing; there is no "have I already billed?" flag to
    * get out of step with reality. That also means a municipality that adds a
    * resident mid-month gets them billed on the next run rather than never.
+   *
+   * `actor` is the staff member who started the run through `POST
+   * fees/recurring/run` (no screen calls it: the fees page lost its button in
+   * `d346729`); the scheduled run has none, and its audit rows are the system's
+   * (`actorId` NULL, `actorType` SYSTEM).
    */
-  async runRecurringBilling(now = new Date()): Promise<{
+  async runRecurringBilling(
+    now = new Date(),
+    actor?: { id: string; role: string },
+  ): Promise<{
     noticesConsidered: number;
     invoicesCreated: number;
     /** Notices whose own run threw. The rest still ran; see `billing_run_entries`. */
@@ -1153,6 +1664,7 @@ export class FeesService {
         targetType: notice.targetType as never,
         targetCategory: notice.targetCategory ?? undefined,
         targetCitizenId: notice.targetCitizenId ?? undefined,
+        basis: notice.basis,
       } as never);
 
       if (citizenIds.length === 0) {
@@ -1192,11 +1704,28 @@ export class FeesService {
           `Recurring "${notice.title}" (${periodKey}): ${heldUnits} unit(s) held under review (تعارض في حالة الوحدة) — not charged this period`,
         );
       }
-      // Flats nobody can live in this period — logged as the review hold is, never silent.
+      /*
+        Units charged nothing this period — logged, never silent, as `issue`
+        logs them. Not a hold: an uninhabitable unit and an exempt one are
+        settled decisions, and nothing is owed for the period afterwards.
+      */
       const uninhabitableUnits = distinctUninhabitable(assessed);
       if (uninhabitableUnits > 0) {
-        this.logger.warn(
-          `Recurring "${notice.title}" (${periodKey}): ${uninhabitableUnits} unit(s) held as uninhabitable (غير صالحة للسكن) — not charged this period`,
+        this.logger.log(
+          `Recurring "${notice.title}" (${periodKey}): ${uninhabitableUnits} unit(s) not charged as uninhabitable (غير صالحة للسكن)`,
+        );
+      }
+      const feeExemptUnits = distinctExempt(assessed);
+      if (feeExemptUnits > 0) {
+        this.logger.log(
+          `Recurring "${notice.title}" (${periodKey}): ${feeExemptUnits} unit(s) exempt from fees (معفاة من الرسوم)`,
+        );
+      }
+      // Paid in full by their responsible owner — a choice, not a hold, so logged rather than warned.
+      const coOwnerPaidUnits = distinctCoOwnerPaid(assessed);
+      if (coOwnerPaidUnits > 0) {
+        this.logger.log(
+          `Recurring "${notice.title}" (${periodKey}): ${coOwnerPaidUnits} co-owned unit(s) paid by their responsible owner (مالك مسؤول)`,
         );
       }
       if (billable.length === 0) {
@@ -1208,25 +1737,40 @@ export class FeesService {
       }
 
       if (unassessable.length > 0) {
+        // By id, never by name (docs/security.md, logging).
         this.logger.warn(
           `Recurring "${notice.title}" (${periodKey}): ${unassessable.length} citizen(s) not assessed — ${unassessable
-            .map((entry) => `${entry.name} (${entry.reason})`)
+            .map((entry) => `${entry.citizenId} (${entry.reason})`)
             .join('; ')}`,
         );
       }
 
-      const created = await this.db.citizenPayment.createMany({
-        data: billable.map((entry) => ({
-          citizenId: entry.citizenId,
-          feeNoticeId: notice.id,
-          title: notice.title,
-          amount: entry.amount,
-          assessment: (entry.assessment ?? undefined) as never,
-          dueDate,
-          periodKey,
-        })),
-        skipDuplicates: true,
-      });
+      /*
+        The insert and the numbering share a transaction, so a period is never
+        left with bills that carry no number. It holds this month's invoice
+        counter for the length of the batch — acceptable here because the
+        recurring job runs at 2am and is the only thing issuing bills at that
+        hour, and the alternative is a half-numbered period.
+      */
+      const created = await this.db.$transaction(async (tx) => {
+        const inserted = await tx.citizenPayment.createMany({
+          data: billable.map((entry) => ({
+            citizenId: entry.citizenId,
+            feeNoticeId: notice.id,
+            title: notice.title,
+            amount: entry.amount,
+            assessment: (entry.assessment ?? undefined) as never,
+            dueDate,
+            periodKey,
+            // Who started the run (`POST fees/recurring/run`), or nobody for the scheduled run (0091).
+            issuedById: actor?.id ?? null,
+          })),
+          skipDuplicates: true,
+        });
+        await this.numberInvoices(tx, notice.id, periodKey, inserted.count, startedAt);
+        return inserted;
+        // As on the first issue: a period of a town-wide notice is more than five seconds of work.
+      }, { maxWait: 15_000, timeout: 60_000 });
 
       if (created.count > 0) {
         this.logger.log(
@@ -1243,6 +1787,10 @@ export class FeesService {
           periodKey,
           heldUnitCount: heldUnits,
           uninhabitableUnitCount: uninhabitableUnits,
+          feeExemptUnitCount: feeExemptUnits,
+          coOwnerPaidUnitCount: coOwnerPaidUnits,
+          actorId: actor?.id ?? null,
+          actorRole: actor?.role ?? null,
         });
       }
 
@@ -1359,22 +1907,26 @@ export class FeesService {
     targetType: string;
     targetCategory?: string;
     targetCitizenId?: string;
+    /** The notice's basis — a flat charge falls on people, not on estates or institutions. */
+    basis?: string;
   }): Promise<string[]> {
     if (input.targetType === 'INDIVIDUAL_CITIZEN') {
-      const citizen = await this.db.user.findFirst({
-        where: { id: input.targetCitizenId, kind: 'CITIZEN', isActive: true },
-        select: { id: true },
-      });
-      if (!citizen) throw new NotFoundError({
-        code: 'CITIZEN_NOT_FOUND',
-        message: `Citizen ${input.targetCitizenId ?? ''} was not found`,
-      });
-      return [citizen.id];
+      return [await this.chargeableCitizen(input.targetCitizenId)];
     }
 
     if (input.targetType === 'ALL_CITIZENS') {
       const rows = await this.db.user.findMany({
-        where: { kind: 'CITIZEN', isActive: true },
+        where: {
+          kind: 'CITIZEN',
+          isActive: true,
+          /*
+            A flat charge is one per person, and an estate or an institution
+            (0076) is not a person: «ورثة المرحوم …» and «وقف مسجد البلدة» own
+            property and are billed for it by the rate-based notices, never per
+            head. A rate-based notice still reaches them through what they hold.
+          */
+          ...(input.basis === 'FLAT' ? { residence: { notIn: [...NON_PERSON_RESIDENCE] } } : {}),
+        },
         select: { id: true },
       });
       return rows.map((row) => row.id);
@@ -1474,7 +2026,7 @@ export class FeesService {
       bearer?: FeeBearer;
     },
   ): Promise<{ assessed: CitizenAssessment[]; unassessable: UnassessableCitizen[] }> {
-    if (notice.basis === 'FLAT') {
+    if (notice.basis === 'FLAT' && !notice.targetCategory) {
       return {
         assessed: citizenIds.map((citizenId) => ({
           citizenId,
@@ -1483,6 +2035,25 @@ export class FeesService {
         })),
         unassessable: [],
       };
+    }
+
+    if (notice.basis === 'FLAT') {
+      // Per holder — unless all they hold of the category is charged nothing (`flatCategoryCharge`).
+      const targetCategory = notice.targetCategory!;
+      const assessed: CitizenAssessment[] = [];
+      const seen = new Set<string>();
+      for await (const batch of this.holdingsOf(citizenIds)) {
+        for (const holding of batch) {
+          seen.add(holding.citizenId);
+          const charge = flatCategoryCharge(holding.entries, { amount: notice.amount, targetCategory });
+          assessed.push({ citizenId: holding.citizenId, ...charge });
+        }
+      }
+      // Never fewer bills than before: a target the register read did not return is charged as one.
+      for (const citizenId of citizenIds) {
+        if (!seen.has(citizenId)) assessed.push({ citizenId, amount: notice.amount, assessment: null });
+      }
+      return { assessed, unassessable: [] };
     }
 
     const assessed: CitizenAssessment[] = [];
@@ -1503,6 +2074,8 @@ export class FeesService {
           assessment: outcome.assessment,
           heldUnitIds: outcome.heldUnitIds,
           uninhabitableUnitIds: outcome.uninhabitableUnitIds,
+          exemptUnitIds: outcome.exemptUnitIds,
+          coOwnerPaidUnitIds: outcome.coOwnerPaidUnitIds,
         });
       }
     }
@@ -1543,6 +2116,7 @@ export class FeesService {
             id: true,
             firstName: true,
             lastName: true,
+            residence: true,
             registrations: {
               orderBy: { submittedAt: 'desc' },
               take: 1,
@@ -1603,7 +2177,15 @@ export class FeesService {
                         unitArea: true,
                         unitStatus: true,
                         unit: {
-                          select: { id: true, unitType: true, unitArea: true, unitStatus: true, unitCode: true },
+                          select: {
+                            id: true,
+                            unitType: true,
+                            unitArea: true,
+                            unitStatus: true,
+                            unitCode: true,
+                            // «معفاة من الرسوم» (0077) — charged nothing, whoever bears the fee.
+                            feeExemption: true,
+                          },
                         },
                       },
                     },
@@ -1637,6 +2219,7 @@ export class FeesService {
                     unitArea: true,
                     unitStatus: true,
                     unitCode: true,
+                    feeExemption: true,
                   },
                 },
               },
@@ -1662,7 +2245,10 @@ export class FeesService {
         for (const occupancy of row.unitOccupancies) heldHere.add(occupancy.unit.id);
       }
       /** The one flat of each structure a منزل card here names — what the card bills. */
-      const soleUnits = new Map<string, { id: string; unitStatus: string | null }>();
+      const soleUnits = new Map<
+        string,
+        { id: string; unitStatus: string | null; unitCode: string; feeExemption: string | null }
+      >();
       const houseBuildings = [
         ...new Set(
           rows.flatMap((row) =>
@@ -1676,7 +2262,7 @@ export class FeesService {
         const houseUnits = await withConnectionRetry(() =>
           this.db.unit.findMany({
             where: { buildingId: { in: houseBuildings } },
-            select: { id: true, buildingId: true, unitStatus: true },
+            select: { id: true, buildingId: true, unitStatus: true, unitCode: true, feeExemption: true },
           }),
         );
         const perBuilding = new Map<string, typeof houseUnits>();
@@ -1713,6 +2299,27 @@ export class FeesService {
       */
       const settledStatus = (unitId: string | undefined | null, stored: string | null) =>
         unitId && review.has(unitId) ? review.get(unitId)!.status : stored;
+      /*
+        «توزيع الرسم على المالكين» for the co-owned flats among them — every
+        current owner of each, not just this batch's, because one owner's part
+        depends on how many others there are and what أسهم they hold.
+      */
+      const coOwnership =
+        heldHere.size === 0
+          ? new Map()
+          : await withConnectionRetry(() => ownerBillingRules(this.db, [...heldHere]));
+      /** This owner's part of a flat others own too; nothing for a flat they own alone. */
+      const ownerShareFor = (
+        unitId: string | undefined | null,
+        citizenId: string,
+      ): { ownerShare?: { mode: string; numerator: number; denominator: number }; ownerShareUndecidable?: boolean } => {
+        const rule = unitId ? coOwnership.get(unitId) : undefined;
+        if (!rule) return {};
+        const outcome = ownerShareOf(rule, citizenId);
+        if (outcome.kind === 'SHARE') return { ownerShare: outcome.share };
+        if (outcome.kind === 'UNDECIDABLE') return { ownerShareUndecidable: true };
+        return {};
+      };
       const reviewedSoleUnit = new Set(
         [...review.values()]
           .filter((fact) => fact.soleUnitOfBuilding && fact.conflicts.length > 0)
@@ -1736,6 +2343,10 @@ export class FeesService {
           underReview: boolean;
           uninhabitable: boolean;
           unitId: string;
+          unitCode: string;
+          ownerShare?: { mode: string; numerator: number; denominator: number };
+          ownerShareUndecidable?: boolean;
+          exempt: boolean;
         }>>();
         for (const occupancy of row.unitOccupancies) {
           const buildingId = occupancy.unit.buildingId;
@@ -1748,6 +2359,9 @@ export class FeesService {
             unitStatus: settledStatus(occupancy.unit.id, occupancy.unit.unitStatus),
             underReview: underReview(occupancy.unit.id),
             uninhabitable: uninhabitable(occupancy.unit.id),
+            unitCode: occupancy.unit.unitCode,
+            exempt: occupancy.unit.feeExemption !== null,
+            ...(occupancy.role === 'OWNER' ? ownerShareFor(occupancy.unit.id, row.id) : {}),
           });
           occupanciesByBuilding.set(buildingId, list);
         }
@@ -1787,6 +2401,9 @@ export class FeesService {
                   const sole = soleUnits.get(card.buildingId!)!;
                   return {
                     soleUnitId: sole.id,
+                    soleUnitCode: sole.unitCode,
+                    exempt: sole.feeExemption !== null,
+                    ...(card.occupancyType === 'OWNER' ? ownerShareFor(sole.id, row.id) : {}),
                     uninhabitable: uninhabitable(sole.id),
                     /*
                       A منزل card that states nothing bills by its flat's answer —
@@ -1807,6 +2424,8 @@ export class FeesService {
                     unitStatus: settledStatus(line.unit.id, line.unit.unitStatus) as never,
                     underReview: underReview(line.unit.id),
                     uninhabitable: uninhabitable(line.unit.id),
+                    exempt: line.unit.feeExemption !== null,
+                    ...(card.occupancyType === 'OWNER' ? ownerShareFor(line.unit.id, row.id) : {}),
                   }
                 : line.unit,
             })),
@@ -1827,7 +2446,7 @@ export class FeesService {
 
         return {
           citizenId: row.id,
-          name: [row.firstName, row.lastName].filter(Boolean).join(' '),
+          name: citizenDisplayName(row, { middleName: false }),
           entries: entries as unknown as BillablePropertyEntry[],
           buildingIds: [...buildingIds],
           unitCodes: [...unitCodes],
@@ -1854,7 +2473,8 @@ export class FeesService {
       title: row.title,
       amount: Number(row.amount),
       paidAmount: Number(row.paidAmount),
-      remaining: Math.max(Number(row.amount) - Number(row.paidAmount), 0),
+      // A cancelled bill (0090) owes nothing.
+      remaining: row.paymentStatus === 'CANCELLED' ? 0 : Math.max(Number(row.amount) - Number(row.paidAmount), 0),
       currency: row.currency,
       dueDate: row.dueDate.toISOString(),
       // OVERDUE is derived on read rather than written by a nightly job: a
@@ -1939,8 +2559,22 @@ export class FeesService {
     paymentId: string;
     citizenId: string;
     method: DeclarePayment['method'];
-    whishTransactionRef?: string;
+    whishTransactionRef: string;
   }) {
+    /*
+      A Whish Money transfer with its reference, and nothing else (open-decisions
+      §21): cash is paid at the office, an instruction and never a claim. A cash
+      "declaration" put the bill in review with no money taken, where the counter
+      cannot settle it until a clerk rejects the claim. `declarePaymentSchema`
+      refuses it at the route; this holds for any caller, before anything is
+      read (review of PR #122).
+    */
+    if ((input.method as string) !== 'WHISH_MONEY' || !input.whishTransactionRef?.trim()) {
+      throw new ValidationError({
+        code: 'PAYMENT_DECLARATION_WHISH_ONLY',
+        message: 'A citizen reports a Whish Money transfer with its reference only; cash is paid at the office.',
+      });
+    }
     const payment = await this.db.citizenPayment.findFirst({
       where: { id: input.paymentId, citizenId: input.citizenId },
       select: { id: true, paymentStatus: true },
@@ -1953,6 +2587,13 @@ export class FeesService {
     // Kept ahead of the write: this is what separates "not yours / no such
     // invoice" from the two specific states a citizen can act on. The
     // predicate below only fires on the genuine race.
+    // A bill the manager cancelled (0090) owes nothing and takes no claim.
+    if (payment.paymentStatus === 'CANCELLED') {
+      throw new ConflictError({
+        code: 'PAYMENT_BILL_CANCELLED',
+        message: 'This bill has been cancelled; it takes no payment.',
+      });
+    }
     if (payment.paymentStatus === 'PAID') {
       throw new ConflictError({
         code: 'PAYMENT_ALREADY_PAID',
@@ -1975,7 +2616,7 @@ export class FeesService {
       guard: { citizenId: input.citizenId },
       data: {
         paymentMethod: input.method as never,
-        whishTransactionRef: input.whishTransactionRef ?? null,
+        whishTransactionRef: input.whishTransactionRef.trim(),
         isSeen: false,
         // Cleared so a previous rejection's note does not sit alongside a
         // fresh claim as though it applied to it.
@@ -2013,7 +2654,7 @@ export class FeesService {
         orderBy: { updatedAt: 'desc' },
         include: {
           citizen: {
-            select: { id: true, firstName: true, lastName: true, phone: true, referenceNumber: true },
+            select: { id: true, firstName: true, lastName: true, phone: true, referenceNumber: true, residence: true },
           },
         },
       }),
@@ -2024,14 +2665,16 @@ export class FeesService {
       title: row.title,
       amount: Number(row.amount),
       paidAmount: Number(row.paidAmount),
-      remaining: Math.max(Number(row.amount) - Number(row.paidAmount), 0),
+      // A cancelled bill (0090) owes nothing.
+      remaining: row.paymentStatus === 'CANCELLED' ? 0 : Math.max(Number(row.amount) - Number(row.paidAmount), 0),
       currency: row.currency,
       dueDate: row.dueDate.toISOString(),
       paymentMethod: row.paymentMethod,
       whishTransactionRef: row.whishTransactionRef,
       isSeen: row.isSeen,
       citizenId: row.citizen.id,
-      citizenName: `${row.citizen.firstName} ${row.citizen.lastName}`,
+      // «ورثة المرحوم …» for an estate (0076): the heirs owe, not the deceased.
+      citizenName: citizenDisplayName(row.citizen, { middleName: false }),
       citizenPhone: row.citizen.phone,
       citizenReference: row.citizen.referenceNumber,
     }));
@@ -2158,6 +2801,28 @@ export class FeesService {
       return { paymentStatus: 'UNPAID' as const };
     }
 
+    /*
+      A claim that is a Whish checkout set aside as MISMATCHED (0090): the
+      provider reported another amount, or the bill moved on while the citizen
+      paid. Confirming it would bank the whole balance under the checkout's own
+      reference for money nobody has matched to it. The clerk refuses the claim
+      and records what the provider shows at the counter, under the provider's
+      reference (decision of 2026-10-13).
+    */
+    if (payment.whishTransactionRef) {
+      const checkout = await this.db.whishCheckout.findUnique({
+        where: { externalRef: payment.whishTransactionRef },
+        select: { paymentId: true, state: true, externalRef: true, providerTxnRef: true },
+      });
+      if (checkout?.paymentId === payment.id && checkout.state === 'MISMATCHED') {
+        throw new ConflictError({
+          code: 'PAYMENT_CHECKOUT_MISMATCHED',
+          message: 'This Whish payment did not match its checkout and was not banked; refuse the claim and record what Whish shows.',
+          params: { reference: checkout.providerTxnRef ?? checkout.externalRef },
+        });
+      }
+    }
+
     /**
      * The citizen declared a transfer for the whole *outstanding* balance —
      * the portal offers no way to declare part of one — so confirming it
@@ -2180,6 +2845,8 @@ export class FeesService {
       externalRef: payment.whishTransactionRef,
       recordedById: input.actor.id,
       note: input.note,
+      // This is the decision the claim waits for; every other ledger write is refused while it waits.
+      resolvesClaim: true,
       audit: (movement) => ({
         actorId: input.actor.id,
         actorType: 'STAFF',
@@ -2215,6 +2882,33 @@ export class FeesService {
    * Kept separate from `issue` because it is a different act: no rule, no
    * recurrence, nothing to re-run next month.
    */
+  /**
+   * The one citizen a new fee is raised on — «تكليف مباشر», or a notice aimed
+   * at one person — checked the same way for both: on file, not folded into
+   * another by «دمج ملفين» (a bill there is one the person never sees), and
+   * not archived. An archived file takes no new fees: that is what archiving
+   * promises («لا رسوم جديدة»), and the biller and every notice for a group
+   * already skip it. Each refusal says which it is.
+   */
+  private async chargeableCitizen(citizenId: string | undefined): Promise<string> {
+    const citizen = await this.db.user.findFirst({
+      where: { id: citizenId, kind: 'CITIZEN' },
+      select: { id: true, isActive: true },
+    });
+    if (!citizen) throw new NotFoundError({
+      code: 'CITIZEN_NOT_FOUND',
+      message: `Citizen ${citizenId ?? ''} was not found`,
+    });
+    await assertNotMergedAway(this.db, citizen.id);
+    if (!citizen.isActive) {
+      throw new ConflictError({
+        code: 'FEE_CITIZEN_ARCHIVED',
+        message: 'This citizen file is archived, and an archived file takes no new fees',
+      });
+    }
+    return citizen.id;
+  }
+
   async chargeIndividual(input: {
     citizenId: string;
     title: string;
@@ -2222,35 +2916,139 @@ export class FeesService {
     dueDate: string;
     actor: { id: string; role: string };
   }) {
-    const citizen = await this.db.user.findFirst({
-      where: { id: input.citizenId, kind: 'CITIZEN' },
-      select: { id: true },
-    });
-    if (!citizen) throw new NotFoundError({
-      code: 'CITIZEN_NOT_FOUND',
-      message: `Citizen ${input.citizenId} was not found`,
-    });
-    // A bill on a file folded into another is one the person never sees.
-    await assertNotMergedAway(this.db, citizen.id);
+    // An archived file takes no new fees (develop, 0a5f6db); `raiseOneOffBill` refuses it too.
+    await this.chargeableCitizen(input.citizenId);
 
-    const created = await this.db.citizenPayment.create({
-      data: {
-        citizenId: citizen.id,
+    /*
+      One bill, so the number goes straight into the row rather than through
+      `numberInvoices` — there is no notice to scope an after-the-fact update
+      by, and nothing here is skipped as a duplicate. The checks, the number and
+      the row are `raiseOneOffBill`, which a municipal request also raises its
+      fee through, inside its own transaction.
+
+      Tier 1, in the same transaction (finance audit B4): a one-off charge has no
+      notice behind it, so until this the bill was the only trace of it and named
+      nobody. The row names who raised it (`issuedById`, 0091) and the audit row
+      says what and how much; the title is the clerk's own words, not the
+      citizen's data.
+    */
+    const created = await runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.db as Prisma.TransactionClient;
+      const bill = await raiseOneOffBill(tx, this.S, {
+        citizenId: input.citizenId,
         title: input.title,
         amount: input.amount,
         dueDate: new Date(input.dueDate),
-      },
-      select: { id: true },
+        issuedById: input.actor.id,
+      });
+      await this.auditTrail.recordInTransaction({
+        actorId: input.actor.id,
+        actorType: 'STAFF',
+        actorRole: input.actor.role as never,
+        action: 'FEE_INDIVIDUAL_LEVIED',
+        entityType: 'Payment',
+        entityId: bill.id,
+        after: {
+          citizenId: input.citizenId,
+          invoiceNumber: bill.invoiceNumber,
+          title: input.title,
+          amount: input.amount,
+          currency: bill.currency,
+          dueDate: input.dueDate,
+        },
+      });
+      return { id: bill.id };
+    });
+
+    // For the caches that count bills; the audit row is already written.
+    this.events.emit('fee.issued', {
+      tenantSlug: this.tenantContext.tenantSlug,
+      noticeId: null,
+      title: input.title,
+      amount: input.amount,
+      targetType: 'INDIVIDUAL_CITIZEN',
+      issuedCount: 1,
+      actorId: input.actor.id,
+      actorRole: input.actor.role,
+      alreadyAudited: true,
     });
 
     return { id: created.id };
+  }
+
+  /**
+   * Puts «INV-2610-0001» on the bills just raised, in the order they were created.
+   *
+   * Numbered **after** the insert rather than in it, because `createMany` runs
+   * with `skipDuplicates`: a block reserved beforehand would be sized to what we
+   * meant to write, and a re-run that inserts nothing would burn a month's worth
+   * of numbers on documents that do not exist. `count` is `createMany`'s own
+   * return, so exactly as many numbers are drawn as there are rows to carry them.
+   *
+   * `since` is taken before the insert and is what keeps this off bills raised
+   * earlier. Without it, a recurring notice re-billed for a period that was
+   * already billed before migration 0079 would hand this run's numbers to those
+   * older, unnumbered rows — the oldest first, by this very ordering — and leave
+   * the new ones blank. Bills issued before 0079 stay unnumbered on purpose.
+   *
+   * The numbers are formatted once, in TypeScript, and carried into the
+   * statement as one `text[]` parameter, unnested with their position: building
+   * them in SQL instead would be a second copy of `formatDocumentNumber` waiting
+   * to drift from the first. One array, not a VALUES list of pairs — Postgres
+   * takes at most 32,767 bind variables in a statement, so two per bill failed
+   * from 16,384 bills, a town-wide notice, and rolled the whole issue back.
+   *
+   * `createdAt` is a zoneless `timestamp` holding UTC wall-clock time, and a bound
+   * `Date` arrives as `timestamptz`, so a bare `>=` converts the column through the
+   * session time zone: correct in UTC, and 0 rows matched (the issue rolled back)
+   * on a database set to Asia/Beirut. `since` is brought to the column instead.
+   *
+   * `createdAt >= since` relies on Prisma stamping `@default(now())` itself, at
+   * the moment of the insert, after `since` was read. Were the column filled by
+   * the database's own default — the transaction's start, which is before
+   * `since` — nothing would match. So the count is checked, and a mismatch
+   * rolls the issue back instead of leaving a period half-numbered.
+   */
+  private async numberInvoices(
+    tx: Prisma.TransactionClient,
+    noticeId: string,
+    periodKey: string,
+    count: number,
+    since: Date,
+  ): Promise<void> {
+    if (count < 1) return;
+
+    const numbers = await allocateDocumentNumbers(tx, this.S, 'INVOICE', count);
+
+    const numbered = await tx.$executeRaw`
+      WITH ordered AS (
+        SELECT "id", row_number() OVER (ORDER BY "createdAt", "id") AS "rn"
+          FROM ${this.S}citizen_payments
+         WHERE "feeNoticeId" = ${noticeId}::uuid
+           AND "periodKey" = ${periodKey}
+           AND "invoiceNumber" IS NULL
+           AND "createdAt" >= (${since}::timestamptz AT TIME ZONE 'UTC')
+      ),
+      assigned AS (
+        SELECT drawn."number", drawn."rn"
+          FROM unnest(${numbers}::text[]) WITH ORDINALITY AS drawn("number", "rn")
+      )
+      UPDATE ${this.S}citizen_payments AS p
+         SET "invoiceNumber" = assigned."number"
+        FROM ordered, assigned
+       WHERE assigned."rn" = ordered."rn"
+         AND p."id" = ordered."id"
+    `;
+    if (numbered !== count) {
+      throw new Error(`numberInvoices: numbered ${numbered} of the ${count} bills raised on notice ${noticeId}`);
+    }
   }
 
   /** The include this app always joins onto a `CitizenPayment` for admin use — kept
    *  in one place so `getPaymentById` and `listAllPayments` read the identical shape. */
   private readonly ADMIN_PAYMENT_INCLUDE = {
     citizen: {
-      select: { id: true, firstName: true, lastName: true, phone: true, referenceNumber: true },
+      select: { id: true, firstName: true, lastName: true, phone: true, referenceNumber: true, residence: true },
     },
     collectedBy: { select: { firstName: true, lastName: true } },
     feeNotice: { select: { frequency: true } },
@@ -2263,17 +3061,25 @@ export class FeesService {
   ) {
     return {
       id: row.id,
+      /** «INV-…», or null for a bill raised before migration 0079. */
+      invoiceNumber: row.invoiceNumber,
       title: row.title,
       amount: Number(row.amount),
       paidAmount: Number(row.paidAmount),
-      remaining: Math.max(Number(row.amount) - Number(row.paidAmount), 0),
+      // A cancelled bill (0090) owes nothing.
+      remaining: row.paymentStatus === 'CANCELLED' ? 0 : Math.max(Number(row.amount) - Number(row.paidAmount), 0),
       currency: row.currency,
       dueDate: row.dueDate.toISOString(),
+      /** When the bill was raised — the tie-break of «oldest first» in a bulk settlement. */
+      createdAt: row.createdAt.toISOString(),
       paymentStatus:
         row.paymentStatus === 'UNPAID' && row.dueDate < now ? 'OVERDUE' : row.paymentStatus,
       paymentMethod: row.paymentMethod,
       whishTransactionRef: row.whishTransactionRef,
       paidAt: row.paidAt?.toISOString() ?? null,
+      /** «إلغاء الفاتورة» (0091): when, and why. Null on every bill still standing. */
+      cancelledAt: row.cancelledAt?.toISOString() ?? null,
+      cancellationReason: row.cancellationReason,
       /**
        * Exposed because `paidAt` is not the whole answer.
        *
@@ -2301,7 +3107,8 @@ export class FeesService {
        */
       assessment: (row.assessment as FeeAssessment | null) ?? null,
       citizenId: row.citizen.id,
-      citizenName: `${row.citizen.firstName} ${row.citizen.lastName}`,
+      // «ورثة المرحوم …» for an estate (0076): the heirs owe, not the deceased.
+      citizenName: citizenDisplayName(row.citizen, { middleName: false }),
       citizenPhone: row.citizen.phone,
       citizenReference: row.citizen.referenceNumber,
     };
@@ -2679,10 +3486,11 @@ export class FeesService {
    * against somebody else's invoice — which would let them *pay* it, but also
    * disclose its amount and title in the process.
    *
-   * In sandbox the invoice moves to PENDING_REVIEW, which is precisely what the
-   * existing manual declaration does and is the honest state: the citizen has
-   * said they are paying, and nothing has confirmed it. It reaches PAID only
-   * through `settleFromWhishCallback`, behind a verified signature.
+   * Refused with `ONLINE_PAYMENT_UNAVAILABLE` until the gateway is live (below).
+   * Once it is, the invoice moves to PENDING_REVIEW while the citizen is at the
+   * provider, and reaches PAID only through `settleFromWhishCallback`, behind a
+   * verified signature. The sandbox's own path to PENDING_REVIEW — no money, a
+   * reference no statement shows — is no longer reachable from here.
    */
   async startWhishCheckout(input: {
     paymentId: string;
@@ -2690,6 +3498,24 @@ export class FeesService {
     callbackUrl: string;
     returnUrl: string;
   }): Promise<{ redirectUrl: string; pending: boolean }> {
+    /*
+      Paused until Whish gives the municipality its API (the product owner's
+      decision of 2026-10-13, open-decisions §21): citizens pay at the
+      municipality. Refused before anything is read or written, because the
+      sandbox below is not a payment — it moved the bill to PENDING_REVIEW under
+      a WSH- reference of our own that no Whish statement can show, and a bill in
+      review cannot be settled at the counter until a clerk rejects the claim.
+      Lifts when the gateway is live — `isLive` is `WHISH_API_URL` and
+      `WHISH_API_KEY` set, nothing more — which must not happen before
+      `postCheckout` is written (the reopening order in open-decisions §21).
+    */
+    if (!this.whish.isLive) {
+      throw new ConflictError({
+        code: 'ONLINE_PAYMENT_UNAVAILABLE',
+        message: 'Online payment is paused; pay at the municipality.',
+      });
+    }
+
     const payment = await this.db.citizenPayment.findUnique({
       where: { id: input.paymentId },
       select: {
@@ -2699,7 +3525,7 @@ export class FeesService {
         paidAmount: true,
         currency: true,
         paymentStatus: true,
-        citizen: { select: { firstName: true, lastName: true } },
+        citizen: { select: { firstName: true, lastName: true, residence: true } },
       },
     });
 
@@ -2709,6 +3535,13 @@ export class FeesService {
       throw new NotFoundError({
         code: 'PAYMENT_NOT_FOUND',
         message: `Payment ${input.paymentId} was not found`,
+      });
+    }
+    // A bill the manager cancelled (0090) owes nothing and takes no claim.
+    if (payment.paymentStatus === 'CANCELLED') {
+      throw new ConflictError({
+        code: 'PAYMENT_BILL_CANCELLED',
+        message: 'This bill has been cancelled; it takes no payment.',
       });
     }
     if (payment.paymentStatus === 'PAID') {
@@ -2736,7 +3569,7 @@ export class FeesService {
       paymentId: payment.id,
       amount: outstanding,
       currency: payment.currency,
-      citizenName: `${payment.citizen.firstName} ${payment.citizen.lastName}`,
+      citizenName: citizenDisplayName(payment.citizen, { middleName: false }),
       callbackUrl: input.callbackUrl,
       returnUrl: input.returnUrl,
     });
@@ -2825,12 +3658,15 @@ export class FeesService {
   /**
    * Applies a verified Whish callback.
    *
-   * Idempotent by construction: it matches on `whishTransactionRef` and skips
-   * anything already PAID, because a provider that does not get a 200 will
-   * retry, and a retry must not take the money twice or stamp a second
-   * `paidAt`. A failed callback returns the invoice to UNPAID and clears the
-   * reference, so the citizen can start again rather than being stuck behind a
-   * PENDING_REVIEW that will never resolve.
+   * Idempotent by construction: a callback resolves to one checkout, a closed
+   * checkout takes nothing more, and the ledger write is keyed by the checkout's
+   * id and closes it in the same transaction — a provider that does not get a
+   * 200 retries, and a retry must not take the money twice. A success is banked
+   * only for the amount the checkout quoted and only while the bill can take it;
+   * otherwise the checkout is set aside, MISMATCHED, for a clerk
+   * (`markWhishCheckoutMismatched`). A failed callback returns the invoice to
+   * UNPAID and clears the reference, so the citizen can start again rather than
+   * being stuck behind a PENDING_REVIEW that will never resolve.
    */
   async settleFromWhishCallback(callback: WhishCallback): Promise<{ applied: boolean }> {
     /*
@@ -2857,6 +3693,7 @@ export class FeesService {
         id: true,
         state: true,
         paymentId: true,
+        amount: true,
         payment: {
           select: { id: true, amount: true, paidAmount: true, paymentStatus: true, citizenId: true },
         },
@@ -2878,13 +3715,17 @@ export class FeesService {
     }
 
     const payment = checkout.payment;
-    /**
-     * Idempotent by construction: a provider that does not get a 200 retries,
-     * and a retry must not bank the money twice or stamp a second `paidAt`.
-     */
-    if (payment.paymentStatus === 'PAID') return { applied: false };
 
     if (!callback.succeeded) {
+      // Nothing moved, and a bill settled or cancelled another way has nothing to undo; the
+      // attempt is still over, so the checkout is closed rather than left OPEN for ever.
+      if (payment.paymentStatus === 'PAID' || payment.paymentStatus === 'CANCELLED') {
+        await this.db.whishCheckout.updateMany({
+          where: { id: checkout.id, state: 'OPEN' },
+          data: { state: 'FAILED', settledAt: new Date(), providerTxnRef: callback.transactionRef ?? null },
+        });
+        return { applied: false };
+      }
       /*
         No money moved, so nothing is written to the ledger. The invoice goes
         back to UNPAID so the citizen can start again rather than being stuck
@@ -2936,82 +3777,79 @@ export class FeesService {
       return { applied: count > 0 };
     }
 
-    /**
-     * The provider is the authority on what it took, but it must not exceed
-     * what was still owed — a mismatch is a bug or a tampered payload, and
-     * banking more than the balance would silently create a credit this system
-     * has no way to represent.
-     *
-     * Capped against the *outstanding* balance rather than the invoice face
-     * value, because `startWhishCheckout` quotes the outstanding figure to the
-     * provider: on a part-settled invoice those two differ, and the face value
-     * is the wrong ceiling.
-     *
-     * The ledger recomputes both under a row lock and refuses an overpayment
-     * itself; this only keeps a legitimate callback from being rejected for
-     * arithmetic the provider did correctly.
-     */
-    const outstanding = Number(payment.amount) - Number(payment.paidAmount);
-    const received = Math.min(callback.amount, outstanding);
-
-    if (received <= 0) return { applied: false };
-
-    const settled = await this.ledger.record({
-      paymentId: payment.id,
-      amount: received,
-      method: 'WHISH_MONEY',
-      externalRef: callback.transactionRef,
-      note: 'دفع إلكتروني عبر Whish',
-      /*
-        A system row: no staff member acted. `actorId` is a uuid column and
-        `actorRole` the staff-role enum, so the provider is named in `after`.
-        Before this, the row was written with `actorId: 'WHISH'`, which the
-        database refused — and the refusal was caught and logged, so no Whish
-        settlement had ever been audited.
-      */
-      audit: (movement) => ({
-        actorId: null,
-        actorType: 'SYSTEM',
-        action: 'PAYMENT_CONFIRMED',
-        entityType: 'Payment',
-        entityId: payment.id,
-        after: {
-          citizenId: payment.citizenId,
-          confirmed: true,
-          provider: 'WHISH',
-          receiptNumber: movement.receiptNumber,
-          amount: movement.received,
-          externalRef: callback.transactionRef ?? null,
-        },
-      }),
-    });
+    /*
+      The provider is the authority on what it took, and what it took must be
+      what was quoted (finance audit B5). `startWhishCheckout` quoted the bill's
+      outstanding balance and wrote it on the checkout; a success for any other
+      amount — a part payment, a tampered payload, or a bill paid another way
+      since — is not banked by arithmetic here but set aside, MISMATCHED, for a
+      clerk. Before this the smaller of the two was credited, so an online
+      overpayment vanished with nothing owed back to the citizen on record.
+    */
+    const quoted = Number(checkout.amount);
+    if (Math.abs(callback.amount - quoted) >= 0.005) {
+      await this.markWhishCheckoutMismatched(checkout, callback, 'AMOUNT_DIFFERS');
+      return { applied: false };
+    }
 
     /*
-      Closed after the ledger, not with it.
-
-      `ledger.record` holds the invoice under `SELECT … FOR UPDATE` and is the
-      authority on whether the money was banked; joining it to this write would
-      mean a failure to close the checkout could roll back a settlement that
-      genuinely happened. The wrong way round: money banked with a checkout
-      still OPEN is a retry that finds `state !== 'OPEN'` and declines, which is
-      correct. Money not banked because bookkeeping failed is not.
+      The money and the checkout's close in one transaction, keyed by the
+      checkout: `clientRequestId` is its id, so a provider retry — or two
+      deliveries of one callback at the same moment — meets the first receipt in
+      the ledger's own replay and never banks it twice. Before this the checkout
+      was closed after the ledger committed, in a step whose failure was only
+      logged, and a retry in that window credited the bill again.
     */
-    await this.db.whishCheckout
-      .updateMany({
-        where: { id: checkout.id, state: 'OPEN' },
-        data: {
-          state: 'SUCCEEDED',
-          settledAt: new Date(),
-          providerTxnRef: callback.transactionRef ?? null,
-        },
-      })
-      .catch((error: unknown) => {
-        this.logger.error(
-          `settled ${callback.externalRef} but could not close its checkout row: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
+    let settled: Awaited<ReturnType<PaymentLedgerService['recordIn']>>;
+    try {
+      settled = await runInTenantTransaction(this.tenantContext, async () => {
+        const tx = this.db as Prisma.TransactionClient;
+        const movement = await this.ledger.recordIn(tx, {
+          paymentId: payment.id,
+          amount: quoted,
+          method: 'WHISH_MONEY',
+          externalRef: callback.transactionRef,
+          note: 'دفع إلكتروني عبر Whish',
+          // The provider's verified word settles the claim `startWhishCheckout` put the bill under —
+          // that claim only: one the citizen declared since is not this money's to decide.
+          resolvesClaim: true,
+          claimRef: callback.externalRef,
+          clientRequestId: checkout.id,
+          /*
+            A system row: no staff member acted. `actorId` is a uuid column and
+            `actorRole` the staff-role enum, so the provider is named in `after`.
+          */
+          audit: (row) => ({
+            actorId: null,
+            actorType: 'SYSTEM',
+            action: 'PAYMENT_CONFIRMED',
+            entityType: 'Payment',
+            entityId: payment.id,
+            after: {
+              citizenId: payment.citizenId,
+              confirmed: true,
+              provider: 'WHISH',
+              receiptNumber: row.receiptNumber,
+              amount: row.received,
+              externalRef: callback.transactionRef ?? null,
+            },
+          }),
+        });
+        await tx.whishCheckout.updateMany({
+          where: { id: checkout.id, state: 'OPEN' },
+          data: { state: 'SUCCEEDED', settledAt: new Date(), providerTxnRef: callback.transactionRef ?? null },
+        });
+        return movement;
       });
+    } catch (error) {
+      // The bill cannot take this money as it stands: a person decides, from the provider's record.
+      if (error instanceof DomainError && WHISH_UNBANKABLE.has(error.code)) {
+        await this.markWhishCheckoutMismatched(checkout, callback, error.code);
+        return { applied: false };
+      }
+      throw error;
+    }
+    if (settled.replayed) return { applied: false };
 
     this.events.emit('payment.reviewed', {
       tenantSlug: this.tenantContext.tenantSlug,
@@ -3024,6 +3862,55 @@ export class FeesService {
     });
 
     return { applied: true };
+  }
+
+  /**
+   * A success callback this system cannot bank as it stands (finance audit B5):
+   * an amount other than the one quoted, or a bill that was settled, cancelled
+   * or part-paid another way while the citizen paid online, or a provider
+   * reference already on a receipt. The money moved at the provider, so the
+   * checkout is neither FAILED nor SUCCEEDED: it becomes MISMATCHED (0090),
+   * nothing is credited, and a Tier 1 row says what came in and why it was not
+   * banked. The bill is left as it is — under review when the checkout put it
+   * there — and a clerk decides from the provider's record: refuse the claim and
+   * record what the provider shows at the counter, under the provider's
+   * reference, or refund the citizen. Confirming the claim as it stands is
+   * refused (`PAYMENT_CHECKOUT_MISMATCHED`, `review`): it would bank the whole
+   * balance for money nobody has matched to it (decision of 2026-10-13).
+   *
+   * Raises no refusal of its own, so the controller answers 200 and the provider
+   * stops retrying; only a database failure escapes, and the provider's retry
+   * then reaches this again.
+   */
+  private async markWhishCheckoutMismatched(
+    checkout: { id: string; amount: Prisma.Decimal; paymentId: string },
+    callback: WhishCallback,
+    reason: string,
+  ): Promise<void> {
+    await runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.db as Prisma.TransactionClient;
+      const { count } = await tx.whishCheckout.updateMany({
+        where: { id: checkout.id, state: 'OPEN' },
+        data: { state: 'MISMATCHED', settledAt: new Date(), providerTxnRef: callback.transactionRef ?? null },
+      });
+      if (count === 0) return;
+      await this.auditTrail.recordInTransaction({
+        actorId: null,
+        actorType: 'SYSTEM',
+        action: 'WHISH_CHECKOUT_MISMATCHED',
+        entityType: 'Payment',
+        entityId: checkout.paymentId,
+        after: {
+          provider: 'WHISH',
+          checkoutId: checkout.id,
+          externalRef: callback.transactionRef ?? null,
+          quoted: Number(checkout.amount),
+          reported: callback.amount,
+          reason,
+        },
+      });
+    });
+    this.logger.warn(`Whish callback for ${callback.externalRef} not banked: ${reason}`);
   }
 
   /**
@@ -3040,6 +3927,10 @@ export class FeesService {
    * carries. Anything *more* is refused rather than quietly recorded as
    * credit — this system has no notion of an overpayment to carry forward, so
    * accepting one would silently lose the difference.
+   *
+   * A bill carrying a citizen's claim (PENDING_REVIEW) is refused by the ledger
+   * (`PAYMENT_CLAIM_UNDER_REVIEW`) until a clerk confirms or rejects the claim:
+   * a counter entry would otherwise overwrite it without deciding it.
    */
   async settleInPerson(input: {
     paymentId: string;
@@ -3062,107 +3953,167 @@ export class FeesService {
     clientRequestId?: string;
     actor: { id: string; role: string };
   }) {
-    /**
-     * The outstanding balance, read only to default `amount`.
-     *
-     * Deliberately *not* the figure the settlement is computed from: this read
-     * is outside any lock, so it can be stale by the time the write happens.
-     * `PaymentLedgerService.record` re-reads under `SELECT … FOR UPDATE` and
-     * validates against that, which is what makes two clerks settling the same
-     * invoice in the same second safe. This value only answers "how much did
-     * they mean, when they typed nothing?".
-     */
-    const invoice = await this.db.citizenPayment.findUnique({
-      where: { id: input.paymentId },
-      select: { amount: true, paidAmount: true, citizenId: true, currency: true },
-    });
-    if (!invoice) throw new NotFoundError({
-      code: 'PAYMENT_NOT_FOUND',
-      message: `Payment ${input.paymentId} was not found`,
-    });
+    /*
+      What a collector may record (finance audit B1; the owner's decision of
+      2026-10-12). Cash he takes goes into his own custody: method COLLECTOR,
+      himself named — never `CASH`, which credits the safe while the notes are in
+      his pocket, and never another collector, whose custody would then owe money
+      he never held. A citizen who transfers by Whish at the door is recorded as
+      WHISH_MONEY, credited to the Whish account where the money actually is; its
+      reference then settles one receipt only (`PAYMENT_EXTERNAL_REF_REUSED`).
+    */
+    if (input.actor.role === 'COLLECTOR') {
+      const self = input.actor.id.toLowerCase();
+      const ownCollection = input.method === 'COLLECTOR' && input.collectedById?.toLowerCase() === self;
+      if (!ownCollection && input.method !== 'WHISH_MONEY') {
+        throw new ForbiddenError({
+          code: 'COLLECTOR_CANNOT_SELECT_METHOD',
+          message: 'A collector records cash as his own collection (method COLLECTOR, himself named), or a Whish transfer.',
+        });
+      }
+    }
+    if (input.method === 'COLLECTOR' && input.collectedById) {
+      await this.assertLiveCollector(input.collectedById);
+    }
+    const externalRef = input.method === 'WHISH_MONEY' ? (input.whishTransactionRef ?? null) : null;
 
     /*
-      «20$ و200,000 ليرة» — the credit is what the notes are worth in the
-      invoice's currency, computed here and never taken from the client, which
-      could send a total that disagrees with its own parts. Rounded to the
-      whole unit for a ليرة invoice, where there are no fractions to pay in,
-      and to the cent otherwise. The ledger then refuses it, under its lock,
-      if it is more than is owed.
+      One transaction (finance audit B8): the bill's row lock, then the settings
+      FOR SHARE — the official rate, the two currencies, the counter's tolerance
+      and the go-live stamp — then the ledger's own work, which re-locks the bill
+      for free. The rate the notes are judged by is the one committed at that
+      moment, never a cached copy up to five minutes old, and it is the rate the
+      wallet entries are stamped with. A Whish reference is serialised first,
+      before any row lock (`lockExternalRef`).
     */
-    const settings = input.tendered ? await this.getSettings(false) : null;
-    const tender = input.tendered
-      ? toTender(
-          input.tendered,
-          invoice.currency,
-          officialRateFor(settings, invoice.currency, input.tendered.foreignCurrency),
-        )
-      : null;
-    const received = tender
-      ? creditOf(tender, invoice.currency)
-      : (input.amount ?? Number(invoice.amount) - Number(invoice.paidAmount));
+    const { settled, invoice, tender } = await runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.db as Prisma.TransactionClient;
+      await this.ledger.lockExternalRef(tx, externalRef);
+      const [invoice] = await this.ledger.lockInvoices(tx, [input.paymentId]);
+      if (!invoice) {
+        throw new NotFoundError({ code: 'PAYMENT_NOT_FOUND', message: `Payment ${input.paymentId} was not found` });
+      }
+      const config = await this.ledger.settings(tx);
 
-    const adjustment = assertCashAdjustment({
-      tender,
-      paidOn: input.paidOn,
-      reason: input.adjustmentReason,
-      role: input.actor.role,
-    });
-
-    const settled = await this.ledger.record({
-      paymentId: input.paymentId,
-      amount: received,
-      method: input.method,
-      /**
-       * Carried on the transaction rather than only on the invoice. A row can
-       * reach here twice — a citizen declares a transfer, it is refused, and
-       * the money arrives at the counter in notes — and the ledger keeps both
-       * movements with their own method and reference instead of the second
-       * overwriting the first.
-       */
-      externalRef: input.method === 'WHISH_MONEY' ? (input.whishTransactionRef ?? null) : null,
-      collectedById: input.method === 'COLLECTOR' ? (input.collectedById ?? null) : null,
-      recordedById: input.actor.id,
-      note: input.note,
-      tendered: tender,
-      occurredAt: occurredAtFor(input.paidOn),
-      adjustmentReason: adjustment.required ? (input.adjustmentReason ?? null) : null,
-      clientRequestId: input.clientRequestId ?? null,
       /*
-        What a Court of Audit reviewer asks of a cash entry: how much, on which
-        receipt, on what day, in which notes, at what rate against the official
-        one, and — when either departs from the ordinary — why. Written in the
-        ledger's transaction; a retry answered from the first row writes none.
+        «20$ و200,000 ليرة» — the credit is what the notes are worth in the
+        invoice's currency, computed here and never taken from the client, which
+        could send a total that disagrees with its own parts. Rounded to the
+        whole unit for a ليرة invoice, where there are no fractions to pay in,
+        and to the cent otherwise. The ledger then refuses it, under its lock,
+        if it is more than is owed. With no figure typed, the balance this lock
+        holds is what is settled.
       */
-      audit: (movement) => ({
-        actorId: input.actor.id,
-        actorType: 'STAFF',
-        actorRole: input.actor.role as never,
-        action: 'PAYMENT_CONFIRMED',
-        entityType: 'Payment',
-        entityId: input.paymentId,
-        after: {
-          citizenId: invoice.citizenId,
-          confirmed: true,
-          receiptNumber: movement.receiptNumber,
-          method: input.method,
-          amount: movement.received,
-          currency: invoice.currency,
-          occurredAt: movement.occurredAt,
-          ...(input.paidOn ? { paidOn: input.paidOn, backdatedDays: adjustment.backdatedDays } : {}),
-          ...(tender
-            ? {
-                tenderedLocal: tender.local,
-                tenderedForeign: tender.foreign,
-                tenderedForeignCurrency: tender.foreignCurrency,
-                exchangeRate: tender.exchangeRate,
-                officialExchangeRate: tender.officialExchangeRate,
-                rateOverridden: adjustment.rateOverridden,
-                changeGiven: movement.changeGiven,
-              }
-            : {}),
-          ...(adjustment.required ? { adjustmentReason: input.adjustmentReason } : {}),
-        },
-      }),
+      const tender = input.tendered
+        ? toTender(
+            input.tendered,
+            invoice.currency,
+            officialRateFor(
+              {
+                baseCurrency: config.baseCurrency,
+                secondaryCurrency: config.secondaryCurrency,
+                exchangeRate: config.exchangeRate === null ? null : Number(config.exchangeRate),
+              },
+              invoice.currency,
+              input.tendered.foreignCurrency,
+            ),
+          )
+        : null;
+      const received = tender ? creditOf(tender, invoice.currency) : (input.amount ?? invoice.amount - invoice.paidAmount);
+
+      const adjustment = assertCashAdjustment({
+        tender,
+        paidOn: input.paidOn,
+        reason: input.adjustmentReason,
+        role: input.actor.role,
+        tolerancePercent:
+          config.exchangeRateTolerancePercent === null
+            ? DEFAULT_EXCHANGE_TOLERANCE_PERCENT
+            : Number(config.exchangeRateTolerancePercent),
+      });
+
+      /*
+        After go-live, a payment dated before it credits no wallet (docs/finance.md
+        §3.3). That is right for cash already inside the counted opening balance,
+        and a silent hole for anything else: cash taken today and dated last week
+        would settle the bill and print a receipt, and reach no wallet and no
+        custody. A receipt is dated the day the money is taken (decree 5595/1982
+        art. 16 and 98), so after go-live only a finance role — someone answerable
+        for the opening count — may date one before it, and the audit row says no
+        wallet was credited.
+      */
+      const goLiveAt = input.paidOn ? config.goLiveAt : null;
+      const occurredAt = occurredAtFor(input.paidOn, goLiveAt);
+      // The ledger's own test, so the refusal and the credit can never disagree.
+      const beforeGoLive = goLiveAt !== null && occurredAt !== undefined && !creditsWallets(goLiveAt, occurredAt);
+      if (beforeGoLive && !canOverrideCashRules(input.actor.role)) {
+        throw new ValidationError({
+          code: 'PAYMENT_DATE_BEFORE_GO_LIVE',
+          message:
+            'A payment dated before the treasury went live reaches no wallet. Record it as today, or ask an accountant.',
+          params: { date: municipalToday(goLiveAt!) },
+        });
+      }
+
+      const settled = await this.ledger.recordIn(tx, {
+        paymentId: input.paymentId,
+        amount: received,
+        method: input.method,
+        /**
+         * Carried on the transaction rather than only on the invoice. A row can
+         * reach here twice — a citizen declares a transfer, it is refused, and
+         * the money arrives at the counter in notes — and the ledger keeps both
+         * movements with their own method and reference instead of the second
+         * overwriting the first.
+         */
+        externalRef,
+        collectedById: input.method === 'COLLECTOR' ? (input.collectedById ?? null) : null,
+        recordedById: input.actor.id,
+        note: input.note,
+        tendered: tender,
+        occurredAt,
+        adjustmentReason: adjustment.required ? (input.adjustmentReason ?? null) : null,
+        clientRequestId: input.clientRequestId ?? null,
+        /*
+          What a Court of Audit reviewer asks of a cash entry: how much, on which
+          receipt, on what day, in which notes, at what rate against the official
+          one, and — when either departs from the ordinary — why. Written in the
+          ledger's transaction; a retry answered from the first row writes none.
+        */
+        audit: (movement) => ({
+          actorId: input.actor.id,
+          actorType: 'STAFF',
+          actorRole: input.actor.role as never,
+          action: 'PAYMENT_CONFIRMED',
+          entityType: 'Payment',
+          entityId: input.paymentId,
+          after: {
+            citizenId: invoice.citizenId,
+            confirmed: true,
+            receiptNumber: movement.receiptNumber,
+            method: input.method,
+            amount: movement.received,
+            currency: invoice.currency,
+            occurredAt: movement.occurredAt,
+            ...(input.paidOn ? { paidOn: input.paidOn, backdatedDays: adjustment.backdatedDays } : {}),
+            // Dated before go-live by a finance role: settled, and deliberately in no wallet.
+            ...(beforeGoLive ? { treasuryCredited: false } : {}),
+            ...(tender
+              ? {
+                  tenderedLocal: tender.local,
+                  tenderedForeign: tender.foreign,
+                  tenderedForeignCurrency: tender.foreignCurrency,
+                  exchangeRate: tender.exchangeRate,
+                  officialExchangeRate: tender.officialExchangeRate,
+                  rateOverridden: adjustment.rateOverridden,
+                  changeGiven: movement.changeGiven,
+                }
+              : {}),
+            ...(adjustment.required ? { adjustmentReason: input.adjustmentReason } : {}),
+          },
+        }),
+      });
+      return { settled, invoice, tender };
     });
 
     // For the caches that show this invoice. A replayed retry changed nothing.
@@ -3189,7 +4140,22 @@ export class FeesService {
       changeGiven: settled.changeGiven,
       exchangeRate: tender?.exchangeRate ?? null,
       officialExchangeRate: tender?.officialExchangeRate ?? null,
+      /**
+       * A retry answered from the first receipt (the same key): the screen says it
+       * was already recorded rather than showing a second, fresh success.
+       */
+      replayed: settled.replayed,
     };
+  }
+
+  /**
+   * The collector named on a round payment must be someone who can be holding
+   * the cash: staff, still active, not removed, and not view-only. Anyone else
+   * would have a custody wallet opened in his name that nobody can hand in.
+   */
+  private async assertLiveCollector(collectorId: string): Promise<void> {
+    // The one rule, shared with the bulk settlement (`live-collector.ts`).
+    await assertLiveCollector(this.db, collectorId);
   }
 
   /** Every movement of money against one invoice, oldest first. */
@@ -3243,6 +4209,93 @@ export class FeesService {
     });
 
     return reversed;
+  }
+
+  /**
+   * «إلغاء الفاتورة» — the manager withdraws a bill nothing has been paid on
+   * (finance audit B3): a notice issued twice, a charge raised in error. Until
+   * this a wrong bill could not be withdrawn at all and stayed owed, in every
+   * arrears list, for ever.
+   *
+   * Refused when money is on it (`BILL_CANCEL_HAS_PAYMENTS`): its receipts are
+   * reversed first, so the money's own record is corrected before the debt is.
+   * Refused while a citizen's claim waits on it (`PAYMENT_CLAIM_UNDER_REVIEW`):
+   * the claim is decided first, as for a counter payment. The row is never
+   * deleted: it stays on the citizen's record, CANCELLED, with who, when and why
+   * (0091), and a Tier 1 row in the same transaction.
+   */
+  async cancelBill(paymentId: string, reason: string, actor: { id: string; role: string }) {
+    const { citizenId, cancelledRequest } = await runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.db as Prisma.TransactionClient;
+      const [bill] = await this.ledger.lockInvoices(tx, [paymentId]);
+      if (!bill) {
+        throw new NotFoundError({ code: 'PAYMENT_NOT_FOUND', message: `Payment ${paymentId} was not found` });
+      }
+      if (bill.paymentStatus === 'CANCELLED') {
+        throw new ConflictError({ code: 'BILL_ALREADY_CANCELLED', message: 'This bill has already been cancelled.' });
+      }
+      if (bill.paymentStatus === 'PENDING_REVIEW') {
+        throw new ConflictError({
+          code: 'PAYMENT_CLAIM_UNDER_REVIEW',
+          message: 'A citizen payment claim on this bill is under review; confirm or reject it first.',
+        });
+      }
+      if (bill.paymentStatus === 'PAID' || bill.paidAmount > 0) {
+        throw new ConflictError({
+          code: 'BILL_CANCEL_HAS_PAYMENTS',
+          message: 'Money has been taken on this bill; reverse its receipts before cancelling it.',
+          params: { paidAmount: bill.paidAmount, currency: bill.currency },
+        });
+      }
+
+      const row = await tx.citizenPayment.update({
+        where: { id: paymentId },
+        data: {
+          paymentStatus: 'CANCELLED',
+          cancelledAt: new Date(),
+          cancelledById: actor.id,
+          cancellationReason: reason.trim(),
+        },
+        select: { invoiceNumber: true, title: true, periodKey: true },
+      });
+      await this.auditTrail.recordInTransaction({
+        actorId: actor.id,
+        actorType: 'STAFF',
+        actorRole: actor.role as never,
+        action: 'FEE_BILL_CANCELLED',
+        entityType: 'Payment',
+        entityId: paymentId,
+        before: { paymentStatus: bill.paymentStatus },
+        after: {
+          citizenId: bill.citizenId,
+          invoiceNumber: row.invoiceNumber,
+          title: row.title,
+          periodKey: row.periodKey,
+          amount: bill.amount,
+          currency: bill.currency,
+          reason: reason.trim(),
+        },
+      });
+      // A municipal request waiting on this bill is cancelled with it (decision of 2026-10-13, 0094).
+      const request = await cancelRequestOfCancelledBill(tx, this.auditTrail, { billId: paymentId, actor });
+      return { citizenId: bill.citizenId, cancelledRequest: request };
+    });
+
+    // For the caches that count what is owed; the audit row is already written.
+    this.events.emit('payment.cancelled', {
+      tenantSlug: this.tenantContext.tenantSlug,
+      paymentId,
+      citizenId,
+      actorId: actor.id,
+      actorRole: actor.role,
+    });
+
+    /*
+      The request cancelled with the bill, so the page can say so: the manager
+      pressed «إلغاء الفاتورة», and a citizen's request ended with it (review of
+      PR #122). Null when the bill was no open request's fee.
+    */
+    return { ...(await this.getPaymentById(paymentId)), cancelledRequest };
   }
 
   /** Headline numbers for the admin fee screen. */
@@ -3364,6 +4417,8 @@ export function assertCashAdjustment(input: {
   reason: string | undefined;
   role: string;
   today?: string;
+  /** How far a rate may stray from the official one, in percent (`exchangeRateTolerancePercent`, 0084). */
+  tolerancePercent?: number;
 }): { required: boolean; rateOverridden: boolean; backdatedDays: number } {
   const today = input.today ?? municipalToday();
   const tender = input.tender;
@@ -3385,6 +4440,34 @@ export function assertCashAdjustment(input: {
           code: 'EXCHANGE_RATE_NOT_SET',
           message: 'No official exchange rate is set. Ask an accountant or a system administrator to set one.',
         });
+  }
+  /*
+    The exchange rule's band at the counter too (finance audit A2). A finance
+    role may take a rate other than the official one, with a reason; beyond the
+    tolerance (3% unless the manager set another) only the manager may, because
+    the rate decides both what the notes settle and the change the safe pays
+    out: a rate pushed past the market books more change than leaves the
+    drawer. With no official rate there is nothing to measure against, and the
+    reason alone stands, as before.
+  */
+  if (rateOverridden && tender?.officialExchangeRate && tender.exchangeRate !== null) {
+    const judged = judgeExchange({
+      rate: tender.exchangeRate,
+      foreignAmount: tender.foreign ?? 0,
+      officialRate: tender.officialExchangeRate,
+      tolerancePercent: input.tolerancePercent ?? DEFAULT_EXCHANGE_TOLERANCE_PERCENT,
+      largeThreshold: Number.POSITIVE_INFINITY,
+    });
+    if (judged.beyondTolerance && !(TREASURY_ADMIN_ROLES as readonly string[]).includes(input.role)) {
+      throw new ForbiddenError({
+        code: 'EXCHANGE_RATE_OVERRIDE_BEYOND_TOLERANCE',
+        message: `The rate is ${judged.deviationPercent}% from the official one; beyond ${input.tolerancePercent ?? DEFAULT_EXCHANGE_TOLERANCE_PERCENT}% only the manager may take it.`,
+        params: {
+          deviation: judged.deviationPercent ?? 0,
+          tolerance: input.tolerancePercent ?? DEFAULT_EXCHANGE_TOLERANCE_PERCENT,
+        },
+      });
+    }
   }
   if (backdatedDays > BACKDATE_WINDOW_DAYS && !finance) {
     throw new ForbiddenError({
@@ -3417,16 +4500,22 @@ export function creditOf(tender: Tender, invoiceCurrency: string): number {
 }
 
 /**
- * When a payment taken on `paidOn` happened: midday of that day, so a
- * back-dated entry lands on its own date in every time zone the
- * municipality's reports are read in. Omitted means now — the page leaves it
- * out for a payment taken today, so its real time is kept.
+ * When a payment taken on `paidOn` happened, by the rule a voucher follows too
+ * (`documentOccurredAt`): midday of an earlier day, so a back-dated entry lands
+ * on its own date in every time zone the reports are read in, but never before
+ * the opening entry on the go-live day. Omitted means now — the page leaves it
+ * out for a payment taken today, so its real time is kept; sent as today, it is
+ * now as well.
  *
- * Not compared with the server's own «today»: that is UTC, a day behind
- * Lebanon between midnight and 3am, and a clerk recording yesterday's cash in
- * that window would have had it silently moved to now. Exported for its spec.
+ * «Today» is the municipality's, never the server's UTC one: that is a day
+ * behind Lebanon between midnight and 3am, and a clerk recording yesterday's
+ * cash in that window would have had it moved to now. Exported for its spec.
  */
-export function occurredAtFor(paidOn: string | undefined): Date | undefined {
+export function occurredAtFor(
+  paidOn: string | undefined,
+  goLiveAt: Date | null = null,
+  now: Date = new Date(),
+): Date | undefined {
   if (!paidOn) return undefined;
-  return new Date(`${paidOn}T12:00:00.000Z`);
+  return documentOccurredAt({ day: paidOn, today: municipalToday(now), now, goLiveAt });
 }

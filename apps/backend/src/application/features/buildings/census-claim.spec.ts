@@ -154,13 +154,15 @@ function harness(options: HarnessOptions = {}) {
             ? {
                 id: where.id,
                 kind: 'CITIZEN',
+                // An open file: `recordOccupancy` refuses an archived one (`assertFileOpen`).
+                isActive: true,
                 firstName: 'مالك',
                 middleName: null,
                 lastName: 'مسجَّل',
                 whatsapp: null,
                 ...options.owners[where.id],
               }
-            : { id: CITIZEN, kind: 'CITIZEN' },
+            : { id: CITIZEN, kind: 'CITIZEN', isActive: true },
         ),
       ),
     },

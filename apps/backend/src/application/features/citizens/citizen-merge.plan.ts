@@ -1,3 +1,5 @@
+import type { CitizenResidence } from '@mechanization/shared-schemas';
+import { isNonPersonRecord, isOwnerRecord } from '@mechanization/shared-schemas';
 import {
   nonResidentCardIssues,
   POSSIBLE_DUPLICATE_FLAG_PATH,
@@ -357,13 +359,12 @@ export function planFields(keep: PlanPerson, absorb: PlanPerson): Pick<
   MergePlan,
   'fills' | 'identityMoves' | 'fillsForDisplay' | 'conflicts'
 > {
-  const kinds =
-    keep.residence === 'NON_RESIDENT_OWNER'
-      ? [...SHARED_FIELDS, ...NON_RESIDENT_FIELDS]
-      : [...SHARED_FIELDS, ...RESIDENT_FIELDS];
+  const kinds = isOwnerRecord(keep.residence)
+    ? [...SHARED_FIELDS, ...NON_RESIDENT_FIELDS]
+    : [...SHARED_FIELDS, ...RESIDENT_FIELDS];
 
   const fills: MergePlan['fills'] = [];
-  const resident = keep.residence !== 'NON_RESIDENT_OWNER';
+  const resident = !isOwnerRecord(keep.residence);
 
   /*
     The person's own numbers, with «لا يملك رقم هاتف» in hand.
@@ -618,6 +619,21 @@ export function planMerge(input: PlanInput): MergePlan {
   }
   if (input.keepMerged || input.absorbMerged) {
     block('ALREADY_MERGED', 'أحد الملفين مدموج في ملف آخر. افتح الملف الذي دُمج فيه وادمج منه.');
+  }
+  /*
+    A person and an estate or an institution are never one record (0076): an
+    estate is the deceased's own file, converted in place, and folding a living
+    person into it — or two kinds of body into one — would put one party's
+    holdings and bills on another.
+  */
+  if (
+    (isNonPersonRecord(keep.residence) || isNonPersonRecord(absorb.residence)) &&
+    keep.residence !== absorb.residence
+  ) {
+    block(
+      'RESIDENCE_CONFLICT',
+      'لا يُدمج ملف تركة أو جهة بملف شخص، ولا تركة بجهة. إن كان أحدهما سُجِّل بالنوع الخطأ فصحّح نوع الملف أولاً من صفحته.',
+    );
   }
 
   const registrations = input.registrations;
@@ -922,7 +938,7 @@ export function planMerge(input: PlanInput): MergePlan {
 
   // ── Somebody who does not live here, holding a home they live in ─────
 
-  if (keep.residence === 'NON_RESIDENT_OWNER' && newest) {
+  if (isOwnerRecord(keep.residence) && newest) {
     const flags = flagWrites.find((write) => write.registrationId === newest.id)?.after.flaggedFields ??
       readFlagList(newest.flaggedFields);
     const flaggedPaths = new Set(flags.map((flag) => flag.path));
@@ -937,12 +953,17 @@ export function planMerge(input: PlanInput): MergePlan {
           .map((rowId) => card.units.find((row) => row.id === rowId)!)
           .map((row) => ({ unitType: row.unitType, unitStatus: row.unitStatus })),
       };
-      if (nonResidentCardIssues(shaped, flaggedPaths, `properties.${index}`).length > 0) {
+      // The kept file's own kind decides: an estate owns only (0076), a non-resident or a body rents no home.
+      if (nonResidentCardIssues(shaped, flaggedPaths, `properties.${index}`, keep.residence as CitizenResidence).length > 0) {
         block(
           'RESIDENCE_CONFLICT',
-          `الملف الباقي «غير مقيم في البلدة»، والملف الآخر يحمل بطاقة تقول إنه يسكن في البلدة (${
-            card.propertyNumber ?? 'عقار'
-          }). احتفظ بالملف الآخر بدلاً منه، أو صحّح الإقامة أولاً عبر «تغيير الإقامة».`,
+          keep.residence === 'ESTATE'
+            ? `الملف الباقي تركة، والتركة تملك فقط، والملف الآخر يحمل بطاقة إيجار أو سكن (${
+                card.propertyNumber ?? 'عقار'
+              }). من يسكن أو يستأجر يبقى بملفه هو.`
+            : `الملف الباقي «${keep.residence === 'INSTITUTION' ? 'جهة أو وقف' : 'غير مقيم في البلدة'}»، والملف الآخر يحمل بطاقة تقول إنه يسكن في البلدة (${
+                card.propertyNumber ?? 'عقار'
+              }). احتفظ بالملف الآخر بدلاً منه، أو صحّح نوع الملف أولاً.`,
         );
       }
     });

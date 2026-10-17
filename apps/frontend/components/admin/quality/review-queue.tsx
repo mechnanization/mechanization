@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { Check, ClipboardCheck, FileQuestion, Loader2, RotateCcw, Undo2 } from 'lucide-react';
 import { getLabels, qualityLabels, REVIEW_FIELD, type ReviewField } from '@mechanization/shared-schemas';
@@ -16,11 +17,13 @@ import { flagFieldLabel } from '@/lib/field-flags';
 import { CompleteRecordDialog } from '@/components/admin/complete-record-dialog';
 import { formatDateTime, formatRelative } from '@/lib/dates';
 import { useStaffQuery } from '@/lib/use-staff-query';
-import { param, useUrlState } from '@/lib/use-url-state';
+import { param, useUrlPagination, useUrlState } from '@/lib/use-url-state';
+import { pageWithRows } from '@/lib/url-state';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { FactCell, FactRow } from '@/components/ui/facts';
 import { Label } from '@/components/ui/label';
+import { Pager } from '@/components/ui/pager';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/states';
@@ -42,6 +45,9 @@ const FILTERS = {
   officer: param.id(),
   flagged: param.flag(),
 };
+
+/** Records a page: cards, each a decision, so fewer than a register's rows. */
+const REVIEW_PAGE_SIZE = 30;
 
 const STATE_BADGE: Record<ReviewQueueItem['state'], { variant: 'soft-warning' | 'soft-info' | 'soft-success' | 'soft-muted'; ar: string; en: string }> = {
   NEW: { variant: 'soft-info', ar: 'جديد', en: 'New' },
@@ -77,24 +83,50 @@ export function ReviewQueue({
   const labels = getLabels(locale);
   const quality = qualityLabels(locale);
   const toast = useToast();
+  const t = useTranslations('recordReview');
 
   const [filters, setFilters] = useUrlState(FILTERS);
   const { tab, officer: officerId, flagged: flaggedOnly } = filters;
+  // `?page=`, reset by every filter below in the same write (`clear: ['page']`).
+  const [pagination, setPagination] = useUrlPagination({
+    defaultSize: REVIEW_PAGE_SIZE,
+    sizes: [REVIEW_PAGE_SIZE],
+  });
+  const offset = pagination.pageIndex * pagination.pageSize;
+  const listTop = useRef<HTMLDivElement | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [returning, setReturning] = useState<string | null>(null);
   /** The row whose «استكمال البيانات الناقصة» dialog is open, or none. */
   const [completing, setCompleting] = useState<ReviewQueueItem | null>(null);
 
   const query = useStaffQuery({
-    queryKey: ['quality-reviews', tenant, tab, officerId, flaggedOnly],
+    queryKey: ['quality-reviews', tenant, tab, officerId, flaggedOnly, pagination.pageSize, offset],
     queryFn: (tok, signal) =>
-      getReviewQueue(tenant, tok, { tab, officerId: officerId || undefined, flaggedOnly, limit: 30 }, signal),
+      getReviewQueue(
+        tenant,
+        tok,
+        { tab, officerId: officerId || undefined, flaggedOnly, limit: pagination.pageSize, offset },
+        signal,
+      ),
     tenant,
     base,
     token,
     errorMessage: en ? 'Could not load the review queue.' : 'تعذّر تحميل قائمة المراجعة.',
     keepPrevious: true,
   });
+
+  /*
+    A decision moves its record to another tab, so the last decision on the
+    last page empties it — and a stale `?page=` can point past the end. Either
+    way the reader is stepped back to the last page with records, once the
+    answer for this page is in (not the previous page's, kept while it loads).
+  */
+  const total = query.data?.total ?? 0;
+  useEffect(() => {
+    if (!query.data || query.fetching) return;
+    const page = pageWithRows(pagination.pageIndex, pagination.pageSize, query.data.total);
+    if (page !== pagination.pageIndex) setPagination((current) => ({ ...current, pageIndex: page }));
+  }, [query.data, query.fetching, pagination.pageIndex, pagination.pageSize, setPagination]);
 
   const counts = query.data?.counts;
   // Keyed by tab so a tab added to `REVIEW_TABS` without a label fails to compile.
@@ -133,7 +165,7 @@ export function ReviewQueue({
   };
 
   return (
-    <div className="space-y-4">
+    <div ref={listTop} className="space-y-4">
       <div className="flex flex-wrap items-end gap-3">
         <div role="tablist" aria-label={en ? 'Review state' : 'حالة المراجعة'} className="flex rounded-lg border p-0.5">
           {tabs.map((option) => (
@@ -141,7 +173,7 @@ export function ReviewQueue({
               key={option.key}
               role="tab"
               aria-selected={tab === option.key}
-              onClick={() => setFilters({ tab: option.key })}
+              onClick={() => setFilters({ tab: option.key }, { clear: ['page'] })}
               className={cn(
                 'flex min-h-9 items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-colors',
                 tab === option.key ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent',
@@ -161,7 +193,7 @@ export function ReviewQueue({
           <Label htmlFor="review-officer" className="text-xs text-muted-foreground">
             {en ? 'Filed by' : 'الموظف الذي سجَّل'}
           </Label>
-          <Select value={officerId || ANY} onValueChange={(value) => setFilters({ officer: value === ANY ? '' : value })}>
+          <Select value={officerId || ANY} onValueChange={(value) => setFilters({ officer: value === ANY ? '' : value }, { clear: ['page'] })}>
             <SelectTrigger id="review-officer" className="h-9">
               <SelectValue />
             </SelectTrigger>
@@ -181,7 +213,7 @@ export function ReviewQueue({
           size="sm"
           className="h-9 gap-1.5"
           aria-pressed={flaggedOnly}
-          onClick={() => setFilters((current) => ({ flagged: !current.flagged }))}
+          onClick={() => setFilters((current) => ({ flagged: !current.flagged }), { clear: ['page'] })}
         >
           <FileQuestion className="size-4" aria-hidden />
           {en ? 'Unverified fields only' : 'ما فيه حقول غير مؤكَّدة'}
@@ -192,7 +224,7 @@ export function ReviewQueue({
         <ErrorState description={query.error} onRetry={query.refetch} />
       ) : query.loading ? (
         <LoadingState label={en ? 'Loading records…' : 'جارٍ تحميل السجلات…'} />
-      ) : (query.data?.items.length ?? 0) === 0 ? (
+      ) : (query.data?.items.length ?? 0) === 0 && total === 0 ? (
         <EmptyState
           icon={ClipboardCheck}
           title={
@@ -528,6 +560,18 @@ export function ReviewQueue({
           })}
         </ol>
       )}
+
+      {!query.error && !query.loading ? (
+        <Pager
+          page={pagination.pageIndex}
+          pageSize={pagination.pageSize}
+          total={total}
+          onPageChange={(page) => setPagination((current) => ({ ...current, pageIndex: page }))}
+          locale={locale}
+          label={t('pages')}
+          scrollTarget={listTop}
+        />
+      ) : null}
 
       {/*
         One dialog for the whole list, keyed by the row it was opened from, so

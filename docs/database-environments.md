@@ -1,6 +1,6 @@
 # Database environments
 
-Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06.
+Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06; the rollback caveat for a new enum value against `chore/migration-0090-0091` (on `develop@5e8f5c3`), 2026-10-13.
 
 Three databases, three targets, and a set of checks whose only job is to make
 "I ran it against the wrong one" impossible rather than unlikely. This is the
@@ -565,7 +565,12 @@ There are no down-migrations here, by design. A down-migration is code that has
 never run, being asked to work on the worst day. The rollback plan is:
 
 - **Bad code, good schema** — redeploy the previous build. This works because
-  expand/contract keeps the schema compatible with the release before it.
+  expand/contract keeps the schema compatible with the release before it —
+  except when the bad release has written an enum value the previous build does
+  not know: that build's Prisma client throws on those rows, so roll forward.
+  This is why a new value reaches `main` a release ahead of the code that writes
+  it ([database.md](database.md#release),
+  [gotchas.md](gotchas.md#the-previous-build-cannot-read-a-value-it-does-not-know)).
 - **Bad schema** — write a forward migration that corrects it.
 - **Data loss** — restore. See below.
 

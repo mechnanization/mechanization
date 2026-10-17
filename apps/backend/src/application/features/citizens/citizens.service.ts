@@ -1,3 +1,4 @@
+import { citizenDisplayName, citizenStoredName } from '@mechanization/shared-schemas';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
@@ -9,7 +10,11 @@ import {
   formatUnitCode,
   IMPORT_COLUMNS,
   internationalPhone,
+  isNonPersonRecord,
+  isOwnerRecord,
+  isSpecificErrorCode,
   POSSIBLE_DUPLICATE_FLAG_PATH,
+  splitInstitutionName,
   statusForFlags,
 } from '@mechanization/shared-schemas';
 import type {
@@ -33,11 +38,12 @@ import { citizenPhoneRuleError } from '../../../infrastructure/prisma/check-viol
 import { PropertyEntry, PropertyType } from '../../../domain/entities/property-entry.entity';
 import { ReferenceNumber } from '../../../domain/value-objects/reference-number.vo';
 import { PARCEL_REPOSITORY } from '../../../domain/interfaces/base-repository.interface';
-import type {
-  ParcelLocation,
-  ParcelRepository,
+import {
+  parcelNumberKey,
+  type ParcelLocation,
+  type ParcelRepository,
 } from '../../../domain/interfaces/parcel-repository.interface';
-import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
+import { ConflictError, DomainError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { fileChanges, highImpactChanges, type EditableFileView, type FileChanges } from './file-changes';
 import { CensusSyncService, type CardEnding } from '../buildings/census-sync.service';
 import {
@@ -66,7 +72,9 @@ import {
   type DuplicateReviewFindings,
 } from './possible-duplicates';
 import { normalizeSearchText } from '../../common/search-terms';
+import { landlordNamesToStore } from '../../common/landlord-name';
 import { assertNotMergedAway } from './merged-away';
+import { isUniqueViolationOn } from '../treasury/retry-key';
 
 /**
  * The most register rows one duplicate lookup compares.
@@ -101,6 +109,19 @@ function columnHeaderFor(path: ReadonlyArray<string | number> | undefined): stri
 }
 
 /**
+ * A row the import could not file, as the dialog reads it: a coded refusal by
+ * its code and params, whose words are the screen's (its `message` is an
+ * English log line), and anything else by the text it carried — Arabic prose
+ * from a throw site not converted yet.
+ */
+function importFailure(caught: unknown): Pick<CitizenImportRowResult, 'error' | 'code' | 'params'> {
+  if (caught instanceof DomainError && isSpecificErrorCode(caught.code)) {
+    return { code: caught.code, ...(caught.params ? { params: caught.params } : {}) };
+  }
+  return { error: caught instanceof Error ? caught.message : 'تعذّر إنشاء السجل' };
+}
+
+/**
  * The stored «غير مؤكَّد» flags, read back defensively.
  *
  * `flaggedFields` is a json column, so Prisma's type for it is "any json" and
@@ -127,6 +148,21 @@ function readFlags(value: unknown): FieldFlag[] {
     */
     const flagKind = FIELD_FLAG_KINDS.find((candidate) => candidate === kind) ?? 'UNESTABLISHED';
     return [{ path, reason, kind: flagKind }];
+  });
+}
+
+/**
+ * A save that would delete a card or a flat a municipal request names (0092's
+ * RESTRICT keys keep them: a certificate is about that property). Named by the
+ * requests' «REQ-» numbers, never by their free text.
+ */
+function propertyNamedByRequest(named: Array<{ requestNumber: string; propertyEntryId: string | null }>): ConflictError {
+  const numbers = [...new Set(named.map((request) => request.requestNumber))];
+  return new ConflictError({
+    code: 'PROPERTY_NAMED_BY_REQUEST',
+    message: 'A municipal request names a card or a flat this save removes; end the ownership or the tenancy instead.',
+    params: { requests: numbers.join('، '), count: numbers.length },
+    details: { propertyIds: [...new Set(named.map((request) => request.propertyEntryId).filter(Boolean))] },
   });
 }
 
@@ -517,14 +553,15 @@ export class CitizensService {
              FROM ${this.S}registrations r
             WHERE r."citizenId" = u.id ORDER BY r."submittedAt" DESC LIMIT 1), 0)::int
             AS "unestablishedFieldCount",
+          -- Not a cancelled bill (0090): withdrawn, it was never billed (decision of 2026-10-13).
           COALESCE((SELECT sum(p.amount) FROM ${this.S}citizen_payments p
-                     WHERE p."citizenId" = u.id), 0)::float8
+                     WHERE p."citizenId" = u.id AND p."paymentStatus" <> 'CANCELLED'), 0)::float8
             AS "feesTotal",
           COALESCE((SELECT sum(p."paidAmount") FROM ${this.S}citizen_payments p
                      WHERE p."citizenId" = u.id), 0)::float8
             AS "paidTotal",
           COALESCE((SELECT sum(p.amount - p."paidAmount") FROM ${this.S}citizen_payments p
-                     WHERE p."citizenId" = u.id AND p."paymentStatus" <> 'PAID'), 0)::float8
+                     WHERE p."citizenId" = u.id AND p."paymentStatus" NOT IN ('PAID', 'CANCELLED')), 0)::float8
             AS "outstandingTotal",
           COALESCE((SELECT sum(p.amount - p."paidAmount") FROM ${this.S}citizen_payments p
                      WHERE p."citizenId" = u.id
@@ -558,7 +595,7 @@ export class CitizensService {
           count(*)::int AS total,
           COALESCE(sum(
             COALESCE((SELECT sum(p.amount - p."paidAmount") FROM ${this.S}citizen_payments p
-                       WHERE p."citizenId" = u.id AND p."paymentStatus" <> 'PAID'), 0)
+                       WHERE p."citizenId" = u.id AND p."paymentStatus" NOT IN ('PAID', 'CANCELLED')), 0)
           ), 0)::float8 AS "allOutstanding",
           COALESCE(sum(
             COALESCE((SELECT sum(p.amount - p."paidAmount") FROM ${this.S}citizen_payments p
@@ -615,7 +652,7 @@ export class CitizensService {
     return {
       items: rows.map((row) => ({
         id: row.id,
-        fullName: [row.firstName, row.middleName, row.lastName].filter(Boolean).join(' '),
+        fullName: citizenDisplayName(row),
         /*
           Carried on the list row because this is what tells two «محمد خليل»s
           apart wherever people are offered for picking — the occupant search on
@@ -740,7 +777,7 @@ export class CitizensService {
     return {
       items: rows.map((row) => ({
         id: row.id,
-        fullName: [row.firstName, row.middleName, row.lastName].filter(Boolean).join(' '),
+        fullName: citizenDisplayName(row),
         motherName: row.motherName,
         referenceNumber: row.referenceNumber,
         phone: row.phone,
@@ -913,6 +950,7 @@ export class CitizensService {
                       firstName: true,
                       middleName: true,
                       lastName: true,
+                      residence: true,
                       referenceNumber: true,
                     },
                   },
@@ -1046,9 +1084,16 @@ export class CitizensService {
       })),
       residence: citizen.residence,
       personal: {
-        firstName: citizen.firstName,
-        middleName: citizen.middleName ?? '',
-        lastName: citizen.lastName,
+        /*
+          An institution's name is one line on the form; it is stored across
+          the parts (`splitInstitutionName`), so it is joined back here (0076).
+        */
+        firstName:
+          citizen.residence === 'INSTITUTION'
+            ? [citizen.firstName, citizen.middleName, citizen.lastName].filter(Boolean).join(' ')
+            : citizen.firstName,
+        middleName: citizen.residence === 'INSTITUTION' ? '' : (citizen.middleName ?? ''),
+        lastName: citizen.residence === 'INSTITUTION' ? '' : citizen.lastName,
         /*
           Empty for a record filed before migration 0044, which is exactly what
           the form needs: the field renders blank and required, so an officer
@@ -1128,13 +1173,14 @@ export class CitizensService {
         landlordLink: property.landlordCitizen
           ? {
               citizenId: property.landlordCitizen.id,
-              name: [
-                property.landlordCitizen.firstName,
-                property.landlordCitizen.middleName,
-                property.landlordCitizen.lastName,
-              ]
-                .filter(Boolean)
-                .join(' '),
+              /*
+                The owner's name as a row stores it: the form sends this as the
+                card's `landlordName` when the tenant's own is blank, so it is
+                copied into the row and never carries «ورثة المرحوم».
+              */
+              name: citizenStoredName(property.landlordCitizen),
+              // What the locked field shows — an estate as its heirs.
+              displayName: citizenDisplayName(property.landlordCitizen),
               referenceNumber: property.landlordCitizen.referenceNumber,
             }
           : null,
@@ -1218,6 +1264,8 @@ export class CitizensService {
     payload: AdminCitizenSubmission,
     actor: { id: string },
   ): Promise<DuplicateReviewFindings> {
+    // «تركة» and «جهة أو وقف» (0076) are not checked as people — see `assessFindings`.
+    if (isNonPersonRecord(payload.residence)) return NO_FINDINGS;
     const personal = payload.personal as Record<string, unknown>;
     const contact = payload.contact as Record<string, unknown>;
     const text = (value: unknown) => (typeof value === 'string' && value.trim() ? value.trim() : null);
@@ -1382,28 +1430,19 @@ export class CitizensService {
     }));
   }
 
-  async create(input: {
-    tenantSlug: string;
-    payload: AdminCitizenSubmission;
-    actor: { id: string; role: string };
-  }) {
-    /*
-      The duplicate question, before anything is written.
-
-      Skipped for a re-delivery: the record a lost response already created is
-      itself the "match", and refusing the retry would strand the officer on a
-      household that is safely on file.
-
-      Refused only when a person is at the screen (`reviewDuplicates`). A
-      filing delivered from the offline queue is written and held at «يتطلب
-      مراجعة» with the match named — see `POSSIBLE_DUPLICATE_FLAG_PATH`.
-    */
-    const replay = input.payload.clientSubmissionId
-      ? await this.db.registration.findUnique({
-          where: { clientSubmissionId: input.payload.clientSubmissionId },
-          select: { id: true },
-        })
-      : null;
+  /**
+   * The duplicate verdict on a new filing, before anything is written: refused
+   * when it is certainly somebody on file (`CITIZEN_DUPLICATE_BLOCKED`), asked
+   * when a person is at the screen, and otherwise filed with «سجل مشابه موجود»
+   * (`serverFlags`). `create` asks it, and so does an import's dry run, with
+   * the payload the import would file, so the preview refuses what the
+   * import would.
+   */
+  private async screenForDuplicates(
+    input: { payload: AdminCitizenSubmission; actor: { id: string; role: string } },
+    /** A re-delivery of a filing already on file: it is its own "match". */
+    replay = false,
+  ) {
     const findings = replay ? NO_FINDINGS : await this.reviewDuplicates(input.payload, input.actor);
     const open = outstandingFindings(findings, input.payload.duplicateReview);
 
@@ -1456,6 +1495,33 @@ export class CitizensService {
       !input.payload.reviewDuplicates && open.possibleDuplicates.length > 0
         ? [possibleDuplicateFlag(open.possibleDuplicates)]
         : [];
+
+    return { findings, open, serverFlags };
+  }
+
+  async create(input: {
+    tenantSlug: string;
+    payload: AdminCitizenSubmission;
+    actor: { id: string; role: string };
+  }) {
+    /*
+      The duplicate question, before anything is written.
+
+      Skipped for a re-delivery: the record a lost response already created is
+      itself the "match", and refusing the retry would strand the officer on a
+      household that is safely on file.
+
+      Refused only when a person is at the screen (`reviewDuplicates`). A
+      filing delivered from the offline queue is written and held at «يتطلب
+      مراجعة» with the match named — see `POSSIBLE_DUPLICATE_FLAG_PATH`.
+    */
+    const replay = input.payload.clientSubmissionId
+      ? await this.db.registration.findUnique({
+          where: { clientSubmissionId: input.payload.clientSubmissionId },
+          select: { id: true },
+        })
+      : null;
+    const { findings, open, serverFlags } = await this.screenForDuplicates(input, Boolean(replay));
 
     const referenceOf = new Map(
       [...findings.possibleDuplicates, ...findings.phoneOwners].map((row) => [
@@ -1737,15 +1803,7 @@ export class CitizensService {
         continue;
       }
 
-      if (input.dryRun) {
-        results.push({ row, ok: true, name });
-        continue;
-      }
-
-      try {
-        const created = await this.create({
-          tenantSlug: input.tenantSlug,
-          /*
+      /*
             A spreadsheet row carries no `UNESTABLISHED` flags, and cannot.
 
             «غير مؤكَّد» is a statement by a named officer about one field they
@@ -1764,38 +1822,59 @@ export class CitizensService {
             with the number intact and the reason attached.
           */
           /*
-            A spreadsheet row carries no blanket reason either, and could not.
-            The reason is a sentence an officer says about a visit they made;
-            a row typed from a ledger years ago has no visit behind it, and
-            inventing one would put words in somebody's mouth on a record that
-            outlives them.
-          */
-          payload: {
-            ...parsed.data,
-            // A register typed up from paper is a register of households; an
-            // owner record is a decision somebody makes at a doorstep.
-            residence: 'RESIDENT',
-            flags: [],
-            blanketFlagReason: undefined,
-            // Nor a note, and for the same reason: a note is something an
-            // officer observed at a door. A spreadsheet row has no visit
-            // behind it to have observed anything.
-            notes: undefined,
-            clientSubmissionId: undefined,
-          },
-          actor: input.actor,
-        });
+        A spreadsheet row carries no blanket reason either, and could not.
+        The reason is a sentence an officer says about a visit they made;
+        a row typed from a ledger years ago has no visit behind it, and
+        inventing one would put words in somebody's mouth on a record that
+        outlives them.
+      */
+      const payload: AdminCitizenSubmission = {
+        ...parsed.data,
+        // A register typed up from paper is a register of households; an
+        // owner record is a decision somebody makes at a doorstep.
+        residence: 'RESIDENT',
+        flags: [],
+        blanketFlagReason: undefined,
+        // Nor a note, and for the same reason: a note is something an
+        // officer observed at a door. A spreadsheet row has no visit
+        // behind it to have observed anything.
+        notes: undefined,
+        clientSubmissionId: undefined,
+      };
+
+      /*
+        The dry run asks the duplicate question the import will, on the payload
+        it will file: a row certainly somebody on file fails here as it would
+        there, and one that only resembles somebody is said to, since it will
+        land at «يتطلب مراجعة». Rows are not compared with each other: a
+        person listed twice in one file passes the preview, and the import
+        refuses or holds the second against the first it has just written.
+      */
+      if (input.dryRun) {
+        try {
+          const { open } = await this.screenForDuplicates({ payload, actor: input.actor });
+          results.push({
+            row,
+            ok: true,
+            name,
+            ...(open.possibleDuplicates.length > 0
+              ? { possibleDuplicateOf: open.possibleDuplicates.map((candidate) => candidate.fullName) }
+              : {}),
+          });
+        } catch (caught) {
+          results.push({ row, ok: false, name, ...importFailure(caught) });
+        }
+        continue;
+      }
+
+      try {
+        const created = await this.create({ tenantSlug: input.tenantSlug, payload, actor: input.actor });
         results.push({ row, ok: true, name, referenceNumber: created.referenceNumber });
       } catch (caught) {
         // A duplicate identity document is the commonest real failure — the
         // same person already on the register, or listed twice in the file —
         // and it is a fact about that row, not a reason to stop the batch.
-        results.push({
-          row,
-          ok: false,
-          name,
-          error: caught instanceof Error ? caught.message : 'تعذّر إنشاء السجل',
-        });
+        results.push({ row, ok: false, name, ...importFailure(caught) });
       }
     }
 
@@ -2034,7 +2113,7 @@ export class CitizensService {
       const { id, ...values } = property as { id?: string } & Record<string, unknown>;
       const parcel =
         typeof values.propertyNumber === 'string'
-          ? cadastre.get(values.propertyNumber.trim())
+          ? cadastre.get(parcelNumberKey(values.propertyNumber))
           : undefined;
       return {
         id,
@@ -2165,6 +2244,23 @@ export class CitizensService {
       });
     }
 
+    /*
+      A card a municipal request names (0092): the certificate is about that
+      card, and the request's key keeps it (RESTRICT), so deleting it would fail
+      the whole save as a 500. The officer is told before anything is written,
+      and pointed to «إنهاء الملكية» / «إنهاء الإيجار», which end a card rather
+      than delete it (decision of 2026-10-13). A flat a request names is held
+      the same way, below, where the save works out which flats it drops.
+    */
+    if (removedIds.length > 0) {
+      const named = await this.db.citizenRequest.findMany({
+        where: { propertyEntryId: { in: removedIds } },
+        select: { requestNumber: true, propertyEntryId: true },
+        orderBy: { createdAt: 'asc' },
+      });
+      if (named.length > 0) throw propertyNamedByRequest(named);
+    }
+
     const endings = await this.removalEndings(removals, removedCards);
 
     /** What undoing links during this save wrote, emitted once it commits. */
@@ -2177,6 +2273,10 @@ export class CitizensService {
     */
     const unchangedStatements = new Set<string>();
     const unlinkedBySave: Array<{ propertyEntryId: string; report: RevertReport }> = [];
+    /** The owner each undone link named, by card — for the owner's own trail. */
+    const unlinkedOwnerOf = new Map<string, string>();
+    /** The `LANDLORD_UNLINKED` rows this save wrote in its transaction, announced after it. */
+    let unlinkChanges: Array<CitizenChange & { tenantSlug: string }> = [];
 
     // Where the record stands *after* this save. A record whose last gap was
     // just filled in leaves «يتطلب مراجعة» by the same rule that put it there.
@@ -2194,8 +2294,16 @@ export class CitizensService {
             contactPhone: citizen.contactPhone,
           }),
         })
-        // 0072's rules on the numbers, named rather than sent on as a 500.
+        // 0072's rules on the numbers, and the document another file holds,
+        // named rather than sent on as a 500.
         .catch((error: unknown) => {
+          if (isUniqueViolationOn(error, 'identityDocNumber')) {
+            // Says nothing of whose: the other holder is not this form's to learn.
+            throw new ConflictError({
+              code: 'CITIZEN_IDENTITY_DOC_TAKEN',
+              message: 'The identity document number is already held by another file',
+            });
+          }
           throw citizenPhoneRuleError(error) ?? error;
         });
 
@@ -2221,6 +2329,25 @@ export class CitizensService {
             code: 'STALE',
           },
         });
+      }
+
+      /*
+        … unless the file is archived: an archived file takes no new filing,
+        here as on the create path (`CITIZEN_FILE_ARCHIVED`). It is reactivated
+        first, with its reason. Read under the row lock the update above holds.
+      */
+      if (!existing?.id) {
+        const person = await tx.user.findFirst({
+          where: { id: citizen.id, kind: 'CITIZEN' },
+          select: { isActive: true },
+        });
+        if (!person?.isActive) {
+          throw new ConflictError({
+            code: 'CITIZEN_FILE_ARCHIVED',
+            message: 'This file is archived. Reactivate it before filing on it.',
+            details: { citizenId: citizen.id },
+          });
+        }
       }
 
       // A citizen with no registration at all (never expected from this form,
@@ -2326,6 +2453,7 @@ export class CitizensService {
         });
         revertEvents.push(...reverted.events);
         unlinkedBySave.push({ propertyEntryId: entryId, report: reverted.report });
+        unlinkedOwnerOf.set(entryId, state.landlordCitizenId);
       };
 
       for (const removedId of removedIds) await undo(removedId);
@@ -2336,11 +2464,15 @@ export class CitizensService {
         });
       }
 
+      const landlordNames = await landlordNamesToStore(
+        tx,
+        entries.map(({ entry }) => entry.props),
+      );
       for (const { id, index, entry } of entries) {
         const p = entry.props;
         const data = {
           occupancyType: p.occupancyType as never,
-          landlordName: p.landlordName ?? null,
+          landlordName: landlordNames[index] ?? null,
           landlordPhone: p.landlordPhone ?? null,
           propertyType: p.propertyType as never,
           neighborhood: p.neighborhood,
@@ -2474,6 +2606,17 @@ export class CitizensService {
           const order = (position: number, isNew: boolean) =>
             inStoredOrder && !isNew ? {} : { createdAt: new Date(base + position) };
 
+          // A flat this save drops that a municipal request names is refused, as a card is above.
+          const dropped = stored.filter((row) => !row.endedAt && !kept.has(row.id)).map((row) => row.id);
+          if (dropped.length > 0) {
+            const named = await tx.citizenRequest.findMany({
+              where: { buildingUnitId: { in: dropped } },
+              select: { requestNumber: true, propertyEntryId: true },
+              orderBy: { createdAt: 'asc' },
+            });
+            if (named.length > 0) throw propertyNamedByRequest(named);
+          }
+
           await tx.propertyEntry.update({
             where: { id },
             data: {
@@ -2508,6 +2651,30 @@ export class CitizensService {
         }
       }
 
+      /*
+        Tier 1, as «إلغاء الربط» writes it: a link this save undid is recorded
+        on the owner's file and on this tenant's, inside the transaction. What
+        the link put on the owner's file was taken off it here, and the owner's
+        own trail used to say nothing about it.
+      */
+      unlinkChanges = unlinkedBySave.flatMap(({ propertyEntryId, report }) => {
+        const ownerId = unlinkedOwnerOf.get(propertyEntryId)!;
+        const after = { propertyEntryId, via: 'CITIZEN_UPDATED', ...report, kept: report.kept.length };
+        const base = {
+          tenantSlug: input.tenantSlug,
+          action: 'LANDLORD_UNLINKED',
+          actorId: input.actor.id,
+          actorRole: input.actor.role,
+        };
+        return [
+          { ...base, citizenId: ownerId, after },
+          { ...base, citizenId: citizen.id, after: { ...after, ownerId } },
+        ];
+      });
+      for (const payload of unlinkChanges) {
+        await this.auditTrail.recordChangeInTransaction({ channel: 'citizen.changed', payload }, tx);
+      }
+
       return registrationId;
     });
 
@@ -2526,15 +2693,9 @@ export class CitizensService {
       round again.
     */
     this.landlordLinks.emitAll(revertEvents, input.actor);
-    for (const { propertyEntryId, report } of unlinkedBySave) {
-      this.events.emit('citizen.changed', {
-        tenantSlug: input.tenantSlug,
-        citizenId: citizen.id,
-        action: 'LANDLORD_UNLINKED',
-        after: { propertyEntryId, via: 'CITIZEN_UPDATED', ...report, kept: report.kept.length },
-        actorId: input.actor.id,
-        actorRole: input.actor.role,
-      });
+    // The rows are written; the events are for the caches that listen.
+    for (const payload of unlinkChanges) {
+      this.events.emit('citizen.changed', { ...payload, alreadyAudited: true });
     }
 
     const census = await this.census.syncQuietly({
@@ -3084,9 +3245,7 @@ export class CitizensService {
       const citizen = entry.registration.citizen;
       const existing = byCitizen.get(citizen.id) ?? {
         citizenId: citizen.id,
-        fullName: [citizen.firstName, citizen.middleName, citizen.lastName]
-          .filter(Boolean)
-          .join(' '),
+        fullName: citizenDisplayName(citizen),
         phone: citizen.phone,
         referenceNumber: citizen.referenceNumber,
         isActive: citizen.isActive,
@@ -3150,9 +3309,10 @@ export class CitizensService {
   ): Promise<{ found: Map<string, ParcelLocation>; missing: Set<string> }> {
     const found = await this.parcels.findManyByNumber(propertyNumbers);
 
+    // Reported as typed: `cadastreFlags` matches the card's own value.
     const unresolved = propertyNumbers
       .map((number) => number.trim())
-      .filter((number) => !found.has(number));
+      .filter((number) => !found.has(parcelNumberKey(number)));
 
     const hasCadastre = unresolved.length > 0 && (await this.parcels.count()) > 0;
 
@@ -3203,15 +3363,38 @@ export function citizenColumnsForEdit(
     match. `|| null` rather than `?? null` because the cleared field arrives
     as an empty string, and `''` is not an absence to Postgres.
   */
-  const hasNoPhone = contact.hasNoPhone === true;
+  const hasNoPhone = contact.hasNoPhone === true && !isOwnerRecord(payload.residence);
+  // An institution's name comes as one line and is stored across the parts (0076).
+  const names =
+    payload.residence === 'INSTITUTION'
+      ? splitInstitutionName(personal.firstName)
+      : { firstName: personal.firstName, middleName: personal.middleName || null, lastName: personal.lastName };
   const shared = {
-    firstName: personal.firstName,
-    middleName: personal.middleName || null,
-    lastName: personal.lastName,
+    ...names,
     hasNoPhone,
     phone: hasNoPhone ? null : (contact.phone || null),
     whatsapp: hasNoPhone ? null : (contact.whatsapp || contact.phone || null),
   };
+
+  if (isNonPersonRecord(payload.residence)) {
+    /*
+      «تركة» or «جهة أو وقف» (0076): the name, a phone if there is one, and the
+      representative in the local-contact fields. Every household column is
+      left as filed — the deceased's file converted to an estate keeps what was
+      recorded about him, under the no-data-loss rule the non-resident branch
+      below follows — except the one the CHECK in 0072 forbids keeping: a
+      relative's number that this save makes the record's own phone.
+    */
+    const newPhone = shared.phone;
+    return {
+      ...shared,
+      hasNoPhone: false,
+      ...(newPhone && stored.contactPhone === newPhone ? { contactPhone: null } : {}),
+      residence: payload.residence as never,
+      localContactName: contact.localContactName ?? null,
+      localContactPhone: contact.localContactPhone ?? null,
+    };
+  }
 
   if (payload.residence === 'NON_RESIDENT_OWNER') {
     /*

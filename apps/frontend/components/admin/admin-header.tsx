@@ -17,11 +17,13 @@ import {
 } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { useEffect, useState } from 'react';
+import type { HeaderBack } from '@/components/admin/header-back-link';
 import { activeNavItem, localizedLabel } from '@/components/admin/nav';
 import { NotificationsBell } from '@/components/admin/notifications-bell';
 import { LanguageSwitcher } from '@/components/language-switcher';
-import { Button } from '@/components/ui/button';
-import { ActionTooltip } from '@/components/ui/tooltip';
+import { BackLink } from '@/components/ui/back-link';
+import { Button, buttonVariants } from '@/components/ui/button';
+import { ActionTooltip, Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -35,6 +37,7 @@ import {
 import { getLabels } from '@mechanization/shared-schemas';
 import { logoutStaff, type Session } from '@/lib/api-client';
 import { clearSession } from '@/lib/session';
+import { cn } from '@/lib/utils';
 
 /**
  * The bar across the top of every staff screen.
@@ -58,6 +61,7 @@ export function AdminHeader({
   adminPath,
   tenantName,
   session,
+  back,
   onOpenDrawer,
   onOpenSearch,
 }: {
@@ -66,6 +70,8 @@ export function AdminHeader({
   adminPath: string;
   tenantName: string | undefined;
   session: Session | null;
+  /** The open page's way back, if it declared one (`HeaderBackLink`). */
+  back: HeaderBack | null;
   onOpenDrawer: () => void;
   /** Opens the command palette — the record search a clerk reaches for most. */
   onOpenSearch: () => void;
@@ -153,6 +159,30 @@ export function AdminHeader({
       >
         <Menu className="size-5" />
       </Button>
+
+      {/*
+        The page's way back, at the start of the bar where it stays while the
+        page scrolls. The arrow alone below `xl`, where the search field, the
+        account name and the crumbs already fill the bar: the label stays in
+        the link for a screen reader and shows as the tooltip. Written out from
+        `xl`, where the tooltip would only repeat it.
+      */}
+      {back ? (
+        <>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <BackLink
+                fallbackHref={back.fallbackHref}
+                label={back.label}
+                labelClassName="sr-only xl:not-sr-only"
+                className={cn(buttonVariants({ variant: 'ghost' }), 'shrink-0 px-3 text-muted-foreground coarse:px-4')}
+              />
+            </TooltipTrigger>
+            <TooltipContent className="xl:hidden">{back.label}</TooltipContent>
+          </Tooltip>
+          <span aria-hidden className="mx-1 h-5 w-px shrink-0 bg-border" />
+        </>
+      ) : null}
 
       {/* Breadcrumb. The municipality's own name is the root rather than a
           generic "الرئيسية": with one portal per tenant, the thing a clerk
@@ -269,7 +299,7 @@ export function AdminHeader({
 
           <DropdownMenuItem onSelect={() => router.push(`${base}/inspector/profile`)}>
             <BadgeDollarSign className="size-4" aria-hidden />
-            <span>{locale === 'en' ? 'My Earnings & Field Work' : 'أرباحي والمسح الميداني'}</span>
+            <span>{locale === 'en' ? 'Field Work Earnings' : 'أرباح المسح الميداني'}</span>
           </DropdownMenuItem>
 
           <DropdownMenuItem onSelect={() => router.push(`${base}/account`)}>

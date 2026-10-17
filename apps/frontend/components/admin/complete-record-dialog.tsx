@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { Check, ClipboardCheck, Loader2, ShieldQuestion, TriangleAlert } from 'lucide-react';
+import { Check, ClipboardCheck, Loader2, ShieldQuestion } from 'lucide-react';
 import {
   ApiRequestError,
   type CitizenFormData,
@@ -14,6 +14,7 @@ import {
 import { controlFor, type FieldControl } from '@/lib/citizen-field-controls';
 import { flagFieldLabel } from '@/lib/field-flags';
 import { adminUpdateCitizenSubmissionSchema } from '@mechanization/shared-schemas';
+import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
@@ -964,16 +965,16 @@ export function RecordCompletionNotices({
   */
   if (blockedElsewhere.length > 0) {
     return (
-      <div role="alert" className="space-y-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
-        <p className="flex items-start gap-2 font-semibold">
-          <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
-          <span>
-            {en
-              ? 'This record cannot be saved from here — other fields on it need correcting first:'
-              : 'لا يمكن حفظ هذا السجل من هنا — هناك خانات أخرى فيه تحتاج تصحيحاً أولاً:'}
-          </span>
-        </p>
-        <ul className="space-y-0.5 ps-6">
+      <Alert
+        variant="destructive"
+        live="alert"
+        title={
+          en
+            ? 'This record cannot be saved from here — other fields on it need correcting first:'
+            : 'لا يمكن حفظ هذا السجل من هنا — هناك خانات أخرى فيه تحتاج تصحيحاً أولاً:'
+        }
+      >
+        <ul className="space-y-0.5">
           {blockedElsewhere.map(([path, message]) => (
             <li key={path}>
               <span className="font-medium">{flagFieldLabel(path, locale)}</span>
@@ -983,22 +984,21 @@ export function RecordCompletionNotices({
         </ul>
         <a
           href={`${base}/citizens/${citizenId}/edit`}
-          className="inline-block font-medium underline underline-offset-4"
+          className="mt-2 inline-block font-medium underline underline-offset-4"
         >
           {en
             ? 'Open the full form to correct them (answers typed here are not kept) →'
             : 'افتح نموذج التعديل الكامل لتصحيحها (لن تُحفظ الإجابات المكتوبة هنا) ←'}
         </a>
-      </div>
+      </Alert>
     );
   }
 
   if (saveError) {
     return (
-      <div role="alert" className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs font-medium text-destructive">
-        <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
-        <span>{saveError}</span>
-      </div>
+      <Alert variant="destructive" live="alert">
+        {saveError}
+      </Alert>
     );
   }
 

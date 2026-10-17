@@ -40,7 +40,7 @@ export function ZoneLegend({
   return (
     <div
       className={cn(
-        'w-full overflow-hidden rounded-xl border border-border/80 bg-card/95 shadow-md backdrop-blur select-none transition-all duration-200',
+        'w-full overflow-hidden rounded-xl border border-border/80 bg-card/95 shadow-md backdrop-blur select-none transition-colors duration-200',
       )}
     >
       {/* Header aligned at top-3 */}

@@ -5,26 +5,25 @@ import Link from 'next/link';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   BadgeDollarSign,
-  Clock,
   HandCoins,
-  Home,
   Receipt,
   RefreshCw,
-  TrendingUp,
   UsersRound,
-  Wallet,
 } from 'lucide-react';
 import { getLabels } from '@mechanization/shared-schemas';
 import { getStaff } from '@/lib/api-client';
 import type { StaffSummary } from '@/lib/api-client';
 import { formatDate } from '@/lib/dates';
+import { readView } from '@/lib/read-view';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { InspectorPayoutDialog } from '@/components/admin/inspector-payout-dialog';
+import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
 import { Skeleton } from '@/components/ui/skeleton';
+import { StatItem, StatStrip } from '@/components/ui/stat-strip';
 import { EmptyState, ErrorState } from '@/components/ui/states';
 import { ActionTooltip } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
@@ -101,6 +100,12 @@ export function InspectorEarningsRoster({
     token,
     errorMessage: isAr ? 'تعذّر تحميل قائمة الموظفين' : 'Failed to load the staff list',
   });
+  /*
+    A failed re-read — a refocus past the stale time — keeps the roster, and the
+    payout dialog open on it (STA-1). Swapping the page for ErrorState unmounted
+    the dialog with what was typed in it (review of 2026-10-11).
+  */
+  const view = readView(data, error);
 
   const inspectors = useMemo(() => {
     const rows = (data?.items ?? []).filter(
@@ -160,27 +165,20 @@ export function InspectorEarningsRoster({
     return (
       <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
         {header}
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
-          {Array.from({ length: 5 }).map((_, index) => (
-            <Skeleton
-              key={index}
-              className={cn('h-24 rounded-lg', index === 4 && 'col-span-2 xl:col-span-1')}
-            />
-          ))}
-        </div>
+        <Skeleton className="h-52 rounded-lg sm:h-20" />
         <Skeleton className="h-52 rounded-xl" />
         <Skeleton className="h-52 rounded-xl" />
       </div>
     );
   }
 
-  if (error) {
+  if (view.state === 'failed') {
     return (
       <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
         {header}
         <Card>
           <CardContent className="p-0">
-            <ErrorState description={error} onRetry={() => refetch()} />
+            <ErrorState description={view.error} onRetry={() => refetch()} />
           </CardContent>
         </Card>
       </div>
@@ -191,54 +189,47 @@ export function InspectorEarningsRoster({
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       {header}
 
+      {view.state === 'ready' && view.refreshFailed ? (
+        <RefreshFailedAlert message={view.refreshFailed} onRetry={() => refetch()} />
+      ) : null}
+
       {/*
         The whole municipality's position, above the rows that make it up.
         One accent, on the balance still owed — it is the only figure here that
         asks somebody to do something.
-
-        Two across until there is room for five: the fifth, the balance owed,
-        then takes the whole last row instead of sitting alone at half width.
-        Five across waits for `xl` because the sidebar takes a quarter of a
-        laptop, and a dollar figure in five columns of what is left wraps.
       */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
-        <Stat
-          icon={UsersRound}
+      <StatStrip>
+        <StatItem
           // Not «المفتشون الميدانيون» any more: the list now includes anyone who
-          // filed work, and a tile that counts them under an inspector's title
+          // filed work, and a cell that counts them under an inspector's title
           // would misname the admin row sitting underneath it.
           label={isAr ? 'من سجّل بيانات' : 'People who filed'}
           value={inspectors.length.toLocaleString(locale)}
         />
-        <Stat
-          icon={Home}
+        <StatItem
           label={isAr ? 'الوحدات المحتسبة' : 'Billable units'}
           value={totals.properties.toLocaleString(locale)}
-          note={`${totals.citizens.toLocaleString(locale)} ${isAr ? 'مواطن مسجَّل' : 'citizens registered'}`}
+          hint={`${totals.citizens.toLocaleString(locale)} ${isAr ? 'مواطن مسجَّل' : 'citizens registered'}`}
         />
-        <Stat
-          icon={TrendingUp}
+        <StatItem
           label={isAr ? 'إجمالي الأرباح' : 'Total earned'}
           value={`$${money(totals.earned, locale)}`}
         />
-        <Stat
-          icon={Wallet}
+        <StatItem
           label={isAr ? 'إجمالي المدفوع' : 'Total paid'}
           value={`$${money(totals.paid, locale)}`}
         />
-        <Stat
-          icon={Clock}
+        <StatItem
           label={isAr ? 'إجمالي المتبقي' : 'Total pending'}
           value={`$${money(totals.pending, locale)}`}
-          note={
+          hint={
             totals.overpaid > 0
               ? `$${money(totals.overpaid, locale)} ${isAr ? 'مدفوع بالزيادة' : 'overpaid'}`
               : undefined
           }
-          emphasis
-          className="col-span-2 xl:col-span-1"
+          className="text-warning"
         />
-      </div>
+      </StatStrip>
 
       {inspectors.length === 0 ? (
         <Card>
@@ -280,6 +271,7 @@ export function InspectorEarningsRoster({
         open={payoutFor !== null}
         onOpenChange={(next) => !next && setPayoutFor(null)}
         tenant={tenant}
+        base={base}
         token={token}
         locale={locale}
         staff={payoutFor ? { id: payoutFor.id, name: payoutFor.fullName } : null}
@@ -483,50 +475,5 @@ function InspectorCard({
         </dl>
       </CardContent>
     </Card>
-  );
-}
-
-/**
- * One figure: a label, a number, and an optional line under it.
- *
- * Deliberately not a `Card` — a card is the chrome of a section with a heading
- * and contents, and five in a row holding one number each is that chrome
- * applied to a single value.
- */
-function Stat({
-  icon: Icon,
-  label,
-  value,
-  note,
-  emphasis,
-  className,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  value: string;
-  note?: string;
-  emphasis?: boolean;
-  className?: string;
-}): React.JSX.Element {
-  return (
-    <div className={cn('rounded-lg border bg-card p-4', className)}>
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Icon className="size-4 shrink-0" aria-hidden />
-        <span className="min-w-0 truncate">{label}</span>
-      </div>
-      {/*
-        `<bdi>` rather than `dir="ltr"` on the number: the label sits above its
-        value, and giving the value its own direction pushed it to the opposite
-        edge from the word naming it.
-      */}
-      <div
-        className={`mt-2 text-2xl font-bold tabular-nums ${
-          emphasis ? 'text-warning' : 'text-foreground'
-        }`}
-      >
-        <bdi>{value}</bdi>
-      </div>
-      {note ? <p className="mt-1 truncate text-xs text-muted-foreground">{note}</p> : null}
-    </div>
   );
 }

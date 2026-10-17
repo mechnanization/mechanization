@@ -6,6 +6,8 @@ import type mapboxgl from 'mapbox-gl';
 import type { Feature, FeatureCollection, Geometry } from 'geojson';
 import { AlertTriangle, Crosshair, Loader2, Pointer, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import type { CadastreAssetName } from '@/lib/api-client';
+import { fetchCadastreAsset } from '@/lib/cadastre-assets';
 import { geometryBounds, pointInGeometry } from '@/lib/map-geometry';
 
 export const FALLBACK_CENTER: [number, number] = [35.2654, 33.2539];
@@ -58,7 +60,7 @@ function addLayerInOrder(
 }
 
 /**
- * The parcel outlines, fetched once per tenant and shared by every dialog/page open.
+ * The parcel outlines, fetched once per tenant (until found) and shared by every dialog/page open.
  */
 export const outlineCache = new Map<string, Promise<FeatureCollection | null>>();
 
@@ -68,32 +70,31 @@ export const labelPointCache = new Map<string, Promise<FeatureCollection | null>
 function loadCadastreAsset(
   cache: Map<string, Promise<FeatureCollection | null>>,
   tenant: string,
-  file: string,
+  token: string | null | undefined,
+  file: CadastreAssetName,
 ): Promise<FeatureCollection | null> {
   const cached = cache.get(tenant);
   if (cached) return cached;
 
-  const slug = encodeURIComponent(tenant);
-  const apiBase = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api/v1'}/t/${slug}/cadastre/assets`;
-
-  const request = (async (): Promise<FeatureCollection | null> => {
-    for (const url of [`/tenants/${slug}/${file}`, `${apiBase}/${file}`]) {
-      try {
-        const response = await fetch(url);
-        if (response.ok) return (await response.json()) as FeatureCollection;
-      } catch {
-        // Try the next source; a missing static asset is not an error worth surfacing while the API still serves the same file.
-      }
-    }
-    return null;
-  })();
+  // The portal's static copy, then the API's, signed in (`fetchCadastreAsset`).
+  // Nothing found is not remembered: the first ask can come before the session
+  // is read, and asked again with a token the API may still answer.
+  const request: Promise<FeatureCollection | null> = fetchCadastreAsset(tenant, token, file).then(
+    (collection) => {
+      if (!collection && cache.get(tenant) === request) cache.delete(tenant);
+      return collection;
+    },
+  );
 
   cache.set(tenant, request);
   return request;
 }
 
-export function loadParcelOutlines(tenant: string): Promise<FeatureCollection | null> {
-  return loadCadastreAsset(outlineCache, tenant, 'parcel-polygons.geojson');
+export function loadParcelOutlines(
+  tenant: string,
+  token: string | null | undefined,
+): Promise<FeatureCollection | null> {
+  return loadCadastreAsset(outlineCache, tenant, token, 'parcel-polygons.geojson');
 }
 
 /**
@@ -107,8 +108,11 @@ export function loadParcelOutlines(tenant: string): Promise<FeatureCollection | 
  * parcel, and a polygon labelled by Mapbox itself can repeat its number where
  * the parcel crosses a tile edge.
  */
-export function loadParcelLabelPoints(tenant: string): Promise<FeatureCollection | null> {
-  return loadCadastreAsset(labelPointCache, tenant, 'parcels.geojson');
+export function loadParcelLabelPoints(
+  tenant: string,
+  token: string | null | undefined,
+): Promise<FeatureCollection | null> {
+  return loadCadastreAsset(labelPointCache, tenant, token, 'parcels.geojson');
 }
 
 export function outlineOf(

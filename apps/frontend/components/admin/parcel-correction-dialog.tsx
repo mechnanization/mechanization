@@ -14,6 +14,7 @@ import {
   type ParcelCorrectionPreview,
   type ParcelCorrectionResult,
 } from '@/lib/api-client';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -499,9 +500,9 @@ export function ParcelCorrectionDialog({
           ) : null}
 
           {failure ? (
-            <p role="alert" className="rounded-md bg-destructive/10 p-2.5 text-sm text-destructive">
+            <Alert variant="destructive" live="alert">
               {failure}
-            </p>
+            </Alert>
           ) : null}
         </div>
 

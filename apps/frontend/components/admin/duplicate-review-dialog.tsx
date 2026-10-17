@@ -4,13 +4,15 @@ import { useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { Ban, ExternalLink, PhoneOff, UsersRound } from 'lucide-react';
-import { duplicateMatchedOnLabels, getLabels } from '@mechanization/shared-schemas';
+import { duplicateMatchedOnLabels } from '@mechanization/shared-schemas';
 import type {
   ContactNumberField,
   DuplicateReviewAnswer,
   DuplicateReviewFindings,
 } from '@/lib/api-client';
+import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
+import { RecordKindBadge } from '@/components/admin/record-kind-badge';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -117,7 +119,6 @@ export function DuplicateReviewDialog({
   onResolve: (outcome: DuplicateReviewOutcome) => void;
 }) {
   const t = useTranslations('duplicateReview');
-  const labels = getLabels(locale);
   // The same words «سجلات مشابهة» uses beside a candidate — one source for what a match agreed on.
   const agreed = duplicateMatchedOnLabels(locale);
   const duplicates = findings.possibleDuplicates;
@@ -217,16 +218,9 @@ export function DuplicateReviewDialog({
 
         <div className="space-y-5">
           {stopped ? (
-            <p
-              role="alert"
-              className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm leading-relaxed"
-            >
-              <Ban className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
-              <span>
-                <span className="block font-semibold">{t('stopped.title')}</span>
-                {t('stopped.body')}
-              </span>
-            </p>
+            <Alert variant="destructive" live="alert" icon={Ban} title={t('stopped.title')}>
+              {t('stopped.body')}
+            </Alert>
           ) : null}
 
           {asksPerson ? (
@@ -249,9 +243,7 @@ export function DuplicateReviewDialog({
                           {row.referenceNumber}
                         </span>
                       ) : null}
-                      {row.residence === 'NON_RESIDENT_OWNER' ? (
-                        <Badge variant="soft-info">{labels.citizenResidence.NON_RESIDENT_OWNER}</Badge>
-                      ) : null}
+                      <RecordKindBadge residence={row.residence} locale={locale} />
                       <Link
                         href={citizenHref(row.id)}
                         target="_blank"

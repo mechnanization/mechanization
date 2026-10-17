@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useEffect, useState } from 'react';
+import { use, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { FileWarning, RefreshCw } from 'lucide-react';
 import {
@@ -18,6 +18,7 @@ import { formatLbp } from '@/lib/currency';
 import { BillReviewDialog, CorrectionBillCard } from '@/components/admin/correction-bills';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/ui/page-header';
+import { Pager } from '@/components/ui/pager';
 import { SegmentedControl } from '@/components/ui/segmented-control';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/states';
 import { useToast } from '@/components/ui/toast';
@@ -64,6 +65,8 @@ export default function CorrectionBillsPage({
   const [reviewing, setReviewing] = useState<CorrectionAffectedBill | null>(null);
   const [saving, setSaving] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
+  /** The top of the list, brought back into view when the page changes. */
+  const listTop = useRef<HTMLUListElement>(null);
 
   useEffect(() => {
     const session = loadSession(tenant);
@@ -138,11 +141,6 @@ export default function CorrectionBillsPage({
       <PageHeader
         icon={FileWarning}
         title={en ? 'Bills affected by corrections' : 'فواتير تأثّرت بتصحيحات'}
-        subtitle={
-          en
-            ? 'Unpaid bills whose basis changed after the record behind them was corrected. Bills are never changed automatically; the decision is yours.'
-            : 'فواتير غير مسدَّدة تغيّر أساس احتسابها بعد تصحيح السجل الذي بُنيت عليه. لا تتغيّر أي فاتورة تلقائياً؛ القرار للمحاسب.'
-        }
         actions={
           <Button variant="outline" size="sm" onClick={() => listQuery.refetch()} disabled={listQuery.fetching}>
             <RefreshCw className={cn('size-4 rtl:ml-1.5 ltr:mr-1.5', listQuery.fetching && 'animate-spin')} aria-hidden />
@@ -208,7 +206,7 @@ export default function CorrectionBillsPage({
         />
       ) : (
         <>
-          <ul className="space-y-3">
+          <ul ref={listTop} className="space-y-3">
             {data.items.map((bill) => (
               <CorrectionBillCard
                 key={bill.paymentId}
@@ -223,19 +221,16 @@ export default function CorrectionBillsPage({
               />
             ))}
           </ul>
-          {pages > 1 ? (
-            <nav className="flex items-center justify-between gap-2" aria-label={en ? 'Pages' : 'الصفحات'}>
-              <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setUrlState((current) => ({ page: current.page - 1 }))}>
-                {en ? 'Previous' : 'السابق'}
-              </Button>
-              <span className="text-sm text-muted-foreground">
-                {en ? `Page ${page + 1} of ${pages}` : `صفحة ${page + 1} من ${pages}`}
-              </span>
-              <Button variant="outline" size="sm" disabled={page + 1 >= pages} onClick={() => setUrlState((current) => ({ page: current.page + 1 }))}>
-                {en ? 'Next' : 'التالي'}
-              </Button>
-            </nav>
-          ) : null}
+          <Pager
+            page={page}
+            pageSize={PAGE_SIZE}
+            total={data.total}
+            // A step off the live URL, not the render's value, which can trail a
+            // quick second click by one write.
+            onPageChange={(target) => setUrlState((current) => ({ page: current.page + (target - page) }))}
+            locale={locale}
+            scrollTarget={listTop}
+          />
         </>
       )}
 

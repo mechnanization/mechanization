@@ -28,7 +28,6 @@ export type SettingsLocale = 'ar' | 'en';
 export interface SettingsCopy {
   page: {
     title: string;
-    subtitle: string;
   };
   nav: {
     label: string;
@@ -408,7 +407,6 @@ export const CURRENCY_NAMES: Record<SettingsLocale, Record<CurrencyCode, string>
 const AR: SettingsCopy = {
   page: {
     title: 'إعدادات البلدية',
-    subtitle: 'الملف الشخصي، المالية، الترقيم، الأمان، والمستخدمون',
   },
   nav: {
     label: 'أقسام الإعدادات',
@@ -776,7 +774,6 @@ const AR: SettingsCopy = {
 const EN: SettingsCopy = {
   page: {
     title: 'Municipality settings',
-    subtitle: 'Profile, finance, numbering, security, and users',
   },
   nav: {
     label: 'Settings sections',

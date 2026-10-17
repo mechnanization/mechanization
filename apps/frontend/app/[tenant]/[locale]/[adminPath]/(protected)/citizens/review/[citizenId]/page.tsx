@@ -20,7 +20,7 @@ import {
   ShieldX,
   UserRound,
 } from 'lucide-react';
-import { getLabels, type CitizenResidence } from '@mechanization/shared-schemas';
+import { citizenDisplayName, getLabels, type CitizenResidence } from '@mechanization/shared-schemas';
 import { askableFields, type CitizenFormValues } from '@/components/admin/citizen-form';
 import {
   OpenQuestionList,
@@ -33,7 +33,7 @@ import {
   type OpenItem,
   type RecordCompletion,
 } from '@/components/admin/complete-record-dialog';
-import { BackLink } from '@/components/ui/back-link';
+import { HeaderBackLink } from '@/components/admin/header-back-link';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -552,16 +552,24 @@ export default function ReviewFilePage({
 
   const personal = values?.personal ?? {};
   const contact = values?.contact ?? {};
-  const fullName =
-    [text(personal.firstName), text(personal.middleName), text(personal.lastName)].filter(Boolean).join(' ') ||
-    (en ? 'Unnamed' : 'بلا اسم');
-  const phone = text(contact.phone);
   const residence = values?.residence as CitizenResidence | undefined;
+  // «ورثة المرحوم …» for an estate (0076), as the register names it.
+  const fullName =
+    citizenDisplayName(
+      {
+        firstName: text(personal.firstName) || null,
+        middleName: text(personal.middleName) || null,
+        lastName: text(personal.lastName) || null,
+        residence,
+      },
+      { locale },
+    ) || (en ? 'Unnamed' : 'بلا اسم');
+  const phone = text(contact.phone);
   const dash = <span className="text-muted-foreground">—</span>;
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <BackLink
+      <HeaderBackLink
         fallbackHref={`${base}/citizens/review`}
         label={en ? 'Back to the review queue' : 'العودة إلى قائمة المراجعة'}
       />
@@ -576,19 +584,6 @@ export default function ReviewFilePage({
       <PageHeader
         icon={ClipboardCheck}
         title={values ? fullName : en ? 'Review file' : 'فحص الملف'}
-        subtitle={
-          values ? (
-            <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-              <span>{en ? 'Review file' : 'فحص الملف'}</span>
-              {record?.citizenReferenceNumber ? (
-                <>
-                  <span aria-hidden>·</span>
-                  <bdi className="font-mono">{record.citizenReferenceNumber}</bdi>
-                </>
-              ) : null}
-            </span>
-          ) : undefined
-        }
         actions={
           <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap">
             {values ? (

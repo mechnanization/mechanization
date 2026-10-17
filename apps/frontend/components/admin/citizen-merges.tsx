@@ -2,18 +2,17 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { GitMerge, Loader2, Search, Undo2 } from 'lucide-react';
+import { GitMerge, Loader2, Undo2 } from 'lucide-react';
 import type { CitizenMergeRecord, CitizenMergeResult, CitizenUnmergePreview } from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
   getCitizenMerges,
-  listCitizens,
   logApiError,
   previewCitizenUnmerge,
   undoCitizenMerge,
-  type CitizenListItem,
 } from '@/lib/api-client';
 import { formatDate } from '@/lib/dates';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -23,8 +22,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { CitizenPicker } from './citizen-picker';
 import { MergeCitizensDialog } from './merge-citizens-dialog';
 
 /**
@@ -230,11 +229,13 @@ function UndoMergeDialog({
         ) : null}
 
         {preview && preview.blocks.length > 0 ? (
-          <ul className="list-disc space-y-1 rounded-lg border border-destructive/40 bg-destructive/5 p-3 ps-7 text-sm">
-            {preview.blocks.map((block) => (
-              <li key={block.code}>{block.message}</li>
-            ))}
-          </ul>
+          <Alert variant="destructive" live="status">
+            <ul className="list-disc space-y-1 ps-4">
+              {preview.blocks.map((block) => (
+                <li key={block.code}>{block.message}</li>
+              ))}
+            </ul>
+          </Alert>
         ) : null}
 
         {preview && preview.blocks.length === 0 ? (
@@ -253,9 +254,9 @@ function UndoMergeDialog({
         ) : null}
 
         {failure ? (
-          <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 p-2.5 text-sm text-destructive">
+          <Alert variant="destructive" live="alert">
             {failure}
-          </p>
+          </Alert>
         ) : null}
 
         <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
@@ -298,31 +299,7 @@ export function MergeWithAnotherButton({
 }): React.JSX.Element {
   const en = locale === 'en';
   const [picking, setPicking] = useState(false);
-  const [search, setSearch] = useState('');
-  const [results, setResults] = useState<CitizenListItem[]>([]);
-  const [searching, setSearching] = useState(false);
   const [other, setOther] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!picking || search.trim().length < 2) {
-      setResults([]);
-      return;
-    }
-    const controller = new AbortController();
-    const timer = setTimeout(() => {
-      setSearching(true);
-      listCitizens(tenant, token, { search: search.trim(), limit: 8 }, controller.signal)
-        .then((page) => setResults(page.items.filter((item) => item.id !== citizenId && item.isActive)))
-        .catch((caught: unknown) => {
-          if (!controller.signal.aborted) logApiError(caught);
-        })
-        .finally(() => setSearching(false));
-    }, 350);
-    return () => {
-      controller.abort();
-      clearTimeout(timer);
-    };
-  }, [picking, search, tenant, token, citizenId]);
 
   return (
     <>
@@ -346,50 +323,21 @@ export function MergeWithAnotherButton({
                 : 'ابحث عن الملف الآخر للشخص نفسه. الخطوة التالية تعرض كل ما سيفعله الدمج قبل أن يحدث أي شيء.'}
             </DialogDescription>
           </DialogHeader>
-          <div className="relative">
-            <Search className="pointer-events-none absolute start-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
-            <Input
-              autoFocus
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder={en ? 'Name, reference or phone' : 'الاسم أو الرقم المرجعي أو الهاتف'}
-              className="ps-8"
-            />
-          </div>
-          <ul className="max-h-72 space-y-1 overflow-y-auto">
-            {searching ? (
-              <li className="flex items-center gap-2 p-2 text-sm text-muted-foreground">
-                <Loader2 className="size-4 animate-spin" aria-hidden />
-                {en ? 'Searching…' : 'جارٍ البحث…'}
-              </li>
-            ) : null}
-            {results.map((item) => (
-              <li key={item.id}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPicking(false);
-                    setOther(item.id);
-                  }}
-                  className="flex w-full flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md border p-2 text-start text-sm hover:bg-muted/50"
-                >
-                  <span className="font-medium">{item.fullName}</span>
-                  {item.motherName ? (
-                    <span className="text-xs text-muted-foreground">
-                      {en ? `mother: ${item.motherName}` : `والدته: ${item.motherName}`}
-                    </span>
-                  ) : null}
-                  <span dir="ltr" className="text-xs text-muted-foreground">
-                    {item.referenceNumber ?? ''}
-                    {item.phone ? ` · ${item.phone}` : ''}
-                  </span>
-                </button>
-              </li>
-            ))}
-            {!searching && search.trim().length >= 2 && results.length === 0 ? (
-              <li className="p-2 text-sm text-muted-foreground">{en ? 'No active file found.' : 'لا يوجد ملف نشط مطابق.'}</li>
-            ) : null}
-          </ul>
+          {/* The register's one picker: an active file other than this one. */}
+          <CitizenPicker
+            id="merge-other-file"
+            tenant={tenant}
+            token={token}
+            value={null}
+            onChange={(citizen) => {
+              if (!citizen) return;
+              setPicking(false);
+              setOther(citizen.id);
+            }}
+            exclude={[citizenId]}
+            ariaLabel={en ? 'Search for the other file' : 'ابحث عن الملف الآخر'}
+            autoFocus
+          />
           <DialogFooter>
             <Button variant="outline" onClick={() => setPicking(false)}>
               {en ? 'Cancel' : 'إلغاء'}

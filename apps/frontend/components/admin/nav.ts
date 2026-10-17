@@ -1,25 +1,36 @@
 import {
+  ArrowDownUp,
   ArrowLeftRight,
+  ArrowRightLeft,
   BadgeDollarSign,
   Building2,
+  CalendarCheck,
   CalendarClock,
   ClipboardCheck,
   ClipboardList,
+  DoorClosed,
+  FileCheck,
   FileQuestion,
-  ScanSearch,
   FileWarning,
+  HandCoins,
   KeyRound,
+  LandPlot,
+  Landmark,
   LayoutDashboard,
   Layers,
   Link2,
   Map as MapIcon,
-  Receipt,
+  ReceiptText,
+  ScanSearch,
+  ScrollText,
   Settings,
   ShieldCheck,
   ShieldQuestion,
   UserPlus,
+  UserRoundCheck,
   Users,
   UsersRound,
+  Wallet,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -29,6 +40,9 @@ import {
   FEE_READ_ROLES,
   MAP_READ_ROLES,
   PAYMENT_REVIEW_READ_ROLES,
+  REQUEST_READ_ROLES,
+  TREASURY_READ_ROLES,
+  TREASURY_WORK_ROLES,
   WORKING_STAFF_ROLES,
 } from '@mechanization/shared-schemas';
 import { QUALITY_REVIEWER_ROLES, WORKLIST_ROLES } from '@/lib/staff-roles';
@@ -77,6 +91,14 @@ export interface NavItem {
   roles: readonly string[];
   /** Extra words the command palette matches on, beyond the label. */
   keywords?: string[];
+  /**
+   * Older addresses this row still owns: pages under them are guarded by this
+   * row's roles and light it up, as if they sat under `path`. For a section
+   * whose documents kept their addresses when its register moved — the printed
+   * vouchers under `/finance/income` and `/finance/expenses` belong to
+   * «الحركات المالية» (`/finance/transactions`). Never listed in the sidebar.
+   */
+  also?: readonly string[];
 }
 
 export interface NavGroup {
@@ -97,36 +119,51 @@ export interface NavGroup {
 }
 
 /**
- * An unlabelled landing pair, then six groups in the order a clerk's day runs:
- * the register, the collection work still open on it, the money raised
- * against it, the land those records describe, the checking of all of it, and
- * the portal's own administration.
+ * An unlabelled landing group, then seven groups — one per job, in the order a
+ * municipality's day runs: the people in the register, the buildings and the
+ * land they live on, the visits still owed in the field, the fees raised and
+ * collected, the treasury's books, the checking of all of it, and the portal's
+ * own administration.
  *
- * A flat list of ten was past scannable — «القطاعات» and «الموظفون» read as
- * equally likely neighbours of «المواطنون» when they belong to different jobs
- * entirely.
+ * ## How it is cut (reorganised 2026-10-09)
  *
- * Money used to sit inside «السجل», on the reasoning that a fee is issued
- * against the register rather than configured apart from it. That reasoning is
- * still true and it stopped being the useful cut: «السجل» had grown to eight of
- * the fifteen rows, which is the flat list again wearing a heading. «المالية»
- * is also a job rather than a subject — the COLLECTOR and the ACCOUNTANT work
- * there and almost nowhere else, and giving them one heading to fold to is
- * worth more than keeping the fee beside the citizen it is owed by.
+ * By the job, not by the screen. A group is what one kind of person works in,
+ * so each of them can fold the rest away (the sidebar remembers folds by
+ * group label):
  *
- * `defaultPathFor` reads this order, so the landing pair stays first and
- * keeps `/dashboard` ahead of `/inspector/profile`: every role's
- * first visible row is the same one it was before the split.
+ *  - «المواطنون» — the register of people and the queues that feed it: a
+ *    record saved with gaps, an owner a tenant named who is not yet linked.
+ *    Those queues keep filling after the survey (ending an ownership sends its
+ *    tenants back to «روابط المالكين»), so they sit beside the register they
+ *    drain into rather than in a group of their own.
+ *  - «المباني والأرض» — the census and the map drawn from it, with the sectors.
+ *  - «العمل الميداني» — the visits still owed: units nobody has surveyed,
+ *    doors that were shut, flats waiting for the visit after repair. These
+ *    drain toward zero once the survey is done, which is why they are a group
+ *    of their own: a clerk past the survey folds it away instead of scrolling
+ *    past three quiet queues.
+ *  - «الرسوم والجباية» and «الخزينة» — money, as two jobs. Billing citizens
+ *    and the collectors' rounds, down to the handover, are the collection
+ *    side; the treasury's books are the accountant's. One «المالية» of seven
+ *    rows was the flat list again, and a collector saw a heading of which he
+ *    could open three rows.
+ *
+ * No group holds more than five rows: past that a heading stops helping the
+ * eye find a row. Each row has an icon of its own, so a folded rail still tells
+ * its rows apart.
+ *
+ * `defaultPathFor` reads this order, so the landing group stays first and
+ * unchanged — `/dashboard` ahead of `/inspector/profile` ahead of `/my-round`
+ * — and every role lands where it landed before.
  */
 export const NAV_GROUPS: NavGroup[] = [
   /*
     Where each role lands, and nothing else.
 
-    These two answer the same question for different people — «what is mine to
-    look at» — and neither is a section of the register. The dashboard is the
+    These answer the same question for different people — «what is mine to
+    look at» — and none is a section of the register. The dashboard is the
     municipality's figures for whoever answers for them; «أرباحي» is one
-    inspector's own work. They are disjoint in practice, so most roles see a
-    single row here.
+    inspector's own work; «جولتي» is the cash in one collector's pocket.
   */
   {
     items: [
@@ -134,11 +171,12 @@ export const NAV_GROUPS: NavGroup[] = [
         Oversight only.
 
         The whole municipality's figures on one screen — arrears, collection
-        rates, household distributions — is a管理 view, not a working one, so
-        it is held to the roles that answer for those numbers rather than the
-        ones that generate them. `FIELD_INSPECTOR` used to be on this list and
-        is not any more: an inspector's own screen is «أرباحي والمسح الميداني»
-        below, which reports their work without exposing everybody else's.
+        rates, household distributions — is an oversight view, not a working
+        one, so it is held to the roles that answer for those numbers rather
+        than the ones that generate them. `FIELD_INSPECTOR` used to be on this
+        list and is not any more: an inspector's own screen is «أرباحي والمسح
+        الميداني» below, which reports their work without exposing everybody
+        else's.
 
         `DashboardController.counters` and `.analytics` were narrowed to match.
         The `map*` endpoints on that same controller keep their wider lists —
@@ -158,39 +196,64 @@ export const NAV_GROUPS: NavGroup[] = [
       // nothing — and whom that route does not admit.
       {
         path: '/inspector/profile',
-        label: 'أرباحي والمسح الميداني',
-        labelEn: 'Inspector Earnings',
+        label: 'أرباح المسح الميداني',
+        labelEn: 'My earnings & survey',
         icon: BadgeDollarSign,
         roles: WORKING_STAFF_ROLES,
         keywords: ['أرباح', 'عمولة', 'مفتش', 'مسح', 'عقارات', 'inspector', 'earnings'],
       },
+      /*
+        Self-service too, and for the same reason: `transfers.myRound` answers
+        for whoever is asking and there is no id in the path to point elsewhere.
+        A man carrying the municipality's cash is owed the answer to «كم
+        بجيبتي؟» without being given sight of the books — which is why this is
+        the one treasury screen outside `TREASURY_READ_ROLES`.
+
+        `WORKING_STAFF_ROLES` rather than `COLLECTOR`, because nothing
+        restricts who may be named on a payment: in practice it is the field
+        inspectors who carry the cash. Staff holding no custody get an empty
+        round, which is the honest answer to the question rather than a locked
+        door.
+      */
+      {
+        path: '/my-round',
+        label: 'جولتي',
+        labelEn: 'My round',
+        icon: Wallet,
+        roles: WORKING_STAFF_ROLES,
+        keywords: ['جولة', 'عهدة', 'جابي', 'تحصيل', 'نقدي', 'round', 'custody', 'collector'],
+      },
     ],
   },
   {
-    label: 'السجل',
-    labelEn: 'Registry',
+    label: 'المواطنون',
+    labelEn: 'Citizens',
     items: [
-      // The register itself — one row per person. Readable by every role;
-      // writing is narrower, which is «تسجيل مواطن جديد» below.
+      /*
+        The register itself — one row per person. Readable by every role;
+        writing is narrower, which is «تسجيل مواطن جديد» below. Named «سجل
+        المواطنين» now that the group carries «المواطنون», and to sit beside
+        «سجل المباني» as the other register.
+      */
       {
         path: '/citizens',
-        label: 'المواطنون',
-        labelEn: 'Citizens',
+        label: 'سجل المواطنين',
+        labelEn: 'Citizen register',
         icon: Users,
         roles: EVERY_STAFF_ROLE,
-        keywords: ['سجل', 'مواطن', 'عقار', 'استيراد', 'citizens', 'registry'],
+        keywords: ['سجل', 'مواطن', 'مواطنون', 'عقار', 'استيراد', 'citizens', 'registry'],
       },
       /*
         The counter's most-used action, promoted to a row of its own.
 
-        It was reachable only as a button on «المواطنون», which put the one
+        It was reachable only as a button on the register, which put the one
         thing a clerk does forty times a day two screens from where they land
         and made it invisible to the command palette. A distinct row also gives
         the draft-restore notice somewhere to live: leaving this page no longer
         discards what has been typed (see `citizen-draft.ts`), and that promise
         only makes sense if there is a page to come back *to*.
 
-        Narrower than «المواطنون» deliberately — these are the roles
+        Narrower than the register deliberately — these are the roles
         `CitizenEditor` admits and `CitizenController.create` accepts. An
         `AUDITOR` reads the register and does not add to it, so offering them
         the form would be offering a save the server refuses.
@@ -198,34 +261,14 @@ export const NAV_GROUPS: NavGroup[] = [
       {
         path: '/citizens/new',
         label: 'تسجيل مواطن جديد',
-        labelEn: 'Register Citizen',
+        labelEn: 'Register a citizen',
         icon: UserPlus,
         roles: ['SUPER_ADMIN', 'FIELD_INSPECTOR', 'ADMINISTRATIVE_OFFICER'],
         keywords: ['تسجيل', 'مواطن', 'جديد', 'إضافة', 'أسرة', 'نموذج', 'register', 'new', 'add'],
       },
-    ],
-  },
-  /*
-    «استكمال البيانات» — the worklists the data collection leaves behind: a
-    record saved with fields still to confirm, an owner a tenant named who is
-    not yet linked, a visit that found nobody home. Each is a queue that drains
-    toward zero once the survey is done, which is why they are no longer in
-    «السجل»: that group is the register people use every day, and a clerk or an
-    accountant who is past the survey folds this one away (the sidebar
-    remembers it) instead of scrolling past three quiet queues.
-
-    Folded, not removed: the queues keep filling after the survey, only more
-    slowly — ending an ownership sends its tenants back to «روابط المالكين»,
-    a registration saved with gaps lands in «يتطلب مراجعة», and a locked gate
-    opens a case.
-  */
-  {
-    label: 'استكمال البيانات',
-    labelEn: 'Data completion',
-    items: [
       /*
         The register narrowed to records saved with fields still to confirm —
-        the same page as «المواطنون» at an address of its own, so every role
+        the same page as the register at an address of its own, so every role
         that reads the register reads this slice of it.
       */
       {
@@ -241,15 +284,15 @@ export const NAV_GROUPS: NavGroup[] = [
         citizens: what it resolves is an *identity* — is the person this
         tenant named the same person as this record.
 
-        Every staff role, matching «المواطنون»: the queue is a view of the
-        register and reading it discloses nothing the registry does not.
-        Acting on a row is narrower and enforced by the server — AUDITOR,
-        COLLECTOR and ACCOUNTANT see the work and do not answer it.
+        Every staff role, matching the register: the queue is a view of it and
+        reading it discloses nothing the registry does not. Acting on a row is
+        narrower and enforced by the server — AUDITOR, COLLECTOR and ACCOUNTANT
+        see the work and do not answer it.
       */
       {
         path: '/citizens/landlord-links',
         label: 'روابط المالكين',
-        labelEn: 'Owner Links',
+        labelEn: 'Owner links',
         icon: Link2,
         roles: EVERY_STAFF_ROLE,
         keywords: [
@@ -264,16 +307,72 @@ export const NAV_GROUPS: NavGroup[] = [
           'tenant',
         ],
       },
-      // A visit that didn't produce a citizen — nobody home, gate locked: what
-      // it records is "who to go back to", not a parcel's own facts.
+      /*
+        «طلبات المعاملات» — what citizens ask the municipality for (a براءة ذمة,
+        a إفادة سكن…), filed online or at the counter, with the paper printed
+        and handed over here (docs/municipal-requests-plan.md). The readers of
+        `REQUEST_READ_ROLES`, as `CitizenRequestsController`: not «مشاهد فقط»,
+        because the papers on a request are identity copies. Filing at the
+        counter, approving and handing over are narrower and gated on the pages.
+      */
       {
-        path: '/cases',
-        label: 'الحالات',
-        labelEn: 'Cases',
-        icon: ClipboardList,
-        roles: EVERY_STAFF_ROLE,
-        keywords: ['زيارة', 'لا أحد في المنزل', 'متابعة', 'cases', 'follow-up', 'visit'],
+        path: '/requests',
+        label: 'طلبات المعاملات',
+        labelEn: 'Requests & certificates',
+        icon: FileCheck,
+        roles: REQUEST_READ_ROLES,
+        keywords: ['طلب', 'معاملة', 'إفادة', 'براءة ذمة', 'إفادة سكن', 'شغور', 'requests', 'certificate', 'clearance'],
       },
+    ],
+  },
+  {
+    label: 'المباني والأرض',
+    labelEn: 'Buildings & land',
+    items: [
+      /*
+        The census first: it is the register of structures, as the group above
+        leads with the register of people, and it is what the map draws its
+        pins from and what a sector is ultimately a count of. Open to every
+        staff role — a collector needs a building's code to find a door as much
+        as an inspector needs it to survey one.
+      */
+      {
+        path: '/buildings',
+        label: 'سجل المباني',
+        labelEn: 'Building census',
+        icon: Building2,
+        roles: EVERY_STAFF_ROLE,
+        keywords: ['مبنى', 'مباني', 'وحدات', 'شقق', 'مسح', 'ضرر', 'إحصاء', 'buildings', 'units', 'census', 'damage'],
+      },
+      {
+        path: '/map',
+        label: 'الخريطة',
+        labelEn: 'Cadastral map',
+        icon: MapIcon,
+        roles: MAP_READ_ROLES,
+        keywords: ['عقارات', 'مواقع', 'مسح', 'map', 'cadastre'],
+      },
+      {
+        path: '/zones',
+        label: 'القطاعات',
+        labelEn: 'Zones',
+        icon: Layers,
+        roles: EVERY_STAFF_ROLE,
+        keywords: ['قطاع', 'منطقة', 'حدود', 'zones', 'districts'],
+      },
+    ],
+  },
+  /*
+    «العمل الميداني» — the visits still owed: each row is a list of doors to go
+    back to. They drain toward zero once the survey is done, so a clerk or an
+    accountant past it folds this group away (the sidebar remembers it).
+    Folded, not removed: a locked gate still opens a case after the survey,
+    and a damage reading still sends a flat to re-inspection.
+  */
+  {
+    label: 'العمل الميداني',
+    labelEn: 'Field work',
+    items: [
       /*
         Units nobody has surveyed or registered anyone in yet — each officer's
         own (the buildings they added), everyone's for the admins. The roles
@@ -287,6 +386,16 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: ScanSearch,
         roles: WORKLIST_ROLES,
         keywords: ['مسح', 'غير ممسوحة', 'وحدة', 'زيارة', 'ميداني', 'unsurveyed', 'survey', 'unit'],
+      },
+      // A visit that didn't produce a citizen — nobody home, gate locked: what
+      // it records is "who to go back to", not a parcel's own facts.
+      {
+        path: '/cases',
+        label: 'الحالات',
+        labelEn: 'Cases',
+        icon: DoorClosed,
+        roles: EVERY_STAFF_ROLE,
+        keywords: ['زيارة', 'لا أحد في المنزل', 'متابعة', 'cases', 'follow-up', 'visit'],
       },
       /*
         Flats and structures read «غير صالحة للسكن», waiting for the visit after
@@ -303,14 +412,17 @@ export const NAV_GROUPS: NavGroup[] = [
       },
     ],
   },
+  /*
+    «الرسوم والجباية» — what citizens are billed and what they have paid: the
+    collector's and the counter's job. Next to the field work above it and
+    ahead of the treasury below, because a fee is owed by a citizen and only
+    becomes the treasury's money once it is paid.
+  */
   {
-    label: 'المالية',
-    labelEn: 'Finance',
+    label: 'الرسوم والجباية',
+    labelEn: 'Fees & collection',
     items: [
       /*
-        Beside the registry rather than under settings: a fee is issued
-        against the citizens in it, not configured in isolation.
-
         `FIELD_INSPECTOR` is absent, and that is not a new restriction — it is
         the one `FeesController` has always enforced on `notices`, `summary`,
         `titles` and `payments`. The row simply stopped claiming otherwise.
@@ -318,10 +430,20 @@ export const NAV_GROUPS: NavGroup[] = [
       {
         path: '/fees',
         label: 'الرسوم والمدفوعات',
-        labelEn: 'Fees & Billing',
-        icon: Receipt,
+        labelEn: 'Fees & billing',
+        icon: ReceiptText,
         roles: FEE_READ_ROLES,
         keywords: ['رسم', 'مطالبة', 'فاتورة', 'دفع', 'fees', 'billing'],
+      },
+      // Read-only: the ledger above answers "who owes what", this answers
+      // "what has been paid". An auditor lives here.
+      {
+        path: '/payments',
+        label: 'سجل العمليات',
+        labelEn: 'Payment operations',
+        icon: ArrowLeftRight,
+        roles: ['SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'VIEWER'],
+        keywords: ['قبض', 'إيصال', 'محصّل', 'نقد', 'payments', 'transactions'],
       },
       /*
         Open bills a correction to the register affected — the accountant's
@@ -336,49 +458,169 @@ export const NAV_GROUPS: NavGroup[] = [
         roles: PAYMENT_REVIEW_READ_ROLES,
         keywords: ['تصحيح', 'فاتورة', 'فرق', 'مراجعة', 'corrections', 'bills', 'difference'],
       },
-      // Read-only: the ledger above answers "who owes what", this answers
-      // "what has been paid". An auditor lives here.
+      /*
+        «المستحق على عقار» — the question asked before a براءة ذمّة: what is
+        still owed on a parcel, whoever's file it is on. Read-only, so every
+        role that reads the ledger may ask it. `LandPlot`, not `Landmark`:
+        that one is the treasury's «الأرصدة», and no two rows share an icon.
+      */
       {
-        path: '/payments',
-        label: 'سجل العمليات',
-        labelEn: 'Payment Operations',
-        icon: ArrowLeftRight,
-        roles: ['SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'VIEWER'],
-        keywords: ['قبض', 'إيصال', 'محصّل', 'نقد', 'payments', 'transactions'],
+        path: '/fees/parcel',
+        label: 'المستحق على عقار',
+        labelEn: 'Owed on a parcel',
+        icon: LandPlot,
+        roles: FEE_READ_ROLES,
+        keywords: ['براءة ذمة', 'براءة ذمّة', 'رقم العقار', 'مستحق', 'دين', 'clearance', 'parcel', 'owed'],
+      },
+      /*
+        What each collector still carries, and the handover into the safe.
+        Under «الرسوم والجباية» since 2026-10-10, when «المناقلات والمصارفة»
+        made «الخزينة» six rows: the round and its handover are the end of
+        collecting, and the group's name already says الجباية. Still
+        `TREASURY_READ_ROLES`, so a collector, who sees this group, does not
+        see this row.
+        Reading is `TREASURY_READ_ROLES`, the list `TransfersController` puts on
+        `GET /treasury/transfers/custody`; receiving is `TREASURY_WORK_ROLES`
+        and is gated on the page. The longest match wins (`activeNavItem`), so
+        a collector's own page, `/finance/collectors/:id`, lights this row up.
+      */
+      {
+        path: '/finance/collectors',
+        label: 'الجباة والتحصيل',
+        labelEn: 'Collectors & handover',
+        icon: HandCoins,
+        roles: TREASURY_READ_ROLES,
+        keywords: ['جباة', 'جابي', 'عهدة', 'تحصيل', 'تسليم', 'استلام', 'collectors', 'custody', 'handover'],
       },
     ],
   },
+  /*
+    «الخزينة» — the municipality's books: where its money is, what reached it
+    and what left it. The accountant's job, on `TREASURY_READ_ROLES` but for the
+    recording page, which only those who record see (`TREASURY_WORK_ROLES`).
+    No row, no guard: `canAccessPath` opens a path nobody listed to every role,
+    which is why each treasury page has a row here.
+  */
   {
-    label: 'الأرض',
-    labelEn: 'Land & Map',
+    label: 'الخزينة',
+    labelEn: 'Treasury',
     items: [
+      /*
+        The wallets and their balances. «الأرصدة» rather than «الخزينة» now that
+        the group carries that name. Activating the treasury is narrower still
+        (the manager) and is gated on the page itself.
+      */
       {
-        path: '/map',
-        label: 'الخريطة',
-        labelEn: 'Cadastral Map',
-        icon: MapIcon,
-        roles: MAP_READ_ROLES,
-        keywords: ['عقارات', 'مواقع', 'مسح', 'map', 'cadastre'],
+        path: '/finance',
+        label: 'الأرصدة',
+        labelEn: 'Balances',
+        icon: Landmark,
+        roles: TREASURY_READ_ROLES,
+        keywords: ['خزينة', 'صندوق', 'رصيد', 'أرصدة', 'حساب', 'نقد', 'treasury', 'safe', 'balance', 'cash'],
       },
-      // Between the map and the sectors on purpose: the census is what the map
-      // draws pins from and what a sector is ultimately a count of. Open to
-      // every staff role that may open the map — a collector needs a building's
-      // code to find a door as much as an inspector needs it to survey one.
+      /*
+        Recording money in that no citizen's bill brought — the Independent
+        Municipal Fund, permits, rent, grants, fines — and money out on «أمر صرف»:
+        one form, «قبض | صرف». Its own row, not a child of /finance: it is where an
+        accountant spends the day. Only for those who record
+        (`TREASURY_WORK_ROLES`, as `IncomeController` and `ExpensesController`
+        enforce); a reader who reaches the address through the `/finance` prefix
+        is told so on the page and sent to the register.
+      */
       {
-        path: '/buildings',
-        label: 'سجل المباني',
-        labelEn: 'Building Census',
-        icon: Building2,
-        roles: EVERY_STAFF_ROLE,
-        keywords: ['مبنى', 'مباني', 'وحدات', 'شقق', 'مسح', 'ضرر', 'إحصاء', 'buildings', 'units', 'census', 'damage'],
+        path: '/finance/movements',
+        label: 'الإيرادات والنفقات',
+        labelEn: 'Income & expenses',
+        icon: ArrowDownUp,
+        roles: TREASURY_WORK_ROLES,
+        keywords: [
+          'إيرادات',
+          'إيراد',
+          'قبض',
+          'سند قبض',
+          'صندوق بلدي',
+          'رخص',
+          'هبات',
+          'غرامات',
+          'نفقات',
+          'صرف',
+          'مصاريف',
+          'فاتورة',
+          'تسجيل',
+          'income',
+          'revenue',
+          'receipt',
+          'expense',
+          'spending',
+          'record',
+        ],
       },
+      /*
+        Every voucher written, money in and out, as one dated list under a filter
+        bar, the voucher behind each line in a side panel, and what waits on the
+        head's order (split from the recording page 2026-10-12; before that the
+        two were «الإيرادات» and «النفقات», each a register with its form). Every
+        finance reader sees it. `also` keeps the printed vouchers, the income
+        categories and the old registers' addresses (which lead here) under it.
+        Cancelling and ordering are narrower and are gated on the page and by
+        `IncomeController` and `ExpensesController`.
+      */
       {
-        path: '/zones',
-        label: 'القطاعات',
-        labelEn: 'Zones',
-        icon: Layers,
-        roles: EVERY_STAFF_ROLE,
-        keywords: ['قطاع', 'منطقة', 'حدود', 'zones', 'districts'],
+        path: '/finance/transactions',
+        also: ['/finance/income', '/finance/expenses'],
+        label: 'الحركات المالية',
+        labelEn: 'Transactions',
+        icon: ScrollText,
+        roles: TREASURY_READ_ROLES,
+        keywords: [
+          'حركات',
+          'سجل',
+          'دفتر',
+          'سندات',
+          'أمر صرف',
+          'بانتظار الأمر',
+          'إيرادات',
+          'نفقات',
+          'transactions',
+          'ledger',
+          'register',
+          'voucher',
+          'payout',
+          'payment order',
+        ],
+      },
+      /*
+        Money between the municipality's own wallets: a Whish cash-out, a bank
+        deposit, funding petty cash, and المصارفة between ليرة and dollars. After
+        the money in and the money out, since it is neither. Every finance reader
+        sees the register, the auditor included — the review queue is theirs.
+        Recording is `TREASURY_WORK_ROLES` and reviewing `TREASURY_REVIEW_ROLES`,
+        gated on the pages and by `TransfersController`. A collector's handover
+        stays on «الجباة والتحصيل»; it is listed here too.
+      */
+      {
+        path: '/finance/transfers',
+        label: 'المناقلات والمصارفة',
+        labelEn: 'Transfers & exchange',
+        icon: ArrowRightLeft,
+        roles: TREASURY_READ_ROLES,
+        keywords: ['مناقلة', 'تحويل', 'مصارفة', 'صرّاف', 'سعر الصرف', 'إيداع', 'سلفة', 'transfer', 'exchange', 'deposit', 'review'],
+      },
+      /*
+        The day's end: each wallet counted against the books, the day closed so
+        nothing more is written into it, and «تقرير الصندوق اليومي» to print
+        and sign (`/finance/daily/report`, guarded by this row's prefix). Last
+        in the group because it is the last thing the accountant does each day.
+        Counting and closing are `TREASURY_WORK_ROLES` and reopening is
+        `TREASURY_ADMIN_ROLES`, gated on the page and by `TreasuryClosingController`.
+      */
+      {
+        path: '/finance/daily',
+        label: 'جرد وإقفال اليومية',
+        labelEn: 'Daily count & close',
+        icon: CalendarCheck,
+        roles: TREASURY_READ_ROLES,
+        keywords: ['جرد', 'إقفال', 'يومية', 'صندوق', 'عجز', 'فائض', 'تقرير يومي', 'count', 'close', 'daily', 'cash report'],
       },
     ],
   },
@@ -387,18 +629,13 @@ export const NAV_GROUPS: NavGroup[] = [
 
     «مراجعة الجودة» was one row opening one page of four tabs, and a tab is not
     addressable: it cannot be linked from a notification, cannot be opened in a
-    second window beside «المواطنون», and hides three of the four screens from
-    the command palette. Four rows, four pages.
-
-    That made a section worth having. The four screens were the eighth row of
-    «السجل», which the header of this file already warns about — a heading with
-    eight rows under it is the flat list again — and they are not *the register*
-    anyway, they are the checking of it. «سجل النشاطات» moves here for the same
-    reason: an auditor reading who changed what is doing this job, not
+    second window beside the register, and hides three of the four screens from
+    the command palette. Four rows, four pages. «سجل النشاطات» belongs here for
+    the same reason: an auditor reading who changed what is doing this job, not
     configuring the municipality, and «النظام» is left as what it says —
     settings and accounts.
 
-    Every row is held to the roles `QualityController` enforces with
+    Every quality row is held to the roles `QualityController` enforces with
     `QUALITY_REVIEWER_ROLES`. An officer's own returned records and the re-checks they
     may do are on «أرباحي والمسح الميداني» instead, so nobody is offered a
     screen that would only tell them their work is being watched.
@@ -435,14 +672,14 @@ export const NAV_GROUPS: NavGroup[] = [
         path: '/quality/officers',
         label: 'الجودة حسب الموظف',
         labelEn: 'Quality by officer',
-        icon: UsersRound,
+        icon: UserRoundCheck,
         roles: QUALITY_REVIEWER_ROLES,
         keywords: ['موظف', 'أداء', 'جودة', 'officer', 'performance', 'quality'],
       },
       {
         path: '/audit',
         label: 'سجل النشاطات',
-        labelEn: 'Audit Log',
+        labelEn: 'Audit log',
         icon: ShieldCheck,
         // The two roles `AuditController` serves — the auditor is who the log is for.
         roles: AUDIT_READ_ROLES,
@@ -465,7 +702,7 @@ export const NAV_GROUPS: NavGroup[] = [
       {
         path: '/staff',
         label: 'الموظفون',
-        labelEn: 'Staff Management',
+        labelEn: 'Staff management',
         icon: UsersRound,
         roles: ['SUPER_ADMIN'],
         keywords: ['موظف', 'صلاحيات', 'حساب', 'staff', 'users'],
@@ -475,7 +712,7 @@ export const NAV_GROUPS: NavGroup[] = [
       {
         path: '/account',
         label: 'أمان الحساب',
-        labelEn: 'Account Security',
+        labelEn: 'Account security',
         icon: KeyRound,
         roles: EVERY_STAFF_ROLE,
         keywords: ['كلمة المرور', 'أمان', 'حسابي', 'مصادقة', '2fa', 'password', 'security', 'account'],
@@ -555,13 +792,23 @@ export function canAccessPath(pathname: string, base: string, role: string | und
 
   // Matched against every section, ignoring role: this answers "is there a
   // page here at all", which is a different question from "may they see it".
-  const known = NAV_GROUPS.flatMap((group) => group.items).some((item) => {
-    const href = `${base}${item.path}`;
-    return pathname === href || pathname.startsWith(`${href}/`);
-  });
+  const known = NAV_GROUPS.flatMap((group) => group.items).some((item) => matchLength(item, pathname, base) >= 0);
   if (!known) return true;
 
   return Boolean(activeNavItem(pathname, base, role));
+}
+
+/**
+ * How long a prefix of `pathname` a row claims: the longest of its `path` and
+ * its `also` paths that the pathname is, or sits under; -1 for none.
+ */
+function matchLength(item: NavItem, pathname: string, base: string): number {
+  let longest = -1;
+  for (const path of [item.path, ...(item.also ?? [])]) {
+    const href = `${base}${path}`;
+    if ((pathname === href || pathname.startsWith(`${href}/`)) && path.length > longest) longest = path.length;
+  }
+  return longest;
 }
 
 /**
@@ -571,6 +818,10 @@ export function canAccessPath(pathname: string, base: string, role: string | und
  * another, and `/citizens` became such a prefix the moment `/citizens/:id`
  * existed. Matching on the longest candidate keeps a detail page attributed to
  * its own section rather than to whichever prefix was declared first.
+ *
+ * A row's `also` paths count as its own: a printed voucher under
+ * `/finance/income/…` belongs to `/finance/transactions`, not to `/finance`,
+ * because `/finance/income` is the longer match.
  *
  * Takes the full pathname and the tenant's admin base so callers do not each
  * rebuild `/{tenant}/{locale}/{adminPath}` and get the trailing slash wrong.
@@ -583,12 +834,10 @@ export function activeNavItem(
   if (!pathname) return undefined;
   const candidates = visibleGroups(role)
     .flatMap((group) => group.items)
-    .filter((item) => {
-      const href = `${base}${item.path}`;
-      return pathname === href || pathname.startsWith(`${href}/`);
-    })
-    .sort((a, b) => b.path.length - a.path.length);
-  return candidates[0];
+    .map((item) => ({ item, length: matchLength(item, pathname, base) }))
+    .filter((candidate) => candidate.length >= 0)
+    .sort((a, b) => b.length - a.length);
+  return candidates[0]?.item;
 }
 
 export function localizedLabel(item: NavItem, locale: string = 'ar'): string {

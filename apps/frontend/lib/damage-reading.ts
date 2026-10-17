@@ -24,7 +24,7 @@ export type DamageTarget = { unitId: string } | { buildingId: string };
  * whole-building reading after a strike speaks for every flat until a flat is
  * read on its own. For the structure: its own latest whole-building reading.
  * Latest by the day of the visit (`history` arrives newest first, ordered by
- * `assessedAt` — `DamageService.history`), the same rule the server's fee hold
+ * `assessedAt` — `DamageService.history`), the same rule the server's exemption
  * reads (`currentReadingForUnit`).
  */
 export function applicableReading(
@@ -41,7 +41,7 @@ export function applicableReading(
  * The reading that decides whether this target can be lived in now: the latest
  * that applies to it and makes a finding (`answersHabitability`). A later
  * «غير مصنّف» with no answer judged nothing, so it leaves an earlier
- * «غير صالحة للسكن» standing — the server's fee hold and «بانتظار إعادة
+ * «غير صالحة للسكن» standing — the server's exemption and «بانتظار إعادة
  * الكشف» read the same reading (`currentReadingForUnit`, `answering`).
  */
 export function governingReading(

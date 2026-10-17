@@ -11,9 +11,10 @@ import { SEES_ALL_STAFF_WORK, STAFF_ROLE, type StaffRole } from './enums';
  * nobody would see until the role tried the screen. A set named here reaches
  * the route and the button together.
  *
- * `@Roles('SUPER_ADMIN')` stays a literal: it names one role, not a list.
- * The server's `@Roles` is the enforcement; a screen that reads these only
- * decides what to show.
+ * `@Roles('SUPER_ADMIN')` stays a literal: it names one role, not a list —
+ * unless a screen gates a control on it too, which needs a name to import
+ * (`PAYMENT_REVERSE_ROLES`). The server's `@Roles` is the enforcement; a
+ * screen that reads these only decides what to show.
  */
 
 /** Every staff role. The register, the census, cases and zones are read by all of them. */
@@ -83,6 +84,14 @@ export const QUALITY_REVIEWER_ROLES = [
 
 /* Complete a quality check in the field: `QUALITY_CHECK_ROLES`, in `quality.schema.ts`. */
 
+/*
+  The treasury's sets live beside its contract, not here: `TREASURY_READ_ROLES`,
+  `TREASURY_WORK_ROLES`, `TREASURY_ADMIN_ROLES` and `TREASURY_REVIEW_ROLES` (who
+  clears a flagged exchange) in `treasury.schema.ts`, and `FINANCE_OVERRIDE_ROLES`
+  (who may take another rate or date a payment further back) in `cash-policy.ts`.
+  `route-inventory.spec.ts` pins every treasury handler to its list.
+*/
+
 /** See whether a record has an open quality return — everyone who files or reviews one. */
 export const QUALITY_RETURN_READ_ROLES = [
   'SUPER_ADMIN',
@@ -102,8 +111,20 @@ export const FEE_READ_ROLES = [
   'VIEWER',
 ] as const satisfies readonly StaffRole[];
 
-/** Issue a fee, charge one citizen, settle at the counter. */
-export const FEE_ISSUE_ROLES = [
+/**
+ * Raise a bill: issue a fee notice (`POST fees/notices`) or charge one citizen
+ * (`POST fees/payments`). The manager and the accountant. A collector collects
+ * what is billed and bills nothing (decided 2026-10-12); settling is
+ * `FEE_SETTLE_ROLES`.
+ */
+export const FEE_ISSUE_ROLES = ['SUPER_ADMIN', 'ACCOUNTANT'] as const satisfies readonly StaffRole[];
+
+/**
+ * Record money against a bill, at the counter or on a round —
+ * `PATCH fees/payments/:id/settle`. Wider than `FEE_ISSUE_ROLES` by the
+ * collector, whose job this is.
+ */
+export const FEE_SETTLE_ROLES = [
   'SUPER_ADMIN',
   'COLLECTOR',
   'ACCOUNTANT',
@@ -111,6 +132,67 @@ export const FEE_ISSUE_ROLES = [
 
 /** The fee settings, notices' active flag, the recurring run and payment review. */
 export const FEE_ADMIN_ROLES = ['SUPER_ADMIN', 'ACCOUNTANT'] as const satisfies readonly StaffRole[];
+
+/**
+ * «إلغاء الفاتورة» (finance audit B3): withdrawing a bill nothing was paid on.
+ * The manager's alone, like reversing a receipt — a debt struck off the register
+ * is a decision, not counter work.
+ */
+export const BILL_CANCEL_ROLES = ['SUPER_ADMIN'] as const satisfies readonly StaffRole[];
+
+/**
+ * Read the municipal-requests queue, a request, its papers (each view audited)
+ * and the list of request types: the manager, the administrative officer (قلم
+ * البلدية, who handles them), the accountant (who collects their fees) and the
+ * auditor. Not «مشاهد فقط»: the papers are identity copies (open decisions §20
+ * D6). `GET requests`, `GET requests/:id`, `GET requests/:id/attachments/:a/url`,
+ * `GET requests/types`. Decided 2026-10-13.
+ */
+export const REQUEST_READ_ROLES = [
+  'SUPER_ADMIN',
+  'ADMINISTRATIVE_OFFICER',
+  'ACCOUNTANT',
+  'AUDITOR',
+] as const satisfies readonly StaffRole[];
+
+/**
+ * Handle a request: file one at the counter for a citizen who is present, attach
+ * its papers, approve it with what the paper certifies, reject it, hand it over,
+ * cancel it. The manager and the administrative officer. Decided 2026-10-13.
+ */
+export const REQUEST_HANDLE_ROLES = ['SUPER_ADMIN', 'ADMINISTRATIVE_OFFICER'] as const satisfies readonly StaffRole[];
+
+/**
+ * Raise a request's fee as a bill, at the counter — `POST requests/:id/bill`. The
+ * handlers and the accountant. The amount is the manager's, from the list of
+ * request types, never typed by whoever raises it, which is why this is wider
+ * than `FEE_ISSUE_ROLES`. Taking the money is still `FEE_SETTLE_ROLES`.
+ */
+export const REQUEST_BILL_ROLES = [
+  'SUPER_ADMIN',
+  'ADMINISTRATIVE_OFFICER',
+  'ACCOUNTANT',
+] as const satisfies readonly StaffRole[];
+
+/** Which request types are offered and their fees (`PUT requests/types/:type`): the manager (D1). */
+export const REQUEST_SETTINGS_ROLES = ['SUPER_ADMIN'] as const satisfies readonly StaffRole[];
+
+/**
+ * «تسديد الفواتير المحددة»: several of one citizen's bills in one press
+ * (docs/finance.md §3.7). The finance roles only, per the phase-4 brief —
+ * narrower than `FEE_SETTLE_ROLES`, so a collector still settles the same bills
+ * one at a time. Its own set because it is its own audience: the dialog reads
+ * the treasury's balances to check the change, which a collector cannot.
+ */
+export const BULK_SETTLE_ROLES = ['SUPER_ADMIN', 'ACCOUNTANT'] as const satisfies readonly StaffRole[];
+
+/**
+ * «عكس الوصل» — reverse one receipt in the payment ledger, with a written
+ * reason (`POST fees/transactions/:transactionId/reverse`). The manager's
+ * alone. A named set although it holds one role, because the bill page shows
+ * the action by the same list.
+ */
+export const PAYMENT_REVERSE_ROLES = ['SUPER_ADMIN'] as const satisfies readonly StaffRole[];
 
 /** Read the payments waiting for verification and the bills a correction affects. */
 export const PAYMENT_REVIEW_READ_ROLES = [

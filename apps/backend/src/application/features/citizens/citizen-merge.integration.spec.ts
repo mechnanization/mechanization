@@ -492,6 +492,68 @@ describeIfDb('CitizenMergeService', () => {
     expect((await db.user.findUniqueOrThrow({ where: { id: f.keepId } })).isActive).toBe(true);
   });
 
+  it('moves the absorbed person’s municipal requests, but one that would be a second open request of its kind, and back on undo (migration 0092)', async () => {
+    const f = await filedTwice();
+    const request = (citizenId: string, requestType: 'OTHER' | 'RESIDENCY') =>
+      db.citizenRequest.create({
+        data: {
+          requestNumber: `REQ-T-${randomUUID().slice(0, 8)}`,
+          citizenId,
+          channel: 'ONLINE',
+          requestType,
+          applicantCapacity: 'OWNER',
+          clientRequestId: randomUUID(),
+        },
+      });
+    await request(f.keepId, 'OTHER');
+    const twin = await request(f.absorbId, 'OTHER');
+    const own = await request(f.absorbId, 'RESIDENCY');
+
+    await mergeIt(f);
+    expect((await db.citizenRequest.findUniqueOrThrow({ where: { id: own.id } })).citizenId).toBe(f.keepId);
+    // Two open «طلب عام» on one file would break the one-open index: the absorbed one stays.
+    expect((await db.citizenRequest.findUniqueOrThrow({ where: { id: twin.id } })).citizenId).toBe(f.absorbId);
+
+    await undoOf(f.absorbId);
+    expect((await db.citizenRequest.findUniqueOrThrow({ where: { id: own.id } })).citizenId).toBe(f.absorbId);
+  });
+
+  it('hands «المالك المسؤول» to the kept file, and back on undo (migration 0075)', async () => {
+    const f = await filedTwice();
+    // A co-owner beside the absorbed person on flat 2, and the absorbed person named to pay for both.
+    const brother = await citizen({ firstName: 'شريك', middleName: null, lastName: 'تجربة' });
+    await db.unitOccupancy.create({ data: { unitId: f.u2, citizenId: brother, role: 'OWNER' } });
+    await db.unit.update({
+      where: { id: f.u2 },
+      data: { ownerBillingMode: 'RESPONSIBLE_OWNER', responsibleOwnerId: f.absorbId },
+    });
+
+    await mergeIt(f);
+    // Left on the absorbed file, the flat would fall back to the equal split on its own.
+    expect((await db.unit.findUniqueOrThrow({ where: { id: f.u2 } })).responsibleOwnerId).toBe(f.keepId);
+
+    await undoOf(f.absorbId);
+    const restored = await db.unit.findUniqueOrThrow({ where: { id: f.u2 } });
+    expect([restored.ownerBillingMode, restored.responsibleOwnerId]).toEqual(['RESPONSIBLE_OWNER', f.absorbId]);
+  });
+
+  it('refuses the undo once the responsible owner it re-pointed has been changed since', async () => {
+    const f = await filedTwice();
+    const brother = await citizen({ firstName: 'شريك', middleName: null, lastName: 'تجربة' });
+    await db.unitOccupancy.create({ data: { unitId: f.u2, citizenId: brother, role: 'OWNER' } });
+    await db.unit.update({
+      where: { id: f.u2 },
+      data: { ownerBillingMode: 'RESPONSIBLE_OWNER', responsibleOwnerId: f.absorbId },
+    });
+    await mergeIt(f);
+    // An officer names the brother instead, after the merge.
+    await db.unit.update({ where: { id: f.u2 }, data: { responsibleOwnerId: brother } });
+
+    const { into } = await within(() => merges.mergesOf(f.absorbId));
+    const { blocks } = await within(() => merges.unmergePreview(into!.id));
+    expect(blocks.map((block) => block.code)).toEqual(['CHANGED_SINCE']);
+  });
+
   it('undoes only its own change to a «ليس هذا المالك» list, keeping answers given since', async () => {
     const f = await filedTwice();
     await mergeIt(f);

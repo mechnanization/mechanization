@@ -98,6 +98,14 @@ export async function migrateTenantSchema(
 
     // Each migration is its own transaction: a failure leaves the schema at the
     // last complete migration rather than half-way through one.
+    //
+    // So every lock a file takes is held until that file's COMMIT, not until
+    // its statement ends. Once a file has run `ALTER TABLE … ADD COLUMN` on a
+    // table, it holds ACCESS EXCLUSIVE on it to the end: readers and writers
+    // wait for the whole file, and a foreign key added NOT VALID and VALIDATEd
+    // later in the same file gains nothing (0085 says otherwise; probed, it
+    // does not hold). A VALIDATE that must not block the table goes in a later
+    // file of its own (docs/database.md, "How tenant migrations run").
     await client.query('BEGIN');
     try {
       // search_path is what lets one unqualified SQL file build any schema.

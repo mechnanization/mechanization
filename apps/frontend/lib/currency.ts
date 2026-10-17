@@ -74,6 +74,89 @@ export function formatMoney(amount: number, currency: string, locale: string = '
   return currency === 'LBP' ? formatLbp(amount, locale) : formatForeign(amount, currency);
 }
 
+/**
+ * The minus a figure on screen carries: U+2212, as wide as «+», so a column of
+ * movements lines up. `toLocaleString` gives a hyphen, which is narrower; the
+ * plain-string formatters above keep it, because a CSV or a toast is read as
+ * text, not as a column.
+ */
+export const MINUS_SIGN = '−';
+
+/** A figure and its unit, apart — what `Money` lays out. */
+export interface MoneyParts {
+  /** The signed number, Latin digits, grouped: «−1,500,000», «+75.5». */
+  figure: string;
+  /** «ل.ل» or «LBP», «$», «€», or the currency code. */
+  unit: string;
+}
+
+/**
+ * Money as the two pieces a screen lays out: the signed figure and its unit.
+ *
+ * Apart because they behave differently on an Arabic page. The figure must
+ * read left to right with its sign attached, whatever the page's direction —
+ * left to the bidi algorithm, a leading minus in a right-to-left run lands on
+ * the far side of the digits. The unit sits after the figure in reading order,
+ * which on an Arabic page is to its left, as everywhere else on the portal.
+ * The figures are those of `formatLbp` and `formatForeign`, which stay the
+ * joined strings for text.
+ *
+ * A negative figure always carries the minus; `signed` adds «+» to a positive
+ * one, for a movement in a ledger. A figure that rounds to zero has no sign.
+ */
+export function moneyParts(amount: number, currency: string, locale: string = 'ar', signed = false): MoneyParts {
+  const lbp = currency === 'LBP';
+  const digits = lbp
+    ? Math.round(Math.abs(amount)).toLocaleString('en-US')
+    : Math.abs(amount).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  const zero = /^[0.,]*$/.test(digits);
+  const sign = zero ? '' : amount < 0 ? MINUS_SIGN : signed && amount > 0 ? '+' : '';
+  const unit = lbp
+    ? locale === 'en'
+      ? 'LBP'
+      : 'ل.ل'
+    : currency === 'USD'
+      ? '$'
+      : currency === 'EUR'
+        ? '€'
+        : currency;
+  return { figure: `${sign}${digits}`, unit };
+}
+
+/**
+ * `formatLbpCompact` in the same two pieces as `moneyParts`: «−12.5» and «مليون
+ * ل.ل», or «−12.5M» and «LBP». The scale word goes with the unit in Arabic and
+ * with the figure in English, as the joined string writes them.
+ */
+export function lbpCompactParts(amount: number, locale: string = 'ar'): MoneyParts {
+  const magnitude = Math.abs(amount);
+  if (magnitude < MILLION) return moneyParts(amount, 'LBP', locale);
+  const sign = amount < 0 ? MINUS_SIGN : '';
+  const millions = scaled(magnitude / MILLION);
+  if (magnitude < BILLION && Number(millions) < 1000) {
+    return locale === 'en'
+      ? { figure: `${sign}${millions}M`, unit: 'LBP' }
+      : { figure: `${sign}${millions}`, unit: 'مليون ل.ل' };
+  }
+  const billions = scaled(magnitude / BILLION);
+  return locale === 'en'
+    ? { figure: `${sign}${billions}B`, unit: 'LBP' }
+    : { figure: `${sign}${billions}`, unit: 'مليار ل.ل' };
+}
+
+/**
+ * The unit an amount field shows in its own segment beside the digits
+ * (`CurrencyInput`, PRIM-25): «ل.ل» for the pound, «$» for the dollar, the
+ * code for anything else.
+ *
+ * It was a page-local `unitOf` in three finance components; the fourth would
+ * have been a copy (PRIM-22), so it lives here once.
+ */
+export function currencyUnit(currency: string, locale: string = 'ar'): string {
+  if (currency === 'LBP') return locale === 'en' ? 'LBP' : 'ل.ل';
+  return currency === 'USD' ? '$' : currency;
+}
+
 const ARABIC_INDIC = /[٠-٩۰-۹]/g;
 
 /** «١٢٣» and «۱۲۳» → «123»: a clerk's keyboard may type either. */

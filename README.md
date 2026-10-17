@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية)
 
-Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06.
+Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06; the frontend dev server on Turbopack, `develop@4634bdb`, 2026-10-15.
 
 A registration system for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastre map, fees and payments. Each
@@ -50,7 +50,7 @@ pnpm dev      # runs both apps; the database must already be up
 ```
 
 - Backend only: `pnpm --filter @mechanization/backend dev` (port 4000).
-- Frontend only: `pnpm --filter @mechanization/frontend dev` (port 3000).
+- Frontend only: `pnpm --filter @mechanization/frontend dev` (port 3000, Turbopack).
 - `pnpm dev` does not rebuild `packages/shared-schemas`. When you edit it, keep
   `pnpm --filter @mechanization/shared-schemas dev` running alongside.
 - Redis is optional: with `REDIS_URL` unset or unreachable, `RedisCacheService`

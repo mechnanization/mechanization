@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { CitizenFormValues } from '@/components/admin/citizen-form';
-import { applyResidenceMove, planResidenceMove } from './residence-move';
+import { applyResidenceMove, homeStatusesFor, namesForKind, planResidenceMove } from './residence-move';
 
 const file = (properties: CitizenFormValues['properties'], personal: Record<string, unknown> = { firstName: 'علي', lastName: 'تجربة' }): CitizenFormValues => ({
   residence: 'RESIDENT',
@@ -90,5 +90,69 @@ describe('planResidenceMove — coming to live in the town', () => {
 
     const elsewhere = applyResidenceMove(values, plan, { movedOn: '2026-09-01', reason: 'عاد', livesIn: null });
     expect(elsewhere.properties).toEqual(values.properties);
+  });
+});
+
+describe('planResidenceMove — the owner died («تركة», 0076)', () => {
+  it('ends every tenancy — the shop too — and asks about the home he lived in', () => {
+    const plan = planResidenceMove(file([rentsFlat, rentsShop, ownsHouseLivesThere] as never), 'ESTATE');
+    expect(plan.tenancies.map((tenancy) => tenancy.cardId)).toEqual(['rent-flat', 'rent-shop']);
+    expect(plan.needsUnitType).toEqual([]);
+    expect(plan.homes.map((home) => home.key)).toEqual(['card:2']);
+    expect(plan.nothingLeft).toBe(false);
+  });
+
+  it('re-asks a non-resident’s «مسكن موسمي» — nobody comes back for a season once he has died', () => {
+    const seasonal = { ...ownsHouseLivesThere, unitStatus: 'SEASONAL' };
+    const values = { ...file([seasonal] as never), residence: 'NON_RESIDENT_OWNER' as const };
+    expect(planResidenceMove(values, 'ESTATE').homes.map((home) => [home.key, home.status])).toEqual([
+      ['card:0', 'SEASONAL'],
+    ]);
+  });
+
+  it('a deceased who only rented has nothing left: archive, do not make an estate', () => {
+    expect(planResidenceMove(file([rentsFlat] as never), 'ESTATE').nothingLeft).toBe(true);
+  });
+
+  it('offers the family staying, a tenant or empty — never «مسكن موسمي»', () => {
+    expect(homeStatusesFor('ESTATE')).toEqual(['FREE_OCCUPIED', 'RENTED', 'VACANT']);
+    expect(homeStatusesFor('NON_RESIDENT_OWNER')).toContain('SEASONAL');
+  });
+
+  it('applies the death to the form without asking where he lives', () => {
+    const values = file([ownsHouseLivesThere] as never);
+    const next = applyResidenceMove(values, planResidenceMove(values, 'ESTATE'), {
+      movedOn: '2026-08-14',
+      reason: 'وفاة المالك',
+      homeStatuses: { 'card:0': 'FREE_OCCUPIED' },
+    });
+    expect(next.residence).toBe('ESTATE');
+    expect(next.properties[0]!.unitStatus).toBe('FREE_OCCUPIED');
+    expect(next.personal.residencePlace).toBeUndefined();
+    expect(next.residenceMove).toEqual({ movedOn: '2026-08-14', reason: 'وفاة المالك' });
+  });
+});
+
+describe('namesForKind — an institution is one name', () => {
+  it('joins a person’s name into one line, and restores the parts when switched straight back', () => {
+    const person = { firstName: 'علي', middleName: 'حسن', lastName: 'سرور' };
+    const body = namesForKind(person, 'RESIDENT', 'INSTITUTION');
+    expect(body.personal).toMatchObject({ firstName: 'علي حسن سرور', middleName: '', lastName: '' });
+    expect(namesForKind(body.personal, 'INSTITUTION', 'RESIDENT', body.before).personal).toMatchObject(person);
+  });
+
+  it('splits the line by the API’s rule once it was edited as an institution', () => {
+    const body = namesForKind({ firstName: 'وقف', middleName: '', lastName: '' }, 'RESIDENT', 'INSTITUTION');
+    const renamed = { ...body.personal, firstName: 'وقف مسجد البلدة' };
+    expect(namesForKind(renamed, 'INSTITUTION', 'RESIDENT', body.before).personal).toMatchObject({
+      firstName: 'وقف',
+      middleName: '',
+      lastName: 'مسجد البلدة',
+    });
+  });
+
+  it('keeps the name parts for an estate — the deceased’s own name', () => {
+    const personal = { firstName: 'حسن', middleName: 'علي', lastName: 'سرور' };
+    expect(namesForKind(personal, 'RESIDENT', 'ESTATE').personal).toBe(personal);
   });
 });

@@ -18,6 +18,7 @@ import {
   type RoleKey,
   type SettingsCopy,
 } from '@/lib/settings-i18n';
+import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { CellTag } from '@/components/ui/cell-tag';
 import { Button } from '@/components/ui/button';
@@ -289,12 +290,9 @@ export function UsersSection({
         </div>
 
         {error ? (
-          <p
-            role="alert"
-            className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive"
-          >
+          <Alert variant="destructive" live="alert">
             {error}
-          </p>
+          </Alert>
         ) : loading ? (
           <div className="space-y-2">
             {[0, 1, 2, 3].map((index) => (

@@ -1,3 +1,4 @@
+import { storedLandlordName } from '@mechanization/shared-schemas';
 import { ValidationError } from '../errors/domain-error';
 
 export type OccupancyType = 'OWNER' | 'TENANT' | 'FREE_OCCUPANT';
@@ -384,7 +385,11 @@ export class PropertyEntry {
     return {
       ...props,
       neighborhood: props.neighborhood?.trim() || null,
-      landlordName: isNonOwner ? (props.landlordName?.trim() || null) : null,
+      /*
+        Never «ورثة المرحوم …»: the form can send a name it was shown, and the
+        prefix is how an estate is displayed, not a name (docs/gotchas.md).
+      */
+      landlordName: isNonOwner ? storedLandlordName(props.landlordName) : null,
       /*
         `|| null` rather than a bare optional chain, because this is now a field
         that can legitimately be absent on a card that is otherwise complete.
