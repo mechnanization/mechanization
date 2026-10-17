@@ -1462,6 +1462,13 @@ model Unit {
   feeExemptedBy    User?               @relation("UnitFeeExemptedBy", fields: [feeExemptedById], references: [id], onDelete: SetNull)
   feeExemptedAt    DateTime?
 
+  /// How many levels this one unit spans, from `floor` (its entrance) upward
+  /// (migration 0095, decision D28): 2 is a «دوبلكس», 3 a «تريبلكس». 1 for
+  /// every unit before it. Dwellings only (CHECK units_levels_dwelling_only),
+  /// 1–6 (CHECK units_levels_range). A flat's per-roof weight comes from
+  /// `SystemSettings.levelFactors`; a house on N storeys is N full roofs.
+  levels Int @default(1)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1974,6 +1981,12 @@ model SystemSettings {
   /// path, per currency. NULL is no ceiling. Greater than zero when set (CHECK).
   salaryUrgentCeilingLbp Decimal? @db.Decimal(14, 2)
   salaryUrgentCeilingUsd Decimal? @db.Decimal(14, 2)
+
+  /// What a multi-level FLAT weighs under a per-unit notice, by level count
+  /// (0095, decision D28): `{"2": 1.8}` — a duplex is 1.8 roofs, two stacked
+  /// flats are 2. A count with no factor makes the citizen unassessable rather
+  /// than guessed. Shape validated by `levelFactorsSchema`; an object by CHECK.
+  levelFactors Json @default("{\"2\": 1.8}")
 
   updatedAt   DateTime @updatedAt
   updatedById String?  @db.Uuid
