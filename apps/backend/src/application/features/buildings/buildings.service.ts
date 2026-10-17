@@ -15,8 +15,14 @@ import {
   isStructuralUnitType,
   isUnoccupied,
   feeBearerClass,
+  canSpanLevels,
+  floorsOfUnit,
+  layoutBuildingFloors,
   layoutFloorSpans,
+  levelSpanOverlap,
   MAX_UNIT_COLUMN,
+  MAX_UNIT_LEVELS,
+  unitTopFloor,
   OCCUPANCY_LIFTS_SURVEY_STATUS,
   spanOverlap,
   SURVEYED_STATUS,
@@ -47,6 +53,7 @@ import { withConnectionRetry } from '../../../infrastructure/prisma/with-connect
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { assertFileOpen, assertNotMergedAway } from '../citizens/merged-away';
 import { cardClaiming, takesAnotherFlat } from '../../../domain/entities/census-claim';
+import { houseOnFile, promoteHouseCards, type HouseOnFile, type PromotedCard } from './house-growth';
 import { CasesService } from '../cases/cases.service';
 import type {
   BuildingLedgerRow,
@@ -319,7 +326,13 @@ export class BuildingsService {
         resident disputing a notice is entitled to see.
       */
       | 'UNIT_VACANCY_CONFIRMED'
-      | 'UNIT_VACANCY_ENDED';
+      | 'UNIT_VACANCY_ENDED'
+      /*
+        «هذا المنزل يصبح مبنى» (D28): the «منزل» cards on a structure that got
+        a second unit, made «مبنى» cards naming the house's unit. Each card's
+        holder gets a CITIZEN_UPDATED row of their own as well.
+      */
+      | 'HOUSE_CARDS_PROMOTED';
     buildingId: string;
     before?: Record<string, unknown>;
     after?: Record<string, unknown>;
@@ -1874,7 +1887,11 @@ export class BuildingsService {
         );
         for (const cell of additions) {
           // The grid drew every unit already on the floor, so there is no duplicate left to ask about.
-          const row = await this.addUnit(id, { ...cell, acknowledgedDuplicates: true }, actor);
+          const row = await this.addUnit(
+            id,
+            { ...cell, acknowledgedDuplicates: true, houseGrowth: input.houseGrowth },
+            actor,
+          );
           summary.added.push(row.unitCode);
         }
 
@@ -2119,8 +2136,31 @@ export class BuildingsService {
 
     this.assertUnitFits(building, existing.length, data.length);
 
+    /*
+      «هذا المنزل يصبح مبنى» (D28): a blueprint only ever adds units, so the one
+      answer it can take is «وحدة مستقلة». A level of the same home is added
+      from the matrix, one floor directly above it.
+    */
+    const house = data.length > 0 ? await houseOnFile(this.db, building) : null;
+    if (house && blueprint.houseGrowth !== 'SEPARATE_UNIT') {
+      if (blueprint.houseGrowth === 'EXTRA_LEVEL') {
+        const above = house.unit.floor + house.unit.levels;
+        throw new ValidationError({
+          code: 'HOUSE_GROWTH_NOT_ABOVE',
+          message: 'A level of the same home is added from the matrix, directly above it.',
+          params: { unitCode: house.unit.unitCode, floor: above },
+        });
+      }
+      throw houseGrowthUnanswered(house);
+    }
+
+    let promoted: PromotedCard[] = [];
     if (data.length > 0) {
-      await this.db.unit.createMany({ data, skipDuplicates: true });
+      promoted = await this.atomic(async (tx) => {
+        await tx.unit.createMany({ data, skipDuplicates: true });
+        const growing = house ? await houseOnFile(tx, building) : null;
+        return growing ? promoteHouseCards(tx, growing) : [];
+      });
     }
 
     /*
@@ -2157,6 +2197,7 @@ export class BuildingsService {
       after: { created: data.length, skipped, total: units.length },
       actor,
     });
+    this.announcePromotions(buildingId, promoted, null, actor);
 
     return { created: data.length, skipped, units: units.map(toUnitRow) };
   }
@@ -2211,11 +2252,28 @@ export class BuildingsService {
     const building = await this.db.building.findUnique({ where: { id: buildingId } });
     if (!building) throw new NotFoundError('المبنى غير موجود');
 
+    /*
+      «هذا المنزل يصبح مبنى» (decision D28) — see `house-growth.ts`. Asked before
+      `assertUnitFits`, which refuses a «منزل مستقل» any second unit: a storey
+      added to a house is usually more of the same home, and that answer creates
+      no unit at all.
+    */
+    const house = await houseOnFile(this.db, building);
+    if (house) {
+      if (!input.houseGrowth) throw houseGrowthUnanswered(house);
+      if (input.houseGrowth === 'EXTRA_LEVEL') return this.growHouseByLevel(house, input.floor, actor);
+    }
+
     this.assertUnitFits(
       building,
       await this.db.unit.count({ where: { buildingId } }),
       1,
     );
+
+    // Never on the upper level of a home rising through this floor (0095).
+    if (input.startCol != null && input.endCol != null) {
+      await this.assertNotOnUpperLevel(buildingId, input.floor, { startCol: input.startCol, endCol: input.endCol });
+    }
 
     /*
       The same shape of hole D18 closed for buildings, one level down.
@@ -2295,7 +2353,7 @@ export class BuildingsService {
     }
 
     // `atomic`, not `$transaction`: a whole-matrix save (`saveMatrix`) runs this inside its own.
-    const created = await this.atomic(async (tx) => {
+    const added = await this.atomic(async (tx) => {
       /*
         The schema is a literal here for the same reason it is in `create` —
         `current_schema()` reads the connection's `search_path`, which this app
@@ -2309,6 +2367,14 @@ export class BuildingsService {
         'SELECT pg_advisory_xact_lock(hashtext($1))',
         `${this.tenantContext.schemaName}:unit-sequence:${buildingId}`,
       );
+
+      /*
+        Asked again under the lock: the question was answered about the
+        structure as it was, and another officer may have filed a «منزل» on it
+        since. An answer of «وحدة مستقلة» converts whatever cards stand now.
+      */
+      const growing = await houseOnFile(tx, building);
+      if (growing && input.houseGrowth !== 'SEPARATE_UNIT') throw houseGrowthUnanswered(growing);
 
       const used = new Set(
         (
@@ -2382,8 +2448,11 @@ export class BuildingsService {
         });
       }
 
-      return unit;
+      // After the unit exists: each card's row names the house's unit, never the new one.
+      const promoted = growing ? await promoteHouseCards(tx, growing) : [];
+      return { unit, promoted };
     });
+    const created = added.unit;
 
     this.record({
       action: 'UNIT_UPDATED',
@@ -2391,8 +2460,172 @@ export class BuildingsService {
       after: { unitCode: created.unitCode, created: true },
       actor,
     });
+    this.announcePromotions(buildingId, added.promoted, created.unitCode, actor);
 
     return toUnitRow(created);
+  }
+
+  /**
+   * «طابق إضافي من المسكن نفسه» — the house's one unit rises a level instead of
+   * a unit being added (decision D28). Only directly above its top level: a
+   * home is one column of levels, not a scatter. Written by `updateUnit`, so
+   * the floor count, the dwelling rule and the trail are the ones every level
+   * change goes through.
+   */
+  private async growHouseByLevel(
+    house: HouseOnFile,
+    floor: number,
+    actor: { id: string; role: string },
+  ): Promise<UnitRow> {
+    const above = house.unit.floor + house.unit.levels;
+    if (floor !== above) {
+      throw new ValidationError({
+        code: 'HOUSE_GROWTH_NOT_ABOVE',
+        message: 'A level of the same home is added directly above it.',
+        params: { unitCode: house.unit.unitCode, floor: above },
+        details: { unitCode: house.unit.unitCode, floor: above, asked: floor },
+      });
+    }
+    if (house.unit.levels >= MAX_UNIT_LEVELS) {
+      throw new ValidationError({
+        code: 'UNIT_LEVELS_MAX',
+        message: 'A home spans at most the maximum number of levels.',
+        params: { unitCode: house.unit.unitCode, max: MAX_UNIT_LEVELS },
+      });
+    }
+    return this.updateUnit(house.unit.id, { levels: house.unit.levels + 1 }, actor);
+  }
+
+  /**
+   * The trail of a house growing into a building: one row on the building, and
+   * on each holder's own file the card that changed shape — what it said of the
+   * house moved onto its row, nothing about it rewritten.
+   */
+  private announcePromotions(
+    buildingId: string,
+    promoted: readonly PromotedCard[],
+    /** The unit that made it a building — null when a blueprint added several. */
+    addedUnitCode: string | null,
+    actor: { id: string; role: string },
+  ): void {
+    if (promoted.length === 0) return;
+    this.record({
+      action: 'HOUSE_CARDS_PROMOTED',
+      buildingId,
+      after: {
+        unitCode: promoted[0]!.unitCode,
+        addedUnitCode,
+        cards: promoted.map((card) => ({ propertyEntryId: card.propertyEntryId, citizenId: card.citizenId })),
+      },
+      actor,
+    });
+    for (const card of promoted) {
+      this.events.emit('citizen.changed', {
+        tenantSlug: this.tenantContext.tenantSlug,
+        citizenId: card.citizenId,
+        action: 'CITIZEN_UPDATED',
+        before: { propertyType: 'HOUSE', ...card.moved },
+        after: {
+          cards: [{ kind: 'changed', propertyEntryId: card.propertyEntryId, fields: ['propertyType', 'units'] }],
+          propertyType: 'BUILDING',
+          unitCode: card.unitCode,
+          addedUnitCode,
+          ...(card.flagsMoved ? { flagsMoved: true } : {}),
+          via: 'HOUSE_GREW',
+        },
+        actorId: actor.id,
+        actorRole: actor.role,
+      });
+    }
+  }
+
+  /**
+   * A unit placed on the columns another home's upper level occupies on this
+   * floor (0095) — refused, naming the home, since the officer is looking at
+   * the floor that home rises through, not at an empty space.
+   */
+  private async assertNotOnUpperLevel(
+    buildingId: string,
+    floor: number,
+    span: { startCol: number; endCol: number },
+    unitId?: string,
+  ): Promise<void> {
+    const units = await this.db.unit.findMany({ where: { buildingId } });
+    if (!units.some((unit) => unit.levels > 1)) return;
+    const layout = layoutBuildingFloors(units).get(floor);
+    const clash = layout?.blocks.find(
+      (block) =>
+        block.continuation &&
+        block.unit.id !== unitId &&
+        block.startCol <= span.endCol &&
+        span.startCol <= block.endCol,
+    );
+    if (clash) {
+      throw new ConflictError({
+        code: 'UNIT_ON_UPPER_LEVEL',
+        message: 'These columns are the upper level of a home on the floor below.',
+        params: { unitCode: clash.unit.unitCode, floor },
+        details: { unitCode: clash.unit.unitCode, floor },
+      });
+    }
+  }
+
+  /**
+   * A unit about to span the floors `next` describes — refused where another
+   * unit is drawn on its columns there (0095).
+   *
+   * On the unit's own entrance floor only the upper levels of other homes are
+   * asked about: neighbours on the same floor were never refused by an edit
+   * here (a matrix save moves several at once and may pass through an overlap),
+   * and this does not start now. Above it, anything drawn in those columns is
+   * in the way — a flat there is either another household, or the upper half
+   * of this one recorded as a second flat, which «دمج كدوبلكس» corrects.
+   */
+  private async assertLevelsFree(
+    unit: { id: string; buildingId: string; unitCode: string; floor: number },
+    next: { floor: number; levels: number; startCol: number | null; endCol: number | null },
+  ): Promise<void> {
+    const units = await this.db.unit.findMany({ where: { buildingId: unit.buildingId } });
+    if (next.levels === 1 && !units.some((other) => other.levels > 1)) return;
+    const layouts = layoutBuildingFloors(units);
+    const self = units.find((other) => other.id === unit.id);
+    if (!self) return;
+
+    let span = next.startCol != null && next.endCol != null ? { startCol: next.startCol, endCol: next.endCol } : null;
+    if (!span) {
+      // Unpositioned and staying on its floor: where the drawing puts it now.
+      // Unpositioned and moved: it is appended after whatever is there.
+      if (next.floor !== unit.floor) return;
+      const block = layouts.get(self.floor)?.blocks.find((candidate) => candidate.unit === self && !candidate.continuation);
+      if (!block) return;
+      span = { startCol: block.startCol, endCol: block.endCol };
+    }
+
+    for (let level = 0; level < next.levels; level += 1) {
+      const floor = next.floor + level;
+      const clash = layouts.get(floor)?.blocks.find(
+        (block) =>
+          block.unit !== self &&
+          (level > 0 || block.continuation) &&
+          block.startCol <= span!.endCol &&
+          span!.startCol <= block.endCol,
+      );
+      if (!clash) continue;
+      if (level === 0) {
+        throw new ConflictError({
+          code: 'UNIT_ON_UPPER_LEVEL',
+          message: 'These columns are the upper level of a home on the floor below.',
+          params: { unitCode: clash.unit.unitCode, floor },
+          details: { unitCode: clash.unit.unitCode, floor },
+        });
+      }
+      throw new ConflictError({
+        code: 'UNIT_LEVELS_BLOCKED',
+        message: 'Another unit is drawn on the floor this home would rise into.',
+        params: { unitCode: unit.unitCode, blockedBy: clash.unit.unitCode, floor },
+        details: { unitCode: unit.unitCode, blockedBy: clash.unit.unitCode, floor },
+      });
+    }
   }
 
   async updateUnit(
@@ -2584,6 +2817,33 @@ export class BuildingsService {
       a flat, or the person really moved into town, is for the officer to say.
     */
     const typeAfter = input.unitType ?? before.unitType;
+
+    /*
+      «عدد طوابق المسكن» (0095, decision D28): one home on several levels is one
+      unit, drawn across them. Only a dwelling spans levels — the database says
+      so too (CHECK units_levels_dwelling_only), and is told here first so the
+      officer reads why. A retype to a shop on a «دوبلكس» is the same refusal:
+      bring it back to one level first.
+    */
+    const levelsAfter = input.levels ?? before.levels;
+    if (levelsAfter > 1 && !canSpanLevels(typeAfter)) {
+      throw new ValidationError({
+        code: 'UNIT_LEVELS_NOT_DWELLING',
+        message: 'Only a flat or a house may span more than one level.',
+        params: { unitCode: before.unitCode },
+        details: { unitCode: before.unitCode, unitType: typeAfter, levels: levelsAfter },
+      });
+    }
+    const spanChanged = input.startCol !== undefined || input.endCol !== undefined;
+    if (levelsAfter !== before.levels || moved || spanChanged) {
+      await this.assertLevelsFree(before, {
+        floor,
+        levels: levelsAfter,
+        startCol: input.startCol !== undefined ? input.startCol : before.startCol,
+        endCol: input.endCol !== undefined ? input.endCol : before.endCol,
+      });
+    }
+
     const statusAfter = becomingStructural
       ? null
       : input.unitStatus !== undefined
@@ -2668,13 +2928,15 @@ export class BuildingsService {
       of a building the register calls three storeys is correcting the
       register. Without this the unit would sit on no row of the matrix.
     */
-    const building = moved
+    const building = moved || levelsAfter !== before.levels
       ? await this.db.building.findUnique({
           where: { id: before.buildingId },
           select: { floorsCount: true, basementsCount: true },
         })
       : null;
-    const growFloors = building && floor + 1 > building.floorsCount ? floor + 1 : null;
+    // A home's top level is a floor the building has too (0095).
+    const topFloor = floor + levelsAfter - 1;
+    const growFloors = building && topFloor + 1 > building.floorsCount ? topFloor + 1 : null;
     const growBasements = building && floor < 0 && -floor > building.basementsCount ? -floor : null;
 
     // One transaction: a moved unit and the floors that make room for it.
@@ -2686,6 +2948,7 @@ export class BuildingsService {
           ...(input.startCol !== undefined ? { startCol: input.startCol } : {}),
           ...(input.endCol !== undefined ? { endCol: input.endCol } : {}),
           ...(input.unitType !== undefined ? { unitType: input.unitType as never } : {}),
+          ...(input.levels !== undefined ? { levels: input.levels } : {}),
           ...(input.postedNumber !== undefined
             ? { postedNumber: input.postedNumber?.trim() || null }
             : {}),
@@ -2795,14 +3058,22 @@ export class BuildingsService {
       const before = await this.db.unit.findUnique({ where: { id: unitId } });
       if (!before) throw new NotFoundError('الوحدة غير موجودة');
 
-      const floorUnits = await this.db.unit.findMany({
-        where: { buildingId: before.buildingId, floor: before.floor },
-        orderBy: { sequence: 'asc' },
+      /*
+        The whole building, not the unit's floor: a «دوبلكس» widened on the
+        ground floor is widened on the floor above too, and may not be drawn
+        over what stands there (0095). A one-level unit asks exactly what it
+        always did — its floor's neighbours, and the upper levels of any home
+        rising through it.
+      */
+      const buildingUnits = await this.db.unit.findMany({
+        where: { buildingId: before.buildingId },
+        orderBy: [{ floor: 'asc' }, { sequence: 'asc' }],
       });
-      const { blocks } = layoutFloorSpans(floorUnits);
-      const self = floorUnits.find((unit) => unit.id === unitId)!;
+      const layouts = layoutBuildingFloors(buildingUnits);
+      const self = buildingUnits.find((unit) => unit.id === unitId)!;
+      const blocks = floorsOfUnit(self).flatMap((level) => layouts.get(level)?.blocks ?? []);
 
-      const clash = spanOverlap(blocks, self, input);
+      const clash = levelSpanOverlap(layouts, self, input);
       if (clash) {
         throw new ConflictError(
           `لا يمكن توسيع الوحدة ${before.unitCode} فوق الوحدة ${clash.unit.unitCode} — الأعمدة ${input.startCol}–${input.endCol} ليست فارغة`,
@@ -2812,6 +3083,8 @@ export class BuildingsService {
 
       const pins = blocks.filter(
         (block) =>
+          // Another home's upper level is placed by its own floor, not pinned here.
+          !block.continuation &&
           block.unit.id !== unitId &&
           (block.unit.startCol == null || block.unit.endCol == null) &&
           // Drawn past the grid's last column, it has no column to be pinned to;
@@ -5069,6 +5342,28 @@ export function changedBuildingFields(
   return changed;
 }
 
+/**
+ * «هذا المنزل مسجَّل على ملف…» — the question the matrix asks before a house
+ * on somebody's file gets a second unit (D28). The holders are named so the
+ * officer knows whose file the answer changes.
+ */
+function houseGrowthUnanswered(house: HouseOnFile): ConflictError {
+  return new ConflictError({
+    code: 'HOUSE_GROWTH_UNANSWERED',
+    message: 'Say whether the new floor is another level of this house or a separate unit.',
+    params: { unitCode: house.unit.unitCode },
+    details: {
+      unitId: house.unit.id,
+      unitCode: house.unit.unitCode,
+      unitType: house.unit.unitType,
+      levels: house.unit.levels,
+      // Where «طابق إضافي» would put the new level.
+      nextLevelFloor: house.unit.floor + house.unit.levels,
+      holders: house.cards.map((card) => ({ name: card.citizenName, capacity: card.occupancyType })),
+    },
+  });
+}
+
 /** The unit fields `UNIT_UPDATED` records when they change. */
 const AUDITED_UNIT_FIELDS = [
   'floor',
@@ -5082,6 +5377,7 @@ const AUDITED_UNIT_FIELDS = [
   'side',
   'startCol',
   'endCol',
+  'levels',
   'presenceMonths',
   'ownerLastStayAt',
   'vacancyDeclaredAt',
@@ -5114,12 +5410,13 @@ export function changedUnitFields(
  * (`floorsCount - 1`) or below the deepest basement (`-basementsCount`).
  * Exported for its spec.
  */
-export function unitsOutsideFloors<T extends { floor: number }>(
+export function unitsOutsideFloors<T extends { floor: number; levels?: number | null }>(
   units: readonly T[],
   floorsCount: number,
   basementsCount: number,
 ): T[] {
-  return units.filter((unit) => unit.floor > floorsCount - 1 || unit.floor < -basementsCount);
+  // A «دوبلكس» on the top floor reaches the floor above it (0095).
+  return units.filter((unit) => unitTopFloor(unit) > floorsCount - 1 || unit.floor < -basementsCount);
 }
 
 /** «0401، 0402، 0403 و5 غيرها» — enough codes to find them, never a wall of them. */
@@ -5402,6 +5699,7 @@ function toUnitRow(row: {
   feeExemptionNote?: string | null;
   feeExemptedAt?: Date | null;
   feeExemptedBy?: { firstName: string; lastName: string } | null;
+  levels?: number;
   notes: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -5431,6 +5729,7 @@ function toUnitRow(row: {
     feeExemptionNote: row.feeExemptionNote ?? null,
     feeExemptedAt: row.feeExemptedAt ?? null,
     feeExemptedByName: row.feeExemptedBy ? `${row.feeExemptedBy.firstName} ${row.feeExemptedBy.lastName}` : null,
+    levels: row.levels ?? 1,
     notes: row.notes,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,

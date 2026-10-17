@@ -105,13 +105,22 @@ export interface BillableUnit {
    * exactly as it does for a flat with no area.
    */
   ownerShareUndecidable?: boolean;
+  /**
+   * How many levels the unit spans when it is more than one — a «دوبلكس» is 2
+   * (`Unit.levels`, migration 0095, decision D28). Absent on a one-level unit.
+   * Weighs in roofs under a PER_UNIT notice only (`roofWeight` in the shared
+   * rules): a flat by the municipality's factor table, a house one roof per
+   * storey. Only ever set for a unit the census holds — levels are on the unit.
+   */
+  levels?: number;
 }
 
-/** The co-ownership facts each storage shape carries for one flat. */
+/** The co-ownership, exemption and level facts each storage shape carries for one flat. */
 interface OwnerShareFields {
   ownerShare?: BillableOwnerShare | null;
   ownerShareUndecidable?: boolean;
   exempt?: boolean;
+  levels?: number | null;
 }
 
 /**
@@ -145,6 +154,8 @@ export interface LinkedUnit {
   ownerShareUndecidable?: boolean;
   /** See `BillableUnit.exempt`. */
   exempt?: boolean;
+  /** See `BillableUnit.levels`. */
+  levels?: number | null;
 }
 
 /** The stored shape this reads — a property card and its unit rows. */
@@ -173,6 +184,8 @@ export interface BillablePropertyEntry {
   ownerShareUndecidable?: boolean;
   /** A منزل whose one flat is «معفاة من الرسوم» — the card-level twin of `LinkedUnit.exempt`. */
   exempt?: boolean;
+  /** A منزل on several storeys — the card-level twin of `LinkedUnit.levels`, from its one unit. */
+  levels?: number | null;
   /**
    * `unitType` is nullable here for the same reason `unitArea` always was: a
    * per-unit «غير مؤكَّد» flag blanks the field it excuses (migration 0031), so
@@ -215,15 +228,20 @@ export interface BillablePropertyEntry {
     ownerShare?: BillableOwnerShare | null;
     ownerShareUndecidable?: boolean;
     exempt?: boolean;
+    levels?: number | null;
   }>;
 }
 
-/** The co-ownership and exemption facts, copied across without inventing any. */
-function shareFields(source: OwnerShareFields | null | undefined): OwnerShareFields {
+/** The co-ownership, exemption and level facts, copied across without inventing any. */
+function shareFields(
+  source: OwnerShareFields | null | undefined,
+): Pick<BillableUnit, 'ownerShare' | 'ownerShareUndecidable' | 'exempt' | 'levels'> {
   return {
     ...(source?.ownerShare ? { ownerShare: source.ownerShare } : {}),
     ...(source?.ownerShareUndecidable ? { ownerShareUndecidable: true } : {}),
     ...(source?.exempt ? { exempt: true } : {}),
+    // Only a unit on more than one level says so; one is the default everywhere.
+    ...(source?.levels != null && source.levels > 1 ? { levels: Math.floor(source.levels) } : {}),
   };
 }
 

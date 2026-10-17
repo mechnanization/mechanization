@@ -178,6 +178,14 @@ export const ERROR_CODES = [
   'FEE_EXEMPTION_STRUCTURAL_UNIT',
   // «تركة (ورثة المرحوم)» (migration 0076)
   'ESTATE_OWNS_ONLY',
+  // One home on several levels, and a house that grows (migration 0095, decision D28)
+  'UNIT_LEVELS_NOT_DWELLING',
+  'UNIT_LEVELS_BLOCKED',
+  'UNIT_LEVELS_MAX',
+  'UNIT_ON_UPPER_LEVEL',
+  'HOUSE_GROWTH_UNANSWERED',
+  'HOUSE_GROWTH_NOT_ABOVE',
+  'HOUSE_CARD_ON_MULTI_UNIT_BUILDING',
   // Corrections
   'UNIT_CORRECTION_PREVIEW_STALE',
   'UNIT_CONFIRM_CODE_MISMATCH',

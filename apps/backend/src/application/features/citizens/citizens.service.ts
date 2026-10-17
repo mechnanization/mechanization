@@ -31,6 +31,7 @@ import { worklistOwner, worklistOwnerFilter, type WorklistViewer } from '../../c
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
+import { houseCardOnMultiUnitBuilding } from '../../../infrastructure/prisma/house-card-guard';
 import { likePattern, searchTokens } from '../../common/search-terms';
 import { Prisma } from '../../../generated/tenant-client';
 import { citizenSearchText } from '../../common/citizen-search';
@@ -2139,6 +2140,23 @@ export class CitizensService {
           params: { propertyType: entry.props.propertyType },
         });
       }
+    }
+
+    /*
+      No «منزل» on a structure of several units (decision D28) — see
+      `houseCardOnMultiUnitBuilding`. Asked before anything is written.
+    */
+    const crowdedHouse = await houseCardOnMultiUnitBuilding(
+      this.db,
+      entries.map(({ entry }) => entry.props),
+    );
+    if (crowdedHouse) {
+      throw new ValidationError({
+        code: 'HOUSE_CARD_ON_MULTI_UNIT_BUILDING',
+        message: 'A house card cannot be linked to a building with several units.',
+        params: { buildingCode: crowdedHouse.buildingCode },
+        details: { path: `properties.${crowdedHouse.index}.propertyType`, buildingCode: crowdedHouse.buildingCode },
+      });
     }
 
     const existing = citizen.registrations[0];
