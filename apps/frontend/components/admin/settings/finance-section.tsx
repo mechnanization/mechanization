@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { ArrowLeftRight, Coins, Smartphone, UserCheck, Zap } from 'lucide-react';
+import { ArrowLeftRight, Coins, Layers, Smartphone, UserCheck, Zap } from 'lucide-react';
+import { DEFAULT_LEVEL_FACTORS } from '@mechanization/shared-schemas';
+import { LevelFactorsEditor } from '@/components/admin/unit-levels';
 import {
   ApiRequestError,
   getMunicipalitySettings,
@@ -151,6 +153,10 @@ export function FinanceSection({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** «معامل السقوف» (0095, D28) — saved on its own, not with the section's draft. */
+  const tFactors = useTranslations('unitLevels.factors');
+  const [factors, setFactors] = useState<Record<string, number>>({ ...DEFAULT_LEVEL_FACTORS });
+  const [savingFactors, setSavingFactors] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -161,6 +167,7 @@ export function FinanceSection({
         const next = toDraft(result);
         setSaved(next);
         setLocal(next);
+        if (result.levelFactors) setFactors(result.levelFactors);
         setError(null);
       } catch (caught) {
         logApiError(caught);
@@ -280,6 +287,24 @@ export function FinanceSection({
   const discard = useCallback(() => {
     if (saved) setLocal(saved);
   }, [saved]);
+
+  /** Sends the table alone: every other setting is left as it is on the server. */
+  const saveFactors = useCallback(
+    async (table: Record<string, number>) => {
+      setSavingFactors(true);
+      try {
+        const result = await updateMunicipalitySettings(tenant, token, { levelFactors: table });
+        setFactors(result.levelFactors ?? table);
+        toast.success(tFactors('saved'));
+      } catch (caught) {
+        logApiError(caught);
+        toast.error(caught instanceof ApiRequestError ? caught.message : copy.common.saveError);
+      } finally {
+        setSavingFactors(false);
+      }
+    },
+    [tenant, token, toast, tFactors, copy.common.saveError],
+  );
 
   const currencyNames = CURRENCY_NAMES[locale === 'en' ? 'en' : 'ar'];
 
@@ -607,6 +632,16 @@ export function FinanceSection({
           saving={saving}
           onSave={() => void save()}
           onDiscard={discard}
+        />
+      </SettingsCard>
+
+      <SettingsCard icon={Layers} title={tFactors('title')} hint={tFactors('description')}>
+        <LevelFactorsEditor
+          value={factors}
+          canEdit
+          busy={savingFactors}
+          locale={locale}
+          onSave={(table) => void saveFactors(table)}
         />
       </SettingsCard>
     </div>

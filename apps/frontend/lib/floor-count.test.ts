@@ -18,8 +18,14 @@ describe('emptyTopFloors', () => {
     expect(emptyTopFloors(at(-1, -2), 3)).toBeNull();
   });
 
-  it('says nothing about a house: its one unit stands on the ground row however tall it is', () => {
-    expect(emptyTopFloors([{ floor: 0, unitType: 'INDEPENDENT_HOUSE' }], 2)).toBeNull();
+  it('counts every level a home reaches — a duplex fills the row above it (0095)', () => {
+    expect(emptyTopFloors([{ floor: 0, levels: 2, unitType: 'APARTMENT' }], 2)).toBeNull();
+    expect(emptyTopFloors([{ floor: 0, levels: 2, unitType: 'APARTMENT' }], 3)).toEqual({ empty: 1, suggested: 2 });
+  });
+
+  it('asks about a two-storey house whose unit says one level — each storey is a roof (D28)', () => {
+    expect(emptyTopFloors([{ floor: 0, levels: 2, unitType: 'INDEPENDENT_HOUSE' }], 2)).toBeNull();
+    expect(emptyTopFloors([{ floor: 0, unitType: 'INDEPENDENT_HOUSE' }], 2)).toEqual({ empty: 1, suggested: 1 });
   });
 
   it('measures the whole gap', () => {

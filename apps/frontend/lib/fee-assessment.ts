@@ -1,5 +1,5 @@
 import { createTranslator } from 'next-intl';
-import { getLabels } from '@mechanization/shared-schemas';
+import { getLabels, unitLevelsLabel } from '@mechanization/shared-schemas';
 import type { FeeAssessment } from '@mechanization/shared-schemas';
 import ar from '../messages/ar.json';
 import en from '../messages/en.json';
@@ -142,6 +142,25 @@ function withLeftOut(line: string, assessment: FeeAssessment, locale: string): s
     );
   }
   if (assessment.coOwnerPaidUnitCount) notes.push(t('coOwnerPays', { count: assessment.coOwnerPaidUnitCount }));
+  /*
+    «لكل سقف» (0095, D28): a unit on several levels counted at its roofs — a
+    duplex flat at the municipality's factor, a house at one per storey — so
+    «1.8 شقة» on the line is checkable against what the unit is.
+  */
+  const weighed = assessment.lines.filter((line) => line.levelFactor !== undefined && line.levels);
+  if (weighed.length > 0) {
+    const parts = [
+      ...new Set(
+        weighed.map((line) =>
+          t('levelPart', {
+            name: unitLevelsLabel(line.levels, locale) ?? '',
+            factor: line.levelFactor!.toLocaleString('en-US'),
+          }),
+        ),
+      ),
+    ];
+    notes.push(t('levelWeighed', { count: weighed.length, parts: parts.join(t('notesSeparator')) }));
+  }
   return notes.length === 0 ? line : t('withNotes', { line, notes: notes.join(t('notesSeparator')) });
 }
 

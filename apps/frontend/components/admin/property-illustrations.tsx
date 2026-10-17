@@ -1,10 +1,19 @@
 'use client';
 
-import { buildingWidth, isStructuralUnitType, layoutFloorSpans, type UnitSpan } from '@mechanization/shared-schemas';
+import {
+  buildingWidth,
+  isStructuralUnitType,
+  layoutBuildingFloors,
+  unitTopFloor,
+  type UnitSpan,
+} from '@mechanization/shared-schemas';
 import type { BuildingDetail, UnitWithOccupants } from '@/lib/api-client';
 
 /** A unit as a drawing reads it: where it is and what it is — never who lives there. */
-export type ElevationUnit = Pick<UnitWithOccupants, 'id' | 'floor' | 'sequence' | 'unitType' | 'unitCode' | 'startCol' | 'endCol'>;
+export type ElevationUnit = Pick<
+  UnitWithOccupants,
+  'id' | 'floor' | 'sequence' | 'unitType' | 'unitCode' | 'startCol' | 'endCol' | 'levels'
+>;
 
 /**
  * A building as a drawing reads it. Narrower than `BuildingDetail` on
@@ -209,7 +218,8 @@ export function BuildingElevation({
    */
   stage?: boolean;
 }) {
-  const unitFloors = building.units.map((unit) => unit.floor);
+  // A home's upper levels are storeys of the drawing too (0095).
+  const unitFloors = building.units.map((unit) => unitTopFloor(unit));
   /*
     As tall as what is drawn on it, not as the register's floor count: a
     three-storey matrix with units painted on the ground floor only is drawn
@@ -223,14 +233,19 @@ export function BuildingElevation({
     not a unit has been painted on them yet, and an empty one is drawn as an
     outline in the ground rather than left out.
   */
-  const bottom = Math.min(...unitFloors, -(building.basementsCount ?? 0), 0);
+  const bottom = Math.min(...building.units.map((unit) => unit.floor), -(building.basementsCount ?? 0), 0);
 
+  /*
+    Laid out as one building, so a «دوبلكس» draws on both its floors in the
+    same columns, as the same unit — lit, picked and pressed as one.
+  */
+  const layouts = layoutBuildingFloors(
+    [...building.units].sort((a, b) => a.floor - b.floor || a.sequence - b.sequence),
+  );
   const floors: Array<{ floor: number; blocks: Array<UnitSpan<ElevationUnit>>; width: number }> = [];
   for (let floor = top; floor >= bottom; floor -= 1) {
-    const units = building.units
-      .filter((unit) => unit.floor === floor)
-      .sort((a, b) => a.sequence - b.sequence);
-    floors.push({ floor, ...layoutFloorSpans(units) });
+    const layout = layouts.get(floor);
+    floors.push({ floor, blocks: layout?.blocks ?? [], width: layout?.width ?? 1 });
   }
   const columns = buildingWidth(floors);
 

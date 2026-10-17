@@ -44,6 +44,31 @@ describe('describeAssessment', () => {
     );
   });
 
+  it('counts a duplex in roofs and says so — 1.8 flats, not 2 (D28)', () => {
+    const duplex = assessment({
+      unitCount: 1,
+      chargedUnits: 1.8,
+      rate: 1_000_000,
+      lines: [
+        {
+          propertyNumber: '352',
+          propertyType: 'BUILDING',
+          unitType: 'APARTMENT',
+          unitArea: null,
+          unitCode: '0001',
+          levels: 2,
+          levelFactor: 1.8,
+        },
+      ],
+    });
+    expect(describeAssessment(duplex, 'ar')).toBe(
+      '1.8 شقة × 1,000,000 ل.ل (1 وحدة من أكثر من طابق احتُسبت بالسقوف (دوبلكس = 1.8 سقف))',
+    );
+    expect(describeAssessment(duplex, 'en')).toBe(
+      '1.8 Apartment × 1,000,000 LBP (1 multi-level units counted in roofs (Duplex = 1.8 roofs))',
+    );
+  });
+
   it('names a mix of unit types with the generic word', () => {
     const mixed = assessment({
       lines: [
