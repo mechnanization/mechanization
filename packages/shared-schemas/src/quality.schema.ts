@@ -155,6 +155,15 @@ export const QUALITY_FINDING_KIND = [
    * «مبنى» card naming its flat.
    */
   'HOUSE_CARD_ON_MULTI_UNIT_BUILDING',
+  /**
+   * A home whose «عدد طوابق المسكن» looks wrong (decision D28): one
+   * owner-occupier recorded in two flats stacked on each other (a duplex
+   * recorded as two flats — «دمج كدوبلكس» corrects it), a «دوبلكس» note on a
+   * one-level unit, or a house with more storeys than its unit's levels. Each
+   * changes a per-roof bill. MEDIUM (LOW for a note), and dismissable: a family
+   * can own and live in two separate flats, and an upper storey can be unbuilt.
+   */
+  'UNIT_LEVELS_TO_CONFIRM',
 ] as const;
 export type QualityFindingKind = (typeof QUALITY_FINDING_KIND)[number];
 
@@ -213,6 +222,7 @@ export function qualityLabels(locale: string) {
       HOUSE_CARD_ON_MULTI_UNIT_BUILDING: en
         ? 'House card on a building with several units'
         : 'بطاقة «منزل» على مبنى من عدّة وحدات',
+      UNIT_LEVELS_TO_CONFIRM: en ? 'Levels of a home to confirm' : 'عدد طوابق مسكن للتأكيد',
     } satisfies Record<QualityFindingKind, string>,
     /**
      * What the re-check found, as one word.

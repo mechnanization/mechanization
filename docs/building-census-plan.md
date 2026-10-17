@@ -2355,7 +2355,25 @@ dwelling rule, a blocked upper floor, a stray card held), the whole backend suit
 on Postgres 17, and the frontend's `floor-count.test.ts` and
 `fee-assessment.test.ts`; rendered at 360/1440, light/dark, ar/en.
 
-**Still open:** existing duplexes recorded as two flats (B-1-352-A among them)
-are converted by «دمج كدوبلكس» (the next PR); existing two-storey houses keep
-`levels = 1` until an officer sets it — the municipality approves that list,
-since each storey raises the bill. Multi-level shops are out of scope.
+**Converting what was recorded before (`feat/duplex-merge`).** A SUPER_ADMIN folds
+the flat directly above a flat into it — «دمج مع الوحدة العلوية كدوبلكس…» under the
+selected flat, shown only when a flat stands there in the same columns. It is
+«حذف تصحيحي» of the upper flat (`planUnitCorrection`, unchanged), plus what makes
+it a merge: the upper flat's visits and cases move down, the lower flat takes
+`levels` and the summed area (or the whole home's, typed), and its file lines
+take the area too (`UnitCorrectionService.applyMerge`, `duplex-merge.plan.ts`,
+`GET/POST corrections/units/:unitId/merge-upper`). It refuses two flats that are
+not one household — someone upstairs not recorded downstairs in the same
+capacity, a card naming only the upper flat — and a standing vacancy, a
+different exemption or co-owner method, or an unknown area. Preview,
+fingerprint, the upper flat's code typed, one transaction, audit
+`UNITS_MERGED_AS_DUPLEX` on the building and each file. The upper flat's line
+closes «سُجِّل بالخطأ», so its officer loses that unit's dollar.
+
+«ملاحظات الجودة» lists the candidates (`UNIT_LEVELS_TO_CONFIRM`): one
+owner-occupier in two stacked flats, a «دوبلكس» note on a one-level unit, and a
+house with more storeys than its unit's levels. All dismissable.
+
+**Still open:** existing two-storey houses keep `levels = 1` until an officer
+sets it — the municipality approves that list, since each storey raises the
+bill. Multi-level shops are out of scope.

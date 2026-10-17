@@ -6170,6 +6170,9 @@ export async function disableStaffTotp(
 // ── «حذف تصحيحي» (SUPER_ADMIN) ──────────────────────────────────────────────
 
 import type {
+  DuplexMergeInput,
+  DuplexMergePreview,
+  DuplexMergeResult,
   ParcelDues,
   UnitCorrectionDeleteInput,
   UnitCorrectionPreview,
@@ -6177,6 +6180,10 @@ import type {
 } from '@mechanization/shared-schemas';
 
 export type {
+  DuplexMergeBlocker,
+  DuplexMergeInput,
+  DuplexMergePreview,
+  DuplexMergeResult,
   ParcelDues,
   ParcelDuesBill,
   UnitCorrectionBlocker,
@@ -6208,6 +6215,26 @@ export async function applyUnitCorrection(
   const result = await apiFetch<UnitCorrectionResult>(
     tenant,
     `/corrections/units/${encodeURIComponent(unitId)}`,
+    { token, method: 'POST', body: JSON.stringify(input) },
+  );
+  invalidateCensus(tenant);
+  return result;
+}
+
+/** «دمج كدوبلكس» (D28): what folding the flat above `lowerUnitId` into it would do. SUPER_ADMIN only. */
+export function getDuplexMergePreview(tenant: string, token: string, lowerUnitId: string, signal?: AbortSignal) {
+  return apiFetch<DuplexMergePreview>(
+    tenant,
+    `/corrections/units/${encodeURIComponent(lowerUnitId)}/merge-upper`,
+    { token, signal },
+  );
+}
+
+/** Folds the flat above into this one exactly as previewed, or changes nothing (refusals as `unitCorrectionRefusal`). */
+export async function applyDuplexMerge(tenant: string, token: string, lowerUnitId: string, input: DuplexMergeInput) {
+  const result = await apiFetch<DuplexMergeResult>(
+    tenant,
+    `/corrections/units/${encodeURIComponent(lowerUnitId)}/merge-upper`,
     { token, method: 'POST', body: JSON.stringify(input) },
   );
   invalidateCensus(tenant);

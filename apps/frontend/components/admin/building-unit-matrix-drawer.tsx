@@ -73,6 +73,7 @@ import { MATRIX_UNIT_TYPES } from '@/components/citizen/unit-fields';
 import { endTenancyMessage } from '@/components/admin/after-tenancy-question';
 import { BuildingElevation } from '@/components/admin/property-illustrations';
 import { UnitCorrectionDeleteButton, useStaffRole } from '@/components/admin/unit-correction-delete-dialog';
+import { DuplexMergeButton } from '@/components/admin/duplex-merge-dialog';
 import {
   type EndOccupancyAnswer,
   activeVacancy,
@@ -97,7 +98,7 @@ import {
 } from './building-unit-forms';
 import { OwnerBillingPanel } from './owner-billing-panel';
 import { FeeExemptionPanel } from './fee-exemption-panel';
-import { HouseGrowthPrompt, UnitLevelsPanel } from './unit-levels';
+import { HouseGrowthPrompt, UnitLevelsPanel, upperFlatOf } from './unit-levels';
 import { showsOwnerBilling } from '@/lib/owner-billing';
 import { DamageForm } from './damage/damage-form';
 import { DamageHistory } from './damage/damage-history';
@@ -1266,6 +1267,20 @@ export function BuildingUnitMatrixDrawer({
                     not visible from here — so it still arrives as a message,
                     and `run` surfaces it verbatim.
                   */}
+                  {/* «دمج كدوبلكس» (D28): a flat and the one above it that are one home. */}
+                  <DuplexMergeButton
+                    tenant={tenant}
+                    token={token}
+                    unitId={selectedUnit.id}
+                    hasUpper={building ? upperFlatOf(building.units, selectedUnit) !== null : false}
+                    locale={locale}
+                    disabled={busy}
+                    onMerged={() => {
+                      setAction(null);
+                      void load();
+                      onChanged?.();
+                    }}
+                  />
                   {role === 'SUPER_ADMIN' ? (
                     <UnitCorrectionDeleteButton
                       tenant={tenant}

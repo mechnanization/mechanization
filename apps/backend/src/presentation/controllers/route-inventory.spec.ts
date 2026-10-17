@@ -109,6 +109,17 @@ describe('the route inventory', () => {
     expect(Object.keys(SELF_SERVICE).filter((name) => !roleLessNames.has(name))).toEqual([]);
   });
 
+  it('keeps every correction — «حذف تصحيحي» and «دمج كدوبلكس», preview included — SUPER_ADMIN only', () => {
+    const corrections = routes().filter((route) => route.name.startsWith('CorrectionsController.'));
+    expect(corrections.map((route) => route.name).sort()).toEqual([
+      'CorrectionsController.deleteUnit',
+      'CorrectionsController.mergeUpper',
+      'CorrectionsController.previewMerge',
+      'CorrectionsController.previewUnit',
+    ]);
+    for (const route of corrections) expect([route.name, route.roles]).toEqual([route.name, ['SUPER_ADMIN']]);
+  });
+
   it('has no route that deletes a citizen — a citizen is archived, never deleted', () => {
     const deletes = all.filter(
       (route) => route.name.startsWith('CitizenController.') && route.method === RequestMethod.DELETE,
