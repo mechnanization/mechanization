@@ -130,6 +130,38 @@ describe('describeAudit — the archive, the relative’s number, and damage rea
     expect(value('موعد إعادة الكشف')).not.toMatch(/:/);
   });
 
+  it('reads «توزيع الرسم على المالكين» as the method and each owner’s أسهم — no ids, no English key', () => {
+    const owners = (shares: Array<number | null>) =>
+      shares.map((value, index) => ({ citizenId: `c-${index + 1}`, shares: value }));
+    const described = describeAudit(
+      {
+        ...entry(
+          { unitId: 'u-5', unitCode: '0005', ownerBillingMode: null, responsibleOwnerId: null, shares: owners([1200, null]) },
+          {
+            unitId: 'u-5',
+            unitCode: '0005',
+            ownerBillingMode: 'BY_SHARES',
+            responsibleOwnerId: null,
+            shares: owners([1200, 1200]),
+            citizens: ['c-1', 'c-2'],
+          },
+        ),
+        action: 'UNIT_OWNER_BILLING_SET',
+        entityType: 'Building',
+      },
+      'ar',
+    );
+    const shares = described.changes.find((change) => change.label === 'الأسهم');
+    // Digits follow the runtime's locale data; either form is the right figure.
+    expect(shares?.before).toMatch(/^(1,200|1200|١٬٢٠٠)، —$/);
+    expect(shares?.after).toMatch(/^(1,200|1200|١٬٢٠٠)، (1,200|1200|١٬٢٠٠)$/);
+    expect(described.changes.find((change) => change.label === 'طريقة توزيع الرسم')?.after).not.toBe('BY_SHARES');
+    const everything = [...described.facts, ...described.details, ...described.changes, ...described.quotes]
+      .flatMap((line) => Object.values(line))
+      .join(' ');
+    expect(everything).not.toMatch(/citizens|حقلاً مسجَّلاً|c-1/);
+  });
+
   it('writes the English page in English, separators included', () => {
     const described = describeAudit(entry(null, { changed: ['fatherName', 'motherName', 'phone'] }), 'en');
     const all = [...described.facts, ...described.quotes, ...described.details, ...described.changes]

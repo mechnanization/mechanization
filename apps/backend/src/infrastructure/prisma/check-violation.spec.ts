@@ -1,4 +1,4 @@
-import { citizenPhoneRuleError, violatedCheckConstraint } from './check-violation';
+import { citizenPhoneRuleError, closedTreasuryDay, violatedCheckConstraint } from './check-violation';
 
 /*
   The shape Prisma 5 really sends for a CHECK violation, read off a throwaway
@@ -39,5 +39,32 @@ describe('citizenPhoneRuleError', () => {
   it('leaves every other constraint to its own handler', () => {
     expect(citizenPhoneRuleError(prismaCheckError('users_household_counts'))).toBeNull();
     expect(citizenPhoneRuleError(new Error('boom'))).toBeNull();
+  });
+});
+
+/*
+  What Prisma 5 sends when the 0082 trigger refuses an entry dated on a closed
+  day, read off a throwaway Postgres 17 by day-closing.integration.spec.ts.
+*/
+function closedDayError(day: string): Error {
+  const error = new Error(
+    'Invalid `.create()` invocation:\n\n\nError occurred during query execution:\n' +
+      'ConnectorError(ConnectorError { user_facing_error: None, kind: QueryError(PostgresError { code: "23514", ' +
+      `message: "treasury day ${day} is closed: no entry may be written on or before a closed day", severity: "ERROR", ` +
+      'detail: None, column: None, hint: None }), transient: false })',
+  );
+  error.name = 'PrismaClientUnknownRequestError';
+  return error;
+}
+
+describe('closedTreasuryDay', () => {
+  it('reads back the day a 0082 trigger refused', () => {
+    expect(closedTreasuryDay(closedDayError('2026-10-04'))).toBe('2026-10-04');
+  });
+
+  it('says nothing for a CHECK violation or any other failure', () => {
+    expect(closedTreasuryDay(prismaCheckError('treasury_counts_variance_explained'))).toBeNull();
+    expect(closedTreasuryDay(new Error('connection reset'))).toBeNull();
+    expect(closedTreasuryDay(undefined)).toBeNull();
   });
 });

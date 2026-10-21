@@ -5,6 +5,10 @@ import {
   occupancyLiftsSurvey,
   STRUCTURE_TYPE_MAP,
   unitStatusForRole,
+  citizenDisplayName,
+  citizenStoredName,
+  ESTATE_PREFIX_PATTERN,
+  withoutEstatePrefix,
 } from '@mechanization/shared-schemas';
 import type { StructureType } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
@@ -257,7 +261,7 @@ export class LandlordLinkService {
       : scope.naming
         ? Prisma.sql`AND (
             pe."landlordPhone" = ANY(${[...scope.naming.phones]}::text[])
-            OR ${S}search_compact(pe."landlordName") IN (
+            OR ${S}search_compact(regexp_replace(pe."landlordName", ${ESTATE_PREFIX_PATTERN}, '')) IN (
               SELECT key FROM citizen_names WHERE citizen_id = ${scope.naming.citizenId}::uuid
             )
             OR (
@@ -357,7 +361,8 @@ export class LandlordLinkService {
       open_claims AS (
         SELECT pe.id,
                pe."landlordPhone" AS phone,
-               nullif(${S}search_compact(pe."landlordName"), '') AS name_key,
+               -- «ورثة المرحوم X» typed by a tenant is X's name (0076).
+               nullif(${S}search_compact(regexp_replace(pe."landlordName", ${ESTATE_PREFIX_PATTERN}, '')), '') AS name_key,
                pe."createdAt" AS created_at,
                pe."landlordLinkDismissedAt" AS dismissed_at,
                pe."landlordLinkDismissedIds" AS dismissed_ids,
@@ -709,7 +714,7 @@ export class LandlordLinkService {
             select: {
               unitId: true,
               citizenId: true,
-              citizen: { select: { firstName: true, middleName: true, lastName: true } },
+              citizen: { select: { firstName: true, middleName: true, lastName: true, residence: true } },
             },
           })
         : Promise.resolve([]),
@@ -931,6 +936,7 @@ export class LandlordLinkService {
         firstName: true,
         middleName: true,
         lastName: true,
+        residence: true,
       },
     });
     if (!citizen || citizen.kind !== 'CITIZEN') {
@@ -1214,7 +1220,7 @@ export class LandlordLinkService {
         toDate: true,
         createdAt: true,
         unit: { select: { id: true, buildingId: true, unitCode: true } },
-        citizen: { select: { firstName: true, middleName: true, lastName: true } },
+        citizen: { select: { firstName: true, middleName: true, lastName: true, residence: true } },
       },
     });
     if (!spell) throw new NotFoundError({
@@ -1276,6 +1282,7 @@ export class LandlordLinkService {
         firstName: true,
         middleName: true,
         lastName: true,
+        residence: true,
         phone: true,
         whatsapp: true,
       },
@@ -1306,6 +1313,7 @@ export class LandlordLinkService {
         shares: null,
         unitStatus: unitStatusForRole(spell.role as never),
         landlord: { citizenId: owner.id },
+        filedById: input.actor.id,
       });
       if (!filed.propertyEntryId) {
         return {
@@ -1452,7 +1460,8 @@ export class LandlordLinkService {
       where: { id: targetId, landlordCitizenId: null },
       data: {
         landlordCitizenId: owner.id,
-        ...(entry.landlordName ? {} : { landlordName: fullName(owner) }),
+        // The row's own name: «ورثة المرحوم» is added where it is shown, never stored.
+        ...(entry.landlordName ? {} : { landlordName: citizenStoredName(owner) }),
         ...(entry.landlordPhone ? {} : { landlordPhone: owner.phone ?? owner.whatsapp ?? null }),
       },
     });
@@ -1523,7 +1532,7 @@ export class LandlordLinkService {
           propertyType: true,
           landlordCitizenId: true,
           landlordLinkFootprint: true,
-          landlordCitizen: { select: { firstName: true, middleName: true, lastName: true } },
+          landlordCitizen: { select: { firstName: true, middleName: true, lastName: true, residence: true } },
           units: {
             where: { endedAt: null },
             orderBy: { createdAt: 'asc' },
@@ -1702,6 +1711,7 @@ export class LandlordLinkService {
           role: 'OWNER',
           shares: current.shares ?? null,
           unitStatus,
+          filedById: input.actor.id,
         });
       } else {
         const recorded = await this.buildings.recordOccupancy(
@@ -1999,7 +2009,7 @@ export class LandlordLinkService {
         landlordCitizenId: true,
         landlordLinkFootprint: true,
         endedAt: true,
-        landlordCitizen: { select: { id: true, firstName: true, middleName: true, lastName: true } },
+        landlordCitizen: { select: { id: true, firstName: true, middleName: true, lastName: true, residence: true } },
         units: { select: { unit: { select: { unitCode: true } } } },
       },
     });
@@ -2293,6 +2303,12 @@ export class LandlordLinkService {
           keptRowCards.add(unit.row.propertyEntryId);
           continue;
         }
+        // A flat a municipal request names stays: the certificate is about it (0092, decision of 2026-10-13).
+        if (pristine && (await client.citizenRequest.count({ where: { buildingUnitId: pristine.id } })) > 0) {
+          report.kept.push({ unitCode: unit.unitCode, reason: 'HAS_REQUESTS' });
+          keptRowCards.add(unit.row.propertyEntryId);
+          continue;
+        }
         if (pristine) {
           await client.buildingUnit.delete({ where: { id: pristine.id } });
           report.rowsRemoved += 1;
@@ -2438,6 +2454,11 @@ export class LandlordLinkService {
       }
       if (!sameCard(cardSnapshot(card), mint.snapshot)) {
         report.kept.push({ unitCode: null, reason: 'EDITED', propertyEntryId: card.id });
+        continue;
+      }
+      // The owner filed a municipal request on the card the link minted: it stays with the request.
+      if ((await client.citizenRequest.count({ where: { propertyEntryId: card.id } })) > 0) {
+        report.kept.push({ unitCode: null, reason: 'HAS_REQUESTS', propertyEntryId: card.id });
         continue;
       }
 
@@ -2641,7 +2662,7 @@ export class LandlordLinkService {
         landlordLinkFootprint: true,
         landlordLinkDismissedIds: true,
         registration: {
-          select: { citizen: { select: { id: true, firstName: true, middleName: true, lastName: true } } },
+          select: { citizen: { select: { id: true, firstName: true, middleName: true, lastName: true, residence: true } } },
         },
         units: { where: { endedAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, unitId: true } },
       },
@@ -2650,9 +2671,10 @@ export class LandlordLinkService {
 
     const seller = await this.db.user.findUnique({
       where: { id: input.ownerId },
-      select: { firstName: true, middleName: true, lastName: true, phone: true },
+      select: { firstName: true, middleName: true, lastName: true, residence: true, phone: true },
     });
-    const sellerName = seller ? fullName(seller) : null;
+    // Written onto the tenant's card below: the row's own name, never «ورثة المرحوم …».
+    const sellerName = seller ? citizenStoredName(seller) : null;
 
     const released: SaleRelease[] = [];
     const events: PendingEvent[] = [];
@@ -3061,7 +3083,7 @@ const ENTRY_SELECT = {
     select: {
       id: true,
       referenceNumber: true,
-      citizen: { select: { id: true, firstName: true, middleName: true, lastName: true } },
+      citizen: { select: { id: true, firstName: true, middleName: true, lastName: true, residence: true } },
     },
   },
   // Current rows only — a flat an ended tenancy gave up is not one a link claims.
@@ -3400,8 +3422,9 @@ function summarise(report: RevertReport) {
   };
 }
 
-function fullName(person: { firstName: string; middleName?: string | null; lastName: string }): string {
-  return [person.firstName, person.middleName, person.lastName].filter(Boolean).join(' ').trim();
+/** A citizen's name as shown — «ورثة المرحوم …» for an estate (0076). */
+function fullName(person: { firstName: string; middleName?: string | null; lastName: string; residence?: string | null }): string {
+  return citizenDisplayName(person);
 }
 
 /**
@@ -3415,7 +3438,8 @@ export function landlordNameMatches(
   typed: string | null | undefined,
   citizen: { firstName: string; middleName: string | null; lastName: string },
 ): boolean {
-  const key = foldNamePart(typed);
+  // «ورثة المرحوم X» typed by a tenant is X's name (0076), as in the SQL twin.
+  const key = foldNamePart(typed ? withoutEstatePrefix(typed) : typed);
   if (!key) return false;
   const short = foldNamePart(`${citizen.firstName} ${citizen.lastName}`);
   const long = citizen.middleName?.trim()
@@ -3550,7 +3574,7 @@ export interface RevertReport {
   /** What was deliberately left standing, and why. */
   kept: Array<{
     unitCode: string | null;
-    reason: 'EDITED' | 'SHARED' | 'OWNER_FILE_CLAIMS' | 'HAS_DOCUMENTS' | 'FLAGGED';
+    reason: 'EDITED' | 'SHARED' | 'OWNER_FILE_CLAIMS' | 'HAS_DOCUMENTS' | 'HAS_REQUESTS' | 'FLAGGED';
     propertyEntryId?: string;
   }>;
 }

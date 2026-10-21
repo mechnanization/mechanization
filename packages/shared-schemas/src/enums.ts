@@ -49,10 +49,54 @@ function arabicEnum<T extends readonly [string, ...string[]]>(values: T, message
  *
  * Decided by where the person *lives most of the year*, never by محل القيد:
  * plenty of people registered in the town live in Beirut, and the reverse.
+ *
+ * Two owners of record that are not a living person (migration 0076; the
+ * user's decision, 2026-10-07):
+ *
+ * `ESTATE` — «تركة (ورثة المرحوم …)». The owner died and the heirs have not
+ * partitioned. A dead man cannot be billed, sign a receipt or pay, so the owner
+ * of record becomes his estate: his own file, converted in place (his cards,
+ * flats and bills stay on it), shown as «ورثة المرحوم …» (`citizenDisplayName`).
+ * It owns and nothing else — whoever lives in or uses the flat (the widow, a
+ * tenant) is filed in their own name and pays the occupancy fee; an empty flat's
+ * owner-borne charges fall on the heirs collectively.
+ *
+ * `INSTITUTION` — «جهة أو وقف». A waqf, a council, a public body, so a mosque
+ * or a municipal hall never stands with no owner (an ownerless flat bills
+ * nobody and reads as broken data). Like a non-resident it may own anything and
+ * rent or occupy premises nobody lives in — a waqf uses its mosque hall.
+ *
+ * Neither is a household: no mother's name, gender, nationality or residency is
+ * asked, the phone is optional (a representative's, in the local contact
+ * fields), and every population count that reads `RESIDENT` leaves both out.
  */
-export const CITIZEN_RESIDENCE = ['RESIDENT', 'NON_RESIDENT_OWNER'] as const;
+export const CITIZEN_RESIDENCE = ['RESIDENT', 'NON_RESIDENT_OWNER', 'ESTATE', 'INSTITUTION'] as const;
 export const citizenResidenceSchema = arabicEnum(CITIZEN_RESIDENCE, 'نوع الملف غير صالح');
 export type CitizenResidence = z.infer<typeof citizenResidenceSchema>;
+
+/**
+ * The file types that are not a household — on the register to say who owns
+ * (and, for a non-resident or an institution, rents or runs) a unit. They share
+ * the form's short shape and the rule that none of them lives in a dwelling.
+ */
+export const OWNER_RECORD_RESIDENCE = ['NON_RESIDENT_OWNER', 'ESTATE', 'INSTITUTION'] as const;
+
+/** Whether this file is not a household — see `OWNER_RECORD_RESIDENCE`. */
+export function isOwnerRecord(residence: string | null | undefined): boolean {
+  return residence != null && (OWNER_RECORD_RESIDENCE as readonly string[]).includes(residence);
+}
+
+/** The owner-record kinds that are not a living person — see `isNonPersonRecord`. */
+export const NON_PERSON_RESIDENCE = ['ESTATE', 'INSTITUTION'] as const;
+
+/**
+ * Whether this owner of record is not a living person — an estate or an
+ * institution: no phone required, no duplicate-person checks by mother or
+ * gender, never merged with a person's file.
+ */
+export function isNonPersonRecord(residence: string | null | undefined): boolean {
+  return residence != null && (NON_PERSON_RESIDENCE as readonly string[]).includes(residence);
+}
 
 export const GENDER = ['MALE', 'FEMALE'] as const;
 export const genderSchema = arabicEnum(GENDER, 'الجنس مطلوب');
@@ -561,6 +605,28 @@ export function isOccupiableLifecycle(status: string | null | undefined): boolea
 export const UNSURVEYABLE_SHELL_LIFECYCLE = ['DEMOLISHED'] as const;
 
 /**
+ * The lifecycle states that say nobody can live in the building — «متضررة من
+ * الحرب وغير مسكونة» and «مهدوم».
+ *
+ * A lifecycle is a label on the structure, set from the building editor with no
+ * finding behind it, and billing does not read it. What exempts a unit from
+ * fees is a damage reading that answers «غير صالحة للسكن» (the user's decision,
+ * 2026-10-07): it records who judged it, when and on what, and a later reading
+ * ends it. So these states are where the two can disagree — a building labelled
+ * uninhabited whose units are still billed — and the editor asks for the
+ * reading and «مراجعة الجودة» lists the building until it is recorded
+ * (`UNINHABITED_WITHOUT_READING`).
+ */
+export const UNINHABITABLE_LIFECYCLE = [
+  'WAR_DAMAGED_UNINHABITED',
+  'DEMOLISHED',
+] as const satisfies readonly BuildingLifecycle[];
+
+export function isUninhabitableLifecycle(status: string | null | undefined): boolean {
+  return status != null && (UNINHABITABLE_LIFECYCLE as readonly string[]).includes(status);
+}
+
+/**
  * The lifecycle states in which there is a structure on the ground — what a
  * re-inspection after repair can still go and look at («بانتظار إعادة الكشف»).
  *
@@ -813,6 +879,112 @@ export const occupancyEndReasonSchema = arabicEnum(
   'يرجى تحديد سبب إنهاء الإشغال',
 );
 export type OccupancyEndReason = z.infer<typeof occupancyEndReasonSchema>;
+
+/**
+ * «توزيع الرسم على المالكين» — how a flat with several current owners is
+ * billed (migration 0075; the user's decision, 2026-10-07).
+ *
+ * Lebanese inheritance makes co-heirs on one deed the normal case, and the
+ * register has always recorded them — one OWNER spell each, with their أسهم.
+ * Billing read neither: every co-owner's file claims the flat, the assessment
+ * runs one citizen at a time, and so each was billed for the whole of it.
+ *
+ *  - `EQUAL` — each of the N current owners pays 1/N. The default: a flat with
+ *    no choice recorded (`Unit.ownerBillingMode` NULL) is billed this way.
+ *  - `BY_SHARES` — each pays their أسهم over the sum of every current owner's
+ *    أسهم. Normalised by the sum, not by 2400: on a building nobody has
+ *    partitioned (غير مفرز) the 2400 cover the whole building, not the flat.
+ *  - `RESPONSIBLE_OWNER` — one owner, named on the unit, pays the whole; the
+ *    others are not charged for this flat.
+ *
+ * Applies only to what an owner bears — an owner-borne notice, or an occupancy
+ * notice on a flat its owners use themselves. A tenant pays for what they
+ * occupy whatever the deed says. See `ownerShareOf`.
+ */
+export const OWNER_BILLING_MODE = ['EQUAL', 'BY_SHARES', 'RESPONSIBLE_OWNER'] as const;
+export const ownerBillingModeSchema = arabicEnum(OWNER_BILLING_MODE, 'اختر طريقة توزيع الرسم');
+export type OwnerBillingMode = z.infer<typeof ownerBillingModeSchema>;
+
+/**
+ * «معفاة من الرسوم» — why a unit is charged nothing at all (migration 0077).
+ *
+ * The exemption belongs to the unit, not to its owner and not to its status:
+ * a waqf that owns the mosque and a shop it rents out is exempt on the first
+ * and must still see its tenant billed on the second (the user's decision,
+ * 2026-10-07), and «مؤجرة» has to stay «مؤجرة» for that tenant to be billed.
+ *
+ *  - `PLACE_OF_WORSHIP` «دار عبادة» — a mosque, a church, a husseiniya.
+ *  - `PUBLIC_FACILITY` «مرفق عام» — the municipality's own buildings, a
+ *    public school.
+ *  - `OTHER` «سبب آخر» — with the reason in words (CHECK
+ *    units_fee_exemption_other_note).
+ *
+ * Granted and lifted by a SUPER_ADMIN only, with an audit row: it takes a unit
+ * off every bill.
+ */
+export const FEE_EXEMPTION_REASON = ['PLACE_OF_WORSHIP', 'PUBLIC_FACILITY', 'OTHER'] as const;
+export const feeExemptionReasonSchema = arabicEnum(FEE_EXEMPTION_REASON, 'اختر سبب الإعفاء');
+export type FeeExemptionReason = z.infer<typeof feeExemptionReasonSchema>;
+
+// ─────────────────────  Municipal requests (migration 0092)  ─────────────────────
+
+/**
+ * What a citizen asks the municipality for (docs/municipal-requests-plan.md).
+ * Which of them a municipality offers, and at what fee, is its manager's list
+ * (`request_type_settings`, open decisions §20 D1); the list itself is for the
+ * municipality to confirm.
+ */
+export const REQUEST_TYPE = [
+  'CLEARANCE',
+  'RESIDENCY',
+  'OCCUPANCY',
+  'VACANCY',
+  'LEASE_REGISTRATION',
+  'RENOVATION',
+  'SIGNAGE',
+  'OTHER',
+] as const;
+export const requestTypeSchema = arabicEnum(REQUEST_TYPE, 'اختر نوع المعاملة');
+export type RequestType = z.infer<typeof requestTypeSchema>;
+
+/**
+ * In what capacity the applicant asks. Declared by the applicant and judged by
+ * the clerk against the papers (open decisions §20 D2); nothing here encodes
+ * who may ask for what.
+ */
+export const APPLICANT_CAPACITY = ['OWNER', 'TENANT', 'ESTATE_HEIR', 'LEGAL_AGENT', 'FREE_OCCUPANT'] as const;
+export const applicantCapacitySchema = arabicEnum(APPLICANT_CAPACITY, 'اختر صفة مقدّم الطلب');
+export type ApplicantCapacity = z.infer<typeof applicantCapacitySchema>;
+
+/** Where a request stands. The transitions are in migration 0092's header. */
+export const REQUEST_STATUS = [
+  'AWAITING_PAYMENT',
+  'IN_REVIEW',
+  'READY_FOR_PICKUP',
+  'COMPLETED',
+  'REJECTED',
+  'CANCELLED',
+] as const;
+export const requestStatusSchema = arabicEnum(REQUEST_STATUS, 'اختر حالة الطلب');
+export type RequestStatus = z.infer<typeof requestStatusSchema>;
+
+/** Online through the portal, or filed by a clerk at the counter (open decisions §20 D8). */
+export const REQUEST_CHANNEL = ['ONLINE', 'COUNTER'] as const;
+export const requestChannelSchema = arabicEnum(REQUEST_CHANNEL, 'اختر طريقة تقديم الطلب');
+export type RequestChannel = z.infer<typeof requestChannelSchema>;
+
+/** What a paper on a request is. */
+export const REQUEST_ATTACHMENT_TYPE = [
+  'IDENTITY',
+  'OWNERSHIP_PROOF',
+  'LEASE_CONTRACT',
+  'POWER_OF_ATTORNEY',
+  'INHERITANCE_PROOF',
+  'MUKHTAR_STATEMENT',
+  'OTHER',
+] as const;
+export const requestAttachmentTypeSchema = arabicEnum(REQUEST_ATTACHMENT_TYPE, 'اختر نوع المستند');
+export type RequestAttachmentType = z.infer<typeof requestAttachmentTypeSchema>;
 
 /**
  * What a «تأكيد الشغور» rests on — asked every time one is recorded.

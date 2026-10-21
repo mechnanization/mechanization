@@ -1,9 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowRight, ClipboardList, Loader2, Save } from 'lucide-react';
+import { ClipboardList, Loader2, Save } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import {
   CASE_FIELD_MAP,
   createCaseSchema,
@@ -18,8 +19,16 @@ import {
   logApiError,
   updateCase,
 } from '@/lib/api-client';
+import {
+  caseCreatePayload,
+  caseUpdatePayload,
+  valuesForPropertyType,
+  type CaseFormValues,
+} from '@/lib/case-payload';
 import { clearSession, loadSession } from '@/lib/session';
 import { CASE_WRITE_ROLES, hasRole } from '@/lib/staff-roles';
+import { HeaderBackLink } from '@/components/admin/header-back-link';
+import { Alert } from '@/components/ui/alert';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Field } from '@/components/ui/field';
@@ -33,18 +42,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-
-interface CaseFormValues {
-  notes: string;
-  propertyNumber: string;
-  neighborhood: string;
-  propertyType: string;
-  buildingName: string;
-  floor: string;
-  side: string;
-  landType: string;
-  tentLocation: string;
-}
 
 const EMPTY: CaseFormValues = {
   notes: '',
@@ -90,6 +87,8 @@ export function CaseEditor({
   const [error, setError] = useState<string | null>(null);
   const [touched, setTouched] = useState(false);
 
+  const t = useTranslations('cases.editor');
+  const tCommon = useTranslations('common');
   const labels = getLabels(locale);
   const cancelHref = `${base}/cases`;
 
@@ -142,7 +141,7 @@ export function CaseEditor({
       })
       .catch((caught) => {
         if (cancelled) return;
-        setLoadError(handleApiError(caught, 'تعذّر تحميل الحالة.'));
+        setLoadError(handleApiError(caught, t('loadFailed')));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -150,7 +149,7 @@ export function CaseEditor({
     return () => {
       cancelled = true;
     };
-  }, [tenant, token, caseId, handleApiError]);
+  }, [tenant, token, caseId, handleApiError, t]);
 
   const set = (patch: Partial<CaseFormValues>) =>
     setValues((previous) => ({ ...previous, ...patch }));
@@ -159,71 +158,67 @@ export function CaseEditor({
    * Which type-specific fields to show — a plot of land has no floor, a tent
    * has no building name. Switching type also drops whatever the previous
    * type had filled in for a field the new one does not carry, so a stray
-   * «الطابق ٣» left over from a BUILDING card never rides along under LAND.
+   * «الطابق ٣» left over from a BUILDING card never rides along under LAND;
+   * a field the new type carries too is kept (`valuesForPropertyType`).
    */
   const visible: readonly string[] = values.propertyType
     ? (CASE_FIELD_MAP[values.propertyType as keyof typeof CASE_FIELD_MAP] ?? [])
     : [];
 
   const changePropertyType = (propertyType: string) => {
-    setValues((previous) => ({
-      ...EMPTY,
-      notes: previous.notes,
-      propertyNumber: previous.propertyNumber,
-      neighborhood: previous.neighborhood,
-      propertyType,
-    }));
+    setValues((previous) => valuesForPropertyType(previous, propertyType));
   };
 
   const check = createCaseSchema.shape.notes.safeParse(values.notes);
   const notesError = touched && !check.success ? check.error.issues[0]?.message : undefined;
   const complete = values.notes.trim().length >= 3;
 
+  /*
+    Synchronous, unlike `submitting`, which lands a render after a fast second
+    press — and a second press on «حفظ» filed a second حالة (STA-4). Kept after
+    a save that landed: the form stays locked while the page leaves.
+  */
+  const inFlight = useRef(false);
+
   const submit = useCallback(async () => {
-    if (!token) return;
+    if (!token || inFlight.current) return;
     setTouched(true);
     if (!complete) return;
 
+    inFlight.current = true;
     setSubmitting(true);
     setError(null);
-    const payload = {
-      notes: values.notes.trim(),
-      ...(values.propertyNumber.trim() ? { propertyNumber: values.propertyNumber.trim() } : {}),
-      ...(values.neighborhood.trim() ? { neighborhood: values.neighborhood.trim() } : {}),
-      ...(values.propertyType ? { propertyType: values.propertyType } : {}),
-      ...(values.buildingName.trim() ? { buildingName: values.buildingName.trim() } : {}),
-      ...(values.floor.trim() ? { floor: values.floor.trim() } : {}),
-      ...(values.side.trim() ? { side: values.side.trim() } : {}),
-      ...(values.landType ? { landType: values.landType } : {}),
-      ...(values.tentLocation.trim() ? { tentLocation: values.tentLocation.trim() } : {}),
-    };
+    let landed = false;
     try {
+      // An edit sends an emptied field as null so it is cleared (`caseUpdatePayload`).
       if (caseId) {
-        await updateCase(tenant, token, caseId, payload);
+        await updateCase(tenant, token, caseId, caseUpdatePayload(values));
       } else {
-        await createCase(tenant, token, payload);
+        await createCase(tenant, token, caseCreatePayload(values));
       }
+      landed = true;
       router.push(cancelHref);
     } catch (caught) {
-      setError(handleApiError(caught, 'تعذّر حفظ الحالة.'));
+      setError(handleApiError(caught, t('saveFailed')));
     } finally {
-      setSubmitting(false);
+      if (!landed) {
+        inFlight.current = false;
+        setSubmitting(false);
+      }
     }
-  }, [token, complete, values, caseId, tenant, router, cancelHref, handleApiError]);
+  }, [token, complete, values, caseId, tenant, router, cancelHref, handleApiError, t]);
 
   if (!token) return null;
 
   if (loadError) {
     return (
       <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-        <p
-          role="alert"
-          className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-destructive"
-        >
+        <HeaderBackLink fallbackHref={cancelHref} label={t('back')} />
+        <Alert variant="destructive" live="alert">
           {loadError}
-        </p>
+        </Alert>
         <Link href={cancelHref} className={buttonVariants({ variant: 'outline' })}>
-          {locale === 'en' ? 'Back to Cases' : 'رجوع إلى الحالات'}
+          {t('back')}
         </Link>
       </div>
     );
@@ -233,13 +228,7 @@ export function CaseEditor({
 
   return (
     <div className="w-full space-y-3.5 sm:space-y-6 px-3 py-3 sm:px-6 sm:py-6 lg:px-8 pb-20 sm:pb-8">
-      <Link
-        href={cancelHref}
-        className="inline-flex items-center gap-1.5 text-xs sm:text-sm text-muted-foreground transition-colors hover:text-foreground"
-      >
-        <ArrowRight className="size-3.5 sm:size-4 rtl:rotate-180" aria-hidden />
-        {locale === 'en' ? 'Back to Cases' : 'رجوع إلى الحالات'}
-      </Link>
+      <HeaderBackLink fallbackHref={cancelHref} label={t('back')} />
 
       <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 border-b pb-3 sm:pb-4">
         <span
@@ -250,14 +239,10 @@ export function CaseEditor({
         </span>
         <div className="min-w-0 space-y-0.5">
           <h1 className="truncate text-base sm:text-2xl font-bold tracking-tight text-foreground">
-            {editing
-              ? (locale === 'en' ? 'Edit Case' : 'تعديل الحالة')
-              : (locale === 'en' ? 'Open a follow-up case' : 'فتح حالة متابعة')}
+            {editing ? t('titleEdit') : t('titleNew')}
           </h1>
           <p className="text-xs sm:text-xs text-muted-foreground hidden sm:block">
-            {locale === 'en'
-              ? 'For a visit that could not become a citizen registration — record what was observed so the next visit does not start from zero.'
-              : 'لزيارة لم تنتهِ بتسجيل مواطن — سجّل ما أمكن ملاحظته حتى لا تبدأ الزيارة القادمة من الصفر.'}
+            {t('intro')}
           </p>
         </div>
       </div>
@@ -265,16 +250,13 @@ export function CaseEditor({
       <Card>
         <CardContent className="space-y-5 p-4 sm:p-6">
           {error ? (
-            <p
-              role="alert"
-              className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
-            >
+            <Alert variant="destructive" live="alert">
               {error}
-            </p>
+            </Alert>
           ) : null}
 
           <Field
-            label={locale === 'en' ? 'What happened' : 'ماذا حصل'}
+            label={t('notes')}
             htmlFor="notes"
             required
             error={notesError}
@@ -291,7 +273,7 @@ export function CaseEditor({
           </Field>
 
           <div className="grid gap-3.5 sm:gap-5">
-            <Field label={locale === 'en' ? 'Property Number' : 'رقم العقار'} htmlFor="propertyNumber">
+            <Field label={t('propertyNumber')} htmlFor="propertyNumber">
               <Input
                 id="propertyNumber"
                 inputMode="numeric"
@@ -301,7 +283,7 @@ export function CaseEditor({
                 onChange={(event) => set({ propertyNumber: event.target.value })}
               />
             </Field>
-            <Field label={locale === 'en' ? 'Neighborhood' : 'الحي'} htmlFor="neighborhood">
+            <Field label={t('neighborhood')} htmlFor="neighborhood">
               <Input
                 id="neighborhood"
                 value={values.neighborhood}
@@ -310,16 +292,16 @@ export function CaseEditor({
             </Field>
           </div>
 
-          <Field label={locale === 'en' ? 'Property Type' : 'نوع العقار'} htmlFor="propertyType">
+          <Field label={t('propertyType')} htmlFor="propertyType">
             <Select
               value={values.propertyType || '__none'}
               onValueChange={(next) => changePropertyType(next === '__none' ? '' : next)}
             >
               <SelectTrigger id="propertyType">
-                <SelectValue placeholder={locale === 'en' ? 'Unknown' : 'غير معروف'} />
+                <SelectValue placeholder={t('unknown')} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="__none">{locale === 'en' ? 'Unknown' : 'غير معروف'}</SelectItem>
+                <SelectItem value="__none">{t('unknown')}</SelectItem>
                 {PROPERTY_TYPE.map((type) => (
                   <SelectItem key={type} value={type}>
                     {labels.propertyType[type]}
@@ -339,7 +321,7 @@ export function CaseEditor({
             <div className="grid gap-3.5 sm:gap-5">
               {visible.includes('buildingName') ? (
                 <Field
-                  label={locale === 'en' ? 'Building / House Name' : 'اسم المبنى/المنزل'}
+                  label={t('buildingName')}
                   htmlFor="buildingName"
                 >
                   <Input
@@ -350,10 +332,10 @@ export function CaseEditor({
                 </Field>
               ) : null}
               {visible.includes('side') ? (
-                <Field label={locale === 'en' ? 'Side / Orientation' : 'الجهة'} htmlFor="side">
+                <Field label={t('side')} htmlFor="side">
                   <Input
                     id="side"
-                    placeholder={locale === 'en' ? 'e.g. North, South' : 'مثال: شمالي، جنوبي'}
+                    placeholder={t('sidePlaceholder')}
                     value={values.side}
                     onChange={(event) => set({ side: event.target.value })}
                   />
@@ -363,7 +345,7 @@ export function CaseEditor({
           ) : null}
 
           {visible.includes('floor') ? (
-            <Field label={locale === 'en' ? 'Floor' : 'الطابق'} htmlFor="floor">
+            <Field label={t('floor')} htmlFor="floor">
               <Input
                 id="floor"
                 value={values.floor}
@@ -373,16 +355,16 @@ export function CaseEditor({
           ) : null}
 
           {visible.includes('landType') ? (
-            <Field label={locale === 'en' ? 'Land Type' : 'نوع الأرض'} htmlFor="landType">
+            <Field label={t('landType')} htmlFor="landType">
               <Select
                 value={values.landType || '__none'}
                 onValueChange={(next) => set({ landType: next === '__none' ? '' : next })}
               >
                 <SelectTrigger id="landType">
-                  <SelectValue placeholder={locale === 'en' ? 'Unknown' : 'غير معروف'} />
+                  <SelectValue placeholder={t('unknown')} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__none">{locale === 'en' ? 'Unknown' : 'غير معروف'}</SelectItem>
+                  <SelectItem value="__none">{t('unknown')}</SelectItem>
                   {LAND_TYPE.map((type) => (
                     <SelectItem key={type} value={type}>
                       {labels.landType[type]}
@@ -395,12 +377,12 @@ export function CaseEditor({
 
           {visible.includes('tentLocation') ? (
             <Field
-              label={locale === 'en' ? 'Tent Location Description' : 'وصف موقع الخيمة'}
+              label={t('tentLocation')}
               htmlFor="tentLocation"
             >
               <Input
                 id="tentLocation"
-                placeholder={locale === 'en' ? 'e.g. North Camp — Plot 4' : 'مثال: المخيم الشمالي — قطعة ٤'}
+                placeholder={t('tentLocationPlaceholder')}
                 value={values.tentLocation}
                 onChange={(event) => set({ tentLocation: event.target.value })}
               />
@@ -411,7 +393,7 @@ export function CaseEditor({
 
       <div className="flex flex-col-reverse gap-2.5 sm:flex-row sm:justify-end sm:gap-3">
         <Link href={cancelHref} className={buttonVariants({ variant: 'outline' })}>
-          {locale === 'en' ? 'Cancel' : 'إلغاء'}
+          {tCommon('cancel')}
         </Link>
         <Button disabled={submitting} onClick={() => void submit()}>
           {submitting ? (
@@ -419,9 +401,7 @@ export function CaseEditor({
           ) : (
             <Save className="size-4" aria-hidden />
           )}
-          {editing
-            ? (locale === 'en' ? 'Save Changes' : 'حفظ التعديلات')
-            : (locale === 'en' ? 'Save Case' : 'حفظ الحالة')}
+          {editing ? t('saveChanges') : t('saveCase')}
         </Button>
       </div>
     </div>

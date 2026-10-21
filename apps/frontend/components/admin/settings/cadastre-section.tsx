@@ -9,6 +9,7 @@ import {
   type CadastreImportResult,
 } from '@/lib/api-client';
 import type { SettingsCopy } from '@/lib/settings-i18n';
+import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/components/ui/toast';
 import { Notice, SettingsCard, StatusTile } from './settings-ui';
@@ -86,12 +87,9 @@ export function CadastreSection({
           <Notice title={copy.cadastre.replaceWarning}>{copy.cadastre.replaceWarningWhy}</Notice>
 
           {error ? (
-            <p
-              role="alert"
-              className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive"
-            >
+            <Alert variant="destructive" live="alert">
               {error}
-            </p>
+            </Alert>
           ) : null}
 
           <input
@@ -127,7 +125,7 @@ export function CadastreSection({
               if (file && !uploading) void upload(file);
             }}
             className={cn(
-              'group flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed p-6 text-center transition-all',
+              'group flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed p-6 text-center transition',
               dragging
                 ? 'border-primary/60 bg-muted/30'
                 : 'border-muted-foreground/25 bg-muted/10 hover:border-primary/60 hover:bg-muted/30',

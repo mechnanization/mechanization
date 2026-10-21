@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { isOwnerRecord, splitInstitutionName } from '@mechanization/shared-schemas';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   cadastreFlags,
@@ -15,9 +16,10 @@ import {
   PARCEL_REPOSITORY,
   REGISTRATION_REPOSITORY,
 } from '../../../domain/interfaces/base-repository.interface';
-import type {
-  ParcelLocation,
-  ParcelRepository,
+import {
+  parcelNumberKey,
+  type ParcelLocation,
+  type ParcelRepository,
 } from '../../../domain/interfaces/parcel-repository.interface';
 import { RegistrationRepository } from '../../../domain/interfaces/registration-repository.interface';
 import { ConflictError } from '../../common/exceptions';
@@ -157,7 +159,7 @@ export class RegistrationService {
     // actually named.
     const properties = input.payload.properties.map((entry, index) => {
       const parcel = entry.propertyNumber
-        ? cadastre.get(entry.propertyNumber.trim())
+        ? cadastre.get(parcelNumberKey(entry.propertyNumber))
         : undefined;
       return PropertyEntry.create(
         {
@@ -200,9 +202,20 @@ export class RegistrationService {
         */
         hasNoPhone: input.payload.contact.hasNoPhone,
         contactPhone: input.payload.contact.contactPhone || undefined,
-        firstName: input.payload.personal.firstName,
-        middleName: input.payload.personal.middleName || undefined,
-        lastName: input.payload.personal.lastName,
+        /*
+          An institution's name comes as one line and is stored across the name
+          parts (`splitInstitutionName`), so every screen that joins first and
+          last reads it whole (0076).
+        */
+        ...(input.payload.residence === 'INSTITUTION'
+          ? (({ firstName, lastName }) => ({ firstName, middleName: undefined, lastName }))(
+              splitInstitutionName(input.payload.personal.firstName),
+            )
+          : {
+              firstName: input.payload.personal.firstName,
+              middleName: input.payload.personal.middleName || undefined,
+              lastName: input.payload.personal.lastName,
+            }),
         motherName: input.payload.personal.motherName || undefined,
         gender: input.payload.personal.gender,
         nationality: input.payload.personal.nationality,
@@ -293,9 +306,10 @@ export class RegistrationService {
   ): Promise<{ found: Map<string, ParcelLocation>; missing: Set<string> }> {
     const found = await this.parcels.findManyByNumber(propertyNumbers);
 
+    // Reported as typed: `cadastreFlags` matches the card's own value.
     const unresolved = propertyNumbers
       .map((number) => number.trim())
-      .filter((number) => !found.has(number));
+      .filter((number) => !found.has(parcelNumberKey(number)));
 
     // Only asked when something is missing: with every number resolved there is
     // nothing for the count to decide.
@@ -354,7 +368,8 @@ export function identityDocumentOf(payload: {
   identityDocType?: string;
   identityDocNumber?: string;
 } {
-  if (payload.residence === 'NON_RESIDENT_OWNER') return {};
+  // A non-household file (non-resident, estate, institution) is never asked for one.
+  if (isOwnerRecord(payload.residence)) return {};
   if (payload.personal.isLebanese !== false) return {};
   const number = payload.personal.identityDocNumber?.trim();
   return number ? { identityDocType: 'PASSPORT', identityDocNumber: number } : {};

@@ -26,16 +26,10 @@ import {
   FEE_TARGET_TYPE,
 } from '@mechanization/shared-schemas';
 import type { FeeBasis, FeeBearer } from '@mechanization/shared-schemas';
-import type { CitizenListItem } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import Link from 'next/link';
+import { Alert } from '@/components/ui/alert';
+import { DatePicker } from '@/components/ui/date-picker';
 import { ChoiceCard, Field } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import {
@@ -47,6 +41,7 @@ import {
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { BillTypeSelect } from '@/components/admin/bill-type-select';
+import { CitizenPicker, type PickedCitizen } from '@/components/admin/citizen-picker';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/dates';
 
@@ -108,28 +103,43 @@ function formatLbp(value: string): string {
   return digits ? Number(digits).toLocaleString('en-US') : '';
 }
 
-export function IssueFeeDialog({
-  open,
-  onOpenChange,
-  citizens,
+/**
+ * «إصدار رسم جديد» — the three steps, on their own page.
+ *
+ * It was a dialog, which BAN-10 refuses for a task that needs neither
+ * interruption nor protected focus: issuing a fee is a three-step wizard that
+ * decides what every household in the town owes, and it is read and re-read
+ * before the last button. A route gives it an address, a back button that means
+ * what it says, and no overlay for a half-filled wizard to be lost to.
+ *
+ * The page owns the submit and what follows it (the counts of what went
+ * unbilled); this owns the steps and the fields.
+ */
+export function IssueFeeForm({
+  tenant,
+  token,
   submitting,
   error,
   onSubmit,
+  backHref,
   locale = 'ar',
   existingTitles = [],
 }: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  citizens: CitizenListItem[];
+  tenant: string;
+  /** The staff session's token; the citizen picker searches the register with it. */
+  token: string | null;
   submitting: boolean;
   error: string | null;
   onSubmit: (values: IssueFeeValues) => void;
+  /** Where «إلغاء» goes from the first step. */
+  backHref: string;
   locale?: string;
   existingTitles?: string[];
 }) {
   const labels = getLabels(locale);
   const [values, setValues] = useState<IssueFeeValues>(EMPTY);
-  const [citizenQuery, setCitizenQuery] = useState('');
+  /** The file chosen in the picker (`CitizenPicker`), whose id `values.targetCitizenId` carries. */
+  const [picked, setPicked] = useState<PickedCitizen | null>(null);
   const [stepIndex, setStepIndex] = useState(0);
 
   const steps = [
@@ -143,14 +153,6 @@ export function IssueFeeDialog({
     BUILDING_CATEGORY: locale === 'en' ? 'Citizens who registered a specific property category' : 'المواطنون الذين سجّلوا عقاراً من نوع محدّد',
     INDIVIDUAL_CITIZEN: locale === 'en' ? 'Single citizen by name or reference number' : 'مواطن واحد بالاسم أو بالرقم المرجعي',
   };
-
-  useEffect(() => {
-    if (open) {
-      setValues(EMPTY);
-      setCitizenQuery('');
-      setStepIndex(0);
-    }
-  }, [open]);
 
   /**
    * A failed submit sends the clerk back to المراجعة.
@@ -166,24 +168,7 @@ export function IssueFeeDialog({
   const set = (patch: Partial<IssueFeeValues>) =>
     setValues((previous) => ({ ...previous, ...patch }));
 
-  const q = citizenQuery.trim().toLowerCase();
-  const digitsOnly = q.replace(/\D/g, '');
-  const matches = q
-    ? citizens
-        .filter(
-          (row) =>
-            row.fullName.toLowerCase().includes(q) ||
-            (row.referenceNumber ?? '').toLowerCase().includes(q) ||
-            (row.phone ?? '').toLowerCase().includes(q) ||
-            (digitsOnly.length > 0 && (row.phone ?? '').replace(/\D/g, '').includes(digitsOnly)) ||
-            (row.whatsapp ?? '').toLowerCase().includes(q) ||
-            (row.identityDocNumber ?? '').toLowerCase().includes(q) ||
-            row.id.toLowerCase().includes(q),
-        )
-        .slice(0, 8)
-    : [];
-
-  const chosen = citizens.find((row) => row.id === values.targetCitizenId);
+  const chosen = picked && picked.id === values.targetCitizenId ? picked : undefined;
   const amount = Number(values.amount.replace(/\D/g, ''));
   const recurring = values.frequency !== 'ONCE';
 
@@ -220,41 +205,23 @@ export function IssueFeeDialog({
   const bulk = values.targetType !== 'INDIVIDUAL_CITIZEN';
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        closeLabel={locale === 'en' ? 'Close' : 'إغلاق'}
-        className="flex max-h-[88dvh] flex-col gap-0 p-0 sm:max-w-xl"
-      >
-        <DialogHeader className="shrink-0 space-y-3 border-b p-6 text-start">
-          <div className="space-y-1">
-            <DialogTitle className="flex items-center gap-2">
-              <Receipt className="size-5 text-primary" aria-hidden />
-              {locale === 'en' ? 'Issue New Fee' : 'إصدار رسم جديد'}
-            </DialogTitle>
-            <DialogDescription>
-              {locale === 'en'
-                ? 'Creates a fee rule and issues claims to all matching citizens.'
-                : 'يُنشئ إشعاراً واحداً ويصدر مطالبة لكل مواطن مشمول به.'}
-            </DialogDescription>
-          </div>
+    <div className="mx-auto w-full max-w-2xl overflow-hidden rounded-lg border bg-card">
+      <div className="border-b p-4 sm:p-6">
+        <Stepper
+          index={stepIndex}
+          steps={steps}
+          complete={stepComplete}
+          onSelect={(next) => setStepIndex(Math.min(next, stepIndex))}
+        />
+      </div>
 
-          <Stepper
-            index={stepIndex}
-            steps={steps}
-            complete={stepComplete}
-            onSelect={(next) => setStepIndex(Math.min(next, stepIndex))}
-          />
-        </DialogHeader>
-
-        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-6">
-          {error ? (
-            <p
-              role="alert"
-              className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
-            >
-              {error}
-            </p>
-          ) : null}
+      <div className="space-y-5 p-4 sm:p-6">
+        {/* The primitive CTL-12 asked for, in place of this file's hand-rolled banner. */}
+        {error ? (
+          <Alert variant="destructive" live="alert">
+            {error}
+          </Alert>
+        ) : null}
 
           {current.id === 'details' ? (
             <>
@@ -391,13 +358,11 @@ export function IssueFeeDialog({
                   htmlFor="fee-due"
                   required
                 >
-                  <Input
+                  <DatePicker
                     id="fee-due"
-                    type="date"
-                    dir="ltr"
-                    className="text-start"
                     value={values.dueDate}
-                    onChange={(event) => set({ dueDate: event.target.value })}
+                    onChange={(dueDate) => set({ dueDate })}
+                    locale={locale === 'en' ? 'en' : 'ar'}
                   />
                 </Field>
               </div>
@@ -479,43 +444,16 @@ export function IssueFeeDialog({
                   htmlFor="fee-citizen"
                   required
                 >
-                  <div className="space-y-2">
-                    <Input
-                      id="fee-citizen"
-                      placeholder={locale === 'en' ? 'Citizen name or reference number' : 'اسم المواطن أو الرقم المرجعي'}
-                      value={
-                        chosen ? `${chosen.fullName} — ${chosen.referenceNumber}` : citizenQuery
-                      }
-                      onChange={(event) => {
-                        setCitizenQuery(event.target.value);
-                        if (values.targetCitizenId) set({ targetCitizenId: '' });
-                      }}
-                    />
-                    {!chosen && matches.length > 0 ? (
-                      <ul className="overflow-hidden rounded-lg border">
-                        {matches.map((row) => (
-                          <li key={row.id}>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                set({ targetCitizenId: row.id });
-                                setCitizenQuery('');
-                              }}
-                              className="flex w-full items-center justify-between gap-3 px-3 py-2 text-start text-sm transition-colors hover:bg-accent"
-                            >
-                              <span className="font-medium">{row.fullName}</span>
-                              <span
-                                className="font-mono text-xs text-muted-foreground"
-                                dir="ltr"
-                              >
-                                {row.referenceNumber}
-                              </span>
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : null}
-                  </div>
+                  <CitizenPicker
+                    id="fee-citizen"
+                    tenant={tenant}
+                    token={token}
+                    value={chosen ?? null}
+                    onChange={(citizen) => {
+                      setPicked(citizen);
+                      set({ targetCitizenId: citizen?.id ?? '' });
+                    }}
+                  />
                 </Field>
               ) : null}
 
@@ -595,42 +533,38 @@ export function IssueFeeDialog({
               ) : null}
             </div>
           ) : null}
-        </div>
+      </div>
 
-        <DialogFooter className="shrink-0 flex-row items-center justify-between gap-2 border-t p-6 sm:justify-between">
-          <Button
-            variant="ghost"
-            onClick={() => (stepIndex === 0 ? onOpenChange(false) : setStepIndex(stepIndex - 1))}
-            disabled={submitting}
-          >
-            {stepIndex === 0 ? (
-              (locale === 'en' ? 'Cancel' : 'إلغاء')
-            ) : (
-              <>
-                <ArrowRight className="size-4 rtl:rotate-180" aria-hidden />
-                {locale === 'en' ? 'Back' : 'السابق'}
-              </>
-            )}
+      <div className="flex flex-row items-center justify-between gap-2 border-t p-4 sm:p-6">
+        {stepIndex === 0 ? (
+          <Button asChild variant="ghost" disabled={submitting}>
+            <Link href={backHref}>{locale === 'en' ? 'Cancel' : 'إلغاء'}</Link>
           </Button>
+        ) : (
+          <Button variant="ghost" onClick={() => setStepIndex(stepIndex - 1)} disabled={submitting}>
+            {/* Back points back: drawn for LTR, flipped in Arabic, and «التالي» below takes the opposite arrow (RTL-3). */}
+            <ArrowLeft className="size-4 rtl:rotate-180" aria-hidden />
+            {locale === 'en' ? 'Back' : 'السابق'}
+          </Button>
+        )}
 
-          {isLast ? (
-            <Button disabled={!canSubmit || submitting} onClick={() => onSubmit(values)}>
-              {submitting ? (
-                <Loader2 className="size-4 animate-spin" aria-hidden />
-              ) : (
-                <Check className="size-4" aria-hidden />
-              )}
-              {locale === 'en' ? 'Issue Claims' : 'إصدار المطالبات'}
-            </Button>
-          ) : (
-            <Button disabled={!canAdvance} onClick={() => setStepIndex(stepIndex + 1)}>
-              {locale === 'en' ? 'Next' : 'التالي'}
-              <ArrowLeft className="size-4 rtl:rotate-180" aria-hidden />
-            </Button>
-          )}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        {isLast ? (
+          <Button disabled={!canSubmit || submitting} onClick={() => onSubmit(values)}>
+            {submitting ? (
+              <Loader2 className="size-4 animate-spin" aria-hidden />
+            ) : (
+              <Check className="size-4" aria-hidden />
+            )}
+            {locale === 'en' ? 'Issue Claims' : 'إصدار المطالبات'}
+          </Button>
+        ) : (
+          <Button disabled={!canAdvance} onClick={() => setStepIndex(stepIndex + 1)}>
+            {locale === 'en' ? 'Next' : 'التالي'}
+            <ArrowRight className="size-4 rtl:rotate-180" aria-hidden />
+          </Button>
+        )}
+      </div>
+    </div>
   );
 }
 

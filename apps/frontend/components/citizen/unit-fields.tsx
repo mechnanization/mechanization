@@ -327,6 +327,7 @@ export function UnitsEditor({
   asksUnitStatus,
   unitTypes = BUILDING_UNIT_TYPES,
   nonResident = false,
+  estate = false,
   errors,
   onChange,
   hideLinked = false,
@@ -345,6 +346,8 @@ export function UnitsEditor({
    * dwelling is not offered «مشغولة من المالك».
    */
   nonResident?: boolean;
+  /** An estate's card (0076): «مسكن موسمي» is not offered either — nobody comes back for a season. */
+  estate?: boolean;
   /**
    * What the census holds about each linked flat, keyed by canonical unit id.
    *
@@ -580,7 +583,9 @@ export function UnitsEditor({
               ? `Set all ${units.length} units to:`
               : `تعيين حالة الوحدات الـ${units.length} جميعاً:`}
           </span>
-          {UNIT_STATUS.filter((option) => !nonResident || option !== 'OWNER_OCCUPIED').map((option) => {
+          {UNIT_STATUS.filter(
+            (option) => !nonResident || (option !== 'OWNER_OCCUPIED' && !(estate && option === 'SEASONAL')),
+          ).map((option) => {
             const Icon = UNIT_STATUS_ICON[option];
             return (
               <button
@@ -710,6 +715,7 @@ export function UnitsEditor({
                   asksUnitStatus={asksUnitStatus}
                   unitTypes={unitTypes}
                   nonResident={nonResident}
+                  estate={estate}
                   onPatch={(patch) => setUnit(unitIndex, patch)}
                   statusPath={flagPath(index, `units.${unitIndex}.unitStatus`)}
                   locale={locale}
@@ -753,6 +759,7 @@ export function UnitFields({
   asksUnitStatus,
   unitTypes = BUILDING_UNIT_TYPES,
   nonResident = false,
+  estate = false,
   onPatch,
   layout = 'stack',
   statusPath,
@@ -788,6 +795,8 @@ export function UnitFields({
   unitTypes?: readonly UnitType[];
   /** See `UnitsEditor.nonResident`. */
   nonResident?: boolean;
+  /** See `UnitsEditor.estate`. */
+  estate?: boolean;
   onPatch: (patch: Partial<UnitDraft>) => void;
   locale?: string;
 }) {
@@ -955,7 +964,13 @@ export function UnitFields({
                     idPrefix={`us-${idPrefix}`}
                     value={unit.unitStatus}
                     onChange={(unitStatus) => onPatch({ unitStatus })}
-                    omit={nonResident && isDwellingUnitType(unit.unitType) ? ['OWNER_OCCUPIED'] : []}
+                    omit={
+                      nonResident && isDwellingUnitType(unit.unitType)
+                        ? estate
+                          ? ['OWNER_OCCUPIED', 'SEASONAL']
+                          : ['OWNER_OCCUPIED']
+                        : []
+                    }
                     path={statusPath}
                     required
                     error={errors.unitStatus}

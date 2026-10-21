@@ -713,6 +713,34 @@ describeIfDb('BuildingsService', () => {
     expect((await db.case.findUnique({ where: { id: untouched.id } }))?.status).toBe('OPEN');
   });
 
+  /*
+    An archived file takes no new filing until it is restored (the owner's
+    decision): an occupancy writes a card on the file, and every way a person
+    lands in a flat — the matrix, a sale's buyer, an owner link — comes through
+    `recordOccupancy`.
+  */
+  it('puts nobody whose file is archived in a flat, and writes nothing', async () => {
+    const { building } = await createBuilding(
+      { parcelNumber: '6150', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
+      actor(),
+    );
+    const { units } = await buildings.generateUnits(
+      building.id,
+      { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
+      actor(),
+    );
+    const citizenId = await citizen('مؤرشف');
+    await db.user.update({ where: { id: citizenId }, data: { isActive: false } });
+
+    const refusal = await buildings
+      .recordOccupancy({ unitId: units[0]!.id, citizenId, role: 'OWNER' }, actor())
+      .then(() => null, (caught: unknown) => caught);
+
+    expect(refusal).toMatchObject({ code: 'CITIZEN_FILE_ARCHIVED', details: { citizenId } });
+    expect(await db.unitOccupancy.count({ where: { unitId: units[0]!.id } })).toBe(0);
+    expect(await db.propertyEntry.count({ where: { registration: { citizenId } } })).toBe(0);
+  });
+
   it('marks a unit surveyed once it has an occupant, but does not overwrite a finding', async () => {
     const { building } = await createBuilding(
       { parcelNumber: '6100', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
@@ -1099,6 +1127,37 @@ describeIfDb('BuildingsService', () => {
 
     expect(await damage.currentLevel(building.id)).toBe('SAFE_MINOR_DAMAGE');
     expect(await damage.history(building.id)).toHaveLength(2);
+  });
+
+  it('colours a building by the reading recorded last when two were observed the same day', async () => {
+    const sameDay = new Date('2026-05-04');
+    const { building } = await createBuilding(
+      { parcelNumber: '9005', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
+      actor(),
+    );
+    const { units } = await buildings.generateUnits(
+      building.id,
+      { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
+      actor(),
+    );
+
+    // The building's reading first, then its flat's, both dated the same day.
+    await damage.record(
+      { buildingId: building.id, level: 'SAFE_MINOR_DAMAGE', source: 'FIELD_VISIT', assessedAt: sameDay },
+      actor(),
+    );
+    await damage.record(
+      { unitId: units[0]!.id, level: 'UNSAFE_EVACUATE', source: 'FIELD_VISIT', assessedAt: sameDay },
+      actor(),
+    );
+    expect((await buildings.currentDamageLevels([building.id])).get(building.id)).toBe('UNSAFE_EVACUATE');
+
+    // And the other way round: a later reading on the building itself wins.
+    await damage.record(
+      { buildingId: building.id, level: 'NOT_AFFECTED', source: 'FIELD_VISIT', assessedAt: sameDay },
+      actor(),
+    );
+    expect((await buildings.currentDamageLevels([building.id])).get(building.id)).toBe('NOT_AFFECTED');
   });
 
   // ────────────────────────  «وحدات غير ممسوحة»  ────────────────────────

@@ -37,7 +37,9 @@ import { formatPhone } from '@/lib/phone';
 import { formatDate } from '@/lib/dates';
 import { LANDLORD_LINK_ANSWER_ROLES } from '@/lib/staff-roles';
 import { Badge } from '@/components/ui/badge';
+import { RecordKindBadge } from '@/components/admin/record-kind-badge';
 import { Button } from '@/components/ui/button';
+import { ChoiceCard } from '@/components/ui/field';
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 
@@ -558,81 +560,84 @@ function CandidateCompare({
   locale: string;
 }) {
   const en = locale === 'en';
-  const inputId = useId();
   const dash = <span className="text-muted-foreground">—</span>;
 
-  return (
-    <div
-      className={cn(
-        'relative rounded-lg border transition-colors duration-150 ease-out',
-        selectable ? 'hover:border-primary/50 hover:bg-muted/30' : 'bg-muted/20',
-        selected && 'border-primary bg-primary/5 ring-1 ring-primary hover:bg-primary/5',
-      )}
-    >
-      <label htmlFor={inputId} className={cn('block space-y-3 p-4', selectable ? 'cursor-pointer' : 'cursor-default')}>
-        <span className="flex items-start gap-3 pe-16">
-          {selectable ? (
-            <input
-              id={inputId}
-              type="radio"
-              name={group}
-              checked={selected}
-              onChange={onSelect}
-              className="mt-1 size-4 shrink-0 accent-[hsl(var(--primary))]"
-            />
-          ) : (
-            <UserRound className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
-          )}
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-base font-semibold" title={candidate.name}>
-              {candidate.name}
-            </span>
-            <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
-              {candidate.referenceNumber ? (
-                <bdi dir="ltr" className="font-mono">
-                  {candidate.referenceNumber}
-                </bdi>
-              ) : null}
-              {candidate.registeredAt ? (
-                <span className="tabular-nums">
-                  {en ? 'Registered ' : 'سُجِّل '}
-                  {formatDate(candidate.registeredAt)}
-                </span>
-              ) : null}
-              {candidate.residence === 'NON_RESIDENT_OWNER' ? (
-                <Badge variant="soft-info">{en ? 'Lives elsewhere' : 'غير مقيم'}</Badge>
-              ) : null}
-            </span>
-          </span>
+  const facts = (
+    <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+      {candidate.referenceNumber ? (
+        <bdi dir="ltr" className="font-mono">
+          {candidate.referenceNumber}
+        </bdi>
+      ) : null}
+      {candidate.registeredAt ? (
+        <span className="tabular-nums">
+          {en ? 'Registered ' : 'سُجِّل '}
+          {formatDate(candidate.registeredAt)}
         </span>
+      ) : null}
+      <RecordKindBadge residence={candidate.residence} locale={en ? 'en' : 'ar'} short />
+    </span>
+  );
 
-        <dl className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-4 gap-y-2 border-t pt-3 text-sm">
-          <dt className="text-xs text-muted-foreground">{en ? 'Name' : 'الاسم'}</dt>
-          {/* The name is the tile's title; this row says how it compares. */}
-          <dd>
-            <MatchLightLabel light={nameLight(proposal, candidate, locale)} />
-          </dd>
-          <dt className="text-xs text-muted-foreground">{en ? 'Phone' : 'الهاتف'}</dt>
-          {/* The number, then its light right after it — as the name's is. */}
-          <dd className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="tabular-nums">
-              {candidate.phone ? <bdi dir="ltr">{formatPhone(candidate.phone)}</bdi> : dash}
+  const comparison = (
+    <dl className="mt-3 grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-4 gap-y-2 border-t pt-3 text-sm">
+      <dt className="text-xs text-muted-foreground">{en ? 'Name' : 'الاسم'}</dt>
+      {/* The name is the tile's title; this row says how it compares. */}
+      <dd>
+        <MatchLightLabel light={nameLight(proposal, candidate, locale)} />
+      </dd>
+      <dt className="text-xs text-muted-foreground">{en ? 'Phone' : 'الهاتف'}</dt>
+      {/* The number, then its light right after it — as the name's is. */}
+      <dd className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="tabular-nums">
+          {candidate.phone ? <bdi dir="ltr">{formatPhone(candidate.phone)}</bdi> : dash}
+        </span>
+        <MatchLightLabel light={phoneLight(proposal, candidate, locale)} />
+      </dd>
+      <dt className="text-xs text-muted-foreground">{en ? 'Father' : 'الأب'}</dt>
+      <dd className="truncate">{candidate.fatherName ?? dash}</dd>
+      <dt className="text-xs text-muted-foreground">{en ? 'Mother' : 'الأم'}</dt>
+      <dd className="truncate">{candidate.motherName ?? dash}</dd>
+    </dl>
+  );
+
+  return (
+    <div className="relative">
+      {selectable ? (
+        <ChoiceCard
+          name={group}
+          value={candidate.id}
+          checked={selected}
+          onChange={onSelect}
+          title={candidate.name}
+          // Full height: tiles side by side in the panel's grid keep one height per row.
+          className="h-full items-start p-4 pe-16"
+        >
+          {facts}
+          {comparison}
+        </ChoiceCard>
+      ) : (
+        <div className="h-full space-y-3 rounded-lg border bg-muted/20 p-4">
+          <span className="flex items-start gap-3 pe-16">
+            <UserRound className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-base font-semibold" title={candidate.name}>
+                {candidate.name}
+              </span>
+              {facts}
             </span>
-            <MatchLightLabel light={phoneLight(proposal, candidate, locale)} />
-          </dd>
-          <dt className="text-xs text-muted-foreground">{en ? 'Father' : 'الأب'}</dt>
-          <dd className="truncate">{candidate.fatherName ?? dash}</dd>
-          <dt className="text-xs text-muted-foreground">{en ? 'Mother' : 'الأم'}</dt>
-          <dd className="truncate">{candidate.motherName ?? dash}</dd>
-        </dl>
-
-        {candidate.blocked ? (
-          <span className="flex items-start gap-1.5 text-xs text-warning">
-            <TriangleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
-            {candidate.blocked.message}
           </span>
-        ) : null}
-      </label>
+
+          {comparison}
+
+          {candidate.blocked ? (
+            <span className="flex items-start gap-1.5 text-xs text-warning">
+              <TriangleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
+              {candidate.blocked.message}
+            </span>
+          ) : null}
+        </div>
+      )}
 
       {/* Outside the label so opening the file does not select the person. */}
       <a
@@ -673,7 +678,6 @@ function CandidateRow({
 }) {
   const en = locale === 'en';
   const tLink = useTranslations('landlordLink');
-  const inputId = useId();
 
   const details = [
     candidate.fatherName ? `${en ? 'Father' : 'الأب'}: ${candidate.fatherName}` : null,
@@ -683,84 +687,83 @@ function CandidateRow({
       : null,
   ].filter(Boolean);
 
+  const badges = (
+    <>
+      <MatchBadge match={match} locale={locale} />
+      {candidate.matchedBy === 'PHONE' ? (
+        <Badge variant="soft-success" className="gap-1">
+          <Phone className="size-3" aria-hidden />
+          {tLink('provenance.PHONE')}
+        </Badge>
+      ) : candidate.matchedBy === 'CONTACT' ? (
+        /*
+          The card's number is this citizen's «رقم للتواصل» — a relative's,
+          recorded because they have no phone. Never preselected, and said
+          so on the row: the relative may be the owner instead.
+        */
+        <Badge variant="soft-warning" className="gap-1">
+          <Phone className="size-3" aria-hidden />
+          {tLink('provenance.CONTACT')}
+        </Badge>
+      ) : candidate.matchedBy === 'NAME' ? (
+        <Badge variant="soft-warning">{tLink('provenance.NAME')}</Badge>
+      ) : candidate.matchedBy === 'PROPERTY' && sayFoundByProperty ? (
+        <Badge variant="soft-warning">{tLink('provenance.PROPERTY')}</Badge>
+      ) : null}
+      <RecordKindBadge residence={candidate.residence} locale={en ? 'en' : 'ar'} short />
+    </>
+  );
+
+  const facts = (
+    <span className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+      {candidate.referenceNumber ? (
+        <bdi dir="ltr" className="font-mono">
+          {candidate.referenceNumber}
+        </bdi>
+      ) : null}
+      {details.map((detail) => (
+        <span key={detail}>{detail}</span>
+      ))}
+    </span>
+  );
+
   return (
-    <div
-      className={cn(
-        'relative rounded-lg border transition-colors duration-150',
-        selectable ? 'hover:border-primary/50' : 'bg-muted/20',
-        selected && 'border-primary bg-primary/10 ring-1 ring-primary',
-      )}
-    >
-      <label
-        htmlFor={inputId}
-        className={cn(
-          'flex min-h-14 items-start gap-3 p-3 pe-24',
-          selectable ? 'cursor-pointer' : 'cursor-default',
-        )}
-      >
-        {/*
-          No radio at all on a row that cannot be chosen. A faded one reads as a
-          control that is broken rather than a choice that is not available, and
-          the reason is written under the name instead.
-        */}
-        {selectable ? (
-          <input
-            id={inputId}
-            type="radio"
-            name={group}
-            checked={selected}
-            onChange={onSelect}
-            className="mt-1 size-4 shrink-0 accent-[hsl(var(--primary))]"
-          />
-        ) : (
+    <div className="relative">
+      {/*
+        No radio at all on a row that cannot be chosen. A faded one reads as a
+        control that is broken rather than a choice that is not available, and
+        the reason is written under the name instead.
+      */}
+      {selectable ? (
+        <ChoiceCard
+          name={group}
+          value={candidate.id}
+          checked={selected}
+          onChange={onSelect}
+          title={candidate.name}
+          className="min-h-14 items-start pe-24"
+        >
+          <span className="my-1 flex flex-wrap items-center gap-x-2 gap-y-1">{badges}</span>
+          {facts}
+        </ChoiceCard>
+      ) : (
+        <div className="flex min-h-14 items-start gap-3 rounded-lg border bg-muted/20 p-3 pe-24">
           <UserRound className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
-        )}
-        <span className="min-w-0 flex-1 space-y-1">
-          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="text-sm font-semibold">{candidate.name}</span>
-            <MatchBadge match={match} locale={locale} />
-            {candidate.matchedBy === 'PHONE' ? (
-              <Badge variant="soft-success" className="gap-1">
-                <Phone className="size-3" aria-hidden />
-                {tLink('provenance.PHONE')}
-              </Badge>
-            ) : candidate.matchedBy === 'CONTACT' ? (
-              /*
-                The card's number is this citizen's «رقم للتواصل» — a relative's,
-                recorded because they have no phone. Never preselected, and said
-                so on the row: the relative may be the owner instead.
-              */
-              <Badge variant="soft-warning" className="gap-1">
-                <Phone className="size-3" aria-hidden />
-                {tLink('provenance.CONTACT')}
-              </Badge>
-            ) : candidate.matchedBy === 'NAME' ? (
-              <Badge variant="soft-warning">{tLink('provenance.NAME')}</Badge>
-            ) : candidate.matchedBy === 'PROPERTY' && sayFoundByProperty ? (
-              <Badge variant="soft-warning">{tLink('provenance.PROPERTY')}</Badge>
-            ) : null}
-            {candidate.residence === 'NON_RESIDENT_OWNER' ? (
-              <Badge variant="soft-info">{en ? 'Lives elsewhere' : 'غير مقيم'}</Badge>
-            ) : null}
-          </span>
-          <span className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
-            {candidate.referenceNumber ? (
-              <bdi dir="ltr" className="font-mono">
-                {candidate.referenceNumber}
-              </bdi>
-            ) : null}
-            {details.map((detail) => (
-              <span key={detail}>{detail}</span>
-            ))}
-          </span>
-          {candidate.blocked ? (
-            <span className="mt-1 flex items-start gap-1.5 text-xs text-warning">
-              <TriangleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
-              {candidate.blocked.message}
+          <span className="min-w-0 flex-1 space-y-1">
+            <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span className="text-sm font-semibold">{candidate.name}</span>
+              {badges}
             </span>
-          ) : null}
-        </span>
-      </label>
+            {facts}
+            {candidate.blocked ? (
+              <span className="mt-1 flex items-start gap-1.5 text-xs text-warning">
+                <TriangleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
+                {candidate.blocked.message}
+              </span>
+            ) : null}
+          </span>
+        </div>
+      )}
 
       {/*
         Outside the label so opening the file does not select the row, and in a
@@ -964,8 +967,8 @@ export function useLandlordResolutions({
           if (result.kept.length > 0) {
             toast.warning(en ? 'Link undone — some records were kept' : 'أُلغي الربط — وبقيت بعض السجلات', {
               description: en
-                ? 'Somebody changed them after the link. Review the owner’s file.'
-                : 'عُدِّلت بعد الربط فلم تُحذف. راجع ملف المالك.',
+                ? 'They were changed after the link, or a municipal request names them. Review the owner’s file.'
+                : 'عُدِّلت بعد الربط أو تذكرها معاملة بلدية فلم تُحذف. راجع ملف المالك.',
             });
           }
         } else {

@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import * as turf from '@turf/turf';
-import { formatBuildingCode, nextBuildingSuffix } from '@mechanization/shared-schemas';
+import { formatBuildingCode, nextBuildingSuffix, citizenDisplayName } from '@mechanization/shared-schemas';
 import type { CorrectBuildingParcelInput } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
@@ -91,7 +91,7 @@ export class ParcelCorrectionService {
             propertyNumber: true,
             endedAt: true,
             registration: {
-              select: { citizen: { select: { id: true, firstName: true, middleName: true, lastName: true } } },
+              select: { citizen: { select: { id: true, firstName: true, middleName: true, lastName: true, residence: true } } },
             },
           },
         }),
@@ -465,8 +465,9 @@ export class ParcelCorrectionService {
 
 const PREVIEW_NAMES = 12;
 
-function fullName(person: { firstName: string; middleName?: string | null; lastName: string }): string {
-  return [person.firstName, person.middleName, person.lastName].filter(Boolean).join(' ');
+/** A citizen's name as shown — «ورثة المرحوم …» for an estate (0076). */
+function fullName(person: { firstName: string; middleName?: string | null; lastName: string; residence?: string | null }): string {
+  return citizenDisplayName(person);
 }
 
 type Neighbour = Awaited<ReturnType<BuildingsService['neighboursOn']>>[number];

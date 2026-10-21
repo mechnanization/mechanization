@@ -9,9 +9,11 @@ import {
   Archive,
   BadgeDollarSign,
   Ban,
+  Banknote,
   Check,
   CheckCircle2,
   Copy,
+  HandCoins,
   KeyRound,
   Loader2,
   Pencil,
@@ -21,7 +23,7 @@ import {
   UserPlus,
   UsersRound,
 } from 'lucide-react';
-import { getLabels, STAFF_ROLE } from '@mechanization/shared-schemas';
+import { getLabels, STAFF_ROLE, TREASURY_WORK_ROLES } from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
   createStaff,
@@ -36,7 +38,9 @@ import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { param, useTabSearch, useUrlPagination, useUrlState } from '@/lib/use-url-state';
 import { formatDate } from '@/lib/dates';
-import { formatForeign } from '@/lib/currency';
+import { hasRole } from '@/lib/staff-roles';
+import { useTableLabels } from '@/lib/use-table-labels';
+import { Alert } from '@/components/ui/alert';
 import { CellTag } from '@/components/ui/cell-tag';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -48,7 +52,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { DataTable, type DataTableLabels } from '@/components/ui/data-table';
+import { DataTable } from '@/components/ui/data-table';
 import { PageHeader } from '@/components/ui/page-header';
 import { ChipGroup, SegmentedControl } from '@/components/ui/segmented-control';
 import { StatItem, StatStrip } from '@/components/ui/stat-strip';
@@ -58,62 +62,9 @@ import { ActionTooltip } from '@/components/ui/tooltip';
 import { StaffForm, type StaffFormValues } from '@/components/admin/staff-form';
 import { PresenceCell } from '@/components/admin/staff/presence-cell';
 import { DeletedStaffSection } from '@/components/admin/staff/deleted-staff-section';
+import { StaffSalaryDialog } from '@/components/admin/staff/staff-salary-dialog';
+import { InspectorPayoutDialog } from '@/components/admin/inspector-payout-dialog';
 import { useStaffPresence } from '@/lib/use-staff-presence';
-
-/**
- * The directory's table labels. The archive overrides two of them from the
- * `staff.archive` messages: an empty table means "nobody has been added yet"
- * in the directory and "nobody has been disabled" in the archive, and saying
- * the first in the second told an admin their staff had vanished (STA-1).
- */
-function getTableLabels(locale: string): DataTableLabels {
-  if (locale === 'en') {
-    return {
-      searchAriaLabel: 'Search staff',
-      searchPlaceholder: 'Search by name or email…',
-      clearSearch: 'Clear search',
-      searchHint: 'Enter',
-      searchApplied: 'Search: "{term}"',
-      empty: 'No staff accounts yet.',
-      emptySearch: 'No results match your search.',
-      loadError: 'Failed to load staff accounts.',
-      retry: 'Retry',
-      previous: 'Previous',
-      next: 'Next',
-      pageOf: 'Page {current} of {total}',
-      rowsPerPage: 'Rows per page',
-      totalRows: '{count} staff members',
-      sortAscending: 'Sort ascending',
-      sortDescending: 'Sort descending',
-      sortNone: 'Clear sorting',
-      columns: 'Columns',
-      columnsHint: 'Visible columns',
-      resetColumns: 'Reset to default',
-    };
-  }
-  return {
-    searchAriaLabel: 'بحث في الموظفين',
-    searchPlaceholder: 'ابحث بالاسم أو البريد الإلكتروني…',
-    clearSearch: 'مسح البحث',
-    searchHint: 'Enter',
-    searchApplied: 'بحث: «{term}»',
-    empty: 'لا يوجد موظفون بعد.',
-    emptySearch: 'لا نتائج مطابقة لبحثك.',
-    loadError: 'تعذّر تحميل الموظفين.',
-    retry: 'إعادة المحاولة',
-    previous: 'السابق',
-    next: 'التالي',
-    pageOf: 'صفحة {current} من {total}',
-    rowsPerPage: 'عدد الصفوف',
-    totalRows: '{count} موظف',
-    sortAscending: 'ترتيب تصاعدي',
-    sortDescending: 'ترتيب تنازلي',
-    sortNone: 'إلغاء الترتيب',
-    columns: 'الأعمدة',
-    columnsHint: 'الأعمدة الظاهرة',
-    resetColumns: 'استعادة الافتراضي',
-  };
-}
 
 /** The role chips: «all», or one of the roles the server knows. */
 const ROLE_FILTERS = ['all', ...STAFF_ROLE] as const;
@@ -154,6 +105,7 @@ export default function StaffPage({
 
   const [token, setToken] = useState<string | null>(null);
   const [selfId, setSelfId] = useState<string | null>(null);
+  const [role, setRole] = useState<string | null>(null);
   /** A failed *write*. The read reports its own failure through the query. */
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -164,6 +116,10 @@ export default function StaffPage({
   const [busyId, setBusyId] = useState<string | null>(null);
   /** The account whose deletion is being confirmed, or null. */
   const [pendingDelete, setPendingDelete] = useState<StaffSummary | null>(null);
+  /** The staff member a salary is being paid to, or null. */
+  const [paying, setPaying] = useState<StaffSummary | null>(null);
+  /** The inspector a commission is being paid to, or null. */
+  const [payingCommission, setPayingCommission] = useState<StaffSummary | null>(null);
   const toast = useToast();
 
   useEffect(() => {
@@ -178,6 +134,7 @@ export default function StaffPage({
     }
     setToken(session.accessToken);
     setSelfId(session.user.id);
+    setRole(session.user.role ?? null);
   }, [tenant, base, router]);
 
   /*
@@ -385,12 +342,19 @@ export default function StaffPage({
     presence read's one-minute poll is what drives.
   */
   const onlineCount = activeStaff.filter((staff) => presence.isOnline(staff.id)).length;
-  /*
-    Every field inspector, disabled ones included. This section is a payout
-    ledger, not a roster: an inspector is archived still owed what they
-    earned, and hiding the card would hide the balance (STA-6).
-  */
+  /* Every field inspector, disabled ones included, as the «الموظفون» count beside it includes them. */
   const inspectors = items.filter((staff) => staff.role === 'FIELD_INSPECTOR');
+  /*
+    «صرف راتب / أجر» is a finance act on a staff page: offered to the roles that
+    may record an expense, which `ExpensesController` enforces either way.
+  */
+  const canPaySalary = hasRole(TREASURY_WORK_ROLES, role);
+  /*
+    «صرف عمولة» reads the inspector's figures by id, which only the manager
+    may (`StaffController.getInspectorProfile`); the payout itself is open to
+    the treasury's working roles, and an accountant reaches it by the API.
+  */
+  const canPayCommission = role === 'SUPER_ADMIN';
 
   const columns = useMemo<ColumnDef<StaffSummary>[]>(
     () => [
@@ -527,6 +491,36 @@ export default function StaffPage({
                 </ActionTooltip>
               ) : null}
 
+              {/* Active accounts only: the directory is who works here now. */}
+              {canPaySalary && staff.isActive ? (
+                <ActionTooltip label={tStaff('payout.paySalary')}>
+                  <Button
+                    variant="outline"
+                    size="icon-sm"
+                    aria-label={tStaff('payout.paySalary')}
+                    disabled={busy}
+                    onClick={() => setPaying(staff)}
+                  >
+                    <Banknote className="size-4" aria-hidden />
+                  </Button>
+                </ActionTooltip>
+              ) : null}
+
+              {/* Disabled inspectors too: what was earned is owed whether or not they still work here. */}
+              {canPayCommission && staff.role === 'FIELD_INSPECTOR' ? (
+                <ActionTooltip label={tStaff('commission.action')}>
+                  <Button
+                    variant="outline"
+                    size="icon-sm"
+                    aria-label={tStaff('commission.action')}
+                    disabled={busy}
+                    onClick={() => setPayingCommission(staff)}
+                  >
+                    <HandCoins className="size-4" aria-hidden />
+                  </Button>
+                </ActionTooltip>
+              ) : null}
+
               <ActionTooltip label={en ? 'Edit' : 'تعديل'}>
                 <Button
                   variant="outline"
@@ -586,22 +580,46 @@ export default function StaffPage({
         },
       },
     ],
-    [selfId, busyId, toggleActive, en, locale, roleLabel, base, router, presence, tStaff],
+    [selfId, busyId, toggleActive, en, locale, roleLabel, base, router, presence, tStaff, canPaySalary, canPayCommission],
   );
 
-  if (!token) return null;
-
-  const tableLabels: DataTableLabels = {
-    ...getTableLabels(locale),
+  /*
+    The directory's table labels: the shared ones, with what this table says
+    that no other does. The column picker is asked for (`columnsMenu`): this
+    table keeps its choice of columns. The archive overrides two more from the
+    `staff.archive` messages: an empty table means "nobody has been added yet" in the
+    directory and "nobody has been disabled" in the archive, and saying the
+    first in the second told an admin their staff had vanished (STA-1).
+  */
+  const tableLabels = useTableLabels({
+    ...(en
+      ? {
+          searchAriaLabel: 'Search staff',
+          searchPlaceholder: 'Search by name or email…',
+          searchApplied: 'Search: "{term}"',
+          empty: 'No staff accounts yet.',
+          loadError: 'Failed to load staff accounts.',
+          totalRows: '{count} staff members',
+        }
+      : {
+          searchAriaLabel: 'بحث في الموظفين',
+          searchPlaceholder: 'ابحث بالاسم أو البريد الإلكتروني…',
+          searchApplied: 'بحث: «{term}»',
+          empty: 'لا يوجد موظفون بعد.',
+          emptySearch: 'لا نتائج مطابقة لبحثك.',
+          loadError: 'تعذّر تحميل الموظفين.',
+          totalRows: '{count} موظف',
+        }),
     ...(archived ? { searchAriaLabel: tStaff('archive.search'), empty: tStaff('archive.empty') } : {}),
-  };
+  }, { columnsMenu: true });
+
+  if (!token) return null;
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <PageHeader
         icon={UsersRound}
         title={en ? 'Staff' : 'الموظفون'}
-        subtitle={en ? 'Municipal staff accounts and what each may do' : 'حسابات موظفي البلدية وصلاحياتهم'}
         actions={
           <Button
             onClick={() => {
@@ -617,9 +635,9 @@ export default function StaffPage({
       />
 
       {error ? (
-        <p role="alert" className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-destructive">
+        <Alert variant="destructive" live="alert">
           {error}
-        </p>
+        </Alert>
       ) : null}
 
       {/* ── At a glance ─────────────────────────────────────────────── */}
@@ -705,70 +723,28 @@ export default function StaffPage({
         onError={setActionError}
       />
 
-      {/* ── Field inspectors ────────────────────────────────────────── */}
-      {inspectors.length > 0 ? (
-        <section className="space-y-3">
-          <div>
-            <h2 className="flex items-center gap-2 text-base font-semibold">
-              <BadgeDollarSign className="size-5 text-primary" aria-hidden />
-              {en ? 'Field inspectors' : 'المفتشون الميدانيون'}
-            </h2>
-            <p className="text-xs text-muted-foreground">
-              {en
-                ? 'What each inspector has registered, and what they are owed ($1 per billable unit).'
-                : 'ما سجّله كل مفتش، وما يستحقه من عمولات (1$ لكل وحدة محتسبة).'}
-            </p>
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {inspectors.map((inspector) => (
-              <article key={inspector.id} className="flex flex-col gap-4 rounded-lg border bg-card p-4 shadow-sm">
-                <div className="flex items-center gap-3">
-                  <span
-                    aria-hidden
-                    className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 font-bold text-primary"
-                  >
-                    {initials(inspector)}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate font-semibold">{inspector.fullName}</p>
-                    <p dir="ltr" className="truncate text-xs text-muted-foreground">
-                      {inspector.email}
-                    </p>
-                  </div>
-                  {inspector.isActive ? (
-                    <CellTag tone="success">{en ? 'Active' : 'فعّال'}</CellTag>
-                  ) : (
-                    <CellTag tone="muted">{en ? 'Disabled' : 'معطّل'}</CellTag>
-                  )}
-                </div>
-                <StatStrip>
-                  <StatItem value={inspector.registeredCitizensCount ?? 0} label={en ? 'Citizens' : 'مواطن'} />
-                  <StatItem
-                    value={inspector.registeredPropertiesCount ?? 0}
-                    label={en ? 'Billable units' : 'الوحدات المحتسبة'}
-                  />
-                  {/* To the cent: the server refuses a delete over $0.40 owed, so the page must not show «0». */}
-                  <StatItem value={formatForeign(inspector.totalEarnings ?? 0, 'USD')} label={en ? 'Earned' : 'الأرباح'} />
-                  <StatItem
-                    value={formatForeign(inspector.pendingBalance ?? 0, 'USD')}
-                    label={en ? 'Owed' : 'المتبقي'}
-                    className={(inspector.pendingBalance ?? 0) > 0 ? 'text-warning' : undefined}
-                  />
-                </StatStrip>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="mt-auto w-full"
-                  onClick={() => router.push(`${base}/inspector/profile/${inspector.id}`)}
-                >
-                  <BadgeDollarSign className="size-4" aria-hidden />
-                  {en ? 'Earnings & payouts' : 'الأرباح والدفعات'}
-                </Button>
-              </article>
-            ))}
-          </div>
-        </section>
+      {paying ? (
+        <StaffSalaryDialog
+          tenant={tenant}
+          base={base}
+          token={token}
+          locale={locale}
+          role={role ?? undefined}
+          staff={paying}
+          onClose={() => setPaying(null)}
+        />
       ) : null}
+
+      <InspectorPayoutDialog
+        open={payingCommission !== null}
+        onOpenChange={(next) => !next && setPayingCommission(null)}
+        tenant={tenant}
+        base={base}
+        token={token}
+        locale={locale}
+        staff={payingCommission ? { id: payingCommission.id, name: payingCommission.fullName } : null}
+        onRecorded={load}
+      />
 
       <StaffForm
         open={formOpen}

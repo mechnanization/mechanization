@@ -1,6 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import {
   Check,
   Copy,
@@ -19,14 +21,23 @@ import {
   ApiRequestError,
   beginStaffTotpEnrolment,
   changeStaffEmail,
+  changeStaffPassword,
   confirmStaffTotpEnrolment,
   disableStaffTotp,
-  getStaff,
+  getStaffSelf,
   logApiError,
+  logoutStaff,
   sendStaffPasswordResetEmail,
 } from '@/lib/api-client';
+import {
+  passwordChangeIssues,
+  signInAfterPasswordChange,
+  type PasswordChangeIssues,
+} from '@/lib/password-change';
+import { clearSession } from '@/lib/session';
 import { QRCodeSVG } from 'qrcode.react';
 import type { SettingsCopy } from '@/lib/settings-i18n';
+import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { CellTag } from '@/components/ui/cell-tag';
 import { Button } from '@/components/ui/button';
@@ -40,6 +51,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ErrorState } from '@/components/ui/states';
 import { useToast } from '@/components/ui/toast';
 import {
   Table,
@@ -77,20 +89,22 @@ const SAMPLE_ROWS = [
 export function SecuritySection({
   tenant,
   token,
-  userId,
   copy,
   locale,
   base,
 }: {
   tenant: string;
   token: string;
-  userId: string;
   copy: SettingsCopy;
   locale: string;
   /** `/{tenant}/{locale}/{adminPath}` — where the reset-password link lands. */
   base: string;
 }) {
   const toast = useToast();
+  const router = useRouter();
+  const tAuth = useTranslations('auth');
+  const tPassword = useTranslations('settings.changePassword');
+  const tAccount = useTranslations('settings.ownAccount');
   const [email, setEmail] = useState('');
   const [loadingEmail, setLoadingEmail] = useState(true);
 
@@ -103,6 +117,25 @@ export function SecuritySection({
 
   // Password reset state
   const [sendingResetEmail, setSendingResetEmail] = useState(false);
+
+  /*
+    The own-account read failed: said, with a retry (STA-1). Until it is in,
+    the 2FA card offers nothing — shown as off, its «إعداد» would enrol a new
+    secret over a confirmed one.
+  */
+  const [selfError, setSelfError] = useState<string | null>(null);
+  const [selfAttempt, setSelfAttempt] = useState(0);
+
+  // Password change state
+  const [showPasswordForm, setShowPasswordForm] = useState(false);
+  const openPasswordButton = useRef<HTMLButtonElement | null>(null);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordIssues, setPasswordIssues] = useState<PasswordChangeIssues>({});
+  const [passwordRefusal, setPasswordRefusal] = useState<string | null>(null);
+  const [changingPassword, setChangingPassword] = useState(false);
+  const changingPasswordRef = useRef(false);
 
   // 2FA state
   const [is2FAEnabled, setIs2FAEnabled] = useState(false);
@@ -131,16 +164,18 @@ export function SecuritySection({
     (async () => {
       try {
         setLoadingEmail(true);
-        const { items } = await getStaff(tenant, token);
+        setSelfError(null);
+        // The caller's own account, which every staff role may read — not the
+        // roster (`getStaff`), which only the administrator may.
+        const self = await getStaffSelf(tenant, token);
         if (!cancelled) {
-          const current = items.find((item) => item.id === userId);
-          setEmail(current?.email ?? '');
-          if (current?.hasConfirmedTotp) {
-            setIs2FAEnabled(true);
-          }
+          setEmail(self.email);
+          setIs2FAEnabled(self.hasConfirmedTotp);
         }
       } catch (caught) {
         logApiError(caught);
+        // The API's own words when it answered; '' for no answer, worded at render.
+        if (!cancelled) setSelfError(caught instanceof ApiRequestError ? caught.message : '');
       } finally {
         if (!cancelled) setLoadingEmail(false);
       }
@@ -148,7 +183,18 @@ export function SecuritySection({
     return () => {
       cancelled = true;
     };
-  }, [tenant, token, userId]);
+  }, [tenant, token, selfAttempt]);
+
+  /** The account as read: what the 2FA card may act on. */
+  const selfKnown = !loadingEmail && selfError === null;
+
+  // The form takes the focus when it opens, and gives it back to its button when it closes (A11Y-6).
+  const passwordFormWasOpen = useRef(false);
+  useEffect(() => {
+    if (showPasswordForm) document.getElementById('current-password')?.focus();
+    else if (passwordFormWasOpen.current) openPasswordButton.current?.focus();
+    passwordFormWasOpen.current = showPasswordForm;
+  }, [showPasswordForm]);
 
   const dateFormat = useMemo(
     () =>
@@ -199,6 +245,80 @@ export function SecuritySection({
     }
   };
 
+  const closePasswordForm = () => {
+    setShowPasswordForm(false);
+    setCurrentPassword('');
+    setNewPassword('');
+    setConfirmPassword('');
+    setPasswordIssues({});
+    setPasswordRefusal(null);
+  };
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (changingPasswordRef.current) return;
+    setPasswordRefusal(null);
+
+    const issues = passwordChangeIssues({ currentPassword, newPassword, confirmPassword });
+    setPasswordIssues(issues);
+    const firstInvalid = issues.currentPassword
+      ? 'current-password'
+      : issues.newPassword
+        ? 'new-password'
+        : issues.confirmPassword
+          ? 'confirm-password'
+          : null;
+    if (firstInvalid) {
+      document.getElementById(firstInvalid)?.focus();
+      return;
+    }
+
+    changingPasswordRef.current = true;
+    setChangingPassword(true);
+    try {
+      await changeStaffPassword(tenant, token, { currentPassword, newPassword });
+    } catch (caught) {
+      logApiError(caught);
+      if (caught instanceof ApiRequestError && caught.code === 'STAFF_CURRENT_PASSWORD_INCORRECT') {
+        setPasswordIssues({ currentPassword: 'required' });
+        setPasswordRefusal(caught.message);
+        document.getElementById('current-password')?.focus();
+      } else {
+        setPasswordRefusal(caught instanceof ApiRequestError ? caught.message : tPassword('failed'));
+      }
+      changingPasswordRef.current = false;
+      setChangingPassword(false);
+      return;
+    }
+
+    /*
+      The change ended every session of the account, this tab's included (the
+      server bumped its token version). Signed out the way the header does it:
+      the server first, then this browser whatever the server answered, and on
+      to sign-in with the reason. The form stays locked until the page moves.
+    */
+    try {
+      await logoutStaff(tenant, token);
+    } catch {
+      // The session is over either way.
+    }
+    clearSession(tenant);
+    router.replace(signInAfterPasswordChange(base));
+  };
+
+  const passwordIssueText = {
+    currentPassword: passwordIssues.currentPassword
+      ? (passwordRefusal ?? tPassword('currentRequired'))
+      : undefined,
+    newPassword:
+      passwordIssues.newPassword === 'tooLong'
+        ? tPassword('tooLong')
+        : passwordIssues.newPassword === 'tooShort'
+          ? tAuth('passwordTooShort')
+          : undefined,
+    confirmPassword: passwordIssues.confirmPassword ? tAuth('passwordsDontMatch') : undefined,
+  };
+
   const handleSendResetPasswordEmail = async () => {
     if (sendingResetEmail || !email) return;
     setSendingResetEmail(true);
@@ -242,6 +362,16 @@ export function SecuritySection({
 
   return (
     <div className="space-y-6">
+      {selfError ? (
+        <ErrorState
+          compact
+          title={tAccount('loadFailedTitle')}
+          description={selfError || tAccount('loadFailed')}
+          onRetry={() => setSelfAttempt((attempt) => attempt + 1)}
+          retryLabel={tAccount('retry')}
+        />
+      ) : null}
+
       {/* Email Address Section */}
       <SettingsCard
         icon={Mail}
@@ -254,7 +384,7 @@ export function SecuritySection({
         }
       >
         <div className="space-y-4">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between rounded-xl border border-border/70 bg-muted/20 p-4">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between rounded-lg border border-border/70 bg-muted/20 p-4">
             <div className="space-y-1">
               <p className="text-xs font-medium text-muted-foreground">
                 {copy.security.currentEmail}
@@ -281,7 +411,7 @@ export function SecuritySection({
           </div>
 
           {showEmailForm && (
-            <form onSubmit={handleSendEmailChange} className="rounded-xl border border-primary/20 bg-primary/[0.02] p-4 space-y-4">
+            <form onSubmit={handleSendEmailChange} className="rounded-lg border border-primary/20 bg-muted/20 p-4 space-y-4">
               <AlignedFieldGrid>
                 <SettingsField
                   label={copy.security.newEmail}
@@ -354,18 +484,19 @@ export function SecuritySection({
         </div>
       </SettingsCard>
 
-      {/* Password & Authentication Section (Single Action Button) */}
+      {/* Password & Authentication Section */}
       <SettingsCard
         icon={KeyRound}
         title={copy.security.passwordHeading}
         hint={copy.security.passwordHint}
+        bodyClassName="space-y-4"
         actions={
           <Badge variant="soft-success">
             {locale === 'en' ? 'Protected' : 'محمي'}
           </Badge>
         }
       >
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between rounded-xl border border-border/70 bg-muted/20 p-4">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between rounded-lg border border-border/70 bg-muted/20 p-4">
           <div className="space-y-1">
             <p className="text-sm font-semibold text-foreground">
               {locale === 'en' ? 'Account Password' : 'كلمة مرور الحساب'}
@@ -395,6 +526,121 @@ export function SecuritySection({
             )}
           </Button>
         </div>
+
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between rounded-lg border border-border/70 bg-muted/20 p-4">
+          <div className="space-y-1">
+            <p className="text-sm font-semibold text-foreground">{tPassword('label')}</p>
+            <p className="text-xs text-muted-foreground">{tPassword('description')}</p>
+          </div>
+          {!showPasswordForm && (
+            <Button
+              ref={openPasswordButton}
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setShowPasswordForm(true)}
+            >
+              <Lock className="me-2 size-3.5" aria-hidden />
+              {tPassword('open')}
+            </Button>
+          )}
+        </div>
+
+        {showPasswordForm && (
+          <form
+            noValidate
+            onSubmit={handleChangePassword}
+            className="rounded-lg border border-primary/20 bg-muted/20 p-4 space-y-4"
+          >
+            <AlignedFieldGrid>
+              <SettingsField
+                label={tPassword('current')}
+                htmlFor="current-password"
+                error={passwordIssueText.currentPassword}
+                required
+              >
+                <Input
+                  id="current-password"
+                  type="password"
+                  autoComplete="current-password"
+                  value={currentPassword}
+                  invalid={Boolean(passwordIssueText.currentPassword)}
+                  aria-required
+                  onChange={(e) => {
+                    setCurrentPassword(e.target.value);
+                    setPasswordIssues((issues) => ({ ...issues, currentPassword: undefined }));
+                    setPasswordRefusal(null);
+                  }}
+                />
+              </SettingsField>
+              <SettingsField
+                label={tAuth('newPassword')}
+                htmlFor="new-password"
+                error={passwordIssueText.newPassword}
+                required
+              >
+                <Input
+                  id="new-password"
+                  type="password"
+                  autoComplete="new-password"
+                  value={newPassword}
+                  invalid={Boolean(passwordIssueText.newPassword)}
+                  aria-required
+                  onChange={(e) => {
+                    setNewPassword(e.target.value);
+                    setPasswordIssues((issues) => ({ ...issues, newPassword: undefined }));
+                  }}
+                />
+              </SettingsField>
+              <SettingsField
+                label={tAuth('confirmPassword')}
+                htmlFor="confirm-password"
+                error={passwordIssueText.confirmPassword}
+                required
+              >
+                <Input
+                  id="confirm-password"
+                  type="password"
+                  autoComplete="new-password"
+                  value={confirmPassword}
+                  invalid={Boolean(passwordIssueText.confirmPassword)}
+                  aria-required
+                  onChange={(e) => {
+                    setConfirmPassword(e.target.value);
+                    setPasswordIssues((issues) => ({ ...issues, confirmPassword: undefined }));
+                  }}
+                />
+              </SettingsField>
+            </AlignedFieldGrid>
+
+            <p className="text-xs text-muted-foreground">{tPassword('signsOut')}</p>
+
+            {passwordRefusal && !passwordIssues.currentPassword ? (
+              <Alert variant="destructive" live="alert">
+                {passwordRefusal}
+              </Alert>
+            ) : null}
+
+            <div className="flex items-center gap-3 pt-1">
+              <Button type="submit" disabled={changingPassword}>
+                {changingPassword ? (
+                  <>
+                    <Loader2 className="me-2 size-4 animate-spin" aria-hidden />
+                    {tPassword('submitting')}
+                  </>
+                ) : (
+                  <>
+                    <KeyRound className="me-2 size-4" aria-hidden />
+                    {tPassword('submit')}
+                  </>
+                )}
+              </Button>
+              <Button type="button" variant="ghost" disabled={changingPassword} onClick={closePasswordForm}>
+                {tPassword('cancel')}
+              </Button>
+            </div>
+          </form>
+        )}
       </SettingsCard>
 
       {/* Two-Factor Authentication */}
@@ -403,7 +649,7 @@ export function SecuritySection({
         title={copy.security.twoFactorHeading}
         hint={copy.security.twoFactorHint}
         actions={
-          is2FAEnabled ? (
+          !selfKnown ? null : is2FAEnabled ? (
             <Badge variant="soft-success">
               {locale === 'en' ? 'Protected' : 'محمي'}
             </Badge>
@@ -415,7 +661,7 @@ export function SecuritySection({
         }
       >
         <div className="space-y-4">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between rounded-xl border border-border/70 bg-muted/20 p-4">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between rounded-lg border border-border/70 bg-muted/20 p-4">
             <div className="flex items-start gap-3.5">
               <div
                 className={cn(
@@ -455,7 +701,7 @@ export function SecuritySection({
                 type="button"
                 variant={is2FAEnabled ? 'outline' : 'default'}
                 size="sm"
-                disabled={enrolling2FA}
+                disabled={enrolling2FA || !selfKnown}
                 onClick={async () => {
                   if (is2FAEnabled) {
                     if (show2FASetup) {
@@ -526,10 +772,10 @@ export function SecuritySection({
           </div>
 
           {show2FASetup && (
-            <div className="rounded-xl border border-primary/20 bg-primary/[0.02] p-5 space-y-5">
+            <div className="rounded-lg border border-primary/20 bg-muted/20 p-5 space-y-5">
               <div className="grid gap-6 md:grid-cols-[168px_1fr] items-center">
                 {/* Real Live QR Code */}
-                <div className="flex flex-col items-center justify-center gap-2.5 rounded-xl border border-border bg-white p-3 shadow-sm text-center">
+                <div className="flex flex-col items-center justify-center gap-2.5 rounded-lg border border-border bg-white p-3 shadow-sm text-center">
                   <div className="rounded-lg bg-white p-1 flex items-center justify-center min-h-[136px] min-w-[136px]">
                     {enrolling2FA || !totpSecret ? (
                       <Skeleton className="size-[136px] rounded-lg" />

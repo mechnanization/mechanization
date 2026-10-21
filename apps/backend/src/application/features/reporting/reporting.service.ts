@@ -1,11 +1,14 @@
+import { citizenDisplayName } from '@mechanization/shared-schemas';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
-import type { FeeAssessment } from '@mechanization/shared-schemas';
+import type { FeeAssessment, RequestStatus, RequestType } from '@mechanization/shared-schemas';
+import { effectiveOwnerBilling, isCoOwned, ownerShareOf } from '@mechanization/shared-schemas';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
+import { attachOccupancies } from '../fees/fees.service';
 
 export interface DashboardCounters {
   total: number;
@@ -71,6 +74,44 @@ export interface DashboardAnalytics {
    */
   unitsByType: Record<string, number>;
   unitTotal: number;
+
+  /**
+   * The physical stock, read from the building census — the same rows «سجل
+   * المباني» lists, under the same predicates.
+   *
+   * Everything above this field counts *filings*: a `property_entries` row is
+   * a card on one citizen's file, so a block of twelve registered households
+   * is twelve «مبنى» cards and one structure. That is the right answer to
+   * "how much has been registered" and the wrong one to "how much is there",
+   * and the dashboard was asking the second question with the first number —
+   * 1,236 against the census's 713 on production on 2026-10-16.
+   *
+   * Counted off `units`/`buildings` rather than the trigger-maintained
+   * `buildings.unitsTotal` the ledger sums, because the units table is where
+   * the fact lives and the counter is a cache of it. The two agreed exactly on
+   * production when this shipped (2,323 either way); if they ever stop
+   * agreeing that is a `sync_building_unit_counts` fault worth seeing, not
+   * something this query should hide by reading the cache too.
+   */
+  census: {
+    /**
+     * Every structure on the register, including the ones no household can
+     * occupy. Matches «عدد المباني» on the ledger, which likewise counts the
+     * whole set — the figure has to mean what the list below it shows.
+     */
+    buildings: number;
+    /**
+     * Units in structures that can hold households, excluding طابق أعمدة and
+     * طابق فارغ. Matches the ledger's denominator.
+     */
+    unitsTotal: number;
+    /** Of those, surveyed — COMPLETE or VACANT_CONFIRMED. */
+    unitsSurveyed: number;
+    /** The same units as `unitsTotal`, split by نوع الوحدة. Sums to it. */
+    unitsByType: Record<string, number>;
+    /** Census buildings at least one live property card points at. */
+    buildingsWithFilings: number;
+  };
 
   /**
    * How many property_entries / building_units rows this payload already
@@ -271,6 +312,26 @@ export interface CitizenProfileUnit {
     contactPhone: string | null;
     shares: number | null;
   }>;
+  /**
+   * «معفاة من الرسوم» (0077): why the linked unit is charged nothing, or null.
+   * The reason only — the officer's note stays on the staff screens, because
+   * this object reaches the citizen portal by spread.
+   */
+  feeExemption: 'PLACE_OF_WORSHIP' | 'PUBLIC_FACILITY' | 'OTHER' | null;
+  /**
+   * «توزيع الرسم على المالكين» (migration 0075), when the linked flat has
+   * several current owners; null otherwise. `share` is this file's owner's
+   * part — what an owner-borne charge on the flat bills them for — or null
+   * when it cannot be computed («حسب الأسهم» with أسهم missing), or when this
+   * person is not among the owners (a tenancy card).
+   */
+  ownerBilling: {
+    mode: 'EQUAL' | 'BY_SHARES' | 'RESPONSIBLE_OWNER' | null;
+    effectiveMode: 'EQUAL' | 'BY_SHARES' | 'RESPONSIBLE_OWNER';
+    responsibleOwnerId: string | null;
+    fallback: 'RESPONSIBLE_NOT_OWNER' | null;
+    share: { numerator: number; denominator: number } | null;
+  } | null;
 }
 
 /**
@@ -377,6 +438,65 @@ export interface CitizenProfileProperty {
   buildingLifecycleStatus: string | null;
   unitCount: number;
   units: CitizenProfileUnit[];
+  /**
+   * The census flats a card with no unit lines is billed through, read as
+   * `holdingsOf` reads them: a منزل's one flat, or the flats this person is
+   * recorded on in the building a مبنى card names. Only what changes the bill
+   * — «معفاة من الرسوم» and the owners' split — since a line on `units`
+   * carries both and these cards have none. Empty for every other card.
+   */
+  heldUnits: CitizenProfileHeldUnit[];
+}
+
+/** What `billedBareCards` reads of a card on the profile. */
+export interface ProfileBillingCard {
+  id: string;
+  endedAt: Date | null;
+  propertyType: string | null;
+  buildingId: string | null;
+  units: ReadonlyArray<{ endedAt: Date | null }>;
+}
+
+/**
+ * The cards with no current unit lines that billing bills through the census,
+ * chosen exactly as `holdingsOf` chooses them, so the file shows «معفاة» and
+ * the owners' split on the cards a bill is actually raised from:
+ *
+ *  - the latest registration only (`registrations` comes latest first, as
+ *    `holdingsOf` reads `take: 1` by `submittedAt desc`);
+ *  - current cards only, and a line counts only while current — a card whose
+ *    every line has ended has none (`endedAt: null` on both, in billing);
+ *  - a منزل card with a building bills that building's one flat;
+ *  - a مبنى card with a building is the one `attachOccupancies` lets claim
+ *    the person's recorded flats there: the first such card, and none when any
+ *    other non-مبنى card names the same building.
+ *
+ * Shares `attachOccupancies` rather than restating it, so the file and the
+ * bill cannot pick different cards.
+ */
+export function billedBareCards<C extends ProfileBillingCard>(
+  registrations: ReadonlyArray<{ properties: readonly C[] }>,
+): { houses: C[]; blocks: C[] } {
+  const current = (registrations[0]?.properties ?? [])
+    .filter((card) => !card.endedAt)
+    .map((card) => ({ card, buildingId: card.buildingId, propertyType: card.propertyType, units: card.units.filter((line) => !line.endedAt) }));
+  const houses = current
+    .filter((entry) => entry.propertyType === 'HOUSE' && entry.buildingId && entry.units.length === 0)
+    .map((entry) => entry.card);
+  // Every building marked, so a claiming card comes back with a list and every other card without one.
+  const marked = new Map(current.filter((entry) => entry.buildingId).map((entry) => [entry.buildingId!, [] as never[]]));
+  const blocks = attachOccupancies(current, marked)
+    .filter((entry) => entry.occupiedUnits !== undefined)
+    .map((entry) => entry.card);
+  return { houses, blocks };
+}
+
+/** A census flat a card bills through without a unit line — see `CitizenProfileProperty.heldUnits`. */
+export interface CitizenProfileHeldUnit {
+  unitId: string;
+  unitCode: string;
+  feeExemption: CitizenProfileUnit['feeExemption'];
+  ownerBilling: CitizenProfileUnit['ownerBilling'];
 }
 
 export interface CitizenProfileDocument {
@@ -435,6 +555,14 @@ export interface CitizenProfilePayment {
   /** `OVERDUE` is derived from the due date on read, never stored. */
   paymentStatus: string;
   paymentMethod: string | null;
+  /**
+   * «INV-2610-0001» — the number on the bill itself (migration 0079).
+   *
+   * Null on every bill raised before that migration, which is why the receipt
+   * falls back to a reference derived from the id: those documents were issued
+   * without a number and inventing one now would be a lie on a printed page.
+   */
+  invoiceNumber: string | null;
   whishTransactionRef: string | null;
   paidAt: string | null;
   reviewNote: string | null;
@@ -453,6 +581,13 @@ export interface CitizenProfilePayment {
    * before per-unit billing existed.
    */
   assessment: FeeAssessment | null;
+  /**
+   * The municipal request whose fee this bill is (0092), or null. Named on the
+   * bill's page and in «إلغاء الفاتورة»'s dialog: cancelling the bill cancels
+   * a request still open on it (review of PR #122). Its status moves with the
+   * bill's money events, which clear this cache.
+   */
+  request: { id: string; requestNumber: string; requestType: RequestType; status: RequestStatus } | null;
 }
 
 /**
@@ -668,9 +803,14 @@ export class ReportingService {
    * rather than widening the pool to tolerate it.
    */
   private async computeAnalytics(): Promise<DashboardAnalytics> {
-    type AnalyticsRow = Omit<DashboardAnalytics, 'duplicateFilingsExcluded'> & {
+    type AnalyticsRow = Omit<DashboardAnalytics, 'duplicateFilingsExcluded' | 'census'> & {
       duplicatePropertiesExcluded: number;
       duplicateUnitsExcluded: number;
+      censusBuildings: number;
+      censusUnitsTotal: number;
+      censusUnitsSurveyed: number;
+      censusUnitsByType: Record<string, number>;
+      censusBuildingsWithFilings: number;
     };
 
     const [row] = await withConnectionRetry(() =>
@@ -753,6 +893,41 @@ export class ReportingService {
                      WHERE bu."endedAt" IS NULL)
                  + (SELECT count(*) FROM countable_entries WHERE "unitType" IS NOT NULL))::int)
             AS "unitTotal",
+          -- ── The census: what is actually there ────────────────────
+          -- The lifecycle and unit-type sets are spelled out because SQL
+          -- cannot read OCCUPIABLE_LIFECYCLE or STRUCTURAL_UNIT_TYPE out of
+          -- shared-schemas — the same compromise migration 0054 makes, and
+          -- the same place to edit when a value is added: both arrays there,
+          -- this query, and the trigger.
+          (SELECT count(*)::int FROM ${this.S}buildings)
+            AS "censusBuildings",
+          (SELECT count(*)::int FROM ${this.S}units u
+             JOIN ${this.S}buildings b ON b.id = u."buildingId"
+            WHERE u."unitType" NOT IN ('PILOTIS', 'EMPTY_FLOOR')
+              AND b."lifecycleStatus" IN ('IN_USE', 'DERELICT'))
+            AS "censusUnitsTotal",
+          (SELECT count(*)::int FROM ${this.S}units u
+             JOIN ${this.S}buildings b ON b.id = u."buildingId"
+            WHERE u."unitType" NOT IN ('PILOTIS', 'EMPTY_FLOOR')
+              AND b."lifecycleStatus" IN ('IN_USE', 'DERELICT')
+              AND u."surveyStatus" IN ('COMPLETE', 'VACANT_CONFIRMED'))
+            AS "censusUnitsSurveyed",
+          (SELECT COALESCE(json_object_agg(t, n), '{}'::json)
+             FROM (SELECT u."unitType"::text AS t, count(*)::int AS n
+                     FROM ${this.S}units u
+                     JOIN ${this.S}buildings b ON b.id = u."buildingId"
+                    WHERE u."unitType" NOT IN ('PILOTIS', 'EMPTY_FLOOR')
+                      AND b."lifecycleStatus" IN ('IN_USE', 'DERELICT')
+                    GROUP BY 1) x)
+            AS "censusUnitsByType",
+          -- Coverage: structures some live card points at. Over the
+          -- countable entries and not every live card (and no backticks in
+          -- this comment, for the reason given above), so a tenant duplicate
+          -- filing cannot make a building look covered that its owner never
+          -- registered.
+          (SELECT count(DISTINCT ce."buildingId")::int FROM countable_entries ce
+            WHERE ce."buildingId" IS NOT NULL)
+            AS "censusBuildingsWithFilings",
           (SELECT count(*)::int FROM excluded_entries)
             AS "duplicatePropertiesExcluded",
           (SELECT (SELECT count(*)::int FROM excluded_entries WHERE "unitType" IS NOT NULL)
@@ -760,12 +935,15 @@ export class ReportingService {
                      JOIN excluded_entries ee ON ee.id = bu."propertyEntryId"
                     WHERE bu."endedAt" IS NULL))
             AS "duplicateUnitsExcluded",
-          COALESCE((SELECT sum(amount) FROM ${this.S}citizen_payments), 0)::float8
+          -- A cancelled bill (0090) was raised in error and withdrawn: not billed,
+          -- so billed stays collected plus outstanding (decision of 2026-10-13).
+          COALESCE((SELECT sum(amount) FROM ${this.S}citizen_payments
+                     WHERE "paymentStatus" <> 'CANCELLED'), 0)::float8
             AS "billedTotal",
           COALESCE((SELECT sum("paidAmount") FROM ${this.S}citizen_payments), 0)::float8
             AS "collectedTotal",
           COALESCE((SELECT sum(amount - "paidAmount") FROM ${this.S}citizen_payments
-                     WHERE "paymentStatus" <> 'PAID'), 0)::float8
+                     WHERE "paymentStatus" NOT IN ('PAID', 'CANCELLED')), 0)::float8
             AS "outstandingTotal",
           -- Derived from the due date on read, never stored: a flag written by
           -- a nightly job is wrong for every hour between a due date passing
@@ -782,7 +960,7 @@ export class ReportingService {
           (SELECT COALESCE(json_agg(row_to_json(m) ORDER BY m.month), '[]'::json)
              FROM (
                SELECT to_char(d.m, 'YYYY-MM') AS month,
-                      COALESCE(sum(p.amount), 0)::float8 AS billed,
+                      COALESCE(sum(p.amount) FILTER (WHERE p."paymentStatus" <> 'CANCELLED'), 0)::float8 AS billed,
                       COALESCE(sum(p."paidAmount"), 0)::float8 AS collected,
                       COALESCE(sum(p.amount - p."paidAmount")
                         FILTER (WHERE p."paymentStatus" = 'UNPAID'
@@ -801,12 +979,28 @@ export class ReportingService {
       `,
     );
 
-    const { duplicatePropertiesExcluded, duplicateUnitsExcluded, ...rest } = row;
+    const {
+      duplicatePropertiesExcluded,
+      duplicateUnitsExcluded,
+      censusBuildings,
+      censusUnitsTotal,
+      censusUnitsSurveyed,
+      censusUnitsByType,
+      censusBuildingsWithFilings,
+      ...rest
+    } = row;
     return {
       ...rest,
       duplicateFilingsExcluded: {
         properties: duplicatePropertiesExcluded,
         units: duplicateUnitsExcluded,
+      },
+      census: {
+        buildings: censusBuildings,
+        unitsTotal: censusUnitsTotal,
+        unitsSurveyed: censusUnitsSurveyed,
+        unitsByType: censusUnitsByType,
+        buildingsWithFilings: censusBuildingsWithFilings,
       },
     };
   }
@@ -949,6 +1143,7 @@ export class ReportingService {
                     firstName: true,
                     middleName: true,
                     lastName: true,
+                    residence: true,
                     referenceNumber: true,
                   },
                 },
@@ -975,12 +1170,16 @@ export class ReportingService {
             dueDate: true,
             paymentStatus: true,
             paymentMethod: true,
+            invoiceNumber: true,
             whishTransactionRef: true,
             paidAt: true,
             reviewNote: true,
+            // Why the manager cancelled it, when he did (0091).
+            cancellationReason: true,
             // «ليش عليّ هالمبلغ؟» — see `CitizenProfilePayment.assessment`.
             assessment: true,
             feeNotice: { select: { frequency: true } },
+            citizenRequest: { select: { id: true, requestNumber: true, requestType: true, status: true } },
           },
         },
         registrations: {
@@ -1013,7 +1212,7 @@ export class ReportingService {
                 // so the card can link to their file instead of naming them.
                 landlordCitizenId: true,
                 landlordCitizen: {
-                  select: { firstName: true, middleName: true, lastName: true, referenceNumber: true },
+                  select: { firstName: true, middleName: true, lastName: true, residence: true, referenceNumber: true },
                 },
                 unitStatus: true,
                 buildingName: true,
@@ -1083,6 +1282,9 @@ export class ReportingService {
                         unitCode: true,
                         postedNumber: true,
                         unitStatus: true,
+                        ownerBillingMode: true,
+                        responsibleOwnerId: true,
+                        feeExemption: true,
                         presenceMonths: true,
                         ownerLastStayAt: true,
                         vacancyDeclaredAt: true,
@@ -1111,9 +1313,12 @@ export class ReportingService {
                                 firstName: true,
                                 middleName: true,
                                 lastName: true,
+                                residence: true,
                                 phone: true,
                                 hasNoPhone: true,
                                 contactPhone: true,
+                                // Billing divides a flat between open files only (0075).
+                                isActive: true,
                               },
                             },
                           },
@@ -1155,7 +1360,8 @@ export class ReportingService {
       title: payment.title,
       amount: Number(payment.amount),
       paidAmount: Number(payment.paidAmount),
-      remaining: Math.max(Number(payment.amount) - Number(payment.paidAmount), 0),
+      remaining:
+        payment.paymentStatus === 'CANCELLED' ? 0 : Math.max(Number(payment.amount) - Number(payment.paidAmount), 0),
       currency: payment.currency,
       dueDate: payment.dueDate.toISOString(),
       paymentStatus:
@@ -1163,11 +1369,21 @@ export class ReportingService {
           ? 'OVERDUE'
           : payment.paymentStatus,
       paymentMethod: payment.paymentMethod,
+      invoiceNumber: payment.invoiceNumber,
       whishTransactionRef: payment.whishTransactionRef,
       paidAt: payment.paidAt?.toISOString() ?? null,
       reviewNote: payment.reviewNote,
+      cancellationReason: payment.cancellationReason,
       frequency: payment.feeNotice?.frequency ?? null,
       assessment: (payment.assessment as FeeAssessment | null) ?? null,
+      request: payment.citizenRequest
+        ? {
+            id: payment.citizenRequest.id,
+            requestNumber: payment.citizenRequest.requestNumber,
+            requestType: payment.citizenRequest.requestType as RequestType,
+            status: payment.citizenRequest.status as RequestStatus,
+          }
+        : null,
     }));
 
     // Summed from the rows just mapped rather than by a second set of
@@ -1180,12 +1396,12 @@ export class ReportingService {
     const sum = (rows: typeof payments, field: 'amount' | 'paidAmount' | 'remaining') =>
       rows.reduce((total, payment) => total + payment[field], 0);
     const overdue = payments.filter((payment) => payment.paymentStatus === 'OVERDUE');
+    const heldUnits = await this.profileHeldUnits(citizen.id, citizen.registrations);
 
     return {
       id: citizen.id,
-      fullName: [citizen.firstName, citizen.middleName, citizen.lastName]
-        .filter(Boolean)
-        .join(' '),
+      // «ورثة المرحوم …» for an estate (0076).
+      fullName: citizenDisplayName(citizen),
       motherName: citizen.motherName,
       phone: citizen.phone,
       whatsapp: citizen.whatsapp,
@@ -1212,14 +1428,20 @@ export class ReportingService {
       isActive: citizen.isActive,
       payments,
       fees: {
-        feesTotal: sum(payments, 'amount'),
+        // A cancelled bill was withdrawn, not billed (decision of 2026-10-13).
+        feesTotal: sum(
+          payments.filter((payment) => payment.paymentStatus !== 'CANCELLED'),
+          'amount',
+        ),
         // Every pound received, across all rows — a part-payment sitting on an
         // UNPAID invoice is money the municipality has, and filtering to PAID
         // would leave it out.
         paidTotal: sum(payments, 'paidAmount'),
-        // What is left on rows not fully settled, not their face value.
+        // What is left on rows not fully settled, not their face value. A bill
+        // the manager cancelled owes nothing (0090), named here rather than left
+        // to its `remaining` of 0.
         outstandingTotal: sum(
-          payments.filter((payment) => payment.paymentStatus !== 'PAID'),
+          payments.filter((payment) => payment.paymentStatus !== 'PAID' && payment.paymentStatus !== 'CANCELLED'),
           'remaining',
         ),
         overdueTotal: sum(overdue, 'remaining'),
@@ -1307,6 +1529,7 @@ export class ReportingService {
           buildingPostedNumber: property.building?.postedNumber ?? null,
           buildingLifecycleStatus: property.building?.lifecycleStatus ?? null,
           unitCount: property.units.filter((unit) => !unit.endedAt).length,
+          heldUnits: heldUnits.get(property.id) ?? [],
           units: property.units.map((unit) => {
             // At most one by the partial unique index; see the select above.
             const vacancy = unit.unit?.vacancies[0];
@@ -1342,6 +1565,8 @@ export class ReportingService {
                 contactPhone: owner.citizen.contactPhone,
                 shares: owner.shares,
               })),
+              feeExemption: unit.unit?.feeExemption ?? null,
+              ownerBilling: profileOwnerBilling(unit.unit, citizenId),
             };
           }),
         })),
@@ -1355,6 +1580,66 @@ export class ReportingService {
         })),
       })),
     };
+  }
+
+  /**
+   * The census flats each card with no unit lines is billed through — see
+   * `CitizenProfileProperty.heldUnits`. Which cards, as `billedBareCards`
+   * chooses them; which flats, as `holdingsOf` reads them: a منزل bills its
+   * building's one flat, a مبنى card the flats this person is recorded on there.
+   */
+  private async profileHeldUnits(
+    citizenId: string,
+    registrations: ReadonlyArray<{ properties: readonly ProfileBillingCard[] }>,
+  ): Promise<Map<string, CitizenProfileHeldUnit[]>> {
+    const { houses, blocks } = billedBareCards(registrations);
+    const held = new Map<string, CitizenProfileHeldUnit[]>();
+    if (houses.length + blocks.length === 0) return held;
+
+    const houseBuildings = [...new Set(houses.map((card) => card.buildingId!))];
+    const blockBuildings = [...new Set(blocks.map((card) => card.buildingId!))];
+    const units = await withConnectionRetry(() =>
+      this.db.unit.findMany({
+        where: {
+          OR: [
+            { buildingId: { in: houseBuildings } },
+            { buildingId: { in: blockBuildings }, occupancies: { some: { citizenId, toDate: null } } },
+          ],
+        },
+        orderBy: [{ floor: 'asc' }, { sequence: 'asc' }],
+        select: {
+          id: true,
+          buildingId: true,
+          unitCode: true,
+          feeExemption: true,
+          ownerBillingMode: true,
+          responsibleOwnerId: true,
+          occupancies: {
+            where: { toDate: null, role: 'OWNER' },
+            select: { citizenId: true, shares: true, citizen: { select: { isActive: true } } },
+          },
+        },
+      }),
+    );
+    const toHeld = (unit: (typeof units)[number]): CitizenProfileHeldUnit => ({
+      unitId: unit.id,
+      unitCode: unit.unitCode,
+      feeExemption: unit.feeExemption,
+      ownerBilling: profileOwnerBilling(unit, citizenId),
+    });
+
+    for (const card of houses) {
+      const inBuilding = units.filter((unit) => unit.buildingId === card.buildingId);
+      if (inBuilding.length === 1) held.set(card.id, [toHeld(inBuilding[0]!)]);
+    }
+    // `billedBareCards` never hands a building both a منزل and a مبنى card: the منزل suppresses it.
+    for (const card of blocks) {
+      held.set(
+        card.id,
+        units.filter((unit) => unit.buildingId === card.buildingId).map(toHeld),
+      );
+    }
+    return held;
   }
 
   /**
@@ -1413,6 +1698,7 @@ export class ReportingService {
                   firstName: true,
                   middleName: true,
                   lastName: true,
+                  residence: true,
                   phone: true,
                   hasNoPhone: true,
                   contactPhone: true,
@@ -1562,13 +1848,7 @@ export class ReportingService {
         const registrant: ParcelRegistrant = {
           citizenId,
           registrationId: row.registration.id,
-          fullName: [
-            row.registration.citizen.firstName,
-            row.registration.citizen.middleName,
-            row.registration.citizen.lastName,
-          ]
-            .filter(Boolean)
-            .join(' '),
+          fullName: citizenDisplayName(row.registration.citizen),
           phone: row.registration.citizen.phone,
           hasNoPhone: row.registration.citizen.hasNoPhone,
           contactPhone: row.registration.citizen.contactPhone,
@@ -1676,6 +1956,7 @@ export class ReportingService {
               firstName: true,
               middleName: true,
               lastName: true,
+              residence: true,
               phone: true,
               hasNoPhone: true,
               contactPhone: true,
@@ -1706,9 +1987,8 @@ export class ReportingService {
       totalProcessed += rows.length;
 
       for (const row of rows) {
-        const name = [row.citizen.firstName, row.citizen.middleName, row.citizen.lastName]
-          .filter(Boolean)
-          .join(' ');
+        // «ورثة المرحوم …» for an estate (0076), as on every screen.
+        const name = citizenDisplayName(row.citizen);
 
         // One line per property, so a citizen with three properties produces three
         // rows — municipality staff filter by property, not by person. A building
@@ -1795,6 +2075,10 @@ export class ReportingService {
   @OnEvent('payment.reviewed')
   /** A reversal moves the same totals back, so it stales the same caches. */
   @OnEvent('payment.reversed')
+  /** A cancelled bill leaves what is owed, so it stales them too. */
+  @OnEvent('payment.cancelled')
+  /** A municipal request raising its fee is a new bill on the citizen's profile and the totals (0092). */
+  @OnEvent('request.bill.raised')
   /**
    * The census moves the map, so the census has to clear the map's cache.
    *
@@ -1837,8 +2121,10 @@ function personName(person: {
   firstName: string;
   middleName: string | null;
   lastName: string;
+  residence?: string | null;
 }): string {
-  return [person.firstName, person.middleName, person.lastName].filter(Boolean).join(' ');
+  // «ورثة المرحوم …» for an estate (0076).
+  return citizenDisplayName(person);
 }
 
 /**
@@ -1852,4 +2138,44 @@ function csvCell(value: unknown): string {
   const text = String(value ?? '');
   const safe = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
   return `"${safe.replace(/"/g, '""')}"`;
+}
+
+/** The co-ownership billing of a flat as the citizen's file shows it — see `CitizenProfileUnit.ownerBilling`. Exported for its tests. */
+export function profileOwnerBilling(
+  unit:
+    | {
+        ownerBillingMode: 'EQUAL' | 'BY_SHARES' | 'RESPONSIBLE_OWNER' | null;
+        responsibleOwnerId: string | null;
+        occupancies: ReadonlyArray<{ citizenId: string; shares: number | null; citizen: { isActive: boolean } }>;
+      }
+    | null
+    | undefined,
+  citizenId: string,
+): CitizenProfileUnit['ownerBilling'] {
+  if (!unit) return null;
+  // The owners billing divides between — open files only, as `ownerBillingRules` reads them.
+  const rule = {
+    mode: unit.ownerBillingMode,
+    responsibleOwnerId: unit.responsibleOwnerId,
+    owners: unit.occupancies
+      .filter((owner) => owner.citizen.isActive)
+      .map((owner) => ({ citizenId: owner.citizenId, shares: owner.shares })),
+  };
+  if (!isCoOwned(rule)) return null;
+  // A tenant's line: how the owners divide their bill is not this person's business.
+  if (!rule.owners.some((owner) => owner.citizenId === citizenId)) return null;
+  const effective = effectiveOwnerBilling(rule);
+  const outcome = ownerShareOf(rule, citizenId);
+  return {
+    mode: rule.mode,
+    effectiveMode: effective.mode,
+    responsibleOwnerId: rule.responsibleOwnerId,
+    fallback: effective.fallback,
+    share:
+      outcome.kind === 'SHARE'
+        ? { numerator: outcome.share.numerator, denominator: outcome.share.denominator }
+        : outcome.kind === 'WHOLE'
+          ? { numerator: 1, denominator: 1 }
+          : null,
+  };
 }

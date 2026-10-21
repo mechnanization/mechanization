@@ -1,6 +1,7 @@
 'use client';
 
 import { useId } from 'react';
+import { useTranslations } from 'next-intl';
 import { getLabels, VACANCY_BASIS } from '@mechanization/shared-schemas';
 import type { VacancyBasis } from '@mechanization/shared-schemas';
 import {
@@ -10,8 +11,8 @@ import {
   type EndOwnershipResult,
   type EndTenancyResult,
 } from '@/lib/api-client';
+import { ChoiceCard } from '@/components/ui/field';
 import { Textarea } from '@/components/ui/textarea';
-import { cn } from '@/lib/utils';
 
 /**
  * «ما حال الوحدة الآن؟» — asked in the same step that ends a tenancy.
@@ -34,7 +35,7 @@ export function AfterTenancyQuestion({
 }: {
   value: AfterTenancyAnswer;
   onChange: (next: AfterTenancyAnswer) => void;
-  /** The owner lives elsewhere — they cannot be recorded living in a dwelling. */
+  /** The owner is an owner record (non-resident, estate, institution) — never recorded living in a dwelling. */
   ownerNonResident?: boolean;
   /**
    * The first answer, said for who the owner is here. «إنهاء الملكية» asks it
@@ -48,6 +49,7 @@ export function AfterTenancyQuestion({
 }) {
   const en = locale === 'en';
   const labels = getLabels(locale);
+  const tKind = useTranslations('citizenKind');
   const group = useId();
   const basisGroup = useId();
   const notesId = useId();
@@ -59,11 +61,7 @@ export function AfterTenancyQuestion({
           status: 'OWNER_OCCUPIED',
           title: en ? 'The owner lives there' : 'يسكنها المالك',
           effect: en ? 'The owner is charged the occupancy fee.' : 'يتحمّل المالك رسم الإشغال.',
-          disabled: ownerNonResident
-            ? en
-              ? 'The owner lives elsewhere.'
-              : 'المالك غير مقيم في البلدة.'
-            : undefined,
+          disabled: ownerNonResident ? tKind('ownerNotHousehold') : undefined,
         },
     {
       status: 'VACANT',
@@ -89,71 +87,53 @@ export function AfterTenancyQuestion({
   ];
 
   const needsSource = value.afterStatus === 'VACANT' && value.vacancyBasis === 'NEIGHBOUR_OR_CARETAKER';
+  // Each group's name for a screen reader, without the «*» the visible caption carries.
+  const question = legend ?? (en ? 'What is the unit now?' : 'ما حال الوحدة الآن؟');
+  const basisQuestion = en ? 'The vacancy rests on' : 'يستند الشغور إلى';
 
   return (
     <fieldset className="space-y-2">
       <legend className="mb-1 text-sm font-medium">
-        {legend ?? (en ? 'What is the unit now?' : 'ما حال الوحدة الآن؟')} <span className="text-destructive">*</span>
+        {question} <span className="text-destructive">*</span>
       </legend>
 
-      <div role="radiogroup" className="grid gap-2">
-        {options.map((option) => {
-          const selected = value.afterStatus === option.status;
-          return (
-            <label
-              key={option.status}
-              className={cn(
-                'flex min-h-11 items-start gap-3 rounded-md border px-3 py-2.5 text-sm transition-colors duration-150',
-                option.disabled
-                  ? 'cursor-not-allowed opacity-60'
-                  : selected
-                    ? 'cursor-pointer border-primary bg-primary/10'
-                    : 'cursor-pointer hover:bg-accent',
-              )}
-            >
-              <input
-                type="radio"
-                name={group}
-                checked={selected}
-                disabled={Boolean(option.disabled)}
-                onChange={() =>
-                  onChange({
-                    afterStatus: option.status,
-                    ...(option.status === 'VACANT'
-                      ? { vacancyBasis: value.vacancyBasis, vacancyNotes: value.vacancyNotes }
-                      : {}),
-                  })
-                }
-                className="mt-0.5 size-4 shrink-0 accent-[hsl(var(--primary))]"
-              />
-              <span className="min-w-0 space-y-0.5">
-                <span className={cn('block font-medium', selected && 'text-primary')}>{option.title}</span>
-                <span className="block text-xs leading-relaxed text-muted-foreground">
-                  {option.disabled ?? option.effect}
-                </span>
-              </span>
-            </label>
-          );
-        })}
+      <div role="radiogroup" aria-label={question} className="grid gap-2">
+        {options.map((option) => (
+          <ChoiceCard
+            key={option.status}
+            name={group}
+            value={option.status}
+            checked={value.afterStatus === option.status}
+            disabled={Boolean(option.disabled)}
+            onChange={() =>
+              onChange({
+                afterStatus: option.status,
+                ...(option.status === 'VACANT'
+                  ? { vacancyBasis: value.vacancyBasis, vacancyNotes: value.vacancyNotes }
+                  : {}),
+              })
+            }
+            title={option.title}
+            description={option.disabled ?? option.effect}
+          />
+        ))}
       </div>
 
       {value.afterStatus === 'VACANT' ? (
         <div className="space-y-2 rounded-md bg-muted/40 p-3">
           <p className="text-xs font-medium">
-            {en ? 'The vacancy rests on' : 'يستند الشغور إلى'} <span className="text-destructive">*</span>
+            {basisQuestion} <span className="text-destructive">*</span>
           </p>
-          <div role="radiogroup" className="grid gap-1.5">
+          <div role="radiogroup" aria-label={basisQuestion} className="grid gap-1.5">
             {VACANCY_BASIS.map((basis) => (
-              <label key={basis} className="flex min-h-9 cursor-pointer items-center gap-2.5 text-sm">
-                <input
-                  type="radio"
-                  name={basisGroup}
-                  checked={value.vacancyBasis === basis}
-                  onChange={() => onChange({ ...value, vacancyBasis: basis as VacancyBasis })}
-                  className="size-4 shrink-0 accent-[hsl(var(--primary))]"
-                />
-                {labels.vacancyBasis[basis as VacancyBasis]}
-              </label>
+              <ChoiceCard
+                key={basis}
+                name={basisGroup}
+                value={basis}
+                checked={value.vacancyBasis === basis}
+                onChange={() => onChange({ ...value, vacancyBasis: basis as VacancyBasis })}
+                title={labels.vacancyBasis[basis as VacancyBasis]}
+              />
             ))}
           </div>
           <label htmlFor={notesId} className="block pt-1 text-xs font-medium">

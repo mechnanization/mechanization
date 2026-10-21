@@ -114,7 +114,6 @@ export default function SettingsPage({
         <PageHeader
           icon={SettingsIcon}
           title={copy.page.title}
-          subtitle={copy.page.subtitle}
         />
 
         {/* Quick link to personal account security */}

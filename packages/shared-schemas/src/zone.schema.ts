@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { normalizeDigits } from './primitives';
 
 /**
  * Administrative sectors (قطاع) a municipality draws over its own cadastre.
@@ -8,12 +9,13 @@ import { z } from 'zod';
  * accepts — the two cannot drift into disagreeing about what is valid.
  */
 
-/** Matches the رقم العقار field the citizen form already validates against. */
+/** Matches the رقم العقار field the citizen form validates against: saved in Latin digits (`propertyNumberField`). */
 const parcelNumberField = z
   .string({ required_error: 'رقم العقار مطلوب' })
   .trim()
   .min(1, 'رقم العقار مطلوب')
-  .max(40);
+  .max(40)
+  .transform((value) => normalizeDigits(value));
 
 const zoneColorField = z
   .string({ required_error: 'لون القطاع مطلوب' })

@@ -84,6 +84,14 @@ duplicate — do not just warn".
 - **ASK** — the officer answers «هو نفسه» (open their file) or «شخص مختلف»
   with a reason. Offline deliveries and imports are not asked: they land with
   the «سجل مشابه موجود» flag for the quality screen.
+- **The import's preview asks it too.** `importMany` with `dryRun` runs the
+  same verdict (`CitizensService.screenForDuplicates`, which `create` calls)
+  on the payload the import would file: a BLOCK fails the row with its code
+  (`CITIZEN_DUPLICATE_BLOCKED`, `params.name`), an ASK passes it with
+  `possibleDuplicateOf` (the names it resembles), shown in the dialog's review
+  step as rows that will be held at «يتطلب مراجعة». Every failed row carries a
+  coded refusal as `code`/`params`, which the dialog says in the page's
+  language.
 - **NONE** — nothing is shown.
 
 The same dialog asks **whose number** a phone is when it is also the number of
@@ -124,8 +132,9 @@ third-party card locked:
   landlord links (and their footprints and mints) and «ليس هذا المالك» answers
   follow the person. Open «مُعاد للتصحيح» returns move to the newest filing.
 - **A bill both files carry for the same notice and period stays on the
-  absorbed file, untouched.** The register allows one per person per period,
-  and no tool cancels a bill. The accountant sees it in «فواتير تأثّرت
+  absorbed file, untouched.** The register allows one per person per period;
+  the manager may withdraw the duplicate with «إلغاء الفاتورة» (finance audit
+  B3) when nothing was paid on it. The accountant sees it in «فواتير تأثّرت
   بتصحيحات» (merges count as corrections).
 - Fields the kept file lacks are filled from the other; fields both answer
   differently keep the kept file's answer (listed in the dialog, a yes-or-no and
@@ -191,6 +200,9 @@ v3 snapshots are refused, as the backup service does on every table change.
 - The merged-away guard is a read, not a lock: a matrix write in the same
   sub-second as a merge can still land on the absorbed file if it commits after
   the merge's final check.
+- An import's rows are not compared with each other. A person listed twice in
+  one file passes the preview twice; the import itself refuses or holds the
+  second row against the file the first has just created.
 
 ## 6. Research and decisions still open (2026-09-29)
 

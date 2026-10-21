@@ -30,12 +30,16 @@ import type { GridUnitDraft } from '@/components/admin/unit-grid-picker';
  * draft has to still be there — so it persists across tabs and restarts, and
  * pays for that with an age check and an explicit «استُعيدت مسودة» notice.
  *
- * This one exists to survive a remount inside one tab, in the same second.
- * Scoping it to the tab is what makes it safe to restore *silently*: nothing
- * here can outlive the session that created it, so there is no stale draft to
- * re-apply over a colleague's correction days later — the exact hazard
- * `citizen-draft` refuses edits to avoid. That is why this one can cover edits
- * too.
+ * This one exists to survive a remount inside one tab — a locale switch, a
+ * look at «سجل المباني» and back — and is ignored after an hour. Being scoped
+ * to the tab keeps it from outliving the session that wrote it, but not from
+ * going stale: inside that hour a colleague can save the same building. So a
+ * draft of an *edit* carries the version it was made against
+ * (`baseUpdatedAt`), and is restored silently only while the server still
+ * holds that version (`draftIsCurrent`). Otherwise the editor says the record
+ * changed since and lets the officer choose: the latest version, or the draft
+ * saved over it. An edit nobody has touched leaves no draft at all
+ * (`editDraftFingerprint`), so the question is only ever about real edits.
  *
  * ## What is deliberately not stored
  *
@@ -98,10 +102,109 @@ export interface BuildingDraft {
   duplicateReason?: string;
   /** «تعذّر تثبيت المدخل» and its reason, as typed. */
   noPinReason?: string;
+  /**
+   * On an edit, the building's `updatedAt` the edits on screen were made
+   * against — the version loaded, or the newer one the officer chose to save
+   * over. Null on a new building, and absent from a draft written before this
+   * field, which `draftIsCurrent` treats as made against an unknown version.
+   */
+  baseUpdatedAt?: string | null;
 }
 
 interface StoredDraft extends BuildingDraft {
   savedAt: number;
+}
+
+/**
+ * Whether a restored draft of an edit may be applied without asking: only when
+ * it was made against the version the server holds now.
+ *
+ * The save sends the version it was made against as `expectedUpdatedAt`, and
+ * the editor used to send the *freshly loaded* one while keeping the draft's
+ * values on screen — so a colleague's save made since the draft was silently
+ * overwritten by it. A draft with no recorded version (written before
+ * `baseUpdatedAt` existed) is not current: nothing says what it was made
+ * against.
+ *
+ * Compared as instants, as the server's own check does, so the same moment
+ * written two ways is the same version.
+ */
+export function draftIsCurrent(
+  draft: Pick<BuildingDraft, 'baseUpdatedAt'>,
+  serverUpdatedAt: string,
+): boolean {
+  if (!draft.baseUpdatedAt) return false;
+  const base = Date.parse(draft.baseUpdatedAt);
+  const server = Date.parse(serverUpdatedAt);
+  if (Number.isNaN(base) || Number.isNaN(server)) return draft.baseUpdatedAt === serverUpdatedAt;
+  return base === server;
+}
+
+/**
+ * What an edit's save sends from this draft — the building's fields and its
+ * grid — as one string, so two drafts that would save the same are equal.
+ *
+ * The building editor compares it with the building as loaded and keeps no
+ * draft of an edit nobody has made: the form holds the building from the moment
+ * it loads, so every visit used to leave one, and the next visit asked which
+ * version to keep about edits that did not exist (`draftIsCurrent`). Left out:
+ * where the wizard stands (`step`), the sector that only narrows the map
+ * (`zoneId`), and the duplicate questions, which a save of an edit does not send.
+ */
+export type EditDraftFields = Pick<
+  BuildingDraft,
+  | 'name'
+  | 'postedNumber'
+  | 'isPartitioned'
+  | 'partitionNumbers'
+  | 'sharedParcels'
+  | 'structureType'
+  | 'lifecycleStatus'
+  | 'floorsCount'
+  | 'basementsCount'
+  | 'notes'
+  | 'pin'
+  | 'gridSize'
+  | 'gridUnits'
+>;
+
+export function editDraftFingerprint(draft: EditDraftFields): string {
+  return JSON.stringify([
+    draft.name,
+    draft.postedNumber,
+    draft.isPartitioned,
+    draft.partitionNumbers,
+    draft.sharedParcels,
+    draft.structureType,
+    draft.lifecycleStatus,
+    draft.floorsCount,
+    draft.basementsCount,
+    draft.notes,
+    draft.pin,
+    draft.gridSize,
+    draft.gridUnits,
+  ]);
+}
+
+/**
+ * The grid of a draft kept over a newer version («أبقِ مسودتي»), redrawn so the
+ * save is what is on screen.
+ *
+ * The save diffs the grid against the newer version's units (`existing`, the
+ * baseline): a flat added since is removed and one moved since moved back. A
+ * flat removed since, which the draft still draws, carries an id the baseline
+ * no longer has, so it was neither updated nor added — left out of the save
+ * without a word. It is drawn again as a new flat (no id, no code).
+ */
+export function redrawRemovedFlats(
+  gridUnits: readonly GridUnitDraft[],
+  existing: { has(id: string): boolean },
+): GridUnitDraft[] {
+  return gridUnits.map((unit) =>
+    unit.existingId && !existing.has(unit.existingId)
+      ? { ...unit, existingId: undefined, unitCode: undefined }
+      : unit,
+  );
 }
 
 /**

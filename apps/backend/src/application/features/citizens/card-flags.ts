@@ -85,3 +85,34 @@ export function withoutRowFlags(
 
   return { flags: kept, removed, changed };
 }
+
+/**
+ * The fields a «منزل» card carries itself and a «مبنى» card carries on its row.
+ * Everything else a منزل card has (neighbourhood, رقم العقار, the building's
+ * name) stays on the card when it becomes a مبنى.
+ */
+const HOUSE_FIELDS_MOVED_TO_ROW = new Set(['unitType', 'unitArea', 'side', 'sharedRights', 'unitStatus']);
+
+/**
+ * A «منزل» card becoming a «مبنى» card whose only row is the house's unit
+ * (decision D28, `promoteHouseCards`): its flags on the fields that move onto
+ * that row move with them — `properties.2.unitArea` becomes
+ * `properties.2.units.0.unitArea` — so a «غير مؤكَّد» area is still the
+ * area that is unconfirmed, not a flag on a field the card no longer has.
+ */
+export function withHouseFieldsOnRow(
+  flags: unknown,
+  cardIndex: number,
+): { flags: Array<Record<string, unknown>>; changed: boolean } {
+  const list = Array.isArray(flags) ? (flags as Array<Record<string, unknown>>) : [];
+  if (cardIndex < 0) return { flags: list, changed: false };
+
+  let changed = false;
+  const moved = list.map((flag) => {
+    const match = typeof flag.path === 'string' ? /^properties\.(\d+)\.([^.]+)$/.exec(flag.path) : null;
+    if (!match || Number(match[1]) !== cardIndex || !HOUSE_FIELDS_MOVED_TO_ROW.has(match[2]!)) return flag;
+    changed = true;
+    return { ...flag, path: `properties.${cardIndex}.units.0.${match[2]}` };
+  });
+  return { flags: moved, changed };
+}

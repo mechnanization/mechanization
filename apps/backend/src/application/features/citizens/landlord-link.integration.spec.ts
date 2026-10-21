@@ -630,6 +630,83 @@ describeIfDb('LandlordLinkService', () => {
     expect(await ownerCards(owner.id)).toEqual([]);
   });
 
+  it('keeps the card a link minted when the owner has filed a municipal request on it (0092)', async () => {
+    /*
+      A منزل bills its single unit from its own columns: a card left saying
+      nothing reads as "nobody was asked", and the owner would be charged the
+      occupancy fee the tenant already pays.
+    */
+    const { building } = await within(() =>
+      buildings.create(
+        { parcelNumber: 'LNK-HOUSE-REQ', structureType: 'INDEPENDENT_HOUSE', lifecycleStatus: 'IN_USE', floorsCount: 1 },
+        actor(),
+      ),
+    );
+    const onlyUnit = await db.unit.findFirst({ where: { buildingId: building.id } });
+    const unitId =
+      onlyUnit?.id ??
+      (
+        await within(() =>
+          buildings.generateUnits(
+            building.id,
+            { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
+            actor(),
+          ),
+        )
+      ).units[0]!.id;
+
+    const phone = freshPhone();
+    const tenantId = await citizen('مستأجر', freshPhone().stored);
+    const registration = await db.registration.create({
+      data: {
+        citizenId: tenantId,
+        referenceNumber: `REF-${randomUUID().slice(0, 10)}`,
+        properties: {
+          create: {
+            occupancyType: 'TENANT',
+            landlordName: 'مالك البيت',
+            landlordPhone: phone.stored,
+            propertyType: 'HOUSE',
+            neighborhood: 'الحي الشرقي',
+            propertyNumber: 'LNK-HOUSE-REQ',
+            buildingId: building.id,
+            unitType: 'APARTMENT',
+            unitArea: 110,
+          },
+        },
+      },
+      select: { id: true, properties: { select: { id: true } } },
+    });
+    await within(() =>
+      census.syncRegistration({ registrationId: registration.id, citizenId: tenantId, actor: actor() }),
+    );
+    const entryId = registration.properties[0]!.id;
+    const owner = await ownerWithFile(phone.stored);
+
+    await within(() => links.confirm({ propertyEntryId: entryId, citizenId: owner.id, actor: actor() }));
+    const [card] = await ownerCards(owner.id);
+    expect(card).toMatchObject({ propertyType: 'HOUSE', occupancyType: 'OWNER', unitStatus: 'RENTED' });
+    expect((await ownerSpells(owner.id))[0]).toMatchObject({ unitId, toDate: null });
+
+    // The owner asks for a paper on the card the link minted; the request's key keeps the card (RESTRICT).
+    await db.citizenRequest.create({
+      data: {
+        requestNumber: `REQ-${randomUUID().slice(0, 8)}`,
+        citizenId: owner.id,
+        channel: 'ONLINE',
+        requestType: 'RESIDENCY',
+        applicantCapacity: 'OWNER',
+        propertyEntryId: card!.id,
+        clientRequestId: randomUUID(),
+      },
+    });
+
+    // Before this the undo deleted the card and the key answered with an unmapped 500.
+    const undone = await within(() => links.unlink({ propertyEntryId: entryId, actor: actor() }));
+    expect(undone).toMatchObject({ cardsRemoved: 0, kept: [{ unitCode: null, reason: 'HAS_REQUESTS', propertyEntryId: card!.id }] });
+    expect(await ownerCards(owner.id)).toHaveLength(1);
+  });
+
   it('reopens a case the link closed, when the link is undone', async () => {
     const { units, building } = await surveyedBlock('LNK-CASE');
     const phone = freshPhone();
@@ -1001,6 +1078,30 @@ describeIfDb('LandlordLinkService', () => {
       orderBy: { createdAt: 'desc' },
     });
     expect(audit?.after).toMatchObject({ matchedBy: 'NAME' });
+  });
+
+  it('reads «ورثة المرحوم X» typed by a tenant as X, and shows the estate as the heirs (0076)', async () => {
+    const { units, building } = await surveyedBlock('LNK-ESTATE');
+    const ownerId = await citizen('نزار', freshPhone().stored, { lastName: 'عاقوري' });
+    await db.user.update({ where: { id: ownerId }, data: { residence: 'ESTATE' as never } });
+    await db.registration.create({
+      data: { citizenId: ownerId, referenceNumber: `REF-${randomUUID().slice(0, 10)}` },
+    });
+    const { entryId } = await tenantFiling({
+      landlordPhone: freshPhone().stored,
+      landlordName: 'ورثة المرحوم نزار عاقوري',
+      parcelNumber: 'LNK-ESTATE',
+      buildingId: building.id,
+      unitIds: [units[0]!.id],
+    });
+
+    expect(await offeredOn(entryId)).toEqual([[ownerId, 'NAME']]);
+    // The estate is shown as the heirs everywhere a name is read.
+    const queued = (await within(() => links.proposals({ limit: 100, offset: 0 }))).items.find(
+      (item) => item.propertyEntryId === entryId,
+    );
+    expect(queued?.candidates[0]?.name).toBe('ورثة المرحوم نزار علي عاقوري');
+
   });
 
   // ─────────────────────────────  By the property  ─────────────────────────────
@@ -1469,6 +1570,64 @@ describeIfDb('LandlordLinkService', () => {
       expect((await ownerSpells(linked.owner.id))[0]!.toDate).toBeNull();
     });
 
+    it('stores an estate owner’s own name when the form sends the name it was shown (0076)', async () => {
+      const { units, building } = await surveyedBlock(`LNK-EST-${randomUUID().slice(0, 4)}`);
+      const filing = await tenantFiling({
+        landlordPhone: null,
+        landlordName: 'مالك لا يعرف اسمه',
+        occupancyType: 'FREE_OCCUPANT',
+        parcelNumber: 'LNK-UPD',
+        buildingId: building.id,
+        unitIds: [units[0]!.id],
+      });
+      const estateId = await citizen('نزار', freshPhone().stored, { lastName: 'عاقوري', residence: 'ESTATE' });
+      /*
+        What the form sent: the matrix row's display name (no middle name),
+        copied by the sole-owner prefill into the card, with the agreement.
+      */
+      const payload = await payloadFor(filing.tenantId, [
+        cardFor(filing.entryId, building.id, units[0]!.id, {
+          occupancyType: 'FREE_OCCUPANT',
+          landlordPhone: undefined,
+          landlordName: 'ورثة المرحوم نزار عاقوري',
+          landlordCitizenId: estateId,
+        }),
+      ]);
+
+      await within(() =>
+        citizens.update({ tenantSlug: 'links', citizenId: filing.tenantId, payload, actor: actor() }),
+      );
+
+      const card = await db.propertyEntry.findUniqueOrThrow({ where: { id: filing.entryId } });
+      expect(card.landlordName).toBe('نزار علي عاقوري');
+    });
+
+    it('never stores «ورثة المرحوم» a tenant card was sent with, linked or not (0076)', async () => {
+      const { units, building } = await surveyedBlock(`LNK-EST-${randomUUID().slice(0, 4)}`);
+      const filing = await tenantFiling({
+        landlordPhone: null,
+        landlordName: 'مالك لا يعرف اسمه',
+        occupancyType: 'FREE_OCCUPANT',
+        parcelNumber: 'LNK-UPD',
+        buildingId: building.id,
+        unitIds: [units[0]!.id],
+      });
+      const payload = await payloadFor(filing.tenantId, [
+        cardFor(filing.entryId, building.id, units[0]!.id, {
+          occupancyType: 'FREE_OCCUPANT',
+          landlordPhone: undefined,
+          landlordName: 'ورثة المرحوم سليم داغر',
+        }),
+      ]);
+
+      await within(() =>
+        citizens.update({ tenantSlug: 'links', citizenId: filing.tenantId, payload, actor: actor() }),
+      );
+
+      const card = await db.propertyEntry.findUniqueOrThrow({ where: { id: filing.entryId } });
+      expect(card.landlordName).toBe('سليم داغر');
+    });
+
     it('undoes the link, and what it wrote, when the number is corrected', async () => {
       const linked = await linkedTenant();
       const corrected = freshPhone();
@@ -1502,6 +1661,48 @@ describeIfDb('LandlordLinkService', () => {
       expect(await db.propertyEntry.findUnique({ where: { id: linked.entryId } })).toBeNull();
       expect((await ownerSpells(linked.owner.id))[0]!.toDate).not.toBeNull();
       expect(await ownerCards(linked.owner.id)).toEqual([]);
+    });
+
+    it('records an unlink by save on the owner’s file as well as the tenant’s, once each', async () => {
+      const unlinkRows = (citizenId: string) =>
+        db.auditLogEntry.findMany({ where: { action: 'LANDLORD_UNLINKED', entityId: citizenId } });
+
+      // The number corrected on a card that stays …
+      const corrected = await linkedTenant();
+      await within(async () =>
+        citizens.update({
+          tenantSlug: 'links',
+          citizenId: corrected.tenantId,
+          payload: await payloadFor(corrected.tenantId, [
+            cardFor(corrected.entryId, corrected.building.id, corrected.units[0]!.id, {
+              landlordPhone: freshPhone().typed,
+            }),
+          ]),
+          actor: actor(),
+        }),
+      );
+      // … and a linked card taken off the file.
+      const removed = await linkedTenant();
+      await within(async () =>
+        citizens.update({
+          tenantSlug: 'links',
+          citizenId: removed.tenantId,
+          payload: await payloadFor(removed.tenantId, []),
+          actor: actor(),
+        }),
+      );
+
+      for (const linked of [corrected, removed]) {
+        const owner = await unlinkRows(linked.owner.id);
+        const tenant = await unlinkRows(linked.tenantId);
+        expect(owner).toHaveLength(1);
+        expect(tenant).toHaveLength(1);
+        expect(owner[0]).toMatchObject({
+          actorId: officerId,
+          after: expect.objectContaining({ propertyEntryId: linked.entryId, via: 'CITIZEN_UPDATED' }),
+        });
+        expect(tenant[0]!.after).toMatchObject({ propertyEntryId: linked.entryId, ownerId: linked.owner.id });
+      }
     });
 
     it('refuses a save from a form opened before somebody else saved the file', async () => {

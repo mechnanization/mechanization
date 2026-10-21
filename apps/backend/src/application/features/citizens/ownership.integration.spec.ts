@@ -253,6 +253,22 @@ describeIfDb('OwnershipService', () => {
     expect(cases.some((row) => /سجِّل المالك الجديد/.test(row.notes ?? ''))).toBe(false);
   });
 
+  it('sells to nobody whose file is archived: no card, no flat, nothing ended', async () => {
+    const { building, units } = await block('OWN-2A');
+    const owner = await ownerOn({ parcelNumber: 'OWN-2A', buildingId: building.id, unitIds: [units[0]!.id] });
+    const buyerId = await citizen('مؤرشف');
+    await db.user.update({ where: { id: buyerId }, data: { isActive: false } });
+
+    const refusal = await within(() =>
+      ownership.endCard(owner.cardId, { reason: 'OWNERSHIP_TRANSFERRED', endedAt: today(), newOwnerId: buyerId }, actor()),
+    ).then(() => null, (caught: unknown) => caught);
+
+    expect(refusal).toMatchObject({ code: 'CITIZEN_FILE_ARCHIVED', details: { citizenId: buyerId } });
+    expect(await db.unitOccupancy.count({ where: { citizenId: buyerId } })).toBe(0);
+    // The seller still owns it: the sale is refused whole.
+    expect((await db.unitOccupancy.findFirstOrThrow({ where: { unitId: units[0]!.id, role: 'OWNER' } })).toDate).toBeNull();
+  });
+
   it('asks what a flat the seller lived in is now, and acts on the answer', async () => {
     const { building, units } = await block('OWN-3');
     const owner = await ownerOn({
@@ -278,7 +294,7 @@ describeIfDb('OwnershipService', () => {
   // ─────────────────────────────  Tenants  ─────────────────────────────
 
   /** A tenant whose card is linked to a registered owner — the full owner link. */
-  const linkedTenancy = async (parcelNumber: string) => {
+  const linkedTenancy = async (parcelNumber: string, over: { landlordName?: string | null } = {}) => {
     const { building, units } = await block(parcelNumber);
     const ownerPhone = phone();
     const ownerId = await citizen('مالك', { phone: ownerPhone });
@@ -293,7 +309,7 @@ describeIfDb('OwnershipService', () => {
       data: {
         registrationId: registration.id,
         occupancyType: 'TENANT',
-        landlordName: 'مالك المبنى',
+        landlordName: over.landlordName === undefined ? 'مالك المبنى' : over.landlordName,
         landlordPhone: ownerPhone,
         propertyType: 'BUILDING',
         neighborhood: 'الحي',
@@ -336,6 +352,19 @@ describeIfDb('OwnershipService', () => {
       where: { unitId: linked.unitId, citizenId: linked.tenantId, toDate: null },
     });
     expect(tenantSpell).toBe(1);
+  });
+
+  it('writes the seller’s own name on a tenant’s blank card when heirs sell — never «ورثة المرحوم» (0076)', async () => {
+    const linked = await linkedTenancy('OWN-EST', { landlordName: null });
+    await db.user.update({ where: { id: linked.ownerId }, data: { residence: 'ESTATE' as never } });
+    const spell = await ownerSpell(linked.ownerId, linked.unitId);
+
+    await within(() => tenancy.endOccupancy(spell.id, { reason: 'OWNERSHIP_TRANSFERRED' }, actor()));
+
+    const owner = await db.user.findUniqueOrThrow({ where: { id: linked.ownerId } });
+    const card = await db.propertyEntry.findUniqueOrThrow({ where: { id: linked.tenantCardId } });
+    expect(card.landlordName).toBe([owner.firstName, owner.middleName, owner.lastName].filter(Boolean).join(' '));
+    expect(card.landlordName).not.toMatch(/ورثة/);
   });
 
   it('refuses a correction while a tenant’s link names this person as the landlord', async () => {

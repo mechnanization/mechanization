@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { isOwnerRecord, citizenDisplayName } from '@mechanization/shared-schemas';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   isDwellingUnitType,
@@ -237,7 +238,7 @@ export class TenancyService {
     const landlord = card.landlordCitizenId
       ? await this.db.user.findUnique({
           where: { id: card.landlordCitizenId },
-          select: { firstName: true, middleName: true, lastName: true },
+          select: { firstName: true, middleName: true, lastName: true, residence: true },
         })
       : null;
 
@@ -444,7 +445,7 @@ export class TenancyService {
     const [citizen, units, spells, others, owners] = await Promise.all([
       this.db.user.findUnique({
         where: { id: input.citizenId },
-        select: { firstName: true, middleName: true, lastName: true },
+        select: { firstName: true, middleName: true, lastName: true, residence: true },
       }),
       input.unitIds.length
         ? this.db.unit.findMany({
@@ -504,7 +505,7 @@ export class TenancyService {
           ownerNames: unitOwners.map((row) => fullName(row.citizen)),
           ownerNonResident:
             unitOwners.length > 0 &&
-            unitOwners.every((row) => row.citizen.residence === 'NON_RESIDENT_OWNER'),
+            unitOwners.every((row) => isOwnerRecord(row.citizen.residence)),
         };
       }),
     };
@@ -564,7 +565,7 @@ export class TenancyService {
       if (refused) {
         throw new ValidationError({
           code: 'NON_RESIDENT_OWNER_CANNOT_OCCUPY',
-          message: `The owner of unit ${refused.unitCode} does not live in the town, so they cannot be recorded as living there. Choose “Vacant” or “I don’t know”.`,
+          message: `The owner of unit ${refused.unitCode} is not a household in the town (living elsewhere, an estate or a body), so they cannot be recorded as living there. Choose “Vacant” or “I don’t know”.`,
           params: { unitCode: refused.unitCode },
           details: { unitCode: refused.unitCode },
         });
@@ -1125,6 +1126,7 @@ export interface TenancyPreview {
   }>;
 }
 
-function fullName(person: { firstName: string; middleName?: string | null; lastName: string }): string {
-  return [person.firstName, person.middleName, person.lastName].filter(Boolean).join(' ');
+/** A citizen's name as shown — «ورثة المرحوم …» for an estate (0076). */
+function fullName(person: { firstName: string; middleName?: string | null; lastName: string; residence?: string | null }): string {
+  return citizenDisplayName(person);
 }

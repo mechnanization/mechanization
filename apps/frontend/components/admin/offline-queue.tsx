@@ -2,6 +2,7 @@
 
 import { CloudOff, Loader2, Pencil, RefreshCw, TriangleAlert, Trash2 } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import { Alert } from '@/components/ui/alert';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useState } from 'react';
@@ -120,6 +121,7 @@ export function OfflineQueuePanel({
   canSend: boolean;
 }) {
   const t = useTranslations('offlineQueue');
+  const tCommon = useTranslations('common');
   const queue = useOfflineQueue(tenant);
   const [discarding, setDiscarding] = useState<string | null>(null);
 
@@ -165,13 +167,9 @@ export function OfflineQueuePanel({
       </header>
 
       {queue.authRequired ? (
-        <p
-          role="alert"
-          className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-2 text-xs font-medium text-destructive"
-        >
-          <TriangleAlert className="size-4 shrink-0" aria-hidden />
+        <Alert variant="destructive" live="alert">
           {t('authRequired')}
-        </p>
+        </Alert>
       ) : null}
 
       {!canSend ? (
@@ -215,6 +213,16 @@ export function OfflineQueuePanel({
               <span className="shrink-0 text-muted-foreground">{t('waiting')}</span>
             )}
 
+            {/* Reached the register before the officer's revision: the file to make it on. */}
+            {item.status === 'blocked' && item.citizenId ? (
+              <ShellLink
+                href={`${base}/citizens/${encodeURIComponent(item.citizenId)}`}
+                className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'h-7 shrink-0 px-2 text-xs')}
+              >
+                {t('openFile')}
+              </ShellLink>
+            ) : null}
+
             {/*
               Shown on every record, not only a blocked one.
 
@@ -227,6 +235,12 @@ export function OfflineQueuePanel({
               that. It is offered for a still-pending record too — an officer
               who spots their own mistake before it was ever attempted should
               not have to wait for a rejection to be allowed to correct it.
+
+              A record the register already holds (`citizenId`) is neither
+              sent again nor corrected here: a replay is answered with that
+              file and lands back here, so «إعادة المحاولة» is not offered and
+              «تعديل» becomes «عرض التعديلات», a page that shows the copy and
+              sends nothing (`CitizenEditor`). The change is made on the file.
             */}
             {canSend ? (
               <ShellLink
@@ -237,21 +251,23 @@ export function OfflineQueuePanel({
                 )}
               >
                 <Pencil className="size-3.5" aria-hidden />
-                {t('edit')}
+                {item.citizenId ? t('viewChanges') : t('edit')}
               </ShellLink>
             ) : null}
 
             {canSend && item.status === 'blocked' ? (
               <>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => queue.retry(item.id)}
-                  className="h-7 shrink-0 px-2 text-xs"
-                >
-                  {t('retry')}
-                </Button>
+                {!item.citizenId ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => queue.retry(item.id)}
+                    className="h-7 shrink-0 px-2 text-xs"
+                  >
+                    {t('retry')}
+                  </Button>
+                ) : null}
                 <Button
                   type="button"
                   size="sm"
@@ -271,17 +287,26 @@ export function OfflineQueuePanel({
       {/*
         Discarding is the one irreversible thing this panel can do — the record
         exists nowhere else — so it is the one thing behind a confirmation, and
-        the copy says what is actually lost rather than "are you sure".
+        the copy says what is actually lost rather than "are you sure": for a
+        record that reached the register before its revision, only the
+        revision (`citizenId`).
       */}
       <ConfirmDialog
         open={discarding !== null}
         onOpenChange={(open) => setDiscarding(open ? discarding : null)}
         title={t('discardTitle')}
-        description={t.rich('discardBody', {
+        description={t.rich(discardTarget?.citizenId ? 'discardRevisionBody' : 'discardBody', {
           name: discardTarget?.displayName ?? '',
-          strong: (chunks) => <strong>{chunks}</strong>,
+          // Isolated: an Arabic name in an English sentence, or the other way round (RTL-2).
+          strong: (chunks) => (
+            <strong>
+              <bdi>{chunks}</bdi>
+            </strong>
+          ),
         })}
         confirmLabel={t('discardConfirm')}
+        cancelLabel={tCommon('cancel')}
+        busyLabel={t('buildings.discarding')}
         onConfirm={() => {
           if (discarding) queue.discard(discarding);
           setDiscarding(null);

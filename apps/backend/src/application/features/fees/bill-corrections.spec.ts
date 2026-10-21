@@ -40,7 +40,7 @@ describe('traceChanges — a damage reading', () => {
     expect(traceChanges([reading({ unitId: 'u-9', unitCode: 'Z-1-45-A-999', habitable: false })], holder)).toEqual([]);
   });
 
-  it('never makes a bill raised before it one a correction affected — the hold runs forward', () => {
+  it('never makes a bill raised before it one a correction affected — the exemption runs forward', () => {
     const traced = traceChanges([reading({ unitId: 'u-1', unitCode: 'Z-1-45-A-101', habitable: false })], holder);
     expect(affectsBill(traced, new Date('2026-10-01T09:00:00Z'))).toBe(false);
     expect(affectsBill(traced, new Date('2026-10-05T09:00:00Z'))).toBe(true);
@@ -206,6 +206,70 @@ describe('traceChanges — «حذف وحدة سُجِّلت بالخطأ»', () 
   });
 });
 
+describe('traceChanges — «توزيع الرسم على المالكين» (UNIT_OWNER_BILLING_SET)', () => {
+  // The flat's code is one this holder's file does not carry: only `after.citizens` can reach them.
+  const choice = (citizens: string[], createdAt = new Date('2026-10-07T10:00:00Z')) =>
+    row({
+      action: 'UNIT_OWNER_BILLING_SET',
+      entityType: 'Building',
+      entityId: 'b-1',
+      before: { unitId: 'u-5', unitCode: '0005', ownerBillingMode: null, responsibleOwnerId: null },
+      after: { unitId: 'u-5', unitCode: '0005', ownerBillingMode: 'RESPONSIBLE_OWNER', responsibleOwnerId: TENANT, citizens },
+      createdAt,
+    });
+
+  it('reaches every co-owner it names, and nobody else', () => {
+    expect(kinds(traceChanges([choice([TENANT, CITIZEN])], holder))).toEqual(['DATED_CHANGE']);
+    expect(kinds(traceChanges([choice([TENANT, CITIZEN])], { citizenId: TENANT, unitCodes: new Set() }))).toEqual([
+      'DATED_CHANGE',
+    ]);
+    expect(traceChanges([choice([TENANT])], holder)).toEqual([]);
+  });
+
+  it('is a choice made going forward: a bill raised before the day it was made stays as raised', () => {
+    const traced = traceChanges([choice([CITIZEN], new Date('2026-10-07T10:00:00Z'))], holder);
+    expect(traced).toEqual([expect.objectContaining({ effectiveOn: new Date('2026-10-07T10:00:00Z') })]);
+    expect(affectsBill(traced, new Date('2026-10-01T09:00:00Z'))).toBe(false);
+    // Raised a day after it, the bill had the choice to read — a figure that now differs is one to look at.
+    expect(affectsBill(traced, new Date('2026-10-08T09:00:00Z'))).toBe(true);
+  });
+});
+
+describe('traceChanges — «معفاة من الرسوم» (the user’s decision, 2026-10-08)', () => {
+  const exemption = (action: string, feeExemption: string | null, createdAt = new Date('2026-10-08T10:00:00Z')) =>
+    row({
+      action,
+      entityType: 'Building',
+      entityId: 'b-1',
+      before: { unitId: 'u-1', unitCode: 'Z-1-45-A-101', feeExemption: feeExemption ? null : 'PLACE_OF_WORSHIP' },
+      after: { unitId: 'u-1', unitCode: 'Z-1-45-A-101', feeExemption },
+      createdAt,
+    });
+
+  it('reads a granted exemption as a correction: a bill raised before it, on any day, is one to look at', () => {
+    const traced = traceChanges([exemption('UNIT_FEE_EXEMPTION_SET', 'PLACE_OF_WORSHIP')], holder);
+    expect(kinds(traced)).toEqual(['CORRECTION']);
+    expect(affectsBill(traced, new Date('2026-09-01T09:00:00Z'))).toBe(true);
+    expect(affectsBill(traced, new Date('2026-10-01T09:00:00Z'))).toBe(true);
+  });
+
+  it('reads a lifted exemption as a real change on its day: a bill raised before it stays as raised', () => {
+    const traced = traceChanges([exemption('UNIT_FEE_EXEMPTION_LIFTED', null)], holder);
+    expect(traced).toEqual([expect.objectContaining({ kind: 'DATED_CHANGE', effectiveOn: new Date('2026-10-08T10:00:00Z') })]);
+    expect(affectsBill(traced, new Date('2026-10-01T09:00:00Z'))).toBe(false);
+  });
+
+  it('is somebody else’s when it is on another unit', () => {
+    const other = row({
+      action: 'UNIT_FEE_EXEMPTION_SET',
+      entityType: 'Building',
+      entityId: 'b-1',
+      after: { unitId: 'u-9', unitCode: 'Z-1-45-A-999', feeExemption: 'PUBLIC_FACILITY' },
+    });
+    expect(traceChanges([other], holder)).toEqual([]);
+  });
+});
+
 describe('affectsBill', () => {
   const raisedAt = new Date('2026-09-15T09:30:00Z');
   const dated = (on: string): TracedChange => ({ row: row({}), kind: 'DATED_CHANGE', effectiveOn: new Date(on) });
@@ -238,6 +302,19 @@ describe('linesDiff and figureKey', () => {
       removed: [line('45', 'SHOP'), line('46', 'OFFICE')],
       added: [line('47', 'SHOP')],
     });
+  });
+
+  it('keys a line by the owner’s part too: a quarter of a shop is not the shop', () => {
+    const whole = line('420', 'SHOP', 300);
+    const quarter = { ...whole, unitCode: '0005', ownerShare: { mode: 'EQUAL' as const, numerator: 1, denominator: 4 } };
+    expect(linesDiff([whole], [quarter])).toEqual({ removed: [whole], added: [quarter] });
+    expect(linesDiff([quarter], [{ ...quarter }])).toEqual({ removed: [], added: [] });
+  });
+
+  it('matches a line raised before 0075 to the same flat billed whole today, census code or not', () => {
+    // Bills raised before co-owner billing carry no `unitCode` and no `ownerShare`; today's lines carry the code.
+    const raised = line('45', 'APARTMENT', 120);
+    expect(linesDiff([raised], [{ ...raised, unitCode: '0201' }])).toEqual({ removed: [], added: [] });
   });
 
   it('keys a figure by what it is, and an amount only when there is one', () => {

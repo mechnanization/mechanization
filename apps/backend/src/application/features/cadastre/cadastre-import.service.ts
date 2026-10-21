@@ -7,6 +7,7 @@ import {
 import type { CadastreStorage } from '../../../domain/interfaces/cadastre-storage.interface';
 import type { ParcelRepository } from '../../../domain/interfaces/parcel-repository.interface';
 import { ValidationError } from '../../common/exceptions';
+import { mergeParcelPoints, type Parcel } from '../../../infrastructure/cadastre/kmz-parser';
 import { buildCadastreGeometryAssets } from '../../../infrastructure/cadastre/parcel-geometry';
 
 /** Six decimal places is ~0.11m at this latitude — finer than any survey's own
@@ -73,17 +74,28 @@ export class CadastreImportService {
       parcels,
     );
 
-    if (parcels.length > 0) {
+    /*
+      One row per رقم العقار, as the `cadastre:import` CLI writes it. The survey
+      labels a parcel split into pieces once per piece, so a number can arrive
+      on several points; written one row per point, the second hit the unique
+      `parcelNumber` and the whole upload failed with a 500. The shapes above
+      are traced from the raw points (a piece is matched by its own label); the
+      registry and `parcels.geojson` take the merged parcel at the centroid,
+      flagged approximate when it came from more than one point.
+    */
+    const merged = mergeParcelPoints(parcels);
+
+    if (merged.length > 0) {
       const boundaries = new Map(
         geometry.parcelBoundaries.map((entry) => [entry.parcelNumber, entry.geometry]),
       );
 
       await this.parcels.replaceAll(
-        parcels.map((parcel) => ({
+        merged.map((parcel) => ({
           parcelNumber: parcel.parcelNumber,
           latitude: parcel.latitude,
           longitude: parcel.longitude,
-          pointCount: 1,
+          pointCount: parcel.pointCount,
           // Absent rather than null for a parcel with no traced shape: Prisma
           // omits an undefined field, so the column takes its own null and the
           // two states — "not traced" and "explicitly nothing" — do not have to
@@ -93,8 +105,8 @@ export class CadastreImportService {
       );
     }
 
-    if (parcels.length > 0) {
-      await this.storage.upload(input.tenantSlug, 'parcels.geojson', this.parcelsGeoJson(parcels));
+    if (merged.length > 0) {
+      await this.storage.upload(input.tenantSlug, 'parcels.geojson', this.parcelsGeoJson(merged));
     }
     if (lines.length > 0) {
       await this.storage.upload(input.tenantSlug, 'cadastre.geojson', this.cadastreGeoJson(lines));
@@ -118,13 +130,13 @@ export class CadastreImportService {
       tenantSlug: input.tenantSlug,
       actorId: input.actor.id,
       actorRole: input.actor.role,
-      parcelsImported: parcels.length,
+      parcelsImported: merged.length,
       parcelsSkipped: skipped,
       linesImported: lines.length,
     });
 
     return {
-      parcelsImported: parcels.length,
+      parcelsImported: merged.length,
       parcelsSkipped: skipped,
       linesImported: lines.length,
       shapesTraced: geometry.shapeCount,
@@ -233,12 +245,13 @@ export class CadastreImportService {
     return Number(value.toFixed(COORDINATE_PRECISION));
   }
 
-  private parcelsGeoJson(parcels: readonly ParsedParcel[]): string {
+  /** Parcel centroids as points; a parcel merged from several labels is approximate. */
+  private parcelsGeoJson(parcels: readonly Parcel[]): string {
     return JSON.stringify({
       type: 'FeatureCollection',
       features: parcels.map((parcel) => ({
         type: 'Feature',
-        properties: { parcelNumber: parcel.parcelNumber, approximate: false },
+        properties: { parcelNumber: parcel.parcelNumber, approximate: parcel.pointCount > 1 },
         geometry: {
           type: 'Point',
           coordinates: [this.round(parcel.longitude), this.round(parcel.latitude)],

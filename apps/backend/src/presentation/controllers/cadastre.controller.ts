@@ -62,7 +62,9 @@ export class CadastreController {
     }
 
     res.setHeader('Content-Type', 'application/geo+json');
-    res.setHeader('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400');
+    // `private`: the answer is for a signed-in session, so the browser may keep
+    // it and a shared cache between it and this API may not.
+    res.setHeader('Cache-Control', 'private, max-age=3600, stale-while-revalidate=86400');
     res.send(contents);
   }
 

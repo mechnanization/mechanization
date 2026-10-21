@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import { Loader2, UserPlus } from 'lucide-react';
-import type { CitizenListItem } from '@/lib/api-client';
+import { useTranslations } from 'next-intl';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 import {
   Dialog,
   DialogContent,
@@ -15,6 +17,7 @@ import {
 import { Field } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { BillTypeSelect } from '@/components/admin/bill-type-select';
+import { CitizenPicker, type PickedCitizen } from '@/components/admin/citizen-picker';
 
 export interface ChargeValues {
   citizenId: string;
@@ -41,7 +44,8 @@ function formatLbp(value: string): string {
 export function ChargeCitizenDialog({
   open,
   onOpenChange,
-  citizens,
+  tenant,
+  token,
   submitting,
   error,
   onSubmit,
@@ -50,44 +54,30 @@ export function ChargeCitizenDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  citizens: CitizenListItem[];
+  tenant: string;
+  /** The staff session's token; the picker searches the register with it. */
+  token: string | null;
   submitting: boolean;
   error: string | null;
   onSubmit: (values: ChargeValues) => void;
   locale?: string;
   existingTitles?: string[];
 }) {
+  const t = useTranslations('fees.charge');
+  const tCommon = useTranslations('common');
   const [values, setValues] = useState<ChargeValues>(EMPTY);
-  const [query, setQuery] = useState('');
+  /** The file chosen in the picker (`CitizenPicker`), whose id `values.citizenId` carries. */
+  const [picked, setPicked] = useState<PickedCitizen | null>(null);
 
   useEffect(() => {
     if (open) {
       setValues(EMPTY);
-      setQuery('');
+      setPicked(null);
     }
   }, [open]);
 
   const set = (patch: Partial<ChargeValues>) =>
     setValues((previous) => ({ ...previous, ...patch }));
-
-  const q = query.trim().toLowerCase();
-  const digitsOnly = q.replace(/\D/g, '');
-  const matches = q
-    ? citizens
-        .filter(
-          (row) =>
-            row.fullName.toLowerCase().includes(q) ||
-            (row.referenceNumber ?? '').toLowerCase().includes(q) ||
-            (row.phone ?? '').toLowerCase().includes(q) ||
-            (digitsOnly.length > 0 && (row.phone ?? '').replace(/\D/g, '').includes(digitsOnly)) ||
-            (row.whatsapp ?? '').toLowerCase().includes(q) ||
-            (row.identityDocNumber ?? '').toLowerCase().includes(q) ||
-            row.id.toLowerCase().includes(q),
-        )
-        .slice(0, 8)
-    : [];
-
-  const chosen = citizens.find((row) => row.id === values.citizenId);
 
   const complete =
     values.citizenId !== '' &&
@@ -98,95 +88,50 @@ export function ChargeCitizenDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        closeLabel={locale === 'en' ? 'Close' : 'إغلاق'}
+        closeLabel={tCommon('close')}
         className="flex max-h-[85dvh] flex-col gap-0 p-0 sm:max-w-lg"
       >
         <DialogHeader className="shrink-0 space-y-1 border-b p-6 text-start">
           <DialogTitle className="flex items-center gap-2">
             <UserPlus className="size-5 text-primary" aria-hidden />
-            {locale === 'en' ? 'Direct Charge Citizen' : 'إضافة مطالبة لمواطن'}
+            {t('title')}
           </DialogTitle>
-          <DialogDescription>
-            {locale === 'en'
-              ? 'One-off individual charge without periodic billing recurrence.'
-              : 'مطالبة فردية لمرة واحدة، دون إشعار أو تكرار.'}
-          </DialogDescription>
+          <DialogDescription>{t('description')}</DialogDescription>
         </DialogHeader>
 
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-6">
           {error ? (
-            <p
-              role="alert"
-              className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
-            >
+            <Alert variant="destructive" live="alert">
               {error}
-            </p>
+            </Alert>
           ) : null}
 
-          <Field
-            label={locale === 'en' ? 'Citizen' : 'المواطن'}
-            htmlFor="charge-citizen"
-            required
-          >
-            <div className="space-y-2">
-              <Input
-                id="charge-citizen"
-                placeholder={locale === 'en' ? 'Citizen name or reference number' : 'اسم المواطن أو الرقم المرجعي'}
-                value={chosen ? `${chosen.fullName} — ${chosen.referenceNumber}` : query}
-                onChange={(event) => {
-                  setQuery(event.target.value);
-                  if (values.citizenId) set({ citizenId: '' });
-                }}
-              />
-              {!chosen && matches.length > 0 ? (
-                <ul className="overflow-hidden rounded-lg border">
-                  {matches.map((row) => (
-                    <li key={row.id}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          set({ citizenId: row.id });
-                          setQuery('');
-                        }}
-                        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-start text-sm transition-colors hover:bg-accent"
-                      >
-                        <span className="font-medium">{row.fullName}</span>
-                        <span className="font-mono text-xs text-muted-foreground" dir="ltr">
-                          {row.referenceNumber}
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-            </div>
+          <Field label={t('citizen')} htmlFor="charge-citizen" required>
+            <CitizenPicker
+              id="charge-citizen"
+              tenant={tenant}
+              token={token}
+              value={picked}
+              onChange={(citizen) => {
+                setPicked(citizen);
+                set({ citizenId: citizen?.id ?? '' });
+              }}
+            />
           </Field>
 
-          <Field
-            label={locale === 'en' ? 'Fee / Bill Type' : 'نوع الرسم / سبب المطالبة'}
-            htmlFor="charge-title"
-            required
-          >
+          <Field label={t('billType')} htmlFor="charge-title" required>
             <BillTypeSelect
               id="charge-title"
               locale={locale}
               value={values.title}
               onChange={(title) => set({ title })}
               existingTitles={existingTitles}
-              placeholder={
-                locale === 'en'
-                  ? 'Select from previous bills or type a new title…'
-                  : 'اختر من الرسوم السابقة أو اكتب اسماً جديداً…'
-              }
+              placeholder={t('billTypePlaceholder')}
             />
           </Field>
 
           <div className="grid gap-5">
-            <Field
-              label={locale === 'en' ? 'Amount (LBP)' : 'المبلغ بالليرة اللبنانية'}
-              htmlFor="charge-amount"
-              required
-            >
+            <Field label={t('amount')} htmlFor="charge-amount" required>
               <Input
                 id="charge-amount"
                 inputMode="numeric"
@@ -197,18 +142,12 @@ export function ChargeCitizenDialog({
                 onChange={(event) => set({ amount: formatLbp(event.target.value) })}
               />
             </Field>
-            <Field
-              label={locale === 'en' ? 'Due Date' : 'تاريخ الاستحقاق'}
-              htmlFor="charge-due"
-              required
-            >
-              <Input
+            <Field label={t('dueDate')} htmlFor="charge-due" required>
+              <DatePicker
                 id="charge-due"
-                type="date"
-                dir="ltr"
-                className="text-start"
                 value={values.dueDate}
-                onChange={(event) => set({ dueDate: event.target.value })}
+                onChange={(dueDate) => set({ dueDate })}
+                locale={locale === 'en' ? 'en' : 'ar'}
               />
             </Field>
           </div>
@@ -216,11 +155,11 @@ export function ChargeCitizenDialog({
 
         <DialogFooter className="shrink-0 gap-2 border-t p-6">
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
-            {locale === 'en' ? 'Cancel' : 'إلغاء'}
+            {tCommon('cancel')}
           </Button>
           <Button disabled={!complete || submitting} onClick={() => onSubmit(values)}>
             {submitting ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-            {locale === 'en' ? 'Add Charge' : 'إضافة المطالبة'}
+            {t('submit')}
           </Button>
         </DialogFooter>
       </DialogContent>

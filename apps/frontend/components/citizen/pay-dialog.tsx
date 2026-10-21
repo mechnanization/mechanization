@@ -1,8 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Banknote, Building2, Clock, Loader2, MapPin, Smartphone } from 'lucide-react';
+import type { DeclarePayment } from '@mechanization/shared-schemas';
 import type { CitizenPaymentItem, MunicipalitySettings } from '@/lib/api-client';
+import { Alert } from '@/components/ui/alert';
+import { isPartlyPaid, partlyPaidFigures } from '@/lib/citizen-payments';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -14,11 +18,8 @@ import {
 } from '@/components/ui/dialog';
 import { Field } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
+import { Money } from '@/components/ui/money';
 import { cn } from '@/lib/utils';
-
-function lbp(amount: number): string {
-  return `${amount.toLocaleString('en-US')} ل.ل`;
-}
 
 /**
  * How to pay one bill.
@@ -44,9 +45,12 @@ export function PayDialog({
   submitting: boolean;
   error: string | null;
   onOpenChange: (open: boolean) => void;
-  onDeclare: (input: { method: string; whishTransactionRef?: string }) => void;
+  /** A Whish Money report only: cash is an instruction, never declared (open-decisions §21). */
+  onDeclare: (input: DeclarePayment) => void;
   locale?: string;
 }) {
+  const tCitizen = useTranslations('citizen');
+  const tDialog = useTranslations('payDialog');
   const whishAvailable = Boolean(settings?.whishMoneyNumber);
   const [method, setMethod] = useState<'CASH' | 'WHISH_MONEY'>('CASH');
   const [reference, setReference] = useState('');
@@ -58,8 +62,8 @@ export function PayDialog({
     }
   }, [payment, whishAvailable]);
 
-  const canSubmit =
-    !submitting && (method === 'CASH' || reference.trim().length >= 4);
+  // Only the Whish report is submitted; cash is an instruction, closed with «حسناً».
+  const canSubmit = !submitting && method === 'WHISH_MONEY' && reference.trim().length >= 4;
 
   return (
     <Dialog open={payment !== null} onOpenChange={onOpenChange}>
@@ -70,18 +74,22 @@ export function PayDialog({
           </DialogTitle>
           <DialogDescription>
             {locale === 'en' ? 'Amount due: ' : 'المبلغ المستحق: '}
-            <span className="font-semibold">{payment ? lbp(payment.amount) : ''}</span>
+            {/* What is left: a confirmed claim credits only the outstanding balance, never the face value. */}
+            {payment ? <Money amount={payment.remaining} locale={locale} exact className="font-semibold" /> : null}
+            {payment && isPartlyPaid(payment) ? (
+              <>
+                {' · '}
+                {tCitizen('partlyPaid', partlyPaidFigures(payment, locale))}
+              </>
+            ) : null}
           </DialogDescription>
         </DialogHeader>
 
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-6">
           {error ? (
-            <p
-              role="alert"
-              className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
-            >
+            <Alert variant="destructive" live="alert">
               {error}
-            </p>
+            </Alert>
           ) : null}
 
           <div className="grid gap-3">
@@ -144,7 +152,9 @@ export function PayDialog({
                     {locale === 'en'
                       ? 'Open Whish Money app and transfer '
                       : 'افتح تطبيق Whish Money وحوّل '}
-                    <span className="font-semibold">{payment ? lbp(payment.amount) : ''}</span>
+                    {payment ? (
+                      <Money amount={payment.remaining} locale={locale} exact className="font-semibold" />
+                    ) : null}
                     {locale === 'en' ? ' to number:' : ' إلى الرقم:'}
                   </span>
                 </li>
@@ -194,23 +204,29 @@ export function PayDialog({
         </div>
 
         <DialogFooter className="shrink-0 gap-2 border-t p-6">
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
-            {locale === 'en' ? 'Cancel' : 'إلغاء'}
-          </Button>
-          <Button
-            disabled={!canSubmit}
-            onClick={() =>
-              onDeclare({
-                method,
-                ...(method === 'WHISH_MONEY' ? { whishTransactionRef: reference.trim() } : {}),
-              })
-            }
-          >
-            {submitting ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-            {method === 'CASH'
-              ? (locale === 'en' ? 'I will pay at municipality' : 'سأدفع في البلدية')
-              : (locale === 'en' ? 'Declare Payment' : 'أبلغ عن الدفع')}
-          </Button>
+          {method === 'CASH' ? (
+            /*
+              Cash is an instruction to visit, and nothing more: no declaration. «سأدفع في
+              البلدية» used to declare one, which put the bill «قيد المراجعة» with no money
+              taken — and a bill under review is not settled at the counter until a clerk
+              answers the claim. With online payment paused (lib/online-payment.ts) this
+              dialog is where every citizen is sent to learn how to pay.
+            */
+            <Button onClick={() => onOpenChange(false)}>{tDialog('cashDone')}</Button>
+          ) : (
+            <>
+              <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
+                {locale === 'en' ? 'Cancel' : 'إلغاء'}
+              </Button>
+              <Button
+                disabled={!canSubmit}
+                onClick={() => onDeclare({ method: 'WHISH_MONEY', whishTransactionRef: reference.trim() })}
+              >
+                {submitting ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+                {locale === 'en' ? 'Declare Payment' : 'أبلغ عن الدفع'}
+              </Button>
+            </>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

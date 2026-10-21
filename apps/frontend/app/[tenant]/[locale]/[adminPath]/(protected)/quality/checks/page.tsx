@@ -27,11 +27,6 @@ export default function QualityChecksPage({
       adminPath={adminPath}
       icon={ClipboardList}
       title={en ? 'Field re-checks' : 'التحقق الميداني'}
-      subtitle={
-        en
-          ? 'A sample of each officer’s records, checked again at the door by someone else.'
-          : 'عيّنة من سجلات كل موظف، يُعاد التحقق منها على الباب بواسطة موظف آخر.'
-      }
     >
       {({ token, base }) => <ChecksBody tenant={tenant} base={base} locale={locale} token={token} />}
     </QualityScreen>

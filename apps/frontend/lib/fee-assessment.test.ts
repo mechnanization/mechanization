@@ -11,6 +11,9 @@ function assessment(overrides: Partial<FeeAssessment> = {}): FeeAssessment {
     excludedUnitCount: 0,
     heldUnitCount: 0,
     uninhabitableUnitCount: 0,
+    sharedUnitCount: 0,
+    coOwnerPaidUnitCount: 0,
+    exemptUnitCount: 0,
     lines: [{ propertyNumber: '12', propertyType: 'COMMERCIAL', unitType: 'SHOP', unitArea: null }],
     ...overrides,
   };
@@ -22,6 +25,14 @@ describe('describeAssessment', () => {
     expect(describeAssessment(null)).toBeNull();
   });
 
+  it('says why a flat charge to a category was not owed — every unit of it exempt or uninhabitable', () => {
+    const letOff = assessment({ basis: 'FLAT', unitCount: 0, lines: [], exemptUnitCount: 1, uninhabitableUnitCount: 1 });
+    expect(describeAssessment(letOff, 'ar')).toBe(
+      'مبلغ مقطوع غير مستحق: 1 وحدة غير صالحة للسكن معفاة، 1 وحدة معفاة من الرسوم',
+    );
+    expect(describeAssessment(letOff, 'en')).toBe('Flat charge, not owed: 1 uninhabitable, exempt; 1 exempt from fees');
+  });
+
   it('writes the same line as before the copy moved to messages', () => {
     expect(describeAssessment(assessment(), 'ar')).toBe('6 محل تجاري × 100,000 ل.ل');
     expect(describeAssessment(assessment({ basis: 'PER_AREA', totalArea: 120.4 }), 'ar')).toBe('120 م² × 100,000 ل.ل');
@@ -30,6 +41,31 @@ describe('describeAssessment', () => {
     );
     expect(describeAssessment(assessment({ excludedUnitCount: 3, heldUnitCount: 1 }), 'en')).toBe(
       '6 Commercial Shop × 100,000 LBP (3 not charged; 1 held for review)',
+    );
+  });
+
+  it('counts a duplex in roofs and says so — 1.8 flats, not 2 (D28)', () => {
+    const duplex = assessment({
+      unitCount: 1,
+      chargedUnits: 1.8,
+      rate: 1_000_000,
+      lines: [
+        {
+          propertyNumber: '352',
+          propertyType: 'BUILDING',
+          unitType: 'APARTMENT',
+          unitArea: null,
+          unitCode: '0001',
+          levels: 2,
+          levelFactor: 1.8,
+        },
+      ],
+    });
+    expect(describeAssessment(duplex, 'ar')).toBe(
+      '1.8 شقة × 1,000,000 ل.ل (1 وحدة من أكثر من طابق احتُسبت بالسقوف (دوبلكس = 1.8 سقف))',
+    );
+    expect(describeAssessment(duplex, 'en')).toBe(
+      '1.8 Apartment × 1,000,000 LBP (1 multi-level units counted in roofs (Duplex = 1.8 roofs))',
     );
   });
 
@@ -45,19 +81,58 @@ describe('describeAssessment', () => {
   });
 
   /*
-    Decision 2 (2026-10-05): a flat read «غير صالحة للسكن» is held, and the bill
-    says so in its own words — not folded into "not charged" or "held for review".
+    Decisions of 2026-10-05 and 2026-10-07: a flat read «غير صالحة للسكن» is exempt,
+    and the bill says so in its own words — not folded into "not charged" or "held for review".
   */
   it('says how many uninhabitable flats the bill held, apart from the other two counts', () => {
     expect(describeAssessment(assessment({ uninhabitableUnitCount: 2 }), 'ar')).toBe(
-      '6 محل تجاري × 100,000 ل.ل (2 وحدة غير صالحة للسكن لم تُحتسب)',
+      '6 محل تجاري × 100,000 ل.ل (2 وحدة غير صالحة للسكن معفاة)',
     );
     expect(describeAssessment(assessment({ heldUnitCount: 1, uninhabitableUnitCount: 2 }), 'en')).toBe(
-      '6 Commercial Shop × 100,000 LBP (1 held for review; 2 uninhabitable, not charged)',
+      '6 Commercial Shop × 100,000 LBP (1 held for review; 2 uninhabitable, exempt)',
     );
   });
 
   it('writes counts in Latin digits on the Arabic page, as every figure on the portal is', () => {
     expect(describeAssessment(assessment({ unitCount: 1234, excludedUnitCount: 12 }), 'ar')).not.toMatch(/[٠-٩]/);
+  });
+
+  it('says when a co-owned flat is charged at this owner’s part, or paid by another owner', () => {
+    const shared = assessment({ unitCount: 3, chargedUnits: 2.25, sharedUnitCount: 1 });
+    expect(describeAssessment(shared, 'ar')).toBe(
+      '2.25 محل تجاري × 100,000 ل.ل (1 وحدة بملكية مشتركة احتُسبت بحصّة المكلَّف منها)',
+    );
+    expect(describeAssessment(shared, 'en')).toBe(
+      '2.25 Commercial Shop × 100,000 LBP (1 co-owned, charged at this owner’s part)',
+    );
+    const parts = assessment({
+      basis: 'PER_AREA',
+      unitCount: 1,
+      totalArea: 100 / 3,
+      sharedUnitCount: 1,
+      lines: [
+        {
+          propertyNumber: '12',
+          propertyType: 'BUILDING',
+          unitType: 'SHOP',
+          unitArea: 100,
+          ownerShare: { mode: 'EQUAL', numerator: 1, denominator: 3 },
+        },
+      ],
+    });
+    expect(describeAssessment(parts, 'ar')).toBe(
+      '33.33 م² × 100,000 ل.ل (1 وحدة بملكية مشتركة احتُسبت بحصّة المكلَّف منها (1/3))',
+    );
+    const paidByOther = assessment({ unitCount: 0, coOwnerPaidUnitCount: 1, lines: [] });
+    expect(describeAssessment(paidByOther, 'ar')).toBe('0 وحدة × 100,000 ل.ل (1 وحدة يدفع رسمها مالك آخر)');
+  });
+
+  it('says when a unit is exempt from fees (a mosque, a public building)', () => {
+    expect(describeAssessment(assessment({ unitCount: 2, exemptUnitCount: 1 }), 'ar')).toBe(
+      '2 محل تجاري × 100,000 ل.ل (1 وحدة معفاة من الرسوم)',
+    );
+    expect(describeAssessment(assessment({ unitCount: 2, exemptUnitCount: 1 }), 'en')).toBe(
+      '2 Commercial Shop × 100,000 LBP (1 exempt from fees)',
+    );
   });
 });

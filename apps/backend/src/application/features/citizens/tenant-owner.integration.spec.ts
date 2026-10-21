@@ -802,6 +802,46 @@ describeIfDb('A tenant and the owner they rent from', () => {
     expect(await db.propertyEntry.count({ where: { id: ownerCard.id } })).toBe(1);
   });
 
+  it('refuses to delete a card a municipal request names, and writes nothing (0092)', async () => {
+    const owner = await person('صاحب معاملة');
+    const card = await db.propertyEntry.create({
+      data: {
+        registrationId: owner.registrationId,
+        occupancyType: 'OWNER',
+        propertyType: 'LAND',
+        propertyNumber: `9${randomUUID().slice(0, 4)}`,
+      },
+    });
+    const request = await db.citizenRequest.create({
+      data: {
+        requestNumber: `REQ-${randomUUID().slice(0, 8)}`,
+        citizenId: owner.id,
+        channel: 'ONLINE',
+        requestType: 'CLEARANCE',
+        applicantCapacity: 'OWNER',
+        propertyEntryId: card.id,
+        clientRequestId: randomUUID(),
+      },
+    });
+    const stored = await db.user.findUniqueOrThrow({ where: { id: owner.id } });
+
+    // Before this the save reached the delete, and 0092's RESTRICT key answered with an unmapped 500.
+    await expect(
+      within(() =>
+        citizens.update({
+          tenantSlug: 'owners',
+          citizenId: owner.id,
+          payload: householdPayload(stored, {
+            civilRecordNumber: '9',
+            removals: [{ propertyId: card.id, reason: 'RECORDED_IN_ERROR' }],
+          }),
+          actor: actor(),
+        }),
+      ),
+    ).rejects.toMatchObject({ code: 'PROPERTY_NAMED_BY_REQUEST', params: { requests: request.requestNumber, count: 1 } });
+    expect(await db.propertyEntry.count({ where: { id: card.id } })).toBe(1);
+  });
+
   it('refuses to delete an owner’s card while a tenant’s link names them, and writes nothing', async () => {
     const { units } = await block('OWN-13');
     const flat = units[0]!.id;

@@ -114,9 +114,56 @@ export const QUALITY_FINDING_KIND = [
    * dismissing it would not change the bill, only hide why.
    */
   'UNIT_UNDER_REVIEW',
+  /**
+   * A co-owned flat whose saved «توزيع الرسم على المالكين» billing cannot
+   * carry out (migration 0075). HIGH: «حسب الأسهم» with an owner's أسهم
+   * missing, so every co-owner's bill is refused. MEDIUM: «مالك مسؤول» naming
+   * someone who no longer owns it with an open file, so the flat is split
+   * equally instead. Not dismissable, for `UNIT_UNDER_REVIEW`'s reason: it
+   * closes when the أسهم are recorded or another method is chosen.
+   */
+  'OWNER_BILLING_BLOCKED',
+  /**
+   * A flat billed «حسب الأسهم» whose owners' recorded أسهم do not add up to
+   * the register's 2400. Billing goes ahead — each owner pays their أسهم over
+   * the sum (the decision of 2026-10-07, kept on 2026-10-12) — so a co-owner
+   * missing from the census has their part billed to the others, and this is
+   * how the office hears of it. MEDIUM, and dismissable: on a building nobody
+   * has partitioned the 2400 cover the whole building, and a flat's owners can
+   * legitimately hold less of it.
+   */
+  'OWNER_SHARES_INCOMPLETE',
   'BUILDING_WITHOUT_PIN',
   'UNITS_WITHOUT_AREA',
   'UNLINKED_LANDLORDS',
+  /**
+   * A building labelled «متضررة من الحرب وغير مسكونة» or «مهدوم» whose units
+   * are still billed, because no damage reading says «غير صالحة للسكن». The
+   * label exempts nothing; the reading does (decision of 2026-10-07). HIGH:
+   * someone is billed for a home the register itself calls uninhabitable.
+   */
+  'UNINHABITED_WITHOUT_READING',
+  /**
+   * A «منزل» card on a structure that now holds more than one unit (decision
+   * D28). The card names no unit; it claims the one unit of a one-unit
+   * structure, so once there are two it claims nothing the census can see —
+   * the household's occupancy is not released (`CensusSyncService` holds it as
+   * unresolved), but it is not backed either, and recording them on another
+   * unit would open a second card. HIGH, not dismissable: the house-growth
+   * question converts such cards as they arise, so one here came from an older
+   * client or from before the question existed, and the fix is to make it a
+   * «مبنى» card naming its flat.
+   */
+  'HOUSE_CARD_ON_MULTI_UNIT_BUILDING',
+  /**
+   * A home whose «عدد طوابق المسكن» looks wrong (decision D28): one
+   * owner-occupier recorded in two flats stacked on each other (a duplex
+   * recorded as two flats — «دمج كدوبلكس» corrects it), a «دوبلكس» note on a
+   * one-level unit, or a house with more storeys than its unit's levels. Each
+   * changes a per-roof bill. MEDIUM (LOW for a note), and dismissable: a family
+   * can own and live in two separate flats, and an upper storey can be unbuilt.
+   */
+  'UNIT_LEVELS_TO_CONFIRM',
 ] as const;
 export type QualityFindingKind = (typeof QUALITY_FINDING_KIND)[number];
 
@@ -164,9 +211,18 @@ export function qualityLabels(locale: string) {
       NEAR_DUPLICATE_BUILDINGS: en ? 'Buildings metres apart on one parcel' : 'مبانٍ متلاصقة على العقار نفسه',
       UNIT_STATUS_CONTRADICTION: en ? 'Unit and owner card disagree' : 'حالة الوحدة تخالف بطاقة المالك',
       UNIT_UNDER_REVIEW: en ? 'Unit status to review' : 'حالة الوحدة للمراجعة',
+      OWNER_BILLING_BLOCKED: en ? 'Co-owner billing not applied' : 'توزيع على المالكين لا يُطبَّق',
+      OWNER_SHARES_INCOMPLETE: en ? 'Owners’ shares do not add up to 2400' : 'أسهم المالكين لا تبلغ 2400',
       BUILDING_WITHOUT_PIN: en ? 'Building with no entrance pin' : 'مبنى بلا مدخل مُثبت',
       UNITS_WITHOUT_AREA: en ? 'Occupied units with no area' : 'وحدات مشغولة بلا مساحة',
       UNLINKED_LANDLORDS: en ? 'Owners named but not linked' : 'مالكون مذكورون غير مربوطين',
+      UNINHABITED_WITHOUT_READING: en
+        ? 'Labelled uninhabited, still billed'
+        : 'مبنى مصنَّف غير مسكون وما زال يُفوتر',
+      HOUSE_CARD_ON_MULTI_UNIT_BUILDING: en
+        ? 'House card on a building with several units'
+        : 'بطاقة «منزل» على مبنى من عدّة وحدات',
+      UNIT_LEVELS_TO_CONFIRM: en ? 'Levels of a home to confirm' : 'عدد طوابق مسكن للتأكيد',
     } satisfies Record<QualityFindingKind, string>,
     /**
      * What the re-check found, as one word.

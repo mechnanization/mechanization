@@ -1,3 +1,4 @@
+import { ConflictError } from '../../domain/errors/domain-error';
 import { isSamePerson, PrismaRegistrationRepository } from './registration.repository';
 
 /**
@@ -18,14 +19,21 @@ import { isSamePerson, PrismaRegistrationRepository } from './registration.repos
  */
 
 function harness(
-  holder: { firstName: string; middleName: string | null; lastName: string } | null,
+  holder: {
+    firstName: string;
+    middleName: string | null;
+    lastName: string;
+    residence?: string;
+    /** Archived (`false`) or open; open unless a test says otherwise. */
+    isActive?: boolean;
+  } | null,
   /** The flags on the holder's newest registration. */
   holderFlags: Array<{ path: string; kind: string; reason: string }> = [],
 ) {
   const tx = {
     user: {
       findUnique: jest.fn().mockResolvedValue(
-        holder ? { id: 'holder-1', kind: 'CITIZEN', ...holder } : null,
+        holder ? { id: 'holder-1', kind: 'CITIZEN', isActive: true, ...holder } : null,
       ),
       create: jest.fn().mockResolvedValue({ id: 'new-citizen' }),
       update: jest.fn(),
@@ -142,6 +150,47 @@ describe('registration — a document number never merges two people', () => {
         reason: expect.stringContaining('N123456'),
       }),
     ]);
+  });
+
+  it('never attaches a filing to an estate holding the number — the deceased’s document again is a conflict (0076)', async () => {
+    const { repository, tx } = harness({ firstName: 'يوسف', middleName: null, lastName: 'جفال', residence: 'ESTATE' });
+
+    const result = await repository.submit(
+      filing({ identityDocType: 'PASSPORT', identityDocNumber: 'N123456' }),
+    );
+
+    expect(result.identity).toBe('CONFLICT');
+    expect(tx.user.update).not.toHaveBeenCalled();
+  });
+
+  /**
+   * An archived file takes no new filing: it is reactivated first, on purpose,
+   * with its reason. Attaching would put flats and bills on a file the register
+   * says is closed; filing beside it would make the same person twice.
+   */
+  it('refuses to attach a filing to the same person’s archived file, naming the file and writing nothing', async () => {
+    const { repository, tx } = harness({ firstName: 'يوسف', middleName: 'علي', lastName: 'جفال', isActive: false });
+
+    const refusal = await repository
+      .submit(filing({ identityDocType: 'PASSPORT', identityDocNumber: 'N123456' }))
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+
+    expect(refusal).toBeInstanceOf(ConflictError);
+    expect((refusal as ConflictError).code).toBe('CITIZEN_FILE_ARCHIVED');
+    expect((refusal as ConflictError).details).toEqual({ citizenId: 'holder-1' });
+    expect(tx.user.create).not.toHaveBeenCalled();
+    expect(tx.registration.create).not.toHaveBeenCalled();
+  });
+
+  it('still keeps a different person apart from an archived holder of the number', async () => {
+    const { repository } = harness({ firstName: 'حسن', middleName: 'علي', lastName: 'جفال', isActive: false });
+
+    const result = await repository.submit(filing({ identityDocType: 'PASSPORT', identityDocNumber: 'N123456' }));
+
+    expect(result.identity).toBe('CONFLICT');
   });
 
   it('creates without looking anything up when no number is given', async () => {

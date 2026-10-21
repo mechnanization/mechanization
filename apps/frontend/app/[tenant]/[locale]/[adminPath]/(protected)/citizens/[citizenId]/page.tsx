@@ -3,6 +3,7 @@
 import { isValidElement, use, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import {
   Archive,
   Banknote,
@@ -23,6 +24,7 @@ import {
   Pencil,
   Phone,
   Receipt as ReceiptIcon,
+  ReceiptText,
   Signpost,
   StickyNote,
   Unlink,
@@ -31,7 +33,7 @@ import {
   Users,
   Wallet,
 } from 'lucide-react';
-import { getLabels } from '@mechanization/shared-schemas';
+import { getLabels, isNonPersonRecord, isOwnerRecord } from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
   getCitizenProfile,
@@ -53,7 +55,8 @@ import { flagFieldLabel } from '@/lib/field-flags';
 import { findLocatedProperty, mapHref } from '@/lib/map-link';
 import { ActivityTrail } from '@/components/admin/activity-trail';
 import { AUDIT_ENTITY } from '@/lib/audit-labels';
-import { BackLink } from '@/components/ui/back-link';
+import { HeaderBackLink } from '@/components/admin/header-back-link';
+import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { CollapsibleSection } from '@/components/ui/collapsible-section';
@@ -77,7 +80,18 @@ import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/dates';
 import { param, useUrlState } from '@/lib/use-url-state';
 import { buildCitizenWelcomeMessage, buildWhatsappHref } from '@/lib/whatsapp';
-import { DOCUMENT_VIEW_ROLES, REFERENCE_SEND_ROLES, hasRole } from '@/lib/staff-roles';
+import {
+  BULK_SETTLE_ROLES,
+  CASH_COUNTER_ROLES,
+  DOCUMENT_VIEW_ROLES,
+  REFERENCE_SEND_ROLES,
+  hasRole,
+} from '@/lib/staff-roles';
+import { fromCitizenPayment, isBulkSettleable, pageSelection, rowBlock } from '@/lib/bulk-settle';
+import { billPageLink } from '@/lib/bill-receipts';
+import { useBulkSelection, type BulkSelection } from '@/lib/use-bulk-selection';
+import { BillCheckbox } from '@/components/admin/bulk-settle/bill-checkbox';
+import { BulkSettleBar } from '@/components/admin/bulk-settle/bulk-settle-bar';
 
 interface FactItem {
   icon: React.ComponentType<{ className?: string }>;
@@ -190,7 +204,8 @@ function householdFacts(citizen: CitizenProfile, locale: string): FactItem[] {
 }
 
 /**
- * What a «غير مقيم في البلدة» record still holds from when it was a household.
+ * What an owner record — «غير مقيم في البلدة», «تركة», «جهة أو وقف» — still
+ * holds from when it was a household.
  *
  * Nothing is erased by the conversion — the edit form stops asking and the
  * server stops writing these columns, and the values filed before it stay
@@ -211,10 +226,13 @@ function RetainedHouseholdSection({
   citizen: CitizenProfile;
   locale: string;
 }) {
-  if (citizen.residence !== 'NON_RESIDENT_OWNER') return null;
+  const tKind = useTranslations('citizenKind');
+  // Any record that is not a household — a converted file keeps what it held (0076 too).
+  if (!isOwnerRecord(citizen.residence)) return null;
 
   const en = locale === 'en';
   const labels = getLabels(locale);
+  const kind = (labels.citizenResidence as Record<string, string>)[citizen.residence ?? ''] ?? String(citizen.residence);
 
   const identity = present([
     {
@@ -281,9 +299,7 @@ function RetainedHouseholdSection({
     >
       <div className="space-y-4">
         <p className="rounded-lg border bg-muted/20 p-3 text-sm leading-relaxed text-muted-foreground">
-          {en
-            ? 'This record was filed as a household before it became a non-resident record. These values are kept as history — the form no longer asks for them and nothing updates them, so do not rely on them as current.'
-            : 'سُجِّل هذا الملف كملف أسرة قبل أن يصبح ملف «غير مقيم في البلدة». هذه القيم محفوظة كتاريخ — لم تعد تُطلب في النموذج ولا يحدّثها شيء، فلا يُعتمد عليها كبيانات حالية.'}
+          {tKind('retainedNote', { kind })}
         </p>
         {/* One section above the other, split by the same coloured rule the
             property cards use between their sections (`SECTION_RULE`, spelled
@@ -432,6 +448,7 @@ export default function CitizenProfilePage({
   const { tenant, locale, adminPath, citizenId } = use(params);
   const router = useRouter();
   const base = `/${tenant}/${locale}/${adminPath}`;
+  const tKind = useTranslations('citizenKind');
 
   const [citizen, setCitizen] = useState<CitizenProfile | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -452,6 +469,8 @@ export default function CitizenProfilePage({
    *  fees controller), so offering it to an inspector would only earn a 403. */
   const canManage =
     role === 'SUPER_ADMIN' || role === 'COLLECTOR' || role === 'ACCOUNTANT';
+  /** Cash into the safe (`CASH_COUNTER_ROLES`); a collector records his own collection instead (D13). */
+  const canTakeCash = hasRole(CASH_COUNTER_ROLES, role);
 
   const reload = useCallback(async () => {
     if (!token) return;
@@ -465,6 +484,23 @@ export default function CitizenProfilePage({
   /** The WhatsApp welcome carries the رقم مرجعي, which «مشاهد فقط» is never given. */
   const canSendReference = hasRole(REFERENCE_SEND_ROLES, role);
   const { merges, reload: reloadMerges } = useCitizenMerges(tenant, token, citizenId);
+
+  /*
+    «تسديد الفواتير المحددة» — `BULK_SETTLE_ROLES`, as the route; the server is
+    the enforcement. Held here rather than in the fees panel because the bar and
+    the dialog sit at the page's root: the panel folds (`CollapsibleSection`
+    clips its content), and a sticky bar inside it would hold nowhere.
+  */
+  const canBulkSettle = hasRole(BULK_SETTLE_ROLES, role);
+  const bulkSelection = useBulkSelection(tenant);
+  const { reconcile: reconcileBulk } = bulkSelection;
+  // Each read of the file drops a ticked bill that has been paid, or sent for review, since.
+  useEffect(() => {
+    if (!citizen) return;
+    reconcileBulk(
+      citizen.payments.map((row) => ({ bill: fromCitizenPayment(citizen, row), settleable: isBulkSettleable(row) })),
+    );
+  }, [citizen, reconcileBulk]);
 
   useEffect(() => {
     const session = loadSession(tenant);
@@ -508,9 +544,9 @@ export default function CitizenProfilePage({
   if (error) {
     return (
       <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-        <p role="alert" className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-destructive">
+        <Alert variant="destructive" live="alert">
           {error}
-        </p>
+        </Alert>
         <Link href={`${base}/dashboard`} className={buttonVariants({ variant: 'outline' })}>
           {locale === 'en' ? 'Back to Dashboard' : 'رجوع إلى اللوحة'}
         </Link>
@@ -540,7 +576,9 @@ export default function CitizenProfilePage({
     officer verified this week. They go into «بيانات محفوظة» below instead,
     which says what they are.
   */
-  const isNonResident = citizen.residence === 'NON_RESIDENT_OWNER';
+  /** Not a household: «غير مقيم في البلدة», «تركة» or «جهة أو وقف» (0076). */
+  const isNonResident = isOwnerRecord(citizen.residence);
+  const nonPerson = isNonPersonRecord(citizen.residence) ? citizen.residence : null;
 
   // What they hold now — a tenancy they left is history, not a property.
   const propertyCount = citizen.registrations.reduce(
@@ -590,12 +628,17 @@ export default function CitizenProfilePage({
           on this kind of record it is not a way to reach them, it is the fact
           that defines the record. Law 60/1988 Art. 14 wants the occupancy
           notice to name the occupant *and where they live*, and this is that.
+          An estate or an institution lives nowhere.
         */
-        {
-          icon: Home,
-          label: en ? 'Lives in' : 'مكان الإقامة',
-          value: citizen.residencePlace ?? undefined,
-        },
+        ...(nonPerson
+          ? []
+          : [
+              {
+                icon: Home,
+                label: en ? 'Lives in' : 'مكان الإقامة',
+                value: citizen.residencePlace ?? undefined,
+              },
+            ]),
       ]
     : [
         { icon: User, label: en ? 'Name' : 'الاسم', value: citizen.fullName },
@@ -692,17 +735,24 @@ export default function CitizenProfilePage({
           },
         ]
       : []),
-    // Who holds the keys here, for an owner who is not here.
+    // Who holds the keys here, for an owner who is not here — or who speaks for the heirs, or the body.
     ...(isNonResident
       ? [
           {
             icon: User,
-            label: en ? 'Local contact' : 'جهة الاتصال المحلية',
+            label:
+              nonPerson === 'ESTATE'
+                ? tKind('estateRepresentative')
+                : nonPerson === 'INSTITUTION'
+                  ? tKind('institutionRepresentative')
+                  : en
+                    ? 'Local contact'
+                    : 'جهة الاتصال المحلية',
             value: citizen.localContactName ?? undefined,
           },
           {
             icon: Phone,
-            label: en ? 'Local contact phone' : 'هاتف جهة الاتصال',
+            label: nonPerson ? tKind('representativePhone') : en ? 'Local contact phone' : 'هاتف جهة الاتصال',
             value: citizen.localContactPhone ? (
               <PhoneLink phone={citizen.localContactPhone} locale={locale} />
             ) : null,
@@ -764,11 +814,7 @@ export default function CitizenProfilePage({
   */
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <BackLink
-        fallbackHref={`${base}/citizens`}
-        label={locale === 'en' ? 'Back' : 'رجوع'}
-        className="text-sm"
-      />
+      <HeaderBackLink fallbackHref={`${base}/citizens`} label={locale === 'en' ? 'Back' : 'رجوع'} />
 
       {/* ── Identity bar ────────────────────────────────────────────── */}
       <header className="space-y-4">
@@ -790,8 +836,8 @@ export default function CitizenProfilePage({
             <div className="flex flex-wrap items-center gap-1.5">
               {isNonResident ? (
                 <Badge variant="soft-info">
-                  {labels.citizenResidence.NON_RESIDENT_OWNER}
-                  {citizen.residencePlace ? ` — ${citizen.residencePlace}` : ''}
+                  {labels.citizenResidence[citizen.residence as keyof typeof labels.citizenResidence]}
+                  {!nonPerson && citizen.residencePlace ? ` — ${citizen.residencePlace}` : ''}
                 </Badge>
               ) : null}
               {/*
@@ -934,26 +980,19 @@ export default function CitizenProfilePage({
 
           The three numbers somebody came to this page for, answered before any
           section is read. The balance leads because it is the only one of the
-          three that is ever urgent, and it carries the same tone the ledger
-          gives it — destructive where something is overdue, emerald where there
-          is nothing owed — so the page never says «لا مستحقات» in the colour of
-          a debt.
+          three that is ever urgent. Only a debt gets a colour: the balance is
+          destructive where something is overdue and plain otherwise, so the page
+          never says «لا مستحقات» in the colour of a debt, and a file where
+          nothing is owed does not shout. The tone is on the figure, never the
+          cell — a red tile for a routine unpaid fee reads as an emergency.
         */}
-        {/*
-          One strip, divided — not three floating cards. Three bordered boxes
-          carrying three short values read as three separate things to deal
-          with; ruled cells of one panel read as one summary line, which is what
-          they are. `border-s` and not `border-l`, so the rules fall between the
-          cells in Arabic as well as English.
-        */}
-        <dl className="grid grid-cols-1 overflow-hidden rounded-lg border bg-card sm:grid-cols-3 [&>*+*]:border-t sm:[&>*+*]:border-s sm:[&>*+*]:border-t-0">
-          <StatTile
-            icon={Wallet}
+        <StatStrip>
+          <StatItem
             label={en ? 'Outstanding' : 'الرصيد المستحق'}
-            tone={citizen.fees.overdueTotal > 0 ? 'bad' : 'plain'}
+            className={citizen.fees.overdueTotal > 0 ? 'text-destructive' : undefined}
             value={
               citizen.fees.outstandingTotal > 0 ? (
-                <Money amount={citizen.fees.outstandingTotal} />
+                <Money amount={citizen.fees.outstandingTotal} wrap />
               ) : (
                 <span>{en ? 'Nothing due' : 'لا مستحقات'}</span>
               )
@@ -966,19 +1005,17 @@ export default function CitizenProfilePage({
                 : undefined
             }
           />
-          <StatTile
-            icon={Building2}
+          <StatItem
             label={en ? 'Properties' : 'العقارات'}
             value={propertyCount}
             hint={en ? 'Currently held' : 'قائمة حالياً'}
           />
-          <StatTile
-            icon={FileText}
+          <StatItem
             label={en ? 'Applications' : 'الطلبات'}
             value={citizen.registrations.length}
             hint={formatDate(citizen.registeredAt)}
           />
-        </dl>
+        </StatStrip>
       </header>
 
       <div className="space-y-5">
@@ -1040,6 +1077,8 @@ export default function CitizenProfilePage({
             payments={citizen.payments}
             fees={citizen.fees}
             canManage={canManage}
+            canTakeCash={canTakeCash}
+            selection={canBulkSettle ? bulkSelection : null}
             municipalityName={municipalityName}
             governorate={settings?.governorate}
             councilDecisionRef={settings?.councilDecisionRef}
@@ -1229,58 +1268,19 @@ export default function CitizenProfilePage({
         locale={locale}
         onSaved={() => void reload()}
       />
-    </div>
-  );
-}
 
-/**
- * One number from the top of the file, said plainly.
- *
- * Three of these sit above the fold and answer the three questions this page is
- * opened with — what is owed, how much property, how many filings — so that the
- * commonest visit needs no section opened at all.
- *
- * `tone` colours only the value, never the tile: a red card for an overdue
- * balance turns the whole page into an alert, and the next person to open a file
- * with a routine unpaid fee reads it as an emergency.
- */
-function StatTile({
-  icon: Icon,
-  label,
-  value,
-  hint,
-  tone = 'plain',
-  className,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  value: React.ReactNode;
-  hint?: string;
-  tone?: 'plain' | 'bad';
-  className?: string;
-}) {
-  return (
-    <div className={cn('px-4 py-3', className)}>
-      <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <Icon className="size-3.5 shrink-0" aria-hidden />
-        {label}
-      </dt>
-      <dd
-        className={cn(
-          'mt-1 text-base font-semibold tracking-tight',
-          /*
-            Only a debt gets a colour. «لا مستحقات» used to be emerald, which
-            made the calmest fact on the file the loudest thing on the screen —
-            and a page where nothing-owed shouts has no louder register left for
-            the file where something is. Nothing due now reads as ordinary text,
-            which is what it is.
-          */
-          tone === 'bad' && 'text-destructive',
-        )}
-      >
-        {value}
-      </dd>
-      {hint ? <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p> : null}
+      {/* «تسديد الفواتير المحددة» — sticky at the foot while a bill is ticked; a direct child of the root. */}
+      {canBulkSettle && token ? (
+        <BulkSettleBar
+          tenant={tenant}
+          base={base}
+          token={token}
+          locale={locale}
+          selection={bulkSelection}
+          onSettled={() => void reload().catch(logApiError)}
+          onStale={() => void reload().catch(logApiError)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -1564,12 +1564,20 @@ const FEES_URL = { feesPage: param.page() };
  * them must not be forced to settle all three or none: every row carries its
  * own «تسجيل دفعة» and its own receipt. Bulk-only settlement is exactly what
  * made arrears impossible to work down gradually.
+ *
+ * So «تسديد الفواتير المحددة» is added beside those, never in their place: for
+ * the finance roles a box on each settleable bill, and «تحديد الكل» over the
+ * page, tick the bills the citizen is paying today; the bar and the dialog that
+ * settle them live at the page's root (`selection`). A bill left unticked stays
+ * owed, and settleable on its own as before.
  */
 function FeesPanel({
   citizen,
   payments,
   fees,
   canManage,
+  canTakeCash,
+  selection,
   municipalityName,
   governorate,
   councilDecisionRef,
@@ -1582,6 +1590,10 @@ function FeesPanel({
   payments: CitizenProfilePayment[];
   fees: CitizenFeeTotals;
   canManage: boolean;
+  /** Whether a bill's own button opens the cash page (`CASH_COUNTER_ROLES`) or, for a collector, the counter settle page. */
+  canTakeCash: boolean;
+  /** The bills ticked for «تسديد الفواتير المحددة», or null for a role that may not settle several at once. */
+  selection: BulkSelection | null;
   municipalityName: string;
   governorate?: string | null;
   councilDecisionRef?: string | null;
@@ -1591,16 +1603,32 @@ function FeesPanel({
   locale?: string;
 }) {
   const { tenant, adminPath } = useParams<{ tenant: string; adminPath: string }>();
-  /** «تسجيل دفعة نقدية» is its own page now — ليرة, dollars, the rate — see payments/[paymentId]. */
+  const tSelect = useTranslations('bulkSettle.select');
+  const tReceipts = useTranslations('billReceipts');
+  /**
+   * The bill's own page, payments/[paymentId]: «تسجيل دفعة نقدية» — ليرة, dollars,
+   * the rate — while it is owed, and under it «وصولات الفاتورة», every receipt
+   * on the bill with «عكس الوصل» for the manager. A bill paid in full has no
+   * cash to take, so its row links there by the receipts' name instead.
+   *
+   * That page always takes cash into the safe, which the server refuses a
+   * collector (D13), so a collector's button opens the counter settle page
+   * instead: his own collection, or a Whish transfer.
+   */
   const settleHref = (paymentId: string) =>
-    `/${tenant}/${locale}/${adminPath}/citizens/${encodeURIComponent(citizen.id)}/payments/${encodeURIComponent(paymentId)}`;
+    canTakeCash
+      ? `/${tenant}/${locale}/${adminPath}/citizens/${encodeURIComponent(citizen.id)}/payments/${encodeURIComponent(paymentId)}`
+      : `/${tenant}/${locale}/${adminPath}/fees/payments/${encodeURIComponent(paymentId)}/settle`;
   const [receipt, setReceipt] = useState<{
     payment: CitizenProfilePayment;
     received: number;
   } | null>(null);
 
   const labels = getLabels(locale);
-  const outstanding = payments.filter((payment) => payment.paymentStatus !== 'PAID');
+  // A cancelled bill (CANCELLED) owes nothing.
+  const outstanding = payments.filter(
+    (payment) => payment.paymentStatus !== 'PAID' && payment.paymentStatus !== 'CANCELLED',
+  );
   const [{ feesPage: page }, setFeesUrl] = useUrlState(FEES_URL);
   const setPage = useCallback((next: number) => setFeesUrl({ feesPage: next }), [setFeesUrl]);
   const listTop = useRef<HTMLUListElement>(null);
@@ -1608,6 +1636,9 @@ function FeesPanel({
   const lastPage = Math.max(0, Math.ceil(payments.length / FEES_PAGE_SIZE) - 1);
   const shownPage = Math.min(page, lastPage);
   const pagePayments = payments.slice(shownPage * FEES_PAGE_SIZE, (shownPage + 1) * FEES_PAGE_SIZE);
+  /** This page's bills that may be ticked, and where «تحديد الكل» stands over them. */
+  const pageEligible = pagePayments.filter(isBulkSettleable).map((row) => fromCitizenPayment(citizen, row));
+  const pageState = selection ? pageSelection(selection.bills, pageEligible) : null;
 
   return (
     <>
@@ -1679,6 +1710,21 @@ function FeesPanel({
               }
             />
           ) : (
+            <div className="space-y-2">
+            {selection && pageState && pageState.eligible > 0 ? (
+              <div className="flex items-center gap-2">
+                <BillCheckbox
+                  id="citizen-fees-select-page"
+                  subject={{ kind: 'page', allSelected: pageState.allSelected }}
+                  checked={pageState.allSelected}
+                  blocked={pageState.blocked}
+                  onToggle={() => selection.toggleRows(pageEligible)}
+                />
+                <label htmlFor="citizen-fees-select-page" className="text-sm">
+                  {pageState.allSelected ? tSelect('pageClear') : tSelect('page')}
+                </label>
+              </div>
+            ) : null}
             <ul ref={listTop} className={cn('divide-y rounded-lg border lg:gap-x-3', FEE_LIST_GRID)}>
               <li
                 aria-hidden
@@ -1687,7 +1733,8 @@ function FeesPanel({
                   FEE_ROW_GRID,
                 )}
               >
-                <span>{locale === 'en' ? 'Item' : 'البند'}</span>
+                {/* Past the rows' boxes when they have them (`size-6` and `gap-3`), so the heading sits over the titles. */}
+                <span className={selection ? 'ps-9' : undefined}>{locale === 'en' ? 'Item' : 'البند'}</span>
                 <span>{locale === 'en' ? 'Status' : 'الحالة'}</span>
                 <span>{locale === 'en' ? 'Due' : 'الاستحقاق'}</span>
                 <span>{locale === 'en' ? 'Frequency' : 'الدورية'}</span>
@@ -1714,6 +1761,24 @@ function FeesPanel({
                     key={payment.id}
                     className={cn('grid items-center gap-x-3 gap-y-2 p-4', FEE_ROW_GRID)}
                   >
+                    <div className="flex min-w-0 items-start gap-3">
+                    {/*
+                      The box for «تسديد الفواتير المحددة», beside the row's own
+                      buttons rather than instead of them. A bill that cannot be
+                      ticked keeps the box's width, so every title lines up.
+                    */}
+                    {selection ? (
+                      isBulkSettleable(payment) ? (
+                        <BillCheckbox
+                          subject={{ kind: 'row', title: payment.title }}
+                          checked={selection.bills.some((entry) => entry.id === payment.id)}
+                          blocked={rowBlock(selection.bills, fromCitizenPayment(citizen, payment))}
+                          onToggle={() => selection.toggle(fromCitizenPayment(citizen, payment))}
+                        />
+                      ) : (
+                        <span aria-hidden className="size-6 shrink-0" />
+                      )
+                    ) : null}
                     <div className="min-w-0 space-y-0.5">
                       <p className="truncate font-semibold">{payment.title}</p>
                       {/*
@@ -1732,6 +1797,7 @@ function FeesPanel({
                           {payment.reviewNote}
                         </p>
                       ) : null}
+                    </div>
                     </div>
 
                     <div className="col-span-2 col-start-1 row-start-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground lg:contents">
@@ -1769,13 +1835,36 @@ function FeesPanel({
 
                     {canManage ? (
                       <div className="col-span-2 col-start-1 row-start-3 flex items-center gap-2 lg:col-span-1 lg:col-start-auto lg:row-start-auto lg:justify-end">
-                        {!settled ? (
+                        {/*
+                          Every bill links to its own page, named by what it
+                          holds now (`billPageLink`): the cash form while it is
+                          owed, the receipts once it is not — the way to a paid
+                          bill's «عكس الوصل» (review of PR #113). A collector
+                          is sent to the counter settle page (D13), and a bill
+                          with no payment to take shows him no link.
+                        */}
+                        {canTakeCash || billPageLink(payment) === 'settle' ? (
                           <Link
                             href={settleHref(payment.id)}
                             className={buttonVariants({ size: 'sm', variant: 'outline' })}
                           >
-                            <Banknote className="size-4" aria-hidden />
-                            {locale === 'en' ? 'Record cash' : 'تسجيل دفعة نقدية'}
+                            {billPageLink(payment) === 'settle' ? (
+                              <>
+                                <Banknote className="size-4" aria-hidden />
+                                {canTakeCash
+                                  ? locale === 'en'
+                                    ? 'Record cash'
+                                    : 'تسجيل دفعة نقدية'
+                                  : locale === 'en'
+                                    ? 'Record payment'
+                                    : 'تسجيل دفعة'}
+                              </>
+                            ) : (
+                              <>
+                                <ReceiptText className="size-4" aria-hidden />
+                                {tReceipts('open')}
+                              </>
+                            )}
                           </Link>
                         ) : null}
                         {payment.paidAmount > 0 ? (
@@ -1794,6 +1883,7 @@ function FeesPanel({
                 );
               })}
             </ul>
+            </div>
           )}
 
           <Pager

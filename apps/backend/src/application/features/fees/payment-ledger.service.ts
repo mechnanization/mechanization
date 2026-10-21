@@ -3,8 +3,10 @@ import { municipalToday, type PaymentMethod } from '@mechanization/shared-schema
 import type { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
+import { allocateDocumentNumber, allocateDocumentNumbers } from '../../common/document-number';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { AuditService, type AuditEntryInput } from '../audit/audit.service';
+import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
 
 /** One movement of money, as the caller describes it. */
 export interface LedgerEntryInput {
@@ -33,6 +35,49 @@ export interface LedgerEntryInput {
    * money twice.
    */
   clientRequestId?: string | null;
+  /**
+   * Set only by the two writes that settle a citizen's claim (PENDING_REVIEW):
+   * the staff confirmation and the Whish success callback. Any other `record`
+   * on a bill under review is refused (`PAYMENT_CLAIM_UNDER_REVIEW`): `append`
+   * writes PAID or UNPAID, and would erase the claim without deciding it.
+   */
+  resolvesClaim?: boolean;
+  /**
+   * With `resolvesClaim`, the claim this write decides: a bill under review is
+   * settled only while its claim is still this reference (`whishTransactionRef`).
+   * The Whish callback names its checkout, so a success that arrives after its
+   * own claim was refused and the citizen declared another transfer meets that
+   * other claim and is refused (`PAYMENT_CLAIM_UNDER_REVIEW`), not banked over
+   * it. The staff confirmation names none: it decides whichever claim is there.
+   */
+  claimRef?: string | null;
+  /**
+   * The settlement this movement belongs to, when one press settles several
+   * of a citizen's bills (migration 0085). The settlement row must already be
+   * written in the same transaction: the ledger refuses UPDATE, so a row joins
+   * its settlement at insert or never.
+   */
+  settlementId?: string | null;
+  /**
+   * The «RCP-» number for this movement, when the caller drew it beforehand
+   * (`reserveReceiptNumbers`, in the same transaction). A settlement of several
+   * bills draws all of its numbers before it locks its wallets, because a single
+   * payment takes the counter before its wallets and the two must agree on that
+   * order. Left out, the number is drawn here, as it always was.
+   */
+  receiptNumber?: string;
+}
+
+/** An invoice as its row lock returns it, as plain numbers. */
+export interface LockedInvoice {
+  id: string;
+  amount: number;
+  paidAmount: number;
+  currency: string;
+  paymentStatus: string;
+  citizenId: string;
+  createdAt: Date;
+  dueDate: Date;
 }
 
 /**
@@ -104,6 +149,7 @@ export class PaymentLedgerService {
   constructor(
     private readonly tenantContext: TenantContextService,
     private readonly auditTrail: AuditService,
+    private readonly treasury: TreasuryLedgerService,
   ) {}
 
   private get db() {
@@ -130,80 +176,243 @@ export class PaymentLedgerService {
    * reprint possible at all.
    */
   async record(input: LedgerEntryInput & { audit: LedgerAudit }): Promise<SettledTotals> {
-    if (!Number.isFinite(input.amount) || input.amount <= 0) {
+    assertPositiveAmount(input.amount);
+    return this.db.$transaction((tx) => this.recordIn(tx, input));
+  }
+
+  /**
+   * `record`, inside a transaction the caller already holds.
+   *
+   * For an act that settles several bills and must commit all of them or none
+   * (`PaymentSettlementService.settle`): the same lock, the same checks, the same
+   * receipt number, wallet entries and Tier 1 audit row, written through the
+   * caller's client. The caller owns the commit, and a refusal here rolls the
+   * whole act back.
+   */
+  async recordIn(
+    tx: Prisma.TransactionClient,
+    input: LedgerEntryInput & { audit: LedgerAudit },
+  ): Promise<SettledTotals> {
+    assertPositiveAmount(input.amount);
+    // Before the bill's row lock, as every caller takes it (`lockExternalRef`).
+    const externalRef = cleanExternalRef(input.externalRef);
+    if (externalRef) await this.lockExternalRef(tx, externalRef);
+    const invoice = await this.lock(tx, input.paymentId);
+
+    /*
+      Checked behind the lock, so two presses racing each other still meet
+      here one after the other and the second finds the first's row.
+    */
+    if (input.clientRequestId) {
+      const earlier = await this.replay(tx, invoice, input.clientRequestId, input);
+      if (earlier) return earlier;
+    }
+
+    if (invoice.paymentStatus === 'CANCELLED') throw billCancelled();
+    const outstanding = invoice.amount - invoice.paidAmount;
+    if (invoice.paymentStatus === 'PAID' || outstanding <= 0) {
+      throw new ConflictError({
+        code: 'PAYMENT_ALREADY_PAID',
+        message: 'This payment has already been settled.',
+      });
+    }
+    if (invoice.paymentStatus === 'PENDING_REVIEW') {
+      const decidesThisClaim =
+        input.resolvesClaim && (input.claimRef == null || input.claimRef === invoice.whishTransactionRef);
+      if (!decidesThisClaim) throw claimUnderReview();
+    }
+
+    /*
+      One Whish transfer is one receipt (finance audit B2). A reference already
+      on a receipt still standing — not reversed — is
+      refused, whichever path brings it: the counter, a citizen's claim being
+      confirmed, the Whish callback, a settlement of several bills. Only the
+      rows of one settlement share a reference, since one transfer paid them
+      all. Asked after the retry key's replay, so a retry finds its own row
+      first, and behind the reference's advisory lock, so two clerks typing one
+      reference at the same moment meet here one after the other.
+    */
+    if (externalRef) await this.assertExternalRefFree(tx, externalRef, input.settlementId ?? null);
+
+    /*
+      A closed treasury day takes nothing (docs/finance.md §7.3): a collector's
+      round or a counter payment back-dated into one is refused here, before a
+      receipt number is drawn, rather than by the ledger's own check further
+      down. Here in `recordIn`, not only in `record`, so every path that settles
+      a bill — the counter, a round, a bulk settlement — meets it. Today is
+      never closed by the application — only a day that has ended can be — so
+      an undated payment passes unless a closure says otherwise.
+    */
+    await this.treasury.assertPaymentDayOpen(tx, input.occurredAt ?? new Date());
+
+    // Money cannot have been taken against a bill before the bill existed.
+    if (input.occurredAt && municipalToday(input.occurredAt) < municipalToday(invoice.createdAt)) {
       throw new ValidationError({
-        code: 'PAYMENT_AMOUNT_NOT_POSITIVE',
-        message: 'The amount received must be greater than zero.',
-        details: {
-          amount: String(input.amount ?? ''),
-        },
+        code: 'PAYMENT_DATE_BEFORE_INVOICE',
+        message: `The payment date is before the invoice was issued (${municipalToday(invoice.createdAt)}).`,
+        params: { issuedOn: municipalToday(invoice.createdAt) },
+        details: { paidOn: municipalToday(input.occurredAt) },
       });
     }
 
-    return this.db.$transaction(async (tx) => {
-      const invoice = await this.lock(tx, input.paymentId);
-
-      /*
-        Checked behind the lock, so two presses racing each other still meet
-        here one after the other and the second finds the first's row.
-      */
-      if (input.clientRequestId) {
-        const earlier = await this.replay(tx, invoice, input.clientRequestId);
-        if (earlier) return earlier;
-      }
-
-      const outstanding = invoice.amount - invoice.paidAmount;
-      if (invoice.paymentStatus === 'PAID' || outstanding <= 0) {
+    const tolerance = toleranceFor(invoice.currency);
+    let credit = input.amount;
+    let changeGiven = 0;
+    /*
+      «الباقي»: a citizen pays a smaller bill with a larger dollar note and
+      gets the difference back. The credit is what was owed; the rest is
+      recorded as change, so tender − change = credit on the row. Only the
+      foreign notes can produce change — ليرة handed over beyond the balance
+      is a typing mistake, not a note too large to split.
+    */
+    if (input.tendered && input.amount > outstanding + tolerance) {
+      if (!input.tendered.foreign || input.tendered.local > outstanding + tolerance) {
         throw new ConflictError({
-          code: 'PAYMENT_ALREADY_PAID',
-          message: 'This payment has already been settled.',
+          code: 'PAYMENT_TENDER_EXCEEDS_BALANCE',
+          message: `The amount in the invoice currency (${input.tendered.local}) is more than the balance due (${outstanding}).`,
+          params: { amount: input.tendered.local, outstanding },
         });
       }
+      credit = outstanding;
+      changeGiven = roundTo(input.amount - outstanding, invoice.currency);
+    }
 
-      // Money cannot have been taken against a bill before the bill existed.
-      if (input.occurredAt && municipalToday(input.occurredAt) < municipalToday(invoice.createdAt)) {
-        throw new ValidationError({
-          code: 'PAYMENT_DATE_BEFORE_INVOICE',
-          message: `The payment date is before the invoice was issued (${municipalToday(invoice.createdAt)}).`,
-          params: { issuedOn: municipalToday(invoice.createdAt) },
-          details: { paidOn: municipalToday(input.occurredAt) },
-        });
-      }
+    if (credit > outstanding + tolerance) {
+      throw new ConflictError({
+        code: 'PAYMENT_EXCEEDS_BALANCE',
+        message: `The amount received (${credit}) is more than the balance due (${outstanding}).`,
+        params: { amount: credit, outstanding },
+      });
+    }
 
-      const tolerance = toleranceFor(invoice.currency);
-      let credit = input.amount;
-      let changeGiven = 0;
-      /*
-        «الباقي»: a citizen pays a smaller bill with a larger dollar note and
-        gets the difference back. The credit is what was owed; the rest is
-        recorded as change, so tender − change = credit on the row. Only the
-        foreign notes can produce change — ليرة handed over beyond the balance
-        is a typing mistake, not a note too large to split.
-      */
-      if (input.tendered && input.amount > outstanding + tolerance) {
-        if (!input.tendered.foreign || input.tendered.local > outstanding + tolerance) {
-          throw new ConflictError({
-            code: 'PAYMENT_TENDER_EXCEEDS_BALANCE',
-            message: `The amount in the invoice currency (${input.tendered.local}) is more than the balance due (${outstanding}).`,
-            params: { amount: input.tendered.local, outstanding },
-          });
-        }
-        credit = outstanding;
-        changeGiven = roundTo(input.amount - outstanding, invoice.currency);
-      }
+    const settled = await this.append(tx, invoice, credit, input, undefined, changeGiven);
+    await this.auditTrail.recordInTransaction(input.audit(settled), tx);
+    return settled;
+  }
 
-      if (credit > outstanding + tolerance) {
-        throw new ConflictError({
-          code: 'PAYMENT_EXCEEDS_BALANCE',
-          message: `The amount received (${credit}) is more than the balance due (${outstanding}).`,
-          params: { amount: credit, outstanding },
-        });
-      }
+  /**
+   * Draws `count` consecutive «RCP-» numbers in the caller's transaction, for
+   * `recordIn` calls that pass them back as `receiptNumber`.
+   *
+   * The RECEIPT counter's row stays locked until the caller commits, as it does
+   * for a single payment. Drawing the block up front is what lets a settlement
+   * of several bills hold the counter before it locks its wallets
+   * (`TreasuryLedgerService.lockPaymentWallets`) — the order a single payment
+   * takes them in — and it keeps the set's receipts consecutive.
+   */
+  async reserveReceiptNumbers(tx: Prisma.TransactionClient, count: number): Promise<string[]> {
+    return allocateDocumentNumbers(tx, this.S, 'RECEIPT', count);
+  }
 
-      const settled = await this.append(tx, invoice, credit, input, undefined, changeGiven);
-      await this.auditTrail.recordInTransaction(input.audit(settled), tx);
-      return settled;
-    });
+  /**
+   * Serialises every write that carries one Whish reference (finance audit B2),
+   * so two clerks typing the same reference at once meet in
+   * `assertExternalRefFree` one after the other. A transaction-scoped advisory
+   * lock, named by the schema so two municipalities never wait on each other.
+   * The key folds case and edge spaces in SQL, with the expression that
+   * comparison uses, so two references it calls one always take one lock.
+   *
+   * Taken before any row lock, like the retry key's: `recordIn` takes it ahead of
+   * the bill's, and a caller that locks bills itself first (`settleInPerson`, a
+   * settlement of several bills) takes it before them. Re-taking it in the same
+   * transaction is free (`pg_advisory_xact_lock` is re-entrant).
+   */
+  async lockExternalRef(tx: Prisma.TransactionClient, externalRef: string | null | undefined): Promise<void> {
+    const ref = cleanExternalRef(externalRef);
+    if (!ref) return;
+    const prefix = `${this.tenantContext.schemaName}:external-ref:`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${prefix}::text || lower(btrim(${ref}::text))))`;
+  }
+
+  /**
+   * Refuses a reference already on a receipt still standing (`PAYMENT_EXTERNAL_REF_REUSED`,
+   * naming that receipt). A reversed receipt frees its reference; the rows of
+   * `settlementId` share one by design. Compared without case or edge spaces,
+   * both sides folded by Postgres in the expression of
+   * `payment_transactions_externalRef_lower_idx` (0091), so the comparison never
+   * depends on JavaScript and Postgres agreeing on what `trim` or lower case is.
+   */
+  private async assertExternalRefFree(
+    tx: Prisma.TransactionClient,
+    externalRef: string,
+    settlementId: string | null,
+  ): Promise<void> {
+    const rows = await tx.$queryRaw<Array<{ receiptNumber: string }>>`
+      SELECT t."receiptNumber"
+        FROM ${this.S}payment_transactions t
+       WHERE lower(btrim(t."externalRef")) = lower(btrim(${externalRef}::text))
+         AND t."externalRef" IS NOT NULL
+         AND t."amount" > 0
+         AND NOT EXISTS (
+               SELECT 1 FROM ${this.S}payment_transactions r WHERE r."reversalOfId" = t."id"
+             )
+         AND (${settlementId}::uuid IS NULL OR t."settlementId" IS NULL OR t."settlementId" <> ${settlementId}::uuid)
+       LIMIT 1
+    `;
+    if (rows[0]) {
+      throw new ConflictError({
+        code: 'PAYMENT_EXTERNAL_REF_REUSED',
+        message: `This reference is already on receipt ${rows[0].receiptNumber}.`,
+        params: { receiptNumber: rows[0].receiptNumber },
+      });
+    }
+  }
+
+  /**
+   * The settings a payment is judged by — the official rate, the two
+   * currencies, the counter's rate tolerance and the go-live stamp — read FOR
+   * SHARE in the caller's transaction (finance audit B8). Take it after the
+   * bill's row lock: that is the order every payment path takes the two in.
+   */
+  async settings(tx: Prisma.TransactionClient) {
+    return this.treasury.config(tx);
+  }
+
+  /**
+   * Takes `record`'s row lock on several invoices at once, in id order.
+   *
+   * A settlement of several bills locks all of them before it writes any, so a
+   * bill another clerk is settling at that moment is waited for and then seen
+   * as paid, never half-way. Id order is the deadlock rule (as `lockAccounts`
+   * on wallets): two settlements over overlapping sets take their locks in the
+   * same order and the second simply waits. `recordIn` re-locking a row this
+   * transaction already holds costs nothing.
+   *
+   * Returns the rows found, in id order; the caller decides what a missing id
+   * means.
+   */
+  async lockInvoices(tx: Prisma.TransactionClient, paymentIds: string[]): Promise<LockedInvoice[]> {
+    const ids = [...new Set(paymentIds)].sort();
+    if (ids.length === 0) return [];
+    const rows = await tx.$queryRaw<
+      Array<{
+        id: string;
+        amount: string;
+        paidAmount: string;
+        currency: string;
+        paymentStatus: string;
+        citizenId: string;
+        createdAt: Date;
+        dueDate: Date;
+      }>
+    >`
+      SELECT "id", "amount"::text, "paidAmount"::text, "currency",
+             "paymentStatus"::text, "citizenId", "createdAt", "dueDate"
+        FROM ${this.S}citizen_payments
+       WHERE "id" = ANY(${ids}::uuid[])
+       ORDER BY "id"
+       FOR UPDATE
+    `;
+    return rows.map((row) => ({
+      id: row.id,
+      amount: Number(row.amount),
+      paidAmount: Number(row.paidAmount),
+      currency: row.currency,
+      paymentStatus: row.paymentStatus,
+      citizenId: row.citizenId,
+      createdAt: row.createdAt,
+      dueDate: row.dueDate,
+    }));
   }
 
   /**
@@ -230,22 +439,12 @@ export class PaymentLedgerService {
           method: true,
           externalRef: true,
           collectedById: true,
-          reversedBy: { select: { id: true } },
         },
       });
       if (!original) throw new NotFoundError({
         code: 'TRANSACTION_NOT_FOUND',
         message: `Transaction ${input.transactionId} was not found`,
       });
-
-      // The unique index on `reversalOfId` enforces this too; checking here
-      // turns a constraint violation into a sentence a clerk can act on.
-      if (original.reversedBy) {
-        throw new ConflictError({
-          code: 'TRANSACTION_ALREADY_REVERSED',
-          message: 'This transaction has already been reversed.',
-        });
-      }
       if (Number(original.amount) < 0) {
         throw new ConflictError({
           code: 'TRANSACTION_IS_REVERSAL',
@@ -254,6 +453,27 @@ export class PaymentLedgerService {
       }
 
       const invoice = await this.lock(tx, original.paymentId);
+      // `append` writes PAID or UNPAID, which would erase the citizen's pending claim.
+      if (invoice.paymentStatus === 'PENDING_REVIEW') throw claimUnderReview();
+
+      /*
+        The unique index on `reversalOfId` enforces this too; checking here
+        turns a constraint violation into a sentence a clerk can act on. Asked
+        under the invoice's lock, not before it: two clerks reversing the same
+        receipt together both passed a check made earlier, and the second
+        reached the index as a raw 500. The lock serialises them, and a reversal
+        committed while this one waited is visible now.
+      */
+      const reversedBy = await tx.paymentTransaction.findFirst({
+        where: { reversalOfId: original.id },
+        select: { id: true },
+      });
+      if (reversedBy) {
+        throw new ConflictError({
+          code: 'TRANSACTION_ALREADY_REVERSED',
+          message: 'This transaction has already been reversed.',
+        });
+      }
 
       const reversed = await this.append(
         tx,
@@ -337,6 +557,8 @@ export class PaymentLedgerService {
     paymentStatus: string;
     citizenId: string;
     createdAt: Date;
+    /** The claim the bill is under review for, when it is (`declare`, `startWhishCheckout`). */
+    whishTransactionRef: string | null;
   }> {
     const rows = await tx.$queryRaw<
       Array<{
@@ -347,10 +569,11 @@ export class PaymentLedgerService {
         paymentStatus: string;
         citizenId: string;
         createdAt: Date;
+        whishTransactionRef: string | null;
       }>
     >`
       SELECT "id", "amount"::text, "paidAmount"::text, "currency",
-             "paymentStatus"::text, "citizenId", "createdAt"
+             "paymentStatus"::text, "citizenId", "createdAt", "whishTransactionRef"
         FROM ${this.S}citizen_payments
        WHERE "id" = ${paymentId}::uuid
        FOR UPDATE
@@ -370,29 +593,61 @@ export class PaymentLedgerService {
       paymentStatus: row.paymentStatus,
       citizenId: row.citizenId,
       createdAt: row.createdAt,
+      whishTransactionRef: row.whishTransactionRef,
     };
   }
 
   /**
    * The totals of a movement already recorded under this retry key, or null.
-   * A key used for a different invoice is refused rather than answered: it can
-   * only mean a page reused an id, and replaying another bill's receipt would
-   * tell the clerk the wrong money was taken.
+   *
+   * A key names one act (finance audit B6): this bill, by this method, with this
+   * collector and reference, for this sum — or these notes, when cash came in
+   * two currencies. Replayed with all of them it answers with the first receipt.
+   * Anything else under the key is refused (`PAYMENT_IDEMPOTENCY_KEY_REUSED`)
+   * rather than answered: the screens keep a key across every edit, so a figure
+   * corrected after a lost answer arrives here, and answering it with the first
+   * receipt would tell the clerk the corrected sum was taken when it was not.
+   * The rate is not compared: a retry carries the official rate as it stands,
+   * which may have moved since, and the notes are what changed hands.
    */
   private async replay(
     tx: Prisma.TransactionClient,
     invoice: { id: string; amount: number; paidAmount: number; paymentStatus: string },
     clientRequestId: string,
+    input: LedgerEntryInput,
   ): Promise<SettledTotals | null> {
     const row = await tx.paymentTransaction.findUnique({
       where: { clientRequestId },
-      select: { id: true, paymentId: true, receiptNumber: true, amount: true, changeGiven: true, occurredAt: true },
+      select: {
+        id: true,
+        paymentId: true,
+        receiptNumber: true,
+        amount: true,
+        method: true,
+        collectedById: true,
+        externalRef: true,
+        tenderedLocal: true,
+        tenderedForeign: true,
+        tenderedForeignCurrency: true,
+        changeGiven: true,
+        occurredAt: true,
+        reversedBy: { select: { id: true } },
+      },
     });
     if (!row) return null;
-    if (row.paymentId !== invoice.id) {
+    if (row.paymentId !== invoice.id || !sameAct(row, input)) {
       throw new ConflictError({
         code: 'PAYMENT_IDEMPOTENCY_KEY_REUSED',
-        message: 'This operation’s identifier was already used for another invoice. Reload the page.',
+        message: `This operation’s identifier was already used for another payment (${row.receiptNumber}). Reload the page.`,
+        params: { receiptNumber: row.receiptNumber },
+      });
+    }
+    // Not answered as recorded once reversed: the clerk would hand over a receipt the ledger has cancelled.
+    if (row.reversedBy) {
+      throw new ConflictError({
+        code: 'TRANSACTION_ALREADY_REVERSED',
+        message: `This operation was recorded as ${row.receiptNumber}, and that receipt has since been reversed.`,
+        params: { receiptNumber: row.receiptNumber },
       });
     }
     return {
@@ -423,24 +678,21 @@ export class PaymentLedgerService {
     changeGiven = 0,
   ): Promise<SettledTotals> {
     /*
-      The sequence names its schema too — see `tenant-schema-ref.ts`.
+      «RCP-2610-0001» — the book, the month it was issued in, and a counter that
+      restarts on the first (migration 0079). Drawn from `document_counters`
+      rather than the old `payment_receipt_seq`, which a monthly reset is
+      impossible with: `nextval` only climbs.
 
-      `payment_receipt_seq` is created once per tenant schema (migration 0017),
-      so a bare `nextval('payment_receipt_seq')` resolves through the pooled
-      connection's `search_path` exactly as an unqualified table would. The
-      failure is worse than a missing table, though: this runs *inside* the
-      caller's transaction, behind the invoice's `FOR UPDATE`, so a drifted
-      connection either 42P01s a payment that is already half-written, or draws
-      from **another municipality's** sequence — and receipt numbers are printed
-      on paper handed to a resident.
-
-      `nextval` takes text cast to `regclass`, which accepts a quoted qualified
-      name, so the prefix goes inside the literal.
+      `tx`, not `this.db`: the number and the receipt have to commit or roll
+      back together. This runs inside the caller's transaction, behind the
+      invoice's `FOR UPDATE`, and `this.S` names the schema for the reason it
+      always has — a drifted pooled connection would otherwise draw from
+      **another municipality's** counter, and receipt numbers are printed on
+      paper handed to a resident.
     */
-    const [{ nextval }] = await tx.$queryRaw<Array<{ nextval: bigint }>>`
-      SELECT nextval('${this.S}payment_receipt_seq') AS nextval
-    `;
-    const receiptNumber = `RCP-${String(nextval).padStart(6, '0')}`;
+    const receiptNumber = input.receiptNumber ?? (await allocateDocumentNumber(tx, this.S, 'RECEIPT'));
+    // Stored clean, whichever path brought it (the Whish callback's is untrimmed).
+    const externalRef = cleanExternalRef(input.externalRef);
 
     const created = await tx.paymentTransaction.create({
       data: {
@@ -449,7 +701,7 @@ export class PaymentLedgerService {
         currency: invoice.currency,
         method: input.method as never,
         receiptNumber,
-        externalRef: input.externalRef ?? null,
+        externalRef,
         collectedById: input.collectedById ?? null,
         recordedById: input.recordedById ?? null,
         ...(reversalOfId ? { reversalOfId } : {}),
@@ -467,6 +719,7 @@ export class PaymentLedgerService {
           : {}),
         adjustmentReason: input.adjustmentReason ?? null,
         clientRequestId: input.clientRequestId ?? null,
+        settlementId: input.settlementId ?? null,
       },
       select: { id: true, occurredAt: true },
     });
@@ -513,10 +766,47 @@ export class PaymentLedgerService {
          * above, so overwriting these loses nothing.
          */
         paymentMethod: input.method as never,
-        whishTransactionRef: input.externalRef ?? null,
+        whishTransactionRef: externalRef,
         collectedById: input.collectedById ?? null,
       },
     });
+
+    /*
+      The wallets, in this same transaction: the payment and the money it moved
+      commit together or not at all. Only once the treasury is live and only for
+      a payment taken since (docs/finance.md §3). A reversal opposes the entries
+      of the movement it undoes; a refused outflow (the drawer cannot cover a
+      refund) rolls the reversal back with it.
+    */
+    if (reversalOfId) {
+      await this.treasury.reversePayment(tx, {
+        originalTransactionId: reversalOfId,
+        reversalTransactionId: created.id,
+        method: input.method,
+        invoiceCurrency: invoice.currency,
+        amount: Math.abs(delta),
+        occurredAt: created.occurredAt,
+        actorId: input.recordedById ?? null,
+      });
+    } else {
+      await this.treasury.creditPayment(tx, {
+        paymentTransactionId: created.id,
+        occurredAt: created.occurredAt,
+        actorId: input.recordedById ?? null,
+        method: input.method,
+        invoiceCurrency: invoice.currency,
+        amount: delta,
+        tendered: input.tendered
+          ? {
+              local: input.tendered.local,
+              foreign: input.tendered.foreign,
+              foreignCurrency: input.tendered.foreignCurrency,
+            }
+          : null,
+        changeGiven,
+        collectedById: input.collectedById ?? null,
+      });
+    }
 
     return {
       receiptNumber,
@@ -530,6 +820,87 @@ export class PaymentLedgerService {
       replayed: false,
     };
   }
+}
+
+/** Money received is more than nothing — checked before any lock is taken. */
+function assertPositiveAmount(amount: number): void {
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new ValidationError({
+      code: 'PAYMENT_AMOUNT_NOT_POSITIVE',
+      message: 'The amount received must be greater than zero.',
+      details: {
+        amount: String(amount ?? ''),
+      },
+    });
+  }
+}
+
+/**
+ * Whether a row recorded under a retry key is the act a retry now describes
+ * (`replay`): the same method, collector and reference, and the same notes —
+ * or, with no notes, the same sum. Ids and references compared as written
+ * apart from case and edge spaces.
+ */
+function sameAct(
+  row: {
+    amount: Prisma.Decimal;
+    method: string;
+    collectedById: string | null;
+    externalRef: string | null;
+    tenderedLocal: Prisma.Decimal | null;
+    tenderedForeign: Prisma.Decimal | null;
+    tenderedForeignCurrency: string | null;
+  },
+  input: LedgerEntryInput,
+): boolean {
+  const id = (value: string | null | undefined) => value?.trim().toLowerCase() || null;
+  if (row.method !== input.method) return false;
+  if (id(row.collectedById) !== id(input.collectedById)) return false;
+  if (normaliseExternalRef(row.externalRef) !== normaliseExternalRef(input.externalRef)) return false;
+  const near = (a: number, b: number) => Math.abs(a - b) < 0.005;
+  if (input.tendered) {
+    if (row.tenderedLocal === null) return false;
+    return (
+      near(Number(row.tenderedLocal), input.tendered.local) &&
+      near(Number(row.tenderedForeign ?? 0), input.tendered.foreign ?? 0) &&
+      (row.tenderedForeignCurrency ?? null) === (input.tendered.foreignCurrency ?? null)
+    );
+  }
+  return row.tenderedLocal === null && near(Number(row.amount), input.amount);
+}
+
+/**
+ * A Whish reference as it is stored, locked on and looked up: edge whitespace of
+ * every kind removed, case kept; null when empty. The provider's callback hands
+ * its `transactionRef` over untrimmed, and JavaScript's `trim()` takes tabs,
+ * newlines and no-break spaces that Postgres's `btrim()` leaves, so the
+ * reference is cleaned once here. The comparison itself (case, edge spaces) is
+ * Postgres's, in the expression 0091 indexes (`assertExternalRefFree`,
+ * `lockExternalRef`).
+ */
+function cleanExternalRef(value: string | null | undefined): string | null {
+  return value?.trim() || null;
+}
+
+/** Two references compared in JavaScript (`sameAct`, a retry's replay): clean, then case-folded. */
+function normaliseExternalRef(value: string | null | undefined): string | null {
+  return cleanExternalRef(value)?.toLowerCase() ?? null;
+}
+
+/** A bill the manager cancelled (0090): it owes nothing and takes nothing. */
+function billCancelled(): ConflictError {
+  return new ConflictError({
+    code: 'PAYMENT_BILL_CANCELLED',
+    message: 'This bill has been cancelled; it takes no payment.',
+  });
+}
+
+/** A citizen's payment claim on this bill awaits a clerk's confirmation or refusal. */
+function claimUnderReview(): ConflictError {
+  return new ConflictError({
+    code: 'PAYMENT_CLAIM_UNDER_REVIEW',
+    message: 'A citizen payment claim on this bill is under review; confirm or reject it first.',
+  });
 }
 
 /** Half a pound for ليرة; a tenth of a cent for dollars and euros alike. */

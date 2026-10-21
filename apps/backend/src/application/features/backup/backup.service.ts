@@ -134,8 +134,10 @@ const TABLE_ORDER = [
    * `inspector_payouts.inspectorId` cascades from `users`, which restore
    * deletes and rewrites — so every restore destroyed every recorded commission
    * and then did not put it back, while reporting success. The same shape as
-   * the `unitOccupancy` hole above. It carries no trigger and needs only
-   * `user`, so it simply belongs here.
+   * the `unitOccupancy` hole above. It needs only `user`, so it simply belongs
+   * here. Its one trigger (0089) refuses deleting a payout paid by a voucher,
+   * and lets every figure-only payout go: a municipality holding a linked one
+   * already holds its voucher, whose keys to `users` refuse the restore anyway.
    */
   'inspectorPayout',
 ] as const;

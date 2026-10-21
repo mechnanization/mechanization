@@ -302,6 +302,29 @@ describeIfDb('CorrectionBillsService', () => {
     expect(await listed(bill.id)).toMatchObject({ now: { kind: 'NOT_TARGETED' }, difference: -5000 });
   });
 
+  it('a flat charge to a category: nothing today once the only unit of it is exempt (0077)', async () => {
+    const { citizenId, units } = await holder('GARAGE', 1);
+    const bill = await issue(citizenId, {
+      basis: 'FLAT',
+      amount: 5000,
+      targetType: 'BUILDING_CATEGORY',
+      targetCategory: 'GARAGE',
+      targetCitizenId: undefined,
+    });
+    expect(Number(bill.amount)).toBe(5000);
+    await db.unit.update({
+      where: { id: units[0]!.id },
+      data: { feeExemption: 'PUBLIC_FACILITY' as never, feeExemptedById: clerkId, feeExemptedAt: new Date() },
+    });
+    await trail(bill, {
+      action: 'CITIZEN_UPDATED',
+      entityType: 'User',
+      entityId: citizenId,
+      after: { cards: [{ cardId: 'c', kind: 'changed' }], reason: 'تصحيح' },
+    });
+    expect(await listed(bill.id)).toMatchObject({ now: { kind: 'ASSESSED', amount: 0 }, difference: -5000 });
+  });
+
   it('a review hides the bill at the figure it saw, refuses a figure it did not, and a later correction reopens it', async () => {
     const { citizenId, lines } = await holder('SHOP', 3);
     const bill = await issue(citizenId);

@@ -63,6 +63,13 @@ describe('nonResidentUnitConflict', () => {
     expect(message).toMatch(/مسكن موسمي/);
   });
 
+  it('refuses «مسكن موسمي» on a home every owner of which is an estate or an institution, in its words', () => {
+    const conflict = (seasonalOwner: string) =>
+      nonResidentUnitConflict({ unitCode: '0101', nonResidentOccupants: [], ownerOccupiedByNonResident: false, seasonalOwner });
+    expect(conflict('ESTATE')).toMatch(/المرحوم لا يسكن الوحدة 0101/);
+    expect(conflict('INSTITUTION')).toMatch(/الجهة لا تسكن المسكن 0101/);
+  });
+
   it('lets everything else through', () => {
     expect(
       nonResidentUnitConflict({ unitCode: '0101', nonResidentOccupants: [], ownerOccupiedByNonResident: false }),
@@ -83,11 +90,18 @@ describe('changedUnitFields', () => {
     side: null,
     startCol: 1,
     endCol: 1,
+    levels: 1,
     presenceMonths: [],
     ownerLastStayAt: null,
     vacancyDeclaredAt: null,
     notes: null,
   };
+
+  it('records a level count, which changes a per-roof bill (0095)', () => {
+    const changes = changedUnitFields(base, { ...base, unitType: 'APARTMENT', levels: 2 });
+    expect(changes.before).toEqual({ unitType: 'SHOP', levels: 1 });
+    expect(changes.after).toEqual({ unitType: 'APARTMENT', levels: 2 });
+  });
 
   it('records a retype and a re-measure, which change a bill', () => {
     const changes = changedUnitFields(base, { ...base, unitType: 'APARTMENT', unitArea: '140' });

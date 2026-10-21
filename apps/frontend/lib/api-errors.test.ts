@@ -79,6 +79,81 @@ describe('localizeApiError', () => {
   it('shows the server message rather than a broken sentence when params are missing', () => {
     expect(localizeApiError({ code: 'PAYMENT_EXCEEDS_BALANCE', message: 'fallback' }, 'ar')).toBe('fallback');
   });
+
+  /*
+    The day a refusal names travels as `YYYY-MM-DD`; the page writes days as
+    09/10/2026 (PRIM-12). A closed-day refusal read «يومية 2026-10-09 مقفلة»
+    under a sheet that said «يمكن إقفال يومية 09/10/2026» (review of 2026-10-11).
+  */
+  it('writes a day the server names the way the page writes days, never the wire’s ISO form', () => {
+    for (const code of ['CLOSED_DAY_MUTATION_BLOCKED', 'DAY_ALREADY_CLOSED', 'DAY_NOT_OVER']) {
+      for (const locale of ['ar', 'en'] as const) {
+        const text = localizeApiError({ code, message: 'x', params: { date: '2026-10-09' } }, locale);
+        expect({ code, locale, text: text.includes('09/10/2026') && !text.includes('2026-10-09') }).toEqual({
+          code,
+          locale,
+          text: true,
+        });
+      }
+    }
+    const short = localizeApiError(
+      {
+        code: 'TREASURY_INSUFFICIENT_FUNDS_ON_DAY',
+        message: 'x',
+        params: { account: 'مصرف التجربة', date: '2026-10-07', available: 0, required: 4_000_000, currency: 'LBP' },
+      },
+      'ar',
+    );
+    expect(short).toContain('07/10/2026');
+    expect(short).toContain('4,000,000');
+    // A value that is not a day is left alone, a voucher number among them.
+    const voucher = localizeApiError(
+      {
+        code: 'TREASURY_INSUFFICIENT_FUNDS_FOR_VOID',
+        message: 'x',
+        params: { voucher: 'RV-2610-0004', account: 'صندوق النقد', available: 1, required: 2 },
+      },
+      'en',
+    );
+    expect(voucher).toContain('RV-2610-0004');
+  });
+
+  /*
+    A salary's month travels as `YYYY-MM`. The salary dialog offers it by name
+    («عن شهر»), and the refusal under that field read «2026-11» beside it.
+  */
+  it('writes a month the server names by its name, never the wire’s YYYY-MM', () => {
+    const future = { code: 'SALARY_PERIOD_IN_FUTURE', message: 'x', params: { period: '2026-11' } };
+    expect(localizeApiError(future, 'ar')).toContain('تشرين الثاني 2026');
+    expect(localizeApiError(future, 'en')).toContain('November 2026');
+    const tooOld = { code: 'SALARY_PERIOD_TOO_OLD', message: 'x', params: { period: '2025-09', oldest: '2025-11' } };
+    for (const locale of ['ar', 'en'] as const) {
+      expect({ locale, text: localizeApiError(tooOld, locale) }).toEqual({
+        locale,
+        text: expect.not.stringMatching(/\d{4}-\d{2}/),
+      });
+    }
+    expect(localizeApiError(tooOld, 'ar')).toContain('أيلول 2025');
+    expect(localizeApiError(tooOld, 'en')).toContain('September 2025');
+    expect(localizeApiError(tooOld, 'en')).toContain('November 2025');
+  });
+
+  /*
+    The bulk dialog's key is its set of bills, so from the screen this refusal
+    means the same bills pressed again another way after a lost answer: the
+    earlier press was recorded. It said the key had settled «other bills» and to
+    reload, and the clerk was never told a receipt existed (review of 2026-10-11).
+  */
+  it('says a reused bulk-settle key recorded its settlement, and names the receipt', () => {
+    const payload = { code: 'BULK_SETTLE_REQUEST_REUSED', message: 'x', params: { number: 'BRC-2610-0001' } };
+    const ar = localizeApiError(payload, 'ar');
+    expect(ar).toContain('BRC-2610-0001');
+    expect(ar).toContain('سُجّلت');
+    expect(ar).not.toContain('فواتير أخرى');
+    const en = localizeApiError(payload, 'en');
+    expect(en).toContain('BRC-2610-0001');
+    expect(en).toContain('already recorded');
+  });
 });
 
 describe('ApiRequestError', () => {

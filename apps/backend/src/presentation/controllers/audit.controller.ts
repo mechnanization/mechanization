@@ -1,7 +1,11 @@
 import { Controller, Get, Query } from '@nestjs/common';
 import {
   AUDIT_READ_ROLES,
+  AUDIT_SYSTEM_ACTOR,
+  auditActorFilterSchema,
+  type AuditActorFilter,
 } from '@mechanization/shared-schemas';
+import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { AuditService } from '../../application/features/audit/audit.service';
 import { Roles } from '../decorators/roles.decorator';
 import { parseDate } from './query-params';
@@ -25,6 +29,15 @@ function safeTimeZone(value: string | undefined): string {
   } catch {
     return DEFAULT_TIME_ZONE;
   }
+}
+
+/**
+ * `?actorId=`, already validated (`auditActorFilterSchema`): a person's id, or
+ * «النظام» — the entries with no actor, which have no id to filter by.
+ */
+function actorFilter(actorId: AuditActorFilter): { actorId?: string; systemActor?: true } {
+  if (actorId === AUDIT_SYSTEM_ACTOR) return { systemActor: true };
+  return actorId ? { actorId } : {};
 }
 
 /** Comma-separated, so one filter can mean a family — «كل التصحيحات». */
@@ -64,7 +77,7 @@ export class AuditController {
   @Roles(...AUDIT_READ_ROLES)
   @Get('daily')
   async daily(
-    @Query('actorId') actorId?: string,
+    @Query('actorId', new ZodValidationPipe(auditActorFilterSchema)) actorId?: AuditActorFilter,
     @Query('entityType') entityType?: string,
     @Query('action') action?: string,
     @Query('from') from?: string,
@@ -74,7 +87,7 @@ export class AuditController {
     @Query('offset') offset = '0',
   ) {
     return this.audit.daily({
-      actorId,
+      ...actorFilter(actorId),
       entityType,
       actions: parseActions(action),
       /*
@@ -94,7 +107,7 @@ export class AuditController {
   @Roles(...AUDIT_READ_ROLES)
   @Get()
   async query(
-    @Query('actorId') actorId?: string,
+    @Query('actorId', new ZodValidationPipe(auditActorFilterSchema)) actorId?: AuditActorFilter,
     @Query('entityType') entityType?: string,
     @Query('entityId') entityId?: string,
     @Query('action') action?: string,
@@ -104,7 +117,7 @@ export class AuditController {
     @Query('offset') offset = '0',
   ) {
     return this.audit.query({
-      actorId,
+      ...actorFilter(actorId),
       entityType,
       entityId,
       actions: parseActions(action),

@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useTranslations } from 'next-intl';
 import { AlertTriangle, Minus, Plus, Trash2 } from 'lucide-react';
 import {
   getLabels,
@@ -60,6 +61,17 @@ export interface GridUnitDraft {
    * has none, because nobody has been asked yet.
    */
   unitStatus?: UnitStatus | null;
+  /**
+   * How many levels an existing home spans upward from `floor` — a «دوبلكس»
+   * is 2 (0095). Its upper rows are drawn as the same block and cannot be
+   * painted over; it is set on the unit, never by painting.
+   */
+  levels?: number;
+}
+
+/** Whether a drafted unit occupies `floor` — at its entrance or as an upper level. */
+function onFloor(unit: GridUnitDraft, floor: number): boolean {
+  return floor >= unit.floor && floor <= unit.floor + (unit.levels ?? 1) - 1;
 }
 
 export const MIN_HORIZONTAL_BLOCKS = 1;
@@ -159,7 +171,8 @@ function highestOccupied(units: GridUnitDraft[]): { row: number; col: number; de
   let col = 0;
   let depth = 0;
   for (const unit of units) {
-    row = Math.max(row, unit.floor + 1);
+    // A home's upper levels are rows the grid cannot shrink below (0095).
+    row = Math.max(row, unit.floor + (unit.levels ?? 1));
     col = Math.max(col, unit.endCol);
     if (unit.floor < 0) depth = Math.max(depth, -unit.floor);
   }
@@ -243,6 +256,7 @@ export function UnitGridPicker({
   const en = locale === 'en';
   const labels = getLabels(locale);
   const toast = useToast();
+  const tFloors = useTranslations('floorCount');
 
   const colsCount = Math.max(MIN_HORIZONTAL_BLOCKS, gridSize || DEFAULT_HORIZONTAL_BLOCKS);
   const safeFloorsCount = Math.max(MIN_VERTICAL_BLOCKS, floorsCount || DEFAULT_VERTICAL_BLOCKS);
@@ -283,7 +297,7 @@ export function UnitGridPicker({
 
   const unitAt = useCallback(
     (floor: number, col: number): GridUnitDraft | undefined =>
-      units.find((unit) => unit.floor === floor && cellsOverlap(unit, col)),
+      units.find((unit) => onFloor(unit, floor) && cellsOverlap(unit, col)),
     [units],
   );
 
@@ -819,9 +833,11 @@ export function UnitGridPicker({
         <div className="grid w-full grid-cols-1 gap-2 lg:w-80 lg:shrink-0">
           {/* Vertical / Floors */}
           <div className="flex min-w-0 items-center justify-between gap-2 rounded-lg border bg-background/80 px-2.5 py-1.5 shadow-2xs">
-            <span className="min-w-0 truncate text-xs font-medium text-muted-foreground">
-              {en ? 'Vertical (Floors)' : 'عمودي (الطوابق)'}
-            </span>
+            {/*
+              «الطوابق المسقوفة» — built levels under a roof, the ground floor
+              and a pilotis among them; never the roof (decision of 2026-10-07).
+            */}
+            <span className="min-w-0 truncate text-xs font-medium text-muted-foreground">{tFloors('label')}</span>
             <div className="flex shrink-0 items-center gap-1.5">
               <Button
                 type="button"
@@ -830,7 +846,7 @@ export function UnitGridPicker({
                 className="size-10 shrink-0 lg:size-8"
                 onClick={() => requestVerticalChange(safeFloorsCount - 1)}
                 disabled={safeFloorsCount <= MIN_VERTICAL_BLOCKS || safeFloorsCount <= minFloorsAllowed}
-                aria-label={en ? 'Fewer floors' : 'إنقاص الطوابق'}
+                aria-label={tFloors('fewer')}
               >
                 <Minus className="size-4" />
               </Button>
@@ -844,7 +860,7 @@ export function UnitGridPicker({
                 value={verticalInput}
                 onChange={(e) => handleVerticalInputChange(e.target.value)}
                 onBlur={handleVerticalInputBlur}
-                aria-label={en ? 'Number of floors' : 'عدد الطوابق'}
+                aria-label={tFloors('aria')}
                 className="h-10 w-12 shrink-0 px-1 py-0 text-center font-mono text-sm font-semibold [appearance:textfield] lg:h-8 lg:text-xs [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                 dir="ltr"
               />
@@ -855,7 +871,7 @@ export function UnitGridPicker({
                 className="size-10 shrink-0 lg:size-8"
                 onClick={() => requestVerticalChange(safeFloorsCount + 1)}
                 disabled={safeFloorsCount >= MAX_VERTICAL_BLOCKS}
-                aria-label={en ? 'More floors' : 'زيادة الطوابق'}
+                aria-label={tFloors('more')}
               >
                 <Plus className="size-4" />
               </Button>
@@ -963,6 +979,12 @@ export function UnitGridPicker({
           {sizeError}
         </p>
       ) : null}
+
+      {/* What the height counts, and a duplex — the two answers officers asked for in the field. */}
+      <div className="space-y-0.5 text-xs leading-relaxed text-muted-foreground">
+        <p>{tFloors('help')}</p>
+        <p>{tFloors('duplexHelp')}</p>
+      </div>
 
       {/*
         «إضافة كراج / ملحق» — the one-block case, made reachable.
@@ -1386,6 +1408,7 @@ export function UnitGridPicker({
       <Sheet
         open={Boolean(panel)}
         onClose={() => setPanel(null)}
+        closeLabel={en ? 'Close' : 'إغلاق'}
         title={panelTitle}
       >
         {panel ? (

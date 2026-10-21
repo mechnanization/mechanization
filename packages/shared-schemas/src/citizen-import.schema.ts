@@ -13,6 +13,7 @@ import {
   UNIT_STATUS,
   UNIT_TYPE,
 } from './enums';
+import type { ErrorCode, ErrorParams } from './error-codes';
 import { normalizeDigits } from './primitives';
 
 /**
@@ -482,10 +483,22 @@ export interface CitizenImportRowResult {
   ok: boolean;
   name?: string;
   referenceNumber?: string;
-  /** Arabic, already user-facing — the same message the form would have shown. */
+  /**
+   * Arabic, already user-facing — the same message the form would have shown.
+   * Absent when the refusal has a `code`: the words for that are the screen's.
+   */
   error?: string;
+  /** The refusal's code, when it has one (`CITIZEN_DUPLICATE_BLOCKED`, …): show `errors.<code>` with `params`. */
+  code?: ErrorCode;
+  params?: ErrorParams;
   /** Which column the error belongs to, when the failure names a field. */
   column?: string;
+  /**
+   * A row that will be imported but held at «يتطلب مراجعة» with «سجل مشابه
+   * موجود»: it resembles these files (their names as shown) without being
+   * certainly one of them. Only the dry run says so; nobody is asked.
+   */
+  possibleDuplicateOf?: string[];
 }
 
 export interface CitizenImportResult {

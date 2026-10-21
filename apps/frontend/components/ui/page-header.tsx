@@ -5,10 +5,20 @@ import { cn } from '@/lib/utils';
  * One page heading, everywhere.
  *
  * Every admin screen had grown its own header — the same tinted icon tile,
- * title, subtitle and action row, re-typed with slightly different sizes and
- * gaps each time. Pulling it into one component is what makes «المواطنون» and
- * «إدارة الرسوم» look like the same product rather than two that happen to
- * share a sidebar.
+ * title and action row, re-typed with slightly different sizes and gaps each
+ * time. Pulling it into one component is what makes «المواطنون» and «إدارة
+ * الرسوم» look like the same product rather than two that happen to share a
+ * sidebar.
+ *
+ * ## A title and nothing under it
+ *
+ * There is no subtitle, on purpose. It was removed from every page at once: a
+ * line of description under every title was read once and then skipped forever,
+ * and it pushed the content down on every visit. Where a subtitle was carrying
+ * something the reader needs — whose bill is being settled — that fact moved
+ * into the title or the page body rather than being lost. A page that needs to
+ * explain itself does it where the explanation is used: beside the field, in an
+ * empty state, in an alert.
  *
  * `actions` is pushed to the far edge with `ms-auto` rather than the row using
  * `justify-between`: the header has two children at some widths and three at
@@ -17,13 +27,11 @@ import { cn } from '@/lib/utils';
 export function PageHeader({
   icon: Icon,
   title,
-  subtitle,
   actions,
   className,
 }: {
   icon: React.ComponentType<{ className?: string }>;
   title: React.ReactNode;
-  subtitle?: React.ReactNode;
   actions?: React.ReactNode;
   className?: string;
 }) {
@@ -41,14 +49,9 @@ export function PageHeader({
         >
           <Icon className="size-5" />
         </span>
-        <div className="min-w-0 flex-1">
-          <h1 className="text-xl font-bold leading-tight tracking-tight sm:truncate md:text-2xl">
-            {title}
-          </h1>
-          {subtitle ? (
-            <p className="mt-0.5 text-xs sm:text-sm text-muted-foreground">{subtitle}</p>
-          ) : null}
-        </div>
+        <h1 className="min-w-0 flex-1 text-xl font-bold leading-tight tracking-tight sm:truncate md:text-2xl">
+          {title}
+        </h1>
       </div>
       {actions ? (
         <div className="flex items-center gap-2 shrink-0 sm:ms-auto overflow-x-auto max-w-full pb-1 sm:pb-0">{actions}</div>

@@ -1,5 +1,10 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Post } from '@nestjs/common';
-import { unitCorrectionDeleteSchema, type UnitCorrectionDeleteInput } from '@mechanization/shared-schemas';
+import {
+  duplexMergeSchema,
+  unitCorrectionDeleteSchema,
+  type DuplexMergeInput,
+  type UnitCorrectionDeleteInput,
+} from '@mechanization/shared-schemas';
 import { UnitCorrectionService } from '../../application/features/corrections/unit-correction.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { CurrentUser } from '../decorators/current-user.decorator';
@@ -37,5 +42,26 @@ export class CorrectionsController {
     @CurrentUser() user: SessionClaims,
   ) {
     return this.units.apply(unitId, body, { id: user.sub, role: user.role ?? '' });
+  }
+
+  /**
+   * «دمج مع الوحدة العلوية كدوبلكس» (D28): what folding the flat directly above
+   * into this one would do, with the fingerprint the merge must quote.
+   */
+  @Roles('SUPER_ADMIN')
+  @Get('units/:unitId/merge-upper')
+  previewMerge(@Param('unitId', new ParseUUIDPipe()) unitId: string) {
+    return this.units.previewMerge(unitId);
+  }
+
+  /** Folds the flat above into this one exactly as previewed, or changes nothing. */
+  @Roles('SUPER_ADMIN')
+  @Post('units/:unitId/merge-upper')
+  mergeUpper(
+    @Param('unitId', new ParseUUIDPipe()) unitId: string,
+    @Body(new ZodValidationPipe(duplexMergeSchema)) body: DuplexMergeInput,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.units.applyMerge(unitId, body, { id: user.sub, role: user.role ?? '' });
   }
 }

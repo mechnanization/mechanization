@@ -22,7 +22,7 @@ const GROUPS_STORAGE_KEY = 'mechanization.sidebar.groups';
  * A module-level store rather than `useState` inside `SidebarNav`, because that
  * component is mounted twice at once: the rail is `hidden lg:flex`, so it stays
  * in the DOM behind the drawer rather than unmounting. Two independent copies
- * of this state means folding «الأرض» in the drawer on a tablet, then rotating
+ * of this state means folding «المباني والأرض» in the drawer on a tablet, then rotating
  * to landscape, reveals a rail that never heard about it.
  *
  * Folded labels are stored rather than open ones so that a group added to
@@ -331,8 +331,8 @@ export function SidebarNav({
             >
               <span className="min-w-0 flex-1 truncate">{localizedGroupLabel(group, locale)}</span>
               {/* The one thing a folded group must still say: your current
-                  section is in here. Without it, folding «السجل» while on the
-                  dashboard leaves nothing on screen saying where you are. */}
+                  section is in here. Without it, folding «المواطنون» while on
+                  «سجل المواطنين» leaves nothing on screen saying where you are. */}
               {isFolded && holdsActive ? (
                 <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-primary" />
               ) : null}

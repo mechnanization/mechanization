@@ -445,3 +445,60 @@ export const partialNonResidentOwnerContactSchema = nonResidentOwnerContactObjec
     localContactName: data.localContactName || undefined,
     localContactPhone: data.localContactPhone || undefined,
   }));
+
+/**
+ * «تركة (ورثة المرحوم …)» — the deceased owner's own file, converted in place
+ * (migration 0076). His name, as it was: the screens add «ورثة المرحوم». Nothing
+ * else is asked of a person who has died.
+ */
+export const estatePersonalSchema = z.object({
+  firstName: arabicOrLatinName,
+  middleName: arabicOrLatinName.optional().or(z.literal('')),
+  lastName: arabicOrLatinName,
+});
+
+export const partialEstatePersonalSchema = estatePersonalSchema.partial().required({ firstName: true, lastName: true });
+
+/**
+ * «جهة أو وقف» — the institution's name on one line («وقف مسجد البلدة»,
+ * «المجلس البلدي»). Letters, digits and the punctuation names of bodies carry;
+ * stored across the name parts (`splitInstitutionName`).
+ */
+export const institutionName = z
+  .string({ required_error: 'اسم الجهة مطلوب' })
+  .trim()
+  .min(2, 'اسم الجهة قصير جداً')
+  .max(120, 'اسم الجهة طويل جداً')
+  .regex(/^[\p{L}\p{M}\p{N}\s.'()\-–،/]+$/u, 'اسم الجهة يحتوي على رموز غير مقبولة');
+
+export const institutionPersonalSchema = z.object({ firstName: institutionName });
+
+export const partialInstitutionPersonalSchema = institutionPersonalSchema.partial().required({ firstName: true });
+
+/**
+ * How to reach an estate or an institution: its representative — «ممثل الورثة»,
+ * «المسؤول عن الجهة» — in the local-contact fields, and a phone if there is one.
+ * Nothing here is required: the owner of record exists to be billed and found,
+ * and a waqf with no known trustee is still the owner of its mosque.
+ */
+const nonPersonContactObject = z.object({
+  phone: optionalInternationalPhone,
+  whatsappSameAsPhone: z.boolean().default(true),
+  whatsapp: optionalInternationalPhone,
+  localContactName: z.string().trim().max(120, 'الاسم طويل جداً').optional(),
+  localContactPhone: optionalInternationalPhone,
+});
+
+export const nonPersonContactSchema = nonPersonContactObject.transform((data) => ({
+  ...data,
+  whatsapp: data.whatsappSameAsPhone ? data.phone : data.whatsapp,
+  localContactName: data.localContactName || undefined,
+  localContactPhone: data.localContactPhone || undefined,
+}));
+
+export const partialNonPersonContactSchema = nonPersonContactObject.partial().transform((data) => ({
+  ...data,
+  whatsapp: data.whatsappSameAsPhone === false ? data.whatsapp : (data.phone ?? data.whatsapp),
+  localContactName: data.localContactName || undefined,
+  localContactPhone: data.localContactPhone || undefined,
+}));

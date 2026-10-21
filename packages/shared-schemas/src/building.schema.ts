@@ -4,7 +4,9 @@ import {
   damageLevelSchema,
   damageSourceSchema,
   occupancyEndReasonSchema,
+  feeExemptionReasonSchema,
   occupancyRoleSchema,
+  ownerBillingModeSchema,
   structureTypeSchema,
   surveyStatusSchema,
   unitStatusSchema,
@@ -14,7 +16,8 @@ import {
 } from './enums';
 import { habitabilityFor, isReinspectDayAhead } from './damage-rule';
 import { areaField, propertyNumberField } from './property.schema';
-import { arabicOrLatinName, internationalPhone, uuid } from './primitives';
+import { arabicOrLatinName, internationalPhone, normalizeDigits, uuid } from './primitives';
+import { unitLevelsField } from './unit-levels';
 
 /**
  * "Not in the future", judged when the date arrives rather than when this
@@ -221,6 +224,29 @@ const floorField = z.coerce
   .max(100, 'الطابق خارج النطاق المقبول');
 
 /**
+ * «هذا المنزل يصبح مبنى» — the answer an officer gives when a house that is on
+ * somebody's file as a «منزل» gets a second unit (decision D28, 2026-10-17).
+ *
+ * A «منزل» card names no unit: it claims the one unit of a one-unit structure,
+ * and every reader infers that from the unit count. A second unit silently
+ * breaks it — the next save of the file closes the household's occupancy, and
+ * recording them on the new unit opens a second card beside the first. Five
+ * production files went that way before this question existed.
+ *
+ *  - `EXTRA_LEVEL` — the new floor is another level of the same home. No unit
+ *    is created: the house's unit rises a level (`Unit.levels`), so a flat
+ *    becomes a «دوبلكس» and a house gains a full roof.
+ *  - `SEPARATE_UNIT` — it is another unit. It is created, and every «منزل» card
+ *    on the structure becomes a «مبنى» card naming the house's unit, in the
+ *    same transaction, so nothing has to infer it again.
+ *
+ * Asked by the server (`HOUSE_GROWTH_UNANSWERED`), never assumed.
+ */
+export const HOUSE_GROWTH = ['EXTRA_LEVEL', 'SEPARATE_UNIT'] as const;
+export const houseGrowthSchema = z.enum(HOUSE_GROWTH);
+export type HouseGrowth = z.infer<typeof houseGrowthSchema>;
+
+/**
  * A single unit, created or corrected by hand from the matrix.
  *
  * `floor` and `sequence` are the durable pair and `unitCode` is derived from
@@ -288,6 +314,8 @@ export const upsertUnitSchema = z.object({
    * form.
    */
   acknowledgedDuplicates: z.boolean().optional(),
+  /** See `HOUSE_GROWTH`. Only read when the structure is a house on somebody's file. */
+  houseGrowth: houseGrowthSchema.optional(),
 });
 
 export type UpsertUnitInput = z.infer<typeof upsertUnitSchema>;
@@ -459,7 +487,7 @@ export const createBuildingSchema = z
           of its floors to be a duplicate of, which is the same reason `create`
           takes no advisory lock for these sequences.
         */
-        upsertUnitSchema.omit({ acknowledgedDuplicates: true }).extend({
+        upsertUnitSchema.omit({ acknowledgedDuplicates: true, houseGrowth: true }).extend({
           /**
            * The browser's own id for this unit, for the same reason the
            * building has one: a phone with no signal has to be able to put a
@@ -588,10 +616,14 @@ const uniformBlueprint = z.object({
     .min(1, 'وحدة واحدة على الأقل في كل طابق')
     .max(20, 'عدد الوحدات في الطابق كبير جداً'),
   unitType: unitTypeSchema,
+  /** See `HOUSE_GROWTH`. A blueprint only ever creates units, so only `SEPARATE_UNIT` is accepted. */
+  houseGrowth: houseGrowthSchema.optional(),
 });
 
 const explicitBlueprint = z.object({
   kind: z.literal('explicit'),
+  /** See `uniformBlueprint.houseGrowth`. */
+  houseGrowth: houseGrowthSchema.optional(),
   floors: z
     .array(
       z.object({
@@ -647,8 +679,14 @@ export const updateUnitSchema = upsertUnitSchema
     counts any present key as a change, so a PATCH carrying nothing but this
     flag would pass the "at least one field" guard and then save nothing.
   */
-  .omit({ acknowledgedDuplicates: true })
+  .omit({ acknowledgedDuplicates: true, houseGrowth: true })
   .extend({
+    /**
+     * «عدد طوابق المسكن» — how many levels this one home spans, upward from its
+     * floor (`Unit.levels`, 0095): 2 is a «دوبلكس». Dwellings only; the server
+     * refuses it on any other type and when the floors above are drawn on.
+     */
+    levels: unitLevelsField,
     /**
      * «مسكن موسمي» — the facts a council needs to decide how a seasonal home is
      * billed, recorded rather than decided here (see `UNIT_STATUS.SEASONAL`).
@@ -703,6 +741,8 @@ export const saveBuildingMatrixSchema = z
       .max(200)
       .default([]),
     add: z.array(matrixCell).max(200).default([]),
+    /** See `HOUSE_GROWTH`; forwarded to every unit this save adds. */
+    houseGrowth: houseGrowthSchema.optional(),
     expectedUpdatedAt: z.string().datetime().optional(),
     dryRun: z.boolean().optional(),
   })
@@ -813,6 +853,13 @@ export const createDamageAssessmentSchema = z
 
 export type CreateDamageAssessmentInput = z.infer<typeof createDamageAssessmentSchema>;
 
+/** أسهم out of 2400 — an owner's part of the deed, as the register records it. */
+export const ownerSharesValue = z.coerce
+  .number({ invalid_type_error: 'عدد الأسهم يجب أن يكون رقماً' })
+  .int('يجب أن يكون رقماً صحيحاً')
+  .min(1, 'يجب أن يكون سهماً واحداً على الأقل')
+  .max(2400, 'الحد الأقصى 2400 سهم');
+
 /**
  * Who is in a unit, recorded straight onto the matrix.
  *
@@ -834,12 +881,7 @@ export const upsertOccupancySchema = z
     citizenId: uuid,
     role: occupancyRoleSchema,
     /** أسهم out of 2400 — owners only; see the refinement below. */
-    shares: z.coerce
-      .number({ invalid_type_error: 'عدد الأسهم يجب أن يكون رقماً' })
-      .int('يجب أن يكون رقماً صحيحاً')
-      .min(1, 'يجب أن يكون سهماً واحداً على الأقل')
-      .max(2400, 'الحد الأقصى 2400 سهم')
-      .optional(),
+    shares: ownerSharesValue.optional(),
     /**
      * حالة الوحدة, stated rather than inferred — and asked of an owner only.
      *
@@ -1315,6 +1357,94 @@ export const endVacancySchema = z.object({
 export type EndVacancyInput = z.infer<typeof endVacancySchema>;
 
 /**
+ * «توزيع الرسم على المالكين» — the officer's choice for a flat with several
+ * owners (migration 0075; the user's decision, 2026-10-07). See
+ * `OWNER_BILLING_MODE` and `ownerShareOf`.
+ *
+ * `mode` null puts the flat back on the default — split equally — and is how
+ * a choice is withdrawn. `shares` records or corrects the owners' أسهم in the
+ * same save, because «حسب الأسهم» is only as good as the figures behind it and
+ * the drawer asks for them beside the choice; each entry names a current owner
+ * of the flat (the server refuses anyone else).
+ */
+export const setOwnerBillingSchema = z
+  .object({
+    mode: ownerBillingModeSchema.nullable(),
+    responsibleOwnerId: uuid.nullable().optional(),
+    shares: z
+      .array(z.object({ citizenId: uuid, shares: ownerSharesValue }))
+      .max(200, 'عدد المالكين كبير جداً')
+      .optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.mode === 'RESPONSIBLE_OWNER' && !value.responsibleOwnerId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['responsibleOwnerId'],
+        message: 'اختر المالك الذي يدفع عن الجميع',
+      });
+    }
+    if (value.mode !== 'RESPONSIBLE_OWNER' && value.responsibleOwnerId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['responsibleOwnerId'],
+        message: 'المالك المسؤول يُحدَّد فقط مع «مالك مسؤول يدفع عن الجميع»',
+      });
+    }
+    const seen = new Set<string>();
+    for (const [index, entry] of (value.shares ?? []).entries()) {
+      if (seen.has(entry.citizenId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['shares', index, 'citizenId'],
+          message: 'هذا المالك مكرّر',
+        });
+      }
+      seen.add(entry.citizenId);
+    }
+  });
+
+export type SetOwnerBillingInput = z.infer<typeof setOwnerBillingSchema>;
+
+/**
+ * «معفاة من الرسوم» — granting (`reason` set) or lifting (`reason` null) a
+ * unit's exemption from every fee (migration 0077). SUPER_ADMIN only. «سبب
+ * آخر» needs its reason in words; a lift takes no note — the audit row records
+ * who lifted it and when, and the exemption it ended.
+ */
+export const setUnitFeeExemptionSchema = z
+  .object({
+    reason: feeExemptionReasonSchema.nullable(),
+    note: z.string().trim().max(500, 'السبب طويل جداً').optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.reason === 'OTHER' && (value.note ?? '').length < 3) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['note'], message: 'اكتب سبب الإعفاء' });
+    }
+  });
+
+export type SetUnitFeeExemptionInput = z.infer<typeof setUnitFeeExemptionSchema>;
+
+/** A flat's «توزيع الرسم على المالكين» as the drawer shows it, after a save or on demand. */
+export interface OwnerBillingState {
+  unitId: string;
+  unitCode: string;
+  /** The officer's choice; null means nobody chose and the flat is split equally. */
+  mode: 'EQUAL' | 'BY_SHARES' | 'RESPONSIBLE_OWNER' | null;
+  responsibleOwnerId: string | null;
+  /** The method billing applies — after the default and any fallback. */
+  effectiveMode: 'EQUAL' | 'BY_SHARES' | 'RESPONSIBLE_OWNER';
+  /** The responsible owner is no longer an owner, so the flat is split equally until someone chooses again. */
+  fallback: 'RESPONSIBLE_NOT_OWNER' | null;
+  owners: Array<{
+    citizenId: string;
+    shares: number | null;
+    /** This owner's part as a fraction; null when it cannot be computed (أسهم missing). */
+    share: { numerator: number; denominator: number } | null;
+  }>;
+}
+
+/**
  * What the census ledger filters on.
  *
  * Every field optional and composable — the page's filters are checkboxes and
@@ -1326,7 +1456,13 @@ export const buildingFilterSchema = z.object({
    * their `sharedParcelNumbers`. The sector filter, by contrast, reads only the
    * parcel a building is filed under (D13).
    */
-  parcelNumber: z.string().trim().max(40).optional(),
+  // In Latin digits, as a building's own رقم العقار is saved (`propertyNumberField`).
+  parcelNumber: z
+    .string()
+    .trim()
+    .max(40)
+    .transform((value) => normalizeDigits(value))
+    .optional(),
   zoneId: uuid.optional(),
   structureType: structureTypeSchema.optional(),
   lifecycleStatus: buildingLifecycleSchema.optional(),

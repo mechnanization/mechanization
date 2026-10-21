@@ -71,4 +71,35 @@ describe('DomainExceptionFilter', () => {
     expect(internal.body).toMatchObject({ code: 'INTERNAL_ERROR', kind: 'INTERNAL_ERROR' });
     expect(String(internal.body.message)).not.toContain('does not exist');
   });
+
+  it('logs the path without its query string: a search term may be a رقم مرجعي', () => {
+    const lines: string[] = [];
+    const response = {
+      status() {
+        return this;
+      },
+      json() {
+        return this;
+      },
+    };
+    const request = { method: 'GET', originalUrl: '/api/v1/t/zahle/requests?search=BZR-2610-NZ58VK', correlationId: 'c-2' };
+    const host = {
+      switchToHttp: () => ({ getResponse: () => response, getRequest: () => request }),
+    } as unknown as ArgumentsHost;
+    const filter = new DomainExceptionFilter();
+    (filter as unknown as { logger: { warn: (line: string) => void; error: (line: string) => void } }).logger = {
+      warn: (line) => lines.push(line),
+      error: (line) => lines.push(line),
+    };
+
+    filter.catch(new ConflictError({ code: 'PAYMENT_EXCEEDS_BALANCE', message: 'refused' }), host);
+    filter.catch(new Error('boom'), host);
+
+    expect(lines).toHaveLength(2);
+    for (const line of lines) {
+      expect(line).toContain('GET /api/v1/t/zahle/requests');
+      expect(line).not.toContain('search=');
+      expect(line).not.toContain('NZ58VK');
+    }
+  });
 });

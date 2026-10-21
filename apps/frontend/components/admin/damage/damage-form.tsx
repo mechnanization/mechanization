@@ -31,7 +31,8 @@ import { today, type DamageFormValues } from '@/lib/damage-reading';
  * at «صالحة» and can be changed — a sound flat with no water or windows is not
  * fit to live in; restricted use starts unanswered and must be answered. A
  * reading that says nobody can live there may carry the day of the visit after
- * repair, and holds the flat's occupancy fee until then.
+ * repair, and exempts the flat from every fee until a later reading says it is
+ * habitable (decisions of 2026-10-05 and 2026-10-07).
  */
 export function DamageForm({
   busy,

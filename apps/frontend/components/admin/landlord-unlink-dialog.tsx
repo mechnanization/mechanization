@@ -10,6 +10,7 @@ import {
   type UnlinkPreview,
   type UnlinkResult,
 } from '@/lib/api-client';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -97,8 +98,8 @@ export function LandlordUnlinkDialog({
       } else if (result.kept.length > 0) {
         toast.warning(en ? 'Link undone — some records were kept' : 'أُلغي الربط — وبقيت بعض السجلات', {
           description: en
-            ? 'They were changed after the link, or another tenant’s link still uses them. Review the owner’s file.'
-            : 'عُدِّلت بعد الربط، أو يعتمد عليها ربط مستأجر آخر. راجع ملف المالك.',
+            ? 'They were changed after the link, a municipal request names them, or another tenant’s link still uses them. Review the owner’s file.'
+            : 'عُدِّلت بعد الربط، أو تذكرها معاملة بلدية، أو يعتمد عليها ربط مستأجر آخر. راجع ملف المالك.',
           duration: 10000,
         });
       } else {
@@ -154,9 +155,9 @@ export function LandlordUnlinkDialog({
         </DialogHeader>
 
         {loadError ? (
-          <p role="alert" className="rounded-md bg-destructive/10 p-2.5 text-sm text-destructive">
+          <Alert variant="destructive" live="alert">
             {loadError}
-          </p>
+          </Alert>
         ) : !preview ? (
           <p className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin" aria-hidden />
@@ -231,9 +232,9 @@ export function LandlordUnlinkDialog({
         )}
 
         {failure ? (
-          <p role="alert" className="rounded-md bg-destructive/10 p-2.5 text-sm text-destructive">
+          <Alert variant="destructive" live="alert">
             {failure}
-          </p>
+          </Alert>
         ) : null}
 
         <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">

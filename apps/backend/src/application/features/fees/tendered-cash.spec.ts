@@ -88,13 +88,36 @@ describe('assertCashAdjustment — who may depart from the ordinary', () => {
     ).toThrow(ForbiddenError);
   });
 
-  it('lets an accountant override the rate only with a reason', () => {
+  // Inside the exchange rule's 3% band (finance audit A2): 91,000 is 1.7% from 89,500.
+  const withinBand = toTender({ local: 0, foreign: 10, foreignCurrency: 'USD', exchangeRate: 91_000 }, 'LBP', OFFICIAL);
+
+  it('lets an accountant override the rate within the tolerance, only with a reason', () => {
     expect(() =>
-      assertCashAdjustment({ tender: overridden, paidOn: undefined, reason: undefined, role: 'ACCOUNTANT', today }),
+      assertCashAdjustment({ tender: withinBand, paidOn: undefined, reason: undefined, role: 'ACCOUNTANT', today }),
     ).toThrow(ValidationError);
     expect(
-      assertCashAdjustment({ tender: overridden, paidOn: undefined, reason: 'قرار المجلس 12/2026', role: 'ACCOUNTANT', today }),
+      assertCashAdjustment({ tender: withinBand, paidOn: undefined, reason: 'قرار المجلس 12/2026', role: 'ACCOUNTANT', today }),
     ).toMatchObject({ required: true, rateOverridden: true });
+  });
+
+  it('keeps a rate beyond the tolerance to the manager, even with a reason (A2)', () => {
+    expect(() =>
+      assertCashAdjustment({ tender: overridden, paidOn: undefined, reason: 'قرار المجلس 12/2026', role: 'ACCOUNTANT', today }),
+    ).toThrow(expect.objectContaining({ code: 'EXCHANGE_RATE_OVERRIDE_BEYOND_TOLERANCE' }));
+    expect(
+      assertCashAdjustment({ tender: overridden, paidOn: undefined, reason: 'قرار المجلس 12/2026', role: 'SUPER_ADMIN', today }),
+    ).toMatchObject({ required: true, rateOverridden: true });
+    // The band is the manager's setting: narrowed to 1%, the same 1.7% is his alone.
+    expect(() =>
+      assertCashAdjustment({
+        tender: withinBand,
+        paidOn: undefined,
+        reason: 'قرار المجلس 12/2026',
+        role: 'ACCOUNTANT',
+        today,
+        tolerancePercent: 1,
+      }),
+    ).toThrow(expect.objectContaining({ code: 'EXCHANGE_RATE_OVERRIDE_BEYOND_TOLERANCE' }));
   });
 
   it('treats any rate as an override when the municipality has set none', () => {
@@ -159,6 +182,18 @@ describe('the day the money was taken', () => {
 
   it('puts a back-dated payment at midday on its own day', () => {
     expect(occurredAtFor('2026-09-28')?.toISOString()).toBe('2026-09-28T12:00:00.000Z');
+  });
+
+  it('keeps the real time when the day sent is today on the Beirut calendar', () => {
+    // 01:30 on 3 Oct in Beirut: «today» is the 3rd, not UTC's 2nd.
+    const now = new Date('2026-10-02T22:30:00.000Z');
+    expect(occurredAtFor('2026-10-03', null, now)).toEqual(now);
+  });
+
+  it('never dates a go-live-day payment before the opening entry', () => {
+    const goLiveAt = new Date('2026-10-01T16:00:00.000Z');
+    const now = new Date('2026-10-05T08:00:00.000Z');
+    expect(occurredAtFor('2026-10-01', goLiveAt, now)).toEqual(goLiveAt);
   });
 
   it('reads «today» on the Beirut calendar, not UTC', () => {

@@ -1,13 +1,21 @@
 import {
+  BILL_CANCEL_ROLES as SHARED_BILL_CANCEL_ROLES,
+  BULK_SETTLE_ROLES as SHARED_BULK_SETTLE_ROLES,
   CENSUS_WORKLIST_ROLES,
-  FEE_ISSUE_ROLES,
+  FEE_SETTLE_ROLES,
   LANDLORD_LINK_ANSWER_ROLES as SHARED_LANDLORD_LINK_ANSWER_ROLES,
+  PAYMENT_REVERSE_ROLES as SHARED_PAYMENT_REVERSE_ROLES,
   PAYMENT_REVIEW_MARK_ROLES,
   QUALITY_REVIEWER_ROLES as SHARED_QUALITY_REVIEWER_ROLES,
   REGISTER_EXPORT_ROLES as SHARED_REGISTER_EXPORT_ROLES,
   REGISTER_WRITE_ROLES,
   WORKING_STAFF_ROLES,
   hasStaffRole,
+  type StaffRole,
+  REQUEST_BILL_ROLES as SHARED_REQUEST_BILL_ROLES,
+  REQUEST_HANDLE_ROLES as SHARED_REQUEST_HANDLE_ROLES,
+  REQUEST_READ_ROLES as SHARED_REQUEST_READ_ROLES,
+  REQUEST_SETTINGS_ROLES as SHARED_REQUEST_SETTINGS_ROLES,
 } from '@mechanization/shared-schemas';
 
 /**
@@ -57,9 +65,66 @@ export const REFERENCE_SEND_ROLES: readonly string[] = WORKING_STAFF_ROLES;
 
 /**
  * Record a payment against a bill — `PATCH fees/payments/:id/settle`, the
- * counter and the round. `FEE_ISSUE_ROLES`, as the route.
+ * counter and the round. `FEE_SETTLE_ROLES`, as the route: the collector
+ * settles, though it issues no fee (`FEE_ISSUE_ROLES`).
  */
-export const PAYMENT_SETTLE_ROLES: readonly string[] = FEE_ISSUE_ROLES;
+export const PAYMENT_SETTLE_ROLES: readonly string[] = FEE_SETTLE_ROLES;
+
+/**
+ * «تسجيل دفعة نقدية» — cash into the safe at the counter, the citizen file's
+ * cash page, which always sends `CASH`. Narrower than `PAYMENT_SETTLE_ROLES`:
+ * a collector records the cash he takes as his own collection, or a Whish
+ * transfer, and the server refuses him `CASH` (`COLLECTOR_CANNOT_SELECT_METHOD`,
+ * finance audit B1, decision D13). That rule lives in `FeesService.settleInPerson`, not
+ * in a `@Roles` — the route is `FEE_SETTLE_ROLES`, the collector included — so there
+ * is no shared set to take; this mirrors it. A collector is sent to the counter
+ * settle page, which offers him those two methods.
+ */
+export const CASH_COUNTER_ROLES: readonly string[] = [
+  'SUPER_ADMIN',
+  'ACCOUNTANT',
+] as const satisfies readonly StaffRole[];
+
+/**
+ * «تسديد الفواتير المحددة» — tick several of one citizen's bills and settle
+ * them in one press, `POST fees/payments/bulk-settle`. `BULK_SETTLE_ROLES`, as
+ * the route: the finance roles only, so a collector still settles the same
+ * bills one at a time with «تسجيل دفعة».
+ */
+export const BULK_SETTLE_ROLES: readonly string[] = SHARED_BULK_SETTLE_ROLES;
+
+/**
+ * «إلغاء الفاتورة» — withdraw a bill nothing was paid on, `POST
+ * fees/payments/:id/cancel` (finance audit B3). `BILL_CANCEL_ROLES`, as the
+ * route: the manager alone.
+ */
+export const BILL_CANCEL_ROLES: readonly string[] = SHARED_BILL_CANCEL_ROLES;
+
+/**
+ * المعاملات والإفادات (docs/municipal-requests-plan.md), as the routes: read the
+ * queue, a request and its papers (not «مشاهد فقط»: the papers are identity
+ * copies); handle one (file at the counter, approve, reject, hand over, cancel);
+ * raise its fee as a bill; and set which types are offered and their fees.
+ */
+export const REQUEST_READ_ROLES: readonly string[] = SHARED_REQUEST_READ_ROLES;
+export const REQUEST_HANDLE_ROLES: readonly string[] = SHARED_REQUEST_HANDLE_ROLES;
+export const REQUEST_BILL_ROLES: readonly string[] = SHARED_REQUEST_BILL_ROLES;
+export const REQUEST_SETTINGS_ROLES: readonly string[] = SHARED_REQUEST_SETTINGS_ROLES;
+
+/**
+ * Send a citizen a copy of a consolidated receipt over WhatsApp. Every working
+ * role, the audience the single receipt's «إرسال عبر واتساب» already has;
+ * «مشاهد فقط» reads and prints a receipt, and sends nothing. The message carries
+ * no رقم مرجعي (`lib/bulk-receipt-message.ts`), so this is not
+ * `REFERENCE_SEND_ROLES`, though today it is the same list.
+ */
+export const RECEIPT_SEND_ROLES: readonly string[] = WORKING_STAFF_ROLES;
+
+/**
+ * «عكس الوصل» on a bill's receipts — `POST fees/transactions/:id/reverse`.
+ * `PAYMENT_REVERSE_ROLES`, as the route: the manager alone.
+ */
+export const PAYMENT_REVERSE_ROLES: readonly string[] = SHARED_PAYMENT_REVERSE_ROLES;
 
 /** The register export, `dashboard/export.csv`. Not «مشاهد فقط». */
 export const REGISTER_EXPORT_ROLES: readonly string[] = SHARED_REGISTER_EXPORT_ROLES;

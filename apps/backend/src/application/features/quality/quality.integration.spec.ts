@@ -69,7 +69,7 @@ describeIfDb('Quality review', () => {
     /*
       Always a miss, so every assertion below reads the register rather than
       whatever a previous case left behind. `DataQualityService` caches its
-      eight scans in production; a test that shared them could not tell a
+      scans in production; a test that shared them could not tell a
       finding that was fixed from one that was merely remembered.
     */
     const cache = {
@@ -233,6 +233,29 @@ describeIfDb('Quality review', () => {
     expect(returned.target).toMatchObject({ type: 'User', label: 'ريم مراجعة', link: { kind: 'citizen', id: citizenId } });
   });
 
+  it("reports the tab's size on every page, a page past the end included", async () => {
+    await filing(staff.hussein, { firstName: 'سارة', lastName: 'صفحات' });
+    await filing(staff.hussein, { firstName: 'سامر', lastName: 'صفحات' });
+
+    const first = await within(() =>
+      reviews.queue({ states: ['NEW'], officerId: staff.hussein, limit: 1, offset: 0 }),
+    );
+    expect(first.items).toHaveLength(1);
+    expect(first.total).toBeGreaterThanOrEqual(2);
+    expect(first.total).toBe(first.counts.NEW);
+
+    /*
+      The last card of the last page decided, or a stale ?page=: no row on the
+      page. The tab still holds records, and «مراجعة السجلات» steps back to
+      them only if `total` says so (`pageWithRows`).
+    */
+    const beyond = await within(() =>
+      reviews.queue({ states: ['NEW'], officerId: staff.hussein, limit: 1, offset: first.total + 5 }),
+    );
+    expect(beyond.items).toHaveLength(0);
+    expect(beyond.total).toBe(first.total);
+  });
+
   it('closes a return for the phone once the officer answers «لا يملك رقم هاتف»', async () => {
     /*
       The return asked for a number; «لا يملك رقم هاتف» is the complete answer
@@ -252,6 +275,24 @@ describeIfDb('Quality review', () => {
       await db.user.update({ where: { id: citizenId }, data: { hasNoPhone: true, phone: null, whatsapp: null } });
       await reviews.onCitizenChanged({ citizenId, action: 'CITIZEN_UPDATED', actorId: staff.jawad });
     });
+    expect(await within(() => reviews.openReturnFor(citizenId))).toBeNull();
+  });
+
+  it('closes a return for the phone and the mother’s name on an estate, which is asked neither (0076)', async () => {
+    const { citizenId, registrationId } = await filing(staff.jawad, { firstName: 'نزار', lastName: 'تركة' });
+    await db.user.update({
+      where: { id: citizenId },
+      data: { residence: 'ESTATE' as never, phone: null, whatsapp: null, motherName: null, hasNoPhone: false },
+    });
+    await within(() =>
+      reviews.returnToOfficer(
+        registrationId,
+        { reason: 'الهاتف واسم الأم ناقصان', fields: ['PHONE', 'MOTHER_NAME'] },
+        as('auditor'),
+      ),
+    );
+
+    await within(() => reviews.onCitizenChanged({ citizenId, action: 'CITIZEN_UPDATED', actorId: staff.jawad }));
     expect(await within(() => reviews.openReturnFor(citizenId))).toBeNull();
   });
 
@@ -481,6 +522,132 @@ describeIfDb('Quality review', () => {
       target: { link: { kind: 'building', id: second.building.id } },
     });
     expect((created.items[0]!.after as Record<string, unknown>).duplicateReason).toBe('مبنى آخر خلفه');
+  });
+
+  /**
+   * «توزيع على المالكين لا يُطبَّق» against the real `activeOwnerSpells` read:
+   * a «حسب الأسهم» shop that gained an owner with no أسهم, and a responsible
+   * owner whose file was archived. Each finding closes by itself once the flat
+   * is one billing can divide again.
+   */
+  it('warns of a co-owned flat whose saved billing method cannot be carried out', async () => {
+    const tag = randomUUID().slice(0, 8);
+    const building = await db.building.create({
+      data: {
+        parcelNumber: `OB${tag}`,
+        codeSuffix: 'A',
+        code: `A2-OB-${tag}`,
+        structureType: 'MIXED_USE',
+        floorsCount: 1,
+        createdById: staff.jawad,
+      },
+    });
+    const unit = (unitCode: string, sequence: number) =>
+      db.unit.create({ data: { buildingId: building.id, unitCode, floor: 0, sequence, unitType: 'SHOP' } });
+    const owner = async (firstName: string) =>
+      (await filing(staff.jawad, { firstName, lastName: `مالك${tag}` })).citizenId;
+    const ali = await owner('علي');
+    const maarouf = await owner('معروف');
+    const aref = await owner('عارف');
+
+    const byShares = await unit('0001', 1);
+    await db.unitOccupancy.createMany({
+      data: [
+        { unitId: byShares.id, citizenId: ali, role: 'OWNER', shares: 1200 },
+        // Recorded after «حسب الأسهم» was saved, by a path that writes no أسهم.
+        { unitId: byShares.id, citizenId: maarouf, role: 'OWNER', shares: null },
+      ],
+    });
+    await db.unit.update({ where: { id: byShares.id }, data: { ownerBillingMode: 'BY_SHARES' } });
+
+    const responsible = await unit('0002', 2);
+    await db.unitOccupancy.createMany({
+      data: [
+        { unitId: responsible.id, citizenId: ali, role: 'OWNER' },
+        { unitId: responsible.id, citizenId: maarouf, role: 'OWNER' },
+        { unitId: responsible.id, citizenId: aref, role: 'OWNER' },
+      ],
+    });
+    await db.unit.update({
+      where: { id: responsible.id },
+      data: { ownerBillingMode: 'RESPONSIBLE_OWNER', responsibleOwnerId: aref },
+    });
+
+    const blocked = async () =>
+      new Map(
+        (await within(() => quality.findings())).items
+          .filter((finding) => finding.kind === 'OWNER_BILLING_BLOCKED')
+          .map((finding) => [finding.subjectKey, finding]),
+      );
+
+    // A responsible owner who still owns it is a method billing carries out.
+    let found = await blocked();
+    expect(found.get(byShares.id)).toMatchObject({
+      severity: 'HIGH',
+      dismissable: false,
+      subjects: [expect.objectContaining({ kind: 'building', id: building.id })],
+    });
+    expect(found.get(byShares.id)!.detail).toContain('(1 من 2)');
+    expect(found.has(responsible.id)).toBe(false);
+
+    // «أرشفة الملف» on the responsible owner: billing falls back to the equal split, and says so here.
+    await db.user.update({ where: { id: aref }, data: { isActive: false } });
+    found = await blocked();
+    expect(found.get(responsible.id)).toMatchObject({ severity: 'MEDIUM' });
+
+    // The أسهم recorded: the shop divides again, and the finding is gone.
+    await db.unitOccupancy.updateMany({ where: { unitId: byShares.id, citizenId: maarouf }, data: { shares: 1200 } });
+    found = await blocked();
+    expect(found.has(byShares.id)).toBe(false);
+    expect(found.has(responsible.id)).toBe(true);
+  });
+
+  it('names homes whose levels look wrong, and «منزل» cards on buildings of several units (D28)', async () => {
+    const tag = randomUUID().slice(0, 8);
+    const structure = (code: string, structureType: 'RESIDENTIAL_BUILDING' | 'INDEPENDENT_HOUSE', floorsCount: number) =>
+      db.building.create({
+        data: { parcelNumber: `LV${code}${tag}`, codeSuffix: 'A', code: `LV-${code}-${tag}`, structureType, floorsCount, createdById: staff.jawad },
+      });
+    const flat = (buildingId: string, unitCode: string, floor: number, extra: Record<string, unknown> = {}) =>
+      db.unit.create({
+        data: { buildingId, unitCode, floor, sequence: 1, startCol: 1, endCol: 1, unitType: 'APARTMENT', unitStatus: 'OWNER_OCCUPIED', ...extra },
+      });
+
+    // One owner-occupier in two stacked flats — a duplex recorded as two flats.
+    const block = await structure('S', 'RESIDENTIAL_BUILDING', 2);
+    const lower = await flat(block.id, '0001', 0);
+    const upper = await flat(block.id, '0101', 1);
+    const { citizenId: nafe } = await filing(staff.jawad, { firstName: 'نافع', lastName: `ط${tag}` });
+    await db.unitOccupancy.createMany({
+      data: [
+        { unitId: lower.id, citizenId: nafe, role: 'OWNER' },
+        { unitId: upper.id, citizenId: nafe, role: 'OWNER' },
+      ],
+    });
+
+    // D27's note on a one-level flat, and a two-storey house whose unit says one level.
+    const noted = await structure('N', 'RESIDENTIAL_BUILDING', 1);
+    const notedFlat = await flat(noted.id, '0001', 0, { notes: 'شقة دوبلكس مع الطابق العلوي' });
+    const house = await structure('H', 'INDEPENDENT_HOUSE', 2);
+    const houseUnit = await flat(house.id, '0001', 0, { unitType: 'INDEPENDENT_HOUSE' });
+
+    // A «منزل» card left on a structure of two units.
+    const { registrationId } = await filing(staff.jawad, { firstName: 'جهاد', lastName: `ط${tag}` });
+    await db.propertyEntry.create({
+      data: { registrationId, occupancyType: 'OWNER', propertyType: 'HOUSE', buildingId: block.id, unitArea: 160 },
+    });
+
+    const items = (await within(() => quality.findings())).items;
+    const keys = new Set(items.map((finding) => `${finding.kind}|${finding.subjectKey}`));
+    expect(keys.has(`UNIT_LEVELS_TO_CONFIRM|STACKED:${lower.id}:${upper.id}`)).toBe(true);
+    expect(keys.has(`UNIT_LEVELS_TO_CONFIRM|NOTE:${notedFlat.id}`)).toBe(true);
+    expect(keys.has(`UNIT_LEVELS_TO_CONFIRM|HOUSE:${houseUnit.id}`)).toBe(true);
+    expect(items.some((finding) => finding.kind === 'HOUSE_CARD_ON_MULTI_UNIT_BUILDING' && finding.subjects.some((s) => s.id === block.id))).toBe(true);
+
+    // Recorded as one home on two levels, the house stops being named.
+    await db.unit.update({ where: { id: houseUnit.id }, data: { levels: 2 } });
+    const after = (await within(() => quality.findings())).items;
+    expect(after.some((finding) => finding.subjectKey === `HOUSE:${houseUnit.id}`)).toBe(false);
   });
 
   it('hides a phone number inside a hand-written audit snapshot when the row is read', async () => {

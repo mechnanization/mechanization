@@ -1,3 +1,4 @@
+import { declarePaymentSchema } from '@mechanization/shared-schemas';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { WhishGateway } from '../../../domain/interfaces/whish-gateway.interface';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
@@ -46,7 +47,7 @@ const INVOICE: Row = {
   paymentStatus: 'UNPAID',
 };
 
-function build(row: Row | null, { updatedCount = 1 }: { updatedCount?: number } = {}) {
+function build(row: Row | null, { updatedCount = 1, isLive = true }: { updatedCount?: number; isLive?: boolean } = {}) {
   const update = jest.fn().mockResolvedValue({});
   const updateMany = jest.fn().mockResolvedValue({ count: updatedCount });
   const record = jest.fn().mockResolvedValue({
@@ -91,7 +92,7 @@ function build(row: Row | null, { updatedCount = 1 }: { updatedCount?: number } 
       tenantId: 'tenant-1',
     } as unknown as TenantContextService,
     { emit: jest.fn() } as unknown as EventEmitter2,
-    { createCheckout, isLive: true } as unknown as WhishGateway,
+    { createCheckout, isLive } as unknown as WhishGateway,
     {
       get: jest.fn().mockResolvedValue(null),
       set: jest.fn().mockResolvedValue(undefined),
@@ -115,7 +116,38 @@ function build(row: Row | null, { updatedCount = 1 }: { updatedCount?: number } 
 }
 
 describe('declare', () => {
-  const input = { paymentId: 'payment-1', citizenId: 'citizen-1', method: 'WHISH_MONEY' as const };
+  const input = {
+    paymentId: 'payment-1',
+    citizenId: 'citizen-1',
+    method: 'WHISH_MONEY' as const,
+    whishTransactionRef: ' 7731552 ',
+  };
+
+  it('records a Whish Money report with its reference, trimmed', async () => {
+    const { service, updateMany } = build(INVOICE);
+
+    await expect(service.declare(input)).resolves.toEqual({ paymentStatus: 'PENDING_REVIEW' });
+    expect(updateMany.mock.calls[0][0].data).toMatchObject({
+      paymentMethod: 'WHISH_MONEY',
+      whishTransactionRef: '7731552',
+    });
+  });
+
+  it('refuses a cash declaration, or a Whish report with no reference, before reading the bill (open-decisions §21)', async () => {
+    // A portal tab loaded before the change, or any caller past the route's schema.
+    for (const claim of [
+      { ...input, method: 'CASH' as never },
+      { ...input, method: 'COLLECTOR' as never },
+      { ...input, whishTransactionRef: '   ' },
+      { ...input, whishTransactionRef: undefined as never },
+    ]) {
+      const { service, prisma, updateMany, recordInTransaction } = build(INVOICE);
+      await expect(service.declare(claim)).rejects.toMatchObject({ code: 'PAYMENT_DECLARATION_WHISH_ONLY' });
+      expect((prisma.citizenPayment as { findFirst: jest.Mock }).findFirst).not.toHaveBeenCalled();
+      expect(updateMany).not.toHaveBeenCalled();
+      expect(recordInTransaction).not.toHaveBeenCalled();
+    }
+  });
 
   it('carries the status and the owner into the predicate', async () => {
     const { service, updateMany } = build(INVOICE);
@@ -177,6 +209,24 @@ describe('declare', () => {
 
     await expect(service.declare(input)).rejects.toMatchObject({ code: 'PAYMENT_ALREADY_PAID' });
     expect(updateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('declarePaymentSchema', () => {
+  it('takes a Whish Money transfer with its reference, and nothing else', () => {
+    expect(declarePaymentSchema.parse({ method: 'WHISH_MONEY', whishTransactionRef: ' 7731552 ' })).toEqual({
+      method: 'WHISH_MONEY',
+      whishTransactionRef: '7731552',
+    });
+    for (const body of [
+      { method: 'CASH' },
+      { method: 'CASH', whishTransactionRef: '7731552' },
+      { method: 'COLLECTOR', whishTransactionRef: '7731552' },
+      { method: 'WHISH_MONEY' },
+      { method: 'WHISH_MONEY', whishTransactionRef: ' 1 ' },
+    ]) {
+      expect(declarePaymentSchema.safeParse(body).success).toBe(false);
+    }
   });
 });
 
@@ -262,6 +312,15 @@ describe('review — confirming a claim', () => {
     expect(write.data).not.toHaveProperty('paymentStatus');
     expect(write.data).toMatchObject({ reviewedById: 'staff-1', reviewNote: 'حوالة مؤكدة' });
   });
+
+  it('tells the ledger this write resolves the claim, which no counter entry may', async () => {
+    // The ledger refuses every other write on a bill under review (PAYMENT_CLAIM_UNDER_REVIEW).
+    const { service, record } = build({ ...INVOICE, paymentStatus: 'PENDING_REVIEW' });
+
+    await service.review({ paymentId: 'payment-1', confirmed: true, actor: { id: 'staff-1', role: 'ACCOUNTANT' } });
+
+    expect(record).toHaveBeenCalledWith(expect.objectContaining({ resolvesClaim: true }));
+  });
 });
 
 describe('startWhishCheckout', () => {
@@ -271,6 +330,25 @@ describe('startWhishCheckout', () => {
     callbackUrl: 'https://api.example/callback',
     returnUrl: 'https://portal.example/done',
   };
+
+  it('is refused while the gateway is not live, before anything is read, sent or written', async () => {
+    /*
+      Online payment is paused until Whish's API is wired (open-decisions §21).
+      In sandbox this path used to move the bill to PENDING_REVIEW under a WSH-
+      reference of our own, with no money taken: the refusal must come first.
+    */
+    const { service, prisma, createCheckout, updateMany, checkoutCreate, checkoutUpdateMany } = build(INVOICE, {
+      isLive: false,
+    });
+
+    await expect(service.startWhishCheckout(input)).rejects.toMatchObject({ code: 'ONLINE_PAYMENT_UNAVAILABLE' });
+    const citizenPayment = prisma.citizenPayment as { findUnique: jest.Mock };
+    expect(citizenPayment.findUnique).not.toHaveBeenCalled();
+    expect(createCheckout).not.toHaveBeenCalled();
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(checkoutCreate).not.toHaveBeenCalled();
+    expect(checkoutUpdateMany).not.toHaveBeenCalled();
+  });
 
   it('claims the invoice under the status it was quoted against', async () => {
     const { service, updateMany } = build(INVOICE);

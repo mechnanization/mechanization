@@ -1,13 +1,14 @@
 'use client';
 
 import { use, useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import {
   BadgeCheck,
   Building2,
   CalendarDays,
   Check,
-  Clock,
   Copy,
   CreditCard,
   DoorClosed,
@@ -26,12 +27,13 @@ import {
   MessageSquareWarning,
   Phone,
   Ruler,
+  Scale,
   Sun,
   User,
   Users,
   Wallet,
 } from 'lucide-react';
-import { getLabels, isUnoccupied, OWNER_BILLED_WHILE_ABSENT } from '@mechanization/shared-schemas';
+import { getLabels, isNonPersonRecord, isUnoccupied, OWNER_BILLED_WHILE_ABSENT } from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
   getMyPayments,
@@ -46,19 +48,20 @@ import type {
   MyCitizenSummary,
 } from '@/lib/api-client';
 import { clearSession, loadSession } from '@/lib/session';
+import { billFigure, citizenPaymentTotals, isPartlyPaid, isSettled, partlyPaidFigures } from '@/lib/citizen-payments';
 import { formatLbp } from '@/lib/currency';
 import { formatDate, formatMonthList } from '@/lib/dates';
 import { describeAssessment } from '@/lib/fee-assessment';
+import { ONLINE_PAYMENT_OPEN } from '@/lib/online-payment';
+import { ownerBillingApplies, ownerBillingWording } from '@/lib/owner-billing';
 import { flagFieldLabel } from '@/lib/field-flags';
+import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { StatItem, StatStrip } from '@/components/ui/stat-strip';
+import { MyRequests } from '@/components/citizen/my-requests';
 import { cn } from '@/lib/utils';
-
-/** A bill is settled, or it is not — everything else is a shade of "not". */
-function isSettled(payment: CitizenPaymentItem): boolean {
-  return payment.paymentStatus === 'PAID';
-}
 
 /**
  * First letters of the first two words, for the avatar.
@@ -147,7 +150,9 @@ function Detail({
  * who typed the URL directly would meet the stricter one, which is backwards.
  *
  * Declaring a payment stays on `/payments`, next to the Whish instructions it
- * needs. This page reports; that one acts.
+ * needs. This page reports; that one acts. While online payment is paused
+ * (`lib/online-payment.ts`, open-decisions §21) the open bills carry no
+ * «ادفع عبر Whish»: they say so, and link to `/payments` for where and how to pay.
  */
 export default function MyFilePage({
   params,
@@ -158,9 +163,13 @@ export default function MyFilePage({
   const router = useRouter();
   const base = `/${tenant}/${locale}`;
   const labels = getLabels(locale);
+  const tKind = useTranslations('citizenKind');
+  const tPay = useTranslations('onlinePayment');
 
   const [token, setToken] = useState<string | null>(null);
   const [summary, setSummary] = useState<MyCitizenSummary | null>(null);
+  // A household's details — not an estate's or an institution's (0076), which is asked none of them.
+  const household = !isNonPersonRecord(summary?.residence);
   const [payments, setPayments] = useState<CitizenPaymentItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -226,6 +235,17 @@ export default function MyFilePage({
     router.replace(base);
   }, [tenant, base, router]);
 
+  /** «طلباتي»'s read came back 401: the session ended, as `load` handles it. */
+  const endIfSignedOut = useCallback(
+    (caught: unknown): boolean => {
+      if (!(caught instanceof ApiRequestError) || caught.status !== 401) return false;
+      clearSession(tenant);
+      router.replace(base);
+      return true;
+    },
+    [tenant, base, router],
+  );
+
   const payWithWhish = useCallback(
     async (paymentId: string) => {
       if (!token) return;
@@ -258,19 +278,25 @@ export default function MyFilePage({
     );
   }
 
-  const outstanding = payments.filter((payment) => !isSettled(payment));
+  // A bill the municipality cancelled (CANCELLED) is not owed, and takes no payment.
+  const outstanding = payments.filter((payment) => !isSettled(payment) && payment.paymentStatus !== 'CANCELLED');
   const settled = payments.filter(isSettled);
   const notes = payments.filter((payment) => payment.reviewNote);
+  /*
+    What is owed and what was paid, by the portal's one rule — the payments
+    page sums the same bills the same way. A bill whose reported transfer
+    waits for a clerk is listed below with its status and is not counted as
+    owed. The summary's `outstandingTotal` counts it, so the two pages told
+    one citizen two totals (review of PR #113).
+  */
+  const totals = citizenPaymentTotals(payments);
 
   return (
     <div className="space-y-6">
       {error ? (
-        <p
-          role="alert"
-          className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-destructive"
-        >
+        <Alert variant="destructive" live="alert">
           {error}
-        </p>
+        </Alert>
       ) : null}
 
       {/* ── Who this is ──
@@ -304,9 +330,10 @@ export default function MyFilePage({
                   as anything other than an ordinary household — so the page
                   looked to them like a household file missing half its fields.
                 */}
-                {summary?.residence === 'NON_RESIDENT_OWNER' ? (
+                {summary?.residence && summary.residence !== 'RESIDENT' ? (
                   <Badge variant="soft-info">
-                    {labels.citizenResidence.NON_RESIDENT_OWNER}
+                    {labels.citizenResidence[summary.residence as keyof typeof labels.citizenResidence] ??
+                      summary.residence}
                   </Badge>
                 ) : null}
               </div>
@@ -358,11 +385,14 @@ export default function MyFilePage({
               the row rather than printing a dash the reader would take for an
               answer.
             */}
-            <Detail
-              icon={User}
-              label={locale === 'en' ? "Mother's Full Name" : 'اسم الأم وشهرتها'}
-              value={summary?.motherName}
-            />
+            {/* Not on an estate or an institution (0076): it is not a household, and nothing here is asked of it. */}
+            {household ? (
+              <Detail
+                icon={User}
+                label={locale === 'en' ? "Mother's Full Name" : 'اسم الأم وشهرتها'}
+                value={summary?.motherName}
+              />
+            ) : null}
             {/*
               «غير مقيم في البلدة» — where they live, and who holds their keys
               here. The municipality asks for these instead of a household, and
@@ -397,77 +427,92 @@ export default function MyFilePage({
                 />
               </>
             ) : null}
-            <Detail
-              icon={IdCard}
-              label={
-                summary?.identityDocType
-                  ? (labels.identityDocType[summary.identityDocType as never] ?? (locale === 'en' ? 'Identity Document' : 'وثيقة الإثبات'))
-                  : (locale === 'en' ? 'Identity Document' : 'وثيقة الإثبات')
-              }
-              value={summary?.identityDocNumberMasked}
-              mono
-              hint={locale === 'en' ? 'Last 3 digits only' : 'آخر ثلاثة أرقام فقط'}
-            />
-            <Detail
-              icon={Flag}
-              label={locale === 'en' ? 'Nationality' : 'الجنسية'}
-              value={
-                summary?.nationality ??
-                (summary?.isLebanese ? (locale === 'en' ? 'Lebanese' : 'لبناني') : null)
-              }
-            />
-            <Detail
-              icon={Home}
-              label={locale === 'en' ? 'Residency Status' : 'صفة الإقامة'}
-              value={
-                summary?.residentStatus
-                  ? (labels.residentStatus[summary.residentStatus as never] ?? summary.residentStatus)
-                  : null
-              }
-            />
-            <Detail
-              icon={HeartHandshake}
-              label={locale === 'en' ? 'Marital Status' : 'الحالة الاجتماعية'}
-              value={
-                summary?.maritalStatus
-                  ? (labels.maritalStatus[summary.maritalStatus as never] ?? summary.maritalStatus)
-                  : null
-              }
-            />
-            <Detail
-              icon={Users}
-              label={
-                locale === 'en'
-                  ? 'Family Members (Living in House)'
-                  : 'عدد أفراد الأسرة (المقيمين في المنزل)'
-              }
-              value={
-                summary?.actualHouseholdMembers
-                  ? String(summary.actualHouseholdMembers)
-                  : summary?.totalRegisteredMembers
-                    ? String(summary.totalRegisteredMembers)
-                    : null
-              }
-            />
-            {/*
-              إجمالي المسجلين في القيد earns a row only where it differs from
-              the household actually in the house.
-            */}
-            {summary?.totalRegisteredMembers != null &&
-            summary?.actualHouseholdMembers != null &&
-            summary.totalRegisteredMembers > summary.actualHouseholdMembers ? (
-              <Detail
-                icon={Users}
-                label={locale === 'en' ? 'Total Registered (Civil Record)' : 'إجمالي المسجلين في القيد'}
-                value={String(summary.totalRegisteredMembers)}
-              />
+            {/* «تركة» or «جهة أو وقف» (0076): who speaks for the heirs, or for the body. */}
+            {summary?.residence === 'ESTATE' || summary?.residence === 'INSTITUTION' ? (
+              <>
+                <Detail
+                  icon={User}
+                  label={tKind(summary.residence === 'ESTATE' ? 'estateRepresentative' : 'institutionRepresentative')}
+                  value={summary.localContactName}
+                />
+                <Detail icon={Phone} label={tKind('representativePhone')} value={summary.localContactPhone} mono />
+              </>
             ) : null}
-            <Detail
-              icon={FileDigit}
-              label={locale === 'en' ? 'Civil Record Number' : 'رقم السجل'}
-              value={summary?.civilRecordNumberMasked}
-              mono
-            />
+            {household ? (
+              <>
+                <Detail
+                  icon={IdCard}
+                  label={
+                    summary?.identityDocType
+                      ? (labels.identityDocType[summary.identityDocType as never] ?? (locale === 'en' ? 'Identity Document' : 'وثيقة الإثبات'))
+                      : (locale === 'en' ? 'Identity Document' : 'وثيقة الإثبات')
+                  }
+                  value={summary?.identityDocNumberMasked}
+                  mono
+                  hint={locale === 'en' ? 'Last 3 digits only' : 'آخر ثلاثة أرقام فقط'}
+                />
+                <Detail
+                  icon={Flag}
+                  label={locale === 'en' ? 'Nationality' : 'الجنسية'}
+                  value={
+                    summary?.nationality ??
+                    (summary?.isLebanese ? (locale === 'en' ? 'Lebanese' : 'لبناني') : null)
+                  }
+                />
+                <Detail
+                  icon={Home}
+                  label={locale === 'en' ? 'Residency Status' : 'صفة الإقامة'}
+                  value={
+                    summary?.residentStatus
+                      ? (labels.residentStatus[summary.residentStatus as never] ?? summary.residentStatus)
+                      : null
+                  }
+                />
+                <Detail
+                  icon={HeartHandshake}
+                  label={locale === 'en' ? 'Marital Status' : 'الحالة الاجتماعية'}
+                  value={
+                    summary?.maritalStatus
+                      ? (labels.maritalStatus[summary.maritalStatus as never] ?? summary.maritalStatus)
+                      : null
+                  }
+                />
+                <Detail
+                  icon={Users}
+                  label={
+                    locale === 'en'
+                      ? 'Family Members (Living in House)'
+                      : 'عدد أفراد الأسرة (المقيمين في المنزل)'
+                  }
+                  value={
+                    summary?.actualHouseholdMembers
+                      ? String(summary.actualHouseholdMembers)
+                      : summary?.totalRegisteredMembers
+                        ? String(summary.totalRegisteredMembers)
+                        : null
+                  }
+                />
+                {/*
+                  إجمالي المسجلين في القيد earns a row only where it differs from
+                  the household actually in the house.
+                */}
+                {summary?.totalRegisteredMembers != null &&
+                summary?.actualHouseholdMembers != null &&
+                summary.totalRegisteredMembers > summary.actualHouseholdMembers ? (
+                  <Detail
+                    icon={Users}
+                    label={locale === 'en' ? 'Total Registered (Civil Record)' : 'إجمالي المسجلين في القيد'}
+                    value={String(summary.totalRegisteredMembers)}
+                  />
+                ) : null}
+                <Detail
+                  icon={FileDigit}
+                  label={locale === 'en' ? 'Civil Record Number' : 'رقم السجل'}
+                  value={summary?.civilRecordNumberMasked}
+                  mono
+                />
+              </>
+            ) : null}
             <Detail
               icon={Building2}
               label={locale === 'en' ? 'Properties Count' : 'عدد العقارات'}
@@ -478,22 +523,18 @@ export default function MyFilePage({
       </Card>
 
       {/* ── What is owed, at a glance ── */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <StatCard
+      <StatStrip>
+        <StatItem
           label={locale === 'en' ? 'Amount Due' : 'المستحق عليك'}
-          value={formatLbp(summary?.fees.outstandingTotal ?? 0, locale)}
-          icon={<Wallet className="size-5" aria-hidden />}
-          tone={
-            (summary?.fees.outstandingTotal ?? 0) > 0 ? 'destructive' : 'success'
-          }
+          value={formatLbp(totals.outstanding, locale)}
+          className={totals.outstanding > 0 ? 'text-destructive' : 'text-success'}
         />
-        <StatCard
+        <StatItem
           label={locale === 'en' ? 'Settled' : 'المسدَّد'}
-          value={formatLbp(summary?.fees.paidTotal ?? 0, locale)}
-          icon={<BadgeCheck className="size-5" aria-hidden />}
-          tone="success"
+          value={formatLbp(totals.paid, locale)}
+          className="text-success"
         />
-        <StatCard
+        <StatItem
           label={locale === 'en' ? 'Overdue' : 'متأخّرات'}
           value={formatLbp(summary?.fees.overdueTotal ?? 0, locale)}
           hint={
@@ -503,10 +544,9 @@ export default function MyFilePage({
                   : `${summary?.fees.overdueCount} مطالبة تجاوزت موعدها`)
               : (locale === 'en' ? 'No overdue claims' : 'لا متأخّرات')
           }
-          icon={<Clock className="size-5" aria-hidden />}
-          tone={(summary?.fees.overdueTotal ?? 0) > 0 ? 'destructive' : undefined}
+          className={(summary?.fees.overdueTotal ?? 0) > 0 ? 'text-destructive' : undefined}
         />
-      </div>
+      </StatStrip>
 
       {/*
         ── What the municipality could not establish ──
@@ -572,15 +612,31 @@ export default function MyFilePage({
         </Card>
       ) : null}
 
+      {/* ── Requests and certificates: what they asked the municipality for ── */}
+      <MyRequests tenant={tenant} locale={locale} token={token} base={base} onSignedOut={endIfSignedOut} />
+
       {/* ── Bills still open ── */}
       <PaymentList
         title={locale === 'en' ? 'Outstanding Fees' : 'رسوم مستحقة عليك'}
         icon={Wallet}
         items={outstanding}
         empty={locale === 'en' ? 'No outstanding fees — your file is fully settled.' : 'لا توجد رسوم مستحقة — ملفّك مسدَّد بالكامل.'}
-        onPay={payWithWhish}
+        onPay={ONLINE_PAYMENT_OPEN ? payWithWhish : undefined}
         payingId={payingId}
         locale={locale}
+        footer={
+          ONLINE_PAYMENT_OPEN ? undefined : (
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t p-4">
+              <p className="text-sm text-muted-foreground">{tPay('paused')}</p>
+              <Button asChild variant="outline" size="sm">
+                <Link href={`${base}/payments`}>
+                  <Wallet className="size-4" aria-hidden />
+                  {tPay('howToPay')}
+                </Link>
+              </Button>
+            </div>
+          )
+        }
       />
 
       {/* ── Bills settled ── */}
@@ -752,6 +808,21 @@ function PropertyRow({
         </ul>
       ) : null}
 
+      {/* A house's flat, or the census flats this card bills through: the same notes, by code when several. */}
+      {(property.heldUnits ?? []).length > 0 ? (
+        <div className="space-y-1 text-xs">
+          {(property.heldUnits ?? []).map((unit) => (
+            <UnitBillingNotes
+              key={unit.unitId}
+              feeExemption={unit.feeExemption}
+              ownerBilling={unit.ownerBilling}
+              unitCode={(property.heldUnits ?? []).length > 1 ? unit.unitCode : undefined}
+              locale={locale}
+            />
+          ))}
+        </div>
+      ) : null}
+
       {property.landlordName ? (
         <p className="text-xs text-muted-foreground">
           {en ? 'Owner: ' : 'المالك: '}
@@ -866,7 +937,51 @@ function MyUnitRow({ unit, locale }: { unit: CitizenProfileUnit; locale: string 
           ) : null}
         </p>
       ) : null}
+
+      <UnitBillingNotes feeExemption={unit.feeExemption} ownerBilling={unit.ownerBilling} locale={locale} />
     </li>
+  );
+}
+
+/**
+ * What changes a unit's bill beyond its status: «معفاة من الرسوم» (0077), and
+ * how a flat this person owns with others is divided (0075) — their own part,
+ * never who else pays, and only while the unit is billed at all. On a unit
+ * line, and on a house or a census flat whose card has no unit lines (`heldUnits`).
+ */
+function UnitBillingNotes({
+  feeExemption,
+  ownerBilling,
+  unitCode,
+  locale,
+}: Pick<CitizenProfileUnit, 'feeExemption' | 'ownerBilling'> & { unitCode?: string; locale: string }) {
+  const labels = getLabels(locale);
+  const tFeeExemption = useTranslations('feeExemption');
+  const code = unitCode ? (
+    <bdi dir="ltr" className="font-mono">
+      {unitCode}
+    </bdi>
+  ) : null;
+
+  return (
+    <>
+      {feeExemption ? (
+        <p className="flex flex-wrap items-center gap-x-2 px-2 text-success">
+          <BadgeCheck className="size-3 shrink-0" aria-hidden />
+          {code}
+          <span>{tFeeExemption('fileValue', { reason: labels.feeExemptionReason[feeExemption] })}</span>
+        </p>
+      ) : null}
+      {/* An exempt unit is billed to no owner: no part to tell them (`ownerBillingApplies`). */}
+      {ownerBilling && ownerBillingApplies({ feeExemption }) ? (
+        <p className="flex flex-wrap items-center gap-x-2 px-2 text-muted-foreground">
+          <Scale className="size-3 shrink-0" aria-hidden />
+          {code}
+          {/* Worded to the owner reading it, the way the staff file words it (`ownerBillingWording`). */}
+          <span>{ownerBillingWording(ownerBilling, locale, 'mine').line}</span>
+        </p>
+      ) : null}
+    </>
   );
 }
 
@@ -898,54 +1013,6 @@ function ownerBilledNote(status: string, locale: string): string | undefined {
     : 'مسجَّلة كمسكن موسمي — يبقى رسم الإشغال على المالك ما لم يُقدَّم تصريح بالشغور إلى البلدية.';
 }
 
-/** One headline figure. */
-function StatCard({
-  label,
-  value,
-  hint,
-  icon,
-  tone,
-}: {
-  label: string;
-  value: string;
-  hint?: string;
-  icon: React.ReactNode;
-  tone?: 'destructive' | 'success';
-}) {
-  return (
-    <Card>
-      <CardContent className="flex items-start justify-between gap-3 p-5">
-        <div className="min-w-0 space-y-1">
-          <p className="text-sm text-muted-foreground">{label}</p>
-          <p
-            className={cn(
-              'truncate text-xl font-bold tabular-nums',
-              tone === 'destructive' && 'text-destructive',
-              tone === 'success' && 'text-success',
-            )}
-          >
-            {value}
-          </p>
-          {hint ? <p className="text-xs text-muted-foreground">{hint}</p> : null}
-        </div>
-        <span
-          aria-hidden
-          className={cn(
-            'flex size-10 shrink-0 items-center justify-center rounded-lg',
-            tone === 'destructive'
-              ? 'bg-destructive/10 text-destructive'
-              : tone === 'success'
-                ? 'bg-success/10 text-success'
-                : 'bg-accent text-muted-foreground',
-          )}
-        >
-          {icon}
-        </span>
-      </CardContent>
-    </Card>
-  );
-}
-
 /**
  * One list of bills.
  */
@@ -956,6 +1023,7 @@ function PaymentList({
   empty,
   onPay,
   payingId,
+  footer,
   locale = 'ar',
 }: {
   title: string;
@@ -964,9 +1032,12 @@ function PaymentList({
   empty: string;
   onPay?: (paymentId: string) => void;
   payingId?: string | null;
+  /** Under the list when it has bills: where to pay them while there is no button here. */
+  footer?: React.ReactNode;
   locale?: string;
 }) {
   const labels = getLabels(locale);
+  const tCitizen = useTranslations('citizen');
 
   return (
     <Card>
@@ -983,7 +1054,6 @@ function PaymentList({
           <ul className="divide-y">
             {items.map((payment) => {
               const settled = isSettled(payment);
-              const partly = !settled && payment.paidAmount > 0;
               const breakdown = describeAssessment(payment.assessment, locale);
               return (
                 <li
@@ -1019,10 +1089,8 @@ function PaymentList({
                         <>
                           {locale === 'en' ? 'Due ' : 'استحقاق '}
                           {formatDate(payment.dueDate)}
-                          {partly
-                            ? (locale === 'en'
-                                ? ` · Paid ${formatLbp(payment.paidAmount, locale)} of ${formatLbp(payment.amount, locale)}`
-                                : ` · سدّدت ${formatLbp(payment.paidAmount, locale)} من ${formatLbp(payment.amount, locale)}`)
+                          {isPartlyPaid(payment)
+                            ? ` · ${tCitizen('partlyPaid', partlyPaidFigures(payment, locale))}`
                             : ''}
                         </>
                       )}
@@ -1033,7 +1101,7 @@ function PaymentList({
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-sm font-semibold tabular-nums">
-                      {formatLbp(settled ? payment.amount : payment.remaining, locale)}
+                      {formatLbp(billFigure(payment), locale)}
                     </span>
                     <Badge
                       variant="outline"
@@ -1072,6 +1140,7 @@ function PaymentList({
             })}
           </ul>
         )}
+        {items.length > 0 ? footer : null}
       </CardContent>
     </Card>
   );

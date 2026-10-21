@@ -11,6 +11,8 @@ import { BuildingsService } from './features/buildings/buildings.service';
 import { CensusSyncService } from './features/buildings/census-sync.service';
 import { DamageService } from './features/buildings/damage.service';
 import { ParcelCorrectionService } from './features/buildings/parcel-correction.service';
+import { OwnerBillingService } from './features/buildings/owner-billing.service';
+import { FeeExemptionService } from './features/buildings/fee-exemption.service';
 import { UnitCorrectionService } from './features/corrections/unit-correction.service';
 import { CasesService } from './features/cases/cases.service';
 import { CitizensService } from './features/citizens/citizens.service';
@@ -29,7 +31,19 @@ import { ReportingService } from './features/reporting/reporting.service';
 import { TenantService } from './features/tenant/tenant.service';
 import { FeesService } from './features/fees/fees.service';
 import { CorrectionBillsService } from './features/fees/correction-bills.service';
+import { ParcelDuesService } from './features/fees/parcel-dues.service';
+import { CitizenRequestsService } from './features/citizen-requests/citizen-requests.service';
 import { PaymentLedgerService } from './features/fees/payment-ledger.service';
+import { PaymentSettlementService } from './features/fees/payment-settlement.service';
+import { TreasuryLedgerService } from './features/treasury/treasury-ledger.service';
+import { TreasuryService } from './features/treasury/treasury.service';
+import { ExpensesService } from './features/treasury/expenses.service';
+import { IncomeService } from './features/treasury/income.service';
+import { TreasuryMovementsService } from './features/treasury/treasury-movements.service';
+import { TransfersService } from './features/treasury/transfers.service';
+import { DayClosureService } from './features/treasury/day-closure.service';
+import { DailyCountService } from './features/treasury/daily-count.service';
+import { DailyCashReportService } from './features/treasury/daily-cash-report.service';
 import { StaffService } from './features/staff/staff.service';
 import { ZonesService } from './features/zones/zones.service';
 import { DataQualityService } from './features/quality/data-quality.service';
@@ -71,7 +85,19 @@ import { RecordReviewService } from './features/quality/record-review.service';
     CitizenMergeService,
     FeesService,
     CorrectionBillsService,
+    ParcelDuesService,
     PaymentLedgerService,
+    PaymentSettlementService,
+    TreasuryLedgerService,
+    TreasuryService,
+    ExpensesService,
+    IncomeService,
+    CitizenRequestsService,
+    TreasuryMovementsService,
+    TransfersService,
+    DayClosureService,
+    DailyCountService,
+    DailyCashReportService,
     StaffService,
     ZonesService,
     CasesService,
@@ -79,6 +105,8 @@ import { RecordReviewService } from './features/quality/record-review.service';
     CensusSyncService,
     DamageService,
     ParcelCorrectionService,
+    OwnerBillingService,
+    FeeExemptionService,
     UnitCorrectionService,
     BackupService,
     RecordReviewService,
@@ -106,7 +134,19 @@ import { RecordReviewService } from './features/quality/record-review.service';
     CitizenMergeService,
     FeesService,
     CorrectionBillsService,
+    ParcelDuesService,
     PaymentLedgerService,
+    PaymentSettlementService,
+    TreasuryLedgerService,
+    TreasuryService,
+    ExpensesService,
+    IncomeService,
+    CitizenRequestsService,
+    TreasuryMovementsService,
+    TransfersService,
+    DayClosureService,
+    DailyCountService,
+    DailyCashReportService,
     StaffService,
     ZonesService,
     CasesService,
@@ -114,6 +154,8 @@ import { RecordReviewService } from './features/quality/record-review.service';
     CensusSyncService,
     DamageService,
     ParcelCorrectionService,
+    OwnerBillingService,
+    FeeExemptionService,
     UnitCorrectionService,
     BackupService,
     RecordReviewService,

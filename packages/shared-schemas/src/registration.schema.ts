@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { normalizeDigits } from './primitives';
 
 /**
  * What is left of the old submission schema: the رقم العقار lookup.
@@ -20,7 +21,12 @@ import { z } from 'zod';
 
 /** Blur-check used by the property card while a رقم العقار is typed. */
 export const propertyNumberCheckSchema = z.object({
-  propertyNumber: z.string().trim().min(1).max(40),
+  propertyNumber: z
+    .string()
+    .trim()
+    .min(1)
+    .max(40)
+    .transform((value) => normalizeDigits(value)),
 });
 
 /**

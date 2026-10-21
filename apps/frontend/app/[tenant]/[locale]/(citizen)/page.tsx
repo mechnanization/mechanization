@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { ArrowLeft, FileSearch, Loader2 } from 'lucide-react';
 import { ApiRequestError, logApiError, openByReference } from '@/lib/api-client';
 import { loadSession, saveSession } from '@/lib/session';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -97,12 +98,9 @@ export default function TenantHome({
       <Card>
         <CardContent className="space-y-4 p-6">
           {error ? (
-            <p
-              role="alert"
-              className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive"
-            >
+            <Alert variant="destructive" live="alert">
               {error}
-            </p>
+            </Alert>
           ) : null}
 
           <div className="space-y-2">
@@ -146,15 +144,13 @@ export default function TenantHome({
             {tCitizen('viewMyFile')}
           </Button>
 
+          {/*
+            No link to the phone-code sign-in (`/login`): there is no SMS provider, so the code never
+            arrives (open-decisions §21). The reference is the way in; whoever does not have it asks
+            the municipality, as `/payments/login` already says.
+          */}
           <p className="text-center text-sm text-muted-foreground">
-            {tCitizen('dontKnowReference')}{' '}
-            <button
-              type="button"
-              onClick={() => router.push(`${base}/login`)}
-              className="font-medium text-primary underline-offset-4 hover:underline"
-            >
-              {locale === 'en' ? 'Sign in with phone number' : 'سجّل الدخول برقم الهاتف'}
-            </button>
+            {tCitizen('dontKnowReference')} {tCitizen('askAtMunicipality')}
           </p>
         </CardContent>
       </Card>

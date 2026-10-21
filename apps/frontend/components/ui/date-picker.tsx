@@ -59,11 +59,12 @@ function JumpDropdown({
         setOpen(false);
       }
     };
+    // On `window`, beside the calendar's own listener: see the note there.
     document.addEventListener('mousedown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('keydown', onKeyDown, true);
     return () => {
       document.removeEventListener('mousedown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown, true);
+      window.removeEventListener('keydown', onKeyDown, true);
     };
   }, [open]);
 
@@ -199,14 +200,26 @@ export function DatePicker({
         setOpen(false);
       }
     };
+    /*
+      Escape is the calendar's while it is open, not the dialog's around it.
+      Radix closes a dialog from a capture listener on `document`, which runs
+      before anything on `document` in the bubble phase: a picker listening
+      there closed the whole dialog, and a dialog that resets on close lost
+      what was typed in it. A capture listener on `window` runs first and stops
+      the key there. An open month or year list closes alone: its listener,
+      added later on `window`, still runs, and this one leaves the panel open.
+    */
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setOpen(false);
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      if (rootRef.current?.querySelector('[role="listbox"]')) return;
+      setOpen(false);
     };
     document.addEventListener('mousedown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keydown', onKeyDown, true);
     return () => {
       document.removeEventListener('mousedown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keydown', onKeyDown, true);
     };
   }, [open]);
 
@@ -227,15 +240,20 @@ export function DatePicker({
     label: monthNameFormatter.format(new Date(2024, index, 1)),
   }));
   // Jump-to-year dropdown, newest first: a 100-year window ending at `max`'s
-  // year (or this year, if no max was given) — or, for a planned date with a
-  // `min` and no `max`, from `min`'s year five years forward.
+  // year — or, for a planned date with a `min` and no `max`, from `min`'s year
+  // five years forward. With neither, the date is open both ways (a due date,
+  // a filter's end), so the window runs 100 years back and five forward. The
+  // year on screen is always in it: the month arrows can leave the window, and
+  // the year button showed nothing there.
   const minDayYear = min ? (parseIsoDay(min)?.year ?? today.getFullYear()) : null;
-  const maxYear = max
+  const lastYear = max
     ? (parseIsoDay(max)?.year ?? today.getFullYear())
     : minDayYear !== null
       ? minDayYear + 5
-      : today.getFullYear();
-  const minYear = minDayYear ?? maxYear - 100;
+      : today.getFullYear() + 5;
+  const firstYear = minDayYear ?? (max ? lastYear - 100 : today.getFullYear() - 100);
+  const maxYear = Math.max(viewYear, lastYear);
+  const minYear = Math.min(viewYear, firstYear);
   const yearOptions: JumpOption[] = Array.from(
     { length: maxYear - minYear + 1 },
     (_, index) => ({ value: maxYear - index, label: String(maxYear - index) }),

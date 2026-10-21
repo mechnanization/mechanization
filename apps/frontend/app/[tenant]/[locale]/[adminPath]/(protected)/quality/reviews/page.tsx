@@ -30,11 +30,6 @@ export default function QualityReviewsPage({
       adminPath={adminPath}
       icon={ClipboardCheck}
       title={en ? 'Records to review' : 'السجلات'}
-      subtitle={
-        en
-          ? 'What the field filed, waiting on a decision — approve it, or send it back with a reason.'
-          : 'ما سجَّله الميدان بانتظار قرار — اعتماده، أو إعادته إلى الموظف مع السبب.'
-      }
     >
       {({ token, base }) => (
         <ReviewsBody tenant={tenant} base={base} locale={locale} token={token} />

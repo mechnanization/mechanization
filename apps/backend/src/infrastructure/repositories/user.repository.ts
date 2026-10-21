@@ -1,3 +1,4 @@
+import { citizenDisplayName } from '@mechanization/shared-schemas';
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '../../generated/tenant-client';
 import { StaffRole, User } from '../../domain/entities/user.entity';
@@ -8,24 +9,9 @@ import {
   StaffSummary,
   UserRepository,
 } from '../../domain/interfaces/user-repository.interface';
-import { cardsFiledOn, COMMISSION_RATE, creditBillableUnits } from '@mechanization/shared-schemas';
+import { cardsCreditedTo, COMMISSION_RATE, creditBillableUnits } from '@mechanization/shared-schemas';
 import { TenantContextService } from '../context/tenant-context.service';
-
-/**
- * The columns of a card the earnings rule reads — `endReason` on both levels,
- * the unit's type and census link — plus where a merge filed it. Selecting
- * only `id` here is what once let the roster disagree with the inspector's
- * own page.
- */
-const EARNINGS_CARD_SELECT = {
-  id: true,
-  propertyType: true,
-  endReason: true,
-  filedRegistrationId: true,
-  units: {
-    select: { id: true, unitId: true, unitType: true, endReason: true },
-  },
-} as const;
+import { creditedRegistrationsWhere, EARNINGS_CARD_SELECT } from './earnings-registrations';
 
 @Injectable()
 export class PrismaUserRepository implements UserRepository {
@@ -93,6 +79,7 @@ export class PrismaUserRepository implements UserRepository {
       identityDocNumber: row.identityDocNumber!,
       isActive: row.isActive,
       tokenVersion: row.tokenVersion,
+      residence: row.residence,
     });
   }
 
@@ -119,6 +106,7 @@ export class PrismaUserRepository implements UserRepository {
       identityDocNumber: row.identityDocNumber!,
       isActive: row.isActive,
       tokenVersion: row.tokenVersion,
+      residence: row.residence,
     });
   }
 
@@ -131,13 +119,14 @@ export class PrismaUserRepository implements UserRepository {
   async findCitizensByPhone(phone: string): Promise<CitizenChoice[]> {
     const rows = await this.db.user.findMany({
       where: { kind: 'CITIZEN', phone, isActive: true },
-      select: { id: true, firstName: true, lastName: true, identityDocNumber: true },
+      select: { id: true, firstName: true, lastName: true, residence: true, identityDocNumber: true },
       orderBy: { createdAt: 'asc' },
     });
 
     return rows.map((row) => ({
       id: row.id,
-      displayName: `${row.firstName} ${row.lastName}`,
+      // «ورثة المرحوم …» for an estate (0076): the heirs choosing which file is theirs.
+      displayName: citizenDisplayName(row, { middleName: false }),
       identityDocLastDigits: (row.identityDocNumber ?? '').slice(-2).padStart(2, '•'),
     }));
   }
@@ -219,54 +208,62 @@ export class PrismaUserRepository implements UserRepository {
 
     const staffIds = rows.map((r) => r.id);
 
-    // Query registrations created by each staff member (field inspector).
+    // The work each staff member is credited for: the registrations they made,
+    // and those holding a line they filed on somebody else's file (0096). See
+    // `creditedRegistrationsWhere`, which the inspector's page loads through too.
     //
-    // Oldest first, because `creditBillableUnits` credits a flat to whoever
-    // filed it first and an unordered read would hand the dollar to whichever
-    // record Postgres happened to return first.
+    // Oldest first, the order `creditBillableUnits` is documented to be fed in.
     const registrations = await this.db.registration.findMany({
-      where: { createdById: { in: staffIds } },
+      where: creditedRegistrationsWhere(staffIds),
       orderBy: { submittedAt: 'asc' },
       select: {
         id: true,
         createdById: true,
         citizenId: true,
-        properties: {
-          // `endReason` on both levels and the unit's type and census link are
-          // what the earnings rule reads; selecting only `id` here is what let
-          // this list disagree with the inspector's own page.
-          select: EARNINGS_CARD_SELECT,
-        },
+        properties: { select: EARNINGS_CARD_SELECT },
         // Cards filed here that a merge has since moved onto another
-        // registration — still this officer's work. See `cardsFiledOn`.
+        // registration — still credited here. See `cardsFiledOn`.
         movedCards: { select: EARNINGS_CARD_SELECT },
       },
     });
 
-    const inspectorStats = new Map<
-      string,
-      { citizens: Set<string>; units: Set<string> }
-    >();
+    const listed = new Set(staffIds);
+    const inspectorStats = new Map<string, { citizens: Set<string>; units: Set<string> }>();
+    const statFor = (officerId: string) => {
+      let stat = inspectorStats.get(officerId);
+      if (!stat) {
+        stat = { citizens: new Set<string>(), units: new Set<string>() };
+        inspectorStats.set(officerId, stat);
+      }
+      return stat;
+    };
     for (const reg of registrations) {
-      if (reg.createdById === null) continue;
-      // Prisma's payload type keeps createdById as `string | null` here even after the
-      // guard above, since it's resolved through a deferred generic index type that CFA
-      // can't narrow — the runtime check is still valid, so assert it explicitly.
-      const createdById = reg.createdById as string;
-      const citizenId = reg.citizenId;
-      const existing = inspectorStats.get(createdById);
-      const stat = existing ?? { citizens: new Set<string>(), units: new Set<string>() };
-      if (!existing) inspectorStats.set(createdById, stat);
-      stat.citizens.add(citizenId);
-      // One dollar per distinct unit. The set spans this inspector's whole
-      // history rather than one registration, so the owner's file and the
-      // tenant's file for one flat are counted once between them.
-      creditBillableUnits(cardsFiledOn(reg), stat.units);
+      // Citizens are the ones this officer registered, not every file he added a line to.
+      if (reg.createdById !== null && listed.has(reg.createdById)) {
+        statFor(reg.createdById).citizens.add(reg.citizenId);
+      }
+      // Everyone this registration can pay: its officer, and whoever filed a line on it.
+      const officers = new Set<string>(reg.createdById ? [reg.createdById] : []);
+      for (const card of [...reg.properties, ...reg.movedCards]) {
+        for (const line of card.units) if (line.filedById) officers.add(line.filedById);
+      }
+      for (const officerId of officers) {
+        if (!listed.has(officerId)) continue;
+        // One dollar per distinct unit. The set spans this officer's whole
+        // history rather than one registration, so the owner's file and the
+        // tenant's file for one flat are counted once between them.
+        creditBillableUnits(cardsCreditedTo(officerId, reg), statFor(officerId).units);
+      }
     }
 
-    // Query recorded payouts for each inspector
+    // Query recorded payouts for each inspector. One whose voucher was
+    // cancelled put the money back in the wallet and is not paid (0086) — the
+    // same rule `StaffService.getInspectorProfile` applies, so both agree.
     const payouts = await this.db.inspectorPayout.findMany({
-      where: { inspectorId: { in: staffIds } },
+      where: {
+        inspectorId: { in: staffIds },
+        OR: [{ expenseVoucherId: null }, { expenseVoucher: { voidedAt: null } }],
+      },
       select: {
         inspectorId: true,
         amount: true,

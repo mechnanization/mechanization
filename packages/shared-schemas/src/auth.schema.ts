@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { staffRoleSchema } from './enums';
+import { staffRoleSchema, type StaffRole } from './enums';
 import { internationalPhone } from './primitives';
 
 /**
@@ -179,6 +179,19 @@ export const changePasswordSchema = z.object({
   newPassword: staffPassword,
 });
 export type ChangePassword = z.infer<typeof changePasswordSchema>;
+
+/**
+ * `GET auth/staff/me`: the signed-in staff member's own account, for «أمان
+ * الحساب». Every staff role reads its own; nothing else about the account
+ * (no hash, no secret, no presence) travels.
+ */
+export interface StaffSelf {
+  id: string;
+  email: string;
+  role: StaffRole;
+  /** A second factor is enrolled and confirmed — what the screen's 2FA card shows. */
+  hasConfirmedTotp: boolean;
+}
 
 /** Changing own email in Security Settings. */
 export const changeEmailSchema = z.object({

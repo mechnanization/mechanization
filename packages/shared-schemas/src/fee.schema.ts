@@ -1,6 +1,9 @@
 import { z } from 'zod';
-import { uuid } from './primitives';
+import { normalizeDigits, uuid } from './primitives';
+import { OWNER_BILLING_MODE } from './enums';
 import { ADJUSTMENT_REASON_MIN, municipalToday } from './cash-policy';
+import { hasAtMostTwoDecimals } from './money-amount';
+import { levelFactorsSchema } from './unit-levels';
 
 /**
  * Fees, and the per-citizen invoices they produce.
@@ -65,7 +68,12 @@ export const feeTargetTypeSchema = z.enum(FEE_TARGET_TYPE, {
 });
 export type FeeTargetType = (typeof FEE_TARGET_TYPE)[number];
 
-export const PAYMENT_STATUS = ['UNPAID', 'PENDING_REVIEW', 'PAID', 'OVERDUE'] as const;
+/**
+ * `CANCELLED` (migration 0090): a bill the manager withdrew before any money was
+ * taken on it — issued twice, or by mistake. It owes nothing and takes nothing;
+ * the row stays, with who cancelled it and why (`cancelBillSchema`).
+ */
+export const PAYMENT_STATUS = ['UNPAID', 'PENDING_REVIEW', 'PAID', 'OVERDUE', 'CANCELLED'] as const;
 export const paymentStatusSchema = z.enum(PAYMENT_STATUS);
 export type PaymentStatus = (typeof PAYMENT_STATUS)[number];
 
@@ -208,6 +216,36 @@ export const feeAssessmentLineSchema = z.object({
   unitType: z.string().nullable(),
   /** Square metres, when established. Null under a PER_UNIT basis. */
   unitArea: z.number().nullable(),
+  /**
+   * The census unit's code («0201»), when the line is a flat the census
+   * holds. Absent on every bill raised before co-owner billing (0075).
+   */
+  unitCode: z.string().nullable().optional(),
+  /**
+   * The part of a co-owned flat this bill charges («توزيع الرسم على
+   * المالكين», `ownerShareOf`): the line's area, or its one unit, is
+   * multiplied by numerator/denominator. Absent on a flat billed whole.
+   */
+  ownerShare: z
+    .object({
+      mode: z.enum(OWNER_BILLING_MODE),
+      numerator: z.number().int().min(0),
+      denominator: z.number().int().min(1),
+    })
+    .nullable()
+    .optional(),
+  /**
+   * The unit's levels when it spans more than one — a «دوبلكس» is 2
+   * (`Unit.levels`, 0095). Absent on a one-level unit and on every bill
+   * raised before 0095.
+   */
+  levels: z.number().int().min(2).optional(),
+  /**
+   * How many roofs this unit counted for under PER_UNIT when that is not 1 — a
+   * duplex flat at the municipality's factor (1.8 by default), a house at one
+   * roof per storey (decision D28). `chargedUnits` is the sum of these.
+   */
+  levelFactor: z.number().positive().optional(),
 });
 
 export const feeAssessmentSchema = z.object({
@@ -247,16 +285,42 @@ export const feeAssessmentSchema = z.object({
    */
   heldUnitCount: z.number().default(0),
   /**
-   * Flats whose occupancy fee this bill holds because their current damage
-   * reading says nobody can live in them — «غير صالحة للسكن» (the user's
-   * decision, 2026-10-05; `isUninhabitableReading`). Not charged to anybody
-   * until a re-inspection reads them habitable, and counted here so the bill
-   * says so. Law 60/1988 ties the rental-value fee (Art. 11) and the annual
-   * maintenance fee (Art. 79) to actual occupancy; owner-borne fees follow the
-   * deed and are not held. Counted apart from `heldUnitCount`: the clerk
-   * settles a review in the register and an uninhabitable flat in the field.
+   * Flats this bill charges nothing for because their current damage reading
+   * says nobody can live in them — «غير صالحة للسكن» (`isUninhabitableReading`).
+   * Exempt from every rate-based fee, owner-borne ones included, until a
+   * re-inspection reads them habitable (the user's decisions of 2026-10-05 and
+   * 2026-10-07: «not habitable → exempt»), and counted here so the bill says
+   * so. Counted apart from `heldUnitCount`: the clerk settles a review in the
+   * register and an uninhabitable flat in the field.
    */
   uninhabitableUnitCount: z.number().default(0),
+  /**
+   * Co-owned flats charged on this bill at this owner's part rather than whole
+   * («توزيع الرسم على المالكين», migration 0075). Their lines carry the
+   * fraction; `totalArea` (PER_AREA) and `chargedUnits` (PER_UNIT) are already
+   * the shared figures the rate multiplies.
+   */
+  sharedUnitCount: z.number().default(0),
+  /**
+   * Co-owned flats this owner holds but another owner pays for — the
+   * responsible owner named on the flat. Not charged here, and counted so the
+   * bill says so rather than reading as a smaller holding.
+   */
+  coOwnerPaidUnitCount: z.number().default(0),
+  /**
+   * Units this bill charges nothing for because they are «معفاة من الرسوم» —
+   * the mosque on a waqf parcel, a public building (migration 0077). Every
+   * rate-based fee, whoever bears it, and counted so the bill says so.
+   */
+  exemptUnitCount: z.number().default(0),
+  /**
+   * The unit count the rate multiplies under PER_UNIT when it is not simply the
+   * number of units: a co-owned flat charged at a part — 2.25 for two whole
+   * shops and a quarter of a third — or a unit on several levels weighed in
+   * roofs (a duplex at 1.8, `levelFactor`). Absent when every charged unit
+   * counts exactly one, where it equals `unitCount`.
+   */
+  chargedUnits: z.number().optional(),
   lines: z.array(feeAssessmentLineSchema),
 });
 
@@ -320,6 +384,13 @@ export const createFeeNoticeSchema = z
       .string({ required_error: 'تاريخ الاستحقاق مطلوب' })
       .min(1, 'تاريخ الاستحقاق مطلوب'),
     instructions: z.string().trim().max(1000).optional(),
+    /**
+     * The wizard's id for this issue (migration 0091). A notice bills everyone
+     * it targets, so a retry after a lost answer must answer with the first
+     * notice rather than bill the town a second time. Required: a press with no
+     * key is the one case the server could not tell from a new notice.
+     */
+    clientRequestId: uuid,
   })
   .superRefine((data, ctx) => {
     if (data.targetType === 'BUILDING_CATEGORY' && !data.targetCategory) {
@@ -339,6 +410,20 @@ export const createFeeNoticeSchema = z
   });
 
 export type CreateFeeNotice = z.infer<typeof createFeeNoticeSchema>;
+
+/**
+ * An urgent-payment ceiling as the settings form sends it: greater than zero,
+ * at most two decimals and inside the DECIMAL(14,2) column (a CHECK in 0083
+ * refuses zero or less), `null` for none.
+ */
+const urgentCeiling = z
+  .number({ invalid_type_error: 'السقف رقم' })
+  .finite('السقف رقم')
+  .positive('السقف أكبر من صفر')
+  .max(999_999_999_999, 'السقف كبير جداً')
+  .refine(hasAtMostTwoDecimals, 'خانتان عشريتان على الأكثر')
+  .nullable()
+  .optional();
 
 /** The municipality-wide settings a clerk edits without a deploy. */
 export const systemSettingsSchema = z.object({
@@ -441,6 +526,47 @@ export const systemSettingsSchema = z.object({
     .max(1_000_000_000)
     .nullable()
     .optional(),
+  /** How far an exchange may stray from `exchangeRate` before it needs a reason (0084). */
+  exchangeRateTolerancePercent: z
+    .number()
+    .min(0, 'النسبة يجب أن تكون بين 0 و100')
+    .max(100, 'النسبة يجب أن تكون بين 0 و100')
+    .optional(),
+  /** Above this, on an exchange's non-base side, it is reviewed whatever its rate (0084). */
+  largeExchangeThreshold: z
+    .number()
+    .positive('الحد يجب أن يكون أكبر من صفر')
+    .max(999_999_999_999)
+    .optional(),
+
+  /**
+   * «سقف الدفع العاجل»: the most an accountant may pay, per voucher, before the
+   * manager's payment order (decree 5595/1982 art. 35; docs/finance.md §5.1,
+   * decision D6). One per currency; anything above it goes to the manager as a
+   * request. `null` clears it — no ceiling — and omitting it leaves it as it is.
+   * Salaries are not held to it: art. 35 names them. The manager's alone to
+   * change (`URGENT_EXPENSE_CEILING_FORBIDDEN`), though the route admits the
+   * accountant for the rest of the settings.
+   */
+  urgentExpenseCeilingLbp: urgentCeiling,
+  urgentExpenseCeilingUsd: urgentCeiling,
+  /**
+   * «سقف صرف الرواتب» (migration 0091, the owner's decision of 2026-10-12): the
+   * most an accountant may pay one staff member as a month's salary on the art.
+   * 35 path, per currency; above it the manager pays it, or it goes as a
+   * request. `null` clears it (no ceiling). The manager's alone, like the
+   * urgent ceiling (`URGENT_EXPENSE_CEILING_FORBIDDEN`).
+   */
+  salaryUrgentCeilingLbp: urgentCeiling,
+  salaryUrgentCeilingUsd: urgentCeiling,
+
+  /**
+   * «معامل السقوف» (migration 0095, decision D28): what a flat on N levels
+   * weighs in roofs under a per-unit notice — `{"2": 1.8}` makes a duplex 1.8
+   * roofs. Replaced whole when sent. A level count left out of the table is not
+   * priced, and a citizen holding such a flat is reported unassessable.
+   */
+  levelFactors: levelFactorsSchema.optional(),
 
   // ── Configuration held as documents ───────────────────────────────────
   /**
@@ -491,32 +617,29 @@ export type SystemSettingsInput = z.infer<typeof systemSettingsSchema>;
  * string they read off their own receipt, and only a clerk holding the
  * municipality's account statement can confirm the money arrived.
  */
-export const declarePaymentSchema = z
-  .object({
-    /**
-     * Narrower than `paymentMethodSchema` on purpose: COLLECTOR is a fact only
-     * the municipality can assert. A citizen who hands notes to a محصّل has no
-     * way to prove it and nothing to quote, so accepting the value here would
-     * queue a claim no clerk could ever verify — the collector's own entry is
-     * what records that money.
-     */
-    method: z.enum(['CASH', 'WHISH_MONEY'], { errorMap: () => ({ message: 'طريقة الدفع مطلوبة' }) }),
-    whishTransactionRef: z
-      .string()
-      .trim()
-      .min(4, 'رقم العملية قصير جداً')
-      .max(60, 'رقم العملية طويل جداً')
-      .optional(),
-  })
-  .superRefine((data, ctx) => {
-    if (data.method === 'WHISH_MONEY' && !data.whishTransactionRef) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['whishTransactionRef'],
-        message: 'أدخل رقم عملية التحويل',
-      });
-    }
-  });
+export const declarePaymentSchema = z.object({
+  /**
+   * A Whish Money transfer only, made in the citizen's own app to the
+   * municipality's number — the one claim a clerk can check against the
+   * statement (open-decisions §21, «Kept»).
+   *
+   * Not CASH: cash is paid at the office, and «طريقة الدفع» says so as an
+   * instruction, not a claim. A cash "declaration" moved the bill to
+   * PENDING_REVIEW with no money taken, and a bill in review is not settled at
+   * the counter until a clerk rejects the claim (review of PR #122; the server
+   * refuses it too, `PAYMENT_DECLARATION_WHISH_ONLY`). Not COLLECTOR either: a
+   * citizen who hands notes to a محصّل has nothing to quote, and the collector's
+   * own entry is what records that money.
+   */
+  method: z.literal('WHISH_MONEY', {
+    errorMap: () => ({ message: 'يُبلَّغ هنا عن تحويل Whish Money وحده؛ الدفع النقدي في صندوق البلدية' }),
+  }),
+  whishTransactionRef: z
+    .string({ required_error: 'أدخل رقم عملية التحويل' })
+    .trim()
+    .min(4, 'رقم العملية قصير جداً')
+    .max(60, 'رقم العملية طويل جداً'),
+});
 
 export type DeclarePayment = z.infer<typeof declarePaymentSchema>;
 
@@ -723,6 +846,18 @@ export const reverseTransactionSchema = z.object({
 export type ReverseTransaction = z.infer<typeof reverseTransactionSchema>;
 
 /**
+ * «إلغاء الفاتورة» — the manager withdraws a bill nothing has been paid on
+ * (a notice issued twice, a charge raised in error). The reason is required for
+ * the same reason a reversal's is: the bill stays on the citizen's record,
+ * struck through, and this is the only place "why" can live.
+ */
+export const cancelBillSchema = z.object({
+  reason: z.string().trim().min(ADJUSTMENT_REASON_MIN, 'اذكر سبب إلغاء الفاتورة').max(500),
+});
+
+export type CancelBill = z.infer<typeof cancelBillSchema>;
+
+/**
  * Citizen sign-in by رقم مرجعي.
  *
  * The phone is required alongside it, not optional. A reference number is
@@ -784,3 +919,57 @@ export const referenceOnlyLoginSchema = z.object({
 });
 
 export type ReferenceOnlyLogin = z.infer<typeof referenceOnlyLoginSchema>;
+
+/**
+ * «ما المستحق على العقار» — what is still owed on one رقم العقار, before a
+ * براءة ذمّة (the user's guidance of 2026-10-07: a debt attaches to the
+ * property, whoever the owner of record is now). Read-only; it issues no
+ * certificate.
+ */
+export const parcelDuesQuerySchema = z.object({
+  /*
+    Latin digits whatever was typed: an Arabic keyboard gives «٤٢٠», and the
+    bill lines hold «420» — read as typed, the answer would be a false «لا شيء
+    مستحق» on the one check a clearance rests on.
+  */
+  propertyNumber: z
+    .string({ required_error: 'رقم العقار مطلوب' })
+    .trim()
+    .min(1, 'رقم العقار مطلوب')
+    .max(40)
+    .transform((value) => normalizeDigits(value)),
+});
+export type ParcelDuesQuery = z.infer<typeof parcelDuesQuerySchema>;
+
+/** One open bill, and the part of what remains on it that is this parcel's. */
+export interface ParcelDuesBill {
+  paymentId: string;
+  citizenId: string;
+  /** «ورثة المرحوم …» for an estate. */
+  citizenName: string;
+  title: string;
+  dueDate: string;
+  paymentStatus: 'UNPAID' | 'OVERDUE' | 'PENDING_REVIEW';
+  /** What is still unpaid on the whole bill. */
+  remaining: number;
+  /** This parcel's part of `remaining`, by the bill's own lines (area or units, and owners' parts). */
+  onParcel: number;
+  /** The census units on this parcel the bill charged for, where it names them. */
+  unitCodes: string[];
+  /** Every line on the bill is on this parcel. */
+  wholeBill: boolean;
+}
+
+export interface ParcelDues {
+  propertyNumber: string;
+  /** Sum of `onParcel` — what is owed on the parcel by its bills' own lines. */
+  total: number;
+  bills: ParcelDuesBill[];
+  /**
+   * Open bills of the people on this parcel that name no unit — a flat amount,
+   * or a bill from before itemised billing. Shown apart: they are the holders'
+   * debts, not demonstrably the parcel's.
+   */
+  unlinked: Array<Omit<ParcelDuesBill, 'onParcel' | 'unitCodes' | 'wholeBill'>>;
+  unlinkedTotal: number;
+}

@@ -4,6 +4,7 @@ import { use, useCallback, useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { ClipboardList, Filter, Plus, TrendingUp, X } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import {
   ApiRequestError,
   deleteCase,
@@ -16,6 +17,8 @@ import type { CaseSummary } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useTabSearch, useUrlPagination, useUrlState } from '@/lib/use-url-state';
+import { useTableLabels } from '@/lib/use-table-labels';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -27,7 +30,6 @@ import { useToast } from '@/components/ui/toast';
 import { BuildingUnitMatrixDrawer } from '@/components/admin/building-unit-matrix-drawer';
 import { CASE_FILTERS, CASE_TABS, TYPED_FILTER_DELAY_MS } from '@/components/admin/cases/case-queues';
 import { nextStatus } from '@/components/admin/cases/case-status';
-import { getCaseTableLabels } from '@/components/admin/cases/case-table-labels';
 import { useCaseColumns } from '@/components/admin/cases/use-case-columns';
 import { useCaseLinking } from '@/components/admin/cases/use-case-linking';
 import { CaseLinkDialog, CaseUnlinkDialog } from '@/components/admin/cases/case-link-dialogs';
@@ -56,6 +58,8 @@ export default function CasesPage({
   const router = useRouter();
   const base = `/${tenant}/${locale}/${adminPath}`;
   const toast = useToast();
+  const t = useTranslations('cases.page');
+  const tCommon = useTranslations('common');
 
   const [token, setToken] = useState<string | null>(null);
   const [role, setRole] = useState<string | null>(null);
@@ -146,7 +150,7 @@ export default function CasesPage({
     tenant,
     base,
     token,
-    errorMessage: locale === 'en' ? 'Failed to load cases.' : 'تعذّر تحميل الحالات.',
+    errorMessage: t('loadFailed'),
   });
 
   const allItems = useMemo(() => query.data?.cases ?? [], [query.data]);
@@ -277,60 +281,40 @@ export default function CasesPage({
         await updateCase(tenant, token, item.id, { status: next });
         await load();
         toast.success(
-          next === 'RESOLVED'
-            ? locale === 'en'
-              ? 'Marked resolved'
-              : 'تم وضع علامة مُعالجة'
-            : next === 'SCHEDULED'
-              ? locale === 'en'
-                ? 'Marked as a scheduled revisit'
-                : 'تم وضعها كزيارة مجدولة'
-              : locale === 'en'
-                ? 'Case reopened'
-                : 'تمت إعادة فتح الحالة',
+          next === 'RESOLVED' ? t('markedResolved') : next === 'SCHEDULED' ? t('markedScheduled') : t('reopened'),
         );
       } catch (caught) {
         logApiError(caught);
-        const message =
-          caught instanceof ApiRequestError
-            ? caught.message
-            : locale === 'en'
-              ? 'Could not update the case.'
-              : 'تعذّر تحديث الحالة.';
+        const message = caught instanceof ApiRequestError ? caught.message : t('updateFailed');
         setActionError(message);
-        toast.error(locale === 'en' ? 'Could not update the case' : 'تعذّر تحديث الحالة', {
+        toast.error(t('updateFailedTitle'), {
           description: message,
         });
       } finally {
         setBusyId(null);
       }
     },
-    [tenant, token, load, toast, locale],
+    [tenant, token, load, toast, t],
   );
 
   const removeCase = useCallback(
     async (item: CaseSummary) => {
-      if (!token) throw new Error(locale === 'en' ? 'Your session has ended.' : 'انتهت الجلسة.');
+      if (!token) throw new Error(t('sessionEnded'));
       setBusyId(item.id);
       try {
         await deleteCase(tenant, token, item.id);
         await load();
-        toast.success(locale === 'en' ? 'Case deleted' : 'تم حذف الحالة');
+        toast.success(t('deleted'));
       } catch (caught) {
         logApiError(caught);
-        const message =
-          caught instanceof ApiRequestError
-            ? caught.message
-            : locale === 'en'
-              ? 'Could not delete the case.'
-              : 'تعذّر حذف الحالة.';
+        const message = caught instanceof ApiRequestError ? caught.message : t('deleteFailed');
         setActionError(message);
         throw new Error(message);
       } finally {
         setBusyId(null);
       }
     },
-    [tenant, token, load, toast, locale],
+    [tenant, token, load, toast, t],
   );
 
   const clearFilters = () => {
@@ -353,37 +337,46 @@ export default function CasesPage({
     setPendingDelete,
   });
 
-  if (!token) return null;
+  /*
+    The cases table's own copy — what it searches and what it is empty of — over
+    the shared table strings. The column picker is asked
+    for (`columnsMenu`): this table keeps its choice of columns.
+  */
+  // Templates, read raw: `DataTable` fills `{term}` and `{count}` itself.
+  const tableLabels = useTableLabels(
+    {
+      searchAriaLabel: t('table.searchAriaLabel'),
+      searchPlaceholder: t('table.searchPlaceholder'),
+      searchApplied: t.raw('table.searchApplied') as string,
+      empty: t('table.empty'),
+      emptySearch: t('table.emptySearch'),
+      loadError: t('table.loadError'),
+      totalRows: t.raw('table.totalRows') as string,
+    },
+    { columnsMenu: true },
+  );
 
-  const tableLabels = getCaseTableLabels(locale);
+  if (!token) return null;
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <PageHeader
         icon={ClipboardList}
-        title={locale === 'en' ? 'Cases' : 'الحالات'}
-        subtitle={
-          locale === 'en'
-            ? 'Visits that did not become a citizen registration — nobody home, access refused. Log what was observed for the next visit.'
-            : 'زيارات لم تنتهِ بتسجيل مواطن — لا أحد في المنزل، أو تعذّر الدخول. سجّل ما أمكن ملاحظته للزيارة القادمة.'
-        }
+        title={t('title')}
         actions={
           canWrite ? (
             <Button onClick={() => router.push(`${base}/cases/new`)}>
               <Plus className="size-4" aria-hidden />
-              {locale === 'en' ? 'Open a follow-up case' : 'فتح حالة متابعة'}
+              {t('open')}
             </Button>
           ) : null
         }
       />
 
       {error ? (
-        <p
-          role="alert"
-          className="rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-destructive"
-        >
+        <Alert variant="destructive" live="alert">
           {error}
-        </p>
+        </Alert>
       ) : null}
 
       {/*
@@ -397,14 +390,12 @@ export default function CasesPage({
         <CardHeader className="flex flex-col gap-2 space-y-0 border-b px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <CardTitle className="flex items-center gap-2 text-base font-semibold">
             <ClipboardList className="size-5 text-primary" aria-hidden />
-            {locale === 'en' ? 'Logged cases' : 'الحالات المسجّلة'}
+            {t('logged')}
             {/* Shown / all, so a narrowed list never reads as the whole register. */}
             <span className="text-sm font-normal tabular-nums text-muted-foreground">
               {items.length === allItems.length
                 ? `(${allItems.length})`
-                : locale === 'en'
-                  ? `(${items.length} of ${allItems.length})`
-                  : `(${items.length} من ${allItems.length})`}
+                : t('shownOf', { shown: items.length, total: allItems.length })}
             </span>
           </CardTitle>
           {/*
@@ -416,12 +407,11 @@ export default function CasesPage({
               <TrendingUp className="size-4 shrink-0 text-primary" aria-hidden />
               <span>
                 <span className="text-sm font-semibold tabular-nums text-foreground">
-                  {Math.round((conversion.linkedCount / conversion.resolvedCount) * 100)}
-                  {locale === 'en' ? '%' : '٪'}
+                  {t('conversionFigure', {
+                    percent: Math.round((conversion.linkedCount / conversion.resolvedCount) * 100),
+                  })}
                 </span>{' '}
-                {locale === 'en'
-                  ? `conversion — ${conversion.linkedCount} of ${conversion.resolvedCount} resolved cases led to a registered citizen`
-                  : `نسبة التحويل — ${conversion.linkedCount} من ${conversion.resolvedCount} حالة محلولة انتهت بتسجيل مواطن`}
+                {t('conversionText', { linked: conversion.linkedCount, resolved: conversion.resolvedCount })}
               </span>
             </p>
           ) : null}
@@ -452,58 +442,58 @@ export default function CasesPage({
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 md:flex md:flex-wrap md:items-center">
                 <span className="hidden items-center gap-1.5 pe-1 text-xs font-medium text-muted-foreground xl:flex">
                   <Filter className="size-3.5" aria-hidden />
-                  {locale === 'en' ? 'Filter:' : 'تصفية:'}
+                  {t('filter')}
                 </span>
                 <FilterSelect
-                  label={locale === 'en' ? 'Sector' : 'القطاع'}
+                  label={t('sector')}
                   value={zoneId}
                   onChange={setZoneId}
                   options={zones.map((zone) => ({ value: zone.id, label: zone.name }))}
-                  allLabel={locale === 'en' ? 'All sectors' : 'كل القطاعات'}
+                  allLabel={t('allSectors')}
                 />
                 <FilterInput
-                  label={locale === 'en' ? 'Filter by parcel number' : 'تصفية حسب رقم العقار'}
+                  label={t('parcelFilter')}
                   value={parcelNumber}
                   onChange={setParcelNumber}
-                  placeholder={locale === 'en' ? 'Parcel #' : 'رقم العقار'}
-                  clearLabel={locale === 'en' ? 'Clear parcel number' : 'مسح رقم العقار'}
+                  placeholder={t('parcelPlaceholder')}
+                  clearLabel={t('parcelClear')}
                   inputMode="numeric"
                   dir="ltr"
                 />
                 <FilterInput
-                  label={locale === 'en' ? 'Filter by building code' : 'تصفية حسب رمز المبنى'}
+                  label={t('buildingFilter')}
                   value={buildingCode}
                   onChange={setBuildingCode}
-                  placeholder={locale === 'en' ? 'Building code' : 'رمز المبنى'}
-                  clearLabel={locale === 'en' ? 'Clear building code' : 'مسح رمز المبنى'}
+                  placeholder={t('buildingPlaceholder')}
+                  clearLabel={t('buildingClear')}
                   dir="ltr"
                   className="sm:w-36"
                 />
                 {/* «من» / «إلى» on the day the case was opened. */}
                 <div className="flex items-center gap-1.5 sm:col-span-2 md:col-span-1">
                   <span className="shrink-0 text-xs text-muted-foreground">
-                    {locale === 'en' ? 'Opened' : 'فُتحت'}
+                    {t('opened')}
                   </span>
                   <DatePicker
                     id="cases-from"
                     value={openedFrom}
                     onChange={setOpenedFrom}
                     max={openedTo || undefined}
-                    placeholder={locale === 'en' ? 'From' : 'من'}
+                    placeholder={t('from')}
                     locale={locale === 'en' ? 'en' : 'ar'}
                   />
                   <DatePicker
                     id="cases-to"
                     value={openedTo}
                     onChange={setOpenedTo}
-                    placeholder={locale === 'en' ? 'To' : 'إلى'}
+                    placeholder={t('to')}
                     locale={locale === 'en' ? 'en' : 'ar'}
                   />
                 </div>
                 {activeFilters > 0 ? (
                   <Button variant="ghost" size="sm" onClick={clearFilters} className="h-9 gap-1.5 text-xs md:ms-auto">
                     <X className="size-3.5" aria-hidden />
-                    {locale === 'en' ? `Clear ${activeFilters} filter(s)` : `مسح ${activeFilters} فلتر`}
+                    {t('clearFilters', { count: activeFilters })}
                   </Button>
                 ) : null}
               </div>
@@ -517,15 +507,11 @@ export default function CasesPage({
         onOpenChange={(open) => {
           if (!open) setPendingDelete(null);
         }}
-        title={locale === 'en' ? 'Delete Case' : 'حذف الحالة'}
-        description={
-          locale === 'en'
-            ? 'This case will be removed permanently. This does not affect any citizen record.'
-            : 'ستُحذف هذه الحالة نهائياً. هذا لا يؤثر على أي سجل مواطن.'
-        }
-        confirmLabel={locale === 'en' ? 'Delete' : 'حذف'}
-        cancelLabel={locale === 'en' ? 'Cancel' : 'إلغاء'}
-        busyLabel={locale === 'en' ? 'Working…' : 'جارٍ التنفيذ…'}
+        title={t('deleteTitle')}
+        description={t('deleteBody')}
+        confirmLabel={tCommon('delete')}
+        cancelLabel={tCommon('cancel')}
+        busyLabel={t('working')}
         onConfirm={async () => {
           if (pendingDelete) await removeCase(pendingDelete);
         }}

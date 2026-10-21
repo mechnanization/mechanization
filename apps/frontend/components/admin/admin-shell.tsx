@@ -6,6 +6,7 @@ import { X } from 'lucide-react';
 import { AdminHeader } from '@/components/admin/admin-header';
 import { AdminSidebar, SidebarNav } from '@/components/admin/admin-sidebar';
 import { CommandPalette } from '@/components/admin/command-palette';
+import { HeaderBackContext, type HeaderBack } from '@/components/admin/header-back-link';
 import { loadSession } from '@/lib/session';
 import type { Session } from '@/lib/api-client';
 import { useRecordNavigation } from '@/lib/nav-history';
@@ -60,6 +61,8 @@ export function AdminShell({
   const [drawerOpen, setDrawerOpen] = React.useState(false);
   const [paletteOpen, setPaletteOpen] = React.useState(false);
   const [session, setSession] = React.useState<Session | null>(null);
+  // The page's way back, which the header draws (`HeaderBackLink`).
+  const [back, setBack] = React.useState<HeaderBack | null>(null);
 
   /*
    * Re-read on every route change rather than once on mount. Signing out and
@@ -172,14 +175,25 @@ export function AdminShell({
           adminPath={adminPath}
           tenantName={tenantName}
           session={session}
+          back={back}
           onOpenDrawer={() => setDrawerOpen(true)}
           onOpenSearch={() => setPaletteOpen(true)}
         />
         {/* `min-w-0` on both this and the flex column above it: without it a
             wide table's intrinsic width wins the flex negotiation and pushes
             the whole column past the viewport, which is how a page ends up
-            scrolling horizontally as a whole instead of inside its table. */}
-        <main className="min-w-0 flex-1 overflow-y-auto bg-background">{children}</main>
+            scrolling horizontally as a whole instead of inside its table.
+
+            `relative` makes the scroller the containing block of what scrolls
+            in it. Without it an `absolute` box with no positioned ancestor —
+            every `sr-only` label — is placed against the viewport at its
+            static position, outside this scroller and the shell's clip, and
+            stretches the document instead: on the dashboard the wheel ran on
+            past the last section and slid the whole shell up over an empty
+            body, by up to a screen on a phone. */}
+        <main className="relative min-w-0 flex-1 overflow-y-auto bg-background">
+          <HeaderBackContext.Provider value={setBack}>{children}</HeaderBackContext.Provider>
+        </main>
       </div>
 
       <CommandPalette

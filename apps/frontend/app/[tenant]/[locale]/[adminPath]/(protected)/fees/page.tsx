@@ -1,25 +1,35 @@
 'use client';
 
-import { use, useCallback, useEffect, useMemo, useState } from 'react';
+import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useTranslations } from 'next-intl';
-import { REFERENCE_SEND_ROLES, hasRole } from '@/lib/staff-roles';
+import { BULK_SETTLE_ROLES, PAYMENT_SETTLE_ROLES, REFERENCE_SEND_ROLES, hasRole } from '@/lib/staff-roles';
+import {
+  fromAdminPayment,
+  isBulkSettleable,
+  pageSelection,
+  rowBlock,
+} from '@/lib/bulk-settle';
+import { useBulkSelection } from '@/lib/use-bulk-selection';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import type { ColumnDef } from '@tanstack/react-table';
 import {
   Banknote,
   CheckCircle2,
-  Clock3,
   FileWarning,
   Loader2,
   Plus,
   Receipt,
   RefreshCw,
   UserPlus,
-  Wallet,
 } from 'lucide-react';
-import { getLabels, PAYMENT_STATUS } from '@mechanization/shared-schemas';
+import {
+  FEE_ADMIN_ROLES,
+  FEE_ISSUE_ROLES,
+  getLabels,
+  PAYMENT_REVIEW_READ_ROLES,
+  PAYMENT_STATUS,
+} from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
   chargeCitizen,
@@ -29,8 +39,6 @@ import {
   getFeeFilterOptions,
   getMunicipalitySettings,
   getTenantConfig,
-  issueFeeNotice,
-  listCitizens,
   logApiError,
   reviewPayment,
 } from '@/lib/api-client';
@@ -39,78 +47,29 @@ import type {
   CitizenProfile,
   CitizenProfilePayment,
 } from '@/lib/api-client';
-import { loadSession } from '@/lib/session';
+import { useStaffSession } from '@/lib/use-staff-session';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { useTableLabels } from '@/lib/use-table-labels';
 import { param, useTabSearch, useUrlPagination, useUrlState } from '@/lib/use-url-state';
-import { formatLbp } from '@/lib/currency';
 import { describeAssessment } from '@/lib/fee-assessment';
 import { formatDate } from '@/lib/dates';
 import { CellTag } from '@/components/ui/cell-tag';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { DataTable, type DataTableLabels } from '@/components/ui/data-table';
+import { DataTable } from '@/components/ui/data-table';
+import { Money } from '@/components/ui/money';
 import { PageHeader } from '@/components/ui/page-header';
 import { SegmentedControl } from '@/components/ui/segmented-control';
-import { Skeleton } from '@/components/ui/skeleton';
+import { LoadingState } from '@/components/ui/states';
 import { useToast } from '@/components/ui/toast';
 import { ChargeCitizenDialog, type ChargeValues } from '@/components/admin/charge-citizen-dialog';
-import { IssueFeeDialog, type IssueFeeValues } from '@/components/admin/issue-fee-dialog';
 import { BillTypeFilter } from '@/components/admin/bill-type-select';
 import { PaymentReceipt } from '@/components/admin/payment-receipt';
+import { BillCheckbox } from '@/components/admin/bulk-settle/bill-checkbox';
+import { BulkSettleBar } from '@/components/admin/bulk-settle/bulk-settle-bar';
+import { FeesSummaryStrip } from '@/components/admin/fees/fees-summary-strip';
+import { PaymentReviewDialog } from '@/components/admin/fees/payment-review-dialog';
 import { cn } from '@/lib/utils';
-
-function getTableLabels(locale: string): DataTableLabels {
-  if (locale === 'en') {
-    return {
-      searchAriaLabel: 'Search fees and demands',
-      searchPlaceholder: 'Search by citizen name, fee title, or reference code…',
-      clearSearch: 'Clear search',
-      searchHint: 'Enter',
-      searchApplied: 'Search: "{term}"',
-      empty: 'No fees or demands registered yet.',
-      emptyHint: 'Issue your first fee using the "Issue Fee Notice" button above.',
-      emptySearch: 'No results match your search.',
-      emptySearchHint: 'Try searching by citizen name, fee title, or reference code.',
-      loadError: 'Failed to load fees and payments register.',
-      retry: 'Retry',
-      previous: 'Previous',
-      next: 'Next',
-      pageOf: 'Page {current} of {total}',
-      rowsPerPage: 'Rows per page',
-      totalRows: '{count} demands',
-      sortAscending: 'Sort ascending',
-      sortDescending: 'Sort descending',
-      sortNone: 'Clear sorting',
-      columns: 'Columns',
-      columnsHint: 'Visible columns',
-      resetColumns: 'Reset to default',
-    };
-  }
-  return {
-    searchAriaLabel: 'بحث في الرسوم والمطالبات',
-    searchPlaceholder: 'ابحث باسم المواطن أو الرسم أو الرقم المرجعي…',
-    clearSearch: 'مسح البحث',
-    searchHint: 'Enter',
-    searchApplied: 'بحث: «{term}»',
-    empty: 'لا توجد رسوم أو مطالبات مسجّلة بعد.',
-    emptyHint: 'أصدر أول رسم من زر «إصدار رسم جديد» أعلاه.',
-    emptySearch: 'لا توجد نتائج مطابقة لبحثك.',
-    emptySearchHint: 'جرّب البحث باسم المواطن، أو نوع الرسم، أو الرقم المرجعي.',
-    loadError: 'تعذّر تحميل سجل الرسوم والمدفوعات.',
-    retry: 'إعادة المحاولة',
-    previous: 'السابق',
-    next: 'التالي',
-    pageOf: 'صفحة {current} من {total}',
-    rowsPerPage: 'عدد الصفوف',
-    totalRows: '{count} مطالبة',
-    sortAscending: 'ترتيب تصاعدي',
-    sortDescending: 'ترتيب تنازلي',
-    sortNone: 'إلغاء الترتيب',
-    columns: 'الأعمدة',
-    columnsHint: 'الأعمدة الظاهرة',
-    resetColumns: 'استعادة الافتراضي',
-  };
-}
 
 /**
  * The order the status tabs read in, which is not alphabetical and not the
@@ -168,11 +127,10 @@ export default function FeesPage({
   params: Promise<{ tenant: string; locale: string; adminPath: string }>;
 }) {
   const { tenant, locale, adminPath } = use(params);
-  const router = useRouter();
   const base = `/${tenant}/${locale}/${adminPath}`;
 
-  const [token, setToken] = useState<string | null>(null);
-  const [role, setRole] = useState<string | undefined>();
+  const { token, user } = useStaffSession(tenant, base);
+  const role = user?.role;
 
   // Table Data State — survives a reload: status and page in the URL, the two
   // free-text values in this tab's storage.
@@ -188,11 +146,10 @@ export default function FeesPage({
   const [pagination, setPagination] = useUrlPagination({ defaultSize: 10 });
 
   // Dialogs State
-  const [issueOpen, setIssueOpen] = useState(false);
-  const [issuing, setIssuing] = useState(false);
   const [chargeOpen, setChargeOpen] = useState(false);
   const [charging, setCharging] = useState(false);
   const [busyPaymentId, setBusyPaymentId] = useState<string | null>(null);
+  const [review, setReview] = useState<{ payment: AdminPaymentItem; confirmed: boolean } | null>(null);
 
   // Receipt State
   const [receipt, setReceipt] = useState<{
@@ -202,18 +159,57 @@ export default function FeesPage({
   } | null>(null);
 
   const toast = useToast();
-  const tFees = useTranslations('fees');
-  const canManage = role === 'SUPER_ADMIN';
-
+  const tSelect = useTranslations('bulkSettle.select');
+  /*
+    Only what this ledger says that the shared `table` strings do not: what it
+    searches by, what it is empty of, and what it counts. The column picker
+    is asked for (`columnsMenu`): this ledger keeps its choice of columns.
+  */
+  const tableLabels = useTableLabels({
+    ...(locale === 'en'
+      ? {
+          searchAriaLabel: 'Search fees and demands',
+          searchPlaceholder: 'Search by citizen name, fee title, or reference code…',
+          searchApplied: 'Search: "{term}"',
+          empty: 'No fees or demands registered yet.',
+          emptyHint: 'Issue your first fee using the "Issue Fee Notice" button above.',
+          emptySearchHint: 'Try searching by citizen name, fee title, or reference code.',
+          loadError: 'Failed to load fees and payments register.',
+          totalRows: '{count} demands',
+        }
+      : {
+          searchAriaLabel: 'بحث في الرسوم والمطالبات',
+          searchPlaceholder: 'ابحث باسم المواطن أو الرسم أو الرقم المرجعي…',
+          searchApplied: 'بحث: «{term}»',
+          empty: 'لا توجد رسوم أو مطالبات مسجّلة بعد.',
+          emptyHint: 'أصدر أول رسم من زر «إصدار رسم جديد» أعلاه.',
+          emptySearchHint: 'جرّب البحث باسم المواطن، أو نوع الرسم، أو الرقم المرجعي.',
+          loadError: 'تعذّر تحميل سجل الرسوم والمدفوعات.',
+          totalRows: '{count} مطالبة',
+        }),
+  }, { columnsMenu: true });
+  const tReview = useTranslations('fees.register.review');
+  const tCommon = useTranslations('common');
+  /** «تأكيد» / «رفض» on a declared transfer — `FEE_ADMIN_ROLES`, as `PATCH fees/payments/:id/review`. */
+  const canDecide = hasRole(FEE_ADMIN_ROLES, role);
+  /** «تكليف مباشر» and «إصدار رسم جديد» — `FEE_ISSUE_ROLES`, as `POST fees/payments`, `POST fees/notices` and the `fees/new` page. */
+  const canIssue = hasRole(FEE_ISSUE_ROLES, role);
+  /** «فواتير تأثّرت بتصحيحات» — `PAYMENT_REVIEW_READ_ROLES`, as the nav row of `/fees/corrections`. */
+  const canReadCorrections = hasRole(PAYMENT_REVIEW_READ_ROLES, role);
+  /** «تسجيل دفعة» — `PAYMENT_SETTLE_ROLES` (`SUPER_ADMIN`, `ACCOUNTANT`, `COLLECTOR`). */
+  const canSettle = hasRole(PAYMENT_SETTLE_ROLES, role);
+  /** «تسديد الفواتير المحددة» — `BULK_SETTLE_ROLES`, as the route's `@Roles`; the server is the enforcement. */
+  const canBulkSettle = hasRole(BULK_SETTLE_ROLES, role);
+  /*
+    The ticked bills, kept whole so the bar's totals survive a page turn; one
+    citizen's at a time (`lib/bulk-settle.ts`). Cleared when a filter changes,
+    because the rows it was ticked from are no longer the ones on screen.
+  */
+  const selection = useBulkSelection(tenant);
+  const { clear: clearSelection, reconcile: reconcileSelection } = selection;
   useEffect(() => {
-    const session = loadSession(tenant);
-    if (!session || session.user.kind !== 'STAFF') {
-      router.replace(`${base}/login`);
-      return;
-    }
-    setToken(session.accessToken);
-    setRole(session.user.role);
-  }, [tenant, base, router]);
+    clearSelection();
+  }, [statusFilter, feeTitleFilter, appliedSearch, clearSelection]);
 
   /**
    * What the filters above the ledger may offer — the bill titles that exist
@@ -276,21 +272,21 @@ export default function FeesPage({
   });
 
   /*
-    Everything on this screen that is not the ledger: the headline figures, the
-    citizen picker the two dialogs read, and the office details a reprinted وصل
-    carries. `allSettled` rather than `all`, kept from the original, because a
-    receipt's phone number failing to load must not blank the table beside it.
+    Everything on this screen that is not the ledger: the headline figures and
+    the office details a reprinted وصل carries. `allSettled` rather than `all`,
+    kept from the original, because a receipt's phone number failing to load
+    must not blank the table beside it. The charge dialog searches the register
+    itself, on the server (`useCitizenSearch`).
   */
   const contextQuery = useStaffQuery({
     queryKey: ['fees-context', tenant],
     queryFn: async (accessToken) => {
-      const [summaryRes, settingsRes, configRes, citizensRes] = await Promise.allSettled([
+      const [summaryRes, settingsRes, configRes] = await Promise.allSettled([
         getFeeSummary(tenant, accessToken),
         getMunicipalitySettings(tenant, accessToken),
         getTenantConfig(tenant),
-        listCitizens(tenant, accessToken, { limit: 200 }),
       ]);
-      for (const result of [summaryRes, settingsRes, configRes, citizensRes]) {
+      for (const result of [summaryRes, settingsRes, configRes]) {
         if (result.status === 'rejected') logApiError(result.reason);
       }
       return {
@@ -300,8 +296,6 @@ export default function FeesPage({
           configRes.status === 'fulfilled'
             ? configRes.value.nameAr || configRes.value.name
             : '',
-        // A file «دمج ملفين» folded into another is charged on the file that stays.
-        citizens: citizensRes.status === 'fulfilled' ? citizensRes.value.items.filter((row) => !row.mergedIntoId) : [],
       };
     },
     tenant,
@@ -312,23 +306,22 @@ export default function FeesPage({
 
   const items = paymentsQuery.data?.items ?? [];
   const total = paymentsQuery.data?.total ?? 0;
+
+  /*
+    Every read of the register checks the ticked bills against it: one paid or
+    sent for review since it was ticked has lost its box, so it leaves the set
+    rather than staying in the bar with nothing on screen to untick it.
+  */
+  const paymentRows = paymentsQuery.data?.items;
+  useEffect(() => {
+    if (!paymentRows) return;
+    reconcileSelection(paymentRows.map((row) => ({ bill: fromAdminPayment(row), settleable: isBulkSettleable(row) })));
+  }, [paymentRows, reconcileSelection]);
   const summary = contextQuery.data?.summary ?? null;
-  const citizens = contextQuery.data?.citizens ?? [];
   const settings = contextQuery.data?.settings ?? null;
   const municipalityName = contextQuery.data?.municipalityName ?? '';
   const loading = paymentsQuery.loading;
   const refreshing = paymentsQuery.fetching || contextQuery.fetching;
-  /*
-    The banner above the page and the state inside the table say different
-    things, and used to say the same one twice.
-
-    A failed *read* belongs to the table: it is the table that has no rows to
-    show, it is the table that needs the retry button, and a table rendering
-    «لا توجد نتائج» after a request failed is telling the reader the register is
-    empty when it is only unreachable. A failed *write* has no such home — the
-    rows are fine, an action was refused — so that is what the banner is for.
-  */
-  const error = contextQuery.error;
 
   /** Re-reads both halves of the screen after a write. */
   const queryClient = useQueryClient();
@@ -371,105 +364,41 @@ export default function FeesPage({
     [tenant, token, toast],
   );
 
-  const handleReview = useCallback(
+  /**
+   * The decision `PaymentReviewDialog` asked for. A refusal is rethrown for
+   * the dialog to show under its question; a conflict — another clerk decided
+   * first, or the counter settled the bill — re-reads the register as well.
+   */
+  const decideReview = useCallback(
     async (paymentId: string, confirmed: boolean) => {
-      if (!token || busyPaymentId) return;
-      setBusyPaymentId(paymentId);
+      if (!token) return;
       try {
         await reviewPayment(tenant, token, paymentId, { confirmed });
-        toast.success(confirmed ? 'تم تأكيد الدفعة بنجاح.' : 'تم رفض الدفعة.');
-        void load();
       } catch (caught) {
         logApiError(caught);
-        toast.error(caught instanceof ApiRequestError ? caught.message : 'تعذّر مراجعة الدفعة.');
-      } finally {
-        setBusyPaymentId(null);
+        if (caught instanceof ApiRequestError && caught.kind === 'CONFLICT') void load();
+        throw caught;
       }
+      // Confirming puts the money in a wallet, so the treasury's balances are stale; a refusal moves none.
+      if (confirmed) void queryClient.invalidateQueries({ queryKey: ['treasury', tenant] });
+      toast.success(confirmed ? tReview('confirmed') : tReview('rejected'));
+      void load();
     },
-    [tenant, token, busyPaymentId, toast, load],
+    [tenant, token, toast, load, queryClient, tReview],
   );
 
-  const handleIssueNotice = async (values: IssueFeeValues) => {
-    if (!token) return;
-    setIssuing(true);
-    try {
-      const res = await issueFeeNotice(tenant, token, {
-        title: values.title,
-        amount: Number(values.amount.replace(/\D/g, '')),
-        basis: values.basis,
-        bearer: values.bearer,
-        frequency: values.frequency,
-        targetType: values.targetType,
-        targetCategory: values.targetCategory || undefined,
-        targetCitizenId: values.targetCitizenId || undefined,
-        dueDate: values.dueDate,
-        instructions: values.instructions || undefined,
-      });
-      toast.success(`تم إصدار الرسم بنجاح وتكليف ${res.issued} مواطن.`);
 
-      /*
-        The skipped are named, not buried.
-
-        A clerk told only that two hundred invoices were raised has no way to
-        know that eleven buildings went unbilled because nobody has been inside
-        them. This is the shortfall made visible so someone can act on it.
-      */
-      if (res.unassessable && res.unassessable.length > 0) {
-        toast.error(
-          `${res.unassessable.length} سجل لم يُحتسب لعدم اكتمال الجرد: ` +
-            res.unassessable.map((entry) => entry.name).join('، '),
-        );
-      }
-
-      /*
-        And so is what the bearer rule left out, for the same reason.
-
-        A clerk who has just said this fee falls on المالك rather than الشاغل
-        has changed what the town owes, and the size of that change is knowable
-        only right here — afterwards it is spread across a few hundred invoices
-        that each look unremarkable. One number, at the moment it was decided.
-      */
-      if (res.exemptedUnits) {
-        toast.info(`${res.exemptedUnits} وحدة لم تُحتسب حسب صفة المكلَّف بالرسم.`);
-      }
-      /*
-        Held, not exempt — and not charged on this notice's period at all: the
-        period's invoice is written once. Said plainly so a clerk who wants the
-        period recovered knows it is a manual charge, not something that will
-        happen by itself.
-      */
-      if (res.heldUnits) {
-        toast.info(
-          `${res.heldUnits} وحدة موقوفة للمراجعة (تعارض في حالة الوحدة) — لم يُحتسب عليها رسم الإشغال في هذه الفترة. بعد تسويتها تُحتسب ابتداءً من الفترة التالية؛ ولتحصيل هذه الفترة أصدر رسماً فردياً. تجدها في «جودة البيانات».`,
-        );
-      }
-      /*
-        Held too, for a different reason: flats read «غير صالحة للسكن» are not
-        charged an occupant-borne fee until a re-inspection reads them
-        habitable (decision, 2026-10-05). Its own count, never folded into the
-        review hold — the clerk acts on each in a different place. A one-off
-        fee has no next period for the charge to resume in (the recurring run
-        skips `ONCE`), so it says how to collect it instead.
-      */
-      if (res.uninhabitableUnits) {
-        toast.info(
-          tFees(values.frequency === 'ONCE' ? 'issue.uninhabitableOnce' : 'issue.uninhabitable', {
-            count: res.uninhabitableUnits,
-          }),
-        );
-      }
-      setIssueOpen(false);
-      void load();
-    } catch (caught) {
-      logApiError(caught);
-      toast.error(caught instanceof ApiRequestError ? caught.message : 'تعذّر إصدار الرسم.');
-    } finally {
-      setIssuing(false);
-    }
-  };
+  /*
+    Synchronous, unlike `charging`, which lands a render after a fast second
+    press — and a second press of «تكليف» raised a second bill (STA-4). The
+    route takes no retry key yet (docs/ui-ux-standards.md §17), so a lost
+    answer is still the clerk's to check on the register before pressing again.
+  */
+  const chargeInFlight = useRef(false);
 
   const handleChargeCitizen = async (values: ChargeValues) => {
-    if (!token) return;
+    if (!token || chargeInFlight.current) return;
+    chargeInFlight.current = true;
     setCharging(true);
     try {
       await chargeCitizen(tenant, token, {
@@ -485,14 +414,68 @@ export default function FeesPage({
       logApiError(caught);
       toast.error(caught instanceof ApiRequestError ? caught.message : 'تعذّر تكليف المواطن.');
     } finally {
+      chargeInFlight.current = false;
       setCharging(false);
     }
   };
 
   const labels = getLabels(locale);
 
+  /** This page's bills that may be ticked, and where «تحديد الكل» stands over them. */
+  const eligibleOnPage = useMemo(
+    () => (paymentRows ?? []).filter(isBulkSettleable).map(fromAdminPayment),
+    [paymentRows],
+  );
+  const pageState = pageSelection(selection.bills, eligibleOnPage);
+  const pageBox = useCallback(
+    (id?: string) =>
+      pageState.eligible > 0 ? (
+        <BillCheckbox
+          id={id}
+          subject={{ kind: 'page', allSelected: pageState.allSelected }}
+          checked={pageState.allSelected}
+          blocked={pageState.blocked}
+          onToggle={() => selection.toggleRows(eligibleOnPage)}
+        />
+      ) : null,
+    [pageState.eligible, pageState.allSelected, pageState.blocked, selection, eligibleOnPage],
+  );
+  /** A row's box: only on a bill with something owed that is neither paid nor under review. */
+  const rowBox = useCallback(
+    (payment: AdminPaymentItem) => {
+      if (!isBulkSettleable(payment)) return null;
+      const bill = fromAdminPayment(payment);
+      return (
+        <BillCheckbox
+          subject={{ kind: 'row', title: payment.title, name: payment.citizenName }}
+          checked={selection.bills.some((entry) => entry.id === payment.id)}
+          blocked={rowBlock(selection.bills, bill)}
+          onToggle={() => selection.toggle(bill)}
+        />
+      );
+    },
+    [selection],
+  );
+
   const columns = useMemo<ColumnDef<AdminPaymentItem>[]>(
     () => [
+      /*
+        «تسديد الفواتير المحددة»: a box per settleable bill, «تحديد الكل» in the
+        heading. Hidden from the phone cards, where the box sits in the card's
+        heading beside the name instead (below) — a function header would
+        otherwise make it an action column pinned to the card's footer.
+      */
+      ...(canBulkSettle
+        ? [
+            {
+              id: 'select',
+              header: () => pageBox(),
+              cell: ({ row }) => rowBox(row.original),
+              enableHiding: false,
+              meta: { mobile: 'hide', headerClassName: 'w-12', label: tSelect('page') },
+            } satisfies ColumnDef<AdminPaymentItem>,
+          ]
+        : []),
       {
         accessorKey: 'citizenName',
         header: locale === 'en' ? 'Citizen' : 'المواطن',
@@ -500,6 +483,7 @@ export default function FeesPage({
           const payment = row.original;
           return (
             <div className="flex items-center gap-3">
+              {canBulkSettle ? <span className="inline-flex sm:hidden">{rowBox(payment)}</span> : null}
               <span
                 aria-hidden
                 className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary"
@@ -576,10 +560,15 @@ export default function FeesPage({
         accessorKey: 'amount',
         header: locale === 'en' ? 'Fee Amount' : 'قيمة الرسم',
         meta: { align: 'end' },
+        // In the bill's own currency, exact: the figure a clerk reads back to the payer (PRIM-10, PRIM-11).
         cell: ({ row }) => (
-          <span className="font-mono text-sm tabular-nums text-foreground whitespace-nowrap">
-            {formatLbp(row.original.amount, locale)}
-          </span>
+          <Money
+            amount={row.original.amount}
+            currency={row.original.currency}
+            exact
+            locale={locale}
+            className="text-sm text-foreground"
+          />
         ),
       },
       {
@@ -588,15 +577,16 @@ export default function FeesPage({
         meta: { align: 'end' },
         cell: ({ row }) => {
           const paid = row.original.paidAmount;
-          return (
-            <span
-              className={cn(
-                'font-mono text-sm tabular-nums whitespace-nowrap',
-                paid > 0 ? 'font-semibold text-success' : 'text-muted-foreground',
-              )}
-            >
-              {paid > 0 ? formatLbp(paid, locale) : '—'}
-            </span>
+          return paid > 0 ? (
+            <Money
+              amount={paid}
+              currency={row.original.currency}
+              exact
+              locale={locale}
+              className="text-sm font-semibold text-success"
+            />
+          ) : (
+            <span className="text-sm text-muted-foreground">—</span>
           );
         },
       },
@@ -606,20 +596,19 @@ export default function FeesPage({
         meta: { align: 'end' },
         cell: ({ row }) => {
           const remaining = row.original.remaining;
-          const isPaid = row.original.paymentStatus === 'PAID';
+          // Settled or cancelled: nothing is owed on it either way.
+          const isClosed = row.original.paymentStatus === 'PAID' || row.original.paymentStatus === 'CANCELLED';
           return (
-            <span
+            <Money
+              amount={remaining}
+              currency={row.original.currency}
+              exact
+              locale={locale}
               className={cn(
-                'font-mono text-sm font-bold tabular-nums whitespace-nowrap',
-                isPaid
-                  ? 'text-muted-foreground line-through opacity-70'
-                  : remaining > 0
-                    ? 'text-foreground'
-                    : 'text-success',
+                'text-sm font-semibold',
+                isClosed ? 'text-muted-foreground line-through opacity-70' : remaining > 0 ? 'text-foreground' : 'text-success',
               )}
-            >
-              {formatLbp(remaining, locale)}
-            </span>
+            />
           );
         },
       },
@@ -653,24 +642,22 @@ export default function FeesPage({
           const payment = row.original;
           const isPaid = payment.paymentStatus === 'PAID';
           const isPendingReview = payment.paymentStatus === 'PENDING_REVIEW';
+          // A cancelled bill takes no payment (0090); the server refuses one anyway.
+          const isCancelled = payment.paymentStatus === 'CANCELLED';
           const isBusy = busyPaymentId === payment.id;
 
           return (
             <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
-              {isPendingReview && canManage ? (
+              {isPendingReview && canDecide ? (
                 <>
                   <Button
                     size="sm"
                     variant="outline"
                     className="h-8 text-xs border-success/40 text-success hover:bg-success/10"
                     disabled={isBusy}
-                    onClick={() => void handleReview(payment.id, true)}
+                    onClick={() => setReview({ payment, confirmed: true })}
                   >
-                    {isBusy ? (
-                      <Loader2 className="size-3.5 animate-spin" />
-                    ) : (
-                      <CheckCircle2 className="size-3.5 rtl:ml-1 ltr:mr-1" />
-                    )}
+                    <CheckCircle2 className="size-3.5" aria-hidden />
                     {locale === 'en' ? 'Confirm' : 'تأكيد'}
                   </Button>
                   <Button
@@ -678,19 +665,19 @@ export default function FeesPage({
                     variant="ghost"
                     className="h-8 text-xs text-destructive hover:bg-destructive/10"
                     disabled={isBusy}
-                    onClick={() => void handleReview(payment.id, false)}
+                    onClick={() => setReview({ payment, confirmed: false })}
                   >
                     {locale === 'en' ? 'Reject' : 'رفض'}
                   </Button>
                 </>
               ) : null}
 
-              {canManage && !isPaid && !isPendingReview ? (
+              {canSettle && !isPaid && !isPendingReview && !isCancelled ? (
                 <Link
                   href={`${base}/fees/payments/${payment.id}/settle`}
                   className={buttonVariants({ variant: 'default', size: 'sm' })}
                 >
-                  <Banknote className="size-3.5 rtl:ml-1.5 ltr:mr-1.5" />
+                  <Banknote className="size-3.5" aria-hidden />
                   {locale === 'en' ? 'Record Payment' : 'تسجيل دفعة'}
                 </Link>
               ) : null}
@@ -706,9 +693,9 @@ export default function FeesPage({
                   }
                 >
                   {isBusy ? (
-                    <Loader2 className="size-3.5 animate-spin" />
+                    <Loader2 className="size-3.5 animate-spin" aria-hidden />
                   ) : (
-                    <Receipt className="size-3.5 rtl:ml-1.5 ltr:mr-1.5" />
+                    <Receipt className="size-3.5" aria-hidden />
                   )}
                   {locale === 'en' ? 'Receipt' : 'وصل القبض'}
                 </Button>
@@ -718,12 +705,11 @@ export default function FeesPage({
         },
       },
     ],
-    [base, canManage, busyPaymentId, openReceipt, handleReview, locale, labels],
+    [base, canDecide, canSettle, busyPaymentId, openReceipt, locale, labels, canBulkSettle, pageBox, rowBox, tSelect],
   );
 
-  if (!token) return null;
+  if (!token) return <LoadingState fullHeight label={tCommon('loading')} />;
 
-  const tableLabels = getTableLabels(locale);
   const statusFilters = buildStatusFilters(locale, filterOptionsQuery.data?.statuses ?? [], labels);
 
   return (
@@ -739,29 +725,28 @@ export default function FeesPage({
               onClick={() => void load()}
               disabled={refreshing}
             >
-              <RefreshCw
-                className={cn('size-4 rtl:ml-1.5 ltr:mr-1.5', refreshing && 'animate-spin')}
-                aria-hidden
-              />
+              <RefreshCw className={cn('size-4', refreshing && 'animate-spin')} aria-hidden />
               {locale === 'en' ? 'Refresh' : 'تحديث'}
             </Button>
 
-            {role === 'SUPER_ADMIN' || role === 'ACCOUNTANT' || role === 'AUDITOR' || role === 'VIEWER' ? (
+            {canReadCorrections ? (
               <Link href={`${base}/fees/corrections`} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
-                <FileWarning className="size-4 rtl:ml-1.5 ltr:mr-1.5" aria-hidden />
+                <FileWarning className="size-4" aria-hidden />
                 {locale === 'en' ? 'Bills affected by corrections' : 'فواتير تأثّرت بتصحيحات'}
               </Link>
             ) : null}
 
-            {canManage ? (
+            {canIssue ? (
               <>
                 <Button variant="outline" size="sm" onClick={() => setChargeOpen(true)}>
-                  <UserPlus className="size-4 rtl:ml-1.5 ltr:mr-1.5" />
+                  <UserPlus className="size-4" aria-hidden />
                   {locale === 'en' ? 'Direct Charge' : 'تكليف مباشر'}
                 </Button>
-                <Button size="sm" onClick={() => setIssueOpen(true)}>
-                  <Plus className="size-4 rtl:ml-1.5 ltr:mr-1.5" />
-                  {locale === 'en' ? 'Issue New Fee' : 'إصدار رسم جديد'}
+                <Button asChild size="sm">
+                  <Link href={`${base}/fees/new`}>
+                    <Plus className="size-4" aria-hidden />
+                    {locale === 'en' ? 'Issue New Fee' : 'إصدار رسم جديد'}
+                  </Link>
                 </Button>
               </>
             ) : null}
@@ -769,68 +754,13 @@ export default function FeesPage({
         }
       />
 
-      {error ? (
-        <p
-          role="alert"
-          className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive"
-        >
-          {error}
-        </p>
-      ) : null}
-
-      {/* KPI Cards Summary Row */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <MetricCard
-          label={locale === 'en' ? 'Total Collected' : 'إجمالي المحصّل'}
-          value={formatLbp(summary?.paidTotal ?? 0, locale)}
-          subtext={
-            summary
-              ? (locale === 'en' ? `${summary.paidCount} payments settled` : `${summary.paidCount} دفعة مسددة`)
-              : undefined
-          }
-          loading={loading}
-          icon={<Wallet className="size-6 text-success" />}
-          accent="bg-success/10"
-        />
-        {/*
-          «قائمة» rather than «مطلوبة», and the difference is not wording.
-
-          This figure is every unpaid invoice, late ones included —
-          `summary()` counts the column with no date predicate. The tab row
-          directly below it splits that same set in two: «غير مدفوعة» is the
-          invoices not yet due and «متأخرة» the ones past due. Left saying
-          «مطالبة مطلوبة», the card was the tab's label over a larger number,
-          on the same screen, which is how a clerk comes to distrust both.
-        */}
-        <MetricCard
-          label={locale === 'en' ? 'Unpaid Balance' : 'المستحقات غير المسددة'}
-          value={formatLbp(summary?.unpaidTotal ?? 0, locale)}
-          subtext={
-            summary
-              ? (locale === 'en'
-                  ? `${summary.unpaidCount} outstanding, due and overdue`
-                  : `${summary.unpaidCount} مطالبة قائمة، مستحقة ومتأخرة`)
-              : undefined
-          }
-          loading={loading}
-          icon={<Banknote className="size-6 text-primary" />}
-        />
-        <MetricCard
-          label={locale === 'en' ? 'Pending Review' : 'دفعات بانتظار التحقق'}
-          value={(summary?.pendingReviewCount ?? 0).toLocaleString('en-US')}
-          subtext={locale === 'en' ? 'Transfers awaiting verification' : 'تحويلات تحتاج موافقة الموظف'}
-          loading={loading}
-          icon={<Clock3 className="size-6 text-warning" />}
-          accent="bg-warning/10"
-        />
-        <MetricCard
-          label={locale === 'en' ? 'Total Billed' : 'إجمالي الرسوم الصادرة'}
-          value={formatLbp((summary?.paidTotal ?? 0) + (summary?.unpaidTotal ?? 0), locale)}
-          subtext={locale === 'en' ? 'Gross billed charges' : 'المجموع الكلي للمطالبات'}
-          loading={loading}
-          icon={<Receipt className="size-6 text-primary" />}
-        />
-      </div>
+      <FeesSummaryStrip
+        summary={summary}
+        loading={contextQuery.loading}
+        onRetry={() => void contextQuery.refetch()}
+        pendingHref={statusFilter === 'PENDING_REVIEW' ? undefined : `${base}/fees?status=PENDING_REVIEW`}
+        locale={locale}
+      />
 
       {/* Main Table Card */}
       <Card className="overflow-hidden">
@@ -873,8 +803,19 @@ export default function FeesPage({
           </div>
         </CardHeader>
 
-        <CardContent className="p-6">
+        {/* One frame: the card's, around a borderless table (BAN-4). */}
+        <CardContent className="p-0">
+          {/* The phone cards have no heading row, so «تحديد الكل» stands above them. */}
+          {canBulkSettle && pageState.eligible > 0 ? (
+            <div className="flex items-center gap-2 px-6 pb-3 pt-6 sm:hidden">
+              {pageBox('fees-select-page')}
+              <label htmlFor="fees-select-page" className="text-sm">
+                {pageState.allSelected ? tSelect('pageClear') : tSelect('page')}
+              </label>
+            </div>
+          ) : null}
           <DataTable
+            className="rounded-none border-0 shadow-none"
             columns={columns}
             data={items}
             labels={tableLabels}
@@ -897,23 +838,13 @@ export default function FeesPage({
         </CardContent>
       </Card>
 
-      {/* Issue Fee Dialog */}
-      <IssueFeeDialog
-        open={issueOpen}
-        onOpenChange={setIssueOpen}
-        citizens={citizens}
-        submitting={issuing}
-        error={null}
-        onSubmit={handleIssueNotice}
-        locale={locale}
-        existingTitles={feeTitles}
-      />
 
       {/* Charge Citizen Dialog */}
       <ChargeCitizenDialog
         open={chargeOpen}
         onOpenChange={setChargeOpen}
-        citizens={citizens}
+        tenant={tenant}
+        token={token}
         submitting={charging}
         error={null}
         onSubmit={handleChargeCitizen}
@@ -943,48 +874,28 @@ export default function FeesPage({
         receivedAmount={receipt?.received}
         locale={locale}
       />
-    </div>
-  );
-}
 
-function MetricCard({
-  label,
-  value,
-  subtext,
-  loading,
-  icon,
-  accent,
-}: {
-  label: string;
-  value: React.ReactNode;
-  subtext?: string;
-  loading: boolean;
-  icon: React.ReactNode;
-  accent?: string;
-}) {
-  return (
-    <Card>
-      <CardContent className="flex items-center justify-between p-5">
-        <div className="space-y-1">
-          <p className="text-xs font-medium text-muted-foreground">{label}</p>
-          {loading ? (
-            <Skeleton className="h-7 w-28" />
-          ) : (
-            <div className="text-xl font-bold tracking-tight text-foreground">{value}</div>
-          )}
-          {subtext && !loading ? (
-            <p className="text-xs text-muted-foreground">{subtext}</p>
-          ) : null}
-        </div>
-        <div
-          className={cn(
-            'flex size-11 items-center justify-center rounded-xl bg-primary/10',
-            accent,
-          )}
-        >
-          {icon}
-        </div>
-      </CardContent>
-    </Card>
+      <PaymentReviewDialog
+        review={review}
+        onOpenChange={(next) => {
+          if (!next) setReview(null);
+        }}
+        onConfirm={decideReview}
+        locale={locale}
+      />
+
+      {/* «تسديد الفواتير المحددة» — sticky at the foot while a bill is ticked; a direct child of the root. */}
+      {canBulkSettle ? (
+        <BulkSettleBar
+          tenant={tenant}
+          base={base}
+          token={token}
+          locale={locale}
+          selection={selection}
+          onSettled={() => void load()}
+          onStale={() => void load()}
+        />
+      ) : null}
+    </div>
   );
 }

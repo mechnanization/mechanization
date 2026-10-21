@@ -78,9 +78,15 @@ enum IdentityDocType {
 /// elsewhere and is recorded only so the register can say who owns a unit and
 /// how to reach them. Added by migration 0040. See `CITIZEN_RESIDENCE` in
 /// shared-schemas.
+///
+/// ESTATE and INSTITUTION (migration 0076) are owners of record that are not a
+/// living person: «تركة (ورثة المرحوم …)», the file of an owner who died,
+/// converted in place; and «جهة / وقف», a waqf, council or public body.
 enum CitizenResidence {
   RESIDENT
   NON_RESIDENT_OWNER
+  ESTATE
+  INSTITUTION
 }
 
 model User {
@@ -251,14 +257,57 @@ model User {
   payments              CitizenPayment[]
   reviewedPayments      CitizenPayment[]     @relation("PaymentReviewedBy")
   collectedPayments     CitizenPayment[]     @relation("PaymentCollectedBy")
+  /// Bills this staff member raised (0091), and bills they cancelled.
+  issuedPayments        CitizenPayment[]     @relation("PaymentIssuedBy")
+  cancelledPayments     CitizenPayment[]     @relation("PaymentCancelledBy")
   collectedTransactions PaymentTransaction[] @relation("TransactionCollectedBy")
   recordedTransactions  PaymentTransaction[] @relation("TransactionRecordedBy")
+  /// Settlements of several bills at once (0085): as the citizen who paid, the
+  /// collector who took the money, or the clerk who recorded it.
+  paymentSettlements          PaymentSettlement[] @relation("SettlementCitizen")
+  collectedPaymentSettlements PaymentSettlement[] @relation("SettlementCollectedBy")
+  recordedPaymentSettlements  PaymentSettlement[] @relation("SettlementRecordedBy")
   targetedFeeNotices    FeeNotice[]          @relation("FeeTargetCitizen")
   issuedFeeNotices      FeeNotice[]          @relation("FeeIssuedBy")
   whishCheckouts        WhishCheckout[]      @relation("WhishCheckoutCitizen")
   createdRegistrations  Registration[]       @relation("RegistrationCreatedBy")
+  /// Unit lines this staff member filed, on any citizen's file (0096).
+  filedUnitLines        BuildingUnit[]       @relation("UnitLineFiledBy")
   inspectorPayouts      InspectorPayout[]    @relation("InspectorPayouts")
   recordedInspectorPayouts InspectorPayout[] @relation("RecordedInspectorPayouts")
+  /// A collector's custody accounts, one per currency (0073). Staff only.
+  treasuryAccountsOwned    TreasuryAccount[]    @relation("TreasuryAccountOwner")
+  treasuryEntriesPosted    TreasuryEntry[]      @relation("TreasuryEntryActor")
+  /// Expenses this staff member recorded, and any they cancelled (0074).
+  expensesRecorded         ExpenseVoucher[]     @relation("ExpenseRecordedBy")
+  expensesVoided           ExpenseVoucher[]     @relation("ExpenseVoidedBy")
+  expensesPaidTo           ExpenseVoucher[]     @relation("ExpensePayeeStaff")
+  /// Transfers between wallets this staff member recorded or cancelled (0078).
+  transfersRecorded        TreasuryTransfer[]   @relation("TransferRecordedBy")
+  transfersVoided          TreasuryTransfer[]   @relation("TransferVoidedBy")
+  /// Payment orders this staff member issued, requests they filed, and the
+  /// requests they decided (0083, decree 5595/1982 art. 28).
+  expensesOrdered          ExpenseVoucher[]     @relation("ExpenseOrderedBy")
+  expenseRequestsFiled     ExpenseRequest[]     @relation("ExpenseRequestFiledBy")
+  expenseRequestsDecided   ExpenseRequest[]     @relation("ExpenseRequestDecidedBy")
+  /// Flagged exchanges this staff member reviewed (0084).
+  transfersReviewed        TreasuryTransfer[]   @relation("TransferReviewedBy")
+  /// Income vouchers this staff member recorded, and any they cancelled (0080).
+  incomeRecorded           IncomeVoucher[]      @relation("IncomeRecordedBy")
+  incomeVoided             IncomeVoucher[]      @relation("IncomeVoidedBy")
+  /// Days this staff member closed or reopened, and wallets they counted (0082).
+  treasuryDaysClosed       TreasuryDayClosure[] @relation("TreasuryDayClosedBy")
+  treasuryDaysReopened     TreasuryDayClosure[] @relation("TreasuryDayReopenedBy")
+  treasuryCounts           TreasuryCount[]      @relation("TreasuryCountedBy")
+  /// Municipal requests (0092): a citizen's own, and the steps staff took on any.
+  citizenRequests          CitizenRequest[]     @relation("RequestCitizen")
+  requestsFiled            CitizenRequest[]     @relation("RequestCreatedBy")
+  requestsReadied          CitizenRequest[]     @relation("RequestReadyBy")
+  requestsCompleted        CitizenRequest[]     @relation("RequestCompletedBy")
+  requestsRejected         CitizenRequest[]     @relation("RequestRejectedBy")
+  requestsCancelled        CitizenRequest[]     @relation("RequestCancelledBy")
+  requestAttachments       CitizenRequestAttachment[] @relation("RequestAttachmentUploadedBy")
+  requestTypesUpdated      RequestTypeSetting[] @relation("RequestTypeUpdatedBy")
   createdCases          Case[]               @relation("CaseCreatedBy")
   resolvedCases         Case[]               @relation("CaseResolvedCitizen")
   unitOccupancies       UnitOccupancy[]      @relation("UnitOccupant")
@@ -287,6 +336,10 @@ model User {
   /// Staff only: the refresh tokens behind this account's sessions (0059).
   /// Cascades, so removing the account ends every session it holds.
   staffRefreshTokens    StaffRefreshToken[]
+  /// Flats this owner pays for in full on behalf of the other owners (0075).
+  unitsPaidAsResponsibleOwner Unit[] @relation("UnitResponsibleOwner")
+  /// Unit fee exemptions this staff member granted (0077).
+  unitFeeExemptionsGranted    Unit[] @relation("UnitFeeExemptedBy")
 
   /// Staff email is unique within the municipality (i.e. within this schema).
   @@unique([email])
@@ -744,6 +797,8 @@ model PropertyEntry {
 
   documents Document[]
   units     BuildingUnit[]
+  /// Municipal requests filed for this card (0092).
+  citizenRequests CitizenRequest[]
 
   /// The registration this card was filed on, when a merge has since moved it
   /// onto another (migration 0061). Null means `registrationId`. Read by the
@@ -809,11 +864,27 @@ model BuildingUnit {
   endedAt   DateTime?
   endReason OccupancyEndReason?
 
+  /// The staff member who created this line (0096), and so who is paid for it
+  /// (`creditBillableUnits`, `filedByOf`).
+  ///
+  /// Null means the officer of the registration the card was filed on — how
+  /// every line was credited before the column existed, and what a line filed
+  /// with its registration still means. Set by every path that adds a line to a
+  /// file afterwards: the matrix (`claimOnFile`), an owner link, the edit form.
+  /// Lines already on file were filled from the audit trail by 0097. Never
+  /// rewritten: an edit keeps the line, and its filer, by identity.
+  filedById String? @db.Uuid
+  filedBy   User?   @relation("UnitLineFiledBy", fields: [filedById], references: [id], onDelete: Restrict)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  /// Municipal requests filed for this unit line (0092).
+  citizenRequests CitizenRequest[]
+
   @@index([propertyEntryId])
   @@index([unitId])
+  @@index([filedById])
   @@map("building_units")
 }
 
@@ -1298,6 +1369,28 @@ model CitizenMerge {
   @@map("citizen_merges")
 }
 
+/// «توزيع الرسم على المالكين» — how a flat with several owners is billed
+/// (migration 0075). See `OWNER_BILLING_MODE` in shared-schemas.
+enum OwnerBillingMode {
+  /// Each of N current owners pays 1/N.
+  EQUAL
+  /// Each owner pays their أسهم over the sum of every current owner's أسهم.
+  BY_SHARES
+  /// `Unit.responsibleOwnerId` pays the whole; the others are not charged.
+  RESPONSIBLE_OWNER
+}
+
+/// Why a unit is charged no fee at all (migration 0077). See
+/// `FEE_EXEMPTION_REASON` in shared-schemas.
+enum FeeExemptionReason {
+  /// «دار عبادة» — a mosque, a church, a husseiniya.
+  PLACE_OF_WORSHIP
+  /// «مرفق عام» — the municipality's own buildings, a public school.
+  PUBLIC_FACILITY
+  /// «سبب آخر» — with the reason in `Unit.feeExemptionNote`.
+  OTHER
+}
+
 /// One canonical unit inside a building — شقة, محل, عيادة.
 ///
 /// The unit exists whether or not anyone has been surveyed in it, and that is
@@ -1363,6 +1456,34 @@ model Unit {
 
   notes String?
 
+  /// «توزيع الرسم على المالكين» (migration 0075): how a flat with several
+  /// current owners is billed. NULL means nobody chose, and is billed as EQUAL
+  /// (the user's decision, 2026-10-07). See `ownerShareOf` in shared-schemas.
+  ownerBillingMode   OwnerBillingMode?
+  /// The owner who pays the whole under RESPONSIBLE_OWNER, and only then
+  /// (CHECK units_responsible_owner_needs_mode). Billing re-checks that this
+  /// person is still a current owner and falls back to EQUAL if not.
+  responsibleOwnerId String?           @db.Uuid
+  responsibleOwner   User?             @relation("UnitResponsibleOwner", fields: [responsibleOwnerId], references: [id], onDelete: SetNull)
+
+  /// «معفاة من الرسوم» (migration 0077): why this unit is charged nothing by
+  /// any rate-based notice — the mosque on a waqf parcel, a public building.
+  /// NULL on every unit billed normally. Reason, grantor and date are set and
+  /// lifted together (CHECK units_fee_exemption_fields); OTHER carries its
+  /// reason in words (CHECK units_fee_exemption_other_note).
+  feeExemption     FeeExemptionReason?
+  feeExemptionNote String?
+  feeExemptedById  String?             @db.Uuid
+  feeExemptedBy    User?               @relation("UnitFeeExemptedBy", fields: [feeExemptedById], references: [id], onDelete: SetNull)
+  feeExemptedAt    DateTime?
+
+  /// How many levels this one unit spans, from `floor` (its entrance) upward
+  /// (migration 0095, decision D28): 2 is a «دوبلكس», 3 a «تريبلكس». 1 for
+  /// every unit before it. Dwellings only (CHECK units_levels_dwelling_only),
+  /// 1–6 (CHECK units_levels_range). A flat's per-roof weight comes from
+  /// `SystemSettings.levelFactors`; a house on N storeys is N full roofs.
+  levels Int @default(1)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1376,6 +1497,7 @@ model Unit {
   @@unique([buildingId, floor, sequence])
   @@index([buildingId])
   @@index([surveyStatus])
+  @@index([responsibleOwnerId])
   @@map("units")
 }
 
@@ -1549,7 +1671,7 @@ model DamageAssessment {
   /// «صالحة للسكن؟» — the second axis beside the structural level (0071). True / false as answered,
   /// NULL on a reading from before the question or an unclassified one. The level prefills it (`habitabilityFor`): a collapse or
   /// an evacuation is never habitable (CHECK `damage_assessments_habitable_matches_level`). A unit whose
-  /// current reading says it cannot be lived in has its occupancy fee held (`isUninhabitableReading`).
+  /// current reading says it cannot be lived in is charged no fee at all until a later reading says habitable (`isUninhabitableReading`).
   habitable Boolean?
 
   /// «موعد إعادة الكشف» — when a target read «غير صالحة للسكن» is due to be inspected again after repair
@@ -1822,6 +1944,12 @@ model SystemSettings {
   exchangeRate          Decimal?  @db.Decimal(18, 6)
   exchangeRateUpdatedAt DateTime?
 
+  /// How far an exchange's rate may stray from `exchangeRate`, in percent,
+  /// before it needs a written reason and a review (0084).
+  exchangeRateTolerancePercent Decimal @default(3) @db.Decimal(5, 2)
+  /// Above this, on an exchange's non-base side, it is reviewed whatever its rate (0084).
+  largeExchangeThreshold       Decimal @default(1000) @db.Decimal(14, 2)
+
   // ── Configuration held as documents ─────────────────────────────────────
 
   /// Per-document-type reference format: `{ invoice: { prefix, nextNumber,
@@ -1850,6 +1978,31 @@ model SystemSettings {
   /// someone else's document, not a shape this system gets to assert.
   councilDecisionRef String?
 
+  /// When the treasury (الخزينة) went live — stamped once, in the transaction that
+  /// posts the opening balances (0073). NULL until then, and while it is NULL
+  /// nothing credits a wallet. A payment taken before this moment never does:
+  /// the cash it brought in is already in an opening balance.
+  treasuryGoLiveAt DateTime? @db.Timestamptz(3)
+
+  /// «سقف الدفع العاجل» (0083, decision D6 in docs/finance.md §13.1c): the most
+  /// an accountant may pay per voucher before the manager's payment order
+  /// (decree 5595/1982 art. 35), one per currency. NULL is no ceiling. Read
+  /// with the go-live stamp (`TreasuryLedgerService.config`, FOR SHARE); a
+  /// salary is not held to it. Greater than zero when set (CHECK in 0083).
+  urgentExpenseCeilingLbp Decimal? @db.Decimal(14, 2)
+  urgentExpenseCeilingUsd Decimal? @db.Decimal(14, 2)
+  /// «سقف صرف الرواتب» (0091, the owner's decision of 2026-10-12): the most an
+  /// accountant may pay one staff member as a month's salary on the art. 35
+  /// path, per currency. NULL is no ceiling. Greater than zero when set (CHECK).
+  salaryUrgentCeilingLbp Decimal? @db.Decimal(14, 2)
+  salaryUrgentCeilingUsd Decimal? @db.Decimal(14, 2)
+
+  /// What a multi-level FLAT weighs under a per-unit notice, by level count
+  /// (0095, decision D28): `{"2": 1.8}` — a duplex is 1.8 roofs, two stacked
+  /// flats are 2. A count with no factor makes the citizen unassessable rather
+  /// than guessed. Shape validated by `levelFactorsSchema`; an object by CHECK.
+  levelFactors Json @default("{\"2\": 1.8}")
+
   updatedAt   DateTime @updatedAt
   updatedById String?  @db.Uuid
 
@@ -1874,6 +2027,9 @@ enum PaymentStatus {
   PENDING_REVIEW
   PAID
   OVERDUE
+  /// «إلغاء الفاتورة» (0090): withdrawn by the manager before any money was
+  /// taken on it. Owes nothing, takes nothing; `cancelledAt` says who and why.
+  CANCELLED
 }
 
 enum PaymentMethod {
@@ -1958,6 +2114,10 @@ model FeeNotice {
   issuedById String? @db.Uuid
   issuedBy   User?   @relation("FeeIssuedBy", fields: [issuedById], references: [id])
 
+  /// The wizard's id for one press of «إصدار» (0091): a retry after a lost
+  /// answer finds this notice instead of billing everyone it targets twice.
+  clientRequestId String? @unique @db.Uuid
+
   createdAt DateTime         @default(now())
   payments  CitizenPayment[]
   /// Every period this notice's recurring run attempted (migration 0056).
@@ -1978,6 +2138,16 @@ model CitizenPayment {
   /// Null for a one-off charge raised directly against a citizen.
   feeNoticeId String?    @db.Uuid
   feeNotice   FeeNotice? @relation(fields: [feeNoticeId], references: [id], onDelete: SetNull)
+
+  /// The number on the bill the resident is handed — «INV-2610-0001»: the year
+  /// and month it was issued in, then a counter that restarts each month.
+  /// Drawn from `document_counters`, migration 0079.
+  ///
+  /// Nullable because every bill issued before that migration has none and
+  /// never will: minting a number for a document that was never issued under
+  /// one would put a fiction in front of an auditor. Unique where present —
+  /// Postgres treats NULLs as distinct, so the legacy rows do not collide.
+  invoiceNumber String? @unique
 
   title      String
   /// What the invoice was raised for. Never mutated on receipt — see paidAmount.
@@ -2041,6 +2211,22 @@ model CitizenPayment {
   /// Whether a staff member has marked this pending verification notification as seen.
   isSeen Boolean @default(false)
 
+  /// Who raised this bill (0091): the notice's issuer, the clerk who charged it
+  /// one-off, or the staff member who started a recurring run (`POST
+  /// fees/recurring/run`). NULL for the scheduled recurring run (the system) and
+  /// for every bill raised before 0091 — never guessed.
+  issuedById String? @db.Uuid
+  issuedBy   User?   @relation("PaymentIssuedBy", fields: [issuedById], references: [id], onDelete: Restrict)
+
+  /// «إلغاء الفاتورة» (0091): the manager withdrew this bill before any money was
+  /// taken on it. The three move together with `paymentStatus` CANCELLED, and a
+  /// cancelled bill has `paidAmount` 0 (CHECKs in 0091); the reason is never
+  /// blank (CHECK in 0093).
+  cancelledAt        DateTime? @db.Timestamptz(3)
+  cancelledById      String?   @db.Uuid
+  cancelledBy        User?     @relation("PaymentCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict)
+  cancellationReason String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -2052,6 +2238,8 @@ model CitizenPayment {
   /// monthly fee could only ever be charged once.
   /// Checkouts opened at the provider against this invoice (migration 0057).
   whishCheckouts WhishCheckout[]
+  /// The municipal request whose fee this bill charges, if any (0092).
+  citizenRequest CitizenRequest?
 
   @@unique([citizenId, feeNoticeId, periodKey])
   /// The portal's main read: this citizen's outstanding balance.
@@ -2066,6 +2254,8 @@ model CitizenPayment {
   @@index([whishTransactionRef])
   /// The admin queue: what is awaiting verification, oldest first.
   @@index([paymentStatus, dueDate])
+  @@index([issuedById])
+  @@index([cancelledById])
   @@map("citizen_payments")
 }
 
@@ -2128,7 +2318,9 @@ model PaymentTransaction {
 
   /// The provider's handle, when the money came through Whish. Per transaction
   /// rather than per invoice, which is what makes a part-Whish, part-cash
-  /// invoice describable at all.
+  /// invoice describable at all. Compared without case or edge spaces through
+  /// an expression index in 0091 (`payment_transactions_externalRef_lower_idx`,
+  /// `lower(btrim("externalRef"))`), which Prisma cannot express.
   externalRef String?
 
   /// The collector holding the money, when `method` is COLLECTOR.
@@ -2145,11 +2337,19 @@ model PaymentTransaction {
   reversalOf   PaymentTransaction? @relation("Reversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
   reversedBy   PaymentTransaction? @relation("Reversal")
 
+  /// The settlement this row was taken in, when one press settled several of
+  /// the citizen's bills (0085). NULL on a bill settled on its own. Written at
+  /// insert — the table refuses UPDATE — so the settlement row comes first.
+  settlementId String?            @db.Uuid
+  settlement   PaymentSettlement? @relation(fields: [settlementId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
   note String?
 
   /// When the money moved, which is not always when the row was written: a
-  /// collector's round is entered at the end of the day.
-  occurredAt DateTime @default(now())
+  /// collector's round is entered at the end of the day. TIMESTAMPTZ in 0017 —
+  /// annotated so raw SQL is not misread as a bare timestamp (it once was, and a
+  /// day's receipts were bucketed six hours off).
+  occurredAt DateTime @default(now()) @db.Timestamptz(6)
   createdAt  DateTime @default(now())
 
   /// The receipt history for one invoice.
@@ -2158,7 +2358,56 @@ model PaymentTransaction {
   @@index([collectedById, occurredAt])
   /// What the municipality took today, across every collector and clerk.
   @@index([occurredAt])
+  /// The rows of one settlement — what the consolidated receipt reprints.
+  @@index([settlementId])
   @@map("payment_transactions")
+}
+
+/// «وصل قبض بلدي مجمّع» — one press that settled several of one citizen's
+/// bills (0085, docs/finance.md §3.7). Each bill still has its own ledger row
+/// and «RCP-» number; this row holds what belongs to the whole set: the master
+/// number, the notes handed over, the change, and the press's retry key.
+/// Append-only: UPDATE and DELETE are refused by triggers.
+model PaymentSettlement {
+  id     String @id @default(uuid()) @db.Uuid
+  /// «BRC-2610-0001», drawn from `document_counters` as kind BULK_RECEIPT.
+  number String @unique
+
+  citizenId String @db.Uuid
+  citizen   User   @relation("SettlementCitizen", fields: [citizenId], references: [id], onDelete: Restrict)
+
+  method        PaymentMethod
+  /// The محصّل, on COLLECTOR only (CHECK).
+  collectedById String?       @db.Uuid
+  collectedBy   User?         @relation("SettlementCollectedBy", fields: [collectedById], references: [id], onDelete: Restrict)
+  /// The Whish transfer's number, on WHISH_MONEY only (CHECK).
+  externalRef   String?
+
+  /// The notes handed over, on CASH only (CHECK): the municipality's own
+  /// currency, then the second one with the official rate (base currency per
+  /// one unit) it was taken at.
+  tenderedLocal           Decimal? @db.Decimal(14, 2)
+  tenderedForeign         Decimal? @db.Decimal(14, 2)
+  tenderedForeignCurrency String?
+  exchangeRate            Decimal? @db.Decimal(18, 4)
+  /// Handed back, in the municipality's own currency. Equals the sum of the
+  /// change on the settlement's ledger rows.
+  changeGiven             Decimal? @db.Decimal(14, 2)
+
+  recordedById String? @db.Uuid
+  recordedBy   User?   @relation("SettlementRecordedBy", fields: [recordedById], references: [id], onDelete: Restrict)
+  /// One id per press, so a retry answers with this settlement.
+  clientRequestId String @unique @db.Uuid
+
+  occurredAt DateTime @default(now()) @db.Timestamptz(6)
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+
+  transactions PaymentTransaction[]
+
+  @@index([citizenId, occurredAt(sort: Desc)])
+  @@index([collectedById])
+  @@index([recordedById])
+  @@map("payment_settlements")
 }
 
 enum BloodType {
@@ -2186,8 +2435,547 @@ model InspectorPayout {
   recordedBy   User?    @relation("RecordedInspectorPayouts", fields: [recordedById], references: [id])
   createdAt    DateTime @default(now())
 
+  /// The «PV-» voucher that paid it, written in the same transaction (0086).
+  /// NULL for a payout recorded while the treasury was not live. A payout whose
+  /// voucher is voided no longer counts as paid; the readers filter on it.
+  /// Once set, the row is written once: no update, no delete (0089).
+  expenseVoucherId String?         @unique @db.Uuid
+  expenseVoucher   ExpenseVoucher? @relation(fields: [expenseVoucherId], references: [id], onDelete: Restrict)
+
+  /// The dialog's retry key (0089), on both paths: a press whose answer was
+  /// lost and is pressed again is answered with this row, never recorded twice.
+  /// NULL on a payout written before 0089 (a live one is found through its
+  /// voucher's key).
+  clientRequestId String? @unique @db.Uuid
+
   @@index([inspectorId, paidAt])
   @@map("inspector_payouts")
+}
+
+// ─────────────────────────  Treasury (migration 0073)  ─────────────────────────
+// Design: docs/finance.md.
+
+enum TreasuryAccountType {
+  CASH_SAFE
+  WHISH_ACCOUNT
+  BANK_ACCOUNT
+  /// The cash a collector holds until he hands it in. Created on his first
+  /// collection, one per currency; never a routing target for other payments.
+  COLLECTOR_CUSTODY
+  PETTY_CASH
+}
+
+enum TreasuryEntrySource {
+  OPENING_BALANCE
+  CITIZEN_PAYMENT
+  INCOME_VOUCHER
+  EXPENSE_VOUCHER
+  TRANSFER
+  ADJUSTMENT
+}
+
+/// A wallet: one place the municipality's money is held, in one currency.
+/// Its balance is the SUM of its entries — there is no balance column.
+model TreasuryAccount {
+  id   String              @id @default(uuid()) @db.Uuid
+  name String
+  type TreasuryAccountType
+  /// ISO 4217, upper case.
+  currency String
+  /// The account a payment of this type and currency is routed to. At most one
+  /// per (type, currency) — a partial unique index in 0073 that Prisma cannot
+  /// express. Never a custody account.
+  isPrimary Boolean @default(false)
+  active    Boolean @default(true)
+  /// The collector, for COLLECTOR_CUSTODY and only then (CHECK in 0073).
+  ownerId String? @db.Uuid
+  owner   User?   @relation("TreasuryAccountOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  entries TreasuryEntry[]
+  expenses ExpenseVoucher[]
+  expenseRequests ExpenseRequest[]
+  incomes  IncomeVoucher[]
+  counts   TreasuryCount[]
+  transfersOut TreasuryTransfer[] @relation("TransferFrom")
+  transfersIn  TreasuryTransfer[] @relation("TransferTo")
+
+  /// The target of the entries' (accountId, currency) foreign key.
+  @@unique([id, currency], map: "treasury_accounts_id_currency_key")
+  @@index([ownerId])
+  @@map("treasury_accounts")
+}
+
+/// One signed movement on one account. Append-only (database trigger): a
+/// correction is an opposing entry that points back through `reversalOfId`.
+model TreasuryEntry {
+  id        String          @id @default(uuid()) @db.Uuid
+  accountId String          @db.Uuid
+  /// Always the account's own currency: the foreign key is the pair.
+  currency  String
+  account   TreasuryAccount @relation(fields: [accountId, currency], references: [id, currency], onDelete: Restrict, onUpdate: Restrict, map: "treasury_entries_account_currency_fkey")
+
+  /// Positive in, negative out. Never zero (CHECK).
+  amount Decimal @db.Decimal(14, 2)
+  /// The municipality's rate (base currency per one unit of the secondary) when
+  /// this was posted, so a report in ليرة values an old dollar entry at its own
+  /// day's rate. NULL when none was set.
+  exchangeRateAtPosting Decimal? @db.Decimal(18, 6)
+
+  source   TreasuryEntrySource
+  /// The row this came from — a `payment_transactions` id for CITIZEN_PAYMENT.
+  /// No foreign key: the sources live in different tables.
+  sourceId String?             @db.Uuid
+
+  reversalOfId String?        @unique @db.Uuid
+  reversalOf   TreasuryEntry? @relation("TreasuryEntryReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversedBy   TreasuryEntry? @relation("TreasuryEntryReversal")
+
+  /// Null for the system (a Whish callback).
+  actorId String? @db.Uuid
+  actor   User?   @relation("TreasuryEntryActor", fields: [actorId], references: [id], onDelete: Restrict)
+  note    String?
+
+  /// When the money moved, which is not always when the row was written.
+  occurredAt DateTime @default(now()) @db.Timestamptz(3)
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([accountId, occurredAt])
+  @@index([source, sourceId])
+  @@index([occurredAt])
+  @@index([actorId])
+  @@map("treasury_entries")
+}
+
+// ─────────────────────────  Transfers (migration 0078)  ─────────────────────────
+// Design: docs/finance.md §6.
+
+/// Money moved between the municipality's own wallets — «تسليم صندوق الجابي»
+/// first among them, and later a Whish cash-out, a bank deposit or an exchange.
+///
+/// The money itself is two `TreasuryEntry` rows, which is what a balance sums;
+/// this is the document that explains them. Never edited: a mistake takes a
+/// cancellation stamp and the ledger gets the opposing pair.
+model TreasuryTransfer {
+  id String @id @default(uuid()) @db.Uuid
+  /// `TR-000001`, from `treasury_transfer_seq`. Printed on the سند مناقلة.
+  transferNumber String @unique
+
+  fromAccountId String          @db.Uuid
+  fromCurrency  String
+  from          TreasuryAccount @relation("TransferFrom", fields: [fromAccountId, fromCurrency], references: [id, currency], onDelete: Restrict, onUpdate: Restrict, map: "treasury_transfers_from_fkey")
+
+  toAccountId String          @db.Uuid
+  toCurrency  String
+  to          TreasuryAccount @relation("TransferTo", fields: [toAccountId, toCurrency], references: [id, currency], onDelete: Restrict, onUpdate: Restrict, map: "treasury_transfers_to_fkey")
+
+  /// What left the source, and what reached the destination. Equal on a
+  /// same-currency move; an exchange is the case where they differ (CHECK in 0078).
+  amount         Decimal @db.Decimal(14, 2)
+  receivedAmount Decimal @db.Decimal(14, 2)
+
+  /// An exchange's rate — base currency per one unit of the other side, derived
+  /// from the two amounts — the municipality's own beside it, and why they
+  /// differ. All NULL on a same-currency transfer.
+  exchangeRate         Decimal? @db.Decimal(18, 6)
+  officialExchangeRate Decimal? @db.Decimal(18, 6)
+  adjustmentReason     String?
+
+  /// What a bank or Whish charged, in the source's currency (0084). The source
+  /// loses amount + fee; the fee is booked as its own «PV-» voucher under
+  /// «رسوم تحويل ومصرفية». Both set or both NULL.
+  feeAmount    Decimal?        @db.Decimal(14, 2)
+  feeVoucherId String?         @unique @db.Uuid
+  feeVoucher   ExpenseVoucher? @relation("TransferFee", fields: [feeVoucherId], references: [id], onDelete: Restrict)
+
+  /// The صرّاف an exchange went through (0084). Exchanges only (CHECK).
+  moneyChangerName String?
+  /// Why it is dated before the day it was written (0084). Not `adjustmentReason`.
+  backdateReason   String?
+
+  /// Set by the server when the exchange is booked: the rate strays beyond the
+  /// tolerance, there was no official rate, or the amount is large (0084). The
+  /// money has moved either way; the flag waits for an auditor.
+  requiresReview Boolean   @default(false)
+  reviewedAt     DateTime? @db.Timestamptz(3)
+  reviewedById   String?   @db.Uuid
+  reviewedBy     User?     @relation("TransferReviewedBy", fields: [reviewedById], references: [id], onDelete: Restrict)
+  reviewNote     String?
+
+  description String
+
+  occurredAt   DateTime @default(now()) @db.Timestamptz(3)
+  recordedById String?  @db.Uuid
+  recordedBy   User?    @relation("TransferRecordedBy", fields: [recordedById], references: [id], onDelete: Restrict)
+
+  /// One id per press of the button, so a retry does not move the money twice.
+  clientRequestId String? @unique @db.Uuid
+
+  voidedAt   DateTime? @db.Timestamptz(3)
+  voidedById String?   @db.Uuid
+  voidedBy   User?     @relation("TransferVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
+  voidReason String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([occurredAt(sort: Desc)])
+  @@index([fromAccountId, occurredAt(sort: Desc)], map: "treasury_transfers_from_idx")
+  @@index([toAccountId, occurredAt(sort: Desc)], map: "treasury_transfers_to_idx")
+  @@index([voidedById])
+  @@index([recordedById])
+  @@index([reviewedById])
+  @@map("treasury_transfers")
+}
+
+// ─────────────────────────  Expenses (migration 0074)  ─────────────────────────
+// Design: docs/finance.md §5.
+
+/// What the municipality spends on. Rows rather than an enum: a municipality
+/// adds its own, and an enum value cannot be added and used in one migration.
+model ExpenseCategory {
+  id String @id @default(uuid()) @db.Uuid
+  /// The stable handle for the categories code must find by name — the
+  /// inspector-commission one, the transfer-fee one. NULL for a municipality's own.
+  key         String?
+  name        String
+  description String?
+  /// باب وبند الموازنة — the chapter and article this category is charged to in
+  /// the municipality's own budget. NULL on every seeded row: the codes come
+  /// from the municipality's adopted budget and this system does not invent
+  /// them. Both set or both NULL (CHECK in 0074).
+  chapterCode String?
+  itemCode    String?
+  /// Deactivated, never deleted: vouchers point here for ever.
+  active    Boolean  @default(true)
+  sortOrder Int      @default(100)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+
+  vouchers ExpenseVoucher[]
+  requests ExpenseRequest[]
+
+  @@map("expense_categories")
+}
+
+/// One «أمر صرف»: money that left a wallet, and why.
+///
+/// Money leaves on the manager's payment order (docs/finance.md §5.1, decree
+/// 5595/1982 art. 28 and 33): the manager's own voucher carries it from the
+/// start, a voucher written from an accountant's request carries the order that
+/// paid it, and an accountant's urgent payment (art. 35, `urgentReason`) waits
+/// for it (`orderedAt` NULL) until the manager regularises it. Whichever way it
+/// was written, a voucher always has its `TreasuryEntry`, written in the same
+/// transaction. A mistake is voided, never edited (trigger in 0083): this row
+/// takes a cancellation stamp while the ledger entry it wrote is opposed by a
+/// new one.
+model ExpenseVoucher {
+  id String @id @default(uuid()) @db.Uuid
+  /// «PV-2610-0001», from `document_counters` (kind `VOUCHER`, 0079). Printed on the voucher.
+  voucherNumber String @unique
+
+  categoryId String          @db.Uuid
+  category   ExpenseCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  /// The wallet it left. Paired with the currency, so the foreign key itself
+  /// refuses a ليرة voucher drawn on a dollar safe.
+  accountId String          @db.Uuid
+  currency  String
+  account   TreasuryAccount @relation(fields: [accountId, currency], references: [id, currency], onDelete: Restrict, onUpdate: Restrict, map: "expense_vouchers_account_currency_fkey")
+
+  /// Positive: what was paid. The ledger entry it writes is the negative one.
+  amount Decimal @db.Decimal(14, 2)
+
+  /// Who was paid. Free text, and it may name a citizen — personal data, kept
+  /// out of logs, Sentry and audit rows.
+  payee       String
+  description String
+
+  /// The day the money left, which is not always the day the row was written.
+  occurredAt DateTime @default(now()) @db.Timestamptz(3)
+  /// Why it is dated before today. Required by the server for any back-dating.
+  adjustmentReason String?
+
+  invoiceNumber      String?
+  /// «الفاتورة الورقية محفوظة في الملف». The scan itself is step 3b.
+  hasPhysicalReceipt Boolean @default(false)
+
+  recordedById String? @db.Uuid
+  recordedBy   User?   @relation("ExpenseRecordedBy", fields: [recordedById], references: [id], onDelete: Restrict)
+
+  /// The staff account a salary, wage or commission voucher paid (0081); NULL
+  /// on every other voucher. `payee` still holds the name as it stood on the
+  /// day. That it is a STAFF row is checked in the WHERE that resolves the
+  /// payee: `recordSalary`'s own, and for a commission
+  /// `StaffService.recordInspectorPayout`'s, before `recordCommission` runs.
+  payeeStaffId String? @db.Uuid
+  payeeStaff   User?   @relation("ExpensePayeeStaff", fields: [payeeStaffId], references: [id], onDelete: Restrict)
+  /// The month a salary voucher is for, `YYYY-MM` (0091), written only by
+  /// `recordSalary`. One per staff member per month among vouchers still
+  /// standing: a partial unique index in 0091 (`expense_vouchers_salary_period_key`,
+  /// WHERE "voidedAt" IS NULL), which Prisma cannot express.
+  salaryPeriod String? @db.VarChar(7)
+
+  /// The inspector payout this voucher paid, when it paid one (0086).
+  inspectorPayout InspectorPayout?
+  /// The transfer whose fee this voucher books, when it books one (0084).
+  transferFeeOf   TreasuryTransfer? @relation("TransferFee")
+
+  /// One id per press of «سجّل النفقة», so a retry finds the first voucher
+  /// instead of paying twice.
+  clientRequestId String? @unique @db.Uuid
+
+  /// The cancellation stamp. All three move together (CHECK in 0074); a voucher
+  /// with `voidedAt` set has an opposing ledger entry against the same wallet.
+  voidedAt   DateTime? @db.Timestamptz(3)
+  voidedById String?   @db.Uuid
+  voidedBy   User?     @relation("ExpenseVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
+  voidReason String?
+
+  /// «أمر الصرف» — the payment order (decree 5595/1982 art. 28 and 33). Set at
+  /// creation on the manager's vouchers and on vouchers paid from an order;
+  /// NULL on an accountant's urgent payment (art. 35) until the manager
+  /// regularises it. Written once (trigger in 0083).
+  orderedAt   DateTime? @db.Timestamptz(3)
+  orderedById String?   @db.Uuid
+  orderedBy   User?     @relation("ExpenseOrderedBy", fields: [orderedById], references: [id], onDelete: Restrict)
+  /// Why an accountant paid before the order (art. 35); NULL otherwise.
+  urgentReason String?
+
+  /// The request this voucher was ordered from, when there was one.
+  request ExpenseRequest?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([occurredAt(sort: Desc)])
+  @@index([categoryId, occurredAt(sort: Desc)])
+  @@index([accountId, occurredAt(sort: Desc)])
+  @@index([recordedById])
+  @@index([orderedById])
+  @@index([voidedById])
+  @@index([payeeStaffId, occurredAt(sort: Desc)])
+  @@map("expense_vouchers")
+}
+
+/// «طلب أمر صرف» — an expense an accountant has prepared for the manager's
+/// payment order (0083). Nothing has left a wallet: the order writes and pays
+/// the voucher in one transaction. The decision is written once (trigger in
+/// 0083) — `ORDERED` with its voucher, `REJECTED` with a reason, or `WITHDRAWN`
+/// by its author. Status is derived from `decision`, never stored twice.
+model ExpenseRequest {
+  id String @id @default(uuid()) @db.Uuid
+
+  categoryId String          @db.Uuid
+  category   ExpenseCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  /// The wallet it is to be paid from, paired with its currency as on vouchers.
+  accountId String          @db.Uuid
+  currency  String
+  account   TreasuryAccount @relation(fields: [accountId, currency], references: [id, currency], onDelete: Restrict, onUpdate: Restrict, map: "expense_requests_account_currency_fkey")
+
+  amount Decimal @db.Decimal(14, 2)
+
+  /// Free text that may name a citizen — kept out of logs, Sentry and audit rows.
+  payee              String
+  description        String
+  invoiceNumber      String?
+  hasPhysicalReceipt Boolean @default(false)
+
+  requestedById String @db.Uuid
+  requestedBy   User   @relation("ExpenseRequestFiledBy", fields: [requestedById], references: [id], onDelete: Restrict)
+
+  /// One id per request, so a retry finds the first instead of filing twice.
+  clientRequestId String? @unique @db.Uuid
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  /// 'ORDERED' | 'REJECTED' | 'WITHDRAWN' (CHECK in 0083).
+  decision       String?
+  decidedAt      DateTime? @db.Timestamptz(3)
+  decidedById    String?   @db.Uuid
+  decidedBy      User?     @relation("ExpenseRequestDecidedBy", fields: [decidedById], references: [id], onDelete: Restrict)
+  decisionReason String?
+
+  voucherId String?         @unique @db.Uuid
+  voucher   ExpenseVoucher? @relation(fields: [voucherId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([categoryId])
+  @@index([accountId])
+  @@index([requestedById])
+  @@index([decidedById])
+  @@map("expense_requests")
+}
+
+// ─────────────────────────  Income (migration 0080)  ─────────────────────────
+// Design: docs/finance.md §4.
+
+/// Where income comes from: the Independent Municipal Fund, permits, rent,
+/// grants, fines. Rows rather than an enum, for the reason `ExpenseCategory` gives.
+model IncomeCategory {
+  id String @id @default(uuid()) @db.Uuid
+  /// The stable handle for the seeded rows (`INCOME_CATEGORY_KEYS`). NULL for a
+  /// municipality's own. Unique where present (a partial index in 0080).
+  key     String?
+  /// The name as the municipality reads it.
+  labelAr String
+  /// Its English name, or NULL for a category entered in Arabic only.
+  labelEn String?
+  /// باب وبند الموازنة. NULL on every seeded row: the codes come from the
+  /// municipality's adopted budget. Both set or both NULL (CHECK in 0080).
+  chapterCode String?
+  itemCode    String?
+  /// Deactivated, never deleted: vouchers point here for ever.
+  active    Boolean  @default(true)
+  sortOrder Int      @default(100)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+
+  vouchers IncomeVoucher[]
+
+  @@map("income_categories")
+}
+
+/// One «سند قبض إيرادات»: money that reached a wallet without a citizen's bill
+/// behind it, and where it came from.
+///
+/// Recording is receiving — the `INCOME_VOUCHER` ledger entry is written in the
+/// same transaction. A mistake is voided, never edited (trigger in 0083): this
+/// row takes a cancellation stamp while the entry it wrote is opposed by a new one.
+model IncomeVoucher {
+  id String @id @default(uuid()) @db.Uuid
+  /// «RV-2610-0001», from `document_counters` (kind `REVENUE_VOUCHER`).
+  voucherNumber String @unique
+
+  categoryId String         @db.Uuid
+  category   IncomeCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  /// The wallet it reached. Paired with the currency, so the foreign key itself
+  /// refuses a ليرة voucher received into a dollar safe.
+  accountId String          @db.Uuid
+  currency  String
+  account   TreasuryAccount @relation(fields: [accountId, currency], references: [id, currency], onDelete: Restrict, onUpdate: Restrict, map: "income_vouchers_account_currency_fkey")
+
+  /// Positive: what was received. The ledger's own precision.
+  amount Decimal @db.Decimal(14, 2)
+
+  /// Who paid. Optional free text, and it may name a citizen — personal data,
+  /// kept out of logs, Sentry and audit rows.
+  payerName         String?
+  description       String
+  /// A cheque number, or a bank or Whish transfer number.
+  externalReference String?
+
+  /// The day the money arrived, which is not always the day the row was written.
+  occurredAt DateTime @default(now()) @db.Timestamptz(3)
+  /// Why it is dated before today. Required by the server for any back-dating.
+  adjustmentReason String?
+
+  recordedById String? @db.Uuid
+  recordedBy   User?   @relation("IncomeRecordedBy", fields: [recordedById], references: [id], onDelete: Restrict)
+
+  /// One id per press of «سجّل الإيراد». Required, so a retry always finds the
+  /// first voucher instead of crediting the wallet twice.
+  clientRequestId String @unique @db.Uuid
+
+  /// The cancellation stamp. All three move together (CHECK in 0080); a voucher
+  /// with `voidedAt` set has an opposing ledger entry against the same wallet.
+  voidedAt   DateTime? @db.Timestamptz(3)
+  voidedById String?   @db.Uuid
+  voidedBy   User?     @relation("IncomeVoidedBy", fields: [voidedById], references: [id], onDelete: Restrict)
+  voidReason String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([occurredAt(sort: Desc)])
+  @@index([categoryId, occurredAt(sort: Desc)])
+  @@index([accountId, occurredAt(sort: Desc)])
+  @@index([recordedById])
+  @@index([voidedById])
+  @@map("income_vouchers")
+}
+
+// ─────────────────  Daily count and closing (migration 0082)  ─────────────────
+// Design: docs/finance.md §7.
+
+/// A day with no `TreasuryDayClosure` row is open. CLOSED locks it; REOPENED is
+/// a closed day the manager opened again, which must be closed again before any
+/// later day can be.
+enum TreasuryDayStatus {
+  CLOSED
+  REOPENED
+}
+
+/// «إقفال اليومية» — one municipal business day, closed.
+///
+/// While a day is CLOSED nothing is written into it: triggers in 0082 refuse a
+/// ledger entry dated on or before it and any change to its counts, and refuse
+/// deleting this row. Closures run from go-live in date order with no gaps.
+model TreasuryDayClosure {
+  id           String            @id @default(uuid()) @db.Uuid
+  /// Beirut's calendar day. Read back as midnight UTC of that date.
+  businessDate DateTime          @unique @db.Date
+  status       TreasuryDayStatus @default(CLOSED)
+  /// Swept closed, uncounted, when a later day closed: none of the counted
+  /// wallets moved on it.
+  autoClosed   Boolean           @default(false)
+  closedAt     DateTime          @default(now()) @db.Timestamptz(3)
+  /// For a swept day, the person whose close swept it.
+  closedById   String            @db.Uuid
+  closedBy     User              @relation("TreasuryDayClosedBy", fields: [closedById], references: [id], onDelete: Restrict)
+
+  /// Set while the day stands open again, and only then (CHECK in 0082).
+  reopenedAt   DateTime?         @db.Timestamptz(3)
+  reopenedById String?           @db.Uuid
+  reopenedBy   User?             @relation("TreasuryDayReopenedBy", fields: [reopenedById], references: [id], onDelete: Restrict)
+  reopenReason String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  counts TreasuryCount[]
+
+  @@index([closedById])
+  @@index([reopenedById])
+  @@map("treasury_day_closures")
+}
+
+/// «جرد الصندوق» — one wallet counted on one day.
+///
+/// The books' figure beside the counted one. A difference is explained, never
+/// posted: nothing here moves money. A recount replaces the row until the day
+/// closes, and from then on the trigger in 0082 refuses any change but the
+/// closure link.
+model TreasuryCount {
+  id        String          @id @default(uuid()) @db.Uuid
+  accountId String          @db.Uuid
+  /// Always the wallet's own currency: the foreign key is the pair.
+  currency  String
+  account   TreasuryAccount @relation(fields: [accountId, currency], references: [id, currency], onDelete: Restrict, onUpdate: Restrict, map: "treasury_counts_account_currency_fkey")
+
+  businessDate   DateTime @db.Date
+  /// The wallet's entries summed to the end of `businessDate`, by the server.
+  expectedAmount Decimal  @db.Decimal(14, 2)
+  /// Found in the safe, or read off the Whish app or the bank statement. Not negative.
+  countedAmount  Decimal  @db.Decimal(14, 2)
+  /// counted − expected (CHECK). Positive a surplus, negative a shortage.
+  difference     Decimal  @db.Decimal(14, 2)
+  /// Required whenever `difference` is not zero (CHECK).
+  varianceReason String?
+
+  countedById String   @db.Uuid
+  countedBy   User     @relation("TreasuryCountedBy", fields: [countedById], references: [id], onDelete: Restrict)
+  countedAt   DateTime @default(now()) @db.Timestamptz(3)
+
+  /// The closure that locked it, set when its day closes.
+  closureId String?             @db.Uuid
+  closure   TreasuryDayClosure? @relation(fields: [closureId], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([accountId, businessDate])
+  @@index([businessDate])
+  @@index([countedById])
+  @@index([closureId])
+  @@map("treasury_counts")
 }
 
 // ─────────────────────────  Quality review (migration 0049)  ─────────────────────────
@@ -2339,6 +3127,10 @@ enum WhishCheckoutState {
   SUCCEEDED
   FAILED
   ABANDONED
+  /// A success callback for an amount other than the one quoted (0090). The
+  /// money moved at the provider, so it is neither FAILED nor SUCCEEDED: nothing
+  /// is credited, and the bill stays under review for a clerk to decide.
+  MISMATCHED
 }
 
 /// One immutable row per checkout opened at the provider (migration 0057).
@@ -2381,4 +3173,213 @@ model WhishCheckout {
 
   @@index([paymentId, openedAt])
   @@map("whish_checkouts")
+}
+
+/// The counter book behind «INV-2610-0001», «RCP-2610-0001», «PV-2610-0001»
+/// and «TR-2610-0001». Migration 0079.
+///
+/// A row per (kind, period), because a Postgres sequence cannot restart on the
+/// first of the month — `nextval` only climbs, and anything that resets it
+/// races whatever is drawing from it. A number is taken with one atomic
+/// `INSERT … ON CONFLICT DO UPDATE … RETURNING`, so two clerks recording in the
+/// same moment cannot be handed the same number; the second waits on the row.
+///
+/// Never written through Prisma: `allocateDocumentNumbers` issues the raw
+/// statement, because the draw and the document must share one transaction.
+model DocumentCounter {
+  /// 'INVOICE' | 'RECEIPT' | 'VOUCHER' | 'TRANSFER'. Text, not an enum: a fifth
+  /// book should not need a migration, and nothing branches on the value.
+  kind   String
+  /// «YYMM» on the municipality's calendar (Asia/Beirut), e.g. '2610'.
+  period String
+
+  /// What the next document will take. A draw of n leaves it n higher.
+  nextValue Int      @default(1)
+  updatedAt DateTime @default(now())
+
+  @@id([kind, period])
+  @@map("document_counters")
+}
+
+// ─────────────────────  Municipal requests (0092)  ─────────────────────
+
+/// What a citizen asks the municipality for. Design: docs/municipal-requests-plan.md.
+enum RequestType {
+  /// براءة ذمة بلدية
+  CLEARANCE
+  /// إفادة سكن / إقامة
+  RESIDENCY
+  /// إفادة إشغال
+  OCCUPANCY
+  /// إفادة شغور
+  VACANCY
+  /// تسجيل وتصديق عقد إيجار
+  LEASE_REGISTRATION
+  /// رخصة / تصريح ترميم
+  RENOVATION
+  /// رخصة لافتة إعلانية
+  SIGNAGE
+  /// طلب عام
+  OTHER
+}
+
+/// In what capacity the applicant asks. Declared, then judged by the clerk (D2).
+enum ApplicantCapacity {
+  OWNER
+  TENANT
+  ESTATE_HEIR
+  LEGAL_AGENT
+  FREE_OCCUPANT
+}
+
+/// Where a request stands. Transitions: migration 0092's header.
+enum RequestStatus {
+  AWAITING_PAYMENT
+  IN_REVIEW
+  READY_FOR_PICKUP
+  COMPLETED
+  REJECTED
+  CANCELLED
+}
+
+/// Online through the portal, or filed by a clerk at the counter (D8).
+enum RequestChannel {
+  ONLINE
+  COUNTER
+}
+
+/// What a paper on a request is.
+enum RequestAttachmentType {
+  IDENTITY
+  OWNERSHIP_PROOF
+  LEASE_CONTRACT
+  POWER_OF_ATTORNEY
+  INHERITANCE_PROOF
+  MUKHTAR_STATEMENT
+  OTHER
+}
+
+/// Which request types this municipality offers, and each one's fee (D1). A type
+/// with no row, or with `enabled` false, is not offered.
+model RequestTypeSetting {
+  requestType RequestType @id
+  enabled     Boolean     @default(false)
+  /// Whole Lebanese pounds (CHECK in 0092). 0 is a free type: no bill is raised.
+  feeAmount   Decimal     @default(0) @db.Decimal(14, 2)
+  updatedAt   DateTime    @default(now()) @updatedAt @db.Timestamptz(3)
+  updatedById String?     @db.Uuid
+  updatedBy   User?       @relation("RequestTypeUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+
+  @@index([updatedById])
+  @@map("request_type_settings")
+}
+
+/// One municipal request — «REQ-2610-0001». What the database holds, none of
+/// which Prisma can express:
+/// - 0092's CHECKs: each status with its stamps (`citizen_requests_paid_stamp`,
+///   `_ready_stamp`, `_ready_states`, `_completed_stamp`, `_rejected_stamp`,
+///   `_cancelled_stamp`), a counter request names its clerk
+///   (`_counter_names_clerk`), a flat only with a card (`_unit_on_card`), and a
+///   purpose never blank (`_purpose_present`).
+/// - One open request per citizen, type and card: `citizen_requests_one_open_key`,
+///   a partial unique index over AWAITING_PAYMENT, IN_REVIEW and READY_FOR_PICKUP;
+///   a request on no card keys on the nil uuid.
+/// - Its life (0094, `citizen_requests_guard`): only the documented transitions;
+///   nothing changes once COMPLETED, REJECTED or CANCELLED but `citizenId`, which
+///   a merge of two files moves; each step's stamps written by that step; the
+///   bill linked once; no DELETE; a flat on the request's card and the card on
+///   the citizen's file; and CANCELLED with a bill only when that bill is
+///   CANCELLED (the manager's «إلغاء الفاتورة», decision of 2026-10-13).
+model CitizenRequest {
+  id            String @id @default(uuid()) @db.Uuid
+  /// «REQ-2610-0001», from `document_counters` (kind `REQUEST`).
+  requestNumber String @unique
+
+  citizenId String @db.Uuid
+  citizen   User   @relation("RequestCitizen", fields: [citizenId], references: [id], onDelete: Restrict)
+
+  channel           RequestChannel
+  requestType       RequestType
+  applicantCapacity ApplicantCapacity
+  status            RequestStatus     @default(AWAITING_PAYMENT)
+
+  /// The citizen's card, and optionally one unit line on it (D4).
+  propertyEntryId String?        @db.Uuid
+  propertyEntry   PropertyEntry? @relation(fields: [propertyEntryId], references: [id], onDelete: Restrict)
+  buildingUnitId  String?        @db.Uuid
+  buildingUnit    BuildingUnit?  @relation(fields: [buildingUnitId], references: [id], onDelete: Restrict)
+
+  /// The bill the fee was charged on, raised when the citizen went to pay (D10).
+  /// Linked once, while the request waits for payment, and never changed (0094).
+  citizenPaymentId String?         @unique @db.Uuid
+  citizenPayment   CitizenPayment? @relation(fields: [citizenPaymentId], references: [id], onDelete: Restrict)
+
+  /// What the citizen needs the paper for. Free text: kept out of audit rows.
+  purpose           String?
+  /// What the paper certifies, written by the clerk on approval (D3).
+  statement         String?
+  /// For a براءة ذمة: `{ total, unlinkedTotal, propertyNumber, checkedAt }` at approval.
+  clearanceSnapshot Json?
+  rejectionReason   String?
+
+  /// One id per press of «إرسال الطلب». A retry finds the first request.
+  clientRequestId String @unique @db.Uuid
+
+  /// The clerk who filed a counter request; null online.
+  createdById   String?   @db.Uuid
+  createdBy     User?     @relation("RequestCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  paidAt        DateTime? @db.Timestamptz(3)
+  readyAt       DateTime? @db.Timestamptz(3)
+  readyById     String?   @db.Uuid
+  readyBy       User?     @relation("RequestReadyBy", fields: [readyById], references: [id], onDelete: Restrict)
+  completedAt   DateTime? @db.Timestamptz(3)
+  completedById String?   @db.Uuid
+  completedBy   User?     @relation("RequestCompletedBy", fields: [completedById], references: [id], onDelete: Restrict)
+  rejectedAt    DateTime? @db.Timestamptz(3)
+  rejectedById  String?   @db.Uuid
+  rejectedBy    User?     @relation("RequestRejectedBy", fields: [rejectedById], references: [id], onDelete: Restrict)
+  cancelledAt   DateTime? @db.Timestamptz(3)
+  /// The clerk who cancelled; null when the citizen cancelled their own.
+  cancelledById String?   @db.Uuid
+  cancelledBy   User?     @relation("RequestCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+
+  attachments CitizenRequestAttachment[]
+
+  @@index([status, createdAt(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
+  @@index([citizenId, createdAt(sort: Desc)])
+  @@index([propertyEntryId])
+  @@index([buildingUnitId])
+  @@index([createdById])
+  @@index([readyById])
+  @@index([completedById])
+  @@index([rejectedById])
+  @@index([cancelledById])
+  @@map("citizen_requests")
+}
+
+/// A paper on a request: the object's key in the private documents bucket and
+/// its type as sniffed from the bytes. The key is never sent as a field; a staff
+/// member's short-lived signed link to the object carries it in its path. The
+/// type is one of 0092's four (`citizen_request_attachments_mime_known`).
+model CitizenRequestAttachment {
+  id        String                @id @default(uuid()) @db.Uuid
+  requestId String                @db.Uuid
+  request   CitizenRequest        @relation(fields: [requestId], references: [id], onDelete: Restrict)
+  type      RequestAttachmentType
+  storagePath String              @unique
+  mimeType    String
+  sizeBytes   Int
+  /// The citizen (online) or the clerk who uploaded it.
+  uploadedById String @db.Uuid
+  uploadedBy   User   @relation("RequestAttachmentUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  /// 0092 named it for the request alone; `map:` keeps Prisma on that name.
+  @@index([requestId, createdAt], map: "citizen_request_attachments_requestId_idx")
+  @@index([uploadedById])
+  @@map("citizen_request_attachments")
 }
