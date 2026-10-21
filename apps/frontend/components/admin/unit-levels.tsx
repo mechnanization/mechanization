@@ -6,6 +6,7 @@ import { Layers, Loader2 } from 'lucide-react';
 import {
   MAX_UNIT_LEVELS,
   canSpanLevels,
+  layoutBuildingFloors,
   levelFactorsSchema,
   unitLevelsLabel,
   type HouseGrowth,
@@ -340,4 +341,30 @@ export function UnitLevelsPanel({
       ) : null}
     </div>
   );
+}
+
+/**
+ * The flat directly above `unit` that «دمج كدوبلكس» would fold into it, or
+ * null — the server's own pair rule (`mergePair`): on the floor the unit's top
+ * level reaches, in its columns as drawn; one with exactly its columns, else the
+ * only one overlapping them. Both must be flats.
+ */
+export function upperFlatOf<
+  T extends { id: string; floor: number; sequence: number; levels?: number; unitType: string; startCol: number | null; endCol: number | null },
+>(units: readonly T[], unit: T): T | null {
+  if (unit.unitType !== 'APARTMENT') return null;
+  const layouts = layoutBuildingFloors([...units].sort((a, b) => a.floor - b.floor || a.sequence - b.sequence));
+  const span = layouts.get(unit.floor)?.blocks.find((block) => block.unit.id === unit.id && !block.continuation);
+  if (!span) return null;
+  const top = unit.floor + (unit.levels ?? 1);
+  const above = (layouts.get(top)?.blocks ?? []).filter(
+    (block) =>
+      !block.continuation &&
+      block.unit.floor === top &&
+      block.startCol <= span.endCol &&
+      span.startCol <= block.endCol,
+  );
+  const exact = above.find((block) => block.startCol === span.startCol && block.endCol === span.endCol);
+  const upper = exact?.unit ?? (above.length === 1 ? above[0]!.unit : null);
+  return upper && upper.unitType === 'APARTMENT' ? upper : null;
 }

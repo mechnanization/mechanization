@@ -85,6 +85,7 @@ import { endTenancyMessage } from '@/components/admin/after-tenancy-question';
 import { BuildingElevation } from '@/components/admin/property-illustrations';
 import { ActivityTrail } from '@/components/admin/activity-trail';
 import { UnitCorrectionDeleteButton } from '@/components/admin/unit-correction-delete-dialog';
+import { DuplexMergeButton } from '@/components/admin/duplex-merge-dialog';
 import { AUDIT_ENTITY } from '@/lib/audit-labels';
 import {
   type EndOccupancyAnswer,
@@ -108,7 +109,7 @@ import {
   VacancyPanel,
   VisitForm,
 } from './building-unit-forms';
-import { HouseGrowthPrompt, UnitContinuationTile, UnitLevelsPanel } from './unit-levels';
+import { HouseGrowthPrompt, UnitContinuationTile, UnitLevelsPanel, upperFlatOf } from './unit-levels';
 import { OwnerBillingPanel } from './owner-billing-panel';
 import { FeeExemptionPanel } from './fee-exemption-panel';
 import { showsOwnerBilling } from '@/lib/owner-billing';
@@ -1499,6 +1500,21 @@ export function BuildingUnitMatrixView({
                     SUPER_ADMIN gets «حذف تصحيحي…» instead: a previewed, audited
                     delete that also works on a unit the ordinary one refuses.
                   */}
+                  {/* «دمج كدوبلكس» (D28): a flat and the one above it that are one home. */}
+                  {token ? (
+                    <DuplexMergeButton
+                      tenant={tenant}
+                      token={token}
+                      unitId={selectedUnit.id}
+                      hasUpper={upperFlatOf(building.units, selectedUnit) !== null}
+                      locale={locale}
+                      disabled={busy}
+                      onMerged={() => {
+                        setAction(null);
+                        void load();
+                      }}
+                    />
+                  ) : null}
                   {role === 'SUPER_ADMIN' && token ? (
                     <UnitCorrectionDeleteButton
                       tenant={tenant}
