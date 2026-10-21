@@ -1,0 +1,49 @@
+-- 0076_citizen_residence_estate_institution
+--
+-- «نوع الملف» gains two owners of record that are not a living person: an
+-- estate, and an institution.
+--
+-- == What it is for ======================================================
+--
+-- The register could name only people as owners. Two kinds of owner the town
+-- really has could therefore be filed only wrongly (production audit,
+-- 2026-10-07):
+--
+--   ESTATE       «تركة (ورثة المرحوم …)» — the owner died and the heirs have
+--                not partitioned. A dead man cannot be billed, sign a receipt
+--                or pay. The user's decision: the owner of record becomes the
+--                estate; whoever lives in or uses the flat pays its occupancy
+--                fee; an empty flat's owner-borne charges fall on the heirs
+--                collectively, and attach to the property until a براءة ذمّة.
+--                Z-5-267-A/0101 is filed today as owned and occupied by a man
+--                the officer's note calls «شهيد», with his widow and children
+--                living there. The file is converted in place, so his cards,
+--                his flats and any bill already issued stay where they are.
+--
+--   INSTITUTION  «جهة / وقف» — a waqf, a council, a public body. Never left
+--                blank (the user's decision): an ownerless flat bills nobody
+--                and reads as broken data. Z-2-19-A, «جامع الساحة», has four
+--                units and no owner recorded on any of them.
+--
+-- Neither is a household: no mother's name, gender, nationality or residency
+-- is asked of either, and population counts, which read RESIDENT, leave both
+-- out without being told to.
+--
+-- == Why this migration is alone =========================================
+--
+-- A value added by `ALTER TYPE … ADD VALUE` may not be used by the transaction
+-- that added it, and the migrator wraps each migration in one (0062 for the
+-- precedent). It is also the "enum value before the code" rule: this ships to
+-- production ahead of the code that writes either value. Two values in one
+-- `ALTER TYPE` series are fine — neither is used here.
+--
+-- == Safety ==============================================================
+--
+-- Additive: two enum values. No row is rewritten, and the build serving
+-- production never writes either value, so it keeps working unchanged. Removing
+-- or renaming a stored enum value is destructive DDL; neither will be.
+--
+-- Written unqualified: the migrator sets `search_path` to the tenant schema.
+
+ALTER TYPE "CitizenResidence" ADD VALUE IF NOT EXISTS 'ESTATE';
+ALTER TYPE "CitizenResidence" ADD VALUE IF NOT EXISTS 'INSTITUTION';
