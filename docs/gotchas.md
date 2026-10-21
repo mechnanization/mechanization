@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `fix/pr116-review` (PR #116 merged with `fix/pr115-review`, which stacks #123, #124 and #115 on `develop@5e8f5c3`, with its review fixes): Escape inside a dialog, Tailwind 4 class names on 3.4; digit-normalised cadastre lookups, Latin digits on write, what still compares as stored; a window count on an empty page, 2026-10-15; the previous build and a new enum value against `chore/migration-0090-0091` (on `develop@5e8f5c3`), 2026-10-13, rebased onto `develop@3211140`, 2026-10-15; the Prisma `now()` clock trap in invoice numbering against `fix/finance-audit-remediation` (on `develop@5e8f5c3`), 2026-10-12; JavaScript and Postgres on `trim` and lower case against `fix/finance-audit-remediation` (rebased on `chore/migration-0090-0091@8d386b5`), 2026-10-13; a new RESTRICT key and an existing delete (0092) against `chore/migration-0092` rebased on `fix/finance-audit-remediation@9f7b12b`, 2026-10-13; the CRLF working tree and Enter inside a nested editor added on `fix/fees-page-ux` (uncommitted), 2026-10-12; a Radix dialog with no trigger losing the focus on close, the same day; a `replaceState` made while a page mounts, found on the request wizard (uncommitted), 2026-10-13; the reference-only sign-in recorded as the decided one, and an undeclared env var set only in `.env` never reaching the code of a deployed build (verified in `@nestjs/config`; a locally generated Prisma client loads the file itself), the same day; and, on `fix/fees-page-ux` rebased onto `chore/migration-0092@16473f0` (2026-10-13), the review of PR #122: a request cancelled with its bill (`cancelRequestOfCancelledBill`), a card or a flat a request names never deleted (`PROPERTY_NAMED_BY_REQUEST`, `HAS_REQUESTS`), request bills stamp `issuedById`, the API's log lines without query strings, and the isolation tests; and, on `fix/pr122-review` (2026-10-15), the review's blocker and majors: `ParcelDuesService.dues` normalising its own argument, a request on a cancelled bill cancelled by `reconcile` too (an IN_REVIEW one through AWAITING_PAYMENT), and a request's `fee` null once it will never be billed; and an `absolute` box escaping the admin shell's scroller, measured on `develop@4634bdb` (uncommitted), 2026-10-15, and the warnings of `next dev --turbo`, the same day.
+Last verified against the code: `fix/pr116-review` (PR #116 merged with `fix/pr115-review`, which stacks #123, #124 and #115 on `develop@5e8f5c3`, with its review fixes): Escape inside a dialog, Tailwind 4 class names on 3.4; digit-normalised cadastre lookups, Latin digits on write, what still compares as stored; a window count on an empty page, 2026-10-15; the previous build and a new enum value against `chore/migration-0090-0091` (on `develop@5e8f5c3`), 2026-10-13, rebased onto `develop@3211140`, 2026-10-15; the Prisma `now()` clock trap in invoice numbering against `fix/finance-audit-remediation` (on `develop@5e8f5c3`), 2026-10-12; JavaScript and Postgres on `trim` and lower case against `fix/finance-audit-remediation` (rebased on `chore/migration-0090-0091@8d386b5`), 2026-10-13; a new RESTRICT key and an existing delete (0092) against `chore/migration-0092` rebased on `fix/finance-audit-remediation@9f7b12b`, 2026-10-13; the CRLF working tree and Enter inside a nested editor added on `fix/fees-page-ux` (uncommitted), 2026-10-12; a Radix dialog with no trigger losing the focus on close, the same day; a `replaceState` made while a page mounts, found on the request wizard (uncommitted), 2026-10-13; the reference-only sign-in recorded as the decided one, and an undeclared env var set only in `.env` never reaching the code of a deployed build (verified in `@nestjs/config`; a locally generated Prisma client loads the file itself), the same day; and, on `fix/fees-page-ux` rebased onto `chore/migration-0092@16473f0` (2026-10-13), the review of PR #122: a request cancelled with its bill (`cancelRequestOfCancelledBill`), a card or a flat a request names never deleted (`PROPERTY_NAMED_BY_REQUEST`, `HAS_REQUESTS`), request bills stamp `issuedById`, the API's log lines without query strings, and the isolation tests; and, on `fix/pr122-review` (2026-10-15), the review's blocker and majors: `ParcelDuesService.dues` normalising its own argument, a request on a cancelled bill cancelled by `reconcile` too (an IN_REVIEW one through AWAITING_PAYMENT), and a request's `fee` null once it will never be billed; and an `absolute` box escaping the admin shell's scroller, measured on `develop@4634bdb` (uncommitted), 2026-10-15, and the warnings of `next dev --turbo`, the same day; and, on `develop@a7e62087` (uncommitted), the two census-counting traps — `property_entries` counting filings rather than structures, and the trigger columns beside the `units` table — both measured against production, 2026-10-16.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -152,6 +152,50 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   `apps/frontend/Dockerfile` stage `build`.
 
 ## Database and migrations
+
+### `property_entries` counts filings, not buildings — the census tables count buildings
+
+- **What happens:** `count(*) FROM property_entries WHERE "propertyType" = 'BUILDING'`
+  reads like "how many buildings are registered". It is not. On production on
+  2026-10-16 it returned 1,236 against a census holding 713 structures, and the
+  dashboard showed that number under «مبانٍ مسجّلة» for as long as the tile existed.
+- **Why:** a `PropertyEntry` hangs off a `Registration`, so it is a card on **one
+  citizen's file**. A block where twelve households have registered is twelve
+  `BUILDING` rows and one `buildings` row. The same goes for units: 1,818 live
+  `building_units` rows pointed at 1,796 distinct census units, because ten units
+  are co-owned and carry an OWNER card each — legitimately, and the card count is
+  still 22 too high for the question "how many flats are there".
+- **What to do:** for the physical stock — how many structures, how many units,
+  how many are surveyed — query `buildings` and `units`. Use `property_entries`
+  for what citizens have *declared*, and say so in the label: «بطاقة عقارية»,
+  not «مبنى». The dedup in `ReportingService.computeAnalytics` only removes a
+  tenant's card on a parcel an owner already filed; it never deduplicates two
+  owners on one parcel, and it is not a substitute for counting the census.
+- **Where to look:** `apps/backend/src/application/features/reporting/reporting.service.ts`
+  (the `census` block and the `countable_entries` CTE above it),
+  `apps/backend/src/application/features/buildings/buildings.service.ts` (`list`'s
+  `summary`), `PropertyEntry` and `Building` in
+  `apps/backend/src/infrastructure/prisma/tenant/schema.prisma`.
+
+### A census figure has two sources, and only one of them is the fact
+
+- **What happens:** `buildings.unitsTotal` / `unitsSurveyed` are maintained by the
+  `sync_building_unit_counts` trigger, and «سجل المباني» sums them, while a direct
+  count over `units` answers the same question from the rows themselves.
+- **Why:** the trigger columns exist so the map can style pins without an N+1
+  count. They are a cache of the `units` table, and application code is forbidden
+  from writing them (migration 0030).
+- **What to do:** both agreed exactly on production when this was checked
+  (2,323 units, 2,186 surveyed, 2026-10-16), so prefer the `units` table when you
+  want the fact and the trigger columns when you want what the ledger shows. If
+  they ever disagree, that is a trigger fault to report — do not paper over it by
+  switching the other reader to the cache. Mind that both move under you: a
+  reading taken minutes apart changed by one here, because an officer surveyed a
+  flat between the two queries.
+- **Where to look:** `apps/backend/src/infrastructure/prisma/tenant/migrations/0054_structural_units_excluded_from_counts/migration.sql`,
+  and `OCCUPIABLE_LIFECYCLE` / `STRUCTURAL_UNIT_TYPE` in
+  `packages/shared-schemas/src/enums.ts` — the SQL spells both sets out literally,
+  so a new value means editing the arrays, the trigger and the analytics query.
 
 ### Prisma reloads `apps/backend/.env`
 

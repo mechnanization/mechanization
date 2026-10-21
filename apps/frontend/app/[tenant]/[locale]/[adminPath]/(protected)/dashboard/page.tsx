@@ -10,8 +10,9 @@ import {
   BadgeDollarSign,
   Banknote,
   BarChart3,
-  Building,
+  Briefcase,
   Building2,
+  Car,
   ChevronDown,
   ChevronLeft,
   Download,
@@ -24,13 +25,12 @@ import {
   RefreshCw,
   Store,
   Stethoscope,
-  Tent,
-  Trees,
   TrendingUp,
   TriangleAlert,
   Users,
   UsersRound,
   Wallet,
+  Warehouse,
 } from 'lucide-react';
 import {
   ApiRequestError,
@@ -70,21 +70,33 @@ const DEFAULT_FOLDED: ReadonlySet<string> = new Set(['units']);
 /**
  * The unit cards, in display order.
  *
- * `unitsByType` is keyed by `UnitType` (شقة / عيادة / محل) and
- * `propertiesByType` by `PropertyType` (مبنى / منزل / أرض / خيمة) — two
- * different enums, so each card names which of the two it reads. Labels are
- * spelled out here rather than taken from `ar.unitType` because these are
- * municipal-register categories ("مستوصف / عيادة"), which read differently
- * from the single word a citizen picks in a form.
+ * All seven read `census.unitsByType`, keyed by `UnitType`, so the tiles sum
+ * to the section header and to «الوحدات الممسوحة» on «سجل المباني». They used
+ * to read two different maps — `unitsByType` for شقة/عيادة/محل and
+ * `propertiesByType` for مبنى/منزل — and that was the bug this list carried:
+ * a property card belongs to one citizen's *file*, so «مبانٍ مسجّلة» counted
+ * filings and read 1,236 against the census's 713 on production on
+ * 2026-10-16. A block of twelve registered households is one building.
+ *
+ * Every non-structural `UnitType` has a tile. The four that existed covered
+ * 1,681 of 1,912 units, so the header never equalled the sum of the tiles
+ * below it and مستودعات, كراجات and مكاتب appeared nowhere on the dashboard at
+ * all. طابق أعمدة and طابق فارغ are deliberately absent: they are parts of a
+ * structure rather than spaces in it, and the census leaves them out of its
+ * own totals (migrations 0052 and 0054).
+ *
+ * Labels are spelled out here rather than taken from `ar.unitType` because
+ * these are municipal-register categories ("مستوصف / عيادة"), which read
+ * differently from the single word a citizen picks in a form.
  */
 const UNIT_CARDS = [
-  { source: 'unit', key: 'APARTMENT', label: 'شقق سكنية', labelEn: 'Residential Apartments', icon: Building2 },
-  { source: 'property', key: 'HOUSE', label: 'منازل مستقلة', labelEn: 'Standalone Houses', icon: Home },
-  { source: 'unit', key: 'SHOP', label: 'أقسام ووحدات تجارية', labelEn: 'Commercial Units & Shops', icon: Store },
-  { source: 'unit', key: 'CLINIC', label: 'مستوصفات وعيادات', labelEn: 'Clinics & Dispensaries', icon: Stethoscope },
-  { source: 'property', key: 'BUILDING', label: 'مبانٍ مسجّلة', labelEn: 'Registered Buildings', icon: Building },
-  { source: 'property', key: 'LAND', label: 'أراضٍ', labelEn: 'Land Parcels', icon: Trees },
-  { source: 'property', key: 'TENT', label: 'خيام', labelEn: 'Tents & Temporary', icon: Tent },
+  { key: 'APARTMENT', label: 'شقق سكنية', labelEn: 'Residential Apartments', icon: Building2 },
+  { key: 'INDEPENDENT_HOUSE', label: 'منازل مستقلة', labelEn: 'Standalone Houses', icon: Home },
+  { key: 'SHOP', label: 'أقسام ووحدات تجارية', labelEn: 'Commercial Units & Shops', icon: Store },
+  { key: 'CLINIC', label: 'مستوصفات وعيادات', labelEn: 'Clinics & Dispensaries', icon: Stethoscope },
+  { key: 'WAREHOUSE', label: 'مستودعات', labelEn: 'Warehouses', icon: Warehouse },
+  { key: 'GARAGE', label: 'كراجات', labelEn: 'Garages', icon: Car },
+  { key: 'OFFICE', label: 'مكاتب', labelEn: 'Offices', icon: Briefcase },
 ] as const;
 
 /**
@@ -353,14 +365,13 @@ export default function StaffDashboard({
     [data, locale],
   );
 
-  /** Resolves each unit card against whichever of the two maps it reads. */
+  /** Every tile reads the census, so they sum to the header above them. */
   const unitCards = useMemo(
     () =>
       UNIT_CARDS.map((card) => ({
         ...card,
         label: locale === 'en' ? card.labelEn : card.label,
-        value:
-          (card.source === 'unit' ? data?.unitsByType : data?.propertiesByType)?.[card.key] ?? 0,
+        value: data?.census.unitsByType?.[card.key] ?? 0,
       })),
     [data, locale],
   );
@@ -654,14 +665,14 @@ export default function StaffDashboard({
         {/* ── Municipal units ───────────────────────────────────────── */}
         <FoldSection
           id="units"
-          title={locale === 'en' ? 'Housing & Property Units' : 'الوحدات والعقارات'}
+          title={locale === 'en' ? 'Buildings & Units' : 'المباني والوحدات'}
           icon={Building2}
           summary={
             loading
               ? (locale === 'en' ? 'Loading…' : 'جارٍ التحميل…')
               : (locale === 'en'
-                ? `${count(data?.propertyTotal)} properties · ${count(data?.unitTotal)} units`
-                : `${count(data?.propertyTotal)} عقار · ${count(data?.unitTotal)} وحدة`)
+                ? `${count(data?.census.buildings)} buildings · ${count(data?.census.unitsTotal)} units`
+                : `${count(data?.census.buildings)} مبنى · ${count(data?.census.unitsTotal)} وحدة`)
           }
           open={!foldedSections.has('units')}
           onToggle={() => toggleSection('units')}
@@ -669,7 +680,7 @@ export default function StaffDashboard({
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {unitCards.map((card) => (
               <UnitTile
-                key={`${card.source}:${card.key}`}
+                key={card.key}
                 label={card.label}
                 value={card.value}
                 icon={card.icon}
@@ -678,18 +689,42 @@ export default function StaffDashboard({
             ))}
           </div>
 
+          {/*
+            Says what these figures are, because the obvious reading is wrong.
+
+            They count *structures and units*, from the census — the same rows
+            «سجل المباني» lists. The old caption described filings and claimed
+            «تعدّ العقار الواحد مرة واحدة», which a reader takes to mean the
+            parcel; it never did. Nothing here is per-citizen any more, so the
+            page states the source rather than apologising for the method.
+          */}
           <p className="text-xs leading-relaxed text-muted-foreground">
             {locale === 'en'
-              ? 'Units inside registered buildings and standalone units are counted together. Registered buildings counts each property once regardless of unit count.'
-              : 'تُحتسب الوحدات داخل المباني المسجّلة والوحدات المسجّلة بذاتها معاً. «مبانٍ مسجّلة» تعدّ العقار الواحد مرة واحدة مهما بلغ عدد وحداته.'}
+              ? 'Counted from the building census — the same figures as the Census Ledger. Column floors and empty floors are excluded, as are units in structures that cannot hold households.'
+              : 'محتسبة من مسح المباني — وهي الأرقام نفسها في «سجل المباني». تُستثنى طوابق الأعمدة والطوابق الفارغة، والوحدات في منشآت لا يمكن أن تؤوي أسراً.'}
           </p>
+          {/*
+            Coverage, which is the question the filing counts actually answer.
+
+            Kept rather than dropped: «how much of the town has registered» is
+            a real figure staff chase, and it is the one thing the census
+            cannot tell them. Named as filings — «بطاقة عقارية» — so it can
+            never again be read as a count of buildings.
+          */}
+          {data ? (
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              {locale === 'en'
+                ? `${count(data.propertyTotal)} property filing(s) on ${count(data.census.buildingsWithFilings)} of these buildings; ${count(data.census.buildings - data.census.buildingsWithFilings)} have none yet.`
+                : `سُجّلت ${count(data.propertyTotal)} بطاقة عقارية على ${count(data.census.buildingsWithFilings)} من هذه المباني، و${count(data.census.buildings - data.census.buildingsWithFilings)} مبنى لم يُسجّل عليه أحد بعد.`}
+            </p>
+          ) : null}
           {data &&
           (data.duplicateFilingsExcluded.properties > 0 ||
             data.duplicateFilingsExcluded.units > 0) ? (
             <p className="text-xs leading-relaxed text-muted-foreground">
               {locale === 'en'
-                ? `${count(data.duplicateFilingsExcluded.properties)} duplicate property filing(s) and ${count(data.duplicateFilingsExcluded.units)} duplicate unit filing(s) already excluded — a unit rented from its registered owner is counted once, not twice.`
-                : `تم استبعاد ${count(data.duplicateFilingsExcluded.properties)} عقار و${count(data.duplicateFilingsExcluded.units)} وحدة مسجّلة مرتين — الوحدة المؤجَّرة من مالكها المسجَّل تُحتسب مرة واحدة فقط.`}
+                ? `${count(data.duplicateFilingsExcluded.properties)} duplicate property filing(s) and ${count(data.duplicateFilingsExcluded.units)} duplicate unit filing(s) already excluded from that figure — a unit rented from its registered owner is counted once, not twice.`
+                : `تم استبعاد ${count(data.duplicateFilingsExcluded.properties)} بطاقة عقارية و${count(data.duplicateFilingsExcluded.units)} وحدة مسجّلة مرتين من هذا الرقم — الوحدة المؤجَّرة من مالكها المسجَّل تُحتسب مرة واحدة فقط.`}
             </p>
           ) : null}
         </FoldSection>

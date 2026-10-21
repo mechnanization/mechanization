@@ -76,6 +76,44 @@ export interface DashboardAnalytics {
   unitTotal: number;
 
   /**
+   * The physical stock, read from the building census — the same rows «سجل
+   * المباني» lists, under the same predicates.
+   *
+   * Everything above this field counts *filings*: a `property_entries` row is
+   * a card on one citizen's file, so a block of twelve registered households
+   * is twelve «مبنى» cards and one structure. That is the right answer to
+   * "how much has been registered" and the wrong one to "how much is there",
+   * and the dashboard was asking the second question with the first number —
+   * 1,236 against the census's 713 on production on 2026-10-16.
+   *
+   * Counted off `units`/`buildings` rather than the trigger-maintained
+   * `buildings.unitsTotal` the ledger sums, because the units table is where
+   * the fact lives and the counter is a cache of it. The two agreed exactly on
+   * production when this shipped (2,323 either way); if they ever stop
+   * agreeing that is a `sync_building_unit_counts` fault worth seeing, not
+   * something this query should hide by reading the cache too.
+   */
+  census: {
+    /**
+     * Every structure on the register, including the ones no household can
+     * occupy. Matches «عدد المباني» on the ledger, which likewise counts the
+     * whole set — the figure has to mean what the list below it shows.
+     */
+    buildings: number;
+    /**
+     * Units in structures that can hold households, excluding طابق أعمدة and
+     * طابق فارغ. Matches the ledger's denominator.
+     */
+    unitsTotal: number;
+    /** Of those, surveyed — COMPLETE or VACANT_CONFIRMED. */
+    unitsSurveyed: number;
+    /** The same units as `unitsTotal`, split by نوع الوحدة. Sums to it. */
+    unitsByType: Record<string, number>;
+    /** Census buildings at least one live property card points at. */
+    buildingsWithFilings: number;
+  };
+
+  /**
    * How many property_entries / building_units rows this payload already
    * excluded as duplicate filings: a TENANT or FREE_OCCUPANT registration of
    * a unit an OWNER already registered under the same رقم العقار — the same
@@ -765,9 +803,14 @@ export class ReportingService {
    * rather than widening the pool to tolerate it.
    */
   private async computeAnalytics(): Promise<DashboardAnalytics> {
-    type AnalyticsRow = Omit<DashboardAnalytics, 'duplicateFilingsExcluded'> & {
+    type AnalyticsRow = Omit<DashboardAnalytics, 'duplicateFilingsExcluded' | 'census'> & {
       duplicatePropertiesExcluded: number;
       duplicateUnitsExcluded: number;
+      censusBuildings: number;
+      censusUnitsTotal: number;
+      censusUnitsSurveyed: number;
+      censusUnitsByType: Record<string, number>;
+      censusBuildingsWithFilings: number;
     };
 
     const [row] = await withConnectionRetry(() =>
@@ -850,6 +893,41 @@ export class ReportingService {
                      WHERE bu."endedAt" IS NULL)
                  + (SELECT count(*) FROM countable_entries WHERE "unitType" IS NOT NULL))::int)
             AS "unitTotal",
+          -- ── The census: what is actually there ────────────────────
+          -- The lifecycle and unit-type sets are spelled out because SQL
+          -- cannot read OCCUPIABLE_LIFECYCLE or STRUCTURAL_UNIT_TYPE out of
+          -- shared-schemas — the same compromise migration 0054 makes, and
+          -- the same place to edit when a value is added: both arrays there,
+          -- this query, and the trigger.
+          (SELECT count(*)::int FROM ${this.S}buildings)
+            AS "censusBuildings",
+          (SELECT count(*)::int FROM ${this.S}units u
+             JOIN ${this.S}buildings b ON b.id = u."buildingId"
+            WHERE u."unitType" NOT IN ('PILOTIS', 'EMPTY_FLOOR')
+              AND b."lifecycleStatus" IN ('IN_USE', 'DERELICT'))
+            AS "censusUnitsTotal",
+          (SELECT count(*)::int FROM ${this.S}units u
+             JOIN ${this.S}buildings b ON b.id = u."buildingId"
+            WHERE u."unitType" NOT IN ('PILOTIS', 'EMPTY_FLOOR')
+              AND b."lifecycleStatus" IN ('IN_USE', 'DERELICT')
+              AND u."surveyStatus" IN ('COMPLETE', 'VACANT_CONFIRMED'))
+            AS "censusUnitsSurveyed",
+          (SELECT COALESCE(json_object_agg(t, n), '{}'::json)
+             FROM (SELECT u."unitType"::text AS t, count(*)::int AS n
+                     FROM ${this.S}units u
+                     JOIN ${this.S}buildings b ON b.id = u."buildingId"
+                    WHERE u."unitType" NOT IN ('PILOTIS', 'EMPTY_FLOOR')
+                      AND b."lifecycleStatus" IN ('IN_USE', 'DERELICT')
+                    GROUP BY 1) x)
+            AS "censusUnitsByType",
+          -- Coverage: structures some live card points at. Over the
+          -- countable entries and not every live card (and no backticks in
+          -- this comment, for the reason given above), so a tenant duplicate
+          -- filing cannot make a building look covered that its owner never
+          -- registered.
+          (SELECT count(DISTINCT ce."buildingId")::int FROM countable_entries ce
+            WHERE ce."buildingId" IS NOT NULL)
+            AS "censusBuildingsWithFilings",
           (SELECT count(*)::int FROM excluded_entries)
             AS "duplicatePropertiesExcluded",
           (SELECT (SELECT count(*)::int FROM excluded_entries WHERE "unitType" IS NOT NULL)
@@ -901,12 +979,28 @@ export class ReportingService {
       `,
     );
 
-    const { duplicatePropertiesExcluded, duplicateUnitsExcluded, ...rest } = row;
+    const {
+      duplicatePropertiesExcluded,
+      duplicateUnitsExcluded,
+      censusBuildings,
+      censusUnitsTotal,
+      censusUnitsSurveyed,
+      censusUnitsByType,
+      censusBuildingsWithFilings,
+      ...rest
+    } = row;
     return {
       ...rest,
       duplicateFilingsExcluded: {
         properties: duplicatePropertiesExcluded,
         units: duplicateUnitsExcluded,
+      },
+      census: {
+        buildings: censusBuildings,
+        unitsTotal: censusUnitsTotal,
+        unitsSurveyed: censusUnitsSurveyed,
+        unitsByType: censusUnitsByType,
+        buildingsWithFilings: censusBuildingsWithFilings,
       },
     };
   }

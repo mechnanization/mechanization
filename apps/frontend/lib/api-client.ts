@@ -1161,6 +1161,28 @@ export interface DashboardAnalytics {
   unitTotal: number;
 
   /**
+   * The physical stock, from the building census — the same rows and the same
+   * predicates as «سجل المباني», so the two screens cannot disagree.
+   *
+   * Everything above counts *filings*: a property card belongs to one
+   * citizen's file, so a block of twelve registered households is twelve
+   * «مبنى» cards and one structure. The dashboard's headline figures come
+   * from here instead; the filing counts stay, named as what they are.
+   */
+  census: {
+    /** Every structure on the register — matches «عدد المباني» on the ledger. */
+    buildings: number;
+    /** Units in structures that can hold households — the ledger's denominator. */
+    unitsTotal: number;
+    /** Of those, surveyed (COMPLETE or VACANT_CONFIRMED). */
+    unitsSurveyed: number;
+    /** The same units as `unitsTotal`, split by نوع الوحدة. Sums to it. */
+    unitsByType: Record<string, number>;
+    /** Census buildings at least one live property card points at. */
+    buildingsWithFilings: number;
+  };
+
+  /**
    * How many property/unit rows were already excluded as duplicate filings —
    * a TENANT/FREE_OCCUPANT registration of a unit an OWNER already registered
    * under the same رقم العقار (the same apartment, filed twice).
