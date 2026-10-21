@@ -1,4 +1,4 @@
-import { COMMISSION_RATE, creditBillableUnits } from '@mechanization/shared-schemas';
+import { cardsCreditedTo, COMMISSION_RATE, creditBillableUnits, filedByOf } from '@mechanization/shared-schemas';
 
 /*
   What an inspector is paid for: one dollar per distinct unit he filed.
@@ -132,5 +132,80 @@ describe('creditBillableUnits', () => {
   it('is unaffected by an unknown unit type, which stays occupiable', () => {
     const seen = new Set<string>();
     expect(creditBillableUnits([entry([unit({ unitType: 'SOMETHING_NEW' })])], seen)).toBe(1);
+  });
+});
+
+/*
+  Who is paid for a line: the officer who filed it (0096), not the officer who
+  registered the citizen.
+
+  The case that found it (production, 2026-10-06): officer J registered a doctor
+  as the tenant of a clinic. Officer H later visited the doctor's own building
+  and recorded him as owner of a flat and a warehouse there. Both lines went
+  onto J's registration — the doctor's file — and before 0096 both dollars went
+  to J, who had never been to that building.
+*/
+describe('cardsCreditedTo', () => {
+  const J = 'officer-j';
+  const H = 'officer-h';
+  const line = (id: string, unitId: string, filedById: string | null = null) =>
+    unit({ id, unitId, filedById });
+  const card = (id: string, units: ReturnType<typeof unit>[], filedRegistrationId: string | null = null) => ({
+    id,
+    endReason: null,
+    filedRegistrationId,
+    units,
+  });
+  type Registration = {
+    id: string;
+    createdById: string | null;
+    properties: ReturnType<typeof card>[];
+    movedCards?: ReturnType<typeof card>[];
+  };
+  const paid = (officerId: string, registrations: Registration[]) => {
+    const seen = new Set<string>();
+    for (const registration of registrations) creditBillableUnits(cardsCreditedTo(officerId, registration), seen);
+    return seen.size * COMMISSION_RATE;
+  };
+
+  const doctorsFile = {
+    id: 'reg-doctor',
+    createdById: J,
+    properties: [
+      card('clinic', [line('clinic-line', 'clinic-0105')]),
+      card('own-building', [line('flat-line', 'flat-0101', H), line('warehouse-line', 'warehouse-0001', H)]),
+    ],
+  };
+
+  it('pays the officer who added a line to a file, not the officer who registered it', () => {
+    expect(paid(H, [doctorsFile])).toBe(2);
+    expect(paid(J, [doctorsFile])).toBe(1);
+  });
+
+  it('reads a line with no filer as the registration officer’s, as every line was before 0096', () => {
+    expect(filedByOf({ filedById: null }, J)).toBe(J);
+    expect(filedByOf({}, J)).toBe(J);
+    expect(filedByOf({ filedById: H }, J)).toBe(H);
+  });
+
+  it('does not change anything when the registration’s own officer is named as the filer', () => {
+    const explicit = { ...doctorsFile, properties: [card('clinic', [line('clinic-line', 'clinic-0105', J)])] };
+    const implicit = { ...doctorsFile, properties: [card('clinic', [line('clinic-line', 'clinic-0105')])] };
+    expect(paid(J, [explicit])).toBe(paid(J, [implicit]));
+  });
+
+  it('still pays an officer once for a flat he filed on two files', () => {
+    // H registered the tenant of flat 0101 himself, then recorded its owner on J's file.
+    const tenantsFile = { id: 'reg-tenant', createdById: H, properties: [card('tenancy', [line('t', 'flat-0101')])] };
+    expect(paid(H, [tenantsFile, doctorsFile])).toBe(2);
+  });
+
+  it('credits a card a merge moved to the registration it was filed on, and a filed line to its filer', () => {
+    const moved = card('moved', [line('kept', 'flat-a'), line('added', 'flat-b', H)], 'reg-old');
+    const survivor = { id: 'reg-new', createdById: 'officer-k', properties: [moved] };
+    const old = { id: 'reg-old', createdById: J, properties: [], movedCards: [moved] };
+    expect(paid('officer-k', [survivor, old])).toBe(0);
+    expect(paid(J, [survivor, old])).toBe(1);
+    expect(paid(H, [survivor, old])).toBe(1);
   });
 });
