@@ -30,8 +30,12 @@ import {
   isUnoccupied,
   municipalToday,
   ownerShareOf,
+  readLevelFactors,
+  roofWeight,
   roundRate,
   TREASURY_ADMIN_ROLES,
+  DEFAULT_LEVEL_FACTORS,
+  type LevelFactors,
 } from '@mechanization/shared-schemas';
 import {
   billableUnits,
@@ -302,6 +306,13 @@ export function assessCitizen(
     targetCategory?: string;
     /** Who owes it. Absent means `OCCUPANT` — see `FEE_BEARER`. */
     bearer?: FeeBearer;
+    /**
+     * «معامل السقوف» — the municipality's table of what a flat on N levels
+     * weighs under PER_UNIT (`system_settings.levelFactors`, 0095). Absent is
+     * an empty table: one-level units never read it, and a duplex with nothing
+     * to price it by is refused, not billed as 1 or 2 by default.
+     */
+    levelFactors?: LevelFactors;
   },
 ):
   | {
@@ -482,9 +493,39 @@ export function assessCitizen(
     }
   }
 
+  /*
+    A unit on several levels counts in roofs under PER_UNIT («لكل سقف»,
+    decision D28, 2026-10-17): a duplex flat at the municipality's factor —
+    1.8 where two separate flats stacked on each other are 2 — and a house at
+    one roof per storey. Only under PER_UNIT: an area fee charges the area of
+    every level, and FLAT returned above.
+
+    A flat whose level count the table does not price is refused, like a flat
+    with no area under PER_AREA: billing it as one roof or as N would be a
+    number nobody decided.
+  */
+  const roofs = new Map<BillableUnit, number>();
+  if (notice.basis === 'PER_UNIT') {
+    const factors = notice.levelFactors ?? {};
+    for (const unit of units) {
+      const weight = roofWeight(unit, factors);
+      if (weight === null) {
+        return {
+          kind: 'unassessable',
+          reason: `وحدة ${unit.unitCode ?? ''} على العقار ${unit.propertyNumber ?? '—'} من ${unit.levels} طوابق، ولا يوجد في الإعدادات معامل سقوف لهذا العدد`,
+        };
+      }
+      roofs.set(unit, weight);
+    }
+  }
+  const roofsOf = (unit: BillableUnit) => roofs.get(unit) ?? 1;
+  const weighedByLevels = units.some((unit) => roofsOf(unit) !== 1);
+
   // A co-owned flat counts for this owner's part of its area, or of one unit.
   const totalArea = units.reduce((sum, unit) => sum + (unit.unitArea ?? 0) * ownerWeight(unit), 0);
-  const chargedUnits = units.reduce((sum, unit) => sum + ownerWeight(unit), 0);
+  // Rounded to four places so 1.8 + 1.8 + … stays 5.4 on the bill, not 5.4000000000000004.
+  const chargedUnits =
+    Math.round(units.reduce((sum, unit) => sum + ownerWeight(unit) * roofsOf(unit), 0) * 10_000) / 10_000;
 
   // Only the two rate bases reach here; FLAT returned above.
   const multiplier = notice.basis === 'PER_AREA' ? totalArea : chargedUnits;
@@ -513,7 +554,7 @@ export function assessCitizen(
       sharedUnitCount: shared.length,
       coOwnerPaidUnitCount: paidByCoOwner.length,
       exemptUnitCount: exemptUnits.length,
-      ...(shared.length > 0 && notice.basis === 'PER_UNIT' ? { chargedUnits } : {}),
+      ...((shared.length > 0 || weighedByLevels) && notice.basis === 'PER_UNIT' ? { chargedUnits } : {}),
       lines: units.map((unit) => ({
         propertyNumber: unit.propertyNumber,
         propertyType: unit.propertyType,
@@ -529,6 +570,8 @@ export function assessCitizen(
               },
             }
           : {}),
+        ...(unit.levels && unit.levels > 1 ? { levels: unit.levels } : {}),
+        ...(roofsOf(unit) !== 1 ? { levelFactor: roofsOf(unit) } : {}),
       })),
     },
   };
@@ -917,6 +960,15 @@ export class FeesService {
     return `settings:${this.tenantContext.tenantSlug}:${includeLogo ? 'full' : 'lite'}`;
   }
 
+  /**
+   * «معامل السقوف» as billing reads it — the municipality's table of what a flat
+   * on N levels weighs under a PER_UNIT notice (0095, decision D28). Through
+   * the settings cache, which `updateSettings` drops.
+   */
+  async levelFactors(): Promise<LevelFactors> {
+    return (await this.getSettings()).levelFactors;
+  }
+
   async getSettings(includeLogo = false) {
     /*
      * Cached, because this is the most-read row in the schema.
@@ -988,6 +1040,8 @@ export class FeesService {
 
       numberingSequences: (row?.numberingSequences as SystemSettingsInput['numberingSequences']) ?? null,
       backupSchedule: (row?.backupSchedule as SystemSettingsInput['backupSchedule']) ?? null,
+      // «معامل السقوف» (0095). The column default where the row predates it.
+      levelFactors: readLevelFactors(row ? row.levelFactors : DEFAULT_LEVEL_FACTORS),
 
       updatedAt: row?.updatedAt?.toISOString() ?? null,
     };
@@ -1037,6 +1091,7 @@ export class FeesService {
           salaryUrgentCeilingUsd: true,
           exchangeRateTolerancePercent: true,
           largeExchangeThreshold: true,
+          levelFactors: true,
         },
       });
 
@@ -1159,6 +1214,8 @@ export class FeesService {
 
         numberingSequences: input.numberingSequences,
         backupSchedule: input.backupSchedule,
+        // Replaced whole: a level count left out of the table is no longer priced.
+        levelFactors: input.levelFactors,
 
         updatedById: actor.id,
       };
@@ -1186,6 +1243,18 @@ export class FeesService {
         if (before === (next ?? null)) continue;
         financeBefore[key] = before;
         financeAfter[key] = next ?? null;
+      }
+      /*
+        The per-roof factors decide what every multi-level flat is billed, so
+        both tables go on the record whenever they differ — compared as JSON,
+        since two objects are never `===`.
+      */
+      if (input.levelFactors !== undefined) {
+        const before = readLevelFactors(previous?.levelFactors ?? DEFAULT_LEVEL_FACTORS);
+        if (JSON.stringify(before) !== JSON.stringify(input.levelFactors)) {
+          financeBefore.levelFactors = before;
+          financeAfter.levelFactors = input.levelFactors;
+        }
       }
       await this.auditTrail.recordInTransaction({
         actorId: actor.id,
@@ -2058,10 +2127,12 @@ export class FeesService {
 
     const assessed: CitizenAssessment[] = [];
     const unassessable: UnassessableCitizen[] = [];
+    // Read once per run: every citizen of one notice is weighed by the same table.
+    const levelFactors = notice.basis === 'PER_UNIT' ? await this.levelFactors() : undefined;
 
     for await (const batch of this.holdingsOf(citizenIds)) {
       for (const holding of batch) {
-        const outcome = assessCitizen(holding.entries, notice);
+        const outcome = assessCitizen(holding.entries, { ...notice, levelFactors });
 
         if (outcome.kind === 'unassessable') {
           unassessable.push({ citizenId: holding.citizenId, name: holding.name, reason: outcome.reason });
@@ -2185,6 +2256,8 @@ export class FeesService {
                             unitCode: true,
                             // «معفاة من الرسوم» (0077) — charged nothing, whoever bears the fee.
                             feeExemption: true,
+                            // «دوبلكس» (0095) — weighed in roofs under a PER_UNIT notice.
+                            levels: true,
                           },
                         },
                       },
@@ -2220,6 +2293,7 @@ export class FeesService {
                     unitStatus: true,
                     unitCode: true,
                     feeExemption: true,
+                    levels: true,
                   },
                 },
               },
@@ -2247,7 +2321,7 @@ export class FeesService {
       /** The one flat of each structure a منزل card here names — what the card bills. */
       const soleUnits = new Map<
         string,
-        { id: string; unitStatus: string | null; unitCode: string; feeExemption: string | null }
+        { id: string; unitStatus: string | null; unitCode: string; feeExemption: string | null; levels: number }
       >();
       const houseBuildings = [
         ...new Set(
@@ -2262,7 +2336,7 @@ export class FeesService {
         const houseUnits = await withConnectionRetry(() =>
           this.db.unit.findMany({
             where: { buildingId: { in: houseBuildings } },
-            select: { id: true, buildingId: true, unitStatus: true, unitCode: true, feeExemption: true },
+            select: { id: true, buildingId: true, unitStatus: true, unitCode: true, feeExemption: true, levels: true },
           }),
         );
         const perBuilding = new Map<string, typeof houseUnits>();
@@ -2347,6 +2421,7 @@ export class FeesService {
           ownerShare?: { mode: string; numerator: number; denominator: number };
           ownerShareUndecidable?: boolean;
           exempt: boolean;
+          levels: number;
         }>>();
         for (const occupancy of row.unitOccupancies) {
           const buildingId = occupancy.unit.buildingId;
@@ -2361,6 +2436,7 @@ export class FeesService {
             uninhabitable: uninhabitable(occupancy.unit.id),
             unitCode: occupancy.unit.unitCode,
             exempt: occupancy.unit.feeExemption !== null,
+            levels: occupancy.unit.levels,
             ...(occupancy.role === 'OWNER' ? ownerShareFor(occupancy.unit.id, row.id) : {}),
           });
           occupanciesByBuilding.set(buildingId, list);
@@ -2403,6 +2479,8 @@ export class FeesService {
                     soleUnitId: sole.id,
                     soleUnitCode: sole.unitCode,
                     exempt: sole.feeExemption !== null,
+                    // A house on several storeys is that many roofs (D28).
+                    levels: sole.levels,
                     ...(card.occupancyType === 'OWNER' ? ownerShareFor(sole.id, row.id) : {}),
                     uninhabitable: uninhabitable(sole.id),
                     /*

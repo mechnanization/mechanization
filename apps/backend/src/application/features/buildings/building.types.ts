@@ -94,6 +94,12 @@ export interface UnitRow {
   feeExemptionNote: string | null;
   feeExemptedAt: Date | null;
   feeExemptedByName: string | null;
+  /**
+   * How many levels this one unit spans, upward from `floor` (0095, D28): 2 is
+   * a «دوبلكس». 1 for an ordinary unit. The matrix draws the levels above as
+   * continuation blocks in the same columns (`layoutBuildingFloors`).
+   */
+  levels: number;
   notes: string | null;
   createdAt: Date;
   updatedAt: Date;

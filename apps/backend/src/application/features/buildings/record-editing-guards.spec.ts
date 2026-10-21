@@ -90,11 +90,18 @@ describe('changedUnitFields', () => {
     side: null,
     startCol: 1,
     endCol: 1,
+    levels: 1,
     presenceMonths: [],
     ownerLastStayAt: null,
     vacancyDeclaredAt: null,
     notes: null,
   };
+
+  it('records a level count, which changes a per-roof bill (0095)', () => {
+    const changes = changedUnitFields(base, { ...base, unitType: 'APARTMENT', levels: 2 });
+    expect(changes.before).toEqual({ unitType: 'SHOP', levels: 1 });
+    expect(changes.after).toEqual({ unitType: 'APARTMENT', levels: 2 });
+  });
 
   it('records a retype and a re-measure, which change a bill', () => {
     const changes = changedUnitFields(base, { ...base, unitType: 'APARTMENT', unitArea: '140' });

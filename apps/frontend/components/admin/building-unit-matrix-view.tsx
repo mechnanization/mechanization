@@ -30,8 +30,9 @@ import {
   isStructuralUnitType,
   defaultUnitTypeFor,
   MAX_UNIT_COLUMN,
-  spanLimits,
+  unitLevelsLabel,
   type DamageLevel,
+  type HouseGrowth,
   type UpsertUnitInput,
   type VacancyBasis,
   type VacancyEndReason,
@@ -47,6 +48,7 @@ import {
   endVacancy,
   getBuilding,
   getBuildingDamage,
+  houseGrowthQuestionOf,
   linkOccupancyOwner,
   logApiError,
   recordDamage,
@@ -58,6 +60,7 @@ import {
   type BuildingDetail,
   type DamageAssessmentRow,
   type DuplicateUnitCandidate,
+  type HouseGrowthQuestion,
   type UnitOccupant,
   type UnitWithOccupants,
 } from '@/lib/api-client';
@@ -92,20 +95,20 @@ import {
   ConfirmVacancyForm,
   effectiveUnitStatus,
   floorLabel,
-  groupUnitsByFloor,
-  layoutFloor,
+  layoutBuilding,
   logVisitWithFollowUp,
   occupancyMessage,
   OccupantList,
   ownerLinkMessage,
   SeasonalHomePanel,
+  spanLimitsAcross,
   UnitStateLegend,
   unitOwners,
   vacancyBlocker,
   VacancyPanel,
   VisitForm,
-  withDeclaredBasements,
 } from './building-unit-forms';
+import { HouseGrowthPrompt, UnitContinuationTile, UnitLevelsPanel } from './unit-levels';
 import { OwnerBillingPanel } from './owner-billing-panel';
 import { FeeExemptionPanel } from './fee-exemption-panel';
 import { showsOwnerBilling } from '@/lib/owner-billing';
@@ -255,12 +258,9 @@ export function BuildingUnitMatrixView({
     void load();
   }, [load]);
 
+  // The whole building at once, so a home's upper levels sit in its own columns (0095).
   const floors = useMemo(
-    () =>
-      withDeclaredBasements(
-        groupUnitsByFloor(building?.units ?? []),
-        building?.basementsCount,
-      ).map(({ floor, units }) => ({ floor, ...layoutFloor(units) })),
+    () => layoutBuilding(building?.units ?? [], building?.basementsCount),
     [building],
   );
 
@@ -294,8 +294,9 @@ export function BuildingUnitMatrixView({
   const selectedSpan = useMemo(() => {
     if (!selectedUnit) return null;
     for (const { blocks } of floors) {
-      const block = blocks.find((candidate) => candidate.unit === selectedUnit);
-      if (block) return { block, limits: spanLimits(blocks, selectedUnit, MAX_UNIT_COLUMN)! };
+      // Its entrance block; a «دوبلكس» widens on every floor it occupies at once.
+      const block = blocks.find((candidate) => candidate.unit === selectedUnit && !candidate.continuation);
+      if (block) return { block, limits: spanLimitsAcross(floors, selectedUnit, MAX_UNIT_COLUMN)! };
     }
     return null;
   }, [floors, selectedUnit]);
@@ -424,7 +425,16 @@ export function BuildingUnitMatrixView({
     floor: number;
     unitType: string;
     candidates: DuplicateUnitCandidate[];
+    /** The house-growth answer already given, carried into the re-send. */
+    houseGrowth?: HouseGrowth;
   } | null>(null);
+  /** «هذا المنزل يصبح مبنى» (D28) — asked by the server before a house on a file grows. */
+  const [growthQuestion, setGrowthQuestion] = useState<{
+    floor: number;
+    unitType: string;
+    question: HouseGrowthQuestion;
+  } | null>(null);
+  const tLevels = useTranslations('unitLevels');
 
   const run = useCallback(
     async (task: () => Promise<string>, failure: string) => {
@@ -448,7 +458,7 @@ export function BuildingUnitMatrixView({
     [load, toast, token],
   );
 
-  const addOnFloor = async (floor: number, unitType: string, acknowledged = false) => {
+  const addOnFloor = async (floor: number, unitType: string, acknowledged = false, houseGrowth?: HouseGrowth) => {
     if (!building || !unitType || !token) return;
 
     setBusy(true);
@@ -458,17 +468,33 @@ export function BuildingUnitMatrixView({
         floor,
         unitType: unitType as UpsertUnitInput['unitType'],
         ...(acknowledged ? { acknowledgedDuplicates: true } : {}),
+        ...(houseGrowth ? { houseGrowth } : {}),
       });
       await load();
       setAddingFloor(null);
       setAddingType('');
       setDuplicateUnits(null);
-      toast.success(en ? `Unit ${created.unitCode} added` : `تمت إضافة الوحدة ${created.unitCode}`);
+      setGrowthQuestion(null);
+      // «طابق إضافي» adds no unit: the home rose a level.
+      toast.success(
+        houseGrowth === 'EXTRA_LEVEL'
+          ? tLevels('growth.levelAdded', {
+              unitCode: created.unitCode,
+              name: unitLevelsLabel(created.levels, locale) ?? '',
+            })
+          : tLevels('growth.unitAdded', { unitCode: created.unitCode }),
+      );
     } catch (caught) {
       logApiError(caught);
+      const question = houseGrowthQuestionOf(caught);
+      if (question) {
+        setGrowthQuestion({ floor, unitType, question });
+        return;
+      }
       const clashes = duplicateUnitsOf(caught);
       if (clashes) {
-        setDuplicateUnits({ floor, unitType, candidates: clashes });
+        setGrowthQuestion(null);
+        setDuplicateUnits({ floor, unitType, candidates: clashes, houseGrowth });
         return;
       }
       const failure = en ? 'Could not add the unit.' : 'تعذّرت إضافة الوحدة.';
@@ -620,6 +646,20 @@ export function BuildingUnitMatrixView({
         return en ? 'Seasonal details saved' : 'تم حفظ بيانات السكن الموسمي';
       },
       en ? 'Could not save the seasonal details.' : 'تعذّر حفظ بيانات السكن الموسمي.',
+    );
+
+  /** «عدد طوابق المسكن» — a flat or house on several levels (0095, D28). */
+  const saveLevels = (unit: UnitWithOccupants, levels: number) =>
+    run(
+      async () => {
+        if (!token) throw new Error('unauthenticated');
+        await updateUnit(tenant, token, unit.id, { levels });
+        return tLevels('field.saved', {
+          unitCode: unit.unitCode,
+          levels: unitLevelsLabel(levels, locale) ?? tLevels('field.one'),
+        });
+      },
+      tLevels('field.failed'),
     );
 
   /** «معفاة من الرسوم» — granted or lifted by a SUPER_ADMIN (0077). */
@@ -901,8 +941,38 @@ export function BuildingUnitMatrixView({
                         gridTemplateColumns: `repeat(${gridWidth}, minmax(2.75rem, 1fr))`,
                       }}
                     >
-                      {blocks.map(({ unit, startCol, endCol }) => {
+                      {blocks.map(({ unit, startCol, endCol, continuation }) => {
                         const badge = cellBadge(unit, labels, en);
+                        /*
+                          The upper level of a home entering below (0095): its
+                          columns, its colours, the same unit when tapped — and
+                          no drag handles, since its width is its entrance's.
+                        */
+                        if (continuation) {
+                          const following = preview !== null && preview.unitId === unit.id;
+                          const upFrom = following ? preview.startCol : startCol;
+                          const upTo = following ? preview.endCol : endCol;
+                          return (
+                            <div
+                              key={`${unit.id}-up`}
+                              className="h-full min-w-0"
+                              style={{ gridColumn: `${upFrom} / ${upTo + 1}`, gridRow: 1 }}
+                            >
+                              <UnitContinuationTile
+                                unitCode={unit.unitCode}
+                                levels={unit.levels ?? 1}
+                                locale={locale}
+                                selected={unit.id === selectedUnitId}
+                                toneClassName={STATUS_BLOCK_CLASSES[badge.variant]}
+                                onSelect={() => {
+                                  setSelectedUnitId(unit.id === selectedUnitId ? null : unit.id);
+                                  setAction(null);
+                                  setActionError(null);
+                                }}
+                              />
+                            </div>
+                          );
+                        }
                         const selected = unit.id === selectedUnitId;
                         const drafting = preview !== null && preview.unitId === unit.id;
                         const from = drafting ? preview.startCol : startCol;
@@ -914,7 +984,7 @@ export function BuildingUnitMatrixView({
                           event.preventDefault();
                           event.stopPropagation();
                           const row = event.currentTarget.closest('[data-matrix-row]');
-                          const limits = spanLimits(blocks, unit, MAX_UNIT_COLUMN);
+                          const limits = spanLimitsAcross(floors, unit, MAX_UNIT_COLUMN);
                           if (!(row instanceof HTMLElement) || !limits) return;
                           setSelectedUnitId(unit.id);
                           setAction(null);
@@ -969,6 +1039,11 @@ export function BuildingUnitMatrixView({
                             )}
                           >
                             <span className="font-mono text-xs font-bold">{unit.unitCode}</span>
+                            {(unit.levels ?? 1) > 1 ? (
+                              <span className="block max-w-full truncate text-xs leading-tight opacity-80">
+                                {unitLevelsLabel(unit.levels, locale)}
+                              </span>
+                            ) : null}
                             {/*
                               The state is written on the tile, not only in its
                               tooltip: a phone has no hover, and «شاغرة» beside an
@@ -1164,7 +1239,7 @@ export function BuildingUnitMatrixView({
                 </Select>
                 <Button
                   size="sm"
-                  disabled={busy || !addingType || duplicateUnits !== null}
+                  disabled={busy || !addingType || duplicateUnits !== null || growthQuestion !== null}
                   onClick={() => void addOnFloor(addingFloor, addingType)}
                 >
                   {busy ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : null}
@@ -1178,6 +1253,7 @@ export function BuildingUnitMatrixView({
                     setAddingFloor(null);
                     setAddingType('');
                     setDuplicateUnits(null);
+                    setGrowthQuestion(null);
                   }}
                 >
                   {en ? 'Cancel' : 'إلغاء'}
@@ -1186,6 +1262,23 @@ export function BuildingUnitMatrixView({
                   {en ? 'The code is assigned from the floor.' : 'يُشتق رمز الوحدة من الطابق.'}
                 </span>
               </div>
+
+              {growthQuestion && growthQuestion.floor === addingFloor ? (
+                <HouseGrowthPrompt
+                  question={growthQuestion.question}
+                  floor={growthQuestion.floor}
+                  floorText={(floor) => floorLabel(floor, en)}
+                  structureIsHouse={building?.structureType === 'INDEPENDENT_HOUSE'}
+                  busy={busy}
+                  locale={locale}
+                  onAnswer={(growth) => void addOnFloor(growthQuestion.floor, growthQuestion.unitType, false, growth)}
+                  onCancel={() => {
+                    setGrowthQuestion(null);
+                    setAddingFloor(null);
+                    setAddingType('');
+                  }}
+                />
+              ) : null}
 
               {duplicateUnits && duplicateUnits.floor === addingFloor ? (
                 <div className="space-y-2 rounded-md border border-warning/40 bg-warning/10 p-2.5">
@@ -1243,7 +1336,9 @@ export function BuildingUnitMatrixView({
                     <Button
                       size="sm"
                       disabled={busy}
-                      onClick={() => void addOnFloor(duplicateUnits.floor, duplicateUnits.unitType, true)}
+                      onClick={() =>
+                        void addOnFloor(duplicateUnits.floor, duplicateUnits.unitType, true, duplicateUnits.houseGrowth)
+                      }
                     >
                       {busy ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : null}
                       {en ? 'Yes, it is a different unit' : 'نعم، هذه وحدة مختلفة'}
@@ -1625,6 +1720,15 @@ export function BuildingUnitMatrixView({
                 busy={busy}
                 canWrite={canWrite}
                 onEnd={(values) => liftVacancy(selectedUnit, values)}
+              />
+
+              {/* «عدد طوابق المسكن» — a home on several levels (0095, D28). */}
+              <UnitLevelsPanel
+                unit={selectedUnit}
+                locale={locale}
+                busy={busy}
+                canEdit={canWrite}
+                onSave={(levels) => void saveLevels(selectedUnit, levels)}
               />
 
               {/* «معفاة من الرسوم» — shown to all; granted and lifted by a SUPER_ADMIN. */}

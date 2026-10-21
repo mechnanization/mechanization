@@ -382,6 +382,13 @@ should get one bill that can explain itself rather than six that cannot.
 
 ---
 
+**Per roof (decided 2026-10-17, D28).** Under a `PER_UNIT` notice a unit counts
+in roofs: a flat on two levels (a «دوبلكس») counts the municipality's factor —
+1.8 by default, where two separate flats stacked on each other count 2 — kept in
+Settings › المالية as a table per level count; a level count with no factor is not
+billed until one is set. A house counts one full roof per storey. `PER_AREA` and
+`FLAT` are unaffected. See docs/building-census-plan.md §15.
+
 ## 🔴 12. Who bears each fee — الرسم على الشاغل أم على المالك
 
 **Status:** the register can now say who occupies each unit, and each notice

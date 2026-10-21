@@ -29,7 +29,9 @@ import {
   isOccupiableLifecycle,
   isStructuralUnitType,
   isUnoccupied,
+  layoutBuildingFloors,
   layoutFloorSpans,
+  spanLimits,
   NON_PERSON_RESIDENCE,
   OCCUPANCY_ROLE,
   SURVEY_STATUS,
@@ -498,6 +500,58 @@ export interface LaidOutUnit<T = UnitWithOccupants> {
   unit: T;
   startCol: number;
   endCol: number;
+  /**
+   * An upper level of a home entering on a floor below — a «دوبلكس» or
+   * «تريبلكس» (`Unit.levels`, 0095). Drawn joined to its entrance, opening the
+   * same unit; nothing else is drawn on it.
+   */
+  continuation?: true;
+}
+
+/**
+ * Every floor of a building as the matrix draws it, top floor first: each
+ * unit at its entrance, the upper levels of a home on the floors above it in
+ * the same columns (`layoutBuildingFloors`), and an empty row for every
+ * basement the register declares and nothing occupies.
+ */
+export function layoutBuilding<
+  T extends { floor: number; sequence: number; levels?: number | null; startCol?: number | null; endCol?: number | null },
+>(
+  units: readonly T[],
+  basementsCount: number | undefined,
+): Array<{ floor: number; blocks: Array<LaidOutUnit<T>>; width: number }> {
+  const ordered = [...units].sort((a, b) => a.floor - b.floor || a.sequence - b.sequence);
+  const rows = [...layoutBuildingFloors(ordered).values()].map(({ floor, blocks, width }) => ({
+    floor,
+    blocks,
+    width,
+  }));
+  const present = new Set(rows.map((row) => row.floor));
+  for (let depth = 1; depth <= (basementsCount ?? 0); depth += 1) {
+    if (!present.has(-depth)) rows.push({ floor: -depth, blocks: [], width: 1 });
+  }
+  return rows.sort((a, b) => b.floor - a.floor);
+}
+
+/**
+ * How far a unit's edges may move: on every floor it occupies at once, so a
+ * «دوبلكس» widens only as far as both of its floors allow. `null` when the
+ * unit is not drawn.
+ */
+export function spanLimitsAcross<T>(
+  floors: ReadonlyArray<{ blocks: ReadonlyArray<LaidOutUnit<T>> }>,
+  target: T,
+  maxCol: number,
+): { minStart: number; maxEnd: number } | null {
+  let result: { minStart: number; maxEnd: number } | null = null;
+  for (const { blocks } of floors) {
+    const limits = spanLimits(blocks, target, maxCol);
+    if (!limits) continue;
+    result = result
+      ? { minStart: Math.max(result.minStart, limits.minStart), maxEnd: Math.min(result.maxEnd, limits.maxEnd) }
+      : limits;
+  }
+  return result;
 }
 
 /**

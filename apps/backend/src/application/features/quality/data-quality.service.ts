@@ -162,6 +162,7 @@ export class DataQualityService {
       this.unitsWithoutArea(),
       this.unlinkedLandlords(),
       this.uninhabitedWithoutReading(),
+      this.houseCardsOnMultiUnitBuildings(),
     ]);
 
     const computed = groups
@@ -889,6 +890,72 @@ export class DataQualityService {
       officerIds: row.createdById ? [row.createdById] : [],
       at: row.updatedAt.toISOString(),
       dismissable: true,
+    }));
+  }
+
+  /**
+   * «منزل» cards on a structure that holds more than one unit (decision D28).
+   *
+   * Such a card names no unit and claims none: the census sync holds its
+   * holder's spells rather than evicting them, but nothing backs them, and
+   * recording the household on a flat would open a second card. The matrix
+   * converts these cards as a house grows and a new one is refused at the
+   * write, so one listed here came from before D28 or an older client. Fixed
+   * on the file — make it a «مبنى» card naming its flat — so not dismissable.
+   *
+   * Counts every unit row, as the census readers do.
+   */
+  private async houseCardsOnMultiUnitBuildings(): Promise<RawFinding[]> {
+    const rows = await this.db.$queryRaw<
+      Array<{
+        cardId: string;
+        citizenId: string;
+        firstName: string;
+        middleName: string | null;
+        lastName: string;
+        residence: string | null;
+        buildingId: string;
+        code: string;
+        name: string | null;
+        parcelNumber: string;
+        units: number;
+        createdById: string | null;
+        createdAt: Date;
+      }>
+    >`
+      SELECT pe.id AS "cardId", c.id AS "citizenId", c."firstName", c."middleName", c."lastName",
+             c.residence::text AS residence,
+             b.id AS "buildingId", b.code, b.name, b."parcelNumber",
+             (SELECT COUNT(*)::int FROM ${this.S}units u WHERE u."buildingId" = b.id) AS units,
+             r."createdById", pe."createdAt"
+        FROM ${this.S}property_entries pe
+        JOIN ${this.S}registrations r ON r.id = pe."registrationId"
+        JOIN ${this.S}users c ON c.id = r."citizenId" AND c."isActive"
+        JOIN ${this.S}buildings b ON b.id = pe."buildingId"
+       WHERE pe."propertyType" = 'HOUSE'
+         AND pe."endedAt" IS NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM ${this.S}building_units bu WHERE bu."propertyEntryId" = pe.id AND bu."endedAt" IS NULL
+         )
+         AND (SELECT COUNT(*) FROM ${this.S}units u WHERE u."buildingId" = b.id) > 1
+    `;
+    return rows.map((row) => ({
+      kind: 'HOUSE_CARD_ON_MULTI_UNIT_BUILDING' as const,
+      subjectKey: row.cardId,
+      severity: 'HIGH' as const,
+      detail: `بطاقة «منزل» على ${row.code} وفيه ${row.units} وحدات — لا تُسمّي أيّاً منها، فلا يُعرف أيّ وحدة هي. اجعلها بطاقة «مبنى» وحدِّد الوحدة في ملف المواطن`,
+      subjects: [
+        { kind: 'citizen' as const, id: row.citizenId, label: fullName(row), secondary: null },
+        {
+          kind: 'building' as const,
+          id: row.buildingId,
+          label: row.name ? `${row.code} — ${row.name}` : row.code,
+          secondary: `عقار ${row.parcelNumber}`,
+        },
+      ],
+      officerIds: row.createdById ? [row.createdById] : [],
+      at: row.createdAt.toISOString(),
+      dismissable: false,
     }));
   }
 

@@ -267,7 +267,7 @@ export class CensusSyncService {
         select: { id: true },
         take: 2,
       });
-      if (units.length === 1)
+      if (units.length === 1) {
         claimed.set(units[0]!.id, {
           role,
           propertyId: property.id,
@@ -275,6 +275,29 @@ export class CensusSyncService {
           declaredStatus: property.unitStatus ?? null,
           statementChanged: changed(property.id),
         });
+        continue;
+      }
+
+      /*
+        A منزل on a structure that has since grown a second unit (decision D28).
+
+        The inference above no longer names a flat, and this used to read that
+        as "the card claims nothing here" — so the next save of the file closed
+        the household's occupancy of their own home. Five production files went
+        that way. The matrix now converts such a card when the house grows
+        (`promoteHouseCards`), and filing a new one is refused
+        (`houseCardOnMultiUnitBuilding`); one that slipped past both — an older
+        client, a queued filing — is held, not evicted: this citizen's spells in
+        the structure are neither applied nor released, exactly as for a card
+        the census cannot place, and the quality screen lists the card.
+      */
+      if (units.length > 1) {
+        const spells = await this.db.unitOccupancy.findMany({
+          where: { citizenId: input.citizenId, toDate: null, unit: { buildingId } },
+          select: { unitId: true },
+        });
+        for (const spell of spells) unresolved.add(spell.unitId);
+      }
     }
 
     /*
