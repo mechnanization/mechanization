@@ -800,6 +800,9 @@ export class UnitCorrectionService {
                   endReason: true,
                   createdAt: true,
                   updatedAt: true,
+                  // Who added the line, when somebody did after the file was made (0096): he is the one paid for it.
+                  filedById: true,
+                  filedBy: { select: { firstName: true, middleName: true, lastName: true } },
                 },
               },
             },
@@ -922,6 +925,8 @@ export class UnitCorrectionService {
           endReason: row.endReason,
           createdAt: row.createdAt,
           updatedAt: row.updatedAt,
+          filedById: row.filedById,
+          filedByName: fullName(row.filedBy),
         })),
       })),
       registrations: registrations.map((row) => ({

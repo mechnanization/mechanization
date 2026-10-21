@@ -20,6 +20,7 @@ import { IdentityService } from '../identity/identity.service';
 import { SessionRevocationService } from '../identity/session-revocation.service';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
+import { creditedRegistrationsWhere } from '../../../infrastructure/repositories/earnings-registrations';
 import { Prisma } from '../../../generated/tenant-client';
 import { AuditService } from '../audit/audit.service';
 import { ExpensesService } from '../treasury/expenses.service';
@@ -27,6 +28,7 @@ import { isUniqueViolationOn } from '../treasury/retry-key';
 import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
 import {
   COMMISSION_RATE,
+  cardsCreditedTo,
   cardsFiledOn,
   creditBillableUnits,
   municipalToday,
@@ -419,7 +421,10 @@ export class StaffService {
    *
    * Earnings are $1 per distinct unit filed — `creditBillableUnits` owns that
    * rule, and the roster in `listStaff` calls the same function, because this
-   * figure and the roster's used to be two copies of one loop.
+   * figure and the roster's used to be two copies of one loop. A line is paid
+   * to the officer who filed it (`cardsCreditedTo`, 0096), so the list below
+   * also carries the files other officers registered that he added lines to
+   * (`addedToOthersFile`), and leaves out the lines others added to his.
    *
    * The breakdown below is a different question and keeps its own arithmetic:
    * it describes every property type this inspector surveyed, land and tents
@@ -446,8 +451,13 @@ export class StaffService {
       throw new NotFoundError('Staff user', inspectorId);
     }
 
+    /*
+      Every registration that can pay this officer: the ones he made, and the
+      ones holding a line he filed on somebody else's file (0096) — loaded the
+      way the roster loads them (`creditedRegistrationsWhere`), so the two agree.
+    */
     const registrations = await this.db.registration.findMany({
-      where: { createdById: inspectorId },
+      where: creditedRegistrationsWhere([inspectorId]),
       orderBy: { submittedAt: 'desc' },
       include: {
         citizen: {
@@ -465,7 +475,7 @@ export class StaffService {
           },
         },
         // Cards filed here that a merge has since moved onto another
-        // registration. Still this officer's work — see `cardsFiledOn`.
+        // registration. Still credited here — see `cardsFiledOn`.
         movedCards: {
           include: {
             units: true,
@@ -500,90 +510,95 @@ export class StaffService {
     };
 
     /*
+      What each registration credits this officer for (`cardsCreditedTo`), and
+      when he earned it.
+
+      His own registration is dated by its submission, as it always was. A file
+      somebody else registered is dated by the first line he filed on it: that is
+      when the dollar was earned, and the payout history (`payoutHistory` in
+      apps/frontend/lib/inspector-payouts.ts) counts each credit from that moment.
+      Dating it by the other officer's submission would count it as earned before
+      the work was done.
+    */
+    const credited = registrations.flatMap((reg) => {
+      const own = reg.createdById === inspectorId;
+      const cards = cardsCreditedTo(inspectorId, reg);
+      const lines = cards.flatMap((card) => card.units);
+      // Loaded for a line of his that a merge has since carried to a file this registration no longer credits.
+      if (!own && lines.length === 0) return [];
+      const creditedAt = own
+        ? reg.submittedAt
+        : new Date(Math.min(...lines.map((line) => line.createdAt.getTime())));
+      return [{ reg, own, cards, creditedAt }];
+    });
+
+    /*
       Oldest first, which is not the order this list is rendered in.
 
       Deduplication has to credit *somebody* for a flat that carries two
       records, and crediting whoever filed first is the only choice that does
       not move an inspector's total when an unrelated record is added months
-      later. `registrations` arrives newest-first for display, so the credit
-      pass walks its own copy and the map carries the answer back.
+      later. The list arrives newest-first for display, so the credit pass walks
+      its own copy, in the order the work was done, and the map carries the
+      answer back.
     */
     const seenUnits = new Set<string>();
     const creditedByRegistration = new Map<string, number>();
-    for (const reg of [...registrations].sort(
-      (a, b) => a.submittedAt.getTime() - b.submittedAt.getTime(),
-    )) {
-      creditedByRegistration.set(reg.id, creditBillableUnits(cardsFiledOn(reg), seenUnits));
+    for (const item of [...credited].sort((a, b) => a.creditedAt.getTime() - b.creditedAt.getTime())) {
+      creditedByRegistration.set(item.reg.id, creditBillableUnits(item.cards, seenUnits));
     }
     const totalProperties = seenUnits.size;
 
-    const recentRegistrations = registrations.map((reg) => {
-      // What this record added to the total — zero when every flat on it was
-      // already credited to an earlier record, which is the honest figure to
-      // show beside it.
-      const regPropertyCount = creditedByRegistration.get(reg.id) ?? 0;
-      const neighborhoods = new Set<string>();
-      const propNums = new Set<string>();
-      const propTypes = new Set<string>();
+    const recentRegistrations = [...credited]
+      .sort((a, b) => b.creditedAt.getTime() - a.creditedAt.getTime())
+      .map(({ reg, own, cards, creditedAt }) => {
+        // What this record added to the total — zero when every flat on it was
+        // already credited to an earlier record, which is the honest figure to
+        // show beside it.
+        const regPropertyCount = creditedByRegistration.get(reg.id) ?? 0;
+        const neighborhoods = new Set<string>();
+        const propNums = new Set<string>();
+        const propTypes = new Set<string>();
 
-      for (const p of cardsFiledOn(reg)) {
-        if (p.neighborhood) neighborhoods.add(p.neighborhood);
-        if (p.propertyNumber) propNums.add(p.propertyNumber);
-        if (p.propertyType) propTypes.add(p.propertyType);
-
-        if (p.propertyType === 'BUILDING' && p.units && p.units.length > 0) {
-          breakdown.buildings++;
-          for (const u of p.units) {
-            if (u.unitType) propTypes.add(u.unitType);
-            if (u.unitType === 'APARTMENT') {
-              breakdown.apartments++;
-            } else if (u.unitType === 'INDEPENDENT_HOUSE') {
-              breakdown.houses++;
-            } else if (u.unitType && ['SHOP', 'OFFICE', 'CLINIC', 'WAREHOUSE'].includes(u.unitType)) {
-              breakdown.commercial++;
-            } else {
-              breakdown.other++;
-            }
-            breakdown.totalUnits++;
-          }
-        } else {
-          if (p.propertyType === 'HOUSE' || p.unitType === 'INDEPENDENT_HOUSE') {
-            breakdown.houses++;
-          } else if (p.unitType === 'APARTMENT') {
-            breakdown.apartments++;
-          } else if (p.propertyType === 'BUILDING') {
-            breakdown.buildings++;
-          } else if (p.propertyType === 'LAND') {
-            breakdown.lands++;
-          } else if (p.propertyType === 'TENT') {
-            breakdown.tents++;
-          } else if (['SHOP', 'OFFICE', 'CLINIC', 'WAREHOUSE'].includes(p.unitType ?? '')) {
-            breakdown.commercial++;
-          } else {
-            breakdown.other++;
-          }
+        /*
+          The surveyed-work breakdown is what he registered, so it reads his own
+          files only, whole — land and tents included, every flat on them. On a
+          file somebody else registered, the list describes the cards his lines
+          are on, and nothing he did not file.
+        */
+        const described = own ? cardsFiledOn(reg) : cards.filter((card) => card.units.length > 0);
+        for (const p of described) {
+          if (p.neighborhood) neighborhoods.add(p.neighborhood);
+          if (p.propertyNumber) propNums.add(p.propertyNumber);
+          if (p.propertyType) propTypes.add(p.propertyType);
+          for (const u of p.units) if (u.unitType) propTypes.add(u.unitType);
+          if (own) countSurveyed(breakdown, p);
         }
-      }
 
-      // «ورثة المرحوم …» for an estate (0076).
-      const citizenName = reg.citizen ? citizenDisplayName(reg.citizen) || 'مواطن' : 'مواطن';
+        // «ورثة المرحوم …» for an estate (0076).
+        const citizenName = reg.citizen ? citizenDisplayName(reg.citizen) || 'مواطن' : 'مواطن';
 
-      return {
-        registrationId: reg.id,
-        citizenId: reg.citizenId,
-        citizenName: citizenName || 'مواطن',
-        referenceNumber: reg.referenceNumber,
-        submittedAt: reg.submittedAt.toISOString(),
-        status: reg.status,
-        propertyCount: regPropertyCount,
-        neighborhoods: Array.from(neighborhoods),
-        propertyNumbers: Array.from(propNums),
-        propertyTypes: Array.from(propTypes),
-        commissionEarned: regPropertyCount * COMMISSION_RATE,
-      };
-    });
+        return {
+          registrationId: reg.id,
+          citizenId: reg.citizenId,
+          citizenName: citizenName || 'مواطن',
+          referenceNumber: reg.referenceNumber,
+          submittedAt: reg.submittedAt.toISOString(),
+          creditedAt: creditedAt.toISOString(),
+          addedToOthersFile: !own,
+          status: reg.status,
+          propertyCount: regPropertyCount,
+          neighborhoods: Array.from(neighborhoods),
+          propertyNumbers: Array.from(propNums),
+          propertyTypes: Array.from(propTypes),
+          commissionEarned: regPropertyCount * COMMISSION_RATE,
+        };
+      });
 
-    const distinctCitizenIds = new Set(registrations.map((r) => r.citizenId));
+    // The citizens he registered — not every file he added a line to.
+    const distinctCitizenIds = new Set(
+      registrations.filter((reg) => reg.createdById === inspectorId).map((r) => r.citizenId),
+    );
     const totalCitizens = distinctCitizenIds.size;
 
     const commissionRate = COMMISSION_RATE;
@@ -1107,4 +1122,44 @@ function payoutItem(p: PayoutRow): InspectorPayoutItem {
         }
       : null,
   };
+}
+
+/**
+ * One card into the surveyed-work breakdown on the inspector's page: what he
+ * registered, by kind, land and tents included. Earns nothing on its own — the
+ * pay is `creditBillableUnits` — and is counted for his own files only.
+ */
+function countSurveyed(
+  breakdown: InspectorPropertyBreakdown,
+  p: { propertyType: string | null; unitType: string | null; units: ReadonlyArray<{ unitType: string | null }> },
+): void {
+  if (p.propertyType === 'BUILDING' && p.units && p.units.length > 0) {
+    breakdown.buildings++;
+    for (const u of p.units) {
+      if (u.unitType === 'APARTMENT') {
+        breakdown.apartments++;
+      } else if (u.unitType === 'INDEPENDENT_HOUSE') {
+        breakdown.houses++;
+      } else if (u.unitType && ['SHOP', 'OFFICE', 'CLINIC', 'WAREHOUSE'].includes(u.unitType)) {
+        breakdown.commercial++;
+      } else {
+        breakdown.other++;
+      }
+      breakdown.totalUnits++;
+    }
+  } else if (p.propertyType === 'HOUSE' || p.unitType === 'INDEPENDENT_HOUSE') {
+    breakdown.houses++;
+  } else if (p.unitType === 'APARTMENT') {
+    breakdown.apartments++;
+  } else if (p.propertyType === 'BUILDING') {
+    breakdown.buildings++;
+  } else if (p.propertyType === 'LAND') {
+    breakdown.lands++;
+  } else if (p.propertyType === 'TENT') {
+    breakdown.tents++;
+  } else if (['SHOP', 'OFFICE', 'CLINIC', 'WAREHOUSE'].includes(p.unitType ?? '')) {
+    breakdown.commercial++;
+  } else {
+    breakdown.other++;
+  }
 }

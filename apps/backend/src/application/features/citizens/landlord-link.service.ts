@@ -1313,6 +1313,7 @@ export class LandlordLinkService {
         shares: null,
         unitStatus: unitStatusForRole(spell.role as never),
         landlord: { citizenId: owner.id },
+        filedById: input.actor.id,
       });
       if (!filed.propertyEntryId) {
         return {
@@ -1710,6 +1711,7 @@ export class LandlordLinkService {
           role: 'OWNER',
           shares: current.shares ?? null,
           unitStatus,
+          filedById: input.actor.id,
         });
       } else {
         const recorded = await this.buildings.recordOccupancy(

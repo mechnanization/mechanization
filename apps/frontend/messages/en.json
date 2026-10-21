@@ -1331,6 +1331,11 @@
         "notes": "Notes",
         "overpaidAfter": "{amount} overpaid",
         "recomputed": "“Owed after” is what was still owed once each payout was made, recomputed from today’s records: a registration corrected or merged since the payout changes what its row shows from what it showed on the day. A payout whose payment order was cancelled does not count as paid."
+      },
+      "log": {
+        "description": "Everything this inspector registered, the units he added to files other officers registered, and the commission owed on each",
+        "addedToFile": "Added to a file",
+        "addedOn": "Added on"
       }
     }
   },
