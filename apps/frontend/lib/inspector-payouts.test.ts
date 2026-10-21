@@ -35,6 +35,14 @@ describe('payoutHistory', () => {
     expect(rows[0]).toMatchObject({ earnedToDate: 25, paidToDate: 20, owedAfter: 5, overpaidAfter: 0 });
   });
 
+  it('counts a line added to another officer’s file from when it was added, not from that file', () => {
+    // Registered by someone else on 1 March; this officer recorded the owner on 1 May.
+    const added = { submittedAt: '2026-03-01T09:00:00.000Z', creditedAt: '2026-05-01T09:00:00.000Z', commissionEarned: 2 };
+    const rows = payoutHistory([figure('a', '2026-04-01T12:00:00.000Z', 25)], [...registrations, added]);
+    // By 1 April he had earned 25, not 27: the two dollars were not his yet.
+    expect(rows[0]).toMatchObject({ earnedToDate: 25, paidToDate: 25, owedAfter: 0, overpaidAfter: 0 });
+  });
+
   it('carries the paid sum down the column, and answers newest first', () => {
     const rows = payoutHistory(
       [figure('late', '2026-06-01T12:00:00.000Z', 30), figure('early', '2026-04-01T12:00:00.000Z', 20)],

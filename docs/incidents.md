@@ -1,6 +1,6 @@
 # Incidents the rules are made of
 
-Last verified against the code: `develop@8742c5b`, 2026-10-03.
+Last verified against the code: `feat/earnings-by-actor` (on `develop@149e458a`, uncommitted): entry 9, 2026-10-21; `develop@8742c5b`, 2026-10-03.
 
 Each of these happened. They are here so the rules read as consequences rather
 than opinions. They moved here from the old `AGENTS.md` §8 without changing
@@ -59,3 +59,14 @@ than none, because it looks like coverage.
 `apps/backend/.env` was pinned to staging, so `pnpm dev` and every local
 migration run wrote to it. That is how six migrations from unmerged branches
 landed on staging. → [docs/database.md: Name the target](database.md#name-the-target)
+
+**9. Officers were paid for each other's work.** The pay rule credited every unit line to the
+officer who had registered the citizen, because `registrations.createdById` was the only officer
+the database held and it was read as "who did this". A line another officer added to the file
+later paid the first one: an owner recorded on the matrix, an owner link, a flat added on the edit
+form. Field officers noticed first, when a link they made raised someone else's balance. By
+2026-10-21, 191 lines on production were credited to the wrong person, moving one officer's total
+by −42 and another's by +61; one officer had been paid $9 more than his corrected total. Nothing
+recorded who filed a line until `0096`, so the past had to be recovered from the audit trail.
+→ [docs/database.md: Who is paid for a unit line](database.md#users-holds-staff-and-citizens) and
+[gotchas.md: A registration's officer is not who filed the lines on it](gotchas.md#a-registrations-officer-is-not-who-filed-the-lines-on-it)

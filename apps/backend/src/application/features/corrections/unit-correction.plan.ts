@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
+  filedByOf,
   isStructuralUnitType,
   isSurveyed,
   statusForFlags,
@@ -103,6 +104,12 @@ export interface CorrectionLine {
   endReason: string | null;
   createdAt: Date;
   updatedAt: Date;
+  /**
+   * Who filed this line when somebody added it after its file (0096), and his
+   * name. Absent, the line is credited to its card's `filedById`.
+   */
+  filedById?: string | null;
+  filedByName?: string | null;
 }
 
 export interface CorrectionCard {
@@ -343,19 +350,21 @@ export function planUnitCorrection(state: UnitCorrectionState): UnitCorrectionPl
     unit ends up RECORDED_IN_ERROR, so each officer who is credited for the
     unit today loses exactly one unit — however many lines of theirs name it.
 
-    Credit follows the registration a card was filed on (`cardsFiledOn`): a
-    card a merge carried across still pays the officer who filed it, and
-    `load` resolves `filedById` to that officer.
+    A line is paid to whoever filed it (`filedByOf`, 0096): its own `filedById`
+    when somebody added it to the file later, and otherwise the officer of the
+    registration its card was filed on (`cardsFiledOn`) — a card a merge carried
+    across still pays the officer who filed it, and `load` resolves the card's
+    `filedById` to that officer.
   */
   const pay = new Map<string, { officerId: string; officerName: string | null; unitsLost: number }>();
   for (const card of state.cards) {
-    if (!card.filedById || card.endReason === RECORDED_IN_ERROR) continue;
-    const credited = card.rows.some(
-      (row) =>
-        row.unitId === unit.id && row.endReason !== RECORDED_IN_ERROR && !isStructuralUnitType(row.unitType),
-    );
-    if (credited && !pay.has(card.filedById)) {
-      pay.set(card.filedById, { officerId: card.filedById, officerName: card.filedByName, unitsLost: 1 });
+    if (card.endReason === RECORDED_IN_ERROR) continue;
+    for (const row of card.rows) {
+      if (row.unitId !== unit.id || row.endReason === RECORDED_IN_ERROR || isStructuralUnitType(row.unitType)) continue;
+      const officerId = filedByOf(row, card.filedById);
+      if (!officerId || pay.has(officerId)) continue;
+      const officerName = row.filedById ? (row.filedByName ?? null) : card.filedByName;
+      pay.set(officerId, { officerId, officerName, unitsLost: 1 });
     }
   }
 

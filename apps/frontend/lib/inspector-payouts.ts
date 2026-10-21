@@ -122,6 +122,10 @@ function byWhenPaid(a: PayoutPlace, b: PayoutPlace): number {
  *
  * Earned-to-date sums `commissionEarned` over the registrations that count.
  * Every registration is in the profile (`recentRegistrations` is not limited).
+ * Each counts from when it was earned (`creditedAt`): for a file another
+ * officer registered and this one added a line to, that is when he added it,
+ * not when the file was made. A server that does not send `creditedAt` yet is
+ * read by `submittedAt`, as before.
  *
  * Recomputed from today's records, and the page says so under the table: a
  * registration's credit is what it earns now — after deduplication, merges and
@@ -135,10 +139,10 @@ function byWhenPaid(a: PayoutPlace, b: PayoutPlace): number {
  */
 export function payoutHistory<P extends PayoutForHistory>(
   payouts: readonly P[],
-  registrations: ReadonlyArray<{ submittedAt: string; commissionEarned: number }>,
+  registrations: ReadonlyArray<{ submittedAt: string; creditedAt?: string; commissionEarned: number }>,
 ): Array<PayoutHistoryRow<P>> {
   const credits: Credit[] = registrations.map((registration) => {
-    const at = new Date(registration.submittedAt);
+    const at = new Date(registration.creditedAt ?? registration.submittedAt);
     return { at: at.getTime(), day: municipalToday(at), amount: registration.commissionEarned };
   });
   const chronological = payouts
