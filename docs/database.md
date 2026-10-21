@@ -1,6 +1,6 @@
 # Database
 
-Last verified against the code: `chore/migration-0095` (on `develop@a7e62087`): `0095_unit_levels`, its row in the units billing facts and its numbering note, 2026-10-17; `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): a رقم العقار saved in Latin digits, digit-normalised lookups for older rows, where `P2002` is mapped; a foreign-key violation on a registration card, 2026-10-15; the finance audit migrations `0090`, `0091` and `0093`, their table rows, the enum release rule and `0091`'s header corrections against `chore/migration-0090-0091` (on `develop@5e8f5c3`) and the code of PR #120 (`fix/finance-audit-remediation@6169287`), 2026-10-13, rebased onto `develop@3211140`, 2026-10-15; `0092_citizen_requests` (municipal requests), shipped alone in `chore/migration-0092` (PR #121) ahead of the code and stacked on #120 with `0093` before it, 2026-10-13; and `feat/treasury-day-closing@c88c971` (`develop` with the reviewed treasury, #107/#108; PR #106, stage 5: the daily count, the day closing and the closed-day lock; PR #109, inspector payouts and decision D9; PR #111, transfers, exchange and wallets with `0088`; PR #112, bulk settlement with `0085`; each merged with its review fixes, and the cross-feature fixes) with the fixes of the final-stack review (uncommitted): `0089` (a paid commission payout written once, and the payout's retry key on its row), a back-dated outflow judged against every day's close, the count's wallet locks in id order, the migrator's lock note, 2026-10-11; the finance audit migrations `0090`, `0091` and `0093`, their table rows, the enum release rule and `0091`'s header corrections against `chore/migration-0090-0091` (on `develop@5e8f5c3`) and the code of PR #120 (`fix/finance-audit-remediation@6169287`), 2026-10-13; `0092_citizen_requests` and, from its review, `0094_citizen_request_guard`, the municipal requests tables, their guard, backup and numbering notes and `0092`'s header corrections, against `chore/migration-0092` rebased on `fix/finance-audit-remediation@9f7b12b` and the code of PR #122 (`fix/fees-page-ux@c28f437`), 2026-10-13; and, on `fix/fees-page-ux` rebased onto `chore/migration-0092@16473f0` (2026-10-13), the review of PR #122: a request cancelled with its bill (`cancelRequestOfCancelledBill`), a card or a flat a request names never deleted (`PROPERTY_NAMED_BY_REQUEST`, `HAS_REQUESTS`), request bills stamp `issuedById`, the API's log lines without query strings, and the isolation tests.
+Last verified against the code: `feat/earnings-by-actor` (on `develop@149e458a`, uncommitted): `0096_building_unit_filed_by` and `0097_building_unit_filed_by_backfill`, who is paid for a unit line, their numbering note and the next free number, 2026-10-21; `chore/migration-0095` (on `develop@a7e62087`): `0095_unit_levels`, its row in the units billing facts and its numbering note, 2026-10-17; `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): a رقم العقار saved in Latin digits, digit-normalised lookups for older rows, where `P2002` is mapped; a foreign-key violation on a registration card, 2026-10-15; the finance audit migrations `0090`, `0091` and `0093`, their table rows, the enum release rule and `0091`'s header corrections against `chore/migration-0090-0091` (on `develop@5e8f5c3`) and the code of PR #120 (`fix/finance-audit-remediation@6169287`), 2026-10-13, rebased onto `develop@3211140`, 2026-10-15; `0092_citizen_requests` (municipal requests), shipped alone in `chore/migration-0092` (PR #121) ahead of the code and stacked on #120 with `0093` before it, 2026-10-13; and `feat/treasury-day-closing@c88c971` (`develop` with the reviewed treasury, #107/#108; PR #106, stage 5: the daily count, the day closing and the closed-day lock; PR #109, inspector payouts and decision D9; PR #111, transfers, exchange and wallets with `0088`; PR #112, bulk settlement with `0085`; each merged with its review fixes, and the cross-feature fixes) with the fixes of the final-stack review (uncommitted): `0089` (a paid commission payout written once, and the payout's retry key on its row), a back-dated outflow judged against every day's close, the count's wallet locks in id order, the migrator's lock note, 2026-10-11; the finance audit migrations `0090`, `0091` and `0093`, their table rows, the enum release rule and `0091`'s header corrections against `chore/migration-0090-0091` (on `develop@5e8f5c3`) and the code of PR #120 (`fix/finance-audit-remediation@6169287`), 2026-10-13; `0092_citizen_requests` and, from its review, `0094_citizen_request_guard`, the municipal requests tables, their guard, backup and numbering notes and `0092`'s header corrections, against `chore/migration-0092` rebased on `fix/finance-audit-remediation@9f7b12b` and the code of PR #122 (`fix/fees-page-ux@c28f437`), 2026-10-13; and, on `fix/fees-page-ux` rebased onto `chore/migration-0092@16473f0` (2026-10-13), the review of PR #122: a request cancelled with its bill (`cancelRequestOfCancelledBill`), a card or a flat a request names never deleted (`PROPERTY_NAMED_BY_REQUEST`, `HAS_REQUESTS`), request bills stamp `issuedById`, the API's log lines without query strings, and the isolation tests.
 
 The rules for anything that reads or writes a database: the schemas, how to
 query them, how to change them, and how data may move between environments.
@@ -142,6 +142,24 @@ is keyed by `parcelNumberKey`.
 | `responsibleOwnerId` | The owner who pays the whole under `RESPONSIBLE_OWNER`, and only then. `units_responsible_owner_needs_mode` uses `IS NOT DISTINCT FROM`: with `=`, a CHECK passes on the NULL that `NULL = 'RESPONSIBLE_OWNER'` yields. |
 | `feeExemption`, `feeExemptionNote`, `feeExemptedById`, `feeExemptedAt` | «معفاة من الرسوم»: `PLACE_OF_WORSHIP`, `PUBLIC_FACILITY` or `OTHER` (which needs the note). Set and lifted together (`units_fee_exemption_fields`). An exempt unit is charged nothing by a rate-based notice; a rented waqf shop is not exempt, its tenant pays. |
 | `levels` | How many levels the one unit spans, upward from `floor` (its entrance): 2 is a «دوبلكس», 3 a «تريبلكس» (decision D28, 2026-10-17). 1 on every unit before 0095. Between 1 and 6 (`units_levels_range`), and above 1 only on a شقة or a منزل مستقل (`units_levels_dwelling_only`). Under a PER_UNIT notice a multi-level flat weighs `system_settings.levelFactors[levels]` roofs (`{"2": 1.8}` by default; JSONB object by CHECK `system_settings_level_factors_object`, shape by `levelFactorsSchema`), and a house on N storeys weighs N. |
+
+**Who is paid for a unit line is on the line** (`0096`, `0097`). `building_units.filedById` is the
+staff member who created the line; an inspector earns $1 per distinct unit he filed
+(`creditBillableUnits` in `packages/shared-schemas/src/inspector-earnings.ts`), and the line is his
+whoever registered the citizen. NULL means the officer of the registration the card was filed on
+(`COALESCE("filedRegistrationId", "registrationId")`), which is how every line was read before the
+column existed and what a line filed with its registration still means. Every path that adds a line
+to an existing file sets it: the matrix and owner links through `BuildingsService.claimOnFile` (which
+requires it), and the edit form for the lines and cards a save adds. Read it through `filedByOf`, and
+load an officer's work through `creditedRegistrationsWhere`
+(`infrastructure/repositories/earnings-registrations.ts`), which also brings the files he only added
+lines to. `ON DELETE RESTRICT`: staff are soft-deleted, and a hard delete must not move the credit.
+`0097` filled the lines already on file from the audit trail (one staff actor on an
+`OCCUPANCY_RECORDED` / `LANDLORD_LINKED` / `LANDLORD_LINK_UPDATED` row within 400 ms of the line),
+then the owner link's receipt, and left a line with its file's officer when it was written with the
+registration or during a `CITIZEN_UPDATED` by the named actor: `building_units.createdAt` is not when a
+line was filed ([gotchas.md](gotchas.md#a-registrations-officer-is-not-who-filed-the-lines-on-it)).
+Incident: [incidents.md](incidents.md), entry 9.
 
 **A damage reading has two answers** (`0071`). `damage_assessments.level` is the
 UN-Habitat scale, untouched; `habitable` is «صالحة للسكن؟», asked beside it and
@@ -707,8 +725,8 @@ reads staging's history from `.env.staging` and nothing else, and
   of order, with `deploy.mjs`'s warning (it flags a pending migration that sorts before one already
   applied). A database that took `0092` before `0090` and `0091`, as a developer's may have, flags those
   two only, not `0093`. None of the five is on `develop` yet, so CI has applied none to staging or
-  production; a hand-run `db:deploy:staging` was not checked. The next free number is `0095`; list
-  every unmerged branch again before you take it.
+  production; a hand-run `db:deploy:staging` was not checked. The next free number is `0098` (checked
+  2026-10-21, below); list every unmerged branch again before you take it.
   - `0091`'s header is wrong in three places, and the file is not edited (it is applied). It says «one
     Whish or bank reference», but only a Whish settlement writes `externalRef`. It lists the
     `ACCESS EXCLUSIVE` locks on the tables it alters, but its two foreign keys also hold
@@ -724,6 +742,19 @@ reads staging's history from `.env.staging` and nothing else, and
     `0094` replaces that CHECK with its guard, and the code cancels the request with its bill (decision of
     2026-10-13, PR #122). It also cites `docs/municipal-requests-plan.md` and `docs/open-decisions.md`
     §20, which arrive with PR #122; §20 is kept for them (the PR #120 review's decisions are §22).
+- `0096_building_unit_filed_by` (`building_units.filedById`: who filed a line, and so who is paid for
+  it) and `0097_building_unit_filed_by_backfill` (filling it for the lines already on file) took their
+  numbers on 2026-10-21 after a check of every local and remote branch and of the open PRs (#128 and
+  #129 carry `0095` only). They were written as `0095` and `0096` on 2026-10-16 and renumbered when
+  `0095_unit_levels` reached `develop` (#127) while they were in progress; they had been applied
+  nowhere under the old numbers. `0096` is additive: a nullable column, its index and a
+  `RESTRICT` key to `users` (which holds `SHARE ROW EXCLUSIVE` on `users` until the file commits, as
+  `0091`'s keys do). `0097` needs `0096`, `0045` (`landlordLinkFootprint`) and `0061`
+  (`filedRegistrationId`), writes only the new column, and is a no-op on replay. The previous build
+  ignores the column and the new build reads NULL as before, so neither order of release breaks a
+  running API. They ship together in `chore/migration-0096-0097`, ahead of `feat/earnings-by-actor`.
+  Dry-run on production through the read-only views (2026-10-21): 191 lines assigned (186 from the
+  trail, 5 from link receipts), 18 kept with their file's officer.
 - Before you pick a number, MUST list the migrations on every unmerged branch
   and open PR:
 

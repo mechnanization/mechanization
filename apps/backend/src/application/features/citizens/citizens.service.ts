@@ -2650,8 +2650,10 @@ export class CitizensService {
                 data: { ...line.unit, ...order(position, false) },
               });
             } else {
+              // A flat this save adds is the saver's work, whoever registered the file (0096);
+              // a kept line was updated above and keeps whoever filed it.
               await tx.buildingUnit.create({
-                data: { ...line.unit, ...order(position, true), propertyEntryId: id },
+                data: { ...line.unit, ...order(position, true), propertyEntryId: id, filedById: input.actor.id },
               });
             }
           }
@@ -2662,7 +2664,12 @@ export class CitizensService {
               registrationId,
               ...data,
               units: {
-                create: units.map((unit, position) => ({ ...unit, createdAt: new Date(base + position) })),
+                // A card this save adds to the file is the saver's work, as a line added above is.
+                create: units.map((unit, position) => ({
+                  ...unit,
+                  createdAt: new Date(base + position),
+                  filedById: input.actor.id,
+                })),
               },
             },
           });

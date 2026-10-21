@@ -4025,6 +4025,7 @@ export class BuildingsService {
       shares: input.shares ?? null,
       unitStatus: input.unitStatus ?? impliedStatus ?? null,
       landlord,
+      filedById: actor.id,
     });
 
     /*
@@ -4210,6 +4211,8 @@ export class BuildingsService {
     shares: number | null;
     unitStatus: string | null;
     landlord?: LandlordSpec | null;
+    /** The staff member doing this, paid for any line it writes. See `claimOnFile`. */
+    filedById: string;
   }): Promise<FileLinkResult> {
     return this.claimOnFile(input);
   }
@@ -4223,6 +4226,12 @@ export class BuildingsService {
     unitStatus: string | null;
     /** Non-owner capacities only: who the flat is held from. */
     landlord?: LandlordSpec | null;
+    /**
+     * The staff member recording this. A line written here goes onto a file
+     * somebody else may have registered, and is his work, not theirs: he is the
+     * one paid for it (`building_units.filedById`, 0096; `creditBillableUnits`).
+     */
+    filedById: string;
   }): Promise<FileLinkResult> {
     /*
       Five reads with nothing to say to each other, issued together.
@@ -4358,6 +4367,7 @@ export class BuildingsService {
           side: described.side,
           unitArea: described.unitArea,
           unitStatus: (input.unitStatus ?? null) as never,
+          filedById: input.filedById,
         },
       });
 
@@ -4468,6 +4478,7 @@ export class BuildingsService {
                   side: described.side,
                   unitArea: described.unitArea,
                   unitStatus: (input.unitStatus ?? null) as never,
+                  filedById: input.filedById,
                 },
               },
             }),

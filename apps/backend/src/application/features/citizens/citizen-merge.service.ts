@@ -3,9 +3,10 @@ import { ReferenceNumber } from '../../../domain/value-objects/reference-number.
 import { Injectable } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
-  cardsFiledOn,
+  cardsCreditedTo,
   COMMISSION_RATE,
   creditBillableUnits,
+  filedByOf,
   type CitizenMergeBillLine,
   type CitizenMergeCardLine,
   type CitizenMergeInput,
@@ -22,6 +23,10 @@ import {
 import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
+import {
+  creditedRegistrationsWhere,
+  EARNINGS_CARD_SELECT,
+} from '../../../infrastructure/repositories/earnings-registrations';
 import { AuditService, type BuildingChange, type CitizenChange } from '../audit/audit.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { ConflictError, NotFoundError } from '../../common/exceptions';
@@ -543,6 +548,7 @@ export class CitizenMergeService {
             endedAt: true,
             endReason: true,
             createdAt: true,
+            filedById: true,
           },
         },
       },
@@ -667,8 +673,14 @@ export class CitizenMergeService {
       })
       .map((card) => ({ id: card.id, landlordLinkMint: card.landlordLinkMint }));
 
+    // The registrations' officers and whoever filed a line on these cards (0096): both can be paid for them.
     const officerIds = [
-      ...new Set(registrations.map((registration) => registration.createdById).filter((id): id is string => Boolean(id))),
+      ...new Set(
+        [
+          ...registrations.map((registration) => registration.createdById),
+          ...cardRows.flatMap((card) => card.units.map((line) => line.filedById)),
+        ].filter((id): id is string => Boolean(id)),
+      ),
     ];
     const officerRows = await this.db.user.findMany({
       where: { id: { in: officerIds }, kind: 'STAFF' },
@@ -760,29 +772,47 @@ export class CitizenMergeService {
 
     const registrationsById = new Map(loaded.input.registrations.map((registration) => [registration.id, registration]));
     const cardsById = new Map(loaded.input.cards.map((card) => [card.id, card]));
+    /*
+      Who is paid for an ended line is who filed it (`filedByOf`, 0096): the
+      officer of the registration the card was filed on, unless somebody else
+      added the line later. An ended card takes every line on it.
+    */
     const officers = new Set<string>();
-    for (const cardId of [...loaded.plan.cardEnds.map((end) => end.cardId), ...loaded.plan.rowEnds.map((end) => end.cardId)]) {
+    const credit = (card: (typeof loaded.input.cards)[number], rowIds: ReadonlySet<string> | null) => {
+      const fileOfficer = registrationsById.get(filedOn(card))?.createdById ?? null;
+      for (const line of card.units) {
+        if (rowIds && !rowIds.has(line.id)) continue;
+        const officer = filedByOf(line, fileOfficer);
+        if (officer) officers.add(officer);
+      }
+    };
+    for (const cardId of endedCards) {
       const card = cardsById.get(cardId);
-      const officer = card ? registrationsById.get(filedOn(card))?.createdById : null;
-      if (officer) officers.add(officer);
+      if (card) credit(card, null);
+    }
+    for (const end of loaded.plan.rowEnds) {
+      const card = cardsById.get(end.cardId);
+      if (card) credit(card, new Set([end.rowId]));
     }
 
     const lines: CitizenMergePayLine[] = [];
     for (const officerId of officers) {
+      // His whole history, loaded as his pay page loads it (`creditedRegistrationsWhere`).
       const registrations = await this.db.registration.findMany({
-        where: { createdById: officerId },
+        where: creditedRegistrationsWhere([officerId]),
         orderBy: { submittedAt: 'asc' },
         select: {
           id: true,
-          properties: { select: EARNINGS_SELECT },
-          movedCards: { select: EARNINGS_SELECT },
+          createdById: true,
+          properties: { select: EARNINGS_CARD_SELECT },
+          movedCards: { select: EARNINGS_CARD_SELECT },
         },
       });
       const before = new Set<string>();
       const after = new Set<string>();
       let delta = 0;
       for (const registration of registrations) {
-        const filed = cardsFiledOn(registration);
+        const filed = cardsCreditedTo(officerId, registration);
         delta -= creditBillableUnits(filed, before);
         delta += creditBillableUnits(
           filed.map((card) => ({
@@ -1560,12 +1590,6 @@ export class CitizenMergeService {
 
 // ─────────────────────────────  Helpers  ─────────────────────────────
 
-const EARNINGS_SELECT = {
-  id: true,
-  endReason: true,
-  filedRegistrationId: true,
-  units: { select: { id: true, unitId: true, unitType: true, endReason: true } },
-} as const;
 
 const PROPERTY_TYPE_LABEL: Record<string, string> = {
   BUILDING: 'مبنى',

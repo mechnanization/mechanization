@@ -103,6 +103,8 @@ export interface PlanRow {
   endedAt: Date | null;
   endReason: string | null;
   createdAt: Date;
+  /** Who filed the line when it was added after its file (0096); the pay preview reads it (`filedByOf`). */
+  filedById?: string | null;
 }
 
 /**
