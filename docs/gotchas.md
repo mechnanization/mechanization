@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `fix/pr116-review` (PR #116 merged with `fix/pr115-review`, which stacks #123, #124 and #115 on `develop@5e8f5c3`, with its review fixes): Escape inside a dialog, Tailwind 4 class names on 3.4; digit-normalised cadastre lookups, Latin digits on write, what still compares as stored; a window count on an empty page, 2026-10-15; the previous build and a new enum value against `chore/migration-0090-0091` (on `develop@5e8f5c3`), 2026-10-13, rebased onto `develop@3211140`, 2026-10-15; the Prisma `now()` clock trap in invoice numbering against `fix/finance-audit-remediation` (on `develop@5e8f5c3`), 2026-10-12; JavaScript and Postgres on `trim` and lower case against `fix/finance-audit-remediation` (rebased on `chore/migration-0090-0091@8d386b5`), 2026-10-13; a new RESTRICT key and an existing delete (0092) against `chore/migration-0092` rebased on `fix/finance-audit-remediation@9f7b12b`, 2026-10-13; the CRLF working tree and Enter inside a nested editor added on `fix/fees-page-ux` (uncommitted), 2026-10-12; a Radix dialog with no trigger losing the focus on close, the same day; a `replaceState` made while a page mounts, found on the request wizard (uncommitted), 2026-10-13; the reference-only sign-in recorded as the decided one, and an undeclared env var set only in `.env` never reaching the code of a deployed build (verified in `@nestjs/config`; a locally generated Prisma client loads the file itself), the same day; and, on `fix/fees-page-ux` rebased onto `chore/migration-0092@16473f0` (2026-10-13), the review of PR #122: a request cancelled with its bill (`cancelRequestOfCancelledBill`), a card or a flat a request names never deleted (`PROPERTY_NAMED_BY_REQUEST`, `HAS_REQUESTS`), request bills stamp `issuedById`, the API's log lines without query strings, and the isolation tests; and, on `fix/pr122-review` (2026-10-15), the review's blocker and majors: `ParcelDuesService.dues` normalising its own argument, a request on a cancelled bill cancelled by `reconcile` too (an IN_REVIEW one through AWAITING_PAYMENT), and a request's `fee` null once it will never be billed; and an `absolute` box escaping the admin shell's scroller, measured on `develop@4634bdb` (uncommitted), 2026-10-15, and the warnings of `next dev --turbo`, the same day; and, on `develop@a7e62087` (uncommitted), the two census-counting traps — `property_entries` counting filings rather than structures, and the trigger columns beside the `units` table — both measured against production, 2026-10-16.
+Last verified against the code: `feat/earnings-by-actor` (on `develop@149e458a`, uncommitted): a registration's officer is not who filed the lines on it, and a line's `createdAt` is not when it was filed, 2026-10-21; `feat/unit-levels` (stacked on `chore/migration-0095`, on `develop@a7e62087`): duplexes and the per-roof factor, a house that grows, D28, 2026-10-17; `fix/pr116-review` (PR #116 merged with `fix/pr115-review`, which stacks #123, #124 and #115 on `develop@5e8f5c3`, with its review fixes): Escape inside a dialog, Tailwind 4 class names on 3.4; digit-normalised cadastre lookups, Latin digits on write, what still compares as stored; a window count on an empty page, 2026-10-15; the previous build and a new enum value against `chore/migration-0090-0091` (on `develop@5e8f5c3`), 2026-10-13, rebased onto `develop@3211140`, 2026-10-15; the Prisma `now()` clock trap in invoice numbering against `fix/finance-audit-remediation` (on `develop@5e8f5c3`), 2026-10-12; JavaScript and Postgres on `trim` and lower case against `fix/finance-audit-remediation` (rebased on `chore/migration-0090-0091@8d386b5`), 2026-10-13; a new RESTRICT key and an existing delete (0092) against `chore/migration-0092` rebased on `fix/finance-audit-remediation@9f7b12b`, 2026-10-13; the CRLF working tree and Enter inside a nested editor added on `fix/fees-page-ux` (uncommitted), 2026-10-12; a Radix dialog with no trigger losing the focus on close, the same day; a `replaceState` made while a page mounts, found on the request wizard (uncommitted), 2026-10-13; the reference-only sign-in recorded as the decided one, and an undeclared env var set only in `.env` never reaching the code of a deployed build (verified in `@nestjs/config`; a locally generated Prisma client loads the file itself), the same day; and, on `fix/fees-page-ux` rebased onto `chore/migration-0092@16473f0` (2026-10-13), the review of PR #122: a request cancelled with its bill (`cancelRequestOfCancelledBill`), a card or a flat a request names never deleted (`PROPERTY_NAMED_BY_REQUEST`, `HAS_REQUESTS`), request bills stamp `issuedById`, the API's log lines without query strings, and the isolation tests; and, on `fix/pr122-review` (2026-10-15), the review's blocker and majors: `ParcelDuesService.dues` normalising its own argument, a request on a cancelled bill cancelled by `reconcile` too (an IN_REVIEW one through AWAITING_PAYMENT), and a request's `fee` null once it will never be billed; and an `absolute` box escaping the admin shell's scroller, measured on `develop@4634bdb` (uncommitted), 2026-10-15, and the warnings of `next dev --turbo`, the same day; and, on `develop@a7e62087` (uncommitted), the two census-counting traps — `property_entries` counting filings rather than structures, and the trigger columns beside the `units` table — both measured against production, 2026-10-16.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -748,6 +748,23 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 
 ## Backend runtime
 
+### A «منزل» card names no unit: the unit count is its claim
+
+- **What happens:** a «منزل» card has no `building_units` row. Five readers —
+  `CensusSyncService`, «إنهاء الملكية», «إنهاء الإيجار», the edit form's card
+  removal and the matrix's backing check — infer its unit from "the structure
+  has exactly one unit". Give the structure a second unit (any type, a «طابق
+  أعمدة» too) and every one of them sees nothing: the next file save closed the
+  household's occupancy, and recording them on the new unit opened a second card
+  beside the first. Production reached that state five times (2026-10-14).
+- **Do this:** never add a unit under a house on a file without the
+  `houseGrowth` answer — `addUnit`, `generateUnits` and `saveMatrix` refuse
+  without it, and `SEPARATE_UNIT` converts the card (`promoteHouseCards`) in the
+  same transaction. Never write a «منزل» card onto a structure of several units
+  (`houseCardOnMultiUnitBuilding` refuses it at the write).
+- **Where:** `buildings/house-growth.ts`, `infrastructure/prisma/house-card-guard.ts`,
+  docs/building-census-plan.md §15.
+
 ### An optional phone must read an empty box as absent
 
 - **What happens:** two spellings of "optional phone" go wrong. With
@@ -919,6 +936,31 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   أسهم are recorded or corrected beside the billing method, in «توزيع الرسم على المالكين».
 - **Where:** `BuildingsService.recordOccupancy`; pinned by
   `co-owner-billing.integration.spec.ts`.
+
+### A registration's officer is not who filed the lines on it
+
+- **What happens:** the pay screens credited every unit line to `registrations.createdById`, so a
+  line another officer added to the file later — an owner recorded on the matrix, an owner link, a
+  flat added on the edit form — paid whoever registered the citizen first. On production 191 lines
+  were credited to the wrong officer (dry run, 2026-10-21). One of them: an officer recorded a
+  doctor as owner of a flat and a warehouse in his own building on 2026-10-06, and both dollars went
+  to the officer who had registered the doctor as a tenant elsewhere on 2026-09-25.
+- **Why:** before `0096` nothing below `registrations` recorded a staff member, and
+  `building_units.createdAt` cannot stand in for one: the edit form re-stamps `createdAt` on the
+  lines it keeps when it reorders them, and before lines were kept by identity it deleted and
+  re-created every line on each save, so a re-save puts old lines at the saver's moment, beside his
+  own audit rows.
+- **Do this:** read who is paid for a line through `filedByOf` (`building_units.filedById`, else the
+  officer of the registration the card was filed on), and load an officer's work through
+  `creditedRegistrationsWhere`, which brings the files he only added lines to as well as his own. A
+  new path that writes a `building_units` row onto an existing file sets `filedById` to the acting
+  staff member; `claimOnFile` requires it. To recover who did something in the past, match the audit
+  trail by time, require exactly one actor, and leave alone what happened during a save of the file,
+  as `0097` does.
+- **Where:** `packages/shared-schemas/src/inspector-earnings.ts` (`filedByOf`, `cardsCreditedTo`),
+  `infrastructure/repositories/earnings-registrations.ts`, `BuildingsService.claimOnFile`,
+  `CitizensService.update`, migrations `0096` and `0097`; incident 9 in
+  [incidents.md](incidents.md).
 
 ### Granting an exemption reaches back; lifting one does not
 

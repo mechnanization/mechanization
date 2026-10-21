@@ -342,6 +342,8 @@ export class CorrectionBillsService {
     const holdings = await this.holdings([
       ...new Set([...rated, ...flatByCategory].map((bill) => bill.citizenId)),
     ]);
+    // What a duplex weighs *now* — the figure a correction is judged against (0095).
+    const levelFactors = rated.length > 0 ? await this.fees.levelFactors() : undefined;
     for (const bill of rated) {
       const holding = holdings.get(bill.citizenId);
       if (!holding) continue;
@@ -351,6 +353,7 @@ export class CorrectionBillsService {
         basis: notice.basis as FeeBasis,
         targetCategory: notice.targetCategory ?? undefined,
         bearer: notice.bearer as FeeBearer,
+        levelFactors,
       });
       figures.set(
         bill.id,

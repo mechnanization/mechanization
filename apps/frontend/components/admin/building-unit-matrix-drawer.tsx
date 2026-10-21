@@ -21,8 +21,10 @@ import {
   getLabels,
   isStructuralUnitType,
   defaultUnitTypeFor,
+  unitLevelsLabel,
   type CitizenResidence,
   type DamageLevel,
+  type HouseGrowth,
   type UpsertUnitInput,
   type VacancyBasis,
   type VacancyEndReason,
@@ -34,7 +36,9 @@ import {
   createCase,
   deleteUnit,
   duplicateUnitsOf,
+  houseGrowthQuestionOf,
   type DuplicateUnitCandidate,
+  type HouseGrowthQuestion,
   endOccupancy,
   endVacancy,
   getBuilding,
@@ -69,6 +73,7 @@ import { MATRIX_UNIT_TYPES } from '@/components/citizen/unit-fields';
 import { endTenancyMessage } from '@/components/admin/after-tenancy-question';
 import { BuildingElevation } from '@/components/admin/property-illustrations';
 import { UnitCorrectionDeleteButton, useStaffRole } from '@/components/admin/unit-correction-delete-dialog';
+import { DuplexMergeButton } from '@/components/admin/duplex-merge-dialog';
 import {
   type EndOccupancyAnswer,
   activeVacancy,
@@ -79,7 +84,7 @@ import {
   ConfirmVacancyForm,
   effectiveUnitStatus,
   floorLabel,
-  groupUnitsByFloor,
+  layoutBuilding,
   logVisitWithFollowUp,
   occupancyMessage,
   OccupantList,
@@ -90,10 +95,10 @@ import {
   vacancyBlocker,
   VacancyPanel,
   VisitForm,
-  withDeclaredBasements,
 } from './building-unit-forms';
 import { OwnerBillingPanel } from './owner-billing-panel';
 import { FeeExemptionPanel } from './fee-exemption-panel';
+import { HouseGrowthPrompt, UnitLevelsPanel, upperFlatOf } from './unit-levels';
 import { showsOwnerBilling } from '@/lib/owner-billing';
 import { DamageForm } from './damage/damage-form';
 import { DamageHistory } from './damage/damage-history';
@@ -272,13 +277,15 @@ export function BuildingUnitMatrixDrawer({
   }, [selectedUnitId]);
 
   /** Floors top-down, so the matrix stands the way the building does, with a
-   *  row for every basement the register declares even when it is still empty. */
+   *  row for every basement the register declares even when it is still empty —
+   *  and for every floor a home's upper level reaches (0095), so a unit can be
+   *  added beside it. Each row lists the units entering on it. */
   const floors = useMemo(
     () =>
-      withDeclaredBasements(
-        groupUnitsByFloor(building?.units ?? []),
-        building?.basementsCount,
-      ),
+      layoutBuilding(building?.units ?? [], building?.basementsCount).map(({ floor, blocks }) => ({
+        floor,
+        units: blocks.filter((block) => !block.continuation).map((block) => block.unit),
+      })),
     [building],
   );
 
@@ -324,7 +331,16 @@ export function BuildingUnitMatrixDrawer({
     floor: number;
     unitType: string;
     candidates: DuplicateUnitCandidate[];
+    /** The house-growth answer already given, carried into the re-send. */
+    houseGrowth?: HouseGrowth;
   } | null>(null);
+  /** «هذا المنزل يصبح مبنى» (D28) — asked by the server before a house on a file grows. */
+  const [growthQuestion, setGrowthQuestion] = useState<{
+    floor: number;
+    unitType: string;
+    question: HouseGrowthQuestion;
+  } | null>(null);
+  const tLevels = useTranslations('unitLevels');
 
   /** Every write funnels through here so the reload and the toast are never forgotten. */
   const run = useCallback(
@@ -364,7 +380,7 @@ export function BuildingUnitMatrixDrawer({
    * an advisory lock so two officers filling one matrix cannot both claim the
    * same position.
    */
-  const addOnFloor = async (floor: number, unitType: string, acknowledged = false) => {
+  const addOnFloor = async (floor: number, unitType: string, acknowledged = false, houseGrowth?: HouseGrowth) => {
     if (!building || !unitType) return;
 
     setBusy(true);
@@ -374,17 +390,32 @@ export function BuildingUnitMatrixDrawer({
         floor,
         unitType: unitType as UpsertUnitInput['unitType'],
         ...(acknowledged ? { acknowledgedDuplicates: true } : {}),
+        ...(houseGrowth ? { houseGrowth } : {}),
       });
       await load();
       onChanged?.();
       setAddingFloor(null);
       setAddingType('');
       setDuplicateUnits(null);
+      setGrowthQuestion(null);
+      // «طابق إضافي» adds no unit: the home rose a level.
       toast.success(
-        en ? `Unit ${created.unitCode} added` : `تمت إضافة الوحدة ${created.unitCode}`,
+        houseGrowth === 'EXTRA_LEVEL'
+          ? tLevels('growth.levelAdded', {
+              unitCode: created.unitCode,
+              name: unitLevelsLabel(created.levels, locale) ?? '',
+            })
+          : tLevels('growth.unitAdded', { unitCode: created.unitCode }),
       );
     } catch (caught) {
       logApiError(caught);
+
+      // A house on somebody's file is about to grow: ask before anything is written (D28).
+      const question = houseGrowthQuestionOf(caught);
+      if (question) {
+        setGrowthQuestion({ floor, unitType, question });
+        return;
+      }
 
       /*
         The floor already has a unit of this type, and the server is holding it
@@ -405,7 +436,8 @@ export function BuildingUnitMatrixDrawer({
       */
       const clashes = duplicateUnitsOf(caught);
       if (clashes) {
-        setDuplicateUnits({ floor, unitType, candidates: clashes });
+        setGrowthQuestion(null);
+        setDuplicateUnits({ floor, unitType, candidates: clashes, houseGrowth });
         return;
       }
 
@@ -568,6 +600,19 @@ export function BuildingUnitMatrixDrawer({
         return en ? 'Seasonal details saved' : 'تم حفظ بيانات السكن الموسمي';
       },
       en ? 'Could not save the seasonal details.' : 'تعذّر حفظ بيانات السكن الموسمي.',
+    );
+
+  /** «عدد طوابق المسكن» — a flat or house on several levels (0095, D28). */
+  const saveLevels = (unit: UnitWithOccupants, levels: number) =>
+    run(
+      async () => {
+        await updateUnit(tenant, token, unit.id, { levels });
+        return tLevels('field.saved', {
+          unitCode: unit.unitCode,
+          levels: unitLevelsLabel(levels, locale) ?? tLevels('field.one'),
+        });
+      },
+      tLevels('field.failed'),
     );
 
   /** «معفاة من الرسوم» — granted or lifted by a SUPER_ADMIN (0077). */
@@ -779,7 +824,7 @@ export function BuildingUnitMatrixDrawer({
                         </Select>
                         <Button
                           size="sm"
-                          disabled={busy || !addingType || duplicateUnits !== null}
+                          disabled={busy || !addingType || duplicateUnits !== null || growthQuestion !== null}
                           onClick={() => void addOnFloor(floor, addingType)}
                         >
                           {busy ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : null}
@@ -793,6 +838,7 @@ export function BuildingUnitMatrixDrawer({
                             setAddingFloor(null);
                             setAddingType('');
                             setDuplicateUnits(null);
+                            setGrowthQuestion(null);
                           }}
                         >
                           {en ? 'Cancel' : 'إلغاء'}
@@ -817,6 +863,25 @@ export function BuildingUnitMatrixDrawer({
                         the only thing that tells two identical-looking units
                         apart.
                       */}
+                      {growthQuestion && growthQuestion.floor === floor ? (
+                        <HouseGrowthPrompt
+                          question={growthQuestion.question}
+                          floor={growthQuestion.floor}
+                          floorText={(level) => floorLabel(level, en)}
+                          structureIsHouse={building?.structureType === 'INDEPENDENT_HOUSE'}
+                          busy={busy}
+                          locale={locale}
+                          onAnswer={(growth) =>
+                            void addOnFloor(growthQuestion.floor, growthQuestion.unitType, false, growth)
+                          }
+                          onCancel={() => {
+                            setGrowthQuestion(null);
+                            setAddingFloor(null);
+                            setAddingType('');
+                          }}
+                        />
+                      ) : null}
+
                       {duplicateUnits && duplicateUnits.floor === floor ? (
                         <div className="space-y-2 rounded-md border border-warning/40 bg-warning/10 p-2.5">
                           <p className="flex items-start gap-1.5 text-xs font-medium leading-relaxed">
@@ -887,6 +952,7 @@ export function BuildingUnitMatrixDrawer({
                                   duplicateUnits.floor,
                                   duplicateUnits.unitType,
                                   true,
+                                  duplicateUnits.houseGrowth,
                                 )
                               }
                             >
@@ -1054,6 +1120,15 @@ export function BuildingUnitMatrixDrawer({
                 onEnd={(values) => liftVacancy(selectedUnit, values)}
               />
 
+              {/* «عدد طوابق المسكن» — a home on several levels (0095, D28). */}
+              <UnitLevelsPanel
+                unit={selectedUnit}
+                locale={locale}
+                busy={busy}
+                canEdit={canWrite}
+                onSave={(levels) => void saveLevels(selectedUnit, levels)}
+              />
+
               {/* «معفاة من الرسوم» — shown to all; granted and lifted by a SUPER_ADMIN. */}
               <FeeExemptionPanel
                 unit={selectedUnit}
@@ -1192,6 +1267,20 @@ export function BuildingUnitMatrixDrawer({
                     not visible from here — so it still arrives as a message,
                     and `run` surfaces it verbatim.
                   */}
+                  {/* «دمج كدوبلكس» (D28): a flat and the one above it that are one home. */}
+                  <DuplexMergeButton
+                    tenant={tenant}
+                    token={token}
+                    unitId={selectedUnit.id}
+                    hasUpper={building ? upperFlatOf(building.units, selectedUnit) !== null : false}
+                    locale={locale}
+                    disabled={busy}
+                    onMerged={() => {
+                      setAction(null);
+                      void load();
+                      onChanged?.();
+                    }}
+                  />
                   {role === 'SUPER_ADMIN' ? (
                     <UnitCorrectionDeleteButton
                       tenant={tenant}

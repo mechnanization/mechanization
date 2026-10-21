@@ -162,6 +162,8 @@ export class DataQualityService {
       this.unitsWithoutArea(),
       this.unlinkedLandlords(),
       this.uninhabitedWithoutReading(),
+      this.houseCardsOnMultiUnitBuildings(),
+      this.unitLevelsToConfirm(),
     ]);
 
     const computed = groups
@@ -889,6 +891,193 @@ export class DataQualityService {
       officerIds: row.createdById ? [row.createdById] : [],
       at: row.updatedAt.toISOString(),
       dismissable: true,
+    }));
+  }
+
+  /**
+   * Homes whose «عدد طوابق المسكن» looks wrong (decision D28) — each changes a
+   * per-roof bill, and none is a guess this screen should make:
+   *
+   *  - **one owner-occupier in two flats stacked on each other**, in overlapping
+   *    columns: a duplex recorded as two flats (B-1-352-A). «دمج كدوبلكس»
+   *    corrects it; a family that really keeps two separate flats dismisses it;
+   *  - **a «دوبلكس» note on a one-level unit** — D27's way of recording one,
+   *    which billing cannot read. Matched in SQL; the note itself is never
+   *    copied into the finding (it is officer free text);
+   *  - **a house with more storeys than its unit's levels** — a two-storey house
+   *    pays two roofs, so its unit should say so, unless the storey is unbuilt.
+   */
+  private async unitLevelsToConfirm(): Promise<RawFinding[]> {
+    const [stacked, noted, houses] = await Promise.all([
+      this.db.$queryRaw<
+        Array<{
+          lowerId: string;
+          upperId: string;
+          lowerCode: string;
+          upperCode: string;
+          buildingId: string;
+          code: string;
+          name: string | null;
+          parcelNumber: string;
+          citizenId: string;
+          firstName: string;
+          middleName: string | null;
+          lastName: string;
+          residence: string | null;
+          createdById: string | null;
+          updatedAt: Date;
+        }>
+      >`
+        SELECT a.id AS "lowerId", b.id AS "upperId", a."unitCode" AS "lowerCode", b."unitCode" AS "upperCode",
+               bl.id AS "buildingId", bl.code, bl.name, bl."parcelNumber",
+               c.id AS "citizenId", c."firstName", c."middleName", c."lastName", c.residence::text AS residence,
+               bl."createdById", GREATEST(a."updatedAt", b."updatedAt") AS "updatedAt"
+          FROM ${this.S}units a
+          JOIN ${this.S}units b
+            ON b."buildingId" = a."buildingId"
+           AND b.floor = a.floor + a.levels
+           AND b."unitType" = 'APARTMENT'
+           AND COALESCE(b."startCol", 1) <= COALESCE(a."endCol", 1)
+           AND COALESCE(a."startCol", 1) <= COALESCE(b."endCol", 1)
+          JOIN ${this.S}unit_occupancies oa ON oa."unitId" = a.id AND oa."toDate" IS NULL AND oa.role = 'OWNER'
+          JOIN ${this.S}unit_occupancies ob
+            ON ob."unitId" = b.id AND ob."toDate" IS NULL AND ob.role = 'OWNER' AND ob."citizenId" = oa."citizenId"
+          JOIN ${this.S}users c ON c.id = oa."citizenId" AND c."isActive"
+          JOIN ${this.S}buildings bl ON bl.id = a."buildingId"
+         WHERE a."unitType" = 'APARTMENT'
+           AND a."unitStatus" = 'OWNER_OCCUPIED'
+           AND b."unitStatus" = 'OWNER_OCCUPIED'
+      `,
+      this.db.$queryRaw<
+        Array<{ id: string; unitCode: string; buildingId: string; code: string; name: string | null; parcelNumber: string; createdById: string | null; updatedAt: Date }>
+      >`
+        SELECT u.id, u."unitCode", b.id AS "buildingId", b.code, b.name, b."parcelNumber", b."createdById", u."updatedAt"
+          FROM ${this.S}units u
+          JOIN ${this.S}buildings b ON b.id = u."buildingId"
+         WHERE u.levels = 1
+           AND u."unitType" IN ('APARTMENT', 'INDEPENDENT_HOUSE')
+           AND u.notes ~* '(دوبلكس|دبلكس|دوبليكس|duplex|تريبلكس|triplex)'
+      `,
+      this.db.$queryRaw<
+        Array<{ id: string; unitCode: string; levels: number; floorsCount: number; buildingId: string; code: string; name: string | null; parcelNumber: string; createdById: string | null; updatedAt: Date }>
+      >`
+        SELECT u.id, u."unitCode", u.levels, b."floorsCount", b.id AS "buildingId", b.code, b.name, b."parcelNumber",
+               b."createdById", u."updatedAt"
+          FROM ${this.S}buildings b
+          JOIN ${this.S}units u ON u."buildingId" = b.id
+         WHERE b."structureType" = 'INDEPENDENT_HOUSE'
+           AND b."lifecycleStatus"::text NOT IN ('PERMITTED', 'UNDER_CONSTRUCTION')
+           AND u."unitType" = 'INDEPENDENT_HOUSE'
+           AND u.floor = 0
+           AND (SELECT COUNT(*) FROM ${this.S}units v WHERE v."buildingId" = b.id) = 1
+           AND u.levels < b."floorsCount"
+      `,
+    ]);
+
+    const building = (row: { buildingId: string; code: string; name: string | null; parcelNumber: string }) => ({
+      kind: 'building' as const,
+      id: row.buildingId,
+      label: row.name ? `${row.code} — ${row.name}` : row.code,
+      secondary: `عقار ${row.parcelNumber}`,
+    });
+
+    return [
+      ...stacked.map((row) => ({
+        kind: 'UNIT_LEVELS_TO_CONFIRM' as const,
+        subjectKey: `STACKED:${row.lowerId}:${row.upperId}`,
+        severity: 'MEDIUM' as const,
+        detail: `${fullName(row)} مالك وساكن في ${row.lowerCode} و${row.upperCode} فوقها مباشرة — إن كانتا مسكناً واحداً على طابقين فاطلب «دمج كدوبلكس»، فهو يُحتسب بمعامل السقوف لا سقفين`,
+        subjects: [{ kind: 'citizen' as const, id: row.citizenId, label: fullName(row), secondary: null }, building(row)],
+        officerIds: row.createdById ? [row.createdById] : [],
+        at: row.updatedAt.toISOString(),
+        dismissable: true,
+      })),
+      ...noted.map((row) => ({
+        kind: 'UNIT_LEVELS_TO_CONFIRM' as const,
+        subjectKey: `NOTE:${row.id}`,
+        severity: 'LOW' as const,
+        detail: `ملاحظة الوحدة ${row.unitCode} تذكر دوبلكس وعدد طوابق المسكن 1 — اضبط «عدد طوابق المسكن» لتُحتسب بالسقوف`,
+        subjects: [building(row)],
+        officerIds: row.createdById ? [row.createdById] : [],
+        at: row.updatedAt.toISOString(),
+        dismissable: true,
+      })),
+      ...houses.map((row) => ({
+        kind: 'UNIT_LEVELS_TO_CONFIRM' as const,
+        subjectKey: `HOUSE:${row.id}`,
+        severity: 'MEDIUM' as const,
+        detail: `المنزل ${row.code} من ${row.floorsCount} طوابق ووحدته ${row.unitCode} مسجَّلة على ${row.levels} — كل طابق سقف يُحتسب؛ اضبط «عدد طوابق المسكن» أو أنقص عدد الطوابق إن لم يكن الطابق مبنياً`,
+        subjects: [building(row)],
+        officerIds: row.createdById ? [row.createdById] : [],
+        at: row.updatedAt.toISOString(),
+        dismissable: true,
+      })),
+    ];
+  }
+
+  /**
+   * «منزل» cards on a structure that holds more than one unit (decision D28).
+   *
+   * Such a card names no unit and claims none: the census sync holds its
+   * holder's spells rather than evicting them, but nothing backs them, and
+   * recording the household on a flat would open a second card. The matrix
+   * converts these cards as a house grows and a new one is refused at the
+   * write, so one listed here came from before D28 or an older client. Fixed
+   * on the file — make it a «مبنى» card naming its flat — so not dismissable.
+   *
+   * Counts every unit row, as the census readers do.
+   */
+  private async houseCardsOnMultiUnitBuildings(): Promise<RawFinding[]> {
+    const rows = await this.db.$queryRaw<
+      Array<{
+        cardId: string;
+        citizenId: string;
+        firstName: string;
+        middleName: string | null;
+        lastName: string;
+        residence: string | null;
+        buildingId: string;
+        code: string;
+        name: string | null;
+        parcelNumber: string;
+        units: number;
+        createdById: string | null;
+        createdAt: Date;
+      }>
+    >`
+      SELECT pe.id AS "cardId", c.id AS "citizenId", c."firstName", c."middleName", c."lastName",
+             c.residence::text AS residence,
+             b.id AS "buildingId", b.code, b.name, b."parcelNumber",
+             (SELECT COUNT(*)::int FROM ${this.S}units u WHERE u."buildingId" = b.id) AS units,
+             r."createdById", pe."createdAt"
+        FROM ${this.S}property_entries pe
+        JOIN ${this.S}registrations r ON r.id = pe."registrationId"
+        JOIN ${this.S}users c ON c.id = r."citizenId" AND c."isActive"
+        JOIN ${this.S}buildings b ON b.id = pe."buildingId"
+       WHERE pe."propertyType" = 'HOUSE'
+         AND pe."endedAt" IS NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM ${this.S}building_units bu WHERE bu."propertyEntryId" = pe.id AND bu."endedAt" IS NULL
+         )
+         AND (SELECT COUNT(*) FROM ${this.S}units u WHERE u."buildingId" = b.id) > 1
+    `;
+    return rows.map((row) => ({
+      kind: 'HOUSE_CARD_ON_MULTI_UNIT_BUILDING' as const,
+      subjectKey: row.cardId,
+      severity: 'HIGH' as const,
+      detail: `بطاقة «منزل» على ${row.code} وفيه ${row.units} وحدات — لا تُسمّي أيّاً منها، فلا يُعرف أيّ وحدة هي. اجعلها بطاقة «مبنى» وحدِّد الوحدة في ملف المواطن`,
+      subjects: [
+        { kind: 'citizen' as const, id: row.citizenId, label: fullName(row), secondary: null },
+        {
+          kind: 'building' as const,
+          id: row.buildingId,
+          label: row.name ? `${row.code} — ${row.name}` : row.code,
+          secondary: `عقار ${row.parcelNumber}`,
+        },
+      ],
+      officerIds: row.createdById ? [row.createdById] : [],
+      at: row.createdAt.toISOString(),
+      dismissable: false,
     }));
   }
 

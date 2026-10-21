@@ -61,6 +61,17 @@ export interface GridUnitDraft {
    * has none, because nobody has been asked yet.
    */
   unitStatus?: UnitStatus | null;
+  /**
+   * How many levels an existing home spans upward from `floor` — a «دوبلكس»
+   * is 2 (0095). Its upper rows are drawn as the same block and cannot be
+   * painted over; it is set on the unit, never by painting.
+   */
+  levels?: number;
+}
+
+/** Whether a drafted unit occupies `floor` — at its entrance or as an upper level. */
+function onFloor(unit: GridUnitDraft, floor: number): boolean {
+  return floor >= unit.floor && floor <= unit.floor + (unit.levels ?? 1) - 1;
 }
 
 export const MIN_HORIZONTAL_BLOCKS = 1;
@@ -160,7 +171,8 @@ function highestOccupied(units: GridUnitDraft[]): { row: number; col: number; de
   let col = 0;
   let depth = 0;
   for (const unit of units) {
-    row = Math.max(row, unit.floor + 1);
+    // A home's upper levels are rows the grid cannot shrink below (0095).
+    row = Math.max(row, unit.floor + (unit.levels ?? 1));
     col = Math.max(col, unit.endCol);
     if (unit.floor < 0) depth = Math.max(depth, -unit.floor);
   }
@@ -285,7 +297,7 @@ export function UnitGridPicker({
 
   const unitAt = useCallback(
     (floor: number, col: number): GridUnitDraft | undefined =>
-      units.find((unit) => unit.floor === floor && cellsOverlap(unit, col)),
+      units.find((unit) => onFloor(unit, floor) && cellsOverlap(unit, col)),
     [units],
   );
 

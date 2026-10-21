@@ -3,6 +3,10 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   isStructuralUnitType,
   isSurveyed,
+  layoutBuildingFloors,
+  type DuplexMergeInput,
+  type DuplexMergePreview,
+  type DuplexMergeResult,
   type UnitCorrectionBlocker,
   type UnitCorrectionDeleteInput,
   type UnitCorrectionPreview,
@@ -24,12 +28,15 @@ import {
   type UnitCorrectionPlan,
   type UnitCorrectionState,
 } from './unit-correction.plan';
+import { mergeBlockerReason, planDuplexMerge, type DuplexMergeState, type MergeFlat } from './duplex-merge.plan';
 
 type Actor = { id: string; role: string };
 
 /** The audit actions this writes. Labelled in the frontend's `audit-labels.ts`. */
 export const UNIT_CORRECTION_DELETED = 'UNIT_CORRECTION_DELETED';
 export const UNIT_CORRECTION_FILE_ENDED = 'UNIT_CORRECTION_FILE_ENDED';
+/** «دمج كدوبلكس» (D28): on the building, and on each file it changes. */
+export const UNITS_MERGED_AS_DUPLEX = 'UNITS_MERGED_AS_DUPLEX';
 
 /** A citizen's name as shown — «ورثة المرحوم …» for an estate (0076). */
 const fullName = (row: { firstName: string; middleName?: string | null; lastName: string; residence?: string | null } | null) => (row ? citizenDisplayName(row) : null);
@@ -133,6 +140,328 @@ export class UnitCorrectionService {
       });
     }
     return outcome.result;
+  }
+
+  // ─────────────────────────────  «دمج كدوبلكس»  ─────────────────────────────
+
+  /**
+   * What folding the flat directly above `lowerId` into it would do (D28) — the
+   * upper flat's «حذف تصحيحي» preview, plus what the lower flat becomes.
+   */
+  async previewMerge(lowerId: string): Promise<DuplexMergePreview> {
+    const merge = await this.loadMerge(lowerId);
+    const plan = planDuplexMerge(merge);
+    const removal = previewOf(merge.upperState, merge.upperPlan);
+    return {
+      lower: flatSummary(merge.lower),
+      upper: flatSummary(merge.upper),
+      building: removal.building,
+      fingerprint: plan.fingerprint,
+      blockers: plan.blockers,
+      levelsAfter: plan.levelsAfter,
+      areaAfter: plan.areaAfter,
+      visitsMoved: merge.upperState.visits.length,
+      casesMoved: merge.upperState.cases.length,
+      occupanciesRemoved: merge.upperState.occupancies.length,
+      files: removal.files,
+      pay: removal.pay,
+      mergesEnded: removal.mergesEnded,
+    };
+  }
+
+  /**
+   * Folds the upper flat into the lower one exactly as previewed, or changes
+   * nothing. The upper flat goes the way «حذف تصحيحي» takes it — the same plan,
+   * the same writes, the same read-back — and before that its visits and cases
+   * move down, the lower flat rises and takes the area, and the lower flat's file
+   * lines take the area too. One transaction; the trail written inside it.
+   */
+  async applyMerge(lowerId: string, input: DuplexMergeInput, actor: Actor): Promise<DuplexMergeResult> {
+    let outcome: { result: DuplexMergeResult; citizens: string[] };
+    try {
+      outcome = await runInTenantTransaction(this.tenantContext, () => this.applyMergeLocked(lowerId, input, actor));
+    } catch (error) {
+      throw busyOr(error);
+    }
+
+    const tenantSlug = this.tenantContext.tenantSlug;
+    this.events.emit('building.changed', {
+      tenantSlug,
+      action: UNITS_MERGED_AS_DUPLEX,
+      buildingId: outcome.result.buildingId,
+      actorId: actor.id,
+      actorRole: actor.role,
+      alreadyAudited: true,
+    });
+    for (const citizenId of outcome.citizens) {
+      this.events.emit('citizen.changed', {
+        tenantSlug,
+        citizenId,
+        action: UNITS_MERGED_AS_DUPLEX,
+        actorId: actor.id,
+        actorRole: actor.role,
+        alreadyAudited: true,
+      });
+    }
+    return outcome.result;
+  }
+
+  private async applyMergeLocked(lowerId: string, input: DuplexMergeInput, actor: Actor) {
+    await this.db.$executeRawUnsafe(`SET LOCAL lock_timeout = '5s'`);
+    const pair = await this.mergePair(lowerId);
+    // The upper flat, its building, cards, lines and registrations, as the delete locks them — then the lower flat.
+    await this.lock(pair.upper.id);
+    await this.db.$queryRaw`SELECT id FROM ${this.S}units WHERE id = ${pair.lower.id}::uuid FOR UPDATE`;
+
+    const merge = await this.loadMerge(lowerId);
+    if (merge.upper.id !== pair.upper.id) {
+      throw new ConflictError({
+        code: 'UNIT_CORRECTION_PREVIEW_STALE',
+        message: 'This unit’s data changed since you opened the preview. Review the new preview, then confirm again.',
+        details: { reason: 'PREVIEW_STALE' },
+      });
+    }
+    const plan = planDuplexMerge(merge, input.totalArea);
+    if (plan.fingerprint !== input.fingerprint) {
+      throw new ConflictError({
+        code: 'UNIT_CORRECTION_PREVIEW_STALE',
+        message: 'This unit’s data changed since you opened the preview. Review the new preview, then confirm again.',
+        details: { reason: 'PREVIEW_STALE' },
+      });
+    }
+    if (plan.blockers.length > 0) {
+      throw new ConflictError({
+        code: 'DUPLEX_MERGE_BLOCKED',
+        message: 'The two units cannot be merged as a duplex.',
+        params: { reason: mergeBlockerReason(plan.blockers[0]!) },
+        details: { reason: 'BLOCKED', blockers: plan.blockers },
+      });
+    }
+    if (input.confirmCode.trim() !== merge.upper.unitCode) {
+      throw new ValidationError({
+        code: 'UNIT_CONFIRM_CODE_MISMATCH',
+        message: 'The code you typed does not match the unit’s code.',
+        details: { confirmCode: merge.upper.unitCode },
+      });
+    }
+
+    const { upperState: state, upperPlan: removal, lower, upper } = merge;
+    const snapshot = await this.snapshot(state, removal);
+    const lowerBefore = await this.db.unit.findUnique({ where: { id: lower.id } });
+    const now = new Date();
+    const endIds = removal.lineChanges.filter((change) => change.mode === 'END').map((change) => change.id);
+    const reclassifyIds = removal.lineChanges.filter((change) => change.mode === 'RECLASSIFY').map((change) => change.id);
+    const linesOnUpper = state.cards.flatMap((card) => card.rows.filter((row) => row.unitId === upper.id).map((row) => row.id));
+
+    // 1. What the home keeps: the attempts made at its upper floor, and the cases about it.
+    const visitsMoved = await this.db.unitVisit.updateMany({ where: { unitId: upper.id }, data: { unitId: lower.id } });
+    expectCount(visitsMoved.count, state.visits.length);
+    const casesMoved = await this.db.case.updateMany({ where: { unitId: upper.id }, data: { unitId: lower.id } });
+    expectCount(casesMoved.count, state.cases.length);
+
+    // 2. The lower flat becomes the home: its levels, and the whole area.
+    const areaAfter = plan.areaAfter!;
+    await this.db.unit.update({
+      where: { id: lower.id },
+      data: { levels: plan.levelsAfter, unitArea: new Prisma.Decimal(areaAfter) },
+    });
+    if (merge.lowerLines.length > 0) {
+      const widened = await this.db.buildingUnit.updateMany({
+        where: { id: { in: merge.lowerLines.map((line) => line.id) }, endedAt: null },
+        data: { unitArea: new Prisma.Decimal(areaAfter) },
+      });
+      expectCount(widened.count, merge.lowerLines.length);
+    }
+
+    // 3. The upper flat, as «حذف تصحيحي» removes it: lines recorded in error, never deleted.
+    if (endIds.length > 0) {
+      const ended = await this.db.buildingUnit.updateMany({
+        where: { id: { in: endIds }, endedAt: null },
+        data: { endedAt: now, endReason: RECORDED_IN_ERROR as never },
+      });
+      expectCount(ended.count, endIds.length);
+    }
+    if (reclassifyIds.length > 0) {
+      const reclassified = await this.db.buildingUnit.updateMany({
+        where: { id: { in: reclassifyIds }, endedAt: { not: null } },
+        data: { endReason: RECORDED_IN_ERROR as never },
+      });
+      expectCount(reclassified.count, reclassifyIds.length);
+    }
+    // Every card naming the upper flat names the lower one (`CARD_WITHOUT_LOWER`), so none ends here.
+    for (const link of removal.landlordLinks) {
+      await this.db.propertyEntry.update({
+        where: { id: link.cardId },
+        data:
+          link.mode === 'CLEAR'
+            ? { landlordCitizenId: null, landlordLinkFootprint: Prisma.DbNull }
+            : { landlordLinkFootprint: link.footprint as Prisma.InputJsonValue },
+      });
+    }
+    for (const change of removal.registrationFlags) {
+      await this.db.registration.update({
+        where: { id: change.registrationId },
+        data: { flaggedFields: change.flags as Prisma.InputJsonValue, status: change.status as never },
+      });
+    }
+    await this.db.unit.delete({ where: { id: upper.id } });
+
+    // 4. Read it back. Any surprise throws, and the throw undoes everything above.
+    const [upperLeft, lowerAfter, linesDone, visitsHere, building] = await Promise.all([
+      this.db.unit.count({ where: { id: upper.id } }),
+      this.db.unit.findUnique({ where: { id: lower.id }, select: { levels: true, unitArea: true } }),
+      this.db.buildingUnit.count({
+        where: { id: { in: linesOnUpper }, unitId: null, endReason: RECORDED_IN_ERROR as never, endedAt: { not: null } },
+      }),
+      this.db.unitVisit.count({ where: { id: { in: state.visits.map((row) => row.id) }, unitId: lower.id } }),
+      this.db.building.findUnique({
+        where: { id: state.unit.buildingId },
+        select: { unitsTotal: true, unitsSurveyed: true },
+      }),
+    ]);
+    if (
+      upperLeft !== 0 ||
+      lowerAfter?.levels !== plan.levelsAfter ||
+      lowerAfter?.unitArea?.toFixed(2) !== areaAfter ||
+      linesDone !== linesOnUpper.length ||
+      visitsHere !== state.visits.length ||
+      building?.unitsTotal !== removal.counters.totalAfter
+    ) {
+      throw new ConflictError({
+        code: 'UNIT_CORRECTION_UNVERIFIED',
+        message: 'The result of the merge could not be verified, so the whole operation was cancelled and nothing changed.',
+        details: { reason: 'UNVERIFIED' },
+      });
+    }
+
+    // 5. The trail, inside the transaction.
+    const reason = input.reason.trim();
+    const citizens = removal.citizensAffected;
+    await this.audit.append(
+      AuditLogEntry.create({
+        actorId: actor.id,
+        actorType: 'STAFF',
+        actorRole: actor.role as never,
+        action: UNITS_MERGED_AS_DUPLEX,
+        entityType: 'Building',
+        entityId: state.building.id,
+        before: {
+          unitCode: lower.unitCode,
+          levels: lower.levels,
+          unitArea: lower.unitArea,
+          removedUnitCode: upper.unitCode,
+          snapshot: { ...snapshot.building, lower: json(lowerBefore) },
+        },
+        after: {
+          note: reason,
+          unitCode: lower.unitCode,
+          levels: plan.levelsAfter,
+          unitArea: areaAfter,
+          removedUnitCode: upper.unitCode,
+          linesEnded: endIds,
+          linesReclassified: reclassifyIds,
+          lowerLinesWidened: merge.lowerLines.map((line) => line.id),
+          visitsMoved: state.visits.map((row) => row.id),
+          casesMoved: state.cases.map((row) => row.id),
+          occupanciesRemoved: state.occupancies.map((row) => row.id),
+          citizens,
+          pay: removal.pay,
+        },
+      }),
+    );
+    for (const citizenId of citizens) {
+      await this.audit.append(
+        AuditLogEntry.create({
+          actorId: actor.id,
+          actorType: 'STAFF',
+          actorRole: actor.role as never,
+          action: UNITS_MERGED_AS_DUPLEX,
+          entityType: 'User',
+          entityId: citizenId,
+          before: { snapshot: snapshot.citizens.get(citizenId) ?? {} },
+          after: {
+            note: reason,
+            unitCode: lower.unitCode,
+            removedUnitCode: upper.unitCode,
+            levels: plan.levelsAfter,
+            unitArea: areaAfter,
+            buildingId: state.building.id,
+            buildingCode: state.building.code,
+          },
+        }),
+      );
+    }
+
+    const result: DuplexMergeResult = {
+      unitCode: lower.unitCode,
+      removedUnitCode: upper.unitCode,
+      buildingId: state.building.id,
+      levels: plan.levelsAfter,
+      unitArea: areaAfter,
+      linesEnded: endIds.length,
+      visitsMoved: state.visits.length,
+      casesMoved: state.cases.length,
+      citizensAffected: citizens.length,
+    };
+    return { result, citizens };
+  }
+
+  /**
+   * The flat directly above `lowerId` — on the floor its top level reaches, in
+   * its columns as drawn. One with exactly its columns wins; otherwise the only
+   * one overlapping them. None, or several with none exact, is no pair at all:
+   * which of two flats is the upper half of a home is not a guess to make.
+   */
+  private async mergePair(lowerId: string): Promise<{ lower: MergeFlat; upper: MergeFlat }> {
+    const lower = await this.db.unit.findUnique({ where: { id: lowerId } });
+    if (!lower) throw new NotFoundError({ code: 'UNIT_NOT_FOUND', message: `Unit ${lowerId} was not found` });
+    const units = await this.db.unit.findMany({
+      where: { buildingId: lower.buildingId },
+      orderBy: [{ floor: 'asc' }, { sequence: 'asc' }],
+    });
+    const layouts = layoutBuildingFloors(units);
+    const self = units.find((unit) => unit.id === lowerId)!;
+    const span = layouts.get(self.floor)?.blocks.find((block) => block.unit === self && !block.continuation);
+    const above = (layouts.get(self.floor + self.levels)?.blocks ?? []).filter(
+      (block) =>
+        !block.continuation &&
+        block.unit.floor === self.floor + self.levels &&
+        span !== undefined &&
+        block.startCol <= span.endCol &&
+        span.startCol <= block.endCol,
+    );
+    const exact = above.find((block) => span && block.startCol === span.startCol && block.endCol === span.endCol);
+    const upper = exact?.unit ?? (above.length === 1 ? above[0]!.unit : undefined);
+    if (!upper) {
+      throw new ValidationError({
+        code: 'DUPLEX_MERGE_NO_UPPER',
+        message: 'There is no flat directly above this unit in the same columns.',
+        params: { unitCode: lower.unitCode },
+      });
+    }
+    return { lower: mergeFlat(self), upper: mergeFlat(upper) };
+  }
+
+  private async loadMerge(lowerId: string): Promise<DuplexMergeState> {
+    const pair = await this.mergePair(lowerId);
+    const upperState = await this.load(pair.upper.id);
+    const [lowerSpells, lowerLines] = await Promise.all([
+      this.db.unitOccupancy.findMany({
+        where: { unitId: pair.lower.id, toDate: null },
+        select: { citizenId: true, role: true },
+      }),
+      this.db.buildingUnit.findMany({
+        where: { unitId: pair.lower.id, endedAt: null, propertyEntry: { endedAt: null } },
+        select: { id: true, propertyEntryId: true, updatedAt: true },
+      }),
+    ]);
+    return {
+      ...pair,
+      upperState,
+      upperPlan: planUnitCorrection(upperState),
+      lowerSpells: lowerSpells.map((spell) => ({ citizenId: spell.citizenId, role: spell.role })),
+      lowerLines,
+    };
   }
 
   // ─────────────────────────────  The transaction  ─────────────────────────────
@@ -471,6 +800,9 @@ export class UnitCorrectionService {
                   endReason: true,
                   createdAt: true,
                   updatedAt: true,
+                  // Who added the line, when somebody did after the file was made (0096): he is the one paid for it.
+                  filedById: true,
+                  filedBy: { select: { firstName: true, middleName: true, lastName: true } },
                 },
               },
             },
@@ -593,6 +925,8 @@ export class UnitCorrectionService {
           endReason: row.endReason,
           createdAt: row.createdAt,
           updatedAt: row.updatedAt,
+          filedById: row.filedById,
+          filedByName: fullName(row.filedBy),
         })),
       })),
       registrations: registrations.map((row) => ({
@@ -657,6 +991,40 @@ export class UnitCorrectionService {
       citizens,
     };
   }
+}
+
+function mergeFlat(unit: {
+  id: string;
+  unitCode: string;
+  floor: number;
+  levels: number;
+  unitType: string;
+  unitArea: Prisma.Decimal | null;
+  feeExemption: string | null;
+  ownerBillingMode: string | null;
+  responsibleOwnerId: string | null;
+  startCol: number | null;
+  endCol: number | null;
+  updatedAt: Date;
+}): MergeFlat {
+  return {
+    id: unit.id,
+    unitCode: unit.unitCode,
+    floor: unit.floor,
+    levels: unit.levels,
+    unitType: unit.unitType,
+    unitArea: unit.unitArea === null ? null : unit.unitArea.toFixed(2),
+    feeExemption: unit.feeExemption,
+    ownerBillingMode: unit.ownerBillingMode,
+    responsibleOwnerId: unit.responsibleOwnerId,
+    startCol: unit.startCol,
+    endCol: unit.endCol,
+    updatedAt: unit.updatedAt,
+  };
+}
+
+function flatSummary(flat: MergeFlat): DuplexMergePreview['lower'] {
+  return { id: flat.id, unitCode: flat.unitCode, floor: flat.floor, levels: flat.levels, unitArea: flat.unitArea };
 }
 
 function expectCount(actual: number, expected: number): void {

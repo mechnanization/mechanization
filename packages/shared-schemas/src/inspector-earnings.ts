@@ -45,6 +45,21 @@
  * entries with no unit row, and the rate is per unit. They are still work, and
  * still appear in the surveyed-work breakdown on the profile page; they earn
  * nothing.
+ *
+ * == Who is paid for a line ===============================================
+ *
+ * The officer who filed it (`filedByOf`), not the officer who registered the
+ * citizen. A line carries its own filer (`building_units.filedById`, migration
+ * 0096) when somebody added it to a file after the file was made — an owner
+ * recorded on the matrix, an owner link, a flat added on the edit form. A line
+ * without one was filed with its registration, and is credited to that
+ * registration's officer.
+ *
+ * Until 0096 there was only the registration's officer, so every line added to
+ * a file later paid whoever had registered that citizen first (user decision,
+ * 2026-10-16: the officer who did the work is paid). The deduplication above is
+ * unchanged and still per officer, so an officer who filed a tenant and then
+ * recorded the same flat's owner is paid once for the flat.
  */
 
 import { isStructuralUnitType } from './enums';
@@ -69,6 +84,8 @@ export type EarningsUnit = {
   unitId: string | null;
   unitType: string | null;
   endReason: string | null;
+  /** Who filed the line, when it was added after its file (0096). See `filedByOf`. */
+  filedById?: string | null;
 };
 
 /** The columns of a property entry this rule reads. */
@@ -140,4 +157,42 @@ export function cardsFiledOn<T extends { filedRegistrationId?: string | null }>(
     ),
     ...(registration.movedCards ?? []),
   ];
+}
+
+/**
+ * The officer paid for a line: the one who filed it (`building_units.filedById`,
+ * migration 0096), or, for a line filed with its file, the officer of the
+ * registration its card was filed on — `cardsFiledOn` decides which registration
+ * that is, so pass that registration's officer.
+ */
+export function filedByOf(line: { filedById?: string | null }, fileOfficerId: string | null): string | null {
+  return line.filedById ?? fileOfficerId;
+}
+
+/**
+ * The cards filed on `registration` (`cardsFiledOn`), each keeping only the lines
+ * `officerId` is paid for (`filedByOf`) — what `creditBillableUnits` is fed for
+ * that officer.
+ *
+ * Every card comes back, with its lines filtered; one holding none of this
+ * officer's lines credits nothing. A registration matters to an officer when he
+ * registered it or filed a line on it, and a reader asks for both: the lines
+ * other officers added to his files are theirs, and his own lines on their files
+ * are his.
+ */
+export function cardsCreditedTo<
+  C extends { filedRegistrationId?: string | null; units: ReadonlyArray<{ filedById?: string | null }> },
+>(
+  officerId: string,
+  registration: {
+    id: string;
+    createdById: string | null;
+    properties: readonly C[];
+    movedCards?: readonly C[];
+  },
+): Array<Omit<C, 'units'> & { units: Array<C['units'][number]> }> {
+  return cardsFiledOn(registration).map((card) => ({
+    ...card,
+    units: card.units.filter((line) => filedByOf(line, registration.createdById) === officerId),
+  }));
 }

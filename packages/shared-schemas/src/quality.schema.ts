@@ -143,6 +143,27 @@ export const QUALITY_FINDING_KIND = [
    * someone is billed for a home the register itself calls uninhabitable.
    */
   'UNINHABITED_WITHOUT_READING',
+  /**
+   * A «منزل» card on a structure that now holds more than one unit (decision
+   * D28). The card names no unit; it claims the one unit of a one-unit
+   * structure, so once there are two it claims nothing the census can see —
+   * the household's occupancy is not released (`CensusSyncService` holds it as
+   * unresolved), but it is not backed either, and recording them on another
+   * unit would open a second card. HIGH, not dismissable: the house-growth
+   * question converts such cards as they arise, so one here came from an older
+   * client or from before the question existed, and the fix is to make it a
+   * «مبنى» card naming its flat.
+   */
+  'HOUSE_CARD_ON_MULTI_UNIT_BUILDING',
+  /**
+   * A home whose «عدد طوابق المسكن» looks wrong (decision D28): one
+   * owner-occupier recorded in two flats stacked on each other (a duplex
+   * recorded as two flats — «دمج كدوبلكس» corrects it), a «دوبلكس» note on a
+   * one-level unit, or a house with more storeys than its unit's levels. Each
+   * changes a per-roof bill. MEDIUM (LOW for a note), and dismissable: a family
+   * can own and live in two separate flats, and an upper storey can be unbuilt.
+   */
+  'UNIT_LEVELS_TO_CONFIRM',
 ] as const;
 export type QualityFindingKind = (typeof QUALITY_FINDING_KIND)[number];
 
@@ -198,6 +219,10 @@ export function qualityLabels(locale: string) {
       UNINHABITED_WITHOUT_READING: en
         ? 'Labelled uninhabited, still billed'
         : 'مبنى مصنَّف غير مسكون وما زال يُفوتر',
+      HOUSE_CARD_ON_MULTI_UNIT_BUILDING: en
+        ? 'House card on a building with several units'
+        : 'بطاقة «منزل» على مبنى من عدّة وحدات',
+      UNIT_LEVELS_TO_CONFIRM: en ? 'Levels of a home to confirm' : 'عدد طوابق مسكن للتأكيد',
     } satisfies Record<QualityFindingKind, string>,
     /**
      * What the re-check found, as one word.

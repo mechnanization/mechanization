@@ -49,6 +49,18 @@ export const inspectorRegistrationLogItemSchema = z.object({
   citizenName: z.string(),
   referenceNumber: z.string(),
   submittedAt: z.string(),
+  /**
+   * When this entry's credit was earned: `submittedAt` for a file he registered,
+   * the first line he filed for one another officer registered. Optional only so
+   * a page served before the API that sends it still reads `submittedAt`.
+   */
+  creditedAt: z.string().optional(),
+  /**
+   * Another officer registered this citizen, and the credit is for lines this
+   * officer added to the file afterwards — an owner recorded on the matrix, an
+   * owner link, a flat added on the edit form (0096).
+   */
+  addedToOthersFile: z.boolean().default(false),
   status: z.string(),
   propertyCount: z.number().int().nonnegative(),
   neighborhoods: z.array(z.string()),

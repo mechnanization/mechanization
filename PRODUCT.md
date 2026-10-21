@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية الذكية)
 
-Last verified against the code: `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): «أمان الحساب» for every staff role, no new filing — card, flat or sale — on an archived file; an archived file takes no new fee on any path, 2026-10-15; and `bugs-fix` (on `develop@5e8f5c3`; the finance audit remediation: the manager cancels a bill, a salary is paid once a month under the manager's ceiling, a collector settles only into his own custody), 2026-10-12; collectors raise no bills on `fix/fees-page-ux` from `develop@5e8f5c3` (uncommitted), 2026-10-12; income and expenses on one page, «الإيرادات والنفقات», on the same branch (uncommitted), 2026-10-12; the same day, the register moved to «الحركات المالية» and «الإيرادات والنفقات» became the recording page (uncommitted); later that day «الحركات المالية» became a filter bar over a dated list, with each voucher in a side panel, and the recording page took the full width (uncommitted); municipal requests and certificates, online and at the counter, with migration `0092` (uncommitted), 2026-10-13; the product owner's decisions of the same day (online Whish payment paused, citizen sign-in by reference alone, no SMS or WhatsApp provider) (uncommitted); and, on `fix/fees-page-ux` rebased onto `chore/migration-0092@16473f0` (2026-10-13), the review of PR #122: a request cancelled with its bill (`cancelRequestOfCancelledBill`), a card or a flat a request names never deleted (`PROPERTY_NAMED_BY_REQUEST`, `HAS_REQUESTS`), request bills stamp `issuedById`, the API's log lines without query strings, and the isolation tests; and, on `fix/pr122-review` (2026-10-15), the review's blocker and majors: a bill cancellation names the request it cancels, and a citizen reports a Whish Money transfer only.
+Last verified against the code: `feat/earnings-by-actor` (on `develop@149e458a`, uncommitted): an inspector paid for the units he filed on any file, and «إضافة على ملف» in his log, 2026-10-21; `feat/duplex-merge` (stacked on `feat/unit-levels`): «دمج كدوبلكس» and `UNIT_LEVELS_TO_CONFIRM`, D28, 2026-10-17; `feat/unit-levels` (stacked on `chore/migration-0095`, on `develop@a7e62087`): duplexes and the per-roof factor, a house that grows, D28, 2026-10-17; `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): «أمان الحساب» for every staff role, no new filing — card, flat or sale — on an archived file; an archived file takes no new fee on any path, 2026-10-15; and `bugs-fix` (on `develop@5e8f5c3`; the finance audit remediation: the manager cancels a bill, a salary is paid once a month under the manager's ceiling, a collector settles only into his own custody), 2026-10-12; collectors raise no bills on `fix/fees-page-ux` from `develop@5e8f5c3` (uncommitted), 2026-10-12; income and expenses on one page, «الإيرادات والنفقات», on the same branch (uncommitted), 2026-10-12; the same day, the register moved to «الحركات المالية» and «الإيرادات والنفقات» became the recording page (uncommitted); later that day «الحركات المالية» became a filter bar over a dated list, with each voucher in a side panel, and the recording page took the full width (uncommitted); municipal requests and certificates, online and at the counter, with migration `0092` (uncommitted), 2026-10-13; the product owner's decisions of the same day (online Whish payment paused, citizen sign-in by reference alone, no SMS or WhatsApp provider) (uncommitted); and, on `fix/fees-page-ux` rebased onto `chore/migration-0092@16473f0` (2026-10-13), the review of PR #122: a request cancelled with its bill (`cancelRequestOfCancelledBill`), a card or a flat a request names never deleted (`PROPERTY_NAMED_BY_REQUEST`, `HAS_REQUESTS`), request bills stamp `issuedById`, the API's log lines without query strings, and the isolation tests; and, on `fix/pr122-review` (2026-10-15), the review's blocker and majors: a bill cancellation names the request it cancels, and a citizen reports a Whish Money transfer only.
 
 A multi-tenant municipal platform for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastral map, municipal fee billing (رسوم القيمة التأجيرية
@@ -167,6 +167,13 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
       Cancelling that voucher puts the amount back on what the inspector is owed. Before the
       treasury is live, the manager records a payout as he always did, with no wallet, dated no
       later than today.
+    - An inspector is paid for the units he filed, whoever's file they are on (decided 2026-10-16):
+      an owner he records on the matrix, an owner he links to a tenant, or a flat he adds on the
+      edit form is his, not the officer's who registered the citizen. Until then the officer who
+      registered a citizen was paid for everything later added to that file. His survey log lists
+      those files too, marked «إضافة على ملف» and dated when he added the units, and his payout
+      history counts them from that day. Still one dollar per flat per officer: an inspector who
+      filed a tenant and then recorded the same flat's owner is paid once.
     - An inspector's payout history shows, after each payout, what was still owed then: what he had
       earned by then less what had been paid by then, with «زيادة» where a payout went past what he
       had earned. A payout whose voucher was cancelled stays listed and is not counted as paid. The
@@ -327,10 +334,23 @@ Citizens are not a role: they are the other user kind (`kind` = `CITIZEN`) in th
   pickers show it marked «مؤرشف» and do not take it.
 - **A building's height counts its built floors, never its roof** (the user's decision of
   2026-10-07). «الطوابق المسقوفة» is every level under a roof, the ground floor and a
-  «طابق أعمدة» included. The building editor says so, gives the two ways to record a duplex
-  (two flats, or one flat with both levels' area), and warns when the top rows of the
-  matrix hold nothing, offering to lower the count; it never lowers it by itself, and says
-  nothing for a house or a building still going up.
+  «طابق أعمدة» included. The building editor says so, says how to record a duplex, and
+  warns when the top rows of the matrix hold nothing, offering to lower the count; it never
+  lowers it by itself, and says nothing for a building still going up.
+- **A home on several levels is one unit** (decision D28, 2026-10-17). «عدد طوابق المسكن» on a
+  flat or a house makes it a «دوبلكس» or «تريبلكس»: one unit, drawn across its floors in the
+  matrix, the drawing and the paint grid. A per-unit fee counts it in roofs — a duplex flat at
+  the municipality's factor (1.8 by default, set in Settings › المالية «معامل السقوف»), a house
+  one roof per storey; two separate flats stacked on each other stay two roofs.
+- **A house that grows is asked which it is.** Adding a unit to a structure whose one unit is
+  on somebody's file as a «منزل» (or to a bare «منزل مستقل») asks «طابق إضافي من المسكن نفسه،
+  أم وحدة مستقلة؟». The first raises the home a level; the second adds the unit and turns the
+  «منزل» card into a «مبنى» card naming the house, so the household keeps its occupancy and is
+  never filed twice. «ملاحظات الجودة» lists any «منزل» card left on a structure of several units.
+- **«دمج كدوبلكس» (SUPER_ADMIN).** Two flats recorded as two units that are one home on two levels
+  are folded into one: the lower flat becomes a «دوبلكس» with both areas, the upper one is removed
+  the way «حذف تصحيحي» removes it (its file lines closed «سُجِّل بالخطأ»), its visits and cases move
+  down. Refused when the two are not one household. «ملاحظات الجودة» lists the candidates.
 - **War damage has two answers.** Each reading keeps the UN-Habitat level, the scale donors
   and the reconstruction file read, and asks beside it whether anyone can live there
   («صالحة للسكن؟»). The level answers it where it can: a collapse or an evacuation is «لا»,

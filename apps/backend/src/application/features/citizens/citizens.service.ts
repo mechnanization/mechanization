@@ -31,6 +31,7 @@ import { worklistOwner, worklistOwnerFilter, type WorklistViewer } from '../../c
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
+import { houseCardOnMultiUnitBuilding } from '../../../infrastructure/prisma/house-card-guard';
 import { likePattern, searchTokens } from '../../common/search-terms';
 import { Prisma } from '../../../generated/tenant-client';
 import { citizenSearchText } from '../../common/citizen-search';
@@ -2141,6 +2142,23 @@ export class CitizensService {
       }
     }
 
+    /*
+      No «منزل» on a structure of several units (decision D28) — see
+      `houseCardOnMultiUnitBuilding`. Asked before anything is written.
+    */
+    const crowdedHouse = await houseCardOnMultiUnitBuilding(
+      this.db,
+      entries.map(({ entry }) => entry.props),
+    );
+    if (crowdedHouse) {
+      throw new ValidationError({
+        code: 'HOUSE_CARD_ON_MULTI_UNIT_BUILDING',
+        message: 'A house card cannot be linked to a building with several units.',
+        params: { buildingCode: crowdedHouse.buildingCode },
+        details: { path: `properties.${crowdedHouse.index}.propertyType`, buildingCode: crowdedHouse.buildingCode },
+      });
+    }
+
     const existing = citizen.registrations[0];
     /*
       The cards this save reconciles — the current ones. An ended tenancy is not
@@ -2632,8 +2650,10 @@ export class CitizensService {
                 data: { ...line.unit, ...order(position, false) },
               });
             } else {
+              // A flat this save adds is the saver's work, whoever registered the file (0096);
+              // a kept line was updated above and keeps whoever filed it.
               await tx.buildingUnit.create({
-                data: { ...line.unit, ...order(position, true), propertyEntryId: id },
+                data: { ...line.unit, ...order(position, true), propertyEntryId: id, filedById: input.actor.id },
               });
             }
           }
@@ -2644,7 +2664,12 @@ export class CitizensService {
               registrationId,
               ...data,
               units: {
-                create: units.map((unit, position) => ({ ...unit, createdAt: new Date(base + position) })),
+                // A card this save adds to the file is the saver's work, as a line added above is.
+                create: units.map((unit, position) => ({
+                  ...unit,
+                  createdAt: new Date(base + position),
+                  filedById: input.actor.id,
+                })),
               },
             },
           });

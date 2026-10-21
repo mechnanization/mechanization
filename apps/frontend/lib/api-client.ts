@@ -2,6 +2,7 @@ import {
   BACKGROUND_REQUEST_HEADER,
   IMPORT_BATCH_SIZE,
   type ErrorParams,
+  type HouseGrowth,
   type ReinspectionsPage,
   type StaffPresenceResponse,
   type StaffSelf,
@@ -188,6 +189,38 @@ export function duplicateUnitsOf(caught: unknown): DuplicateUnitCandidate[] | nu
   )
     ? (candidates as DuplicateUnitCandidate[])
     : null;
+}
+
+/**
+ * «هذا المنزل يصبح مبنى» — what the server asks before a house on somebody's
+ * file gets a second unit (decision D28, `HOUSE_GROWTH_UNANSWERED`).
+ */
+export interface HouseGrowthQuestion {
+  unitId: string;
+  unitCode: string;
+  unitType: UnitType;
+  levels: number;
+  /** The floor «طابق إضافي من المسكن نفسه» would add — directly above the home. */
+  nextLevelFloor: number;
+  /** Whose file the answer changes; empty on a bare «منزل مستقل». */
+  holders: Array<{ name: string; capacity: OccupancyRole }>;
+}
+
+/** The question carried by a `HOUSE_GROWTH_UNANSWERED` refusal, or null for any other error. */
+export function houseGrowthQuestionOf(caught: unknown): HouseGrowthQuestion | null {
+  if (!(caught instanceof ApiRequestError) || caught.payload.code !== 'HOUSE_GROWTH_UNANSWERED') return null;
+  const details = caught.payload.details;
+  if (!details || typeof details !== 'object' || Array.isArray(details)) return null;
+  const question = details as Partial<HouseGrowthQuestion>;
+  if (typeof question.unitCode !== 'string' || typeof question.nextLevelFloor !== 'number') return null;
+  return {
+    unitId: question.unitId ?? '',
+    unitCode: question.unitCode,
+    unitType: question.unitType as UnitType,
+    levels: question.levels ?? 1,
+    nextLevelFloor: question.nextLevelFloor,
+    holders: Array.isArray(question.holders) ? question.holders : [],
+  };
 }
 
 export class ApiRequestError extends Error {
@@ -1747,6 +1780,11 @@ export interface UnitRow {
   feeExemptionNote?: string | null;
   feeExemptedAt?: string | null;
   feeExemptedByName?: string | null;
+  /**
+   * How many levels this one home spans upward from `floor` (0095, D28): 2 is
+   * a «دوبلكس». Optional on the wire for older responses, where it is 1.
+   */
+  levels?: number;
   notes: string | null;
   createdAt: string;
   updatedAt: string;
@@ -2047,7 +2085,7 @@ export type UpdateBuildingInput = Partial<{
  * amounts of knowledge — "six floors, four flats each" from the pavement, or a
  * row per floor from someone who has walked the stairwell.
  */
-export type UnitBlueprintInput =
+export type UnitBlueprintInput = (
   | {
       kind: 'uniform';
       fromFloor: number;
@@ -2058,7 +2096,11 @@ export type UnitBlueprintInput =
   | {
       kind: 'explicit';
       floors: Array<{ floor: number; unitCount: number; unitType: UnitType }>;
-    };
+    }
+) & {
+  /** See `UpsertUnitInput.houseGrowth`; a blueprint takes only `SEPARATE_UNIT`. */
+  houseGrowth?: HouseGrowth;
+};
 
 export interface UpsertUnitInput {
   floor: number;
@@ -2079,6 +2121,11 @@ export interface UpsertUnitInput {
    * server refuses a same-type addition without it; see `upsertUnitSchema`.
    */
   acknowledgedDuplicates?: boolean;
+  /**
+   * The answer to «هذا المنزل يصبح مبنى» (D28): another level of the same home,
+   * or a separate unit. Sent only after the server asked (`houseGrowthQuestionOf`).
+   */
+  houseGrowth?: HouseGrowth;
 }
 
 export interface RecordOccupancyInput {
@@ -2484,6 +2531,8 @@ export interface BuildingMatrixSave {
   remove: string[];
   update: Array<{ id: string; floor: number; startCol?: number; endCol?: number; unitType: string }>;
   add: Array<{ floor: number; startCol?: number; endCol?: number; unitType: string }>;
+  /** See `UpsertUnitInput.houseGrowth`; forwarded to every unit the save adds. */
+  houseGrowth?: HouseGrowth;
   expectedUpdatedAt?: string;
   /** Do it all and roll back — what a save would do, or why it would be refused. */
   dryRun?: boolean;
@@ -2565,6 +2614,8 @@ export async function updateUnit(
   token: string,
   unitId: string,
   input: Partial<UpsertUnitInput> & {
+    /** «عدد طوابق المسكن» — see `UnitRow.levels`. */
+    levels?: number;
     /** «مسكن موسمي» facts — see `UnitRow.presenceMonths`. */
     presenceMonths?: number[];
     ownerLastStayAt?: string | null;
@@ -5110,6 +5161,12 @@ export interface MunicipalitySettings {
 
   numberingSequences: Record<SequenceKey, NumberingSequence> | null;
   backupSchedule: BackupSchedule | null;
+  /**
+   * «معامل السقوف» (0095, D28): what a flat on N levels weighs in roofs under a
+   * per-unit notice, keyed by N — `{"2": 1.8}` by default. Optional on the wire
+   * for older responses.
+   */
+  levelFactors?: Record<string, number>;
 
   updatedAt: string | null;
 }
@@ -5200,6 +5257,8 @@ export async function updateMunicipalitySettings(
 
     numberingSequences: Record<SequenceKey, NumberingSequence>;
     backupSchedule: BackupSchedule;
+    /** «معامل السقوف» (0095) — replaced whole when sent. */
+    levelFactors: Record<string, number>;
   }>,
 ) {
   const result = await apiFetch<MunicipalitySettings>(tenant, '/fees/settings', {
@@ -6133,6 +6192,9 @@ export async function disableStaffTotp(
 // ── «حذف تصحيحي» (SUPER_ADMIN) ──────────────────────────────────────────────
 
 import type {
+  DuplexMergeInput,
+  DuplexMergePreview,
+  DuplexMergeResult,
   ParcelDues,
   UnitCorrectionDeleteInput,
   UnitCorrectionPreview,
@@ -6140,6 +6202,10 @@ import type {
 } from '@mechanization/shared-schemas';
 
 export type {
+  DuplexMergeBlocker,
+  DuplexMergeInput,
+  DuplexMergePreview,
+  DuplexMergeResult,
   ParcelDues,
   ParcelDuesBill,
   UnitCorrectionBlocker,
@@ -6171,6 +6237,26 @@ export async function applyUnitCorrection(
   const result = await apiFetch<UnitCorrectionResult>(
     tenant,
     `/corrections/units/${encodeURIComponent(unitId)}`,
+    { token, method: 'POST', body: JSON.stringify(input) },
+  );
+  invalidateCensus(tenant);
+  return result;
+}
+
+/** «دمج كدوبلكس» (D28): what folding the flat above `lowerUnitId` into it would do. SUPER_ADMIN only. */
+export function getDuplexMergePreview(tenant: string, token: string, lowerUnitId: string, signal?: AbortSignal) {
+  return apiFetch<DuplexMergePreview>(
+    tenant,
+    `/corrections/units/${encodeURIComponent(lowerUnitId)}/merge-upper`,
+    { token, signal },
+  );
+}
+
+/** Folds the flat above into this one exactly as previewed, or changes nothing (refusals as `unitCorrectionRefusal`). */
+export async function applyDuplexMerge(tenant: string, token: string, lowerUnitId: string, input: DuplexMergeInput) {
+  const result = await apiFetch<DuplexMergeResult>(
+    tenant,
+    `/corrections/units/${encodeURIComponent(lowerUnitId)}/merge-upper`,
     { token, method: 'POST', body: JSON.stringify(input) },
   );
   invalidateCensus(tenant);

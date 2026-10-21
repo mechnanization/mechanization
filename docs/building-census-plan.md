@@ -163,7 +163,8 @@ raise it with the user before changing course.
 | D24 | A registration may **create** the structure it names, but only on an explicit tap, and never without its units | Not selecting a building is evidence of a control below the fold, not of a new building; and a shell with no units links the card while recording no occupancy, which is §10.1's under-billing arriving through the fix for it. See §11. |
 | D25 | **Habitability is a second answer beside the level**, prefilled where the level decides it (decision, 2026-10-05) | A sound building stripped of its windows and services cannot be lived in, and a cracked one can; folding that into the level broke the donors' scale (D4). Collapse and evacuation lock «غير صالحة»; none and minor damage start at «صالحة» and can change; restricted use must be answered. A reading that says nobody can live there may carry a re-inspection day, and exempts the unit from every fee until a later reading says otherwise (owner-borne fees too since 2026-10-07). See §14. |
 | D26 | **عدد الطوابق counts built levels under a roof — the ground floor and a «طابق أعمدة» included, the roof never** (decision, 2026-10-07) | The matrix is a picture of the structure, so a pilotis row stays a row; the roof is not a floor. The audit of 2026-10-07 found 75 buildings whose top row was empty — the roof counted, or the old default of 3 left standing. The editor says what is counted, and warns when the top rows hold nothing (`emptyTopFloors`, never for a house or a building still going up) with a one-click lowering; existing buildings are lowered only by a guarded correction the municipality approves. |
-| D27 | **A duplex is two flats, or one flat on the entrance level with both levels' area** (decision, 2026-10-07) | Both bill correctly with no new code. A unit has one floor, so the one-flat form leaves the upper row undrawn, with a «دوبلكس» note on the flat; the empty-top warning names the duplex as a reason to leave the count alone. |
+| D27 | ~~A duplex is two flats, or one flat on the entrance level with both levels' area~~ (decision, 2026-10-07) — **replaced by D28** | Neither form could be read by billing once a duplex was priced differently from two flats. |
+| D28 | **One home on several levels is one unit with `levels`; a flat weighs the municipality's per-roof factor, a house one roof per storey; a house that grows is asked which it is** (decision, 2026-10-17; migration 0095) | The municipality charges per roof: a duplex 1.8 roofs where two stacked flats are 2, the factor kept per municipality in settings and never guessed. A «منزل» card names no unit, so a second unit on its structure used to orphan the household and open a second card (five production files, 2026-10-14). See §15. |
 | D23 | **Verification builds use their own `distDir`** (`pnpm build:check`) | `next build` and `next dev` share `.next`; building while the dev server runs corrupts it and produces runtime 500s that point at nothing. The frontend twin of the `nest build` EBUSY note in §6. See §10.7. |
 
 ---
@@ -2288,3 +2289,91 @@ reading that judged nothing, the CHECKs on Postgres 17) and the frontend's
 **Still open:** whether «المحاسب» should see «بانتظار إعادة الكشف» — the role that
 issues fees cannot open the list of units the hold applies to
 ([docs/open-decisions.md](open-decisions.md)).
+
+## 15. One home on several levels, and a house that grows (D28, 2026-10-17)
+
+**Why.** The municipality charges per roof («لكل سقف»): one level is one roof,
+a **duplex flat 1.8**, two separate flats stacked on each other **2**. D27 left a
+duplex as two flats or one flat with a note, which billing cannot tell apart.
+Separately, a «منزل» card claims the one unit of a one-unit structure by
+inference (five readers count units to find it), so when an officer added a
+second unit the next save of the file closed the household's occupancy and
+recording them on the new unit opened a second card. That happened five times in
+production (B-1-352-A, Z-5-201-A, A9-1225-A, A6-974-B, Z-3-52-A), all repaired by
+hand on 2026-10-14.
+
+**The model (0095).** `units.levels` — how many levels one unit spans upward
+from `floor`, its entrance and the floor its code is read from. Dwellings only
+(`units_levels_dwelling_only`), 1–6 (`units_levels_range`). The rules live in
+`packages/shared-schemas/src/unit-levels.ts`; the layout in `unit-layout.ts`
+(`layoutBuildingFloors`): floors are laid out from the lowest up, and each floor a
+home rises into receives a *continuation* block in its entrance columns before
+that floor's own units are placed. Every overlap check — the paint grid,
+`resizeUnitSpan`, `addUnit` with columns, a level change — reads that layout.
+
+**Billing.** Only `PER_UNIT` notices weigh levels (`roofWeight`): a flat by
+`system_settings.levelFactors` (`{"2": 1.8}` by default; a count with no factor
+makes the citizen *unassessable*, never billed as 1 or N), a house one full roof
+per storey (the user's answer: the discount is for flats). `PER_AREA` charges
+the area of every level; `FLAT` is per person. The bill line carries `levels`
+and `levelFactor`, and `chargedUnits` is the weighed sum. Officer pay is
+unchanged: a duplex is one unit, $1.
+
+**A house that grows.** Adding a unit to a structure whose one unit is held on a
+«منزل» card — or to a bare «منزل مستقل» — is refused with
+`HOUSE_GROWTH_UNANSWERED` until the officer answers:
+
+- **«طابق إضافي من المسكن نفسه»** (`EXTRA_LEVEL`, only directly above the home):
+  no unit is created; the unit rises a level and the floor count follows.
+- **«وحدة مستقلة»** (`SEPARATE_UNIT`): the unit is created and, in the same
+  transaction, every «منزل» card on the structure becomes a «مبنى» card whose
+  one row names the house's unit (`house-growth.ts`, `promoteHouseCards`). The
+  card keeps its id, link, documents and filing officer; its area, side, shared
+  rights and owner's status move onto the row, and so do their «غير مؤكَّد»
+  flags (`withHouseFieldsOnRow`). A «منزل مستقل» still takes no second unit —
+  `assertUnitFits` asks for «بناية سكنية» first.
+
+The matrix, the drawer and the building editor's rehearsed save all ask it.
+
+**Safety nets.** A filing or an edit that *creates* a «منزل» card on a structure
+with several units is refused (`HOUSE_CARD_ON_MULTI_UNIT_BUILDING`,
+`infrastructure/prisma/house-card-guard.ts`). The census sync holds such a
+card's spells as unresolved instead of closing them. The quality screen lists
+any that remain (`HOUSE_CARD_ON_MULTI_UNIT_BUILDING`, HIGH, not dismissable).
+
+**Drawing.** The matrix draws an upper level as a joined «↑ 0001 · دوبلكس» tile
+that opens the same unit; the paint grid draws it as the same block and refuses
+to paint over it; the building drawing lights both floors. «عدد طوابق المسكن» is
+set from a panel under the selected dwelling (`unit-levels.tsx`), and the
+per-roof factors from Settings › المالية. The empty-top warning counts a home's
+levels — so a two-storey house whose unit still says one level is now flagged.
+
+**Verified:** `unit-levels.spec.ts`, `unit-levels-billing.spec.ts`,
+`record-editing-guards.spec.ts`, `house-growth.integration.spec.ts` (Postgres 17:
+the B-1-352-A replay, a tenant's card, the house structure, `EXTRA_LEVEL`, the
+dwelling rule, a blocked upper floor, a stray card held), the whole backend suite
+on Postgres 17, and the frontend's `floor-count.test.ts` and
+`fee-assessment.test.ts`; rendered at 360/1440, light/dark, ar/en.
+
+**Converting what was recorded before (`feat/duplex-merge`).** A SUPER_ADMIN folds
+the flat directly above a flat into it — «دمج مع الوحدة العلوية كدوبلكس…» under the
+selected flat, shown only when a flat stands there in the same columns. It is
+«حذف تصحيحي» of the upper flat (`planUnitCorrection`, unchanged), plus what makes
+it a merge: the upper flat's visits and cases move down, the lower flat takes
+`levels` and the summed area (or the whole home's, typed), and its file lines
+take the area too (`UnitCorrectionService.applyMerge`, `duplex-merge.plan.ts`,
+`GET/POST corrections/units/:unitId/merge-upper`). It refuses two flats that are
+not one household — someone upstairs not recorded downstairs in the same
+capacity, a card naming only the upper flat — and a standing vacancy, a
+different exemption or co-owner method, or an unknown area. Preview,
+fingerprint, the upper flat's code typed, one transaction, audit
+`UNITS_MERGED_AS_DUPLEX` on the building and each file. The upper flat's line
+closes «سُجِّل بالخطأ», so its officer loses that unit's dollar.
+
+«ملاحظات الجودة» lists the candidates (`UNIT_LEVELS_TO_CONFIRM`): one
+owner-occupier in two stacked flats, a «دوبلكس» note on a one-level unit, and a
+house with more storeys than its unit's levels. All dismissable.
+
+**Still open:** existing two-storey houses keep `levels = 1` until an officer
+sets it — the municipality approves that list, since each storey raises the
+bill. Multi-level shops are out of scope.

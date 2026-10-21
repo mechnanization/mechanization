@@ -1,3 +1,5 @@
+import { unitTopFloor } from '@mechanization/shared-schemas';
+
 /**
  * «عدد الطوابق المسقوفة» — the top rows of a building's matrix that hold nothing.
  *
@@ -9,22 +11,22 @@
  * says «3 طوابق» repeats the mistake.
  *
  * So a gap at the top is worth saying, never fixing silently: it can also be
- * a storey nobody has surveyed yet, or the upper level of a duplex recorded as
- * one flat below it. The officer decides; this only measures.
+ * a storey nobody has surveyed yet, or the upper level of a home whose
+ * «عدد طوابق المسكن» was never set. The officer decides; this only measures.
  *
  * `units` are every unit on the building, drawn or not (basements are
- * negative and do not count here). Null when nothing is drawn above ground —
- * an empty matrix says nothing about its height — when the top row holds
- * something, or when a unit is a whole house («منزل مستقل»): a house is one
- * unit on the ground row however many storeys it has, so its empty rows above
- * are the house itself.
+ * negative and do not count here). A home on several levels (`levels`, 0095)
+ * fills every row it reaches — a «دوبلكس», or a house on two storeys. Since
+ * decision D28 that includes a «منزل مستقل»: each storey is a roof it is billed
+ * for, so a two-storey house whose unit says one level is a gap worth saying.
+ * Null when nothing is drawn above ground — an empty matrix says nothing about
+ * its height — or when the top row holds something.
  */
 export function emptyTopFloors(
-  units: ReadonlyArray<{ floor: number; unitType?: string | null }>,
+  units: ReadonlyArray<{ floor: number; levels?: number | null; unitType?: string | null }>,
   floorsCount: number,
 ): { empty: number; suggested: number } | null {
-  if (units.some((unit) => unit.unitType === 'INDEPENDENT_HOUSE')) return null;
-  const above = units.map((unit) => unit.floor).filter((floor) => floor >= 0);
+  const above = units.map((unit) => unitTopFloor(unit)).filter((floor) => floor >= 0);
   if (above.length === 0) return null;
   const suggested = Math.max(...above) + 1;
   const empty = floorsCount - suggested;

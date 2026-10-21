@@ -334,6 +334,15 @@
     "UNIT_CORRECTION_UNVERIFIED": "The result of the deletion could not be verified, so the whole operation was cancelled and nothing changed.",
     "UNIT_CORRECTION_BUSY": "The unit or one of the citizens’ files is being edited right now. Try again in a moment.",
     "UNIT_NOT_FOUND": "This unit could not be found.",
+    "DUPLEX_MERGE_NO_UPPER": "There is no flat directly above unit {unitCode} in the same columns to merge with.",
+    "DUPLEX_MERGE_BLOCKED": "The two units cannot be merged as a duplex: {reason}",
+    "UNIT_LEVELS_NOT_DWELLING": "Unit {unitCode} is not a home — only flats and houses can be duplexes or triplexes. Bring it back to one level before changing its type.",
+    "UNIT_LEVELS_BLOCKED": "Home {unitCode} cannot rise to floor {floor}: unit {blockedBy} is drawn in the same columns. If it is the upper level of this same home, ask for “Merge as duplex”.",
+    "UNIT_LEVELS_MAX": "Home {unitCode} cannot span more than {max} levels.",
+    "UNIT_ON_UPPER_LEVEL": "These columns on floor {floor} are the upper level of home {unitCode} — no other unit can be drawn there.",
+    "HOUSE_GROWTH_UNANSWERED": "Home {unitCode} is on a citizen's file. Is the new floor another level of the same home, or a separate unit?",
+    "HOUSE_GROWTH_NOT_ABOVE": "A level of home {unitCode} is added directly above it, on floor {floor}, from the building's matrix.",
+    "HOUSE_CARD_ON_MULTI_UNIT_BUILDING": "Building {buildingCode} has more than one unit, so it cannot be filed as a house. Choose “Building” and pick the unit.",
     "PARCEL_HAS_OTHER_BUILDINGS": "{count, plural, =1 {A building is} other {{count, number} buildings are}} already recorded on parcel {parcel}. Make sure this building is not one of them before correcting.",
     "PARCEL_CHANGED_CONCURRENTLY": "This building’s parcel number just changed. Reopen it.",
     "BUILDING_CODE_TAKEN": "Code {code} is used by another building. Try again.",
@@ -1322,6 +1331,11 @@
         "notes": "Notes",
         "overpaidAfter": "{amount} overpaid",
         "recomputed": "“Owed after” is what was still owed once each payout was made, recomputed from today’s records: a registration corrected or merged since the payout changes what its row shows from what it showed on the day. A payout whose payment order was cancelled does not count as paid."
+      },
+      "log": {
+        "description": "Everything this inspector registered, the units he added to files other officers registered, and the commission owed on each",
+        "addedToFile": "Added to a file",
+        "addedOn": "Added on"
       }
     }
   },
@@ -1338,7 +1352,9 @@
     "coOwnerPays": "{count} paid by another owner",
     "coOwnedShareParts": "{count} co-owned, charged at this owner’s part ({parts})",
     "exempt": "{count} exempt from fees",
-    "flatNotOwed": "Flat charge, not owed: {notes}"
+    "flatNotOwed": "Flat charge, not owed: {notes}",
+    "levelWeighed": "{count} multi-level units counted in roofs ({parts})",
+    "levelPart": "{name} = {factor} roofs"
   },
   "fees": {
     "issue": {
@@ -1545,6 +1561,7 @@
     "DATA_CORRECTION_DELETE": "Manual deletion (correction)",
     "UNIT_CORRECTION_DELETED": "Unit removed by admin correction",
     "UNIT_CORRECTION_FILE_ENDED": "File lines closed by a unit correction",
+    "UNITS_MERGED_AS_DUPLEX": "Two units merged as a duplex (admin)",
     "BUILDING_CREATED": "Building created",
     "BUILDING_UPDATED": "Building updated",
     "BUILDING_DELETED": "Building deleted",
@@ -1557,6 +1574,7 @@
     "UNIT_VISIT_LOGGED": "Unit visit logged",
     "UNIT_VACANCY_CONFIRMED": "Vacancy confirmed",
     "UNIT_VACANCY_ENDED": "Vacancy lifted",
+    "HOUSE_CARDS_PROMOTED": "House card made a building card as a unit was added",
     "CASE_CREATED": "Case opened",
     "CASE_UPDATED": "Case updated",
     "CASE_RESOLVED": "Case resolved",
@@ -2989,6 +3007,85 @@
     "fileValue": "Exempt — {reason}",
     "lifecycleNote": "The building’s status alone exempts nothing from fees. If it cannot be lived in, use “Assess the building” (or “Assess this unit” for a single unit) in the unit matrix and record it as “Not habitable” — what is read not habitable is then exempt from every fee until a re-inspection."
   },
+  "unitLevels": {
+    "continuation": "↑ {unitCode}",
+    "continuationAria": "Upper level of home {unitCode}",
+    "field": {
+      "label": "Levels of this home",
+      "one": "One level",
+      "many": "{name} — {count} levels",
+      "notDwelling": "Only flats and houses can be duplexes.",
+      "caution": "A flat on two levels is billed at the per-roof factor in settings; two separate flats are two full roofs. A house is one full roof per storey.",
+      "saved": "Unit {unitCode} is now: {levels}",
+      "save": "Save levels",
+      "failed": "Could not save the levels of this home."
+    },
+    "growth": {
+      "titleOnFile": "This home is on a citizen's file",
+      "titleBare": "This is an independent house",
+      "question": "Is the new floor another level of home {unitCode}, or a separate unit?",
+      "holders": "On the file of: {names}",
+      "extraLevel": "Another level of the same home",
+      "extraLevelHint": "No unit is added: {unitCode} becomes a {name}.",
+      "notAbove": "A level of the same home is added directly above it, on {floor} — or set «Levels of this home» on unit {unitCode} itself.",
+      "separate": "A separate unit",
+      "separateHint": "The unit is added, and the «house» card on the file becomes a «building» card naming {unitCode}, so its occupancy is kept.",
+      "separateHouse": "An independent house holds one unit: change the structure to «residential building» first if this really is a separate unit.",
+      "cancel": "Cancel",
+      "levelAdded": "Home {unitCode} is now a {name}",
+      "unitAdded": "Unit {unitCode} added"
+    },
+    "factors": {
+      "title": "Per-roof factors",
+      "description": "How many roofs a flat on more than one level counts for, in fees charged per unit. Two separate flats are two roofs; a duplex counts the factor below. A level count with no factor is not billed until one is set.",
+      "row": "{name}",
+      "factorAria": "Factor for {name}",
+      "unset": "No factor",
+      "range": "Between 1 and {max}",
+      "save": "Save factors",
+      "saved": "Per-roof factors saved",
+      "invalid": "The factor for {name} must be between 1 and {max}"
+    },
+    "merge": {
+      "button": "Merge with the unit above as a duplex…",
+      "title": "Merge {lower} and {upper} into one home",
+      "description": "For two flats recorded as two units that are one home on two levels. {lower} stays and becomes a {name}; {upper} is removed: its file lines are closed «recorded in error», never deleted, and its visits and cases move to {lower}.",
+      "loading": "Preparing the preview…",
+      "loadFailed": "The preview could not be read.",
+      "retry": "Try again",
+      "afterTitle": "After the merge",
+      "levels": "Levels of this home",
+      "visits": "Visits moved to {lower}",
+      "cases": "Follow-up cases moved to {lower}",
+      "occupancies": "Occupancies of {upper} removed (repeated on {lower})",
+      "lines": "File lines closed «recorded in error»",
+      "pay": "{name}'s units fall by one: {upper} was one unit too many",
+      "mergeFinal": "The merge of {survivor} and {absorbed} becomes final",
+      "blockedTitle": "Cannot merge",
+      "area": "Area of the whole home (m²)",
+      "areaHint": "Both levels summed. Correct it if the whole home was measured.",
+      "areaRequired": "One unit has no area recorded: enter the area of the whole home.",
+      "reason": "Reason for the merge",
+      "reasonPlaceholder": "e.g. a duplex recorded as two flats by mistake",
+      "confirm": "Type the upper unit's code {upper} to confirm",
+      "submit": "Merge as duplex",
+      "cancel": "Cancel",
+      "done": "{lower} is now a {name} of {area} m²",
+      "failed": "The merge failed",
+      "blocker": {
+        "NOT_FLATS": "Only flats are merged as a duplex; a house's storeys are set in «Levels of this home».",
+        "TOO_MANY_LEVELS": "A home spans at most {max} levels.",
+        "OTHER_HOUSEHOLD": "{name} is recorded in the upper unit but not in the lower one in the same capacity — it may be another household.",
+        "CARD_WITHOUT_LOWER": "{name}'s file names the upper unit but not the lower one.",
+        "STANDING_VACANCY": "The upper unit has a standing vacancy confirmation: lift it first.",
+        "BILLING_DIFFERS": "The two units are billed differently (an exemption or a co-owner method).",
+        "AREA_UNKNOWN": "One unit has no area recorded: enter the area of the whole home.",
+        "DAMAGE_ASSESSMENT": "The upper unit has {count} damage assessment(s), which are never deleted.",
+        "LINK_NAMES_OTHER_UNITS": "{name}'s link to the owner covers other units: unlink it first.",
+        "UNREADABLE_LANDLORD_LINK": "{name}'s link to the owner could not be read."
+      }
+    }
+  },
   "citizenKind": {
     "question": "Whose file",
     "person": "A person",
@@ -3083,8 +3180,8 @@
     "fewer": "Fewer floors",
     "more": "More floors",
     "help": "Every built level under a roof, the ground floor and a pilotis level included. The roof is not a floor.",
-    "duplexHelp": "Duplex: record it as two flats (one per level), or as one flat on the entrance level with both levels' area and a «duplex» note on it.",
-    "emptyTop": "{count, plural, one {The top row of the matrix holds no unit} other {The top {count} rows of the matrix hold no unit}}. The roof is not a floor: if nothing is built there, lower the count. If it is a built floor not yet divided, draw an «Empty floor» on it; if it is the upper level of a duplex, leave it.",
+    "duplexHelp": "Duplex or triplex: record it as one unit on the entrance level, then set «Levels of this home» on the unit. Two separate flats stacked on each other stay two units.",
+    "emptyTop": "{count, plural, one {The top row of the matrix holds no unit} other {The top {count} rows of the matrix hold no unit}}. The roof is not a floor: if nothing is built there, lower the count. If it is a built floor not yet divided, draw an «Empty floor» on it; if it is the upper level of a home, set «Levels of this home» on the unit below it.",
     "trimTo": "Lower to {count}"
   },
   "counterPayment": {

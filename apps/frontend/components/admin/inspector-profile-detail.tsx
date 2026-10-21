@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
@@ -34,6 +35,7 @@ import { MyQualityTasks } from '@/components/admin/quality/my-tasks';
 import { OfficerQuality } from '@/components/admin/quality/officer-quality';
 import { useGoBack } from '@/components/ui/back-link';
 import { FactCell, FactRow } from '@/components/ui/facts';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
@@ -78,6 +80,7 @@ export function InspectorProfileDetail({
   const router = useRouter();
   const goBack = useGoBack();
   const isAr = locale !== 'en';
+  const tLog = useTranslations('staff.commission.log');
   const labels = getLabels(locale);
   const queryClient = useQueryClient();
 
@@ -447,11 +450,7 @@ export function InspectorProfileDetail({
               <CardTitle className="text-base font-bold">
                 {isAr ? 'المعاملات والمواطنون المسجلون' : 'Registered citizens & properties'}
               </CardTitle>
-              <CardDescription>
-                {isAr
-                  ? 'كل ما سجّله هذا المفتش، والعمولة المستحقة عن كل تسجيل'
-                  : 'Everything this inspector registered, and the commission owed on each'}
-              </CardDescription>
+              <CardDescription>{tLog('description')}</CardDescription>
             </CardHeader>
             <CardContent className={data.recentRegistrations.length === 0 ? 'p-0' : undefined}>
               {data.recentRegistrations.length === 0 ? (
@@ -480,7 +479,12 @@ export function InspectorProfileDetail({
                           <User className="size-5" />
                         </span>
                         <div className="space-y-1">
-                          <span className="text-sm font-bold sm:text-base">{item.citizenName}</span>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-bold sm:text-base">{item.citizenName}</span>
+                            {item.addedToOthersFile ? (
+                              <Badge variant="soft-default">{tLog('addedToFile')}</Badge>
+                            ) : null}
+                          </div>
                           <FactRow>
                             <FactCell
                               label={isAr ? 'الرقم المرجعي' : 'Reference'}
@@ -504,10 +508,17 @@ export function InspectorProfileDetail({
                                     : 'Completed'
                               }
                             />
-                            <FactCell
-                              label={isAr ? 'تاريخ التسجيل' : 'Date'}
-                              value={formatDateTime(item.submittedAt)}
-                            />
+                            {item.addedToOthersFile ? (
+                              <FactCell
+                                label={tLog('addedOn')}
+                                value={formatDateTime(item.creditedAt ?? item.submittedAt)}
+                              />
+                            ) : (
+                              <FactCell
+                                label={isAr ? 'تاريخ التسجيل' : 'Date'}
+                                value={formatDateTime(item.submittedAt)}
+                              />
+                            )}
                             {item.neighborhoods.length > 0 ? (
                               <FactCell
                                 label={isAr ? 'الأحياء' : 'Neighborhoods'}

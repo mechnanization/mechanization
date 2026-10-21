@@ -10,7 +10,8 @@ import {
 import { Prisma } from '../../generated/tenant-client';
 import { PropertyEntry } from '../../domain/entities/property-entry.entity';
 import { Registration } from '../../domain/entities/registration.entity';
-import { ConflictError, NotFoundError } from '../../domain/errors/domain-error';
+import { ConflictError, NotFoundError, ValidationError } from '../../domain/errors/domain-error';
+import { houseCardOnMultiUnitBuilding } from '../prisma/house-card-guard';
 import { parcelNumberKey } from '../../domain/interfaces/parcel-repository.interface';
 import {
   RegistrationRepository,
@@ -144,6 +145,23 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
 
     try {
       return await this.db.$transaction(async (tx) => {
+        /*
+          No «منزل» on a structure of several units (decision D28) — see
+          `houseCardOnMultiUnitBuilding`. First, so nothing is written.
+        */
+        const crowdedHouse = await houseCardOnMultiUnitBuilding(
+          tx,
+          input.properties.map((property) => property.props),
+        );
+        if (crowdedHouse) {
+          throw new ValidationError({
+            code: 'HOUSE_CARD_ON_MULTI_UNIT_BUILDING',
+            message: 'A house card cannot be linked to a building with several units.',
+            params: { buildingCode: crowdedHouse.buildingCode },
+            details: { path: `properties.${crowdedHouse.index}.propertyType`, buildingCode: crowdedHouse.buildingCode },
+          });
+        }
+
         /*
           A filing never overwrites a person who is already on file.
 
