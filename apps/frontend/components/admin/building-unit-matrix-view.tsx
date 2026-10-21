@@ -111,6 +111,7 @@ import {
 } from './building-unit-forms';
 import { HouseGrowthPrompt, UnitContinuationTile, UnitLevelsPanel, upperFlatOf } from './unit-levels';
 import { OwnerBillingPanel } from './owner-billing-panel';
+import { UnitAreaPanel } from './unit-area-panel';
 import { FeeExemptionPanel } from './fee-exemption-panel';
 import { showsOwnerBilling } from '@/lib/owner-billing';
 import { CENSUS_WRITE_ROLES, hasRole } from '@/lib/staff-roles';
@@ -436,6 +437,7 @@ export function BuildingUnitMatrixView({
     question: HouseGrowthQuestion;
   } | null>(null);
   const tLevels = useTranslations('unitLevels');
+  const tArea = useTranslations('unitArea');
 
   const run = useCallback(
     async (task: () => Promise<string>, failure: string) => {
@@ -661,6 +663,17 @@ export function BuildingUnitMatrixView({
         });
       },
       tLevels('field.failed'),
+    );
+
+  /** «مساحة الوحدة» — the census area billing reads before any card's. */
+  const saveArea = (unit: UnitWithOccupants, unitArea: number) =>
+    run(
+      async () => {
+        if (!token) throw new Error('unauthenticated');
+        await updateUnit(tenant, token, unit.id, { unitArea });
+        return tArea('saved', { unitCode: unit.unitCode, area: unitArea });
+      },
+      tArea('failed'),
     );
 
   /** «معفاة من الرسوم» — granted or lifted by a SUPER_ADMIN (0077). */
@@ -1736,6 +1749,14 @@ export function BuildingUnitMatrixView({
                 busy={busy}
                 canWrite={canWrite}
                 onEnd={(values) => liftVacancy(selectedUnit, values)}
+              />
+
+              {/* «مساحة الوحدة» — corrected here, never on a card (a linked card shows it locked). */}
+              <UnitAreaPanel
+                unit={selectedUnit}
+                busy={busy}
+                canEdit={canWrite}
+                onSave={(unitArea) => void saveArea(selectedUnit, unitArea)}
               />
 
               {/* «عدد طوابق المسكن» — a home on several levels (0095, D28). */}

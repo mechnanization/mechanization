@@ -3007,6 +3007,14 @@
     "fileValue": "Exempt — {reason}",
     "lifecycleNote": "The building’s status alone exempts nothing from fees. If it cannot be lived in, use “Assess the building” (or “Assess this unit” for a single unit) in the unit matrix and record it as “Not habitable” — what is read not habitable is then exempt from every fee until a re-inspection."
   },
+  "unitArea": {
+    "label": "Unit area (m²)",
+    "unmeasured": "Not measured yet",
+    "save": "Save area",
+    "saved": "Unit {unitCode} is now {area} m²",
+    "failed": "Could not save the unit area.",
+    "invalid": "The area is not valid"
+  },
   "unitLevels": {
     "continuation": "↑ {unitCode}",
     "continuationAria": "Upper level of home {unitCode}",

@@ -79,6 +79,7 @@ import { LandlordUnlinkDialog } from '@/components/admin/landlord-unlink-dialog'
 import { EndTenancyDialog } from '@/components/admin/end-tenancy-dialog';
 import { EndOwnershipDialog } from '@/components/admin/end-ownership-dialog';
 import { cn, scopeErrors } from '@/lib/utils';
+import { mirrorCensusAreas } from '@/lib/census-area';
 import {
   type CensusUnitFacts,
   flagPath,
@@ -403,6 +404,16 @@ export function PropertyCard({
     for (const unit of linkedBuilding?.units ?? []) facts[unit.id] = unit;
     return facts;
   }, [linkedBuilding]);
+
+  /* The locked census area, written onto the line the save validates. See `mirrorCensusAreas`. */
+  useEffect(() => {
+    if (!mirrorCensusAreas(draft.units ?? [], censusUnits)) return;
+    onChange((current) => {
+      const units = mirrorCensusAreas(current.units ?? [], censusUnits);
+      return units ? { ...current, units } : current;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [censusUnits, draft.units]);
 
   /** The register has an answer, so the field states it instead of asking. */
   const namedByCensus = Boolean(draft.buildingId && linkedBuilding?.name);
