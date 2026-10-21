@@ -271,6 +271,8 @@ model User {
   issuedFeeNotices      FeeNotice[]          @relation("FeeIssuedBy")
   whishCheckouts        WhishCheckout[]      @relation("WhishCheckoutCitizen")
   createdRegistrations  Registration[]       @relation("RegistrationCreatedBy")
+  /// Unit lines this staff member filed, on any citizen's file (0096).
+  filedUnitLines        BuildingUnit[]       @relation("UnitLineFiledBy")
   inspectorPayouts      InspectorPayout[]    @relation("InspectorPayouts")
   recordedInspectorPayouts InspectorPayout[] @relation("RecordedInspectorPayouts")
   /// A collector's custody accounts, one per currency (0073). Staff only.
@@ -862,6 +864,18 @@ model BuildingUnit {
   endedAt   DateTime?
   endReason OccupancyEndReason?
 
+  /// The staff member who created this line (0096), and so who is paid for it
+  /// (`creditBillableUnits`, `filedByOf`).
+  ///
+  /// Null means the officer of the registration the card was filed on — how
+  /// every line was credited before the column existed, and what a line filed
+  /// with its registration still means. Set by every path that adds a line to a
+  /// file afterwards: the matrix (`claimOnFile`), an owner link, the edit form.
+  /// Lines already on file were filled from the audit trail by 0097. Never
+  /// rewritten: an edit keeps the line, and its filer, by identity.
+  filedById String? @db.Uuid
+  filedBy   User?   @relation("UnitLineFiledBy", fields: [filedById], references: [id], onDelete: Restrict)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -870,6 +884,7 @@ model BuildingUnit {
 
   @@index([propertyEntryId])
   @@index([unitId])
+  @@index([filedById])
   @@map("building_units")
 }
 
