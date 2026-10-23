@@ -33,6 +33,43 @@ describe('describeAssessment', () => {
     expect(describeAssessment(letOff, 'en')).toBe('Flat charge, not owed: 1 uninhabitable, exempt; 1 exempt from fees');
   });
 
+  it('names each unit’s bracket under TIERED_AREA, never a rate of 0', () => {
+    const tiered = assessment({
+      basis: 'TIERED_AREA',
+      rate: 0,
+      unitCount: 1,
+      totalArea: 120,
+      lines: [
+        {
+          propertyNumber: '88',
+          propertyType: 'BUILDING',
+          unitType: 'APARTMENT',
+          unitArea: 120,
+          bracketCode: 'B',
+          bracketLabel: 'الفئة B',
+        },
+      ],
+    });
+    expect(describeAssessment(tiered, 'ar')).toBe('حسب فئة المساحة: الفئة B (120 م²)');
+    expect(describeAssessment({ ...tiered, sharedBillUnitCount: 1 }, 'ar')).toBe(
+      'حسب فئة المساحة: الفئة B (120 م²) (1 وحدة تُفوتر في فاتورة وحدة مشتركة)',
+    );
+  });
+
+  it('says a shared unit bill is shared, and between how many, never who', () => {
+    const shared = assessment({
+      basis: 'TIERED_AREA',
+      rate: 0,
+      unitCount: 1,
+      sharedBillDebtorCount: 3,
+      lines: [{ propertyNumber: '88', propertyType: 'BUILDING', unitType: 'SHOP', unitArea: 40, bracketCode: 'S' }],
+    });
+    expect(describeAssessment(shared, 'ar')).toBe('حسب فئة المساحة: S (40 م²) — فاتورة وحدة مشتركة بين 3 مسجّلين');
+    expect(describeAssessment(shared, 'en')).toBe(
+      'By area bracket: S (40 m²) — a shared unit bill between 3 registered people',
+    );
+  });
+
   it('writes the same line as before the copy moved to messages', () => {
     expect(describeAssessment(assessment(), 'ar')).toBe('6 محل تجاري × 100,000 ل.ل');
     expect(describeAssessment(assessment({ basis: 'PER_AREA', totalArea: 120.4 }), 'ar')).toBe('120 م² × 100,000 ل.ل');

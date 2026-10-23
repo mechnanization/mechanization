@@ -696,15 +696,16 @@ export default function FeesPage({
                 </Link>
               ) : null}
 
-              {/* A receipt is rebuilt from the citizen's file; a shared unit bill (0099) has none yet. */}
-              {payment.paidAmount > 0 && payment.citizenId ? (
+              {/* A receipt is rebuilt from a file: the citizen's, or on a shared unit bill (0099) the payer's. */}
+              {payment.paidAmount > 0 && (payment.citizenId ?? payment.lastPaidByCitizenId) ? (
                 <Button
                   size="sm"
                   variant="outline"
                   className="h-8 text-xs"
                   disabled={isBusy}
                   onClick={() => {
-                    if (payment.citizenId) void openReceipt(payment.citizenId, payment.id, payment.paidAmount);
+                    const fileOf = payment.citizenId ?? payment.lastPaidByCitizenId;
+                    if (fileOf) void openReceipt(fileOf, payment.id, payment.paidAmount);
                   }}
                 >
                   {isBusy ? (

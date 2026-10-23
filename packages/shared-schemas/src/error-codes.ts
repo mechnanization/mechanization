@@ -87,6 +87,8 @@ export const ERROR_CODES = [
   'SHARED_BILL_PAYER_REQUIRED',
   'SHARED_BILL_PAYER_NOT_DEBTOR',
   'SHARED_BILL_PAYER_ON_OWN_BILL',
+  // A debtor's claim or online payment on a shared unit bill: it is paid at the office.
+  'SHARED_BILL_PAY_AT_OFFICE',
   // Cancelling a bill that has money on it, or one already cancelled.
   'BILL_CANCEL_HAS_PAYMENTS',
   'BILL_ALREADY_CANCELLED',

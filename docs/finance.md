@@ -409,6 +409,11 @@ bills of **one** citizen, on «الرسوم» or on the citizen's file, and sett
 Decided with the owner on 2026-10-10: notes that do not cover every selected bill are **refused**
 (no part-payment of the last one), and each bill keeps its own «RCP-» receipt under a group record.
 
+**«One citizen's bills» includes the shared unit bills they owe** (0099, decision D5 of 2026-10-23):
+a shared bill is in the set only when the citizen settling is one of its debtors (else
+`BULK_SETTLE_CITIZEN_MISMATCH`), and its receipt names them as its payer (`paidByCitizenId`, checked
+again by `recordIn` under the same lock). Paid once, it is paid for all its debtors.
+
 - **All or nothing.** `PaymentSettlementService.settle` runs one `runInTenantTransaction`: the retry
   key's advisory lock, every bill `FOR UPDATE` in id order (`PaymentLedgerService.lockInvoices`), the
   settings row `FOR SHARE`, the closed-day check, the «BRC-» number, the `payment_settlements` row

@@ -14,6 +14,16 @@ export const SHARED_BILL_INCLUDE = {
 
 type SharedBillRow = Prisma.CitizenPaymentGetPayload<{ include: typeof SHARED_BILL_INCLUDE }>;
 
+/**
+ * The bills a person owes: their own, and every shared unit bill they are a
+ * debtor on (0099, D5) — a shared bill is owed by each of its debtors until one
+ * of them pays it. Put in an `AND` beside other conditions, never spread into a
+ * `where` that may carry its own `OR`.
+ */
+export function billsOwedBy(citizenId: string): Prisma.CitizenPaymentWhereInput {
+  return { OR: [{ citizenId }, { debtors: { some: { citizenId } } }] };
+}
+
 /** The shared unit a bill is for, or null on a citizen's own bill. */
 export function sharedUnitView(row: Pick<SharedBillRow, 'unit' | '_count'>): SharedUnitBillView | null {
   if (!row.unit) return null;

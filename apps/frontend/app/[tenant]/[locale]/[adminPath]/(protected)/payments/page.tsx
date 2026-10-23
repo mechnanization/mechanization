@@ -328,9 +328,9 @@ export default function PaymentsPage({
   /** Reprints the وصل for one transaction, exactly as إدارة الرسوم does. */
   const openReceipt = useCallback(
     async (payment: AdminPaymentItem) => {
-      // A receipt is rebuilt from the citizen's file; a shared unit bill (0099) has none yet.
-      if (!token || !payment.citizenId) return;
-      const citizenId = payment.citizenId;
+      // A receipt is rebuilt from a file: the citizen's, or on a shared unit bill (0099) the payer's.
+      const citizenId = payment.citizenId ?? payment.lastPaidByCitizenId;
+      if (!token || !citizenId) return;
       setReceiptBusyId(payment.id);
       try {
         const profile = await getCitizenProfile(tenant, token, citizenId);

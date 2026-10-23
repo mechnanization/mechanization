@@ -117,6 +117,7 @@
     }
   },
   "citizen": {
+    "sharedBill": "The bill for unit {unit} in building {building}, shared between you and {others, plural, one {one other person} other {# other people}} registered on the unit. Any of you pays it at the municipality's office, and once it is paid it is cleared for everyone.",
     "enterReference": "Enter your Reference Number",
     "enterReferenceHint": "To view your properties, due fees, and payment receipts.",
     "referenceNumber": "Reference Number",
@@ -233,6 +234,7 @@
     "SHARED_BILL_PAYER_REQUIRED": "This is a shared unit bill: choose which of the people registered on the unit paid it.",
     "SHARED_BILL_PAYER_NOT_DEBTOR": "The person chosen is not registered on this shared unit.",
     "SHARED_BILL_PAYER_ON_OWN_BILL": "This bill belongs to one citizen; no payer is chosen for it.",
+    "SHARED_BILL_PAY_AT_OFFICE": "This is a shared unit bill: it is paid at the municipality's office, by any of the people registered on it.",
     "PAYMENT_STATE_CHANGED": "This payment changed since the screen was opened. Refresh the page.",
     "PAYMENT_NO_PENDING_REVIEW": "There is no pending payment to review on this record.",
     "PAYMENT_NOTHING_OUTSTANDING": "Nothing is outstanding on this charge.",
@@ -1358,7 +1360,11 @@
     "exempt": "{count} exempt from fees",
     "flatNotOwed": "Flat charge, not owed: {notes}",
     "levelWeighed": "{count} multi-level units counted in roofs ({parts})",
-    "levelPart": "{name} = {factor} roofs"
+    "levelPart": "{name} = {factor} roofs",
+    "tiered": "By area bracket: {lines}",
+    "tieredShared": "By area bracket: {lines} — a shared unit bill between {count} registered people",
+    "tieredLine": "{bracket} ({area} m²)",
+    "sharedBillUnits": "{count} billed on a shared unit bill"
   },
   "fees": {
     "issue": {

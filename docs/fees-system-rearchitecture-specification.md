@@ -42,6 +42,7 @@ document says otherwise, these win.
 |---|---|---|
 | O1 | Fixed amounts for designated entities (a school, a gas station): which unit field identifies them? | Not built. No `designatedOverrides`. |
 | O2 | On the citizen portal, does a shared unit bill show the **names** of the other people it is shared with, or only "shared with N others"? Names expose one citizen's holdings to another. | Show the count only. |
+| O3 | May a debtor pay a shared unit bill online, or report a Whish transfer for it? Either needs the bill to remember which debtor made the claim (a new nullable column, its own migration), so the clerk's confirmation can name the payer. | Refused: paid at the office (`SHARED_BILL_PAY_AT_OFFICE`). |
 
 ---
 
@@ -327,19 +328,38 @@ shared bill means in the same change, so this phase took part of Phase 6:
 
 ### Phase 6: shared bills where a person reads their own
 
-What a debtor sees as theirs. Until this lands a shared bill is billed, paid at
-the counter and blocks its parcel's clearance, but a debtor does not see it
-among their own bills:
+Built on `feat/tiered-fees-debtor-views`. What a person owes is their own bills
+and the shared bills they are a debtor on (`billsOwedBy`, and its SQL twin in
+the register):
 
-- Portal `payments/mine` and the outstanding balance: own bills plus shared
-  bills where the citizen is a debtor. O2: show the number of others, not names.
-- `payments/mine/:id/whish/checkout` and `payments/mine/:id/declare`: allowed for any debtor.
-- A citizen's file (`GET citizens/:id` payments) and the register's balances
-  (`citizens.service.ts`): a debtor's shared bills counted as theirs.
-- The payments list filtered by citizen: their shared bills too.
-- Bulk settlement: a debtor's shared bills, with the payer recorded.
-- Receipts: the reprint names the paying debtor.
-- Correction bills (`bill-corrections.ts`): trace changes on the unit and on each debtor.
+- Portal `payments/mine`, the portal summary and the staff citizen file
+  (`getCitizenProfile`): a debtor's shared bills, with `sharedUnit` — the unit
+  and the number of others, never names (O2). The portal explains a shared bill
+  and offers no payment action for it.
+- `payments/mine/:id/declare` and `…/whish/checkout`: **refused** for a debtor's
+  shared bill (`SHARED_BILL_PAY_AT_OFFICE`), not allowed as first planned. A
+  claim is confirmed later by a clerk, the ledger takes money on a shared bill
+  only with its payer named, and the bill keeps no claimant: a claim could
+  never be confirmed. See O3. A citizen who is not a debtor is answered
+  `PAYMENT_NOT_FOUND`, as for any bill not theirs.
+- The register: each person's figures include their shared bills; the money
+  totals sum distinct bills, so a shared bill counts once.
+- The payments list filtered by citizen and the edit review's open bills: their
+  shared bills too.
+- Bulk settlement: a debtor's shared bills, the citizen settling named payer.
+- Receipts: reprinted from the payer's file (`lastPaidByCitizenId` on the ledger
+  row; the citizen file lists the shared bill).
+- `describeAssessment`: each unit's bracket under `TIERED_AREA`, a shared bill
+  shared between N, an own bill's units moved to shared bills — never «× 0».
+- **Not done: correction bills.** They leave `TIERED_AREA` out
+  (`correction-bills.service.ts`). Today's figure of a tiered bill depends on
+  who else is charged for each unit, so it has to be recomputed across the run
+  as `splitSharedUnitBills` does; one citizen at a time an own bill would be
+  listed for shared units it never carried. Phase 6b.
+- Tests: four more in `shared-unit-bills.integration.spec.ts` (every read of
+  what a person owes and the register's once-only total; the claim refusal;
+  bulk settlement with the payer); `describeAssessment` in
+  `fee-assessment.test.ts`.
 - Commit: `feat(fees): shared unit bills in the portal and a citizen's own reads`
 
 ### Phase 7: batch cancel (D6)

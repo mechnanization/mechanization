@@ -25,6 +25,7 @@ import type {
   FeeNoticePreviewInput,
   FeeNoticePreviewResult,
   PaymentMethod,
+  SharedUnitBillView,
   SystemSettingsInput,
 } from '@mechanization/shared-schemas';
 import {
@@ -61,7 +62,7 @@ import { assertNotMergedAway } from '../citizens/merged-away';
 import { ConflictError, DomainError, ForbiddenError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { exchangeRuleChangeAllowed } from '../treasury/transfers.plan';
 import { raiseOneOffBill } from './one-off-bill';
-import { SHARED_BILL_INCLUDE, sharedUnitView } from './shared-bill-view';
+import { billsOwedBy, SHARED_BILL_INCLUDE, sharedUnitView } from './shared-bill-view';
 import {
   priceTieredUnits,
   splitSharedUnitBills,
@@ -77,6 +78,23 @@ import { PaymentLedgerService, type Tender } from './payment-ledger.service';
 import { creditsWallets, documentOccurredAt } from '../treasury/treasury.plan';
 import { assertLiveCollector } from './live-collector';
 import { AuditService, type AuditEntryInput } from '../audit/audit.service';
+
+/**
+ * A shared unit bill (0099) is paid at the office, by any of its debtors, named
+ * at the counter. Not online and not by a citizen's claim: a claim is confirmed
+ * later by a clerk (`review`), and the bill has nowhere to keep which debtor
+ * made it, while the ledger takes money on a shared bill only with its payer
+ * named (`recordIn`). A claim that could never be confirmed would hold the bill
+ * in review until a clerk rejected it.
+ */
+function assertNotSharedOnline(payment: { unitId: string | null }): void {
+  if (payment.unitId) {
+    throw new ConflictError({
+      code: 'SHARED_BILL_PAY_AT_OFFICE',
+      message: 'A shared unit bill is paid at the municipality’s office, by any of its debtors.',
+    });
+  }
+}
 
 /**
  * Who a bill is for, as the staff lists show it: its citizen, or — on a shared
@@ -894,6 +912,12 @@ export interface PaymentSummary {
    * charge, which explains itself.
    */
   assessment: FeeAssessment | null;
+  /**
+   * On a shared unit bill (0099, D5) this citizen owes with others: the unit
+   * and how many may pay it — never who (open question O2). Null on their own
+   * bill. Paid at the office only, until a claim on one can name its claimant.
+   */
+  sharedUnit: SharedUnitBillView | null;
 }
 
 /**
@@ -2833,13 +2857,13 @@ export class FeesService {
 
   // ────────────────────────────  Payments  ────────────────────────────
 
-  /** One citizen's own bills, newest obligation first. */
+  /** What one citizen owes: their own bills and the shared unit bills they are a debtor on, newest obligation first. */
   async listForCitizen(citizenId: string): Promise<PaymentSummary[]> {
     const rows = await withConnectionRetry(() =>
       this.db.citizenPayment.findMany({
-        where: { citizenId },
+        where: billsOwedBy(citizenId),
         orderBy: [{ paymentStatus: 'asc' }, { dueDate: 'asc' }],
-        include: { feeNotice: { select: { frequency: true } } },
+        include: { feeNotice: { select: { frequency: true } }, ...SHARED_BILL_INCLUDE },
       }),
     );
 
@@ -2864,6 +2888,7 @@ export class FeesService {
       reviewNote: row.reviewNote,
       frequency: row.feeNotice?.frequency ?? null,
       assessment: (row.assessment as FeeAssessment | null) ?? null,
+      sharedUnit: sharedUnitView(row),
     }));
   }
 
@@ -2952,13 +2977,14 @@ export class FeesService {
       });
     }
     const payment = await this.db.citizenPayment.findFirst({
-      where: { id: input.paymentId, citizenId: input.citizenId },
-      select: { id: true, paymentStatus: true },
+      where: { AND: [{ id: input.paymentId }, billsOwedBy(input.citizenId)] },
+      select: { id: true, paymentStatus: true, unitId: true },
     });
     if (!payment) throw new NotFoundError({
       code: 'PAYMENT_NOT_FOUND',
       message: `Payment ${input.paymentId} was not found`,
     });
+    assertNotSharedOnline(payment);
 
     // Kept ahead of the write: this is what separates "not yours / no such
     // invoice" from the two specific states a citizen can act on. The
@@ -3426,6 +3452,13 @@ export class FeesService {
     collectedBy: { select: { firstName: true, lastName: true } },
     feeNotice: { select: { frequency: true } },
     ...SHARED_BILL_INCLUDE,
+    // On a shared unit bill (0099): the debtor who last paid on it, whose file the receipt is reprinted from.
+    transactions: {
+      where: { paidByCitizenId: { not: null }, reversalOfId: null },
+      orderBy: [{ occurredAt: 'desc' }, { createdAt: 'desc' }],
+      take: 1,
+      select: { paidByCitizenId: true },
+    },
   } satisfies Prisma.CitizenPaymentInclude;
 
   /** One row, in the shape the admin ledger and the settle page both read. */
@@ -3481,6 +3514,8 @@ export class FeesService {
        */
       assessment: (row.assessment as FeeAssessment | null) ?? null,
       ...billHolder(row),
+      /** On a shared unit bill, the debtor who last paid on it; null on a citizen's own bill or one not paid yet. */
+      lastPaidByCitizenId: row.transactions[0]?.paidByCitizenId ?? null,
     };
   }
 
@@ -3705,8 +3740,14 @@ export class FeesService {
       due" — a smaller number, on a tile whose whole job is to be the count
       nobody has dealt with yet.
     */
+    /*
+      One citizen's bills: their own and the shared unit bills they owe as a
+      debtor (0099). Put around each query's `where` rather than into it, which
+      spreads several conditions that carry their own `OR`.
+    */
+    const scoped = (condition: Prisma.CitizenPaymentWhereInput): Prisma.CitizenPaymentWhereInput =>
+      filter.citizenId ? { AND: [billsOwedBy(filter.citizenId), condition] } : condition;
     const whereWithoutStatus = {
-      ...(filter.citizenId ? { citizenId: filter.citizenId } : {}),
       ...(filter.method ? { paymentMethod: filter.method as never } : {}),
       ...(filter.feeTitle
         ? {
@@ -3783,7 +3824,7 @@ export class FeesService {
     const [rows, total, collected, byMethod, awaiting] = await withConnectionRetry(() =>
       this.db.$transaction([
         this.db.citizenPayment.findMany({
-          where,
+          where: scoped(where),
           /**
            * A transactions view is a chronology, so it is ordered by when the
            * money moved — newest first — rather than by what is most overdue.
@@ -3802,7 +3843,7 @@ export class FeesService {
           skip,
           include: this.ADMIN_PAYMENT_INCLUDE,
         }),
-        this.db.citizenPayment.count({ where }),
+        this.db.citizenPayment.count({ where: scoped(where) }),
         /**
          * Aggregates over the *whole filtered set*, not the page.
          *
@@ -3813,17 +3854,17 @@ export class FeesService {
          * kind of wrong number nobody notices until it is quoted in a meeting.
          */
         this.db.citizenPayment.aggregate({
-          where: { ...where, paidAmount: { gt: 0 } },
+          where: scoped({ ...where, paidAmount: { gt: 0 } }),
           _sum: { paidAmount: true },
         }),
         this.db.citizenPayment.groupBy({
           by: ['paymentMethod'],
-          where: { ...where, paidAmount: { gt: 0 } },
+          where: scoped({ ...where, paidAmount: { gt: 0 } }),
           _count: { _all: true },
         }),
         this.db.citizenPayment.count({
           // `whereWithoutStatus`, not `where` — see the note on its declaration.
-          where: { ...whereWithoutStatus, paymentStatus: 'PENDING_REVIEW' },
+          where: scoped({ ...whereWithoutStatus, paymentStatus: 'PENDING_REVIEW' }),
         }),
       ]),
     );
@@ -3895,15 +3936,15 @@ export class FeesService {
         paidAmount: true,
         currency: true,
         paymentStatus: true,
+        unitId: true,
         citizen: { select: { firstName: true, lastName: true, residence: true } },
+        // Whether this citizen owes it as one of a shared unit bill's debtors (0099).
+        debtors: { where: { citizenId: input.citizenId }, select: { citizenId: true } },
       },
     });
 
-    /*
-      A shared unit bill (0099) has no citizen of its own and is not paid
-      online yet: a debtor paying one through Whish lands with the portal's
-      shared bills. Until then it answers as any bill that is not theirs.
-    */
+    // A debtor's shared unit bill is theirs to see, and paid at the office (`assertNotSharedOnline`).
+    if (payment && payment.unitId && payment.debtors.length > 0) assertNotSharedOnline(payment);
     if (!payment || !payment.citizen || payment.citizenId !== input.citizenId) {
       // Same error for "no such invoice" and "not yours", so the endpoint
       // cannot be used to discover which payment ids exist.

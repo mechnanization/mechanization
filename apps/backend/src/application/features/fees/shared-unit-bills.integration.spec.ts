@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Client } from 'pg';
-import type { CreateFeeNotice, FeeAssessment, FeeMatrixBracket } from '@mechanization/shared-schemas';
+import type { BulkSettlePayments, CreateFeeNotice, FeeAssessment, FeeMatrixBracket } from '@mechanization/shared-schemas';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaClient as TenantPrismaClient } from '../../../generated/tenant-client';
 import { migrateTenantSchema } from '../../../infrastructure/prisma/tenant-migrator';
@@ -8,10 +8,13 @@ import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-cli
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { PrismaAuditRepository } from '../../../infrastructure/repositories/audit.repository';
 import { AuditService } from '../audit/audit.service';
+import { CitizensService } from '../citizens/citizens.service';
+import { ReportingService } from '../reporting/reporting.service';
 import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
 import { FeesService } from './fees.service';
 import { ParcelDuesService } from './parcel-dues.service';
 import { PaymentLedgerService } from './payment-ledger.service';
+import { PaymentSettlementService } from './payment-settlement.service';
 
 /**
  * The shared unit bill, written and paid (0099; decision D5 of 2026-10-23,
@@ -50,6 +53,9 @@ describeIfDb('shared unit bills', () => {
   let context: TenantContextService;
   let fees: FeesService;
   let parcelDues: ParcelDuesService;
+  let settlements: PaymentSettlementService;
+  let reporting: ReportingService;
+  let citizens: CitizensService;
   const accountantId = randomUUID();
   const actor = { id: accountantId, role: 'ACCOUNTANT' };
   const brothers = [randomUUID(), randomUUID(), randomUUID()].sort();
@@ -112,6 +118,23 @@ describeIfDb('shared unit bills', () => {
       audit,
     );
     parcelDues = new ParcelDuesService(context);
+    settlements = new PaymentSettlementService(context, new EventEmitter2(), payments, audit, new TreasuryLedgerService(context));
+    reporting = new ReportingService(
+      context,
+      new EventEmitter2(),
+      { get: async () => null, set: async () => undefined } as never,
+      { get: () => undefined } as never,
+    );
+    citizens = new CitizensService(
+      context,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      new EventEmitter2(),
+      audit,
+    );
 
     await db.user.create({
       data: {
@@ -182,6 +205,7 @@ describeIfDb('shared unit bills', () => {
   let issuedNoticeId: string;
   let sharedBillId: string;
   let ownBillId: string;
+  let recurringNoticeId: string;
 
   it('issues a bracket notice: the shop once to the three brothers, the flat to its owner, as previewed (T-8, T-9)', async () => {
     const input = notice();
@@ -227,6 +251,36 @@ describeIfDb('shared unit bills', () => {
     expect(shared).toMatchObject({ citizenId: null, citizenName: null, sharedDebtorCount: 3, remaining: 30_000_000 });
   });
 
+  it('shows the shared bill among each debtor’s own — the portal, their file, the ledger and the register — and the register’s total counts it once', async () => {
+    const mine = await within(() => fees.listForCitizen(brothers[1]!));
+    expect(mine.map((bill) => [bill.id, bill.sharedUnit?.debtorCount ?? null])).toEqual([[sharedBillId, 3]]);
+    const eldest = await within(() => fees.listForCitizen(brothers[0]!));
+    expect(eldest.map((bill) => bill.id).sort()).toEqual([ownBillId, sharedBillId].sort());
+    expect(await within(() => fees.listForCitizen(neighbour))).toEqual([]);
+
+    const profile = await within(() => reporting.getCitizenProfile(brothers[2]!));
+    expect(profile!.payments.map((bill) => [bill.id, bill.sharedUnit?.unitCode ?? null])).toEqual([[sharedBillId, '0001']]);
+
+    const ledger = await within(() => fees.listAllPayments({ citizenId: brothers[1]! }));
+    expect(ledger.items.map((bill) => bill.id)).toEqual([sharedBillId]);
+
+    const register = await within(() => citizens.list({ limit: 50 }));
+    const outstandingOf = (id: string) => register.items.find((row) => row.id === id)?.outstandingTotal;
+    expect(brothers.map(outstandingOf)).toEqual([31_500_000, 30_000_000, 30_000_000]);
+    // The municipality is owed the shop once and the flat once — not the shop three times.
+    expect(register.totals.outstanding).toBe(31_500_000);
+  });
+
+  it('refuses a debtor’s claim on a shared bill — it is paid at the office — and answers a stranger as for any bill not theirs', async () => {
+    const claim = (citizenId: string) =>
+      within(() =>
+        fees.declare({ paymentId: sharedBillId, citizenId, method: 'WHISH_MONEY', whishTransactionRef: 'WSH-SHARED-1' }),
+      );
+    await expect(claim(brothers[1]!)).rejects.toMatchObject({ code: 'SHARED_BILL_PAY_AT_OFFICE' });
+    await expect(claim(neighbour)).rejects.toMatchObject({ code: 'PAYMENT_NOT_FOUND' });
+    expect((await db.citizenPayment.findUniqueOrThrow({ where: { id: sharedBillId } })).paymentStatus).toBe('UNPAID');
+  });
+
   it('takes the money on a shared bill from one of its debtors only, and names them on the receipt', async () => {
     const settle = (paymentId: string, paidByCitizenId?: string) =>
       within(() =>
@@ -269,5 +323,45 @@ describeIfDb('shared unit bills', () => {
       expect(period.every((bill) => bill.invoiceNumber?.startsWith('INV-'))).toBe(true);
     }
     expect(issuedNoticeId).not.toBe(issued.noticeId);
+    recurringNoticeId = issued.noticeId;
+  });
+
+  it('settles a debtor’s shared bill with their own in one press, naming them as its payer, and refuses it to a stranger', async () => {
+    // One period of the recurring notice: the eldest's own flat and the shop the three share.
+    const open = await db.citizenPayment.findMany({
+      where: { feeNoticeId: recurringNoticeId, paymentStatus: 'UNPAID', OR: [{ citizenId: brothers[0] }, { unitId: shopId }] },
+      select: { id: true, amount: true, unitId: true, periodKey: true },
+      orderBy: [{ periodKey: 'asc' }, { createdAt: 'asc' }],
+    });
+    const period = open.filter((bill) => bill.periodKey === open[0]!.periodKey);
+    expect(period.map((bill) => Boolean(bill.unitId)).sort()).toEqual([false, true]);
+    const total = period.reduce((sum, bill) => sum + Number(bill.amount), 0);
+    const press = (citizenId: string) =>
+      within(() =>
+        settlements.settle(
+          {
+            citizenId,
+            paymentIds: period.map((bill) => bill.id),
+            method: 'CASH',
+            tendered: { local: total, foreign: 0, foreignCurrency: 'USD' },
+            expectedDue: { LBP: total },
+            clientRequestId: randomUUID(),
+          } as BulkSettlePayments,
+          actor,
+        ),
+      );
+
+    await expect(press(neighbour)).rejects.toMatchObject({ code: 'BULK_SETTLE_CITIZEN_MISMATCH' });
+    await press(brothers[0]!);
+
+    const receipts = await db.paymentTransaction.findMany({
+      where: { paymentId: { in: period.map((bill) => bill.id) } },
+      select: { paymentId: true, paidByCitizenId: true },
+    });
+    const sharedId = period.find((bill) => bill.unitId)!.id;
+    expect(receipts.map((receipt) => [receipt.paymentId === sharedId, receipt.paidByCitizenId]).sort()).toEqual([
+      [false, null],
+      [true, brothers[0]],
+    ]);
   });
 });

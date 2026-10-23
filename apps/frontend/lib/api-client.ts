@@ -3492,6 +3492,11 @@ export interface CitizenProfilePayment {
    * itself, and on every invoice raised before per-unit billing existed.
    */
   assessment?: FeeAssessment | null;
+  /**
+   * On a shared unit bill (0099) this citizen owes with others: the unit and
+   * how many may pay it, never who. Null or absent on their own bill.
+   */
+  sharedUnit?: SharedUnitBillView | null;
 }
 
 /**
@@ -5632,6 +5637,12 @@ export interface CitizenPaymentItem {
    * way to check it. Null on a flat charge, which explains itself.
    */
   assessment?: FeeAssessment | null;
+  /**
+   * On a shared unit bill (0099) this citizen owes with others: the unit and
+   * how many may pay it, never who. Paid at the office, by any of them: the
+   * portal offers neither Whish nor a declaration for it.
+   */
+  sharedUnit?: SharedUnitBillView | null;
 }
 
 /** The signed-in citizen's own bills. */
@@ -5738,6 +5749,8 @@ export interface AdminPaymentItem {
   citizenReference: string | null;
   /** On a shared unit bill, the unit and how many may pay it; null on a citizen's own bill. */
   sharedUnit: SharedUnitBillView | null;
+  /** On a shared unit bill, the debtor who last paid on it: whose file its receipt is reprinted from. */
+  lastPaidByCitizenId?: string | null;
 }
 
 /**
