@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
   Logger,
   Param,
   ParseUUIDPipe,
@@ -29,6 +30,7 @@ import {
   chargeCitizenSchema,
   createFeeNoticeSchema,
   declarePaymentSchema,
+  feeNoticePreviewSchema,
   noticeActiveSchema,
   parcelDuesQuerySchema,
   reverseTransactionSchema,
@@ -40,6 +42,8 @@ import {
   type ChargeCitizen,
   type CreateFeeNotice,
   type DeclarePayment,
+  type FeeNoticePreviewInput,
+  type FeeNoticePreviewResult,
   type ParcelDuesQuery,
   type SettlePayment,
   type SystemSettingsInput,
@@ -148,6 +152,21 @@ export class FeesController {
     @CurrentUser() user: SessionClaims,
   ) {
     return this.fees.issue(body, { id: user.sub, role: user.role ?? '' });
+  }
+
+  /**
+   * «معاينة قبل الإصدار»: what `POST notices` would bill for this notice,
+   * written nowhere. The same roles as issuing, since it reads what an issue
+   * reads, the names of the citizens it could not assess among it. A POST
+   * because the notice is a body, not a query; 200 because nothing is created.
+   */
+  @Roles(...FEE_ISSUE_ROLES)
+  @Post('notices/preview')
+  @HttpCode(200)
+  async previewNotice(
+    @Body(new ZodValidationPipe(feeNoticePreviewSchema)) body: FeeNoticePreviewInput,
+  ): Promise<FeeNoticePreviewResult> {
+    return this.fees.previewNotice(body);
   }
 
   @Roles(...FEE_READ_ROLES)
@@ -325,6 +344,7 @@ export class FeesController {
       method: body.method,
       whishTransactionRef: body.whishTransactionRef,
       collectedById: body.collectedById,
+      paidByCitizenId: body.paidByCitizenId,
       note: body.note,
       tendered: body.tendered,
       paidOn: body.paidOn,

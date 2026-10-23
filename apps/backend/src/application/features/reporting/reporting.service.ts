@@ -2,13 +2,14 @@ import { citizenDisplayName } from '@mechanization/shared-schemas';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
-import type { FeeAssessment, RequestStatus, RequestType } from '@mechanization/shared-schemas';
+import type { FeeAssessment, RequestStatus, RequestType, SharedUnitBillView } from '@mechanization/shared-schemas';
 import { effectiveOwnerBilling, isCoOwned, ownerShareOf } from '@mechanization/shared-schemas';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
 import { attachOccupancies } from '../fees/fees.service';
+import { billsOwedBy, SHARED_BILL_INCLUDE, sharedUnitView } from '../fees/shared-bill-view';
 
 export interface DashboardCounters {
   total: number;
@@ -588,6 +589,11 @@ export interface CitizenProfilePayment {
    * bill's money events, which clear this cache.
    */
   request: { id: string; requestNumber: string; requestType: RequestType; status: RequestStatus } | null;
+  /**
+   * On a shared unit bill (0099, D5) this citizen owes with others: the unit
+   * and how many may pay it, never who (O2). Null on their own bill.
+   */
+  sharedUnit: SharedUnitBillView | null;
 }
 
 /**
@@ -1153,35 +1159,6 @@ export class ReportingService {
         },
         isActive: true,
         createdAt: true,
-        /**
-         * The citizen's ledger, alongside their claims rather than a page
-         * away. Staff reviewing a registration are routinely also the people
-         * asked "what do I owe?", and until now the answer lived only on the
-         * fees screen, keyed by a name they had to search for again.
-         */
-        payments: {
-          orderBy: [{ paymentStatus: 'asc' }, { dueDate: 'asc' }],
-          select: {
-            id: true,
-            title: true,
-            amount: true,
-            paidAmount: true,
-            currency: true,
-            dueDate: true,
-            paymentStatus: true,
-            paymentMethod: true,
-            invoiceNumber: true,
-            whishTransactionRef: true,
-            paidAt: true,
-            reviewNote: true,
-            // Why the manager cancelled it, when he did (0091).
-            cancellationReason: true,
-            // «ليش عليّ هالمبلغ؟» — see `CitizenProfilePayment.assessment`.
-            assessment: true,
-            feeNotice: { select: { frequency: true } },
-            citizenRequest: { select: { id: true, requestNumber: true, requestType: true, status: true } },
-          },
-        },
         registrations: {
           orderBy: { submittedAt: 'desc' },
           select: {
@@ -1350,12 +1327,48 @@ export class ReportingService {
 
     if (!citizen) return null;
 
+    /*
+      The citizen's ledger, alongside their claims rather than a page away.
+      Staff reviewing a registration are routinely also the people asked "what
+      do I owe?", and until now the answer lived only on the fees screen, keyed
+      by a name they had to search for again. What they owe is their own bills
+      and the shared unit bills they are a debtor on (0099, D5), so it is read
+      by that rule rather than through the citizen's own `payments`.
+    */
+    const ledger = await withConnectionRetry(() =>
+      this.db.citizenPayment.findMany({
+        where: billsOwedBy(citizen.id),
+        orderBy: [{ paymentStatus: 'asc' }, { dueDate: 'asc' }],
+        select: {
+          id: true,
+          title: true,
+          amount: true,
+          paidAmount: true,
+          currency: true,
+          dueDate: true,
+          paymentStatus: true,
+          paymentMethod: true,
+          invoiceNumber: true,
+          whishTransactionRef: true,
+          paidAt: true,
+          reviewNote: true,
+          // Why the manager cancelled it, when he did (0091).
+          cancellationReason: true,
+          // «ليش عليّ هالمبلغ؟» — see `CitizenProfilePayment.assessment`.
+          assessment: true,
+          feeNotice: { select: { frequency: true } },
+          citizenRequest: { select: { id: true, requestNumber: true, requestType: true, status: true } },
+          ...SHARED_BILL_INCLUDE,
+        },
+      }),
+    );
+
     const now = new Date();
 
     // OVERDUE is derived here for the same reason `FeesService` derives it: a
     // status written by a nightly job is wrong for every hour between a due
     // date passing and the job next running.
-    const payments = citizen.payments.map((payment) => ({
+    const payments = ledger.map((payment) => ({
       id: payment.id,
       title: payment.title,
       amount: Number(payment.amount),
@@ -1384,6 +1397,8 @@ export class ReportingService {
             status: payment.citizenRequest.status as RequestStatus,
           }
         : null,
+      // A shared unit bill this person owes with others: the unit and how many, never who (O2).
+      sharedUnit: sharedUnitView(payment),
     }));
 
     // Summed from the rows just mapped rather than by a second set of
@@ -1718,12 +1733,20 @@ export class ReportingService {
       citizenIds.length > 0
         ? await withConnectionRetry(() =>
             this.db.citizenPayment.findMany({
-              where: { citizenId: { in: citizenIds } },
+              /*
+                Their own bills, and the shared unit bills they are a debtor on
+                (0099, D5): a shared bill is owed by each of its debtors until
+                one pays it, so it stands in each one's standing.
+              */
+              where: {
+                OR: [{ citizenId: { in: citizenIds } }, { debtors: { some: { citizenId: { in: citizenIds } } } }],
+              },
               select: {
                 citizenId: true,
                 amount: true,
                 paidAmount: true,
                 paymentStatus: true,
+                debtors: { select: { citizenId: true } },
               },
             }),
           )
@@ -1733,14 +1756,18 @@ export class ReportingService {
       string,
       Array<{ amount: number; paidAmount: number; status: string }>
     >();
+    const listed = new Set(citizenIds);
     for (const p of payments) {
-      const list = paymentsByCitizen.get(p.citizenId) ?? [];
-      list.push({
-        amount: Number(p.amount),
-        paidAmount: Number(p.paidAmount),
-        status: p.paymentStatus,
-      });
-      paymentsByCitizen.set(p.citizenId, list);
+      const holders = p.citizenId ? [p.citizenId] : p.debtors.map((debtor) => debtor.citizenId);
+      for (const holder of holders.filter((id) => listed.has(id))) {
+        const list = paymentsByCitizen.get(holder) ?? [];
+        list.push({
+          amount: Number(p.amount),
+          paidAmount: Number(p.paidAmount),
+          status: p.paymentStatus,
+        });
+        paymentsByCitizen.set(holder, list);
+      }
     }
 
     /*

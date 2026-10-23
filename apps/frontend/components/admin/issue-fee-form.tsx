@@ -280,7 +280,13 @@ export function IssueFeeForm({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {FEE_BASIS.map((option) => (
+                      {/*
+                        TIERED_AREA is not offered until this form has the
+                        bracket table to go with it (Phase 8 of
+                        docs/fees-system-rearchitecture-specification.md); the
+                        API refuses to price one until then.
+                      */}
+                      {FEE_BASIS.filter((option) => option !== 'TIERED_AREA').map((option) => (
                         <SelectItem key={option} value={option}>
                           {labels.feeBasis[option]}
                         </SelectItem>

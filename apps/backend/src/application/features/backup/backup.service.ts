@@ -22,8 +22,12 @@ import { ValidationError } from '../../common/exceptions';
  * **4** adds `citizenMerge` (migration 0061), for the same reason: both
  * citizens of a merge cascade from `users`, which restore empties, so a v3
  * file would erase every «دمج ملفين» and its undo and restore none of them.
+ *
+ * **5** adds `citizenPaymentDebtor` (migration 0099): who may pay a shared unit
+ * bill. Its rows cascade from `citizen_payments`, which restore empties, so a
+ * v4 file would bring the shared bills back with nobody to owe them.
  */
-const SNAPSHOT_VERSION = 4;
+const SNAPSHOT_VERSION = 5;
 
 /**
  * Ceiling on the *decompressed* snapshot, enforced by `gunzipSync`.
@@ -130,6 +134,8 @@ const TABLE_ORDER = [
   'document',
   'feeNotice',
   'citizenPayment',
+  // Who may pay a shared unit bill (0099): after the bill and the `users` it names.
+  'citizenPaymentDebtor',
   /*
    * `inspector_payouts.inspectorId` cascades from `users`, which restore
    * deletes and rewrites — so every restore destroyed every recorded commission

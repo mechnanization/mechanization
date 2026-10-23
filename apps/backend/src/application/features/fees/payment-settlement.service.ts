@@ -270,7 +270,27 @@ export class PaymentSettlementService {
     if (missing) {
       throw new NotFoundError({ code: 'PAYMENT_NOT_FOUND', message: `Payment ${missing} was not found` });
     }
-    if (invoices.some((invoice) => invoice.citizenId !== input.citizenId)) {
+    /*
+      Every bill is this citizen's: their own, or a shared unit bill (0099, D5)
+      they are a debtor on, which they then pay for all its debtors and are
+      named on as its payer (`recordIn` checks it again under the same lock).
+    */
+    const sharedIds = invoices.filter((invoice) => invoice.citizenId === null).map((invoice) => invoice.id);
+    const owedShared = new Set(
+      sharedIds.length === 0
+        ? []
+        : (
+            await tx.citizenPaymentDebtor.findMany({
+              where: { paymentId: { in: sharedIds }, citizenId: input.citizenId },
+              select: { paymentId: true },
+            })
+          ).map((row) => row.paymentId),
+    );
+    if (
+      invoices.some((invoice) =>
+        invoice.citizenId === null ? !owedShared.has(invoice.id) : invoice.citizenId !== input.citizenId,
+      )
+    ) {
       throw new ValidationError({
         code: 'BULK_SETTLE_CITIZEN_MISMATCH',
         message: 'The selected bills do not all belong to the citizen named in the request.',
@@ -456,6 +476,8 @@ export class PaymentSettlementService {
         method: input.method,
         externalRef: input.method === 'WHISH_MONEY' ? (input.whishTransactionRef ?? null) : null,
         collectedById,
+        // On a shared unit bill (0099), the citizen settling is the debtor who paid it.
+        paidByCitizenId: owedShared.has(row.paymentId) ? input.citizenId : null,
         recordedById: actor.id,
         note: input.note,
         tendered: tender,

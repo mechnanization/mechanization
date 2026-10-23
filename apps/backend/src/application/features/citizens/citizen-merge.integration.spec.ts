@@ -443,6 +443,49 @@ describeIfDb('CitizenMergeService', () => {
     return within(() => merges.unmerge({ mergeId: into!.id, reason: 'تراجع للاختبار', tenantSlug: 'merge', actor: actor() }));
   };
 
+  it('moves the shared unit bills the absorbed person owes onto the kept file, leaves one both owe, and undoes exactly (0099)', async () => {
+    const f = await filedTwice();
+    const notice = await db.feeNotice.create({
+      data: {
+        title: `رسم القيمة التأجيرية ${randomUUID().slice(0, 6)}`,
+        amount: 0,
+        basis: 'TIERED_AREA',
+        matrixBrackets: [{ code: 'A' }],
+        frequency: 'ONCE',
+        targetType: 'ALL_CITIZENS',
+        dueDate: new Date('2026-12-31'),
+      },
+    });
+    const sharedBill = (unitId: string) =>
+      db.citizenPayment.create({
+        data: { unitId, feeNoticeId: notice.id, title: notice.title, amount: 1_000_000, dueDate: notice.dueDate },
+      });
+    const owedAlone = await sharedBill(f.u1);
+    const owedByBoth = await sharedBill(f.u2);
+    await db.citizenPaymentDebtor.createMany({
+      data: [
+        { paymentId: owedAlone.id, citizenId: f.absorbId, role: 'OWNER' },
+        { paymentId: owedByBoth.id, citizenId: f.absorbId, role: 'OWNER' },
+        { paymentId: owedByBoth.id, citizenId: f.keepId, role: 'OWNER' },
+      ],
+    });
+    const debtorsOf = async (paymentId: string) =>
+      (await db.citizenPaymentDebtor.findMany({ where: { paymentId }, select: { citizenId: true } }))
+        .map((row) => row.citizenId)
+        .sort();
+
+    await mergeIt(f);
+
+    expect(await debtorsOf(owedAlone.id)).toEqual([f.keepId]);
+    // Both were already debtors: the bill is owed either way, and the absorbed row is not the merge's to delete.
+    expect(await debtorsOf(owedByBoth.id)).toEqual([f.absorbId, f.keepId].sort());
+
+    await undoOf(f.absorbId);
+
+    expect(await debtorsOf(owedAlone.id)).toEqual([f.absorbId]);
+    expect(await debtorsOf(owedByBoth.id)).toEqual([f.absorbId, f.keepId].sort());
+  });
+
   it('takes «لا يملك رقم هاتف» onto a kept file with no answer, and gives it back on undo', async () => {
     const f = await filedTwice();
     await db.user.update({
