@@ -36,6 +36,12 @@ export interface LedgerEntryInput {
    */
   clientRequestId?: string | null;
   /**
+   * On a shared unit bill (0099), which of its debtors the money came from:
+   * required there and refused on a citizen's own bill (`recordIn`). Kept on
+   * the transaction for the receipt.
+   */
+  paidByCitizenId?: string | null;
+  /**
    * Set only by the two writes that settle a citizen's claim (PENDING_REVIEW):
    * the staff confirmation and the Whish success callback. Any other `record`
    * on a bill under review is refused (`PAYMENT_CLAIM_UNDER_REVIEW`): `append`
@@ -75,7 +81,8 @@ export interface LockedInvoice {
   paidAmount: number;
   currency: string;
   paymentStatus: string;
-  citizenId: string;
+  /** Null on a shared unit bill (0099), which its debtors owe instead. */
+  citizenId: string | null;
   createdAt: Date;
   dueDate: Date;
 }
@@ -220,6 +227,36 @@ export class PaymentLedgerService {
       const decidesThisClaim =
         input.resolvesClaim && (input.claimRef == null || input.claimRef === invoice.whishTransactionRef);
       if (!decidesThisClaim) throw claimUnderReview();
+    }
+
+    /*
+      A shared unit bill (0099, D5) has no citizen of its own: any of its
+      debtors may pay it, and the receipt names the one who did. Here, where
+      every path that settles a bill passes, so none can take money on a shared
+      bill from nobody — or name a payer on a bill that is one person's.
+    */
+    if (invoice.citizenId === null) {
+      if (!input.paidByCitizenId) {
+        throw new ValidationError({
+          code: 'SHARED_BILL_PAYER_REQUIRED',
+          message: 'A shared unit bill is paid by one of its debtors; say which.',
+        });
+      }
+      const debtor = await tx.citizenPaymentDebtor.findUnique({
+        where: { paymentId_citizenId: { paymentId: invoice.id, citizenId: input.paidByCitizenId } },
+        select: { citizenId: true },
+      });
+      if (!debtor) {
+        throw new ValidationError({
+          code: 'SHARED_BILL_PAYER_NOT_DEBTOR',
+          message: 'The payer named is not one of this shared unit bill’s debtors.',
+        });
+      }
+    } else if (input.paidByCitizenId) {
+      throw new ValidationError({
+        code: 'SHARED_BILL_PAYER_ON_OWN_BILL',
+        message: 'A payer is named only on a shared unit bill; this bill is one citizen’s.',
+      });
     }
 
     /*
@@ -391,7 +428,7 @@ export class PaymentLedgerService {
         paidAmount: string;
         currency: string;
         paymentStatus: string;
-        citizenId: string;
+        citizenId: string | null;
         createdAt: Date;
         dueDate: Date;
       }>
@@ -439,6 +476,7 @@ export class PaymentLedgerService {
           method: true,
           externalRef: true,
           collectedById: true,
+          paidByCitizenId: true,
         },
       });
       if (!original) throw new NotFoundError({
@@ -485,6 +523,8 @@ export class PaymentLedgerService {
           method: original.method as PaymentMethod,
           externalRef: original.externalRef,
           collectedById: original.collectedById,
+          // On a shared unit bill (0099), the money goes back to the debtor it came from.
+          paidByCitizenId: original.paidByCitizenId,
           recordedById: input.recordedById,
           note: input.note,
         },
@@ -555,7 +595,8 @@ export class PaymentLedgerService {
     paidAmount: number;
     currency: string;
     paymentStatus: string;
-    citizenId: string;
+    /** Null on a shared unit bill (0099), which its debtors owe instead. */
+    citizenId: string | null;
     createdAt: Date;
     /** The claim the bill is under review for, when it is (`declare`, `startWhishCheckout`). */
     whishTransactionRef: string | null;
@@ -567,7 +608,7 @@ export class PaymentLedgerService {
         paidAmount: string;
         currency: string;
         paymentStatus: string;
-        citizenId: string;
+        citizenId: string | null;
         createdAt: Date;
         whishTransactionRef: string | null;
       }>
@@ -720,6 +761,7 @@ export class PaymentLedgerService {
         adjustmentReason: input.adjustmentReason ?? null,
         clientRequestId: input.clientRequestId ?? null,
         settlementId: input.settlementId ?? null,
+        paidByCitizenId: input.paidByCitizenId ?? null,
       },
       select: { id: true, occurredAt: true },
     });

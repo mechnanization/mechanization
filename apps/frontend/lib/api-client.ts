@@ -32,7 +32,10 @@ import type {
   FeeExemptionReason,
   FeeBearer,
   FeeFrequency,
+  FeeNoticePreviewInput,
+  FeeNoticePreviewResult,
   FieldFlag,
+  SharedUnitBillView,
   ImportRow,
   InspectorProfileResponse,
   NumberingSequence,
@@ -5410,6 +5413,10 @@ export async function issueFeeNotice(
      * see `FeeAssessment.coOwnerPaidUnitCount`. Each flat once.
      */
     coOwnerPaidUnits?: number;
+    /** Of `issued`, the shared unit bills (TIERED_AREA, 0099): one per unit several citizens are charged for. */
+    sharedBills?: number;
+    /** Shared units billed to nobody because their holders' records put them in different brackets. */
+    sharedUnitConflicts?: FeeNoticePreviewResult['conflicts'];
   }>(tenant, '/fees/notices', {
     token,
     method: 'POST',
@@ -5417,6 +5424,20 @@ export async function issueFeeNotice(
   });
   invalidateRequests(`fee-summary:${tenant}`);
   return result;
+}
+
+/**
+ * «معاينة قبل الإصدار»: what `issueFeeNotice` would bill for this notice, with
+ * nothing written — the revenue, the bills, each bracket's units, what is not
+ * charged and who cannot be assessed. The same notice as the issue takes,
+ * without the retry key.
+ */
+export function previewFeeNotice(tenant: string, token: string, input: FeeNoticePreviewInput) {
+  return apiFetch<FeeNoticePreviewResult>(tenant, '/fees/notices/preview', {
+    token,
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
 }
 
 export interface FeeSummary {
@@ -5447,10 +5468,13 @@ export interface PendingPayment {
   paymentMethod: string | null;
   whishTransactionRef: string | null;
   isSeen?: boolean;
-  citizenId: string;
-  citizenName: string;
+  /** Null on a shared unit bill (0099), which has no one citizen: see `sharedUnit`. */
+  citizenId: string | null;
+  citizenName: string | null;
   citizenPhone: string | null;
   citizenReference: string | null;
+  /** On a shared unit bill, the unit and how many may pay it; null on a citizen's own bill. */
+  sharedUnit: SharedUnitBillView | null;
 }
 
 /** The clerk's queue: money claimed but not yet confirmed. */
@@ -5707,10 +5731,13 @@ export interface AdminPaymentItem {
    * itself, and on every invoice raised before per-unit billing existed.
    */
   assessment?: FeeAssessment | null;
-  citizenId: string;
-  citizenName: string;
+  /** Null on a shared unit bill (0099), which has no one citizen: see `sharedUnit`. */
+  citizenId: string | null;
+  citizenName: string | null;
   citizenPhone: string | null;
   citizenReference: string | null;
+  /** On a shared unit bill, the unit and how many may pay it; null on a citizen's own bill. */
+  sharedUnit: SharedUnitBillView | null;
 }
 
 /**

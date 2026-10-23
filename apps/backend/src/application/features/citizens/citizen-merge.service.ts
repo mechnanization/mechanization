@@ -97,6 +97,11 @@ interface MergeFootprint {
    */
   requests?: string[];
   /**
+   * Shared unit bills (0099) the absorbed person was a debtor on, now owed by
+   * the kept one. Absent on a merge recorded before shared bills existed.
+   */
+  sharedBillDebts?: string[];
+  /**
    * Cards on which somebody had said «ليس هذا المالك» about the absorbed
    * person. The undo maps the kept person back to the absorbed one on these —
    * never overwrites the list, which may have gained answers since.
@@ -182,7 +187,8 @@ interface Loaded {
   plan: MergePlan;
   payments: Array<{
     id: string;
-    citizenId: string;
+    /** Never null here: these are read by citizen. Typed as the column is, nullable since 0099. */
+    citizenId: string | null;
     feeNoticeId: string | null;
     periodKey: string;
     title: string;
@@ -198,6 +204,12 @@ interface Loaded {
   dismissals: Array<{ id: string; landlordLinkDismissedIds: string[] }>;
   /** Flats that name the absorbed person as the owner who pays for all (0075). */
   responsibleUnits: string[];
+  /**
+   * Shared unit bills (0099) the absorbed person is a debtor on and the kept
+   * one is not. A bill both are debtors on keeps both rows: it is owed either
+   * way, and a debtor row is not this action's to delete.
+   */
+  sharedBillDebts: string[];
   unitCodes: Map<string, string>;
   /** The building each spell's unit stands in — for the census trail of a spell with no card. */
   unitBuilding: Map<string, string>;
@@ -687,6 +699,12 @@ export class CitizenMergeService {
       select: { id: true, firstName: true, lastName: true },
     });
 
+    const debts = await this.db.citizenPaymentDebtor.findMany({
+      where: { citizenId: { in: people } },
+      select: { paymentId: true, citizenId: true },
+    });
+    const keepDebts = new Set(debts.filter((debt) => debt.citizenId === keepId).map((debt) => debt.paymentId));
+
     return {
       keep: keep as Loaded['keep'],
       absorb: absorb as Loaded['absorb'],
@@ -700,6 +718,9 @@ export class CitizenMergeService {
       mints,
       dismissals,
       responsibleUnits: responsibleUnits.map((row) => row.id),
+      sharedBillDebts: debts
+        .filter((debt) => debt.citizenId === absorbId && !keepDebts.has(debt.paymentId))
+        .map((debt) => debt.paymentId),
       unitCodes,
       unitBuilding,
       officers: new Map(officerRows.map((row) => [row.id, `${row.firstName} ${row.lastName}`])),
@@ -1085,6 +1106,13 @@ export class CitizenMergeService {
     if (payments.length > 0) {
       await db.citizenPayment.updateMany({ where: { id: { in: payments } }, data: { citizenId: keep.id } });
     }
+    // And the shared unit bills (0099) the absorbed person owes as a debtor; see `Loaded.sharedBillDebts`.
+    if (loaded.sharedBillDebts.length > 0) {
+      await db.citizenPaymentDebtor.updateMany({
+        where: { citizenId: absorb.id, paymentId: { in: loaded.sharedBillDebts } },
+        data: { citizenId: keep.id },
+      });
+    }
     const checkouts = loaded.checkouts
       .filter((checkout) => !collisions.has(checkout.paymentId))
       .map((checkout) => checkout.id);
@@ -1207,6 +1235,7 @@ export class CitizenMergeService {
       mints: loaded.mints.map((card) => card.id),
       responsibleUnits: loaded.responsibleUnits,
       requests,
+      sharedBillDebts: loaded.sharedBillDebts,
       dismissals,
       reviewMoves,
       fills: plan.fills.map((fill) => fill.field),
@@ -1369,6 +1398,12 @@ export class CitizenMergeService {
     }
     if (footprint.payments.length > 0) {
       await db.citizenPayment.updateMany({ where: { id: { in: footprint.payments } }, data: { citizenId: absorbId } });
+    }
+    if ((footprint.sharedBillDebts ?? []).length > 0) {
+      await db.citizenPaymentDebtor.updateMany({
+        where: { paymentId: { in: footprint.sharedBillDebts }, citizenId: keepId },
+        data: { citizenId: absorbId },
+      });
     }
     if ((footprint.requests ?? []).length > 0) {
       await db.citizenRequest.updateMany({

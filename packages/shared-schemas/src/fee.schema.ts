@@ -1,9 +1,9 @@
 import { z } from 'zod';
 import { normalizeDigits, uuid } from './primitives';
-import { OWNER_BILLING_MODE } from './enums';
+import { OWNER_BILLING_MODE, UNIT_TYPE } from './enums';
 import { ADJUSTMENT_REASON_MIN, municipalToday } from './cash-policy';
 import { hasAtMostTwoDecimals } from './money-amount';
-import { levelFactorsSchema } from './unit-levels';
+import { canSpanLevels, levelFactorsSchema, unitLevels, unitLevelsField } from './unit-levels';
 
 /**
  * Fees, and the per-citizen invoices they produce.
@@ -138,11 +138,18 @@ export type FeeTargetCategory = (typeof FEE_TARGET_CATEGORY)[number];
  *  - `PER_UNIT` — the rate times how many matching units the citizen holds.
  *  - `PER_AREA` — the rate times their total area in square metres.
  *
- * Which of the three is right is a municipal decision with a legal basis
+ * `TIERED_AREA` (0098) has no rate at all: the notice carries a table of area
+ * brackets the assessment committee set («A» up to 100 m², «B» from 100 to
+ * 150 m², …, `feeMatrixSchema`), and each unit is charged the bracket its area
+ * falls in. `amount` is 0 under it. A unit two or more citizens are charged for
+ * is billed once, in full, as a shared unit bill (decision D5,
+ * docs/fees-system-rearchitecture-specification.md).
+ *
+ * Which of these is right is a municipal decision with a legal basis
  * behind it, not an engineering one, which is why none of them is imposed and
  * why every notice written before this existed keeps billing exactly as it did.
  */
-export const FEE_BASIS = ['FLAT', 'PER_UNIT', 'PER_AREA'] as const;
+export const FEE_BASIS = ['FLAT', 'PER_UNIT', 'PER_AREA', 'TIERED_AREA'] as const;
 export const feeBasisSchema = z.enum(FEE_BASIS).default('FLAT');
 export type FeeBasis = (typeof FEE_BASIS)[number];
 
@@ -246,6 +253,13 @@ export const feeAssessmentLineSchema = z.object({
    * roof per storey (decision D28). `chargedUnits` is the sum of these.
    */
   levelFactor: z.number().positive().optional(),
+  /**
+   * Under TIERED_AREA, the bracket this unit's area fell in — its code («B») and
+   * label as the notice's table had them when the bill was raised. Absent under
+   * every other basis.
+   */
+  bracketCode: z.string().optional(),
+  bracketLabel: z.string().optional(),
 });
 
 export const feeAssessmentSchema = z.object({
@@ -321,6 +335,14 @@ export const feeAssessmentSchema = z.object({
    * counts exactly one, where it equals `unitCount`.
    */
   chargedUnits: z.number().optional(),
+  /**
+   * TIERED_AREA only (decision D5). On a shared unit bill, how many registered
+   * citizens may pay it — the number, never the names (open question O2). On a
+   * citizen's own bill, how many of their units went to shared unit bills
+   * instead, so the bill says so rather than reading as a smaller holding.
+   */
+  sharedBillDebtorCount: z.number().int().min(2).optional(),
+  sharedBillUnitCount: z.number().int().min(1).optional(),
   lines: z.array(feeAssessmentLineSchema),
 });
 
@@ -353,37 +375,273 @@ const lbpAmount = z.coerce
   .positive('المبلغ يجب أن يكون أكبر من صفر')
   .max(1_000_000_000, 'المبلغ كبير جداً — يرجى المراجعة');
 
+/** Square metres as the census records them: not negative, two decimals at most (`units.unitArea`, DECIMAL(12,2)). */
+const bracketArea = z
+  .number({ invalid_type_error: 'المساحة يجب أن تكون رقماً' })
+  .nonnegative('المساحة لا تكون سالبة')
+  .max(1_000_000, 'المساحة كبيرة جداً — يرجى المراجعة')
+  .refine(hasAtMostTwoDecimals, 'المساحة بخانتين عشريتين على الأكثر');
+
 /**
- * Issuing a fee. The three target types each require different companions,
- * which is what the refinement below enforces — an "individual" fee with no
- * citizen attached would fan out to nobody and look like a silent failure.
+ * One row of a TIERED_AREA notice's table: «الفئة B — من 100 إلى 150 م² —
+ * 1,500,000 ل.ل», for the unit types and level count it names (decisions D1
+ * and D7, docs/fees-system-rearchitecture-specification.md).
+ *
+ * The range includes `minArea` and stops short of `maxArea`, so 100 m² sits in
+ * exactly one of `[50, 100)` and `[100, 150)`, and an area of 100.5 m² cannot
+ * fall between two brackets. `maxArea` null is no ceiling: the top bracket.
+ *
+ * `levels` picks the table: 1 for a one-level unit, 2 for a «دوبلكس», 3 for a
+ * «تريبلكس» (`Unit.levels`, 0095). Only a dwelling spans levels, so a bracket
+ * for more than one level names dwelling types only. The duplex and triplex
+ * brackets replace the roof factor (`levelFactors`), which TIERED_AREA does not
+ * read. Amounts are whole pounds, like every notice amount.
  */
-export const createFeeNoticeSchema = z
+export const feeMatrixBracketSchema = z
   .object({
-    title: z
-      .string({ required_error: 'اسم الرسم مطلوب' })
+    code: z
+      .string({ required_error: 'رمز الفئة مطلوب' })
       .trim()
-      .min(3, 'اسم الرسم قصير جداً')
-      .max(120, 'اسم الرسم طويل جداً'),
+      .min(1, 'رمز الفئة مطلوب')
+      .max(10, 'رمز الفئة طويل جداً'),
+    labelAr: z
+      .string({ required_error: 'اسم الفئة مطلوب' })
+      .trim()
+      .min(1, 'اسم الفئة مطلوب')
+      .max(80, 'اسم الفئة طويل جداً'),
+    unitTypes: z
+      .array(z.enum(UNIT_TYPE), { required_error: 'اختر نوع الوحدة' })
+      .min(1, 'اختر نوعاً واحداً على الأقل من الوحدات')
+      .refine((types) => new Set(types).size === types.length, 'نوع الوحدة مكرّر في الفئة'),
+    levels: unitLevelsField.default(1),
+    minArea: bracketArea,
+    maxArea: bracketArea.nullable(),
     amount: lbpAmount,
-    /** What `amount` is per — see `FEE_BASIS`. Absent means the original flat charge. */
-    basis: feeBasisSchema,
-    /**
-     * Who owes this fee — see `FEE_BEARER`.
-     *
-     * Meaningless under FLAT, where the amount does not depend on holdings at
-     * all, and ignored there rather than refused: a notice switched from
-     * PER_UNIT to FLAT and back should not lose the setting in between.
-     */
-    bearer: feeBearerSchema,
-    frequency: feeFrequencySchema,
-    targetType: feeTargetTypeSchema,
-    targetCategory: feeTargetCategorySchema.optional(),
-    targetCitizenId: uuid.optional(),
-    dueDate: z
-      .string({ required_error: 'تاريخ الاستحقاق مطلوب' })
-      .min(1, 'تاريخ الاستحقاق مطلوب'),
-    instructions: z.string().trim().max(1000).optional(),
+  })
+  .refine((bracket) => bracket.maxArea === null || bracket.maxArea > bracket.minArea, {
+    path: ['maxArea'],
+    message: 'الحد الأعلى للمساحة يجب أن يكون أكبر من الحد الأدنى',
+  })
+  .refine((bracket) => bracket.levels === 1 || bracket.unitTypes.every(canSpanLevels), {
+    path: ['levels'],
+    message: 'المسكن وحده يمتد على أكثر من طابق: اختر شقة أو منزلاً مستقلاً',
+  });
+export type FeeMatrixBracket = z.infer<typeof feeMatrixBracketSchema>;
+
+/** The most rows one table may hold. A sanity bound: nine categories over three level counts is 27. */
+export const FEE_MATRIX_MAX_BRACKETS = 100;
+
+/**
+ * A TIERED_AREA notice's whole table.
+ *
+ * Each (unit type, level count) a bracket names is its own scale, and on each
+ * scale the brackets, sorted by `minArea`, run one into the next: no two
+ * overlap, none leaves a gap, and only the last may be open-ended. A scale need
+ * not start at 0: a unit smaller than its first bracket is reported, not priced
+ * by guess. Codes are unique across the table, since a bill names its bracket
+ * by code.
+ */
+export const feeMatrixSchema = z
+  .array(feeMatrixBracketSchema, { required_error: 'جدول الفئات مطلوب' })
+  .min(1, 'أضف فئة واحدة على الأقل')
+  .max(FEE_MATRIX_MAX_BRACKETS, `الجدول لا يتجاوز ${FEE_MATRIX_MAX_BRACKETS} فئة`)
+  .superRefine((brackets, ctx) => {
+    const seenCodes = new Map<string, number>();
+    brackets.forEach((bracket, index) => {
+      const first = seenCodes.get(bracket.code);
+      if (first !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [index, 'code'],
+          message: `الرمز «${bracket.code}» مستعمل لفئة أخرى`,
+        });
+      } else {
+        seenCodes.set(bracket.code, index);
+      }
+    });
+
+    for (const scale of bracketScales(brackets)) {
+      for (let i = 1; i < scale.length; i += 1) {
+        const previous = scale[i - 1]!;
+        const current = scale[i]!;
+        const ceiling = previous.bracket.maxArea;
+        if (ceiling === null || current.bracket.minArea < ceiling) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [current.index, 'minArea'],
+            message: `الفئة «${current.bracket.code}» تتداخل مع الفئة «${previous.bracket.code}» في المساحة`,
+          });
+        } else if (current.bracket.minArea > ceiling) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [current.index, 'minArea'],
+            message: `بين الفئة «${previous.bracket.code}» والفئة «${current.bracket.code}» مساحات لا تقع في أي فئة`,
+          });
+        }
+      }
+    }
+  });
+export type FeeMatrix = z.infer<typeof feeMatrixSchema>;
+
+/**
+ * The table split into its scales: one per (unit type, level count) a bracket
+ * names, each sorted by `minArea`, every row with its index in the table.
+ * A bracket naming three unit types sits on three scales.
+ */
+export function bracketScales<B extends Pick<FeeMatrixBracket, 'unitTypes' | 'levels' | 'minArea'>>(
+  brackets: readonly B[],
+): Array<Array<{ bracket: B; index: number }>> {
+  const scales = new Map<string, Array<{ bracket: B; index: number }>>();
+  brackets.forEach((bracket, index) => {
+    for (const unitType of bracket.unitTypes) {
+      const key = `${unitType}:${bracket.levels}`;
+      const scale = scales.get(key) ?? [];
+      scale.push({ bracket, index });
+      scales.set(key, scale);
+    }
+  });
+  return [...scales.values()].map((scale) =>
+    scale.sort((a, b) => a.bracket.minArea - b.bracket.minArea || a.index - b.index),
+  );
+}
+
+/** Why a unit has no bracket: no area recorded, or no bracket for its type, level count and area. */
+export type BracketMiss = 'NO_AREA' | 'NO_BRACKET';
+
+/**
+ * The bracket one unit falls in, or why it falls in none.
+ *
+ * The scale is the unit's own type and level count (D1, D7); on it, the
+ * bracket whose range holds the area, `minArea` included and `maxArea` not.
+ * A table that passed `feeMatrixSchema` holds at most one such bracket. A unit
+ * with no area, or no type, or one the table does not price, is a miss and is
+ * never priced by guess: the biller reports it, and the drawer says so.
+ */
+export function matchBracket<B extends Pick<FeeMatrixBracket, 'unitTypes' | 'levels' | 'minArea' | 'maxArea'>>(
+  unit: { unitType: string | null; unitArea: number | null; levels?: number | null },
+  brackets: readonly B[],
+): { kind: 'matched'; bracket: B } | { kind: 'miss'; reason: BracketMiss } {
+  if (unit.unitArea === null || !Number.isFinite(unit.unitArea)) return { kind: 'miss', reason: 'NO_AREA' };
+  const area = unit.unitArea;
+  const levels = unitLevels(unit);
+  const bracket = brackets.find(
+    (row) =>
+      unit.unitType !== null &&
+      (row.unitTypes as readonly string[]).includes(unit.unitType) &&
+      row.levels === levels &&
+      area >= row.minArea &&
+      (row.maxArea === null || area < row.maxArea),
+  );
+  return bracket ? { kind: 'matched', bracket } : { kind: 'miss', reason: 'NO_BRACKET' };
+}
+
+/**
+ * A notice amount: whole pounds and not negative here, because a TIERED_AREA
+ * notice's amount is 0 — the brackets carry the money. Under every other basis
+ * the refinement below asks for more than zero, with the words `lbpAmount`
+ * uses.
+ */
+const noticeAmount = z.coerce
+  .number({
+    required_error: 'المبلغ مطلوب',
+    invalid_type_error: 'المبلغ يجب أن يكون رقماً',
+  })
+  .int('المبلغ يجب أن يكون رقماً صحيحاً بالليرة')
+  .nonnegative('المبلغ يجب أن يكون أكبر من صفر')
+  .max(1_000_000_000, 'المبلغ كبير جداً — يرجى المراجعة');
+
+/**
+ * What a notice says, before the wizard's retry key: shared by issuing it
+ * (`createFeeNoticeSchema`) and previewing it (`feeNoticePreviewSchema`), so
+ * the preview reads exactly what the issue would.
+ */
+const feeNoticeFields = z.object({
+  title: z
+    .string({ required_error: 'اسم الرسم مطلوب' })
+    .trim()
+    .min(3, 'اسم الرسم قصير جداً')
+    .max(120, 'اسم الرسم طويل جداً'),
+  /** The whole bill under FLAT, the rate under PER_UNIT and PER_AREA, 0 under TIERED_AREA. */
+  amount: noticeAmount,
+  /** What `amount` is per — see `FEE_BASIS`. Absent means the original flat charge. */
+  basis: feeBasisSchema,
+  /** The bracket table, under TIERED_AREA and only then (CHECK fee_notices_matrix_brackets_basis). */
+  matrixBrackets: feeMatrixSchema.optional(),
+  /**
+   * Who owes this fee — see `FEE_BEARER`.
+   *
+   * Meaningless under FLAT, where the amount does not depend on holdings at
+   * all, and ignored there rather than refused: a notice switched from
+   * PER_UNIT to FLAT and back should not lose the setting in between.
+   */
+  bearer: feeBearerSchema,
+  frequency: feeFrequencySchema,
+  targetType: feeTargetTypeSchema,
+  targetCategory: feeTargetCategorySchema.optional(),
+  targetCitizenId: uuid.optional(),
+  dueDate: z
+    .string({ required_error: 'تاريخ الاستحقاق مطلوب' })
+    .min(1, 'تاريخ الاستحقاق مطلوب'),
+  instructions: z.string().trim().max(1000).optional(),
+});
+
+/**
+ * The rules across a notice's fields. The three target types each require
+ * different companions — an "individual" fee with no citizen attached would
+ * fan out to nobody and look like a silent failure — and the basis decides
+ * between an amount and a bracket table, never both.
+ */
+function refineFeeNotice(data: z.infer<typeof feeNoticeFields>, ctx: z.RefinementCtx): void {
+  if (data.targetType === 'BUILDING_CATEGORY' && !data.targetCategory) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['targetCategory'],
+      message: 'اختر فئة العقارات المستهدفة',
+    });
+  }
+  if (data.targetType === 'INDIVIDUAL_CITIZEN' && !data.targetCitizenId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['targetCitizenId'],
+      message: 'اختر المواطن المستهدف',
+    });
+  }
+  if (data.basis === 'TIERED_AREA') {
+    if (!data.matrixBrackets) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['matrixBrackets'],
+        message: 'أدخل جدول الفئات',
+      });
+    }
+    if (data.amount !== 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['amount'],
+        message: 'المبلغ يُحدَّد من جدول الفئات: اتركه صفراً',
+      });
+    }
+  } else {
+    if (data.matrixBrackets) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['matrixBrackets'],
+        message: 'جدول الفئات للرسم حسب فئة المساحة وحده',
+      });
+    }
+    if (data.amount === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['amount'],
+        message: 'المبلغ يجب أن يكون أكبر من صفر',
+      });
+    }
+  }
+}
+
+/** Issuing a fee: what the notice says, and the wizard's retry key. */
+export const createFeeNoticeSchema = feeNoticeFields
+  .extend({
     /**
      * The wizard's id for this issue (migration 0091). A notice bills everyone
      * it targets, so a retry after a lost answer must answer with the first
@@ -392,24 +650,80 @@ export const createFeeNoticeSchema = z
      */
     clientRequestId: uuid,
   })
-  .superRefine((data, ctx) => {
-    if (data.targetType === 'BUILDING_CATEGORY' && !data.targetCategory) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['targetCategory'],
-        message: 'اختر فئة العقارات المستهدفة',
-      });
-    }
-    if (data.targetType === 'INDIVIDUAL_CITIZEN' && !data.targetCitizenId) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['targetCitizenId'],
-        message: 'اختر المواطن المستهدف',
-      });
-    }
-  });
+  .superRefine(refineFeeNotice);
 
 export type CreateFeeNotice = z.infer<typeof createFeeNoticeSchema>;
+
+/**
+ * «معاينة قبل الإصدار»: the same notice, asked what it would bill without
+ * billing anyone. No retry key, because nothing is written.
+ */
+export const feeNoticePreviewSchema = feeNoticeFields.superRefine(refineFeeNotice);
+export type FeeNoticePreviewInput = z.infer<typeof feeNoticePreviewSchema>;
+
+/**
+ * What the preview answers: what issuing this notice now would bill, read by
+ * the same path the issue takes (`FeesService.planNotice`) and written nowhere.
+ *
+ * `expectedRevenue` is the citizens' own bills plus the shared unit bills, in
+ * whole pounds. `brackets` is empty under every basis but TIERED_AREA, where it
+ * counts each unit once, a shared one included, in the table's own order. The
+ * `notCharged` counts are each unit once across the run, as the issue counts
+ * them. `unassessable` names the citizens the issue would skip and why — a
+ * staff read, as the issue's own answer is. `conflicts` are units shared by
+ * citizens whose records put them in different brackets, billed to nobody
+ * (`splitSharedUnitBills`); the people are counted, not named.
+ */
+export const feeNoticePreviewResultSchema = z.object({
+  targetedCitizens: z.number().int().nonnegative(),
+  /** Citizens who would get a bill of their own. */
+  billedCitizens: z.number().int().nonnegative(),
+  /** Units billed once to everyone charged for them (TIERED_AREA, D5). */
+  sharedBills: z.number().int().nonnegative(),
+  expectedRevenue: z.number().nonnegative(),
+  currency: z.string(),
+  brackets: z.array(
+    z.object({
+      code: z.string(),
+      label: z.string(),
+      unitCount: z.number().int().nonnegative(),
+      subtotal: z.number().nonnegative(),
+    }),
+  ),
+  notCharged: z.object({
+    /** Not this person's to pay under the bearer rule: let, empty, still being built. */
+    excludedUnits: z.number().int().nonnegative(),
+    heldUnits: z.number().int().nonnegative(),
+    uninhabitableUnits: z.number().int().nonnegative(),
+    feeExemptUnits: z.number().int().nonnegative(),
+    coOwnerPaidUnits: z.number().int().nonnegative(),
+  }),
+  unassessable: z.array(z.object({ citizenId: z.string(), name: z.string(), reason: z.string() })),
+  conflicts: z.array(
+    z.object({
+      unitId: z.string(),
+      unitCode: z.string().nullable(),
+      propertyNumber: z.string().nullable(),
+      citizenCount: z.number().int().min(2),
+      bracketCodes: z.array(z.string()),
+    }),
+  ),
+});
+export type FeeNoticePreviewResult = z.infer<typeof feeNoticePreviewResultSchema>;
+
+/**
+ * A shared unit bill as a staff list shows it (0099, D5): the unit it is for
+ * and how many registered citizens may pay it. Lists that name a bill's citizen
+ * carry this instead, with the citizen fields null, because a shared bill has
+ * no one citizen. The debtors are counted, never named (open question O2).
+ */
+export interface SharedUnitBillView {
+  unitId: string;
+  /** «0201», formatted from the unit's floor and sequence as the receipt prints it. */
+  unitCode: string;
+  buildingCode: string;
+  debtorCount: number;
+}
 
 /**
  * An urgent-payment ceiling as the settings form sends it: greater than zero,
@@ -709,6 +1023,13 @@ export const settlePaymentSchema = z
      */
     collectedById: uuid.optional(),
     /**
+     * On a shared unit bill (0099, D5), which of its debtors paid: the server
+     * requires it there (`SHARED_BILL_PAYER_REQUIRED`), checks it is one of the
+     * bill's debtors, and refuses it on a citizen's own bill. Kept on the
+     * receipt's transaction.
+     */
+    paidByCitizenId: uuid.optional(),
+    /**
      * The day the money was taken, when it was not today — a payment written
      * up the morning after, or a collector's round entered at the end of the
      * week. Never after today on the municipality's own calendar. Omitted
@@ -944,9 +1265,12 @@ export type ParcelDuesQuery = z.infer<typeof parcelDuesQuerySchema>;
 /** One open bill, and the part of what remains on it that is this parcel's. */
 export interface ParcelDuesBill {
   paymentId: string;
-  citizenId: string;
-  /** «ورثة المرحوم …» for an estate. */
-  citizenName: string;
+  /** Null on a shared unit bill (0099), which has no one citizen: see `sharedDebtorCount`. */
+  citizenId: string | null;
+  /** «ورثة المرحوم …» for an estate. Null on a shared unit bill. */
+  citizenName: string | null;
+  /** On a shared unit bill, how many registered citizens may pay it; null on a citizen's own bill. */
+  sharedDebtorCount: number | null;
   title: string;
   dueDate: string;
   paymentStatus: 'UNPAID' | 'OVERDUE' | 'PENDING_REVIEW';

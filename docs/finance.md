@@ -2010,6 +2010,16 @@ custody wallet and had no way out. Built:
   `PaymentReceipt` to print, download or send it over WhatsApp. Nothing new was
   built for the receipt itself.
 
+  **A shared unit bill (0099, decision D5 of 2026-10-23,
+  docs/fees-system-rearchitecture-specification.md)** has no citizen of its own:
+  any of its debtors may pay it, once, in full. The ledger (`recordIn`) takes the
+  money only with the paying debtor named (`payment_transactions.paidByCitizenId`)
+  and checks they are one of the bill's debtors; a reversal carries the same
+  payer. The collector's two views (`TransfersService.collections`, «جولتي»)
+  name that debtor, and take the sector and the door from the shared unit itself
+  rather than from where the payer lives. Reprinting such a receipt from a
+  citizen's file waits for the file to show shared bills.
+
   The list is **everything since his last handover**, not "today": his pocket
   does not empty at midnight, and a man who collected yesterday and has not
   handed in would otherwise see a full pocket above an empty list. After a

@@ -147,6 +147,7 @@ export default function PaymentsPage({
   const base = `/${tenant}/${locale}/${adminPath}`;
 
   const t = useTranslations('payments');
+  const tCommon = useTranslations('common');
   /*
     Only what is about payments rather than about tables: the placeholder names
     this screen's searchable fields, and the row count is «١٢ عملية» rather than
@@ -327,10 +328,12 @@ export default function PaymentsPage({
   /** Reprints the وصل for one transaction, exactly as إدارة الرسوم does. */
   const openReceipt = useCallback(
     async (payment: AdminPaymentItem) => {
-      if (!token) return;
+      // A receipt is rebuilt from the citizen's file; a shared unit bill (0099) has none yet.
+      if (!token || !payment.citizenId) return;
+      const citizenId = payment.citizenId;
       setReceiptBusyId(payment.id);
       try {
-        const profile = await getCitizenProfile(tenant, token, payment.citizenId);
+        const profile = await getCitizenProfile(tenant, token, citizenId);
         const row = profile.payments.find((entry) => entry.id === payment.id);
         if (!row) return;
         setReceipt({ citizen: profile, payment: row, received: payment.paidAmount });
@@ -420,10 +423,20 @@ export default function PaymentsPage({
                 aria-hidden
                 className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary"
               >
-                {initials(payment.citizenName)}
+                {initials(payment.citizenName ?? '')}
               </span>
               <div className="min-w-0 space-y-0.5">
-                <p className="truncate font-medium">{payment.citizenName}</p>
+                <p className="truncate font-medium">
+                  {/* A shared unit bill (0099) has no one citizen: the unit is named, its people counted. */}
+                  {payment.citizenName ??
+                    (payment.sharedUnit
+                      ? tCommon('sharedUnitBill', {
+                          building: payment.sharedUnit.buildingCode,
+                          unit: payment.sharedUnit.unitCode,
+                          count: payment.sharedUnit.debtorCount,
+                        })
+                      : '—')}
+                </p>
                 <p className="truncate text-xs text-muted-foreground">
                   {payment.citizenReference ? (
                     <span className="font-mono" dir="ltr">
@@ -596,7 +609,7 @@ export default function PaymentsPage({
         },
       },
     ],
-    [copiedId, copyId, openReceipt, receiptBusyId, t, labels, locale],
+    [copiedId, copyId, openReceipt, receiptBusyId, t, tCommon, labels, locale],
   );
 
   if (!token) return null;

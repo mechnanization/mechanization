@@ -42,8 +42,9 @@ export interface SelectedBill {
 export function fromAdminPayment(row: AdminPaymentItem): SelectedBill {
   return {
     id: row.id,
-    citizenId: row.citizenId,
-    citizenName: row.citizenName,
+    // Blank only on a shared unit bill (0099), which `isBulkSettleable` never lets into a set.
+    citizenId: row.citizenId ?? '',
+    citizenName: row.citizenName ?? '',
     invoiceNumber: row.invoiceNumber ?? null,
     title: row.title,
     currency: row.currency,
@@ -73,8 +74,13 @@ export function fromCitizenPayment(citizen: { id: string; fullName: string }, ro
  * neither paid nor a Whish claim waiting for review — a claim is settled by
  * confirming it, not by taking the money a second time.
  */
-export function isBulkSettleable(row: { paymentStatus: string; remaining: number }): boolean {
-  return row.remaining > 0 && (row.paymentStatus === 'UNPAID' || row.paymentStatus === 'OVERDUE');
+export function isBulkSettleable(row: { paymentStatus: string; remaining: number; citizenId?: string | null }): boolean {
+  return (
+    row.remaining > 0 &&
+    (row.paymentStatus === 'UNPAID' || row.paymentStatus === 'OVERDUE') &&
+    // A shared unit bill (0099) is no one citizen's, and one press settles one citizen's bills.
+    row.citizenId !== null
+  );
 }
 
 /**

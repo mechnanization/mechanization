@@ -1,5 +1,6 @@
 {
   "common": {
+    "sharedUnitBill": "Shared unit {building} / {unit} — people registered: {count}",
     "appName": "Municipal Register",
     "appSubtitle": "Property and Housing Units Platform",
     "systemName": "Official System for Property Registration & Inventory for Lebanese Municipalities",
@@ -229,6 +230,9 @@
     "PAYMENT_ALREADY_UNDER_REVIEW": "This payment is already under review.",
     "PAYMENT_DECLARATION_WHISH_ONLY": "Only a Whish Money transfer, with its reference number, can be reported here. Cash is paid at the municipality's cash office and is not reported here.",
     "PAYMENT_CLAIM_UNDER_REVIEW": "The citizen has a payment claim under review on this bill. Confirm or reject it first in Fees & billing (“Pending Review”), then try again.",
+    "SHARED_BILL_PAYER_REQUIRED": "This is a shared unit bill: choose which of the people registered on the unit paid it.",
+    "SHARED_BILL_PAYER_NOT_DEBTOR": "The person chosen is not registered on this shared unit.",
+    "SHARED_BILL_PAYER_ON_OWN_BILL": "This bill belongs to one citizen; no payer is chosen for it.",
     "PAYMENT_STATE_CHANGED": "This payment changed since the screen was opened. Refresh the page.",
     "PAYMENT_NO_PENDING_REVIEW": "There is no pending payment to review on this record.",
     "PAYMENT_NOTHING_OUTSTANDING": "Nothing is outstanding on this charge.",
@@ -3161,6 +3165,7 @@
     "total": "Owed on the parcel",
     "totalHint": "The parcel's part of every open bill with a unit on it, by the bill's own lines (area or units, and owners' parts).",
     "billsTitle": "Bills on units of this parcel",
+    "sharedBill": "Shared unit bill — people registered on it: {count}",
     "remaining": "Remaining on the bill",
     "onParcel": "This parcel's part",
     "partOfBill": "The bill also covers other parcels",
