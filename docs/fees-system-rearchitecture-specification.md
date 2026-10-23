@@ -387,19 +387,35 @@ Built on `feat/tiered-fees-cancel-and-wizard`.
 
 ### Phase 8: frontend
 
-- `components/admin/issue-fee-form.tsx`: `TIERED_AREA` as a basis; a bracket
-  editor (kit primitives only, [docs/ui-ux-standards.md](ui-ux-standards.md))
-  grouped by unit type and level count, with the same overlap and gap checks
-  the schema runs; the preview as a required step before «إصدار».
-- `components/admin/building-unit-matrix-drawer.tsx`: the unit's bracket and
-  estimated fee under the active tiered notice, via `matchBracket`.
-- The notice list on the fees page: «إلغاء الإشعار» for `BILL_CANCEL_ROLES`,
-  showing what will be cancelled and what will be skipped. There is no notice
-  detail page today.
-- Portal: a shared bill labelled as shared, with the count of others (O2).
-- New copy in `messages/ar.json` and `messages/en.json`; the §16 pre-merge
-  checklist in ui-ux-standards.
-- Commit: `feat(fees): tiered bracket editor, notice preview and batch cancel in the dashboard`
+Built on `feat/tiered-fees-cancel-and-wizard`, in three commits:
+
+- **The wizard** (`components/admin/issue-fee-form.tsx`): `TIERED_AREA` as a
+  basis, the bracket editor (`components/admin/fees/tiered-matrix-editor.tsx`:
+  kit primitives only, checked by `feeMatrixSchema` through `matrixIssues`), and
+  «معاينة قبل الإصدار» (`components/admin/fees/notice-preview.tsx`) as a
+  required step before «إصدار», for every basis. One notice payload for the
+  preview and the issue (`lib/fee-notice-draft.ts`, `noticePayload`), which
+  also stopped the wizard sending its default category with every target (a
+  per-unit notice to all citizens had charged their shops alone).
+- **The counter** («تسجيل دفعة»): a shared bill's payer chosen from its debtors
+  (`sharedDebtors` on `GET fees/payments/:id`), required, sent as
+  `paidByCitizenId`.
+- **«إشعارات الرسوم»** (`/fees/notices`): there was no notice list, so it was
+  added, with «إلغاء الإشعار» for `BILL_CANCEL_ROLES` behind a `ConfirmDialog`
+  that says what is cancelled, what is left and that it cannot be undone; the
+  bills left are listed after.
+- Portal: a shared bill labelled as shared, with the count of others (O2) —
+  done in Phase 6.
+- New copy in both message files. `PRODUCT.md` updated.
+- **Not done:** the unit drawer's estimate (`building-unit-matrix-drawer.tsx`,
+  the unit's bracket under each active tiered notice via `matchBracket`): the
+  drawer is a census screen whose roles do not read the fees, and the notices
+  it would read carry no table yet (`GET fees/notices` does not return
+  `matrixBrackets`). And the §16 pre-merge checklist's rendering (360/1440,
+  light/dark, ar/en) was not run: no browser harness was set up.
+- Commits: `feat(fees): tiered bracket editor and the notice preview in the
+  issue wizard`, `feat(fees): choose the payer of a shared unit bill at the
+  counter`, `feat(fees): the fee notices page and «إلغاء الإشعار»`.
 
 ### Phase 9: verification and docs
 
