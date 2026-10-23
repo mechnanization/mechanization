@@ -355,6 +355,17 @@ export function assessCitizen(
     };
   }
 
+  /*
+    TIERED_AREA is priced by the notice's bracket table, which this function
+    does not read yet (Phase 3, docs/fees-system-rearchitecture-specification.md).
+    Refused outright rather than allowed to fall through to the per-unit
+    arithmetic below, which would bill a bracket notice as «rate × units» at a
+    rate of 0. The wizard does not offer the basis until then.
+  */
+  if (notice.basis === 'TIERED_AREA') {
+    throw new Error('assessCitizen: TIERED_AREA notices are not priced yet');
+  }
+
   const unsurveyed = unsurveyedCanMatter(notice.targetCategory)
     ? entries.find(isUnsurveyed)
     : undefined;
