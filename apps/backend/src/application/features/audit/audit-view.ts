@@ -1,4 +1,4 @@
-import { citizenDisplayName } from '@mechanization/shared-schemas';
+import { citizenDisplayName, formatUnitCode } from '@mechanization/shared-schemas';
 import { AuditLogEntry } from '../../../domain/entities/audit-log-entry.entity';
 import { ReferenceNumber } from '../../../domain/value-objects/reference-number.vo';
 import type { AuditRow } from '../../../domain/interfaces/audit-repository.interface';
@@ -133,6 +133,8 @@ export async function toAuditViews(db: PrismaClient, rows: readonly AuditRow[]):
             id: true,
             title: true,
             citizen: { select: { id: true, firstName: true, middleName: true, lastName: true, residence: true } },
+            // A shared unit bill (0099) has no citizen: it is named by its unit.
+            unit: { select: { floor: true, sequence: true, building: { select: { id: true, code: true } } } },
           },
         })
       : [],
@@ -264,13 +266,21 @@ export async function toAuditViews(db: PrismaClient, rows: readonly AuditRow[]):
         return labelled(
           ids.map((id) => {
             const payment = paymentById.get(id);
-            return payment
-              ? {
-                  label: fullName(payment.citizen),
-                  secondary: payment.title,
-                  link: { kind: 'citizen', id: payment.citizen.id },
-                }
-              : null;
+            if (payment?.citizen) {
+              return {
+                label: fullName(payment.citizen),
+                secondary: payment.title,
+                link: { kind: 'citizen', id: payment.citizen.id },
+              };
+            }
+            if (payment?.unit) {
+              return {
+                label: `${payment.unit.building.code} — ${formatUnitCode(payment.unit.floor, payment.unit.sequence)}`,
+                secondary: payment.title,
+                link: { kind: 'building', id: payment.unit.building.id },
+              };
+            }
+            return null;
           }),
         );
       case 'Document':

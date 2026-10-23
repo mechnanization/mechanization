@@ -1,5 +1,6 @@
 {
   "common": {
+    "sharedUnitBill": "Shared unit {building} / {unit} — people registered: {count}",
     "appName": "Municipal Register",
     "appSubtitle": "Property and Housing Units Platform",
     "systemName": "Official System for Property Registration & Inventory for Lebanese Municipalities",
@@ -116,6 +117,7 @@
     }
   },
   "citizen": {
+    "sharedBill": "The bill for unit {unit} in building {building}, shared between you and {others, plural, one {one other person} other {# other people}} registered on the unit. Any of you pays it at the municipality's office, and once it is paid it is cleared for everyone.",
     "enterReference": "Enter your Reference Number",
     "enterReferenceHint": "To view your properties, due fees, and payment receipts.",
     "referenceNumber": "Reference Number",
@@ -229,6 +231,10 @@
     "PAYMENT_ALREADY_UNDER_REVIEW": "This payment is already under review.",
     "PAYMENT_DECLARATION_WHISH_ONLY": "Only a Whish Money transfer, with its reference number, can be reported here. Cash is paid at the municipality's cash office and is not reported here.",
     "PAYMENT_CLAIM_UNDER_REVIEW": "The citizen has a payment claim under review on this bill. Confirm or reject it first in Fees & billing (“Pending Review”), then try again.",
+    "SHARED_BILL_PAYER_REQUIRED": "This is a shared unit bill: choose which of the people registered on the unit paid it.",
+    "SHARED_BILL_PAYER_NOT_DEBTOR": "The person chosen is not registered on this shared unit.",
+    "SHARED_BILL_PAYER_ON_OWN_BILL": "This bill belongs to one citizen; no payer is chosen for it.",
+    "SHARED_BILL_PAY_AT_OFFICE": "This is a shared unit bill: it is paid at the municipality's office, by any of the people registered on it.",
     "PAYMENT_STATE_CHANGED": "This payment changed since the screen was opened. Refresh the page.",
     "PAYMENT_NO_PENDING_REVIEW": "There is no pending payment to review on this record.",
     "PAYMENT_NOTHING_OUTSTANDING": "Nothing is outstanding on this charge.",
@@ -1354,14 +1360,97 @@
     "exempt": "{count} exempt from fees",
     "flatNotOwed": "Flat charge, not owed: {notes}",
     "levelWeighed": "{count} multi-level units counted in roofs ({parts})",
-    "levelPart": "{name} = {factor} roofs"
+    "levelPart": "{name} = {factor} roofs",
+    "tiered": "By area bracket: {lines}",
+    "tieredShared": "By area bracket: {lines} — a shared unit bill between {count} registered people",
+    "tieredLine": "{bracket} ({area} m²)",
+    "sharedBillUnits": "{count} billed on a shared unit bill"
   },
   "fees": {
+    "notices": {
+      "title": "Fee notices",
+      "back": "Back to Fees & billing",
+      "loadError": "Could not load the fee notices.",
+      "empty": "No fee has been issued yet.",
+      "columns": {
+        "title": "Fee",
+        "frequency": "Frequency",
+        "issued": "Bills",
+        "status": "Status",
+        "created": "Issued on",
+        "actions": "Actions"
+      },
+      "active": "Active",
+      "stopped": "Stopped",
+      "cancel": "Cancel notice",
+      "confirmTitle": "Cancel the notice “{title}”",
+      "confirmBody": "Every bill this notice raised that nothing has been paid on is cancelled, as “Cancel bill” cancels one, and the notice stops recurring. A bill with money on it, or with a payment claim under review, is left as it is and listed afterwards. Cancelling cannot be undone: a cancelled bill stays on the record, cancelled.",
+      "reason": "Reason for cancelling",
+      "confirmAction": "Cancel the notice's bills",
+      "keep": "Keep the notice",
+      "busy": "Cancelling…",
+      "cancelFailed": "Could not cancel the notice.",
+      "cancelled": "{count} bill(s) of “{title}” cancelled.",
+      "outcomeTitle": "“{title}”: {count} bill(s) cancelled, and the notice stopped.",
+      "outcomeAll": "No bill of this notice is left standing.",
+      "outcomeSkipped": "{count} bill(s) were left as they are:",
+      "reasons": {
+        "BILL_CANCEL_HAS_PAYMENTS": "money has been taken on it — reverse its receipts first",
+        "PAYMENT_CLAIM_UNDER_REVIEW": "a payment claim on it is under review — decide it first",
+        "BILL_ALREADY_CANCELLED": "already cancelled"
+      }
+    },
+    "matrix": {
+      "field": "Bracket table",
+      "rangeHint": "Each unit type and level count has its own scale: each bracket starts where the one before it ends, and includes its lower bound but not its upper one — 100 m² falls in the bracket that starts at 100. Leave “Up to” empty on the last bracket.",
+      "empty": "No brackets yet. Add the first one.",
+      "newBracket": "new",
+      "rowTitle": "Bracket {code}",
+      "remove": "Remove bracket {code}",
+      "add": "Add a bracket",
+      "code": "Bracket code",
+      "label": "Bracket name",
+      "labelPlaceholder": "e.g. Category A",
+      "minArea": "From (m²)",
+      "maxArea": "Up to, not including (m²)",
+      "noCeiling": "No upper limit",
+      "levels": "Unit levels",
+      "oneLevel": "One level",
+      "amount": "Fee",
+      "lbp": "LBP",
+      "unitTypes": "Unit types this bracket covers"
+    },
+    "preview": {
+      "title": "Preview of what will be issued",
+      "loading": "Working out the bills this fee will raise…",
+      "failed": "The preview failed, and the fee is not issued without it.",
+      "retry": "Preview again",
+      "nobody": "This fee reaches nobody: no citizen matches the target.",
+      "billedCitizens": "Citizens' bills",
+      "sharedBills": "Shared unit bills",
+      "revenue": "Expected revenue",
+      "bracket": "Bracket",
+      "units": "Units",
+      "subtotal": "Subtotal",
+      "notCharged": {
+        "excluded": "Not charged under the bearer rule",
+        "held": "Held for review",
+        "uninhabitable": "Uninhabitable",
+        "feeExempt": "Exempt from fees",
+        "coOwnerPaid": "Paid by another owner"
+      },
+      "conflicts": "Shared units that will not be billed because the records of those registered on them put them in different brackets: {count}",
+      "conflictLine": "Unit {unit} on parcel {parcel}: brackets {brackets}, registered {count}",
+      "separator": ", ",
+      "unassessable": "Citizens whose fee could not be worked out: {count}"
+    },
     "issue": {
       "uninhabitable": "Uninhabitable units: {count} — not charged this fee. Charging resumes at the first billing run after a re-inspection reads a unit habitable: for the current period if the person has no bill for it yet, otherwise from the next period.",
       "uninhabitableOnce": "Uninhabitable units: {count} — not charged this fee. It is a one-off fee, so nothing charges them later by itself; to collect it once a re-inspection reads a unit habitable, issue an individual charge.",
       "feeExempt": "Units exempt from fees (place of worship, public facility…): {count} — not charged this fee.",
-      "coOwnerPaid": "Co-owned units paid for by their responsible owner: {count} — nothing was charged for them to their other owners."
+      "coOwnerPaid": "Co-owned units paid for by their responsible owner: {count} — nothing was charged for them to their other owners.",
+      "sharedBills": "Of these, shared unit bills: {count} — one bill for each unit more than one citizen is registered on, paid at the municipality's office by any of them.",
+      "sharedUnitConflicts": "Shared units not billed because the records of those registered on them put them in different brackets: {count} — correct the unit's area, then issue a fee for it."
     },
     "issuePage": {
       "back": "Back to fees and payments",
@@ -1596,6 +1685,7 @@
     "PAYMENT_REVERSED": "Payment reversed",
     "FEE_INDIVIDUAL_LEVIED": "One-off charge raised",
     "FEE_BILL_CANCELLED": "Bill cancelled",
+    "FEE_NOTICE_CANCELLED": "Fee notice cancelled",
     "WHISH_CHECKOUT_MISMATCHED": "Whish payment not banked (needs review)",
     "BILL_BASIS_REVIEWED": "Bill affected by a correction reviewed",
     "INSPECTOR_PAYOUT_RECORDED": "Inspector payout recorded",
@@ -3161,6 +3251,7 @@
     "total": "Owed on the parcel",
     "totalHint": "The parcel's part of every open bill with a unit on it, by the bill's own lines (area or units, and owners' parts).",
     "billsTitle": "Bills on units of this parcel",
+    "sharedBill": "Shared unit bill — people registered on it: {count}",
     "remaining": "Remaining on the bill",
     "onParcel": "This parcel's part",
     "partOfBill": "The bill also covers other parcels",
@@ -3208,6 +3299,8 @@
     "reference": "Transfer reference number",
     "collector": "Collector",
     "collectorPlaceholder": "Choose the collector…",
+    "payer": "Paid by (registered on the unit)",
+    "payerPlaceholder": "Choose who paid this shared bill…",
     "noCollectors": "There are no staff accounts to choose a collector from.",
     "amount": "Amount received (LBP)",
     "tooMuch": "The amount is more than the remaining balance ({amount})",

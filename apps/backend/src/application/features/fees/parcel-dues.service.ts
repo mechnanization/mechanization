@@ -15,7 +15,9 @@ import { parcelShareOf } from './parcel-dues';
 
 interface OpenBillRow {
   id: string;
-  citizenId: string;
+  /** Null on a shared unit bill (0099); its debtors are counted in `debtorCount`. */
+  citizenId: string | null;
+  debtorCount: number;
   title: string;
   amount: unknown;
   paidAmount: unknown;
@@ -70,9 +72,12 @@ export class ParcelDuesService {
         this.db.$queryRaw<OpenBillRow[]>`
           SELECT p.id, p."citizenId", p.title, p.amount, p."paidAmount", p."dueDate",
                  p."paymentStatus"::text AS status, p.assessment,
-                 u."firstName", u."middleName", u."lastName", u.residence::text AS residence
+                 u."firstName", u."middleName", u."lastName", u.residence::text AS residence,
+                 (SELECT count(*)::int FROM ${S}citizen_payment_debtors d WHERE d."paymentId" = p.id) AS "debtorCount"
             FROM ${S}citizen_payments p
-            JOIN ${S}users u ON u.id = p."citizenId"
+            -- LEFT: a shared unit bill (0099) has no citizen and is owed on this parcel all the same.
+            -- Joined, a براءة ذمة would certify a parcel whose shared bill is unpaid.
+            LEFT JOIN ${S}users u ON u.id = p."citizenId"
            WHERE p."paymentStatus"::text = ANY(${OPEN}::text[])
              AND CASE WHEN jsonb_typeof(p.assessment -> 'lines') = 'array'
                       THEN EXISTS (
@@ -109,8 +114,10 @@ export class ParcelDuesService {
           )
           SELECT p.id, p."citizenId", p.title, p.amount, p."paidAmount", p."dueDate",
                  p."paymentStatus"::text AS status, p.assessment,
-                 u."firstName", u."middleName", u."lastName", u.residence::text AS residence
+                 u."firstName", u."middleName", u."lastName", u.residence::text AS residence,
+                 0 AS "debtorCount"
             FROM ${S}citizen_payments p
+            -- A citizen's own bills only: a shared unit bill always names its unit, so it is listed above.
             JOIN holders h ON h."citizenId" = p."citizenId"
             JOIN ${S}users u ON u.id = p."citizenId"
            WHERE p."paymentStatus"::text = ANY(${OPEN}::text[])
@@ -129,7 +136,8 @@ export class ParcelDuesService {
     const base = (row: OpenBillRow) => ({
       paymentId: row.id,
       citizenId: row.citizenId,
-      citizenName: citizenDisplayName(row, { middleName: false }),
+      citizenName: row.citizenId ? citizenDisplayName(row, { middleName: false }) : null,
+      sharedDebtorCount: row.citizenId ? null : row.debtorCount,
       title: row.title,
       dueDate: row.dueDate.toISOString(),
       // OVERDUE is derived, as everywhere: a stored status lags the calendar.

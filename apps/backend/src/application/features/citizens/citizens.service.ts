@@ -76,6 +76,7 @@ import { normalizeSearchText } from '../../common/search-terms';
 import { landlordNamesToStore } from '../../common/landlord-name';
 import { assertNotMergedAway } from './merged-away';
 import { isUniqueViolationOn } from '../treasury/retry-key';
+import { billsOwedBy } from '../fees/shared-bill-view';
 
 /**
  * The most register rows one duplicate lookup compares.
@@ -489,6 +490,14 @@ export class CitizensService {
       : Prisma.empty;
 
     /*
+      A bill `p` that the citizen `u` owes: their own, or a shared unit bill
+      (0099, D5) they are a debtor on. The SQL twin of `billsOwedBy`.
+    */
+    const owes = Prisma.sql`(p."citizenId" = u.id OR EXISTS (
+      SELECT 1 FROM ${this.S}citizen_payment_debtors d WHERE d."paymentId" = p.id AND d."citizenId" = u.id
+    ))`;
+
+    /*
       The page and the figures above it, on one connection and one snapshot.
 
       They were a single query, with `count(*) OVER()` and three `sum(...)
@@ -555,27 +564,28 @@ export class CitizensService {
             WHERE r."citizenId" = u.id ORDER BY r."submittedAt" DESC LIMIT 1), 0)::int
             AS "unestablishedFieldCount",
           -- Not a cancelled bill (0090): withdrawn, it was never billed (decision of 2026-10-13).
+          -- Each figure is what this person owes: their own bills and the shared unit bills they are a debtor on.
           COALESCE((SELECT sum(p.amount) FROM ${this.S}citizen_payments p
-                     WHERE p."citizenId" = u.id AND p."paymentStatus" <> 'CANCELLED'), 0)::float8
+                     WHERE ${owes} AND p."paymentStatus" <> 'CANCELLED'), 0)::float8
             AS "feesTotal",
           COALESCE((SELECT sum(p."paidAmount") FROM ${this.S}citizen_payments p
-                     WHERE p."citizenId" = u.id), 0)::float8
+                     WHERE ${owes}), 0)::float8
             AS "paidTotal",
           COALESCE((SELECT sum(p.amount - p."paidAmount") FROM ${this.S}citizen_payments p
-                     WHERE p."citizenId" = u.id AND p."paymentStatus" NOT IN ('PAID', 'CANCELLED')), 0)::float8
+                     WHERE ${owes} AND p."paymentStatus" NOT IN ('PAID', 'CANCELLED')), 0)::float8
             AS "outstandingTotal",
           COALESCE((SELECT sum(p.amount - p."paidAmount") FROM ${this.S}citizen_payments p
-                     WHERE p."citizenId" = u.id
+                     WHERE ${owes}
                        AND p."paymentStatus" = 'UNPAID'
                        AND p."dueDate" < now()), 0)::float8
             AS "overdueTotal",
           (SELECT count(*)::int FROM ${this.S}citizen_payments p
-            WHERE p."citizenId" = u.id
+            WHERE ${owes}
               AND p."paymentStatus" = 'UNPAID'
               AND p."dueDate" < now())
             AS "overdueCount",
           (SELECT count(*)::int FROM ${this.S}citizen_payments p
-            WHERE p."citizenId" = u.id AND p."paymentStatus" = 'PENDING_REVIEW')
+            WHERE ${owes} AND p."paymentStatus" = 'PENDING_REVIEW')
             AS "pendingReviewCount"
         FROM ${this.S}users u
         WHERE u.kind = 'CITIZEN'
@@ -592,21 +602,28 @@ export class CitizensService {
           page".
         */
         this.db.$queryRaw<CitizenListAggregate[]>`
+        /*
+          The bills the searched people owe, each once. Summing every person's
+          own figure would count a shared unit bill (0099) once per debtor, and
+          the headline is money the municipality is owed, which is the bill's.
+        */
+        WITH owed AS (
+          SELECT DISTINCT p.id, p.amount, p."paidAmount", p."paymentStatus", p."dueDate"
+            FROM ${this.S}citizen_payments p
+            JOIN ${this.S}users u ON ${owes}
+           WHERE u.kind = 'CITIZEN'
+           ${searchFilter}
+        )
         SELECT
           count(*)::int AS total,
-          COALESCE(sum(
-            COALESCE((SELECT sum(p.amount - p."paidAmount") FROM ${this.S}citizen_payments p
-                       WHERE p."citizenId" = u.id AND p."paymentStatus" NOT IN ('PAID', 'CANCELLED')), 0)
-          ), 0)::float8 AS "allOutstanding",
-          COALESCE(sum(
-            COALESCE((SELECT sum(p.amount - p."paidAmount") FROM ${this.S}citizen_payments p
-                       WHERE p."citizenId" = u.id
-                         AND p."paymentStatus" = 'UNPAID'
-                         AND p."dueDate" < now()), 0)
-          ), 0)::float8 AS "allOverdue",
+          (SELECT COALESCE(sum(o.amount - o."paidAmount"), 0)::float8 FROM owed o
+            WHERE o."paymentStatus" NOT IN ('PAID', 'CANCELLED')) AS "allOutstanding",
+          (SELECT COALESCE(sum(o.amount - o."paidAmount"), 0)::float8 FROM owed o
+            WHERE o."paymentStatus" = 'UNPAID' AND o."dueDate" < now()) AS "allOverdue",
+          -- People in arrears: a shared bill overdue puts each of its debtors there.
           count(*) FILTER (
             WHERE (SELECT count(*) FROM ${this.S}citizen_payments p
-                    WHERE p."citizenId" = u.id
+                    WHERE ${owes}
                       AND p."paymentStatus" = 'UNPAID'
                       AND p."dueDate" < now()) > 0
           )::int AS "allInArrears",
@@ -3055,7 +3072,10 @@ export class CitizensService {
       );
     const open = touchesBilling
       ? await this.db.citizenPayment.findMany({
-          where: { citizenId, paymentStatus: { in: ['UNPAID', 'OVERDUE', 'PENDING_REVIEW'] as never } },
+          // What they owe: their own bills and the shared unit bills they are a debtor on (0099).
+          where: {
+            AND: [billsOwedBy(citizenId), { paymentStatus: { in: ['UNPAID', 'OVERDUE', 'PENDING_REVIEW'] as never } }],
+          },
           select: { amount: true, paidAmount: true, currency: true },
         })
       : [];

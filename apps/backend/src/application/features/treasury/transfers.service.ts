@@ -66,6 +66,47 @@ const TRANSFER_SELECT = {
 type TransferRow = Prisma.TreasuryTransferGetPayload<{ select: typeof TRANSFER_SELECT }>;
 
 /**
+ * The person a collector's receipt names (`collections`): the bill's citizen,
+ * or on a shared unit bill (0099) the debtor who paid it — read the same way
+ * from either side.
+ */
+const COLLECTION_PERSON_SELECT = {
+  firstName: true,
+  middleName: true,
+  lastName: true,
+  phone: true,
+  contactPhone: true,
+  hasNoPhone: true,
+  /*
+    Where he is now, for the sector. The newest occupancy that has not ended: a
+    file carries its history, and last year's address is not an answer to «من
+    أي حي؟».
+  */
+  unitOccupancies: {
+    where: { toDate: null },
+    orderBy: { fromDate: 'desc' },
+    take: 1,
+    select: { unit: { select: { building: { select: { parcelNumber: true } } } } },
+  },
+} satisfies Prisma.UserSelect;
+
+/** A door on the collector's own round (`myRound`): the unit's code as the receipt prints it, and its building. */
+const ROUND_UNIT_SELECT = { floor: true, sequence: true, building: { select: { code: true } } } satisfies Prisma.UnitSelect;
+
+/** The person a door on the round names, with where they live now. */
+const ROUND_PERSON_SELECT = {
+  firstName: true,
+  middleName: true,
+  lastName: true,
+  unitOccupancies: {
+    where: { toDate: null },
+    orderBy: { fromDate: 'desc' },
+    take: 1,
+    select: { unit: { select: ROUND_UNIT_SELECT } },
+  },
+} satisfies Prisma.UserSelect;
+
+/**
  * المناقلات — money between the municipality's own wallets.
  *
  * ## «تسليم صندوق الجابي», and why it is a transfer and not a payment
@@ -226,31 +267,16 @@ export class TransfersService {
           note: true,
           reversalOfId: true,
           reversedBy: { select: { id: true } },
+          // On a shared unit bill (0099), the debtor the money came from.
+          paidByCitizenId: true,
+          paidByCitizen: { select: COLLECTION_PERSON_SELECT },
           payment: {
             select: {
               title: true,
               citizenId: true,
-              citizen: {
-                select: {
-                  firstName: true,
-                  middleName: true,
-                  lastName: true,
-                  phone: true,
-                  contactPhone: true,
-                  hasNoPhone: true,
-                  /*
-                    Where he is now, for the sector. The newest occupancy that
-                    has not ended: a file carries its history, and last year's
-                    address is not an answer to «من أي حي؟».
-                  */
-                  unitOccupancies: {
-                    where: { toDate: null },
-                    orderBy: { fromDate: 'desc' },
-                    take: 1,
-                    select: { unit: { select: { building: { select: { parcelNumber: true } } } } },
-                  },
-                },
-              },
+              citizen: { select: COLLECTION_PERSON_SELECT },
+              // A shared unit bill's sector is its unit's, whoever paid it.
+              unit: { select: { building: { select: { parcelNumber: true } } } },
             },
           },
         },
@@ -282,11 +308,15 @@ export class TransfersService {
       queries. A municipality has a handful of sectors, so reading them whole is
       cheaper than any alternative — the same trade `BuildingsService` makes.
     */
-    const parcels = new Set(
-      rows
-        .map((row) => row.payment.citizen.unitOccupancies[0]?.unit.building.parcelNumber)
-        .filter((parcel): parcel is string => Boolean(parcel)),
-    );
+    /*
+      Who a receipt names: the bill's citizen, or — on a shared unit bill
+      (0099), which has none — the debtor who paid it. Its parcel is the shared
+      unit's own, else where that person lives now.
+    */
+    const personOf = (row: (typeof rows)[number]) => row.payment.citizen ?? row.paidByCitizen;
+    const parcelOf = (row: (typeof rows)[number]) =>
+      row.payment.unit?.building.parcelNumber ?? personOf(row)?.unitOccupancies[0]?.unit.building.parcelNumber;
+    const parcels = new Set(rows.map(parcelOf).filter((parcel): parcel is string => Boolean(parcel)));
     const zoneOfParcel = new Map<string, string>();
     if (parcels.size > 0) {
       const zones = await this.db.zone.findMany({ select: { name: true, parcelNumbers: true } });
@@ -305,32 +335,26 @@ export class TransfersService {
       custody: custody
         .filter((wallet) => wallet.collectorId === collectorId)
         .map((wallet) => ({ currency: wallet.currency, held: wallet.held })),
-      rows: rows.map((row) => ({
-        id: row.id,
-        receiptNumber: row.receiptNumber,
-        occurredAt: row.occurredAt.toISOString(),
-        citizenId: row.payment.citizenId,
-        citizenName: [
-          row.payment.citizen.firstName,
-          row.payment.citizen.middleName,
-          row.payment.citizen.lastName,
-        ]
-          .filter(Boolean)
-          .join(' '),
-        citizenPhone: row.payment.citizen.phone,
-        citizenContactPhone: row.payment.citizen.contactPhone,
-        citizenHasNoPhone: row.payment.citizen.hasNoPhone,
-        zoneName:
-          zoneOfParcel.get(
-            row.payment.citizen.unitOccupancies[0]?.unit.building.parcelNumber ?? '',
-          ) ?? null,
-        paymentTitle: row.payment.title,
-        amount: row.amount.toNumber(),
-        currency: row.currency,
-        isReversal: row.reversalOfId !== null,
-        reversed: row.reversedBy !== null,
-        note: row.note,
-      })),
+      rows: rows.map((row) => {
+        const person = personOf(row);
+        return {
+          id: row.id,
+          receiptNumber: row.receiptNumber,
+          occurredAt: row.occurredAt.toISOString(),
+          citizenId: row.payment.citizenId ?? row.paidByCitizenId,
+          citizenName: person ? [person.firstName, person.middleName, person.lastName].filter(Boolean).join(' ') : null,
+          citizenPhone: person?.phone ?? null,
+          citizenContactPhone: person?.contactPhone ?? null,
+          citizenHasNoPhone: person?.hasNoPhone ?? false,
+          zoneName: zoneOfParcel.get(parcelOf(row) ?? '') ?? null,
+          paymentTitle: row.payment.title,
+          amount: row.amount.toNumber(),
+          currency: row.currency,
+          isReversal: row.reversalOfId !== null,
+          reversed: row.reversedBy !== null,
+          note: row.note,
+        };
+      }),
       total,
       totals: totals.map((row) => ({ currency: row.currency, amount: row._sum.amount?.toNumber() ?? 0 })),
       since: goLiveAt?.toISOString() ?? null,
@@ -1376,27 +1400,16 @@ export class TransfersService {
         amount: true,
         currency: true,
         paymentId: true,
+        // On a shared unit bill (0099), the debtor the money came from.
+        paidByCitizenId: true,
+        paidByCitizen: { select: ROUND_PERSON_SELECT },
         payment: {
           select: {
             title: true,
             citizenId: true,
-            citizen: {
-              select: {
-                firstName: true,
-                middleName: true,
-                lastName: true,
-                unitOccupancies: {
-                  where: { toDate: null },
-                  orderBy: { fromDate: 'desc' },
-                  take: 1,
-                  select: {
-                    unit: {
-                      select: { floor: true, sequence: true, building: { select: { code: true } } },
-                    },
-                  },
-                },
-              },
-            },
+            citizen: { select: ROUND_PERSON_SELECT },
+            // A shared unit bill's door is its own unit's, whoever paid it.
+            unit: { select: ROUND_UNIT_SELECT },
           },
         },
       },
@@ -1435,20 +1448,16 @@ export class TransfersService {
         };
       }),
       rows: rows.map((row) => {
-        const unit = row.payment.citizen.unitOccupancies[0]?.unit;
+        // The bill's citizen, or on a shared unit bill the debtor who paid; the door is the shared unit's own.
+        const person = row.payment.citizen ?? row.paidByCitizen;
+        const unit = row.payment.unit ?? person?.unitOccupancies[0]?.unit;
         return {
           id: row.id,
           receiptNumber: row.receiptNumber,
           occurredAt: row.occurredAt.toISOString(),
           paymentId: row.paymentId,
-          citizenId: row.payment.citizenId,
-          citizenName: [
-            row.payment.citizen.firstName,
-            row.payment.citizen.middleName,
-            row.payment.citizen.lastName,
-          ]
-            .filter(Boolean)
-            .join(' '),
+          citizenId: row.payment.citizenId ?? row.paidByCitizenId,
+          citizenName: person ? [person.firstName, person.middleName, person.lastName].filter(Boolean).join(' ') : null,
           // The same formatter the receipt prints, not the stored copy.
           unitCode: unit ? formatUnitCode(unit.floor, unit.sequence) : null,
           buildingCode: unit?.building.code ?? null,

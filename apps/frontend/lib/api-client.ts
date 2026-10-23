@@ -32,7 +32,11 @@ import type {
   FeeExemptionReason,
   FeeBearer,
   FeeFrequency,
+  FeeMatrixBracket,
+  FeeNoticePreviewInput,
+  FeeNoticePreviewResult,
   FieldFlag,
+  SharedUnitBillView,
   ImportRow,
   InspectorProfileResponse,
   NumberingSequence,
@@ -3489,6 +3493,11 @@ export interface CitizenProfilePayment {
    * itself, and on every invoice raised before per-unit billing existed.
    */
   assessment?: FeeAssessment | null;
+  /**
+   * On a shared unit bill (0099) this citizen owes with others: the unit and
+   * how many may pay it, never who. Null or absent on their own bill.
+   */
+  sharedUnit?: SharedUnitBillView | null;
 }
 
 /**
@@ -5296,8 +5305,8 @@ export interface FeeNoticeSummary {
   createdAt: string;
 }
 
-export function getFeeNotices(tenant: string, token: string) {
-  return apiFetch<{ items: FeeNoticeSummary[] }>(tenant, '/fees/notices', { token });
+export function getFeeNotices(tenant: string, token: string, signal?: AbortSignal) {
+  return apiFetch<{ items: FeeNoticeSummary[] }>(tenant, '/fees/notices', { token, signal });
 }
 
 /**
@@ -5360,6 +5369,8 @@ export async function issueFeeNotice(
     targetCitizenId?: string;
     dueDate: string;
     instructions?: string;
+    /** The bracket table, under TIERED_AREA and only then (`feeMatrixSchema`). */
+    matrixBrackets?: FeeMatrixBracket[];
     /** One id per issue (`fee-notice:new` in `lib/request-id.ts`): a retry is answered with the first notice. */
     clientRequestId: string;
   },
@@ -5410,6 +5421,10 @@ export async function issueFeeNotice(
      * see `FeeAssessment.coOwnerPaidUnitCount`. Each flat once.
      */
     coOwnerPaidUnits?: number;
+    /** Of `issued`, the shared unit bills (TIERED_AREA, 0099): one per unit several citizens are charged for. */
+    sharedBills?: number;
+    /** Shared units billed to nobody because their holders' records put them in different brackets. */
+    sharedUnitConflicts?: FeeNoticePreviewResult['conflicts'];
   }>(tenant, '/fees/notices', {
     token,
     method: 'POST',
@@ -5417,6 +5432,50 @@ export async function issueFeeNotice(
   });
   invalidateRequests(`fee-summary:${tenant}`);
   return result;
+}
+
+/** What «إلغاء الإشعار» did: the bills cancelled, those left with why, and whether the notice stopped. */
+export interface FeeNoticeCancelResult {
+  noticeId: string;
+  cancelled: number;
+  /** Bills left as they were: money on them, or a citizen's claim waiting (an `ERROR_CODES` code). */
+  skipped: Array<{
+    paymentId: string;
+    invoiceNumber: string | null;
+    reason: 'BILL_ALREADY_CANCELLED' | 'PAYMENT_CLAIM_UNDER_REVIEW' | 'BILL_CANCEL_HAS_PAYMENTS';
+  }>;
+  /** True when the notice was still recurring and has now stopped. */
+  deactivated: boolean;
+}
+
+/**
+ * «إلغاء الإشعار» (decision D6): cancels every bill of the notice nothing has
+ * been paid on, reports the rest, and stops the notice. The manager only, with
+ * a reason, as for one bill.
+ */
+export async function cancelFeeNotice(tenant: string, token: string, noticeId: string, reason: string) {
+  const result = await apiFetch<FeeNoticeCancelResult>(
+    tenant,
+    `/fees/notices/${encodeURIComponent(noticeId)}/cancel`,
+    { token, method: 'POST', body: JSON.stringify({ reason }) },
+  );
+  invalidateRequests(`fee-summary:${tenant}`);
+  return result;
+}
+
+/**
+ * «معاينة قبل الإصدار»: what `issueFeeNotice` would bill for this notice, with
+ * nothing written — the revenue, the bills, each bracket's units, what is not
+ * charged and who cannot be assessed. The same notice as the issue takes,
+ * without the retry key.
+ */
+export function previewFeeNotice(tenant: string, token: string, input: FeeNoticePreviewInput, signal?: AbortSignal) {
+  return apiFetch<FeeNoticePreviewResult>(tenant, '/fees/notices/preview', {
+    token,
+    method: 'POST',
+    body: JSON.stringify(input),
+    signal,
+  });
 }
 
 export interface FeeSummary {
@@ -5447,10 +5506,13 @@ export interface PendingPayment {
   paymentMethod: string | null;
   whishTransactionRef: string | null;
   isSeen?: boolean;
-  citizenId: string;
-  citizenName: string;
+  /** Null on a shared unit bill (0099), which has no one citizen: see `sharedUnit`. */
+  citizenId: string | null;
+  citizenName: string | null;
   citizenPhone: string | null;
   citizenReference: string | null;
+  /** On a shared unit bill, the unit and how many may pay it; null on a citizen's own bill. */
+  sharedUnit: SharedUnitBillView | null;
 }
 
 /** The clerk's queue: money claimed but not yet confirmed. */
@@ -5608,6 +5670,12 @@ export interface CitizenPaymentItem {
    * way to check it. Null on a flat charge, which explains itself.
    */
   assessment?: FeeAssessment | null;
+  /**
+   * On a shared unit bill (0099) this citizen owes with others: the unit and
+   * how many may pay it, never who. Paid at the office, by any of them: the
+   * portal offers neither Whish nor a declaration for it.
+   */
+  sharedUnit?: SharedUnitBillView | null;
 }
 
 /** The signed-in citizen's own bills. */
@@ -5707,10 +5775,15 @@ export interface AdminPaymentItem {
    * itself, and on every invoice raised before per-unit billing existed.
    */
   assessment?: FeeAssessment | null;
-  citizenId: string;
-  citizenName: string;
+  /** Null on a shared unit bill (0099), which has no one citizen: see `sharedUnit`. */
+  citizenId: string | null;
+  citizenName: string | null;
   citizenPhone: string | null;
   citizenReference: string | null;
+  /** On a shared unit bill, the unit and how many may pay it; null on a citizen's own bill. */
+  sharedUnit: SharedUnitBillView | null;
+  /** On a shared unit bill, the debtor who last paid on it: whose file its receipt is reprinted from. */
+  lastPaidByCitizenId?: string | null;
 }
 
 /**
@@ -5802,7 +5875,15 @@ export function getAllPayments(
  * arrives with nothing but this id.
  */
 export function getPaymentById(tenant: string, token: string, id: string) {
-  return apiFetch<AdminPaymentItem>(tenant, `/fees/payments/${encodeURIComponent(id)}`, {
+  return apiFetch<
+    AdminPaymentItem & {
+      /**
+       * On a shared unit bill (0099): everyone who may pay it, by name, for the
+       * counter to say which of them did. Empty on a citizen's own bill.
+       */
+      sharedDebtors?: Array<{ citizenId: string; name: string; role: string }>;
+    }
+  >(tenant, `/fees/payments/${encodeURIComponent(id)}`, {
     token,
   });
 }
