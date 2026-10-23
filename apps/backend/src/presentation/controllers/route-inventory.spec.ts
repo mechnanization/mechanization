@@ -460,4 +460,11 @@ describe('the routes that raise a bill', () => {
     expect(route).toBeDefined();
     expect([...(route?.roles ?? [])].sort()).toEqual(['ACCOUNTANT', 'SUPER_ADMIN']);
   });
+
+  it('lets only those who may issue a notice preview it: it reads what an issue reads, names included', () => {
+    const preview = all.find((candidate) => candidate.name === 'FeesController.previewNotice');
+    const issue = all.find((candidate) => candidate.name === 'FeesController.issue');
+    expect(preview).toMatchObject({ method: RequestMethod.POST, path: 'notices/preview', isPublic: false });
+    expect([...(preview?.roles ?? [])].sort()).toEqual([...(issue?.roles ?? [])].sort());
+  });
 });
