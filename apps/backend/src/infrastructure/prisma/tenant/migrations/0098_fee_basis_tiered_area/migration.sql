@@ -1,0 +1,29 @@
+-- 0098_fee_basis_tiered_area
+--
+-- «الرسم حسب فئة المساحة» — a fourth answer to what a notice's amount is per.
+--
+-- == What it is for ======================================================
+--
+-- A notice is priced FLAT (one amount per citizen), PER_UNIT (a rate per unit
+-- held) or PER_AREA (a rate per m²). TIERED_AREA is a table of area brackets
+-- the assessment committee sets — «A» up to 100 m², «B» from 100 to 150 m², …
+-- — kept on the notice (`fee_notices."matrixBrackets"`, 0099), and each unit
+-- is charged the bracket its area falls in. The decisions behind it are in
+-- docs/fees-system-rearchitecture-specification.md §1 (2026-10-23).
+--
+-- == Why this migration is alone =========================================
+--
+-- `ALTER TYPE … ADD VALUE` may not have its new value *used* by the transaction
+-- that added it, and the migrator wraps each migration in one (0062, 0063).
+-- 0099 uses it, in its own transaction. It is also the "enum value before the
+-- code" rule: this reaches `main` in a release before any code that writes it.
+--
+-- == Safety ==============================================================
+--
+-- No row is rewritten. Nothing writes the value until the code ships, and the
+-- build serving production when this lands never reads it. Idempotent.
+--
+-- Written unqualified: the migrator sets `search_path` to the target tenant
+-- schema before running this.
+
+ALTER TYPE "FeeBasis" ADD VALUE IF NOT EXISTS 'TIERED_AREA';
