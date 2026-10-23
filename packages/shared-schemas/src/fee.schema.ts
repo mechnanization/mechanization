@@ -662,6 +662,56 @@ export const feeNoticePreviewSchema = feeNoticeFields.superRefine(refineFeeNotic
 export type FeeNoticePreviewInput = z.infer<typeof feeNoticePreviewSchema>;
 
 /**
+ * What the preview answers: what issuing this notice now would bill, read by
+ * the same path the issue takes (`FeesService.planNotice`) and written nowhere.
+ *
+ * `expectedRevenue` is the citizens' own bills plus the shared unit bills, in
+ * whole pounds. `brackets` is empty under every basis but TIERED_AREA, where it
+ * counts each unit once, a shared one included, in the table's own order. The
+ * `notCharged` counts are each unit once across the run, as the issue counts
+ * them. `unassessable` names the citizens the issue would skip and why — a
+ * staff read, as the issue's own answer is. `conflicts` are units shared by
+ * citizens whose records put them in different brackets, billed to nobody
+ * (`splitSharedUnitBills`); the people are counted, not named.
+ */
+export const feeNoticePreviewResultSchema = z.object({
+  targetedCitizens: z.number().int().nonnegative(),
+  /** Citizens who would get a bill of their own. */
+  billedCitizens: z.number().int().nonnegative(),
+  /** Units billed once to everyone charged for them (TIERED_AREA, D5). */
+  sharedBills: z.number().int().nonnegative(),
+  expectedRevenue: z.number().nonnegative(),
+  currency: z.string(),
+  brackets: z.array(
+    z.object({
+      code: z.string(),
+      label: z.string(),
+      unitCount: z.number().int().nonnegative(),
+      subtotal: z.number().nonnegative(),
+    }),
+  ),
+  notCharged: z.object({
+    /** Not this person's to pay under the bearer rule: let, empty, still being built. */
+    excludedUnits: z.number().int().nonnegative(),
+    heldUnits: z.number().int().nonnegative(),
+    uninhabitableUnits: z.number().int().nonnegative(),
+    feeExemptUnits: z.number().int().nonnegative(),
+    coOwnerPaidUnits: z.number().int().nonnegative(),
+  }),
+  unassessable: z.array(z.object({ citizenId: z.string(), name: z.string(), reason: z.string() })),
+  conflicts: z.array(
+    z.object({
+      unitId: z.string(),
+      unitCode: z.string().nullable(),
+      propertyNumber: z.string().nullable(),
+      citizenCount: z.number().int().min(2),
+      bracketCodes: z.array(z.string()),
+    }),
+  ),
+});
+export type FeeNoticePreviewResult = z.infer<typeof feeNoticePreviewResultSchema>;
+
+/**
  * An urgent-payment ceiling as the settings form sends it: greater than zero,
  * at most two decimals and inside the DECIMAL(14,2) column (a CHECK in 0083
  * refuses zero or less), `null` for none.

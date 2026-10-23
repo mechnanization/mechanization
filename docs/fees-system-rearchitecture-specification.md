@@ -275,13 +275,20 @@ CLAUDE.md, "Keeping the docs true".
 
 ### Phase 4: preview
 
-- `FeesService.previewNotice(input, actor)` runs the same path as `issue` and
-  writes nothing.
+- `FeesService.planNotice(input, citizenIds)` is the read-and-assess half of
+  `issue`: the assessment, the shared-unit split and the counts. `issue` and
+  `FeesService.previewNotice(input)` both call it; the preview writes nothing
+  (no notice, bill, audit row or event), so it takes no actor.
 - `POST t/:tenantSlug/fees/notices/preview`, `@Roles(...FEE_ISSUE_ROLES)`,
-  `ZodValidationPipe(feeNoticePreviewSchema)`.
-- Tests: counts of `fee_notices`, `citizen_payments` and
-  `citizen_payment_debtors` unchanged after a preview; the preview's totals
-  equal the issued totals for the same input (T-9).
+  `ZodValidationPipe(feeNoticePreviewSchema)`, `@HttpCode(200)`; the answer is
+  `feeNoticePreviewResultSchema`. A notice that targets nobody previews as
+  zeros rather than refusing. `previewFeeNotice` in the frontend's api-client.
+- Tests (`fee-preview.integration.spec.ts`): counts of `fee_notices`,
+  `citizen_payments`, `citizen_payment_debtors` and the audit log unchanged
+  after a preview; a `PER_UNIT` preview equals the issue that follows, to the
+  citizen and the pound (T-9). The same check for `TIERED_AREA` lands with
+  Phase 5, when it can be issued. The preview's roles are pinned to the
+  issue's in `route-inventory.spec.ts`.
 - Commit: `feat(fees): preview a notice's bills before issuing it`
 
 ### Phase 5: issuing

@@ -20,6 +20,8 @@ import type {
   FeeBasis,
   FeeBearer,
   FeeMatrixBracket,
+  FeeNoticePreviewInput,
+  FeeNoticePreviewResult,
   PaymentMethod,
   SystemSettingsInput,
 } from '@mechanization/shared-schemas';
@@ -57,7 +59,14 @@ import { assertNotMergedAway } from '../citizens/merged-away';
 import { ConflictError, DomainError, ForbiddenError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { exchangeRuleChangeAllowed } from '../treasury/transfers.plan';
 import { raiseOneOffBill } from './one-off-bill';
-import { priceTieredUnits, tieredAssessment, type TieredUnit } from './tiered-area';
+import {
+  priceTieredUnits,
+  splitSharedUnitBills,
+  tieredAssessment,
+  type SharedUnitBill,
+  type SharedUnitConflict,
+  type TieredUnit,
+} from './tiered-area';
 import { likePattern, searchTokens } from '../../common/search-terms';
 import { citizenSearchText } from '../../common/citizen-search';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
@@ -1356,6 +1365,125 @@ export class FeesService {
   }
 
   /**
+   * What a notice would bill, read and assessed, with nothing written: the
+   * half of `issue` the preview shares, so the two cannot disagree.
+   *
+   * Under TIERED_AREA the units several citizens are charged for come off
+   * their own bills and become shared unit bills (`splitSharedUnitBills`, D5).
+   * The counts are each unit once across the run, as the issue has always
+   * reported them.
+   */
+  private async planNotice(
+    input: FeeNoticePreviewInput,
+    citizenIds: readonly string[],
+  ): Promise<{
+    /** Every citizen assessed, own bills after the shared units came off, a bill of 0 included. */
+    assessed: CitizenAssessment[];
+    /**
+     * The citizens who get a bill of their own. One who holds none of what the
+     * notice charges for owes nothing, and an invoice for zero is not a bill —
+     * it is a letter telling someone they owe nothing, arriving with a due
+     * date. Skipped rather than raised.
+     */
+    billable: CitizenAssessment[];
+    shared: SharedUnitBill[];
+    conflicts: SharedUnitConflict[];
+    unassessable: UnassessableCitizen[];
+    counts: {
+      /** Units this notice declined to charge for under the bearer rule. Reported, never silent. */
+      exemptedUnits: number;
+      /** Flats whose occupancy fee is held under review — see `assessCitizen`. Each flat once. */
+      heldUnits: number;
+      /** Flats held as «غير صالحة للسكن» — exempt from every fee; see `assessCitizen`. Each flat once. */
+      uninhabitableUnits: number;
+      /** Units «معفاة من الرسوم» (0077) — see `assessCitizen`. Each unit once. */
+      feeExemptUnits: number;
+      /** Co-owned flats the responsible owner pays for, not the person assessed. Each flat once. */
+      coOwnerPaidUnits: number;
+    };
+  }> {
+    const { assessed: raw, unassessable } = await this.assessTargets(citizenIds, input);
+    const { own: assessed, shared, conflicts } =
+      input.basis === 'TIERED_AREA' ? splitSharedUnitBills(raw) : { own: raw, shared: [], conflicts: [] };
+
+    return {
+      assessed,
+      billable: assessed.filter((entry) => entry.amount > 0),
+      shared,
+      conflicts,
+      unassessable,
+      counts: {
+        exemptedUnits: assessed.reduce((sum, entry) => sum + (entry.assessment?.excludedUnitCount ?? 0), 0),
+        heldUnits: distinctHeld(assessed),
+        uninhabitableUnits: distinctUninhabitable(assessed),
+        feeExemptUnits: distinctExempt(assessed),
+        coOwnerPaidUnits: distinctCoOwnerPaid(assessed),
+      },
+    };
+  }
+
+  /**
+   * «معاينة قبل الإصدار»: what issuing this notice now would bill, without
+   * billing anyone (Phase 4 of docs/fees-system-rearchitecture-specification.md).
+   *
+   * Reads the targets and the register exactly as `issue` does (`planNotice`)
+   * and writes nothing: no notice, no bill, no audit row, no event. The answer
+   * is the revenue, the bills, each bracket's units and subtotal, what is not
+   * charged and why, the citizens who cannot be assessed, and the shared units
+   * whose records disagree. A notice that targets nobody previews as zeros
+   * rather than refusing: telling the clerk so is the preview's job.
+   */
+  async previewNotice(input: FeeNoticePreviewInput): Promise<FeeNoticePreviewResult> {
+    const citizenIds = await this.resolveTargets(input);
+    const plan = await this.planNotice(input, citizenIds);
+
+    const brackets = new Map(
+      (input.basis === 'TIERED_AREA' ? input.matrixBrackets ?? [] : []).map((row) => [
+        row.code,
+        { code: row.code, label: row.labelAr, unitCount: 0, subtotal: 0 },
+      ]),
+    );
+    const count = (code: string | undefined, amount: number) => {
+      const row = code === undefined ? undefined : brackets.get(code);
+      if (!row) return;
+      row.unitCount += 1;
+      row.subtotal += amount;
+    };
+    for (const entry of plan.billable) {
+      for (const unit of entry.tieredUnits ?? []) count(unit.bracketCode, unit.amount);
+    }
+    for (const bill of plan.shared) count(bill.assessment.lines[0]?.bracketCode, bill.amount);
+
+    return {
+      targetedCitizens: citizenIds.length,
+      billedCitizens: plan.billable.length,
+      sharedBills: plan.shared.length,
+      expectedRevenue:
+        plan.billable.reduce((sum, entry) => sum + entry.amount, 0) +
+        plan.shared.reduce((sum, bill) => sum + bill.amount, 0),
+      // Every notice is issued in pounds: the notice form has no currency (`createFeeNoticeSchema`).
+      currency: 'LBP',
+      brackets: [...brackets.values()],
+      notCharged: {
+        // `exemptedUnits` in the issue's own answer: the units the bearer rule left out, not «معفاة».
+        excludedUnits: plan.counts.exemptedUnits,
+        heldUnits: plan.counts.heldUnits,
+        uninhabitableUnits: plan.counts.uninhabitableUnits,
+        feeExemptUnits: plan.counts.feeExemptUnits,
+        coOwnerPaidUnits: plan.counts.coOwnerPaidUnits,
+      },
+      unassessable: plan.unassessable,
+      conflicts: plan.conflicts.map((conflict) => ({
+        unitId: conflict.unitId,
+        unitCode: conflict.unitCode,
+        propertyNumber: conflict.propertyNumber,
+        citizenCount: conflict.citizenIds.length,
+        bracketCodes: conflict.bracketCodes,
+      })),
+    };
+  }
+
+  /**
    * Writes the rule and bills everyone it applies to, in one transaction.
    *
    * Not two steps: a notice that exists but billed nobody looks identical to
@@ -1364,6 +1492,17 @@ export class FeesService {
    * residents.
    */
   async issue(input: CreateFeeNotice, actor: { id: string; role: string }) {
+    /*
+      A TIERED_AREA notice can be priced and previewed, but not yet issued: the
+      notice's bracket table and the shared unit bills are written in Phase 5
+      of docs/fees-system-rearchitecture-specification.md. Refused here, before
+      anything is read, rather than issuing own bills and dropping the shared
+      ones. The wizard does not offer the basis until then.
+    */
+    if (input.basis === 'TIERED_AREA') {
+      throw new Error('FeesService.issue: TIERED_AREA notices cannot be issued yet');
+    }
+
     /*
       A notice is issued once per press of «إصدار» (finance audit B3). A retry
       after a lost answer — or a double press past the wizard's lock — carries
@@ -1374,17 +1513,6 @@ export class FeesService {
       The route's schema requires the key; a caller inside the server that
       sends none (a script, a spec) issues as before, unguarded.
     */
-    /*
-      A TIERED_AREA notice can be priced (`assessCitizen`), but not yet issued:
-      the notice's bracket table and the shared unit bills are written in Phase 5
-      of docs/fees-system-rearchitecture-specification.md. Refused here, before
-      anything is read, rather than issuing own bills and dropping the shared
-      ones. The wizard does not offer the basis until then.
-    */
-    if (input.basis === 'TIERED_AREA') {
-      throw new Error('FeesService.issue: TIERED_AREA notices cannot be issued yet');
-    }
-
     const earlier = input.clientRequestId
       ? await this.replayNotice(this.db as Prisma.TransactionClient, input)
       : null;
@@ -1407,28 +1535,9 @@ export class FeesService {
       });
     }
 
-    const { assessed, unassessable } = await this.assessTargets(citizenIds, input);
-
-    /*
-      A citizen who holds none of what this notice charges for owes nothing, and
-      an invoice for zero is not a bill — it is a letter telling someone they
-      owe nothing, arriving with a due date. Skipped rather than raised.
-    */
-    const billable = assessed.filter((entry) => entry.amount > 0);
-
-    /** Units this notice declined to charge for. Reported, never silent. */
-    const exemptedUnits = assessed.reduce(
-      (sum, entry) => sum + (entry.assessment?.excludedUnitCount ?? 0),
-      0,
-    );
-    /** Flats whose occupancy fee is held under review — see `assessCitizen`. Each flat once. */
-    const heldUnits = distinctHeld(assessed);
-    /** Flats held as «غير صالحة للسكن» — exempt from every fee; see `assessCitizen`. Each flat once. */
-    const uninhabitableUnits = distinctUninhabitable(assessed);
-    /** Units «معفاة من الرسوم» (0077) — see `assessCitizen`. Each unit once. */
-    const feeExemptUnits = distinctExempt(assessed);
-    /** Co-owned flats the responsible owner pays for, not the person assessed — see `assessCitizen`. Each flat once. */
-    const coOwnerPaidUnits = distinctCoOwnerPaid(assessed);
+    // The same reading the preview makes (`planNotice`): what the preview showed is what this bills.
+    const { billable, unassessable, counts } = await this.planNotice(input, citizenIds);
+    const { exemptedUnits, heldUnits, uninhabitableUnits, feeExemptUnits, coOwnerPaidUnits } = counts;
 
     if (billable.length === 0) {
       /*

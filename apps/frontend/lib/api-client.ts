@@ -32,6 +32,8 @@ import type {
   FeeExemptionReason,
   FeeBearer,
   FeeFrequency,
+  FeeNoticePreviewInput,
+  FeeNoticePreviewResult,
   FieldFlag,
   ImportRow,
   InspectorProfileResponse,
@@ -5417,6 +5419,20 @@ export async function issueFeeNotice(
   });
   invalidateRequests(`fee-summary:${tenant}`);
   return result;
+}
+
+/**
+ * «معاينة قبل الإصدار»: what `issueFeeNotice` would bill for this notice, with
+ * nothing written — the revenue, the bills, each bracket's units, what is not
+ * charged and who cannot be assessed. The same notice as the issue takes,
+ * without the retry key.
+ */
+export function previewFeeNotice(tenant: string, token: string, input: FeeNoticePreviewInput) {
+  return apiFetch<FeeNoticePreviewResult>(tenant, '/fees/notices/preview', {
+    token,
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
 }
 
 export interface FeeSummary {
