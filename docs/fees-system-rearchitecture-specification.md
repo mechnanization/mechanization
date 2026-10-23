@@ -42,7 +42,7 @@ document says otherwise, these win.
 |---|---|---|
 | O1 | Fixed amounts for designated entities (a school, a gas station): which unit field identifies them? | Not built. No `designatedOverrides`. |
 | O2 | On the citizen portal, does a shared unit bill show the **names** of the other people it is shared with, or only "shared with N others"? Names expose one citizen's holdings to another. | Show the count only. |
-| O3 | May a debtor pay a shared unit bill online, or report a Whish transfer for it? Either needs the bill to remember which debtor made the claim (a new nullable column, its own migration), so the clerk's confirmation can name the payer. | Refused: paid at the office (`SHARED_BILL_PAY_AT_OFFICE`). |
+| O3 | May a debtor pay a shared unit bill online, or report a Whish transfer for it? Either needs the bill to remember which debtor made the claim (a new nullable column, its own migration), so the clerk's confirmation can name the payer. | **Decided 2026-10-23, for now:** paid at the municipal office only (`SHARED_BILL_PAY_AT_OFFICE`); no migration until online payment for shared bills is wanted. |
 
 ---
 
@@ -364,15 +364,25 @@ the register):
 
 ### Phase 7: batch cancel (D6)
 
+Built on `feat/tiered-fees-cancel-and-wizard`.
+
 - `FeesService.cancelNoticeBatch(noticeId, reason, actor)`, in one transaction:
-  for each bill on the notice, apply `cancelBill`'s rules; cancel what passes;
-  return `{ cancelled, skipped: [{ paymentId, invoiceNumber, reason }] }`; set
-  `isActive = false`; one audit row per cancelled bill.
-- `POST t/:tenantSlug/fees/notices/:id/cancel`, `@Roles(...BILL_CANCEL_ROLES)`,
-  `ParseUUIDPipe`, body validated by `cancelBillSchema` (same reason rule).
-- Tests: a notice with paid, part-paid, `PENDING_REVIEW` and untouched bills
-  cancels only the untouched ones and reports the rest (T-10); the next
-  recurring run issues nothing for it.
+  every bill of the notice locked, `billCancelRefusal` (the rule `cancelBill`
+  now applies too) on each; what passes cancelled in one `updateMany`, with a
+  `FEE_BILL_CANCELLED` row per bill and any waiting municipal request cancelled
+  with its bill; what fails left as it is and returned as
+  `{ paymentId, invoiceNumber, reason }`; the notice `isActive = false` and a
+  `FEE_NOTICE_CANCELLED` row on it. Answers
+  `{ noticeId, cancelled, skipped, deactivated }`; a second press cancels
+  nothing more.
+- `POST t/:tenantSlug/fees/notices/:id/cancel`, `@Roles(...BILL_CANCEL_ROLES)`
+  (pinned to the single cancel's), `ParseUUIDPipe`, body validated by
+  `cancelBillSchema` (same reason rule), 200. `cancelFeeNotice` in the
+  frontend's api-client; the button is Phase 8.
+- Tests (`notice-batch-cancel.integration.spec.ts`): a notice with paid,
+  part-paid, `PENDING_REVIEW` and untouched bills cancels only the untouched
+  one and reports the rest (T-10); the notice stops and the next recurring run
+  issues nothing for it; a second press and an unknown notice.
 - Commit: `feat(fees): cancel a notice's untouched bills in one step`
 
 ### Phase 8: frontend

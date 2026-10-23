@@ -1606,6 +1606,7 @@
     "PAYMENT_REVERSED": "Payment reversed",
     "FEE_INDIVIDUAL_LEVIED": "One-off charge raised",
     "FEE_BILL_CANCELLED": "Bill cancelled",
+    "FEE_NOTICE_CANCELLED": "Fee notice cancelled",
     "WHISH_CHECKOUT_MISMATCHED": "Whish payment not banked (needs review)",
     "BILL_BASIS_REVIEWED": "Bill affected by a correction reviewed",
     "INSPECTOR_PAYOUT_RECORDED": "Inspector payout recorded",

@@ -1606,6 +1606,7 @@
     "PAYMENT_REVERSED": "عكس حركة دفع",
     "FEE_INDIVIDUAL_LEVIED": "تكليف مالي فردي",
     "FEE_BILL_CANCELLED": "إلغاء فاتورة",
+    "FEE_NOTICE_CANCELLED": "إلغاء إشعار رسم",
     "WHISH_CHECKOUT_MISMATCHED": "دفعة Whish لم تُقيَّد (تحتاج مراجعة)",
     "BILL_BASIS_REVIEWED": "مراجعة فاتورة تأثّرت بتصحيح",
     "INSPECTOR_PAYOUT_RECORDED": "تسجيل دفعة لمفتش",

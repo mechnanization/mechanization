@@ -155,6 +155,23 @@ export class FeesController {
   }
 
   /**
+   * «إلغاء الإشعار» (decision D6): every bill of the notice nothing has been
+   * paid on is cancelled, each one as «إلغاء الفاتورة» would; the rest are
+   * reported with the reason, and the notice stops. The manager alone, as for
+   * one bill (`BILL_CANCEL_ROLES`), and with the same required reason.
+   */
+  @Roles(...BILL_CANCEL_ROLES)
+  @Post('notices/:id/cancel')
+  @HttpCode(200)
+  async cancelNotice(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body(new ZodValidationPipe(cancelBillSchema)) body: CancelBill,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.fees.cancelNoticeBatch(id, body.reason, { id: user.sub, role: user.role ?? '' });
+  }
+
+  /**
    * «معاينة قبل الإصدار»: what `POST notices` would bill for this notice,
    * written nowhere. The same roles as issuing, since it reads what an issue
    * reads, the names of the citizens it could not assess among it. A POST

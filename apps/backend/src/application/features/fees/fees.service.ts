@@ -80,6 +80,24 @@ import { assertLiveCollector } from './live-collector';
 import { AuditService, type AuditEntryInput } from '../audit/audit.service';
 
 /**
+ * Why a bill cannot be cancelled now, or null when it can — «إلغاء الفاتورة»'s
+ * rule, applied by `cancelBill` to one bill and by `cancelNoticeBatch` to each
+ * bill of a notice, so a batch never cancels what one press would refuse: one
+ * already cancelled; one with a citizen's claim under review (the claim is
+ * decided first); one with money on it, paid or part-paid (its receipts are
+ * reversed first, so the money's own record is corrected before the debt is).
+ */
+function billCancelRefusal(bill: {
+  paymentStatus: string;
+  paidAmount: number;
+}): 'BILL_ALREADY_CANCELLED' | 'PAYMENT_CLAIM_UNDER_REVIEW' | 'BILL_CANCEL_HAS_PAYMENTS' | null {
+  if (bill.paymentStatus === 'CANCELLED') return 'BILL_ALREADY_CANCELLED';
+  if (bill.paymentStatus === 'PENDING_REVIEW') return 'PAYMENT_CLAIM_UNDER_REVIEW';
+  if (bill.paymentStatus === 'PAID' || bill.paidAmount > 0) return 'BILL_CANCEL_HAS_PAYMENTS';
+  return null;
+}
+
+/**
  * A shared unit bill (0099) is paid at the office, by any of its debtors, named
  * at the counter. Not online and not by a citizen's claim: a claim is confirmed
  * later by a clerk (`review`), and the bill has nowhere to keep which debtor
@@ -4652,16 +4670,17 @@ export class FeesService {
       if (!bill) {
         throw new NotFoundError({ code: 'PAYMENT_NOT_FOUND', message: `Payment ${paymentId} was not found` });
       }
-      if (bill.paymentStatus === 'CANCELLED') {
+      const refusal = billCancelRefusal(bill);
+      if (refusal === 'BILL_ALREADY_CANCELLED') {
         throw new ConflictError({ code: 'BILL_ALREADY_CANCELLED', message: 'This bill has already been cancelled.' });
       }
-      if (bill.paymentStatus === 'PENDING_REVIEW') {
+      if (refusal === 'PAYMENT_CLAIM_UNDER_REVIEW') {
         throw new ConflictError({
           code: 'PAYMENT_CLAIM_UNDER_REVIEW',
           message: 'A citizen payment claim on this bill is under review; confirm or reject it first.',
         });
       }
-      if (bill.paymentStatus === 'PAID' || bill.paidAmount > 0) {
+      if (refusal === 'BILL_CANCEL_HAS_PAYMENTS') {
         throw new ConflictError({
           code: 'BILL_CANCEL_HAS_PAYMENTS',
           message: 'Money has been taken on this bill; reverse its receipts before cancelling it.',
@@ -4717,6 +4736,128 @@ export class FeesService {
       PR #122). Null when the bill was no open request's fee.
     */
     return { ...(await this.getPaymentById(paymentId)), cancelledRequest };
+  }
+
+  /**
+   * «إلغاء الإشعار» — the manager withdraws a notice's bills in one step
+   * (decision D6, 2026-10-23, docs/fees-system-rearchitecture-specification.md):
+   * a notice issued with the wrong table, the wrong target, the wrong amount.
+   *
+   * Every bill of the notice that `cancelBill` would cancel is cancelled — the
+   * citizens' own and the shared unit bills alike, each with who, when and why
+   * and its own Tier 1 row, as one press of «إلغاء الفاتورة» writes. Every bill
+   * it would refuse is left exactly as it is and reported with the reason: money
+   * on it, or a citizen's claim waiting on it. The notice stops: `isActive`
+   * false, so the recurring run raises nothing more for it. One transaction:
+   * every bill is locked first, so a payment cannot land between the reading
+   * and the writing.
+   *
+   * The statuses are one write; the audit rows are one per bill, because a
+   * bill's own history is where «who cancelled this» is looked up.
+   */
+  async cancelNoticeBatch(noticeId: string, reason: string, actor: { id: string; role: string }) {
+    const why = reason.trim();
+    const outcome = await runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.db as Prisma.TransactionClient;
+      const notice = await tx.feeNotice.findUnique({
+        where: { id: noticeId },
+        select: { id: true, title: true, isActive: true },
+      });
+      if (!notice) {
+        throw new NotFoundError({ code: 'FEE_NOTICE_NOT_FOUND', message: `FeeNotice ${noticeId} was not found` });
+      }
+
+      const rows = await tx.citizenPayment.findMany({
+        where: { feeNoticeId: noticeId, paymentStatus: { not: 'CANCELLED' } },
+        select: { id: true, invoiceNumber: true, title: true, periodKey: true },
+      });
+      const meta = new Map(rows.map((row) => [row.id, row]));
+      const bills = await this.ledger.lockInvoices(
+        tx,
+        rows.map((row) => row.id),
+      );
+
+      const cancellable = bills.filter((bill) => billCancelRefusal(bill) === null);
+      const skipped = bills.flatMap((bill) => {
+        const refusal = billCancelRefusal(bill);
+        return refusal ? [{ paymentId: bill.id, invoiceNumber: meta.get(bill.id)?.invoiceNumber ?? null, reason: refusal }] : [];
+      });
+
+      if (cancellable.length > 0) {
+        const written = await tx.citizenPayment.updateMany({
+          // The rows are locked; the status and the money are asked again all the same.
+          where: {
+            id: { in: cancellable.map((bill) => bill.id) },
+            paymentStatus: { notIn: ['CANCELLED', 'PAID', 'PENDING_REVIEW'] },
+            paidAmount: 0,
+          },
+          data: { paymentStatus: 'CANCELLED', cancelledAt: new Date(), cancelledById: actor.id, cancellationReason: why },
+        });
+        if (written.count !== cancellable.length) {
+          throw new Error(`cancelNoticeBatch: cancelled ${written.count} of the ${cancellable.length} bills found cancellable`);
+        }
+        for (const bill of cancellable) {
+          const row = meta.get(bill.id);
+          await this.auditTrail.recordInTransaction({
+            actorId: actor.id,
+            actorType: 'STAFF',
+            actorRole: actor.role as never,
+            action: 'FEE_BILL_CANCELLED',
+            entityType: 'Payment',
+            entityId: bill.id,
+            before: { paymentStatus: bill.paymentStatus },
+            after: {
+              citizenId: bill.citizenId,
+              invoiceNumber: row?.invoiceNumber ?? null,
+              title: row?.title ?? null,
+              periodKey: row?.periodKey ?? null,
+              amount: bill.amount,
+              currency: bill.currency,
+              reason: why,
+              // Withdrawn with the whole notice, not on its own.
+              noticeId,
+            },
+          });
+        }
+        // A municipal request waiting on one of these bills is cancelled with it, as with one bill (0094).
+        const waiting = await tx.citizenRequest.findMany({
+          where: { citizenPaymentId: { in: cancellable.map((bill) => bill.id) } },
+          select: { citizenPaymentId: true },
+        });
+        for (const request of waiting) {
+          if (request.citizenPaymentId) {
+            await cancelRequestOfCancelledBill(tx, this.auditTrail, { billId: request.citizenPaymentId, actor });
+          }
+        }
+      }
+
+      if (notice.isActive) {
+        await tx.feeNotice.update({ where: { id: noticeId }, data: { isActive: false } });
+      }
+      await this.auditTrail.recordInTransaction({
+        actorId: actor.id,
+        actorType: 'STAFF',
+        actorRole: actor.role as never,
+        action: 'FEE_NOTICE_CANCELLED',
+        entityType: 'FeeNotice',
+        entityId: noticeId,
+        before: { isActive: notice.isActive },
+        after: { isActive: false, title: notice.title, cancelled: cancellable.length, skipped: skipped.length, reason: why },
+      });
+
+      return { cancelled: cancellable.length, skipped, deactivated: notice.isActive };
+    });
+
+    // For the caches that count what is owed; the audit rows are already written.
+    if (outcome.cancelled > 0) {
+      this.events.emit('payment.cancelled', {
+        tenantSlug: this.tenantContext.tenantSlug,
+        noticeId,
+        actorId: actor.id,
+        actorRole: actor.role,
+      });
+    }
+    return { noticeId, ...outcome };
   }
 
   /** Headline numbers for the admin fee screen. */

@@ -5431,6 +5431,35 @@ export async function issueFeeNotice(
   return result;
 }
 
+/** What «إلغاء الإشعار» did: the bills cancelled, those left with why, and whether the notice stopped. */
+export interface FeeNoticeCancelResult {
+  noticeId: string;
+  cancelled: number;
+  /** Bills left as they were: money on them, or a citizen's claim waiting (an `ERROR_CODES` code). */
+  skipped: Array<{
+    paymentId: string;
+    invoiceNumber: string | null;
+    reason: 'BILL_ALREADY_CANCELLED' | 'PAYMENT_CLAIM_UNDER_REVIEW' | 'BILL_CANCEL_HAS_PAYMENTS';
+  }>;
+  /** True when the notice was still recurring and has now stopped. */
+  deactivated: boolean;
+}
+
+/**
+ * «إلغاء الإشعار» (decision D6): cancels every bill of the notice nothing has
+ * been paid on, reports the rest, and stops the notice. The manager only, with
+ * a reason, as for one bill.
+ */
+export async function cancelFeeNotice(tenant: string, token: string, noticeId: string, reason: string) {
+  const result = await apiFetch<FeeNoticeCancelResult>(
+    tenant,
+    `/fees/notices/${encodeURIComponent(noticeId)}/cancel`,
+    { token, method: 'POST', body: JSON.stringify({ reason }) },
+  );
+  invalidateRequests(`fee-summary:${tenant}`);
+  return result;
+}
+
 /**
  * «معاينة قبل الإصدار»: what `issueFeeNotice` would bill for this notice, with
  * nothing written — the revenue, the bills, each bracket's units, what is not
