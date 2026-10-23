@@ -344,6 +344,7 @@ export class FeesController {
       method: body.method,
       whishTransactionRef: body.whishTransactionRef,
       collectedById: body.collectedById,
+      paidByCitizenId: body.paidByCitizenId,
       note: body.note,
       tendered: body.tendered,
       paidOn: body.paidOn,

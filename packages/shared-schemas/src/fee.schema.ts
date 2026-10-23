@@ -712,6 +712,20 @@ export const feeNoticePreviewResultSchema = z.object({
 export type FeeNoticePreviewResult = z.infer<typeof feeNoticePreviewResultSchema>;
 
 /**
+ * A shared unit bill as a staff list shows it (0099, D5): the unit it is for
+ * and how many registered citizens may pay it. Lists that name a bill's citizen
+ * carry this instead, with the citizen fields null, because a shared bill has
+ * no one citizen. The debtors are counted, never named (open question O2).
+ */
+export interface SharedUnitBillView {
+  unitId: string;
+  /** «0201», formatted from the unit's floor and sequence as the receipt prints it. */
+  unitCode: string;
+  buildingCode: string;
+  debtorCount: number;
+}
+
+/**
  * An urgent-payment ceiling as the settings form sends it: greater than zero,
  * at most two decimals and inside the DECIMAL(14,2) column (a CHECK in 0083
  * refuses zero or less), `null` for none.
@@ -1009,6 +1023,13 @@ export const settlePaymentSchema = z
      */
     collectedById: uuid.optional(),
     /**
+     * On a shared unit bill (0099, D5), which of its debtors paid: the server
+     * requires it there (`SHARED_BILL_PAYER_REQUIRED`), checks it is one of the
+     * bill's debtors, and refuses it on a citizen's own bill. Kept on the
+     * receipt's transaction.
+     */
+    paidByCitizenId: uuid.optional(),
+    /**
      * The day the money was taken, when it was not today — a payment written
      * up the morning after, or a collector's round entered at the end of the
      * week. Never after today on the municipality's own calendar. Omitted
@@ -1244,9 +1265,12 @@ export type ParcelDuesQuery = z.infer<typeof parcelDuesQuerySchema>;
 /** One open bill, and the part of what remains on it that is this parcel's. */
 export interface ParcelDuesBill {
   paymentId: string;
-  citizenId: string;
-  /** «ورثة المرحوم …» for an estate. */
-  citizenName: string;
+  /** Null on a shared unit bill (0099), which has no one citizen: see `sharedDebtorCount`. */
+  citizenId: string | null;
+  /** «ورثة المرحوم …» for an estate. Null on a shared unit bill. */
+  citizenName: string | null;
+  /** On a shared unit bill, how many registered citizens may pay it; null on a citizen's own bill. */
+  sharedDebtorCount: number | null;
   title: string;
   dueDate: string;
   paymentStatus: 'UNPAID' | 'OVERDUE' | 'PENDING_REVIEW';

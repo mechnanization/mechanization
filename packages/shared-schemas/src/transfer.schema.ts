@@ -251,9 +251,14 @@ export interface CollectorCollectionRow {
   id: string;
   receiptNumber: string;
   occurredAt: string;
-  citizenId: string;
+  /**
+   * The bill's citizen, or on a shared unit bill (0099) the debtor who paid it.
+   * Null, with every citizen field null or false, only on a shared bill whose
+   * payer was not recorded.
+   */
+  citizenId: string | null;
   /** The three parts — «غسان جواد حيدر» — because two «غسان حيدر» in one village is ordinary. */
-  citizenName: string;
+  citizenName: string | null;
   /** His own number. Null when the file has none; see `citizenHasNoPhone`. */
   citizenPhone: string | null;
   /** A relative's, shown as a relative's and only when he has none of his own. */
@@ -311,9 +316,13 @@ export interface CollectorRoundRow {
   occurredAt: string;
   /** The invoice, so the receipt can be reopened and shared. */
   paymentId: string;
-  citizenId: string;
-  citizenName: string;
-  /** «0304» — floor-based, readable off the door. Null if he is in no censused unit. */
+  /** As `CollectorCollectionRow.citizenId`: on a shared unit bill (0099), the debtor who paid. */
+  citizenId: string | null;
+  citizenName: string | null;
+  /**
+   * «0304» — floor-based, readable off the door: a shared unit bill's own unit,
+   * else the unit the person lives in. Null if there is none in the census.
+   */
   unitCode: string | null;
   /** «A-1042-B», so a unit code has a building to hang on (D14). */
   buildingCode: string | null;

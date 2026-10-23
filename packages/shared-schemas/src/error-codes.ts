@@ -83,6 +83,10 @@ export const ERROR_CODES = [
   'EXCHANGE_RATE_OVERRIDE_BEYOND_TOLERANCE',
   // A bill cancelled by the manager takes no payment, claim or checkout.
   'PAYMENT_BILL_CANCELLED',
+  // A shared unit bill (0099) is paid by one of its debtors, named; a citizen's own bill names no payer.
+  'SHARED_BILL_PAYER_REQUIRED',
+  'SHARED_BILL_PAYER_NOT_DEBTOR',
+  'SHARED_BILL_PAYER_ON_OWN_BILL',
   // Cancelling a bill that has money on it, or one already cancelled.
   'BILL_CANCEL_HAS_PAYMENTS',
   'BILL_ALREADY_CANCELLED',

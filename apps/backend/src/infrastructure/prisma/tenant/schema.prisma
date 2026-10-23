@@ -2147,17 +2147,12 @@ model FeeNotice {
 /// rewrite what someone already paid last month.
 model CitizenPayment {
   id        String @id @default(uuid()) @db.Uuid
-  /// Whose bill this is.
-  ///
-  /// **Deliberately stricter than the database.** Since 0099 the column is
-  /// nullable: NULL exactly on a shared unit bill, which belongs to `unitId` and
-  /// is owed by its `debtors` instead (CHECK citizen_payments_citizen_or_unit).
-  /// It stays required here until the code that issues shared bills ships
-  /// (`feat/tiered-fees-matrix-engine`), which makes it `String?` and handles
-  /// every read of a bill's citizen in the same change. Until then nothing
-  /// writes a NULL, so the stricter type is true of every row.
-  citizenId String @db.Uuid
-  citizen   User   @relation(fields: [citizenId], references: [id], onDelete: Cascade)
+  /// Whose bill this is. Null exactly on a shared unit bill (0099), which
+  /// belongs to `unitId` and is owed by its `debtors` instead (CHECK
+  /// citizen_payments_citizen_or_unit). Every read of a bill's citizen has to
+  /// say what it does with a shared one.
+  citizenId String? @db.Uuid
+  citizen   User?   @relation(fields: [citizenId], references: [id], onDelete: Cascade)
 
   /// «فاتورة الوحدة المشتركة» (0099, TIERED_AREA only): a unit the bearer rule
   /// charged to two or more citizens, billed once and in full, not split. Set

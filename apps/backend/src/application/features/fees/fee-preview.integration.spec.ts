@@ -239,12 +239,4 @@ describeIfDb('the notice preview', () => {
     );
     expect(preview).toMatchObject({ targetedCitizens: 0, billedCitizens: 0, sharedBills: 0, expectedRevenue: 0 });
   });
-
-  it('still refuses to issue a bracket notice until its bills can be written (Phase 5)', async () => {
-    const before = await written();
-    await expect(
-      within(() => fees.issue({ ...tieredNotice, clientRequestId: randomUUID() } as CreateFeeNotice, actor)),
-    ).rejects.toThrow('TIERED_AREA notices cannot be issued yet');
-    expect(await written()).toEqual(before);
-  });
 });

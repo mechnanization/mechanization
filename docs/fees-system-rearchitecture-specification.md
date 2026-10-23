@@ -291,27 +291,56 @@ CLAUDE.md, "Keeping the docs true".
   issue's in `route-inventory.spec.ts`.
 - Commit: `feat(fees): preview a notice's bills before issuing it`
 
-### Phase 5: issuing
+### Phase 5: issuing, with the readers that had to change with it
 
-- `issue` and `runRecurringBilling` write own bills and shared bills (with
-  their debtors) in one `runInTenantTransaction`; shared bills get invoice
-  numbers like any other.
+Built on `feat/tiered-fees-shared-bills`. Writing a shared bill makes a bill's
+`citizenId` nullable in Prisma, and every read of it had to decide what a
+shared bill means in the same change, so this phase took part of Phase 6:
+
+- `issue` and `runRecurringBilling` plan through `planNotice` and write
+  through `writeBills`: own bills, then shared bills with ids given up front so
+  their debtors are written only for the bills inserted (a re-run of a period
+  writes nothing), then one numbering pass. The notice keeps its table
+  (`matrixBrackets`); a stored table that no longer parses fails that notice's
+  recurring run. `issue` answers `sharedBills` and `sharedUnitConflicts`.
+- The counter: `settlePaymentSchema.paidByCitizenId`; the ledger requires it on
+  a shared bill, checks it is a debtor, refuses it on an own bill
+  (`SHARED_BILL_PAYER_*`), and a reversal carries it.
+- Staff readers: the payments list and the verification queue (`billHolder`,
+  `sharedUnit`), the audit view (the unit, linked to its building), the
+  collector's two views (the paying debtor, the shared unit's sector and
+  door), the parcel report's per-person standing (a debtor's shared bills
+  included).
+- «المستحق على عقار» left-joins the citizen, so an unpaid shared bill on a
+  parcel blocks its براءة ذمة (the clearance reads parcel dues).
+- `citizen-merge` moves the absorbed person's debtor rows, leaves a row on a
+  bill both already owe, and the undo moves them back (`sharedBillDebts`).
+- Backup: `citizenPaymentDebtor` in `TABLE_ORDER`, snapshot version 5.
+- Frontend: the screens that read a bill's citizen name a shared bill by its
+  unit and count (`common.sharedUnitBill`), and offer no receipt reprint or
+  bulk settlement for one.
+- Tests: `shared-unit-bills.integration.spec.ts` (issue as previewed, T-8 and
+  T-9; the parcel's dues; the counter's three refusals and the paid bill with
+  its payer; the recurring run once a period), and a merge-and-undo test in
+  `citizen-merge.integration.spec.ts`.
 - Commit: `feat(fees): issue tiered notices with shared unit bills`
 
-### Phase 6: shared bills wherever a bill is read
+### Phase 6: shared bills where a person reads their own
 
-Every place that reads a bill's citizen, found by the compiler after 0099:
+What a debtor sees as theirs. Until this lands a shared bill is billed, paid at
+the counter and blocks its parcel's clearance, but a debtor does not see it
+among their own bills:
 
 - Portal `payments/mine` and the outstanding balance: own bills plus shared
   bills where the citizen is a debtor. O2: show the number of others, not names.
 - `payments/mine/:id/whish/checkout` and `payments/mine/:id/declare`: allowed for any debtor.
-- Settlement at the counter and bulk settlement: record `paidByCitizenId`.
-- Receipts name the paying debtor.
-- براءة ذمة (`citizen-requests`): an unpaid shared bill blocks every debtor.
-- Staff lists, search, summary and reports: a shared bill is counted once, never once per debtor.
-- `citizen-merge`: move debtor rows; refuse or fold a duplicate pair on one bill.
+- A citizen's file (`GET citizens/:id` payments) and the register's balances
+  (`citizens.service.ts`): a debtor's shared bills counted as theirs.
+- The payments list filtered by citizen: their shared bills too.
+- Bulk settlement: a debtor's shared bills, with the payer recorded.
+- Receipts: the reprint names the paying debtor.
 - Correction bills (`bill-corrections.ts`): trace changes on the unit and on each debtor.
-- Commit: `feat(fees): shared unit bills in the portal, settlement, clearance and reports`
+- Commit: `feat(fees): shared unit bills in the portal and a citizen's own reads`
 
 ### Phase 7: batch cancel (D6)
 

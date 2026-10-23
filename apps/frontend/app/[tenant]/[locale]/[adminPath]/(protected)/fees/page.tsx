@@ -447,7 +447,7 @@ export default function FeesPage({
       const bill = fromAdminPayment(payment);
       return (
         <BillCheckbox
-          subject={{ kind: 'row', title: payment.title, name: payment.citizenName }}
+          subject={{ kind: 'row', title: payment.title, name: payment.citizenName ?? '' }}
           checked={selection.bills.some((entry) => entry.id === payment.id)}
           blocked={rowBlock(selection.bills, bill)}
           onToggle={() => selection.toggle(bill)}
@@ -481,6 +481,20 @@ export default function FeesPage({
         header: locale === 'en' ? 'Citizen' : 'المواطن',
         cell: ({ row }) => {
           const payment = row.original;
+          // A shared unit bill (0099) has no one citizen: the unit is named, its people counted.
+          if (!payment.citizenId) {
+            return (
+              <span className="text-sm text-muted-foreground">
+                {payment.sharedUnit
+                  ? tCommon('sharedUnitBill', {
+                      building: payment.sharedUnit.buildingCode,
+                      unit: payment.sharedUnit.unitCode,
+                      count: payment.sharedUnit.debtorCount,
+                    })
+                  : '—'}
+              </span>
+            );
+          }
           return (
             <div className="flex items-center gap-3">
               {canBulkSettle ? <span className="inline-flex sm:hidden">{rowBox(payment)}</span> : null}
@@ -488,7 +502,7 @@ export default function FeesPage({
                 aria-hidden
                 className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary"
               >
-                {initials(payment.citizenName)}
+                {initials(payment.citizenName ?? '')}
               </span>
               <div className="min-w-0 space-y-0.5">
                 <Link
@@ -682,15 +696,16 @@ export default function FeesPage({
                 </Link>
               ) : null}
 
-              {payment.paidAmount > 0 ? (
+              {/* A receipt is rebuilt from the citizen's file; a shared unit bill (0099) has none yet. */}
+              {payment.paidAmount > 0 && payment.citizenId ? (
                 <Button
                   size="sm"
                   variant="outline"
                   className="h-8 text-xs"
                   disabled={isBusy}
-                  onClick={() =>
-                    void openReceipt(payment.citizenId, payment.id, payment.paidAmount)
-                  }
+                  onClick={() => {
+                    if (payment.citizenId) void openReceipt(payment.citizenId, payment.id, payment.paidAmount);
+                  }}
                 >
                   {isBusy ? (
                     <Loader2 className="size-3.5 animate-spin" aria-hidden />
@@ -705,7 +720,7 @@ export default function FeesPage({
         },
       },
     ],
-    [base, canDecide, canSettle, busyPaymentId, openReceipt, locale, labels, canBulkSettle, pageBox, rowBox, tSelect],
+    [base, canDecide, canSettle, busyPaymentId, openReceipt, locale, labels, canBulkSettle, pageBox, rowBox, tSelect, tCommon],
   );
 
   if (!token) return <LoadingState fullHeight label={tCommon('loading')} />;

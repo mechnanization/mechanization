@@ -1718,12 +1718,20 @@ export class ReportingService {
       citizenIds.length > 0
         ? await withConnectionRetry(() =>
             this.db.citizenPayment.findMany({
-              where: { citizenId: { in: citizenIds } },
+              /*
+                Their own bills, and the shared unit bills they are a debtor on
+                (0099, D5): a shared bill is owed by each of its debtors until
+                one pays it, so it stands in each one's standing.
+              */
+              where: {
+                OR: [{ citizenId: { in: citizenIds } }, { debtors: { some: { citizenId: { in: citizenIds } } } }],
+              },
               select: {
                 citizenId: true,
                 amount: true,
                 paidAmount: true,
                 paymentStatus: true,
+                debtors: { select: { citizenId: true } },
               },
             }),
           )
@@ -1733,14 +1741,18 @@ export class ReportingService {
       string,
       Array<{ amount: number; paidAmount: number; status: string }>
     >();
+    const listed = new Set(citizenIds);
     for (const p of payments) {
-      const list = paymentsByCitizen.get(p.citizenId) ?? [];
-      list.push({
-        amount: Number(p.amount),
-        paidAmount: Number(p.paidAmount),
-        status: p.paymentStatus,
-      });
-      paymentsByCitizen.set(p.citizenId, list);
+      const holders = p.citizenId ? [p.citizenId] : p.debtors.map((debtor) => debtor.citizenId);
+      for (const holder of holders.filter((id) => listed.has(id))) {
+        const list = paymentsByCitizen.get(holder) ?? [];
+        list.push({
+          amount: Number(p.amount),
+          paidAmount: Number(p.paidAmount),
+          status: p.paymentStatus,
+        });
+        paymentsByCitizen.set(holder, list);
+      }
     }
 
     /*

@@ -395,7 +395,8 @@ export default function SettlePaymentPage({
         description: t('replayedBody', { amount: formatLbp(result.received, locale) }),
       });
     }
-    await loadReceipt(payment.citizenId);
+    // A receipt is rebuilt from the citizen's file; a shared unit bill (0099) has none yet.
+    if (payment.citizenId) await loadReceipt(payment.citizenId);
   };
 
   /** The words for a failed press: the localised text for the code (TXT-6), or this page's own for an earlier receipt. */
@@ -488,12 +489,14 @@ export default function SettlePaymentPage({
             {receiptState === 'failed' ? <p>{t('receiptFailedBody')}</p> : null}
             <div className="flex flex-wrap items-center gap-2">
               {/* Reads the citizen's file again, for the receipt only: the payment is not touched. */}
-              {receiptState !== 'idle' ? (
+              {receiptState !== 'idle' && payment.citizenId ? (
                 <Button
                   size="sm"
                   variant="outline"
                   disabled={receiptState === 'loading'}
-                  onClick={() => void loadReceipt(payment.citizenId)}
+                  onClick={() => {
+                    if (payment.citizenId) void loadReceipt(payment.citizenId);
+                  }}
                 >
                   {receiptState === 'loading' ? (
                     <Loader2 className="size-4 animate-spin" aria-hidden />
