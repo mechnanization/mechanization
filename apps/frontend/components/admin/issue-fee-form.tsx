@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import {
   ArrowLeft,
   ArrowRight,
@@ -25,7 +26,10 @@ import {
   FEE_TARGET_CATEGORY,
   FEE_TARGET_TYPE,
 } from '@mechanization/shared-schemas';
-import type { FeeBasis, FeeBearer } from '@mechanization/shared-schemas';
+import type { FeeBasis, FeeNoticePreviewResult } from '@mechanization/shared-schemas';
+import { NoticePreview } from '@/components/admin/fees/notice-preview';
+import { TieredMatrixEditor } from '@/components/admin/fees/tiered-matrix-editor';
+import { emptyBracket, matrixIssues, noticePayload, type NoticeDraft } from '@/lib/fee-notice-draft';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
 import { Alert } from '@/components/ui/alert';
@@ -45,20 +49,8 @@ import { CitizenPicker, type PickedCitizen } from '@/components/admin/citizen-pi
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/dates';
 
-export interface IssueFeeValues {
-  title: string;
-  amount: string;
-  /** What `amount` is per — see `FEE_BASIS`. */
-  basis: FeeBasis;
-  /** Who owes it — see `FEE_BEARER`. Only consulted when basis is not FLAT. */
-  bearer: FeeBearer;
-  frequency: string;
-  targetType: string;
-  targetCategory: string;
-  targetCitizenId: string;
-  dueDate: string;
-  instructions: string;
-}
+/** The wizard's fields, as typed — see `NoticeDraft`, and `noticePayload` for what is sent. */
+export type IssueFeeValues = NoticeDraft;
 
 const EMPTY: IssueFeeValues = {
   title: '',
@@ -84,6 +76,7 @@ const EMPTY: IssueFeeValues = {
   targetCitizenId: '',
   dueDate: '',
   instructions: '',
+  matrixBrackets: [],
 };
 
 /** One glyph per bearer, so the two are told apart before they are read. */
@@ -117,6 +110,7 @@ function formatLbp(value: string): string {
  */
 export function IssueFeeForm({
   tenant,
+  base,
   token,
   submitting,
   error,
@@ -126,6 +120,8 @@ export function IssueFeeForm({
   existingTitles = [],
 }: {
   tenant: string;
+  /** `/{tenant}/{locale}/{adminPath}`, for the preview's read. */
+  base: string;
   /** The staff session's token; the citizen picker searches the register with it. */
   token: string | null;
   submitting: boolean;
@@ -137,7 +133,11 @@ export function IssueFeeForm({
   existingTitles?: string[];
 }) {
   const labels = getLabels(locale);
+  const tMatrix = useTranslations('fees.matrix');
   const [values, setValues] = useState<IssueFeeValues>(EMPTY);
+  /** The preview's answer for the notice on screen; «إصدار» waits for it. */
+  const [preview, setPreview] = useState<FeeNoticePreviewResult | null>(null);
+  const onPreview = useCallback((result: FeeNoticePreviewResult | null) => setPreview(result), []);
   /** The file chosen in the picker (`CitizenPicker`), whose id `values.targetCitizenId` carries. */
   const [picked, setPicked] = useState<PickedCitizen | null>(null);
   const [stepIndex, setStepIndex] = useState(0);
@@ -171,6 +171,8 @@ export function IssueFeeForm({
   const chosen = picked && picked.id === values.targetCitizenId ? picked : undefined;
   const amount = Number(values.amount.replace(/\D/g, ''));
   const recurring = values.frequency !== 'ONCE';
+  // «حسب فئة المساحة» (0098): the brackets carry the money, and there is no amount to type.
+  const tiered = values.basis === 'TIERED_AREA';
 
   /**
    * Which steps are finished.
@@ -180,7 +182,10 @@ export function IssueFeeForm({
    * button disagrees is worse than no header at all.
    */
   const stepComplete: Record<'details' | 'target' | 'review', boolean> = {
-    details: values.title.trim().length >= 3 && amount > 0 && values.dueDate !== '',
+    details:
+      values.title.trim().length >= 3 &&
+      values.dueDate !== '' &&
+      (tiered ? matrixIssues(values.matrixBrackets).ok : amount > 0),
     target:
       values.targetType !== 'INDIVIDUAL_CITIZEN' || values.targetCitizenId !== '',
     review: true,
@@ -188,8 +193,13 @@ export function IssueFeeForm({
 
   const current = steps[stepIndex];
   const isLast = stepIndex === steps.length - 1;
+  // A preview answers for the notice it was read for: leaving the review step drops it.
+  useEffect(() => {
+    if (current.id !== 'review') setPreview(null);
+  }, [current.id]);
   const canAdvance = stepComplete[current.id];
-  const canSubmit = stepComplete.details && stepComplete.target;
+  // Issued only once the preview has answered for this notice: the clerk has seen what it raises.
+  const canSubmit = stepComplete.details && stepComplete.target && preview !== null;
 
   const targetSummary =
     values.targetType === 'INDIVIDUAL_CITIZEN'
@@ -246,47 +256,27 @@ export function IssueFeeForm({
 
               <div className="grid gap-5">
                 <Field
-                  label={
-                    values.basis === 'FLAT'
-                      ? (locale === 'en' ? 'Amount (LBP)' : 'المبلغ بالليرة اللبنانية')
-                      : values.basis === 'PER_AREA'
-                        ? (locale === 'en' ? 'Rate per m² (LBP)' : 'السعر للمتر المربع (ل.ل.)')
-                        : (locale === 'en' ? 'Rate per unit (LBP)' : 'السعر لكل وحدة (ل.ل.)')
-                  }
-                  htmlFor="fee-amount"
-                  required
-                >
-                  <Input
-                    id="fee-amount"
-                    inputMode="numeric"
-                    dir="ltr"
-                    className="text-start text-lg font-semibold tabular-nums"
-                    placeholder="500,000"
-                    value={values.amount}
-                    onChange={(event) => set({ amount: formatLbp(event.target.value) })}
-                  />
-                </Field>
-
-                <Field
                   label={locale === 'en' ? 'Charged' : 'طريقة الاحتساب'}
                   htmlFor="fee-basis"
                   required
                 >
                   <Select
                     value={values.basis}
-                    onValueChange={(next) => set({ basis: next as FeeBasis })}
+                    onValueChange={(next) =>
+                      set({
+                        basis: next as FeeBasis,
+                        // A table to start from the first time the bracket basis is chosen.
+                        ...(next === 'TIERED_AREA' && values.matrixBrackets.length === 0
+                          ? { matrixBrackets: [emptyBracket()] }
+                          : {}),
+                      })
+                    }
                   >
                     <SelectTrigger id="fee-basis">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {/*
-                        TIERED_AREA is not offered until this form has the
-                        bracket table to go with it (Phase 8 of
-                        docs/fees-system-rearchitecture-specification.md); the
-                        API refuses to price one until then.
-                      */}
-                      {FEE_BASIS.filter((option) => option !== 'TIERED_AREA').map((option) => (
+                      {FEE_BASIS.map((option) => (
                         <SelectItem key={option} value={option}>
                           {labels.feeBasis[option]}
                         </SelectItem>
@@ -294,6 +284,41 @@ export function IssueFeeForm({
                     </SelectContent>
                   </Select>
                 </Field>
+
+                {tiered ? (
+                  <fieldset className="space-y-2">
+                    <legend className="text-sm font-medium">
+                      {tMatrix('field')} <span className="text-destructive" aria-hidden>*</span>
+                    </legend>
+                    <TieredMatrixEditor
+                      value={values.matrixBrackets}
+                      onChange={(matrixBrackets) => set({ matrixBrackets })}
+                      locale={locale}
+                    />
+                  </fieldset>
+                ) : (
+                  <Field
+                    label={
+                      values.basis === 'FLAT'
+                        ? (locale === 'en' ? 'Amount (LBP)' : 'المبلغ بالليرة اللبنانية')
+                        : values.basis === 'PER_AREA'
+                          ? (locale === 'en' ? 'Rate per m² (LBP)' : 'السعر للمتر المربع (ل.ل.)')
+                          : (locale === 'en' ? 'Rate per unit (LBP)' : 'السعر لكل وحدة (ل.ل.)')
+                    }
+                    htmlFor="fee-amount"
+                    required
+                  >
+                    <Input
+                      id="fee-amount"
+                      inputMode="numeric"
+                      dir="ltr"
+                      className="text-start text-lg font-semibold tabular-nums"
+                      placeholder="500,000"
+                      value={values.amount}
+                      onChange={(event) => set({ amount: formatLbp(event.target.value) })}
+                    />
+                  </Field>
+                )}
 
                 {/*
                   Hidden under FLAT, where it decides nothing.
@@ -481,12 +506,17 @@ export function IssueFeeForm({
             <div className="space-y-4">
               <div className="rounded-lg border bg-muted/30 p-4 text-center">
                 <p className="text-sm text-muted-foreground">{values.title || '—'}</p>
-                <p className="mt-1 text-3xl font-bold tabular-nums" dir="ltr">
-                  {amount ? amount.toLocaleString('en-US') : '—'}
-                  <span className="ms-2 text-base font-medium text-muted-foreground">
-                    {locale === 'en' ? 'LBP' : 'ل.ل'}
-                  </span>
-                </p>
+                {tiered ? (
+                  // No one amount: the table decides each unit's, and the preview below adds them up.
+                  <p className="mt-1 text-lg font-semibold">{labels.feeBasis.TIERED_AREA}</p>
+                ) : (
+                  <p className="mt-1 text-3xl font-bold tabular-nums" dir="ltr">
+                    {amount ? amount.toLocaleString('en-US') : '—'}
+                    <span className="ms-2 text-base font-medium text-muted-foreground">
+                      {locale === 'en' ? 'LBP' : 'ل.ل'}
+                    </span>
+                  </p>
+                )}
               </div>
 
               <dl className="divide-y rounded-lg border text-sm">
@@ -536,6 +566,18 @@ export function IssueFeeForm({
                       : ''}
                   </span>
                 </p>
+              ) : null}
+
+              {/* «معاينة قبل الإصدار»: what this notice raises, read as the issue reads it; «إصدار» waits for it. */}
+              {stepComplete.details && stepComplete.target ? (
+                <NoticePreview
+                  tenant={tenant}
+                  base={base}
+                  token={token}
+                  input={noticePayload(values)}
+                  locale={locale}
+                  onResult={onPreview}
+                />
               ) : null}
             </div>
           ) : null}

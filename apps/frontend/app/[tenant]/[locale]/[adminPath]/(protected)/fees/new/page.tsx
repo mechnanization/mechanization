@@ -16,6 +16,7 @@ import { hasRole } from '@/lib/staff-roles';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { IssueFeeForm, type IssueFeeValues } from '@/components/admin/issue-fee-form';
+import { noticePayload } from '@/lib/fee-notice-draft';
 import { Alert } from '@/components/ui/alert';
 import { HeaderBackLink } from '@/components/admin/header-back-link';
 import { Card, CardContent } from '@/components/ui/card';
@@ -86,16 +87,8 @@ export default function IssueFeePage({
     setError(null);
     try {
       const res = await issueFeeNotice(tenant, token, {
-        title: values.title,
-        amount: Number(values.amount.replace(/\D/g, '')),
-        basis: values.basis,
-        bearer: values.bearer,
-        frequency: values.frequency,
-        targetType: values.targetType,
-        targetCategory: values.targetCategory || undefined,
-        targetCitizenId: values.targetCitizenId || undefined,
-        dueDate: values.dueDate,
-        instructions: values.instructions || undefined,
+        // The notice the preview was read for, field for field (`noticePayload`).
+        ...noticePayload(values),
         // Kept across every failure and edit, spent once the server confirms the notice exists.
         clientRequestId: heldKey(tenant, 'fee-notice:new'),
       });
@@ -168,14 +161,15 @@ export default function IssueFeePage({
         toast.info(tFees('issue.coOwnerPaid', { count: res.coOwnerPaidUnits }));
       }
 
-      // «معفاة من الرسوم» (0077): the mosque on a waqf parcel, a public building.
-      if (res.feeExemptUnits) toast.info(tFees('issue.feeExempt', { count: res.feeExemptUnits }));
-
       /*
-        Not held and not exempt: a co-owned flat «مالك مسؤول» pays for in full.
-        Said so the other owners' bills do not read as missing a unit.
+        «حسب فئة المساحة» (0099, D5): how many of the bills raised are shared
+        unit bills, one per unit several people are charged for, and the shared
+        units billed to nobody because their holders' records disagree.
       */
-      if (res.coOwnerPaidUnits) toast.info(tFees('issue.coOwnerPaid', { count: res.coOwnerPaidUnits }));
+      if (res.sharedBills) toast.info(tFees('issue.sharedBills', { count: res.sharedBills }));
+      if (res.sharedUnitConflicts && res.sharedUnitConflicts.length > 0) {
+        toast.warning(tFees('issue.sharedUnitConflicts', { count: res.sharedUnitConflicts.length }));
+      }
 
       // The wizard stays locked from here: the page is leaving (see `inFlight`).
       router.push(feesHref);
@@ -214,6 +208,7 @@ export default function IssueFeePage({
       ) : (
         <IssueFeeForm
           tenant={tenant}
+          base={base}
           token={token}
           submitting={submitting}
           error={error}

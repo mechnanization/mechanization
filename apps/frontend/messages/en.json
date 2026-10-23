@@ -1367,11 +1367,57 @@
     "sharedBillUnits": "{count} billed on a shared unit bill"
   },
   "fees": {
+    "matrix": {
+      "field": "Bracket table",
+      "rangeHint": "Each unit type and level count has its own scale: each bracket starts where the one before it ends, and includes its lower bound but not its upper one — 100 m² falls in the bracket that starts at 100. Leave “Up to” empty on the last bracket.",
+      "empty": "No brackets yet. Add the first one.",
+      "newBracket": "new",
+      "rowTitle": "Bracket {code}",
+      "remove": "Remove bracket {code}",
+      "add": "Add a bracket",
+      "code": "Bracket code",
+      "label": "Bracket name",
+      "labelPlaceholder": "e.g. Category A",
+      "minArea": "From (m²)",
+      "maxArea": "Up to, not including (m²)",
+      "noCeiling": "No upper limit",
+      "levels": "Unit levels",
+      "oneLevel": "One level",
+      "amount": "Fee",
+      "lbp": "LBP",
+      "unitTypes": "Unit types this bracket covers"
+    },
+    "preview": {
+      "title": "Preview of what will be issued",
+      "loading": "Working out the bills this fee will raise…",
+      "failed": "The preview failed, and the fee is not issued without it.",
+      "retry": "Preview again",
+      "nobody": "This fee reaches nobody: no citizen matches the target.",
+      "billedCitizens": "Citizens' bills",
+      "sharedBills": "Shared unit bills",
+      "revenue": "Expected revenue",
+      "bracket": "Bracket",
+      "units": "Units",
+      "subtotal": "Subtotal",
+      "notCharged": {
+        "excluded": "Not charged under the bearer rule",
+        "held": "Held for review",
+        "uninhabitable": "Uninhabitable",
+        "feeExempt": "Exempt from fees",
+        "coOwnerPaid": "Paid by another owner"
+      },
+      "conflicts": "Shared units that will not be billed because the records of those registered on them put them in different brackets: {count}",
+      "conflictLine": "Unit {unit} on parcel {parcel}: brackets {brackets}, registered {count}",
+      "separator": ", ",
+      "unassessable": "Citizens whose fee could not be worked out: {count}"
+    },
     "issue": {
       "uninhabitable": "Uninhabitable units: {count} — not charged this fee. Charging resumes at the first billing run after a re-inspection reads a unit habitable: for the current period if the person has no bill for it yet, otherwise from the next period.",
       "uninhabitableOnce": "Uninhabitable units: {count} — not charged this fee. It is a one-off fee, so nothing charges them later by itself; to collect it once a re-inspection reads a unit habitable, issue an individual charge.",
       "feeExempt": "Units exempt from fees (place of worship, public facility…): {count} — not charged this fee.",
-      "coOwnerPaid": "Co-owned units paid for by their responsible owner: {count} — nothing was charged for them to their other owners."
+      "coOwnerPaid": "Co-owned units paid for by their responsible owner: {count} — nothing was charged for them to their other owners.",
+      "sharedBills": "Of these, shared unit bills: {count} — one bill for each unit more than one citizen is registered on, paid at the municipality's office by any of them.",
+      "sharedUnitConflicts": "Shared units not billed because the records of those registered on them put them in different brackets: {count} — correct the unit's area, then issue a fee for it."
     },
     "issuePage": {
       "back": "Back to fees and payments",

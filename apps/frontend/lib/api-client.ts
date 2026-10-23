@@ -32,6 +32,7 @@ import type {
   FeeExemptionReason,
   FeeBearer,
   FeeFrequency,
+  FeeMatrixBracket,
   FeeNoticePreviewInput,
   FeeNoticePreviewResult,
   FieldFlag,
@@ -5368,6 +5369,8 @@ export async function issueFeeNotice(
     targetCitizenId?: string;
     dueDate: string;
     instructions?: string;
+    /** The bracket table, under TIERED_AREA and only then (`feeMatrixSchema`). */
+    matrixBrackets?: FeeMatrixBracket[];
     /** One id per issue (`fee-notice:new` in `lib/request-id.ts`): a retry is answered with the first notice. */
     clientRequestId: string;
   },
@@ -5466,11 +5469,12 @@ export async function cancelFeeNotice(tenant: string, token: string, noticeId: s
  * charged and who cannot be assessed. The same notice as the issue takes,
  * without the retry key.
  */
-export function previewFeeNotice(tenant: string, token: string, input: FeeNoticePreviewInput) {
+export function previewFeeNotice(tenant: string, token: string, input: FeeNoticePreviewInput, signal?: AbortSignal) {
   return apiFetch<FeeNoticePreviewResult>(tenant, '/fees/notices/preview', {
     token,
     method: 'POST',
     body: JSON.stringify(input),
+    signal,
   });
 }
 
