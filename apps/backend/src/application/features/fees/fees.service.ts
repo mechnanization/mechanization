@@ -3551,14 +3551,36 @@ export class FeesService {
     const row = await withConnectionRetry(() =>
       this.db.citizenPayment.findUnique({
         where: { id },
-        include: this.ADMIN_PAYMENT_INCLUDE,
+        include: {
+          ...this.ADMIN_PAYMENT_INCLUDE,
+          /*
+            On a shared unit bill (0099): everyone who may pay it, by name, for
+            the counter to say which of them did (`paidByCitizenId`). This one
+            bill, for staff only; the lists carry the count, never the names.
+          */
+          debtors: {
+            orderBy: { createdAt: 'asc' },
+            select: {
+              citizenId: true,
+              role: true,
+              citizen: { select: { firstName: true, middleName: true, lastName: true, residence: true } },
+            },
+          },
+        },
       }),
     );
     if (!row) throw new NotFoundError({
       code: 'PAYMENT_NOT_FOUND',
       message: `Payment ${id} was not found`,
     });
-    return this.toAdminPaymentItem(row, new Date());
+    return {
+      ...this.toAdminPaymentItem(row, new Date()),
+      sharedDebtors: row.debtors.map((debtor) => ({
+        citizenId: debtor.citizenId,
+        name: citizenDisplayName(debtor.citizen, { middleName: true }),
+        role: debtor.role,
+      })),
+    };
   }
 
   /**

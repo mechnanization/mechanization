@@ -263,6 +263,11 @@ describeIfDb('shared unit bills', () => {
 
     const ledger = await within(() => fees.listAllPayments({ citizenId: brothers[1]! }));
     expect(ledger.items.map((bill) => bill.id)).toEqual([sharedBillId]);
+    // The counter's one bill names its debtors, for the clerk to say which one paid; the lists never do.
+    const atCounter = await within(() => fees.getPaymentById(sharedBillId));
+    expect(atCounter.sharedDebtors.map((debtor) => debtor.citizenId).sort()).toEqual([...brothers].sort());
+    expect(atCounter.sharedDebtors.every((debtor) => debtor.name.length > 0 && debtor.role === 'OWNER')).toBe(true);
+    expect(ledger.items[0]).not.toHaveProperty('sharedDebtors');
 
     const register = await within(() => citizens.list({ limit: 50 }));
     const outstandingOf = (id: string) => register.items.find((row) => row.id === id)?.outstandingTotal;

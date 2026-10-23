@@ -106,7 +106,8 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   (`paidByCitizenId`, a UUID in `settlePaymentSchema`). The ledger checks it is one of the bill's
   debtors under the bill's lock and refuses a payer on a citizen's own bill, so no receipt on a shared
   bill names someone with no part in it. Staff lists show a shared bill's unit and how many may pay
-  it, never the debtors' names beside it (open question O2). The citizen portal shows a debtor the
+  it, never the debtors' names beside it (open question O2); the one bill the counter opens
+  (`GET fees/payments/:id`, `sharedDebtors`) names them, so the clerk can record which one paid. The citizen portal shows a debtor the
   shared bills they owe the same way — the unit and the number of others, never who they are — and
   refuses a claim or a Whish payment on one (`SHARED_BILL_PAY_AT_OFFICE`) while answering a citizen
   who is not a debtor as for any bill not theirs (`PAYMENT_NOT_FOUND`), so a bill id discloses nothing.

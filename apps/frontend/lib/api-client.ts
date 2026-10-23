@@ -5875,7 +5875,15 @@ export function getAllPayments(
  * arrives with nothing but this id.
  */
 export function getPaymentById(tenant: string, token: string, id: string) {
-  return apiFetch<AdminPaymentItem>(tenant, `/fees/payments/${encodeURIComponent(id)}`, {
+  return apiFetch<
+    AdminPaymentItem & {
+      /**
+       * On a shared unit bill (0099): everyone who may pay it, by name, for the
+       * counter to say which of them did. Empty on a citizen's own bill.
+       */
+      sharedDebtors?: Array<{ citizenId: string; name: string; role: string }>;
+    }
+  >(tenant, `/fees/payments/${encodeURIComponent(id)}`, {
     token,
   });
 }

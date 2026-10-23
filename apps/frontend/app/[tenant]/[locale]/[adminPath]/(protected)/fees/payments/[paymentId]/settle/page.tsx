@@ -145,13 +145,14 @@ export default function SettlePaymentPage({
   const queryClient = useQueryClient();
   const toast = useToast();
   const t = useTranslations('counterPayment');
+  const tCommon = useTranslations('common');
   const labels = getLabels(locale);
   const base = `/${tenant}/${locale}/${adminPath}`;
 
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [payment, setPayment] = useState<AdminPaymentItem | null>(null);
+  const [payment, setPayment] = useState<Awaited<ReturnType<typeof getPaymentById>> | null>(null);
   const [collectors, setCollectors] = useState<StaffSummary[]>([]);
   /** The staff read failed (it is not open to every role that settles), which is not «no staff». */
   const [collectorsFailed, setCollectorsFailed] = useState(false);
@@ -163,6 +164,8 @@ export default function SettlePaymentPage({
   const [method, setMethod] = useState<Method>('CASH');
   const [reference, setReference] = useState('');
   const [collectedById, setCollectedById] = useState('');
+  /** On a shared unit bill (0099): which of its debtors is paying — required, and named on the receipt. */
+  const [paidBy, setPaidBy] = useState('');
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
   /**
@@ -334,8 +337,13 @@ export default function SettlePaymentPage({
   const isCollector = method === 'COLLECTOR';
   const missingReference = isWhish && reference.trim() === '';
   const missingCollector = isCollector && collectedById === '';
+  // A shared unit bill is paid by one of its debtors, named (the server refuses it otherwise).
+  const shared = Boolean(payment.sharedUnit);
+  const missingPayer = shared && paidBy === '';
   const tooMuch = received > payment.remaining;
-  const valid = received > 0 && !tooMuch && !missingReference && !missingCollector;
+  const valid = received > 0 && !tooMuch && !missingReference && !missingCollector && !missingPayer;
+  /** Whose file the receipt is rebuilt from: the bill's citizen, or the debtor who paid a shared bill. */
+  const receiptFile = payment.citizenId ?? (shared && paidBy !== '' ? paidBy : null);
   const isPartial = received > 0 && received < payment.remaining;
   /** The money has moved: nothing on the page may move it again. */
   const locked = settled !== null;
@@ -362,6 +370,7 @@ export default function SettlePaymentPage({
         amount: received,
         whishTransactionRef: isWhish ? reference.trim() : undefined,
         collectedById: isCollector ? collectedById : undefined,
+        paidByCitizenId: shared ? paidBy : undefined,
         note: note.trim() || undefined,
         clientRequestId: heldKey(tenant, keyScope),
       });
@@ -395,8 +404,8 @@ export default function SettlePaymentPage({
         description: t('replayedBody', { amount: formatLbp(result.received, locale) }),
       });
     }
-    // A receipt is rebuilt from the citizen's file; a shared unit bill (0099) has none yet.
-    if (payment.citizenId) await loadReceipt(payment.citizenId);
+    // Rebuilt from a file: the citizen's, or on a shared unit bill (0099) the debtor who paid.
+    if (receiptFile) await loadReceipt(receiptFile);
   };
 
   /** The words for a failed press: the localised text for the code (TXT-6), or this page's own for an earlier receipt. */
@@ -489,14 +498,12 @@ export default function SettlePaymentPage({
             {receiptState === 'failed' ? <p>{t('receiptFailedBody')}</p> : null}
             <div className="flex flex-wrap items-center gap-2">
               {/* Reads the citizen's file again, for the receipt only: the payment is not touched. */}
-              {receiptState !== 'idle' && payment.citizenId ? (
+              {receiptState !== 'idle' && receiptFile ? (
                 <Button
                   size="sm"
                   variant="outline"
                   disabled={receiptState === 'loading'}
-                  onClick={() => {
-                    if (payment.citizenId) void loadReceipt(payment.citizenId);
-                  }}
+                  onClick={() => void loadReceipt(receiptFile)}
                 >
                   {receiptState === 'loading' ? (
                     <Loader2 className="size-4 animate-spin" aria-hidden />
@@ -578,6 +585,27 @@ export default function SettlePaymentPage({
                   <Alert variant="info" title={t('collector')}>
                     {t('selfCollector')}
                   </Alert>
+                ) : null}
+
+                {/*
+                  A shared unit bill (0099, D5): owed by everyone registered on the unit, paid
+                  once by any of them. The clerk says which, from those the bill names.
+                */}
+                {shared ? (
+                  <Field label={t('payer')} htmlFor="settle-payer" required>
+                    <Select value={paidBy} onValueChange={setPaidBy} disabled={locked}>
+                      <SelectTrigger id="settle-payer">
+                        <SelectValue placeholder={t('payerPlaceholder')} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(payment.sharedDebtors ?? []).map((debtor) => (
+                          <SelectItem key={debtor.citizenId} value={debtor.citizenId}>
+                            {debtor.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </Field>
                 ) : null}
 
                 {isCollector && !selfCollector ? (
@@ -698,7 +726,17 @@ export default function SettlePaymentPage({
                 <div className="space-y-3 text-sm">
                   <div className="flex justify-between gap-3">
                     <span className="text-muted-foreground">{t('citizen')}</span>
-                    <span className="font-semibold text-foreground">{payment.citizenName}</span>
+                    <span className="font-semibold text-foreground">
+                      {/* A shared unit bill has no one citizen: the unit, and how many may pay it. */}
+                      {payment.citizenName ??
+                        (payment.sharedUnit
+                          ? tCommon('sharedUnitBill', {
+                              building: payment.sharedUnit.buildingCode,
+                              unit: payment.sharedUnit.unitCode,
+                              count: payment.sharedUnit.debtorCount,
+                            })
+                          : '—')}
+                    </span>
                   </div>
                   <div className="flex justify-between gap-3">
                     <span className="text-muted-foreground">{t('charge')}</span>
