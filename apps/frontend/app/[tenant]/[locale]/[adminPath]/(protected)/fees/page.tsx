@@ -17,6 +17,7 @@ import {
   Banknote,
   CheckCircle2,
   FileWarning,
+  Megaphone,
   Loader2,
   Plus,
   Receipt,
@@ -190,6 +191,7 @@ export default function FeesPage({
   }, { columnsMenu: true });
   const tReview = useTranslations('fees.register.review');
   const tCommon = useTranslations('common');
+  const tNotices = useTranslations('fees.notices');
   /** «تأكيد» / «رفض» on a declared transfer — `FEE_ADMIN_ROLES`, as `PATCH fees/payments/:id/review`. */
   const canDecide = hasRole(FEE_ADMIN_ROLES, role);
   /** «تكليف مباشر» and «إصدار رسم جديد» — `FEE_ISSUE_ROLES`, as `POST fees/payments`, `POST fees/notices` and the `fees/new` page. */
@@ -751,6 +753,12 @@ export default function FeesPage({
                 {locale === 'en' ? 'Bills affected by corrections' : 'فواتير تأثّرت بتصحيحات'}
               </Link>
             ) : null}
+
+            {/* «إشعارات الرسوم»: every notice issued, and the manager's «إلغاء الإشعار». Read by every ledger reader. */}
+            <Link href={`${base}/fees/notices`} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+              <Megaphone className="size-4" aria-hidden />
+              {tNotices('title')}
+            </Link>
 
             {canIssue ? (
               <>

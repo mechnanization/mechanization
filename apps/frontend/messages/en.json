@@ -1367,6 +1367,39 @@
     "sharedBillUnits": "{count} billed on a shared unit bill"
   },
   "fees": {
+    "notices": {
+      "title": "Fee notices",
+      "back": "Back to Fees & billing",
+      "loadError": "Could not load the fee notices.",
+      "empty": "No fee has been issued yet.",
+      "columns": {
+        "title": "Fee",
+        "frequency": "Frequency",
+        "issued": "Bills",
+        "status": "Status",
+        "created": "Issued on",
+        "actions": "Actions"
+      },
+      "active": "Active",
+      "stopped": "Stopped",
+      "cancel": "Cancel notice",
+      "confirmTitle": "Cancel the notice “{title}”",
+      "confirmBody": "Every bill this notice raised that nothing has been paid on is cancelled, as “Cancel bill” cancels one, and the notice stops recurring. A bill with money on it, or with a payment claim under review, is left as it is and listed afterwards. Cancelling cannot be undone: a cancelled bill stays on the record, cancelled.",
+      "reason": "Reason for cancelling",
+      "confirmAction": "Cancel the notice's bills",
+      "keep": "Keep the notice",
+      "busy": "Cancelling…",
+      "cancelFailed": "Could not cancel the notice.",
+      "cancelled": "{count} bill(s) of “{title}” cancelled.",
+      "outcomeTitle": "“{title}”: {count} bill(s) cancelled, and the notice stopped.",
+      "outcomeAll": "No bill of this notice is left standing.",
+      "outcomeSkipped": "{count} bill(s) were left as they are:",
+      "reasons": {
+        "BILL_CANCEL_HAS_PAYMENTS": "money has been taken on it — reverse its receipts first",
+        "PAYMENT_CLAIM_UNDER_REVIEW": "a payment claim on it is under review — decide it first",
+        "BILL_ALREADY_CANCELLED": "already cancelled"
+      }
+    },
     "matrix": {
       "field": "Bracket table",
       "rangeHint": "Each unit type and level count has its own scale: each bracket starts where the one before it ends, and includes its lower bound but not its upper one — 100 m² falls in the bracket that starts at 100. Leave “Up to” empty on the last bracket.",

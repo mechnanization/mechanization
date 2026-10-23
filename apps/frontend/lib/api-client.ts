@@ -5305,8 +5305,8 @@ export interface FeeNoticeSummary {
   createdAt: string;
 }
 
-export function getFeeNotices(tenant: string, token: string) {
-  return apiFetch<{ items: FeeNoticeSummary[] }>(tenant, '/fees/notices', { token });
+export function getFeeNotices(tenant: string, token: string, signal?: AbortSignal) {
+  return apiFetch<{ items: FeeNoticeSummary[] }>(tenant, '/fees/notices', { token, signal });
 }
 
 /**
