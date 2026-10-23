@@ -4,6 +4,7 @@ import {
   feeMatrixBracketSchema,
   feeMatrixSchema,
   feeNoticePreviewSchema,
+  matchBracket,
   type FeeMatrixBracket,
 } from '@mechanization/shared-schemas';
 import { assessCitizen } from './fees.service';
@@ -186,8 +187,31 @@ describe('createFeeNoticeSchema under TIERED_AREA', () => {
   });
 });
 
+describe('matchBracket', () => {
+  const table = [A, B, C, bracket({ code: 'D', levels: 2, minArea: 0, maxArea: null })];
+
+  it('puts an area on a boundary in the bracket that starts there (T-3)', () => {
+    expect(matchBracket({ unitType: 'APARTMENT', unitArea: 100 }, table)).toMatchObject({ bracket: { code: 'B' } });
+    expect(matchBracket({ unitType: 'APARTMENT', unitArea: 99.99 }, table)).toMatchObject({ bracket: { code: 'A' } });
+  });
+
+  it('reads the level count to pick the scale', () => {
+    expect(matchBracket({ unitType: 'APARTMENT', unitArea: 220, levels: 2 }, table)).toMatchObject({ bracket: { code: 'D' } });
+  });
+
+  it('misses a unit with no area, no type, or no bracket for its type and level count', () => {
+    expect(matchBracket({ unitType: 'APARTMENT', unitArea: null }, table)).toEqual({ kind: 'miss', reason: 'NO_AREA' });
+    expect(matchBracket({ unitType: null, unitArea: 80 }, table)).toEqual({ kind: 'miss', reason: 'NO_BRACKET' });
+    expect(matchBracket({ unitType: 'SHOP', unitArea: 80 }, table)).toEqual({ kind: 'miss', reason: 'NO_BRACKET' });
+    expect(matchBracket({ unitType: 'APARTMENT', unitArea: 220, levels: 3 }, table)).toEqual({
+      kind: 'miss',
+      reason: 'NO_BRACKET',
+    });
+  });
+});
+
 describe('assessCitizen under TIERED_AREA', () => {
-  it('refuses to price a bracket notice rather than bill it as rate × units at a rate of 0', () => {
-    expect(() => assessCitizen([], { amount: 0, basis: 'TIERED_AREA' })).toThrow('TIERED_AREA notices are not priced yet');
+  it('refuses a bracket notice that reached it without its table', () => {
+    expect(() => assessCitizen([], { amount: 0, basis: 'TIERED_AREA' })).toThrow('without its bracket table');
   });
 });

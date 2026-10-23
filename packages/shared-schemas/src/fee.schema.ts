@@ -3,7 +3,7 @@ import { normalizeDigits, uuid } from './primitives';
 import { OWNER_BILLING_MODE, UNIT_TYPE } from './enums';
 import { ADJUSTMENT_REASON_MIN, municipalToday } from './cash-policy';
 import { hasAtMostTwoDecimals } from './money-amount';
-import { canSpanLevels, levelFactorsSchema, unitLevelsField } from './unit-levels';
+import { canSpanLevels, levelFactorsSchema, unitLevels, unitLevelsField } from './unit-levels';
 
 /**
  * Fees, and the per-citizen invoices they produce.
@@ -335,6 +335,14 @@ export const feeAssessmentSchema = z.object({
    * counts exactly one, where it equals `unitCount`.
    */
   chargedUnits: z.number().optional(),
+  /**
+   * TIERED_AREA only (decision D5). On a shared unit bill, how many registered
+   * citizens may pay it — the number, never the names (open question O2). On a
+   * citizen's own bill, how many of their units went to shared unit bills
+   * instead, so the bill says so rather than reading as a smaller holding.
+   */
+  sharedBillDebtorCount: z.number().int().min(2).optional(),
+  sharedBillUnitCount: z.number().int().min(1).optional(),
   lines: z.array(feeAssessmentLineSchema),
 });
 
@@ -495,6 +503,36 @@ export function bracketScales<B extends Pick<FeeMatrixBracket, 'unitTypes' | 'le
   return [...scales.values()].map((scale) =>
     scale.sort((a, b) => a.bracket.minArea - b.bracket.minArea || a.index - b.index),
   );
+}
+
+/** Why a unit has no bracket: no area recorded, or no bracket for its type, level count and area. */
+export type BracketMiss = 'NO_AREA' | 'NO_BRACKET';
+
+/**
+ * The bracket one unit falls in, or why it falls in none.
+ *
+ * The scale is the unit's own type and level count (D1, D7); on it, the
+ * bracket whose range holds the area, `minArea` included and `maxArea` not.
+ * A table that passed `feeMatrixSchema` holds at most one such bracket. A unit
+ * with no area, or no type, or one the table does not price, is a miss and is
+ * never priced by guess: the biller reports it, and the drawer says so.
+ */
+export function matchBracket<B extends Pick<FeeMatrixBracket, 'unitTypes' | 'levels' | 'minArea' | 'maxArea'>>(
+  unit: { unitType: string | null; unitArea: number | null; levels?: number | null },
+  brackets: readonly B[],
+): { kind: 'matched'; bracket: B } | { kind: 'miss'; reason: BracketMiss } {
+  if (unit.unitArea === null || !Number.isFinite(unit.unitArea)) return { kind: 'miss', reason: 'NO_AREA' };
+  const area = unit.unitArea;
+  const levels = unitLevels(unit);
+  const bracket = brackets.find(
+    (row) =>
+      unit.unitType !== null &&
+      (row.unitTypes as readonly string[]).includes(unit.unitType) &&
+      row.levels === levels &&
+      area >= row.minArea &&
+      (row.maxArea === null || area < row.maxArea),
+  );
+  return bracket ? { kind: 'matched', bracket } : { kind: 'miss', reason: 'NO_BRACKET' };
 }
 
 /**

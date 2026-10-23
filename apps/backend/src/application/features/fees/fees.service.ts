@@ -19,6 +19,7 @@ import type {
   FeeAssessment,
   FeeBasis,
   FeeBearer,
+  FeeMatrixBracket,
   PaymentMethod,
   SystemSettingsInput,
 } from '@mechanization/shared-schemas';
@@ -56,6 +57,7 @@ import { assertNotMergedAway } from '../citizens/merged-away';
 import { ConflictError, DomainError, ForbiddenError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { exchangeRuleChangeAllowed } from '../treasury/transfers.plan';
 import { raiseOneOffBill } from './one-off-bill';
+import { priceTieredUnits, tieredAssessment, type TieredUnit } from './tiered-area';
 import { likePattern, searchTokens } from '../../common/search-terms';
 import { citizenSearchText } from '../../common/citizen-search';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
@@ -90,6 +92,8 @@ export interface CitizenAssessment {
   exemptUnitIds?: string[];
   /** The co-owned flats another owner pays for, for the same reason. Not stored. */
   coOwnerPaidUnitIds?: string[];
+  /** Under TIERED_AREA, each unit priced, so the run can bill the shared ones once (`splitSharedUnitBills`). Not stored. */
+  tieredUnits?: readonly TieredUnit[];
 }
 
 /** What one citizen holds today, as billing reads it. See `FeesService.holdingsOf`. */
@@ -313,6 +317,8 @@ export function assessCitizen(
      * to price it by is refused, not billed as 1 or 2 by default.
      */
     levelFactors?: LevelFactors;
+    /** The bracket table, under TIERED_AREA (`feeMatrixSchema`); unread under every other basis. */
+    matrixBrackets?: readonly FeeMatrixBracket[];
   },
 ):
   | {
@@ -323,6 +329,8 @@ export function assessCitizen(
       uninhabitableUnitIds?: string[];
       exemptUnitIds?: string[];
       coOwnerPaidUnitIds?: string[];
+      /** Under TIERED_AREA, each unit priced, for the run to find the shared ones. Not stored. */
+      tieredUnits?: TieredUnit[];
     }
   | { kind: 'unassessable'; reason: string } {
   /*
@@ -353,17 +361,6 @@ export function assessCitizen(
         lines: [],
       },
     };
-  }
-
-  /*
-    TIERED_AREA is priced by the notice's bracket table, which this function
-    does not read yet (Phase 3, docs/fees-system-rearchitecture-specification.md).
-    Refused outright rather than allowed to fall through to the per-unit
-    arithmetic below, which would bill a bracket notice as «rate × units» at a
-    rate of 0. The wizard does not offer the basis until then.
-  */
-  if (notice.basis === 'TIERED_AREA') {
-    throw new Error('assessCitizen: TIERED_AREA notices are not priced yet');
   }
 
   const unsurveyed = unsurveyedCanMatter(notice.targetCategory)
@@ -446,6 +443,46 @@ export function assessCitizen(
   const decided = held.filter((unit) => !inReview(unit) && !unit.uninhabitable);
   const owed = decided.filter((unit) => bearsFee(unit, bearer));
   const excludedUnitCount = decided.length - owed.length;
+  const heldUnitCount = reviewing.length;
+  const uninhabitableUnitCount = unlivable.length;
+  // Which flats, so a run can count each once — an owner and a tenant hold the same one.
+  const heldUnitIds = reviewing.map((unit) => unit.unitId).filter((id): id is string => Boolean(id));
+  const uninhabitableUnitIds = unlivable
+    .map((unit) => unit.unitId)
+    .filter((id): id is string => Boolean(id));
+  const exemptUnitIds = exemptUnits.map((unit) => unit.unitId).filter((id): id is string => Boolean(id));
+
+  /*
+    TIERED_AREA prices each unit by its bracket and divides nothing (decision
+    D5, 2026-10-23): a unit several citizens are charged for is billed once, in
+    full, by the run (`splitSharedUnitBills`), so the co-owner methods below —
+    a part per owner, the responsible owner — play no part, and neither does a
+    missing أسهم. Everything above has already run: exempt, uninhabitable,
+    under review and not this person's to pay are off the bill and counted.
+  */
+  if (notice.basis === 'TIERED_AREA') {
+    if (!notice.matrixBrackets) {
+      throw new Error('assessCitizen: a TIERED_AREA notice reached assessment without its bracket table');
+    }
+    const priced = priceTieredUnits(owed, notice.matrixBrackets);
+    if (priced.kind === 'unassessable') return priced;
+    return {
+      kind: 'assessed',
+      amount: priced.units.reduce((sum, unit) => sum + unit.amount, 0),
+      heldUnitIds,
+      uninhabitableUnitIds,
+      exemptUnitIds,
+      coOwnerPaidUnitIds: [],
+      tieredUnits: priced.units,
+      assessment: tieredAssessment(priced.units, {
+        excludedUnitCount,
+        heldUnitCount,
+        uninhabitableUnitCount,
+        exemptUnitCount: exemptUnits.length,
+      }),
+    };
+  }
+
   /*
     A flat several people own is divided between them, not billed to each in
     full («توزيع الرسم على المالكين», the user's decision, 2026-10-07).
@@ -474,14 +511,6 @@ export function assessCitizen(
   const paidByCoOwner = owed.filter((unit) => ownerWeight(unit) === 0);
   const units = owed.filter((unit) => ownerWeight(unit) > 0);
   const shared = units.filter((unit) => unit.occupancyType === 'OWNER' && unit.ownerShare);
-  const heldUnitCount = reviewing.length;
-  const uninhabitableUnitCount = unlivable.length;
-  // Which flats, so a run can count each once — an owner and a tenant hold the same one.
-  const heldUnitIds = reviewing.map((unit) => unit.unitId).filter((id): id is string => Boolean(id));
-  const uninhabitableUnitIds = unlivable
-    .map((unit) => unit.unitId)
-    .filter((id): id is string => Boolean(id));
-  const exemptUnitIds = exemptUnits.map((unit) => unit.unitId).filter((id): id is string => Boolean(id));
   const coOwnerPaidUnitIds = paidByCoOwner
     .map((unit) => unit.unitId)
     .filter((id): id is string => Boolean(id));
@@ -538,7 +567,7 @@ export function assessCitizen(
   const chargedUnits =
     Math.round(units.reduce((sum, unit) => sum + ownerWeight(unit) * roofsOf(unit), 0) * 10_000) / 10_000;
 
-  // Only the two rate bases reach here; FLAT returned above.
+  // Only the two rate bases reach here; FLAT and TIERED_AREA returned above.
   const multiplier = notice.basis === 'PER_AREA' ? totalArea : chargedUnits;
 
   return {
@@ -1345,6 +1374,17 @@ export class FeesService {
       The route's schema requires the key; a caller inside the server that
       sends none (a script, a spec) issues as before, unguarded.
     */
+    /*
+      A TIERED_AREA notice can be priced (`assessCitizen`), but not yet issued:
+      the notice's bracket table and the shared unit bills are written in Phase 5
+      of docs/fees-system-rearchitecture-specification.md. Refused here, before
+      anything is read, rather than issuing own bills and dropping the shared
+      ones. The wizard does not offer the basis until then.
+    */
+    if (input.basis === 'TIERED_AREA') {
+      throw new Error('FeesService.issue: TIERED_AREA notices cannot be issued yet');
+    }
+
     const earlier = input.clientRequestId
       ? await this.replayNotice(this.db as Prisma.TransactionClient, input)
       : null;
@@ -2104,6 +2144,8 @@ export class FeesService {
       basis: FeeBasis;
       targetCategory?: string;
       bearer?: FeeBearer;
+      /** Under TIERED_AREA, the bracket table every citizen is priced by. */
+      matrixBrackets?: readonly FeeMatrixBracket[];
     },
   ): Promise<{ assessed: CitizenAssessment[]; unassessable: UnassessableCitizen[] }> {
     if (notice.basis === 'FLAT' && !notice.targetCategory) {
@@ -2158,6 +2200,7 @@ export class FeesService {
           uninhabitableUnitIds: outcome.uninhabitableUnitIds,
           exemptUnitIds: outcome.exemptUnitIds,
           coOwnerPaidUnitIds: outcome.coOwnerPaidUnitIds,
+          ...(outcome.tieredUnits ? { tieredUnits: outcome.tieredUnits } : {}),
         });
       }
     }

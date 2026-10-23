@@ -205,19 +205,31 @@ governs. `UNIT_TYPE` and `unitLevelsField` must be the existing exports; check
 
 ## 5. Calculation
 
-1. `matchBracket(area, unitType, levels, brackets)` is a pure function in
-   shared-schemas, so the unit drawer (Phase 7) shows the same answer the
-   biller charges. It returns the bracket, or an unassessable reason.
+1. `matchBracket(unit, brackets)` is a pure function in shared-schemas, so
+   the unit drawer (Phase 8) shows the same answer the biller charges. It
+   returns the bracket, or a miss: `NO_AREA`, or `NO_BRACKET` for a type, level
+   count or area the table does not price.
 2. `assessCitizen` gets a `TIERED_AREA` branch beside `PER_UNIT` and
-   `PER_AREA`. Exemptions, habitability, review holds and the bearer rule run
-   first, unchanged; the branch prices only the units they leave chargeable.
-   `levelFactors` is not read (D1).
-3. **Shared units (D5).** Before building per-citizen bills, the run groups
-   chargeable units by who the bearer rule charges for them. A unit charged to
-   one citizen becomes a line on that citizen's bill. A unit charged to two or
-   more becomes one shared bill: `unitId` set, `citizenId` NULL, the full
-   bracket amount, one `citizen_payment_debtors` row per person. A citizen can
-   therefore have one own bill and several shared bills on the same notice.
+   `PER_AREA` (`priceTieredUnits`, `tiered-area.ts`). Exemptions,
+   habitability, review holds and the bearer rule run first, unchanged; the
+   branch prices only the units they leave chargeable, each unit once per
+   citizen. `levelFactors` is not read (D1), and neither are the 0075
+   co-owner methods or a missing أسهم (D5). A miss makes the citizen
+   unassessable, named in the report, as a unit with no area does under
+   `PER_AREA`.
+3. **Shared units (D5).** The run (`splitSharedUnitBills`) takes every unit
+   two or more citizens' assessments price off their own bills and bills it
+   once: `unitId` set, `citizenId` NULL, the full bracket amount, one
+   `citizen_payment_debtors` row per person, in citizen-id order with the
+   capacity each is charged in. A citizen can therefore have one own bill and
+   several shared bills on the same notice; their own bill counts the units
+   moved (`sharedBillUnitCount`), a shared bill its debtors
+   (`sharedBillDebtorCount`). Two cases are not shared:
+   - a card-only unit has no census id and cannot be matched across citizens,
+     so it stays on each holder's own bill, as under every other basis;
+   - a unit whose holders' records put it in different brackets (the census
+     unit has no area and two cards measured it differently) is billed to
+     nobody and reported as a conflict, rather than choosing a record.
 4. Nothing is split, so there is no rounding remainder.
 
 ---
@@ -253,8 +265,11 @@ CLAUDE.md, "Keeping the docs true".
 
 ### Phase 3: calculation
 
-- §5 in `fees.service.ts` (or a sibling `tiered-area.ts` beside `assessment`),
-  `matchBracket` in shared-schemas.
+- §5: `priceTieredUnits`, `tieredAssessment` and `splitSharedUnitBills` in
+  `fees/tiered-area.ts`, the branch in `assessCitizen`, `matchBracket` in
+  shared-schemas. Nothing is written yet: the Phase 2 guard moves from
+  `assessCitizen`, which can now price a tiered notice, to `issue`, until
+  Phase 5 writes the notice's table and the shared bills.
 - Tests: §8, cases T-1 to T-8.
 - Commit: `feat(fees): price units by area bracket and bill shared units once`
 
