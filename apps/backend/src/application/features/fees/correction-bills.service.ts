@@ -293,8 +293,21 @@ export class CorrectionBillsService {
             A flat charge to everyone, or to one person, is the same whatever
             the register says. A flat charge to a category is not: whether the
             citizen is on it turns on what they hold.
+
+            Not TIERED_AREA (0098/0099), yet. Its figure is not one citizen's:
+            which units are shared bills is decided across everyone charged
+            for them (`splitSharedUnitBills`), and today's figure has to be
+            worked out the same way before a bill can be said to differ. Read
+            here one citizen at a time, an own bill would be listed for the
+            shared units it never carried, and a shared bill has no citizen to
+            read. docs/fees-system-rearchitecture-specification.md, Phase 6.
           */
-          feeNotice: { is: { OR: [{ basis: { not: 'FLAT' } }, { targetType: 'BUILDING_CATEGORY' }] } },
+          feeNotice: {
+            is: {
+              basis: { not: 'TIERED_AREA' },
+              OR: [{ basis: { not: 'FLAT' } }, { targetType: 'BUILDING_CATEGORY' }],
+            },
+          },
         },
         select: {
           id: true,

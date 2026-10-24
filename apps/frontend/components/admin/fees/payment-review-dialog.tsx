@@ -41,12 +41,23 @@ export function PaymentReviewDialog({
     ? (labels.paymentMethod[payment.paymentMethod as never] ?? payment.paymentMethod)
     : null;
 
+  // A shared unit bill (0099) has no one citizen: the unit is named instead.
+  const who =
+    payment.citizenName ??
+    (payment.sharedUnit
+      ? tCommon('sharedUnitBill', {
+          building: payment.sharedUnit.buildingCode,
+          unit: payment.sharedUnit.unitCode,
+          count: payment.sharedUnit.debtorCount,
+        })
+      : '—');
+
   return (
     <ConfirmDialog
       open
       onOpenChange={onOpenChange}
       destructive={!confirmed}
-      title={confirmed ? t('confirmTitle', { citizen: payment.citizenName }) : t('rejectTitle', { citizen: payment.citizenName })}
+      title={confirmed ? t('confirmTitle', { citizen: who }) : t('rejectTitle', { citizen: who })}
       description={confirmed ? t('confirmBody') : t('rejectBody')}
       confirmLabel={confirmed ? t('confirmAction') : t('rejectAction')}
       cancelLabel={tCommon('cancel')}

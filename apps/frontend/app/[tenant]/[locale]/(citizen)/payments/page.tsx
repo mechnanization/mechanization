@@ -323,7 +323,22 @@ export default function CitizenPayments({
                     </p>
                   ) : null}
 
-                  {payable ? (
+                  {/*
+                    A shared unit bill (0099): owed with others, paid at the office by any of
+                    them — neither Whish nor a declaration (`SHARED_BILL_PAY_AT_OFFICE`). The
+                    others are counted, never named.
+                  */}
+                  {item.sharedUnit && !cancelled ? (
+                    <p className="rounded-lg border bg-muted/40 p-3 text-sm text-muted-foreground">
+                      {tCitizen('sharedBill', {
+                        unit: item.sharedUnit.unitCode,
+                        building: item.sharedUnit.buildingCode,
+                        others: Math.max(item.sharedUnit.debtorCount - 1, 1),
+                      })}
+                    </p>
+                  ) : null}
+
+                  {payable && !item.sharedUnit ? (
                     <div className="flex flex-wrap items-center justify-end gap-2">
                       {ONLINE_PAYMENT_OPEN ? (
                         <>

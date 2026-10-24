@@ -113,10 +113,16 @@ export default function MyRoundPage({
   const openReceipt = useCallback(
     async (row: CollectorRoundRow) => {
       if (!token) return;
+      // A shared unit bill (0099) whose payer was not recorded names nobody to reopen it from.
+      if (!row.citizenId) {
+        setShareError(t('receiptMissing'));
+        return;
+      }
+      const citizenId = row.citizenId;
       setBusyId(row.id);
       setShareError(null);
       try {
-        const profile = await getCitizenProfile(tenant, token, row.citizenId);
+        const profile = await getCitizenProfile(tenant, token, citizenId);
         const payment = profile.payments.find((entry) => entry.id === row.paymentId);
         if (!payment) {
           setShareError(t('receiptMissing'));

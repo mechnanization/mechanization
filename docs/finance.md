@@ -409,6 +409,11 @@ bills of **one** citizen, on «الرسوم» or on the citizen's file, and sett
 Decided with the owner on 2026-10-10: notes that do not cover every selected bill are **refused**
 (no part-payment of the last one), and each bill keeps its own «RCP-» receipt under a group record.
 
+**«One citizen's bills» includes the shared unit bills they owe** (0099, decision D5 of 2026-10-23):
+a shared bill is in the set only when the citizen settling is one of its debtors (else
+`BULK_SETTLE_CITIZEN_MISMATCH`), and its receipt names them as its payer (`paidByCitizenId`, checked
+again by `recordIn` under the same lock). Paid once, it is paid for all its debtors.
+
 - **All or nothing.** `PaymentSettlementService.settle` runs one `runInTenantTransaction`: the retry
   key's advisory lock, every bill `FOR UPDATE` in id order (`PaymentLedgerService.lockInvoices`), the
   settings row `FOR SHARE`, the closed-day check, the «BRC-» number, the `payment_settlements` row
@@ -2009,6 +2014,16 @@ custody wallet and had no way out. Built:
   the receipt number and the time, and a button that opens the existing
   `PaymentReceipt` to print, download or send it over WhatsApp. Nothing new was
   built for the receipt itself.
+
+  **A shared unit bill (0099, decision D5 of 2026-10-23,
+  docs/fees-system-rearchitecture-specification.md)** has no citizen of its own:
+  any of its debtors may pay it, once, in full. The ledger (`recordIn`) takes the
+  money only with the paying debtor named (`payment_transactions.paidByCitizenId`)
+  and checks they are one of the bill's debtors; a reversal carries the same
+  payer. The collector's two views (`TransfersService.collections`, «جولتي»)
+  name that debtor, and take the sector and the door from the shared unit itself
+  rather than from where the payer lives. Reprinting such a receipt from a
+  citizen's file waits for the file to show shared bills.
 
   The list is **everything since his last handover**, not "today": his pocket
   does not empty at midnight, and a man who collected yesterday and has not

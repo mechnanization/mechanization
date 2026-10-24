@@ -162,9 +162,14 @@ function DuesRow({
       <div className="min-w-0 space-y-1">
         <p className="font-medium">{bill.title}</p>
         <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-muted-foreground">
-          <Link href={`${base}/citizens/${encodeURIComponent(bill.citizenId)}`} className="text-primary hover:underline">
-            {bill.citizenName}
-          </Link>
+          {bill.citizenId ? (
+            <Link href={`${base}/citizens/${encodeURIComponent(bill.citizenId)}`} className="text-primary hover:underline">
+              {bill.citizenName}
+            </Link>
+          ) : (
+            // A shared unit bill (0099) has no one citizen: the people on it are counted, not named.
+            <span>{t('sharedBill', { count: bill.sharedDebtorCount ?? 0 })}</span>
+          )}
           <span>
             · {t('due')}: {formatDate(bill.dueDate)}
           </span>
