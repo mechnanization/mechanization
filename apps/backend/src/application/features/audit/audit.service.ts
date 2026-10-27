@@ -730,6 +730,18 @@ export class AuditService {
     await this.audit.appendInTransaction(AuditLogEntry.create(entry), transaction);
   }
 
+  /**
+   * Several Tier 1 rows in one statement, under the same rule as
+   * `recordInTransaction`: inside the transaction they record, or not at all.
+   */
+  async recordManyInTransaction(entries: readonly AuditEntryInput[], transaction?: TransactionHandle): Promise<void> {
+    if (entries.length === 0) return;
+    if (transaction === undefined && !this.tenantContext.peek()?.transaction) {
+      throw new Error(`The audit rows for ${entries[0]!.action} must be written inside the transaction they record`);
+    }
+    await this.audit.appendManyInTransaction(entries.map((entry) => AuditLogEntry.create(entry)), transaction);
+  }
+
   private async record(entry: AuditEntryInput): Promise<void> {
     /*
       Emitted from inside a transaction: written once it commits, and not at all

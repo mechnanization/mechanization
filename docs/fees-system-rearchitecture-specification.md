@@ -1,9 +1,17 @@
 # Tiered Area Fees (`TIERED_AREA`): Specification and Phased Plan
 
-> **Status:** Revised 2026-10-23 with the product decisions below. Replaces the
-> earlier draft, which re-specified rules the fee engine already has and
-> contradicted decisions already taken (D28, migration 0075).
-> **Last verified against the code:** `develop@b2c18dd`, 2026-10-23; D8 against `fix/fee-wizard-review` (uncommitted), 2026-10-26.
+> **Status:** Revised 2026-10-23 with the product decisions below, on
+> 2026-10-26 with «من يشمل الإشعار» (D15) and the decisions of the review of
+> PRs #133–#138 (D8–D14; D6 amended by D12), and on 2026-10-27 with D5's payer.
+> Replaces the earlier draft, which re-specified rules the fee engine already
+> has and contradicted decisions already taken (D28, migration 0075).
+> **Last verified against the code:** `fix/fee-wizard-review`, merged with the
+> review's `c10d3c0`: D15 beside D8–D14, D5's payer, the unassessable reason
+> codes, 2026-10-27; `fix/fee-wizard-review` (on
+> `feat/tiered-fees-cancel-and-wizard@aa35d4a`): the review's fixes and §1's
+> D8–D14, 2026-10-26; D15 (then numbered D8) against `fix/fee-wizard-review`,
+> 2026-10-26; the §16 render check, and production's fee tables read through
+> `prod_ro`, 2026-10-27; `develop@b2c18dd`, 2026-10-23.
 > **Legislative reference:** Lebanese Municipal Fees and Surcharges Law No. 60/1988.
 > The bracket figures themselves are the assessment committee's (لجنة التخمين)
 > and the council's; the system stores them, it does not derive them.
@@ -33,9 +41,24 @@ document says otherwise, these win.
 | **D3 Who is billed** | Each registered citizen file is رب الأسرة. There is no household scope and no head-of-household lookup: `familyScope`, `FEE_FAMILY_SCOPE` and `resolveDebtor` are dropped. |
 | **D4 Bill shape** | One bill per citizen, per notice, per period, as today. Each line in `assessment.lines` records the unit's bracket. |
 | **D5 Shared unit bills** | **`TIERED_AREA` only.** When the bearer rule charges two or more citizens for the same unit (co-owners, or co-tenants under an occupant-borne notice), the unit gets **one bill for the full bracket amount**, not split. It appears on every one of those citizens' profiles. Any of them may pay it, in part or in full; once paid it is PAID for all of them. While it is unpaid it blocks براءة ذمة for every one of them. Deed shares (أسهم) are not used. **Confirmed 2026-10-27** for every co-owner method, «مالك مسؤول» included: the unit's responsible owner is not its only debtor, only the payer the counter offers first. The payer is named at the counter on the settle page and on the citizen file's cash page alike, starting on the citizen whose file the bill was opened from, else the responsible owner (`defaultPayer`, `GET fees/payments/:id` → `sharedDebtors[].responsible`). |
-| **D6 Batch cancel** | Cancelling a notice cancels every bill nothing has been paid on, leaves bills with money on them (`paidAmount > 0`) or a claim waiting (`PENDING_REVIEW`), reports which and why, and sets the notice `isActive = false` so the recurring run does not re-issue it. |
+| **D6 Batch cancel** | Cancelling a notice cancels every bill nothing has been paid on, leaves bills with money on them (`paidAmount > 0`) or a claim waiting (`PENDING_REVIEW`), reports which and why, and sets the notice `isActive = false` so the recurring run does not re-issue it. **Amended 2026-10-26 by D12:** the bills of the periods the manager names, not every period; stopping is its own act. |
 | **D7 Bracket scope** | Staff choose, per bracket, which unit types it applies to (any of `UnitType`) and its level count. |
-| **D8 Notice scope** (2026-10-26) | Every basis, not only `TIERED_AREA`. A notice to everyone is narrowed by three filters, in this order: the unit statuses it charges (all six `UnitStatus` values; no recorded status counts as owner-occupied), the kinds of file (`CitizenResidence`), and several categories at once. The bearer still decides who pays a unit in scope. Defaults are what the law levies on the bearer. Departing from it is allowed with a warning the clerk confirms: an occupancy fee on شاغرة or قيد الإنجاز units (charged to the owner), or a status or kind of file the law charges left out. Not a per-bracket column: the statuses apply to the whole notice. Migration `0100_fee_notice_scope`; `feeNoticeScopeSchema`. |
+| **D15 Notice scope** (2026-10-26; written as D8, renumbered on 2026-10-27 when merged with the review's D8–D14) | Every basis, not only `TIERED_AREA`. A notice to everyone is narrowed by three filters, in this order: the unit statuses it charges (all six `UnitStatus` values; no recorded status counts as owner-occupied), the kinds of file (`CitizenResidence`), and several categories at once. The bearer still decides who pays a unit in scope. Defaults are what the law levies on the bearer. Departing from it is allowed with a warning the clerk confirms: an occupancy fee on شاغرة or قيد الإنجاز units (charged to the owner), or a status or kind of file the law charges left out. Not a per-bracket column: the statuses apply to the whole notice. Migration `0100_fee_notice_scope`; `feeNoticeScopeSchema`. |
+
+### Decisions of the review (2026-10-26)
+
+Taken by the user on the review of PRs #133–#138, on the review's
+recommendations. D12 amends D6.
+
+| # | Decision | Grounds |
+|---|---|---|
+| **D8 A period's bill stands** | The recurring run comes back every night and the register moves between nights. A unit already on a bill of the notice for the period — a citizen's own or a shared one, cancelled ones included — is billed to nobody again in that period; a change of holders counts from the next period. Each tiered line records its census `unitId` so the run can tell. Before this, a flat billed to its one owner on the 1st and given a co-owner on the 10th was billed again on the 11th as a shared bill, the owner on both. | The rule the fee engine already keeps («a period's invoice is written once»); Law 60/1988 Art. 11 counts a part-month as a full month. |
+| **D9 Receipts on a shared bill** | One receipt per payment: its own «RCP-» number, the debtor who paid (`paidByCitizenId`) and what they paid — printed from «وصولات الفاتورة», payment by payment. Never the bill's total under one name, and never from a debtor's file the receipt does not name. | `docs/finance.md`: each payment has its own receipt (decree 5595/1982 Art. 16 and 98: a receipt is written when the money is taken). A co-debtor who paid has a claim on the others, and the receipt is their evidence. |
+| **D10 A holder whose own bill is withheld** | A citizen who cannot be assessed — a unit with no area, a level count the table lacks, an unsurveyed building — gets no own bill and is named in the report, as before, but is still a debtor on every shared unit that can be priced: the gap is on another unit and changes nothing about this one's bracket. A unit only they hold is billed to nobody until the record is fixed. | D5: the bearer rule charged them for the unit. Not billing a correctly priced unit over a gap elsewhere would be an exemption the law does not grant (exemption is by law only). |
+| **D11 Units the table does not price** | A unit whose type no bracket names, and a card with no unit type (أرض، خيمة), are outside the notice: not charged, counted on the bill (`outsideTableUnitCount`) and in the preview by type. A listed type whose level count or area no bracket covers stays unassessable (D1, T-5). | Law 60/1988's rental-value fee falls on occupied built property (Arts. 3–4); vacant land is outside it (the Ministry of Interior's 2025 roadmap recommends amending Art. 3 to bring it in). D7: staff choose which types a bracket applies to. |
+| **D12 Stop and cancel are two acts** | «إيقاف الإشعار» stops a recurring notice and cancels nothing (`PATCH fees/notices/:id/active`, now on the notices page and in the trail). «إلغاء الإشعار» cancels the bills of the periods the manager names — the dialog shows each period's counts first, the latest with something to cancel ticked — and stops the notice too. | Exemption from municipal fees is by law only, and waiving municipal revenue needs the Minister of Interior's approval; cancelling a period's correct bills to end a fee would be that. Cancelling is for bills that should not have been raised. |
+| **D13 A category on a category notice only** | `targetCategory` is refused on a notice to all citizens or to one (`createFeeNoticeSchema`), and dropped by `issue` for a caller that skips the schema. Notices already stored with one keep it: the municipality decides, notice by notice, whether each meant that category (retarget to «فئة عقارات») or everything (clear it), applied by the data-repair procedure. Production had none to decide on 2026-10-27: it had issued no notice yet. | The old wizard sent its default «محل تجاري» with every target, and the assessment filters every unit by it, so a per-unit notice to all citizens charged their shops alone. Only the server stops every caller; a stored notice's meaning cannot be read off the record. |
+| **D14 A merged-away file pays nothing** | The payer of a shared bill is a live file: the counter's list leaves out a file merged into another (its debtor row stays when both owed the bill), and the ledger refuses one (`CITIZEN_MERGED_AWAY`, naming the file that stays). | `merged-away.ts`: nothing is written against a merged-away file; the file that stays is already a debtor. |
 
 ### Still open
 
@@ -43,7 +66,7 @@ document says otherwise, these win.
 |---|---|---|
 | O1 | Fixed amounts for designated entities (a school, a gas station): which unit field identifies them? | Not built. No `designatedOverrides`. |
 | O2 | On the citizen portal, does a shared unit bill show the **names** of the other people it is shared with, or only "shared with N others"? Names expose one citizen's holdings to another. | Show the count only. |
-| O3 | May a debtor pay a shared unit bill online, or report a Whish transfer for it? Either needs the bill to remember which debtor made the claim (a new nullable column, its own migration), so the clerk's confirmation can name the payer. | **Decided 2026-10-23, for now:** paid at the municipal office only (`SHARED_BILL_PAY_AT_OFFICE`); no migration until online payment for shared bills is wanted. |
+| O3 | May a debtor pay a shared unit bill online, or report a Whish transfer for it? Either needs the bill to remember which debtor made the claim (a new nullable column, its own migration), so the clerk's confirmation can name the payer. | **Decided 2026-10-23, for now:** paid at the municipal office only (`SHARED_BILL_PAY_AT_OFFICE`); no migration until online payment for shared bills is wanted. **2026-10-26:** stays so while online payment is paused (`docs/open-decisions.md` §21). When it reopens, the payer is recorded on the Whish checkout the signed-in debtor opens (a nullable column on `whish_checkouts`, in its own migration PR), and the success callback names it as `paidByCitizenId`. |
 
 ---
 
@@ -445,6 +468,60 @@ Built on `feat/tiered-fees-cancel-and-wizard`, in three commits:
   note on `docs/open-decisions.md` §11, and `docs/financial-features-testing-matrix.md`.
 - Commit: `test(fees): tiered area fees end to end`
 
+### Phase 10: the review's fixes (2026-10-26)
+
+Built on `fix/fee-wizard-review` (PR #138), on top of the stack. The review of
+PRs #133–#138 found three defects that block the release and five decisions,
+recorded as D8–D14 above.
+
+- **D8, the recurring run.** `writeBills`'s transaction locks the notice's row
+  (`FOR UPDATE`), re-reads `isActive`, and for `TIERED_AREA` reads the units the
+  period already billed (`unitsBilledInPeriod`: shared bills' `unitId`, own
+  bills' line `unitId`) and splits again without them (`splitSharedUnitBills`'
+  `alreadyBilled`). Each tiered line carries its `unitId`. A bill says what left
+  it: `billedElsewhereUnitCount`, `sharedConflictUnitCount`.
+- **D9, receipts.** `GET fees/payments/:id/transactions` names each payment's
+  payer on a shared bill (`paidByCitizenId`, `paidByName`); «وصولات الفاتورة»
+  prints that payment's receipt from the payer's file (`receiptOfEntry`). The
+  citizen file and the fees and payments lists no longer reprint a shared bill's
+  total; they link to «وصولات الفاتورة». The bill's cash page, opened from a
+  debtor's file, names that debtor as the payer (it was refused with
+  `SHARED_BILL_PAYER_REQUIRED` before).
+- **D10, D11, pricing.** `priceTieredUnits` prices every unit it can and
+  returns the units outside the table and why the own bill is withheld;
+  `assessTargets` hands the withheld with their priced units to the split
+  (`withheld`). The preview counts the units outside the table by type.
+- **D12, the notices page.** «إيقاف الإشعار» / «استئناف الإشعار»
+  (`FEE_ADMIN_ROLES`, audited `FEE_NOTICE_STOPPED` / `FEE_NOTICE_RESUMED`);
+  «إلغاء الإشعار» takes `periodKeys` (`cancelNoticeSchema`) and shows each
+  period first (`GET fees/notices/:id/periods`, `BILL_CANCEL_ROLES`). The cancel
+  locks the notice's row first, as the run does, and writes its audit rows in one
+  statement (`AuditService.recordManyInTransaction`).
+- **D13** in `refineFeeNotice` and `issue`; **D14** in `getPaymentById` and
+  `recordIn`.
+- **The register's figures** (`CitizensService.list`): «what a person owes»
+  read through the two indexes (`p.id IN (own UNION ALL debtor rows)`), and the
+  headline totals from a `searched` set joined by `UNION`, instead of an `OR`
+  around a correlated `EXISTS`.
+- **Release order.** `chore/migration-0098-0099` (#133) reaches `main` alone.
+  #134–#138 then ship as **one** release: each step alone has a known defect
+  (#135 alone fails the corrections page, #135–#136 issue shared bills the counter
+  cannot take money on). The first tiered notice is issued once that release has
+  run without trouble: 0099's header says a rollback past it is safe only while
+  no shared bill exists. On 2026-10-27 production's last tenant migration was
+  0097 and it had issued no notice and no bill, so 0098/0099 meet empty fee tables.
+- **Rendered** (§16, 2026-10-27), against fabricated data: the notices page, its
+  cancel and stop dialogs, the periods' loading, error and empty states, and a
+  shared bill's receipts, in Arabic and English at 360 and 1440px, light and
+  dark, and the cancel by keyboard alone. It caught the phone card's two buttons
+  drawn over each other (`!w-auto`, UI §17.4) and an Arabic title reordering an
+  English sentence (now isolated, RTL-2).
+- **Not done:** correction bills for `TIERED_AREA` (Phase 6b, a debt in
+  `docs/code-quality.md`).
+- Tests: T-14 to T-19 below, in `tiered-area.spec.ts`, `fee-matrix.spec.ts`,
+  `notice-batch-cancel.integration.spec.ts`, `shared-unit-bills.integration.spec.ts`,
+  `route-inventory.spec.ts`, `bill-receipts.test.ts` and `fee-assessment.test.ts`.
+
 ---
 
 ## 7. Not in this spec
@@ -473,3 +550,9 @@ Built on `feat/tiered-fees-cancel-and-wizard`, in three commits:
 | T-11 | Existing `FLAT`, `PER_UNIT`, `PER_AREA` notices | Bill exactly as before |
 | T-12 | A co-owner with an unpaid shared bill requests براءة ذمة | Refused until the shared bill is paid |
 | T-13 | Exempt and uninhabitable units under `TIERED_AREA` | Not charged; counted in the preview by reason |
+| T-14 | «إلغاء الإشعار» on a monthly notice for the latest period only | That period's untouched bills cancelled; the earlier period stays owed; the periods are named in the notice's audit row (D12) |
+| T-15 | A flat billed to its one owner this month; a co-owner recorded mid-month; the run again | No second bill for the flat this month; next month one shared bill owed by both (D8) |
+| T-16 | Three brothers own a shop; the youngest also owns a flat with no area | No own bill for him, named in the report; the shop's shared bill has all three as debtors (D10) |
+| T-17 | A residential table issued to all citizens; a citizen holds a flat, a garage and a plot | The flat is billed; the garage and the plot counted outside the table, not refused (D11) |
+| T-18 | A shared bill paid in two parts by two brothers, reprinted | Each receipt names its own payer and amount, the balance after it (D9) |
+| T-19 | A shared bill's payer is a file merged into another | Not offered at the counter; refused by the ledger with `CITIZEN_MERGED_AWAY` (D14) |

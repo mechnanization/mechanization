@@ -2022,8 +2022,22 @@ custody wallet and had no way out. Built:
   and checks they are one of the bill's debtors; a reversal carries the same
   payer. The collector's two views (`TransfersService.collections`, «جولتي»)
   name that debtor, and take the sector and the door from the shared unit itself
-  rather than from where the payer lives. Reprinting such a receipt from a
-  citizen's file waits for the file to show shared bills.
+  rather than from where the payer lives.
+
+  **Its receipts are per payment (decision D9, 2026-10-26).** «وصولات الفاتورة»
+  lists each payment with the debtor who made it and prints that payment's own
+  receipt — its «RCP-» number, its day, what that debtor paid, what the bill still
+  owed after it — from the payer's file. A shared bill is never reprinted as its
+  total under one name: two brothers who each paid part are each named for their
+  own part, and a debtor's file does not print a receipt for money another paid.
+  Paid from a debtor's file at the counter, that debtor is named the payer. A file
+  merged into another is never the payer (`CITIZEN_MERGED_AWAY`, D14).
+
+  **«إلغاء الإشعار» cancels periods, not a fee (D12).** It withdraws the
+  untouched bills of the periods the manager names — a notice raised with the
+  wrong table, target or amount — and stops the notice; the bills of every other
+  period stay owed. A fee that is merely ending is stopped («إيقاف الإشعار»), which
+  cancels nothing: a municipality may not waive its fees except as the law allows.
 
   The list is **everything since his last handover**, not "today": his pocket
   does not empty at midnight, and a man who collected yesterday and has not

@@ -231,7 +231,8 @@ export function PreviewBrackets({
  */
 export function PreviewFindings({ result, locale }: { result: FeeNoticePreviewResult; locale: string }) {
   const t = useTranslations('fees.preview');
-  const unitStatus = getLabels(locale).unitStatus;
+  const labels = getLabels(locale);
+  const unitStatus = labels.unitStatus;
   const notCharged = [
     // «من يشمل الإشعار» (0100) first, by state — «شاغرة: 12» — in the order the scope step asks them.
     ...UNIT_STATUS.map((state) => ({
@@ -245,6 +246,8 @@ export function PreviewFindings({ result, locale }: { result: FeeNoticePreviewRe
     { key: 'uninhabitable', label: t('notCharged.uninhabitable'), count: result.notCharged.uninhabitableUnits },
     { key: 'feeExempt', label: t('notCharged.feeExempt'), count: result.notCharged.feeExemptUnits },
     { key: 'coOwnerPaid', label: t('notCharged.coOwnerPaid'), count: result.notCharged.coOwnerPaidUnits },
+    // Under TIERED_AREA, units of a type the table never names: outside the notice (D11).
+    { key: 'outsideTable', label: t('notCharged.outsideTable'), count: result.notCharged.outsideTableUnits },
   ].filter((entry) => entry.count > 0);
 
   return (
@@ -256,6 +259,29 @@ export function PreviewFindings({ result, locale }: { result: FeeNoticePreviewRe
               <FactCell key={entry.key} label={entry.label} value={count(entry.count)} />
             ))}
           </FactRow>
+
+          {/*
+            What the table does not price, by type (D11): not charged by this notice.
+            Shown before «إصدار» so a type the clerk meant to charge and forgot to put
+            in the table is caught here, not by the residents it was meant for.
+          */}
+          {result.outsideTable.length > 0 ? (
+            <Alert variant="info">
+              <p>{t('outsideTable', { count: result.notCharged.outsideTableUnits })}</p>
+              <ul className="mt-1 list-disc ps-5">
+                {result.outsideTable.map((row) => (
+                  <li key={row.unitType ?? 'none'}>
+                    {t('outsideTableLine', {
+                      type: row.unitType
+                        ? (labels.unitType[row.unitType as keyof typeof labels.unitType] ?? row.unitType)
+                        : t('outsideTableNoType'),
+                      count: row.count,
+                    })}
+                  </li>
+                ))}
+              </ul>
+            </Alert>
+          ) : null}
         </FormSection>
       ) : null}
 

@@ -71,6 +71,22 @@ describe('describeAssessment', () => {
     );
   });
 
+  it('says why a tiered bill is smaller than the holding: outside the table, disputed, billed already this period', () => {
+    const bill = assessment({
+      basis: 'TIERED_AREA',
+      rate: 0,
+      unitCount: 1,
+      outsideTableUnitCount: 2,
+      sharedConflictUnitCount: 1,
+      billedElsewhereUnitCount: 1,
+      lines: [{ propertyNumber: '88', propertyType: 'BUILDING', unitType: 'APARTMENT', unitArea: 120, bracketCode: 'B' }],
+    });
+    expect(describeAssessment(bill, 'en')).toBe(
+      "By area bracket: B (120 m²) (1 shared unit(s) not billed: their holders' records put them in different brackets; 1 already billed on another bill for this period; 2 outside the bracket table)",
+    );
+    expect(describeAssessment(bill, 'ar')).toContain('2 وحدة خارج جدول الفئات');
+  });
+
   it('writes the same line as before the copy moved to messages', () => {
     expect(describeAssessment(assessment(), 'ar')).toBe('6 محل تجاري × 100,000 ل.ل');
     expect(describeAssessment(assessment({ basis: 'PER_AREA', totalArea: 120.4 }), 'ar')).toBe('120 م² × 100,000 ل.ل');

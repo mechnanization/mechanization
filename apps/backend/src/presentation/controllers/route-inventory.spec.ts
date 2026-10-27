@@ -469,6 +469,13 @@ describe('the routes that raise a bill', () => {
     expect(batch?.roles).toEqual(['SUPER_ADMIN']);
   });
 
+  it('shows a notice’s periods before the cancel to the same roles as the cancel itself (D12)', () => {
+    const periods = all.find((candidate) => candidate.name === 'FeesController.noticePeriods');
+    const batch = all.find((candidate) => candidate.name === 'FeesController.cancelNotice');
+    expect(periods).toMatchObject({ method: RequestMethod.GET, path: 'notices/:id/periods', isPublic: false });
+    expect([...(periods?.roles ?? [])].sort()).toEqual([...(batch?.roles ?? [])].sort());
+  });
+
   it('lets only those who may issue a notice preview it: it reads what an issue reads, names included', () => {
     const preview = all.find((candidate) => candidate.name === 'FeesController.previewNotice');
     const issue = all.find((candidate) => candidate.name === 'FeesController.issue');

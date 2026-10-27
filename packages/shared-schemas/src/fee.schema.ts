@@ -373,6 +373,14 @@ export const feeAssessmentLineSchema = z.object({
    */
   bracketCode: z.string().optional(),
   bracketLabel: z.string().optional(),
+  /**
+   * Under TIERED_AREA, the census unit the line charges, when it has one. A
+   * period's recurring run reads it back to keep a unit already billed in that
+   * period off every later bill of the period (decision D8, 2026-10-26): a code
+   * like «0201» repeats in every building, so only the id can say "this flat".
+   * Absent on a card-only unit and under every other basis.
+   */
+  unitId: z.string().optional(),
 });
 
 export const feeAssessmentSchema = z.object({
@@ -464,6 +472,27 @@ export const feeAssessmentSchema = z.object({
    */
   sharedBillDebtorCount: z.number().int().min(2).optional(),
   sharedBillUnitCount: z.number().int().min(1).optional(),
+  /**
+   * TIERED_AREA only. Units this person holds that the notice's table does not
+   * price at all — a type no bracket names, or a card with no unit type (أرض,
+   * خيمة) — so not charged by this notice and counted, not refused (decision
+   * D11, 2026-10-26).
+   */
+  outsideTableUnitCount: z.number().int().min(1).optional(),
+  /**
+   * TIERED_AREA only. Shared units left off this bill and billed to nobody
+   * because their holders' records put them in different brackets
+   * (`splitSharedUnitBills`), so the bill says so rather than reading as a
+   * smaller holding.
+   */
+  sharedConflictUnitCount: z.number().int().min(1).optional(),
+  /**
+   * TIERED_AREA only. Units already on another bill of this notice for this
+   * period — a holder recorded after the period was billed — so not billed again
+   * (decision D8, 2026-10-26: a period's bill stands; a change of holders counts
+   * from the next period).
+   */
+  billedElsewhereUnitCount: z.number().int().min(1).optional(),
   lines: z.array(feeAssessmentLineSchema),
 });
 
@@ -626,8 +655,20 @@ export function bracketScales<B extends Pick<FeeMatrixBracket, 'unitTypes' | 'le
   );
 }
 
-/** Why a unit has no bracket: no area recorded, or no bracket for its type, level count and area. */
-export type BracketMiss = 'NO_AREA' | 'NO_BRACKET';
+/**
+ * Why a unit has no bracket:
+ *
+ *  - `NOT_IN_TABLE`: no bracket names its type at any level count, or it has no
+ *    unit type at all (a أرض or خيمة card). The table does not price it, so the
+ *    notice does not charge it: the biller counts it as outside the table
+ *    (decision D11, 2026-10-26), it does not refuse the citizen over it.
+ *  - `NO_AREA`: its type is in the table and it has no recorded area.
+ *  - `NO_BRACKET`: its type is in the table, but no bracket covers its level
+ *    count (D1) or its area (a scale need not start at 0).
+ *
+ * The last two are gaps in the record or the table, never priced by guess.
+ */
+export type BracketMiss = 'NOT_IN_TABLE' | 'NO_AREA' | 'NO_BRACKET';
 
 /**
  * The bracket one unit falls in, or why it falls in none.
@@ -635,20 +676,23 @@ export type BracketMiss = 'NO_AREA' | 'NO_BRACKET';
  * The scale is the unit's own type and level count (D1, D7); on it, the
  * bracket whose range holds the area, `minArea` included and `maxArea` not.
  * A table that passed `feeMatrixSchema` holds at most one such bracket. A unit
- * with no area, or no type, or one the table does not price, is a miss and is
- * never priced by guess: the biller reports it, and the drawer says so.
+ * the table does not price, or one with no area, is a miss and is never priced
+ * by guess: the biller reports it, and the drawer says so.
  */
 export function matchBracket<B extends Pick<FeeMatrixBracket, 'unitTypes' | 'levels' | 'minArea' | 'maxArea'>>(
   unit: { unitType: string | null; unitArea: number | null; levels?: number | null },
   brackets: readonly B[],
 ): { kind: 'matched'; bracket: B } | { kind: 'miss'; reason: BracketMiss } {
+  const unitType = unit.unitType;
+  if (unitType === null || !brackets.some((row) => (row.unitTypes as readonly string[]).includes(unitType))) {
+    return { kind: 'miss', reason: 'NOT_IN_TABLE' };
+  }
   if (unit.unitArea === null || !Number.isFinite(unit.unitArea)) return { kind: 'miss', reason: 'NO_AREA' };
   const area = unit.unitArea;
   const levels = unitLevels(unit);
   const bracket = brackets.find(
     (row) =>
-      unit.unitType !== null &&
-      (row.unitTypes as readonly string[]).includes(unit.unitType) &&
+      (row.unitTypes as readonly string[]).includes(unitType) &&
       row.levels === levels &&
       area >= row.minArea &&
       (row.maxArea === null || area < row.maxArea),
@@ -722,6 +766,13 @@ const feeNoticeFields = z.object({
  * different companions — an "individual" fee with no citizen attached would
  * fan out to nobody and look like a silent failure — and the basis decides
  * between an amount and a bracket table, never both.
+ *
+ * A category belongs to a notice aimed at one and to no other (decision D13,
+ * 2026-10-26). The assessment filters every unit by it, so a category sent
+ * with «جميع المواطنين» quietly charged that category alone: the issue wizard
+ * kept its default «محل تجاري» on every target and sent it, and a per-unit
+ * notice to all citizens billed their shops and nothing else. Refused here, on
+ * the server, so no caller can do it again.
  */
 function refineFeeNotice(data: z.infer<typeof feeNoticeFields>, ctx: z.RefinementCtx): void {
   if (data.targetType === 'BUILDING_CATEGORY' && !data.targetCategory && !data.targetCategories) {
@@ -743,6 +794,13 @@ function refineFeeNotice(data: z.infer<typeof feeNoticeFields>, ctx: z.Refinemen
       code: z.ZodIssueCode.custom,
       path: ['targetCategories'],
       message: 'قائمة الفئات لإشعار موجّه إلى فئات عقارية وحده',
+    });
+  }
+  if (data.targetType !== 'BUILDING_CATEGORY' && data.targetCategory) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['targetCategory'],
+      message: 'الفئة للرسم الموجّه إلى فئة عقارات وحده',
     });
   }
   if (data.targetType === 'INDIVIDUAL_CITIZEN' && !data.targetCitizenId) {
@@ -826,8 +884,10 @@ export type FeeNoticePreviewInput = z.infer<typeof feeNoticePreviewSchema>;
  *
  *  - `UNSURVEYED` — a building on their card whose units were never counted;
  *  - `NO_AREA` — a unit charged by area with none recorded;
- *  - `NO_BRACKET` — a unit no bracket of the table covers, for its type, level
- *    count and area;
+ *  - `NO_BRACKET` — a unit of a type the table prices, whose level count or
+ *    area no bracket covers (`matchBracket`'s miss of the same name). A type
+ *    the table never names is not this: it is outside the notice, counted and
+ *    not charged (`NOT_IN_TABLE`, decision D11);
  *  - `SHARES_MISSING` — a unit divided «حسب الأسهم» with a co-owner's أسهم
  *    unrecorded;
  *  - `NO_LEVEL_FACTOR` — a unit on more levels than الإعدادات has a roof factor for.
@@ -907,7 +967,15 @@ export const feeNoticePreviewResultSchema = z.object({
     outOfScopeByState: z.record(z.enum(UNIT_STATUS), z.number().int().positive()),
     /** Files the residence filter left out that the notice would otherwise reach (0100). */
     residenceLeftOut: z.number().int().nonnegative(),
+    /** Under TIERED_AREA, units the table does not price at all (D11). Each unit once. */
+    outsideTableUnits: z.number().int().nonnegative(),
   }),
+  /**
+   * The same units by type — `null` for a card with no unit type (أرض, خيمة) —
+   * so a type the clerk forgot to put in the table shows before «إصدار», not
+   * after. Empty under every other basis.
+   */
+  outsideTable: z.array(z.object({ unitType: z.string().nullable(), count: z.number().int().min(1) })),
   unassessable: z.array(feeUnassessableSchema),
   conflicts: z.array(
     z.object({
@@ -1387,6 +1455,46 @@ export const cancelBillSchema = z.object({
 });
 
 export type CancelBill = z.infer<typeof cancelBillSchema>;
+
+/**
+ * A billing period as `periodKeyFor` writes it: «2026-07», «2026-H2», «2026»,
+ * or «ONCE» for a one-off notice.
+ */
+export const periodKeySchema = z
+  .string()
+  .regex(/^(ONCE|\d{4}(-(0[1-9]|1[0-2]|H[12]))?)$/, 'فترة غير صالحة');
+
+/**
+ * «إلغاء الإشعار» (decisions D6 and D12): the bills of the periods the manager
+ * names, each as «إلغاء الفاتورة» would, with the same required reason. The
+ * periods are named, never implied: cancelling a period's correct bills to stop
+ * a fee would be waiving revenue the law does not let a municipality waive, so
+ * stopping is its own switch (`PATCH fees/notices/:id/active`) and cancels nothing.
+ */
+export const cancelNoticeSchema = cancelBillSchema.extend({
+  periodKeys: z
+    .array(periodKeySchema, { required_error: 'اختر فترة واحدة على الأقل' })
+    .min(1, 'اختر فترة واحدة على الأقل')
+    .max(240)
+    .refine((keys) => new Set(keys).size === keys.length, 'فترة مكرّرة'),
+});
+
+export type CancelNotice = z.infer<typeof cancelNoticeSchema>;
+
+/** One period of a notice as «إلغاء الإشعار» shows it before the press (`GET fees/notices/:id/periods`). */
+export interface FeeNoticePeriodSummary {
+  periodKey: string;
+  /** Every bill of the period, cancelled ones included. */
+  bills: number;
+  /** What the cancel would cancel: nothing paid on it, no claim waiting, not cancelled. */
+  cancellable: number;
+  cancellableAmount: number;
+  /** What it would leave, and why. */
+  withPayments: number;
+  underReview: number;
+  alreadyCancelled: number;
+  currency: string;
+}
 
 /**
  * Citizen sign-in by رقم مرجعي.

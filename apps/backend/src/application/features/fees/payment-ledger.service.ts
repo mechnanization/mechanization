@@ -1,11 +1,12 @@
 import { Injectable } from '@nestjs/common';
-import { municipalToday, type PaymentMethod } from '@mechanization/shared-schemas';
+import { citizenDisplayName, municipalToday, type PaymentMethod } from '@mechanization/shared-schemas';
 import type { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { allocateDocumentNumber, allocateDocumentNumbers } from '../../common/document-number';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { AuditService, type AuditEntryInput } from '../audit/audit.service';
+import { assertNotMergedAway } from '../citizens/merged-away';
 import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
 
 /** One movement of money, as the caller describes it. */
@@ -252,6 +253,12 @@ export class PaymentLedgerService {
           message: 'The payer named is not one of this shared unit bill’s debtors.',
         });
       }
+      /*
+        A file merged into another keeps its debtor row on a bill both owed, and
+        a receipt may not be written against it (decision D14, 2026-10-26): the
+        answer names the file that stays, which is a debtor on the bill too.
+      */
+      await assertNotMergedAway(tx, input.paidByCitizenId);
     } else if (input.paidByCitizenId) {
       throw new ValidationError({
         code: 'SHARED_BILL_PAYER_ON_OWN_BILL',
@@ -544,6 +551,7 @@ export class PaymentLedgerService {
         collectedBy: { select: { firstName: true, lastName: true } },
         recordedBy: { select: { firstName: true, lastName: true } },
         reversedBy: { select: { id: true } },
+        paidByCitizen: { select: { firstName: true, middleName: true, lastName: true, residence: true } },
       },
     });
 
@@ -560,6 +568,13 @@ export class PaymentLedgerService {
       recordedBy: row.recordedBy
         ? `${row.recordedBy.firstName} ${row.recordedBy.lastName}`
         : null,
+      /*
+        On a shared unit bill (0099), the debtor this money came from: the person
+        its receipt names (decision D9, 2026-10-26). Staff only, as this list is.
+        Null on a citizen's own bill, whose receipt names the bill's citizen.
+      */
+      paidByCitizenId: row.paidByCitizenId,
+      paidByName: row.paidByCitizen ? citizenDisplayName(row.paidByCitizen, { middleName: true }) : null,
       /** True for the opposing row itself; `reversed` for the one it undoes. */
       isReversal: row.reversalOfId !== null,
       reversed: row.reversedBy !== null,

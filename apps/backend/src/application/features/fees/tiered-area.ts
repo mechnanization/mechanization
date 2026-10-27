@@ -23,6 +23,9 @@ export interface Unassessable {
   unit?: UnassessableUnit;
 }
 
+/** Why a citizen's own bill cannot be raised, without the outcome's `kind`: what pricing hands the caller. */
+export type UnassessableDetail = Omit<Unassessable, 'kind'>;
+
 /** A unit's facts for `Unassessable.unit`: its code, parcel, type, area and level count. */
 export function unassessableUnit(
   unit: Pick<BillableUnit, 'unitCode' | 'propertyNumber' | 'unitType' | 'unitArea' | 'levels'>,
@@ -52,6 +55,17 @@ export function unassessableUnit(
  * Everything decided before the arithmetic stays where it is, in
  * `assessCitizen`: exemptions, uninhabitable flats, the review hold and the
  * bearer rule run first, unchanged, and only what they leave reaches here.
+ *
+ * And the review's decisions, 2026-10-26 (same document, §1):
+ *
+ *  - A unit the table does not price at all — a type no bracket names, a card
+ *    with no unit type — is outside the notice: not charged, counted (D11).
+ *  - A citizen whose own bill cannot be raised (a unit with no area, a level
+ *    count the table lacks, an unsurveyed building) is still a debtor on every
+ *    shared unit that can be priced: the gap is on another unit and changes
+ *    nothing about this one's bracket (D10).
+ *  - A period's bill stands: a unit already on a bill of the notice for the
+ *    period is billed to nobody again in that period (D8).
  */
 
 /** One unit priced by its bracket for one citizen. Not stored: the run regroups these. */
@@ -65,13 +79,42 @@ export interface TieredUnit {
   line: FeeAssessmentLine;
 }
 
+/** A unit the notice's table does not price at all (D11): counted on the bill, never charged. */
+export interface OutsideUnit {
+  unitId: string | null;
+  /** Null for a card with no unit type: a أرض or a خيمة. */
+  unitType: string | null;
+}
+
+/** One citizen's units as the table prices them. */
+export interface TieredPricing {
+  /** Every unit the table prices, each once. */
+  units: TieredUnit[];
+  /** Units the table does not price at all — outside the notice, counted (D11). */
+  outside: OutsideUnit[];
+  /**
+   * Why this citizen's own bill cannot be raised: the first unit the table
+   * should price and cannot — no area, or a level count or an area no bracket
+   * covers — with its code and the unit's facts, which a screen words
+   * (`feeUnassessableSchema`). Null when every unit was priced or is outside
+   * the table.
+   */
+  unassessable: UnassessableDetail | null;
+}
+
 /**
- * Prices every unit one citizen is charged for, or says why it cannot.
+ * Prices every unit one citizen is charged for, and says what stops their bill.
  *
- * A unit with no area, or one the table has no bracket for, stops the whole
- * assessment, as a unit with no area does under PER_AREA: billing the rest
- * would read as a smaller holding, and the caller reports the citizen by name
- * so someone fixes the record.
+ * A unit with no area, or one whose level count or area the table has no
+ * bracket for, withholds the citizen's own bill, as a unit with no area does
+ * under PER_AREA: billing the rest would read as a smaller holding, and the
+ * caller reports the citizen by name so someone fixes the record. It no longer
+ * stops the pricing: the units that could be priced are still returned, so the
+ * run can bill a unit this citizen shares with others (D10).
+ *
+ * A unit whose type the table never names is a different case: the notice does
+ * not charge it, so it is counted and left out (D11). A table for flats and
+ * houses issued to every citizen must not strand the man who also owns a plot.
  *
  * One unit is priced once per citizen. The same flat can reach one person
  * twice — on their building card and through an occupancy — and a bracket fee
@@ -80,9 +123,11 @@ export interface TieredUnit {
 export function priceTieredUnits(
   units: readonly BillableUnit[],
   brackets: readonly FeeMatrixBracket[],
-): { kind: 'priced'; units: TieredUnit[] } | Unassessable {
+): TieredPricing {
   const seen = new Set<string>();
   const priced: TieredUnit[] = [];
+  const outside: OutsideUnit[] = [];
+  let unassessable: UnassessableDetail | null = null;
 
   for (const unit of units) {
     if (unit.unitId) {
@@ -92,9 +137,13 @@ export function priceTieredUnits(
 
     const match = matchBracket(unit, brackets);
     if (match.kind === 'miss') {
+      if (match.reason === 'NOT_IN_TABLE') {
+        outside.push({ unitId: unit.unitId ?? null, unitType: unit.unitType });
+        continue;
+      }
       const where = `${unit.unitCode ? `وحدة ${unit.unitCode}` : 'وحدة'} على العقار ${unit.propertyNumber ?? '—'}`;
-      return {
-        kind: 'unassessable',
+      // The first unit that withholds the bill; the pricing goes on for the shared units (D10).
+      unassessable ??= {
         reason:
           match.reason === 'NO_AREA'
             ? `${where} بلا مساحة مسجّلة`
@@ -102,6 +151,7 @@ export function priceTieredUnits(
         code: match.reason === 'NO_AREA' ? 'NO_AREA' : 'NO_BRACKET',
         unit: unassessableUnit(unit),
       };
+      continue;
     }
 
     const { bracket } = match;
@@ -119,11 +169,13 @@ export function priceTieredUnits(
         ...(unitLevels(unit) > 1 ? { levels: unitLevels(unit) } : {}),
         bracketCode: bracket.code,
         bracketLabel: bracket.labelAr,
+        // The unit a later run of the period reads back (D8).
+        ...(unit.unitId ? { unitId: unit.unitId } : {}),
       },
     });
   }
 
-  return { kind: 'priced', units: priced };
+  return { units: priced, outside, unassessable };
 }
 
 /** What `assessCitizen` counted before pricing, carried onto the bill. */
@@ -134,6 +186,8 @@ export interface TieredCounts {
   exemptUnitCount: number;
   /** Units whose حالة الوحدة the notice does not charge (0100). Absent on a shared bill, which holds one unit in scope. */
   outOfScopeUnitCount?: number;
+  /** Units the table does not price (D11). Absent before pricing counted them. */
+  outsideTableUnitCount?: number;
 }
 
 /**
@@ -143,7 +197,12 @@ export interface TieredCounts {
 export function tieredAssessment(
   units: readonly TieredUnit[],
   counts: TieredCounts,
-  shared: { sharedBillUnitCount?: number; sharedBillDebtorCount?: number } = {},
+  shared: {
+    sharedBillUnitCount?: number;
+    sharedBillDebtorCount?: number;
+    sharedConflictUnitCount?: number;
+    billedElsewhereUnitCount?: number;
+  } = {},
 ): FeeAssessment {
   return {
     basis: 'TIERED_AREA',
@@ -157,8 +216,11 @@ export function tieredAssessment(
     coOwnerPaidUnitCount: 0,
     exemptUnitCount: counts.exemptUnitCount,
     outOfScopeUnitCount: counts.outOfScopeUnitCount ?? 0,
+    ...(counts.outsideTableUnitCount ? { outsideTableUnitCount: counts.outsideTableUnitCount } : {}),
     ...(shared.sharedBillUnitCount ? { sharedBillUnitCount: shared.sharedBillUnitCount } : {}),
     ...(shared.sharedBillDebtorCount ? { sharedBillDebtorCount: shared.sharedBillDebtorCount } : {}),
+    ...(shared.sharedConflictUnitCount ? { sharedConflictUnitCount: shared.sharedConflictUnitCount } : {}),
+    ...(shared.billedElsewhereUnitCount ? { billedElsewhereUnitCount: shared.billedElsewhereUnitCount } : {}),
     lines: units.map((unit) => unit.line),
   };
 }
@@ -204,6 +266,17 @@ export interface SharedUnitConflict {
  * an occupant-borne one, or an owner and a tenant both charged because the
  * flat's status was never recorded. Each of them is a debtor on the one bill.
  *
+ * `withheld` are the citizens whose own bill cannot be raised (`unassessable`
+ * in `assessCitizen`) with the units that could still be priced. They hold
+ * those units as anyone does — a unit they share is billed, with them among its
+ * debtors (D10) — but they get no own bill, so a unit only they hold is billed
+ * to nobody until their record is fixed.
+ *
+ * `alreadyBilled` are the units already on a bill of this notice for this
+ * period, cancelled ones included (D8). Each of them is billed to nobody again:
+ * a co-owner recorded after the period was billed joins the unit's bill from the
+ * next period, rather than the unit being billed a second time in this one.
+ *
  * A card-only unit has no census id and cannot be matched across citizens, so
  * it stays on each holder's own bill, as under every other basis. A citizen
  * whose every unit went to shared bills is returned with an amount of 0: the
@@ -211,11 +284,16 @@ export interface SharedUnitConflict {
  */
 export function splitSharedUnitBills<C extends TieredCitizen>(
   assessed: readonly C[],
+  options: {
+    withheld?: readonly TieredCitizen[];
+    alreadyBilled?: ReadonlySet<string>;
+  } = {},
 ): { own: C[]; shared: SharedUnitBill[]; conflicts: SharedUnitConflict[] } {
+  const alreadyBilled = options.alreadyBilled ?? new Set<string>();
   const holders = new Map<string, Array<{ citizenId: string; unit: TieredUnit }>>();
-  for (const citizen of assessed) {
+  for (const citizen of [...assessed, ...(options.withheld ?? [])]) {
     for (const unit of citizen.tieredUnits ?? []) {
-      if (!unit.unitId) continue;
+      if (!unit.unitId || alreadyBilled.has(unit.unitId)) continue;
       const list = holders.get(unit.unitId) ?? [];
       if (!list.some((entry) => entry.citizenId === citizen.citizenId)) {
         list.push({ citizenId: citizen.citizenId, unit });
@@ -259,21 +337,30 @@ export function splitSharedUnitBills<C extends TieredCitizen>(
     });
   }
 
-  if (takenOff.size === 0) return { own: [...assessed], shared, conflicts };
+  if (takenOff.size === 0 && alreadyBilled.size === 0) return { own: [...assessed], shared, conflicts };
 
   const sharedIds = new Set(shared.map((bill) => bill.unitId));
+  const conflictIds = new Set(conflicts.map((conflict) => conflict.unitId));
   const own = assessed.map((citizen) => {
     const units = citizen.tieredUnits ?? [];
-    const kept = units.filter((unit) => !unit.unitId || !takenOff.has(unit.unitId));
+    const kept = units.filter(
+      (unit) => !unit.unitId || (!takenOff.has(unit.unitId) && !alreadyBilled.has(unit.unitId)),
+    );
     if (kept.length === units.length || !citizen.assessment) return citizen;
 
-    const movedToShared = units.filter((unit) => unit.unitId && sharedIds.has(unit.unitId)).length;
+    // Each unit that left this bill is counted on it, by where it went.
+    const countOf = (ids: ReadonlySet<string>) => units.filter((unit) => unit.unitId && ids.has(unit.unitId)).length;
+    const movedToShared = countOf(sharedIds);
+    const conflicted = countOf(conflictIds);
+    const billedElsewhere = countOf(alreadyBilled);
     return {
       ...citizen,
       amount: kept.reduce((sum, unit) => sum + unit.amount, 0),
       tieredUnits: kept,
       assessment: tieredAssessment(kept, citizen.assessment, {
         ...(movedToShared > 0 ? { sharedBillUnitCount: movedToShared } : {}),
+        ...(conflicted > 0 ? { sharedConflictUnitCount: conflicted } : {}),
+        ...(billedElsewhere > 0 ? { billedElsewhereUnitCount: billedElsewhere } : {}),
       }),
     };
   });

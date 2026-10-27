@@ -168,6 +168,16 @@ function withLeftOut(line: string, assessment: FeeAssessment, locale: string): s
   if (assessment.coOwnerPaidUnitCount) notes.push(t('coOwnerPays', { count: assessment.coOwnerPaidUnitCount }));
   // Units of this person's billed instead on a shared unit bill with the others charged for them (0099, D5).
   if (assessment.sharedBillUnitCount) notes.push(t('sharedBillUnits', { count: assessment.sharedBillUnitCount }));
+  // Shared units billed to nobody: their holders' records put them in different brackets.
+  if (assessment.sharedConflictUnitCount) {
+    notes.push(t('sharedConflictUnits', { count: assessment.sharedConflictUnitCount }));
+  }
+  // Units already on another bill of the notice for the period (D8): billed once in it.
+  if (assessment.billedElsewhereUnitCount) {
+    notes.push(t('billedElsewhereUnits', { count: assessment.billedElsewhereUnitCount }));
+  }
+  // Units the bracket table does not price at all (D11): outside this notice.
+  if (assessment.outsideTableUnitCount) notes.push(t('outsideTableUnits', { count: assessment.outsideTableUnitCount }));
   /*
     «لكل سقف» (0095, D28): a unit on several levels counted at its roofs — a
     duplex flat at the municipality's factor, a house at one per storey — so

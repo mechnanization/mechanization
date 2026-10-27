@@ -1,12 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { QueryClient, QueryObserver, onlineManager } from '@tanstack/react-query';
 import { reverseTransactionSchema } from '@mechanization/shared-schemas';
-import { ApiRequestError } from './api-client';
+import { ApiRequestError, type PaymentLedgerEntry } from './api-client';
 import {
   REVERSAL_REASON_MAX,
   billPageLink,
   claimUnderReview,
+  mayPrintSharedReceipt,
   mayReverseReceipt,
+  receiptOfEntry,
   receiptsReadAgain,
   reversalFailure,
   reversalReasonValid,
@@ -192,5 +194,69 @@ describe('reversalFailure', () => {
 
   it('reads a refusal as done when the receipts read again show another press reversed it first', () => {
     expect(reversalFailure(failed(409, 'TREASURY_INSUFFICIENT_FUNDS'), reversed, 'rcp-1')).toBe('already-reversed');
+  });
+});
+
+describe('shared unit bill receipts (D9)', () => {
+  const entry = (over: Partial<PaymentLedgerEntry> & Pick<PaymentLedgerEntry, 'id' | 'amount'>): PaymentLedgerEntry => ({
+    receiptNumber: `RCP-${over.id}`,
+    currency: 'LBP',
+    method: 'CASH',
+    externalRef: null,
+    collectedBy: null,
+    recordedBy: null,
+    isReversal: false,
+    reversed: false,
+    note: null,
+    occurredAt: '2026-10-20T09:00:00.000Z',
+    tenderedLocal: null,
+    tenderedForeign: null,
+    tenderedForeignCurrency: null,
+    exchangeRate: null,
+    officialExchangeRate: null,
+    changeGiven: null,
+    adjustmentReason: null,
+    paidByCitizenId: null,
+    paidByName: null,
+    ...over,
+  });
+
+  it('offers a print on a standing payment of a shared bill, never on a reversal, a reversed one or an own bill', () => {
+    expect(mayPrintSharedReceipt(entry({ id: 'a', amount: 1, paidByCitizenId: 'ali' }))).toBe(true);
+    expect(mayPrintSharedReceipt(entry({ id: 'b', amount: 1, paidByCitizenId: 'ali', reversed: true }))).toBe(false);
+    expect(mayPrintSharedReceipt(entry({ id: 'c', amount: -1, paidByCitizenId: 'ali', isReversal: true }))).toBe(false);
+    expect(mayPrintSharedReceipt(entry({ id: 'd', amount: 1 }))).toBe(false);
+  });
+
+  it('prints each brother for what he paid, with what the bill still owed right after it', () => {
+    // A 30,000,000 bill: Ali pays 20,000,000, then Hassan the 10,000,000 left.
+    const entries = [
+      entry({ id: 'ali', amount: 20_000_000, paidByCitizenId: 'ali', tenderedLocal: 20_000_000 }),
+      entry({ id: 'hassan', amount: 10_000_000, paidByCitizenId: 'hassan', occurredAt: '2026-10-22T09:00:00.000Z' }),
+    ];
+    expect(receiptOfEntry(entries, 'ali', 30_000_000)).toMatchObject({
+      receiptNumber: 'RCP-ali',
+      received: 20_000_000,
+      remaining: 10_000_000,
+      tender: { local: 20_000_000, foreign: 0 },
+      method: 'CASH',
+    });
+    expect(receiptOfEntry(entries, 'hassan', 30_000_000)).toMatchObject({
+      receiptNumber: 'RCP-hassan',
+      received: 10_000_000,
+      remaining: 0,
+      occurredAt: '2026-10-22T09:00:00.000Z',
+      tender: null,
+    });
+    expect(receiptOfEntry(entries, 'missing', 30_000_000)).toBeNull();
+  });
+
+  it('counts a reversal before a payment in what the bill still owed after it', () => {
+    const entries = [
+      entry({ id: 'first', amount: 5_000_000, paidByCitizenId: 'ali', reversed: true }),
+      entry({ id: 'undo', amount: -5_000_000, paidByCitizenId: 'ali', isReversal: true }),
+      entry({ id: 'second', amount: 5_000_000, paidByCitizenId: 'hassan' }),
+    ];
+    expect(receiptOfEntry(entries, 'second', 30_000_000)).toMatchObject({ received: 5_000_000, remaining: 25_000_000 });
   });
 });

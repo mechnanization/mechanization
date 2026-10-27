@@ -61,6 +61,8 @@ describeIfDb('shared unit bills', () => {
   const brothers = [randomUUID(), randomUUID(), randomUUID()].sort();
   const neighbour = randomUUID();
   let shopId: string;
+  let flatId: string;
+  let buildingId: string;
 
   const within = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'tenant-sub', tenantSlug: 'sub', schemaName: SCHEMA, prisma: db }, work);
@@ -172,6 +174,8 @@ describeIfDb('shared unit bills', () => {
     const shop = await unit('0001', 0, 1, 'SHOP', 40);
     const flat = await unit('0101', 1, 1, 'APARTMENT', 120);
     shopId = shop.id;
+    flatId = flat.id;
+    buildingId = building.id;
 
     await citizenOwning(brothers[0]!, 'علي', building.id, [
       { id: shop.id, unitType: 'SHOP', unitArea: 40 },
@@ -368,5 +372,132 @@ describeIfDb('shared unit bills', () => {
       [false, null],
       [true, brothers[0]],
     ]);
+  });
+
+  it('lists each receipt of a shared bill with the debtor who paid it, so a reprint names them (D9)', async () => {
+    const receipts = await within(() => fees.listTransactions(sharedBillId));
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0]).toMatchObject({
+      amount: 30_000_000,
+      paidByCitizenId: brothers[1],
+      paidByName: expect.stringContaining('معروف'),
+      receiptNumber: expect.any(String),
+    });
+    // A citizen's own bill names no payer: its receipt names the bill's citizen.
+    const recurringOwn = await db.citizenPayment.findFirstOrThrow({
+      where: { feeNoticeId: recurringNoticeId, citizenId: brothers[0], paymentStatus: 'PAID' },
+    });
+    const own = await within(() => fees.listTransactions(recurringOwn.id));
+    expect(own.map((row) => [row.paidByCitizenId, row.paidByName])).toEqual([[null, null]]);
+  });
+
+  it('cancels a period’s shared bill with the notice, its debtors kept on the record (D12)', async () => {
+    const now = new Date();
+    const current = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+    const periods = await within(() => fees.noticePeriods(recurringNoticeId));
+    expect(periods.find((row) => row.periodKey === current)).toMatchObject({ bills: 2, cancellable: 2 });
+
+    const manager = { id: accountantId, role: 'SUPER_ADMIN' };
+    const result = await within(() =>
+      fees.cancelNoticeBatch(recurringNoticeId, { reason: 'صدر بالجدول الخطأ', periodKeys: [current] }, manager),
+    );
+    expect(result).toMatchObject({ cancelled: 2, skipped: [] });
+
+    const shared = await db.citizenPayment.findFirstOrThrow({
+      where: { feeNoticeId: recurringNoticeId, periodKey: current, unitId: shopId },
+      include: { _count: { select: { debtors: true } } },
+    });
+    expect(shared.paymentStatus).toBe('CANCELLED');
+    expect(shared._count.debtors).toBe(3);
+    const row = await db.auditLogEntry.findFirstOrThrow({ where: { action: 'FEE_BILL_CANCELLED', entityId: shared.id } });
+    expect(row.after).toMatchObject({ citizenId: null, periodKey: current, noticeId: recurringNoticeId });
+  });
+
+  it('refuses a merged-away debtor as the payer and does not offer them at the counter (D14)', async () => {
+    const issued = await within(() => fees.issue(notice(), actor));
+    const shared = await db.citizenPayment.findFirstOrThrow({ where: { feeNoticeId: issued.noticeId, unitId: shopId } });
+
+    // The youngest brother's file is folded into the middle one's: the merge keeps both debtor rows.
+    const merge = await db.citizenMerge.create({
+      data: { survivorId: brothers[1]!, absorbedId: brothers[2]!, reason: 'ملف مكرّر', footprint: {}, mergedById: accountantId },
+    });
+    await db.user.update({ where: { id: brothers[2] }, data: { isActive: false } });
+    try {
+      const atCounter = await within(() => fees.getPaymentById(shared.id));
+      expect(atCounter.sharedDebtors.map((debtor) => debtor.citizenId).sort()).toEqual([brothers[0], brothers[1]].sort());
+
+      await expect(
+        within(() =>
+          fees.settleInPerson({ paymentId: shared.id, method: 'CASH', paidByCitizenId: brothers[2], clientRequestId: randomUUID(), actor }),
+        ),
+      ).rejects.toMatchObject({ code: 'CITIZEN_MERGED_AWAY' });
+      expect(await db.paymentTransaction.count({ where: { paymentId: shared.id } })).toBe(0);
+
+      await within(() =>
+        fees.settleInPerson({ paymentId: shared.id, method: 'CASH', paidByCitizenId: brothers[1], clientRequestId: randomUUID(), actor }),
+      );
+      expect((await db.citizenPayment.findUniqueOrThrow({ where: { id: shared.id } })).paymentStatus).toBe('PAID');
+    } finally {
+      // Undone as «التراجع عن الدمج» records it: who, when and why move together (CHECK citizen_merges_undo_reason).
+      await db.citizenMerge.update({
+        where: { id: merge.id },
+        data: { undoneAt: new Date(), undoneById: accountantId, undoReason: 'انتهى الاختبار' },
+      });
+      await db.user.update({ where: { id: brothers[2] }, data: { isActive: true } });
+    }
+  });
+
+  it('bills a flat once in its period when a co-owner is recorded after the period was billed, and shares it from the next (D8)', async () => {
+    const now = new Date();
+    const lastMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+    const nextMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 15));
+    const current = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+    const issued = await within(() =>
+      fees.issue(notice({ frequency: 'MONTHLY', dueDate: lastMonth.toISOString().slice(0, 10) }), actor),
+    );
+    // This month, the eldest alone owns the flat: his own bill charges it.
+    await within(() => fees.runRecurringBilling(now));
+    const thisMonth = () =>
+      db.citizenPayment.findMany({
+        where: { feeNoticeId: issued.noticeId, periodKey: current },
+        select: { citizenId: true, unitId: true, amount: true, assessment: true },
+      });
+    const before = await thisMonth();
+    expect(before.find((bill) => bill.citizenId === brothers[0])).toBeDefined();
+
+    // Mid-month the neighbour is recorded as the flat's co-owner.
+    const registration = await db.registration.findFirstOrThrow({ where: { citizenId: neighbour } });
+    const card = await db.propertyEntry.create({
+      data: {
+        registrationId: registration.id,
+        occupancyType: 'OWNER' as never,
+        propertyType: 'BUILDING' as never,
+        buildingId,
+        propertyNumber: '88',
+      },
+    });
+    await db.buildingUnit.create({
+      data: { propertyEntryId: card.id, unitId: flatId, unitType: 'APARTMENT' as never, unitArea: 120, unitStatus: 'OWNER_OCCUPIED' as never },
+    });
+    await db.unitOccupancy.create({
+      data: { unitId: flatId, citizenId: neighbour, role: 'OWNER' as never, registrationId: registration.id },
+    });
+
+    // The next night: nothing more for this month — the flat is not billed a second time.
+    await within(() => fees.runRecurringBilling(now));
+    const after = await thisMonth();
+    expect(after).toHaveLength(before.length);
+    expect(after.some((bill) => bill.unitId === flatId)).toBe(false);
+    expect(after.some((bill) => bill.citizenId === neighbour)).toBe(false);
+
+    // From the next month the flat is one shared bill, owed by both.
+    await within(() => fees.runRecurringBilling(nextMonth));
+    const next = `${nextMonth.getUTCFullYear()}-${String(nextMonth.getUTCMonth() + 1).padStart(2, '0')}`;
+    const sharedFlat = await db.citizenPayment.findFirstOrThrow({
+      where: { feeNoticeId: issued.noticeId, periodKey: next, unitId: flatId },
+      include: { debtors: { select: { citizenId: true } } },
+    });
+    expect(Number(sharedFlat.amount)).toBe(1_500_000);
+    expect(sharedFlat.debtors.map((debtor) => debtor.citizenId).sort()).toEqual([brothers[0], neighbour].sort());
   });
 });

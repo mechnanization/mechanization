@@ -33,11 +33,13 @@ import type {
   FeeBearer,
   FeeFrequency,
   FeeMatrixBracket,
+  FeeNoticePeriodSummary,
   FeeNoticePreviewInput,
   FeeNoticePreviewResult,
   FeeUnassessable,
   FieldFlag,
   SharedUnitBillView,
+  CancelNotice,
   ImportRow,
   InspectorProfileResponse,
   NumberingSequence,
@@ -5436,6 +5438,8 @@ export async function issueFeeNotice(
     sharedBills?: number;
     /** Shared units billed to nobody because their holders' records put them in different brackets. */
     sharedUnitConflicts?: FeeNoticePreviewResult['conflicts'];
+    /** Units the bracket table does not price (D11): not charged, counted. */
+    outsideTableUnits?: number;
   }>(tenant, '/fees/notices', {
     token,
     method: 'POST',
@@ -5464,14 +5468,27 @@ export interface FeeNoticeCancelResult {
  * been paid on, reports the rest, and stops the notice. The manager only, with
  * a reason, as for one bill.
  */
-export async function cancelFeeNotice(tenant: string, token: string, noticeId: string, reason: string) {
+export async function cancelFeeNotice(tenant: string, token: string, noticeId: string, input: CancelNotice) {
   const result = await apiFetch<FeeNoticeCancelResult>(
     tenant,
     `/fees/notices/${encodeURIComponent(noticeId)}/cancel`,
-    { token, method: 'POST', body: JSON.stringify({ reason }) },
+    { token, method: 'POST', body: JSON.stringify(input) },
   );
   invalidateRequests(`fee-summary:${tenant}`);
   return result;
+}
+
+/**
+ * A notice's periods as «إلغاء الإشعار» shows them before the press (D12):
+ * each period's bills, what the cancel would cancel and for how much, and what
+ * it would leave and why. `BILL_CANCEL_ROLES`, as the cancel itself.
+ */
+export function getFeeNoticePeriods(tenant: string, token: string, noticeId: string, signal?: AbortSignal) {
+  return apiFetch<{ items: FeeNoticePeriodSummary[] }>(
+    tenant,
+    `/fees/notices/${encodeURIComponent(noticeId)}/periods`,
+    { token, signal },
+  );
 }
 
 /**
@@ -6038,6 +6055,12 @@ export interface PaymentLedgerEntry {
   officialExchangeRate: number | null;
   changeGiven: number | null;
   adjustmentReason: string | null;
+  /**
+   * On a shared unit bill (0099), the debtor this money came from: the person its
+   * receipt names (D9). Null on a citizen's own bill.
+   */
+  paidByCitizenId?: string | null;
+  paidByName?: string | null;
 }
 
 /** Every movement on one bill, oldest first — `GET fees/payments/:id/transactions` (`FEE_READ_ROLES`). */

@@ -698,16 +698,30 @@ export default function FeesPage({
                 </Link>
               ) : null}
 
-              {/* A receipt is rebuilt from a file: the citizen's, or on a shared unit bill (0099) the payer's. */}
-              {payment.paidAmount > 0 && (payment.citizenId ?? payment.lastPaidByCitizenId) ? (
+              {/*
+                A shared unit bill (0099) is reprinted one payment at a time, each naming
+                the debtor who paid it (D9) — on the bill's receipts page, reached through
+                the file of whoever paid last. Never its total under one name.
+              */}
+              {payment.paidAmount > 0 && !payment.citizenId && payment.lastPaidByCitizenId && canSettle ? (
+                <Link
+                  href={`${base}/citizens/${encodeURIComponent(payment.lastPaidByCitizenId)}/payments/${encodeURIComponent(payment.id)}`}
+                  className={buttonVariants({ variant: 'outline', size: 'sm', className: 'h-8 text-xs' })}
+                >
+                  <Receipt className="size-3.5" aria-hidden />
+                  {tCommon('sharedBillReceipts')}
+                </Link>
+              ) : null}
+
+              {/* A citizen's own bill: the receipt is rebuilt from their file. */}
+              {payment.paidAmount > 0 && payment.citizenId ? (
                 <Button
                   size="sm"
                   variant="outline"
                   className="h-8 text-xs"
                   disabled={isBusy}
                   onClick={() => {
-                    const fileOf = payment.citizenId ?? payment.lastPaidByCitizenId;
-                    if (fileOf) void openReceipt(fileOf, payment.id, payment.paidAmount);
+                    if (payment.citizenId) void openReceipt(payment.citizenId, payment.id, payment.paidAmount);
                   }}
                 >
                   {isBusy ? (

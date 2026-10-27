@@ -80,6 +80,7 @@ describe('assessCitizen under TIERED_AREA', () => {
       reason: 'وحدة TRI على العقار 352 لا تقع في أي فئة من جدول الفئات لنوعها وعدد طوابقها (3)',
       code: 'NO_BRACKET',
       unit: { unitCode: 'TRI', propertyNumber: '352', unitType: 'APARTMENT', unitArea: 300, levels: 3 },
+      tieredUnits: [],
     });
   });
 
@@ -89,6 +90,7 @@ describe('assessCitizen under TIERED_AREA', () => {
       reason: 'وحدة U1 على العقار 352 بلا مساحة مسجّلة',
       code: 'NO_AREA',
       unit: { unitCode: 'U1', propertyNumber: '352', unitType: 'APARTMENT', unitArea: null, levels: 1 },
+      tieredUnits: [],
     });
   });
 
@@ -99,6 +101,56 @@ describe('assessCitizen under TIERED_AREA', () => {
       code: 'UNSURVEYED',
       unit: { unitCode: null, propertyNumber: '352', unitType: null, unitArea: null, levels: 1 },
     });
+  });
+
+  it('withholds the own bill over a unit with no area, and still prices the rest for the run (D10)', () => {
+    const outcome = tiered([card([{ id: 'u1' }, { id: 'shop', unitType: 'SHOP', unitArea: 40 }])], 'OWNER');
+    expect(outcome).toMatchObject({ kind: 'unassessable', reason: 'وحدة U1 على العقار 352 بلا مساحة مسجّلة' });
+    if (outcome.kind !== 'unassessable') return;
+    expect(outcome.tieredUnits?.map((unit) => [unit.unitId, unit.bracketCode, unit.amount])).toEqual([['shop', 'S', 30_000_000]]);
+  });
+
+  it('withholds the own bill over an unsurveyed building, and still prices the rest for the run (D10)', () => {
+    const unsurveyed: BillablePropertyEntry = {
+      propertyType: 'BUILDING',
+      propertyNumber: '400',
+      occupancyType: 'OWNER',
+      unitType: null,
+      unitArea: null,
+      units: [],
+    };
+    const outcome = tiered([unsurveyed, card([{ id: 'shop', unitType: 'SHOP', unitArea: 40 }])], 'OWNER');
+    expect(outcome).toMatchObject({ kind: 'unassessable', reason: 'مبنى على العقار 400 لم تُجرد وحداته بعد' });
+    if (outcome.kind !== 'unassessable') return;
+    expect(outcome.tieredUnits?.map((unit) => unit.unitId)).toEqual(['shop']);
+  });
+
+  it('leaves out a type the table does not name, and a plot with no unit type, and counts them (D11)', () => {
+    const plot: BillablePropertyEntry = {
+      propertyType: 'LAND',
+      propertyNumber: '512',
+      occupancyType: 'OWNER',
+      unitType: null,
+      unitArea: 900,
+      units: [],
+    };
+    const outcome = tiered([card([{ id: 'u1', unitArea: 80 }, { id: 'garage', unitType: 'GARAGE', unitArea: 20 }]), plot], 'OWNER');
+    expect(outcome).toMatchObject({
+      kind: 'assessed',
+      amount: 1_000_000,
+      assessment: { unitCount: 1, outsideTableUnitCount: 2 },
+    });
+    if (outcome.kind !== 'assessed') return;
+    expect(outcome.outsideUnits).toEqual([
+      { unitId: 'garage', unitType: 'GARAGE' },
+      { unitId: null, unitType: null },
+    ]);
+  });
+
+  it('writes the census unit on each line, for a later run of the period to read back (D8)', () => {
+    const outcome = tiered([card([{ id: 'u1', unitArea: 80 }])]);
+    if (outcome.kind !== 'assessed') throw new Error('expected an assessment');
+    expect(outcome.assessment.lines[0]).toMatchObject({ unitId: 'u1', unitCode: 'U1', bracketCode: 'A' });
   });
 
   it('relieves a vacant flat under an occupant-borne notice, and counts it (T-6)', () => {
@@ -236,9 +288,10 @@ describe('splitSharedUnitBills', () => {
     expect(conflicts).toEqual([
       { unitId: 'u1', unitCode: 'U1', propertyNumber: '352', citizenIds: ['c1', 'c2'], bracketCodes: ['A', 'B'] },
     ]);
-    expect(own.map((entry) => [entry.amount, entry.assessment?.sharedBillUnitCount])).toEqual([
-      [0, undefined],
-      [0, undefined],
+    // Off both bills, and each bill says so rather than reading as a smaller holding.
+    expect(own.map((entry) => [entry.amount, entry.assessment?.sharedBillUnitCount, entry.assessment?.sharedConflictUnitCount])).toEqual([
+      [0, undefined, 1],
+      [0, undefined, 1],
     ]);
   });
 
@@ -247,5 +300,70 @@ describe('splitSharedUnitBills', () => {
     const { own, shared } = splitSharedUnitBills(run);
     expect(shared).toEqual([]);
     expect(own).toEqual(run);
+  });
+
+  /** A citizen whose own bill is withheld, as `assessTargets` hands them to the run. */
+  function withheld(citizenId: string, entries: BillablePropertyEntry[], bearer: FeeBearer = 'OCCUPANT'): TieredCitizen {
+    const outcome = tiered(entries, bearer);
+    if (outcome.kind !== 'unassessable') throw new Error(`${citizenId} was assessable`);
+    return { citizenId, amount: 0, assessment: null, tieredUnits: outcome.tieredUnits ?? [] };
+  }
+
+  it('keeps a brother whose own bill is withheld a debtor on the shop he shares (D10)', () => {
+    const shop = { id: 'shop', unitType: 'SHOP', unitArea: 40 };
+    const brothers = ['c1', 'c2'].map((id) => citizen(id, [card([shop])], 'OWNER'));
+    // The youngest also owns a flat nobody measured: no bill of his own.
+    const youngest = withheld('c3', [card([shop, { id: 'unmeasured' }])], 'OWNER');
+
+    const { own, shared } = splitSharedUnitBills(brothers, { withheld: [youngest] });
+
+    expect(shared).toHaveLength(1);
+    expect(shared[0]?.debtors.map((debtor) => debtor.citizenId)).toEqual(['c1', 'c2', 'c3']);
+    expect(shared[0]?.assessment.sharedBillDebtorCount).toBe(3);
+    expect(own.map((entry) => entry.citizenId)).toEqual(['c1', 'c2']);
+  });
+
+  it('bills a shop two co-owners hold as shared even when one of them is withheld, not to the other alone (D10)', () => {
+    const shop = { id: 'shop', unitType: 'SHOP', unitArea: 40 };
+    const ali = citizen('ali', [card([shop])], 'OWNER');
+    const hassan = withheld('hassan', [card([shop, { id: 'unmeasured' }])], 'OWNER');
+
+    const { own, shared } = splitSharedUnitBills([ali], { withheld: [hassan] });
+
+    expect(shared.map((bill) => bill.debtors.map((debtor) => debtor.citizenId))).toEqual([['ali', 'hassan']]);
+    expect(own).toMatchObject([{ citizenId: 'ali', amount: 0, assessment: { sharedBillUnitCount: 1 } }]);
+  });
+
+  it('bills nobody for a unit only a withheld citizen holds: that waits for the record (D10)', () => {
+    const lone = withheld('c1', [card([{ id: 'u1', unitArea: 80 }, { id: 'unmeasured' }])]);
+    const { own, shared } = splitSharedUnitBills([], { withheld: [lone] });
+    expect(own).toEqual([]);
+    expect(shared).toEqual([]);
+  });
+
+  it('bills a unit already billed in the period to nobody again, and says so on the bill (D8)', () => {
+    // On the 1st: Ali alone owned the flat and his own bill charged it. On the 10th Hassan was
+    // recorded as a co-owner; he also holds a shop of his own.
+    const flat = { id: 'flat', unitArea: 120 };
+    const ali = citizen('ali', [card([flat])], 'OWNER');
+    const hassan = citizen('hassan', [card([flat, { id: 'shop', unitType: 'SHOP', unitArea: 40 }])], 'OWNER');
+
+    const { own, shared } = splitSharedUnitBills([ali, hassan], { alreadyBilled: new Set(['flat']) });
+
+    // No second bill for the flat this period: not shared, not on Hassan's own.
+    expect(shared).toEqual([]);
+    expect(own.map((entry) => [entry.citizenId, entry.amount, entry.assessment?.billedElsewhereUnitCount])).toEqual([
+      ['ali', 0, 1],
+      ['hassan', 30_000_000, 1],
+    ]);
+    expect(own[1]?.assessment?.lines.map((line) => line.unitId)).toEqual(['shop']);
+  });
+
+  it('leaves a shared unit already billed in the period alone too, cancelled bills included (D8)', () => {
+    const shop = { id: 'shop', unitType: 'SHOP', unitArea: 40 };
+    const brothers = ['c1', 'c2'].map((id) => citizen(id, [card([shop])], 'OWNER'));
+    const { own, shared } = splitSharedUnitBills(brothers, { alreadyBilled: new Set(['shop']) });
+    expect(shared).toEqual([]);
+    expect(own.every((entry) => entry.amount === 0)).toBe(true);
   });
 });

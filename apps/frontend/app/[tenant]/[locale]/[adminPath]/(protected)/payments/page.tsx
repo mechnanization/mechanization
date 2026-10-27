@@ -328,9 +328,22 @@ export default function PaymentsPage({
   /** Reprints the وصل for one transaction, exactly as إدارة الرسوم does. */
   const openReceipt = useCallback(
     async (payment: AdminPaymentItem) => {
-      // A receipt is rebuilt from a file: the citizen's, or on a shared unit bill (0099) the payer's.
-      const citizenId = payment.citizenId ?? payment.lastPaidByCitizenId;
-      if (!token || !citizenId) return;
+      /*
+        A shared unit bill (0099) is reprinted one payment at a time, each naming
+        the debtor who paid it (D9): on the bill's receipts page, through the file
+        of whoever paid last. Never its total under one name.
+      */
+      if (!payment.citizenId) {
+        if (payment.lastPaidByCitizenId) {
+          router.push(
+            `${base}/citizens/${encodeURIComponent(payment.lastPaidByCitizenId)}/payments/${encodeURIComponent(payment.id)}`,
+          );
+        }
+        return;
+      }
+      // A citizen's own bill: the receipt is rebuilt from their file.
+      const citizenId = payment.citizenId;
+      if (!token) return;
       setReceiptBusyId(payment.id);
       try {
         const profile = await getCitizenProfile(tenant, token, citizenId);
@@ -344,7 +357,7 @@ export default function PaymentsPage({
         setReceiptBusyId(null);
       }
     },
-    [tenant, token, t],
+    [tenant, token, t, router, base],
   );
 
   const copyId = useCallback((id: string) => {

@@ -68,6 +68,8 @@ export function IssueResultPanel({
     result.feeExemptUnits ? tFees('issue.feeExempt', { count: result.feeExemptUnits }) : null,
     // Not held and not exempt: a co-owned flat «مالك مسؤول» pays for in full.
     result.coOwnerPaidUnits ? tFees('issue.coOwnerPaid', { count: result.coOwnerPaidUnits }) : null,
+    // Under TIERED_AREA, units of a type the bracket table never names: outside the notice (D11).
+    result.outsideTableUnits ? tFees('issue.outsideTable', { count: result.outsideTableUnits }) : null,
   ].filter((line): line is string => line !== null);
 
   const unassessable = result.unassessable ?? [];
