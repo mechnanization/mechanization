@@ -3,7 +3,7 @@
 import { useEffect } from 'react';
 import { UserX } from 'lucide-react';
 import { useTranslations } from 'next-intl';
-import type { FeeNoticePreviewInput, FeeNoticePreviewResult } from '@mechanization/shared-schemas';
+import { getLabels, type FeeNoticePreviewInput, type FeeNoticePreviewResult } from '@mechanization/shared-schemas';
 import { Alert } from '@/components/ui/alert';
 import { CollapsibleSection } from '@/components/ui/collapsible-section';
 import { FactCell, FactRow } from '@/components/ui/facts';
@@ -67,7 +67,9 @@ export function NoticePreview({
     { key: 'uninhabitable', count: result.notCharged.uninhabitableUnits },
     { key: 'feeExempt', count: result.notCharged.feeExemptUnits },
     { key: 'coOwnerPaid', count: result.notCharged.coOwnerPaidUnits },
+    { key: 'outsideTable', count: result.notCharged.outsideTableUnits },
   ].filter((entry) => entry.count > 0);
+  const labels = getLabels(locale);
 
   return (
     <section aria-label={t('title')} className="space-y-4" aria-live="polite">
@@ -120,6 +122,29 @@ export function NoticePreview({
             <FactCell key={entry.key} label={t(`notCharged.${entry.key}`)} value={entry.count.toLocaleString('en-US')} />
           ))}
         </FactRow>
+      ) : null}
+
+      {/*
+        What the table does not price, by type (D11): not charged by this notice.
+        Shown before «إصدار» so a type the clerk meant to charge and forgot to put
+        in the table is caught here, not by the residents it was meant for.
+      */}
+      {result.outsideTable.length > 0 ? (
+        <Alert variant="info">
+          <p>{t('outsideTable', { count: result.notCharged.outsideTableUnits })}</p>
+          <ul className="mt-1 list-disc ps-5">
+            {result.outsideTable.map((row) => (
+              <li key={row.unitType ?? 'none'}>
+                {t('outsideTableLine', {
+                  type: row.unitType
+                    ? (labels.unitType[row.unitType as keyof typeof labels.unitType] ?? row.unitType)
+                    : t('outsideTableNoType'),
+                  count: row.count,
+                })}
+              </li>
+            ))}
+          </ul>
+        </Alert>
       ) : null}
 
       {result.conflicts.length > 0 ? (

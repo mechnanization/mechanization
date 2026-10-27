@@ -18,6 +18,7 @@ import {
   BULK_SETTLE_ROLES,
   bulkSettlePaymentsSchema,
   cancelBillSchema,
+  cancelNoticeSchema,
   type BulkSettlePayments,
   FEE_ADMIN_ROLES,
   FEE_ISSUE_ROLES,
@@ -39,6 +40,7 @@ import {
   systemSettingsSchema,
   type BillBasisReview,
   type CancelBill,
+  type CancelNotice,
   type ChargeCitizen,
   type CreateFeeNotice,
   type DeclarePayment,
@@ -155,20 +157,36 @@ export class FeesController {
   }
 
   /**
-   * «إلغاء الإشعار» (decision D6): every bill of the notice nothing has been
-   * paid on is cancelled, each one as «إلغاء الفاتورة» would; the rest are
-   * reported with the reason, and the notice stops. The manager alone, as for
-   * one bill (`BILL_CANCEL_ROLES`), and with the same required reason.
+   * «إلغاء الإشعار» (decisions D6 and D12): every bill of the periods named
+   * that nothing has been paid on is cancelled, each one as «إلغاء الفاتورة»
+   * would; the rest are reported with the reason, and the notice stops. The
+   * manager alone, as for one bill (`BILL_CANCEL_ROLES`), with the same required
+   * reason and the periods spelled out (`cancelNoticeSchema`).
    */
   @Roles(...BILL_CANCEL_ROLES)
   @Post('notices/:id/cancel')
   @HttpCode(200)
   async cancelNotice(
     @Param('id', new ParseUUIDPipe()) id: string,
-    @Body(new ZodValidationPipe(cancelBillSchema)) body: CancelBill,
+    @Body(new ZodValidationPipe(cancelNoticeSchema)) body: CancelNotice,
     @CurrentUser() user: SessionClaims,
   ) {
-    return this.fees.cancelNoticeBatch(id, body.reason, { id: user.sub, role: user.role ?? '' });
+    return this.fees.cancelNoticeBatch(
+      id,
+      { reason: body.reason, periodKeys: body.periodKeys },
+      { id: user.sub, role: user.role ?? '' },
+    );
+  }
+
+  /**
+   * What «إلغاء الإشعار» would do, period by period, before the press (D12):
+   * the bills, what would be cancelled and for how much, what would be left and
+   * why. Counts and sums only, no names; the same roles as the cancel itself.
+   */
+  @Roles(...BILL_CANCEL_ROLES)
+  @Get('notices/:id/periods')
+  async noticePeriods(@Param('id', new ParseUUIDPipe()) id: string) {
+    return { items: await this.fees.noticePeriods(id) };
   }
 
   /**
@@ -192,14 +210,18 @@ export class FeesController {
     return this.fees.summary();
   }
 
-  /** Stops or resumes the recurring biller for one notice. */
+  /**
+   * Stops or resumes the recurring biller for one notice — «إيقاف الإشعار»
+   * on the notices page (decision D12). Nothing already billed is touched.
+   */
   @Roles(...FEE_ADMIN_ROLES)
   @Patch('notices/:id/active')
   async setNoticeActive(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body(new ZodValidationPipe(noticeActiveSchema)) body: { isActive: boolean },
+    @CurrentUser() user: SessionClaims,
   ) {
-    return this.fees.setNoticeActive(id, body.isActive);
+    return this.fees.setNoticeActive(id, body.isActive, { id: user.sub, role: user.role ?? '' });
   }
 
   /**

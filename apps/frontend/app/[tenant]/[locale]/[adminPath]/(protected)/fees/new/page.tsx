@@ -170,6 +170,8 @@ export default function IssueFeePage({
       if (res.sharedUnitConflicts && res.sharedUnitConflicts.length > 0) {
         toast.warning(tFees('issue.sharedUnitConflicts', { count: res.sharedUnitConflicts.length }));
       }
+      // Units the bracket table does not price (D11): not charged, and said so.
+      if (res.outsideTableUnits) toast.info(tFees('issue.outsideTable', { count: res.outsideTableUnits }));
 
       // The wizard stays locked from here: the page is leaving (see `inFlight`).
       router.push(feesHref);

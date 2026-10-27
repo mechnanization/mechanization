@@ -1,5 +1,6 @@
 import {
   bracketScales,
+  cancelNoticeSchema,
   createFeeNoticeSchema,
   feeMatrixBracketSchema,
   feeMatrixSchema,
@@ -187,6 +188,51 @@ describe('createFeeNoticeSchema under TIERED_AREA', () => {
   });
 });
 
+describe('a notice’s category (D13)', () => {
+  const flat = {
+    title: 'رسم النظافة',
+    amount: 50_000,
+    basis: 'PER_UNIT',
+    frequency: 'MONTHLY',
+    dueDate: '2026-12-31',
+    clientRequestId: '6f1c1f0e-8d4b-4a8e-9a43-1f0f7c9d2a11',
+  } as const;
+
+  it('refuses a category on a notice to all citizens or to one: it would narrow what is charged to that category', () => {
+    expect(issues(createFeeNoticeSchema.safeParse({ ...flat, targetType: 'ALL_CITIZENS', targetCategory: 'SHOP' }))).toEqual([
+      { path: 'targetCategory', message: 'الفئة للرسم الموجّه إلى فئة عقارات وحده' },
+    ]);
+    const citizen = { targetType: 'INDIVIDUAL_CITIZEN', targetCitizenId: '0c5a7a65-58a3-4a54-9b0c-c4f0d81b6a0e' } as const;
+    expect(issues(createFeeNoticeSchema.safeParse({ ...flat, ...citizen, targetCategory: 'SHOP' })).map((issue) => issue.path)).toEqual([
+      'targetCategory',
+    ]);
+    expect(createFeeNoticeSchema.safeParse({ ...flat, targetType: 'ALL_CITIZENS' }).success).toBe(true);
+  });
+
+  it('still takes, and still asks for, the category of a notice aimed at one', () => {
+    expect(createFeeNoticeSchema.safeParse({ ...flat, targetType: 'BUILDING_CATEGORY', targetCategory: 'SHOP' }).success).toBe(true);
+    expect(issues(createFeeNoticeSchema.safeParse({ ...flat, targetType: 'BUILDING_CATEGORY' })).map((issue) => issue.path)).toEqual([
+      'targetCategory',
+    ]);
+  });
+});
+
+describe('cancelNoticeSchema (D12)', () => {
+  const reason = 'صدر بالجدول الخطأ';
+
+  it('takes the periods named, in every shape a period key has', () => {
+    expect(cancelNoticeSchema.safeParse({ reason, periodKeys: ['2026-07', '2026-H2', '2026', 'ONCE'] }).success).toBe(true);
+  });
+
+  it('refuses a cancel that names no period, a period twice, or something that is not a period', () => {
+    expect(cancelNoticeSchema.safeParse({ reason }).success).toBe(false);
+    expect(cancelNoticeSchema.safeParse({ reason, periodKeys: [] }).success).toBe(false);
+    expect(cancelNoticeSchema.safeParse({ reason, periodKeys: ['2026-07', '2026-07'] }).success).toBe(false);
+    expect(cancelNoticeSchema.safeParse({ reason, periodKeys: ['2026-13'] }).success).toBe(false);
+    expect(cancelNoticeSchema.safeParse({ reason, periodKeys: ['all'] }).success).toBe(false);
+  });
+});
+
 describe('matchBracket', () => {
   const table = [A, B, C, bracket({ code: 'D', levels: 2, minArea: 0, maxArea: null })];
 
@@ -199,14 +245,23 @@ describe('matchBracket', () => {
     expect(matchBracket({ unitType: 'APARTMENT', unitArea: 220, levels: 2 }, table)).toMatchObject({ bracket: { code: 'D' } });
   });
 
-  it('misses a unit with no area, no type, or no bracket for its type and level count', () => {
+  it('misses a unit of a listed type with no area, or with no bracket for its level count or area', () => {
     expect(matchBracket({ unitType: 'APARTMENT', unitArea: null }, table)).toEqual({ kind: 'miss', reason: 'NO_AREA' });
-    expect(matchBracket({ unitType: null, unitArea: 80 }, table)).toEqual({ kind: 'miss', reason: 'NO_BRACKET' });
-    expect(matchBracket({ unitType: 'SHOP', unitArea: 80 }, table)).toEqual({ kind: 'miss', reason: 'NO_BRACKET' });
     expect(matchBracket({ unitType: 'APARTMENT', unitArea: 220, levels: 3 }, table)).toEqual({
       kind: 'miss',
       reason: 'NO_BRACKET',
     });
+  });
+
+  it('says a type the table never names, or a unit with no type, is outside the table — area or not (D11)', () => {
+    expect(matchBracket({ unitType: 'SHOP', unitArea: 80 }, table)).toEqual({ kind: 'miss', reason: 'NOT_IN_TABLE' });
+    expect(matchBracket({ unitType: 'SHOP', unitArea: null }, table)).toEqual({ kind: 'miss', reason: 'NOT_IN_TABLE' });
+    expect(matchBracket({ unitType: null, unitArea: 80 }, table)).toEqual({ kind: 'miss', reason: 'NOT_IN_TABLE' });
+  });
+
+  it('keeps a scale that starts above zero a gap, not outside the table', () => {
+    const fromFifty = [bracket({ code: 'M', minArea: 50, maxArea: null })];
+    expect(matchBracket({ unitType: 'APARTMENT', unitArea: 30 }, fromFifty)).toEqual({ kind: 'miss', reason: 'NO_BRACKET' });
   });
 });
 

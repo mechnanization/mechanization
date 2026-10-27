@@ -31,12 +31,16 @@ import {
   ApiRequestError,
   cancelBill,
   type CancelBillResult,
+  type CitizenProfile,
+  type CitizenProfilePayment,
   getCitizenProfile,
   getMunicipalitySettings,
   getTenantConfig,
   logApiError,
+  type PaymentLedgerEntry,
   settlePayment,
 } from '@/lib/api-client';
+import { receiptOfEntry } from '@/lib/bill-receipts';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { formatDate } from '@/lib/dates';
@@ -163,6 +167,17 @@ export default function SettleCashPage({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<RecordedMovement | null>(null);
+  /**
+   * One payment's receipt on a shared unit bill, reprinted from the receipts
+   * below (decision D9): the payer's file and that payment alone — never the
+   * bill's total under the file that happens to be open.
+   */
+  const [reprint, setReprint] = useState<{
+    citizen: CitizenProfile;
+    payment: CitizenProfilePayment;
+    recorded: RecordedMovement;
+  } | null>(null);
+  const [reprintError, setReprintError] = useState<string | null>(null);
   /** A refusal said the key's payment exists, so the bill on screen was read before it. */
   const [billMoved, setBillMoved] = useState(false);
   /** …and reading it again failed: the balance shown is not the bill's, so nothing is judged against it. */
@@ -290,6 +305,32 @@ export default function SettleCashPage({
       : 'تعذّر تسجيل الدفعة. لن تُسجَّل مرتين — اضغط مجدداً لإعادة المحاولة.';
   };
 
+  /**
+   * «طباعة الوصل» on one payment of a shared unit bill (D9): the payer's own
+   * file — read when it is not this one — and the receipt that payment wrote,
+   * with what the bill still owed right after it (`receiptOfEntry`).
+   */
+  const printSharedReceipt = async (entry: PaymentLedgerEntry, entries: readonly PaymentLedgerEntry[]) => {
+    if (!token || !payment || !entry.paidByCitizenId) return;
+    setReprintError(null);
+    try {
+      const payer =
+        entry.paidByCitizenId === citizenId && citizen
+          ? citizen
+          : await getCitizenProfile(tenant, token, entry.paidByCitizenId);
+      const row = payer.payments.find((candidate) => candidate.id === payment.id);
+      const recorded = receiptOfEntry(entries, entry.id, payment.amount);
+      if (!row || !recorded) {
+        setReprintError(t('reprintMissing'));
+        return;
+      }
+      setReprint({ citizen: payer, payment: { ...row, remaining: recorded.remaining }, recorded });
+    } catch (caught) {
+      logApiError(caught);
+      setReprintError(t('reprintFailed'));
+    }
+  };
+
   const submit = async () => {
     if (!token || !payment || problem || receipt || billStale || inFlight.current) return;
     inFlight.current = true;
@@ -310,6 +351,13 @@ export default function SettleCashPage({
         ...(paidOn !== today ? { paidOn } : {}),
         ...(needsReason ? { adjustmentReason: reason.trim() } : {}),
         ...(note.trim() ? { note: note.trim() } : {}),
+        /*
+          A shared unit bill (0099) is paid by one of its debtors, named: on this
+          page, the citizen whose file it is (the ledger checks they are one).
+          Without it every shared bill opened from a debtor's file was refused
+          with SHARED_BILL_PAYER_REQUIRED and nothing on the page could say who.
+        */
+        ...(payment.sharedUnit ? { paidByCitizenId: citizenId } : {}),
         clientRequestId: heldKey(tenant, keyScope),
       });
     } catch (caught) {
@@ -931,6 +979,36 @@ export default function SettleCashPage({
           citizenId={citizenId}
           paymentId={payment.id}
           paymentStatus={payment.paymentStatus}
+          // A shared unit bill's receipts are printed one payment at a time, each naming its payer (D9).
+          onPrint={payment.sharedUnit ? (entry, entries) => void printSharedReceipt(entry, entries) : undefined}
+        />
+      ) : null}
+
+      {reprintError ? (
+        <Alert variant="destructive" live="alert">
+          {reprintError}
+        </Alert>
+      ) : null}
+
+      {reprint ? (
+        <PaymentReceipt
+          open
+          onOpenChange={(open) => {
+            if (!open) setReprint(null);
+          }}
+          tenant={tenant}
+          // Only the money roles reach this page, and each of them may send a citizen their reference.
+          canSend
+          locale={locale}
+          citizen={reprint.citizen}
+          payment={reprint.payment}
+          recorded={reprint.recorded}
+          municipalityName={municipalityName}
+          governorate={settings?.governorate}
+          councilDecisionRef={settings?.councilDecisionRef}
+          district={settings?.district}
+          contactPhone={settings?.contactPhone}
+          officeWhatsapp={settings?.whatsappNumber}
         />
       ) : null}
     </div>

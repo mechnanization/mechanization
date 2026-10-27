@@ -492,10 +492,18 @@ export class CitizensService {
     /*
       A bill `p` that the citizen `u` owes: their own, or a shared unit bill
       (0099, D5) they are a debtor on. The SQL twin of `billsOwedBy`.
+
+      A semi-join on the two indexed lookups — `citizen_payments ("citizenId", …)`
+      and `citizen_payment_debtors ("citizenId")` — and not
+      `p."citizenId" = u.id OR EXISTS (…)`: an OR around a correlated EXISTS
+      cannot use either index, so each figure scanned every bill in the
+      municipality once per citizen on the list (review of PR #136).
     */
-    const owes = Prisma.sql`(p."citizenId" = u.id OR EXISTS (
-      SELECT 1 FROM ${this.S}citizen_payment_debtors d WHERE d."paymentId" = p.id AND d."citizenId" = u.id
-    ))`;
+    const owes = Prisma.sql`p.id IN (
+      SELECT o.id FROM ${this.S}citizen_payments o WHERE o."citizenId" = u.id
+      UNION ALL
+      SELECT d."paymentId" FROM ${this.S}citizen_payment_debtors d WHERE d."citizenId" = u.id
+    )`;
 
     /*
       The page and the figures above it, on one connection and one snapshot.
@@ -606,13 +614,24 @@ export class CitizensService {
           The bills the searched people owe, each once. Summing every person's
           own figure would count a shared unit bill (0099) once per debtor, and
           the headline is money the municipality is owed, which is the bill's.
+          Their own bills and the shared ones they owe, read through the two
+          indexes and joined by UNION, which keeps a shared bill once however
+          many of its debtors the search found.
         */
-        WITH owed AS (
-          SELECT DISTINCT p.id, p.amount, p."paidAmount", p."paymentStatus", p."dueDate"
-            FROM ${this.S}citizen_payments p
-            JOIN ${this.S}users u ON ${owes}
+        WITH searched AS (
+          SELECT u.id FROM ${this.S}users u
            WHERE u.kind = 'CITIZEN'
            ${searchFilter}
+        ),
+        owed AS (
+          SELECT p.id, p.amount, p."paidAmount", p."paymentStatus", p."dueDate"
+            FROM ${this.S}citizen_payments p
+           WHERE p."citizenId" IN (SELECT id FROM searched)
+          UNION
+          SELECT p.id, p.amount, p."paidAmount", p."paymentStatus", p."dueDate"
+            FROM ${this.S}citizen_payment_debtors d
+            JOIN ${this.S}citizen_payments p ON p.id = d."paymentId"
+           WHERE d."citizenId" IN (SELECT id FROM searched)
         )
         SELECT
           count(*)::int AS total,

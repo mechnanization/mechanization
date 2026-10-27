@@ -1867,7 +1867,13 @@ function FeesPanel({
                             )}
                           </Link>
                         ) : null}
-                        {payment.paidAmount > 0 ? (
+                        {/*
+                          A shared unit bill (0099) is not reprinted from here: its receipt
+                          names whoever paid, and that is not necessarily the person whose
+                          file this is (D9). Its receipts are printed one payment at a time
+                          on the bill's own page, «وصولات الفاتورة», which the row links to.
+                        */}
+                        {payment.paidAmount > 0 && !payment.sharedUnit ? (
                           <Button
                             size="sm"
                             variant="ghost"

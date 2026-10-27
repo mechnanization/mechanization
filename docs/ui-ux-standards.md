@@ -1,6 +1,6 @@
 # UI/UX standards: binding for every change to `apps/frontend`
 
-Last verified against the code: `fix/pr116-review` (PR #116 merged with `fix/pr115-review`, which stacks #123, #124 and #115 on `develop@5e8f5c3`, with its review fixes): `DatePicker`'s Escape and year list (FRM-6), the PRIM-2 guard, TXT-1 on four files #116 touched, the stat tones at zero; phase 1 of the kit adoption, `StatItem`'s `hint`, §17.1 recounted; «أمان الحساب» on the kit `invalid` prop, its error state, `rounded-lg`; the double-submit entries, `Pager` users, 2026-10-15; and `bugs-fix` (on `develop@5e8f5c3`; the finance audit remediation: the fee wizard's retry key, the salary dialog's month, the salary ceiling in الإعدادات, «إلغاء الفاتورة» on the bill page, the collector's fixed method on the settle page), 2026-10-12; the review of PR #120 (a cancelled bill named on every owed screen, the cash page closed to collectors, the counter pages re-read after a refused retry, §17.6) against `fix/finance-audit-remediation` rebased on `chore/migration-0090-0091@8d386b5`, 2026-10-13; §17 recounted where the fees-page fixes touched it (stat components, banners, `loadSession`, double frames, physical utilities, toasts, header actions) on `fix/fees-page-ux` from `develop@5e8f5c3` (uncommitted), 2026-10-12; the merged «الإيرادات والنفقات» register (the PRIM-3 exception for a register grouped by day, PRIM-29 `SearchField`, money received in COL-2, `ChoiceCard` taking a node and a `trailing` figure, its `transition-all` and `shadow-2xs` gone from §17, PRIM-18's exception for a form that stays for the next act, the `CurrencyInput` size that stops at `sm` added to §17.4) on the same branch (uncommitted), 2026-10-12; the same day, the register moved to its own page «الحركات المالية» (`/finance/transactions`, PRIM-3), the wallet became `WalletSelect` (PRIM-27) and `ChoiceCard` lost `trailing` (uncommitted); later that day «الحركات المالية» became one frame of dated rows under a filter bar with the voucher in a side panel (PRIM-3), and `Sheet` moved onto Radix Dialog, its focus-trap debt gone from §17.1 and its 300ms from §17.5 (PRIM-17, CTL-6), the `StatStrip` and `Pager` counts and a controlled `DialogContent`'s lost focus in §17.1 (uncommitted); municipal requests on the same branch (uncommitted), 2026-10-13: PRIM-30 `FileInput` and CTL-13, the five native file pickers it leaves in §17.1, the queue as a PRIM-3 `DataTable` with its request in a `Sheet`, the counter form, the paper as a PRIM-28 document page.
+Last verified against the code: `fix/fee-wizard-review` (on `feat/tiered-fees-cancel-and-wizard@aa35d4a`): §17.1 a `ConfirmDialog` title under the close X and §17.4 the phone card's 36px footer buttons, from the render check of the notices page, 2026-10-26; `fix/pr116-review` (PR #116 merged with `fix/pr115-review`, which stacks #123, #124 and #115 on `develop@5e8f5c3`, with its review fixes): `DatePicker`'s Escape and year list (FRM-6), the PRIM-2 guard, TXT-1 on four files #116 touched, the stat tones at zero; phase 1 of the kit adoption, `StatItem`'s `hint`, §17.1 recounted; «أمان الحساب» on the kit `invalid` prop, its error state, `rounded-lg`; the double-submit entries, `Pager` users, 2026-10-15; and `bugs-fix` (on `develop@5e8f5c3`; the finance audit remediation: the fee wizard's retry key, the salary dialog's month, the salary ceiling in الإعدادات, «إلغاء الفاتورة» on the bill page, the collector's fixed method on the settle page), 2026-10-12; the review of PR #120 (a cancelled bill named on every owed screen, the cash page closed to collectors, the counter pages re-read after a refused retry, §17.6) against `fix/finance-audit-remediation` rebased on `chore/migration-0090-0091@8d386b5`, 2026-10-13; §17 recounted where the fees-page fixes touched it (stat components, banners, `loadSession`, double frames, physical utilities, toasts, header actions) on `fix/fees-page-ux` from `develop@5e8f5c3` (uncommitted), 2026-10-12; the merged «الإيرادات والنفقات» register (the PRIM-3 exception for a register grouped by day, PRIM-29 `SearchField`, money received in COL-2, `ChoiceCard` taking a node and a `trailing` figure, its `transition-all` and `shadow-2xs` gone from §17, PRIM-18's exception for a form that stays for the next act, the `CurrencyInput` size that stops at `sm` added to §17.4) on the same branch (uncommitted), 2026-10-12; the same day, the register moved to its own page «الحركات المالية» (`/finance/transactions`, PRIM-3), the wallet became `WalletSelect` (PRIM-27) and `ChoiceCard` lost `trailing` (uncommitted); later that day «الحركات المالية» became one frame of dated rows under a filter bar with the voucher in a side panel (PRIM-3), and `Sheet` moved onto Radix Dialog, its focus-trap debt gone from §17.1 and its 300ms from §17.5 (PRIM-17, CTL-6), the `StatStrip` and `Pager` counts and a controlled `DialogContent`'s lost focus in §17.1 (uncommitted); municipal requests on the same branch (uncommitted), 2026-10-13: PRIM-30 `FileInput` and CTL-13, the five native file pickers it leaves in §17.1, the queue as a PRIM-3 `DataTable` with its request in a `Sheet`, the counter form, the paper as a PRIM-28 document page.
 
 This file binds every AI agent and every person who builds or reviews an
 interface in this repository. [CLAUDE.md](../CLAUDE.md) (non-negotiable 9) and
@@ -783,7 +783,11 @@ Code-pattern debt outside the UI rules lives in
   `DialogContent`'s close button and `Badge` also use `focus:` rings instead of
   `focus-visible:` (A11Y-1).
 - **`ConfirmDialog`**: `requireText` is compared raw, without `normalizeArabic`
-  (DES-3); the default `confirmLabel` «تأكيد» is a gesture label (FRM-3).
+  (DES-3); the default `confirmLabel` «تأكيد» is a gesture label (FRM-3). Its
+  header gives the title the whole width while `DialogContent`'s close X sits
+  `absolute end-4 top-4` inside it, so a title that fills its first line runs
+  into the X (LAY-6): seen at 360px on «إلغاء الإشعار «…»» with a long notice
+  title (2026-10-26). `DialogHeader` has the same shape; not measured there.
 - **`Toast` side stripe** (BAN-3): the toast root in
   `components/ui/toast.tsx` uses `border-s-4`, a coloured side stripe thicker
   than 1px. Replace it with a tinted surface or icon plus text.
@@ -900,6 +904,16 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
   every `FEE_ISSUE_ROLES` role: of its four actions, «تكليف مباشر» is cut at the edge
   and «إصدار رسم جديد» is wholly off-screen, reachable only by swiping the row. Other
   pages with several header actions were not measured.
+- **Labelled buttons squeezed in `DataTable`'s phone card** (LAY-6): the card
+  footer's `[&_button]:size-9` makes every `<button>` in a `meta.mobile: 'actions'`
+  column a 36px square, so a label spills out of it and two collide
+  ([gotchas](gotchas.md)). Measured 2026-10-26 on the notices page, which now passes
+  `!w-auto` as `finding-parts.tsx` does. Still squeezed, by reading:
+  `finance/income/categories/page.tsx` and `requests/types/page.tsx` (two labelled
+  buttons each, which collide), `finance/transfers/page.tsx` (its review and void
+  buttons: `max-sm:w-full` loses to the footer) and `requests/page.tsx` («فتح»).
+  A floor in the footer (`min-h-9 min-w-9`) instead of a size would cover them all;
+  not done.
 
 ### 17.5 Motion
 
