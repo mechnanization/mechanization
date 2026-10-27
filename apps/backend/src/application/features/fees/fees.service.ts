@@ -66,7 +66,7 @@ import { assertNotMergedAway } from '../citizens/merged-away';
 import { ConflictError, DomainError, ForbiddenError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { exchangeRuleChangeAllowed } from '../treasury/transfers.plan';
 import { raiseOneOffBill } from './one-off-bill';
-import { billsOwedBy, SHARED_BILL_INCLUDE, sharedUnitView } from './shared-bill-view';
+import { billsOwedBy, responsibleDebtorId, SHARED_BILL_INCLUDE, sharedUnitView } from './shared-bill-view';
 import {
   priceTieredUnits,
   splitSharedUnitBills,
@@ -3795,6 +3795,10 @@ export class FeesService {
         where: { id },
         include: {
           ...this.ADMIN_PAYMENT_INCLUDE,
+          // The unit's co-owner method too, for the responsible owner the counter offers first (`responsibleDebtorId`).
+          unit: {
+            select: { ...SHARED_BILL_INCLUDE.unit.select, ownerBillingMode: true, responsibleOwnerId: true },
+          },
           /*
             On a shared unit bill (0099): everyone who may pay it, by name, for
             the counter to say which of them did (`paidByCitizenId`). This one
@@ -3815,12 +3819,15 @@ export class FeesService {
       code: 'PAYMENT_NOT_FOUND',
       message: `Payment ${id} was not found`,
     });
+    const responsible = responsibleDebtorId(row.unit);
     return {
       ...this.toAdminPaymentItem(row, new Date()),
       sharedDebtors: row.debtors.map((debtor) => ({
         citizenId: debtor.citizenId,
         name: citizenDisplayName(debtor.citizen, { middleName: true }),
         role: debtor.role,
+        // «مالك مسؤول» on the unit: offered first as the payer, never the only debtor (D5).
+        responsible: debtor.citizenId === responsible,
       })),
     };
   }

@@ -5891,8 +5891,10 @@ export function getPaymentById(tenant: string, token: string, id: string) {
       /**
        * On a shared unit bill (0099): everyone who may pay it, by name, for the
        * counter to say which of them did. Empty on a citizen's own bill.
+       * `responsible`: the unit's «مالك مسؤول» (0075), offered first as the
+       * payer (`defaultPayer`); absent from older answers.
        */
-      sharedDebtors?: Array<{ citizenId: string; name: string; role: string }>;
+      sharedDebtors?: Array<{ citizenId: string; name: string; role: string; responsible?: boolean }>;
     }
   >(tenant, `/fees/payments/${encodeURIComponent(id)}`, {
     token,

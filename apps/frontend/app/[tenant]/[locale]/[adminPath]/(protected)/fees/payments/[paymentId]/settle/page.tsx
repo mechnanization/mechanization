@@ -40,7 +40,9 @@ import { CurrencyInput } from '@/components/ui/currency-input';
 import { formatDate } from '@/lib/dates';
 import { tafqeet } from '@/lib/tafqeet';
 import { PaymentReceipt, type RecordedMovement } from '@/components/admin/payment-receipt';
+import { SharedBillPayerField } from '@/components/admin/fees/shared-bill-payer';
 import { heldKey, keyIsSpent, spendKey } from '@/lib/request-id';
+import { defaultPayer } from '@/lib/shared-bill-payer';
 import { Alert } from '@/components/ui/alert';
 import { HeaderBackLink } from '@/components/admin/header-back-link';
 import { Badge } from '@/components/ui/badge';
@@ -227,6 +229,8 @@ export default function SettlePaymentPage({
       const row = await getPaymentById(tenant, accessToken, paymentId);
       setPayment(row);
       setAmount(formatTypedAmount(String(Math.round(row.remaining)), 0));
+      // No file opened this bill: a shared one starts on the unit's «مالك مسؤول», if it names one.
+      setPaidBy((chosen) => chosen || defaultPayer(row.sharedDebtors ?? []));
     } catch (caught) {
       logApiError(caught);
       if (caught instanceof ApiRequestError && caught.status === 401) {
@@ -592,20 +596,13 @@ export default function SettlePaymentPage({
                   once by any of them. The clerk says which, from those the bill names.
                 */}
                 {shared ? (
-                  <Field label={t('payer')} htmlFor="settle-payer" required>
-                    <Select value={paidBy} onValueChange={setPaidBy} disabled={locked}>
-                      <SelectTrigger id="settle-payer">
-                        <SelectValue placeholder={t('payerPlaceholder')} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {(payment.sharedDebtors ?? []).map((debtor) => (
-                          <SelectItem key={debtor.citizenId} value={debtor.citizenId}>
-                            {debtor.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </Field>
+                  <SharedBillPayerField
+                    id="settle-payer"
+                    debtors={payment.sharedDebtors ?? []}
+                    value={paidBy}
+                    onChange={setPaidBy}
+                    disabled={locked}
+                  />
                 ) : null}
 
                 {isCollector && !selfCollector ? (
