@@ -4,8 +4,37 @@ import {
   type FeeAssessment,
   type FeeAssessmentLine,
   type FeeMatrixBracket,
+  type FeeUnassessable,
+  type FeeUnassessableReason,
 } from '@mechanization/shared-schemas';
 import type { BillableUnit } from '../../../domain/entities/billable-unit';
+
+/** The unit that stopped an assessment, as the register holds it (`feeUnassessableSchema`). */
+export type UnassessableUnit = NonNullable<FeeUnassessable['unit']>;
+
+/**
+ * Why one citizen cannot be assessed: the server's own sentence, for its logs,
+ * and the code and unit a screen words and says what to do about.
+ */
+export interface Unassessable {
+  kind: 'unassessable';
+  reason: string;
+  code: FeeUnassessableReason;
+  unit?: UnassessableUnit;
+}
+
+/** A unit's facts for `Unassessable.unit`: its code, parcel, type, area and level count. */
+export function unassessableUnit(
+  unit: Pick<BillableUnit, 'unitCode' | 'propertyNumber' | 'unitType' | 'unitArea' | 'levels'>,
+): UnassessableUnit {
+  return {
+    unitCode: unit.unitCode ?? null,
+    propertyNumber: unit.propertyNumber,
+    unitType: unit.unitType,
+    unitArea: unit.unitArea,
+    levels: unitLevels(unit),
+  };
+}
 
 /**
  * «الرسم حسب فئة المساحة» — pricing a TIERED_AREA notice, apart from the reads.
@@ -51,7 +80,7 @@ export interface TieredUnit {
 export function priceTieredUnits(
   units: readonly BillableUnit[],
   brackets: readonly FeeMatrixBracket[],
-): { kind: 'priced'; units: TieredUnit[] } | { kind: 'unassessable'; reason: string } {
+): { kind: 'priced'; units: TieredUnit[] } | Unassessable {
   const seen = new Set<string>();
   const priced: TieredUnit[] = [];
 
@@ -70,6 +99,8 @@ export function priceTieredUnits(
           match.reason === 'NO_AREA'
             ? `${where} بلا مساحة مسجّلة`
             : `${where} لا تقع في أي فئة من جدول الفئات لنوعها${unitLevels(unit) > 1 ? ` وعدد طوابقها (${unitLevels(unit)})` : ''}`,
+        code: match.reason === 'NO_AREA' ? 'NO_AREA' : 'NO_BRACKET',
+        unit: unassessableUnit(unit),
       };
     }
 
@@ -101,6 +132,8 @@ export interface TieredCounts {
   heldUnitCount: number;
   uninhabitableUnitCount: number;
   exemptUnitCount: number;
+  /** Units whose حالة الوحدة the notice does not charge (0100). Absent on a shared bill, which holds one unit in scope. */
+  outOfScopeUnitCount?: number;
 }
 
 /**
@@ -123,6 +156,7 @@ export function tieredAssessment(
     sharedUnitCount: 0,
     coOwnerPaidUnitCount: 0,
     exemptUnitCount: counts.exemptUnitCount,
+    outOfScopeUnitCount: counts.outOfScopeUnitCount ?? 0,
     ...(shared.sharedBillUnitCount ? { sharedBillUnitCount: shared.sharedBillUnitCount } : {}),
     ...(shared.sharedBillDebtorCount ? { sharedBillDebtorCount: shared.sharedBillDebtorCount } : {}),
     lines: units.map((unit) => unit.line),

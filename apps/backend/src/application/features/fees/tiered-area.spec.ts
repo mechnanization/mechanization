@@ -74,10 +74,12 @@ describe('assessCitizen under TIERED_AREA', () => {
     expect(outcome.assessment.lines[0]!.levelFactor).toBeUndefined();
   });
 
-  it('reports a triplex the table has no brackets for instead of pricing it (T-5)', () => {
+  it('reports a triplex the table has no brackets for instead of pricing it (T-5), with the unit a screen words', () => {
     expect(tiered([card([{ id: 'tri', unitArea: 300, levels: 3 }])])).toEqual({
       kind: 'unassessable',
       reason: 'وحدة TRI على العقار 352 لا تقع في أي فئة من جدول الفئات لنوعها وعدد طوابقها (3)',
+      code: 'NO_BRACKET',
+      unit: { unitCode: 'TRI', propertyNumber: '352', unitType: 'APARTMENT', unitArea: 300, levels: 3 },
     });
   });
 
@@ -85,12 +87,28 @@ describe('assessCitizen under TIERED_AREA', () => {
     expect(tiered([card([{ id: 'u1' }])])).toEqual({
       kind: 'unassessable',
       reason: 'وحدة U1 على العقار 352 بلا مساحة مسجّلة',
+      code: 'NO_AREA',
+      unit: { unitCode: 'U1', propertyNumber: '352', unitType: 'APARTMENT', unitArea: null, levels: 1 },
+    });
+  });
+
+  it('reports a building whose units were never counted by its parcel, as UNSURVEYED', () => {
+    const unsurveyed: BillablePropertyEntry = { ...card([]), units: [] };
+    expect(tiered([unsurveyed])).toMatchObject({
+      kind: 'unassessable',
+      code: 'UNSURVEYED',
+      unit: { unitCode: null, propertyNumber: '352', unitType: null, unitArea: null, levels: 1 },
     });
   });
 
   it('relieves a vacant flat under an occupant-borne notice, and counts it (T-6)', () => {
     const outcome = tiered([card([{ id: 'u1', unitArea: 80, unitStatus: 'OWNER_OCCUPIED' }, { id: 'u2', unitArea: 80, unitStatus: 'VACANT' }])]);
-    expect(outcome).toMatchObject({ kind: 'assessed', amount: 1_000_000, assessment: { unitCount: 1, excludedUnitCount: 1 } });
+    // Outside the notice's unit states (0100), not a unit someone else pays for.
+    expect(outcome).toMatchObject({
+      kind: 'assessed',
+      amount: 1_000_000,
+      assessment: { unitCount: 1, excludedUnitCount: 0, outOfScopeUnitCount: 1 },
+    });
   });
 
   it('charges a flat whose status nobody recorded (T-7)', () => {

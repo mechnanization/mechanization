@@ -14,6 +14,7 @@ function assessment(overrides: Partial<FeeAssessment> = {}): FeeAssessment {
     sharedUnitCount: 0,
     coOwnerPaidUnitCount: 0,
     exemptUnitCount: 0,
+    outOfScopeUnitCount: 0,
     lines: [{ propertyNumber: '12', propertyType: 'COMMERCIAL', unitType: 'SHOP', unitArea: null }],
     ...overrides,
   };

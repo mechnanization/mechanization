@@ -141,6 +141,8 @@ function withLeftOut(line: string, assessment: FeeAssessment, locale: string): s
   const t = translatorFor(locale);
   const notes: string[] = [];
   if (assessment.excludedUnitCount) notes.push(t('notCharged', { count: assessment.excludedUnitCount }));
+  // Outside the notice's حالة الوحدة filter (0100): an empty flat under an occupancy fee, or a status left unticked.
+  if (assessment.outOfScopeUnitCount) notes.push(t('outOfScope', { count: assessment.outOfScopeUnitCount }));
   if (assessment.heldUnitCount) notes.push(t('heldForReview', { count: assessment.heldUnitCount }));
   if (assessment.uninhabitableUnitCount) {
     notes.push(t('uninhabitable', { count: assessment.uninhabitableUnitCount }));

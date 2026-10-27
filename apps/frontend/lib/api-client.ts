@@ -35,6 +35,7 @@ import type {
   FeeMatrixBracket,
   FeeNoticePreviewInput,
   FeeNoticePreviewResult,
+  FeeUnassessable,
   FieldFlag,
   SharedUnitBillView,
   ImportRow,
@@ -5295,6 +5296,10 @@ export interface FeeNoticeSummary {
   frequency: string;
   targetType: string;
   targetCategory: string | null;
+  /** «من يشمل الإشعار» (0100): each null when the notice named none — every category, the bearer's statuses, every file. */
+  targetCategories: string[] | null;
+  unitStates: string[] | null;
+  residences: string[] | null;
   targetCitizenName: string | null;
   dueDate: string;
   instructions: string | null;
@@ -5366,6 +5371,12 @@ export async function issueFeeNotice(
     frequency: string;
     targetType: string;
     targetCategory?: string;
+    /** «من يشمل الإشعار» (0100): each absent is its default — see `feeNoticeScopeSchema`. */
+    targetCategories?: FeeNoticePreviewInput['targetCategories'];
+    unitStates?: FeeNoticePreviewInput['unitStates'];
+    residences?: FeeNoticePreviewInput['residences'];
+    /** The scope's warnings the clerk confirmed; the server refuses a scope with one unconfirmed. */
+    acknowledgedWarnings?: FeeNoticePreviewInput['acknowledgedWarnings'];
     targetCitizenId?: string;
     dueDate: string;
     instructions?: string;
@@ -5386,7 +5397,7 @@ export async function issueFeeNotice(
      * are not billed and not silently dropped: the caller names them so the
      * municipality can chase the survey.
      */
-    unassessable?: Array<{ citizenId: string; name: string; reason: string }>;
+    unassessable?: FeeUnassessable[];
     /**
      * Units this notice declined to charge anyone for — let to a tenant who is
      * billed for them directly, empty, still being built, or not owned by the

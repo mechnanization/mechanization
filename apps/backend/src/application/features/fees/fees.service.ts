@@ -3,7 +3,10 @@ import {
   citizenDisplayName,
   DEFAULT_EXCHANGE_TOLERANCE_PERCENT,
   DEFAULT_LARGE_EXCHANGE_THRESHOLD,
+  defaultUnitStates,
   feeMatrixSchema,
+  feeNoticeScopeSchema,
+  feeUnitState,
   judgeExchange,
   NON_PERSON_RESIDENCE,
 } from '@mechanization/shared-schemas';
@@ -24,6 +27,8 @@ import type {
   FeeMatrixBracket,
   FeeNoticePreviewInput,
   FeeNoticePreviewResult,
+  FeeNoticeScope,
+  FeeUnassessableReason,
   PaymentMethod,
   SharedUnitBillView,
   SystemSettingsInput,
@@ -33,7 +38,6 @@ import {
   canOverrideCashRules,
   daysBetween,
   isOccupiedByOthers,
-  isUnoccupied,
   municipalToday,
   ownerShareOf,
   readLevelFactors,
@@ -67,9 +71,12 @@ import {
   priceTieredUnits,
   splitSharedUnitBills,
   tieredAssessment,
+  unassessableUnit,
   type SharedUnitBill,
   type SharedUnitConflict,
   type TieredUnit,
+  type Unassessable,
+  type UnassessableUnit,
 } from './tiered-area';
 import { likePattern, searchTokens } from '../../common/search-terms';
 import { citizenSearchText } from '../../common/citizen-search';
@@ -160,8 +167,79 @@ export interface CitizenAssessment {
   exemptUnitIds?: string[];
   /** The co-owned flats another owner pays for, for the same reason. Not stored. */
   coOwnerPaidUnitIds?: string[];
+  /** The units whose حالة الوحدة the notice does not charge, with that state, for counting each once by state. Not stored. */
+  outOfScopeUnits?: OutOfScopeUnit[];
   /** Under TIERED_AREA, each unit priced, so the run can bill the shared ones once (`splitSharedUnitBills`). Not stored. */
   tieredUnits?: readonly TieredUnit[];
+}
+
+/** A unit a notice's «حالة الوحدة» filter left out (0100): its census id when it has one, and its state. */
+export interface OutOfScopeUnit {
+  unitId: string | null;
+  state: string;
+}
+
+/**
+ * The filters a notice applies on top of its bearer and target type
+ * («من يشمل الإشعار», 0100), as the biller reads them: each absent is the
+ * behaviour before them — every category the target type names, the statuses
+ * the bearer has always charged, every kind of file.
+ */
+export interface NoticeScope {
+  categories?: readonly string[];
+  unitStates?: readonly string[];
+  residences?: readonly string[];
+}
+
+/**
+ * A stored notice's scope: its one `targetCategory` or its list, and the
+ * filters kept in `fee_notices.scope`, read back through the schema that let
+ * them in. A stored scope that no longer parses fails that notice's read,
+ * named, rather than billing it unfiltered.
+ */
+export function scopeOf(notice: { targetCategory: string | null; scope: unknown }): NoticeScope & {
+  acknowledgedWarnings?: readonly string[];
+} {
+  const stored: FeeNoticeScope = notice.scope == null ? {} : feeNoticeScopeSchema.parse(notice.scope);
+  return {
+    categories: stored.categories ?? (notice.targetCategory ? [notice.targetCategory] : undefined),
+    unitStates: stored.unitStates,
+    residences: stored.residences,
+    acknowledgedWarnings: stored.acknowledgedWarnings,
+  };
+}
+
+/**
+ * The scope a notice is issued with, as stored in `fee_notices.scope`: only
+ * what departs from the defaults, so a notice that names none of it stores
+ * NULL and reads back exactly as before. One category is `targetCategory`'s;
+ * a list goes here. The statuses are not stored under FLAT, which ignores them.
+ */
+function storedScope(input: {
+  basis: FeeBasis;
+  targetCategories?: readonly string[];
+  unitStates?: readonly string[];
+  residences?: readonly string[];
+  acknowledgedWarnings?: readonly string[];
+}): FeeNoticeScope | null {
+  const scope = {
+    ...(input.targetCategories ? { categories: [...input.targetCategories] } : {}),
+    ...(input.unitStates && input.basis !== 'FLAT' ? { unitStates: [...input.unitStates] } : {}),
+    ...(input.residences ? { residences: [...input.residences] } : {}),
+    ...(input.acknowledgedWarnings?.length ? { acknowledgedWarnings: [...input.acknowledgedWarnings] } : {}),
+  };
+  return Object.keys(scope).length > 0 ? (feeNoticeScopeSchema.parse(scope) as FeeNoticeScope) : null;
+}
+
+/** The categories a notice sent: its list, or its one `targetCategory`, or none for every category. */
+function categoriesOf(input: { targetCategory?: string; targetCategories?: readonly string[] }) {
+  return input.targetCategories ?? (input.targetCategory ? [input.targetCategory] : undefined);
+}
+
+/** Two lists holding the same values, in any order; absent equals absent only. */
+function sameSet(a: readonly string[] | undefined, b: readonly string[] | undefined): boolean {
+  if (!a || !b) return !a && !b;
+  return a.length === b.length && a.every((value) => b.includes(value));
 }
 
 /** What one citizen holds today, as billing reads it. See `FeesService.holdingsOf`. */
@@ -175,11 +253,13 @@ export interface CitizenHoldings {
   unitCodes: string[];
 }
 
-/** Someone the notice targets whose holdings cannot be measured. */
+/** Someone the notice targets whose holdings cannot be measured (`feeUnassessableSchema`). */
 export interface UnassessableCitizen {
   citizenId: string;
   name: string;
   reason: string;
+  code: FeeUnassessableReason;
+  unit?: UnassessableUnit;
 }
 
 /**
@@ -188,12 +268,14 @@ export interface UnassessableCitizen {
  * A category names either a نوع العقار (the whole card) or a نوع الوحدة (one
  * unit inside it), which is why the check has to look at both depths. A notice
  * with no category at all — ALL_CITIZENS, or one aimed at a single citizen —
- * charges for everything the citizen holds.
+ * charges for everything the citizen holds. A notice with several (0100)
+ * charges a unit any one of them names.
  */
-function unitMatches(unit: BillableUnit, category?: string): boolean {
-  if (!category) return true;
-  if (PROPERTY_TYPE_CATEGORIES.has(category)) return unit.propertyType === category;
-  return unit.unitType === category;
+function unitMatches(unit: BillableUnit, categories?: readonly string[]): boolean {
+  if (!categories) return true;
+  return categories.some((category) =>
+    PROPERTY_TYPE_CATEGORIES.has(category) ? unit.propertyType === category : unit.unitType === category,
+  );
 }
 
 /**
@@ -215,7 +297,12 @@ function unitMatches(unit: BillableUnit, category?: string): boolean {
  *    card they filed, so it always counts. An owner's unit counts unless they
  *    have said someone else is in it (مؤجرة or مشغولة بتسامح — that person is
  *    billed on their own card, and charging both is the double-count this whole
- *    enum exists to end) or that nobody is (شاغرة, قيد الإنجاز).
+ *    enum exists to end).
+ *
+ * Whether a unit nobody is in (شاغرة, قيد الإنجاز) is charged at all is the
+ * notice's «حالة الوحدة» filter, asked before this (`inScope`, 0100): an
+ * occupancy fee leaves them out unless the clerk ticked them and confirmed the
+ * warning, and then the owner — the only person there is — bears it.
  *
  * The owner's exemption reads `isOccupiedByOthers`, not `!== 'RENTED'`, and the
  * difference is not cosmetic. The register has three ways to be the شاغل and
@@ -237,7 +324,17 @@ function bearsFee(unit: BillableUnit, bearer: FeeBearer): boolean {
   // A non-owner card is the occupant's own, and carries no status to consult.
   if (unit.occupancyType !== 'OWNER') return true;
 
-  return !isOccupiedByOthers(unit.unitStatus) && !isUnoccupied(unit.unitStatus);
+  return !isOccupiedByOthers(unit.unitStatus);
+}
+
+/**
+ * Whether the notice's «حالة الوحدة» filter charges this unit (0100): its state
+ * (`feeUnitState` — no recorded status is «مشغولة من المالك») among the ones
+ * ticked, or the bearer's own when none were (`defaultUnitStates`), which is
+ * exactly what this function's predecessor in `bearsFee` excluded.
+ */
+function inScope(unit: BillableUnit, states: readonly string[]): boolean {
+  return states.includes(feeUnitState(unit));
 }
 
 /**
@@ -312,6 +409,28 @@ function distinctCoOwnerPaid(assessed: readonly HeldEntry[]): number {
 }
 
 /**
+ * Units a notice's «حالة الوحدة» filter left out across a run (0100), by state,
+ * each once: a rented flat out of scope is on its owner's card and its tenant's,
+ * one flat. A unit with no census id has nothing to count once by and is
+ * counted where it is found, as `distinctUnits` does.
+ */
+function distinctOutOfScope(assessed: readonly CitizenAssessment[]): Partial<Record<string, number>> {
+  const byId = new Map<string, string>();
+  const counts: Partial<Record<string, number>> = {};
+  for (const entry of assessed) {
+    for (const unit of entry.outOfScopeUnits ?? []) {
+      if (unit.unitId) {
+        byId.set(unit.unitId, unit.state);
+      } else {
+        counts[unit.state] = (counts[unit.state] ?? 0) + 1;
+      }
+    }
+  }
+  for (const state of byId.values()) counts[state] = (counts[state] ?? 0) + 1;
+  return counts;
+}
+
+/**
  * Whether an unsurveyed building could hold any of what this notice charges for.
  *
  * The refusal below is expensive on purpose — it drops a citizen out of a
@@ -322,8 +441,13 @@ function distinctCoOwnerPaid(assessed: readonly HeldEntry[]): number {
  * for their land because of a building the notice never charged for — the same
  * silent under-collection the refusal exists to prevent, arrived at backwards.
  */
-function unsurveyedCanMatter(category?: string): boolean {
-  if (!category) return true;
+function unsurveyedCanMatter(categories?: readonly string[]): boolean {
+  if (!categories) return true;
+  // Several categories (0100): it matters if it matters to any one of them.
+  return categories.some(unsurveyedCanMatterFor);
+}
+
+function unsurveyedCanMatterFor(category: string): boolean {
   if (PROPERTY_TYPE_CATEGORIES.has(category)) return category === 'BUILDING';
   /*
     A منزل مستقل is the one unit type a building cannot contain.
@@ -376,8 +500,12 @@ export function assessCitizen(
     amount: number;
     basis: FeeBasis;
     targetCategory?: string;
+    /** Several categories (0100), in place of `targetCategory`. */
+    targetCategories?: readonly string[];
     /** Who owes it. Absent means `OCCUPANT` — see `FEE_BEARER`. */
     bearer?: FeeBearer;
+    /** The حالة الوحدة values it charges (0100). Absent is the bearer's own (`defaultUnitStates`). */
+    unitStates?: readonly string[];
     /**
      * «معامل السقوف» — the municipality's table of what a flat on N levels
      * weighs under PER_UNIT (`system_settings.levelFactors`, 0095). Absent is
@@ -397,10 +525,11 @@ export function assessCitizen(
       uninhabitableUnitIds?: string[];
       exemptUnitIds?: string[];
       coOwnerPaidUnitIds?: string[];
+      outOfScopeUnits?: OutOfScopeUnit[];
       /** Under TIERED_AREA, each unit priced, for the run to find the shared ones. Not stored. */
       tieredUnits?: TieredUnit[];
     }
-  | { kind: 'unassessable'; reason: string } {
+  | Unassessable {
   /*
     A flat charge never asks the register anything.
 
@@ -426,24 +555,29 @@ export function assessCitizen(
         sharedUnitCount: 0,
         coOwnerPaidUnitCount: 0,
         exemptUnitCount: 0,
+        outOfScopeUnitCount: 0,
         lines: [],
       },
     };
   }
 
-  const unsurveyed = unsurveyedCanMatter(notice.targetCategory)
+  const categories = categoriesOf(notice);
+  const unsurveyed = unsurveyedCanMatter(categories)
     ? entries.find(isUnsurveyed)
     : undefined;
   if (unsurveyed) {
     return {
       kind: 'unassessable',
       reason: `مبنى على العقار ${unsurveyed.propertyNumber ?? '—'} لم تُجرد وحداته بعد`,
+      code: 'UNSURVEYED',
+      // The building itself: no unit of it was ever counted.
+      unit: { unitCode: null, propertyNumber: unsurveyed.propertyNumber, unitType: null, unitArea: null, levels: 1 },
     };
   }
 
   const matching = entries
     .flatMap(billableUnits)
-    .filter((unit) => unitMatches(unit, notice.targetCategory));
+    .filter((unit) => unitMatches(unit, categories));
   /*
     «معفاة من الرسوم» comes off first, under every notice and whoever bears it
     (migration 0077; the user's decision, 2026-10-07): the mosque on a waqf
@@ -509,8 +643,20 @@ export function assessCitizen(
   */
   const unlivable = held.filter((unit) => !inReview(unit) && unit.uninhabitable);
   const decided = held.filter((unit) => !inReview(unit) && !unit.uninhabitable);
-  const owed = decided.filter((unit) => bearsFee(unit, bearer));
-  const excludedUnitCount = decided.length - owed.length;
+  /*
+    «من يشمل الإشعار» (0100): a unit whose حالة الوحدة the notice does not
+    charge is out of it, before anyone is asked to pay for it — under an
+    occupancy fee, by default, the empty and unfinished units. Counted apart
+    from the bearer rule's exclusions, with each unit's state, so the preview
+    can say «12 شاغرة» rather than one number for every reason.
+  */
+  const states = notice.unitStates ?? defaultUnitStates(bearer);
+  const scoped = decided.filter((unit) => inScope(unit, states));
+  const outOfScope = decided.filter((unit) => !inScope(unit, states));
+  const outOfScopeUnits = outOfScope.map((unit) => ({ unitId: unit.unitId ?? null, state: feeUnitState(unit) }));
+  const owed = scoped.filter((unit) => bearsFee(unit, bearer));
+  const excludedUnitCount = scoped.length - owed.length;
+  const outOfScopeUnitCount = outOfScope.length;
   const heldUnitCount = reviewing.length;
   const uninhabitableUnitCount = unlivable.length;
   // Which flats, so a run can count each once — an owner and a tenant hold the same one.
@@ -541,12 +687,14 @@ export function assessCitizen(
       uninhabitableUnitIds,
       exemptUnitIds,
       coOwnerPaidUnitIds: [],
+      outOfScopeUnits,
       tieredUnits: priced.units,
       assessment: tieredAssessment(priced.units, {
         excludedUnitCount,
         heldUnitCount,
         uninhabitableUnitCount,
         exemptUnitCount: exemptUnits.length,
+        outOfScopeUnitCount,
       }),
     };
   }
@@ -573,6 +721,8 @@ export function assessCitizen(
     return {
       kind: 'unassessable',
       reason: `وحدة ${undecidable.unitCode ?? ''} على العقار ${undecidable.propertyNumber ?? '—'} يتوزّع رسمها «حسب الأسهم» وأسهم أحد مالكيها غير مسجّلة`,
+      code: 'SHARES_MISSING',
+      unit: unassessableUnit(undecidable),
     };
   }
   // Paid by the responsible owner named on the flat — not this person's to pay.
@@ -597,6 +747,8 @@ export function assessCitizen(
       return {
         kind: 'unassessable',
         reason: `وحدة على العقار ${missing.propertyNumber ?? '—'} بلا مساحة مسجّلة`,
+        code: 'NO_AREA',
+        unit: unassessableUnit(missing),
       };
     }
   }
@@ -621,6 +773,8 @@ export function assessCitizen(
         return {
           kind: 'unassessable',
           reason: `وحدة ${unit.unitCode ?? ''} على العقار ${unit.propertyNumber ?? '—'} من ${unit.levels} طوابق، ولا يوجد في الإعدادات معامل سقوف لهذا العدد`,
+          code: 'NO_LEVEL_FACTOR',
+          unit: unassessableUnit(unit),
         };
       }
       roofs.set(unit, weight);
@@ -651,6 +805,7 @@ export function assessCitizen(
     uninhabitableUnitIds,
     exemptUnitIds,
     coOwnerPaidUnitIds,
+    outOfScopeUnits,
     assessment: {
       basis: notice.basis,
       rate: notice.amount,
@@ -662,6 +817,7 @@ export function assessCitizen(
       sharedUnitCount: shared.length,
       coOwnerPaidUnitCount: paidByCoOwner.length,
       exemptUnitCount: exemptUnits.length,
+      outOfScopeUnitCount,
       ...((shared.length > 0 || weighedByLevels) && notice.basis === 'PER_UNIT' ? { chargedUnits } : {}),
       lines: units.map((unit) => ({
         propertyNumber: unit.propertyNumber,
@@ -712,7 +868,8 @@ export function assessCitizen(
  */
 export function flatCategoryCharge(
   entries: readonly BillablePropertyEntry[],
-  notice: { amount: number; targetCategory: string },
+  /** One category, or several (0100): a holder of any of them is a holder. */
+  notice: { amount: number; targetCategory?: string; targetCategories?: readonly string[] },
 ): {
   amount: number;
   assessment: FeeAssessment | null;
@@ -722,7 +879,7 @@ export function flatCategoryCharge(
 } {
   const matching = entries
     .flatMap(billableUnits)
-    .filter((unit) => unitMatches(unit, notice.targetCategory));
+    .filter((unit) => unitMatches(unit, categoriesOf(notice)));
   const exempt = matching.filter((unit) => unit.exempt);
   const unlivable = matching.filter((unit) => !unit.exempt && unit.uninhabitable);
   // In the order `assessCitizen` reports them: exempt, then uninhabitable, then another owner's to pay.
@@ -750,6 +907,7 @@ export function flatCategoryCharge(
       sharedUnitCount: 0,
       coOwnerPaidUnitCount: paidByCoOwner.length,
       exemptUnitCount: exempt.length,
+      outOfScopeUnitCount: 0,
       lines: [],
     },
   };
@@ -1407,7 +1565,9 @@ export class FeesService {
       }),
     );
 
-    return rows.map((row) => ({
+    return rows.map((row) => {
+      const scope = scopeOf(row);
+      return {
       id: row.id,
       title: row.title,
       /** Under FLAT the whole invoice; under the other two a rate. Read with `basis`. */
@@ -1419,6 +1579,10 @@ export class FeesService {
       frequency: row.frequency,
       targetType: row.targetType,
       targetCategory: row.targetCategory,
+      /** «من يشمل الإشعار» (0100): each null when the notice named none — every category, the bearer's statuses, every file. */
+      targetCategories: row.targetType === 'BUILDING_CATEGORY' ? scope.categories ?? null : null,
+      unitStates: scope.unitStates ?? null,
+      residences: scope.residences ?? null,
       targetCitizenName: row.targetCitizen ? citizenDisplayName(row.targetCitizen, { middleName: false }) : null,
       dueDate: row.dueDate.toISOString(),
       instructions: row.instructions,
@@ -1426,7 +1590,8 @@ export class FeesService {
       issuedCount: row._count.payments,
       isActive: row.isActive,
       createdAt: row.createdAt.toISOString(),
-    }));
+      };
+    });
   }
 
   /**
@@ -1443,7 +1608,9 @@ export class FeesService {
       amount: number;
       basis: FeeBasis;
       targetCategory?: string;
+      targetCategories?: readonly string[];
       bearer?: FeeBearer;
+      unitStates?: readonly string[];
       matrixBrackets?: readonly FeeMatrixBracket[];
     },
     citizenIds: readonly string[],
@@ -1471,11 +1638,16 @@ export class FeesService {
       feeExemptUnits: number;
       /** Co-owned flats the responsible owner pays for, not the person assessed. Each flat once. */
       coOwnerPaidUnits: number;
+      /** Units whose حالة الوحدة the notice does not charge (0100). Each unit once. */
+      outOfScopeUnits: number;
+      /** The same, by state. */
+      outOfScopeByState: Partial<Record<string, number>>;
     };
   }> {
     const { assessed: raw, unassessable } = await this.assessTargets(citizenIds, input);
     const { own: assessed, shared, conflicts } =
       input.basis === 'TIERED_AREA' ? splitSharedUnitBills(raw) : { own: raw, shared: [], conflicts: [] };
+    const outOfScopeByState = distinctOutOfScope(assessed);
 
     return {
       assessed,
@@ -1489,6 +1661,8 @@ export class FeesService {
         uninhabitableUnits: distinctUninhabitable(assessed),
         feeExemptUnits: distinctExempt(assessed),
         coOwnerPaidUnits: distinctCoOwnerPaid(assessed),
+        outOfScopeUnits: Object.values(outOfScopeByState).reduce<number>((sum, count) => sum + (count ?? 0), 0),
+        outOfScopeByState,
       },
     };
   }
@@ -1507,6 +1681,15 @@ export class FeesService {
   async previewNotice(input: FeeNoticePreviewInput): Promise<FeeNoticePreviewResult> {
     const citizenIds = await this.resolveTargets(input);
     const plan = await this.planNotice(input, citizenIds);
+    /*
+      Who the residence filter left out (0100): the files the same notice would
+      reach with every kind ticked, less the ones it reaches. One more read of
+      the targets, and only when a kind was left out.
+    */
+    const residenceLeftOut =
+      input.residences && input.targetType !== 'INDIVIDUAL_CITIZEN'
+        ? (await this.resolveTargets({ ...input, residences: undefined })).length - citizenIds.length
+        : 0;
 
     const brackets = new Map(
       (input.basis === 'TIERED_AREA' ? input.matrixBrackets ?? [] : []).map((row) => [
@@ -1542,6 +1725,9 @@ export class FeesService {
         uninhabitableUnits: plan.counts.uninhabitableUnits,
         feeExemptUnits: plan.counts.feeExemptUnits,
         coOwnerPaidUnits: plan.counts.coOwnerPaidUnits,
+        outOfScopeUnits: plan.counts.outOfScopeUnits,
+        outOfScopeByState: plan.counts.outOfScopeByState as FeeNoticePreviewResult['notCharged']['outOfScopeByState'],
+        residenceLeftOut: Math.max(0, residenceLeftOut),
       },
       unassessable: plan.unassessable,
       conflicts: plan.conflicts.map((conflict) => ({
@@ -1597,7 +1783,14 @@ export class FeesService {
 
     // The same reading the preview makes (`planNotice`): what the preview showed is what this bills.
     const { billable, shared, conflicts, unassessable, counts } = await this.planNotice(input, citizenIds);
-    const { exemptedUnits, heldUnits, uninhabitableUnits, feeExemptUnits, coOwnerPaidUnits } = counts;
+    const { heldUnits, uninhabitableUnits, feeExemptUnits, coOwnerPaidUnits, outOfScopeUnits } = counts;
+    /*
+      What the issue has always called «exempted»: the units this notice let
+      off for their state or their payer — شاغرة, قيد الإنجاز, let to a tenant
+      billed on their own card. Since 0100 the first two are counted as out of
+      the notice's scope; the answer and the refusal keep the one figure.
+    */
+    const exemptedUnits = counts.exemptedUnits + outOfScopeUnits;
 
     // Nothing to bill: no citizen's own bill, and under TIERED_AREA no shared unit bill either.
     if (billable.length === 0 && shared.length === 0) {
@@ -1677,6 +1870,8 @@ export class FeesService {
           targetType: input.targetType as never,
           targetCategory: input.targetCategory ?? null,
           targetCitizenId: input.targetCitizenId ?? null,
+          // «من يشمل الإشعار» (0100): only what departs from the defaults; NULL when nothing does.
+          scope: (storedScope(input) ?? Prisma.DbNull) as never,
           dueDate,
           instructions: input.instructions ?? null,
           issuedById: actor.id,
@@ -1735,7 +1930,7 @@ export class FeesService {
     */
     if (exemptedUnits > 0) {
       this.logger.log(
-        `Fee "${input.title}": ${exemptedUnits} unit(s) exempted as شاغرة / قيد الإنجاز`,
+        `Fee "${input.title}": ${exemptedUnits} unit(s) not charged for their state or their payer (${outOfScopeUnits} outside the notice's unit states)`,
       );
     }
 
@@ -1746,6 +1941,8 @@ export class FeesService {
       amount: input.amount,
       basis: input.basis,
       targetType: input.targetType,
+      // What the clerk chose and confirmed, for the audit row (0100); null when the notice named no scope.
+      scope: storedScope(input),
       issuedCount: result.issued,
       unassessableCount: unassessable.length,
       exemptedUnitCount: exemptedUnits,
@@ -1915,8 +2112,9 @@ export class FeesService {
   /**
    * The notice a retry key already issued, as `issue` answers it, or null.
    *
-   * Bound to its act: the same title, figure, basis, bearer, recurrence, target
-   * and due date. A key that issued another notice can only mean a page reused
+   * Bound to its act: the same title, figure, basis, bearer, recurrence, target,
+   * scope (0100: the categories, unit states and kinds of file) and due date.
+   * A key that issued another notice can only mean a page reused
    * an id, and answering with that notice would tell the clerk the wrong fee was
    * raised (`FEE_NOTICE_REQUEST_REUSED`). The counts beside the bills are not
    * replayed: they described the register as it stood at the first press.
@@ -1934,10 +2132,12 @@ export class FeesService {
         targetType: true,
         targetCategory: true,
         targetCitizenId: true,
+        scope: true,
         dueDate: true,
       },
     });
     if (!notice) return null;
+    const stored = scopeOf(notice);
     const same =
       notice.title === input.title &&
       Number(notice.amount) === input.amount &&
@@ -1947,6 +2147,9 @@ export class FeesService {
       notice.targetType === input.targetType &&
       (notice.targetCategory ?? null) === (input.targetCategory ?? null) &&
       (notice.targetCitizenId ?? null)?.toLowerCase() === (input.targetCitizenId ?? null)?.toLowerCase() &&
+      sameSet(stored.categories, categoriesOf(input)) &&
+      sameSet(stored.unitStates, input.basis === 'FLAT' ? undefined : input.unitStates) &&
+      sameSet(stored.residences, input.residences) &&
       notice.dueDate.getTime() === new Date(input.dueDate).getTime();
     if (!same) {
       throw new ConflictError({
@@ -2050,11 +2253,14 @@ export class FeesService {
 
       // Targets are re-resolved every period rather than frozen at issue time:
       // someone who registered a shop last week should be in this month's
-      // billing, and someone deactivated should drop out of it.
+      // billing, and someone deactivated should drop out of it. Through the
+      // scope the notice was issued with (0100), read back like its table.
+      const scope = scopeOf(notice);
       const citizenIds = await this.resolveTargets({
         targetType: notice.targetType as never,
-        targetCategory: notice.targetCategory ?? undefined,
+        targetCategories: scope.categories,
         targetCitizenId: notice.targetCitizenId ?? undefined,
+        residences: scope.residences,
         basis: notice.basis,
       } as never);
 
@@ -2085,11 +2291,12 @@ export class FeesService {
         {
           amount: Number(notice.amount),
           basis: notice.basis as FeeBasis,
-          targetCategory: notice.targetCategory ?? undefined,
+          targetCategories: scope.categories,
           // Re-read from the notice every period, like the basis and the targets
           // above it: a council that changes who bears a fee in March expects
           // April's run to honour it without the notice being reissued.
           bearer: notice.bearer as FeeBearer,
+          unitStates: scope.unitStates,
           matrixBrackets,
         },
         citizenIds,
@@ -2298,8 +2505,10 @@ export class FeesService {
    * register, but whether the citizen is on it at all does. The same query a
    * notice is issued with, so the answer cannot drift from it.
    */
-  async categoryHolders(category: string): Promise<Set<string>> {
-    return new Set(await this.resolveTargets({ targetType: 'BUILDING_CATEGORY', targetCategory: category }));
+  async categoryHolders(categories: readonly string[], residences?: readonly string[]): Promise<Set<string>> {
+    return new Set(
+      await this.resolveTargets({ targetType: 'BUILDING_CATEGORY', targetCategories: categories, residences }),
+    );
   }
 
   /**
@@ -2312,7 +2521,11 @@ export class FeesService {
   private async resolveTargets(input: {
     targetType: string;
     targetCategory?: string;
+    /** Several categories (0100), in place of `targetCategory`. */
+    targetCategories?: readonly string[];
     targetCitizenId?: string;
+    /** The kinds of file the notice reaches (0100); absent is every kind. Not read for one named citizen. */
+    residences?: readonly string[];
     /** The notice's basis — a flat charge falls on people, not on estates or institutions. */
     basis?: string;
   }): Promise<string[]> {
@@ -2320,18 +2533,30 @@ export class FeesService {
       return [await this.chargeableCitizen(input.targetCitizenId)];
     }
 
+    /*
+      «نوع الإقامة» (0100): only the kinds of file the clerk ticked. A FLAT
+      notice to everyone still never reaches an estate or an institution, ticked
+      or not — the rule below — so the two narrow together.
+    */
+    const residenceWhere = input.residences
+      ? [{ residence: { in: [...input.residences] as never[] } }]
+      : [];
+
     if (input.targetType === 'ALL_CITIZENS') {
       const rows = await this.db.user.findMany({
         where: {
           kind: 'CITIZEN',
           isActive: true,
-          /*
-            A flat charge is one per person, and an estate or an institution
-            (0076) is not a person: «ورثة المرحوم …» and «وقف مسجد البلدة» own
-            property and are billed for it by the rate-based notices, never per
-            head. A rate-based notice still reaches them through what they hold.
-          */
-          ...(input.basis === 'FLAT' ? { residence: { notIn: [...NON_PERSON_RESIDENCE] } } : {}),
+          AND: [
+            /*
+              A flat charge is one per person, and an estate or an institution
+              (0076) is not a person: «ورثة المرحوم …» and «وقف مسجد البلدة» own
+              property and are billed for it by the rate-based notices, never per
+              head. A rate-based notice still reaches them through what they hold.
+            */
+            ...(input.basis === 'FLAT' ? [{ residence: { notIn: [...NON_PERSON_RESIDENCE] } }] : []),
+            ...residenceWhere,
+          ],
         },
         select: { id: true },
       });
@@ -2351,7 +2576,22 @@ export class FeesService {
       municipality that has no houses rather than as a query looking in one
       place.
     */
-    const category = input.targetCategory!;
+    // Several categories (0100): a holder of any one of them.
+    const categories = categoriesOf(input) ?? [];
+    const rows = await this.db.user.findMany({
+      where: {
+        kind: 'CITIZEN',
+        isActive: true,
+        AND: residenceWhere,
+        OR: categories.flatMap((category) => this.categoryHolderWhere(category)),
+      },
+      select: { id: true },
+    });
+    return rows.map((row) => row.id);
+  }
+
+  /** Who holds one category, on a card or through an occupancy — one `OR` branch each of `resolveTargets`. */
+  private categoryHolderWhere(category: string): Prisma.UserWhereInput[] {
     // A tenancy that ended (migration 0046) holds nothing to charge for.
     const propertyWhere = PROPERTY_TYPE_CATEGORIES.has(category)
       ? { propertyType: category as never, endedAt: null }
@@ -2394,18 +2634,10 @@ export class FeesService {
       ? undefined
       : { some: { toDate: null, unit: { unitType: category as never } } };
 
-    const rows = await this.db.user.findMany({
-      where: {
-        kind: 'CITIZEN',
-        isActive: true,
-        OR: [
-          { registrations: { some: { properties: { some: propertyWhere } } } },
-          ...(occupancyWhere ? [{ unitOccupancies: occupancyWhere }] : []),
-        ],
-      },
-      select: { id: true },
-    });
-    return rows.map((row) => row.id);
+    return [
+      { registrations: { some: { properties: { some: propertyWhere } } } },
+      ...(occupancyWhere ? [{ unitOccupancies: occupancyWhere }] : []),
+    ];
   }
 
   /**
@@ -2429,12 +2661,16 @@ export class FeesService {
       amount: number;
       basis: FeeBasis;
       targetCategory?: string;
+      targetCategories?: readonly string[];
       bearer?: FeeBearer;
+      /** The حالة الوحدة values it charges (0100); unread under FLAT. */
+      unitStates?: readonly string[];
       /** Under TIERED_AREA, the bracket table every citizen is priced by. */
       matrixBrackets?: readonly FeeMatrixBracket[];
     },
   ): Promise<{ assessed: CitizenAssessment[]; unassessable: UnassessableCitizen[] }> {
-    if (notice.basis === 'FLAT' && !notice.targetCategory) {
+    const categories = categoriesOf(notice);
+    if (notice.basis === 'FLAT' && !categories) {
       return {
         assessed: citizenIds.map((citizenId) => ({
           citizenId,
@@ -2446,14 +2682,13 @@ export class FeesService {
     }
 
     if (notice.basis === 'FLAT') {
-      // Per holder — unless all they hold of the category is charged nothing (`flatCategoryCharge`).
-      const targetCategory = notice.targetCategory!;
+      // Per holder — unless all they hold of the categories is charged nothing (`flatCategoryCharge`).
       const assessed: CitizenAssessment[] = [];
       const seen = new Set<string>();
       for await (const batch of this.holdingsOf(citizenIds)) {
         for (const holding of batch) {
           seen.add(holding.citizenId);
-          const charge = flatCategoryCharge(holding.entries, { amount: notice.amount, targetCategory });
+          const charge = flatCategoryCharge(holding.entries, { amount: notice.amount, targetCategories: categories });
           assessed.push({ citizenId: holding.citizenId, ...charge });
         }
       }
@@ -2474,7 +2709,13 @@ export class FeesService {
         const outcome = assessCitizen(holding.entries, { ...notice, levelFactors });
 
         if (outcome.kind === 'unassessable') {
-          unassessable.push({ citizenId: holding.citizenId, name: holding.name, reason: outcome.reason });
+          unassessable.push({
+            citizenId: holding.citizenId,
+            name: holding.name,
+            reason: outcome.reason,
+            code: outcome.code,
+            ...(outcome.unit ? { unit: outcome.unit } : {}),
+          });
           continue;
         }
 
@@ -2486,6 +2727,7 @@ export class FeesService {
           uninhabitableUnitIds: outcome.uninhabitableUnitIds,
           exemptUnitIds: outcome.exemptUnitIds,
           coOwnerPaidUnitIds: outcome.coOwnerPaidUnitIds,
+          outOfScopeUnits: outcome.outOfScopeUnits,
           ...(outcome.tieredUnits ? { tieredUnits: outcome.tieredUnits } : {}),
         });
       }

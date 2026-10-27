@@ -1352,6 +1352,7 @@
     "withNotes": "{line} ({notes})",
     "notesSeparator": "; ",
     "notCharged": "{count} not charged",
+    "outOfScope": "{count} outside the notice’s unit statuses",
     "heldForReview": "{count} held for review",
     "uninhabitable": "{count} uninhabitable, exempt",
     "coOwnedShare": "{count} co-owned, charged at this owner’s part",
@@ -1402,26 +1403,60 @@
     },
     "matrix": {
       "field": "Bracket table",
-      "rangeHint": "Each unit type and level count has its own scale: each bracket starts where the one before it ends, and includes its lower bound but not its upper one — 100 m² falls in the bracket that starts at 100. Leave “Up to” empty on the last bracket.",
-      "empty": "No brackets yet. Add the first one.",
+      "rangeHint": "Each unit type and level count has its own scale. Areas are in whole square metres, and a bracket includes both its ends: 0 to 50 includes 50 m², and the next bracket starts at 51. Leave “Up to” empty on the last bracket. Changing a bracket’s “Up to” moves the “From” of the bracket after it.",
+      "empty": "No brackets yet. Start from the template, or add the first one.",
       "newBracket": "new",
       "rowTitle": "Bracket {code}",
       "remove": "Remove bracket {code}",
+      "extend": "Price bracket {code} for {levels}",
+      "extensionOf": "{levels} price of bracket {code}",
+      "extensionTypesNote": "Of these, only flats and independent houses can span more than one level, so only they are priced here.",
+      "removeWithExtensions": "Remove bracket {code} with its level prices",
       "add": "Add a bracket",
       "code": "Bracket code",
       "label": "Bracket name",
       "labelPlaceholder": "e.g. Category A",
       "minArea": "From (m²)",
-      "maxArea": "Up to, not including (m²)",
+      "maxArea": "Up to and including (m²)",
       "noCeiling": "No upper limit",
       "levels": "Unit levels",
       "oneLevel": "One level",
       "amount": "Fee",
       "lbp": "LBP",
-      "unitTypes": "Unit types this bracket covers"
+      "unitTypes": "Unit types this bracket covers",
+      "separator": ", ",
+      "presets": "Quick pick",
+      "preset": {
+        "residential": "Residential only",
+        "commercial": "Commercial and professional",
+        "all": "All units"
+      },
+      "template": {
+        "action": "Load the standard 9-tier template (A–I)",
+        "confirmTitle": "Replace the bracket table with the template?",
+        "confirmBody": "{count, plural, one {The bracket you typed is replaced} other {The {count} brackets you typed are replaced}} by the nine brackets A to I for flats and houses on one level, with their areas filled in and every fee left for you to type.",
+        "confirm": "Replace with the template",
+        "cancel": "Keep my brackets"
+      },
+      "coverage": {
+        "title": "Area coverage",
+        "scale": "{types} — {levels}",
+        "gap": "No bracket from {from} to {to} m²",
+        "bracket": "Bracket {code}: from {min} up to {max} m²",
+        "bracketOverlap": "Bracket {code}: from {min} up to {max} m², overlapping the bracket before it",
+        "open": "Bracket {code}: {min} m² and over",
+        "openOverlap": "Bracket {code}: {min} m² and over, overlapping the bracket before it",
+        "continuous": "Each scale runs on without a gap or an overlap.",
+        "problems": "Gaps: {gaps} · Overlaps: {overlaps}. Fix them before the next step."
+      },
+      "maxAreaShort": "Up to (m²)",
+      "unitTypesShort": "Unit types",
+      "actions": "Actions",
+      "cellLabel": "{field}, row {row}",
+      "typesOneByOne": "Type by type",
+      "noTypes": "None chosen"
     },
     "preview": {
-      "title": "Preview of what will be issued",
       "loading": "Working out the bills this fee will raise…",
       "failed": "The preview failed, and the fee is not issued without it.",
       "retry": "Preview again",
@@ -1429,20 +1464,61 @@
       "billedCitizens": "Citizens' bills",
       "sharedBills": "Shared unit bills",
       "revenue": "Expected revenue",
-      "bracket": "Bracket",
-      "units": "Units",
       "subtotal": "Subtotal",
       "notCharged": {
         "excluded": "Not charged under the bearer rule",
         "held": "Held for review",
         "uninhabitable": "Uninhabitable",
         "feeExempt": "Exempt from fees",
-        "coOwnerPaid": "Paid by another owner"
+        "coOwnerPaid": "Paid by another owner",
+        "outOfScope": "{state} — outside the notice’s scope",
+        "residenceLeftOut": "Files outside the ticked residence kinds"
       },
-      "conflicts": "Shared units that will not be billed because the records of those registered on them put them in different brackets: {count}",
-      "conflictLine": "Unit {unit} on parcel {parcel}: brackets {brackets}, registered {count}",
       "separator": ", ",
-      "unassessable": "Citizens whose fee could not be worked out: {count}"
+      "unassessable": "Citizens whose fee could not be worked out: {count}",
+      "announce": "The preview is ready: {billed, number} citizens’ bills and {shared, number} shared unit bills.",
+      "conflictTable": {
+        "title": "{count, plural, one {A shared unit billed to nobody} other {Shared units billed to nobody: {count}}}",
+        "why": "The records of the people registered on these units put them in different brackets, so the notice bills none of them until the records agree.",
+        "search": "Search by unit or parcel number",
+        "emptySearch": "No unit or parcel matches this search.",
+        "unit": "Unit",
+        "parcel": "Parcel",
+        "brackets": "Brackets",
+        "registered": "Registered"
+      },
+      "unassessableTable": {
+        "search": "Search by name or reason",
+        "emptySearch": "No citizen matches this search.",
+        "name": "Citizen",
+        "unit": "Unit",
+        "why": "Why, and what to do"
+      },
+      "notChargedTitle": "Not charged on this notice",
+      "unitCount": "Units counted"
+    },
+    "unassessable": {
+      "unit": "Unit {unitCode} — parcel {parcel}",
+      "building": "Building on parcel {parcel}",
+      "parcelOnly": "A unit on parcel {parcel}",
+      "area": "{area} m²",
+      "noArea": "No recorded area",
+      "unknownType": "unit",
+      "separator": " · ",
+      "why": {
+        "UNSURVEYED": "The building's units were never surveyed, so what this citizen holds in it is unknown.",
+        "NO_AREA": "The unit has no recorded area, and this fee is charged by area.",
+        "NO_BRACKET": "No bracket in the table covers this unit: {type}{multi, select, yes { ({levels})} other {}}, {area} m².",
+        "SHARES_MISSING": "The unit's fee is divided by shares, and a co-owner's shares are not recorded.",
+        "NO_LEVEL_FACTOR": "The unit spans {count} levels, and Settings has no roof factor for that many."
+      },
+      "fix": {
+        "UNSURVEYED": "Survey the building's units in the building register.",
+        "NO_AREA": "Record the unit's area on its card.",
+        "NO_BRACKET": "{multi, select, yes {Add a {levels} price to the bracket that covers {area} m² with its extend button, or add a bracket for it.} other {Widen a bracket to cover {area} m², or add one for it.}}",
+        "SHARES_MISSING": "Record the co-owners' shares on the unit, or choose another way to divide the fee.",
+        "NO_LEVEL_FACTOR": "Add a roof factor for that many levels in Settings."
+      }
     },
     "issue": {
       "uninhabitable": "Uninhabitable units: {count} — not charged this fee. Charging resumes at the first billing run after a re-inspection reads a unit habitable: for the current period if the person has no bill for it yet, otherwise from the next period.",
@@ -1459,12 +1535,124 @@
       "issued": "The fee was issued and charged to {count, number} citizens.",
       "alreadyIssuedTitle": "This fee was already issued — «{title}»",
       "alreadyIssuedBody": "An earlier attempt whose answer was lost issued it, and it stands as first issued: {count, number} bills, notice ID {id}. Nobody was billed again.",
-      "unassessable": "{count, number} records were not assessed because the census is incomplete: ",
+      "unassessable": "{count, plural, one {{count} record was not assessed because the census is incomplete} other {{count} records were not assessed because the census is incomplete}}",
       "exempted": "{count, number} units were not charged, under the bearer rule for this fee.",
       "held": "{count, number} units are held for review (a conflict in the unit status) — no occupancy fee was charged on them this period. Once settled they are charged from the next period; to recover this one, issue an individual fee. They are listed under «جودة البيانات».",
       "failed": "The fee could not be issued.",
       "notAllowedTitle": "You may not issue fees",
-      "notAllowedBody": "Issuing fees is limited to certain roles. You can read the register without issuing."
+      "notAllowedBody": "Issuing fees is limited to certain roles. You can read the register without issuing.",
+      "resultTitle": "The fee was issued — «{title}»",
+      "resultBody": "The bills are on the citizens’ files now. What follows is what the server reported for this notice.",
+      "resultBills": "Bills issued",
+      "resultShared": "Of which shared unit bills",
+      "resultNotCharged": "Not charged on this notice",
+      "toNotices": "Go to fee notices",
+      "issueAnother": "Issue another fee",
+      "loading": "Preparing the wizard…"
+    },
+    "issueForm": {
+      "stepsLabel": "Steps to issue a fee",
+      "steps": {
+        "details": "Details",
+        "brackets": "Brackets",
+        "target": "Scope",
+        "review": "Review and issue"
+      },
+      "stepHeading": "Step {step} of {total}: {title}",
+      "sections": {
+        "fee": {
+          "title": "The fee",
+          "hint": "The name on the bill and how it is charged."
+        },
+        "schedule": {
+          "title": "Due date and collection",
+          "hint": "When the bill falls due and whether it repeats, with the payment instructions kept on the notice."
+        }
+      },
+      "refused": {
+        "more": "{count, plural, one {One more field needs fixing.} other {# more fields need fixing.}}"
+      },
+      "title": "Fee / bill type",
+      "titlePlaceholder": "Select from previous bills or type a new title…",
+      "basis": "How it is charged",
+      "amount": "{basis, select, PER_AREA {Rate per m²} PER_UNIT {Rate per unit} other {Amount}}",
+      "lbp": "LBP",
+      "bearer": "Levied on",
+      "occupancy": {
+        "label": "Units charged",
+        "OCCUPIED": "Occupied",
+        "VACANT": "Vacant",
+        "ALL": "Both",
+        "custom": "A custom choice, made under “Unit status” on the Scope step."
+      },
+      "dueDate": "Due date",
+      "frequency": "Frequency",
+      "instructions": "Payment instructions / notes",
+      "target": "Who the notice is for",
+      "citizen": "Citizen",
+      "review": {
+        "basis": "Charged",
+        "bearer": "Levied on",
+        "appliesTo": "Applies to",
+        "frequency": "Frequency",
+        "recurring": "{frequency} — repeats automatically until stopped",
+        "dueDate": "Due date",
+        "instructions": "Payment instructions",
+        "rateUnit": "{basis, select, PER_AREA {LBP per m²} PER_UNIT {LBP per unit} other {LBP}}",
+        "allCitizens": "All registered citizens",
+        "brackets": "Bracket table",
+        "bracket": "Bracket",
+        "units": "Units",
+        "area": "Area",
+        "fee": "Fee",
+        "rangeBounded": "From {min} up to {max} m²",
+        "rangeOpen": "{min} m² and above",
+        "unitsLine": "{types} — {levels}",
+        "states": "Unit status",
+        "residences": "Residence",
+        "allResidences": "Every kind",
+        "categories": "Citizens registered on: {categories}",
+        "edit": "Edit",
+        "editSection": "Edit: {section}",
+        "sections": {
+          "confirm": "Before you issue"
+        }
+      },
+      "bulk": {
+        "FLAT": "One bill is created for each citizen included, and it shows on their file at once.",
+        "holdings": "Each citizen included is billed for what they hold, under the rule of who the fee is levied on, and the bills show on their files at once. The preview below gives the count.",
+        "TIERED_AREA": "Each citizen is billed for the units they hold by the bracket table, and a unit more than one citizen is registered on gets one shared bill. The preview below gives both counts.",
+        "recurring": "Recurrence can be stopped later, but bills already issued remain."
+      },
+      "cancel": "Cancel",
+      "back": "Back",
+      "next": "Next",
+      "issue": "Issue the bills",
+      "zero": {
+        "title": "Issue a fee that bills nobody?",
+        "body": "{recurring, select, true {The preview found no one to bill. The fee is still created, and as a recurring fee it stays in force until it is stopped.} other {The preview found no one to bill. The fee is created with no bills.}}",
+        "confirm": "Issue it anyway",
+        "cancel": "Go back"
+      },
+      "leave": {
+        "title": "Leave without issuing this fee?",
+        "body": "What you entered in the wizard is not saved, and it is lost if you leave.",
+        "confirm": "Leave and discard it",
+        "cancel": "Stay"
+      },
+      "tieredNext": "The fee comes from the bracket table, on the next step.",
+      "audience": {
+        "ALL": {
+          "title": "Everyone liable",
+          "hint": "Everyone the choices below reach: unit status, residence and property type"
+        },
+        "INDIVIDUAL": {
+          "title": "One citizen",
+          "hint": "Single citizen by name or reference number"
+        }
+      },
+      "confirmScope": "I confirm issuing this notice with this scope despite the warnings",
+      "confirmScopeNeeded": "Confirm the warnings on the notice’s scope to enable «Issue bills»."
     },
     "register": {
       "summary": {
@@ -1500,6 +1688,37 @@
       "amount": "Amount (LBP)",
       "dueDate": "Due Date",
       "submit": "Add Charge"
+    },
+    "scope": {
+      "separator": ", ",
+      "states": {
+        "legend": "Unit status",
+        "hint": "Only units in the ticked statuses are charged. The default is what the law levies on the chosen bearer.",
+        "reset": "Default for the bearer",
+        "ownerOccupied": "Owner-occupied (or status not recorded)",
+        "payer": "Paid by {payer, select, tenant {the tenant, on their lease} freeOccupant {the rent-free occupant} other {the owner}}",
+        "notOwed": "Paid by the owner — no occupancy fee is owed on an unoccupied unit"
+      },
+      "residences": {
+        "legend": "Residence",
+        "hint": "Only files of the ticked kinds."
+      },
+      "categories": {
+        "legend": "Property or unit type",
+        "all": "All",
+        "property": "Property",
+        "unit": "Unit",
+        "allHint": "Every type is ticked: the notice goes to every citizen for what they hold.",
+        "allFlat": "Every type is ticked: the flat amount is charged to every citizen, even with no property recorded.",
+        "tieredHint": "The bracket table prices: {types}. A unit of any other type leaves its holder among those who cannot be assessed.",
+        "matchTable": "Match the bracket table"
+      },
+      "warnings": {
+        "title": "Warnings on the notice’s scope",
+        "UNOCCUPIED_CHARGED": "An occupant-borne fee will be charged on vacant or unfinished units, paid by their owner. Municipal Fees Law 60/1988 levies neither the rental-value fee nor the cleaning fee on an unoccupied unit.",
+        "STATE_LEFT_OUT": "A status the law charges this fee on is left out ({states}): less is collected than the law levies.",
+        "RESIDENCE_LEFT_OUT": "A residence kind is left out ({kinds}): the law grants no exemption by where a person lives."
+      }
     }
   },
   "parcelDrawer": {

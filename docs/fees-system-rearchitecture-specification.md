@@ -3,7 +3,7 @@
 > **Status:** Revised 2026-10-23 with the product decisions below. Replaces the
 > earlier draft, which re-specified rules the fee engine already has and
 > contradicted decisions already taken (D28, migration 0075).
-> **Last verified against the code:** `develop@b2c18dd`, 2026-10-23.
+> **Last verified against the code:** `develop@b2c18dd`, 2026-10-23; D8 against `fix/fee-wizard-review` (uncommitted), 2026-10-26.
 > **Legislative reference:** Lebanese Municipal Fees and Surcharges Law No. 60/1988.
 > The bracket figures themselves are the assessment committee's (لجنة التخمين)
 > and the council's; the system stores them, it does not derive them.
@@ -35,6 +35,7 @@ document says otherwise, these win.
 | **D5 Shared unit bills** | **`TIERED_AREA` only.** When the bearer rule charges two or more citizens for the same unit (co-owners, or co-tenants under an occupant-borne notice), the unit gets **one bill for the full bracket amount**, not split. It appears on every one of those citizens' profiles. Any of them may pay it, in part or in full; once paid it is PAID for all of them. While it is unpaid it blocks براءة ذمة for every one of them. Deed shares (أسهم) are not used. |
 | **D6 Batch cancel** | Cancelling a notice cancels every bill nothing has been paid on, leaves bills with money on them (`paidAmount > 0`) or a claim waiting (`PENDING_REVIEW`), reports which and why, and sets the notice `isActive = false` so the recurring run does not re-issue it. |
 | **D7 Bracket scope** | Staff choose, per bracket, which unit types it applies to (any of `UnitType`) and its level count. |
+| **D8 Notice scope** (2026-10-26) | Every basis, not only `TIERED_AREA`. A notice to everyone is narrowed by three filters, in this order: the unit statuses it charges (all six `UnitStatus` values; no recorded status counts as owner-occupied), the kinds of file (`CitizenResidence`), and several categories at once. The bearer still decides who pays a unit in scope. Defaults are what the law levies on the bearer. Departing from it is allowed with a warning the clerk confirms: an occupancy fee on شاغرة or قيد الإنجاز units (charged to the owner), or a status or kind of file the law charges left out. Not a per-bracket column: the statuses apply to the whole notice. Migration `0100_fee_notice_scope`; `feeNoticeScopeSchema`. |
 
 ### Still open
 
@@ -397,6 +398,23 @@ Built on `feat/tiered-fees-cancel-and-wizard`, in three commits:
   preview and the issue (`lib/fee-notice-draft.ts`, `noticePayload`), which
   also stopped the wizard sending its default category with every target (a
   per-unit notice to all citizens had charged their shops alone).
+  D1's duplex and triplex tables are typed by «مدّ الفئة» (2026-10-27, the
+  user's design): a button beside a bracket's delete adds the next level
+  count's row under it, coded `D-2`, `D-3` … up to `MAX_UNIT_LEVELS`, with the
+  bracket's name, range and unit types (which follow it; the dwellings among them are sent, the only units that span levels) and a price of
+  its own (`extendBracket`, `withExtensions` in `lib/fee-notice-draft.ts`).
+  Sent, each is an ordinary bracket on its level count's scale, so the schema,
+  the API and the engine are unchanged; a duplex keeps D1's rule of matching
+  on its whole area. The review step (`NoticeReview`, 2026-10-27) reads the
+  notice back as rows under the preview's pinned figures: the fee, the bracket
+  table beside each bracket's counted units and subtotal, the scope, what goes
+  unbilled, and the confirmation last, each step's row with «تعديل» back to it.
+  Ranges are typed and shown in whole metres with both
+  ends included (2026-10-27, the user's decision): «0 – 50», then «51 – 60».
+  The engine's ranges are unchanged — floor included, ceiling excluded — so
+  the wizard sends each typed «حتى» as the next metre (`toMatrix`: «0 – 50»
+  as `[0, 51)`), and an area of 50.4 m² still lands in «0 – 50» rather than
+  between two brackets.
 - **The counter** («تسجيل دفعة»): a shared bill's payer chosen from its debtors
   (`sharedDebtors` on `GET fees/payments/:id`), required, sent as
   `paidByCitizenId`.

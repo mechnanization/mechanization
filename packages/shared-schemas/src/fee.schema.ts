@@ -1,6 +1,13 @@
 import { z } from 'zod';
 import { normalizeDigits, uuid } from './primitives';
-import { OWNER_BILLING_MODE, UNIT_TYPE } from './enums';
+import {
+  CITIZEN_RESIDENCE,
+  OWNER_BILLING_MODE,
+  UNIT_STATUS,
+  UNIT_TYPE,
+  UNOCCUPIED_UNIT_STATUS,
+  type UnitStatus,
+} from './enums';
 import { ADJUSTMENT_REASON_MIN, municipalToday } from './cash-policy';
 import { hasAtMostTwoDecimals } from './money-amount';
 import { canSpanLevels, levelFactorsSchema, unitLevels, unitLevelsField } from './unit-levels';
@@ -204,6 +211,112 @@ export const feeBearerSchema = z.enum(FEE_BEARER).default('OCCUPANT');
 export type FeeBearer = (typeof FEE_BEARER)[number];
 
 /**
+ * «من يشمل الإشعار» (0100; the user's decision, 2026-10-26) — the filters a
+ * notice applies on top of its bearer and its target type, asked in this order:
+ *
+ *  1. **حالة الوحدة** — which of the six `UNIT_STATUS` values it charges. A unit
+ *     with no recorded status counts as `OWNER_OCCUPIED`, as it always has; a
+ *     tenant's or a شاغل بتسامح's own card counts as `RENTED` or
+ *     `FREE_OCCUPIED` (`feeUnitState`). Who pays for a unit in scope is still
+ *     the bearer rule: under `OCCUPANT` the one inside, under `OWNER` the deed
+ *     holder — and a شاغرة or قيد الإنجاز unit has nobody inside, so ticking
+ *     either under `OCCUPANT` charges its owner.
+ *  2. **نوع الإقامة** — which kinds of file (`CITIZEN_RESIDENCE`) it reaches.
+ *  3. **نوع العقار / الوحدة** — several `FEE_TARGET_CATEGORY` values at once.
+ *
+ * Absent is the behaviour before any of this: the statuses the bearer has
+ * always charged (`defaultUnitStates`), every kind of file, the one category
+ * `targetCategory` names. Ignored under FLAT, as the bearer is: a flat amount is
+ * a person's charge, not a unit's, so only the residence and the categories
+ * narrow it.
+ *
+ * Departing from what the law charges is allowed, with a warning the clerk
+ * confirms before issuing (`feeScopeWarnings`): Law 60/1988 does not levy
+ * القيمة التأجيرية or النظافة on an empty unit, and exempts no status the
+ * bearer charges and no file by where its holder lives.
+ */
+export const FEE_SCOPE_WARNING = [
+  /** شاغرة or قيد الإنجاز ticked under OCCUPANT: an occupancy fee on a unit nobody occupies. */
+  'UNOCCUPIED_CHARGED',
+  /** A status the bearer charges left unticked: less is collected than the law levies. */
+  'STATE_LEFT_OUT',
+  /** A kind of file left unticked: the law does not exempt by where a person lives. */
+  'RESIDENCE_LEFT_OUT',
+] as const;
+export type FeeScopeWarning = (typeof FEE_SCOPE_WARNING)[number];
+
+/**
+ * The حالة الوحدة values a notice charges when it names none — what each
+ * bearer has always charged: an occupancy fee every occupied unit, an
+ * owner-borne fee every unit whatever its state.
+ */
+export function defaultUnitStates(bearer: FeeBearer): UnitStatus[] {
+  return bearer === 'OWNER'
+    ? [...UNIT_STATUS]
+    : UNIT_STATUS.filter((state) => !(UNOCCUPIED_UNIT_STATUS as readonly string[]).includes(state));
+}
+
+/**
+ * The state a unit is judged by under a notice's «حالة الوحدة» filter: a
+ * tenant's or a شاغل بتسامح's own card is the occupancy it records, an owner's
+ * card the status it carries, and no recorded status is «مشغولة من المالك» —
+ * a unit nobody was asked about is billed (`isUnoccupied`).
+ */
+export function feeUnitState(unit: { occupancyType: string; unitStatus: string | null }): string {
+  if (unit.occupancyType === 'TENANT') return 'RENTED';
+  if (unit.occupancyType === 'FREE_OCCUPANT') return 'FREE_OCCUPIED';
+  return unit.unitStatus ?? 'OWNER_OCCUPIED';
+}
+
+/**
+ * What the clerk must confirm before a notice with this scope is issued, in the
+ * order the step asks: none for a notice that charges what the law charges.
+ * Under FLAT only the residence is read, as the statuses decide nothing there.
+ */
+export function feeScopeWarnings(notice: {
+  basis: FeeBasis;
+  bearer: FeeBearer;
+  unitStates?: readonly string[];
+  residences?: readonly string[];
+}): FeeScopeWarning[] {
+  const warnings: FeeScopeWarning[] = [];
+  if (notice.basis !== 'FLAT' && notice.unitStates) {
+    const states = notice.unitStates;
+    if (notice.bearer === 'OCCUPANT' && UNOCCUPIED_UNIT_STATUS.some((state) => states.includes(state))) {
+      warnings.push('UNOCCUPIED_CHARGED');
+    }
+    if (defaultUnitStates(notice.bearer).some((state) => !states.includes(state))) {
+      warnings.push('STATE_LEFT_OUT');
+    }
+  }
+  if (notice.residences && CITIZEN_RESIDENCE.some((kind) => !notice.residences!.includes(kind))) {
+    warnings.push('RESIDENCE_LEFT_OUT');
+  }
+  return warnings;
+}
+
+/** A list of distinct enum values, at least one. */
+function distinctChoice<T extends readonly [string, ...string[]]>(values: T, required: string) {
+  return z
+    .array(z.enum(values), { invalid_type_error: required })
+    .min(1, required)
+    .refine((chosen) => new Set(chosen).size === chosen.length, 'قيمة مكرّرة في الاختيار');
+}
+
+/**
+ * The notice's scope as stored (`fee_notices.scope`, 0100), read back by the
+ * biller through this schema as the bracket table is through `feeMatrixSchema`.
+ * Each key absent is its default; see `FEE_SCOPE_WARNING` above.
+ */
+export const feeNoticeScopeSchema = z.object({
+  categories: distinctChoice(FEE_TARGET_CATEGORY, 'اختر نوعاً واحداً على الأقل').optional(),
+  unitStates: distinctChoice(UNIT_STATUS, 'اختر حالة واحدة على الأقل').optional(),
+  residences: distinctChoice(CITIZEN_RESIDENCE, 'اختر نوع إقامة واحداً على الأقل').optional(),
+  acknowledgedWarnings: z.array(z.enum(FEE_SCOPE_WARNING)).optional(),
+});
+export type FeeNoticeScope = z.infer<typeof feeNoticeScopeSchema>;
+
+/**
  * How one citizen's invoice was arrived at.
  *
  * Stored on the payment rather than recomputed on demand, because the register
@@ -327,6 +440,14 @@ export const feeAssessmentSchema = z.object({
    * rate-based fee, whoever bears it, and counted so the bill says so.
    */
   exemptUnitCount: z.number().default(0),
+  /**
+   * Units whose حالة الوحدة the notice does not charge («من يشمل الإشعار»,
+   * 0100): a شاغرة flat under an occupancy fee, or any status the clerk left
+   * unticked. Counted apart from `excludedUnitCount`, which is a unit in scope
+   * that another person pays for. Absent on every bill raised before 0100,
+   * where an empty unit was counted in `excludedUnitCount`.
+   */
+  outOfScopeUnitCount: z.number().default(0),
   /**
    * The unit count the rate multiplies under PER_UNIT when it is not simply the
    * number of units: a co-owned flat charged at a part — 2.25 for two whole
@@ -578,6 +699,17 @@ const feeNoticeFields = z.object({
   frequency: feeFrequencySchema,
   targetType: feeTargetTypeSchema,
   targetCategory: feeTargetCategorySchema.optional(),
+  /**
+   * Several categories at once, under BUILDING_CATEGORY, in place of
+   * `targetCategory` («من يشمل الإشعار», 0100). Never both.
+   */
+  targetCategories: feeNoticeScopeSchema.shape.categories,
+  /** The حالة الوحدة values it charges; absent is the bearer's own (`defaultUnitStates`). See `FEE_SCOPE_WARNING`. */
+  unitStates: feeNoticeScopeSchema.shape.unitStates,
+  /** The kinds of file it reaches; absent is every kind. Not read for one named citizen. */
+  residences: feeNoticeScopeSchema.shape.residences,
+  /** The warnings the clerk confirmed (`feeScopeWarnings`); the issue refuses a scope with one unconfirmed. */
+  acknowledgedWarnings: feeNoticeScopeSchema.shape.acknowledgedWarnings,
   targetCitizenId: uuid.optional(),
   dueDate: z
     .string({ required_error: 'تاريخ الاستحقاق مطلوب' })
@@ -592,11 +724,25 @@ const feeNoticeFields = z.object({
  * between an amount and a bracket table, never both.
  */
 function refineFeeNotice(data: z.infer<typeof feeNoticeFields>, ctx: z.RefinementCtx): void {
-  if (data.targetType === 'BUILDING_CATEGORY' && !data.targetCategory) {
+  if (data.targetType === 'BUILDING_CATEGORY' && !data.targetCategory && !data.targetCategories) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['targetCategory'],
       message: 'اختر فئة العقارات المستهدفة',
+    });
+  }
+  if (data.targetCategory && data.targetCategories) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['targetCategories'],
+      message: 'أرسل فئة واحدة أو قائمة فئات، لا الاثنتين',
+    });
+  }
+  if (data.targetCategories && data.targetType !== 'BUILDING_CATEGORY') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['targetCategories'],
+      message: 'قائمة الفئات لإشعار موجّه إلى فئات عقارية وحده',
     });
   }
   if (data.targetType === 'INDIVIDUAL_CITIZEN' && !data.targetCitizenId) {
@@ -650,7 +796,18 @@ export const createFeeNoticeSchema = feeNoticeFields
      */
     clientRequestId: uuid,
   })
-  .superRefine(refineFeeNotice);
+  .superRefine(refineFeeNotice)
+  .superRefine((data, ctx) => {
+    // Issued only once every warning its scope raises was confirmed; the preview asks nothing of it.
+    const unconfirmed = feeScopeWarnings(data).filter((warning) => !data.acknowledgedWarnings?.includes(warning));
+    if (unconfirmed.length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['acknowledgedWarnings'],
+        message: 'أكّد التنبيهات على نطاق الإشعار قبل إصداره',
+      });
+    }
+  });
 
 export type CreateFeeNotice = z.infer<typeof createFeeNoticeSchema>;
 
@@ -662,6 +819,52 @@ export const feeNoticePreviewSchema = feeNoticeFields.superRefine(refineFeeNotic
 export type FeeNoticePreviewInput = z.infer<typeof feeNoticePreviewSchema>;
 
 /**
+ * Why a citizen a notice targets cannot be assessed, as a code the screen
+ * words and says what to do about (2026-10-27; the server's sentence alone
+ * named neither the unit's type, area nor levels, nor the fix, and read in
+ * Arabic on an English screen):
+ *
+ *  - `UNSURVEYED` — a building on their card whose units were never counted;
+ *  - `NO_AREA` — a unit charged by area with none recorded;
+ *  - `NO_BRACKET` — a unit no bracket of the table covers, for its type, level
+ *    count and area;
+ *  - `SHARES_MISSING` — a unit divided «حسب الأسهم» with a co-owner's أسهم
+ *    unrecorded;
+ *  - `NO_LEVEL_FACTOR` — a unit on more levels than الإعدادات has a roof factor for.
+ */
+export const FEE_UNASSESSABLE_REASON = [
+  'UNSURVEYED',
+  'NO_AREA',
+  'NO_BRACKET',
+  'SHARES_MISSING',
+  'NO_LEVEL_FACTOR',
+] as const;
+export type FeeUnassessableReason = (typeof FEE_UNASSESSABLE_REASON)[number];
+
+/**
+ * One citizen the notice cannot assess. `reason` is the server's own sentence,
+ * kept for its logs and older readers; `code` and `unit` are what a screen
+ * reads — the unit that stopped the assessment, as the register holds it (the
+ * building, under `UNSURVEYED`, with no unit of its own).
+ */
+export const feeUnassessableSchema = z.object({
+  citizenId: z.string(),
+  name: z.string(),
+  reason: z.string(),
+  code: z.enum(FEE_UNASSESSABLE_REASON).optional(),
+  unit: z
+    .object({
+      unitCode: z.string().nullable(),
+      propertyNumber: z.string().nullable(),
+      unitType: z.string().nullable(),
+      unitArea: z.number().nullable(),
+      levels: z.number().int().positive(),
+    })
+    .optional(),
+});
+export type FeeUnassessable = z.infer<typeof feeUnassessableSchema>;
+
+/**
  * What the preview answers: what issuing this notice now would bill, read by
  * the same path the issue takes (`FeesService.planNotice`) and written nowhere.
  *
@@ -669,10 +872,11 @@ export type FeeNoticePreviewInput = z.infer<typeof feeNoticePreviewSchema>;
  * whole pounds. `brackets` is empty under every basis but TIERED_AREA, where it
  * counts each unit once, a shared one included, in the table's own order. The
  * `notCharged` counts are each unit once across the run, as the issue counts
- * them. `unassessable` names the citizens the issue would skip and why — a
- * staff read, as the issue's own answer is. `conflicts` are units shared by
- * citizens whose records put them in different brackets, billed to nobody
- * (`splitSharedUnitBills`); the people are counted, not named.
+ * them. `unassessable` names the citizens the issue would skip and why
+ * (`feeUnassessableSchema`) — a staff read, as the issue's own answer is.
+ * `conflicts` are units shared by citizens whose records put them in different
+ * brackets, billed to nobody (`splitSharedUnitBills`); the people are counted,
+ * not named.
  */
 export const feeNoticePreviewResultSchema = z.object({
   targetedCitizens: z.number().int().nonnegative(),
@@ -697,8 +901,14 @@ export const feeNoticePreviewResultSchema = z.object({
     uninhabitableUnits: z.number().int().nonnegative(),
     feeExemptUnits: z.number().int().nonnegative(),
     coOwnerPaidUnits: z.number().int().nonnegative(),
+    /** Units whose حالة الوحدة the notice does not charge, each once (0100). */
+    outOfScopeUnits: z.number().int().nonnegative(),
+    /** The same, by state: «شاغرة: 12». A state with none is absent. */
+    outOfScopeByState: z.record(z.enum(UNIT_STATUS), z.number().int().positive()),
+    /** Files the residence filter left out that the notice would otherwise reach (0100). */
+    residenceLeftOut: z.number().int().nonnegative(),
   }),
-  unassessable: z.array(z.object({ citizenId: z.string(), name: z.string(), reason: z.string() })),
+  unassessable: z.array(feeUnassessableSchema),
   conflicts: z.array(
     z.object({
       unitId: z.string(),

@@ -420,6 +420,8 @@ export class AuditService {
     title: string;
     amount: number;
     targetType: string;
+    /** «من يشمل الإشعار» (0100): the categories, statuses and kinds of file chosen, and the warnings confirmed. */
+    scope?: unknown;
     issuedCount: number;
     actorId?: string | null;
     actorRole?: string | null;
@@ -446,6 +448,7 @@ export class AuditService {
         title: payload.title,
         amount: payload.amount,
         targetType: payload.targetType,
+        ...(payload.scope ? { scope: payload.scope } : {}),
         issuedCount: payload.issuedCount,
         periodKey: payload.periodKey,
       },

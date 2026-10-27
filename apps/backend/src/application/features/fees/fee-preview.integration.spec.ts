@@ -207,7 +207,13 @@ describeIfDb('the notice preview', () => {
       conflicts: [],
     });
     expect(preview.unassessable).toEqual([
-      { citizenId: unmeasured, name: expect.any(String), reason: 'وحدة 0102 على العقار 77 بلا مساحة مسجّلة' },
+      {
+        citizenId: unmeasured,
+        name: expect.any(String),
+        reason: 'وحدة 0102 على العقار 77 بلا مساحة مسجّلة',
+        code: 'NO_AREA',
+        unit: expect.objectContaining({ unitCode: '0102', propertyNumber: '77', unitArea: null }),
+      },
     ]);
     expect(await written()).toEqual(before);
   });

@@ -19,7 +19,7 @@ import {
   type BillFigure,
   type ChangeKind,
 } from './bill-corrections';
-import { assessCitizen, FeesService, flatCategoryCharge, type CitizenHoldings } from './fees.service';
+import { assessCitizen, FeesService, flatCategoryCharge, scopeOf, type CitizenHoldings } from './fees.service';
 
 /** Owed and not yet settled. PENDING_REVIEW is money claimed, not money received. */
 const OPEN_STATUSES = ['UNPAID', 'OVERDUE', 'PENDING_REVIEW'] as const;
@@ -87,6 +87,8 @@ interface OpenBill {
     bearer: string;
     targetType: string;
     targetCategory: string | null;
+    /** «من يشمل الإشعار» (0100), read through `scopeOf`. */
+    scope: unknown;
   } | null;
 }
 
@@ -322,7 +324,7 @@ export class CorrectionBillsService {
           createdAt: true,
           assessment: true,
           feeNotice: {
-            select: { amount: true, basis: true, bearer: true, targetType: true, targetCategory: true },
+            select: { amount: true, basis: true, bearer: true, targetType: true, targetCategory: true, scope: true },
           },
         },
       }),
@@ -351,7 +353,9 @@ export class CorrectionBillsService {
       or another co-owner's to pay under «مالك مسؤول», owes nothing for it
       (`flatCategoryCharge`).
     */
-    const flatByCategory = flat.filter((bill) => bill.feeNotice!.targetCategory);
+    // Each notice's scope (0100) as its run reads it: one category or several, its statuses, its kinds of file.
+    const scopes = new Map(bills.map((bill) => [bill.id, scopeOf(bill.feeNotice!)]));
+    const flatByCategory = flat.filter((bill) => scopes.get(bill.id)!.categories);
     const holdings = await this.holdings([
       ...new Set([...rated, ...flatByCategory].map((bill) => bill.citizenId)),
     ]);
@@ -361,11 +365,13 @@ export class CorrectionBillsService {
       const holding = holdings.get(bill.citizenId);
       if (!holding) continue;
       const notice = bill.feeNotice!;
+      const scope = scopes.get(bill.id)!;
       const outcome = assessCitizen(holding.entries, {
         amount: Number(notice.amount),
         basis: notice.basis as FeeBasis,
-        targetCategory: notice.targetCategory ?? undefined,
+        targetCategories: scope.categories,
         bearer: notice.bearer as FeeBearer,
+        unitStates: scope.unitStates,
         levelFactors,
       });
       figures.set(
@@ -376,13 +382,20 @@ export class CorrectionBillsService {
       );
     }
 
-    const categories = [...new Set(flat.map((bill) => bill.feeNotice!.targetCategory).filter((c): c is string => !!c))];
+    // Who each FLAT notice's categories and kinds of file reach today, read once per distinct pair.
     const holders = new Map<string, Set<string>>();
-    for (const category of categories) holders.set(category, await this.fees.categoryHolders(category));
+    const keyOf = (scope: { categories?: readonly string[]; residences?: readonly string[] }) =>
+      JSON.stringify([scope.categories, scope.residences]);
+    for (const bill of flatByCategory) {
+      const scope = scopes.get(bill.id)!;
+      const key = keyOf(scope);
+      if (!holders.has(key)) holders.set(key, await this.fees.categoryHolders(scope.categories!, scope.residences));
+    }
     for (const bill of flat) {
       const notice = bill.feeNotice!;
-      if (!notice.targetCategory) continue;
-      if (!holders.get(notice.targetCategory)?.has(bill.citizenId)) {
+      const scope = scopes.get(bill.id)!;
+      if (!scope.categories) continue;
+      if (!holders.get(keyOf(scope))?.has(bill.citizenId)) {
         figures.set(bill.id, { kind: 'NOT_TARGETED' });
         continue;
       }
@@ -390,7 +403,7 @@ export class CorrectionBillsService {
       const charge = holding
         ? flatCategoryCharge(holding.entries, {
             amount: Math.round(Number(notice.amount)),
-            targetCategory: notice.targetCategory,
+            targetCategories: scope.categories,
           })
         : { amount: Math.round(Number(notice.amount)), assessment: null };
       figures.set(bill.id, { kind: 'ASSESSED', amount: charge.amount, assessment: charge.assessment });
