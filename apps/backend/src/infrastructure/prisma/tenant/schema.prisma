@@ -2133,6 +2133,12 @@ model FeeNotice {
   /// (CHECK fee_notices_matrix_brackets_array); its shape is `feeMatrixSchema`.
   matrixBrackets Json?
 
+  /// «من يشمل الإشعار» (0100): the categories, حالة الوحدة values and kinds of
+  /// file the notice reaches, and the warnings the clerk confirmed. A JSON object
+  /// (CHECK fee_notices_scope_object) whose shape is `feeNoticeScopeSchema`; a
+  /// missing key or NULL is the behaviour before it — see `FeesService.scopeOf`.
+  scope Json?
+
   createdAt DateTime         @default(now())
   payments  CitizenPayment[]
   /// Every period this notice's recurring run attempted (migration 0056).
