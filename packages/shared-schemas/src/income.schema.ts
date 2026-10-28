@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { typeError } from './type-error';
 import { businessDay } from './primitives';
 import {
   BUDGET_CODES_INCOMPLETE,
@@ -63,7 +64,7 @@ export function canReceiveIncome(type: TreasuryAccountType): boolean {
 
 /** A received amount: greater than zero, at most two decimals, inside what the ledger holds. */
 const receivedAmount = z
-  .number({ required_error: 'اكتب المبلغ', invalid_type_error: 'المبلغ رقم' })
+  .number(typeError({ required: 'اكتب المبلغ', invalid: 'المبلغ رقم' }))
   .finite('المبلغ رقم')
   .positive('المبلغ أكبر من صفر')
   .max(999_999_999_999, 'المبلغ كبير جداً')
@@ -80,13 +81,13 @@ const receivedAmount = z
  * lost response must find the first voucher rather than credit the wallet twice.
  */
 export const recordIncomeVoucherSchema = z.object({
-  categoryId: z.string().uuid('اختر بند الإيراد'),
-  accountId: z.string().uuid('اختر الحساب الذي استُلم فيه المبلغ'),
+  categoryId: z.string().guid('اختر بند الإيراد'),
+  accountId: z.string().guid('اختر الحساب الذي استُلم فيه المبلغ'),
   amount: receivedAmount,
   /** The paying body — «مصرف لبنان / الصندوق البلدي المستقل». Optional; may name a citizen. */
   payerName: z.string().trim().max(200, 'الاسم طويل جداً').optional(),
   description: z
-    .string({ required_error: 'اكتب البيان' })
+    .string(typeError({ required: 'اكتب البيان' }))
     .trim()
     .min(3, 'اكتب البيان')
     .max(1000, 'البيان طويل جداً'),
@@ -97,7 +98,7 @@ export const recordIncomeVoucherSchema = z.object({
   /** Required by the server for any back-dated voucher. */
   adjustmentReason: z.string().trim().max(500, 'السبب طويل جداً').optional(),
   /** One id per press of the button, so a retry does not credit the wallet twice. */
-  clientRequestId: z.string().uuid(),
+  clientRequestId: z.string().guid(),
 });
 
 export type RecordIncomeVoucherInput = z.infer<typeof recordIncomeVoucherSchema>;
@@ -111,7 +112,7 @@ export type RecordIncomeVoucherInput = z.infer<typeof recordIncomeVoucherSchema>
  */
 const incomeCategoryFields = {
   labelAr: z
-    .string({ required_error: 'اكتب اسم البند' })
+    .string(typeError({ required: 'اكتب اسم البند' }))
     .trim()
     .min(2, 'اكتب اسم البند')
     .max(120, 'الاسم طويل جداً'),
@@ -145,7 +146,7 @@ export type UpdateIncomeCategoryInput = z.infer<typeof updateIncomeCategorySchem
 /** «إلغاء سند القبض» — the manager's cancellation, with its reason. */
 export const voidIncomeVoucherSchema = z.object({
   reason: z
-    .string({ required_error: 'اكتب سبب الإلغاء' })
+    .string(typeError({ required: 'اكتب سبب الإلغاء' }))
     .trim()
     .min(5, 'اكتب سبباً واضحاً للإلغاء')
     .max(500, 'السبب طويل جداً'),
@@ -167,8 +168,8 @@ export const listIncomeVouchersQuerySchema = z
   .object({
     from: businessDay.optional(),
     to: businessDay.optional(),
-    categoryId: z.string().uuid().optional(),
-    accountId: z.string().uuid().optional(),
+    categoryId: z.string().guid().optional(),
+    accountId: z.string().guid().optional(),
     /** ISO 4217, as the wallets store it. */
     currency: z
       .string()

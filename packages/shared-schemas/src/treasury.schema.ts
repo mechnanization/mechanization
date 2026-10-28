@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { typeError } from './type-error';
 import { hasAtMostTwoDecimals } from './money-amount';
 
 /**
@@ -60,11 +61,11 @@ export const TREASURY_NEW_ACCOUNT_TYPES = ['BANK_ACCOUNT', 'PETTY_CASH'] as cons
 /** «إضافة حساب» — the manager opens a bank account or a petty-cash fund. */
 export const createTreasuryAccountSchema = z.object({
   name: z
-    .string({ required_error: 'اكتب اسم الحساب' })
+    .string(typeError({ required: 'اكتب اسم الحساب' }))
     .trim()
     .min(2, 'اكتب اسم الحساب')
     .max(120, 'الاسم طويل جداً'),
-  type: z.enum(TREASURY_NEW_ACCOUNT_TYPES, { errorMap: () => ({ message: 'اختر نوع الحساب' }) }),
+  type: z.enum(TREASURY_NEW_ACCOUNT_TYPES, { error: 'اختر نوع الحساب' }),
   /** The municipality's base or secondary currency; the server refuses any other. */
   currency: z.string().regex(/^[A-Z]{3}$/, 'اختر العملة'),
 });
@@ -99,7 +100,7 @@ export const BUDGET_CODES_INCOMPLETE = {
 
 /** An amount in a wallet's currency: not negative, at most two decimals. */
 const openingAmount = z
-  .number({ required_error: 'اكتب الرصيد الافتتاحي', invalid_type_error: 'الرصيد الافتتاحي رقم' })
+  .number(typeError({ required: 'اكتب الرصيد الافتتاحي', invalid: 'الرصيد الافتتاحي رقم' }))
   .finite('الرصيد الافتتاحي رقم')
   .min(0, 'الرصيد الافتتاحي لا يكون سالباً')
   .max(999_999_999_999, 'الرصيد كبير جداً')
@@ -115,7 +116,7 @@ const openingAmount = z
 export const activateTreasurySchema = z
   .object({
     balances: z
-      .array(z.object({ accountId: z.string().uuid('حساب غير صالح'), amount: openingAmount }))
+      .array(z.object({ accountId: z.string().guid('حساب غير صالح'), amount: openingAmount }))
       .min(1, 'أدخل رصيد كل حساب')
       .max(50, 'عدد الحسابات كبير جداً'),
     note: z.string().trim().max(500, 'الملاحظة طويلة جداً').optional(),
