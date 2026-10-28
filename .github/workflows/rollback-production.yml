@@ -1,0 +1,85 @@
+name: Rollback Production
+run-name: Rollback to ${{ inputs.target }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'previous | list | commit SHA (e.g. d3cb97d) | release name (e.g. 20261006093952-d3cb97d)'
+        required: true
+        default: 'previous'
+
+# Never run at the same time as a deploy (set the same group in the deploy workflow)
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Switch production to the selected release
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          TARGET: ${{ inputs.target }}
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          envs: TARGET
+          script: |
+            set -euo pipefail
+            BASE=/var/www/municipality-app-releases
+            cd "$BASE/releases"
+
+            # Input is passed as an env var (never interpolated into the script) and validated
+            if ! [[ "$TARGET" =~ ^[A-Za-z0-9-]+$ ]]; then
+              echo "FATAL: invalid target '$TARGET'"; exit 1
+            fi
+
+            CURRENT=$(basename "$(readlink -f "$BASE/current")")
+
+            if [ "$TARGET" = "list" ]; then
+              echo "Available releases (newest last):"
+              for r in $(ls -1 | sort); do
+                if [ "$r" = "$CURRENT" ]; then echo "  $r   <-- CURRENT"; else echo "  $r"; fi
+              done
+              exit 0
+            fi
+
+            if [ "$TARGET" = "previous" ]; then
+              NEW=$(ls -1 | sort | awk -v c="$CURRENT" '$0 < c' | tail -1)
+            elif [ -d "$TARGET" ]; then
+              NEW="$TARGET"
+            else
+              SHORT="${TARGET:0:7}"
+              NEW=$(ls -1d -- *-"$SHORT" 2>/dev/null | sort | tail -1 || true)
+            fi
+
+            if [ -z "${NEW:-}" ] || [ ! -d "$NEW" ]; then
+              echo "FATAL: no release found for '$TARGET'. Available:"; ls -1 | sort; exit 1
+            fi
+            if [ ! -f "$NEW/apps/backend/dist/presentation/main.js" ]; then
+              echo "FATAL: $NEW is incomplete (main.js missing)"; exit 1
+            fi
+            if [ "$NEW" = "$CURRENT" ]; then
+              echo "Already running $NEW, nothing to do."; exit 0
+            fi
+
+            echo "Rolling back: $CURRENT  ->  $NEW"
+            ln -sfn "$BASE/releases/$NEW" "$BASE/current"
+            pm2 reload "$BASE/ecosystem.config.js"
+
+            sleep 3
+            for i in $(seq 1 30); do
+              if curl -sf http://localhost:4000/api/v1/health > /dev/null; then
+                echo "Production healthy on $NEW"
+                exit 0
+              fi
+              sleep 2
+            done
+
+            echo "Health check FAILED on $NEW, restoring $CURRENT"
+            ln -sfn "$BASE/releases/$CURRENT" "$BASE/current"
+            pm2 reload "$BASE/ecosystem.config.js"
+            exit 1
