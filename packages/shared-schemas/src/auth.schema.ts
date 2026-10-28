@@ -82,12 +82,12 @@ export const verifyOtpSchema = z.object({
    */
   code: z.string().trim().regex(/^\d{6}$/, 'الرمز مكوّن من 6 أرقام').optional(),
   /** Set on the second call when a shared phone matched several people. */
-  citizenId: z.string().uuid().optional(),
+  citizenId: z.string().guid().optional(),
 });
 
 /** Returned when one phone belongs to several household members. */
 export const citizenChoiceSchema = z.object({
-  id: z.string().uuid(),
+  id: z.string().guid(),
   displayName: z.string(),
   identityDocLastDigits: z.string(),
 });
@@ -107,7 +107,7 @@ export const sessionSchema = z.object({
   supabaseAccessToken: z.string().optional(),
   expiresIn: z.string(),
   user: z.object({
-    id: z.string().uuid(),
+    id: z.string().guid(),
     name: z.string(),
     kind: z.enum(['STAFF', 'CITIZEN']),
     role: staffRoleSchema.optional(),

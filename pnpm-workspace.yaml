@@ -15,8 +15,9 @@ packages:
 # Keep the two lists identical.
 overrides:
   # Reached through @nestjs/platform-express, and the only one here an attacker
-  # can touch directly: FileInterceptor on the cadastre import.
-  multer: ^2.3.0
+  # can touch directly: FileInterceptor on the cadastre import. 2.5.0 fixes a DoS
+  # through a pending asynchronous fileFilter (GHSA-q7qp-rjg7-q26m, high, 2026-10-23).
+  multer: ^2.5.0
   postcss: ^8.5.26
   # Held on their existing major lines: 1.x and 2.x are what the trees below
   # them expect, and the fixes were backported.
@@ -26,8 +27,14 @@ overrides:
   # 5.0.9 recurses without bound on crafted patterns (GHSA-6j4f-fj2g-mc7p).
   brace-expansion@5: ^5.0.11
   nanoid@3: ^3.3.18
-  body-parser@1: ^1.20.6
-  qs@6: ^6.15.2
+  # Every JSON body the API reads: 1.20.9 fixes a DoS via trailing bytes after a
+  # compressed body (GHSA-27r3-jxmh-p828, high, 2026-10-23).
+  body-parser@1: ^1.20.9
+  # Reached through body-parser and express: 6.16.1 fixes an uncaught TypeError
+  # in `stringify` with arrayFormat 'comma' (GHSA-6pq8-jhm2-2vcw, moderate, 2026-10-27).
+  # Exact, not a caret: 6.16.2 and 6.17.0 were a day old when this was set
+  # (2026-10-28). Loosen to ^6.16.1 once they have stood a few weeks.
+  qs@6: 6.16.1
   uuid@11: ^11.1.1
   lodash: ^4.18.1
   # Next's optional image-optimisation dependency; inherits libvips CVEs below
@@ -46,3 +53,8 @@ overrides:
   proxy-addr: ^2.0.8
   compression: ^1.8.2
   source-map-js: ^1.2.2
+  # Reached through jspdf (the PDF receipts), which declares `^3.3.1` and resolved
+  # to 3.4.13: a critical SAFE_FOR_TEMPLATES bypass (GHSA-cg2g-xh64-v4q7) and a
+  # high IN_PLACE one (GHSA-mrv2-3pqr-j5jr) land below 3.4.17. jspdf's own range
+  # admits it, so this raises the resolved version as fast-uri's pin does.
+  dompurify: ^3.4.17

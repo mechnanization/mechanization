@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { typeError } from './type-error';
 import { uuid } from './primitives';
 
 /**
@@ -48,7 +49,7 @@ export const CHECK_DIFFERENCE = [
 export type CheckDifference = (typeof CHECK_DIFFERENCE)[number];
 
 const reason = (message: string) =>
-  z.string({ required_error: message }).trim().min(4, message).max(500, 'النص طويل جداً');
+  z.string(typeError({ required: message })).trim().min(4, message).max(500, 'النص طويل جداً');
 
 export const returnRecordSchema = z.object({
   reason: reason('يرجى كتابة ما يجب على الموظف تصحيحه'),
@@ -58,8 +59,8 @@ export type ReturnRecordInput = z.infer<typeof returnRecordSchema>;
 
 export const drawSampleSchema = z
   .object({
-    from: z.coerce.date({ invalid_type_error: 'تاريخ البداية غير صالح' }),
-    to: z.coerce.date({ invalid_type_error: 'تاريخ النهاية غير صالح' }),
+    from: z.coerce.date(typeError({ invalid: 'تاريخ البداية غير صالح' })),
+    to: z.coerce.date(typeError({ invalid: 'تاريخ النهاية غير صالح' })),
     /** Share of each officer's records in the period, never fewer than one where they filed any. */
     percent: z.coerce.number().int().min(1, 'النسبة ١٪ على الأقل').max(50, 'النسبة ٥٠٪ على الأكثر').default(5),
   })

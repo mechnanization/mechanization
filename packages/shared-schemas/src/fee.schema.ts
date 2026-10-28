@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { typeError } from './type-error';
 import { normalizeDigits, uuid } from './primitives';
 import { OWNER_BILLING_MODE } from './enums';
 import { ADJUSTMENT_REASON_MIN, municipalToday } from './cash-policy';
@@ -17,7 +18,7 @@ import { levelFactorsSchema } from './unit-levels';
 
 export const FEE_FREQUENCY = ['ONCE', 'MONTHLY', 'HALF_YEARLY', 'ANNUALLY'] as const;
 export const feeFrequencySchema = z.enum(FEE_FREQUENCY, {
-  errorMap: () => ({ message: 'دورية الرسم مطلوبة' }),
+  error: 'دورية الرسم مطلوبة',
 });
 export type FeeFrequency = (typeof FEE_FREQUENCY)[number];
 
@@ -64,7 +65,7 @@ export const FEE_TARGET_TYPE = [
   'INDIVIDUAL_CITIZEN',
 ] as const;
 export const feeTargetTypeSchema = z.enum(FEE_TARGET_TYPE, {
-  errorMap: () => ({ message: 'الفئة المستهدفة مطلوبة' }),
+  error: 'الفئة المستهدفة مطلوبة',
 });
 export type FeeTargetType = (typeof FEE_TARGET_TYPE)[number];
 
@@ -333,7 +334,7 @@ export type FeeAssessmentLine = z.infer<typeof feeAssessmentLineSchema>;
  */
 export const billBasisReviewSchema = z.object({
   note: z
-    .string({ required_error: 'اكتب ما قرّرته' })
+    .string(typeError({ required: 'اكتب ما قرّرته' }))
     .trim()
     .min(3, 'اكتب ما قرّرته')
     .max(1000, 'الملاحظة طويلة جداً'),
@@ -345,10 +346,7 @@ export type FeeAssessment = z.infer<typeof feeAssessmentSchema>;
 
 /** LBP, whole pounds. The ceiling is a typo guard, not a policy limit. */
 const lbpAmount = z.coerce
-  .number({
-    required_error: 'المبلغ مطلوب',
-    invalid_type_error: 'المبلغ يجب أن يكون رقماً',
-  })
+  .number(typeError({ required: 'المبلغ مطلوب', invalid: 'المبلغ يجب أن يكون رقماً' }))
   .int('المبلغ يجب أن يكون رقماً صحيحاً بالليرة')
   .positive('المبلغ يجب أن يكون أكبر من صفر')
   .max(1_000_000_000, 'المبلغ كبير جداً — يرجى المراجعة');
@@ -361,7 +359,7 @@ const lbpAmount = z.coerce
 export const createFeeNoticeSchema = z
   .object({
     title: z
-      .string({ required_error: 'اسم الرسم مطلوب' })
+      .string(typeError({ required: 'اسم الرسم مطلوب' }))
       .trim()
       .min(3, 'اسم الرسم قصير جداً')
       .max(120, 'اسم الرسم طويل جداً'),
@@ -381,7 +379,7 @@ export const createFeeNoticeSchema = z
     targetCategory: feeTargetCategorySchema.optional(),
     targetCitizenId: uuid.optional(),
     dueDate: z
-      .string({ required_error: 'تاريخ الاستحقاق مطلوب' })
+      .string(typeError({ required: 'تاريخ الاستحقاق مطلوب' }))
       .min(1, 'تاريخ الاستحقاق مطلوب'),
     instructions: z.string().trim().max(1000).optional(),
     /**
@@ -417,7 +415,7 @@ export type CreateFeeNotice = z.infer<typeof createFeeNoticeSchema>;
  * refuses zero or less), `null` for none.
  */
 const urgentCeiling = z
-  .number({ invalid_type_error: 'السقف رقم' })
+  .number(typeError({ invalid: 'السقف رقم' }))
   .finite('السقف رقم')
   .positive('السقف أكبر من صفر')
   .max(999_999_999_999, 'السقف كبير جداً')
@@ -632,10 +630,10 @@ export const declarePaymentSchema = z.object({
    * own entry is what records that money.
    */
   method: z.literal('WHISH_MONEY', {
-    errorMap: () => ({ message: 'يُبلَّغ هنا عن تحويل Whish Money وحده؛ الدفع النقدي في صندوق البلدية' }),
+    error: 'يُبلَّغ هنا عن تحويل Whish Money وحده؛ الدفع النقدي في صندوق البلدية',
   }),
   whishTransactionRef: z
-    .string({ required_error: 'أدخل رقم عملية التحويل' })
+    .string(typeError({ required: 'أدخل رقم عملية التحويل' }))
     .trim()
     .min(4, 'رقم العملية قصير جداً')
     .max(60, 'رقم العملية طويل جداً'),
@@ -653,12 +651,12 @@ export type DeclarePayment = z.infer<typeof declarePaymentSchema>;
 export const chargeCitizenSchema = z.object({
   citizenId: uuid,
   title: z
-    .string({ required_error: 'اسم الرسم مطلوب' })
+    .string(typeError({ required: 'اسم الرسم مطلوب' }))
     .trim()
     .min(3, 'اسم الرسم قصير جداً')
     .max(120),
   amount: lbpAmount,
-  dueDate: z.string({ required_error: 'تاريخ الاستحقاق مطلوب' }).min(1),
+  dueDate: z.string(typeError({ required: 'تاريخ الاستحقاق مطلوب' })).min(1),
 });
 
 export type ChargeCitizen = z.infer<typeof chargeCitizenSchema>;
@@ -683,7 +681,7 @@ export const settlePaymentSchema = z
    * as credit, because nothing here can carry an overpayment forward.
    */
     amount: z.coerce
-      .number({ invalid_type_error: 'المبلغ يجب أن يكون رقماً' })
+      .number(typeError({ invalid: 'المبلغ يجب أن يكون رقماً' }))
       .positive('المبلغ يجب أن يكون أكبر من صفر')
       .max(1_000_000_000_000, 'المبلغ كبير جداً')
       .optional(),
@@ -766,7 +764,7 @@ export const settlePaymentSchema = z
         // «foreign» part of a dollar bill would store a rate that rounds to 0.
         foreignCurrency: z.enum(['USD', 'EUR']).default('USD'),
         exchangeRate: z.coerce
-          .number({ invalid_type_error: 'سعر الصرف يجب أن يكون رقماً' })
+          .number(typeError({ invalid: 'سعر الصرف يجب أن يكون رقماً' }))
           .positive('سعر الصرف يجب أن يكون أكبر من صفر')
           .max(1_000_000_000)
           .optional(),
@@ -867,12 +865,12 @@ export type CancelBill = z.infer<typeof cancelBillSchema>;
  */
 export const referenceLoginSchema = z.object({
   referenceNumber: z
-    .string({ required_error: 'الرقم المرجعي مطلوب' })
+    .string(typeError({ required: 'الرقم المرجعي مطلوب' }))
     .trim()
     .min(4, 'الرقم المرجعي غير صالح')
     .max(40)
     .transform((value) => value.toUpperCase()),
-  phone: z.string({ required_error: 'رقم الهاتف مطلوب' }).trim().min(6, 'رقم الهاتف غير صالح'),
+  phone: z.string(typeError({ required: 'رقم الهاتف مطلوب' })).trim().min(6, 'رقم الهاتف غير صالح'),
 });
 
 export type ReferenceLogin = z.infer<typeof referenceLoginSchema>;
@@ -903,7 +901,7 @@ export type ReferenceLogin = z.infer<typeof referenceLoginSchema>;
  */
 export const referenceOnlyLoginSchema = z.object({
   referenceNumber: z
-    .string({ required_error: 'الرقم المرجعي مطلوب' })
+    .string(typeError({ required: 'الرقم المرجعي مطلوب' }))
     .trim()
     // Spaces and lowercase are what a citizen actually types off a slip; the
     // domain's `ReferenceNumber.parse` normalises the same way.
@@ -933,7 +931,7 @@ export const parcelDuesQuerySchema = z.object({
     مستحق» on the one check a clearance rests on.
   */
   propertyNumber: z
-    .string({ required_error: 'رقم العقار مطلوب' })
+    .string(typeError({ required: 'رقم العقار مطلوب' }))
     .trim()
     .min(1, 'رقم العقار مطلوب')
     .max(40)
