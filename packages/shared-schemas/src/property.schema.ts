@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { typeError } from './type-error';
+import { partialKeepingAbsent } from './partial-keeping-absent';
 import {
   landTypeSchema,
   occupancyTypeSchema,
@@ -112,7 +114,7 @@ const occupancyBranch = z.discriminatedUnion(
       landlordCitizenId: landlordCitizenIdField,
     }),
   ],
-  { errorMap: () => ({ message: 'نوع الإشغال مطلوب' }) },
+  { error: 'نوع الإشغال مطلوب' },
 );
 
 export const sharedRightsField = z
@@ -123,13 +125,13 @@ export const sharedRightsField = z
 /**
  * `z.coerce.number()` turns a missing/blank input into `NaN` before Zod's own
  * type check ever sees it, so the failure surfaces as `invalid_type` — with
- * `required_error` alone silently never firing (the value is never literally
+ * the `required` message alone silently never firing (the value is never literally
  * `undefined` by the time Zod inspects it). Both messages are set to the same
  * Arabic text so whichever code path actually triggers, the citizen sees the
  * same thing rather than either message falling back to Zod's English default.
  */
 export const areaField = z.coerce
-  .number({ required_error: 'المساحة مطلوبة', invalid_type_error: 'المساحة يجب أن تكون رقماً' })
+  .number(typeError({ required: 'المساحة مطلوبة', invalid: 'المساحة يجب أن تكون رقماً' }))
   .positive('المساحة يجب أن تكون أكبر من صفر')
   .max(1_000_000);
 
@@ -141,7 +143,7 @@ export const areaField = z.coerce
  * ever describe a share of the *land itself*.
  */
 export const sharesField = z.coerce
-  .number({ required_error: 'عدد الأسهم مطلوب', invalid_type_error: 'عدد الأسهم يجب أن يكون رقماً' })
+  .number(typeError({ required: 'عدد الأسهم مطلوب', invalid: 'عدد الأسهم يجب أن يكون رقماً' }))
   .int('يجب أن يكون رقماً صحيحاً')
   .min(1, 'يجب أن يكون سهماً واحداً على الأقل')
   .max(2400, 'الحد الأقصى 2400 سهم');
@@ -184,7 +186,7 @@ export const unitStatusField = unitStatusSchema.optional();
  * on both sides (`parcelNumberKey`, docs/gotchas.md).
  */
 export const propertyNumberField = z
-  .string({ required_error: 'رقم العقار مطلوب' })
+  .string(typeError({ required: 'رقم العقار مطلوب' }))
   .trim()
   .min(1, 'رقم العقار مطلوب')
   .max(40)
@@ -208,7 +210,7 @@ export const propertyNumberField = z
  * everywhere would stop reporting a genuinely malformed one.
  */
 export const neighborhoodField = z
-  .string({ required_error: 'الحي مطلوب' })
+  .string(typeError({ required: 'الحي مطلوب' }))
   .trim()
   .min(1, 'الحي مطلوب')
   .max(80, 'اسم الحي طويل جداً');
@@ -295,7 +297,7 @@ export const buildingUnitSchema = z.object({
     (type) => !isStructuralUnitType(type),
     'هذا طابق من البناء وليس وحدة تُسجَّل على ملف — يُرسم في مصفوفة المبنى فقط',
   ),
-  floor: z.string({ required_error: 'الطابق مطلوب' }).trim().min(1, 'الطابق مطلوب').max(20),
+  floor: z.string(typeError({ required: 'الطابق مطلوب' })).trim().min(1, 'الطابق مطلوب').max(20),
   side: z.string().trim().max(60).optional(),
   unitArea: areaField,
   sharedRights: sharedRightsField,
@@ -311,7 +313,7 @@ export type BuildingUnit = z.infer<typeof buildingUnitSchema>;
 
 /** A building with more units than this is a data-entry accident, not a landlord. */
 export const buildingUnitsSchema = z
-  .array(buildingUnitSchema, { required_error: 'يجب إضافة وحدة واحدة على الأقل' })
+  .array(buildingUnitSchema, typeError({ required: 'يجب إضافة وحدة واحدة على الأقل' }))
   .min(1, 'يجب إضافة وحدة واحدة على الأقل')
   .max(60, 'عدد الوحدات كبير جداً — يرجى مراجعة البلدية');
 
@@ -330,7 +332,7 @@ export const buildingUnitsSchema = z
  * The element rules are the identical field constants either way; what is
  * dropped is only the requiredness the flag has accounted for.
  */
-export const partialBuildingUnitSchema = buildingUnitSchema.partial();
+export const partialBuildingUnitSchema = partialKeepingAbsent(buildingUnitSchema);
 
 /**
  * No `min(1)` here, and that is not a loosening.
@@ -407,13 +409,13 @@ const propertyBranch = z.discriminatedUnion(
       neighborhood: neighborhoodField.optional(),
       propertyNumber: propertyNumberField,
       tentLocation: z
-        .string({ required_error: 'موقع الخيمة مطلوب' })
+        .string(typeError({ required: 'موقع الخيمة مطلوب' }))
         .trim()
         .min(3, 'موقع الخيمة مطلوب')
         .max(200),
     }),
   ],
-  { errorMap: () => ({ message: 'نوع العقار مطلوب' }) },
+  { error: 'نوع العقار مطلوب' },
 );
 
 /**
@@ -474,8 +476,8 @@ export const PROPERTY_FIELD_MAP = {
  * drifting: add a field to a branch without adding it here and the package
  * fails to compile rather than silently dropping it on flagged records.
  */
-export const partialPropertyEntrySchema = z
-  .object({
+export const partialPropertyEntrySchema = partialKeepingAbsent(
+  z.object({
     occupancyType: occupancyTypeSchema,
     landlordName: arabicOrLatinName,
     // Reads `''` as absent so a شاغل بتسامح card the strict branch accepts with
@@ -495,8 +497,8 @@ export const partialPropertyEntrySchema = z
     sharedRights: sharedRightsField,
     unitStatus: unitStatusSchema,
     units: partialBuildingUnitsSchema,
-  })
-  .partial()
+  }),
+)
   /**
    * The two discriminators stay required: they are `NON_FLAGGABLE_FIELDS`, so
    * no flag can excuse them and no shape derived from flags may make them

@@ -30,7 +30,11 @@ overrides:
   # Every JSON body the API reads: 1.20.9 fixes a DoS via trailing bytes after a
   # compressed body (GHSA-27r3-jxmh-p828, high, 2026-10-23).
   body-parser@1: ^1.20.9
-  qs@6: ^6.15.2
+  # Reached through body-parser and express: 6.16.1 fixes an uncaught TypeError
+  # in `stringify` with arrayFormat 'comma' (GHSA-6pq8-jhm2-2vcw, moderate, 2026-10-27).
+  # Exact, not a caret: 6.16.2 and 6.17.0 were a day old when this was set
+  # (2026-10-28). Loosen to ^6.16.1 once they have stood a few weeks.
+  qs@6: 6.16.1
   uuid@11: ^11.1.1
   lodash: ^4.18.1
   # Next's optional image-optimisation dependency; inherits libvips CVEs below

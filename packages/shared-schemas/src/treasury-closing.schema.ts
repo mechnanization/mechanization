@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { typeError } from './type-error';
 import { municipalToday } from './cash-policy';
 import { businessDay } from './primitives';
 import type { TreasuryAccountType, TreasuryEntrySource } from './treasury.schema';
@@ -54,7 +55,7 @@ export function varianceOf(counted: number, expected: number): number {
 
 /** What was found in a wallet: not negative, at most two decimals. */
 const countedAmount = z
-  .number({ required_error: 'اكتب المبلغ المعدود', invalid_type_error: 'المبلغ المعدود رقم' })
+  .number(typeError({ required: 'اكتب المبلغ المعدود', invalid: 'المبلغ المعدود رقم' }))
   .finite('المبلغ المعدود رقم')
   .min(0, 'المبلغ المعدود لا يكون سالباً')
   .max(999_999_999_999, 'المبلغ كبير جداً')
@@ -62,7 +63,7 @@ const countedAmount = z
 
 /** The books' figure as the screen showed it. Signed, though the ledger never lets it go below zero. */
 const shownExpected = z
-  .number({ required_error: 'الرصيد الدفتري مطلوب', invalid_type_error: 'الرصيد الدفتري رقم' })
+  .number(typeError({ required: 'الرصيد الدفتري مطلوب', invalid: 'الرصيد الدفتري رقم' }))
   .finite('الرصيد الدفتري رقم')
   .min(-999_999_999_999, 'الرصيد كبير جداً')
   .max(999_999_999_999, 'الرصيد كبير جداً')
@@ -78,7 +79,7 @@ const shownExpected = z
  */
 export const dailyCountLineSchema = z
   .object({
-    accountId: z.string().uuid('حساب غير صالح'),
+    accountId: z.string().guid('حساب غير صالح'),
     expectedAmount: shownExpected,
     countedAmount,
     varianceReason: z.string().trim().max(500, 'السبب طويل جداً').optional(),
@@ -120,7 +121,7 @@ export type RecordDailyCountInput = z.infer<typeof recordDailyCountSchema>;
  * the closer read.
  */
 const shownCountSchema = z.object({
-  accountId: z.string().uuid('حساب غير صالح'),
+  accountId: z.string().guid('حساب غير صالح'),
   countedAt: z.string().datetime({ message: 'وقت الجرد غير صالح' }),
 });
 
@@ -147,7 +148,7 @@ export type CloseDayInput = z.infer<typeof closeDaySchema>;
 export const reopenDaySchema = z.object({
   businessDate,
   reason: z
-    .string({ required_error: 'اكتب سبب إعادة الفتح' })
+    .string(typeError({ required: 'اكتب سبب إعادة الفتح' }))
     .trim()
     .min(REOPEN_REASON_MIN, 'اكتب سبباً واضحاً لإعادة فتح اليومية')
     .max(500, 'السبب طويل جداً'),

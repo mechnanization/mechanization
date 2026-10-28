@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { typeError } from './type-error';
 import {
   applicantCapacitySchema,
   requestAttachmentTypeSchema,
@@ -72,7 +73,7 @@ export const REQUEST_STATUSES_TAKING_ATTACHMENTS = [
 
 // ─── inputs ───
 
-const uuid = (message: string) => z.string({ required_error: message }).uuid(message);
+const uuid = (message: string) => z.string(typeError({ required: message })).guid(message);
 
 const requestFields = {
   requestType: requestTypeSchema,
@@ -85,7 +86,7 @@ const requestFields = {
     .max(500, 'الغرض طويل جداً')
     .optional()
     .transform((value) => (value ? value : undefined)),
-  clientRequestId: z.string().uuid(),
+  clientRequestId: z.string().guid(),
 };
 
 /** A type tied to a property names a card; a unit line is always on a card. */
@@ -114,7 +115,7 @@ export type SubmitCounterRequestInput = z.infer<typeof submitCounterRequestSchem
 /** «جاهزة للاستلام»: what the paper certifies, in the clerk's words (open decisions §20 D3). */
 export const approveRequestSchema = z.object({
   statement: z
-    .string({ required_error: 'اكتب نصّ الإفادة' })
+    .string(typeError({ required: 'اكتب نصّ الإفادة' }))
     .trim()
     .min(5, 'اكتب نصّ الإفادة')
     .max(2000, 'النصّ طويل جداً'),
@@ -124,7 +125,7 @@ export type ApproveRequestInput = z.infer<typeof approveRequestSchema>;
 /** «رفض الطلب», with the reason the citizen will read. */
 export const rejectRequestSchema = z.object({
   reason: z
-    .string({ required_error: 'اكتب سبب الرفض' })
+    .string(typeError({ required: 'اكتب سبب الرفض' }))
     .trim()
     .min(5, 'اكتب سبب الرفض (٥ أحرف على الأقل)')
     .max(500, 'السبب طويل جداً'),
@@ -135,7 +136,7 @@ export type RejectRequestInput = z.infer<typeof rejectRequestSchema>;
 export const updateRequestTypeSettingSchema = z.object({
   enabled: z.boolean(),
   feeAmount: z.coerce
-    .number({ invalid_type_error: 'الرسم يجب أن يكون رقماً' })
+    .number(typeError({ invalid: 'الرسم يجب أن يكون رقماً' }))
     .int('الرسم بالليرة، رقماً صحيحاً')
     .min(0, 'الرسم لا يكون سالباً')
     .max(1_000_000_000, 'الرسم كبير جداً — يرجى المراجعة'),

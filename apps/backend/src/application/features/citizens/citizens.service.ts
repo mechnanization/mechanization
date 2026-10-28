@@ -99,10 +99,10 @@ const MAX_LIST_ROWS = 500;
  * flat template prefixes the header to keep it distinct from the property's own
  * `side`/`unitArea`.
  */
-function columnHeaderFor(path: ReadonlyArray<string | number> | undefined): string | undefined {
+function columnHeaderFor(path: ReadonlyArray<PropertyKey> | undefined): string | undefined {
   if (!path || path.length === 0) return undefined;
 
-  const leaf = path.filter((segment) => typeof segment === 'string').at(-1);
+  const leaf = path.filter((segment): segment is string => typeof segment === 'string').at(-1);
   if (!leaf) return undefined;
 
   const key = path.includes('units') && leaf === 'floor' ? 'unitFloor' : leaf;

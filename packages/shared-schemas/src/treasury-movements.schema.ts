@@ -44,8 +44,8 @@ export const listTreasuryMovementsQuerySchema = z
     direction: z.enum(TREASURY_MOVEMENT_DIRECTIONS).optional(),
     from: businessDay.optional(),
     to: businessDay.optional(),
-    accountId: z.string().uuid().optional(),
-    categoryId: z.string().uuid().optional(),
+    accountId: z.string().guid().optional(),
+    categoryId: z.string().guid().optional(),
     /** ISO 4217, as the wallets store it. */
     currency: z
       .string()

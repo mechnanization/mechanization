@@ -73,8 +73,11 @@ const create = (contact: Record<string, unknown> = {}) =>
 const edit = (contact: Record<string, unknown> = {}) =>
   adminUpdateCitizenSubmissionSchema.safeParse({ residence: 'RESIDENT', ...household(contact) });
 
-const messages = (result: { success: boolean; error?: { issues: Array<{ path: Array<string | number>; message: string }> } }) =>
-  result.success ? [] : (result.error?.issues ?? []).map((issue) => `${issue.path.join('.')}: ${issue.message}`);
+const messages = (result: {
+  success: boolean;
+  error?: { issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey>; message: string }> };
+}) =>
+  result.success ? [] : (result.error?.issues ?? []).map((issue) => `${issue.path.map(String).join('.')}: ${issue.message}`);
 
 const contactOf = (result: ReturnType<typeof create>) => {
   if (!result.success) throw new Error(JSON.stringify(messages(result)));

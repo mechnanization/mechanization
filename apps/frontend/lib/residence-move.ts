@@ -127,7 +127,10 @@ export function planResidenceMove(values: CitizenFormValues, to: CitizenResidenc
   });
 
   const missing = new Set<string>();
-  const collect = (section: 'personal' | 'contact', result: { success: boolean; error?: { issues: Array<{ path: Array<string | number> }> } }) => {
+  const collect = (
+    section: 'personal' | 'contact',
+    result: { success: boolean; error?: { issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey> }> } },
+  ) => {
     if (result.success) return;
     for (const issue of result.error?.issues ?? []) {
       const field = String(issue.path[0] ?? '');

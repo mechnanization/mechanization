@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { typeError } from './type-error';
 import {
   contactDetailsSchema,
   estatePersonalSchema,
@@ -148,7 +149,7 @@ export type AdminUpdateCitizen = z.infer<typeof adminUpdateCitizenSchema>;
  * strict schemas before the flags are known: which field is excused is what
  * decides whether the parse should have failed at all.
  */
-const rawSection = z.record(z.unknown());
+const rawSection = z.record(z.string(), z.unknown());
 
 /**
  * A personal or contact section with its `null` values read as absent.
@@ -245,9 +246,9 @@ export type CardRemovalReason = (typeof CARD_REMOVAL_REASON)[number];
 
 export const cardRemovalSchema = z.object({
   propertyId: uuid,
-  reason: z.enum(CARD_REMOVAL_REASON, { errorMap: () => ({ message: 'سبب الحذف غير صالح' }) }),
+  reason: z.enum(CARD_REMOVAL_REASON, { error: 'سبب الحذف غير صالح' }),
   endedAt: z.coerce
-    .date({ invalid_type_error: 'التاريخ غير صالح' })
+    .date(typeError({ invalid: 'التاريخ غير صالح' }))
     // Judged at parse time — a bound computed at module load goes stale.
     .refine((value) => value.getTime() <= Date.now() + 60_000, 'التاريخ في المستقبل')
     .optional(),
@@ -351,7 +352,7 @@ function strictIssuePaths(input: SubmissionInput, excused: ReadonlySet<string>):
   const paths: string[] = [];
   const schemas = sectionSchemas(input.residence);
 
-  const collect = (prefix: string, result: z.SafeParseReturnType<unknown, unknown>) => {
+  const collect = (prefix: string, result: z.ZodSafeParseResult<unknown>) => {
     if (result.success) return;
     for (const issue of result.error.issues) paths.push(issuePath(prefix, issue.path));
   };
@@ -716,7 +717,7 @@ function unexcusedIssues(input: SubmissionInput, ctx: z.RefinementCtx): void {
   }
 
   const reported = new Set<string>();
-  const report = (prefix: string, result: z.SafeParseReturnType<unknown, unknown>) => {
+  const report = (prefix: string, result: z.ZodSafeParseResult<unknown>) => {
     if (result.success) return;
     for (const issue of result.error.issues) {
       const path = issuePath(prefix, issue.path);
@@ -977,7 +978,7 @@ const submissionEnvelope = {
    * a correction of a residence recorded wrongly.
    */
   movedOn: z.coerce
-    .date({ invalid_type_error: 'تاريخ الانتقال غير صالح' })
+    .date(typeError({ invalid: 'تاريخ الانتقال غير صالح' }))
     .refine((value) => value.getTime() <= Date.now() + 60_000, 'تاريخ الانتقال في المستقبل')
     .optional(),
 };
@@ -997,7 +998,7 @@ export const duplicateReviewAnswerSchema = z.object({
   /** The phone is also the landlord's number on one of this record's own cards, and that is right. */
   sharedPhoneWithLandlord: z.boolean().default(false),
   reason: z
-    .string({ required_error: 'يرجى ذكر سبب الاعتبار' })
+    .string(typeError({ required: 'يرجى ذكر سبب الاعتبار' }))
     .trim()
     .min(4, 'يرجى ذكر سبب الاعتبار')
     .max(300, 'السبب طويل جداً'),
@@ -1077,7 +1078,7 @@ export const setCitizenActiveSchema = z
       .max(200, 'اسم صاحب الطلب طويل جداً')
       .optional(),
     movedOn: z.coerce
-      .date({ invalid_type_error: 'تاريخ الانتقال غير صالح' })
+      .date(typeError({ invalid: 'تاريخ الانتقال غير صالح' }))
       .refine((value) => value.getTime() <= Date.now() + 60_000, 'تاريخ الانتقال في المستقبل')
       .optional(),
   })
