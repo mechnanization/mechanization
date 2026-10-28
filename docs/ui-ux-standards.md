@@ -1,6 +1,6 @@
 # UI/UX standards: binding for every change to `apps/frontend`
 
-Last verified against the code: `fix/pr116-review` (PR #116 merged with `fix/pr115-review`, which stacks #123, #124 and #115 on `develop@5e8f5c3`, with its review fixes): `DatePicker`'s Escape and year list (FRM-6), the PRIM-2 guard, TXT-1 on four files #116 touched, the stat tones at zero; phase 1 of the kit adoption, `StatItem`'s `hint`, §17.1 recounted; «أمان الحساب» on the kit `invalid` prop, its error state, `rounded-lg`; the double-submit entries, `Pager` users, 2026-10-15; and `bugs-fix` (on `develop@5e8f5c3`; the finance audit remediation: the fee wizard's retry key, the salary dialog's month, the salary ceiling in الإعدادات, «إلغاء الفاتورة» on the bill page, the collector's fixed method on the settle page), 2026-10-12; the review of PR #120 (a cancelled bill named on every owed screen, the cash page closed to collectors, the counter pages re-read after a refused retry, §17.6) against `fix/finance-audit-remediation` rebased on `chore/migration-0090-0091@8d386b5`, 2026-10-13; §17 recounted where the fees-page fixes touched it (stat components, banners, `loadSession`, double frames, physical utilities, toasts, header actions) on `fix/fees-page-ux` from `develop@5e8f5c3` (uncommitted), 2026-10-12; the merged «الإيرادات والنفقات» register (the PRIM-3 exception for a register grouped by day, PRIM-29 `SearchField`, money received in COL-2, `ChoiceCard` taking a node and a `trailing` figure, its `transition-all` and `shadow-2xs` gone from §17, PRIM-18's exception for a form that stays for the next act, the `CurrencyInput` size that stops at `sm` added to §17.4) on the same branch (uncommitted), 2026-10-12; the same day, the register moved to its own page «الحركات المالية» (`/finance/transactions`, PRIM-3), the wallet became `WalletSelect` (PRIM-27) and `ChoiceCard` lost `trailing` (uncommitted); later that day «الحركات المالية» became one frame of dated rows under a filter bar with the voucher in a side panel (PRIM-3), and `Sheet` moved onto Radix Dialog, its focus-trap debt gone from §17.1 and its 300ms from §17.5 (PRIM-17, CTL-6), the `StatStrip` and `Pager` counts and a controlled `DialogContent`'s lost focus in §17.1 (uncommitted); municipal requests on the same branch (uncommitted), 2026-10-13: PRIM-30 `FileInput` and CTL-13, the five native file pickers it leaves in §17.1, the queue as a PRIM-3 `DataTable` with its request in a `Sheet`, the counter form, the paper as a PRIM-28 document page.
+Last verified against the code: `fix/fee-wizard-review` (on `feat/tiered-fees-cancel-and-wizard@aa35d4a`, uncommitted), 2026-10-27: the fee wizard at the page's width, its details and scope steps as `FormSection` rows (`components/admin/fees/form-section.tsx`), the bearer cards without descriptions, a refused «التالي» said in a toast and FRM-2's exception for it (`Field`'s `errorElsewhere`, PRIM-13); before that, the fee wizard's review — TXT-1 on `issue-fee-form.tsx` (`fees.issueForm`), `ChoiceCard` radiogroups for the bearer and the target (PRIM-27, A11Y-3), Latin step numbers (TYP-4), FRM-2 checks on «التالي», `CurrencyInput` for the amount (PRIM-25), `formatDay` for the due date (PRIM-12), `useLeaveGuard`, the §17 rows for money formatting and the wizard's toasts; 2026-10-24; the same day, the bracket editor's template, chained ceilings, unit-type `ChipGroup` and coverage bars, and the preview's pinned figures, bracket chips and paged `DataTable`s, with the §17.1 `DataTable` count (uncommitted); 2026-10-25, «جدول الفئات» as its own wizard step, an editable `ui/table` added to §17.1 (uncommitted); `fix/fee-wizard-review` (on `feat/tiered-fees-cancel-and-wizard@aa35d4a`): §17.1 a `ConfirmDialog` title under the close X and §17.4 the phone card's 36px footer buttons, from the render check of the notices page, 2026-10-26; `fix/pr116-review` (PR #116 merged with `fix/pr115-review`, which stacks #123, #124 and #115 on `develop@5e8f5c3`, with its review fixes): `DatePicker`'s Escape and year list (FRM-6), the PRIM-2 guard, TXT-1 on four files #116 touched, the stat tones at zero; phase 1 of the kit adoption, `StatItem`'s `hint`, §17.1 recounted; «أمان الحساب» on the kit `invalid` prop, its error state, `rounded-lg`; the double-submit entries, `Pager` users, 2026-10-15; and `bugs-fix` (on `develop@5e8f5c3`; the finance audit remediation: the fee wizard's retry key, the salary dialog's month, the salary ceiling in الإعدادات, «إلغاء الفاتورة» on the bill page, the collector's fixed method on the settle page), 2026-10-12; the review of PR #120 (a cancelled bill named on every owed screen, the cash page closed to collectors, the counter pages re-read after a refused retry, §17.6) against `fix/finance-audit-remediation` rebased on `chore/migration-0090-0091@8d386b5`, 2026-10-13; §17 recounted where the fees-page fixes touched it (stat components, banners, `loadSession`, double frames, physical utilities, toasts, header actions) on `fix/fees-page-ux` from `develop@5e8f5c3` (uncommitted), 2026-10-12; the merged «الإيرادات والنفقات» register (the PRIM-3 exception for a register grouped by day, PRIM-29 `SearchField`, money received in COL-2, `ChoiceCard` taking a node and a `trailing` figure, its `transition-all` and `shadow-2xs` gone from §17, PRIM-18's exception for a form that stays for the next act, the `CurrencyInput` size that stops at `sm` added to §17.4) on the same branch (uncommitted), 2026-10-12; the same day, the register moved to its own page «الحركات المالية» (`/finance/transactions`, PRIM-3), the wallet became `WalletSelect` (PRIM-27) and `ChoiceCard` lost `trailing` (uncommitted); later that day «الحركات المالية» became one frame of dated rows under a filter bar with the voucher in a side panel (PRIM-3), and `Sheet` moved onto Radix Dialog, its focus-trap debt gone from §17.1 and its 300ms from §17.5 (PRIM-17, CTL-6), the `StatStrip` and `Pager` counts and a controlled `DialogContent`'s lost focus in §17.1 (uncommitted); municipal requests on the same branch (uncommitted), 2026-10-13: PRIM-30 `FileInput` and CTL-13, the five native file pickers it leaves in §17.1, the queue as a PRIM-3 `DataTable` with its request in a `Sheet`, the counter form, the paper as a PRIM-28 document page.
 
 This file binds every AI agent and every person who builds or reviews an
 interface in this repository. [CLAUDE.md](../CLAUDE.md) (non-negotiable 9) and
@@ -118,7 +118,7 @@ to, the primitive gets a prop instead.
 | PRIM-10 | LBP on screen | `<Money>`; `formatLbp` only for plain strings (toast, aria, CSV). `Money` isolates the signed figure left to right — a negative keeps its minus, U+2212, on the left of the digits on an Arabic page — and leaves the unit in the page's direction, so «ل.ل» sits after the figure in reading order on every screen. `signed` adds «+» for a ledger movement; `wrap` lets the unit drop under the figure in a narrow box. The treasury's `TreasuryAmount` is `Money` with `exact` | `toLocaleString()` plus «ل.ل» by hand; a figure wrapped in `dir="ltr"` with its unit, which puts «ل.ل» on the other side from every other screen (UX-1) |
 | PRIM-11 | USD/EUR on screen | `<Money currency>` in a figure or a table (drawn as PRIM-10, never compacted); `formatForeign(amount, currency)` or `formatMoney(amount, currency, locale)` from `lib/currency.ts` for plain strings | A page-local USD formatter, `$${x.toFixed(2)}`, or a third spelling |
 | PRIM-12 | Dates | `formatDate` / `formatTime` / `formatDateTime` / `formatMonthList` from `lib/dates`; a calendar day (`YYYY-MM-DD`, a business day with no time) through `formatDay` / `formatDayLong`, which never pass it through a zone | `toLocaleDateString('ar')`, raw month numbers joined with «، » |
-| PRIM-13 | A labelled input | `Field` (label, required `*`, «(اختياري)», `caution`, error with `role="alert"`) wrapping `Input`/`Select`/`Textarea`/`DatePicker` | A bare `<label>` plus input; a native `<select>`; a native `type="date"` in new code |
+| PRIM-13 | A labelled input | `Field` (label, required `*`, «(اختياري)», `caution`, error with `role="alert"`; `errorElsewhere` for FRM-2's one exception) wrapping `Input`/`Select`/`Textarea`/`DatePicker` | A bare `<label>` plus input; a native `<select>`; a native `type="date"` in new code |
 | PRIM-14 | Two to four options | `SegmentedControl`; three or more filter chips: `ChipGroup` | Hand-rolled toggle buttons |
 | PRIM-15 | Foldable section | `CollapsibleSection` | A `useState` toggle with a chevron |
 | PRIM-16 | Confirmation of a destructive or irreversible action | `ConfirmDialog` (`requireText` when typing the subject's name is warranted); throw from `onConfirm` to show the server's refusal inline | `window.confirm`, a custom dialog |
@@ -419,7 +419,14 @@ Spacing, radius and shadow values as defined: [DESIGN.md](../DESIGN.md) "Layout"
   same way everywhere.
 - **FRM-2. Validation.** Validate on blur or submit, not per keystroke. The
   error goes under the field with `role="alert"`. On a failed submit, focus the
-  first invalid field. Keep what the user typed.
+  first invalid field. Keep what the user typed. **One exception, the fee
+  wizard** (`fees/new`, the user's decision 2026-10-27): a refused «التالي» says
+  the first refusal in a warning toast, with how many more fields need fixing,
+  and nothing is drawn under the field. The field keeps its mark until it is
+  fixed — a red label (`Field`'s `errorElsewhere`), a red border on a bracket
+  cell — and its message as `sr-only` text, without `role="alert"`, since the
+  toast announced it. The bracket table's own line about gaps between brackets,
+  which belongs to no one cell, stays on screen. Any other form keeps the rule.
 - **FRM-3. Labels describe the outcome.** A button says what will happen («سجّل
   الدفعة»), never the gesture («موافق», «إرسال»).
 - **FRM-4. Money entry:**
@@ -699,8 +706,9 @@ Code-pattern debt outside the UI rules lives in
 - **Native file pickers, 5 in 4 files** (CTL-13, PRIM-30), from before `FileInput` existed (2026-10-13):
   `import-citizens-dialog.tsx`, `settings/backup-section.tsx` (two), `settings/cadastre-section.tsx`,
   `settings/profile-section.tsx` (the crest). Move each to `FileInput` when the file is next touched.
-- **Tables not drawn by `DataTable`, 14 in 13 files** (PRIM-3). `DataTable`
-  has 19 users. Registers, which PRIM-3 covers: `finance/collector-custody-panel`
+- **Tables not drawn by `DataTable`, 15 in 14 files** (PRIM-3). `DataTable`
+  has 21 users (recounted 2026-10-24, with «معاينة قبل الإصدار»'s conflicts and
+  unassessable citizens). Registers, which PRIM-3 covers: `finance/collector-custody-panel`
   (`finance/collectors`), `audit-daily` (`audit`; its detail rows are what
   `renderSubRow` does), the payouts page (`inspector/profile/[staffId]/payouts`),
   `settings/users-section` (its own search, skeleton and red error `<p>`), and
@@ -709,7 +717,8 @@ Code-pattern debt outside the UI rules lives in
   `ui/table`: `bulk-settle/bulk-bills-table` (in a dialog, a remove button per
   row), `bulk-settle/bulk-payment-receipt` (the printed receipt's items),
   `finance/daily-cash-report` (the day's report, `finance/daily/report`),
-  `settings/numbering-section` (an input in every cell),
+  `settings/numbering-section` and `fees/tiered-matrix-editor` (the fee
+  wizard's «جدول الفئات», 2026-10-25) (an input in every cell),
   `settings/security-section` (the account page's login history, drawn from
   hard-coded `SAMPLE_ROWS`, BAN-13) and `settings/backup-section` (2, not
   rendered). Not registers, a raw `<table>`: `charts.tsx` (each chart's
@@ -783,7 +792,11 @@ Code-pattern debt outside the UI rules lives in
   `DialogContent`'s close button and `Badge` also use `focus:` rings instead of
   `focus-visible:` (A11Y-1).
 - **`ConfirmDialog`**: `requireText` is compared raw, without `normalizeArabic`
-  (DES-3); the default `confirmLabel` «تأكيد» is a gesture label (FRM-3).
+  (DES-3); the default `confirmLabel` «تأكيد» is a gesture label (FRM-3). Its
+  header gives the title the whole width while `DialogContent`'s close X sits
+  `absolute end-4 top-4` inside it, so a title that fills its first line runs
+  into the X (LAY-6): seen at 360px on «إلغاء الإشعار «…»» with a long notice
+  title (2026-10-26). `DialogHeader` has the same shape; not measured there.
 - **`Toast` side stripe** (BAN-3): the toast root in
   `components/ui/toast.tsx` uses `border-s-4`, a coloured side stripe thicker
   than 1px. Replace it with a tinted surface or icon plus text.
@@ -900,6 +913,16 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
   every `FEE_ISSUE_ROLES` role: of its four actions, «تكليف مباشر» is cut at the edge
   and «إصدار رسم جديد» is wholly off-screen, reachable only by swiping the row. Other
   pages with several header actions were not measured.
+- **Labelled buttons squeezed in `DataTable`'s phone card** (LAY-6): the card
+  footer's `[&_button]:size-9` makes every `<button>` in a `meta.mobile: 'actions'`
+  column a 36px square, so a label spills out of it and two collide
+  ([gotchas](gotchas.md)). Measured 2026-10-26 on the notices page, which now passes
+  `!w-auto` as `finding-parts.tsx` does. Still squeezed, by reading:
+  `finance/income/categories/page.tsx` and `requests/types/page.tsx` (two labelled
+  buttons each, which collide), `finance/transfers/page.tsx` (its review and void
+  buttons: `max-sm:w-full` loses to the footer) and `requests/page.tsx` («فتح»).
+  A floor in the footer (`min-h-9 min-w-9`) instead of a size would cover them all;
+  not done.
 
 ### 17.5 Motion
 
@@ -968,8 +991,10 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
   search by «الرقم المرجعي» for every role, but for «مشاهد فقط» the search leaves
   the reference out (`citizenSearchText`). Role-aware hints are not built
   (2026-10-06).
-- **Money formatting** (PRIM-11, PRIM-25): `charge-citizen-dialog.tsx` and
-  `issue-fee-form.tsx` each define a local `formatLbp(value: string)`. The pay
+- **Money formatting** (PRIM-11, PRIM-25): `charge-citizen-dialog.tsx` defines a local
+  `formatLbp(value: string)`. `issue-fee-form.tsx`'s went on 2026-10-24 (`fix/fee-wizard-review`):
+  its amount is a `CurrencyInput` formatted by `formatTypedAmount`, and `typedAmount` in
+  `lib/fee-notice-draft.ts` reads Arabic-Indic digits, which the local `\D` strip dropped. The pay
   dialog's local `lbp`, which wrote «ل.ل» into the English sentence too (PRIM-10, TXT-2),
   went on 2026-10-13 (PR #113), and so did the payout history's page-local `$` formatter
   (PRIM-11); the inspector's dashboard and the earnings roster keep theirs.
@@ -984,6 +1009,10 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
   Harmless in Lebanon, wrong on a laptop set to another zone. A day named in an API refusal
   (`CLOSED_DAY_MUTATION_BLOCKED`, `DAY_ALREADY_CLOSED`, …) printed in its ISO form beside the page's
   09/10/2026; fixed 2026-10-11: `localizeApiError` writes any `YYYY-MM-DD` param through `formatDay`.
+- **Leaving a half-filled form** (STA-3, 2026-10-24): `useLeaveGuard` (`lib/use-leave-guard.ts`)
+  asks before a link or a reload leaves the fee wizard, but not before the browser's back button:
+  the app router gives a page no way to refuse a `popstate`. No other long form uses it yet (the
+  building editor keeps drafts instead).
 - **Double submit** (STA-4): the fees register's «تكليف مباشر» (`handleChargeCitizen` in
   `fees/page.tsx`) takes no retry key: its route accepts none, so after a lost answer the clerk
   must check the register before pressing again. (This entry used to name `InspectorPayoutDialog`
@@ -1054,12 +1083,11 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
   - The fee wizard's issue (`fees/new`) carries a retry key since 2026-10-12 (`fee-notice:new`,
     `fee_notices.clientRequestId`, 0091; finance audit B3): a retry is answered with the first
     notice («صدر الرسم من قبل…»). Still open: «تكليف مالي» (docs/security.md, known gaps).
-  - The fee wizard (`fees/new`) says «معفاة من الرسوم» and «مالك مسؤول» twice after an issue: the
-    toasts for `feeExemptUnits` and `coOwnerPaidUnits` are each written twice in `issue` (found
-    2026-10-12, not changed by the finance audit's remediation).
-  - The fee wizard (`fees/new`) gained an in-flight ref, and stays locked once it has issued. A
-    page, unlike the dialog it replaced, stays mounted until the next route is ready, and a
-    second press there would bill every household twice.
+  - The fee wizard (`fees/new`) gained an in-flight ref, and stays locked once it has issued, until
+    «إصدار رسم آخر» opens a new wizard under a new key. A page, unlike the dialog it replaced, stays
+    mounted until the next route is ready, and a second press there would bill every household twice.
+    Since 2026-10-24 an issue's counts stay on screen (`IssueResultPanel`) instead of up to nine
+    toasts, which also retired the row that said two of them fired twice.
 
 - **Printing** (PRIM-28): a page with no print root prints the receipt rule's blank sheet;
   only the treasury statement has one. «تقرير الصندوق اليومي» (`finance/daily/report`, PR #106)

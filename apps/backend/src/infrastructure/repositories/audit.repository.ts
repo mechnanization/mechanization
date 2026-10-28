@@ -67,6 +67,12 @@ export class PrismaAuditRepository implements AuditRepository {
     await client.auditLogEntry.create({ data: toRow(entry) });
   }
 
+  async appendManyInTransaction(entries: readonly AuditLogEntry[], transaction?: TransactionHandle): Promise<void> {
+    if (entries.length === 0) return;
+    const client = (transaction ?? this.db) as Prisma.TransactionClient;
+    await client.auditLogEntry.createMany({ data: entries.map(toRow) });
+  }
+
   /**
    * One round trip via `count(*) OVER()` rather than a `findMany` + `count`
    * pair: two queries meant two connections briefly competing for the same

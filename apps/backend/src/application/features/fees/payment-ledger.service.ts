@@ -1,11 +1,12 @@
 import { Injectable } from '@nestjs/common';
-import { municipalToday, type PaymentMethod } from '@mechanization/shared-schemas';
+import { citizenDisplayName, municipalToday, type PaymentMethod } from '@mechanization/shared-schemas';
 import type { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { allocateDocumentNumber, allocateDocumentNumbers } from '../../common/document-number';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { AuditService, type AuditEntryInput } from '../audit/audit.service';
+import { assertNotMergedAway } from '../citizens/merged-away';
 import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
 
 /** One movement of money, as the caller describes it. */
@@ -35,6 +36,12 @@ export interface LedgerEntryInput {
    * money twice.
    */
   clientRequestId?: string | null;
+  /**
+   * On a shared unit bill (0099), which of its debtors the money came from:
+   * required there and refused on a citizen's own bill (`recordIn`). Kept on
+   * the transaction for the receipt.
+   */
+  paidByCitizenId?: string | null;
   /**
    * Set only by the two writes that settle a citizen's claim (PENDING_REVIEW):
    * the staff confirmation and the Whish success callback. Any other `record`
@@ -75,7 +82,8 @@ export interface LockedInvoice {
   paidAmount: number;
   currency: string;
   paymentStatus: string;
-  citizenId: string;
+  /** Null on a shared unit bill (0099), which its debtors owe instead. */
+  citizenId: string | null;
   createdAt: Date;
   dueDate: Date;
 }
@@ -220,6 +228,42 @@ export class PaymentLedgerService {
       const decidesThisClaim =
         input.resolvesClaim && (input.claimRef == null || input.claimRef === invoice.whishTransactionRef);
       if (!decidesThisClaim) throw claimUnderReview();
+    }
+
+    /*
+      A shared unit bill (0099, D5) has no citizen of its own: any of its
+      debtors may pay it, and the receipt names the one who did. Here, where
+      every path that settles a bill passes, so none can take money on a shared
+      bill from nobody — or name a payer on a bill that is one person's.
+    */
+    if (invoice.citizenId === null) {
+      if (!input.paidByCitizenId) {
+        throw new ValidationError({
+          code: 'SHARED_BILL_PAYER_REQUIRED',
+          message: 'A shared unit bill is paid by one of its debtors; say which.',
+        });
+      }
+      const debtor = await tx.citizenPaymentDebtor.findUnique({
+        where: { paymentId_citizenId: { paymentId: invoice.id, citizenId: input.paidByCitizenId } },
+        select: { citizenId: true },
+      });
+      if (!debtor) {
+        throw new ValidationError({
+          code: 'SHARED_BILL_PAYER_NOT_DEBTOR',
+          message: 'The payer named is not one of this shared unit bill’s debtors.',
+        });
+      }
+      /*
+        A file merged into another keeps its debtor row on a bill both owed, and
+        a receipt may not be written against it (decision D14, 2026-10-26): the
+        answer names the file that stays, which is a debtor on the bill too.
+      */
+      await assertNotMergedAway(tx, input.paidByCitizenId);
+    } else if (input.paidByCitizenId) {
+      throw new ValidationError({
+        code: 'SHARED_BILL_PAYER_ON_OWN_BILL',
+        message: 'A payer is named only on a shared unit bill; this bill is one citizen’s.',
+      });
     }
 
     /*
@@ -391,7 +435,7 @@ export class PaymentLedgerService {
         paidAmount: string;
         currency: string;
         paymentStatus: string;
-        citizenId: string;
+        citizenId: string | null;
         createdAt: Date;
         dueDate: Date;
       }>
@@ -439,6 +483,7 @@ export class PaymentLedgerService {
           method: true,
           externalRef: true,
           collectedById: true,
+          paidByCitizenId: true,
         },
       });
       if (!original) throw new NotFoundError({
@@ -485,6 +530,8 @@ export class PaymentLedgerService {
           method: original.method as PaymentMethod,
           externalRef: original.externalRef,
           collectedById: original.collectedById,
+          // On a shared unit bill (0099), the money goes back to the debtor it came from.
+          paidByCitizenId: original.paidByCitizenId,
           recordedById: input.recordedById,
           note: input.note,
         },
@@ -504,6 +551,7 @@ export class PaymentLedgerService {
         collectedBy: { select: { firstName: true, lastName: true } },
         recordedBy: { select: { firstName: true, lastName: true } },
         reversedBy: { select: { id: true } },
+        paidByCitizen: { select: { firstName: true, middleName: true, lastName: true, residence: true } },
       },
     });
 
@@ -520,6 +568,13 @@ export class PaymentLedgerService {
       recordedBy: row.recordedBy
         ? `${row.recordedBy.firstName} ${row.recordedBy.lastName}`
         : null,
+      /*
+        On a shared unit bill (0099), the debtor this money came from: the person
+        its receipt names (decision D9, 2026-10-26). Staff only, as this list is.
+        Null on a citizen's own bill, whose receipt names the bill's citizen.
+      */
+      paidByCitizenId: row.paidByCitizenId,
+      paidByName: row.paidByCitizen ? citizenDisplayName(row.paidByCitizen, { middleName: true }) : null,
       /** True for the opposing row itself; `reversed` for the one it undoes. */
       isReversal: row.reversalOfId !== null,
       reversed: row.reversedBy !== null,
@@ -555,7 +610,8 @@ export class PaymentLedgerService {
     paidAmount: number;
     currency: string;
     paymentStatus: string;
-    citizenId: string;
+    /** Null on a shared unit bill (0099), which its debtors owe instead. */
+    citizenId: string | null;
     createdAt: Date;
     /** The claim the bill is under review for, when it is (`declare`, `startWhishCheckout`). */
     whishTransactionRef: string | null;
@@ -567,7 +623,7 @@ export class PaymentLedgerService {
         paidAmount: string;
         currency: string;
         paymentStatus: string;
-        citizenId: string;
+        citizenId: string | null;
         createdAt: Date;
         whishTransactionRef: string | null;
       }>
@@ -720,6 +776,7 @@ export class PaymentLedgerService {
         adjustmentReason: input.adjustmentReason ?? null,
         clientRequestId: input.clientRequestId ?? null,
         settlementId: input.settlementId ?? null,
+        paidByCitizenId: input.paidByCitizenId ?? null,
       },
       select: { id: true, occurredAt: true },
     });

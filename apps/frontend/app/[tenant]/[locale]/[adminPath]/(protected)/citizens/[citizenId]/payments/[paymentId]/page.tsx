@@ -31,12 +31,19 @@ import {
   ApiRequestError,
   cancelBill,
   type CancelBillResult,
+  type CitizenProfile,
+  type CitizenProfilePayment,
   getCitizenProfile,
   getMunicipalitySettings,
+  getPaymentById,
   getTenantConfig,
   logApiError,
+  type PaymentLedgerEntry,
   settlePayment,
 } from '@/lib/api-client';
+import { defaultPayer } from '@/lib/shared-bill-payer';
+import { SharedBillPayerField } from '@/components/admin/fees/shared-bill-payer';
+import { receiptOfEntry } from '@/lib/bill-receipts';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { formatDate } from '@/lib/dates';
@@ -152,6 +159,44 @@ export default function SettleCashPage({
     [citizen, paymentId],
   );
 
+  /*
+    A shared unit bill (0099, D5) is owed in full by everyone registered on the
+    unit and paid by one of them, whom the receipt names; the server refuses a
+    payment on it that names nobody (`SHARED_BILL_PAYER_REQUIRED`). This page
+    never asked, so a shared bill could not be paid from a citizen's file at all
+    (2026-10-27). Its debtors are read for such a bill only, and the choice
+    starts on this file's citizen (`defaultPayer`).
+  */
+  const shared = Boolean(payment?.sharedUnit);
+  const bill = useStaffQuery({
+    queryKey: ['fee-payment', tenant, paymentId],
+    queryFn: (tok) => getPaymentById(tenant, tok, paymentId),
+    tenant,
+    base,
+    // No token, no read: an ordinary bill never asks.
+    token: shared ? token : null,
+    errorMessage: t('payersFailed'),
+  });
+  const debtors = bill.data?.sharedDebtors;
+  const [paidBy, setPaidBy] = useState('');
+  useEffect(() => {
+    if (paidBy === '' && debtors && debtors.length > 0) setPaidBy(defaultPayer(debtors, citizenId));
+  }, [debtors, paidBy, citizenId]);
+  /** Another co-owner is paying: the receipt is theirs, rebuilt from their own file, read as soon as they are chosen. */
+  const otherPayer = shared && paidBy !== '' && paidBy !== citizenId;
+  const payerFile = useStaffQuery({
+    queryKey: ['citizen-profile', tenant, paidBy],
+    queryFn: (tok) => getCitizenProfile(tenant, tok, paidBy),
+    tenant,
+    base,
+    token: otherPayer ? token : null,
+    errorMessage: t('payerFileFailed'),
+  });
+  /** Whose file the receipt prints: the payer's, never another debtor's. Null while that file is being read. */
+  const receiptCitizen = otherPayer ? (payerFile.data ?? null) : citizen;
+  /** «سجّل الدفعة» waits for a payer, and for the file the receipt will name. */
+  const payerBlocked = shared && (paidBy === '' || receiptCitizen === null);
+
   const [payIn, setPayIn] = useState<PayIn>('LBP');
   const [lbp, setLbp] = useState('');
   const [foreignRaw, setForeignRaw] = useState('');
@@ -163,6 +208,17 @@ export default function SettleCashPage({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<RecordedMovement | null>(null);
+  /**
+   * One payment's receipt on a shared unit bill, reprinted from the receipts
+   * below (decision D9): the payer's file and that payment alone — never the
+   * bill's total under the file that happens to be open.
+   */
+  const [reprint, setReprint] = useState<{
+    citizen: CitizenProfile;
+    payment: CitizenProfilePayment;
+    recorded: RecordedMovement;
+  } | null>(null);
+  const [reprintError, setReprintError] = useState<string | null>(null);
   /** A refusal said the key's payment exists, so the bill on screen was read before it. */
   const [billMoved, setBillMoved] = useState(false);
   /** …and reading it again failed: the balance shown is not the bill's, so nothing is judged against it. */
@@ -290,8 +346,34 @@ export default function SettleCashPage({
       : 'تعذّر تسجيل الدفعة. لن تُسجَّل مرتين — اضغط مجدداً لإعادة المحاولة.';
   };
 
+  /**
+   * «طباعة الوصل» on one payment of a shared unit bill (D9): the payer's own
+   * file — read when it is not this one — and the receipt that payment wrote,
+   * with what the bill still owed right after it (`receiptOfEntry`).
+   */
+  const printSharedReceipt = async (entry: PaymentLedgerEntry, entries: readonly PaymentLedgerEntry[]) => {
+    if (!token || !payment || !entry.paidByCitizenId) return;
+    setReprintError(null);
+    try {
+      const payer =
+        entry.paidByCitizenId === citizenId && citizen
+          ? citizen
+          : await getCitizenProfile(tenant, token, entry.paidByCitizenId);
+      const row = payer.payments.find((candidate) => candidate.id === payment.id);
+      const recorded = receiptOfEntry(entries, entry.id, payment.amount);
+      if (!row || !recorded) {
+        setReprintError(t('reprintMissing'));
+        return;
+      }
+      setReprint({ citizen: payer, payment: { ...row, remaining: recorded.remaining }, recorded });
+    } catch (caught) {
+      logApiError(caught);
+      setReprintError(t('reprintFailed'));
+    }
+  };
+
   const submit = async () => {
-    if (!token || !payment || problem || receipt || billStale || inFlight.current) return;
+    if (!token || !payment || problem || payerBlocked || receipt || billStale || inFlight.current) return;
     inFlight.current = true;
     setBusy(true);
     setError(null);
@@ -310,6 +392,12 @@ export default function SettleCashPage({
         ...(paidOn !== today ? { paidOn } : {}),
         ...(needsReason ? { adjustmentReason: reason.trim() } : {}),
         ...(note.trim() ? { note: note.trim() } : {}),
+        /*
+          A shared unit bill (0099) is paid by one of its debtors, named: the one
+          chosen above, this file's citizen unless the clerk chose another (the
+          ledger checks they are one). Refused on any other bill.
+        */
+        ...(shared ? { paidByCitizenId: paidBy } : {}),
         clientRequestId: heldKey(tenant, keyScope),
       });
     } catch (caught) {
@@ -747,6 +835,33 @@ export default function SettleCashPage({
                 </div>
               </div>
 
+              {/* Who is paying a shared unit bill (0099, D5): this file's citizen to start with, any debtor of the unit. */}
+              {shared ? (
+                bill.error && !debtors ? (
+                  <ErrorState compact title={bill.error} onRetry={() => void bill.refetch()} retryLabel={t('payerRetry')} />
+                ) : (
+                  <div className="space-y-2">
+                    <SharedBillPayerField
+                      id="tender-payer"
+                      debtors={debtors ?? []}
+                      value={paidBy}
+                      onChange={setPaidBy}
+                      disabled={!debtors || busy || receipt !== null}
+                    />
+                    {otherPayer && payerFile.error && !payerFile.data ? (
+                      <Alert variant="destructive" live="alert">
+                        <span className="flex flex-wrap items-center justify-between gap-2">
+                          {payerFile.error}
+                          <Button type="button" size="sm" variant="outline" onClick={() => void payerFile.refetch()}>
+                            {t('payerRetry')}
+                          </Button>
+                        </span>
+                      </Alert>
+                    ) : null}
+                  </div>
+                )
+              ) : null}
+
               <div className="grid gap-4 sm:grid-cols-2">
                 <Field
                   label={en ? 'Payment date' : 'تاريخ الدفع'}
@@ -881,7 +996,7 @@ export default function SettleCashPage({
                   type="button"
                   className="w-full"
                   onClick={() => void submit()}
-                  disabled={busy || Boolean(problem) || receipt !== null || billStale}
+                  disabled={busy || Boolean(problem) || payerBlocked || receipt !== null || billStale}
                 >
                   {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Banknote className="size-4" aria-hidden />}
                   {en ? 'Record payment' : 'سجّل الدفعة'}
@@ -903,7 +1018,8 @@ export default function SettleCashPage({
             // Only the money roles reach this page, and each of them may send a citizen their reference.
             canSend
             locale={locale}
-            citizen={citizen}
+            // The payer's file on a shared unit bill (`receiptCitizen`), loaded before the press could be made.
+            citizen={receiptCitizen ?? citizen}
             payment={receipt ? { ...payment, remaining: receipt.remaining } : null}
             recorded={receipt}
             municipalityName={municipalityName}
@@ -931,6 +1047,36 @@ export default function SettleCashPage({
           citizenId={citizenId}
           paymentId={payment.id}
           paymentStatus={payment.paymentStatus}
+          // A shared unit bill's receipts are printed one payment at a time, each naming its payer (D9).
+          onPrint={payment.sharedUnit ? (entry, entries) => void printSharedReceipt(entry, entries) : undefined}
+        />
+      ) : null}
+
+      {reprintError ? (
+        <Alert variant="destructive" live="alert">
+          {reprintError}
+        </Alert>
+      ) : null}
+
+      {reprint ? (
+        <PaymentReceipt
+          open
+          onOpenChange={(open) => {
+            if (!open) setReprint(null);
+          }}
+          tenant={tenant}
+          // Only the money roles reach this page, and each of them may send a citizen their reference.
+          canSend
+          locale={locale}
+          citizen={reprint.citizen}
+          payment={reprint.payment}
+          recorded={reprint.recorded}
+          municipalityName={municipalityName}
+          governorate={settings?.governorate}
+          councilDecisionRef={settings?.councilDecisionRef}
+          district={settings?.district}
+          contactPhone={settings?.contactPhone}
+          officeWhatsapp={settings?.whatsappNumber}
         />
       ) : null}
     </div>

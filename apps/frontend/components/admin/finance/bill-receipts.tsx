@@ -2,10 +2,10 @@
 
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { ReceiptText, Undo2 } from 'lucide-react';
+import { Printer, ReceiptText, Undo2 } from 'lucide-react';
 import { getLabels } from '@mechanization/shared-schemas';
-import { getPaymentTransactions } from '@/lib/api-client';
-import { claimUnderReview, mayReverseReceipt } from '@/lib/bill-receipts';
+import { getPaymentTransactions, type PaymentLedgerEntry } from '@/lib/api-client';
+import { claimUnderReview, mayPrintSharedReceipt, mayReverseReceipt } from '@/lib/bill-receipts';
 import { formatDateTime } from '@/lib/dates';
 import { readView } from '@/lib/read-view';
 import { PAYMENT_REVERSE_ROLES, hasRole } from '@/lib/staff-roles';
@@ -37,6 +37,11 @@ import { ReverseReceiptDialog } from './reverse-receipt-dialog';
  * rows, and the reversal dialog open on one of them, with a
  * `RefreshFailedAlert` above. The dialog is given its receipt as the list reads
  * it now (by id), so a re-read that shows it reversed turns its Confirm off.
+ *
+ * On a shared unit bill (0099) each payment names the debtor who made it, and
+ * offers «طباعة الوصل» for that payment alone (`onPrint`, decision D9): the
+ * receipt names the person who paid, for what they paid — never the bill's
+ * total under whichever file is open.
  */
 export function BillReceipts({
   tenant,
@@ -47,6 +52,7 @@ export function BillReceipts({
   citizenId,
   paymentId,
   paymentStatus,
+  onPrint,
 }: {
   tenant: string;
   base: string;
@@ -57,6 +63,8 @@ export function BillReceipts({
   paymentId: string;
   /** The bill's status as the page read it: no reversal is offered while a reported transfer waits for a clerk. */
   paymentStatus: string;
+  /** Prints one payment's receipt on a shared unit bill: the entry, and the list it sits in (for the balance after it). */
+  onPrint?: (entry: PaymentLedgerEntry, entries: readonly PaymentLedgerEntry[]) => void;
 }): React.JSX.Element {
   const t = useTranslations('billReceipts');
   const labels = getLabels(locale);
@@ -136,6 +144,10 @@ export function BillReceipts({
                       {labels.paymentMethod[entry.method] ?? entry.method}
                       {entry.recordedBy ? ` · ${t('recordedBy', { name: entry.recordedBy })}` : ''}
                     </p>
+                    {/* A shared unit bill's payment: who paid it, which its receipt names. */}
+                    {entry.paidByName ? (
+                      <p className="text-xs text-muted-foreground">{t('paidBy', { name: entry.paidByName })}</p>
+                    ) : null}
                     {entry.note ? <p className="text-xs text-muted-foreground">{entry.note}</p> : null}
                   </div>
                   <div className="flex flex-wrap items-center gap-3">
@@ -147,6 +159,19 @@ export function BillReceipts({
                       signed
                       className={struck ? 'text-sm font-semibold text-muted-foreground line-through' : 'text-sm font-semibold'}
                     />
+                    {onPrint && mayPrintSharedReceipt(entry) ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5"
+                        aria-label={t('printAria', { number: entry.receiptNumber })}
+                        onClick={() => onPrint(entry, items)}
+                      >
+                        <Printer className="size-3.5" aria-hidden />
+                        {t('print')}
+                      </Button>
+                    ) : null}
                     {mayReverseReceipt(entry, role, bill) ? (
                       <Button
                         type="button"

@@ -14,6 +14,7 @@ const assessment = (basis: 'PER_UNIT' | 'PER_AREA', lines: FeeAssessment['lines'
   sharedUnitCount: 0,
   coOwnerPaidUnitCount: 0,
   exemptUnitCount: 0,
+  outOfScopeUnitCount: 0,
   lines,
 });
 const line = (propertyNumber: string, unitArea: number | null, extra: Partial<FeeAssessment['lines'][number]> = {}) => ({

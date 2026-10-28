@@ -420,6 +420,8 @@ export class AuditService {
     title: string;
     amount: number;
     targetType: string;
+    /** «من يشمل الإشعار» (0100): the categories, statuses and kinds of file chosen, and the warnings confirmed. */
+    scope?: unknown;
     issuedCount: number;
     actorId?: string | null;
     actorRole?: string | null;
@@ -446,6 +448,7 @@ export class AuditService {
         title: payload.title,
         amount: payload.amount,
         targetType: payload.targetType,
+        ...(payload.scope ? { scope: payload.scope } : {}),
         issuedCount: payload.issuedCount,
         periodKey: payload.periodKey,
       },
@@ -725,6 +728,18 @@ export class AuditService {
       throw new Error(`The audit row for ${entry.action} must be written inside the transaction it records`);
     }
     await this.audit.appendInTransaction(AuditLogEntry.create(entry), transaction);
+  }
+
+  /**
+   * Several Tier 1 rows in one statement, under the same rule as
+   * `recordInTransaction`: inside the transaction they record, or not at all.
+   */
+  async recordManyInTransaction(entries: readonly AuditEntryInput[], transaction?: TransactionHandle): Promise<void> {
+    if (entries.length === 0) return;
+    if (transaction === undefined && !this.tenantContext.peek()?.transaction) {
+      throw new Error(`The audit rows for ${entries[0]!.action} must be written inside the transaction they record`);
+    }
+    await this.audit.appendManyInTransaction(entries.map((entry) => AuditLogEntry.create(entry)), transaction);
   }
 
   private async record(entry: AuditEntryInput): Promise<void> {

@@ -460,4 +460,26 @@ describe('the routes that raise a bill', () => {
     expect(route).toBeDefined();
     expect([...(route?.roles ?? [])].sort()).toEqual(['ACCOUNTANT', 'SUPER_ADMIN']);
   });
+
+  it('lets only the manager withdraw a notice’s bills, as he alone cancels one bill', () => {
+    const batch = all.find((candidate) => candidate.name === 'FeesController.cancelNotice');
+    const one = all.find((candidate) => candidate.name === 'FeesController.cancelBill');
+    expect(batch).toMatchObject({ method: RequestMethod.POST, path: 'notices/:id/cancel', isPublic: false });
+    expect([...(batch?.roles ?? [])].sort()).toEqual([...(one?.roles ?? [])].sort());
+    expect(batch?.roles).toEqual(['SUPER_ADMIN']);
+  });
+
+  it('shows a notice’s periods before the cancel to the same roles as the cancel itself (D12)', () => {
+    const periods = all.find((candidate) => candidate.name === 'FeesController.noticePeriods');
+    const batch = all.find((candidate) => candidate.name === 'FeesController.cancelNotice');
+    expect(periods).toMatchObject({ method: RequestMethod.GET, path: 'notices/:id/periods', isPublic: false });
+    expect([...(periods?.roles ?? [])].sort()).toEqual([...(batch?.roles ?? [])].sort());
+  });
+
+  it('lets only those who may issue a notice preview it: it reads what an issue reads, names included', () => {
+    const preview = all.find((candidate) => candidate.name === 'FeesController.previewNotice');
+    const issue = all.find((candidate) => candidate.name === 'FeesController.issue');
+    expect(preview).toMatchObject({ method: RequestMethod.POST, path: 'notices/preview', isPublic: false });
+    expect([...(preview?.roles ?? [])].sort()).toEqual([...(issue?.roles ?? [])].sort());
+  });
 });

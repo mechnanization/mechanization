@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>الإيرادات والنفقات</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0d0d0c;--card:#1a1a19;--pop:#222220;--mu:#272725;--ac:#2c2c2a;--bd:#2f2f2d;--in:#393937;--fg:#fff;--mf:#c2c0b7;--pr:#3a86e4;--ok:#1eae53;--warn:#f9941f;--err:#e45858;--info:#26b2f2;--prt:rgba(58,134,228,.12)}*{box-sizing:border-box}
+html,body{margin:0;width:1440px;height:900px;overflow:hidden}body{display:flex;background:var(--bg);color:var(--fg);font:400 14px/20px 'IBM Plex Sans Arabic',system-ui,sans-serif;font-variant-numeric:tabular-nums}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;cursor:pointer}a{color:inherit;text-decoration:none}
+h1{margin:0;font-size:24px;line-height:32px;font-weight:600}.i{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.i20{width:20px;height:20px}.code{font-family:Consolas,ui-monospace,monospace;font-size:12px}
+.chip{display:inline-flex;align-items:center;height:20px;padding-inline:6px;border-radius:6px;font-size:12px;line-height:16px;font-weight:500;background:rgba(249,148,31,.15);color:var(--warn)}.side{width:272px;flex:none;border-inline-end:1px solid var(--bd)}
+.brand{height:56px;display:flex;align-items:center;gap:12px;padding-inline:18px;border-bottom:1px solid var(--bd);font-size:16px;font-weight:600}.bt{width:28px;height:28px;border-radius:6px;display:grid;place-items:center;background:var(--prt);color:var(--pr)}
+.nav{padding:8px 12px}.gh{padding:16px 12px 4px;font-size:13px;line-height:20px;font-weight:500;color:var(--mf)}
+.gh:first-child{padding-block-start:8px}.nr{height:36px;display:flex;align-items:center;gap:12px;padding-inline:12px;border-radius:6px}
+.nr .i{color:var(--mf)}.nr.on{background:var(--prt);color:var(--pr);font-weight:500}
+.nr.on .i{color:var(--pr)}.app{flex:1;min-width:0;display:flex;flex-direction:column}
+.top{height:56px;flex:none;display:flex;align-items:center;gap:8px;padding-inline:32px;border-bottom:1px solid var(--bd)}.crumb{display:flex;align-items:center;gap:8px;color:var(--mf)}
+.crumb b{color:var(--fg);font-weight:500}.tools{margin-inline-start:auto;display:flex;align-items:center;gap:8px}
+.gs{width:280px;height:36px;display:flex;align-items:center;gap:8px;padding-inline:12px 6px;border:1px solid var(--in);border-radius:6px;color:var(--mf);font-size:13px}kbd{margin-inline-start:auto;height:24px;display:inline-flex;align-items:center;padding-inline:6px;border:1px solid var(--bd);border-radius:6px;background:var(--mu);font:500 12px/16px 'IBM Plex Sans Arabic',sans-serif;color:var(--mf)}
+.ib{width:36px;height:36px;display:grid;place-items:center;border-radius:6px;color:var(--mf);font-size:13px;font-weight:500}.user{display:flex;align-items:center;gap:8px;padding-inline-start:8px;font-size:13px;font-weight:500}
+.av{width:28px;height:28px;border-radius:9999px;display:grid;place-items:center;background:var(--mu);border:1px solid var(--in);font-size:12px}main{flex:1;min-height:0;overflow:hidden;padding:24px 32px;display:flex;flex-direction:column}
+.back{align-self:flex-start;display:inline-flex;align-items:center;gap:4px;font-size:13px;line-height:20px;color:var(--mf);margin-block-end:12px}.ph{display:flex;align-items:center;gap:12px;padding-block-end:16px;border-bottom:1px solid var(--bd)}
+.pt{width:40px;height:40px;border-radius:8px;display:grid;place-items:center;background:var(--prt);color:var(--pr)}.ph .btn{margin-inline-start:auto}
+.btn{height:40px;display:inline-flex;align-items:center;justify-content:center;gap:8px;padding-inline:16px;border-radius:6px;font-weight:500;white-space:nowrap}.ol{border:1px solid var(--in)}
+.btn.pr{background:var(--pr);color:#0d0d0c}.gb{color:var(--mf)}
+.strip{margin-block-start:24px;display:flex;align-items:center;padding:8px;padding-inline-end:16px;background:var(--card);border:1px solid var(--bd);border-radius:8px}.sel{height:36px;display:inline-flex;align-items:center;gap:8px;padding-inline:12px;border:1px solid var(--in);border-radius:6px;font-size:13px;font-weight:500;margin-inline-end:16px}
+.sel .i,.dd .i,.inp .i,.u .i{color:var(--mf)}.cell{display:flex;align-items:center;gap:8px;height:28px;padding-inline:16px;border-inline-start:1px solid var(--bd);font-size:12px;color:var(--mf);white-space:nowrap}
+.cell .ck{font-size:13px;font-weight:600;color:var(--fg)}.cell bdi{font-size:14px;font-weight:500;color:var(--fg)}
+.cell bdi.ok{color:var(--ok)}.cell bdi.net{font-weight:600}
+.cell.n{margin-inline-start:auto;border:0;padding-inline-end:0;font-size:13px}.split{flex:1;min-height:0;margin-block-start:16px;display:grid;grid-template-columns:minmax(0,1fr) 472px;grid-template-rows:minmax(0,1fr);gap:16px}
+.reg{min-width:0;min-height:0}.seg{display:inline-flex;gap:2px;padding:2px;height:36px;border:1px solid var(--bd);border-radius:6px;background:var(--card)}
+.sg{display:inline-flex;align-items:center;gap:8px;padding-inline:12px;border-radius:4px;font-size:13px;font-weight:500;color:var(--mf)}.sg.on{background:var(--ac);color:var(--fg)}
+.flt{display:flex;gap:8px;margin-block-start:12px}.srch{flex:1;min-width:0;height:36px;display:flex;align-items:center;gap:8px;padding-inline:12px;border:1px solid var(--in);border-radius:6px;color:var(--mf);font-size:13px;white-space:nowrap;overflow:hidden}
+.dd{height:36px;display:inline-flex;align-items:center;gap:8px;padding-inline:12px;border:1px solid var(--in);border-radius:6px;font-size:13px;white-space:nowrap}.dh{display:flex;align-items:baseline;justify-content:space-between;margin-block:16px 8px}
+.dh b{font-weight:600}.dh span{font-size:12px;line-height:16px;color:var(--mf)}
+.list{background:var(--card);border:1px solid var(--bd);border-radius:8px}.row{height:52px;display:flex;align-items:center;gap:12px;padding-inline:16px}
+.row+.row{border-top:1px solid var(--bd)}.dt{width:28px;height:28px;flex:none;border-radius:6px;display:grid;place-items:center;background:var(--mu);color:var(--mf)}
+.dt.in{background:rgba(30,174,83,.12);color:var(--ok)}.tx{flex:1;min-width:0}
+.p{display:flex;align-items:center;gap:8px;font-weight:500}.m{font-size:12px;line-height:16px;color:var(--mf);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.am{flex:none;text-align:end}.v{font-weight:600;white-space:nowrap}
+.v.in{color:var(--ok)}.v.x{color:var(--mf);font-weight:500;text-decoration:line-through}
+.w{font-size:12px;line-height:16px;color:var(--mf)}.pane{position:sticky;top:24px;min-height:0;display:flex;flex-direction:column;background:var(--card);border:1px solid var(--bd);border-radius:8px;overflow:hidden}
+.pn-h{height:52px;flex:none;display:flex;align-items:center;padding-inline:16px;border-bottom:1px solid var(--bd);font-size:16px;line-height:24px;font-weight:600}.pn-b{flex:1;min-height:0;overflow:hidden;padding:16px}
+.pn-f{flex:none;display:flex;flex-direction:column;gap:8px;padding:16px;border-top:1px solid var(--bd)}.pn-f .btn{width:100%}
+.dir{display:grid;grid-template-columns:1fr 1fr;gap:2px;padding:3px;height:40px;border:1px solid var(--in);border-radius:6px}.dir span{display:flex;align-items:center;justify-content:center;gap:8px;border-radius:4px;font-weight:500;color:var(--mf)}
+.dir .on{background:var(--pr);color:#0d0d0c}.opts{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-block-start:12px}
+.opt{display:flex;gap:8px;padding:10px 12px;border:1px solid var(--bd);border-radius:6px}.opt.on{border-color:var(--pr);background:rgba(58,134,228,.06)}
+.rd{width:16px;height:16px;flex:none;margin-block-start:2px;border-radius:9999px;border:1px solid var(--in)}.opt.on .rd{border-color:var(--pr);background:var(--pr);box-shadow:inset 0 0 0 3px #1c2025}
+.ot{font-size:13px;font-weight:500}.od{font-size:12px;line-height:16px;color:var(--mf);margin-block-start:2px}
+.f{margin-block-start:16px}.lb{display:block;font-size:13px;line-height:16px;font-weight:500;margin-block-end:8px}
+.amt{height:56px;display:flex;align-items:center;border:1px solid var(--pr);border-radius:6px;box-shadow:0 0 0 3px rgba(58,134,228,.25)}.u{align-self:stretch;display:flex;align-items:center;gap:4px;padding-inline:12px;border-inline-end:1px solid var(--in);background:var(--mu);border-start-start-radius:5px;border-end-start-radius:5px;font-weight:500}
+.dg{padding-inline:16px;font-size:24px;line-height:32px;font-weight:600}.wl{display:grid;grid-template-columns:repeat(3,auto);gap:8px}
+.wt{padding:8px;border:1px solid var(--bd);border-radius:6px}.wt.on{border-color:var(--pr);background:rgba(58,134,228,.06)}
+.wn{font-size:13px;line-height:18px;font-weight:500}.wb{font-size:12px;line-height:16px;color:var(--mf);margin-block-start:2px}
+.nw{white-space:nowrap}.wb .fg{color:var(--fg);font-weight:500}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:12px}.inp{height:40px;display:flex;align-items:center;gap:8px;padding-inline:12px;border:1px solid var(--in);border-radius:6px;white-space:nowrap;overflow:hidden}
+.inp .i{margin-inline-start:auto}.more{height:36px;margin-block-start:12px;padding-inline:8px;justify-content:flex-start}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<symbol id="banknote" viewBox="0 0 24 24"><rect width="20" height="12" x="2" y="6" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01M18 12h.01"/></symbol>
+<symbol id="in" viewBox="0 0 24 24"><path d="M17 7 7 17"/><path d="M17 17H7V7"/></symbol>
+<symbol id="out" viewBox="0 0 24 24"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></symbol>
+<symbol id="tag" viewBox="0 0 24 24"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5"/></symbol>
+<symbol id="search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+<symbol id="bell" viewBox="0 0 24 24"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></symbol>
+<symbol id="chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+<symbol id="crumb" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+<symbol id="back" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></symbol>
+<symbol id="wallet" viewBox="0 0 24 24"><path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/></symbol>
+<symbol id="house" viewBox="0 0 24 24"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+<symbol id="users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+<symbol id="swap" viewBox="0 0 24 24"><path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/></symbol>
+<symbol id="clip" viewBox="0 0 24 24"><rect width="8" height="4" x="8" y="2" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="m9 14 2 2 4-4"/></symbol>
+<symbol id="history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></symbol>
+<symbol id="msg" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+<symbol id="landmark" viewBox="0 0 24 24"><path d="M3 22h18"/><path d="M6 18v-7M10 18v-7M14 18v-7M18 18v-7"/><path d="M11.12 2.198a2 2 0 0 1 1.76.006l7.866 3.847c.476.233.31.949-.22.949H3.474c-.53 0-.695-.716-.22-.949z"/></symbol>
+<symbol id="plus" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></symbol>
+<symbol id="cal" viewBox="0 0 24 24"><path d="M8 2v4M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/></symbol>
+</svg>
+<aside class="side">
+  <div class="brand"><span class="bt"><svg class="i"><use href="#landmark"/></svg></span>لوحة البلدية</div>
+  <nav class="nav">
+    <div class="gh">الجباية</div>
+    <a class="nr" href="#"><svg class="i"><use href="#house"/></svg>المستحق على عقار</a>
+    <a class="nr" href="#"><svg class="i"><use href="#users"/></svg>الجباة والتحصيل</a>
+    <div class="gh">الخزينة</div>
+    <a class="nr" href="#"><svg class="i"><use href="#wallet"/></svg>الأرصدة</a>
+    <a class="nr on" href="#" aria-current="page"><svg class="i"><use href="#banknote"/></svg>الإيرادات والنفقات</a>
+    <a class="nr" href="#"><svg class="i"><use href="#swap"/></svg>المناقلات والمصارفة</a>
+    <a class="nr" href="#"><svg class="i"><use href="#clip"/></svg>جرد وإقفال اليومية</a>
+    <div class="gh">المراجعة والتدقيق</div>
+    <a class="nr" href="#"><svg class="i"><use href="#history"/></svg>السجلات</a>
+    <a class="nr" href="#"><svg class="i"><use href="#msg"/></svg>ملاحظات الجودة</a>
+  </nav>
+</aside>
+<div class="app">
+  <header class="top">
+    <nav class="crumb" aria-label="مسار التنقل"><span>البازورية</span><svg class="i"><use href="#crumb"/></svg><b>الإيرادات والنفقات</b></nav>
+    <div class="tools">
+      <div class="gs"><svg class="i"><use href="#search"/></svg><span>بحث في السجل…</span><kbd>Ctrl K</kbd></div>
+      <button class="ib">EN</button>
+      <button class="ib" aria-label="الإشعارات"><svg class="i"><use href="#bell"/></svg></button>
+      <div class="user">مدير النظام<span class="av">م</span></div>
+    </div>
+  </header>
+  <main>
+    <a class="back" href="#"><svg class="i"><use href="#back"/></svg>عودة إلى الخزينة</a>
+    <div class="ph">
+      <span class="pt"><svg class="i i20"><use href="#banknote"/></svg></span>
+      <h1>الإيرادات والنفقات</h1>
+      <button class="btn ol"><svg class="i"><use href="#tag"/></svg>بنود الإيرادات</button>
+    </div>
+    <div class="strip">
+      <button class="sel"><svg class="i"><use href="#cal"/></svg>هذا الشهر — تشرين الأول 2026<svg class="i"><use href="#chev"/></svg></button>
+      <div class="cell"><span class="ck">ليرة</span><span>قبض <bdi class="ok" dir="ltr">451,000,000</bdi></span><span>·</span><span>صرف <bdi dir="ltr">20,900,000</bdi></span><span>·</span><span>الصافي <bdi class="net" dir="ltr">+430,100,000</bdi></span></div>
+      <div class="cell"><span class="ck">دولار</span><span>قبض <bdi class="ok" dir="ltr">1,250</bdi></span><span>·</span><span>صرف <bdi dir="ltr">300</bdi></span><span>·</span><span>الصافي <bdi class="net" dir="ltr">+950</bdi></span></div>
+      <div class="cell n"><bdi dir="ltr">9</bdi> سندات</div>
+    </div>
+    <div class="split">
+      <section class="reg" aria-label="الدفتر">
+        <div class="seg" role="tablist"><span class="sg on" role="tab" aria-selected="true">الدفتر</span><span class="sg" role="tab">بانتظار الأمر <span class="chip">3</span></span></div>
+        <div class="flt">
+          <div class="srch"><svg class="i"><use href="#search"/></svg>ابحث برقم السند أو الجهة أو البيان…</div>
+          <button class="dd">كل الاتجاهات<svg class="i"><use href="#chev"/></svg></button>
+          <button class="dd">كل الحسابات<svg class="i"><use href="#chev"/></svg></button>
+          <button class="dd">كل البنود<svg class="i"><use href="#chev"/></svg></button>
+        </div>
+        <div class="dh"><b>اليوم · الإثنين 12/10/2026</b><span>قبض <bdi dir="ltr">+750</bdi> $ · صرف <bdi dir="ltr">−18,500,000</bdi> ل.ل</span></div>
+        <div class="list">
+          <div class="row"><span class="dt in"><svg class="i"><use href="#in"/></svg></span><div class="tx"><div class="p">مكتب جابر للهندسة</div><div class="m"><bdi class="code" dir="ltr">RV-2610-0004</bdi> · رخص بناء وإشغال وتخطيط · صندوق النقد — دولار</div></div><div class="am"><div class="v in"><bdi dir="ltr">+500</bdi> $</div><div class="w">قبض</div></div></div>
+          <div class="row"><span class="dt"><svg class="i"><use href="#out"/></svg></span><div class="tx"><div class="p">محطة الأمانة للمحروقات<span class="chip">بانتظار أمر الصرف</span></div><div class="m"><bdi class="code" dir="ltr">PV-2610-0007</bdi> · محروقات ومولّدات · صندوق النقد — ليرة</div></div><div class="am"><div class="v"><bdi dir="ltr">−18,500,000</bdi> ل.ل</div><div class="w">صرف</div></div></div>
+          <div class="row"><span class="dt in"><svg class="i"><use href="#in"/></svg></span><div class="tx"><div class="p">فرن الساحة</div><div class="m"><bdi class="code" dir="ltr">RV-2610-0003</bdi> · إيجار أملاك بلدية · Whish — دولار</div></div><div class="am"><div class="v in"><bdi dir="ltr">+250</bdi> $</div><div class="w">قبض</div></div></div>
+        </div>
+        <div class="dh"><b>أمس · الأحد 11/10/2026</b><span>قبض <bdi dir="ltr">+500</bdi> $ · صرف <bdi dir="ltr">−2,400,000</bdi> ل.ل، <bdi dir="ltr">−300</bdi> $</span></div>
+        <div class="list">
+          <div class="row"><span class="dt"><svg class="i"><use href="#out"/></svg></span><div class="tx"><div class="p">مكتبة النور</div><div class="m"><bdi class="code" dir="ltr">PV-2610-0006</bdi> · قرطاسية ومطبوعات · صندوق النقد — ليرة</div></div><div class="am"><div class="v"><bdi dir="ltr">−2,400,000</bdi> ل.ل</div><div class="w">صرف</div></div></div>
+          <div class="row"><span class="dt in"><svg class="i"><use href="#in"/></svg></span><div class="tx"><div class="p">ABED</div><div class="m"><bdi class="code" dir="ltr">RV-2610-0002</bdi> · رخص بناء وإشغال وتخطيط · صندوق النقد — دولار</div></div><div class="am"><div class="v in"><bdi dir="ltr">+500</bdi> $</div><div class="w">قبض</div></div></div>
+          <div class="row"><span class="dt"><svg class="i"><use href="#out"/></svg></span><div class="tx"><div class="p">عامل نظافة — تشرين الأول</div><div class="m"><bdi class="code" dir="ltr">PV-2610-0005</bdi> · رواتب وأجور · صندوق النقد — دولار</div></div><div class="am"><div class="v"><bdi dir="ltr">−300</bdi> $</div><div class="w">صرف</div></div></div>
+          <div class="row"><span class="dt"><svg class="i"><use href="#out"/></svg></span><div class="tx"><div class="p">كاراج الحاج<span class="chip">ملغى</span></div><div class="m"><bdi class="code" dir="ltr">PV-2610-0004</bdi> · صيانة آليات · صندوق النقد — ليرة</div></div><div class="am"><div class="v x"><bdi dir="ltr">−1,200,000</bdi> ل.ل</div><div class="w">صرف</div></div></div>
+        </div>
+        <div class="dh"><b>الجمعة 09/10/2026</b><span>قبض <bdi dir="ltr">+450,000,000</bdi> ل.ل</span></div>
+        <div class="list">
+          <div class="row"><span class="dt in"><svg class="i"><use href="#in"/></svg></span><div class="tx"><div class="p">وزارة الداخلية والبلديات</div><div class="m"><bdi class="code" dir="ltr">RV-2610-0001</bdi> · الصندوق البلدي المستقل · حساب مصرف لبنان — ليرة</div></div><div class="am"><div class="v in"><bdi dir="ltr">+450,000,000</bdi> ل.ل</div><div class="w">قبض</div></div></div>
+        </div>
+      </section>
+      <aside class="pane" aria-label="حركة جديدة">
+        <div class="pn-h">حركة جديدة</div>
+        <div class="pn-b">
+          <div class="dir" role="radiogroup"><span><svg class="i"><use href="#in"/></svg>قبض</span><span class="on" aria-checked="true"><svg class="i"><use href="#out"/></svg>صرف</span></div>
+          <div class="opts">
+            <div class="opt on"><span class="rd"></span><div><div class="ot">طلب أمر صرف</div><div class="od">لا يخرج المال قبل أمر رئيس البلدية</div></div></div>
+            <div class="opt"><span class="rd"></span><div><div class="ot">دفع عاجل (المادة 35)</div><div class="od">راتب، نفقة نثرية أو طارئة — يُدفع الآن ويُسوّى لاحقاً</div></div></div>
+          </div>
+          <div class="f"><span class="lb">المبلغ</span><div class="amt"><span class="u">ل.ل<svg class="i"><use href="#chev"/></svg></span><bdi class="dg" dir="ltr">18,500,000</bdi></div></div>
+          <div class="f"><span class="lb">من حساب</span>
+            <div class="wl">
+              <div class="wt on"><div class="wn">صندوق النقد — ليرة</div><div class="wb">الرصيد <span class="nw"><bdi dir="ltr">612,400,000</bdi> ل.ل</span></div><div class="wb">بعد الصرف <span class="nw fg"><bdi dir="ltr">593,900,000</bdi> ل.ل</span></div></div>
+              <div class="wt"><div class="wn">حساب مصرف لبنان — ليرة</div><div class="wb">الرصيد <span class="nw"><bdi dir="ltr">1,980,000,000</bdi> ل.ل</span></div></div>
+              <div class="wt"><div class="wn">Whish — دولار</div><div class="wb">الرصيد <span class="nw"><bdi dir="ltr">1,135</bdi> $</span></div></div>
+            </div>
+          </div>
+          <div class="f two">
+            <div><span class="lb">البند</span><div class="inp">محروقات ومولّدات<svg class="i"><use href="#chev"/></svg></div></div>
+            <div><span class="lb">المستفيد</span><div class="inp">محطة الأمانة للمحروقات</div></div>
+          </div>
+          <div class="f"><span class="lb">البيان</span><div class="inp">مازوت لمولّد مبنى البلدية — 200 ليتر</div></div>
+          <button class="btn gb more"><svg class="i"><use href="#plus"/></svg>تفاصيل إضافية: رقم الفاتورة، إيصال ورقي</button>
+        </div>
+        <div class="pn-f"><button class="btn pr">أرسل طلب أمر الصرف</button><button class="btn gb">إلغاء</button></div>
+      </aside>
+    </div>
+  </main>
+</div>
+</body>
+</html>

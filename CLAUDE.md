@@ -1,6 +1,7 @@
 # CLAUDE.md — Mechanization (منظومة المكننة البلدية)
 
-Last verified against the code: `develop@8742c5b`, 2026-10-03; the majors line
+Last verified against the code: `develop@8742c5b`, 2026-10-03; the two tiered-fees rows
+(the routing table and the docs table), `fix/fee-wizard-review`, 2026-10-26; the majors line
 (zod 4) on `fix/dependency-audit`, 2026-10-28. Code wins: where a
 doc and the code disagree, the code is the fact and the doc is the bug.
 
@@ -109,6 +110,7 @@ Every command below is a `package.json` script. Run them from the repo root.
 | Money: wallets, income, expenses, transfers, the daily count (الخزينة) | [docs/finance.md](docs/finance.md) |
 | Buildings, units, numbering, war damage; duplicate citizens and «دمج ملفين» | [docs/building-census-plan.md](docs/building-census-plan.md); [docs/citizen-duplicates.md](docs/citizen-duplicates.md) |
 | Municipal requests and certificates (براءة ذمة, إفادات, the request queue, the portal's «طلباتي») | [docs/municipal-requests-plan.md](docs/municipal-requests-plan.md) |
+| Fees by area bracket (`TIERED_AREA`), the shared unit bill, the notice preview, stopping and cancelling a notice | [docs/fees-system-rearchitecture-specification.md](docs/fees-system-rearchitecture-specification.md) |
 | Open product and legal decisions | [docs/open-decisions.md](docs/open-decisions.md) |
 | Who the users are, the staff roles, what the product does | [PRODUCT.md](PRODUCT.md) |
 | First-time setup, running the apps, onboarding a municipality | [README.md](README.md) |
@@ -197,6 +199,7 @@ Docs, tests, lockfiles and generated files never trigger it.
 | A new trap found | — | [docs/gotchas.md](docs/gotchas.md) |
 | The treasury: wallets, ledger, vouchers, payment hooks | `apps/backend/src/application/features/treasury/**` | [docs/finance.md](docs/finance.md), [apps/backend/CLAUDE.md](apps/backend/CLAUDE.md) |
 | Citizen requests and certificates | `apps/backend/src/application/features/citizen-requests/**` | [docs/municipal-requests-plan.md](docs/municipal-requests-plan.md) |
+| Fees by area bracket and the shared unit bill | `apps/backend/src/application/features/fees/tiered-area.ts`, `apps/backend/src/application/features/fees/shared-bill-view.ts` | [docs/fees-system-rearchitecture-specification.md](docs/fees-system-rearchitecture-specification.md) |
 | A staff role, a user kind, or a user-facing capability added or removed | — | [PRODUCT.md](PRODUCT.md) |
 | A canonical doc or heading renamed or moved | — | the section map in [AGENTS.md](AGENTS.md), and every link to it |
 | A rule broken in a way that cost something | — | [docs/incidents.md](docs/incidents.md) |

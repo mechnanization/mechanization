@@ -48,6 +48,7 @@ export function useStaffQuery<T>({
   keepPrevious = false,
   reference = false,
   refreshMs,
+  fresh = false,
 }: {
   /**
    * Must contain the tenant and every parameter that changes the response.
@@ -113,6 +114,16 @@ export function useStaffQuery<T>({
    * feel live: that is what invalidating the key after a write is for.
    */
   refreshMs?: number;
+  /**
+   * Never served from the cache: read again every time the screen mounts, with
+   * nothing on screen until the answer comes (`staleTime` and `gcTime` 0).
+   *
+   * For a read that a write is about to be confirmed against — «معاينة قبل
+   * الإصدار» is the first: the clerk issues the figure it shows, and an answer
+   * kept from a visit minutes ago is not that figure. The opposite of
+   * `reference`; do not set both.
+   */
+  fresh?: boolean;
 }): StaffQueryResult<T> {
   const router = useRouter();
 
@@ -124,6 +135,7 @@ export function useStaffQuery<T>({
     enabled: Boolean(token),
     placeholderData: keepPrevious ? keepPreviousData : undefined,
     ...(refreshMs ? { refetchInterval: refreshMs } : {}),
+    ...(fresh ? { staleTime: 0, gcTime: 0 } : {}),
     ...(reference
       ? {
           staleTime: Infinity,

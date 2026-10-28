@@ -162,6 +162,7 @@ export function Field({
   htmlFor,
   path,
   className,
+  errorElsewhere,
   children,
 }: {
   label: string;
@@ -211,6 +212,14 @@ export function Field({
    * rest of the row.
    */
   className?: string;
+  /**
+   * The refusal is said elsewhere, as a toast, so it is not drawn under the
+   * control: the label turns `destructive` and stays so until the field is
+   * fixed, which the toast does not, and the message stays in the page for a
+   * screen reader, without `role="alert"` — the toast already announced it.
+   * The fee wizard only (FRM-2's exception, the user's decision 2026-10-27).
+   */
+  errorElsewhere?: boolean;
   children: React.ReactNode;
 }) {
   const flagging = useContext(FieldFlagContext);
@@ -250,7 +259,10 @@ export function Field({
       <div className="flex items-baseline justify-between gap-2">
         <Label
           htmlFor={htmlFor}
-          className="flex items-baseline gap-1.5 text-xs font-medium text-foreground/90"
+          className={cn(
+            'flex items-baseline gap-1.5 text-xs font-medium',
+            error && errorElsewhere ? 'text-destructive' : 'text-foreground/90',
+          )}
         >
           <span>{label}</span>
           {required ? (
@@ -370,7 +382,9 @@ export function Field({
         </p>
       ) : null}
 
-      {error ? (
+      {error && errorElsewhere ? (
+        <p className="sr-only">{error}</p>
+      ) : error ? (
         <p
           role="alert"
           className="rounded-md border border-destructive/30 bg-destructive/5 px-2.5 py-1 text-xs text-destructive"

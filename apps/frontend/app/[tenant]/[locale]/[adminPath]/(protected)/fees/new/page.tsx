@@ -1,7 +1,8 @@
 'use client';
 
-import { use, useRef, useState } from 'react';
+import { use, useCallback, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
 import { useTranslations } from 'next-intl';
 import { Receipt } from 'lucide-react';
 import { FEE_ISSUE_ROLES } from '@mechanization/shared-schemas';
@@ -15,12 +16,13 @@ import { heldKey, keyIsSpent, spendKey } from '@/lib/request-id';
 import { hasRole } from '@/lib/staff-roles';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
-import { IssueFeeForm, type IssueFeeValues } from '@/components/admin/issue-fee-form';
+import { IssueFeeForm, IssueFeeFormSkeleton, type IssueFeeValues } from '@/components/admin/issue-fee-form';
+import { IssueResultPanel, type IssueFeeNoticeResult } from '@/components/admin/fees/issue-result-panel';
+import { issuePayload } from '@/lib/fee-notice-draft';
 import { Alert } from '@/components/ui/alert';
 import { HeaderBackLink } from '@/components/admin/header-back-link';
 import { Card, CardContent } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
-import { Skeleton } from '@/components/ui/skeleton';
 import { ErrorState } from '@/components/ui/states';
 import { useToast } from '@/components/ui/toast';
 
@@ -34,8 +36,8 @@ import { useToast } from '@/components/ui/toast';
  * wizard survives a stray click.
  *
  * The page owns the write and everything that follows it — the counts of what
- * went unbilled, which are the part a clerk has to act on — while the form owns
- * the steps and the fields.
+ * went unbilled, which are the part a clerk has to act on, kept on screen in
+ * `IssueResultPanel` — while the form owns the steps and the fields.
  *
  * It sits under `/fees`, so `canAccessPath` matches that nav row by prefix.
  * Issuing is narrower than reading, so the page checks `FEE_ISSUE_ROLES` and
@@ -50,27 +52,40 @@ export default function IssueFeePage({
   const base = `/${tenant}/${locale}/${adminPath}`;
   const feesHref = `${base}/fees`;
   const t = useTranslations('fees.issuePage');
-  const tFees = useTranslations('fees');
   const router = useRouter();
   const toast = useToast();
+  const queryClient = useQueryClient();
   const { token, user } = useStaffSession(tenant, base);
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** The issue the server confirmed, shown in place of the wizard. */
+  const [issued, setIssued] = useState<{ values: IssueFeeValues; result: IssueFeeNoticeResult } | null>(null);
+  /** A fresh wizard after «إصدار رسم آخر»: a new key remounts it empty. */
+  const [formKey, setFormKey] = useState(0);
+  const clearError = useCallback(() => setError(null), []);
   /*
     Synchronous, unlike `submitting`, which lands a render after a fast second
-    press. And never released on success: the dialog this page replaced closed
+    press. And not released by a success: the dialog this page replaced closed
     itself, while a page stays mounted until the next route is ready — seconds on
     a village connection — and a second press there would issue the notice again
-    and bill every household twice.
+    and bill every household twice. Only «إصدار رسم آخر» releases it, with a new
+    wizard whose notice takes a new key.
   */
   const inFlight = useRef(false);
 
   const canIssue = user ? hasRole(FEE_ISSUE_ROLES, user.role) : false;
 
-  /** Titles already in use, so the wizard can warn before a second notice repeats one. */
+  /**
+   * Titles already in use, so the wizard can warn before a second notice repeats one.
+   *
+   * The key the fees register and the payments ledger read and invalidate: under
+   * `reference` it is fetched once a session, and a key of its own here was
+   * never refreshed, so the notice just issued was missing from the next one's
+   * warning (M3).
+   */
   const titlesQuery = useStaffQuery({
-    queryKey: ['fees-filter-options', tenant],
+    queryKey: ['fee-filter-options', tenant],
     queryFn: (accessToken, signal) => getFeeFilterOptions(tenant, accessToken, signal),
     tenant,
     base,
@@ -86,20 +101,22 @@ export default function IssueFeePage({
     setError(null);
     try {
       const res = await issueFeeNotice(tenant, token, {
-        title: values.title,
-        amount: Number(values.amount.replace(/\D/g, '')),
-        basis: values.basis,
-        bearer: values.bearer,
-        frequency: values.frequency,
-        targetType: values.targetType,
-        targetCategory: values.targetCategory || undefined,
-        targetCitizenId: values.targetCitizenId || undefined,
-        dueDate: values.dueDate,
-        instructions: values.instructions || undefined,
+        // The notice the preview was read for, field for field, and the scope warnings the clerk confirmed (`issuePayload`).
+        ...issuePayload(values),
         // Kept across every failure and edit, spent once the server confirms the notice exists.
         clientRequestId: heldKey(tenant, 'fee-notice:new'),
       });
       spendKey(tenant, 'fee-notice:new');
+      /*
+        The screens a notice changes read again: the register's bills and its
+        context, the notices list, and the titles in use (STA-3). Not awaited —
+        the answer is already in hand, and a re-read must not hold it back.
+      */
+      void Promise.all(
+        ['fee-filter-options', 'fee-notices', 'fees-payments', 'fees-context'].map((key) =>
+          queryClient.invalidateQueries({ queryKey: [key, tenant] }),
+        ),
+      );
       /*
         A retry the server answered from the first notice: nothing new was
         billed, and the counts are not repeated. Said with a warning, never the
@@ -111,74 +128,19 @@ export default function IssueFeePage({
         toast.warning(t('alreadyIssuedTitle', { title: values.title }), {
           description: t('alreadyIssuedBody', { count: res.issued, id: res.noticeId }),
         });
+        // The wizard stays locked from here: the page is leaving (see `inFlight`).
         router.push(feesHref);
         return;
       }
       toast.success(t('issued', { count: res.issued }));
-
       /*
-        The skipped are named, not buried.
-
-        A clerk told only that two hundred invoices were raised has no way to
-        know that eleven buildings went unbilled because nobody has been inside
-        them. This is the shortfall made visible so someone can act on it.
+        The rest — what went unbilled and why, the citizens nobody could
+        assess, the shared units — stays on screen in the panel that replaces
+        the wizard, rather than in toasts that close themselves (S8). The
+        wizard is gone with it, so `inFlight` stays held until «إصدار رسم آخر».
       */
-      if (res.unassessable && res.unassessable.length > 0) {
-        toast.error(
-          t('unassessable', { count: res.unassessable.length }) +
-            res.unassessable.map((entry) => entry.name).join('، '),
-        );
-      }
-
-      /*
-        And so is what the bearer rule left out, for the same reason: a clerk who
-        has just said this fee falls on المالك rather than الشاغل has changed what
-        the town owes, and the size of that change is knowable only right here.
-      */
-      if (res.exemptedUnits) toast.info(t('exempted', { count: res.exemptedUnits }));
-
-      /*
-        Held, not exempt — and not charged on this notice's period at all: the
-        period's invoice is written once. Said plainly so a clerk who wants the
-        period recovered knows it is a manual charge.
-      */
-      if (res.heldUnits) toast.info(t('held', { count: res.heldUnits }));
-
-      /*
-        Held too, for a different reason: flats read «غير صالحة للسكن» are not
-        charged an occupant-borne fee until a re-inspection reads them habitable.
-        A one-off fee has no next period for the charge to resume in.
-      */
-      if (res.uninhabitableUnits) {
-        toast.info(
-          tFees(values.frequency === 'ONCE' ? 'issue.uninhabitableOnce' : 'issue.uninhabitable', {
-            count: res.uninhabitableUnits,
-          }),
-        );
-      }
-      // «معفاة من الرسوم» (0077): the mosque on a waqf parcel, a public building.
-      if (res.feeExemptUnits) {
-        toast.info(tFees('issue.feeExempt', { count: res.feeExemptUnits }));
-      }
-      /*
-        Not held and not exempt: a co-owned flat «مالك مسؤول» pays for in full.
-        Said so the other owners' bills do not read as missing a unit.
-      */
-      if (res.coOwnerPaidUnits) {
-        toast.info(tFees('issue.coOwnerPaid', { count: res.coOwnerPaidUnits }));
-      }
-
-      // «معفاة من الرسوم» (0077): the mosque on a waqf parcel, a public building.
-      if (res.feeExemptUnits) toast.info(tFees('issue.feeExempt', { count: res.feeExemptUnits }));
-
-      /*
-        Not held and not exempt: a co-owned flat «مالك مسؤول» pays for in full.
-        Said so the other owners' bills do not read as missing a unit.
-      */
-      if (res.coOwnerPaidUnits) toast.info(tFees('issue.coOwnerPaid', { count: res.coOwnerPaidUnits }));
-
-      // The wizard stays locked from here: the page is leaving (see `inFlight`).
-      router.push(feesHref);
+      setIssued({ values, result: res });
+      setSubmitting(false);
     } catch (caught) {
       logApiError(caught);
       // A key whose notice exists is spent; every other failure keeps it, so a retry is answered from the first.
@@ -206,18 +168,36 @@ export default function IssueFeePage({
           </CardContent>
         </Card>
       ) : !user || !ready ? (
-        <Skeleton className="mx-auto h-96 w-full max-w-2xl rounded-lg" />
+        <IssueFeeFormSkeleton label={t('loading')} />
       ) : !canIssue ? (
         <Alert variant="warning" title={t('notAllowedTitle')}>
           {t('notAllowedBody')}
         </Alert>
+      ) : issued ? (
+        <IssueResultPanel
+          title={issued.values.title.trim()}
+          frequency={issued.values.frequency}
+          result={issued.result}
+          noticesHref={`${feesHref}/notices`}
+          feesHref={feesHref}
+          locale={locale}
+          onIssueAnother={() => {
+            // A new notice under a new key: the last one's was spent when the server confirmed it.
+            inFlight.current = false;
+            setIssued(null);
+            setFormKey((key) => key + 1);
+          }}
+        />
       ) : (
         <IssueFeeForm
+          key={formKey}
           tenant={tenant}
+          base={base}
           token={token}
           submitting={submitting}
           error={error}
           onSubmit={issue}
+          onEdit={clearError}
           backHref={feesHref}
           locale={locale}
           existingTitles={titlesQuery.data?.titles ?? []}

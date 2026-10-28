@@ -1,6 +1,6 @@
 # Gotchas
 
-Last verified against the code: `fix/dependency-audit` (on `develop@b2c18dd`): a `.default()` on a citizen form flag under zod 4 (`partialKeepingAbsent`), 2026-10-28; `fix/unit-area-edit` (on `develop@0f54fcca`, uncommitted): a locked census field that validates the card's own value, 2026-10-21; `feat/earnings-by-actor` (on `develop@149e458a`, uncommitted): a registration's officer is not who filed the lines on it, and a line's `createdAt` is not when it was filed, 2026-10-21; `feat/unit-levels` (stacked on `chore/migration-0095`, on `develop@a7e62087`): duplexes and the per-roof factor, a house that grows, D28, 2026-10-17; `fix/pr116-review` (PR #116 merged with `fix/pr115-review`, which stacks #123, #124 and #115 on `develop@5e8f5c3`, with its review fixes): Escape inside a dialog, Tailwind 4 class names on 3.4; digit-normalised cadastre lookups, Latin digits on write, what still compares as stored; a window count on an empty page, 2026-10-15; the previous build and a new enum value against `chore/migration-0090-0091` (on `develop@5e8f5c3`), 2026-10-13, rebased onto `develop@3211140`, 2026-10-15; the Prisma `now()` clock trap in invoice numbering against `fix/finance-audit-remediation` (on `develop@5e8f5c3`), 2026-10-12; JavaScript and Postgres on `trim` and lower case against `fix/finance-audit-remediation` (rebased on `chore/migration-0090-0091@8d386b5`), 2026-10-13; a new RESTRICT key and an existing delete (0092) against `chore/migration-0092` rebased on `fix/finance-audit-remediation@9f7b12b`, 2026-10-13; the CRLF working tree and Enter inside a nested editor added on `fix/fees-page-ux` (uncommitted), 2026-10-12; a Radix dialog with no trigger losing the focus on close, the same day; a `replaceState` made while a page mounts, found on the request wizard (uncommitted), 2026-10-13; the reference-only sign-in recorded as the decided one, and an undeclared env var set only in `.env` never reaching the code of a deployed build (verified in `@nestjs/config`; a locally generated Prisma client loads the file itself), the same day; and, on `fix/fees-page-ux` rebased onto `chore/migration-0092@16473f0` (2026-10-13), the review of PR #122: a request cancelled with its bill (`cancelRequestOfCancelledBill`), a card or a flat a request names never deleted (`PROPERTY_NAMED_BY_REQUEST`, `HAS_REQUESTS`), request bills stamp `issuedById`, the API's log lines without query strings, and the isolation tests; and, on `fix/pr122-review` (2026-10-15), the review's blocker and majors: `ParcelDuesService.dues` normalising its own argument, a request on a cancelled bill cancelled by `reconcile` too (an IN_REVIEW one through AWAITING_PAYMENT), and a request's `fee` null once it will never be billed; and an `absolute` box escaping the admin shell's scroller, measured on `develop@4634bdb` (uncommitted), 2026-10-15, and the warnings of `next dev --turbo`, the same day; and, on `develop@a7e62087` (uncommitted), the two census-counting traps — `property_entries` counting filings rather than structures, and the trigger columns beside the `units` table — both measured against production, 2026-10-16.
+Last verified against the code: `fix/dependency-audit` (on `develop@b2c18dd`): a `.default()` on a citizen form flag under zod 4 (`partialKeepingAbsent`), 2026-10-28; `fix/fee-wizard-review` (on `feat/tiered-fees-cancel-and-wizard@aa35d4a`): a category on a notice to all citizens, a cast that hides a nullable column, a labelled button in a `DataTable` phone card, 2026-10-26; `fix/unit-area-edit` (on `develop@0f54fcca`, uncommitted): a locked census field that validates the card's own value, 2026-10-21; `feat/earnings-by-actor` (on `develop@149e458a`, uncommitted): a registration's officer is not who filed the lines on it, and a line's `createdAt` is not when it was filed, 2026-10-21; `feat/unit-levels` (stacked on `chore/migration-0095`, on `develop@a7e62087`): duplexes and the per-roof factor, a house that grows, D28, 2026-10-17; `fix/pr116-review` (PR #116 merged with `fix/pr115-review`, which stacks #123, #124 and #115 on `develop@5e8f5c3`, with its review fixes): Escape inside a dialog, Tailwind 4 class names on 3.4; digit-normalised cadastre lookups, Latin digits on write, what still compares as stored; a window count on an empty page, 2026-10-15; the previous build and a new enum value against `chore/migration-0090-0091` (on `develop@5e8f5c3`), 2026-10-13, rebased onto `develop@3211140`, 2026-10-15; the Prisma `now()` clock trap in invoice numbering against `fix/finance-audit-remediation` (on `develop@5e8f5c3`), 2026-10-12; JavaScript and Postgres on `trim` and lower case against `fix/finance-audit-remediation` (rebased on `chore/migration-0090-0091@8d386b5`), 2026-10-13; a new RESTRICT key and an existing delete (0092) against `chore/migration-0092` rebased on `fix/finance-audit-remediation@9f7b12b`, 2026-10-13; the CRLF working tree and Enter inside a nested editor added on `fix/fees-page-ux` (uncommitted), 2026-10-12; a Radix dialog with no trigger losing the focus on close, the same day; a `replaceState` made while a page mounts, found on the request wizard (uncommitted), 2026-10-13; the reference-only sign-in recorded as the decided one, and an undeclared env var set only in `.env` never reaching the code of a deployed build (verified in `@nestjs/config`; a locally generated Prisma client loads the file itself), the same day; and, on `fix/fees-page-ux` rebased onto `chore/migration-0092@16473f0` (2026-10-13), the review of PR #122: a request cancelled with its bill (`cancelRequestOfCancelledBill`), a card or a flat a request names never deleted (`PROPERTY_NAMED_BY_REQUEST`, `HAS_REQUESTS`), request bills stamp `issuedById`, the API's log lines without query strings, and the isolation tests; and, on `fix/pr122-review` (2026-10-15), the review's blocker and majors: `ParcelDuesService.dues` normalising its own argument, a request on a cancelled bill cancelled by `reconcile` too (an IN_REVIEW one through AWAITING_PAYMENT), and a request's `fee` null once it will never be billed; and an `absolute` box escaping the admin shell's scroller, measured on `develop@4634bdb` (uncommitted), 2026-10-15, and the warnings of `next dev --turbo`, the same day; and, on `develop@a7e62087` (uncommitted), the two census-counting traps — `property_entries` counting filings rather than structures, and the trigger columns beside the `units` table — both measured against production, 2026-10-16.
 
 Traps specific to this repository, each confirmed in the code. Every entry
 gives what happens, why, what to do, and where to look. The rules themselves
@@ -748,6 +748,39 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 
 ## Backend runtime
 
+### A category on a notice to all citizens narrows what it charges
+
+- **What happens:** `assessCitizen` filters every unit by the notice's
+  `targetCategory` (`unitMatches`), whatever the target. A per-unit notice to
+  «جميع المواطنين» that carries «محل تجاري» charges every citizen for their shops
+  and nothing else, and the recurring run reads the stored category again every
+  period. The issue wizard on `develop` kept its default «محل تجاري» on every
+  target and sent it (`targetCategory: values.targetCategory || undefined`), so
+  every notice it issued to all citizens or to one carries it.
+- **Do this:** a category goes with `BUILDING_CATEGORY` only: `refineFeeNotice`
+  refuses it elsewhere and `issue` drops it for a caller that skips the schema
+  (decision D13, 2026-10-26). Never "fix" a stored notice by ignoring its
+  category in the run: some of them meant it. Find them with
+  `SELECT id, title, "targetType", "targetCategory", basis, frequency, "isActive"
+  FROM fee_notices WHERE "targetType" <> 'BUILDING_CATEGORY' AND "targetCategory" IS NOT NULL`,
+  and have the municipality decide each one (retarget, or clear). Production had
+  none on 2026-10-27: it had issued no notice yet.
+- **Where:** `fees.service.ts` `unitMatches`, `fee.schema.ts` `refineFeeNotice`,
+  `lib/fee-notice-draft.ts` `noticePayload`, docs/fees-system-rearchitecture-specification.md D13.
+
+### A cast on a Prisma read hides a column that became nullable
+
+- **What happens:** `findMany({ select }) as Promise<T[]>` pins the row type by
+  hand. When `schema.prisma` makes a column nullable — `citizen_payments."citizenId"`
+  in 0099 — every such read still says `string`, and `pnpm typecheck` passes over
+  it. `CorrectionBillsService.openBills` did this: the shared and tiered bills
+  reached its one-citizen-at-a-time figures and failed «فواتير تأثّرت بتصحيحات»
+  with a 500 (review of PR #135).
+- **Do this:** when a column's type changes, grep its reads, not only the
+  compiler's list: `grep -rn "as Promise<" apps/backend/src` finds the casts. A
+  new read lets Prisma infer the row, or names its select with `satisfies`.
+- **Where:** `fees/correction-bills.service.ts`, docs/code-quality.md (the debt row).
+
 ### A «منزل» card names no unit: the unit count is its claim
 
 - **What happens:** a «منزل» card has no `building_units` row. Five readers —
@@ -1368,6 +1401,22 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   with `innerHeight`.
 - **Where:** `apps/frontend/components/admin/admin-shell.tsx` (`<main>`), the
   dashboard's `FoldSection`, `components/admin/charts.tsx` `ChartCard`.
+
+### A labelled button in a `DataTable` phone card is a 36px square
+
+- **What happens:** at 360px the notices page drew «إيقاف الإشعار» and «إلغاء الإشعار» over
+  each other: each button measured 36px wide, its label 65–69px (2026-10-26). One labelled
+  button alone spills out of its box the same way, with nothing beside it to collide with.
+- **Why:** the phone card pins a `meta.mobile: 'actions'` column to a footer whose
+  `[&_button]:size-9` makes every `<button>` inside it a 36px square, sized for the icon-only
+  row actions (PRIM-19). The selector is a class plus an element, so it outranks a plain
+  utility on the button: `w-auto` and `max-sm:w-full` lose. A `<Link>` drawn as a button is an
+  `<a>` and escapes it, and `max-sm:flex-1` grows past it.
+- **Do this:** an icon-only action is `size="icon*"` with `aria-label` and `ActionTooltip`. A
+  labelled one carries `!w-auto`, as `finding-parts.tsx` and the notices page do. The pages
+  still squeezed are in [ui-ux-standards.md](ui-ux-standards.md) §17.4.
+- **Where:** `apps/frontend/components/ui/data-table.tsx` (the phone card's footer),
+  `components/admin/quality/finding-parts.tsx`.
 
 ### Escape in a popover closes the dialog around it
 

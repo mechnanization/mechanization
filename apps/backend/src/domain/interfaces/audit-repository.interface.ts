@@ -85,6 +85,13 @@ export interface AuditRepository {
    * aborted it, and the caller must see the failure.
    */
   appendInTransaction(entry: AuditLogEntry, transaction?: TransactionHandle): Promise<void>;
+  /**
+   * Several rows through a transaction in one statement, as `appendInTransaction`
+   * writes one: for a single act that writes a row per record it touches (a
+   * notice's bills cancelled together), where a statement per row would hold
+   * the transaction for as many round trips as there are bills.
+   */
+  appendManyInTransaction(entries: readonly AuditLogEntry[], transaction?: TransactionHandle): Promise<void>;
   query(query: AuditQuery): Promise<{ items: AuditRow[]; total: number }>;
   /** One row per (day, staff member), for the log's summary view. */
   daily(query: AuditDailyQuery): Promise<{ items: AuditDailyRow[]; total: number }>;
