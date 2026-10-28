@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { typeError } from './type-error';
 
 /**
  * «غير مؤكَّد / بانتظار المعلومة» — a field the officer could not fill, with
@@ -122,12 +123,12 @@ export function isFlaggablePath(path: string): boolean {
  */
 export const fieldFlagSchema = z.object({
   path: z
-    .string({ required_error: 'الحقل المعلَّم مطلوب' })
+    .string(typeError({ required: 'الحقل المعلَّم مطلوب' }))
     .trim()
     .max(80)
     .refine(isFlaggablePath, 'لا يمكن تعليم هذا الحقل كـ«غير مؤكَّد»'),
   reason: z
-    .string({ required_error: 'يرجى ذكر سبب عدم اكتمال هذه المعلومة' })
+    .string(typeError({ required: 'يرجى ذكر سبب عدم اكتمال هذه المعلومة' }))
     .trim()
     .min(4, 'يرجى ذكر سبب عدم اكتمال هذه المعلومة')
     .max(300, 'السبب طويل جداً'),
@@ -250,6 +251,7 @@ export function withoutFlagged<T extends Record<string, unknown>>(
 }
 
 /** The dot-path an issue landed on, in the same vocabulary the flags use. */
-export function issuePath(prefix: string, path: ReadonlyArray<string | number>): string {
-  return [prefix, ...path].join('.');
+export function issuePath(prefix: string, path: ReadonlyArray<PropertyKey>): string {
+  // zod 4 types a path as PropertyKey[]; `join` alone would throw on a symbol.
+  return [prefix, ...path.map(String)].join('.');
 }

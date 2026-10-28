@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { typeError } from './type-error';
 import { positiveMoneyAmount } from './money-amount';
 import { businessDay } from './primitives';
 
@@ -28,12 +29,12 @@ const transferAmount = positiveMoneyAmount(999_999_999_999);
  */
 export const receiveCustodySchema = z.object({
   /** The collector's custody wallet the money leaves. */
-  custodyAccountId: z.string().uuid('اختر عهدة الجابي'),
+  custodyAccountId: z.string().guid('اختر عهدة الجابي'),
   amount: transferAmount,
   /** Counted together before the button is pressed; free text for what was agreed. */
   note: z.string().trim().max(500, 'الملاحظة طويلة جداً').optional(),
   /** One id per press, so a retry does not move the money twice. */
-  clientRequestId: z.string().uuid().optional(),
+  clientRequestId: z.string().guid().optional(),
 });
 
 export type ReceiveCustodyInput = z.infer<typeof receiveCustodySchema>;
@@ -41,7 +42,7 @@ export type ReceiveCustodyInput = z.infer<typeof receiveCustodySchema>;
 /** «إلغاء سند المناقلة» — the manager's cancellation, with its reason. */
 export const voidTransferSchema = z.object({
   reason: z
-    .string({ required_error: 'اكتب سبب الإلغاء' })
+    .string(typeError({ required: 'اكتب سبب الإلغاء' }))
     .trim()
     .min(5, 'اكتب سبباً واضحاً للإلغاء')
     .max(500, 'السبب طويل جداً'),
@@ -66,8 +67,8 @@ const optionalText = (max: number, tooLong: string) => z.string().trim().max(max
 
 /** What both kinds carry. */
 const transferBase = {
-  fromAccountId: z.string().uuid('اختر الحساب الذي يخرج منه المبلغ'),
-  toAccountId: z.string().uuid('اختر الحساب الذي يصل إليه المبلغ'),
+  fromAccountId: z.string().guid('اختر الحساب الذي يخرج منه المبلغ'),
+  toAccountId: z.string().guid('اختر الحساب الذي يصل إليه المبلغ'),
   /** What leaves the source, in its currency — the fee is on top. */
   amount: transferAmount,
   /**
@@ -77,7 +78,7 @@ const transferBase = {
    */
   feeAmount: transferAmount.optional(),
   description: z
-    .string({ required_error: 'اكتب بيان المناقلة' })
+    .string(typeError({ required: 'اكتب بيان المناقلة' }))
     .trim()
     .min(3, 'اكتب بيان المناقلة')
     .max(500, 'البيان طويل جداً'),
@@ -85,7 +86,7 @@ const transferBase = {
   transferredOn: businessDate.optional(),
   backdateReason: optionalText(500, 'السبب طويل جداً'),
   /** Required: one id per press, so a retry does not move the money twice. */
-  clientRequestId: z.string().uuid(),
+  clientRequestId: z.string().guid(),
 };
 
 /**

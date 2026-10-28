@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { typeError } from './type-error';
 import { normalizeDigits } from './primitives';
 
 /**
@@ -11,14 +12,14 @@ import { normalizeDigits } from './primitives';
 
 /** Matches the رقم العقار field the citizen form validates against: saved in Latin digits (`propertyNumberField`). */
 const parcelNumberField = z
-  .string({ required_error: 'رقم العقار مطلوب' })
+  .string(typeError({ required: 'رقم العقار مطلوب' }))
   .trim()
   .min(1, 'رقم العقار مطلوب')
   .max(40)
   .transform((value) => normalizeDigits(value));
 
 const zoneColorField = z
-  .string({ required_error: 'لون القطاع مطلوب' })
+  .string(typeError({ required: 'لون القطاع مطلوب' }))
   .trim()
   .regex(/^#[0-9a-fA-F]{6}$/, 'اللون يجب أن يكون بصيغة #RRGGBB');
 
@@ -27,7 +28,7 @@ const zoneColorField = z
  * then read as two different sectors in a report.
  */
 const zoneCodeField = z
-  .string({ required_error: 'رمز القطاع مطلوب' })
+  .string(typeError({ required: 'رمز القطاع مطلوب' }))
   .trim()
   .min(2, 'رمز القطاع قصير جداً')
   .max(24, 'رمز القطاع طويل جداً')
@@ -35,7 +36,7 @@ const zoneCodeField = z
   .transform((value) => value.toUpperCase());
 
 const zoneNameField = z
-  .string({ required_error: 'اسم القطاع مطلوب' })
+  .string(typeError({ required: 'اسم القطاع مطلوب' }))
   .trim()
   .min(2, 'اسم القطاع قصير جداً')
   .max(120, 'اسم القطاع طويل جداً');

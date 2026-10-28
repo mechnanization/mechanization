@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { typeError } from './type-error';
 import { normalizeDigits, uuid } from './primitives';
 import {
   CITIZEN_RESIDENCE,
@@ -24,7 +25,7 @@ import { canSpanLevels, levelFactorsSchema, unitLevels, unitLevelsField } from '
 
 export const FEE_FREQUENCY = ['ONCE', 'MONTHLY', 'HALF_YEARLY', 'ANNUALLY'] as const;
 export const feeFrequencySchema = z.enum(FEE_FREQUENCY, {
-  errorMap: () => ({ message: 'دورية الرسم مطلوبة' }),
+  error: 'دورية الرسم مطلوبة',
 });
 export type FeeFrequency = (typeof FEE_FREQUENCY)[number];
 
@@ -71,7 +72,7 @@ export const FEE_TARGET_TYPE = [
   'INDIVIDUAL_CITIZEN',
 ] as const;
 export const feeTargetTypeSchema = z.enum(FEE_TARGET_TYPE, {
-  errorMap: () => ({ message: 'الفئة المستهدفة مطلوبة' }),
+  error: 'الفئة المستهدفة مطلوبة',
 });
 export type FeeTargetType = (typeof FEE_TARGET_TYPE)[number];
 
@@ -298,7 +299,7 @@ export function feeScopeWarnings(notice: {
 /** A list of distinct enum values, at least one. */
 function distinctChoice<T extends readonly [string, ...string[]]>(values: T, required: string) {
   return z
-    .array(z.enum(values), { invalid_type_error: required })
+    .array(z.enum(values), typeError({ invalid: required }))
     .min(1, required)
     .refine((chosen) => new Set(chosen).size === chosen.length, 'قيمة مكرّرة في الاختيار');
 }
@@ -505,7 +506,7 @@ export type FeeAssessmentLine = z.infer<typeof feeAssessmentLineSchema>;
  */
 export const billBasisReviewSchema = z.object({
   note: z
-    .string({ required_error: 'اكتب ما قرّرته' })
+    .string(typeError({ required: 'اكتب ما قرّرته' }))
     .trim()
     .min(3, 'اكتب ما قرّرته')
     .max(1000, 'الملاحظة طويلة جداً'),
@@ -517,17 +518,14 @@ export type FeeAssessment = z.infer<typeof feeAssessmentSchema>;
 
 /** LBP, whole pounds. The ceiling is a typo guard, not a policy limit. */
 const lbpAmount = z.coerce
-  .number({
-    required_error: 'المبلغ مطلوب',
-    invalid_type_error: 'المبلغ يجب أن يكون رقماً',
-  })
+  .number(typeError({ required: 'المبلغ مطلوب', invalid: 'المبلغ يجب أن يكون رقماً' }))
   .int('المبلغ يجب أن يكون رقماً صحيحاً بالليرة')
   .positive('المبلغ يجب أن يكون أكبر من صفر')
   .max(1_000_000_000, 'المبلغ كبير جداً — يرجى المراجعة');
 
 /** Square metres as the census records them: not negative, two decimals at most (`units.unitArea`, DECIMAL(12,2)). */
 const bracketArea = z
-  .number({ invalid_type_error: 'المساحة يجب أن تكون رقماً' })
+  .number(typeError({ invalid: 'المساحة يجب أن تكون رقماً' }))
   .nonnegative('المساحة لا تكون سالبة')
   .max(1_000_000, 'المساحة كبيرة جداً — يرجى المراجعة')
   .refine(hasAtMostTwoDecimals, 'المساحة بخانتين عشريتين على الأكثر');
@@ -550,17 +548,17 @@ const bracketArea = z
 export const feeMatrixBracketSchema = z
   .object({
     code: z
-      .string({ required_error: 'رمز الفئة مطلوب' })
+      .string(typeError({ required: 'رمز الفئة مطلوب' }))
       .trim()
       .min(1, 'رمز الفئة مطلوب')
       .max(10, 'رمز الفئة طويل جداً'),
     labelAr: z
-      .string({ required_error: 'اسم الفئة مطلوب' })
+      .string(typeError({ required: 'اسم الفئة مطلوب' }))
       .trim()
       .min(1, 'اسم الفئة مطلوب')
       .max(80, 'اسم الفئة طويل جداً'),
     unitTypes: z
-      .array(z.enum(UNIT_TYPE), { required_error: 'اختر نوع الوحدة' })
+      .array(z.enum(UNIT_TYPE), typeError({ required: 'اختر نوع الوحدة' }))
       .min(1, 'اختر نوعاً واحداً على الأقل من الوحدات')
       .refine((types) => new Set(types).size === types.length, 'نوع الوحدة مكرّر في الفئة'),
     levels: unitLevelsField.default(1),
@@ -592,7 +590,7 @@ export const FEE_MATRIX_MAX_BRACKETS = 100;
  * by code.
  */
 export const feeMatrixSchema = z
-  .array(feeMatrixBracketSchema, { required_error: 'جدول الفئات مطلوب' })
+  .array(feeMatrixBracketSchema, typeError({ required: 'جدول الفئات مطلوب' }))
   .min(1, 'أضف فئة واحدة على الأقل')
   .max(FEE_MATRIX_MAX_BRACKETS, `الجدول لا يتجاوز ${FEE_MATRIX_MAX_BRACKETS} فئة`)
   .superRefine((brackets, ctx) => {
@@ -707,10 +705,7 @@ export function matchBracket<B extends Pick<FeeMatrixBracket, 'unitTypes' | 'lev
  * uses.
  */
 const noticeAmount = z.coerce
-  .number({
-    required_error: 'المبلغ مطلوب',
-    invalid_type_error: 'المبلغ يجب أن يكون رقماً',
-  })
+  .number(typeError({ required: 'المبلغ مطلوب', invalid: 'المبلغ يجب أن يكون رقماً' }))
   .int('المبلغ يجب أن يكون رقماً صحيحاً بالليرة')
   .nonnegative('المبلغ يجب أن يكون أكبر من صفر')
   .max(1_000_000_000, 'المبلغ كبير جداً — يرجى المراجعة');
@@ -722,7 +717,7 @@ const noticeAmount = z.coerce
  */
 const feeNoticeFields = z.object({
   title: z
-    .string({ required_error: 'اسم الرسم مطلوب' })
+    .string(typeError({ required: 'اسم الرسم مطلوب' }))
     .trim()
     .min(3, 'اسم الرسم قصير جداً')
     .max(120, 'اسم الرسم طويل جداً'),
@@ -756,7 +751,7 @@ const feeNoticeFields = z.object({
   acknowledgedWarnings: feeNoticeScopeSchema.shape.acknowledgedWarnings,
   targetCitizenId: uuid.optional(),
   dueDate: z
-    .string({ required_error: 'تاريخ الاستحقاق مطلوب' })
+    .string(typeError({ required: 'تاريخ الاستحقاق مطلوب' }))
     .min(1, 'تاريخ الاستحقاق مطلوب'),
   instructions: z.string().trim().max(1000).optional(),
 });
@@ -964,7 +959,8 @@ export const feeNoticePreviewResultSchema = z.object({
     /** Units whose حالة الوحدة the notice does not charge, each once (0100). */
     outOfScopeUnits: z.number().int().nonnegative(),
     /** The same, by state: «شاغرة: 12». A state with none is absent. */
-    outOfScopeByState: z.record(z.enum(UNIT_STATUS), z.number().int().positive()),
+    // `partialRecord`: zod 4's `record` over an enum key demands every state.
+    outOfScopeByState: z.partialRecord(z.enum(UNIT_STATUS), z.number().int().positive()),
     /** Files the residence filter left out that the notice would otherwise reach (0100). */
     residenceLeftOut: z.number().int().nonnegative(),
     /** Under TIERED_AREA, units the table does not price at all (D11). Each unit once. */
@@ -1009,7 +1005,7 @@ export interface SharedUnitBillView {
  * refuses zero or less), `null` for none.
  */
 const urgentCeiling = z
-  .number({ invalid_type_error: 'السقف رقم' })
+  .number(typeError({ invalid: 'السقف رقم' }))
   .finite('السقف رقم')
   .positive('السقف أكبر من صفر')
   .max(999_999_999_999, 'السقف كبير جداً')
@@ -1224,10 +1220,10 @@ export const declarePaymentSchema = z.object({
    * own entry is what records that money.
    */
   method: z.literal('WHISH_MONEY', {
-    errorMap: () => ({ message: 'يُبلَّغ هنا عن تحويل Whish Money وحده؛ الدفع النقدي في صندوق البلدية' }),
+    error: 'يُبلَّغ هنا عن تحويل Whish Money وحده؛ الدفع النقدي في صندوق البلدية',
   }),
   whishTransactionRef: z
-    .string({ required_error: 'أدخل رقم عملية التحويل' })
+    .string(typeError({ required: 'أدخل رقم عملية التحويل' }))
     .trim()
     .min(4, 'رقم العملية قصير جداً')
     .max(60, 'رقم العملية طويل جداً'),
@@ -1245,12 +1241,12 @@ export type DeclarePayment = z.infer<typeof declarePaymentSchema>;
 export const chargeCitizenSchema = z.object({
   citizenId: uuid,
   title: z
-    .string({ required_error: 'اسم الرسم مطلوب' })
+    .string(typeError({ required: 'اسم الرسم مطلوب' }))
     .trim()
     .min(3, 'اسم الرسم قصير جداً')
     .max(120),
   amount: lbpAmount,
-  dueDate: z.string({ required_error: 'تاريخ الاستحقاق مطلوب' }).min(1),
+  dueDate: z.string(typeError({ required: 'تاريخ الاستحقاق مطلوب' })).min(1),
 });
 
 export type ChargeCitizen = z.infer<typeof chargeCitizenSchema>;
@@ -1275,7 +1271,7 @@ export const settlePaymentSchema = z
    * as credit, because nothing here can carry an overpayment forward.
    */
     amount: z.coerce
-      .number({ invalid_type_error: 'المبلغ يجب أن يكون رقماً' })
+      .number(typeError({ invalid: 'المبلغ يجب أن يكون رقماً' }))
       .positive('المبلغ يجب أن يكون أكبر من صفر')
       .max(1_000_000_000_000, 'المبلغ كبير جداً')
       .optional(),
@@ -1365,7 +1361,7 @@ export const settlePaymentSchema = z
         // «foreign» part of a dollar bill would store a rate that rounds to 0.
         foreignCurrency: z.enum(['USD', 'EUR']).default('USD'),
         exchangeRate: z.coerce
-          .number({ invalid_type_error: 'سعر الصرف يجب أن يكون رقماً' })
+          .number(typeError({ invalid: 'سعر الصرف يجب أن يكون رقماً' }))
           .positive('سعر الصرف يجب أن يكون أكبر من صفر')
           .max(1_000_000_000)
           .optional(),
@@ -1473,7 +1469,7 @@ export const periodKeySchema = z
  */
 export const cancelNoticeSchema = cancelBillSchema.extend({
   periodKeys: z
-    .array(periodKeySchema, { required_error: 'اختر فترة واحدة على الأقل' })
+    .array(periodKeySchema, typeError({ required: 'اختر فترة واحدة على الأقل' }))
     .min(1, 'اختر فترة واحدة على الأقل')
     .max(240)
     .refine((keys) => new Set(keys).size === keys.length, 'فترة مكرّرة'),
@@ -1506,12 +1502,12 @@ export interface FeeNoticePeriodSummary {
  */
 export const referenceLoginSchema = z.object({
   referenceNumber: z
-    .string({ required_error: 'الرقم المرجعي مطلوب' })
+    .string(typeError({ required: 'الرقم المرجعي مطلوب' }))
     .trim()
     .min(4, 'الرقم المرجعي غير صالح')
     .max(40)
     .transform((value) => value.toUpperCase()),
-  phone: z.string({ required_error: 'رقم الهاتف مطلوب' }).trim().min(6, 'رقم الهاتف غير صالح'),
+  phone: z.string(typeError({ required: 'رقم الهاتف مطلوب' })).trim().min(6, 'رقم الهاتف غير صالح'),
 });
 
 export type ReferenceLogin = z.infer<typeof referenceLoginSchema>;
@@ -1542,7 +1538,7 @@ export type ReferenceLogin = z.infer<typeof referenceLoginSchema>;
  */
 export const referenceOnlyLoginSchema = z.object({
   referenceNumber: z
-    .string({ required_error: 'الرقم المرجعي مطلوب' })
+    .string(typeError({ required: 'الرقم المرجعي مطلوب' }))
     .trim()
     // Spaces and lowercase are what a citizen actually types off a slip; the
     // domain's `ReferenceNumber.parse` normalises the same way.
@@ -1572,7 +1568,7 @@ export const parcelDuesQuerySchema = z.object({
     مستحق» on the one check a clearance rests on.
   */
   propertyNumber: z
-    .string({ required_error: 'رقم العقار مطلوب' })
+    .string(typeError({ required: 'رقم العقار مطلوب' }))
     .trim()
     .min(1, 'رقم العقار مطلوب')
     .max(40)

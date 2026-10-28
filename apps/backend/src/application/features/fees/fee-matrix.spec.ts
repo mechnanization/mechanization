@@ -35,8 +35,13 @@ const B = bracket({ code: 'B', minArea: 100, maxArea: 150, amount: 1_500_000 });
 const C = bracket({ code: 'C', minArea: 150, maxArea: null, amount: 2_000_000 });
 
 /** The messages a failed parse raised, with the path each sits on. */
-function issues(result: { success: boolean; error?: { issues: Array<{ path: (string | number)[]; message: string }> } }) {
-  return result.success ? [] : result.error!.issues.map((issue) => ({ path: issue.path.join('.'), message: issue.message }));
+function issues(result: {
+  success: boolean;
+  error?: { issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey>; message: string }> };
+}) {
+  return result.success
+    ? []
+    : result.error!.issues.map((issue) => ({ path: issue.path.map(String).join('.'), message: issue.message }));
 }
 
 describe('feeMatrixBracketSchema', () => {

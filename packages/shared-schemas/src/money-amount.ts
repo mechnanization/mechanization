@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { typeError } from './type-error';
 
 /**
  * At most two decimals, judged on the number's own decimal form.
@@ -27,7 +28,7 @@ export function hasAtMostTwoDecimals(value: number): boolean {
  */
 export function positiveMoneyAmount(max: number) {
   return z
-    .number({ required_error: 'اكتب المبلغ', invalid_type_error: 'المبلغ رقم' })
+    .number(typeError({ required: 'اكتب المبلغ', invalid: 'المبلغ رقم' }))
     .finite('المبلغ رقم')
     .positive('المبلغ أكبر من صفر')
     .max(max, 'المبلغ كبير جداً')

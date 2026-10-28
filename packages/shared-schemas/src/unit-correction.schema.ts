@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { typeError } from './type-error';
 
 /**
  * «حذف تصحيحي» — a SUPER_ADMIN removes a census unit the ordinary delete
@@ -16,12 +17,12 @@ import { z } from 'zod';
 export const unitCorrectionDeleteSchema = z.object({
   fingerprint: z.string().regex(/^[0-9a-f]{64}$/, 'افتح المعاينة من جديد'),
   reason: z
-    .string({ required_error: 'اكتب سبب الحذف' })
+    .string(typeError({ required: 'اكتب سبب الحذف' }))
     .trim()
     .min(10, 'اكتب سبباً واضحاً: عشرة أحرف على الأقل')
     .max(500, 'السبب طويل جداً'),
   /** The unit's code, typed by hand: the confirmation muscle memory cannot give. */
-  confirmCode: z.string({ required_error: 'اكتب رمز الوحدة للتأكيد' }).trim().min(1, 'اكتب رمز الوحدة للتأكيد'),
+  confirmCode: z.string(typeError({ required: 'اكتب رمز الوحدة للتأكيد' })).trim().min(1, 'اكتب رمز الوحدة للتأكيد'),
 });
 
 export type UnitCorrectionDeleteInput = z.infer<typeof unitCorrectionDeleteSchema>;
@@ -141,7 +142,7 @@ export interface UnitCorrectionResult {
  */
 export const duplexMergeSchema = unitCorrectionDeleteSchema.extend({
   totalArea: z.coerce
-    .number({ invalid_type_error: 'المساحة يجب أن تكون رقماً' })
+    .number(typeError({ invalid: 'المساحة يجب أن تكون رقماً' }))
     .positive('المساحة يجب أن تكون أكبر من صفر')
     .max(100_000, 'المساحة كبيرة جداً')
     .optional(),

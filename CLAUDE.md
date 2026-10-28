@@ -1,7 +1,8 @@
 # CLAUDE.md — Mechanization (منظومة المكننة البلدية)
 
 Last verified against the code: `develop@8742c5b`, 2026-10-03; the two tiered-fees rows
-(the routing table and the docs table), `fix/fee-wizard-review`, 2026-10-26. Code wins: where a
+(the routing table and the docs table), `fix/fee-wizard-review`, 2026-10-26; the majors line
+(zod 4) on `fix/dependency-audit`, 2026-10-28. Code wins: where a
 doc and the code disagree, the code is the fact and the doc is the bug.
 
 A multi-tenant registration system for Lebanese municipalities: the citizen
@@ -30,9 +31,9 @@ This file is the hub. Every rule has one home, and this file links to it.
   comes from the system of record or the user, never from a plausible guess.
 - **Cite, don't recall.** Your memory of a library API is a guess. These are the
   majors in use: Next 15, React 18, NestJS 10, Prisma 5, Tailwind 3,
-  tailwind-merge 3, zod 3, next-intl 4, TanStack Query 5. Training data is full
-  of Prisma 7, Tailwind 4, React 19 and zod 4. Read the types or source in
-  `node_modules` before you rely on an API.
+  tailwind-merge 3, zod 4, next-intl 4, TanStack Query 5. Training data is full
+  of Prisma 7, Tailwind 4 and React 19, and most zod examples are still zod 3.
+  Read the types or source in `node_modules` before you rely on an API.
 - **Read before you infer.** A Prisma model can drift from the database, and a
   name can mislead. Rules: [docs/database.md](docs/database.md#read-before-you-infer).
 - **Facts go stale inside a session.** Teammates push. Re-run `git status` and
