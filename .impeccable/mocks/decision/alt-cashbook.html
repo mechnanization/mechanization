@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>دفتر الصندوق</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0d0d0c;--card:#1a1a19;--mut:#272725;--acc:#2c2c2a;--bd:#2f2f2d;--in:#393937;--fg:#fff;--mf:#c2c0b7;--pr:#3a86e4;--ok:#1eae53;--wn:#f9941f}
+*{box-sizing:border-box}
+html,body{margin:0;width:1440px;height:900px;overflow:hidden}
+body{display:flex;background:var(--bg);color:var(--fg);font:400 14px/20px 'IBM Plex Sans Arabic',system-ui,sans-serif;font-variant-numeric:tabular-nums}
+a{color:inherit;text-decoration:none}button{font:inherit;color:inherit;background:none;border:0;padding:0}
+.i{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.m{color:var(--mf)}.pos{color:var(--ok)}code,kbd{font:400 12px/16px Consolas,ui-monospace,monospace}
+.sb{width:272px;flex:none;border-inline-end:1px solid var(--bd);background:var(--bg)}
+.brand{height:56px;display:flex;align-items:center;gap:8px;padding-inline:16px;font-weight:600;border-bottom:1px solid var(--bd)}
+.bt,.tile{display:grid;place-items:center;flex:none;border-radius:6px;background:rgba(58,134,228,.12);color:var(--pr);width:28px;height:28px}
+nav{padding:4px 12px}
+.gh{font-size:13px;line-height:20px;color:var(--mf);padding:16px 8px 4px}
+.nv{display:flex;align-items:center;gap:8px;height:36px;padding-inline:8px;border-radius:6px}
+.nv .i{color:var(--mf)}.nv.on{background:rgba(58,134,228,.12);color:var(--pr);font-weight:500}.nv.on .i{color:var(--pr)}
+.mn{flex:1;min-width:0;display:flex;flex-direction:column}
+.tb{height:56px;flex:none;display:flex;align-items:center;justify-content:space-between;padding-inline:32px;border-bottom:1px solid var(--bd)}
+.crumb{display:flex;align-items:center;gap:8px;color:var(--mf)}.crumb b{color:var(--fg);font-weight:500}
+.tools{display:flex;align-items:center;gap:8px}.sx,.srch{height:36px;display:flex;align-items:center;gap:8px;padding-inline:12px;border:1px solid var(--in);border-radius:6px;color:var(--mf)}
+.sx{width:280px;background:var(--card)}.sx span{flex:1}
+kbd{padding-inline:6px;border:1px solid var(--in);border-radius:4px;line-height:18px}
+.gb{height:36px;min-width:36px;padding-inline:8px;border-radius:6px;display:grid;place-items:center;color:var(--mf);font-weight:500;font-size:13px}
+.me{display:flex;align-items:center;gap:8px;padding-inline-start:8px;font-weight:500}
+.av{width:32px;height:32px;border-radius:9999px;background:var(--mut);display:grid;place-items:center;font-size:13px;color:var(--mf)}
+.pg{padding:24px 32px 0;display:flex;flex-direction:column;min-height:0}
+.back{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--mf);margin-bottom:12px;align-self:flex-start}.back .i{width:14px;height:14px}
+.ph{display:flex;align-items:center;gap:12px;padding-bottom:16px;border-bottom:1px solid var(--bd)}
+.tile{width:40px;height:40px;border-radius:8px}.tile .i{width:20px;height:20px}
+h1{margin:0;font-size:24px;line-height:32px;font-weight:600}
+.acts{margin-inline-start:auto;display:flex;gap:8px}
+.btn{height:40px;display:inline-flex;align-items:center;gap:8px;padding-inline:16px;border-radius:6px;font-weight:500;white-space:nowrap}
+.ol{border:1px solid var(--in)}.ol.on{background:var(--acc)}
+.sm{height:36px;padding-inline:12px}.pri{background:var(--pr);color:#0d0d0c}.gs{color:var(--mf);padding-inline:12px}
+.strip{display:flex;align-items:center;gap:16px;margin-top:16px}
+.sel{height:40px;display:inline-flex;align-items:center;gap:8px;padding-inline:12px;border:1px solid var(--in);border-radius:6px;background:var(--card);font-weight:500}
+.cv{color:var(--mf)}.sep{width:1px;height:24px;background:var(--bd)}
+.cell{display:flex;align-items:baseline;gap:8px}.cell b{font-weight:600}
+.note{margin-inline-start:auto;display:flex;align-items:center;gap:8px;color:var(--wn);font-weight:500}
+.note a{color:var(--pr)}.flt{display:flex;align-items:center;gap:8px;margin-top:12px}
+.srch{width:400px;margin-inline-end:4px}
+.fs{height:36px;display:inline-flex;align-items:center;gap:8px;padding-inline:12px;border:1px solid var(--in);border-radius:6px}
+.book{position:relative;margin-top:16px}
+.book::before{content:"";position:absolute;inset-block:0;inset-inline-start:calc(50% - .5px);width:1px;background:var(--bd)}
+.two{display:grid;grid-template-columns:1fr 56px 1fr;position:relative}
+.hd{border-bottom:1px solid var(--bd)}
+.ch{height:60px;display:flex;align-items:center;gap:12px;padding-inline:12px;position:sticky;top:0;background:var(--bg)}
+.ch .btn{margin-inline-start:auto}
+.ct{font-size:16px;line-height:24px;font-weight:600}.tot{font-weight:600}
+.dt{width:28px;height:28px;border-radius:6px;display:grid;place-items:center;flex:none}
+.dt.in{background:rgba(30,174,83,.12);color:var(--ok)}.dt.out{background:var(--mut);color:var(--mf)}
+.cz{padding-block:12px 16px}
+.cmp{margin:0;border:1px solid var(--bd);background:var(--card);border-radius:8px;padding:12px;display:grid;gap:12px}
+.g{display:grid;grid-template-columns:1fr 1fr;gap:12px}.g.a{grid-template-columns:176px 1fr}.g.c{grid-template-columns:1fr auto;align-items:end}
+.f{display:flex;flex-direction:column;gap:4px;min-width:0}
+.lb{font-size:12px;line-height:16px;font-weight:500;color:var(--mf)}
+.ctl{height:40px;display:flex;align-items:center;gap:8px;padding-inline:12px;border:1px solid var(--in);border-radius:6px;background:var(--bg);white-space:nowrap;overflow:hidden}
+.ctl .cv{margin-inline-start:auto}
+.foc{padding:0;border-color:var(--pr);box-shadow:0 0 0 3px rgba(58,134,228,.25)}
+.foc .v{flex:1;display:flex;align-items:center;justify-content:flex-end;gap:1px;padding-inline:12px;font-weight:500}
+.caret{width:1px;height:18px;background:var(--fg)}.unit{align-self:stretch;display:grid;place-items:center;padding-inline:14px;background:var(--mut);border-inline-start:1px solid var(--in);color:var(--mf);font-weight:500}
+.hint{font-size:12px;line-height:16px;color:var(--mf)}
+.ac{display:flex;gap:8px}.band{height:32px;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding-inline:12px;background:var(--card);border-block:1px solid var(--bd);position:relative}
+.dl{font-weight:600}.net{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600}.net .m{font-weight:500}
+.col{min-width:0}.rw{height:52px;display:flex;align-items:center;gap:12px;padding-inline:12px}
+.rw+.rw{border-top:1px solid var(--bd)}
+.tx{flex:1;min-width:0}.p{display:flex;align-items:center;gap:8px;font-weight:500;white-space:nowrap}
+.s{font-size:12px;line-height:16px;color:var(--mf);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.am{display:flex;flex-direction:column;align-items:flex-end;gap:0}.am b{font-weight:600}.am code{color:var(--mf)}
+.chip{font-size:12px;line-height:16px;padding:2px 6px;border-radius:6px;color:var(--wn);background:rgba(249,148,31,.15);font-weight:500}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<symbol id="lm" viewBox="0 0 24 24"><path d="M3 22h18M6 18v-7M10 18v-7M14 18v-7M18 18v-7"/><path d="M11.12 2.198a2 2 0 0 1 1.76.006l7.866 3.847c.476.233.31.949-.22.949H3.474c-.53 0-.695-.716-.22-.949z"/></symbol><symbol id="hs" viewBox="0 0 24 24"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+<symbol id="us" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/><circle cx="9" cy="7" r="4"/></symbol><symbol id="wl" viewBox="0 0 24 24"><path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/></symbol>
+<symbol id="bn" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01M18 12h.01"/></symbol><symbol id="lr" viewBox="0 0 24 24"><path d="M8 3 4 7l4 4M4 7h16M16 21l4-4-4-4M20 17H4"/></symbol>
+<symbol id="cc" viewBox="0 0 24 24"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2M9 14l2 2 4-4"/></symbol><symbol id="ft" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4M10 9H8M16 13H8M16 17H8"/></symbol>
+<symbol id="ms" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol><symbol id="sr" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+<symbol id="bl" viewBox="0 0 24 24"><path d="M10.268 21a2 2 0 0 0 3.464 0M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></symbol><symbol id="cl" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+<symbol id="cd" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol><symbol id="ar" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></symbol>
+<symbol id="tg" viewBox="0 0 24 24"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/></symbol><symbol id="ca" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></symbol>
+<symbol id="ck" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></symbol><symbol id="pl" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></symbol>
+<symbol id="in" viewBox="0 0 24 24"><path d="M17 7 7 17M17 17H7V7"/></symbol><symbol id="ou" viewBox="0 0 24 24"><path d="M7 7h10v10M7 17 17 7"/></symbol>
+</svg>
+<aside class="sb">
+<div class="brand"><span class="bt"><svg class="i"><use href="#lm"/></svg></span>لوحة البلدية</div>
+<nav>
+<div class="gh">الجباية</div>
+<a class="nv"><svg class="i"><use href="#hs"/></svg>المستحق على عقار</a>
+<a class="nv"><svg class="i"><use href="#us"/></svg>الجباة والتحصيل</a>
+<div class="gh">الخزينة</div>
+<a class="nv"><svg class="i"><use href="#wl"/></svg>الأرصدة</a>
+<a class="nv on" aria-current="page"><svg class="i"><use href="#bn"/></svg>الإيرادات والنفقات</a>
+<a class="nv"><svg class="i"><use href="#lr"/></svg>المناقلات والمصارفة</a>
+<a class="nv"><svg class="i"><use href="#cc"/></svg>جرد وإقفال اليومية</a>
+<div class="gh">المراجعة والتدقيق</div>
+<a class="nv"><svg class="i"><use href="#ft"/></svg>السجلات</a>
+<a class="nv"><svg class="i"><use href="#ms"/></svg>ملاحظات الجودة</a>
+</nav>
+</aside>
+<main class="mn">
+<header class="tb">
+<div class="crumb">البازورية<svg class="i"><use href="#cl"/></svg><b>الإيرادات والنفقات</b></div>
+<div class="tools">
+<div class="sx"><svg class="i"><use href="#sr"/></svg><span>بحث في السجل…</span><kbd dir="ltr">Ctrl K</kbd></div>
+<button class="gb">EN</button>
+<button class="gb" aria-label="التنبيهات"><svg class="i"><use href="#bl"/></svg></button>
+<div class="me"><span>مدير النظام</span><span class="av">م</span></div>
+</div>
+</header>
+<div class="pg">
+<a class="back"><svg class="i"><use href="#ar"/></svg>عودة إلى الخزينة</a>
+<div class="ph"><span class="tile"><svg class="i"><use href="#bn"/></svg></span><h1>الإيرادات والنفقات</h1>
+<div class="acts"><button class="btn ol"><svg class="i"><use href="#tg"/></svg>بنود الإيرادات</button></div></div>
+<div class="strip">
+<button class="sel"><svg class="i cv"><use href="#ca"/></svg>هذا الشهر — تشرين الأول 2026<svg class="i cv"><use href="#cd"/></svg></button>
+<span class="sep"></span>
+<div class="cell"><span class="m">ليرة · الصافي</span><b class="pos"><bdi dir="ltr">+430,100,000</bdi> ل.ل</b></div>
+<span class="sep"></span>
+<div class="cell"><span class="m">دولار · الصافي</span><b class="pos"><bdi dir="ltr">+950</bdi> $</b></div>
+<div class="note"><svg class="i"><use href="#ck"/></svg>3 بانتظار أمر رئيس البلدية<a>عرض الطلبات</a></div>
+</div>
+<div class="flt">
+<div class="srch"><svg class="i"><use href="#sr"/></svg><span>ابحث برقم السند أو الجهة أو البيان…</span></div>
+<button class="fs">كل الحسابات<svg class="i cv"><use href="#cd"/></svg></button>
+<button class="fs">كل البنود<svg class="i cv"><use href="#cd"/></svg></button>
+<button class="fs">غير الملغاة<svg class="i cv"><use href="#cd"/></svg></button>
+</div>
+<section class="book" aria-label="دفتر الصندوق">
+<div class="two hd">
+<div class="ch"><span class="dt in"><svg class="i"><use href="#in"/></svg></span><div><div class="ct">المقبوضات</div><div class="tot pos"><span><bdi dir="ltr">+451,000,000</bdi> ل.ل</span> <span class="m">·</span> <span><bdi dir="ltr">+1,250</bdi> $</span></div></div><button class="btn ol sm on" aria-expanded="true"><svg class="i"><use href="#pl"/></svg>تسجيل قبض</button></div>
+<div></div>
+<div class="ch"><span class="dt out"><svg class="i"><use href="#ou"/></svg></span><div><div class="ct">المدفوعات</div><div class="tot"><span><bdi dir="ltr">−20,900,000</bdi> ل.ل</span> <span class="m">·</span> <span><bdi dir="ltr">−300</bdi> $</span></div></div><button class="btn ol sm"><svg class="i"><use href="#pl"/></svg>تسجيل صرف</button></div>
+</div>
+<div class="two cz">
+<form class="cmp" aria-label="سند قبض جديد">
+<div class="g a">
+<div class="f"><span class="lb">المبلغ</span><span class="ctl foc"><span class="v" dir="ltr"><span class="m">0</span><span class="caret"></span></span><span class="unit">$</span></span></div>
+<div class="f"><span class="lb">الحساب</span><span class="ctl">صندوق النقد — دولار<svg class="i cv"><use href="#cd"/></svg></span><span class="hint">الرصيد <bdi dir="ltr">4,820</bdi> $</span></div>
+</div>
+<div class="g">
+<div class="f"><span class="lb">البند</span><span class="ctl">رخص بناء وإشغال وتخطيط<svg class="i cv"><use href="#cd"/></svg></span></div>
+<div class="f"><span class="lb">الدافع</span><span class="ctl m">اسم الشخص أو الجهة</span></div>
+</div>
+<div class="g c">
+<div class="f"><span class="lb">البيان</span><span class="ctl m">وصف مختصر يظهر على السند</span></div>
+<div class="ac"><button class="btn pri" type="button">سجّل سند القبض</button><button class="btn gs" type="button">إلغاء</button></div>
+</div>
+</form>
+<div></div><div></div>
+</div>
+<div class="band"><span class="dl">اليوم · الإثنين 12/10/2026</span><span class="net"><span class="m">صافي اليوم</span><span><bdi dir="ltr">−18,500,000</bdi> ل.ل</span><span class="m">·</span><span class="pos"><bdi dir="ltr">+750</bdi> $</span></span><span></span></div>
+<div class="two">
+<div class="col">
+<div class="rw"><span class="dt in"><svg class="i"><use href="#in"/></svg></span><div class="tx"><div class="p">مكتب جابر للهندسة</div><div class="s">رخص بناء وإشغال وتخطيط · صندوق النقد — دولار</div></div><div class="am"><b class="pos"><bdi dir="ltr">+500</bdi> $</b><code dir="ltr">RV-2610-0004</code></div></div>
+<div class="rw"><span class="dt in"><svg class="i"><use href="#in"/></svg></span><div class="tx"><div class="p">فرن الساحة</div><div class="s">إيجار أملاك بلدية · Whish — دولار</div></div><div class="am"><b class="pos"><bdi dir="ltr">+250</bdi> $</b><code dir="ltr">RV-2610-0003</code></div></div>
+</div>
+<div></div>
+<div class="col">
+<div class="rw"><span class="dt out"><svg class="i"><use href="#ou"/></svg></span><div class="tx"><div class="p">محطة الأمانة للمحروقات<span class="chip">بانتظار أمر الصرف</span></div><div class="s">محروقات ومولّدات · صندوق النقد — ليرة</div></div><div class="am"><b><bdi dir="ltr">−18,500,000</bdi> ل.ل</b><code dir="ltr">PV-2610-0007</code></div></div>
+</div>
+</div>
+<div class="band"><span class="dl">أمس · الأحد 11/10/2026</span><span class="net"><span class="m">صافي اليوم</span><span><bdi dir="ltr">−2,400,000</bdi> ل.ل</span><span class="m">·</span><span class="pos"><bdi dir="ltr">+200</bdi> $</span></span><span></span></div>
+<div class="two">
+<div class="col">
+<div class="rw"><span class="dt in"><svg class="i"><use href="#in"/></svg></span><div class="tx"><div class="p"><bdi dir="ltr">ABED</bdi></div><div class="s">رخص بناء وإشغال وتخطيط · صندوق النقد — دولار</div></div><div class="am"><b class="pos"><bdi dir="ltr">+500</bdi> $</b><code dir="ltr">RV-2610-0002</code></div></div>
+</div>
+<div></div>
+<div class="col">
+<div class="rw"><span class="dt out"><svg class="i"><use href="#ou"/></svg></span><div class="tx"><div class="p">مكتبة النور</div><div class="s">قرطاسية ومطبوعات · صندوق النقد — ليرة</div></div><div class="am"><b><bdi dir="ltr">−2,400,000</bdi> ل.ل</b><code dir="ltr">PV-2610-0006</code></div></div>
+<div class="rw"><span class="dt out"><svg class="i"><use href="#ou"/></svg></span><div class="tx"><div class="p">عامل نظافة — تشرين الأول</div><div class="s">رواتب وأجور · صندوق النقد — دولار</div></div><div class="am"><b><bdi dir="ltr">−300</bdi> $</b><code dir="ltr">PV-2610-0005</code></div></div>
+</div>
+</div>
+</section>
+</div>
+</main>
+</body>
+</html>

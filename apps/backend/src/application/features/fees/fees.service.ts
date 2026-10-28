@@ -1,7 +1,12 @@
+import { randomUUID } from 'node:crypto';
 import {
   citizenDisplayName,
   DEFAULT_EXCHANGE_TOLERANCE_PERCENT,
   DEFAULT_LARGE_EXCHANGE_THRESHOLD,
+  defaultUnitStates,
+  feeMatrixSchema,
+  feeNoticeScopeSchema,
+  feeUnitState,
   judgeExchange,
   NON_PERSON_RESIDENCE,
 } from '@mechanization/shared-schemas';
@@ -19,7 +24,14 @@ import type {
   FeeAssessment,
   FeeBasis,
   FeeBearer,
+  FeeMatrixBracket,
+  FeeNoticePeriodSummary,
+  FeeNoticePreviewInput,
+  FeeNoticePreviewResult,
+  FeeNoticeScope,
+  FeeUnassessableReason,
   PaymentMethod,
+  SharedUnitBillView,
   SystemSettingsInput,
 } from '@mechanization/shared-schemas';
 import {
@@ -27,7 +39,6 @@ import {
   canOverrideCashRules,
   daysBetween,
   isOccupiedByOthers,
-  isUnoccupied,
   municipalToday,
   ownerShareOf,
   readLevelFactors,
@@ -56,6 +67,21 @@ import { assertNotMergedAway } from '../citizens/merged-away';
 import { ConflictError, DomainError, ForbiddenError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { exchangeRuleChangeAllowed } from '../treasury/transfers.plan';
 import { raiseOneOffBill } from './one-off-bill';
+import { billsOwedBy, responsibleDebtorId, SHARED_BILL_INCLUDE, sharedUnitView } from './shared-bill-view';
+import {
+  priceTieredUnits,
+  splitSharedUnitBills,
+  tieredAssessment,
+  unassessableUnit,
+  type OutsideUnit,
+  type SharedUnitBill,
+  type SharedUnitConflict,
+  type TieredCitizen,
+  type TieredUnit,
+  type Unassessable,
+  type UnassessableDetail,
+  type UnassessableUnit,
+} from './tiered-area';
 import { likePattern, searchTokens } from '../../common/search-terms';
 import { citizenSearchText } from '../../common/citizen-search';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
@@ -63,6 +89,61 @@ import { PaymentLedgerService, type Tender } from './payment-ledger.service';
 import { creditsWallets, documentOccurredAt } from '../treasury/treasury.plan';
 import { assertLiveCollector } from './live-collector';
 import { AuditService, type AuditEntryInput } from '../audit/audit.service';
+
+/**
+ * Why a bill cannot be cancelled now, or null when it can — «إلغاء الفاتورة»'s
+ * rule, applied by `cancelBill` to one bill and by `cancelNoticeBatch` to each
+ * bill of a notice, so a batch never cancels what one press would refuse: one
+ * already cancelled; one with a citizen's claim under review (the claim is
+ * decided first); one with money on it, paid or part-paid (its receipts are
+ * reversed first, so the money's own record is corrected before the debt is).
+ */
+function billCancelRefusal(bill: {
+  paymentStatus: string;
+  paidAmount: number;
+}): 'BILL_ALREADY_CANCELLED' | 'PAYMENT_CLAIM_UNDER_REVIEW' | 'BILL_CANCEL_HAS_PAYMENTS' | null {
+  if (bill.paymentStatus === 'CANCELLED') return 'BILL_ALREADY_CANCELLED';
+  if (bill.paymentStatus === 'PENDING_REVIEW') return 'PAYMENT_CLAIM_UNDER_REVIEW';
+  if (bill.paymentStatus === 'PAID' || bill.paidAmount > 0) return 'BILL_CANCEL_HAS_PAYMENTS';
+  return null;
+}
+
+/**
+ * A shared unit bill (0099) is paid at the office, by any of its debtors, named
+ * at the counter. Not online and not by a citizen's claim: a claim is confirmed
+ * later by a clerk (`review`), and the bill has nowhere to keep which debtor
+ * made it, while the ledger takes money on a shared bill only with its payer
+ * named (`recordIn`). A claim that could never be confirmed would hold the bill
+ * in review until a clerk rejected it.
+ */
+function assertNotSharedOnline(payment: { unitId: string | null }): void {
+  if (payment.unitId) {
+    throw new ConflictError({
+      code: 'SHARED_BILL_PAY_AT_OFFICE',
+      message: 'A shared unit bill is paid at the municipality’s office, by any of its debtors.',
+    });
+  }
+}
+
+/**
+ * Who a bill is for, as the staff lists show it: its citizen, or — on a shared
+ * unit bill (0099, D5), which has none — the unit and how many may pay it, with
+ * the citizen fields null.
+ */
+function billHolder(row: {
+  citizen:
+    | (Parameters<typeof citizenDisplayName>[0] & { id: string; phone: string | null; referenceNumber: string | null })
+    | null;
+} & Parameters<typeof sharedUnitView>[0]) {
+  return {
+    citizenId: row.citizen?.id ?? null,
+    // «ورثة المرحوم …» for an estate (0076): the heirs owe, not the deceased.
+    citizenName: row.citizen ? citizenDisplayName(row.citizen, { middleName: false }) : null,
+    citizenPhone: row.citizen?.phone ?? null,
+    citizenReference: row.citizen?.referenceNumber ?? null,
+    sharedUnit: sharedUnitView(row),
+  };
+}
 
 /** Property categories that live on `PropertyEntry.propertyType`. */
 const PROPERTY_TYPE_CATEGORIES = new Set(['BUILDING', 'HOUSE', 'LAND', 'TENT']);
@@ -90,6 +171,81 @@ export interface CitizenAssessment {
   exemptUnitIds?: string[];
   /** The co-owned flats another owner pays for, for the same reason. Not stored. */
   coOwnerPaidUnitIds?: string[];
+  /** The units whose حالة الوحدة the notice does not charge, with that state, for counting each once by state. Not stored. */
+  outOfScopeUnits?: OutOfScopeUnit[];
+  /** Under TIERED_AREA, each unit priced, so the run can bill the shared ones once (`splitSharedUnitBills`). Not stored. */
+  tieredUnits?: readonly TieredUnit[];
+  /** Under TIERED_AREA, the units the table does not price (D11), for counting each once across a run. Not stored. */
+  outsideUnits?: readonly OutsideUnit[];
+}
+
+/** A unit a notice's «حالة الوحدة» filter left out (0100): its census id when it has one, and its state. */
+export interface OutOfScopeUnit {
+  unitId: string | null;
+  state: string;
+}
+
+/**
+ * The filters a notice applies on top of its bearer and target type
+ * («من يشمل الإشعار», 0100), as the biller reads them: each absent is the
+ * behaviour before them — every category the target type names, the statuses
+ * the bearer has always charged, every kind of file.
+ */
+export interface NoticeScope {
+  categories?: readonly string[];
+  unitStates?: readonly string[];
+  residences?: readonly string[];
+}
+
+/**
+ * A stored notice's scope: its one `targetCategory` or its list, and the
+ * filters kept in `fee_notices.scope`, read back through the schema that let
+ * them in. A stored scope that no longer parses fails that notice's read,
+ * named, rather than billing it unfiltered.
+ */
+export function scopeOf(notice: { targetCategory: string | null; scope: unknown }): NoticeScope & {
+  acknowledgedWarnings?: readonly string[];
+} {
+  const stored: FeeNoticeScope = notice.scope == null ? {} : feeNoticeScopeSchema.parse(notice.scope);
+  return {
+    categories: stored.categories ?? (notice.targetCategory ? [notice.targetCategory] : undefined),
+    unitStates: stored.unitStates,
+    residences: stored.residences,
+    acknowledgedWarnings: stored.acknowledgedWarnings,
+  };
+}
+
+/**
+ * The scope a notice is issued with, as stored in `fee_notices.scope`: only
+ * what departs from the defaults, so a notice that names none of it stores
+ * NULL and reads back exactly as before. One category is `targetCategory`'s;
+ * a list goes here. The statuses are not stored under FLAT, which ignores them.
+ */
+function storedScope(input: {
+  basis: FeeBasis;
+  targetCategories?: readonly string[];
+  unitStates?: readonly string[];
+  residences?: readonly string[];
+  acknowledgedWarnings?: readonly string[];
+}): FeeNoticeScope | null {
+  const scope = {
+    ...(input.targetCategories ? { categories: [...input.targetCategories] } : {}),
+    ...(input.unitStates && input.basis !== 'FLAT' ? { unitStates: [...input.unitStates] } : {}),
+    ...(input.residences ? { residences: [...input.residences] } : {}),
+    ...(input.acknowledgedWarnings?.length ? { acknowledgedWarnings: [...input.acknowledgedWarnings] } : {}),
+  };
+  return Object.keys(scope).length > 0 ? (feeNoticeScopeSchema.parse(scope) as FeeNoticeScope) : null;
+}
+
+/** The categories a notice sent: its list, or its one `targetCategory`, or none for every category. */
+function categoriesOf(input: { targetCategory?: string; targetCategories?: readonly string[] }) {
+  return input.targetCategories ?? (input.targetCategory ? [input.targetCategory] : undefined);
+}
+
+/** Two lists holding the same values, in any order; absent equals absent only. */
+function sameSet(a: readonly string[] | undefined, b: readonly string[] | undefined): boolean {
+  if (!a || !b) return !a && !b;
+  return a.length === b.length && a.every((value) => b.includes(value));
 }
 
 /** What one citizen holds today, as billing reads it. See `FeesService.holdingsOf`. */
@@ -103,11 +259,13 @@ export interface CitizenHoldings {
   unitCodes: string[];
 }
 
-/** Someone the notice targets whose holdings cannot be measured. */
+/** Someone the notice targets whose holdings cannot be measured (`feeUnassessableSchema`). */
 export interface UnassessableCitizen {
   citizenId: string;
   name: string;
   reason: string;
+  code: FeeUnassessableReason;
+  unit?: UnassessableUnit;
 }
 
 /**
@@ -116,12 +274,14 @@ export interface UnassessableCitizen {
  * A category names either a نوع العقار (the whole card) or a نوع الوحدة (one
  * unit inside it), which is why the check has to look at both depths. A notice
  * with no category at all — ALL_CITIZENS, or one aimed at a single citizen —
- * charges for everything the citizen holds.
+ * charges for everything the citizen holds. A notice with several (0100)
+ * charges a unit any one of them names.
  */
-function unitMatches(unit: BillableUnit, category?: string): boolean {
-  if (!category) return true;
-  if (PROPERTY_TYPE_CATEGORIES.has(category)) return unit.propertyType === category;
-  return unit.unitType === category;
+function unitMatches(unit: BillableUnit, categories?: readonly string[]): boolean {
+  if (!categories) return true;
+  return categories.some((category) =>
+    PROPERTY_TYPE_CATEGORIES.has(category) ? unit.propertyType === category : unit.unitType === category,
+  );
 }
 
 /**
@@ -143,7 +303,12 @@ function unitMatches(unit: BillableUnit, category?: string): boolean {
  *    card they filed, so it always counts. An owner's unit counts unless they
  *    have said someone else is in it (مؤجرة or مشغولة بتسامح — that person is
  *    billed on their own card, and charging both is the double-count this whole
- *    enum exists to end) or that nobody is (شاغرة, قيد الإنجاز).
+ *    enum exists to end).
+ *
+ * Whether a unit nobody is in (شاغرة, قيد الإنجاز) is charged at all is the
+ * notice's «حالة الوحدة» filter, asked before this (`inScope`, 0100): an
+ * occupancy fee leaves them out unless the clerk ticked them and confirmed the
+ * warning, and then the owner — the only person there is — bears it.
  *
  * The owner's exemption reads `isOccupiedByOthers`, not `!== 'RENTED'`, and the
  * difference is not cosmetic. The register has three ways to be the شاغل and
@@ -165,7 +330,17 @@ function bearsFee(unit: BillableUnit, bearer: FeeBearer): boolean {
   // A non-owner card is the occupant's own, and carries no status to consult.
   if (unit.occupancyType !== 'OWNER') return true;
 
-  return !isOccupiedByOthers(unit.unitStatus) && !isUnoccupied(unit.unitStatus);
+  return !isOccupiedByOthers(unit.unitStatus);
+}
+
+/**
+ * Whether the notice's «حالة الوحدة» filter charges this unit (0100): its state
+ * (`feeUnitState` — no recorded status is «مشغولة من المالك») among the ones
+ * ticked, or the bearer's own when none were (`defaultUnitStates`), which is
+ * exactly what this function's predecessor in `bearsFee` excluded.
+ */
+function inScope(unit: BillableUnit, states: readonly string[]): boolean {
+  return states.includes(feeUnitState(unit));
 }
 
 /**
@@ -240,6 +415,53 @@ function distinctCoOwnerPaid(assessed: readonly HeldEntry[]): number {
 }
 
 /**
+ * Units a notice's «حالة الوحدة» filter left out across a run (0100), by state,
+ * each once: a rented flat out of scope is on its owner's card and its tenant's,
+ * one flat. A unit with no census id has nothing to count once by and is
+ * counted where it is found, as `distinctUnits` does.
+ */
+function distinctOutOfScope(assessed: readonly CitizenAssessment[]): Partial<Record<string, number>> {
+  const byId = new Map<string, string>();
+  const counts: Partial<Record<string, number>> = {};
+  for (const entry of assessed) {
+    for (const unit of entry.outOfScopeUnits ?? []) {
+      if (unit.unitId) {
+        byId.set(unit.unitId, unit.state);
+      } else {
+        counts[unit.state] = (counts[unit.state] ?? 0) + 1;
+      }
+    }
+  }
+  for (const state of byId.values()) counts[state] = (counts[state] ?? 0) + 1;
+  return counts;
+}
+
+/**
+ * Units a TIERED_AREA notice's table does not price, across a run, by type
+ * (decision D11): each unit once by id, a card with no census unit once per
+ * holder. `null` is a card with no unit type — a أرض or a خيمة.
+ */
+function outsideTableByType(
+  assessed: readonly { outsideUnits?: readonly OutsideUnit[] }[],
+): Array<{ unitType: string | null; count: number }> {
+  const byId = new Map<string, string | null>();
+  const counts = new Map<string | null, number>();
+  for (const entry of assessed) {
+    for (const unit of entry.outsideUnits ?? []) {
+      if (unit.unitId) {
+        byId.set(unit.unitId, unit.unitType);
+      } else {
+        counts.set(unit.unitType, (counts.get(unit.unitType) ?? 0) + 1);
+      }
+    }
+  }
+  for (const unitType of byId.values()) counts.set(unitType, (counts.get(unitType) ?? 0) + 1);
+  return [...counts.entries()]
+    .map(([unitType, count]) => ({ unitType, count }))
+    .sort((a, b) => b.count - a.count || String(a.unitType).localeCompare(String(b.unitType)));
+}
+
+/**
  * Whether an unsurveyed building could hold any of what this notice charges for.
  *
  * The refusal below is expensive on purpose — it drops a citizen out of a
@@ -250,8 +472,13 @@ function distinctCoOwnerPaid(assessed: readonly HeldEntry[]): number {
  * for their land because of a building the notice never charged for — the same
  * silent under-collection the refusal exists to prevent, arrived at backwards.
  */
-function unsurveyedCanMatter(category?: string): boolean {
-  if (!category) return true;
+function unsurveyedCanMatter(categories?: readonly string[]): boolean {
+  if (!categories) return true;
+  // Several categories (0100): it matters if it matters to any one of them.
+  return categories.some(unsurveyedCanMatterFor);
+}
+
+function unsurveyedCanMatterFor(category: string): boolean {
   if (PROPERTY_TYPE_CATEGORIES.has(category)) return category === 'BUILDING';
   /*
     A منزل مستقل is the one unit type a building cannot contain.
@@ -304,8 +531,12 @@ export function assessCitizen(
     amount: number;
     basis: FeeBasis;
     targetCategory?: string;
+    /** Several categories (0100), in place of `targetCategory`. */
+    targetCategories?: readonly string[];
     /** Who owes it. Absent means `OCCUPANT` — see `FEE_BEARER`. */
     bearer?: FeeBearer;
+    /** The حالة الوحدة values it charges (0100). Absent is the bearer's own (`defaultUnitStates`). */
+    unitStates?: readonly string[];
     /**
      * «معامل السقوف» — the municipality's table of what a flat on N levels
      * weighs under PER_UNIT (`system_settings.levelFactors`, 0095). Absent is
@@ -313,6 +544,8 @@ export function assessCitizen(
      * to price it by is refused, not billed as 1 or 2 by default.
      */
     levelFactors?: LevelFactors;
+    /** The bracket table, under TIERED_AREA (`feeMatrixSchema`); unread under every other basis. */
+    matrixBrackets?: readonly FeeMatrixBracket[];
   },
 ):
   | {
@@ -323,8 +556,19 @@ export function assessCitizen(
       uninhabitableUnitIds?: string[];
       exemptUnitIds?: string[];
       coOwnerPaidUnitIds?: string[];
+      outOfScopeUnits?: OutOfScopeUnit[];
+      /** Under TIERED_AREA, each unit priced, for the run to find the shared ones. Not stored. */
+      tieredUnits?: TieredUnit[];
+      /** Under TIERED_AREA, the units the table does not price (D11), for counting each once. Not stored. */
+      outsideUnits?: OutsideUnit[];
     }
-  | { kind: 'unassessable'; reason: string } {
+  | (Unassessable & {
+      /**
+       * Under TIERED_AREA, the units that could still be priced: the citizen
+       * gets no bill of their own, but stays a debtor on a unit they share (D10).
+       */
+      tieredUnits?: TieredUnit[];
+    }) {
   /*
     A flat charge never asks the register anything.
 
@@ -350,24 +594,37 @@ export function assessCitizen(
         sharedUnitCount: 0,
         coOwnerPaidUnitCount: 0,
         exemptUnitCount: 0,
+        outOfScopeUnitCount: 0,
         lines: [],
       },
     };
   }
 
-  const unsurveyed = unsurveyedCanMatter(notice.targetCategory)
+  const categories = categoriesOf(notice);
+  const unsurveyed = unsurveyedCanMatter(categories)
     ? entries.find(isUnsurveyed)
     : undefined;
-  if (unsurveyed) {
-    return {
-      kind: 'unassessable',
-      reason: `مبنى على العقار ${unsurveyed.propertyNumber ?? '—'} لم تُجرد وحداته بعد`,
-    };
+  const unsurveyedDetail: UnassessableDetail | null = unsurveyed
+    ? {
+        reason: `مبنى على العقار ${unsurveyed.propertyNumber ?? '—'} لم تُجرد وحداته بعد`,
+        code: 'UNSURVEYED',
+        // The building itself: no unit of it was ever counted.
+        unit: { unitCode: null, propertyNumber: unsurveyed.propertyNumber, unitType: null, unitArea: null, levels: 1 },
+      }
+    : null;
+  /*
+    Under TIERED_AREA the citizen's own bill is withheld all the same, below,
+    but the units that can be priced still are: a flat they share is billed with
+    them among its debtors (decision D10, 2026-10-26). An unsurveyed building
+    changes nothing about another flat's bracket.
+  */
+  if (unsurveyedDetail && notice.basis !== 'TIERED_AREA') {
+    return { kind: 'unassessable', ...unsurveyedDetail };
   }
 
   const matching = entries
     .flatMap(billableUnits)
-    .filter((unit) => unitMatches(unit, notice.targetCategory));
+    .filter((unit) => unitMatches(unit, categories));
   /*
     «معفاة من الرسوم» comes off first, under every notice and whoever bears it
     (migration 0077; the user's decision, 2026-10-07): the mosque on a waqf
@@ -433,8 +690,66 @@ export function assessCitizen(
   */
   const unlivable = held.filter((unit) => !inReview(unit) && unit.uninhabitable);
   const decided = held.filter((unit) => !inReview(unit) && !unit.uninhabitable);
-  const owed = decided.filter((unit) => bearsFee(unit, bearer));
-  const excludedUnitCount = decided.length - owed.length;
+  /*
+    «من يشمل الإشعار» (0100): a unit whose حالة الوحدة the notice does not
+    charge is out of it, before anyone is asked to pay for it — under an
+    occupancy fee, by default, the empty and unfinished units. Counted apart
+    from the bearer rule's exclusions, with each unit's state, so the preview
+    can say «12 شاغرة» rather than one number for every reason.
+  */
+  const states = notice.unitStates ?? defaultUnitStates(bearer);
+  const scoped = decided.filter((unit) => inScope(unit, states));
+  const outOfScope = decided.filter((unit) => !inScope(unit, states));
+  const outOfScopeUnits = outOfScope.map((unit) => ({ unitId: unit.unitId ?? null, state: feeUnitState(unit) }));
+  const owed = scoped.filter((unit) => bearsFee(unit, bearer));
+  const excludedUnitCount = scoped.length - owed.length;
+  const outOfScopeUnitCount = outOfScope.length;
+  const heldUnitCount = reviewing.length;
+  const uninhabitableUnitCount = unlivable.length;
+  // Which flats, so a run can count each once — an owner and a tenant hold the same one.
+  const heldUnitIds = reviewing.map((unit) => unit.unitId).filter((id): id is string => Boolean(id));
+  const uninhabitableUnitIds = unlivable
+    .map((unit) => unit.unitId)
+    .filter((id): id is string => Boolean(id));
+  const exemptUnitIds = exemptUnits.map((unit) => unit.unitId).filter((id): id is string => Boolean(id));
+
+  /*
+    TIERED_AREA prices each unit by its bracket and divides nothing (decision
+    D5, 2026-10-23): a unit several citizens are charged for is billed once, in
+    full, by the run (`splitSharedUnitBills`), so the co-owner methods below —
+    a part per owner, the responsible owner — play no part, and neither does a
+    missing أسهم. Everything above has already run: exempt, uninhabitable,
+    under review and not this person's to pay are off the bill and counted.
+  */
+  if (notice.basis === 'TIERED_AREA') {
+    if (!notice.matrixBrackets) {
+      throw new Error('assessCitizen: a TIERED_AREA notice reached assessment without its bracket table');
+    }
+    const priced = priceTieredUnits(owed, notice.matrixBrackets);
+    // The own bill is withheld; the priced units go to the run for the units this citizen shares (D10).
+    const withheld = unsurveyedDetail ?? priced.unassessable;
+    if (withheld) return { kind: 'unassessable', ...withheld, tieredUnits: priced.units };
+    return {
+      kind: 'assessed',
+      amount: priced.units.reduce((sum, unit) => sum + unit.amount, 0),
+      heldUnitIds,
+      uninhabitableUnitIds,
+      exemptUnitIds,
+      coOwnerPaidUnitIds: [],
+      outOfScopeUnits,
+      tieredUnits: priced.units,
+      outsideUnits: priced.outside,
+      assessment: tieredAssessment(priced.units, {
+        excludedUnitCount,
+        heldUnitCount,
+        uninhabitableUnitCount,
+        exemptUnitCount: exemptUnits.length,
+        outOfScopeUnitCount,
+        outsideTableUnitCount: priced.outside.length,
+      }),
+    };
+  }
+
   /*
     A flat several people own is divided between them, not billed to each in
     full («توزيع الرسم على المالكين», the user's decision, 2026-10-07).
@@ -457,20 +772,14 @@ export function assessCitizen(
     return {
       kind: 'unassessable',
       reason: `وحدة ${undecidable.unitCode ?? ''} على العقار ${undecidable.propertyNumber ?? '—'} يتوزّع رسمها «حسب الأسهم» وأسهم أحد مالكيها غير مسجّلة`,
+      code: 'SHARES_MISSING',
+      unit: unassessableUnit(undecidable),
     };
   }
   // Paid by the responsible owner named on the flat — not this person's to pay.
   const paidByCoOwner = owed.filter((unit) => ownerWeight(unit) === 0);
   const units = owed.filter((unit) => ownerWeight(unit) > 0);
   const shared = units.filter((unit) => unit.occupancyType === 'OWNER' && unit.ownerShare);
-  const heldUnitCount = reviewing.length;
-  const uninhabitableUnitCount = unlivable.length;
-  // Which flats, so a run can count each once — an owner and a tenant hold the same one.
-  const heldUnitIds = reviewing.map((unit) => unit.unitId).filter((id): id is string => Boolean(id));
-  const uninhabitableUnitIds = unlivable
-    .map((unit) => unit.unitId)
-    .filter((id): id is string => Boolean(id));
-  const exemptUnitIds = exemptUnits.map((unit) => unit.unitId).filter((id): id is string => Boolean(id));
   const coOwnerPaidUnitIds = paidByCoOwner
     .map((unit) => unit.unitId)
     .filter((id): id is string => Boolean(id));
@@ -489,6 +798,8 @@ export function assessCitizen(
       return {
         kind: 'unassessable',
         reason: `وحدة على العقار ${missing.propertyNumber ?? '—'} بلا مساحة مسجّلة`,
+        code: 'NO_AREA',
+        unit: unassessableUnit(missing),
       };
     }
   }
@@ -513,6 +824,8 @@ export function assessCitizen(
         return {
           kind: 'unassessable',
           reason: `وحدة ${unit.unitCode ?? ''} على العقار ${unit.propertyNumber ?? '—'} من ${unit.levels} طوابق، ولا يوجد في الإعدادات معامل سقوف لهذا العدد`,
+          code: 'NO_LEVEL_FACTOR',
+          unit: unassessableUnit(unit),
         };
       }
       roofs.set(unit, weight);
@@ -527,7 +840,7 @@ export function assessCitizen(
   const chargedUnits =
     Math.round(units.reduce((sum, unit) => sum + ownerWeight(unit) * roofsOf(unit), 0) * 10_000) / 10_000;
 
-  // Only the two rate bases reach here; FLAT returned above.
+  // Only the two rate bases reach here; FLAT and TIERED_AREA returned above.
   const multiplier = notice.basis === 'PER_AREA' ? totalArea : chargedUnits;
 
   return {
@@ -543,6 +856,7 @@ export function assessCitizen(
     uninhabitableUnitIds,
     exemptUnitIds,
     coOwnerPaidUnitIds,
+    outOfScopeUnits,
     assessment: {
       basis: notice.basis,
       rate: notice.amount,
@@ -554,6 +868,7 @@ export function assessCitizen(
       sharedUnitCount: shared.length,
       coOwnerPaidUnitCount: paidByCoOwner.length,
       exemptUnitCount: exemptUnits.length,
+      outOfScopeUnitCount,
       ...((shared.length > 0 || weighedByLevels) && notice.basis === 'PER_UNIT' ? { chargedUnits } : {}),
       lines: units.map((unit) => ({
         propertyNumber: unit.propertyNumber,
@@ -604,7 +919,8 @@ export function assessCitizen(
  */
 export function flatCategoryCharge(
   entries: readonly BillablePropertyEntry[],
-  notice: { amount: number; targetCategory: string },
+  /** One category, or several (0100): a holder of any of them is a holder. */
+  notice: { amount: number; targetCategory?: string; targetCategories?: readonly string[] },
 ): {
   amount: number;
   assessment: FeeAssessment | null;
@@ -614,7 +930,7 @@ export function flatCategoryCharge(
 } {
   const matching = entries
     .flatMap(billableUnits)
-    .filter((unit) => unitMatches(unit, notice.targetCategory));
+    .filter((unit) => unitMatches(unit, categoriesOf(notice)));
   const exempt = matching.filter((unit) => unit.exempt);
   const unlivable = matching.filter((unit) => !unit.exempt && unit.uninhabitable);
   // In the order `assessCitizen` reports them: exempt, then uninhabitable, then another owner's to pay.
@@ -642,6 +958,7 @@ export function flatCategoryCharge(
       sharedUnitCount: 0,
       coOwnerPaidUnitCount: paidByCoOwner.length,
       exemptUnitCount: exempt.length,
+      outOfScopeUnitCount: 0,
       lines: [],
     },
   };
@@ -822,6 +1139,12 @@ export interface PaymentSummary {
    * charge, which explains itself.
    */
   assessment: FeeAssessment | null;
+  /**
+   * On a shared unit bill (0099, D5) this citizen owes with others: the unit
+   * and how many may pay it — never who (open question O2). Null on their own
+   * bill. Paid at the office only, until a claim on one can name its claimant.
+   */
+  sharedUnit: SharedUnitBillView | null;
 }
 
 /**
@@ -1293,7 +1616,9 @@ export class FeesService {
       }),
     );
 
-    return rows.map((row) => ({
+    return rows.map((row) => {
+      const scope = scopeOf(row);
+      return {
       id: row.id,
       title: row.title,
       /** Under FLAT the whole invoice; under the other two a rate. Read with `basis`. */
@@ -1305,6 +1630,10 @@ export class FeesService {
       frequency: row.frequency,
       targetType: row.targetType,
       targetCategory: row.targetCategory,
+      /** «من يشمل الإشعار» (0100): each null when the notice named none — every category, the bearer's statuses, every file. */
+      targetCategories: row.targetType === 'BUILDING_CATEGORY' ? scope.categories ?? null : null,
+      unitStates: scope.unitStates ?? null,
+      residences: scope.residences ?? null,
       targetCitizenName: row.targetCitizen ? citizenDisplayName(row.targetCitizen, { middleName: false }) : null,
       dueDate: row.dueDate.toISOString(),
       instructions: row.instructions,
@@ -1312,7 +1641,174 @@ export class FeesService {
       issuedCount: row._count.payments,
       isActive: row.isActive,
       createdAt: row.createdAt.toISOString(),
-    }));
+      };
+    });
+  }
+
+  /**
+   * What a notice would bill, read and assessed, with nothing written: the
+   * half of `issue` the preview shares, so the two cannot disagree.
+   *
+   * Under TIERED_AREA the units several citizens are charged for come off
+   * their own bills and become shared unit bills (`splitSharedUnitBills`, D5).
+   * The counts are each unit once across the run, as the issue has always
+   * reported them.
+   */
+  private async planNotice(
+    input: {
+      amount: number;
+      basis: FeeBasis;
+      targetCategory?: string;
+      targetCategories?: readonly string[];
+      bearer?: FeeBearer;
+      unitStates?: readonly string[];
+      matrixBrackets?: readonly FeeMatrixBracket[];
+    },
+    citizenIds: readonly string[],
+  ): Promise<{
+    /**
+     * Every citizen assessed, before the shared units came off, and the
+     * unassessable with what could still be priced (D10): what the recurring
+     * run splits again once it knows what the period already billed (D8).
+     */
+    raw: CitizenAssessment[];
+    withheld: TieredCitizen[];
+    /** Every citizen assessed, own bills after the shared units came off, a bill of 0 included. */
+    assessed: CitizenAssessment[];
+    /**
+     * The citizens who get a bill of their own. One who holds none of what the
+     * notice charges for owes nothing, and an invoice for zero is not a bill —
+     * it is a letter telling someone they owe nothing, arriving with a due
+     * date. Skipped rather than raised.
+     */
+    billable: CitizenAssessment[];
+    shared: SharedUnitBill[];
+    conflicts: SharedUnitConflict[];
+    unassessable: UnassessableCitizen[];
+    counts: {
+      /** Units this notice declined to charge for under the bearer rule. Reported, never silent. */
+      exemptedUnits: number;
+      /** Flats whose occupancy fee is held under review — see `assessCitizen`. Each flat once. */
+      heldUnits: number;
+      /** Flats held as «غير صالحة للسكن» — exempt from every fee; see `assessCitizen`. Each flat once. */
+      uninhabitableUnits: number;
+      /** Units «معفاة من الرسوم» (0077) — see `assessCitizen`. Each unit once. */
+      feeExemptUnits: number;
+      /** Co-owned flats the responsible owner pays for, not the person assessed. Each flat once. */
+      coOwnerPaidUnits: number;
+      /** Units whose حالة الوحدة the notice does not charge (0100). Each unit once. */
+      outOfScopeUnits: number;
+      /** The same, by state. */
+      outOfScopeByState: Partial<Record<string, number>>;
+      /** Under TIERED_AREA, units the table does not price (D11). Each unit once. */
+      outsideTableUnits: number;
+    };
+    /** The same units by type; empty under every other basis. */
+    outsideTable: Array<{ unitType: string | null; count: number }>;
+  }> {
+    const { assessed: raw, unassessable, withheld } = await this.assessTargets(citizenIds, input);
+    const { own: assessed, shared, conflicts } =
+      input.basis === 'TIERED_AREA'
+        ? splitSharedUnitBills(raw, { withheld })
+        : { own: raw, shared: [], conflicts: [] };
+    const outOfScopeByState = distinctOutOfScope(assessed);
+    const outsideTable = outsideTableByType(assessed);
+
+    return {
+      raw,
+      withheld,
+      assessed,
+      billable: assessed.filter((entry) => entry.amount > 0),
+      shared,
+      conflicts,
+      unassessable,
+      counts: {
+        exemptedUnits: assessed.reduce((sum, entry) => sum + (entry.assessment?.excludedUnitCount ?? 0), 0),
+        heldUnits: distinctHeld(assessed),
+        uninhabitableUnits: distinctUninhabitable(assessed),
+        feeExemptUnits: distinctExempt(assessed),
+        coOwnerPaidUnits: distinctCoOwnerPaid(assessed),
+        outOfScopeUnits: Object.values(outOfScopeByState).reduce<number>((sum, count) => sum + (count ?? 0), 0),
+        outOfScopeByState,
+        outsideTableUnits: outsideTable.reduce((sum, row) => sum + row.count, 0),
+      },
+      outsideTable,
+    };
+  }
+
+  /**
+   * «معاينة قبل الإصدار»: what issuing this notice now would bill, without
+   * billing anyone (Phase 4 of docs/fees-system-rearchitecture-specification.md).
+   *
+   * Reads the targets and the register exactly as `issue` does (`planNotice`)
+   * and writes nothing: no notice, no bill, no audit row, no event. The answer
+   * is the revenue, the bills, each bracket's units and subtotal, what is not
+   * charged and why, the citizens who cannot be assessed, and the shared units
+   * whose records disagree. A notice that targets nobody previews as zeros
+   * rather than refusing: telling the clerk so is the preview's job.
+   */
+  async previewNotice(input: FeeNoticePreviewInput): Promise<FeeNoticePreviewResult> {
+    const citizenIds = await this.resolveTargets(input);
+    const plan = await this.planNotice(input, citizenIds);
+    /*
+      Who the residence filter left out (0100): the files the same notice would
+      reach with every kind ticked, less the ones it reaches. One more read of
+      the targets, and only when a kind was left out.
+    */
+    const residenceLeftOut =
+      input.residences && input.targetType !== 'INDIVIDUAL_CITIZEN'
+        ? (await this.resolveTargets({ ...input, residences: undefined })).length - citizenIds.length
+        : 0;
+
+    const brackets = new Map(
+      (input.basis === 'TIERED_AREA' ? input.matrixBrackets ?? [] : []).map((row) => [
+        row.code,
+        { code: row.code, label: row.labelAr, unitCount: 0, subtotal: 0 },
+      ]),
+    );
+    const count = (code: string | undefined, amount: number) => {
+      const row = code === undefined ? undefined : brackets.get(code);
+      if (!row) return;
+      row.unitCount += 1;
+      row.subtotal += amount;
+    };
+    for (const entry of plan.billable) {
+      for (const unit of entry.tieredUnits ?? []) count(unit.bracketCode, unit.amount);
+    }
+    for (const bill of plan.shared) count(bill.assessment.lines[0]?.bracketCode, bill.amount);
+
+    return {
+      targetedCitizens: citizenIds.length,
+      billedCitizens: plan.billable.length,
+      sharedBills: plan.shared.length,
+      expectedRevenue:
+        plan.billable.reduce((sum, entry) => sum + entry.amount, 0) +
+        plan.shared.reduce((sum, bill) => sum + bill.amount, 0),
+      // Every notice is issued in pounds: the notice form has no currency (`createFeeNoticeSchema`).
+      currency: 'LBP',
+      brackets: [...brackets.values()],
+      notCharged: {
+        // `exemptedUnits` in the issue's own answer: the units the bearer rule left out, not «معفاة».
+        excludedUnits: plan.counts.exemptedUnits,
+        heldUnits: plan.counts.heldUnits,
+        uninhabitableUnits: plan.counts.uninhabitableUnits,
+        feeExemptUnits: plan.counts.feeExemptUnits,
+        coOwnerPaidUnits: plan.counts.coOwnerPaidUnits,
+        outOfScopeUnits: plan.counts.outOfScopeUnits,
+        outOfScopeByState: plan.counts.outOfScopeByState as FeeNoticePreviewResult['notCharged']['outOfScopeByState'],
+        residenceLeftOut: Math.max(0, residenceLeftOut),
+        outsideTableUnits: plan.counts.outsideTableUnits,
+      },
+      outsideTable: plan.outsideTable,
+      unassessable: plan.unassessable,
+      conflicts: plan.conflicts.map((conflict) => ({
+        unitId: conflict.unitId,
+        unitCode: conflict.unitCode,
+        propertyNumber: conflict.propertyNumber,
+        citizenCount: conflict.citizenIds.length,
+        bracketCodes: conflict.bracketCodes,
+      })),
+    };
   }
 
   /**
@@ -1323,7 +1819,16 @@ export class FeesService {
    * happened before re-running it and double-charging the municipality's
    * residents.
    */
-  async issue(input: CreateFeeNotice, actor: { id: string; role: string }) {
+  async issue(request: CreateFeeNotice, actor: { id: string; role: string }) {
+    /*
+      A category belongs to a notice aimed at one (decision D13, 2026-10-26).
+      The route's schema refuses it on any other target; a caller inside the
+      server skips the schema, so it is dropped here too, before anything reads
+      it — the assessment filters every unit by it.
+    */
+    const input: CreateFeeNotice =
+      request.targetType === 'BUILDING_CATEGORY' ? request : { ...request, targetCategory: undefined };
+
     /*
       A notice is issued once per press of «إصدار» (finance audit B3). A retry
       after a lost answer — or a double press past the wizard's lock — carries
@@ -1356,30 +1861,20 @@ export class FeesService {
       });
     }
 
-    const { assessed, unassessable } = await this.assessTargets(citizenIds, input);
-
+    // The same reading the preview makes (`planNotice`): what the preview showed is what this bills.
+    const { billable, shared, conflicts, unassessable, counts } = await this.planNotice(input, citizenIds);
+    const { heldUnits, uninhabitableUnits, feeExemptUnits, coOwnerPaidUnits, outOfScopeUnits, outsideTableUnits } =
+      counts;
     /*
-      A citizen who holds none of what this notice charges for owes nothing, and
-      an invoice for zero is not a bill — it is a letter telling someone they
-      owe nothing, arriving with a due date. Skipped rather than raised.
+      What the issue has always called «exempted»: the units this notice let
+      off for their state or their payer — شاغرة, قيد الإنجاز, let to a tenant
+      billed on their own card. Since 0100 the first two are counted as out of
+      the notice's scope; the answer and the refusal keep the one figure.
     */
-    const billable = assessed.filter((entry) => entry.amount > 0);
+    const exemptedUnits = counts.exemptedUnits + outOfScopeUnits;
 
-    /** Units this notice declined to charge for. Reported, never silent. */
-    const exemptedUnits = assessed.reduce(
-      (sum, entry) => sum + (entry.assessment?.excludedUnitCount ?? 0),
-      0,
-    );
-    /** Flats whose occupancy fee is held under review — see `assessCitizen`. Each flat once. */
-    const heldUnits = distinctHeld(assessed);
-    /** Flats held as «غير صالحة للسكن» — exempt from every fee; see `assessCitizen`. Each flat once. */
-    const uninhabitableUnits = distinctUninhabitable(assessed);
-    /** Units «معفاة من الرسوم» (0077) — see `assessCitizen`. Each unit once. */
-    const feeExemptUnits = distinctExempt(assessed);
-    /** Co-owned flats the responsible owner pays for, not the person assessed — see `assessCitizen`. Each flat once. */
-    const coOwnerPaidUnits = distinctCoOwnerPaid(assessed);
-
-    if (billable.length === 0) {
+    // Nothing to bill: no citizen's own bill, and under TIERED_AREA no shared unit bill either.
+    if (billable.length === 0 && shared.length === 0) {
       /*
         Three ways to bill nobody, and telling them apart is the whole value of
         the message. "Nobody matched" sends a clerk to check the target
@@ -1395,8 +1890,17 @@ export class FeesService {
         a reason too: a notice aimed at the brother who pays nothing matched
         him, and «لا يوجد مواطنون مطابقون» sent the clerk to the wrong place.
       */
+      // A shared unit whose holders' records disagree (`splitSharedUnitBills`) is a reason too: billed to nobody, reported.
+      // So is a unit the table does not price (D11): a table naming no type the town holds bills nothing.
       if (
-        heldUnits + uninhabitableUnits + exemptedUnits + feeExemptUnits + coOwnerPaidUnits + unassessable.length ===
+        heldUnits +
+          uninhabitableUnits +
+          exemptedUnits +
+          feeExemptUnits +
+          coOwnerPaidUnits +
+          outsideTableUnits +
+          unassessable.length +
+          conflicts.length ===
         0
       ) {
         throw new ConflictError({
@@ -1414,6 +1918,7 @@ export class FeesService {
           exempted: exemptedUnits,
           feeExempt: feeExemptUnits,
           coOwnerPaid: coOwnerPaidUnits,
+          outsideTable: outsideTableUnits,
           unassessable: unassessable.length,
         },
       });
@@ -1449,53 +1954,37 @@ export class FeesService {
           targetType: input.targetType as never,
           targetCategory: input.targetCategory ?? null,
           targetCitizenId: input.targetCitizenId ?? null,
+          // «من يشمل الإشعار» (0100): only what departs from the defaults; NULL when nothing does.
+          scope: (storedScope(input) ?? Prisma.DbNull) as never,
           dueDate,
           instructions: input.instructions ?? null,
           issuedById: actor.id,
           clientRequestId: input.clientRequestId ?? null,
+          // The bracket table, under TIERED_AREA only (CHECK fee_notices_matrix_brackets_basis).
+          ...(input.basis === 'TIERED_AREA' ? { matrixBrackets: input.matrixBrackets as never } : {}),
         },
         select: { id: true },
       });
 
-      // Taken before the insert; see `numberInvoices`.
-      const raisedAt = new Date();
-      const created = await tx.citizenPayment.createMany({
-        data: billable.map((entry) => ({
-          citizenId: entry.citizenId,
-          feeNoticeId: notice.id,
-          title: input.title,
-          /*
-            One invoice per citizen, whatever the basis — never one per unit.
-
-            Every downstream flow keys on a single payment row: the settlement
-            screen, the Whish callback, the collector's round, the receipt
-            facsimile. Splitting a six-shop bill into six rows would multiply
-            all of that, and hand the citizen six pieces of paper for one visit
-            to one counter. What they get instead is one bill that can say why.
-          */
-          amount: entry.amount,
-          assessment: (entry.assessment ?? undefined) as never,
-          dueDate,
-          // The first period is the one the chosen due date falls in; the
-          // recurring job takes over from the next one.
-          periodKey: periodKeyFor(input.frequency, dueDate),
-          // Who raised it (0091, finance audit B4).
-          issuedById: actor.id,
-        })),
-        // The unique (citizenId, feeNoticeId, periodKey) triple means a retried
-        // request tops up missing rows instead of failing the whole batch.
-        skipDuplicates: true,
+      const written = await this.writeBills(tx, {
+        noticeId: notice.id,
+        title: input.title,
+        dueDate,
+        // The first period is the one the chosen due date falls in; the
+        // recurring job takes over from the next one.
+        periodKey: periodKeyFor(input.frequency, dueDate),
+        // Who raised them (0091, finance audit B4).
+        issuedById: actor.id,
+        own: billable,
+        shared,
       });
 
-      await this.numberInvoices(
-        tx,
-        notice.id,
-        periodKeyFor(input.frequency, dueDate),
-        created.count,
-        raisedAt,
-      );
-
-      return { noticeId: notice.id, issued: created.count, replayed: false as const };
+      return {
+        noticeId: notice.id,
+        issued: written.own + written.shared,
+        sharedBills: written.shared,
+        replayed: false as const,
+      };
     }, { maxWait: 15_000, timeout: 60_000 });
 
     // A press that raced the first one and lost: answered from it, and nothing more is written or emitted.
@@ -1525,7 +2014,7 @@ export class FeesService {
     */
     if (exemptedUnits > 0) {
       this.logger.log(
-        `Fee "${input.title}": ${exemptedUnits} unit(s) exempted as شاغرة / قيد الإنجاز`,
+        `Fee "${input.title}": ${exemptedUnits} unit(s) not charged for their state or their payer (${outOfScopeUnits} outside the notice's unit states)`,
       );
     }
 
@@ -1536,6 +2025,8 @@ export class FeesService {
       amount: input.amount,
       basis: input.basis,
       targetType: input.targetType,
+      // What the clerk chose and confirmed, for the audit row (0100); null when the notice named no scope.
+      scope: storedScope(input),
       issuedCount: result.issued,
       unassessableCount: unassessable.length,
       exemptedUnitCount: exemptedUnits,
@@ -1577,9 +2068,25 @@ export class FeesService {
       );
     }
 
+    if (outsideTableUnits > 0) {
+      this.logger.log(`Fee "${input.title}": ${outsideTableUnits} unit(s) outside the bracket table, not charged`);
+    }
+
+    if (conflicts.length > 0) {
+      // By unit, never by citizen name (docs/security.md, logging).
+      this.logger.warn(
+        `Fee "${input.title}": ${conflicts.length} shared unit(s) not billed — their holders' records put them in different brackets (${conflicts
+          .map((conflict) => conflict.unitId)
+          .join(', ')})`,
+      );
+    }
+
     return {
       noticeId: result.noticeId,
+      /** Every bill raised: the citizens' own and the shared unit bills. */
       issued: result.issued,
+      /** Of `issued`, the shared unit bills (TIERED_AREA, D5). */
+      sharedBills: result.sharedBills,
       replayed: false,
       unassessable,
       exemptedUnits,
@@ -1587,14 +2094,149 @@ export class FeesService {
       uninhabitableUnits,
       feeExemptUnits,
       coOwnerPaidUnits,
+      /** Units the bracket table does not price (D11): not charged, counted. */
+      outsideTableUnits,
+      /** Shared units billed to nobody because their holders' records disagree; see `splitSharedUnitBills`. */
+      sharedUnitConflicts: conflicts.map((conflict) => ({
+        unitId: conflict.unitId,
+        unitCode: conflict.unitCode,
+        propertyNumber: conflict.propertyNumber,
+        citizenCount: conflict.citizenIds.length,
+        bracketCodes: conflict.bracketCodes,
+      })),
     };
+  }
+
+  /**
+   * Writes one period's bills for a notice: the citizens' own, and under
+   * TIERED_AREA the shared unit bills with their debtors (0099, D5) — then
+   * numbers them all, in the caller's transaction.
+   *
+   * Safe to run twice for one period. The own bills skip a duplicate on the
+   * (citizen, notice, period) key, the shared ones on (unit, notice, period);
+   * a shared bill is given its id here so its debtors are written only for the
+   * bills this call actually inserted, never for one an earlier run raised.
+   */
+  private async writeBills(
+    tx: Prisma.TransactionClient,
+    bills: {
+      noticeId: string;
+      title: string;
+      dueDate: Date;
+      periodKey: string;
+      /** The notice's issuer, the staff member who started a recurring run, or nobody for the scheduled run. */
+      issuedById: string | null;
+      own: readonly CitizenAssessment[];
+      shared: readonly SharedUnitBill[];
+    },
+  ): Promise<{ own: number; shared: number }> {
+    // Taken before the insert; see `numberInvoices`.
+    const raisedAt = new Date();
+    const own = await tx.citizenPayment.createMany({
+      data: bills.own.map((entry) => ({
+        citizenId: entry.citizenId,
+        feeNoticeId: bills.noticeId,
+        title: bills.title,
+        /*
+          One invoice per citizen, whatever the basis — never one per unit.
+
+          Every downstream flow keys on a single payment row: the settlement
+          screen, the Whish callback, the collector's round, the receipt
+          facsimile. Splitting a six-shop bill into six rows would multiply all
+          of that, and hand the citizen six pieces of paper for one visit to one
+          counter. What they get instead is one bill that can say why. A shared
+          unit bill is the one exception, and it is one bill for one unit.
+        */
+        amount: entry.amount,
+        assessment: (entry.assessment ?? undefined) as never,
+        dueDate: bills.dueDate,
+        periodKey: bills.periodKey,
+        issuedById: bills.issuedById,
+      })),
+      // The unique (citizenId, feeNoticeId, periodKey) triple means a retried
+      // request tops up missing rows instead of failing the whole batch.
+      skipDuplicates: true,
+    });
+
+    let shared = 0;
+    if (bills.shared.length > 0) {
+      const rows = bills.shared.map((bill) => ({ id: randomUUID(), bill }));
+      const created = await tx.citizenPayment.createMany({
+        data: rows.map(({ id, bill }) => ({
+          id,
+          citizenId: null,
+          unitId: bill.unitId,
+          feeNoticeId: bills.noticeId,
+          title: bills.title,
+          amount: bill.amount,
+          assessment: bill.assessment as never,
+          dueDate: bills.dueDate,
+          periodKey: bills.periodKey,
+          issuedById: bills.issuedById,
+        })),
+        // One per unit, notice and period (`citizen_payments_unitId_feeNoticeId_periodKey_key`).
+        skipDuplicates: true,
+      });
+      shared = created.count;
+      const inserted = new Set(
+        (
+          await tx.citizenPayment.findMany({
+            where: { id: { in: rows.map((row) => row.id) } },
+            select: { id: true },
+          })
+        ).map((row) => row.id),
+      );
+      await tx.citizenPaymentDebtor.createMany({
+        data: rows
+          .filter((row) => inserted.has(row.id))
+          .flatMap(({ id, bill }) =>
+            bill.debtors.map((debtor) => ({ paymentId: id, citizenId: debtor.citizenId, role: debtor.role as never })),
+          ),
+      });
+    }
+
+    await this.numberInvoices(tx, bills.noticeId, bills.periodKey, own.count + shared, raisedAt);
+    return { own: own.count, shared };
+  }
+
+  /**
+   * The units already on a bill of this TIERED_AREA notice for this period
+   * (decision D8): a shared bill's own `unitId`, and each line's `unitId` on a
+   * citizen's own bill. Every status, cancelled included, as the two unique
+   * keys count them: a bill cancelled in its period is not raised again by the
+   * next night's run, and neither is the unit it charged.
+   */
+  private async unitsBilledInPeriod(
+    tx: Prisma.TransactionClient,
+    noticeId: string,
+    periodKey: string,
+  ): Promise<Set<string>> {
+    const rows = await tx.$queryRaw<Array<{ unitId: string }>>`
+      SELECT p."unitId"::text AS "unitId"
+        FROM ${this.S}citizen_payments p
+       WHERE p."feeNoticeId" = ${noticeId}::uuid
+         AND p."periodKey" = ${periodKey}
+         AND p."unitId" IS NOT NULL
+      UNION
+      SELECT line ->> 'unitId'
+        FROM ${this.S}citizen_payments p
+       CROSS JOIN LATERAL jsonb_array_elements(
+               CASE WHEN jsonb_typeof(p.assessment -> 'lines') = 'array' THEN p.assessment -> 'lines' ELSE '[]'::jsonb END
+             ) AS line
+       WHERE p."feeNoticeId" = ${noticeId}::uuid
+         AND p."periodKey" = ${periodKey}
+         AND p."unitId" IS NULL
+         AND line ->> 'unitId' IS NOT NULL
+    `;
+    return new Set(rows.map((row) => row.unitId));
   }
 
   /**
    * The notice a retry key already issued, as `issue` answers it, or null.
    *
-   * Bound to its act: the same title, figure, basis, bearer, recurrence, target
-   * and due date. A key that issued another notice can only mean a page reused
+   * Bound to its act: the same title, figure, basis, bearer, recurrence, target,
+   * scope (0100: the categories, unit states and kinds of file) and due date.
+   * A key that issued another notice can only mean a page reused
    * an id, and answering with that notice would tell the clerk the wrong fee was
    * raised (`FEE_NOTICE_REQUEST_REUSED`). The counts beside the bills are not
    * replayed: they described the register as it stood at the first press.
@@ -1612,10 +2254,12 @@ export class FeesService {
         targetType: true,
         targetCategory: true,
         targetCitizenId: true,
+        scope: true,
         dueDate: true,
       },
     });
     if (!notice) return null;
+    const stored = scopeOf(notice);
     const same =
       notice.title === input.title &&
       Number(notice.amount) === input.amount &&
@@ -1625,6 +2269,9 @@ export class FeesService {
       notice.targetType === input.targetType &&
       (notice.targetCategory ?? null) === (input.targetCategory ?? null) &&
       (notice.targetCitizenId ?? null)?.toLowerCase() === (input.targetCitizenId ?? null)?.toLowerCase() &&
+      sameSet(stored.categories, categoriesOf(input)) &&
+      sameSet(stored.unitStates, input.basis === 'FLAT' ? undefined : input.unitStates) &&
+      sameSet(stored.residences, input.residences) &&
       notice.dueDate.getTime() === new Date(input.dueDate).getTime();
     if (!same) {
       throw new ConflictError({
@@ -1728,11 +2375,14 @@ export class FeesService {
 
       // Targets are re-resolved every period rather than frozen at issue time:
       // someone who registered a shop last week should be in this month's
-      // billing, and someone deactivated should drop out of it.
+      // billing, and someone deactivated should drop out of it. Through the
+      // scope the notice was issued with (0100), read back like its table.
+      const scope = scopeOf(notice);
       const citizenIds = await this.resolveTargets({
         targetType: notice.targetType as never,
-        targetCategory: notice.targetCategory ?? undefined,
+        targetCategories: scope.categories,
         targetCitizenId: notice.targetCitizenId ?? undefined,
+        residences: scope.residences,
         basis: notice.basis,
       } as never);
 
@@ -1750,24 +2400,37 @@ export class FeesService {
         register's accuracy irrelevant to the bill after the first period, which
         is the failure the whole feature exists to correct.
       */
-      const { assessed, unassessable } = await this.assessTargets(citizenIds, {
-        amount: Number(notice.amount),
-        basis: notice.basis as FeeBasis,
-        targetCategory: notice.targetCategory ?? undefined,
-        // Re-read from the notice every period, like the basis and the targets
-        // above it: a council that changes who bears a fee in March expects
-        // April's run to honour it without the notice being reissued.
-        bearer: notice.bearer as FeeBearer,
-      });
+      /*
+        A TIERED_AREA notice is priced by the table it was issued with, read
+        back through the same schema that let it in: a stored table that no
+        longer parses fails this notice's run, named, rather than pricing the
+        period by guess.
+      */
+      const matrixBrackets =
+        notice.basis === 'TIERED_AREA' ? feeMatrixSchema.parse(notice.matrixBrackets) : undefined;
+      // The same reading `issue` and the preview make, shared units split off.
+      const { raw, withheld, billable, shared, conflicts, unassessable, counts } = await this.planNotice(
+        {
+          amount: Number(notice.amount),
+          basis: notice.basis as FeeBasis,
+          targetCategories: scope.categories,
+          // Re-read from the notice every period, like the basis and the targets
+          // above it: a council that changes who bears a fee in March expects
+          // April's run to honour it without the notice being reissued.
+          bearer: notice.bearer as FeeBearer,
+          unitStates: scope.unitStates,
+          matrixBrackets,
+        },
+        citizenIds,
+      );
 
-      const billable = assessed.filter((entry) => entry.amount > 0);
       /*
         Flats held under review this period — logged, never silent. They are
         not charged for this period by this run or any later one (a period's
         invoice is written once); charging them for it after the review is the
         municipality's decision, not the job's.
       */
-      const heldUnits = distinctHeld(assessed);
+      const { heldUnits, uninhabitableUnits, feeExemptUnits, coOwnerPaidUnits } = counts;
       if (heldUnits > 0) {
         this.logger.warn(
           `Recurring "${notice.title}" (${periodKey}): ${heldUnits} unit(s) held under review (تعارض في حالة الوحدة) — not charged this period`,
@@ -1778,26 +2441,31 @@ export class FeesService {
         logs them. Not a hold: an uninhabitable unit and an exempt one are
         settled decisions, and nothing is owed for the period afterwards.
       */
-      const uninhabitableUnits = distinctUninhabitable(assessed);
       if (uninhabitableUnits > 0) {
         this.logger.log(
           `Recurring "${notice.title}" (${periodKey}): ${uninhabitableUnits} unit(s) not charged as uninhabitable (غير صالحة للسكن)`,
         );
       }
-      const feeExemptUnits = distinctExempt(assessed);
       if (feeExemptUnits > 0) {
         this.logger.log(
           `Recurring "${notice.title}" (${periodKey}): ${feeExemptUnits} unit(s) exempt from fees (معفاة من الرسوم)`,
         );
       }
       // Paid in full by their responsible owner — a choice, not a hold, so logged rather than warned.
-      const coOwnerPaidUnits = distinctCoOwnerPaid(assessed);
       if (coOwnerPaidUnits > 0) {
         this.logger.log(
           `Recurring "${notice.title}" (${periodKey}): ${coOwnerPaidUnits} co-owned unit(s) paid by their responsible owner (مالك مسؤول)`,
         );
       }
-      if (billable.length === 0) {
+      if (conflicts.length > 0) {
+        // By unit, never by citizen name (docs/security.md, logging).
+        this.logger.warn(
+          `Recurring "${notice.title}" (${periodKey}): ${conflicts.length} shared unit(s) not billed — their holders' records put them in different brackets (${conflicts
+            .map((conflict) => conflict.unitId)
+            .join(', ')})`,
+        );
+      }
+      if (billable.length === 0 && shared.length === 0) {
         await this.recordBillingRun(notice.id, periodKey, startedAt, {
           outcome: 'SKIPPED',
           citizensConsidered: citizenIds.length,
@@ -1821,25 +2489,65 @@ export class FeesService {
         recurring job runs at 2am and is the only thing issuing bills at that
         hour, and the alternative is a half-numbered period.
       */
-      const created = await this.db.$transaction(async (tx) => {
-        const inserted = await tx.citizenPayment.createMany({
-          data: billable.map((entry) => ({
-            citizenId: entry.citizenId,
-            feeNoticeId: notice.id,
+      const created = await this.db.$transaction(
+        async (tx) => {
+          /*
+            The notice's row first, as «إلغاء الإشعار» takes it (`cancelNoticeBatch`):
+            a run and a cancel of the same notice wait for each other instead of
+            crossing — a cancel landing mid-run would otherwise be followed by
+            this run's bills on a notice the manager had just stopped. Read
+            again under the lock: a notice stopped since the list was read bills
+            nothing.
+          */
+          const [live] = await tx.$queryRaw<Array<{ isActive: boolean }>>`
+            SELECT "isActive" FROM ${this.S}fee_notices WHERE "id" = ${notice.id}::uuid FOR UPDATE
+          `;
+          if (!live?.isActive) return { count: 0, stopped: true };
+
+          /*
+            A period's bill stands (decision D8, 2026-10-26). The run comes back
+            every night and the register moves between nights: a flat billed to
+            its one owner on the 1st and given a second owner on the 10th would
+            otherwise be billed again on the 11th, as a shared bill, while the
+            first bill still charged it. So the units already on a bill of this
+            notice for this period — cancelled ones too, as the two unique keys
+            treat them — are taken off every bill this run would add; a change of
+            holders counts from the next period.
+          */
+          let own: readonly CitizenAssessment[] = billable;
+          let sharedBills: readonly SharedUnitBill[] = shared;
+          if (notice.basis === 'TIERED_AREA') {
+            const alreadyBilled = await this.unitsBilledInPeriod(tx, notice.id, periodKey);
+            if (alreadyBilled.size > 0) {
+              const split = splitSharedUnitBills(raw, { withheld, alreadyBilled });
+              own = split.own.filter((entry) => entry.amount > 0);
+              sharedBills = split.shared;
+            }
+          }
+
+          const written = await this.writeBills(tx, {
+            noticeId: notice.id,
             title: notice.title,
-            amount: entry.amount,
-            assessment: (entry.assessment ?? undefined) as never,
             dueDate,
             periodKey,
             // Who started the run (`POST fees/recurring/run`), or nobody for the scheduled run (0091).
             issuedById: actor?.id ?? null,
-          })),
-          skipDuplicates: true,
-        });
-        await this.numberInvoices(tx, notice.id, periodKey, inserted.count, startedAt);
-        return inserted;
+            own,
+            shared: sharedBills,
+          });
+          return { count: written.own + written.shared, stopped: false };
+        },
         // As on the first issue: a period of a town-wide notice is more than five seconds of work.
-      }, { maxWait: 15_000, timeout: 60_000 });
+        { maxWait: 15_000, timeout: 60_000 },
+      );
+
+      if (created.stopped) {
+        await this.recordBillingRun(notice.id, periodKey, startedAt, {
+          outcome: 'SKIPPED',
+          citizensConsidered: citizenIds.length,
+        });
+        continue;
+      }
 
       if (created.count > 0) {
         this.logger.log(
@@ -1942,16 +2650,40 @@ export class FeesService {
     }
   }
 
-  /** Stops or resumes a recurring notice without touching its past invoices. */
-  async setNoticeActive(id: string, isActive: boolean) {
-    const notice = await this.db.feeNotice.findUnique({ where: { id }, select: { id: true } });
-    if (!notice) throw new NotFoundError({
-      code: 'FEE_NOTICE_NOT_FOUND',
-      message: `FeeNotice ${id} was not found`,
-    });
+  /**
+   * Stops or resumes a recurring notice without touching its past invoices.
+   *
+   * «إيقاف الإشعار» is how a fee stops (decision D12, 2026-10-26): the bills
+   * already raised stay owed — a council that ends a fee from next month has not
+   * waived last month's — and only «إلغاء الإشعار» withdraws bills, for the
+   * periods the manager names. Taken under the notice's row lock, as the
+   * recurring run and the cancel take it, and written to the trail.
+   */
+  async setNoticeActive(id: string, isActive: boolean, actor: { id: string; role: string }) {
+    return runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.db as Prisma.TransactionClient;
+      const [notice] = await tx.$queryRaw<Array<{ title: string; isActive: boolean }>>`
+        SELECT "title", "isActive" FROM ${this.S}fee_notices WHERE "id" = ${id}::uuid FOR UPDATE
+      `;
+      if (!notice) throw new NotFoundError({
+        code: 'FEE_NOTICE_NOT_FOUND',
+        message: `FeeNotice ${id} was not found`,
+      });
+      if (notice.isActive === isActive) return { isActive };
 
-    await this.db.feeNotice.update({ where: { id }, data: { isActive } });
-    return { isActive };
+      await tx.feeNotice.update({ where: { id }, data: { isActive } });
+      await this.auditTrail.recordInTransaction({
+        actorId: actor.id,
+        actorType: 'STAFF',
+        actorRole: actor.role as never,
+        action: isActive ? 'FEE_NOTICE_RESUMED' : 'FEE_NOTICE_STOPPED',
+        entityType: 'FeeNotice',
+        entityId: id,
+        before: { isActive: notice.isActive },
+        after: { isActive, title: notice.title },
+      });
+      return { isActive };
+    });
   }
 
   /**
@@ -1961,8 +2693,10 @@ export class FeesService {
    * register, but whether the citizen is on it at all does. The same query a
    * notice is issued with, so the answer cannot drift from it.
    */
-  async categoryHolders(category: string): Promise<Set<string>> {
-    return new Set(await this.resolveTargets({ targetType: 'BUILDING_CATEGORY', targetCategory: category }));
+  async categoryHolders(categories: readonly string[], residences?: readonly string[]): Promise<Set<string>> {
+    return new Set(
+      await this.resolveTargets({ targetType: 'BUILDING_CATEGORY', targetCategories: categories, residences }),
+    );
   }
 
   /**
@@ -1975,7 +2709,11 @@ export class FeesService {
   private async resolveTargets(input: {
     targetType: string;
     targetCategory?: string;
+    /** Several categories (0100), in place of `targetCategory`. */
+    targetCategories?: readonly string[];
     targetCitizenId?: string;
+    /** The kinds of file the notice reaches (0100); absent is every kind. Not read for one named citizen. */
+    residences?: readonly string[];
     /** The notice's basis — a flat charge falls on people, not on estates or institutions. */
     basis?: string;
   }): Promise<string[]> {
@@ -1983,18 +2721,30 @@ export class FeesService {
       return [await this.chargeableCitizen(input.targetCitizenId)];
     }
 
+    /*
+      «نوع الإقامة» (0100): only the kinds of file the clerk ticked. A FLAT
+      notice to everyone still never reaches an estate or an institution, ticked
+      or not — the rule below — so the two narrow together.
+    */
+    const residenceWhere = input.residences
+      ? [{ residence: { in: [...input.residences] as never[] } }]
+      : [];
+
     if (input.targetType === 'ALL_CITIZENS') {
       const rows = await this.db.user.findMany({
         where: {
           kind: 'CITIZEN',
           isActive: true,
-          /*
-            A flat charge is one per person, and an estate or an institution
-            (0076) is not a person: «ورثة المرحوم …» and «وقف مسجد البلدة» own
-            property and are billed for it by the rate-based notices, never per
-            head. A rate-based notice still reaches them through what they hold.
-          */
-          ...(input.basis === 'FLAT' ? { residence: { notIn: [...NON_PERSON_RESIDENCE] } } : {}),
+          AND: [
+            /*
+              A flat charge is one per person, and an estate or an institution
+              (0076) is not a person: «ورثة المرحوم …» and «وقف مسجد البلدة» own
+              property and are billed for it by the rate-based notices, never per
+              head. A rate-based notice still reaches them through what they hold.
+            */
+            ...(input.basis === 'FLAT' ? [{ residence: { notIn: [...NON_PERSON_RESIDENCE] } }] : []),
+            ...residenceWhere,
+          ],
         },
         select: { id: true },
       });
@@ -2014,7 +2764,22 @@ export class FeesService {
       municipality that has no houses rather than as a query looking in one
       place.
     */
-    const category = input.targetCategory!;
+    // Several categories (0100): a holder of any one of them.
+    const categories = categoriesOf(input) ?? [];
+    const rows = await this.db.user.findMany({
+      where: {
+        kind: 'CITIZEN',
+        isActive: true,
+        AND: residenceWhere,
+        OR: categories.flatMap((category) => this.categoryHolderWhere(category)),
+      },
+      select: { id: true },
+    });
+    return rows.map((row) => row.id);
+  }
+
+  /** Who holds one category, on a card or through an occupancy — one `OR` branch each of `resolveTargets`. */
+  private categoryHolderWhere(category: string): Prisma.UserWhereInput[] {
     // A tenancy that ended (migration 0046) holds nothing to charge for.
     const propertyWhere = PROPERTY_TYPE_CATEGORIES.has(category)
       ? { propertyType: category as never, endedAt: null }
@@ -2057,18 +2822,10 @@ export class FeesService {
       ? undefined
       : { some: { toDate: null, unit: { unitType: category as never } } };
 
-    const rows = await this.db.user.findMany({
-      where: {
-        kind: 'CITIZEN',
-        isActive: true,
-        OR: [
-          { registrations: { some: { properties: { some: propertyWhere } } } },
-          ...(occupancyWhere ? [{ unitOccupancies: occupancyWhere }] : []),
-        ],
-      },
-      select: { id: true },
-    });
-    return rows.map((row) => row.id);
+    return [
+      { registrations: { some: { properties: { some: propertyWhere } } } },
+      ...(occupancyWhere ? [{ unitOccupancies: occupancyWhere }] : []),
+    ];
   }
 
   /**
@@ -2092,10 +2849,24 @@ export class FeesService {
       amount: number;
       basis: FeeBasis;
       targetCategory?: string;
+      targetCategories?: readonly string[];
       bearer?: FeeBearer;
+      /** The حالة الوحدة values it charges (0100); unread under FLAT. */
+      unitStates?: readonly string[];
+      /** Under TIERED_AREA, the bracket table every citizen is priced by. */
+      matrixBrackets?: readonly FeeMatrixBracket[];
     },
-  ): Promise<{ assessed: CitizenAssessment[]; unassessable: UnassessableCitizen[] }> {
-    if (notice.basis === 'FLAT' && !notice.targetCategory) {
+  ): Promise<{
+    assessed: CitizenAssessment[];
+    unassessable: UnassessableCitizen[];
+    /**
+     * Under TIERED_AREA, the unassessable with the units that could still be
+     * priced: no own bill, but a debtor on any unit they share (D10).
+     */
+    withheld: TieredCitizen[];
+  }> {
+    const categories = categoriesOf(notice);
+    if (notice.basis === 'FLAT' && !categories) {
       return {
         assessed: citizenIds.map((citizenId) => ({
           citizenId,
@@ -2103,18 +2874,18 @@ export class FeesService {
           assessment: null,
         })),
         unassessable: [],
+        withheld: [],
       };
     }
 
     if (notice.basis === 'FLAT') {
-      // Per holder — unless all they hold of the category is charged nothing (`flatCategoryCharge`).
-      const targetCategory = notice.targetCategory!;
+      // Per holder — unless all they hold of the categories is charged nothing (`flatCategoryCharge`).
       const assessed: CitizenAssessment[] = [];
       const seen = new Set<string>();
       for await (const batch of this.holdingsOf(citizenIds)) {
         for (const holding of batch) {
           seen.add(holding.citizenId);
-          const charge = flatCategoryCharge(holding.entries, { amount: notice.amount, targetCategory });
+          const charge = flatCategoryCharge(holding.entries, { amount: notice.amount, targetCategories: categories });
           assessed.push({ citizenId: holding.citizenId, ...charge });
         }
       }
@@ -2122,11 +2893,12 @@ export class FeesService {
       for (const citizenId of citizenIds) {
         if (!seen.has(citizenId)) assessed.push({ citizenId, amount: notice.amount, assessment: null });
       }
-      return { assessed, unassessable: [] };
+      return { assessed, unassessable: [], withheld: [] };
     }
 
     const assessed: CitizenAssessment[] = [];
     const unassessable: UnassessableCitizen[] = [];
+    const withheld: TieredCitizen[] = [];
     // Read once per run: every citizen of one notice is weighed by the same table.
     const levelFactors = notice.basis === 'PER_UNIT' ? await this.levelFactors() : undefined;
 
@@ -2135,7 +2907,16 @@ export class FeesService {
         const outcome = assessCitizen(holding.entries, { ...notice, levelFactors });
 
         if (outcome.kind === 'unassessable') {
-          unassessable.push({ citizenId: holding.citizenId, name: holding.name, reason: outcome.reason });
+          unassessable.push({
+            citizenId: holding.citizenId,
+            name: holding.name,
+            reason: outcome.reason,
+            code: outcome.code,
+            ...(outcome.unit ? { unit: outcome.unit } : {}),
+          });
+          if (outcome.tieredUnits && outcome.tieredUnits.length > 0) {
+            withheld.push({ citizenId: holding.citizenId, amount: 0, assessment: null, tieredUnits: outcome.tieredUnits });
+          }
           continue;
         }
 
@@ -2147,11 +2928,14 @@ export class FeesService {
           uninhabitableUnitIds: outcome.uninhabitableUnitIds,
           exemptUnitIds: outcome.exemptUnitIds,
           coOwnerPaidUnitIds: outcome.coOwnerPaidUnitIds,
+          outOfScopeUnits: outcome.outOfScopeUnits,
+          ...(outcome.tieredUnits ? { tieredUnits: outcome.tieredUnits } : {}),
+          ...(outcome.outsideUnits && outcome.outsideUnits.length > 0 ? { outsideUnits: outcome.outsideUnits } : {}),
         });
       }
     }
 
-    return { assessed, unassessable };
+    return { assessed, unassessable, withheld };
   }
 
   /**
@@ -2535,13 +3319,13 @@ export class FeesService {
 
   // ────────────────────────────  Payments  ────────────────────────────
 
-  /** One citizen's own bills, newest obligation first. */
+  /** What one citizen owes: their own bills and the shared unit bills they are a debtor on, newest obligation first. */
   async listForCitizen(citizenId: string): Promise<PaymentSummary[]> {
     const rows = await withConnectionRetry(() =>
       this.db.citizenPayment.findMany({
-        where: { citizenId },
+        where: billsOwedBy(citizenId),
         orderBy: [{ paymentStatus: 'asc' }, { dueDate: 'asc' }],
-        include: { feeNotice: { select: { frequency: true } } },
+        include: { feeNotice: { select: { frequency: true } }, ...SHARED_BILL_INCLUDE },
       }),
     );
 
@@ -2566,6 +3350,7 @@ export class FeesService {
       reviewNote: row.reviewNote,
       frequency: row.feeNotice?.frequency ?? null,
       assessment: (row.assessment as FeeAssessment | null) ?? null,
+      sharedUnit: sharedUnitView(row),
     }));
   }
 
@@ -2654,13 +3439,14 @@ export class FeesService {
       });
     }
     const payment = await this.db.citizenPayment.findFirst({
-      where: { id: input.paymentId, citizenId: input.citizenId },
-      select: { id: true, paymentStatus: true },
+      where: { AND: [{ id: input.paymentId }, billsOwedBy(input.citizenId)] },
+      select: { id: true, paymentStatus: true, unitId: true },
     });
     if (!payment) throw new NotFoundError({
       code: 'PAYMENT_NOT_FOUND',
       message: `Payment ${input.paymentId} was not found`,
     });
+    assertNotSharedOnline(payment);
 
     // Kept ahead of the write: this is what separates "not yours / no such
     // invoice" from the two specific states a citizen can act on. The
@@ -2734,6 +3520,7 @@ export class FeesService {
           citizen: {
             select: { id: true, firstName: true, lastName: true, phone: true, referenceNumber: true, residence: true },
           },
+          ...SHARED_BILL_INCLUDE,
         },
       }),
     );
@@ -2750,11 +3537,7 @@ export class FeesService {
       paymentMethod: row.paymentMethod,
       whishTransactionRef: row.whishTransactionRef,
       isSeen: row.isSeen,
-      citizenId: row.citizen.id,
-      // «ورثة المرحوم …» for an estate (0076): the heirs owe, not the deceased.
-      citizenName: citizenDisplayName(row.citizen, { middleName: false }),
-      citizenPhone: row.citizen.phone,
-      citizenReference: row.citizen.referenceNumber,
+      ...billHolder(row),
     }));
   }
 
@@ -3130,6 +3913,14 @@ export class FeesService {
     },
     collectedBy: { select: { firstName: true, lastName: true } },
     feeNotice: { select: { frequency: true } },
+    ...SHARED_BILL_INCLUDE,
+    // On a shared unit bill (0099): the debtor who last paid on it, whose file the receipt is reprinted from.
+    transactions: {
+      where: { paidByCitizenId: { not: null }, reversalOfId: null },
+      orderBy: [{ occurredAt: 'desc' }, { createdAt: 'desc' }],
+      take: 1,
+      select: { paidByCitizenId: true },
+    },
   } satisfies Prisma.CitizenPaymentInclude;
 
   /** One row, in the shape the admin ledger and the settle page both read. */
@@ -3184,11 +3975,9 @@ export class FeesService {
        * Null for a flat charge, which explains itself.
        */
       assessment: (row.assessment as FeeAssessment | null) ?? null,
-      citizenId: row.citizen.id,
-      // «ورثة المرحوم …» for an estate (0076): the heirs owe, not the deceased.
-      citizenName: citizenDisplayName(row.citizen, { middleName: false }),
-      citizenPhone: row.citizen.phone,
-      citizenReference: row.citizen.referenceNumber,
+      ...billHolder(row),
+      /** On a shared unit bill, the debtor who last paid on it; null on a citizen's own bill or one not paid yet. */
+      lastPaidByCitizenId: row.transactions[0]?.paidByCitizenId ?? null,
     };
   }
 
@@ -3206,14 +3995,47 @@ export class FeesService {
     const row = await withConnectionRetry(() =>
       this.db.citizenPayment.findUnique({
         where: { id },
-        include: this.ADMIN_PAYMENT_INCLUDE,
+        include: {
+          ...this.ADMIN_PAYMENT_INCLUDE,
+          // The unit's co-owner method too, for the responsible owner the counter offers first (`responsibleDebtorId`).
+          unit: {
+            select: { ...SHARED_BILL_INCLUDE.unit.select, ownerBillingMode: true, responsibleOwnerId: true },
+          },
+          /*
+            On a shared unit bill (0099): everyone who may pay it, by name, for
+            the counter to say which of them did (`paidByCitizenId`). This one
+            bill, for staff only; the lists carry the count, never the names.
+            Live files only (decision D14, 2026-10-26): a file merged into
+            another keeps its debtor row when both owed the bill, and nothing
+            may be written against it — the file that stays is offered instead.
+          */
+          debtors: {
+            where: { citizen: { isActive: true } },
+            orderBy: { createdAt: 'asc' },
+            select: {
+              citizenId: true,
+              role: true,
+              citizen: { select: { firstName: true, middleName: true, lastName: true, residence: true } },
+            },
+          },
+        },
       }),
     );
     if (!row) throw new NotFoundError({
       code: 'PAYMENT_NOT_FOUND',
       message: `Payment ${id} was not found`,
     });
-    return this.toAdminPaymentItem(row, new Date());
+    const responsible = responsibleDebtorId(row.unit);
+    return {
+      ...this.toAdminPaymentItem(row, new Date()),
+      sharedDebtors: row.debtors.map((debtor) => ({
+        citizenId: debtor.citizenId,
+        name: citizenDisplayName(debtor.citizen, { middleName: true }),
+        role: debtor.role,
+        // «مالك مسؤول» on the unit: offered first as the payer, never the only debtor (D5).
+        responsible: debtor.citizenId === responsible,
+      })),
+    };
   }
 
   /**
@@ -3413,8 +4235,14 @@ export class FeesService {
       due" — a smaller number, on a tile whose whole job is to be the count
       nobody has dealt with yet.
     */
+    /*
+      One citizen's bills: their own and the shared unit bills they owe as a
+      debtor (0099). Put around each query's `where` rather than into it, which
+      spreads several conditions that carry their own `OR`.
+    */
+    const scoped = (condition: Prisma.CitizenPaymentWhereInput): Prisma.CitizenPaymentWhereInput =>
+      filter.citizenId ? { AND: [billsOwedBy(filter.citizenId), condition] } : condition;
     const whereWithoutStatus = {
-      ...(filter.citizenId ? { citizenId: filter.citizenId } : {}),
       ...(filter.method ? { paymentMethod: filter.method as never } : {}),
       ...(filter.feeTitle
         ? {
@@ -3491,7 +4319,7 @@ export class FeesService {
     const [rows, total, collected, byMethod, awaiting] = await withConnectionRetry(() =>
       this.db.$transaction([
         this.db.citizenPayment.findMany({
-          where,
+          where: scoped(where),
           /**
            * A transactions view is a chronology, so it is ordered by when the
            * money moved — newest first — rather than by what is most overdue.
@@ -3510,7 +4338,7 @@ export class FeesService {
           skip,
           include: this.ADMIN_PAYMENT_INCLUDE,
         }),
-        this.db.citizenPayment.count({ where }),
+        this.db.citizenPayment.count({ where: scoped(where) }),
         /**
          * Aggregates over the *whole filtered set*, not the page.
          *
@@ -3521,17 +4349,17 @@ export class FeesService {
          * kind of wrong number nobody notices until it is quoted in a meeting.
          */
         this.db.citizenPayment.aggregate({
-          where: { ...where, paidAmount: { gt: 0 } },
+          where: scoped({ ...where, paidAmount: { gt: 0 } }),
           _sum: { paidAmount: true },
         }),
         this.db.citizenPayment.groupBy({
           by: ['paymentMethod'],
-          where: { ...where, paidAmount: { gt: 0 } },
+          where: scoped({ ...where, paidAmount: { gt: 0 } }),
           _count: { _all: true },
         }),
         this.db.citizenPayment.count({
           // `whereWithoutStatus`, not `where` — see the note on its declaration.
-          where: { ...whereWithoutStatus, paymentStatus: 'PENDING_REVIEW' },
+          where: scoped({ ...whereWithoutStatus, paymentStatus: 'PENDING_REVIEW' }),
         }),
       ]),
     );
@@ -3603,11 +4431,16 @@ export class FeesService {
         paidAmount: true,
         currency: true,
         paymentStatus: true,
+        unitId: true,
         citizen: { select: { firstName: true, lastName: true, residence: true } },
+        // Whether this citizen owes it as one of a shared unit bill's debtors (0099).
+        debtors: { where: { citizenId: input.citizenId }, select: { citizenId: true } },
       },
     });
 
-    if (!payment || payment.citizenId !== input.citizenId) {
+    // A debtor's shared unit bill is theirs to see, and paid at the office (`assertNotSharedOnline`).
+    if (payment && payment.unitId && payment.debtors.length > 0) assertNotSharedOnline(payment);
+    if (!payment || !payment.citizen || payment.citizenId !== input.citizenId) {
       // Same error for "no such invoice" and "not yours", so the endpoint
       // cannot be used to discover which payment ids exist.
       throw new NotFoundError({
@@ -4020,6 +4853,8 @@ export class FeesService {
     whishTransactionRef?: string;
     /** Required by the schema when `method` is COLLECTOR; ignored otherwise. */
     collectedById?: string;
+    /** On a shared unit bill (0099), the debtor who paid; the ledger requires and checks it there. */
+    paidByCitizenId?: string;
     note?: string;
     /** `YYYY-MM-DD`, not in the future (the schema's rule). Omitted means now. */
     paidOn?: string;
@@ -4146,6 +4981,7 @@ export class FeesService {
          */
         externalRef,
         collectedById: input.method === 'COLLECTOR' ? (input.collectedById ?? null) : null,
+        paidByCitizenId: input.paidByCitizenId ?? null,
         recordedById: input.actor.id,
         note: input.note,
         tendered: tender,
@@ -4167,6 +5003,8 @@ export class FeesService {
           entityId: input.paymentId,
           after: {
             citizenId: invoice.citizenId,
+            // A shared unit bill (0099) has no citizen; the debtor who paid it is named instead.
+            ...(input.paidByCitizenId ? { paidByCitizenId: input.paidByCitizenId } : {}),
             confirmed: true,
             receiptNumber: movement.receiptNumber,
             method: input.method,
@@ -4309,16 +5147,17 @@ export class FeesService {
       if (!bill) {
         throw new NotFoundError({ code: 'PAYMENT_NOT_FOUND', message: `Payment ${paymentId} was not found` });
       }
-      if (bill.paymentStatus === 'CANCELLED') {
+      const refusal = billCancelRefusal(bill);
+      if (refusal === 'BILL_ALREADY_CANCELLED') {
         throw new ConflictError({ code: 'BILL_ALREADY_CANCELLED', message: 'This bill has already been cancelled.' });
       }
-      if (bill.paymentStatus === 'PENDING_REVIEW') {
+      if (refusal === 'PAYMENT_CLAIM_UNDER_REVIEW') {
         throw new ConflictError({
           code: 'PAYMENT_CLAIM_UNDER_REVIEW',
           message: 'A citizen payment claim on this bill is under review; confirm or reject it first.',
         });
       }
-      if (bill.paymentStatus === 'PAID' || bill.paidAmount > 0) {
+      if (refusal === 'BILL_CANCEL_HAS_PAYMENTS') {
         throw new ConflictError({
           code: 'BILL_CANCEL_HAS_PAYMENTS',
           message: 'Money has been taken on this bill; reverse its receipts before cancelling it.',
@@ -4374,6 +5213,196 @@ export class FeesService {
       PR #122). Null when the bill was no open request's fee.
     */
     return { ...(await this.getPaymentById(paymentId)), cancelledRequest };
+  }
+
+  /**
+   * «إلغاء الإشعار» — the manager withdraws a notice's bills, for the periods
+   * he names, in one step (decisions D6 of 2026-10-23 and D12 of 2026-10-26,
+   * docs/fees-system-rearchitecture-specification.md): a notice issued with the
+   * wrong table, the wrong target, the wrong amount.
+   *
+   * Every bill of those periods that `cancelBill` would cancel is cancelled —
+   * the citizens' own and the shared unit bills alike, each with who, when and
+   * why and its own Tier 1 row, as one press of «إلغاء الفاتورة» writes. Every
+   * bill it would refuse is left exactly as it is and reported with the reason:
+   * money on it, or a citizen's claim waiting on it. The notice stops:
+   * `isActive` false, so the recurring run raises nothing more for it.
+   *
+   * Only the periods named. A period's correct bills are revenue the law does
+   * not let a municipality waive (exemption is by law only), so a fee that is
+   * merely ending is stopped (`setNoticeActive`), not cancelled, and a wrong
+   * period is cancelled without the right ones around it.
+   *
+   * One transaction. The notice's row is locked first, as the recurring run
+   * locks it, so a run and a cancel of one notice wait for each other; then
+   * every bill, so a payment cannot land between the reading and the writing.
+   * The statuses are one write and the audit rows one statement, one row per
+   * bill, because a bill's own history is where «who cancelled this» is looked up.
+   */
+  async cancelNoticeBatch(
+    noticeId: string,
+    input: { reason: string; periodKeys: readonly string[] },
+    actor: { id: string; role: string },
+  ) {
+    const why = input.reason.trim();
+    const periodKeys = [...new Set(input.periodKeys)];
+    const outcome = await runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.db as Prisma.TransactionClient;
+      const [notice] = await tx.$queryRaw<Array<{ title: string; isActive: boolean }>>`
+        SELECT "title", "isActive" FROM ${this.S}fee_notices WHERE "id" = ${noticeId}::uuid FOR UPDATE
+      `;
+      if (!notice) {
+        throw new NotFoundError({ code: 'FEE_NOTICE_NOT_FOUND', message: `FeeNotice ${noticeId} was not found` });
+      }
+
+      const rows = await tx.citizenPayment.findMany({
+        where: { feeNoticeId: noticeId, periodKey: { in: periodKeys }, paymentStatus: { not: 'CANCELLED' } },
+        select: { id: true, invoiceNumber: true, title: true, periodKey: true },
+      });
+      const meta = new Map(rows.map((row) => [row.id, row]));
+      const bills = await this.ledger.lockInvoices(
+        tx,
+        rows.map((row) => row.id),
+      );
+
+      const cancellable = bills.filter((bill) => billCancelRefusal(bill) === null);
+      const skipped = bills.flatMap((bill) => {
+        const refusal = billCancelRefusal(bill);
+        return refusal ? [{ paymentId: bill.id, invoiceNumber: meta.get(bill.id)?.invoiceNumber ?? null, reason: refusal }] : [];
+      });
+
+      if (cancellable.length > 0) {
+        const written = await tx.citizenPayment.updateMany({
+          // The rows are locked; the status and the money are asked again all the same.
+          where: {
+            id: { in: cancellable.map((bill) => bill.id) },
+            paymentStatus: { notIn: ['CANCELLED', 'PAID', 'PENDING_REVIEW'] },
+            paidAmount: 0,
+          },
+          data: { paymentStatus: 'CANCELLED', cancelledAt: new Date(), cancelledById: actor.id, cancellationReason: why },
+        });
+        if (written.count !== cancellable.length) {
+          throw new Error(`cancelNoticeBatch: cancelled ${written.count} of the ${cancellable.length} bills found cancellable`);
+        }
+        await this.auditTrail.recordManyInTransaction(
+          cancellable.map((bill) => {
+            const row = meta.get(bill.id);
+            return {
+              actorId: actor.id,
+              actorType: 'STAFF' as const,
+              actorRole: actor.role as never,
+              action: 'FEE_BILL_CANCELLED',
+              entityType: 'Payment',
+              entityId: bill.id,
+              before: { paymentStatus: bill.paymentStatus },
+              after: {
+                citizenId: bill.citizenId,
+                invoiceNumber: row?.invoiceNumber ?? null,
+                title: row?.title ?? null,
+                periodKey: row?.periodKey ?? null,
+                amount: bill.amount,
+                currency: bill.currency,
+                reason: why,
+                // Withdrawn with the notice, not on its own.
+                noticeId,
+              },
+            };
+          }),
+        );
+        // A municipal request waiting on one of these bills is cancelled with it, as with one bill (0094).
+        const waiting = await tx.citizenRequest.findMany({
+          where: { citizenPaymentId: { in: cancellable.map((bill) => bill.id) } },
+          select: { citizenPaymentId: true },
+        });
+        for (const request of waiting) {
+          if (request.citizenPaymentId) {
+            await cancelRequestOfCancelledBill(tx, this.auditTrail, { billId: request.citizenPaymentId, actor });
+          }
+        }
+      }
+
+      if (notice.isActive) {
+        await tx.feeNotice.update({ where: { id: noticeId }, data: { isActive: false } });
+      }
+      await this.auditTrail.recordInTransaction({
+        actorId: actor.id,
+        actorType: 'STAFF',
+        actorRole: actor.role as never,
+        action: 'FEE_NOTICE_CANCELLED',
+        entityType: 'FeeNotice',
+        entityId: noticeId,
+        before: { isActive: notice.isActive },
+        after: {
+          isActive: false,
+          title: notice.title,
+          periodKeys,
+          cancelled: cancellable.length,
+          skipped: skipped.length,
+          reason: why,
+        },
+      });
+
+      return { cancelled: cancellable.length, skipped, deactivated: notice.isActive };
+    });
+
+    // For the caches that count what is owed; the audit rows are already written.
+    if (outcome.cancelled > 0) {
+      this.events.emit('payment.cancelled', {
+        tenantSlug: this.tenantContext.tenantSlug,
+        noticeId,
+        actorId: actor.id,
+        actorRole: actor.role,
+      });
+    }
+    return { noticeId, ...outcome };
+  }
+
+  /**
+   * A notice's periods as «إلغاء الإشعار» shows them before the press (D12):
+   * each period's bills, how many the cancel would cancel and for how much, and
+   * how many it would leave and why — by `billCancelRefusal`'s own order, so the
+   * figures are the cancel's: cancelled first, then a claim under review, then
+   * money taken. Newest period first.
+   */
+  async noticePeriods(noticeId: string): Promise<FeeNoticePeriodSummary[]> {
+    const notice = await this.db.feeNotice.findUnique({ where: { id: noticeId }, select: { id: true } });
+    if (!notice) throw new NotFoundError({ code: 'FEE_NOTICE_NOT_FOUND', message: `FeeNotice ${noticeId} was not found` });
+
+    const rows = await withConnectionRetry(() =>
+      this.db.$queryRaw<
+        Array<{
+          periodKey: string;
+          bills: number;
+          cancellable: number;
+          cancellableAmount: number;
+          withPayments: number;
+          underReview: number;
+          alreadyCancelled: number;
+          currency: string;
+        }>
+      >`
+        SELECT p."periodKey",
+               count(*)::int AS "bills",
+               count(*) FILTER (
+                 WHERE p."paymentStatus"::text NOT IN ('CANCELLED', 'PENDING_REVIEW', 'PAID') AND p."paidAmount" = 0
+               )::int AS "cancellable",
+               COALESCE(sum(p.amount) FILTER (
+                 WHERE p."paymentStatus"::text NOT IN ('CANCELLED', 'PENDING_REVIEW', 'PAID') AND p."paidAmount" = 0
+               ), 0)::float8 AS "cancellableAmount",
+               count(*) FILTER (
+                 WHERE p."paymentStatus"::text NOT IN ('CANCELLED', 'PENDING_REVIEW')
+                   AND (p."paymentStatus"::text = 'PAID' OR p."paidAmount" > 0)
+               )::int AS "withPayments",
+               count(*) FILTER (WHERE p."paymentStatus"::text = 'PENDING_REVIEW')::int AS "underReview",
+               count(*) FILTER (WHERE p."paymentStatus"::text = 'CANCELLED')::int AS "alreadyCancelled",
+               min(p.currency) AS "currency"
+          FROM ${this.S}citizen_payments p
+         WHERE p."feeNoticeId" = ${noticeId}::uuid
+         GROUP BY p."periodKey"
+         ORDER BY p."periodKey" DESC
+      `,
+    );
+    return rows;
   }
 
   /** Headline numbers for the admin fee screen. */

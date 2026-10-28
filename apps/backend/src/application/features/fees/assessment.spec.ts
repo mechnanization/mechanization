@@ -789,7 +789,9 @@ describe('assessment', () => {
 
       expect(result.kind === 'assessed' && result.amount).toBe(100_000);
       expect(result.kind === 'assessed' && result.assessment.unitCount).toBe(1);
-      expect(result.kind === 'assessed' && result.assessment.excludedUnitCount).toBe(2);
+      // The let shop is the tenant's to pay; the empty one is outside the notice's unit states (0100).
+      expect(result.kind === 'assessed' && result.assessment.excludedUnitCount).toBe(1);
+      expect(result.kind === 'assessed' && result.assessment.outOfScopeUnitCount).toBe(1);
     });
 
     it('excludes nothing when every unit is borne by the person assessed', () => {
@@ -1085,3 +1087,89 @@ describe('a flat nobody can live in — exempt from every fee until re-inspected
   });
 });
 
+
+/*
+  «من يشمل الإشعار» (0100; the user's decision, 2026-10-26): a notice names the
+  حالة الوحدة values and categories it charges. Absent, the bearer's own — so
+  every notice issued before it bills as it did.
+*/
+describe('the notice scope — unit states and several categories (0100)', () => {
+  const rate = { basis: 'PER_UNIT' as const, amount: 100_000 };
+  const all = [
+    'OWNER_OCCUPIED',
+    'RENTED',
+    'FREE_OCCUPIED',
+    'SEASONAL',
+    'VACANT',
+    'UNDER_CONSTRUCTION',
+  ];
+  const holdings = [
+    building('1553', [
+      ['SHOP', 40, 'OWNER_OCCUPIED'],
+      ['SHOP', 25, 'RENTED'],
+      ['SHOP', 30, 'VACANT'],
+      ['SHOP', 30, 'UNDER_CONSTRUCTION'],
+      ['SHOP', 30, 'SEASONAL'],
+      ['SHOP', 30],
+    ]),
+  ];
+  const assessed = (notice: Record<string, unknown>) => {
+    const result = assessCitizen(holdings, { ...rate, ...notice } as never);
+    if (result.kind !== 'assessed') throw new Error('expected an assessment');
+    return result;
+  };
+
+  it('leaves the empty and unfinished units out of an occupancy fee by default, as before', () => {
+    const result = assessed({ bearer: 'OCCUPANT' });
+    // Owner-occupied, seasonal and unrecorded: three. The let one is the tenant's.
+    expect(result.amount).toBe(300_000);
+    expect(result.assessment.outOfScopeUnitCount).toBe(2);
+    expect(result.assessment.excludedUnitCount).toBe(1);
+  });
+
+  it('charges the owner for empty units when the clerk ticked them under an occupancy fee', () => {
+    const result = assessed({ bearer: 'OCCUPANT', unitStates: all });
+    expect(result.amount).toBe(500_000);
+    expect(result.assessment.outOfScopeUnitCount).toBe(0);
+    // The let shop is still the tenant's to pay, ticked or not.
+    expect(result.assessment.excludedUnitCount).toBe(1);
+  });
+
+  it('charges only the ticked states, counting the rest with their state', () => {
+    const result = assessed({ bearer: 'OWNER', unitStates: ['VACANT'] });
+    expect(result.amount).toBe(100_000);
+    expect(result.assessment.outOfScopeUnitCount).toBe(5);
+    expect(result.outOfScopeUnits?.map((unit) => unit.state).sort()).toEqual(
+      ['OWNER_OCCUPIED', 'OWNER_OCCUPIED', 'RENTED', 'SEASONAL', 'UNDER_CONSTRUCTION'].sort(),
+    );
+  });
+
+  it('reads an unrecorded status as «مشغولة من المالك»', () => {
+    const result = assessCitizen([building('1553', [['SHOP', 30]])], {
+      ...rate,
+      bearer: 'OWNER',
+      unitStates: ['OWNER_OCCUPIED'],
+    });
+    expect(result.kind === 'assessed' && result.amount).toBe(100_000);
+  });
+
+  it("judges a tenant's own card by its tenancy", () => {
+    const tenancy = [building('1553', [['SHOP', 30]], 'TENANT')];
+    const without = assessCitizen(tenancy, { ...rate, bearer: 'OCCUPANT', unitStates: ['OWNER_OCCUPIED'] });
+    const with_ = assessCitizen(tenancy, { ...rate, bearer: 'OCCUPANT', unitStates: ['RENTED'] });
+    expect(without.kind === 'assessed' && without.amount).toBe(0);
+    expect(with_.kind === 'assessed' && with_.amount).toBe(100_000);
+  });
+
+  it('charges a unit any one of several categories names', () => {
+    const mixed = [
+      building('1553', [
+        ['SHOP', 30],
+        ['WAREHOUSE', 30],
+        ['APARTMENT', 90],
+      ]),
+    ];
+    const result = assessCitizen(mixed, { ...rate, bearer: 'OCCUPANT', targetCategories: ['SHOP', 'WAREHOUSE'] });
+    expect(result.kind === 'assessed' && result.amount).toBe(200_000);
+  });
+});

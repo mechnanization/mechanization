@@ -1,6 +1,7 @@
 import type { QueryState } from '@tanstack/react-query';
 import { reverseTransactionSchema } from '@mechanization/shared-schemas';
-import { ApiRequestError } from './api-client';
+import type { RecordedMovement } from '@/components/admin/payment-receipt';
+import { ApiRequestError, type PaymentLedgerEntry } from './api-client';
 import { outcomeInDoubt } from './request-id';
 import { hasRole, PAYMENT_REVERSE_ROLES } from './staff-roles';
 
@@ -50,6 +51,57 @@ export function mayReverseReceipt(
 export function billPageLink(bill: { paymentStatus: string }): 'settle' | 'receipts' {
   // A cancelled bill (0090) takes no cash either: what is left to see is its receipts, if any.
   return bill.paymentStatus === 'PAID' || bill.paymentStatus === 'CANCELLED' ? 'receipts' : 'settle';
+}
+
+/**
+ * Whether a receipt on the bill page offers «طباعة الوصل» of its own: a payment
+ * on a shared unit bill (0099), which names the debtor who paid it, for what
+ * they paid (decision D9, 2026-10-26). A shared bill is reprinted payment by
+ * payment, never as the bill's total under one name: two brothers who each paid
+ * part are each named for their own part. Not the opposing row of a reversal,
+ * nor a receipt since reversed.
+ */
+export function mayPrintSharedReceipt(entry: {
+  isReversal: boolean;
+  reversed: boolean;
+  paidByCitizenId?: string | null;
+}): boolean {
+  return Boolean(entry.paidByCitizenId) && !entry.isReversal && !entry.reversed;
+}
+
+/**
+ * What one payment's receipt prints — its own RCP number, day, amount, notes
+ * and method — and what the bill still owed right after it: the bill's amount
+ * less every movement up to and including this one, reversals among them, in
+ * the list's own order (oldest first). Null when the list does not hold it.
+ */
+export function receiptOfEntry(
+  entries: readonly PaymentLedgerEntry[],
+  entryId: string,
+  billAmount: number,
+): RecordedMovement | null {
+  const index = entries.findIndex((entry) => entry.id === entryId);
+  const entry = entries[index];
+  if (!entry) return null;
+  const paidThrough = entries.slice(0, index + 1).reduce((sum, row) => sum + row.amount, 0);
+  const tendered = entry.tenderedLocal != null || entry.tenderedForeign != null;
+  return {
+    receiptNumber: entry.receiptNumber,
+    occurredAt: entry.occurredAt,
+    received: entry.amount,
+    remaining: Math.max(0, Math.round((billAmount - paidThrough) * 100) / 100),
+    changeGiven: entry.changeGiven ?? 0,
+    tender: tendered
+      ? {
+          local: entry.tenderedLocal ?? 0,
+          foreign: entry.tenderedForeign ?? 0,
+          foreignCurrency: entry.tenderedForeignCurrency ?? 'USD',
+          exchangeRate: entry.exchangeRate ?? 0,
+          officialExchangeRate: entry.officialExchangeRate,
+        }
+      : null,
+    method: entry.method,
+  };
 }
 
 /** The longest reason the server takes, read off its own schema — the box's `maxLength`. */

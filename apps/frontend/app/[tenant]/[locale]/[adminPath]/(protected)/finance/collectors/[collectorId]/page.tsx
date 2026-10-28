@@ -89,12 +89,17 @@ export default function CollectorCollectionsPage({
                 The citizen's own file, so «قال إنه دفع» is one click from here.
                 A plain link, not an action: nothing on this page changes money.
               */}
-              <Link
-                href={`${base}/citizens/${row.original.citizenId}`}
-                className="truncate font-medium text-foreground underline-offset-4 hover:underline"
-              >
-                {row.original.citizenName}
-              </Link>
+              {/* On a shared unit bill (0099) the debtor who paid; null only if none was recorded. */}
+              {row.original.citizenId ? (
+                <Link
+                  href={`${base}/citizens/${row.original.citizenId}`}
+                  className="truncate font-medium text-foreground underline-offset-4 hover:underline"
+                >
+                  {row.original.citizenName}
+                </Link>
+              ) : (
+                <span className="truncate font-medium text-muted-foreground">—</span>
+              )}
               {row.original.isReversal ? (
                 <Badge variant="soft-warning">{t('reversalRow')}</Badge>
               ) : row.original.reversed ? (

@@ -17,6 +17,7 @@ import {
   Banknote,
   CheckCircle2,
   FileWarning,
+  Megaphone,
   Loader2,
   Plus,
   Receipt,
@@ -190,6 +191,7 @@ export default function FeesPage({
   }, { columnsMenu: true });
   const tReview = useTranslations('fees.register.review');
   const tCommon = useTranslations('common');
+  const tNotices = useTranslations('fees.notices');
   /** «تأكيد» / «رفض» on a declared transfer — `FEE_ADMIN_ROLES`, as `PATCH fees/payments/:id/review`. */
   const canDecide = hasRole(FEE_ADMIN_ROLES, role);
   /** «تكليف مباشر» and «إصدار رسم جديد» — `FEE_ISSUE_ROLES`, as `POST fees/payments`, `POST fees/notices` and the `fees/new` page. */
@@ -447,7 +449,7 @@ export default function FeesPage({
       const bill = fromAdminPayment(payment);
       return (
         <BillCheckbox
-          subject={{ kind: 'row', title: payment.title, name: payment.citizenName }}
+          subject={{ kind: 'row', title: payment.title, name: payment.citizenName ?? '' }}
           checked={selection.bills.some((entry) => entry.id === payment.id)}
           blocked={rowBlock(selection.bills, bill)}
           onToggle={() => selection.toggle(bill)}
@@ -481,6 +483,20 @@ export default function FeesPage({
         header: locale === 'en' ? 'Citizen' : 'المواطن',
         cell: ({ row }) => {
           const payment = row.original;
+          // A shared unit bill (0099) has no one citizen: the unit is named, its people counted.
+          if (!payment.citizenId) {
+            return (
+              <span className="text-sm text-muted-foreground">
+                {payment.sharedUnit
+                  ? tCommon('sharedUnitBill', {
+                      building: payment.sharedUnit.buildingCode,
+                      unit: payment.sharedUnit.unitCode,
+                      count: payment.sharedUnit.debtorCount,
+                    })
+                  : '—'}
+              </span>
+            );
+          }
           return (
             <div className="flex items-center gap-3">
               {canBulkSettle ? <span className="inline-flex sm:hidden">{rowBox(payment)}</span> : null}
@@ -488,7 +504,7 @@ export default function FeesPage({
                 aria-hidden
                 className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary"
               >
-                {initials(payment.citizenName)}
+                {initials(payment.citizenName ?? '')}
               </span>
               <div className="min-w-0 space-y-0.5">
                 <Link
@@ -682,15 +698,31 @@ export default function FeesPage({
                 </Link>
               ) : null}
 
-              {payment.paidAmount > 0 ? (
+              {/*
+                A shared unit bill (0099) is reprinted one payment at a time, each naming
+                the debtor who paid it (D9) — on the bill's receipts page, reached through
+                the file of whoever paid last. Never its total under one name.
+              */}
+              {payment.paidAmount > 0 && !payment.citizenId && payment.lastPaidByCitizenId && canSettle ? (
+                <Link
+                  href={`${base}/citizens/${encodeURIComponent(payment.lastPaidByCitizenId)}/payments/${encodeURIComponent(payment.id)}`}
+                  className={buttonVariants({ variant: 'outline', size: 'sm', className: 'h-8 text-xs' })}
+                >
+                  <Receipt className="size-3.5" aria-hidden />
+                  {tCommon('sharedBillReceipts')}
+                </Link>
+              ) : null}
+
+              {/* A citizen's own bill: the receipt is rebuilt from their file. */}
+              {payment.paidAmount > 0 && payment.citizenId ? (
                 <Button
                   size="sm"
                   variant="outline"
                   className="h-8 text-xs"
                   disabled={isBusy}
-                  onClick={() =>
-                    void openReceipt(payment.citizenId, payment.id, payment.paidAmount)
-                  }
+                  onClick={() => {
+                    if (payment.citizenId) void openReceipt(payment.citizenId, payment.id, payment.paidAmount);
+                  }}
                 >
                   {isBusy ? (
                     <Loader2 className="size-3.5 animate-spin" aria-hidden />
@@ -705,7 +737,7 @@ export default function FeesPage({
         },
       },
     ],
-    [base, canDecide, canSettle, busyPaymentId, openReceipt, locale, labels, canBulkSettle, pageBox, rowBox, tSelect],
+    [base, canDecide, canSettle, busyPaymentId, openReceipt, locale, labels, canBulkSettle, pageBox, rowBox, tSelect, tCommon],
   );
 
   if (!token) return <LoadingState fullHeight label={tCommon('loading')} />;
@@ -735,6 +767,12 @@ export default function FeesPage({
                 {locale === 'en' ? 'Bills affected by corrections' : 'فواتير تأثّرت بتصحيحات'}
               </Link>
             ) : null}
+
+            {/* «إشعارات الرسوم»: every notice issued, and the manager's «إلغاء الإشعار». Read by every ledger reader. */}
+            <Link href={`${base}/fees/notices`} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+              <Megaphone className="size-4" aria-hidden />
+              {tNotices('title')}
+            </Link>
 
             {canIssue ? (
               <>

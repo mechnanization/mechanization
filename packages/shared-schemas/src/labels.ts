@@ -84,6 +84,7 @@ export const ar = {
     FLAT: 'مبلغ ثابت لكل مواطن',
     PER_UNIT: 'المبلغ × عدد الوحدات',
     PER_AREA: 'المبلغ × إجمالي المساحة (م²)',
+    TIERED_AREA: 'حسب فئة المساحة (جدول الفئات)',
   } satisfies Record<FeeBasis, string>,
 
   /** Who the fee is levied on. See `FEE_BEARER`. */
@@ -550,6 +551,7 @@ export const en = {
     FLAT: 'Flat amount per citizen',
     PER_UNIT: 'Rate × number of units',
     PER_AREA: 'Rate × total area (m²)',
+    TIERED_AREA: 'By area bracket (bracket table)',
   } satisfies Record<FeeBasis, string>,
 
   feeBearer: {

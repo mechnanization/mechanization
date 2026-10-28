@@ -262,6 +262,10 @@ model User {
   cancelledPayments     CitizenPayment[]     @relation("PaymentCancelledBy")
   collectedTransactions PaymentTransaction[] @relation("TransactionCollectedBy")
   recordedTransactions  PaymentTransaction[] @relation("TransactionRecordedBy")
+  /// Shared unit bills this citizen is a debtor on, and the payments they made
+  /// on one (0099).
+  sharedBillDebts       CitizenPaymentDebtor[] @relation("PaymentDebtor")
+  sharedBillPayments    PaymentTransaction[]   @relation("TransactionPaidBy")
   /// Settlements of several bills at once (0085): as the citizen who paid, the
   /// collector who took the money, or the clerk who recorded it.
   paymentSettlements          PaymentSettlement[] @relation("SettlementCitizen")
@@ -1493,6 +1497,8 @@ model Unit {
   buildingUnits     BuildingUnit[]
   visits            UnitVisit[]
   vacancies         UnitVacancyConfirmation[]
+  /// Shared unit bills raised for this unit (0099, TIERED_AREA only).
+  sharedBills       CitizenPayment[]
 
   @@unique([buildingId, floor, sequence])
   @@index([buildingId])
@@ -2050,6 +2056,9 @@ enum FeeBasis {
   FLAT
   PER_UNIT
   PER_AREA
+  /// Each unit is charged the bracket its area falls in, from the table on the
+  /// notice (`FeeNotice.matrixBrackets`, 0098/0099).
+  TIERED_AREA
 }
 
 /// Who a fee is levied on — الرسم على الشاغل أم على المالك.
@@ -2118,6 +2127,18 @@ model FeeNotice {
   /// answer finds this notice instead of billing everyone it targets twice.
   clientRequestId String? @unique @db.Uuid
 
+  /// The bracket table under TIERED_AREA (0099): code, label, unit types, level
+  /// count, area range and amount per bracket. Present exactly when the basis is
+  /// TIERED_AREA (CHECK fee_notices_matrix_brackets_basis), a non-empty array
+  /// (CHECK fee_notices_matrix_brackets_array); its shape is `feeMatrixSchema`.
+  matrixBrackets Json?
+
+  /// «من يشمل الإشعار» (0100): the categories, حالة الوحدة values and kinds of
+  /// file the notice reaches, and the warnings the clerk confirmed. A JSON object
+  /// (CHECK fee_notices_scope_object) whose shape is `feeNoticeScopeSchema`; a
+  /// missing key or NULL is the behaviour before it — see `FeesService.scopeOf`.
+  scope Json?
+
   createdAt DateTime         @default(now())
   payments  CitizenPayment[]
   /// Every period this notice's recurring run attempted (migration 0056).
@@ -2127,13 +2148,29 @@ model FeeNotice {
   @@map("fee_notices")
 }
 
-/// One citizen's debt. Denormalises `title`/`amount` off the notice on purpose:
-/// a clerk correcting next month's fee must not silently rewrite what someone
-/// already paid last month.
+/// One citizen's debt, or one unit's. Denormalises `title`/`amount` off the
+/// notice on purpose: a clerk correcting next month's fee must not silently
+/// rewrite what someone already paid last month.
 model CitizenPayment {
   id        String @id @default(uuid()) @db.Uuid
-  citizenId String @db.Uuid
-  citizen   User   @relation(fields: [citizenId], references: [id], onDelete: Cascade)
+  /// Whose bill this is. Null exactly on a shared unit bill (0099), which
+  /// belongs to `unitId` and is owed by its `debtors` instead (CHECK
+  /// citizen_payments_citizen_or_unit). Every read of a bill's citizen has to
+  /// say what it does with a shared one.
+  citizenId String? @db.Uuid
+  citizen   User?   @relation(fields: [citizenId], references: [id], onDelete: Cascade)
+
+  /// «فاتورة الوحدة المشتركة» (0099, TIERED_AREA only): a unit the bearer rule
+  /// charged to two or more citizens, billed once and in full, not split. Set
+  /// on such a bill and nowhere else; such a bill always has a notice (CHECK
+  /// citizen_payments_unit_bill_notice). One per unit, notice and period: the
+  /// partial unique index `citizen_payments_unitId_feeNoticeId_periodKey_key`,
+  /// which Prisma cannot express.
+  unitId  String?                @db.Uuid
+  unit    Unit?                  @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  /// Who may pay a shared unit bill: everyone charged for the unit when it was
+  /// raised. Empty on a citizen's own bill.
+  debtors CitizenPaymentDebtor[]
 
   /// Null for a one-off charge raised directly against a citizen.
   feeNoticeId String?    @db.Uuid
@@ -2259,6 +2296,28 @@ model CitizenPayment {
   @@map("citizen_payments")
 }
 
+/// Who may pay a shared unit bill (0099, TIERED_AREA only): everyone the bearer
+/// rule charged for the unit **when the bill was raised**, written then, like
+/// `CitizenPayment.assessment`. The bill shows on each of their profiles; any of
+/// them may pay it; once paid it is paid for all of them, and until then it holds
+/// back براءة ذمة for all of them (decision D5, 2026-10-23,
+/// docs/fees-system-rearchitecture-specification.md).
+model CitizenPaymentDebtor {
+  paymentId String         @db.Uuid
+  payment   CitizenPayment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  /// RESTRICT: deleting a citizen must not quietly change who owes a bill.
+  citizenId String         @db.Uuid
+  citizen   User           @relation("PaymentDebtor", fields: [citizenId], references: [id], onDelete: Restrict)
+  /// In what capacity they were charged for the unit.
+  role      OccupancyRole
+  createdAt DateTime       @default(now())
+
+  @@id([paymentId, citizenId])
+  /// The portal's read: the shared bills this citizen is a debtor on.
+  @@index([citizenId])
+  @@map("citizen_payment_debtors")
+}
+
 /// One movement of money against one invoice. Append-only.
 ///
 /// The ledger `CitizenPayment` used to lack. That row keeps a *balance*:
@@ -2330,6 +2389,13 @@ model PaymentTransaction {
   /// collector handed in at the end of a round.
   recordedById  String? @db.Uuid
   recordedBy    User?   @relation("TransactionRecordedBy", fields: [recordedById], references: [id], onDelete: Restrict)
+
+  /// On a shared unit bill (0099), which of its debtors the money came from, for
+  /// the receipt. Null on every other transaction. Written with the row (the
+  /// ledger is append-only); that it names one of the bill's debtors is checked
+  /// by the code. Not indexed: read through its bill, never searched by.
+  paidByCitizenId String? @db.Uuid
+  paidByCitizen   User?   @relation("TransactionPaidBy", fields: [paidByCitizenId], references: [id], onDelete: Restrict)
 
   /// Set when this row reverses an earlier one. Unique, so an entry can be
   /// reversed at most once — twice would credit the citizen twice.
