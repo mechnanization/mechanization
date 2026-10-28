@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { typeError } from './type-error';
 
 /** Converts Eastern Arabic / Arabic-Indic digits to ASCII standard digits. */
 export function normalizeDigits(input: string): string {
@@ -17,7 +18,7 @@ export const LATIN_DIGITS = '01234567890123456789';
 
 /** Lebanese mobile numbers: +961 3/70/71/76/78/79/81 XXXXXX, stored E.164. */
 export const lebanesePhone = z
-  .string({ required_error: 'رقم الهاتف مطلوب' })
+  .string(typeError({ required: 'رقم الهاتف مطلوب' }))
   .trim()
   .transform((v) => normalizeDigits(v).replace(/[\s-]/g, ''))
   .pipe(
@@ -70,7 +71,7 @@ export const lebanesePhone = z
  */
 export const internationalPhone = z
   // Both messages Arabic: a wrong type reached the screen as Zod's English default.
-  .string({ required_error: 'رقم الهاتف مطلوب', invalid_type_error: 'رقم الهاتف غير صالح' })
+  .string(typeError({ required: 'رقم الهاتف مطلوب', invalid: 'رقم الهاتف غير صالح' }))
   .trim()
   .transform((v) => normalizeDigits(v).replace(/[\s\-().]/g, ''))
   .superRefine((v, ctx) => {
@@ -120,14 +121,14 @@ export const optionalInternationalPhone = z.preprocess(
 );
 
 export const arabicOrLatinName = z
-  .string({ required_error: 'الاسم مطلوب' })
+  .string(typeError({ required: 'الاسم مطلوب' }))
   .trim()
   .min(2, 'الاسم قصير جداً')
   .max(60, 'الاسم طويل جداً')
   .regex(/^[\u0600-\u06FFa-zA-Z\s'-]+$/u, 'الاسم يحتوي على رموز غير مسموحة');
 
 export const documentNumber = z
-  .string({ required_error: 'رقم الوثيقة مطلوب' })
+  .string(typeError({ required: 'رقم الوثيقة مطلوب' }))
   .trim()
   .min(3, 'رقم الوثيقة قصير جداً')
   .max(40, 'رقم الوثيقة طويل جداً');
@@ -137,7 +138,7 @@ export const documentNumber = z
  * generic `documentNumber` minimum would wrongly reject valid records.
  */
 export const civilRecordNumber = z
-  .string({ required_error: 'رقم السجل مطلوب' })
+  .string(typeError({ required: 'رقم السجل مطلوب' }))
   .trim()
   .min(1, 'رقم السجل مطلوب')
   .max(20, 'رقم السجل طويل جداً')
@@ -152,7 +153,12 @@ export const tenantSlug = z
   .max(50)
   .regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, 'Invalid municipality slug');
 
-export const uuid = z.string().uuid();
+/**
+ * Any 8-4-4-4-12 hex id. `guid`, not zod 4's `uuid`, which also checks the
+ * version and variant digits: zod 3's `uuid` never did, and every id this
+ * accepted before the zod 4 upgrade must still be accepted after it.
+ */
+export const uuid = z.string().guid();
 
 /**
  * A real calendar day as `YYYY-MM-DD`: «2026-02-30» or «2026-10-00» is refused,
@@ -172,6 +178,6 @@ export function isCalendarDay(day: string): boolean {
  * the pattern (the transfer's did, until the review of 2026-10-11).
  */
 export const businessDay = z
-  .string({ required_error: 'اختر التاريخ' })
+  .string(typeError({ required: 'اختر التاريخ' }))
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'تاريخ غير صالح')
   .refine(isCalendarDay, 'تاريخ غير صالح');

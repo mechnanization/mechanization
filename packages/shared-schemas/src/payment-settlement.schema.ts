@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { typeError } from './type-error';
 import { uuid } from './primitives';
 import { paymentMethodSchema, type PaymentMethod } from './fee.schema';
 import { hasAtMostTwoDecimals } from './money-amount';
@@ -24,7 +25,7 @@ export const BULK_SETTLE_MAX_BILLS = 50;
 
 const money = (max: number) =>
   z.coerce
-    .number({ invalid_type_error: 'المبلغ يجب أن يكون رقماً' })
+    .number(typeError({ invalid: 'المبلغ يجب أن يكون رقماً' }))
     .min(0, 'المبلغ لا يمكن أن يكون سالباً')
     .max(max)
     .refine(hasAtMostTwoDecimals, 'منزلتان عشريتان على الأكثر');

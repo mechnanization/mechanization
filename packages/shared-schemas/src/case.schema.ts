@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { typeError } from './type-error';
 import { caseTypeSchema, landTypeSchema, propertyTypeSchema } from './enums';
 import { normalizeDigits, uuid } from './primitives';
 
@@ -30,17 +31,21 @@ export const CASE_STATUS = ['OPEN', 'SCHEDULED', 'RESOLVED'] as const;
 export type CaseStatus = (typeof CASE_STATUS)[number];
 
 const notesField = z
-  .string({ required_error: 'وصف الحالة مطلوب' })
+  .string(typeError({ required: 'وصف الحالة مطلوب' }))
   .trim()
   .min(3, 'وصف الحالة قصير جداً')
   .max(500, 'وصف الحالة طويل جداً');
 
 const optionalText = (max: number) => z.string().trim().max(max).optional();
 
-/** A case's رقم العقار, saved in Latin digits like a card's (`propertyNumberField`). */
-const optionalPropertyNumber = optionalText(40).transform((value) =>
-  value === undefined ? value : normalizeDigits(value),
-);
+/**
+ * A case's رقم العقار, saved in Latin digits like a card's (`propertyNumberField`).
+ * The trailing `.optional()` changes no value — a missing one is already passed
+ * through — but zod 4 marks a key optional only when its schema says so.
+ */
+const optionalPropertyNumber = optionalText(40)
+  .transform((value) => (value === undefined ? value : normalizeDigits(value)))
+  .optional();
 
 /**
  * The census links a case may carry.
@@ -67,7 +72,7 @@ const censusLinks = {
    * from the record to the officer's memory.
    */
   scheduledRevisitAt: z.coerce
-    .date({ invalid_type_error: 'تاريخ الزيارة غير صالح' })
+    .date(typeError({ invalid: 'تاريخ الزيارة غير صالح' }))
     .optional(),
 };
 
@@ -123,7 +128,7 @@ export const updateCaseSchema = z
     unitId: uuid.nullable().optional(),
     damageAssessmentId: uuid.nullable().optional(),
     scheduledRevisitAt: z.coerce
-      .date({ invalid_type_error: 'تاريخ الزيارة غير صالح' })
+      .date(typeError({ invalid: 'تاريخ الزيارة غير صالح' }))
       .nullable()
       .optional(),
     /**

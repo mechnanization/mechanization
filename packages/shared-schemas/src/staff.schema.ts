@@ -16,7 +16,7 @@ export const inspectorPropertyBreakdownSchema = z.object({
 export type InspectorPropertyBreakdown = z.infer<typeof inspectorPropertyBreakdownSchema>;
 
 export const inspectorPayoutItemSchema = z.object({
-  id: z.string().uuid(),
+  id: z.string().guid(),
   amount: z.number().nonnegative(),
   currency: z.string().default('USD'),
   paidAt: z.string(),
@@ -32,7 +32,7 @@ export const inspectorPayoutItemSchema = z.object({
    */
   voucher: z
     .object({
-      id: z.string().uuid(),
+      id: z.string().guid(),
       voucherNumber: z.string(),
       accountName: z.string(),
       voided: z.boolean(),
@@ -44,8 +44,8 @@ export const inspectorPayoutItemSchema = z.object({
 export type InspectorPayoutItem = z.infer<typeof inspectorPayoutItemSchema>;
 
 export const inspectorRegistrationLogItemSchema = z.object({
-  registrationId: z.string().uuid(),
-  citizenId: z.string().uuid(),
+  registrationId: z.string().guid(),
+  citizenId: z.string().guid(),
   citizenName: z.string(),
   referenceNumber: z.string(),
   submittedAt: z.string(),
@@ -73,7 +73,7 @@ export type InspectorRegistrationLogItem = z.infer<typeof inspectorRegistrationL
 
 export const inspectorProfileResponseSchema = z.object({
   inspector: z.object({
-    id: z.string().uuid(),
+    id: z.string().guid(),
     name: z.string(),
     email: z.string().nullable(),
     role: staffRoleSchema,
@@ -135,7 +135,7 @@ export const recordInspectorPayoutSchema = z.object({
   note: z.string().max(500).optional(),
   reference: z.string().max(100).optional(),
   /** The paying wallet. Required once the treasury is live, refused before. */
-  accountId: z.string().uuid('اختر الحساب الذي ستُدفع منه العمولة').optional(),
+  accountId: z.string().guid('اختر الحساب الذي ستُدفع منه العمولة').optional(),
   /**
    * The payout's retry key, before go-live and after: one per payout, kept by
    * the dialog across every failure until the server confirms the act
@@ -145,7 +145,7 @@ export const recordInspectorPayoutSchema = z.object({
    * under it. Before 0089 a figure-only payout kept none, and a lost answer
    * pressed again was recorded twice (review of 2026-10-11).
    */
-  clientRequestId: z.string().uuid().optional(),
+  clientRequestId: z.string().guid().optional(),
 });
 
 export type RecordInspectorPayoutInput = z.infer<typeof recordInspectorPayoutSchema>;

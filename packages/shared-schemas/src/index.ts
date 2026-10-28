@@ -4,6 +4,8 @@ export * from './damage-rule';
 export * from './staff-presence';
 export * from './labels';
 export * from './primitives';
+export * from './type-error';
+export * from './partial-keeping-absent';
 export * from './numbering';
 export * from './citizen.schema';
 export * from './field-flag.schema';

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { typeError } from './type-error';
 import { municipalToday } from './cash-policy';
 import { positiveMoneyAmount } from './money-amount';
 import { businessDay } from './primitives';
@@ -79,16 +80,16 @@ const paidAmount = positiveMoneyAmount(999_999_999_999);
  * hold. The client cannot get that pair wrong because it never states it.
  */
 export const recordExpenseSchema = z.object({
-  categoryId: z.string().uuid('اختر بند الصرف'),
-  accountId: z.string().uuid('اختر الحساب الذي سيُدفع منه'),
+  categoryId: z.string().guid('اختر بند الصرف'),
+  accountId: z.string().guid('اختر الحساب الذي سيُدفع منه'),
   amount: paidAmount,
   payee: z
-    .string({ required_error: 'اكتب اسم المستفيد' })
+    .string(typeError({ required: 'اكتب اسم المستفيد' }))
     .trim()
     .min(2, 'اكتب اسم المستفيد')
     .max(200, 'الاسم طويل جداً'),
   description: z
-    .string({ required_error: 'اكتب سبب الصرف' })
+    .string(typeError({ required: 'اكتب سبب الصرف' }))
     .trim()
     .min(3, 'اكتب سبب الصرف')
     .max(1000, 'الوصف طويل جداً'),
@@ -107,7 +108,7 @@ export const recordExpenseSchema = z.object({
    */
   urgentReason: z.string().trim().min(5, 'اكتب سبب الدفع العاجل بوضوح').max(500, 'السبب طويل جداً').optional(),
   /** One id per press of the button, so a retry does not pay twice. */
-  clientRequestId: z.string().uuid().optional(),
+  clientRequestId: z.string().guid().optional(),
 });
 
 export type RecordExpenseInput = z.infer<typeof recordExpenseSchema>;
@@ -120,23 +121,23 @@ export type RecordExpenseInput = z.infer<typeof recordExpenseSchema>;
  * order.
  */
 export const requestExpenseSchema = z.object({
-  categoryId: z.string().uuid('اختر بند الصرف'),
-  accountId: z.string().uuid('اختر الحساب الذي سيُدفع منه'),
+  categoryId: z.string().guid('اختر بند الصرف'),
+  accountId: z.string().guid('اختر الحساب الذي سيُدفع منه'),
   amount: paidAmount,
   payee: z
-    .string({ required_error: 'اكتب اسم المستفيد' })
+    .string(typeError({ required: 'اكتب اسم المستفيد' }))
     .trim()
     .min(2, 'اكتب اسم المستفيد')
     .max(200, 'الاسم طويل جداً'),
   description: z
-    .string({ required_error: 'اكتب سبب الصرف' })
+    .string(typeError({ required: 'اكتب سبب الصرف' }))
     .trim()
     .min(3, 'اكتب سبب الصرف')
     .max(1000, 'الوصف طويل جداً'),
   invoiceNumber: z.string().trim().max(100, 'الرقم طويل جداً').optional(),
   hasPhysicalReceipt: z.boolean().optional(),
   /** One id per request, so a retry does not file it twice. */
-  clientRequestId: z.string().uuid().optional(),
+  clientRequestId: z.string().guid().optional(),
 });
 
 export type RequestExpenseInput = z.infer<typeof requestExpenseSchema>;
@@ -144,7 +145,7 @@ export type RequestExpenseInput = z.infer<typeof requestExpenseSchema>;
 /** The manager declines a request, with the reason the accountant will read. */
 export const rejectExpenseRequestSchema = z.object({
   reason: z
-    .string({ required_error: 'اكتب سبب الرفض' })
+    .string(typeError({ required: 'اكتب سبب الرفض' }))
     .trim()
     .min(5, 'اكتب سبباً واضحاً للرفض')
     .max(500, 'السبب طويل جداً'),
@@ -196,11 +197,11 @@ export function salaryPeriodWindow(now: Date = new Date()): string[] {
 }
 
 export const recordStaffSalarySchema = z.object({
-  accountId: z.string().uuid('اختر الحساب الذي سيُدفع منه'),
+  accountId: z.string().guid('اختر الحساب الذي سيُدفع منه'),
   amount: paidAmount,
   /** «عن شهر / بيان الصرف» — what the payment is for, e.g. the month. */
   description: z
-    .string({ required_error: 'اكتب عن أي فترة يُصرف' })
+    .string(typeError({ required: 'اكتب عن أي فترة يُصرف' }))
     .trim()
     .min(3, 'اكتب عن أي فترة يُصرف')
     .max(1000, 'الوصف طويل جداً'),
@@ -211,11 +212,11 @@ export const recordStaffSalarySchema = z.object({
    * an advance on a month not yet worked is not a salary (checked by the server,
    * on its own clock).
    */
-  salaryPeriod: z.string({ required_error: 'اختر الشهر' }).regex(SALARY_PERIOD_PATTERN, 'اختر الشهر'),
+  salaryPeriod: z.string(typeError({ required: 'اختر الشهر' })).regex(SALARY_PERIOD_PATTERN, 'اختر الشهر'),
   /** The paper behind it: a payroll sheet or a signed receipt number. */
   invoiceNumber: z.string().trim().max(100, 'الرقم طويل جداً').optional(),
   /** Required: one id per press, so a retry does not pay a salary twice. */
-  clientRequestId: z.string().uuid(),
+  clientRequestId: z.string().guid(),
 });
 
 export type RecordStaffSalaryInput = z.infer<typeof recordStaffSalarySchema>;
@@ -271,7 +272,7 @@ const budgetCodeOnEdit = z
 /** The fields a municipality owns on a category, shared by create and edit. */
 const categoryFields = {
   name: z
-    .string({ required_error: 'اكتب اسم البند' })
+    .string(typeError({ required: 'اكتب اسم البند' }))
     .trim()
     .min(2, 'اكتب اسم البند')
     .max(120, 'الاسم طويل جداً'),
@@ -316,7 +317,7 @@ export type UpdateExpenseCategoryInput = z.infer<typeof updateExpenseCategorySch
 /** «إلغاء سند الصرف» — the manager's cancellation, with its reason. */
 export const voidExpenseSchema = z.object({
   reason: z
-    .string({ required_error: 'اكتب سبب الإلغاء' })
+    .string(typeError({ required: 'اكتب سبب الإلغاء' }))
     .trim()
     .min(5, 'اكتب سبباً واضحاً للإلغاء')
     .max(500, 'السبب طويل جداً'),

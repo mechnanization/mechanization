@@ -315,7 +315,7 @@ export function RecordExpenseForm({
     */
     let request: RequestExpenseInput | null = null;
     let payment: RecordExpenseInput | null = null;
-    let issues: ReadonlyArray<{ path: ReadonlyArray<string | number> }> = [];
+    let issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey> }> = [];
     if (mode === 'REQUEST') {
       const parsed = requestExpenseSchema.safeParse({ ...shared, clientRequestId: heldKey(tenant, scope('REQUEST')) });
       if (parsed.success) request = parsed.data;

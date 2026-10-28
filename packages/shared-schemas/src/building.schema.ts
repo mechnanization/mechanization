@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { typeError } from './type-error';
 import {
   buildingLifecycleSchema,
   damageLevelSchema,
@@ -116,7 +117,7 @@ const isPartitioned = z.boolean();
 const partitionNumbers = z
   .array(
     z
-      .string({ required_error: 'رقم القسم مطلوب' })
+      .string(typeError({ required: 'رقم القسم مطلوب' }))
       .trim()
       .min(1, 'رقم القسم مطلوب')
       .max(40, 'رقم القسم طويل جداً'),
@@ -156,12 +157,12 @@ const sharedParcelNumbers = z
  * Gulf of Guinea. See `coordinatePair` below.
  */
 const latitude = z.coerce
-  .number({ invalid_type_error: 'الإحداثي غير صالح' })
+  .number(typeError({ invalid: 'الإحداثي غير صالح' }))
   .min(-90, 'خط العرض غير صالح')
   .max(90, 'خط العرض غير صالح');
 
 const longitude = z.coerce
-  .number({ invalid_type_error: 'الإحداثي غير صالح' })
+  .number(typeError({ invalid: 'الإحداثي غير صالح' }))
   .min(-180, 'خط الطول غير صالح')
   .max(180, 'خط الطول غير صالح');
 
@@ -189,7 +190,7 @@ function coordinatePair<T extends { latitude?: number | null; longitude?: number
  * could ever be filed against.
  */
 const floorsCount = z.coerce
-  .number({ invalid_type_error: 'عدد الطوابق يجب أن يكون رقماً' })
+  .number(typeError({ invalid: 'عدد الطوابق يجب أن يكون رقماً' }))
   .int('عدد الطوابق يجب أن يكون رقماً صحيحاً')
   .min(1, 'المبنى له طابق واحد على الأقل')
   .max(100, 'عدد الطوابق كبير جداً');
@@ -207,7 +208,7 @@ const floorsCount = z.coerce
  * a basement no unit could be filed against.
  */
 const basementsCount = z.coerce
-  .number({ invalid_type_error: 'عدد الطوابق تحت الأرض يجب أن يكون رقماً' })
+  .number(typeError({ invalid: 'عدد الطوابق تحت الأرض يجب أن يكون رقماً' }))
   .int('عدد الطوابق تحت الأرض يجب أن يكون رقماً صحيحاً')
   .min(0, 'عدد الطوابق تحت الأرض لا يمكن أن يكون سالباً')
   .max(10, 'عدد الطوابق تحت الأرض كبير جداً');
@@ -218,7 +219,7 @@ const basementsCount = z.coerce
  * storable floor is.
  */
 const floorField = z.coerce
-  .number({ invalid_type_error: 'الطابق يجب أن يكون رقماً' })
+  .number(typeError({ invalid: 'الطابق يجب أن يكون رقماً' }))
   .int('الطابق يجب أن يكون رقماً صحيحاً')
   .min(-10, 'الطابق خارج النطاق المقبول')
   .max(100, 'الطابق خارج النطاق المقبول');
@@ -261,7 +262,7 @@ export const upsertUnitSchema = z.object({
    * colliding on the unique `(buildingId, floor, sequence)`.
    */
   sequence: z.coerce
-    .number({ invalid_type_error: 'الترتيب يجب أن يكون رقماً' })
+    .number(typeError({ invalid: 'الترتيب يجب أن يكون رقماً' }))
     .int('الترتيب يجب أن يكون رقماً صحيحاً')
     .min(1, 'الترتيب يبدأ من 1')
     .max(99, 'الترتيب كبير جداً')
@@ -274,13 +275,13 @@ export const upsertUnitSchema = z.object({
    * a harmless edge case rather than one worth hard-blocking.
    */
   startCol: z.coerce
-    .number({ invalid_type_error: 'العمود يجب أن يكون رقماً' })
+    .number(typeError({ invalid: 'العمود يجب أن يكون رقماً' }))
     .int('العمود يجب أن يكون رقماً صحيحاً')
     .min(1)
     .max(20)
     .optional(),
   endCol: z.coerce
-    .number({ invalid_type_error: 'العمود يجب أن يكون رقماً' })
+    .number(typeError({ invalid: 'العمود يجب أن يكون رقماً' }))
     .int('العمود يجب أن يكون رقماً صحيحاً')
     .min(1)
     .max(20)
@@ -577,7 +578,7 @@ export type UpdateBuildingInput = z.infer<typeof updateBuildingSchema>;
 export const correctBuildingParcelSchema = z.object({
   parcelNumber,
   reason: z
-    .string({ required_error: 'اكتب سبب التصحيح' })
+    .string(typeError({ required: 'اكتب سبب التصحيح' }))
     .trim()
     .min(3, 'اكتب سبب التصحيح')
     .max(500, 'السبب طويل جداً'),
@@ -611,7 +612,7 @@ const uniformBlueprint = z.object({
   fromFloor: floorField.default(0),
   toFloor: floorField,
   unitsPerFloor: z.coerce
-    .number({ invalid_type_error: 'عدد الوحدات يجب أن يكون رقماً' })
+    .number(typeError({ invalid: 'عدد الوحدات يجب أن يكون رقماً' }))
     .int('عدد الوحدات يجب أن يكون رقماً صحيحاً')
     .min(1, 'وحدة واحدة على الأقل في كل طابق')
     .max(20, 'عدد الوحدات في الطابق كبير جداً'),
@@ -629,7 +630,7 @@ const explicitBlueprint = z.object({
       z.object({
         floor: floorField,
         unitCount: z.coerce
-          .number({ invalid_type_error: 'عدد الوحدات يجب أن يكون رقماً' })
+          .number(typeError({ invalid: 'عدد الوحدات يجب أن يكون رقماً' }))
           .int('عدد الوحدات يجب أن يكون رقماً صحيحاً')
           .min(1, 'وحدة واحدة على الأقل في كل طابق')
           .max(20, 'عدد الوحدات في الطابق كبير جداً'),
@@ -657,7 +658,7 @@ const explicitBlueprint = z.object({
 
 export const unitBlueprintSchema = z
   .discriminatedUnion('kind', [uniformBlueprint, explicitBlueprint], {
-    errorMap: () => ({ message: 'طريقة توليد الوحدات غير صالحة' }),
+    error: 'طريقة توليد الوحدات غير صالحة',
   })
   .superRefine((blueprint, ctx) => {
     if (blueprint.kind !== 'uniform') return;
@@ -702,11 +703,11 @@ export const updateUnitSchema = upsertUnitSchema
       .max(12)
       .transform((months) => [...new Set(months)].sort((a, b) => a - b)),
     ownerLastStayAt: z.coerce
-      .date({ invalid_type_error: 'تاريخ آخر إقامة غير صالح' })
+      .date(typeError({ invalid: 'تاريخ آخر إقامة غير صالح' }))
       .refine(notAfterNow, 'تاريخ آخر إقامة في المستقبل')
       .nullable(),
     vacancyDeclaredAt: z.coerce
-      .date({ invalid_type_error: 'تاريخ تصريح الشغور غير صالح' })
+      .date(typeError({ invalid: 'تاريخ تصريح الشغور غير صالح' }))
       .refine(notAfterNow, 'تاريخ تصريح الشغور في المستقبل')
       .nullable(),
   })
@@ -774,7 +775,7 @@ export const createDamageAssessmentSchema = z
     source: damageSourceSchema.default('FIELD_VISIT'),
     observations: z.string().trim().max(2000, 'الوصف طويل جداً').optional(),
     assessedAt: z.coerce
-      .date({ invalid_type_error: 'تاريخ الكشف غير صالح' })
+      .date(typeError({ invalid: 'تاريخ الكشف غير صالح' }))
       .refine(notAfterNow, 'تاريخ الكشف في المستقبل')
       .optional(),
     /**
@@ -785,14 +786,14 @@ export const createDamageAssessmentSchema = z
      * «غير صالحة», absent on no or minor damage «صالحة». Restricted use is the
      * one level where either is ordinary, so it must be stated there.
      */
-    habitable: z.boolean({ invalid_type_error: 'جواب «صالحة للسكن» غير صالح' }).optional(),
+    habitable: z.boolean(typeError({ invalid: 'جواب «صالحة للسكن» غير صالح' })).optional(),
     /**
      * «موعد إعادة الكشف» — when a target read «غير صالحة للسكن» is to be
      * visited again, once it is repaired. Only on such a reading: it is the
      * one that expects a second visit. A planned day — today or later on the
      * municipality's calendar.
      */
-    reinspectAt: z.coerce.date({ invalid_type_error: 'موعد إعادة الكشف غير صالح' }).optional(),
+    reinspectAt: z.coerce.date(typeError({ invalid: 'موعد إعادة الكشف غير صالح' })).optional(),
   })
   /*
     The level's own answer fills an absent one, on the server as on the form, so
@@ -855,7 +856,7 @@ export type CreateDamageAssessmentInput = z.infer<typeof createDamageAssessmentS
 
 /** أسهم out of 2400 — an owner's part of the deed, as the register records it. */
 export const ownerSharesValue = z.coerce
-  .number({ invalid_type_error: 'عدد الأسهم يجب أن يكون رقماً' })
+  .number(typeError({ invalid: 'عدد الأسهم يجب أن يكون رقماً' }))
   .int('يجب أن يكون رقماً صحيحاً')
   .min(1, 'يجب أن يكون سهماً واحداً على الأقل')
   .max(2400, 'الحد الأقصى 2400 سهم');
@@ -968,8 +969,8 @@ export const upsertOccupancySchema = z
       .min(4, 'يرجى ذكر سبب عدم تحديد من يشغل الوحدة')
       .max(300, 'السبب طويل جداً')
       .optional(),
-    fromDate: z.coerce.date({ invalid_type_error: 'تاريخ البدء غير صالح' }).optional(),
-    toDate: z.coerce.date({ invalid_type_error: 'تاريخ الانتهاء غير صالح' }).optional(),
+    fromDate: z.coerce.date(typeError({ invalid: 'تاريخ البدء غير صالح' })).optional(),
+    toDate: z.coerce.date(typeError({ invalid: 'تاريخ الانتهاء غير صالح' })).optional(),
     /**
      * «المالك» — who a مستأجر or شاغل بتسامح holds the flat from.
      *
@@ -1089,7 +1090,7 @@ export type UpsertOccupancyInput = z.infer<typeof upsertOccupancySchema>;
  */
 export const AFTER_TENANCY_STATUS = ['OWNER_OCCUPIED', 'VACANT', 'RENTED_TO_OTHER', 'UNKNOWN'] as const;
 export const afterTenancyStatusSchema = z.enum(AFTER_TENANCY_STATUS, {
-  errorMap: () => ({ message: 'حدِّد حالة الوحدة بعد خروج الشاغل' }),
+  error: 'حدِّد حالة الوحدة بعد خروج الشاغل',
 });
 export type AfterTenancyStatus = z.infer<typeof afterTenancyStatusSchema>;
 
@@ -1098,7 +1099,7 @@ export type AfterTenancyStatus = z.infer<typeof afterTenancyStatusSchema>;
  * when the module loads goes stale on a server that has been up since yesterday.
  */
 const pastDate = (message: string) =>
-  z.coerce.date({ invalid_type_error: message }).refine(notAfterNow, 'التاريخ في المستقبل');
+  z.coerce.date(typeError({ invalid: message })).refine(notAfterNow, 'التاريخ في المستقبل');
 
 const afterTenancyFields = {
   afterStatus: afterTenancyStatusSchema.optional(),
@@ -1162,7 +1163,7 @@ export type EndOccupancyInput = z.infer<typeof endOccupancySchema>;
 export const endTenancySchema = z
   .object({
     reason: z.enum(['MOVED_OUT', 'RECORDED_IN_ERROR'], {
-      errorMap: () => ({ message: 'يرجى تحديد سبب إنهاء الإيجار' }),
+      error: 'يرجى تحديد سبب إنهاء الإيجار',
     }),
     endedAt: pastDate('تاريخ الانتهاء غير صالح').optional(),
     rowIds: z.array(uuid).min(1, 'حدِّد الوحدات التي تركها').max(60).optional(),
@@ -1194,7 +1195,7 @@ export type EndTenancyInput = z.infer<typeof endTenancySchema>;
 export const endOwnershipSchema = z
   .object({
     reason: z.enum(['OWNERSHIP_TRANSFERRED', 'RECORDED_IN_ERROR'], {
-      errorMap: () => ({ message: 'حدِّد ماذا حدث للملكية' }),
+      error: 'حدِّد ماذا حدث للملكية',
     }),
     endedAt: pastDate('تاريخ البيع غير صالح').optional(),
     rowIds: z.array(uuid).min(1, 'حدِّد الوحدات التي انتهت ملكيتها').max(60).optional(),
@@ -1271,7 +1272,7 @@ export const logVisitSchema = z.object({
    * never a fact.
    */
   visitedAt: z.coerce
-    .date({ invalid_type_error: 'تاريخ الزيارة غير صالح' })
+    .date(typeError({ invalid: 'تاريخ الزيارة غير صالح' }))
     .refine(notAfterNow, 'تاريخ الزيارة في المستقبل')
     .optional(),
   notes: z.string().trim().max(1000, 'الملاحظات طويلة جداً').optional(),
@@ -1307,7 +1308,7 @@ export const confirmVacancySchema = z
     basis: vacancyBasisSchema,
     /** When the unit was found empty. Back-datable from a paper round; never future. */
     observedAt: z.coerce
-      .date({ invalid_type_error: 'تاريخ المعاينة غير صالح' })
+      .date(typeError({ invalid: 'تاريخ المعاينة غير صالح' }))
       .refine(notAfterNow, 'تاريخ المعاينة في المستقبل')
       .optional(),
     notes: z.string().trim().max(1000, 'الملاحظات طويلة جداً').optional(),
@@ -1348,7 +1349,7 @@ export type ConfirmVacancyInput = z.infer<typeof confirmVacancySchema>;
 export const endVacancySchema = z.object({
   reason: vacancyEndReasonSchema,
   endedAt: z.coerce
-    .date({ invalid_type_error: 'التاريخ غير صالح' })
+    .date(typeError({ invalid: 'التاريخ غير صالح' }))
     .refine(notAfterNow, 'التاريخ في المستقبل')
     .optional(),
   notes: z.string().trim().max(1000, 'الملاحظات طويلة جداً').optional(),

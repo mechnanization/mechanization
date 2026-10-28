@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { typeError } from './type-error';
+import { partialKeepingAbsent } from './partial-keeping-absent';
 import {
   bloodTypeSchema,
   genderSchema,
@@ -94,11 +96,11 @@ export const personalDetailsObject = z.object({
   identityDocNumber: documentNumber.optional().or(z.literal('')),
   civilRecordNumber: civilRecordNumber.optional().or(z.literal('')),
   nationality: z
-    .string({ required_error: 'الجنسية مطلوبة' })
+    .string(typeError({ required: 'الجنسية مطلوبة' }))
     .trim()
     .min(2, 'الجنسية قصيرة جداً')
     .max(60, 'الجنسية طويلة جداً'),
-  isLebanese: z.boolean({ required_error: 'يرجى تحديد الجنسية' }),
+  isLebanese: z.boolean(typeError({ required: 'يرجى تحديد الجنسية' })),
   residencyNumber: documentNumber.optional().or(z.literal('')),
   residentStatus: residentStatusSchema,
 });
@@ -219,10 +221,12 @@ export const contactDetailsObject = z.object({
    */
   contactPhone: optionalInternationalPhone,
   actualHouseholdMembers: z.coerce
-    .number({
-      required_error: 'عدد أفراد الأسرة المقيمين في المنزل مطلوب',
-      invalid_type_error: 'عدد أفراد الأسرة المقيمين في المنزل يجب أن يكون رقماً',
-    })
+    .number(
+      typeError({
+        required: 'عدد أفراد الأسرة المقيمين في المنزل مطلوب',
+        invalid: 'عدد أفراد الأسرة المقيمين في المنزل يجب أن يكون رقماً',
+      }),
+    )
     .int('يجب أن يكون رقماً صحيحاً')
     .min(1, 'يجب تسجيل فرد واحد على الأقل')
     .max(50, 'العدد كبير جداً — يرجى مراجعة البلدية'),
@@ -331,8 +335,7 @@ export type ContactDetails = z.infer<typeof contactDetailsSchema>;
  * does on the strict schema; when the phone itself is flagged there is nothing
  * to copy and both end up empty, which is the honest outcome.
  */
-export const partialContactDetailsSchema = contactDetailsObject
-  .partial()
+export const partialContactDetailsSchema = partialKeepingAbsent(contactDetailsObject)
   .transform((data) => ({
     ...data,
     whatsapp: data.whatsappSameAsPhone === false ? data.whatsapp : (data.phone ?? data.whatsapp),
@@ -391,7 +394,7 @@ export const nonResidentOwnerPersonalSchema = z.object({
   lastName: arabicOrLatinName,
   /** Town or country — «بيروت»، «ساحل العاج». Free text: there is no list to pick from. */
   residencePlace: z
-    .string({ required_error: 'مكان الإقامة مطلوب' })
+    .string(typeError({ required: 'مكان الإقامة مطلوب' }))
     .trim()
     .min(2, 'مكان الإقامة قصير جداً')
     .max(80, 'مكان الإقامة طويل جداً'),
@@ -437,8 +440,7 @@ export const nonResidentOwnerContactSchema = nonResidentOwnerContactObject
     }
   });
 
-export const partialNonResidentOwnerContactSchema = nonResidentOwnerContactObject
-  .partial()
+export const partialNonResidentOwnerContactSchema = partialKeepingAbsent(nonResidentOwnerContactObject)
   .transform((data) => ({
     ...data,
     whatsapp: data.whatsappSameAsPhone === false ? data.whatsapp : (data.phone ?? data.whatsapp),
@@ -465,7 +467,7 @@ export const partialEstatePersonalSchema = estatePersonalSchema.partial().requir
  * stored across the name parts (`splitInstitutionName`).
  */
 export const institutionName = z
-  .string({ required_error: 'اسم الجهة مطلوب' })
+  .string(typeError({ required: 'اسم الجهة مطلوب' }))
   .trim()
   .min(2, 'اسم الجهة قصير جداً')
   .max(120, 'اسم الجهة طويل جداً')
@@ -496,7 +498,7 @@ export const nonPersonContactSchema = nonPersonContactObject.transform((data) =>
   localContactPhone: data.localContactPhone || undefined,
 }));
 
-export const partialNonPersonContactSchema = nonPersonContactObject.partial().transform((data) => ({
+export const partialNonPersonContactSchema = partialKeepingAbsent(nonPersonContactObject).transform((data) => ({
   ...data,
   whatsapp: data.whatsappSameAsPhone === false ? data.whatsapp : (data.phone ?? data.whatsapp),
   localContactName: data.localContactName || undefined,

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { typeError } from './type-error';
 import { isDwellingUnitType } from './enums';
 
 /**
@@ -50,7 +51,7 @@ export function unitCoversFloor(unit: { floor: number; levels?: number | null },
 }
 
 export const unitLevelsField = z.coerce
-  .number({ invalid_type_error: 'عدد طوابق المسكن يجب أن يكون رقماً' })
+  .number(typeError({ invalid: 'عدد طوابق المسكن يجب أن يكون رقماً' }))
   .int('عدد طوابق المسكن يجب أن يكون رقماً صحيحاً')
   .min(1, 'المسكن طابق واحد على الأقل')
   .max(MAX_UNIT_LEVELS, `المسكن لا يتجاوز ${MAX_UNIT_LEVELS} طوابق`);
@@ -71,7 +72,7 @@ export const levelFactorsSchema = z
   .record(
     z.string().regex(/^[2-6]$/, 'عدد الطوابق في جدول المعاملات بين 2 و6'),
     z.coerce
-      .number({ invalid_type_error: 'المعامل يجب أن يكون رقماً' })
+      .number(typeError({ invalid: 'المعامل يجب أن يكون رقماً' }))
       .positive('المعامل يجب أن يكون أكبر من صفر'),
   )
   .superRefine((table, ctx) => {

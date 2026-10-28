@@ -15,7 +15,7 @@ import { z } from 'zod';
  */
 function arabicEnum<T extends readonly [string, ...string[]]>(values: T, message: string) {
   return z.enum(values as unknown as [T[number], ...T[number][]], {
-    errorMap: () => ({ message }),
+    error: message,
   });
 }
 
