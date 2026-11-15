@@ -1,12 +1,9 @@
 import 'reflect-metadata';
-import { readdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { Param, ParseUUIDPipe, RequestMethod } from '@nestjs/common';
-import { METHOD_METADATA, PATH_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
+import { METHOD_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import { RouteParamtypes } from '@nestjs/common/enums/route-paramtypes.enum';
-import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
-import { ROLES_KEY } from '../decorators/roles.decorator';
 import { FeesController } from './fees.controller';
+import { DiscoveredRoute, discoverRoutes } from './route-discovery';
 
 /*
   The route inventory: who can reach every route the API serves.
@@ -19,13 +16,8 @@ import { FeesController } from './fees.controller';
   covered the day it is written.
 */
 
-type Route = {
-  name: string;
-  method: RequestMethod;
-  path: string;
-  isPublic: boolean;
-  roles: readonly string[] | undefined;
-};
+/** Read off the controllers on disk (`route-discovery.ts`, shared with `cross-tenant-routes.spec.ts`). */
+type Route = DiscoveredRoute;
 
 /**
  * The routes with no `@Roles` that are not `@Public`, each reviewed: a
@@ -64,32 +56,7 @@ const SELF_SERVICE: Record<string, string> = {
  */
 const SIDE_EFFECT_GETS = ['DashboardController.exportCsv'];
 
-function routes(): Route[] {
-  const found: Route[] = [];
-  for (const file of readdirSync(__dirname).filter((name) => name.endsWith('.controller.ts'))) {
-    const mod = require(join(__dirname, file)) as Record<string, unknown>;
-    for (const exported of Object.values(mod)) {
-      if (typeof exported !== 'function' || Reflect.getMetadata(PATH_METADATA, exported) === undefined) continue;
-      const classRoles = Reflect.getMetadata(ROLES_KEY, exported) as string[] | undefined;
-      const classPublic = Reflect.getMetadata(IS_PUBLIC_KEY, exported) as boolean | undefined;
-      const prototype = (exported as { prototype: Record<string, unknown> }).prototype;
-      for (const key of Object.getOwnPropertyNames(prototype)) {
-        const handler = prototype[key];
-        if (typeof handler !== 'function') continue;
-        const method = Reflect.getMetadata(METHOD_METADATA, handler) as RequestMethod | undefined;
-        if (method === undefined) continue;
-        found.push({
-          name: `${(exported as { name: string }).name}.${key}`,
-          method,
-          path: String(Reflect.getMetadata(PATH_METADATA, handler)),
-          isPublic: Boolean((Reflect.getMetadata(IS_PUBLIC_KEY, handler) as boolean | undefined) ?? classPublic),
-          roles: (Reflect.getMetadata(ROLES_KEY, handler) as string[] | undefined) ?? classRoles,
-        });
-      }
-    }
-  }
-  return found;
-}
+const routes = (): Route[] => discoverRoutes();
 
 describe('the route inventory', () => {
   const all = routes();
