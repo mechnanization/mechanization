@@ -5379,6 +5379,8 @@ export async function issueFeeNotice(
     residences?: FeeNoticePreviewInput['residences'];
     /** The scope's warnings the clerk confirmed; the server refuses a scope with one unconfirmed. */
     acknowledgedWarnings?: FeeNoticePreviewInput['acknowledgedWarnings'];
+    /** The active notices the preview listed as duplicates and the clerk issued beside (`FEE_NOTICE_DUPLICATE`), by id. */
+    acknowledgedDuplicates?: string[];
     targetCitizenId?: string;
     dueDate: string;
     instructions?: string;

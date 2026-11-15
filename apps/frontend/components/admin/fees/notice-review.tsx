@@ -17,9 +17,18 @@ import { ScopeWarnings } from '@/components/admin/fees/notice-scope';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Money } from '@/components/ui/money';
 import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
-import { formatDay } from '@/lib/dates';
-import { noticePayload, noticeWarnings, toMatrix, typedAmount, unitStatesOf, type NoticeDraft } from '@/lib/fee-notice-draft';
+import { formatDate, formatDay } from '@/lib/dates';
+import {
+  duplicatesConfirmed,
+  noticePayload,
+  noticeWarnings,
+  toMatrix,
+  typedAmount,
+  unitStatesOf,
+  type NoticeDraft,
+} from '@/lib/fee-notice-draft';
 
 /** The steps a review row sends the clerk back to. */
 export type EditableStep = 'details' | 'brackets' | 'target';
@@ -88,6 +97,9 @@ function ReviewBody({
   const amount = typedAmount(values.amount);
   const warnings = noticeWarnings(values);
   const separator = tScope('separator');
+  // Active notices that bill the same people for the same period (finding F11); the server refuses them unconfirmed.
+  const duplicates = preview?.result?.duplicates ?? [];
+  const duplicatesOk = duplicatesConfirmed(values, duplicates);
 
   const appliesTo = !bulk
     ? chosen
@@ -178,8 +190,58 @@ function ReviewBody({
 
         {preview?.result ? <PreviewFindings result={preview.result} locale={locale} /> : null}
 
-        {bulk || warnings.length > 0 ? (
+        {bulk || warnings.length > 0 || duplicates.length > 0 ? (
           <FormSection title={t('review.sections.confirm')}>
+            {/*
+              Another notice already bills these people for this period: two
+              issuers, or one in two tabs, each with a key of their own (F11).
+              Named first, before the town-wide warning, and confirmed by id —
+              the server takes the ids, so a notice issued since is asked again.
+            */}
+            {duplicates.length > 0 ? (
+              <div className="space-y-2">
+                <Alert variant="warning" title={t('duplicates.title', { count: duplicates.length })}>
+                  <ul className="mt-1 space-y-1">
+                    {duplicates.map((duplicate) => (
+                      <li key={duplicate.id}>
+                        <span className="font-medium">{duplicate.title}</span>
+                        {' — '}
+                        {duplicate.basis === 'TIERED_AREA' ? null : (
+                          <>
+                            <Money amount={duplicate.amount} exact />
+                            {' — '}
+                          </>
+                        )}
+                        {t('duplicates.item', {
+                          frequency: labels.feeFrequency[duplicate.frequency],
+                          issuedAt: formatDate(duplicate.issuedAt),
+                          count: duplicate.billCount,
+                        })}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-2">{t('duplicates.body')}</p>
+                </Alert>
+                <label
+                  htmlFor="fee-confirm-duplicates"
+                  className="flex cursor-pointer select-none items-start gap-2.5 rounded-md border border-warning/40 p-3 text-sm font-medium"
+                >
+                  <Checkbox
+                    id="fee-confirm-duplicates"
+                    className="mt-0.5"
+                    checked={duplicatesOk}
+                    onCheckedChange={(next) =>
+                      set({ duplicatesConfirmed: next === true ? duplicates.map((duplicate) => duplicate.id) : [] })
+                    }
+                  />
+                  {t('duplicates.confirm', { count: duplicates.length })}
+                </label>
+                {duplicatesOk ? null : (
+                  <p className="text-xs text-muted-foreground">{t('duplicates.confirmNeeded')}</p>
+                )}
+              </div>
+            ) : null}
+
             {bulk ? (
               <Alert variant="warning">
                 {/* Said per basis: under TIERED_AREA a shared unit is one bill for several people, not one each (M4). */}

@@ -25,6 +25,7 @@ import type {
   FeeBasis,
   FeeBearer,
   FeeMatrixBracket,
+  FeeNoticeDuplicate,
   FeeNoticePeriodSummary,
   FeeNoticePreviewInput,
   FeeNoticePreviewResult,
@@ -82,6 +83,7 @@ import {
   type UnassessableDetail,
   type UnassessableUnit,
 } from './tiered-area';
+import { sameMonth, sameTarget, unconfirmed } from './duplicate-notice';
 import { likePattern, searchTokens } from '../../common/search-terms';
 import { citizenSearchText } from '../../common/citizen-search';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
@@ -1801,6 +1803,7 @@ export class FeesService {
       },
       outsideTable: plan.outsideTable,
       unassessable: plan.unassessable,
+      duplicates: await this.duplicateNotices(this.db as Prisma.TransactionClient, input),
       conflicts: plan.conflicts.map((conflict) => ({
         unitId: conflict.unitId,
         unitCode: conflict.unitCode,
@@ -1843,6 +1846,9 @@ export class FeesService {
       ? await this.replayNotice(this.db as Prisma.TransactionClient, input)
       : null;
     if (earlier) return earlier;
+
+    // Before the assessment, so a duplicate is refused without reading the register; asked again under the issue lock.
+    await this.refuseUnconfirmedDuplicates(this.db as Prisma.TransactionClient, input);
 
     const citizenIds = await this.resolveTargets(input);
 
@@ -1931,6 +1937,8 @@ export class FeesService {
       thousands of bills in here, and past five seconds Prisma closes the
       transaction under the insert.
     */
+    /** The duplicates found under the issue lock that the clerk confirmed, for the audit row. */
+    let duplicatesConfirmed: string[] = [];
     const result = await this.db.$transaction(async (tx) => {
       /*
         Serialised before anything is written; the key names the schema, so two
@@ -1943,6 +1951,17 @@ export class FeesService {
         const raced = await this.replayNotice(tx, input);
         if (raced) return { noticeId: raced.noticeId, issued: raced.issued, replayed: true as const };
       }
+
+      /*
+        Two issuers with two keys (finding F11): each passed the check above
+        before either had written, and each would bill the town. One lock per
+        municipality for every issue, taken after the key's, so the second
+        waits for the first to commit its notice and its bills and then finds
+        them. Issuing is rare; a notice waiting on another is the point.
+      */
+      const issueLock = `${this.tenantContext.schemaName}:fee-notice-issue`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${issueLock}))`;
+      duplicatesConfirmed = await this.refuseUnconfirmedDuplicates(tx, input);
 
       const notice = await tx.feeNotice.create({
         data: {
@@ -2027,6 +2046,7 @@ export class FeesService {
       targetType: input.targetType,
       // What the clerk chose and confirmed, for the audit row (0100); null when the notice named no scope.
       scope: storedScope(input),
+      duplicatesConfirmed,
       issuedCount: result.issued,
       unassessableCount: unassessable.length,
       exemptedUnitCount: exemptedUnits,
@@ -2241,6 +2261,111 @@ export class FeesService {
    * raised (`FEE_NOTICE_REQUEST_REUSED`). The counts beside the bills are not
    * replayed: they described the register as it stood at the first press.
    */
+  /**
+   * The active notices this one would duplicate (finding F11): the same basis,
+   * frequency and target (`sameTarget`), and the same period — a bill not
+   * cancelled in the new notice's first period, and for a one-off notice a due
+   * date in the same month (`sameMonth`). See `feeNoticeDuplicateSchema`. Read
+   * by the preview, and by the issue before its assessment and again under its
+   * lock.
+   */
+  private async duplicateNotices(
+    client: Prisma.TransactionClient,
+    input: {
+      basis: FeeBasis;
+      frequency: string;
+      targetType: string;
+      targetCategory?: string;
+      targetCategories?: readonly string[];
+      targetCitizenId?: string;
+      dueDate: string;
+    },
+  ): Promise<FeeNoticeDuplicate[]> {
+    const dueDate = new Date(input.dueDate);
+    // An invalid date is the issue's own refusal (`FEE_DUE_DATE_INVALID`); there is no period to compare.
+    if (Number.isNaN(dueDate.getTime())) return [];
+
+    const candidates = await client.feeNotice.findMany({
+      where: {
+        isActive: true,
+        basis: input.basis as never,
+        frequency: input.frequency as never,
+        targetType: input.targetType as never,
+      },
+      select: {
+        id: true,
+        title: true,
+        amount: true,
+        basis: true,
+        bearer: true,
+        frequency: true,
+        targetCategory: true,
+        targetCitizenId: true,
+        scope: true,
+        dueDate: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const target = {
+      targetType: input.targetType,
+      targetCitizenId: input.targetCitizenId ?? null,
+      categories: categoriesOf(input),
+    };
+    const periodKey = periodKeyFor(input.frequency, dueDate);
+    const found: FeeNoticeDuplicate[] = [];
+    for (const notice of candidates) {
+      const theirs = {
+        targetType: input.targetType,
+        targetCitizenId: notice.targetCitizenId,
+        categories: scopeOf(notice).categories,
+      };
+      if (!sameTarget(target, theirs)) continue;
+      if (input.frequency === 'ONCE' && !sameMonth(notice.dueDate, dueDate)) continue;
+      // Shared unit bills (0099) carry the notice and the period too, so they count.
+      const billCount = await client.citizenPayment.count({
+        where: { feeNoticeId: notice.id, periodKey, paymentStatus: { not: 'CANCELLED' } },
+      });
+      if (billCount === 0) continue;
+      found.push({
+        id: notice.id,
+        title: notice.title,
+        amount: Number(notice.amount),
+        basis: notice.basis as FeeNoticeDuplicate['basis'],
+        bearer: notice.bearer as FeeNoticeDuplicate['bearer'],
+        frequency: notice.frequency as FeeNoticeDuplicate['frequency'],
+        dueDate: notice.dueDate.toISOString(),
+        issuedAt: notice.createdAt.toISOString(),
+        billCount,
+      });
+    }
+    return found;
+  }
+
+  /**
+   * Refuses the issue while it duplicates an active notice the request did
+   * not confirm (`acknowledgedDuplicates`, by id), and answers the ones it did
+   * confirm. Confirmed by id rather than by a yes: a notice someone else issued
+   * after the clerk's preview is not covered by a box ticked before it existed.
+   */
+  private async refuseUnconfirmedDuplicates(
+    client: Prisma.TransactionClient,
+    input: CreateFeeNotice,
+  ): Promise<string[]> {
+    const duplicates = await this.duplicateNotices(client, input);
+    const open = unconfirmed(duplicates, input.acknowledgedDuplicates);
+    if (open.length > 0) {
+      throw new ConflictError({
+        code: 'FEE_NOTICE_DUPLICATE',
+        message: 'An active notice already bills the same people for the same period',
+        params: { title: open[0].title, count: open.length },
+        details: { duplicates: open },
+      });
+    }
+    return duplicates.map((duplicate) => duplicate.id);
+  }
+
   private async replayNotice(tx: Prisma.TransactionClient, input: CreateFeeNotice) {
     const notice = await tx.feeNotice.findUnique({
       where: { clientRequestId: input.clientRequestId },

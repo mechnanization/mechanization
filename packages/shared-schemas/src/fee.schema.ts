@@ -848,6 +848,14 @@ export const createFeeNoticeSchema = feeNoticeFields
      * key is the one case the server could not tell from a new notice.
      */
     clientRequestId: uuid,
+    /**
+     * The active notices the clerk was shown as duplicates of this one
+     * (`FeeNoticeDuplicate`, from the preview) and chose to issue beside. The
+     * server refuses with `FEE_NOTICE_DUPLICATE` while any duplicate it finds is
+     * not named here, so a notice issued by someone else after the preview is
+     * never confirmed by a box ticked before it existed (finding F11).
+     */
+    acknowledgedDuplicates: z.array(uuid).max(50).optional(),
   })
   .superRefine(refineFeeNotice)
   .superRefine((data, ctx) => {
@@ -920,6 +928,33 @@ export const feeUnassessableSchema = z.object({
 export type FeeUnassessable = z.infer<typeof feeUnassessableSchema>;
 
 /**
+ * An active notice that would bill the same people for the same thing in the
+ * same period as the one being issued (finding F11 of the 2026-11-14 billing
+ * audit): two issuers, or one in two tabs, each with their own retry key,
+ * raised two full sets of bills.
+ *
+ * The same basis, the same target (one category in common under
+ * BUILDING_CATEGORY, the same citizen under INDIVIDUAL_CITIZEN) and the same
+ * frequency; and the same period — a recurring notice that holds a bill, not
+ * cancelled, in the new notice's first period, or a one-off notice due in the
+ * same month. Who bears it is not compared: two fees with the same basis and
+ * target are told apart by the clerk, which is why this is confirmed and not
+ * refused outright. `billCount` is that period's bills.
+ */
+export const feeNoticeDuplicateSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  amount: z.number(),
+  basis: feeBasisSchema,
+  bearer: feeBearerSchema,
+  frequency: feeFrequencySchema,
+  dueDate: z.string(),
+  issuedAt: z.string(),
+  billCount: z.number().int().nonnegative(),
+});
+export type FeeNoticeDuplicate = z.infer<typeof feeNoticeDuplicateSchema>;
+
+/**
  * What the preview answers: what issuing this notice now would bill, read by
  * the same path the issue takes (`FeesService.planNotice`) and written nowhere.
  *
@@ -982,6 +1017,8 @@ export const feeNoticePreviewResultSchema = z.object({
       bracketCodes: z.array(z.string()),
     }),
   ),
+  /** Active notices this one would duplicate (`feeNoticeDuplicateSchema`); the issue needs each confirmed. */
+  duplicates: z.array(feeNoticeDuplicateSchema),
 });
 export type FeeNoticePreviewResult = z.infer<typeof feeNoticePreviewResultSchema>;
 

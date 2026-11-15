@@ -38,6 +38,13 @@ const OFFICIAL_RATE = 89_500;
 describeIfDb('finance audit remediation', () => {
   let ddl: Client;
   let db: TenantPrismaClient;
+  /**
+   * Every notice still active. These cases issue several fees of one basis and
+   * target on purpose, each its own, so each confirms the others as different
+   * fees, as a clerk must since the duplicate guard (finding F11).
+   */
+  const otherFees = async () =>
+    (await db.feeNotice.findMany({ where: { isActive: true }, select: { id: true } })).map((notice) => notice.id);
   let context: TenantContextService;
   let payments: PaymentLedgerService;
   let expenses: ExpensesService;
@@ -464,7 +471,7 @@ describeIfDb('finance audit remediation', () => {
 
   describe('a notice, a charge and a cancelled bill (B3, B4)', () => {
     const notice = (clientRequestId: string, title = 'رسم تنظيفات 2026') =>
-      scoped(() =>
+      scoped(async () =>
         fees.issue(
           {
             title,
@@ -475,6 +482,7 @@ describeIfDb('finance audit remediation', () => {
             targetType: 'INDIVIDUAL_CITIZEN',
             targetCitizenId: citizenId,
             dueDate: '2026-12-31',
+            acknowledgedDuplicates: await otherFees(),
             clientRequestId,
           },
           ACCOUNTANT(),

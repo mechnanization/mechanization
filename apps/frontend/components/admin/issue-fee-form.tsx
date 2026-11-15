@@ -31,6 +31,7 @@ import { NoticeReview } from '@/components/admin/fees/notice-review';
 import { NoticeScopeFields, SCOPE_FIELD_ID, ScopeWarnings } from '@/components/admin/fees/notice-scope';
 import { bracketFieldId, MATRIX_ADD_ID, TieredMatrixEditor } from '@/components/admin/fees/tiered-matrix-editor';
 import {
+  duplicatesConfirmed,
   matrixIssues,
   noticeIssues,
   noticeWarnings,
@@ -95,6 +96,7 @@ const EMPTY: IssueFeeValues = {
   unitStates: null,
   residences: [...CITIZEN_RESIDENCE],
   scopeConfirmed: false,
+  duplicatesConfirmed: [],
   targetCitizenId: '',
   dueDate: '',
   instructions: '',
@@ -300,8 +302,10 @@ export function IssueFeeForm({
   // «من يشمل الإشعار»: a scope that departs from the law is issued only once the clerk confirms it.
   const warnings = noticeWarnings(values);
   const scopeOk = warnings.length === 0 || values.scopeConfirmed;
+  // An active notice that bills the same people for the same period (F11) is issued beside only once confirmed.
+  const duplicatesOk = preview !== null && duplicatesConfirmed(values, preview.duplicates);
   // Issued only once the preview has answered for this notice: the clerk has seen what it raises.
-  const canSubmit = detailsOk && bracketsOk && targetOk && scopeOk && preview !== null;
+  const canSubmit = detailsOk && bracketsOk && targetOk && scopeOk && duplicatesOk;
   const billsNobody = preview !== null && preview.billedCitizens === 0 && preview.sharedBills === 0;
 
   /** «التالي»: on to the next step, or the step's refusals shown and the focus on the first. */
