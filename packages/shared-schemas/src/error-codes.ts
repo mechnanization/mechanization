@@ -394,6 +394,11 @@ export const ERROR_CODES = [
   'ORIGIN_NOT_ALLOWED',
   // A staff member's own account («أمان الحساب»): the password typed to confirm a change is wrong.
   'STAFF_CURRENT_PASSWORD_INCORRECT',
+  // A staff second factor (TOTP): a wrong code (401), a right one already used (409), and wrong
+  // codes having locked the account; `params.minutes` is how long is left, rounded up (403).
+  'TOTP_CODE_INVALID',
+  'TOTP_CODE_REUSED',
+  'TOTP_LOCKED',
   // Raised by the portal itself when no response arrives or it cannot be read
   'NETWORK_ERROR',
   'UNKNOWN',

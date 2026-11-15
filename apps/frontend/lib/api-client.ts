@@ -759,12 +759,13 @@ const SESSION_ROUTES = ['/auth/staff/login', '/auth/staff/refresh', '/auth/staff
 
 /**
  * 401s that answer the request, not the session: the current password typed to
- * confirm a change to one's own account («أمان الحساب») is wrong. Exchanged and
+ * confirm a change to one's own account («أمان الحساب») is wrong, or the code
+ * typed to confirm an authenticator is (`TOTP_CODE_INVALID`). Exchanged and
  * replayed like an expiry, each wrong guess rotated the refresh cookie and had
- * the server check the password twice. A 401 with any other code on those
- * routes is still an expired session and renewed as one.
+ * the server check it twice. A 401 with any other code on those routes is
+ * still an expired session and renewed as one.
  */
-const ANSWERED_401 = new Set<string>(['STAFF_CURRENT_PASSWORD_INCORRECT']);
+const ANSWERED_401 = new Set<string>(['STAFF_CURRENT_PASSWORD_INCORRECT', 'TOTP_CODE_INVALID']);
 
 type ApiFetchInit = RequestInit & {
   token?: string;
