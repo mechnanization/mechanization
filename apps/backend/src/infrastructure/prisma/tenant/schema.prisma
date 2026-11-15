@@ -2264,6 +2264,11 @@ model CitizenPayment {
   issuedById String? @db.Uuid
   issuedBy   User?   @relation("PaymentIssuedBy", fields: [issuedById], references: [id], onDelete: Restrict)
 
+  /// «تكليف مالي»'s retry key (0102): one id per press, so a retry after a lost
+  /// answer finds the bill the first press raised. NULL on every bill a notice
+  /// raises, and on every one-off charge raised before 0102.
+  clientRequestId String? @unique @db.Uuid
+
   /// «إلغاء الفاتورة» (0091): the manager withdrew this bill before any money was
   /// taken on it. The three move together with `paymentStatus` CANCELLED, and a
   /// cancelled bill has `paidAmount` 0 (CHECKs in 0091); the reason is never
