@@ -261,22 +261,29 @@ describe('referenceOnlyLoginSchema', () => {
  * Each payment method carries exactly one fact that makes it auditable, and the
  * schema is where that is enforced for both the counter and the API.
  */
+/**
+ * A press as a page sends it: the retry key and what the screen showed are required (finding F18 of the
+ * 2026-11-14 billing audit), so each case varies only the field it names.
+ */
+const PRESS = { clientRequestId: '00000000-0000-4000-8000-000000000002', expected: { credit: 5000, change: 0 } };
+
 describe('settlePaymentSchema', () => {
   it('defaults an omitted method to cash, so older clients keep working', () => {
-    const result = settlePaymentSchema.safeParse({ amount: 5000 });
+    const result = settlePaymentSchema.safeParse({ ...PRESS, amount: 5000 });
     expect(result.success && result.data.method).toBe('CASH');
   });
 
   it('accepts cash with neither a reference nor a collector', () => {
-    expect(settlePaymentSchema.safeParse({ method: 'CASH', amount: 5000 }).success).toBe(true);
+    expect(settlePaymentSchema.safeParse({ ...PRESS, method: 'CASH', amount: 5000 }).success).toBe(true);
   });
 
   it('requires a transfer reference for Whish', () => {
-    expect(settlePaymentSchema.safeParse({ method: 'WHISH_MONEY', amount: 5000 }).success).toBe(
+    expect(settlePaymentSchema.safeParse({ ...PRESS, method: 'WHISH_MONEY', amount: 5000 }).success).toBe(
       false,
     );
     expect(
       settlePaymentSchema.safeParse({
+        ...PRESS,
         method: 'WHISH_MONEY',
         amount: 5000,
         whishTransactionRef: 'TRX-1',
@@ -289,11 +296,12 @@ describe('settlePaymentSchema', () => {
    * — which is the whole distinction the COLLECTOR method was added to draw.
    */
   it('requires a collector for a collected payment', () => {
-    expect(settlePaymentSchema.safeParse({ method: 'COLLECTOR', amount: 5000 }).success).toBe(
+    expect(settlePaymentSchema.safeParse({ ...PRESS, method: 'COLLECTOR', amount: 5000 }).success).toBe(
       false,
     );
     expect(
       settlePaymentSchema.safeParse({
+        ...PRESS,
         method: 'COLLECTOR',
         amount: 5000,
         collectedById: '11111111-1111-4111-8111-111111111111',
@@ -302,8 +310,8 @@ describe('settlePaymentSchema', () => {
   });
 
   it('rejects an unknown method and a non-positive amount', () => {
-    expect(settlePaymentSchema.safeParse({ method: 'BITCOIN', amount: 5000 }).success).toBe(false);
-    expect(settlePaymentSchema.safeParse({ method: 'CASH', amount: -1 }).success).toBe(false);
+    expect(settlePaymentSchema.safeParse({ ...PRESS, method: 'BITCOIN', amount: 5000 }).success).toBe(false);
+    expect(settlePaymentSchema.safeParse({ ...PRESS, method: 'CASH', amount: -1 }).success).toBe(false);
   });
 });
 

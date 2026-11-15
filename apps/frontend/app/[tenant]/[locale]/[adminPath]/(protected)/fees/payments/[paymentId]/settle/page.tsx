@@ -377,6 +377,12 @@ export default function SettlePaymentPage({
         paidByCitizenId: shared ? paidBy : undefined,
         note: note.trim() || undefined,
         clientRequestId: heldKey(tenant, keyScope),
+        /*
+          What this page shows: the sum as typed, which is all it credits, and no
+          change — a sum in one currency hands nothing back. The server refuses
+          the press when its lock reads another balance (finding F18).
+        */
+        expected: { credit: received, change: 0 },
       });
     } catch (caught) {
       logApiError(caught);
@@ -387,6 +393,9 @@ export default function SettlePaymentPage({
         // Money moved under the key: the treasury's figures are behind it, and the bill on screen too.
         void queryClient.invalidateQueries({ queryKey: ['treasury', tenant] });
         // Held (`inFlight`, `submitting`) until the bill is read again, so the next press meets its balance.
+        await rereadBill(token);
+      } else if (caught instanceof ApiRequestError && caught.code === 'PAYMENT_FIGURES_CHANGED') {
+        // Nothing was written and the key is kept: the bill moved since it was read, so read it again first.
         await rereadBill(token);
       }
       inFlight.current = false;
