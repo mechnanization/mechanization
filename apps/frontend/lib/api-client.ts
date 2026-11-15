@@ -5922,9 +5922,15 @@ export function getPaymentById(tenant: string, token: string, id: string) {
 export async function chargeCitizen(
   tenant: string,
   token: string,
-  input: { citizenId: string; title: string; amount: number; dueDate: string },
+  /** `clientRequestId`: one id per press (`charge:new` in `lib/request-id.ts`, 0102); a retry is answered with the first bill. */
+  input: { citizenId: string; title: string; amount: number; dueDate: string; clientRequestId: string },
 ) {
-  const result = await apiFetch<{ id: string }>(tenant, '/fees/payments', {
+  const result = await apiFetch<{
+    id: string;
+    invoiceNumber: string | null;
+    /** True when the key had already raised this charge: nothing new was billed. */
+    replayed: boolean;
+  }>(tenant, '/fees/payments', {
     token,
     method: 'POST',
     body: JSON.stringify(input),

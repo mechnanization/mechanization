@@ -1247,6 +1247,15 @@ export const chargeCitizenSchema = z.object({
     .max(120),
   amount: lbpAmount,
   dueDate: z.string(typeError({ required: 'تاريخ الاستحقاق مطلوب' })).min(1),
+  /**
+   * One id per press of «تكليف» (0102). A retry after a lost answer sends the
+   * same id and is answered with the bill the first press raised; before it,
+   * a second press billed the citizen twice. Required: a press with no key is
+   * the one case the server cannot tell from a second charge. Bound to the act
+   * — the citizen, the title, the amount and the due date — so a key sent with
+   * any of them changed is refused (`FEE_CHARGE_REQUEST_REUSED`).
+   */
+  clientRequestId: uuid,
 });
 
 export type ChargeCitizen = z.infer<typeof chargeCitizenSchema>;

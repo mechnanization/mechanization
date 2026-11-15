@@ -509,6 +509,57 @@ describeIfDb('finance audit remediation', () => {
       expect(row.actorId).toBe(ids.accountant);
     });
 
+    describe('«تكليف مالي» with a retry key (0102)', () => {
+      const charge = (clientRequestId: string, amount = 45_000) =>
+        scoped(() =>
+          fees.chargeIndividual({
+            citizenId,
+            title: 'تكليف بمفتاح',
+            amount,
+            dueDate: '2026-12-31',
+            clientRequestId,
+            actor: ACCOUNTANT(),
+          }),
+        );
+      const billsUnder = (key: string) => db.citizenPayment.count({ where: { clientRequestId: key } });
+      const levied = () => db.auditLogEntry.count({ where: { action: 'FEE_INDIVIDUAL_LEVIED' } });
+
+      it('raises one bill per key, and answers a retry with it', async () => {
+        const key = randomUUID();
+        const first = await charge(key);
+        expect(first).toMatchObject({ replayed: false });
+        const rows = await levied();
+
+        await expect(charge(key)).resolves.toMatchObject({
+          id: first.id,
+          invoiceNumber: first.invoiceNumber,
+          replayed: true,
+        });
+        expect(await billsUnder(key)).toBe(1);
+        expect(await levied()).toBe(rows);
+      });
+
+      it('refuses the key for another charge, naming the bill it raised', async () => {
+        const key = randomUUID();
+        const first = await charge(key);
+
+        await expect(charge(key, 46_000)).rejects.toMatchObject({
+          code: 'FEE_CHARGE_REQUEST_REUSED',
+          params: { invoiceNumber: first.invoiceNumber },
+        });
+        expect(await billsUnder(key)).toBe(1);
+      });
+
+      it('raises once when two presses with one key race', async () => {
+        const key = randomUUID();
+        const results = await Promise.all([charge(key), charge(key)]);
+
+        expect(new Set(results.map((result) => result.id)).size).toBe(1);
+        expect(results.filter((result) => result.replayed)).toHaveLength(1);
+        expect(await billsUnder(key)).toBe(1);
+      });
+    });
+
     it('cancels a bill nothing was paid on, once, and the bill then takes nothing', async () => {
       const paymentId = await bill(60_000);
       await expect(scoped(() => fees.cancelBill(paymentId, 'صدر الرسم مرتين', MANAGER()))).resolves.toMatchObject({

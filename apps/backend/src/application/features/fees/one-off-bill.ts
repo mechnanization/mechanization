@@ -24,7 +24,15 @@ import { assertNotMergedAway } from '../citizens/merged-away';
 export async function raiseOneOffBill(
   tx: Prisma.TransactionClient,
   schema: Prisma.Sql,
-  input: { citizenId: string; title: string; amount: number; dueDate: Date; issuedById: string | null },
+  input: {
+    citizenId: string;
+    title: string;
+    amount: number;
+    dueDate: Date;
+    issuedById: string | null;
+    /** «تكليف مالي»'s retry key (0102); the caller has already answered a retry from it. */
+    clientRequestId?: string | null;
+  },
 ): Promise<{ id: string; invoiceNumber: string; currency: string }> {
   const citizen = await tx.user.findFirst({
     where: { id: input.citizenId, kind: 'CITIZEN' },
@@ -52,6 +60,7 @@ export async function raiseOneOffBill(
       dueDate: input.dueDate,
       invoiceNumber,
       issuedById: input.issuedById,
+      clientRequestId: input.clientRequestId ?? null,
     },
     select: { id: true, currency: true },
   });

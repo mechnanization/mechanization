@@ -3775,8 +3775,22 @@ export class FeesService {
     title: string;
     amount: number;
     dueDate: string;
+    /** One id per press of «تكليف» (0102); a retry is answered with the first bill. */
+    clientRequestId?: string;
     actor: { id: string; role: string };
   }) {
+    /*
+      A retry after a lost answer (0102; docs/security.md, the «تكليف مالي»
+      gap): answered with the bill the first press raised, asked here and again
+      under the key's lock inside the write. Before this, the second press
+      billed the citizen twice. The route's schema requires the key; a caller
+      inside the server that sends none charges as before, unguarded.
+    */
+    if (input.clientRequestId) {
+      const earlier = await this.replayCharge(this.db as Prisma.TransactionClient, input);
+      if (earlier) return earlier;
+    }
+
     // An archived file takes no new fees (develop, 0a5f6db); `raiseOneOffBill` refuses it too.
     await this.chargeableCitizen(input.citizenId);
 
@@ -3795,12 +3809,24 @@ export class FeesService {
     */
     const created = await runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
+      /*
+        Two presses with one key arriving together meet here, one after the
+        other; the second finds the first's bill. Schema-scoped and lower-cased,
+        as the notice's key is.
+      */
+      if (input.clientRequestId) {
+        const lockKey = `${this.tenantContext.schemaName}:fee-charge:${input.clientRequestId.toLowerCase()}`;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
+        const raced = await this.replayCharge(tx, input);
+        if (raced) return { id: raced.id, raced };
+      }
       const bill = await raiseOneOffBill(tx, this.S, {
         citizenId: input.citizenId,
         title: input.title,
         amount: input.amount,
         dueDate: new Date(input.dueDate),
         issuedById: input.actor.id,
+        clientRequestId: input.clientRequestId ?? null,
       });
       await this.auditTrail.recordInTransaction({
         actorId: input.actor.id,
@@ -3818,8 +3844,11 @@ export class FeesService {
           dueDate: input.dueDate,
         },
       });
-      return { id: bill.id };
+      return { id: bill.id, invoiceNumber: bill.invoiceNumber, raced: null };
     });
+
+    // A press that raced the first one with the same key: answered from it, and nothing written or emitted.
+    if (created.raced) return created.raced;
 
     // For the caches that count bills; the audit row is already written.
     this.events.emit('fee.issued', {
@@ -3834,7 +3863,44 @@ export class FeesService {
       alreadyAudited: true,
     });
 
-    return { id: created.id };
+    return { id: created.id, invoiceNumber: created.invoiceNumber, replayed: false as const };
+  }
+
+  /**
+   * The bill a retry key already raised, or null (0102).
+   *
+   * A key names one charge: this citizen, this title, this amount, this due
+   * date. The same press again is answered with the first bill, `replayed`, so
+   * the dialog says it was already raised instead of a second success; any of
+   * them changed under the key is refused (`FEE_CHARGE_REQUEST_REUSED`, naming
+   * the first bill), because a key is kept across every edit and an answer of
+   * the first bill would tell the clerk the corrected charge was raised. A bill
+   * cancelled since is still the one the key raised, and is answered so: a new
+   * charge is a new press, with a new key.
+   */
+  private async replayCharge(
+    tx: Prisma.TransactionClient,
+    input: { clientRequestId?: string; citizenId: string; title: string; amount: number; dueDate: string },
+  ): Promise<{ id: string; invoiceNumber: string | null; replayed: true } | null> {
+    if (!input.clientRequestId) return null;
+    const bill = await tx.citizenPayment.findUnique({
+      where: { clientRequestId: input.clientRequestId },
+      select: { id: true, citizenId: true, title: true, amount: true, dueDate: true, invoiceNumber: true },
+    });
+    if (!bill) return null;
+    const same =
+      bill.citizenId?.toLowerCase() === input.citizenId.toLowerCase() &&
+      bill.title === input.title &&
+      Number(bill.amount) === input.amount &&
+      bill.dueDate.getTime() === new Date(input.dueDate).getTime();
+    if (!same) {
+      throw new ConflictError({
+        code: 'FEE_CHARGE_REQUEST_REUSED',
+        message: `This request id already raised another charge (${bill.invoiceNumber ?? bill.id}).`,
+        params: { invoiceNumber: bill.invoiceNumber ?? '' },
+      });
+    }
+    return { id: bill.id, invoiceNumber: bill.invoiceNumber, replayed: true };
   }
 
   /**
