@@ -63,6 +63,7 @@ describe('isSchedulerEnabled', () => {
 
 describe('validateEnv — SCHEDULER_ENABLED', () => {
   const base = {
+    NODE_ENV: 'development',
     DATABASE_URL: 'postgresql://u:p@localhost:5432/db?schema=public',
     DIRECT_URL: 'postgresql://u:p@localhost:5432/db',
     SUPABASE_URL: 'https://example.supabase.co',
@@ -83,6 +84,7 @@ describe('validateEnv — SCHEDULER_ENABLED', () => {
 
 describe('validateEnv — METRICS_TOKEN', () => {
   const base = {
+    NODE_ENV: 'development',
     DATABASE_URL: 'postgresql://u:p@localhost:5432/db?schema=public',
     DIRECT_URL: 'postgresql://u:p@localhost:5432/db',
     JWT_SECRET: 'y'.repeat(40),
@@ -119,6 +121,7 @@ describe('validateEnv — METRICS_TOKEN', () => {
  */
 describe('validateEnv — S3', () => {
   const base = {
+    NODE_ENV: 'development',
     DATABASE_URL: 'postgresql://u:p@localhost:5432/db?schema=public',
     DIRECT_URL: 'postgresql://u:p@localhost:5432/db',
     SUPABASE_URL: 'https://example.supabase.co',
@@ -228,5 +231,32 @@ describe('validateEnv — S3', () => {
         validateEnv({ ...productionBase, ...s3, AWS_ACCESS_KEY_ID: 'A'.repeat(20) }),
       ).toThrow(/AWS_SECRET_ACCESS_KEY/);
     });
+  });
+});
+
+/**
+ * `NODE_ENV` has no default (security audit N-2). Unset, it used to read as
+ * `development`: an OTP response carried `devCode`, `OTP_ENABLED=false` was
+ * allowed and S3 was not demanded, on whatever host forgot to set it.
+ */
+describe('validateEnv — NODE_ENV', () => {
+  const withoutNodeEnv = {
+    DATABASE_URL: 'postgresql://u:p@localhost:5432/db?schema=public',
+    DIRECT_URL: 'postgresql://u:p@localhost:5432/db',
+    JWT_SECRET: 'y'.repeat(40),
+  };
+
+  it('refuses to boot when it is unset, and says what to do', () => {
+    expect(() => validateEnv({ ...withoutNodeEnv })).toThrow(/NODE_ENV is required/);
+  });
+
+  it('refuses a value it does not know, rather than reading it as development', () => {
+    expect(() => validateEnv({ ...withoutNodeEnv, NODE_ENV: 'prod' })).toThrow(
+      /NODE_ENV must be one of/,
+    );
+  });
+
+  it.each(['development', 'test'])('takes %s as it is', (value) => {
+    expect(validateEnv({ ...withoutNodeEnv, NODE_ENV: value }).NODE_ENV).toBe(value);
   });
 });

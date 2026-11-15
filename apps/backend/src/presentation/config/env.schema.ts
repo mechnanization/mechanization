@@ -52,7 +52,23 @@ export function isSchedulerEnabled(env: NodeJS.ProcessEnv = process.env): boolea
  */
 export const envSchema = z
   .object({
-    NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+    /**
+     * Required, with no default (security audit N-2, 2026-11-15).
+     *
+     * It decides whether an OTP response carries `devCode`, whether
+     * `OTP_ENABLED=false` is allowed, whether S3 is demanded and whether SMS
+     * bodies are logged, and every one of those relaxes outside `production`.
+     * The default was `development`, so a host that forgot to set it ran with
+     * all of them relaxed and said nothing. Unset now fails boot: a deploy has
+     * to say what it is. Jest sets `test` itself; the Dockerfile and the local
+     * `.env` block in docs/database-environments.md set theirs.
+     */
+    NODE_ENV: z.enum(['development', 'test', 'production'], {
+      error: (issue) =>
+        issue.input === undefined
+          ? 'NODE_ENV is required — set production, development or test explicitly (unset used to read as development, which returns OTP codes in responses and lifts every production check)'
+          : 'NODE_ENV must be one of production, development, test',
+    }),
     PORT: z.coerce.number().int().positive().default(4000),
 
     /** Pooled connection (pgbouncer) for application queries. */

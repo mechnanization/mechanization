@@ -352,6 +352,12 @@ export class AuthController {
 
   @Public()
   @Post('citizen/otp/verify')
+  @Throttle({
+    default: {
+      limit: APP_CONFIG.throttle.otpVerify.limit,
+      ttl: APP_CONFIG.throttle.otpVerify.ttlSeconds * 1000,
+    },
+  })
   async verifyOtp(
     @Param('tenantSlug') tenantSlug: string,
     @Body(new ZodValidationPipe(verifyOtpSchema))

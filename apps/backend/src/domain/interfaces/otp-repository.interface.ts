@@ -37,6 +37,13 @@ export interface SmsSender {
   send(input: { phone: string; message: string; channel: OtpChannel }): Promise<void>;
   /** Whether a fallback route is configured at all — surfaced at boot, not on first failure. */
   readonly hasFallback: boolean;
+  /**
+   * Whether a text can reach a phone at all: a provider is wired and its key
+   * set. While it is false the phone-code sign-in is refused before anything
+   * is written (`CITIZEN_OTP_UNAVAILABLE`), as online payment is while the
+   * Whish gateway is not live.
+   */
+  readonly isLive: boolean;
 }
 
 export interface PasswordHasher {

@@ -394,6 +394,8 @@ export const ERROR_CODES = [
   'ORIGIN_NOT_ALLOWED',
   // A staff member's own account («أمان الحساب»): the password typed to confirm a change is wrong.
   'STAFF_CURRENT_PASSWORD_INCORRECT',
+  // The phone-code sign-in (`citizen/otp/*`) while no SMS provider is live; the portal signs in by رقم مرجعي.
+  'CITIZEN_OTP_UNAVAILABLE',
   // Raised by the portal itself when no response arrives or it cannot be read
   'NETWORK_ERROR',
   'UNKNOWN',
