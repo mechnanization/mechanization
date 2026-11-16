@@ -344,6 +344,9 @@ model User {
   unitsPaidAsResponsibleOwner Unit[] @relation("UnitResponsibleOwner")
   /// Unit fee exemptions this staff member granted (0077).
   unitFeeExemptionsGranted    Unit[] @relation("UnitFeeExemptedBy")
+  /// Exemption periods this staff member granted, and lifted (0104).
+  feeExemptionPeriodsGranted  UnitFeeExemption[] @relation("UnitFeeExemptionGrantedBy")
+  feeExemptionPeriodsLifted   UnitFeeExemption[] @relation("UnitFeeExemptionLiftedBy")
 
   /// Staff email is unique within the municipality (i.e. within this schema).
   @@unique([email])
@@ -1480,6 +1483,13 @@ model Unit {
   feeExemptedById  String?             @db.Uuid
   feeExemptedBy    User?               @relation("UnitFeeExemptedBy", fields: [feeExemptedById], references: [id], onDelete: SetNull)
   feeExemptedAt    DateTime?
+  /// The open exemption period's last day (migration 0104), NULL for none.
+  /// Exempt on day D while `feeExemption` is set and D <= this
+  /// (`isFeeExemptOn` in shared-schemas). Only on an exempt unit (CHECK
+  /// units_fee_exemption_valid_until_needs_reason). The history of every
+  /// period is `UnitFeeExemption`; these columns are its live mirror.
+  feeExemptionValidUntil DateTime? @db.Date
+  feeExemptionPeriods    UnitFeeExemption[]
 
   /// How many levels this one unit spans, from `floor` (its entrance) upward
   /// (migration 0095, decision D28): 2 is a «دوبلكس», 3 a «تريبلكس». 1 for
@@ -1514,6 +1524,46 @@ model Unit {
 /// deed — Lebanese inheritance makes multi-owner the normal case, not the
 /// exception. And because a previous tenant is information the municipality
 /// needs, not history to overwrite.
+/// «قائمة الإعفاء من الرسوم» — one exemption period of one unit (migration
+/// 0104). The unit's `feeExemption*` columns are the live state billing reads;
+/// this is their history, written in the same transaction. The exemption
+/// belongs to the unit, never to a person.
+///
+/// At most one open period (`liftedAt` NULL) per unit: the partial unique
+/// index `unit_fee_exemptions_one_open_key`, which Prisma 5 cannot express.
+/// CHECKs: `unit_fee_exemptions_other_note` (OTHER needs its note),
+/// `unit_fee_exemptions_text_not_blank`, `unit_fee_exemptions_lift_fields`
+/// (lifted ⇔ `liftedAt` and `liftReason`; the lifter may be SET NULL) and
+/// `unit_fee_exemptions_lifted_after_grant`.
+///
+/// `note` and `liftReason` are free text about a place and, through it, the
+/// people on it: neither goes into a log or a Sentry event, and `note` stays
+/// out of the audit row too (decision of 2026-11-16).
+model UnitFeeExemption {
+  id          String             @id @default(uuid()) @db.Uuid
+  /// RESTRICT: a unit with an exemption history is not deleted under it.
+  unitId      String             @db.Uuid
+  unit        Unit               @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  reason      FeeExemptionReason
+  note        String?
+  /// «رقم قرار المجلس البلدي», when the exemption rests on one.
+  decisionRef String?
+  /// The last exempt day, NULL for none (decision 1 of 2026-11-16).
+  validUntil  DateTime?          @db.Date
+  grantedById String?            @db.Uuid
+  grantedBy   User?              @relation("UnitFeeExemptionGrantedBy", fields: [grantedById], references: [id], onDelete: SetNull)
+  grantedAt   DateTime
+  liftedById  String?            @db.Uuid
+  liftedBy    User?              @relation("UnitFeeExemptionLiftedBy", fields: [liftedById], references: [id], onDelete: SetNull)
+  liftedAt    DateTime?
+  liftReason  String?
+
+  @@index([unitId, grantedAt])
+  @@index([grantedById])
+  @@index([liftedById])
+  @@map("unit_fee_exemptions")
+}
+
 model UnitOccupancy {
   id     String @id @default(uuid()) @db.Uuid
   unitId String @db.Uuid
