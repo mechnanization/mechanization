@@ -351,10 +351,32 @@ export const envSchema = z
     PUBLIC_API_URL: z.string().url().optional(),
     PUBLIC_PORTAL_URL: z.string().url().optional(),
 
+    /**
+     * The portal's origins, comma-separated. Credentialed: the staff refresh
+     * cookie crosses from the portal to the API (`bootstrap.ts`). In production
+     * each must be an https origin, checked below.
+     */
     CORS_ORIGINS: z
       .string()
       .default('http://localhost:3000')
       .transform((value) => value.split(',').map((origin) => origin.trim()).filter(Boolean)),
+
+    /**
+     * Whish Money (`WhishGatewayService`). Declared so a value set in the `.env`
+     * file reaches the gateway in a deployed build: `validate` copies into
+     * `process.env` only the keys this schema returns (security gap closed by
+     * task S18, 2026-11-16). Setting them does not open online payment: the
+     * gateway stays closed until `postCheckout` is written
+     * (`WHISH_PROVIDER_WIRED`, open-decisions §21).
+     *
+     * No pair rule or URL check yet, for the reason the SMS keys below have
+     * none: a boot refusal over a route that cannot carry a payment enforces
+     * nothing but an outage (§8.7). Add both in the change that writes
+     * `postCheckout`: the URL with the key, the webhook secret with them.
+     */
+    WHISH_API_URL: z.string().min(1).optional(),
+    WHISH_API_KEY: z.string().min(1).optional(),
+    WHISH_WEBHOOK_SECRET: z.string().min(1).optional(),
 
     /**
      * Error reporting. Declared here so the variable is documented and
@@ -514,6 +536,26 @@ export const envSchema = z
     }
 
     /**
+     * The portal's origins, credentialed (the staff refresh cookie), as https
+     * origins: scheme, host and port, as a browser sends them. An http origin
+     * hands a session cookie's requests to anyone on the network path, and an
+     * entry with a path, a trailing slash or a wildcard never matches an
+     * `Origin` header, so a portal listed that way is silently cut off. The
+     * default (`http://localhost:3000`) is refused here too: in production the
+     * variable must be set.
+     */
+    const notHttpsOrigins = env.CORS_ORIGINS.filter((origin) => !isHttpsOrigin(origin));
+    if (env.CORS_ORIGINS.length === 0 || notHttpsOrigins.length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['CORS_ORIGINS'],
+        message: `CORS_ORIGINS must list the portal's https origins in production (scheme, host and port, no path or wildcard)${
+          notHttpsOrigins.length > 0 ? ` — refused: ${notHttpsOrigins.join(', ')}` : ''
+        }`,
+      });
+    }
+
+    /**
      * SMS_PROVIDER_API_KEY and SMS_PROVIDER_FALLBACK_API_KEY used to be demanded
      * here. They are not any more, and the reason is worth writing down so the
      * check is restored for the right reason rather than reflexively.
@@ -540,6 +582,16 @@ export const envSchema = z
   });
 
 export type Env = z.infer<typeof envSchema>;
+
+/** An `https://host[:port]` origin exactly as a browser sends it. */
+function isHttpsOrigin(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.origin === value;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Parses the environment or throws with every problem listed at once —

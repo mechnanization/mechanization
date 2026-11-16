@@ -977,11 +977,12 @@ decided; a later answer from the municipality overrides it and is recorded here 
      a query on staging and production. The same goes for a bill a citizen declared paid in cash:
      `paymentMethod` CASH with PENDING_REVIEW. A clerk rejects each, and the citizen pays at the
      counter; not counted either.
-   - **To reopen:** write `WhishGatewayService.postCheckout` against Whish's contract, declare
-     `WHISH_*` in the backend's env schema (today in a deployed build a value set only in the `.env` file never reaches the gateway (`validate` copies into `process.env` only the keys `envSchema` returns); on a developer machine the locally generated Prisma client loads `apps/backend/.env` into `process.env` when it is required, so there it does; [gotchas.md](gotchas.md)),
-     set them, decide §15, then set `ONLINE_PAYMENT_OPEN`. `isLive` is the two credentials and
-     nothing more, so they MUST NOT be set before `postCheckout` is written: the server's refusal
-     would lift into 500s.
+   - **To reopen:** write `WhishGatewayService.postCheckout` against Whish's contract, set
+     `WHISH_PROVIDER_WIRED` and add the `WHISH_*` pair rule to the backend's env schema in the same
+     change, set them, decide §15, then set `ONLINE_PAYMENT_OPEN`. `WHISH_*` are declared since S18
+     (2026-11-16), so a value in a deployed `.env` reaches the gateway, and `isLive` needs
+     `WHISH_PROVIDER_WIRED` as well as both credentials, so a value set before `postCheckout` is
+     written no longer lifts the server's refusal into 500s.
 2. **Citizen sign-in stays the رقم مرجعي alone** (`POST citizen/reference/open`): no code by SMS
    and no second factor, because elderly citizens must be able to sign in without help. The risk
    is accepted: whoever holds a citizen's reference signs in as that citizen, reads their file and

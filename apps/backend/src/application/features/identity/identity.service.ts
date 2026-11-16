@@ -29,6 +29,7 @@ import {
 } from '../../common/exceptions';
 import { OtpService } from './otp.service';
 import { SessionRevocationService } from './session-revocation.service';
+import { sessionSignOptions, verifySessionToken } from './session-token';
 import { IssuedRefreshToken, StaffRefreshTokenService } from './staff-refresh-token.service';
 
 /**
@@ -1122,7 +1123,7 @@ export class IdentityService {
 
     let claims: SessionClaims;
     try {
-      claims = this.jwt.verify<SessionClaims>(accessToken, { ignoreExpiration: true });
+      claims = verifySessionToken<SessionClaims>(this.jwt, accessToken, { ignoreExpiration: true });
     } catch {
       return null;
     }
@@ -1219,7 +1220,7 @@ export class IdentityService {
       };
 
       return {
-        accessToken: this.jwt.sign(claims, { expiresIn }),
+        accessToken: this.jwt.sign(claims, sessionSignOptions(expiresIn)),
         expiresIn,
         user: { id: input.id, name: input.name, kind: input.kind, role: input.role },
       };
@@ -1255,7 +1256,7 @@ export class IdentityService {
     };
 
     return {
-      accessToken: this.jwt.sign(claims, { expiresIn }),
+      accessToken: this.jwt.sign(claims, sessionSignOptions(expiresIn)),
       expiresIn: `${expiresIn}s`,
       expiresAt: new Date((nowSeconds + expiresIn) * 1000).toISOString(),
       sessionExpiresAt: new Date(sessionExpiresAt * 1000).toISOString(),
