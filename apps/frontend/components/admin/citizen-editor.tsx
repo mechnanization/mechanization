@@ -2198,6 +2198,7 @@ export function CitizenEditor({
           leaveTo(`${base}/citizens/${citizenId}`);
         }}
         canMerge={canMerge && editing && !isQueuedEdit}
+        canAnswerLandlord={canAnswerLinks}
         canOverrideDuplicates={canMerge}
         onMerged={(result) => {
           forgetDraft();
