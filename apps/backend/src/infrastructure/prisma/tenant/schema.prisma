@@ -1019,6 +1019,12 @@ enum StructureType {
   /// season; minting a building shell for each would corrupt every density and
   /// structural-inventory figure the census exists to produce.
   TENT_SHELTER
+  /// «منشأة عامة / خدماتية» — a school, a dispensary, the municipality's own
+  /// hall (0105; decision 4 of 2026-11-16). The behaviour behind the
+  /// administrator's public building types (`BuildingType`). Units default to
+  /// an office. Not `FeeExemptionReason.PUBLIC_FACILITY`: a building's type
+  /// exempts nothing.
+  PUBLIC_INSTITUTION
 }
 
 /// Where a structure is in its own life — the third axis, beside *what kind of
