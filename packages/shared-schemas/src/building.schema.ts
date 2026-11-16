@@ -19,6 +19,7 @@ import { habitabilityFor, isReinspectDayAhead } from './damage-rule';
 import { areaField, propertyNumberField } from './property.schema';
 import { arabicOrLatinName, internationalPhone, normalizeDigits, uuid } from './primitives';
 import { unitLevelsField } from './unit-levels';
+import type { OwnerBillingFallback } from './owner-share';
 
 /**
  * "Not in the future", judged when the date arrives rather than when this
@@ -1435,8 +1436,13 @@ export interface OwnerBillingState {
   responsibleOwnerId: string | null;
   /** The method billing applies — after the default and any fallback. */
   effectiveMode: 'EQUAL' | 'BY_SHARES' | 'RESPONSIBLE_OWNER';
-  /** The responsible owner is no longer an owner, so the flat is split equally until someone chooses again. */
-  fallback: 'RESPONSIBLE_NOT_OWNER' | null;
+  /**
+   * Why the chosen method is set aside and the flat split equally until someone
+   * chooses again (`OwnerBillingFallback`). A save is refused when the responsible
+   * owner's file does not claim the flat, so a saved state reads only
+   * `RESPONSIBLE_NOT_OWNER`; billing can also read `RESPONSIBLE_NOT_BILLED` later.
+   */
+  fallback: OwnerBillingFallback | null;
   owners: Array<{
     citizenId: string;
     shares: number | null;

@@ -61,7 +61,7 @@ import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-re
 import { allocateDocumentNumbers } from '../../common/document-number';
 import { unitsUnderReview } from '../buildings/unit-status';
 import { uninhabitableUnitIds } from '../buildings/habitability';
-import { ownerBillingRules } from '../buildings/owner-billing';
+import { checkResponsibleOwners, ownerBillingRules } from '../buildings/owner-billing';
 import { cancelRequestOfCancelledBill } from '../citizen-requests/cancelled-bill';
 import { assertNotMergedAway } from '../citizens/merged-away';
 import { ConflictError, DomainError, ForbiddenError, NotFoundError, ValidationError } from '../../common/exceptions';
@@ -2948,8 +2948,23 @@ export class FeesService {
    *
    * Also returns where the holdings sit — the buildings and unit codes — so a
    * change recorded against a unit can be traced back to the bills it moves.
+   *
+   * A flat billed to one «مالك مسؤول» is split equally instead when that
+   * owner's own file no longer claims it (`checkResponsibleOwners`, finding F13
+   * of the 2026-11-14 billing audit): otherwise the others paid nothing and he
+   * was billed nothing. `checkResponsible: false` skips that one question, for
+   * `ownerClaims`, which asks it.
    */
-  async *holdingsOf(citizenIds: readonly string[]): AsyncGenerator<CitizenHoldings[]> {
+  async *holdingsOf(
+    citizenIds: readonly string[],
+    options: { checkResponsible?: boolean } = {},
+  ): AsyncGenerator<CitizenHoldings[]> {
+    // One read of each responsible owner's file per call, however many batches name them.
+    const claims = new Map<string, Promise<ReadonlySet<string>>>();
+    const claimsOf = (citizenId: string) => {
+      if (!claims.has(citizenId)) claims.set(citizenId, this.ownerClaims(citizenId));
+      return claims.get(citizenId)!;
+    };
     /*
       Read in batches rather than one `IN (...)` over the whole register.
 
@@ -3166,6 +3181,7 @@ export class FeesService {
         heldHere.size === 0
           ? new Map()
           : await withConnectionRetry(() => ownerBillingRules(this.db, [...heldHere]));
+      if (options.checkResponsible !== false) await checkResponsibleOwners(coOwnership, claimsOf);
       /** This owner's part of a flat others own too; nothing for a flat they own alone. */
       const ownerShareFor = (
         unitId: string | undefined | null,
@@ -3315,6 +3331,24 @@ export class FeesService {
         };
       });
     }
+  }
+
+  /**
+   * The flats a citizen's own file claims as owner, as billing reads that file
+   * — the units a rate-based bill would charge them for as an owner. Asked of a
+   * «مالك مسؤول» at billing time (`checkResponsibleOwners`) and when the choice
+   * is saved (`OwnerBillingService`), so the two cannot disagree with the bill.
+   */
+  async ownerClaims(citizenId: string): Promise<Set<string>> {
+    const claimed = new Set<string>();
+    for await (const batch of this.holdingsOf([citizenId], { checkResponsible: false })) {
+      for (const holding of batch) {
+        for (const unit of holding.entries.flatMap(billableUnits)) {
+          if (unit.unitId && unit.occupancyType === 'OWNER') claimed.add(unit.unitId);
+        }
+      }
+    }
+    return claimed;
   }
 
   // ────────────────────────────  Payments  ────────────────────────────

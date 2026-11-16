@@ -77,6 +77,7 @@ describeIfDb('units charged nothing', () => {
       emitter,
       { get: jest.fn().mockResolvedValue(null), set: jest.fn(), invalidatePrefix: jest.fn() } as never,
       { get: () => 0 } as never,
+      fees,
     );
 
     await db.user.create({

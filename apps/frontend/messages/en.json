@@ -3297,6 +3297,7 @@
     "partUnknown": "Unknown — shares not recorded",
     "notOnFile": "Their file does not claim this unit, so their part is not billed until their file is completed",
     "fallback": "The chosen responsible owner no longer owns this unit, so the fee is split equally until a new method is chosen.",
+    "fallbackNotBilled": "The chosen responsible owner's own file no longer lists this unit, so the fee is split equally until the file is completed or a new method is chosen.",
     "singleOwner": "This unit has only one owner now, so the saved method ({mode}) does not apply. You can withdraw it.",
     "withdraw": "Withdraw the saved method",
     "save": "Save the method",
