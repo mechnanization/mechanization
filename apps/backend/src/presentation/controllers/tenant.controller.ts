@@ -1,10 +1,11 @@
-import { Controller, Get, Param } from '@nestjs/common';
+import { Controller, Get } from '@nestjs/common';
 import {
   WORKING_STAFF_ROLES,
 } from '@mechanization/shared-schemas';
 import { TenantService } from '../../application/features/tenant/tenant.service';
 import { Public } from '../decorators/public.decorator';
 import { Roles } from '../decorators/roles.decorator';
+import { CurrentTenant } from '../decorators/current-user.decorator';
 
 @Controller('t/:tenantSlug/tenant')
 export class TenantController {
@@ -17,13 +18,13 @@ export class TenantController {
    */
   @Public()
   @Get('config')
-  async getPublicConfig(@Param('tenantSlug') tenantSlug: string) {
+  async getPublicConfig(@CurrentTenant('slug') tenantSlug: string) {
     return this.tenants.getPublicConfig(tenantSlug);
   }
 
   @Roles(...WORKING_STAFF_ROLES)
   @Get('admin-config')
-  async getAdminConfig(@Param('tenantSlug') tenantSlug: string) {
+  async getAdminConfig(@CurrentTenant('slug') tenantSlug: string) {
     return this.tenants.getAdminConfig(tenantSlug);
   }
 }

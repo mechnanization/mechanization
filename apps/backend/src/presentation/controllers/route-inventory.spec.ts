@@ -4,6 +4,7 @@ import { METHOD_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import { RouteParamtypes } from '@nestjs/common/enums/route-paramtypes.enum';
 import { FeesController } from './fees.controller';
 import { DiscoveredRoute, discoverRoutes } from './route-discovery';
+import { UuidPipe } from '../pipes/uuid.pipe';
 
 /*
   The route inventory: who can reach every route the API serves.
@@ -448,5 +449,61 @@ describe('the routes that raise a bill', () => {
     const issue = all.find((candidate) => candidate.name === 'FeesController.issue');
     expect(preview).toMatchObject({ method: RequestMethod.POST, path: 'notices/preview', isPublic: false });
     expect([...(preview?.roles ?? [])].sort()).toEqual([...(issue?.roles ?? [])].sort());
+  });
+});
+
+/*
+  Every id any route takes from its path goes through `UuidPipe` (task S11 of
+  the 2026-11-14 security audit, N-7): validated, so a bad id is a 400 rather
+  than a 500 and a Sentry event, and lower-cased, so the self-guards and lock
+  keys behind it compare one spelling. And no handler reads its municipality
+  from the path: `@CurrentTenant()` is the row TenantMiddleware resolved.
+*/
+describe('the path parameters of every route (S11)', () => {
+  type RouteArg = { data?: unknown; pipes?: unknown[] };
+  /** Path parameters that are not ids, each reviewed: a cadastre number, a request type's key, an asset's file name. */
+  const NOT_IDS = ['propertyNumber', 'type', 'assetName'];
+  const isId = (name: string) => /^(id|\w+Id)$/.test(name);
+  const isUuidPipe = (pipe: unknown) => pipe === UuidPipe || pipe instanceof UuidPipe;
+
+  const all = discoverRoutes();
+  const pathArgs = all.flatMap((route) => {
+    const method = route.name.split('.')[1]!;
+    const args = Object.entries(
+      (Reflect.getMetadata(ROUTE_ARGS_METADATA, route.controller, method) ?? {}) as Record<string, RouteArg>,
+    );
+    return args
+      .filter(([key]) => key.startsWith(`${RouteParamtypes.PARAM}:`))
+      .map(([, arg]) => ({ route: route.name, param: String(arg.data), pipes: arg.pipes ?? [] }));
+  });
+
+  it('finds them, so the checks below are about something', () => {
+    expect(pathArgs.filter((arg) => isId(arg.param)).length).toBeGreaterThan(100);
+  });
+
+  it('puts every path id through UuidPipe', () => {
+    expect(
+      pathArgs.filter((arg) => isId(arg.param) && !arg.pipes.some(isUuidPipe)).map((arg) => `${arg.route}(${arg.param})`),
+    ).toEqual([]);
+  });
+
+  it('reads the municipality from the resolved request, never from the path', () => {
+    expect(pathArgs.filter((arg) => arg.param === 'tenantSlug').map((arg) => arg.route)).toEqual([]);
+  });
+
+  it('names every path parameter as an id, or lists it here as reviewed', () => {
+    const names = new Set(
+      all.flatMap((route) => `${route.controllerPath}/${route.path}`.match(/:(\w+)/g) ?? []).map((name) => name.slice(1)),
+    );
+    expect([...names].filter((name) => name !== 'tenantSlug' && !isId(name) && !NOT_IDS.includes(name))).toEqual([]);
+  });
+
+  it('lower-cases a valid id and refuses an invalid one', async () => {
+    const pipe = new UuidPipe();
+    await expect(pipe.transform('3F2A0000-0000-4000-8000-00000000ABCD', { type: 'param' })).resolves.toBe(
+      '3f2a0000-0000-4000-8000-00000000abcd',
+    );
+    await expect(pipe.transform('not-an-id', { type: 'param' })).rejects.toThrow();
+    await expect(new UuidPipe({ optional: true }).transform(undefined as never, { type: 'query' })).resolves.toBeUndefined();
   });
 });

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { businessDay } from './primitives';
+import { businessDay, MAX_LIST_PAGE } from './primitives';
 import type { ExpenseVoucherView } from './expense.schema';
 import type { IncomeVoucherView } from './income.schema';
 
@@ -21,8 +21,6 @@ import type { IncomeVoucherView } from './income.schema';
 export const TREASURY_MOVEMENT_DIRECTIONS = ['IN', 'OUT'] as const;
 export type TreasuryMovementDirection = (typeof TREASURY_MOVEMENT_DIRECTIONS)[number];
 
-/** The last page the register serves: a million pages of 200 is far past any municipality's books. */
-const TREASURY_MOVEMENTS_MAX_PAGE = 1_000_000;
 
 /**
  * The merged register's filters, as they arrive in the query string.
@@ -61,7 +59,7 @@ export const listTreasuryMovementsQuerySchema = z
      * whole number Postgres can read: unbounded, `page=1e20` passed and the
      * query failed as a 500 (bigint out of range), its URL logged.
      */
-    page: z.coerce.number().int().min(1).max(TREASURY_MOVEMENTS_MAX_PAGE).default(1),
+    page: z.coerce.number().int().min(1).max(MAX_LIST_PAGE).default(1),
     pageSize: z.coerce.number().int().min(1).max(200).default(25),
   })
   .refine((value) => !value.from || !value.to || value.from <= value.to, {

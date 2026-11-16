@@ -8,7 +8,7 @@ import {
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { AuditService } from '../../application/features/audit/audit.service';
 import { Roles } from '../decorators/roles.decorator';
-import { parseDate } from './query-params';
+import { parseDate, queryLimit, queryOffset } from './query-params';
 
 /** Where a municipality of this system is. Used when the browser says nothing. */
 const DEFAULT_TIME_ZONE = 'Asia/Beirut';
@@ -99,8 +99,8 @@ export class AuditController {
       from: parseDate(from),
       to: parseDate(to),
       timeZone: safeTimeZone(timeZone),
-      limit: Math.min(Number(limit) || 50, 200),
-      offset: Number(offset) || 0,
+      limit: queryLimit(limit, 50, 200),
+      offset: queryOffset(offset),
     });
   }
 
@@ -123,8 +123,8 @@ export class AuditController {
       actions: parseActions(action),
       from: parseDate(from),
       to: parseDate(to),
-      limit: Math.min(Number(limit) || 50, 200),
-      offset: Number(offset) || 0,
+      limit: queryLimit(limit, 50, 200),
+      offset: queryOffset(offset),
     });
   }
 }

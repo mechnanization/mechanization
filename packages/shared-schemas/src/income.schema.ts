@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { typeError } from './type-error';
-import { businessDay } from './primitives';
+import { businessDay, MAX_LIST_PAGE } from './primitives';
 import {
   BUDGET_CODES_INCOMPLETE,
   budgetCodeSchema,
@@ -181,7 +181,7 @@ export const listIncomeVouchersQuerySchema = z
       .enum(['true', 'false'])
       .optional()
       .transform((value) => value === 'true'),
-    page: z.coerce.number().int().min(1).default(1),
+    page: z.coerce.number().int().min(1).max(MAX_LIST_PAGE).default(1),
     pageSize: z.coerce.number().int().min(1).max(200).default(50),
   })
   .refine((value) => !value.from || !value.to || value.from <= value.to, {
