@@ -1,6 +1,6 @@
 # Database environments
 
-Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06; the rollback caveat for a new enum value against `chore/migration-0090-0091` (on `develop@5e8f5c3`), 2026-10-13.
+Last verified against the code: `chore/migration-0103` (on `chore/migration-0102@72f0974`): `0103_append_only_no_truncate`, TRUNCATE refused on the append-only and written-once tables, the scanner narrowed to the statement, the local reset tools switching the guards (`truncate-guards.mjs`), applied with `pnpm db:deploy:local` and its integration spec run on a throwaway Postgres 17, and the next free number `0104` (task S19), 2026-11-16; `fix/pr88-review` (on `develop@be4f053`), 2026-10-06; the rollback caveat for a new enum value against `chore/migration-0090-0091` (on `develop@5e8f5c3`), 2026-10-13.
 
 Three databases, three targets, and a set of checks whose only job is to make
 "I ran it against the wrong one" impossible rather than unlikely. This is the
@@ -416,7 +416,14 @@ refuses to run without `--allow-destructive`, which only the manual
 *Deploy production* workflow can pass; a heavy lock or a row rewrite prints a
 warning and continues, because a backfill is expected to fill new columns and a
 scanner cannot tell that from an overwrite. What blocks and what warns:
-[database.md](database.md#destructive-changes-go-in-a-later-release).
+[database.md](database.md#destructive-changes-go-in-a-later-release). A `TRUNCATE` statement blocks; the
+word as a trigger event (`BEFORE TRUNCATE`, `0103`'s guards on the append-only tables) does not.
+
+The two local reset tools, `scripts/db/reset-local-money.mjs` and
+`scripts/db/delete-local-citizens-and-buildings.mjs`, refuse any database but `municipality_db_local` on
+loopback, and since `0103` switch its TRUNCATE guards off around their own TRUNCATE and on again, inside
+their transaction (`scripts/db/truncate-guards.mjs`). Nothing else does that, and nothing may against
+staging or production.
 
 **Production only accepts migrations staging has already applied.** The deploy
 reads staging's migration history, from `.env.staging` and nothing else, and

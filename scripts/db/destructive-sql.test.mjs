@@ -7,7 +7,10 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { scanSql } from './destructive-sql.mjs';
+import { ROOT } from './targets.mjs';
 
 const levels = (sql) => scanSql('m', sql).map((f) => f.level);
 const blocks = (sql) => levels(sql).includes('blocking');
@@ -18,6 +21,10 @@ describe('blocks everything that loses data', () => {
     'ALTER TABLE "users" DROP COLUMN "phone";',
     'DROP SCHEMA "tenant_x" CASCADE;',
     'TRUNCATE "audit_log_entries";',
+    'TRUNCATE TABLE "treasury_day_closures" CASCADE;',
+    'truncate only "payment_transactions";',
+    'CREATE FUNCTION f() RETURNS trigger AS $ BEGIN TRUNCATE "audit_log_entries"; RETURN NULL; END $ LANGUAGE plpgsql;',
+    'SELECT 1; TRUNCATE "inspector_payouts", "expense_vouchers";',
     'ALTER TABLE "units" ALTER COLUMN "area" TYPE integer;',
     'ALTER TABLE "users" RENAME COLUMN "phone" TO "mobile";',
     'ALTER TABLE "units" RENAME TO "flats";',
@@ -44,6 +51,11 @@ describe('lets additive and harmless statements through', () => {
     'CREATE TABLE "sms_log" ("id" uuid PRIMARY KEY);',
     'ALTER TABLE "a" ADD CONSTRAINT "a_b_fkey" FOREIGN KEY ("b") REFERENCES "b"("id") ON DELETE CASCADE ON UPDATE CASCADE;',
     'CREATE TRIGGER t BEFORE DELETE ON "audit_log_entries" FOR EACH ROW EXECUTE FUNCTION f();',
+    // 0103's guards: TRUNCATE as a trigger event, and as the value of TG_OP.
+    'CREATE TRIGGER t BEFORE TRUNCATE ON "audit_log_entries" FOR EACH STATEMENT EXECUTE FUNCTION f();',
+    'CREATE TRIGGER t BEFORE UPDATE OR DELETE OR TRUNCATE ON "x" FOR EACH STATEMENT EXECUTE FUNCTION f();',
+    "DO $ BEGIN EXECUTE format('CREATE TRIGGER %I BEFORE TRUNCATE ON %I FOR EACH STATEMENT EXECUTE FUNCTION f()', 'a', 'b'); END $;",
+    "CREATE FUNCTION f() RETURNS trigger AS $ BEGIN IF TG_OP = 'TRUNCATE' THEN RAISE EXCEPTION 'no'; END IF; RETURN NULL; END $ LANGUAGE plpgsql;",
     'SELECT 1 FROM "units" FOR UPDATE;',
     '-- DROP TABLE "units"; kept for reference',
     '/* DELETE FROM users; */ SELECT 1;',
@@ -68,4 +80,13 @@ test('a finding names the migration and the statement', () => {
     level: 'blocking',
     what: 'DELETE FROM (removes rows)',
   });
+});
+
+test('0103, the TRUNCATE guards on the append-only tables, runs unattended: it names TRUNCATE as a trigger event only', () => {
+  const sql = readFileSync(
+    join(ROOT, 'apps/backend/src/infrastructure/prisma/tenant/migrations/0103_append_only_no_truncate/migration.sql'),
+    'utf8',
+  );
+  assert.ok(/BEFORE TRUNCATE/.test(sql));
+  assert.equal(blocks(sql), false);
 });

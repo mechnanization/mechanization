@@ -25,6 +25,7 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
 import { ROOT, resolveTarget, parseConnection } from './targets.mjs';
+import { withTruncateGuardsOff } from './truncate-guards.mjs';
 
 const require = createRequire(join(ROOT, 'apps', 'backend', 'package.json'));
 const { Client } = require('pg');
@@ -162,7 +163,10 @@ async function main() {
       const tablesToTruncate = existingTablesRes.rows.map((r) => `"${s}"."${r.table_name}"`);
 
       if (tablesToTruncate.length > 0) {
-        await client.query(`TRUNCATE TABLE ${tablesToTruncate.join(', ')} CASCADE`);
+        // 0103's guards refuse TRUNCATE on the append-only tables; off for this local reset only.
+        await withTruncateGuardsOff(client, s, () =>
+          client.query(`TRUNCATE TABLE ${tablesToTruncate.join(', ')} CASCADE`),
+        );
       }
 
       // 2c. Reset sequences
