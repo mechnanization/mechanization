@@ -26,6 +26,7 @@ import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Money } from '@/components/ui/money';
 import { LoadingState } from '@/components/ui/states';
+import { signOutCitizen } from '@/lib/citizen-sign-out';
 
 const PROPERTY_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
   BUILDING: Building2,
@@ -92,8 +93,9 @@ export default function MyAccount({
         </div>
         <Button
           variant="ghost"
-          onClick={() => {
-            clearSession(tenant);
+          onClick={async () => {
+            // Ended on the server too, not only forgotten here (S14).
+            await signOutCitizen(tenant);
             router.push(`/${tenant}/${locale}`);
           }}
         >

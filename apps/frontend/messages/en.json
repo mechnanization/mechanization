@@ -98,8 +98,6 @@
     "goToSignIn": "Go to sign in",
     "invalidResetLinkTitle": "Link invalid or expired",
     "invalidResetLinkDesc": "This password reset link is no longer valid. Request a new one from Settings, or contact your system administrator.",
-    "emailChangeConfirmedTitle": "Email address confirmed",
-    "emailChangeConfirmedDesc": "Your sign-in email address has already been updated. You can close this page and sign in.",
     "passwordsDontMatch": "Passwords do not match.",
     "passwordTooShort": "Use at least 10 characters.",
     "staffSignIn": {

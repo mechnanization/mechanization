@@ -139,6 +139,15 @@ export class PrismaUserRepository implements UserRepository {
     });
   }
 
+  /** Scoped to `kind = 'CITIZEN'` in the write itself, so a staff id here changes nothing. */
+  async endCitizenSessions(userId: string): Promise<boolean> {
+    const { count } = await this.db.user.updateMany({
+      where: { id: userId, kind: 'CITIZEN' },
+      data: { tokenVersion: { increment: 1 } },
+    });
+    return count === 1;
+  }
+
   /**
    * Burns a TOTP step.
    *

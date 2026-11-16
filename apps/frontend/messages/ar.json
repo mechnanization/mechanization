@@ -98,8 +98,6 @@
     "goToSignIn": "الذهاب إلى تسجيل الدخول",
     "invalidResetLinkTitle": "الرابط غير صالح أو منتهي الصلاحية",
     "invalidResetLinkDesc": "رابط إعادة تعيين كلمة المرور هذا لم يعد صالحاً. اطلب رابطاً جديداً من الإعدادات، أو تواصل مع مسؤول النظام.",
-    "emailChangeConfirmedTitle": "تم تأكيد البريد الإلكتروني",
-    "emailChangeConfirmedDesc": "تم تحديث بريدك الإلكتروني للدخول مسبقاً. يمكنك إغلاق هذه الصفحة وتسجيل الدخول.",
     "passwordsDontMatch": "كلمتا المرور غير متطابقتين.",
     "passwordTooShort": "استخدم 10 أحرف على الأقل.",
     "staffSignIn": {

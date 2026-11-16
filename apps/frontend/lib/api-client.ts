@@ -1142,6 +1142,26 @@ export async function logoutStaff(tenant: string, accessToken?: string): Promise
   );
 }
 
+/**
+ * A citizen's «خروج», ended on the server (task S14 of the 2026-11-14
+ * security audit): every session the citizen holds stops working, not only
+ * the one in this browser — a citizen token otherwise lives seven days.
+ *
+ * **May throw**, like `logoutStaff`: callers clear the local session anyway
+ * (`signOutCitizen` in `lib/citizen-sign-out.ts`), and a session this could
+ * not end runs out at its cap, which is all signing out did before.
+ */
+export async function logoutCitizen(tenant: string, accessToken?: string): Promise<void> {
+  if (!accessToken) return;
+  await apiFetch<{ signedOut: boolean }>(tenant, '/auth/citizen/logout', {
+    method: 'POST',
+    token: accessToken,
+    // A 401 here means there was nothing to end, never "exchange and retry".
+    skipTokenRefresh: true,
+    signal: timeoutSignal(5_000),
+  });
+}
+
 export interface DashboardCounters {
   total: number;
   byPropertyType: Record<string, number>;

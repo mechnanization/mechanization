@@ -41,6 +41,7 @@ const SELF_SERVICE: Record<string, string> = {
   'AuthController.changeEmail': "the caller's own email",
   'AuthController.sendResetPasswordEmail': "the caller's own reset email",
   'AuthController.me': 'who the caller is',
+  'AuthController.logoutCitizen': "a citizen ending their own sessions; refuses staff",
   'CadastreController.getAsset': 'the parcel map every signed-in screen draws',
   'CitizenController.mySummary': "a citizen's own summary; refuses staff",
   'FeesController.getSettings': "the municipality's payment instructions",

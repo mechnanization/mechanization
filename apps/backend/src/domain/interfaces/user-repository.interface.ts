@@ -91,6 +91,13 @@ export interface UserRepository {
   /** Stamps `lastLoginAt`, which the staff list surfaces as dormancy. */
   markLoggedIn(userId: string): Promise<void>;
 
+  /**
+   * Ends every session a citizen holds, by bumping `tokenVersion`: the guard
+   * refuses each token stamped with the old one. Citizens only — a staff
+   * session ends with its refresh family. False when no citizen has the id.
+   */
+  endCitizenSessions(userId: string): Promise<boolean>;
+
   /** Burns a TOTP step so the same code cannot be presented twice. */
   recordTotpStep(userId: string, step: number): Promise<void>;
   /** Stores an unconfirmed secret; `confirmTotp` is what activates it. */
