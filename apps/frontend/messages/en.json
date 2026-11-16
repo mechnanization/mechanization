@@ -514,7 +514,12 @@
     "STAFF_CURRENT_PASSWORD_INCORRECT": "The current password is incorrect.",
     "FEE_EXEMPTION_VALID_UNTIL_PAST": "The last exempt day ({validUntil}) is before today ({today}) — choose today or a later day",
     "FEE_EXEMPTION_LIFT_REASON_REQUIRED": "Write why the exemption is lifted",
-    "UNIT_HAS_FEE_EXEMPTION_HISTORY": "Unit {unitCode} has a fee exemption history, which deleting it would erase. Correct the unit instead of deleting it"
+    "UNIT_HAS_FEE_EXEMPTION_HISTORY": "Unit {unitCode} has a fee exemption history, which deleting it would erase. Correct the unit instead of deleting it",
+    "BUILDING_TYPE_NOT_FOUND": "This building type does not exist",
+    "BUILDING_TYPE_INACTIVE": "The type “{name}” is switched off and cannot be chosen for a new building. Choose another, or switch it back on under Building types",
+    "BUILDING_TYPE_NAME_TAKEN": "Another type is already called “{name}”",
+    "BUILDING_TYPE_SYSTEM_STRUCTURE": "A system type keeps its structure. Add a new type instead of changing it",
+    "BUILDING_TYPE_STRUCTURE_IN_USE": "{count, plural, one {One building is} other {{count} buildings are}} filed under this type, so its structure cannot change. Add a new type instead"
   },
   "damage": {
     "level": "Damage level",
@@ -1999,7 +2004,9 @@
     "REQUEST_CANCELLED": "Request cancelled",
     "REQUEST_ATTACHMENT_ADDED": "Document attached to a request",
     "REQUEST_ATTACHMENT_VIEWED": "Request document opened",
-    "REQUEST_FEE_WAIVED": "Request made free, moved to review"
+    "REQUEST_FEE_WAIVED": "Request made free, moved to review",
+    "BUILDING_TYPE_CREATED": "Building type added",
+    "BUILDING_TYPE_UPDATED": "Building type edited"
   },
   "auditEntities": {
     "User": "Citizen or staff",
@@ -2025,7 +2032,8 @@
     "ExpenseRequest": "Payment order request",
     "TreasuryDay": "Treasury day",
     "CitizenRequest": "Request",
-    "RequestTypeSetting": "Request type"
+    "RequestTypeSetting": "Request type",
+    "BuildingType": "Building type"
   },
   "audit": {
     "families": {
@@ -4160,5 +4168,57 @@
     "endedNotLifted": "Exemption ended, not lifted",
     "area": "{area} m²",
     "close": "Close"
+  },
+  "buildingTypes": {
+    "title": "Building types",
+    "back": "Building census",
+    "intro": "Each type takes the behaviour of one of the system’s structures: how it is counted in the census, and what its units start as. System types keep their structures; the municipality adds what it is missing (school, dispensary, municipal building…). A type is never deleted: it is switched off, and stays on the buildings filed under it.",
+    "picker": "Building type",
+    "filter": "Building type",
+    "allTypes": "All building types",
+    "loadError": "Could not load the building types",
+    "empty": "No types yet",
+    "add": "Add a type",
+    "addTitle": "Add a building type",
+    "editTitle": "Edit the building type",
+    "dialogDescription": "The type is offered in the building wizard, on the map and in the reports.",
+    "nameAr": "Name in Arabic",
+    "nameArPlaceholder": "مثال: مستوصف",
+    "nameRequired": "Write the type’s name",
+    "nameEn": "Name in English",
+    "nameEnPlaceholder": "e.g. Dispensary",
+    "structure": "Behaves as",
+    "structureFixedSystem": "A system type keeps its structure.",
+    "structureFixedUsed": "{count, plural, one {One building is} other {{count} buildings are}} filed under this type, so its structure cannot change.",
+    "defaultUnitType": "Units start as",
+    "sortOrder": "Order",
+    "noFee": "A building’s type changes no fee: fees are charged by each unit’s type. To exempt a public school, exempt its units on the fee exemption list.",
+    "save": "Save",
+    "saving": "Saving…",
+    "saveFailed": "Could not save the type",
+    "cancel": "Cancel",
+    "close": "Close",
+    "edit": "Edit",
+    "deactivate": "Switch off",
+    "activate": "Switch back on",
+    "deactivateTitle": "Switch off the type “{name}”?",
+    "deactivateBody": "It is no longer offered for a new building, and stays on the buildings filed under it.",
+    "activateTitle": "Switch the type “{name}” back on?",
+    "activateBody": "It is offered again when a building is filed.",
+    "deactivated": "Type “{name}” switched off",
+    "activated": "Type “{name}” switched back on",
+    "system": "System type",
+    "custom": "Municipality’s type",
+    "inactive": "Switched off",
+    "notTyped": "Not typed yet",
+    "byType": "Buildings by type",
+    "columns": {
+      "name": "Type",
+      "structure": "Behaves as",
+      "defaultUnitType": "Units start as",
+      "kind": "Kind",
+      "buildings": "Buildings",
+      "actions": "Actions"
+    }
   }
 }

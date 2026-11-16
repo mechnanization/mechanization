@@ -486,6 +486,14 @@ export const STRUCTURE_TYPE = [
    * the map as something to revisit.
    */
   'TENT_SHELTER',
+  /**
+   * «منشأة عامة / خدماتية» — a school, a dispensary, the municipality's own hall
+   * (migration 0105; decision 4 of 2026-11-16). The behaviour behind the building
+   * types an administrator adds for public and service buildings (`building_types`,
+   * 0106). Its units start as offices; a dispensary's type starts them as clinics.
+   * Not `FeeExemptionReason.PUBLIC_FACILITY`: a building's type exempts nothing.
+   */
+  'PUBLIC_INSTITUTION',
 ] as const;
 export const structureTypeSchema = arabicEnum(STRUCTURE_TYPE, 'نوع المنشأة مطلوب');
 export type StructureType = z.infer<typeof structureTypeSchema>;
@@ -1092,6 +1100,7 @@ export const STRUCTURE_TYPE_MAP = {
   WAREHOUSE_HANGAR: { propertyType: 'BUILDING', defaultUnitType: 'WAREHOUSE' },
   MIXED_USE: { propertyType: 'BUILDING', defaultUnitType: 'APARTMENT' },
   TENT_SHELTER: { propertyType: 'TENT', defaultUnitType: 'INDEPENDENT_HOUSE' },
+  PUBLIC_INSTITUTION: { propertyType: 'BUILDING', defaultUnitType: 'OFFICE' },
 } as const satisfies Record<
   StructureType,
   { propertyType: PropertyType; defaultUnitType: UnitType }

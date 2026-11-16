@@ -56,6 +56,20 @@ export const LANDLORD_SUMMARY_READ_ROLES = [
   'VIEWER',
 ] as const satisfies readonly StaffRole[];
 
+/**
+ * Read «أنواع المباني» (`GET building-types`): everyone who creates or reads
+ * buildings — the building list, the map and the census are read by every staff
+ * role — and the offline store keeps the list for an inspector with no network.
+ */
+export const BUILDING_TYPE_READ_ROLES: readonly StaffRole[] = EVERY_STAFF_ROLE;
+
+/**
+ * Add, rename, reorder, switch off or on a building type (`POST`/`PATCH building-types`):
+ * the manager's, as the expense and income categories are. A named set because the
+ * screen shows its controls by it.
+ */
+export const BUILDING_TYPE_ADMIN_ROLES = ['SUPER_ADMIN'] as const satisfies readonly StaffRole[];
+
 /** The register's own administration: zones. */
 export const REGISTER_ADMIN_ROLES = [
   'SUPER_ADMIN',

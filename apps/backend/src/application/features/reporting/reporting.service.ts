@@ -110,6 +110,12 @@ export interface DashboardAnalytics {
     unitsSurveyed: number;
     /** The same units as `unitsTotal`, split by نوع الوحدة. Sums to it. */
     unitsByType: Record<string, number>;
+    /**
+     * Every structure on the register by «نوع المبنى» (0106), keyed by the type's
+     * id — `NONE` for a building not typed yet. Sums to `buildings`. The names
+     * come from `GET building-types`, which the screen already holds.
+     */
+    buildingsByType: Record<string, number>;
     /** Census buildings at least one live property card points at. */
     buildingsWithFilings: number;
   };
@@ -823,6 +829,7 @@ export class ReportingService {
       censusUnitsTotal: number;
       censusUnitsSurveyed: number;
       censusUnitsByType: Record<string, number>;
+      censusBuildingsByType: Record<string, number>;
       censusBuildingsWithFilings: number;
     };
 
@@ -933,6 +940,12 @@ export class ReportingService {
                       AND b."lifecycleStatus" IN ('IN_USE', 'DERELICT')
                     GROUP BY 1) x)
             AS "censusUnitsByType",
+          -- Every structure by its building type (0106); NONE before its first save since.
+          (SELECT COALESCE(json_object_agg(t, n), '{}'::json)
+             FROM (SELECT COALESCE(b."buildingTypeId"::text, 'NONE') AS t, count(*)::int AS n
+                     FROM ${this.S}buildings b
+                    GROUP BY 1) x)
+            AS "censusBuildingsByType",
           -- Coverage: structures some live card points at. Over the
           -- countable entries and not every live card (and no backticks in
           -- this comment, for the reason given above), so a tenant duplicate
@@ -999,6 +1012,7 @@ export class ReportingService {
       censusUnitsTotal,
       censusUnitsSurveyed,
       censusUnitsByType,
+      censusBuildingsByType,
       censusBuildingsWithFilings,
       ...rest
     } = row;
@@ -1013,6 +1027,7 @@ export class ReportingService {
         unitsTotal: censusUnitsTotal,
         unitsSurveyed: censusUnitsSurveyed,
         unitsByType: censusUnitsByType,
+        buildingsByType: censusBuildingsByType,
         buildingsWithFilings: censusBuildingsWithFilings,
       },
     };

@@ -14,6 +14,7 @@ import {
   type StaffRole,
   REQUEST_BILL_ROLES as SHARED_REQUEST_BILL_ROLES,
   REQUEST_HANDLE_ROLES as SHARED_REQUEST_HANDLE_ROLES,
+  BUILDING_TYPE_ADMIN_ROLES as SHARED_BUILDING_TYPE_ADMIN_ROLES,
   FEE_EXEMPTION_GRANT_ROLES as SHARED_FEE_EXEMPTION_GRANT_ROLES,
   FEE_EXEMPTION_READ_ROLES as SHARED_FEE_EXEMPTION_READ_ROLES,
   REQUEST_READ_ROLES as SHARED_REQUEST_READ_ROLES,
@@ -157,3 +158,6 @@ export function hasRole(roles: readonly string[], role: string | null | undefine
 export const FEE_EXEMPTION_READ_ROLES: readonly string[] = SHARED_FEE_EXEMPTION_READ_ROLES;
 /** `PUT buildings/units/:unitId/fee-exemption`: the manager's alone. */
 export const FEE_EXEMPTION_GRANT_ROLES: readonly string[] = SHARED_FEE_EXEMPTION_GRANT_ROLES;
+
+/** «أنواع المباني» (0106): add, edit, switch off or on a building type — the manager's. */
+export const BUILDING_TYPE_ADMIN_ROLES: readonly string[] = SHARED_BUILDING_TYPE_ADMIN_ROLES;

@@ -29,6 +29,8 @@ import type {
   FeeAssessment,
   FeeAssessmentLine,
   FeeBasis,
+  BuildingTypeView,
+  CreateBuildingTypeInput,
   FeeExemptionCitizenUnits,
   FeeExemptionListQuery,
   FeeExemptionListResult,
@@ -63,6 +65,7 @@ import type {
   SequenceKey,
   SetOwnerBillingInput,
   SetUnitFeeExemptionInput,
+  UpdateBuildingTypeInput,
   SettlePayment,
   BulkSettlePayments,
   SettlementReceipt,
@@ -1222,6 +1225,11 @@ export interface DashboardAnalytics {
     unitsSurveyed: number;
     /** The same units as `unitsTotal`, split by نوع الوحدة. Sums to it. */
     unitsByType: Record<string, number>;
+    /**
+     * Every structure by «نوع المبنى» (0106), keyed by the type's id — `NONE` for one
+     * not typed yet. Optional on the wire for an answer from before it.
+     */
+    buildingsByType?: Record<string, number>;
     /** Census buildings at least one live property card points at. */
     buildingsWithFilings: number;
   };
@@ -1650,6 +1658,11 @@ export interface BuildingSummary {
   sharedParcelNumbers?: string[];
   structureType: StructureType;
   /**
+   * «نوع المبنى» (0106): the municipality's type it was filed as; `structureType`
+   * is set from it. Optional on the wire for an answer from before it.
+   */
+  buildingTypeId?: string | null;
+  /**
    * Where the structure is in its own life — permitted, going up, standing,
    * abandoned, gone. The third axis beside *what it is* (`structureType`) and
    * *what happened to it* (its damage level).
@@ -1960,6 +1973,8 @@ export interface BuildingListFilter {
   parcelNumber?: string;
   zoneId?: string;
   structureType?: StructureType;
+  /** «نوع المبنى» (0106). */
+  buildingTypeId?: string;
   lifecycleStatus?: BuildingLifecycle;
   surveyStatus?: SurveyStatus;
   damageLevel?: DamageLevel;
@@ -2003,6 +2018,8 @@ export interface CreateBuildingInput {
   sharedParcelNumbers?: string[];
   /** Sent beside the type for an older server and the offline queue; the server takes the type's. */
   structureType: StructureType;
+  /** «نوع المبنى» (0106): an inactive type is refused on a new building. */
+  buildingTypeId?: string;
   /** Defaults to `IN_USE` server-side — what an officer is looking at most days. */
   lifecycleStatus?: BuildingLifecycle;
   latitude?: number;
@@ -2089,6 +2106,8 @@ export type UpdateBuildingInput = Partial<{
   /** Replaces the stored list wholesale — an empty array clears it. */
   sharedParcelNumbers: string[];
   structureType: StructureType;
+  /** «نوع المبنى» (0106): decides `structureType`; an inactive one is kept only if the building has it. */
+  buildingTypeId: string;
   lifecycleStatus: BuildingLifecycle;
   latitude: number | null;
   longitude: number | null;
@@ -2249,6 +2268,8 @@ export interface RecordDamageInput {
  */
 export interface BuildingFilterOptions {
   structureTypes: StructureType[];
+  /** The types buildings are filed under (0106). Optional on the wire for an answer from before it. */
+  buildingTypeIds?: string[];
   lifecycleStatuses: BuildingLifecycle[];
   surveyStatuses: SurveyStatus[];
   damageLevels: DamageLevel[];
@@ -3245,6 +3266,8 @@ export interface BuildingMapPin {
   longitude: number;
   parcelNumber: string;
   structureType: StructureType;
+  /** «نوع المبنى» (0106), for the map's type filter and legend. */
+  buildingTypeId?: string | null;
   lifecycleStatus: BuildingLifecycle;
   unitsTotal: number;
   unitsSurveyed: number;
@@ -7213,6 +7236,57 @@ export function getTreasuryClosures(
 export function getDailyCashReport(tenant: string, token: string, args: { date: string }, signal?: AbortSignal) {
   return apiFetch<DailyCashReport>(tenant, `/treasury/reports/daily?date=${encodeURIComponent(args.date)}`, {
     token,
+    signal,
+  });
+}
+
+// ─────────────────────────────  «أنواع المباني» (0106)  ─────────────────────────────
+
+/**
+ * The municipality's building types, system types first (`GET building-types`,
+ * every staff role). `includeInactive` for the screen that edits the list.
+ * Read through `useBuildingTypes`, which keeps it for offline use.
+ */
+export async function getBuildingTypes(
+  tenant: string,
+  token: string,
+  options: { includeInactive?: boolean } = {},
+  signal?: AbortSignal,
+): Promise<BuildingTypeView[]> {
+  return apiFetch<BuildingTypeView[]>(
+    tenant,
+    `/building-types${options.includeInactive ? '?includeInactive=true' : ''}`,
+    { token, signal },
+  );
+}
+
+/** Adds a custom type. The manager's (`BUILDING_TYPE_ADMIN_ROLES`). */
+export async function createBuildingType(
+  tenant: string,
+  token: string,
+  input: CreateBuildingTypeInput,
+  signal?: AbortSignal,
+): Promise<BuildingTypeView> {
+  return apiFetch<BuildingTypeView>(tenant, '/building-types', {
+    token,
+    method: 'POST',
+    body: JSON.stringify(input),
+    signal,
+  });
+}
+
+/** Renames, reorders, switches off or on, or moves a type unused by any building. The manager's. */
+export async function updateBuildingType(
+  tenant: string,
+  token: string,
+  id: string,
+  input: UpdateBuildingTypeInput,
+  signal?: AbortSignal,
+): Promise<BuildingTypeView> {
+  return apiFetch<BuildingTypeView>(tenant, `/building-types/${encodeURIComponent(id)}`, {
+    token,
+    method: 'PATCH',
+    body: JSON.stringify(input),
     signal,
   });
 }

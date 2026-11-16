@@ -2,6 +2,7 @@
 
 import { use, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { useQueryClient } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
 import {
@@ -15,12 +16,14 @@ import {
   MapPinOff,
   Pencil,
   Plus,
+  Shapes,
   ShieldAlert,
   Trash2,
   X,
 } from 'lucide-react';
 import {
   BUILDING_LIFECYCLE,
+  buildingTypeName,
   DAMAGE_LEVEL,
   getLabels,
   STRUCTURE_TYPE,
@@ -56,6 +59,7 @@ import { BuildingQueueNotice } from '@/components/admin/building-queue-notice';
 import { buildCsv, downloadCsv } from '@/lib/csv';
 import { cn } from '@/lib/utils';
 import { CENSUS_WRITE_ROLES, hasRole } from '@/lib/staff-roles';
+import { buildingTypeLabel, useBuildingTypes } from '@/lib/building-types';
 
 /**
  * سجل المباني — the census ledger.
@@ -94,6 +98,8 @@ const FILTERS = {
   zone: param.id(),
   parcel: param.string(),
   structure: param.oneOf(STRUCTURE_TYPE, ''),
+  /** «نوع المبنى» (0106). */
+  type: param.id(),
   lifecycle: param.oneOf(BUILDING_LIFECYCLE, ''),
   survey: param.oneOf(SURVEY_STATUS, ''),
   damage: param.oneOf(DAMAGE_LEVEL, ''),
@@ -123,9 +129,14 @@ export default function BuildingsPage({
   const labels = getLabels(locale);
   const toast = useToast();
   const queryClient = useQueryClient();
+  const tTypes = useTranslations('buildingTypes');
 
   const [token, setToken] = useState<string | null>(null);
   const [role, setRole] = useState<string | null>(null);
+
+  // «أنواع المباني» (0106): every type, so a building whose type was switched off is still named.
+  const typesQuery = useBuildingTypes(tenant, base, token, { includeInactive: true, errorMessage: tTypes('loadError') });
+  const types = useMemo(() => typesQuery.data ?? [], [typesQuery.data]);
 
   useEffect(() => {
     const session = loadSession(tenant);
@@ -148,6 +159,7 @@ export default function BuildingsPage({
     zone: zoneId,
     parcel: parcelNumber,
     structure: structureType,
+    type: buildingTypeId,
     lifecycle: lifecycleStatus,
     survey: surveyStatus,
     damage: damageLevel,
@@ -169,6 +181,7 @@ export default function BuildingsPage({
       zoneId,
       parcelInput,
       structureType,
+      buildingTypeId,
       lifecycleStatus,
       surveyStatus,
       damageLevel,
@@ -279,6 +292,7 @@ export default function BuildingsPage({
       zoneId,
       parcelNumber,
       structureType,
+      buildingTypeId,
       lifecycleStatus,
       surveyStatus,
       damageLevel,
@@ -295,6 +309,7 @@ export default function BuildingsPage({
           zoneId: zoneId || undefined,
           parcelNumber: parcelNumber || undefined,
           structureType: structureType || undefined,
+          buildingTypeId: buildingTypeId || undefined,
           lifecycleStatus: lifecycleStatus || undefined,
           surveyStatus: surveyStatus || undefined,
           damageLevel: damageLevel || undefined,
@@ -375,6 +390,7 @@ export default function BuildingsPage({
         zoneId: zoneId || undefined,
         parcelNumber: parcelNumber || undefined,
         structureType: structureType || undefined,
+        buildingTypeId: buildingTypeId || undefined,
         lifecycleStatus: lifecycleStatus || undefined,
         surveyStatus: surveyStatus || undefined,
         damageLevel: damageLevel || undefined,
@@ -448,7 +464,7 @@ export default function BuildingsPage({
         row.parcelNumber,
         (row.sharedParcelNumbers ?? []).join(' / '),
         row.zoneName ?? '',
-        labels.structureType[row.structureType] ?? row.structureType,
+        buildingTypeLabel(types, row, locale, labels.structureType[row.structureType] ?? row.structureType),
         labels.buildingLifecycle[row.lifecycleStatus] ?? row.lifecycleStatus,
         row.floorsCount,
         row.unitsTotal,
@@ -487,6 +503,7 @@ export default function BuildingsPage({
     zoneId,
     parcelNumber,
     structureType,
+    buildingTypeId,
     lifecycleStatus,
     surveyStatus,
     damageLevel,
@@ -494,6 +511,8 @@ export default function BuildingsPage({
     labels,
     toast,
     en,
+    types,
+    locale,
   ]);
 
   // ── Columns ───────────────────────────────────────────────────────
@@ -586,7 +605,9 @@ export default function BuildingsPage({
               with every other value on the other.
             */}
             <div>
-              <CellTag>{labels.structureType[row.original.structureType]}</CellTag>
+              <CellTag>
+                {buildingTypeLabel(types, row.original, locale, labels.structureType[row.original.structureType])}
+              </CellTag>
             </div>
             {/*
               Under the type rather than in a column of its own, and only when
@@ -717,7 +738,7 @@ export default function BuildingsPage({
         ),
       },
     ],
-    [en, labels, canWrite, canDelete, base, router],
+    [en, labels, canWrite, canDelete, base, router, types, locale],
   );
 
   /*
@@ -772,6 +793,10 @@ export default function BuildingsPage({
                 <Download className="size-4" aria-hidden />
               )}
               {en ? 'Export CSV' : 'تصدير CSV'}
+            </Button>
+            <Button variant="outline" onClick={() => router.push(`${base}/buildings/types`)}>
+              <Shapes className="size-4" aria-hidden />
+              {tTypes('title')}
             </Button>
             {canWrite ? (
               <Button onClick={() => router.push(`${base}/buildings/new`)}>
@@ -946,6 +971,16 @@ export default function BuildingsPage({
                       label: labels.structureType[value],
                     }))}
                     allLabel={en ? 'All structures' : 'كل الأنواع'}
+                  />
+                  <FilterSelect
+                    label={tTypes('filter')}
+                    value={buildingTypeId}
+                    onChange={(value) => setFilter({ type: value })}
+                    options={(filterOptions?.buildingTypeIds ?? []).flatMap((id) => {
+                      const type = types.find((candidate) => candidate.id === id);
+                      return type ? [{ value: id, label: buildingTypeName(type, locale) }] : [];
+                    })}
+                    allLabel={tTypes('allTypes')}
                   />
                   <FilterSelect
                     label={en ? 'Construction' : 'الحالة الإنشائية'}
