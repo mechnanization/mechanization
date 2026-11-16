@@ -1,46 +1,47 @@
 import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Put, Query } from '@nestjs/common';
 import {
-  CENSUS_WORKLIST_ROLES,
-  EVERY_STAFF_ROLE,
-  REGISTER_WRITE_ROLES,
-  buildingFilterSchema,
-  worklistQuerySchema,
-  confirmVacancySchema,
-  correctBuildingParcelSchema,
-  createBuildingSchema,
-  createDamageAssessmentSchema,
-  endOccupancySchema,
-  endVacancySchema,
-  linkOccupancyOwnerSchema,
-  logVisitSchema,
-  resizeUnitSpanSchema,
-  saveBuildingMatrixSchema,
-  setOwnerBillingSchema,
-  setUnitFeeExemptionSchema,
-  unitBlueprintSchema,
-  updateBuildingSchema,
-  updateUnitSchema,
-  upsertOccupancySchema,
-  upsertUnitSchema,
   type BuildingFilter,
-  type WorklistQuery,
+  buildingFilterSchema,
+  CENSUS_WORKLIST_ROLES,
   type ConfirmVacancyInput,
+  confirmVacancySchema,
   type CorrectBuildingParcelInput,
+  correctBuildingParcelSchema,
   type CreateBuildingInput,
+  createBuildingSchema,
   type CreateDamageAssessmentInput,
+  createDamageAssessmentSchema,
   type EndOccupancyInput,
+  endOccupancySchema,
   type EndVacancyInput,
+  endVacancySchema,
+  EVERY_STAFF_ROLE,
+  FEE_EXEMPTION_GRANT_ROLES,
   type LinkOccupancyOwnerInput,
+  linkOccupancyOwnerSchema,
   type LogVisitInput,
+  logVisitSchema,
+  REGISTER_WRITE_ROLES,
   type ResizeUnitSpanInput,
+  resizeUnitSpanSchema,
   type SaveBuildingMatrixInput,
+  saveBuildingMatrixSchema,
   type SetOwnerBillingInput,
+  setOwnerBillingSchema,
   type SetUnitFeeExemptionInput,
+  setUnitFeeExemptionSchema,
   type UnitBlueprint,
+  unitBlueprintSchema,
   type UpdateBuildingInput,
+  updateBuildingSchema,
   type UpdateUnitInput,
+  updateUnitSchema,
   type UpsertOccupancyInput,
+  upsertOccupancySchema,
   type UpsertUnitInput,
+  upsertUnitSchema,
+  type WorklistQuery,
+  worklistQuerySchema,
 } from '@mechanization/shared-schemas';
 import { BuildingsService } from '../../application/features/buildings/buildings.service';
 import { DamageService } from '../../application/features/buildings/damage.service';
@@ -397,8 +398,11 @@ export class BuildingsController {
    * exemption from every fee (migration 0077): the mosque on a waqf parcel, a
    * public building. SUPER_ADMIN only — it takes the unit off every bill, for
    * everyone who holds it, which is an office decision and not a survey one.
+   * Since 0104 it also takes the council's decision number and a last day, and
+   * a lift needs its reason; each grant, amendment and lift writes the unit's
+   * period (`unit_fee_exemptions`). Answers the unit as the whitelist shows it.
    */
-  @Roles('SUPER_ADMIN')
+  @Roles(...FEE_EXEMPTION_GRANT_ROLES)
   @Put('units/:unitId/fee-exemption')
   async setFeeExemption(
     @Param('unitId', new ParseUUIDPipe()) unitId: string,

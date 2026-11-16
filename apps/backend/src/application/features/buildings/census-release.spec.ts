@@ -331,6 +331,8 @@ describe('deleteUnit — what it refuses', () => {
       unitVacancyConfirmation: {
         count: jest.fn().mockResolvedValue(counts.vacancies ?? 0),
       },
+      // No fee exemption history (0104): the integration suite covers the refusal.
+      unitFeeExemption: { findFirst: jest.fn().mockResolvedValue(null) },
       building: { update: jest.fn() },
     };
 

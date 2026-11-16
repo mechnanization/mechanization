@@ -1,4 +1,4 @@
-import { citizenDisplayName } from '@mechanization/shared-schemas';
+import { calendarDayOf, citizenDisplayName, isFeeExemptOn, municipalToday } from '@mechanization/shared-schemas';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
@@ -320,6 +320,12 @@ export interface CitizenProfileUnit {
    */
   feeExemption: 'PLACE_OF_WORSHIP' | 'PUBLIC_FACILITY' | 'OTHER' | null;
   /**
+   * The exemption's last day, `YYYY-MM-DD`, or null for none (0104). Both are
+   * as of today (`isFeeExemptOn`): an exemption that ran out reads as none,
+   * since billing charges the unit again.
+   */
+  feeExemptionValidUntil: string | null;
+  /**
    * «توزيع الرسم على المالكين» (migration 0075), when the linked flat has
    * several current owners; null otherwise. `share` is this file's owner's
    * part — what an owner-borne charge on the flat bills them for — or null
@@ -497,6 +503,7 @@ export interface CitizenProfileHeldUnit {
   unitId: string;
   unitCode: string;
   feeExemption: CitizenProfileUnit['feeExemption'];
+  feeExemptionValidUntil: CitizenProfileUnit['feeExemptionValidUntil'];
   ownerBilling: CitizenProfileUnit['ownerBilling'];
 }
 
@@ -1098,6 +1105,8 @@ export class ReportingService {
   }
 
   private async computeCitizenProfile(citizenId: string): Promise<CitizenProfile | null> {
+    // The day a unit's fee exemption is read on (0104).
+    const today = municipalToday();
     const citizen = await withConnectionRetry(() => this.db.user.findFirst({
       // `kind` is part of the filter, not an afterthought: without it a staff
       // id in the URL would render a staff member through the citizen view.
@@ -1262,6 +1271,7 @@ export class ReportingService {
                         ownerBillingMode: true,
                         responsibleOwnerId: true,
                         feeExemption: true,
+                        feeExemptionValidUntil: true,
                         presenceMonths: true,
                         ownerLastStayAt: true,
                         vacancyDeclaredAt: true,
@@ -1580,7 +1590,7 @@ export class ReportingService {
                 contactPhone: owner.citizen.contactPhone,
                 shares: owner.shares,
               })),
-              feeExemption: unit.unit?.feeExemption ?? null,
+              ...exemptionToday(unit.unit, today),
               ownerBilling: profileOwnerBilling(unit.unit, citizenId),
             };
           }),
@@ -1627,6 +1637,7 @@ export class ReportingService {
           buildingId: true,
           unitCode: true,
           feeExemption: true,
+          feeExemptionValidUntil: true,
           ownerBillingMode: true,
           responsibleOwnerId: true,
           occupancies: {
@@ -1639,7 +1650,7 @@ export class ReportingService {
     const toHeld = (unit: (typeof units)[number]): CitizenProfileHeldUnit => ({
       unitId: unit.id,
       unitCode: unit.unitCode,
-      feeExemption: unit.feeExemption,
+      ...exemptionToday(unit, municipalToday()),
       ownerBilling: profileOwnerBilling(unit, citizenId),
     });
 
@@ -2144,6 +2155,22 @@ export class ReportingService {
 }
 
 /** «الاسم الأول اسم الأب الشهرة», skipping whichever part is missing. */
+/**
+ * A unit's fee exemption as a file shows it today (0104): the reason and its
+ * last day while it runs (`isFeeExemptOn`), none once it ran out — billing
+ * charges it again. The note is never here: this reaches the portal by spread.
+ */
+function exemptionToday(
+  unit: { feeExemption: CitizenProfileUnit['feeExemption']; feeExemptionValidUntil: Date | null } | null | undefined,
+  today: string,
+): Pick<CitizenProfileUnit, 'feeExemption' | 'feeExemptionValidUntil'> {
+  if (!unit || !isFeeExemptOn(unit, today)) return { feeExemption: null, feeExemptionValidUntil: null };
+  return {
+    feeExemption: unit.feeExemption,
+    feeExemptionValidUntil: unit.feeExemptionValidUntil ? calendarDayOf(unit.feeExemptionValidUntil) : null,
+  };
+}
+
 function personName(person: {
   firstName: string;
   middleName: string | null;

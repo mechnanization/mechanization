@@ -104,6 +104,7 @@ import { DamageForm } from './damage/damage-form';
 import { DamageHistory } from './damage/damage-history';
 import { ReinspectNotice } from './damage/reinspect-notice';
 import { damageInput, isUninhabitableNow } from '@/lib/damage-reading';
+import { FEE_EXEMPTION_GRANT_ROLES, hasRole } from '@/lib/staff-roles';
 
 /**
  * One building's units, floor by floor, with the things an officer standing in
@@ -1134,7 +1135,7 @@ export function BuildingUnitMatrixDrawer({
                 unit={selectedUnit}
                 locale={locale}
                 busy={busy}
-                canGrant={role === 'SUPER_ADMIN'}
+                canGrant={hasRole(FEE_EXEMPTION_GRANT_ROLES, role)}
                 onSave={(input) => void saveFeeExemption(selectedUnit, input)}
               />
 

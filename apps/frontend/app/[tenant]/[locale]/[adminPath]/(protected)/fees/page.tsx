@@ -2,7 +2,13 @@
 
 import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { BULK_SETTLE_ROLES, PAYMENT_SETTLE_ROLES, REFERENCE_SEND_ROLES, hasRole } from '@/lib/staff-roles';
+import {
+  BULK_SETTLE_ROLES,
+  FEE_EXEMPTION_READ_ROLES,
+  PAYMENT_SETTLE_ROLES,
+  REFERENCE_SEND_ROLES,
+  hasRole,
+} from '@/lib/staff-roles';
 import {
   fromAdminPayment,
   isBulkSettleable,
@@ -18,6 +24,7 @@ import {
   CheckCircle2,
   FileWarning,
   Megaphone,
+  ShieldCheck,
   Loader2,
   Plus,
   Receipt,
@@ -192,12 +199,14 @@ export default function FeesPage({
   const tReview = useTranslations('fees.register.review');
   const tCommon = useTranslations('common');
   const tNotices = useTranslations('fees.notices');
+  const tExemptions = useTranslations('feeExemptions');
   /** «تأكيد» / «رفض» on a declared transfer — `FEE_ADMIN_ROLES`, as `PATCH fees/payments/:id/review`. */
   const canDecide = hasRole(FEE_ADMIN_ROLES, role);
   /** «تكليف مباشر» and «إصدار رسم جديد» — `FEE_ISSUE_ROLES`, as `POST fees/payments`, `POST fees/notices` and the `fees/new` page. */
   const canIssue = hasRole(FEE_ISSUE_ROLES, role);
   /** «فواتير تأثّرت بتصحيحات» — `PAYMENT_REVIEW_READ_ROLES`, as the nav row of `/fees/corrections`. */
   const canReadCorrections = hasRole(PAYMENT_REVIEW_READ_ROLES, role);
+  const canReadExemptions = hasRole(FEE_EXEMPTION_READ_ROLES, role);
   /** «تسجيل دفعة» — `PAYMENT_SETTLE_ROLES` (`SUPER_ADMIN`, `ACCOUNTANT`, `COLLECTOR`). */
   const canSettle = hasRole(PAYMENT_SETTLE_ROLES, role);
   /** «تسديد الفواتير المحددة» — `BULK_SETTLE_ROLES`, as the route's `@Roles`; the server is the enforcement. */
@@ -773,6 +782,14 @@ export default function FeesPage({
               <Megaphone className="size-4" aria-hidden />
               {tNotices('title')}
             </Link>
+
+            {/* «قائمة الإعفاء من الرسوم» (0104): names the people on each unit, so `FEE_EXEMPTION_READ_ROLES` only. */}
+            {canReadExemptions ? (
+              <Link href={`${base}/fees/exemptions`} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+                <ShieldCheck className="size-4" aria-hidden />
+                {tExemptions('link')}
+              </Link>
+            ) : null}
 
             {canIssue ? (
               <>

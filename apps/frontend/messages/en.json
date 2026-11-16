@@ -511,7 +511,10 @@
     "FILE_OPEN_FAILED": "The file could not be opened.",
     "CITIZEN_IDENTITY_DOC_TAKEN": "This document number is already recorded for someone else in the register. Check the number.",
     "CITIZEN_FILE_ARCHIVED": "This person's file is archived, so nothing new is filed on it — no card, no flat, no sale. Restore it first («Restore from the archive» on the citizens register), then try again.",
-    "STAFF_CURRENT_PASSWORD_INCORRECT": "The current password is incorrect."
+    "STAFF_CURRENT_PASSWORD_INCORRECT": "The current password is incorrect.",
+    "FEE_EXEMPTION_VALID_UNTIL_PAST": "The last exempt day ({validUntil}) is before today ({today}) — choose today or a later day",
+    "FEE_EXEMPTION_LIFT_REASON_REQUIRED": "Write why the exemption is lifted",
+    "UNIT_HAS_FEE_EXEMPTION_HISTORY": "Unit {unitCode} has a fee exemption history, which deleting it would erase. Correct the unit instead of deleting it"
   },
   "damage": {
     "level": "Damage level",
@@ -2131,7 +2134,8 @@
       "source": "Source",
       "ownerBillingMode": "How the owners are billed",
       "shares": "Shares",
-      "feeExemption": "Fee exemption"
+      "feeExemption": "Fee exemption",
+      "decisionRef": "Council decision no."
     },
     "text": {
       "redacted": "hidden to protect personal data",
@@ -2180,7 +2184,10 @@
       "rowsAdded": "{count} added",
       "rowsRemoved": "{count} removed",
       "rowsChanged": "{count} changed",
-      "recordedFields": "{count} recorded field(s)"
+      "recordedFields": "{count} recorded field(s)",
+      "validUntil": "Last exempt day",
+      "noEndDay": "No end date",
+      "liftReason": "Why it was lifted"
     },
     "daily": {
       "loadFailed": "Failed to load the daily report.",
@@ -3345,7 +3352,28 @@
     "failed": "Could not save the exemption",
     "fileLabel": "Fee exemption",
     "fileValue": "Exempt — {reason}",
-    "lifecycleNote": "The building’s status alone exempts nothing from fees. If it cannot be lived in, use “Assess the building” (or “Assess this unit” for a single unit) in the unit matrix and record it as “Not habitable” — what is read not habitable is then exempt from every fee until a re-inspection."
+    "lifecycleNote": "The building’s status alone exempts nothing from fees. If it cannot be lived in, use “Assess the building” (or “Assess this unit” for a single unit) in the unit matrix and record it as “Not habitable” — what is read not habitable is then exempt from every fee until a re-inspection.",
+    "fileValueUntil": "Exempt — {reason} until {date}",
+    "decisionRef": "Council decision no.",
+    "decisionRefPlaceholder": "e.g. 12/2026",
+    "decisionRefTooLong": "The decision number is too long — 100 characters at most",
+    "validUntil": "Last exempt day",
+    "validUntilHint": "Leave empty for an exemption with no end. After this day the unit is billed again, even if the exemption is not lifted.",
+    "standingUntil": "until {date}",
+    "noEnd": "No end date",
+    "ended": "Ended {date} — billed again",
+    "decision": "Council decision {ref}",
+    "liftReason": "Why it is lifted",
+    "liftReasonPlaceholder": "e.g. the council decision expired, or the unit is no longer a public facility",
+    "liftReasonRequired": "Write why the exemption is lifted",
+    "amend": "Amend the exemption",
+    "save": "Save the change",
+    "amended": "Exemption amended",
+    "history": "Exemption history",
+    "historyOpen": "Standing since {date}",
+    "historyLifted": "From {from} to {to}, lifted by {name}",
+    "historyLiftReason": "Reason: {reason}",
+    "whitelistLink": "Fee exemption list"
   },
   "unitArea": {
     "label": "Unit area (m²)",
@@ -4072,5 +4100,65 @@
         "totalRows": "{count} cases"
       }
     }
+  },
+  "feeExemptions": {
+    "title": "Fee exemption list",
+    "back": "Fees & billing",
+    "link": "Exemption list",
+    "loadError": "Could not load the exemption list",
+    "searchPlaceholder": "Unit or building code, parcel number, or holder’s name",
+    "empty": "No unit is exempt from fees",
+    "emptyHint": "Units are added from “Add an exemption” or from a building’s unit matrix.",
+    "emptyLifted": "No exemption has been lifted yet",
+    "emptyFiltered": "Nothing matches",
+    "emptyFilteredHint": "Try another word or clear the filter.",
+    "statusFilter": "Show",
+    "statusOpen": "Standing exemptions",
+    "statusLifted": "Lifted exemptions",
+    "reasonFilter": "Reason",
+    "allReasons": "All reasons",
+    "columns": {
+      "unit": "Unit",
+      "building": "Building",
+      "type": "Unit type",
+      "holders": "Held now by",
+      "reason": "Reason",
+      "decision": "Council decision",
+      "granted": "Granted",
+      "until": "Until",
+      "lifted": "Lifted",
+      "actions": "Actions"
+    },
+    "ended": "Ended",
+    "noHolders": "Nobody recorded on it",
+    "parcel": "Parcel {number}",
+    "grantedOn": "{date} — {name}",
+    "open": "View",
+    "openOf": "View the exemption of unit {reference}",
+    "add": "Add an exemption",
+    "noAccess": "The exemption list is for the manager, the accountant, the office and the auditor",
+    "noAccessHint": "It shows the names of the people on each unit, so no one else opens it.",
+    "unitTitle": "Unit {reference}",
+    "unitLoadError": "Could not load the unit",
+    "unitLoading": "Loading the unit…",
+    "addTitle": "Add units to the exemption list",
+    "addDescription": "An exemption belongs to the unit, not the person: someone holding three units may have one exempt and pay on the other two.",
+    "fromCitizen": "From a citizen",
+    "byReference": "By unit code",
+    "addMode": "How to add",
+    "citizen": "Citizen",
+    "citizenHint": "Shows the units they own or occupy now, structural floors left out.",
+    "noUnits": "Owns or occupies no unit now",
+    "unitsLoading": "Loading their units…",
+    "unitsError": "Could not load their units",
+    "reference": "Full unit code",
+    "referencePlaceholder": "e.g. Z-2-19-A-0001",
+    "referenceHint": "The building code, then the unit code, as printed on a notice.",
+    "find": "Find",
+    "exemptToday": "Exempt today",
+    "billed": "Billed",
+    "endedNotLifted": "Exemption ended, not lifted",
+    "area": "{area} m²",
+    "close": "Close"
   }
 }

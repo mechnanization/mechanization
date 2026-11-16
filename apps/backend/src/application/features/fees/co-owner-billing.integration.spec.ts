@@ -14,6 +14,7 @@ import { CasesService } from '../cases/cases.service';
 import { BuildingsService } from '../buildings/buildings.service';
 import { OwnerBillingService } from '../buildings/owner-billing.service';
 import { assessCitizen, FeesService } from './fees.service';
+import { municipalToday } from '@mechanization/shared-schemas';
 
 /**
  * «توزيع الرسم على المالكين» against a real tenant schema (migration 0075
@@ -173,7 +174,7 @@ describeIfDb('co-owner billing', () => {
     },
   ) {
     return within(async () => {
-      for await (const batch of fees.holdingsOf([citizenId])) {
+      for await (const batch of fees.holdingsOf([citizenId], { exemptOn: municipalToday() })) {
         return assessCitizen(batch[0]!.entries, notice);
       }
       throw new Error('no holdings');

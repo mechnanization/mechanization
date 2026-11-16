@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   isStructuralUnitType,
+  municipalToday,
   type OwnerBillingRule,
   type OwnerBillingState,
   type SetOwnerBillingInput,
@@ -155,7 +156,7 @@ export class OwnerBillingService {
   }
 
   private async assertBilledHere(unitId: string, unitCode: string, citizenId: string): Promise<void> {
-    for await (const batch of this.fees.holdingsOf([citizenId])) {
+    for await (const batch of this.fees.holdingsOf([citizenId], { exemptOn: municipalToday() })) {
       for (const holding of batch) {
         const billed = holding.entries
           .flatMap(billableUnits)

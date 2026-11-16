@@ -1,4 +1,4 @@
-import { citizenDisplayName } from '@mechanization/shared-schemas';
+import { citizenDisplayName, municipalToday } from '@mechanization/shared-schemas';
 import { Inject, Injectable } from '@nestjs/common';
 import type { FeeAssessment, FeeAssessmentLine, FeeBasis, FeeBearer } from '@mechanization/shared-schemas';
 import { AuditLogEntry } from '../../../domain/entities/audit-log-entry.entity';
@@ -20,6 +20,7 @@ import {
   type ChangeKind,
 } from './bill-corrections';
 import { assessCitizen, FeesService, flatCategoryCharge, scopeOf, type CitizenHoldings } from './fees.service';
+import { billingDayOfPeriod } from '../buildings/fee-exemption';
 
 /** Owed and not yet settled. PENDING_REVIEW is money claimed, not money received. */
 const OPEN_STATUSES = ['UNPAID', 'OVERDUE', 'PENDING_REVIEW'] as const;
@@ -131,7 +132,8 @@ export class CorrectionBillsService {
 
     // A flat charge's figure needed no holdings; tracing its changes does.
     const unread = [...new Set(differing.map((bill) => bill.citizenId))].filter((id) => !holdings.has(id));
-    for (const [id, holding] of await this.holdings(unread)) holdings.set(id, holding);
+    // Only where the holdings sit is read here, which no day changes.
+    for (const [id, holding] of await this.holdings(unread, municipalToday(now))) holdings.set(id, holding);
     const rows = await this.changesSince(differing, holdings);
 
     const affected = differing.flatMap((bill) => {
@@ -331,9 +333,9 @@ export class CorrectionBillsService {
     ) as Promise<OpenBill[]>;
   }
 
-  private async holdings(citizenIds: readonly string[]): Promise<Map<string, CitizenHoldings>> {
+  private async holdings(citizenIds: readonly string[], exemptOn: string): Promise<Map<string, CitizenHoldings>> {
     const byCitizen = new Map<string, CitizenHoldings>();
-    for await (const batch of this.fees.holdingsOf(citizenIds)) {
+    for await (const batch of this.fees.holdingsOf(citizenIds, { exemptOn })) {
       for (const holding of batch) byCitizen.set(holding.citizenId, holding);
     }
     return byCitizen;
@@ -356,13 +358,30 @@ export class CorrectionBillsService {
     // Each notice's scope (0100) as its run reads it: one category or several, its statuses, its kinds of file.
     const scopes = new Map(bills.map((bill) => [bill.id, scopeOf(bill.feeNotice!)]));
     const flatByCategory = flat.filter((bill) => scopes.get(bill.id)!.categories);
-    const holdings = await this.holdings([
-      ...new Set([...rated, ...flatByCategory].map((bill) => bill.citizenId)),
-    ]);
+    /*
+      Read once per billing day: a unit's exemption is judged on the first day
+      of the bill's own period (0104, `billingDayOfPeriod`), as the run that
+      raised it judged it, so an exemption that ended since is not a
+      correction to a bill of a period it still covered.
+    */
+    const dayOf = (bill: OpenBill) => billingDayOfPeriod(bill.periodKey, municipalToday(bill.createdAt));
+    const citizensByDay = new Map<string, Set<string>>();
+    for (const bill of [...rated, ...flatByCategory]) {
+      const day = dayOf(bill);
+      citizensByDay.set(day, (citizensByDay.get(day) ?? new Set()).add(bill.citizenId));
+    }
+    const holdingsByDay = new Map<string, Map<string, CitizenHoldings>>();
+    for (const [day, ids] of citizensByDay) holdingsByDay.set(day, await this.holdings([...ids], day));
+    const holdingOf = (bill: OpenBill) => holdingsByDay.get(dayOf(bill))?.get(bill.citizenId);
+    // Where each citizen's holdings sit, for `changesSince`: the same buildings whichever day read them.
+    const holdings = new Map<string, CitizenHoldings>();
+    for (const byCitizen of holdingsByDay.values()) {
+      for (const [citizenId, holding] of byCitizen) if (!holdings.has(citizenId)) holdings.set(citizenId, holding);
+    }
     // What a duplex weighs *now* — the figure a correction is judged against (0095).
     const levelFactors = rated.length > 0 ? await this.fees.levelFactors() : undefined;
     for (const bill of rated) {
-      const holding = holdings.get(bill.citizenId);
+      const holding = holdingOf(bill);
       if (!holding) continue;
       const notice = bill.feeNotice!;
       const scope = scopes.get(bill.id)!;
@@ -399,7 +418,7 @@ export class CorrectionBillsService {
         figures.set(bill.id, { kind: 'NOT_TARGETED' });
         continue;
       }
-      const holding = holdings.get(bill.citizenId);
+      const holding = holdingOf(bill);
       const charge = holding
         ? flatCategoryCharge(holding.entries, {
             amount: Math.round(Number(notice.amount)),

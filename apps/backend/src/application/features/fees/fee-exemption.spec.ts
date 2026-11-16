@@ -74,8 +74,12 @@ describe('setUnitFeeExemptionSchema', () => {
     expect(setUnitFeeExemptionSchema.safeParse({ reason: 'OTHER' }).success).toBe(false);
     expect(setUnitFeeExemptionSchema.safeParse({ reason: 'OTHER', note: 'قرار المجلس البلدي' }).success).toBe(true);
     expect(setUnitFeeExemptionSchema.safeParse({ reason: 'PLACE_OF_WORSHIP' }).success).toBe(true);
-    expect(setUnitFeeExemptionSchema.safeParse({ reason: null }).success).toBe(true);
     expect(setUnitFeeExemptionSchema.safeParse({ reason: 'CHARITY' }).success).toBe(false);
+  });
+
+  it('needs a lift’s reason in words since 0104 (decision of 2026-11-16)', () => {
+    expect(setUnitFeeExemptionSchema.safeParse({ reason: null }).success).toBe(false);
+    expect(setUnitFeeExemptionSchema.safeParse({ reason: null, liftReason: 'انتهى القرار' }).success).toBe(true);
   });
 });
 
