@@ -98,3 +98,38 @@ export function optionalInt(value: string | undefined): number | undefined {
   }
   return Number(value);
 }
+
+/**
+ * A page size from a query string: digits only (`optionalInt`), `fallback`
+ * when absent, and clamped to 1…`max`. `Number(limit) || 50` took «1e9» as a
+ * billion rows and «-5» as minus five (task S11 of the 2026-11-14 security
+ * audit); a typo is refused, an excess is clamped.
+ */
+export function queryLimit(value: string | undefined, fallback: number, max: number): number {
+  return Math.min(Math.max(optionalInt(value) ?? fallback, 1), max);
+}
+
+/**
+ * How many rows to skip, from a query string: digits only, nine at most
+ * (`optionalInt`), so the offset stays a number Prisma's `skip` and Postgres
+ * take. `Number(offset) || 0` passed «1e20», «-5» and «Infinity» to the
+ * database, each a 500 (task S11).
+ */
+export function queryOffset(value: string | undefined): number {
+  return optionalInt(value) ?? 0;
+}
+
+/**
+ * One of a list's values from a query string, or nothing. For a filter that
+ * reaches the database as an enum: Prisma refuses a value its enum does not
+ * have with a validation error, which surfaced as a 500 for a misspelt
+ * `?status=` (task S11 of the 2026-11-14 security audit). A value the list
+ * does not hold is refused here as the malformed request it is.
+ */
+export function optionalOneOf<T extends string>(value: string | undefined, allowed: readonly T[]): T | undefined {
+  if (value === undefined || value === '') return undefined;
+  if (!(allowed as readonly string[]).includes(value)) {
+    throw new ValidationError({ code: 'INVALID_QUERY_VALUE', message: `Not one of the values this filter takes: ${value}` });
+  }
+  return value as T;
+}

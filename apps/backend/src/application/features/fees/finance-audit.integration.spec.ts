@@ -38,6 +38,13 @@ const OFFICIAL_RATE = 89_500;
 describeIfDb('finance audit remediation', () => {
   let ddl: Client;
   let db: TenantPrismaClient;
+  /**
+   * Every notice still active. These cases issue several fees of one basis and
+   * target on purpose, each its own, so each confirms the others as different
+   * fees, as a clerk must since the duplicate guard (finding F11).
+   */
+  const otherFees = async () =>
+    (await db.feeNotice.findMany({ where: { isActive: true }, select: { id: true } })).map((notice) => notice.id);
   let context: TenantContextService;
   let payments: PaymentLedgerService;
   let expenses: ExpensesService;
@@ -228,6 +235,134 @@ describeIfDb('finance audit remediation', () => {
         params: { receiptNumber: first.receiptNumber },
       });
       expect(await db.paymentTransaction.count({ where: { paymentId } })).toBe(1);
+    });
+
+    it('refuses the key for the same sum on another day (F18)', async () => {
+      const paymentId = await bill(500_000);
+      const key = randomUUID();
+      const yesterday = new Date(Date.now() - 86_400_000).toLocaleDateString('en-CA', { timeZone: 'Asia/Beirut' });
+      const settle = (paidOn?: string) =>
+        scoped(() =>
+          fees.settleInPerson({
+            paymentId,
+            method: 'CASH',
+            amount: 200_000,
+            clientRequestId: key,
+            ...(paidOn ? { paidOn, adjustmentReason: 'قُبضت أمس وأُدخلت اليوم' } : {}),
+            actor: MANAGER(),
+          }),
+        );
+      const first = await settle();
+      // The receipt says today: answered as it, it would tell the clerk yesterday's date was recorded.
+      await expect(settle(yesterday)).rejects.toMatchObject({
+        code: 'PAYMENT_IDEMPOTENCY_KEY_REUSED',
+        params: { receiptNumber: first.receiptNumber },
+      });
+      await expect(settle()).resolves.toMatchObject({ replayed: true });
+    });
+  });
+
+  // ─────────────────────  F18 and F19: what the counter showed, and large change  ─────────────────────
+
+  describe('a counter payment’s figures and its change (F18, F19)', () => {
+    const settleDollars = (
+      paymentId: string,
+      expected: { credit: number; change: number },
+      more: { clientRequestId?: string; adjustmentReason?: string } = {},
+    ) =>
+      scoped(() =>
+        fees.settleInPerson({
+          paymentId,
+          method: 'CASH',
+          tendered: { local: 0, foreign: 20, foreignCurrency: 'USD' },
+          expected,
+          ...more,
+          actor: MANAGER(),
+        }),
+      );
+    // $20 at the official rate against a bill of 500,000: the bill is paid and the rest handed back.
+    const worth = OFFICIAL_RATE * 20;
+    const shown = { credit: 500_000, change: worth - 500_000 };
+    const setRate = (exchangeRate: number) =>
+      db.systemSettings.update({ where: { singleton: true }, data: { exchangeRate } });
+
+    it('refuses a press whose balance moved since the screen showed it, and writes nothing', async () => {
+      const paymentId = await bill(500_000);
+      // Another desk takes part of the bill after this one read it.
+      await scoped(() => fees.settleInPerson({ paymentId, method: 'CASH', amount: 100_000, actor: MANAGER() }));
+
+      await expect(
+        scoped(() =>
+          fees.settleInPerson({ paymentId, method: 'CASH', expected: { credit: 500_000, change: 0 }, actor: MANAGER() }),
+        ),
+      ).rejects.toMatchObject({ code: 'PAYMENT_FIGURES_CHANGED', params: { credit: 400_000, change: 0 } });
+      expect(await db.paymentTransaction.count({ where: { paymentId } })).toBe(1);
+    });
+
+    it('refuses change worked out at a rate that moved since, and takes it at the rate shown', async () => {
+      const paymentId = await bill(500_000);
+      await setRate(OFFICIAL_RATE + 500);
+      try {
+        await expect(settleDollars(paymentId, shown)).rejects.toMatchObject({
+          code: 'PAYMENT_FIGURES_CHANGED',
+          params: { credit: 500_000, change: (OFFICIAL_RATE + 500) * 20 - 500_000 },
+        });
+        expect(await db.paymentTransaction.count({ where: { paymentId } })).toBe(0);
+      } finally {
+        await setRate(OFFICIAL_RATE);
+      }
+      await expect(settleDollars(paymentId, shown)).resolves.toMatchObject({
+        paymentStatus: 'PAID',
+        changeGiven: shown.change,
+      });
+    });
+
+    it('answers a retry from its first receipt even when the rate moved since', async () => {
+      const paymentId = await bill(500_000);
+      const key = randomUUID();
+      const first = await settleDollars(paymentId, shown, { clientRequestId: key });
+      await setRate(OFFICIAL_RATE + 500);
+      try {
+        // The same press after a lost answer: the money was counted out at the first rate, and that receipt stands.
+        await expect(settleDollars(paymentId, shown, { clientRequestId: key })).resolves.toMatchObject({
+          replayed: true,
+          receiptNumber: first.receiptNumber,
+        });
+      } finally {
+        await setRate(OFFICIAL_RATE);
+      }
+    });
+
+    it('asks a reason for change worth more than the large-exchange threshold, keeps it and flags the row', async () => {
+      const paymentId = await bill(500_000);
+      // Ten dollars, so the $14 of change handed back for $20 is «large».
+      await db.systemSettings.update({ where: { singleton: true }, data: { largeExchangeThreshold: 10 } });
+      try {
+        await expect(settleDollars(paymentId, shown)).rejects.toMatchObject({
+          code: 'PAYMENT_LARGE_CHANGE_REASON_REQUIRED',
+          params: { threshold: 10, currency: 'USD' },
+        });
+        expect(await db.paymentTransaction.count({ where: { paymentId } })).toBe(0);
+
+        const reason = 'دفع بورقة المئة دولار الوحيدة معه';
+        const settled = await settleDollars(paymentId, shown, { adjustmentReason: reason });
+        expect(settled).toMatchObject({ paymentStatus: 'PAID', changeGiven: shown.change });
+        const row = await db.paymentTransaction.findFirstOrThrow({ where: { paymentId } });
+        expect(row.adjustmentReason).toBe(reason);
+        const audit = await db.auditLogEntry.findFirstOrThrow({
+          where: { action: 'PAYMENT_CONFIRMED', entityId: paymentId },
+        });
+        expect(audit.after).toMatchObject({ largeChange: true, largeExchangeThreshold: 10, adjustmentReason: reason });
+      } finally {
+        await db.systemSettings.update({ where: { singleton: true }, data: { largeExchangeThreshold: 1000 } });
+      }
+    });
+
+    it('asks nothing of change under the threshold', async () => {
+      const paymentId = await bill(500_000);
+      await expect(settleDollars(paymentId, shown)).resolves.toMatchObject({ paymentStatus: 'PAID' });
+      const audit = await db.auditLogEntry.findFirstOrThrow({ where: { action: 'PAYMENT_CONFIRMED', entityId: paymentId } });
+      expect(audit.after).not.toHaveProperty('largeChange');
     });
   });
 
@@ -464,7 +599,7 @@ describeIfDb('finance audit remediation', () => {
 
   describe('a notice, a charge and a cancelled bill (B3, B4)', () => {
     const notice = (clientRequestId: string, title = 'رسم تنظيفات 2026') =>
-      scoped(() =>
+      scoped(async () =>
         fees.issue(
           {
             title,
@@ -475,6 +610,7 @@ describeIfDb('finance audit remediation', () => {
             targetType: 'INDIVIDUAL_CITIZEN',
             targetCitizenId: citizenId,
             dueDate: '2026-12-31',
+            acknowledgedDuplicates: await otherFees(),
             clientRequestId,
           },
           ACCOUNTANT(),
@@ -507,6 +643,57 @@ describeIfDb('finance audit remediation', () => {
       expect((await db.citizenPayment.findUniqueOrThrow({ where: { id } })).issuedById).toBe(ids.accountant);
       const row = await db.auditLogEntry.findFirstOrThrow({ where: { action: 'FEE_INDIVIDUAL_LEVIED', entityId: id } });
       expect(row.actorId).toBe(ids.accountant);
+    });
+
+    describe('«تكليف مالي» with a retry key (0102)', () => {
+      const charge = (clientRequestId: string, amount = 45_000) =>
+        scoped(() =>
+          fees.chargeIndividual({
+            citizenId,
+            title: 'تكليف بمفتاح',
+            amount,
+            dueDate: '2026-12-31',
+            clientRequestId,
+            actor: ACCOUNTANT(),
+          }),
+        );
+      const billsUnder = (key: string) => db.citizenPayment.count({ where: { clientRequestId: key } });
+      const levied = () => db.auditLogEntry.count({ where: { action: 'FEE_INDIVIDUAL_LEVIED' } });
+
+      it('raises one bill per key, and answers a retry with it', async () => {
+        const key = randomUUID();
+        const first = await charge(key);
+        expect(first).toMatchObject({ replayed: false });
+        const rows = await levied();
+
+        await expect(charge(key)).resolves.toMatchObject({
+          id: first.id,
+          invoiceNumber: first.invoiceNumber,
+          replayed: true,
+        });
+        expect(await billsUnder(key)).toBe(1);
+        expect(await levied()).toBe(rows);
+      });
+
+      it('refuses the key for another charge, naming the bill it raised', async () => {
+        const key = randomUUID();
+        const first = await charge(key);
+
+        await expect(charge(key, 46_000)).rejects.toMatchObject({
+          code: 'FEE_CHARGE_REQUEST_REUSED',
+          params: { invoiceNumber: first.invoiceNumber },
+        });
+        expect(await billsUnder(key)).toBe(1);
+      });
+
+      it('raises once when two presses with one key race', async () => {
+        const key = randomUUID();
+        const results = await Promise.all([charge(key), charge(key)]);
+
+        expect(new Set(results.map((result) => result.id)).size).toBe(1);
+        expect(results.filter((result) => result.replayed)).toHaveLength(1);
+        expect(await billsUnder(key)).toBe(1);
+      });
     });
 
     it('cancels a bill nothing was paid on, once, and the bill then takes nothing', async () => {

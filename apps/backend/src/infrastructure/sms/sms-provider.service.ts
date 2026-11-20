@@ -17,6 +17,13 @@ import { OtpChannel, SmsSender } from '../../domain/interfaces/otp-repository.in
  */
 @Injectable()
 export class SmsProviderService implements SmsSender {
+  /**
+   * Whether `deliver()` calls a real provider. It does not: it throws for
+   * every message (docs/open-decisions.md #2). Set it true in the change that
+   * writes `deliver()`, and only then does a key make the route live.
+   */
+  private static readonly providerWired: boolean = false;
+
   private readonly logger = new Logger(SmsProviderService.name);
   private readonly primaryKey?: string;
   private readonly fallbackKey?: string;
@@ -48,6 +55,16 @@ export class SmsProviderService implements SmsSender {
 
   get hasFallback(): boolean {
     return Boolean(this.fallbackKey && this.fallbackKey !== this.primaryKey);
+  }
+
+  /**
+   * A provider is wired and the primary key is set. A key alone is not
+   * enough: with `deliver()` unwritten it carries no message, which is how a
+   * phone-code request came to write a challenge, send nothing and, wherever
+   * `NODE_ENV` was not `production`, hand the code back in the response.
+   */
+  get isLive(): boolean {
+    return SmsProviderService.providerWired && Boolean(this.primaryKey);
   }
 
   async send(input: { phone: string; message: string; channel: OtpChannel }): Promise<void> {

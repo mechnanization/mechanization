@@ -26,6 +26,7 @@ import type {
   FeeBasis,
   FeeBearer,
   FeeMatrixBracket,
+  FeeNoticeDuplicate,
   FeeNoticePeriodSummary,
   FeeNoticePreviewInput,
   FeeNoticePreviewResult,
@@ -63,7 +64,7 @@ import { allocateDocumentNumbers } from '../../common/document-number';
 import { unitsUnderReview } from '../buildings/unit-status';
 import { uninhabitableUnitIds } from '../buildings/habitability';
 import { billingDayOfPeriod } from '../buildings/fee-exemption';
-import { ownerBillingRules } from '../buildings/owner-billing';
+import { checkResponsibleOwners, ownerBillingRules } from '../buildings/owner-billing';
 import { cancelRequestOfCancelledBill } from '../citizen-requests/cancelled-bill';
 import { assertNotMergedAway } from '../citizens/merged-away';
 import { ConflictError, DomainError, ForbiddenError, NotFoundError, ValidationError } from '../../common/exceptions';
@@ -84,10 +85,11 @@ import {
   type UnassessableDetail,
   type UnassessableUnit,
 } from './tiered-area';
+import { sameMonth, sameTarget, unconfirmed } from './duplicate-notice';
 import { likePattern, searchTokens } from '../../common/search-terms';
 import { citizenSearchText } from '../../common/citizen-search';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
-import { PaymentLedgerService, type Tender } from './payment-ledger.service';
+import { counterCredit, PaymentLedgerService, type Tender } from './payment-ledger.service';
 import { creditsWallets, documentOccurredAt } from '../treasury/treasury.plan';
 import { assertLiveCollector } from './live-collector';
 import { AuditService, type AuditEntryInput } from '../audit/audit.service';
@@ -1818,6 +1820,7 @@ export class FeesService {
       },
       outsideTable: plan.outsideTable,
       unassessable: plan.unassessable,
+      duplicates: await this.duplicateNotices(this.db as Prisma.TransactionClient, input),
       conflicts: plan.conflicts.map((conflict) => ({
         unitId: conflict.unitId,
         unitCode: conflict.unitCode,
@@ -1860,6 +1863,9 @@ export class FeesService {
       ? await this.replayNotice(this.db as Prisma.TransactionClient, input)
       : null;
     if (earlier) return earlier;
+
+    // Before the assessment, so a duplicate is refused without reading the register; asked again under the issue lock.
+    await this.refuseUnconfirmedDuplicates(this.db as Prisma.TransactionClient, input);
 
     const citizenIds = await this.resolveTargets(input);
 
@@ -1952,6 +1958,8 @@ export class FeesService {
       thousands of bills in here, and past five seconds Prisma closes the
       transaction under the insert.
     */
+    /** The duplicates found under the issue lock that the clerk confirmed, for the audit row. */
+    let duplicatesConfirmed: string[] = [];
     const result = await this.db.$transaction(async (tx) => {
       /*
         Serialised before anything is written; the key names the schema, so two
@@ -1964,6 +1972,17 @@ export class FeesService {
         const raced = await this.replayNotice(tx, input);
         if (raced) return { noticeId: raced.noticeId, issued: raced.issued, replayed: true as const };
       }
+
+      /*
+        Two issuers with two keys (finding F11): each passed the check above
+        before either had written, and each would bill the town. One lock per
+        municipality for every issue, taken after the key's, so the second
+        waits for the first to commit its notice and its bills and then finds
+        them. Issuing is rare; a notice waiting on another is the point.
+      */
+      const issueLock = `${this.tenantContext.schemaName}:fee-notice-issue`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${issueLock}))`;
+      duplicatesConfirmed = await this.refuseUnconfirmedDuplicates(tx, input);
 
       const notice = await tx.feeNotice.create({
         data: {
@@ -2048,6 +2067,7 @@ export class FeesService {
       targetType: input.targetType,
       // What the clerk chose and confirmed, for the audit row (0100); null when the notice named no scope.
       scope: storedScope(input),
+      duplicatesConfirmed,
       issuedCount: result.issued,
       unassessableCount: unassessable.length,
       exemptedUnitCount: exemptedUnits,
@@ -2262,6 +2282,111 @@ export class FeesService {
    * raised (`FEE_NOTICE_REQUEST_REUSED`). The counts beside the bills are not
    * replayed: they described the register as it stood at the first press.
    */
+  /**
+   * The active notices this one would duplicate (finding F11): the same basis,
+   * frequency and target (`sameTarget`), and the same period — a bill not
+   * cancelled in the new notice's first period, and for a one-off notice a due
+   * date in the same month (`sameMonth`). See `feeNoticeDuplicateSchema`. Read
+   * by the preview, and by the issue before its assessment and again under its
+   * lock.
+   */
+  private async duplicateNotices(
+    client: Prisma.TransactionClient,
+    input: {
+      basis: FeeBasis;
+      frequency: string;
+      targetType: string;
+      targetCategory?: string;
+      targetCategories?: readonly string[];
+      targetCitizenId?: string;
+      dueDate: string;
+    },
+  ): Promise<FeeNoticeDuplicate[]> {
+    const dueDate = new Date(input.dueDate);
+    // An invalid date is the issue's own refusal (`FEE_DUE_DATE_INVALID`); there is no period to compare.
+    if (Number.isNaN(dueDate.getTime())) return [];
+
+    const candidates = await client.feeNotice.findMany({
+      where: {
+        isActive: true,
+        basis: input.basis as never,
+        frequency: input.frequency as never,
+        targetType: input.targetType as never,
+      },
+      select: {
+        id: true,
+        title: true,
+        amount: true,
+        basis: true,
+        bearer: true,
+        frequency: true,
+        targetCategory: true,
+        targetCitizenId: true,
+        scope: true,
+        dueDate: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const target = {
+      targetType: input.targetType,
+      targetCitizenId: input.targetCitizenId ?? null,
+      categories: categoriesOf(input),
+    };
+    const periodKey = periodKeyFor(input.frequency, dueDate);
+    const found: FeeNoticeDuplicate[] = [];
+    for (const notice of candidates) {
+      const theirs = {
+        targetType: input.targetType,
+        targetCitizenId: notice.targetCitizenId,
+        categories: scopeOf(notice).categories,
+      };
+      if (!sameTarget(target, theirs)) continue;
+      if (input.frequency === 'ONCE' && !sameMonth(notice.dueDate, dueDate)) continue;
+      // Shared unit bills (0099) carry the notice and the period too, so they count.
+      const billCount = await client.citizenPayment.count({
+        where: { feeNoticeId: notice.id, periodKey, paymentStatus: { not: 'CANCELLED' } },
+      });
+      if (billCount === 0) continue;
+      found.push({
+        id: notice.id,
+        title: notice.title,
+        amount: Number(notice.amount),
+        basis: notice.basis as FeeNoticeDuplicate['basis'],
+        bearer: notice.bearer as FeeNoticeDuplicate['bearer'],
+        frequency: notice.frequency as FeeNoticeDuplicate['frequency'],
+        dueDate: notice.dueDate.toISOString(),
+        issuedAt: notice.createdAt.toISOString(),
+        billCount,
+      });
+    }
+    return found;
+  }
+
+  /**
+   * Refuses the issue while it duplicates an active notice the request did
+   * not confirm (`acknowledgedDuplicates`, by id), and answers the ones it did
+   * confirm. Confirmed by id rather than by a yes: a notice someone else issued
+   * after the clerk's preview is not covered by a box ticked before it existed.
+   */
+  private async refuseUnconfirmedDuplicates(
+    client: Prisma.TransactionClient,
+    input: CreateFeeNotice,
+  ): Promise<string[]> {
+    const duplicates = await this.duplicateNotices(client, input);
+    const open = unconfirmed(duplicates, input.acknowledgedDuplicates);
+    if (open.length > 0) {
+      throw new ConflictError({
+        code: 'FEE_NOTICE_DUPLICATE',
+        message: 'An active notice already bills the same people for the same period',
+        params: { title: open[0].title, count: open.length },
+        details: { duplicates: open },
+      });
+    }
+    return duplicates.map((duplicate) => duplicate.id);
+  }
+
   private async replayNotice(tx: Prisma.TransactionClient, input: CreateFeeNotice) {
     const notice = await tx.feeNotice.findUnique({
       where: { clientRequestId: input.clientRequestId },
@@ -2973,16 +3098,29 @@ export class FeesService {
    *
    * Also returns where the holdings sit — the buildings and unit codes — so a
    * change recorded against a unit can be traced back to the bills it moves.
+   *
+   * A flat billed to one «مالك مسؤول» is split equally instead when that
+   * owner's own file no longer claims it (`checkResponsibleOwners`, finding F13
+   * of the 2026-11-14 billing audit): otherwise the others paid nothing and he
+   * was billed nothing. `checkResponsible: false` skips that one question, for
+   * `ownerClaims`, which asks it.
    */
   async *holdingsOf(
     citizenIds: readonly string[],
     /**
-     * The municipal day a unit's fee exemption is judged on (`isFeeExemptOn`,
+     * `exemptOn`: the municipal day a unit's fee exemption is judged on (`isFeeExemptOn`,
      * 0104): the first day of the period being billed (`billingDayOfPeriod`),
-     * or today for a reading of the register as it stands.
+     * or today for a reading of the register as it stands. `checkResponsible: false`
+     * skips the responsible-owner question, for `ownerClaims`, which asks it.
      */
-    options: { exemptOn: string },
+    options: { exemptOn: string; checkResponsible?: boolean },
   ): AsyncGenerator<CitizenHoldings[]> {
+    // One read of each responsible owner's file per call, however many batches name them.
+    const claims = new Map<string, Promise<ReadonlySet<string>>>();
+    const claimsOf = (citizenId: string) => {
+      if (!claims.has(citizenId)) claims.set(citizenId, this.ownerClaims(citizenId));
+      return claims.get(citizenId)!;
+    };
     /*
       Read in batches rather than one `IN (...)` over the whole register.
 
@@ -3217,6 +3355,7 @@ export class FeesService {
         heldHere.size === 0
           ? new Map()
           : await withConnectionRetry(() => ownerBillingRules(this.db, [...heldHere]));
+      if (options.checkResponsible !== false) await checkResponsibleOwners(coOwnership, claimsOf);
       /** This owner's part of a flat others own too; nothing for a flat they own alone. */
       const ownerShareFor = (
         unitId: string | undefined | null,
@@ -3366,6 +3505,26 @@ export class FeesService {
         };
       });
     }
+  }
+
+  /**
+   * The flats a citizen's own file claims as owner, as billing reads that file
+   * — the units a rate-based bill would charge them for as an owner. Asked of a
+   * «مالك مسؤول» at billing time (`checkResponsibleOwners`) and when the choice
+   * is saved (`OwnerBillingService`), so the two cannot disagree with the bill.
+   */
+  async ownerClaims(citizenId: string): Promise<Set<string>> {
+    const claimed = new Set<string>();
+    // Which flats the file claims does not depend on the day exemptions are judged on:
+    // `billableUnits` keeps an exempt unit (flagged, not dropped), so today will do.
+    for await (const batch of this.holdingsOf([citizenId], { exemptOn: municipalToday(), checkResponsible: false })) {
+      for (const holding of batch) {
+        for (const unit of holding.entries.flatMap(billableUnits)) {
+          if (unit.unitId && unit.occupancyType === 'OWNER') claimed.add(unit.unitId);
+        }
+      }
+    }
+    return claimed;
   }
 
   // ────────────────────────────  Payments  ────────────────────────────
@@ -3826,8 +3985,22 @@ export class FeesService {
     title: string;
     amount: number;
     dueDate: string;
+    /** One id per press of «تكليف» (0102); a retry is answered with the first bill. */
+    clientRequestId?: string;
     actor: { id: string; role: string };
   }) {
+    /*
+      A retry after a lost answer (0102; docs/security.md, the «تكليف مالي»
+      gap): answered with the bill the first press raised, asked here and again
+      under the key's lock inside the write. Before this, the second press
+      billed the citizen twice. The route's schema requires the key; a caller
+      inside the server that sends none charges as before, unguarded.
+    */
+    if (input.clientRequestId) {
+      const earlier = await this.replayCharge(this.db as Prisma.TransactionClient, input);
+      if (earlier) return earlier;
+    }
+
     // An archived file takes no new fees (develop, 0a5f6db); `raiseOneOffBill` refuses it too.
     await this.chargeableCitizen(input.citizenId);
 
@@ -3846,12 +4019,24 @@ export class FeesService {
     */
     const created = await runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
+      /*
+        Two presses with one key arriving together meet here, one after the
+        other; the second finds the first's bill. Schema-scoped and lower-cased,
+        as the notice's key is.
+      */
+      if (input.clientRequestId) {
+        const lockKey = `${this.tenantContext.schemaName}:fee-charge:${input.clientRequestId.toLowerCase()}`;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
+        const raced = await this.replayCharge(tx, input);
+        if (raced) return { id: raced.id, raced };
+      }
       const bill = await raiseOneOffBill(tx, this.S, {
         citizenId: input.citizenId,
         title: input.title,
         amount: input.amount,
         dueDate: new Date(input.dueDate),
         issuedById: input.actor.id,
+        clientRequestId: input.clientRequestId ?? null,
       });
       await this.auditTrail.recordInTransaction({
         actorId: input.actor.id,
@@ -3869,8 +4054,11 @@ export class FeesService {
           dueDate: input.dueDate,
         },
       });
-      return { id: bill.id };
+      return { id: bill.id, invoiceNumber: bill.invoiceNumber, raced: null };
     });
+
+    // A press that raced the first one with the same key: answered from it, and nothing written or emitted.
+    if (created.raced) return created.raced;
 
     // For the caches that count bills; the audit row is already written.
     this.events.emit('fee.issued', {
@@ -3885,7 +4073,44 @@ export class FeesService {
       alreadyAudited: true,
     });
 
-    return { id: created.id };
+    return { id: created.id, invoiceNumber: created.invoiceNumber, replayed: false as const };
+  }
+
+  /**
+   * The bill a retry key already raised, or null (0102).
+   *
+   * A key names one charge: this citizen, this title, this amount, this due
+   * date. The same press again is answered with the first bill, `replayed`, so
+   * the dialog says it was already raised instead of a second success; any of
+   * them changed under the key is refused (`FEE_CHARGE_REQUEST_REUSED`, naming
+   * the first bill), because a key is kept across every edit and an answer of
+   * the first bill would tell the clerk the corrected charge was raised. A bill
+   * cancelled since is still the one the key raised, and is answered so: a new
+   * charge is a new press, with a new key.
+   */
+  private async replayCharge(
+    tx: Prisma.TransactionClient,
+    input: { clientRequestId?: string; citizenId: string; title: string; amount: number; dueDate: string },
+  ): Promise<{ id: string; invoiceNumber: string | null; replayed: true } | null> {
+    if (!input.clientRequestId) return null;
+    const bill = await tx.citizenPayment.findUnique({
+      where: { clientRequestId: input.clientRequestId },
+      select: { id: true, citizenId: true, title: true, amount: true, dueDate: true, invoiceNumber: true },
+    });
+    if (!bill) return null;
+    const same =
+      bill.citizenId?.toLowerCase() === input.citizenId.toLowerCase() &&
+      bill.title === input.title &&
+      Number(bill.amount) === input.amount &&
+      bill.dueDate.getTime() === new Date(input.dueDate).getTime();
+    if (!same) {
+      throw new ConflictError({
+        code: 'FEE_CHARGE_REQUEST_REUSED',
+        message: `This request id already raised another charge (${bill.invoiceNumber ?? bill.id}).`,
+        params: { invoiceNumber: bill.invoiceNumber ?? '' },
+      });
+    }
+    return { id: bill.id, invoiceNumber: bill.invoiceNumber, replayed: true };
   }
 
   /**
@@ -4915,6 +5140,8 @@ export class FeesService {
     adjustmentReason?: string;
     /** The page's id for this press of the button — a retry returns the first receipt. */
     clientRequestId?: string;
+    /** What the screen showed: the credit and the change; the ledger refuses figures that moved (F18). */
+    expected?: { credit: number; change: number };
     actor: { id: string; role: string };
   }) {
     /*
@@ -4997,6 +5224,49 @@ export class FeesService {
       });
 
       /*
+        «الباقي» is an exchange: foreign notes in, ليرة out of the safe (finding
+        F19 of the 2026-11-14 billing audit). Change worth more, in the foreign
+        currency, than the manager's large-exchange threshold — the bar that
+        sends a transfer to review — needs a reason, kept on the receipt and
+        flagged in the audit row (Abed's decision of 2026-11-15: a reason and a
+        flag, no review queue). Judged on the figure the ledger records
+        (`counterCredit`). A payment the ledger will refuse, or a retry of one
+        already recorded — the bill is settled, so nothing is owed — has no
+        change to judge here: `recordIn` answers it, after the replay.
+      */
+      const largeChange = (() => {
+        if (!tender?.foreign || !tender.exchangeRate) return null;
+        let changeGiven: number;
+        try {
+          ({ changeGiven } = counterCredit({
+            amount: received,
+            tendered: tender,
+            outstanding: invoice.amount - invoice.paidAmount,
+            currency: invoice.currency,
+          }));
+        } catch {
+          return null;
+        }
+        const threshold =
+          config.largeExchangeThreshold === null
+            ? DEFAULT_LARGE_EXCHANGE_THRESHOLD
+            : Number(config.largeExchangeThreshold);
+        const foreignValue = Math.round((changeGiven / tender.exchangeRate) * 100) / 100;
+        return Math.round(foreignValue * 100) > Math.round(threshold * 100)
+          ? { foreignValue, threshold, currency: tender.foreignCurrency }
+          : null;
+      })();
+      if (largeChange && !input.adjustmentReason?.trim()) {
+        throw new ValidationError({
+          code: 'PAYMENT_LARGE_CHANGE_REASON_REQUIRED',
+          message: `The change is worth ${largeChange.foreignValue} ${largeChange.currency}, above the large-exchange threshold of ${largeChange.threshold}; give the reason.`,
+          params: { threshold: largeChange.threshold, currency: largeChange.currency ?? '' },
+          details: { adjustmentReason: '' },
+        });
+      }
+      const reasonKept = adjustment.required || largeChange !== null;
+
+      /*
         After go-live, a payment dated before it credits no wallet (docs/finance.md
         §3.3). That is right for cash already inside the counted opening balance,
         and a silent hole for anything else: cash taken today and dated last week
@@ -5037,8 +5307,9 @@ export class FeesService {
         note: input.note,
         tendered: tender,
         occurredAt,
-        adjustmentReason: adjustment.required ? (input.adjustmentReason ?? null) : null,
+        adjustmentReason: reasonKept ? (input.adjustmentReason ?? null) : null,
         clientRequestId: input.clientRequestId ?? null,
+        expected: input.expected ?? null,
         /*
           What a Court of Audit reviewer asks of a cash entry: how much, on which
           receipt, on what day, in which notes, at what rate against the official
@@ -5076,7 +5347,15 @@ export class FeesService {
                   changeGiven: movement.changeGiven,
                 }
               : {}),
-            ...(adjustment.required ? { adjustmentReason: input.adjustmentReason } : {}),
+            // Change worth more than the large-exchange threshold (F19): flagged, so it can be found.
+            ...(largeChange
+              ? {
+                  largeChange: true,
+                  changeForeignValue: largeChange.foreignValue,
+                  largeExchangeThreshold: largeChange.threshold,
+                }
+              : {}),
+            ...(reasonKept ? { adjustmentReason: input.adjustmentReason } : {}),
           },
         }),
       });

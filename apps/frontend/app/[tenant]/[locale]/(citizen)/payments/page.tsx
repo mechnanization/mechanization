@@ -37,6 +37,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { PayDialog } from '@/components/citizen/pay-dialog';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/dates';
+import { signOutCitizen } from '@/lib/citizen-sign-out';
 
 /*
   A bill the municipality cancelled (CANCELLED) is muted: it stays on the list,
@@ -189,8 +190,9 @@ export default function CitizenPayments({
         </div>
         <Button
           variant="ghost"
-          onClick={() => {
-            clearSession(tenant);
+          onClick={async () => {
+            // Ended on the server too, not only forgotten here (S14).
+            await signOutCitizen(tenant);
             router.push(`/${tenant}/${locale}`);
           }}
         >

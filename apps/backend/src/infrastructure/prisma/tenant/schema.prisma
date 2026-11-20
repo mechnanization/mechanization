@@ -228,6 +228,15 @@ model User {
   /// presenting a step at or below this one is refused whatever the digits say.
   lastTotpStep BigInt?
 
+  /// Wrong TOTP codes since the last accepted one or the last lockout
+  /// (migration 0101). Reaching `APP_CONFIG.totp.maxFailures` sets
+  /// `totpLockedUntil` and starts the count again.
+  totpFailedAttempts Int @default(0)
+
+  /// While in the future, no TOTP code is checked for this account, right or
+  /// wrong. NULL when it is not locked. Migration 0101.
+  totpLockedUntil DateTime?
+
   /// Read-only. A Postgres `GENERATED ALWAYS AS ... STORED` column holding
   /// every value this row can be looked up by, folded to one alphabet:
   /// hamza-carrying alefs to bare alef, taa marbuta to haa, alef maqsura to
@@ -2358,6 +2367,11 @@ model CitizenPayment {
   /// for every bill raised before 0091 — never guessed.
   issuedById String? @db.Uuid
   issuedBy   User?   @relation("PaymentIssuedBy", fields: [issuedById], references: [id], onDelete: Restrict)
+
+  /// «تكليف مالي»'s retry key (0102): one id per press, so a retry after a lost
+  /// answer finds the bill the first press raised. NULL on every bill a notice
+  /// raises, and on every one-off charge raised before 0102.
+  clientRequestId String? @unique @db.Uuid
 
   /// «إلغاء الفاتورة» (0091): the manager withdrew this bill before any money was
   /// taken on it. The three move together with `paymentStatus` CANCELLED, and a

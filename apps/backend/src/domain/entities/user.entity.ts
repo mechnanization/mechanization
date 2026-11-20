@@ -25,6 +25,8 @@ export interface StaffProps {
   lastTotpStep?: bigint | null;
   totpSecret?: string | null;
   totpConfirmedAt?: Date | null;
+  /** While in the future, no code is checked for this account (0101). */
+  totpLockedUntil?: Date | null;
 }
 
 export interface CitizenProps {
@@ -100,13 +102,23 @@ export class User extends AggregateRoot {
   /**
    * The TOTP step this account last authenticated with, or `null`.
    *
-   * Compared against the step a submitted code falls in, which is what makes a
-   * code single-use: within `otplib`'s one-step window the same digits verify
-   * for about ninety seconds, so "it verified" is not on its own enough.
+   * Compared against the step a submitted code was generated in, which is
+   * what makes a code single-use: within the one-step window the same digits
+   * verify for about ninety seconds, so "it verified" is not on its own enough.
    */
   get lastTotpStep(): number | null {
     const raw = this.attrs.lastTotpStep as bigint | number | null | undefined;
     return raw === null || raw === undefined ? null : Number(raw);
+  }
+
+  /**
+   * Whether wrong codes have locked this account's second factor at `now`.
+   * Read as loaded; the write that accepts a code checks it again, so a code
+   * sent while a lockout is being set is still refused.
+   */
+  totpLockedAt(now: Date): Date | null {
+    const until = this.attrs.totpLockedUntil as Date | null | undefined;
+    return until && until.getTime() > now.getTime() ? until : null;
   }
 
   get totpSecret(): string | undefined {

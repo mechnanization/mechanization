@@ -9,20 +9,19 @@ import { TotpService } from '../../domain/interfaces/otp-repository.interface';
  * and scanned documents for their municipality, and can export the lot to CSV.
  * A single reused password should not be all that stands in front of that.
  */
-/** Shared by the verifier and `currentStep`, so the two cannot drift apart. */
 const STEP_SECONDS = 30;
+
+/**
+ * One step either side of now: 30s of phone clock drift each way, and a code
+ * typed just as it rolled over still counts. Two steps (until 2026-11-15)
+ * kept a code valid for two and a half minutes, which is room for a code read
+ * over a shoulder or relayed by a phishing page to be used (security.md: «The
+ * verifier SHOULD accept one step either side»).
+ */
+const WINDOW_STEPS = 1;
 
 @Injectable()
 export class OtplibTotpService implements TotpService {
-  constructor() {
-    authenticator.options = {
-      // Two steps of tolerance each way (60s past & 60s future): phone clocks drift,
-      // and the alternative is locking an admin out over a few seconds of clock skew.
-      window: 2,
-      step: STEP_SECONDS,
-    };
-  }
-
   generateSecret(): string {
     return authenticator.generateSecret();
   }
@@ -32,25 +31,29 @@ export class OtplibTotpService implements TotpService {
   }
 
   /**
-   * Derived from the same 30-second step the verifier uses, so the number
-   * stored alongside an accepted code describes exactly the window that code
-   * was valid in.
+   * The step the code belongs to: the clock's step plus otplib's delta.
+   *
+   * The checker is cloned with the instant pinned, so the delta and the step
+   * it is added to are read from the same moment; read apart, a check that
+   * straddled a step boundary would name the neighbouring step. The shared
+   * `authenticator`'s own options are never changed. They are set on the
+   * clone rather than passed to `clone()`: otplib lays the source instance's
+   * `options` over whatever `clone()` is given, so a `window` set on the
+   * shared instance anywhere in the process would otherwise win.
    */
-  currentStep(now: Date = new Date()): number {
-    return Math.floor(now.getTime() / 1000 / STEP_SECONDS);
-  }
-
-  verify(token: string, secret: string): boolean {
+  matchStep(token: string, secret: string, now: Date = new Date()): number | null {
     try {
-      const cleanToken = token.replace(/[\s-]/g, '').trim();
-      const cleanSecret = secret.replace(/\s/g, '').trim();
-      return (
-        authenticator.verify({ token: cleanToken, secret: cleanSecret }) ||
-        authenticator.check(cleanToken, cleanSecret)
-      );
+      const cleanToken = token.replace(/[\s-]/g, '');
+      const cleanSecret = secret.replace(/\s/g, '');
+      const epoch = now.getTime();
+      const checker = authenticator.clone();
+      checker.options = { step: STEP_SECONDS, window: WINDOW_STEPS, epoch };
+      const delta = checker.checkDelta(cleanToken, cleanSecret);
+      if (delta === null) return null;
+      return Math.floor(epoch / 1000 / STEP_SECONDS) + delta;
     } catch {
-      // A malformed token is a failed check, not a 500.
-      return false;
+      // A malformed token or secret is a failed check, not a 500.
+      return null;
     }
   }
 }

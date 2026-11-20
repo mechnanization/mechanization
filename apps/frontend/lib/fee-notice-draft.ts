@@ -438,6 +438,13 @@ export interface NoticeDraft {
   residences: CitizenResidence[];
   /** The clerk confirmed the scope's warnings (`noticeWarnings`); cleared by any change to the scope. */
   scopeConfirmed: boolean;
+  /**
+   * The active notices the preview listed as duplicates of this one
+   * (`FeeNoticeDuplicate`) that the clerk chose to issue beside, by id. By id,
+   * as the server takes them: a notice issued since the box was ticked is not
+   * among them, so «إصدار» waits again (`duplicatesConfirmed`).
+   */
+  duplicatesConfirmed: string[];
   targetCitizenId: string;
   dueDate: string;
   instructions: string;
@@ -551,16 +558,31 @@ export function noticeWarnings(values: NoticeDraft): FeeScopeWarning[] {
 }
 
 /**
- * The notice as «إصدار» sends it: the preview's notice, and the warnings the
- * clerk confirmed — none unless they did, so an unconfirmed scope is refused by
- * the server as well as held by the wizard.
+ * The notice as «إصدار» sends it: the preview's notice, the warnings the clerk
+ * confirmed — none unless they did, so an unconfirmed scope is refused by the
+ * server as well as held by the wizard — and the duplicates they confirmed.
  */
-export function issuePayload(values: NoticeDraft): FeeNoticePreviewInput {
+export function issuePayload(
+  values: NoticeDraft,
+): FeeNoticePreviewInput & { acknowledgedDuplicates?: string[] } {
   const warnings = noticeWarnings(values);
   return {
     ...noticePayload(values),
     acknowledgedWarnings: values.scopeConfirmed && warnings.length > 0 ? warnings : undefined,
+    acknowledgedDuplicates: values.duplicatesConfirmed.length > 0 ? values.duplicatesConfirmed : undefined,
   };
+}
+
+/**
+ * Whether every duplicate the preview listed (`FeeNoticeDuplicate`) is
+ * confirmed. The server asks the same of the issue (`FEE_NOTICE_DUPLICATE`),
+ * so «إصدار» waits for it rather than send a press that will be refused.
+ */
+export function duplicatesConfirmed(
+  values: Pick<NoticeDraft, 'duplicatesConfirmed'>,
+  duplicates: readonly { id: string }[],
+): boolean {
+  return duplicates.every((duplicate) => values.duplicatesConfirmed.includes(duplicate.id));
 }
 
 /**

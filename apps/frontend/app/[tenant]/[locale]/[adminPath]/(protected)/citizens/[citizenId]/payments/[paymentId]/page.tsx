@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import {
   ADJUSTMENT_REASON_MIN,
+  DEFAULT_LARGE_EXCHANGE_THRESHOLD,
   BACKDATE_WINDOW_DAYS,
   canOverrideCashRules,
   cancelBillSchema,
@@ -276,7 +277,16 @@ export default function SettleCashPage({
 
   const rateOverridden = foreign > 0 && (officialRate === null || exchangeRate !== roundRate(officialRate));
   const backdatedDays = paidOn && paidOn < today ? daysBetween(paidOn, today) : 0;
-  const needsReason = rateOverridden || backdatedDays > 0;
+  /*
+    «الباقي» is an exchange: change worth more, in the foreign currency, than
+    the manager's large-exchange threshold needs a reason (finding F19, the
+    server's rule in `settleInPerson`), judged as the server judges it — the
+    change over the rate, to the cent.
+  */
+  const largeThreshold = settings?.largeExchangeThreshold ?? DEFAULT_LARGE_EXCHANGE_THRESHOLD;
+  const changeForeignValue = change > 0 && exchangeRate > 0 ? Math.round((change / exchangeRate) * 100) / 100 : 0;
+  const largeChange = Math.round(changeForeignValue * 100) > Math.round(largeThreshold * 100);
+  const needsReason = rateOverridden || backdatedDays > 0 || largeChange;
 
   const problem: string | null = (() => {
     if (usesForeign && exchangeRate <= 0) {
@@ -305,9 +315,11 @@ export default function SettleCashPage({
         ? en
           ? 'Write why this payment is taken at another rate.'
           : 'اكتب سبب اعتماد سعر صرف غير السعر المعتمد.'
-        : en
-          ? 'Write why this payment is dated before today.'
-          : 'اكتب سبب تسجيل الدفعة بتاريخ سابق.';
+        : largeChange
+          ? t('largeChange.needed')
+          : en
+            ? 'Write why this payment is dated before today.'
+            : 'اكتب سبب تسجيل الدفعة بتاريخ سابق.';
     }
     return null;
   })();
@@ -399,10 +411,23 @@ export default function SettleCashPage({
         */
         ...(shared ? { paidByCitizenId: paidBy } : {}),
         clientRequestId: heldKey(tenant, keyScope),
+        /*
+          The credit and the change this page shows (finding F18). The server
+          works both out again under the bill's lock, at the rate committed
+          then, and refuses the press when either moved — another desk took part
+          of the bill, or the official rate changed — rather than hand back other
+          change than was counted out.
+        */
+        expected: { credit, change },
       });
     } catch (caught) {
       logApiError(caught);
       setError(failureText(caught));
+      if (caught instanceof ApiRequestError && caught.code === 'PAYMENT_FIGURES_CHANGED') {
+        // Nothing was written and the key is kept: the bill and the rate are read again, and the preview with them.
+        void queryClient.invalidateQueries({ queryKey: ['municipality-settings', tenant] });
+        void queryClient.invalidateQueries({ queryKey: ['citizen-profile', tenant, citizenId] });
+      }
       // A key whose act exists is spent; every other failure keeps it, so a retry is answered from the first.
       if (keyIsSpent(caught)) {
         spendKey(tenant, keyScope);
@@ -890,9 +915,15 @@ export default function SettleCashPage({
                       ? en
                         ? 'Why another rate'
                         : 'سبب اعتماد سعر آخر'
-                      : en
-                        ? `Why it is dated ${backdatedDays} day${backdatedDays === 1 ? '' : 's'} before today`
-                        : `سبب تسجيلها بتاريخ يسبق اليوم بـ ${backdatedDays} يوماً`
+                      : largeChange
+                        ? t('largeChange.label', {
+                            amount: changeForeignValue,
+                            unit: foreignUnit,
+                            threshold: largeThreshold,
+                          })
+                        : en
+                          ? `Why it is dated ${backdatedDays} day${backdatedDays === 1 ? '' : 's'} before today`
+                          : `سبب تسجيلها بتاريخ يسبق اليوم بـ ${backdatedDays} يوماً`
                   }
                   htmlFor="tender-reason"
                   required

@@ -215,6 +215,7 @@ export function PropertyCard({
   token,
   citizenId,
   censusPicker = false,
+  canAnswerLandlord,
   lockedCensusTarget,
   nonResident = false,
   recordKind,
@@ -276,6 +277,8 @@ export function PropertyCard({
   token?: string | null;
   /** Opt-in, so the citizen wizard's own use of this card is unchanged. */
   censusPicker?: boolean;
+  /** Whether this session may answer an owner claim (`LANDLORD_LINK_ANSWER_ROLES`); required, so it never fails open. */
+  canAnswerLandlord: boolean;
   /** Set when the form was launched from a building's unit matrix. */
   lockedCensusTarget?: LockedCensusTarget | null;
   /**
@@ -1141,6 +1144,7 @@ export function PropertyCard({
                         phone={draft.landlordPhone}
                         typedName={draft.landlordName}
                         agreedCitizenId={draft.landlordCitizenId}
+                        canAnswer={canAnswerLandlord}
                         /*
                           The id makes the link on save; the registered name is what
                           the locked field shows. The tenant's own words stay in

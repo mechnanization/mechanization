@@ -94,6 +94,19 @@ export const ERROR_CODES = [
   'BILL_ALREADY_CANCELLED',
   // A retry key already used to issue a different notice.
   'FEE_NOTICE_REQUEST_REUSED',
+  // «تكليف مالي»: a retry key already used for a different one-off charge (0102). `params.invoiceNumber`
+  // names the bill the key raised.
+  'FEE_CHARGE_REQUEST_REUSED',
+  // An active notice would bill the same people for the same period (`FeeNoticeDuplicate`), not
+  // confirmed in `acknowledgedDuplicates`. `params.title` is the first one's title, `params.count`
+  // how many; `details.duplicates` lists them.
+  'FEE_NOTICE_DUPLICATE',
+  // A single counter payment whose credit or change, worked out under the bill's lock, is not what the
+  // screen showed (`expected`): `params.credit`, `params.change` and `params.currency` are the server's.
+  'PAYMENT_FIGURES_CHANGED',
+  // Counter change worth more than the manager's large-exchange threshold, with no reason given.
+  // `params.threshold` is the threshold and `params.currency` the foreign currency it is counted in.
+  'PAYMENT_LARGE_CHANGE_REASON_REQUIRED',
   // Several of one citizen's bills settled in one press (docs/finance.md §3.7)
   'BULK_SETTLE_CITIZEN_MISMATCH',
   // A selected bill was settled since it was ticked (`params.invoice`: its INV- number, or its title).
@@ -400,6 +413,13 @@ export const ERROR_CODES = [
   'ORIGIN_NOT_ALLOWED',
   // A staff member's own account («أمان الحساب»): the password typed to confirm a change is wrong.
   'STAFF_CURRENT_PASSWORD_INCORRECT',
+  // A staff second factor (TOTP): a wrong code (401), a right one already used (409), and wrong
+  // codes having locked the account; `params.minutes` is how long is left, rounded up (403).
+  'TOTP_CODE_INVALID',
+  'TOTP_CODE_REUSED',
+  'TOTP_LOCKED',
+  // The phone-code sign-in (`citizen/otp/*`) while no SMS provider is live; the portal signs in by رقم مرجعي.
+  'CITIZEN_OTP_UNAVAILABLE',
   // Raised by the portal itself when no response arrives or it cannot be read
   'NETWORK_ERROR',
   'UNKNOWN',
