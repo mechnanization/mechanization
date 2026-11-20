@@ -1,15 +1,4 @@
-import {
-  Body,
-  Controller,
-  Get,
-  Param,
-  ParseUUIDPipe,
-  Post,
-  Put,
-  Query,
-  UploadedFile,
-  UseInterceptors,
-} from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Put, Query, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Throttle } from '@nestjs/throttler';
 import { createHash } from 'node:crypto';
@@ -43,6 +32,7 @@ import type { SessionClaims } from '../../application/features/identity/identity
 import { APP_CONFIG } from '../config/app.config';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
+import { UuidPipe } from '../pipes/uuid.pipe';
 
 /**
  * A citizen filing and uploading through the portal. Counted per session, not
@@ -126,7 +116,7 @@ export class CitizenRequestsController {
   }
 
   @Get('mine/:id')
-  mineOne(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: SessionClaims) {
+  mineOne(@Param('id', new UuidPipe()) id: string, @CurrentUser() user: SessionClaims) {
     return this.requests.mineOne(asCitizen(user), id);
   }
 
@@ -134,7 +124,7 @@ export class CitizenRequestsController {
   @Post('mine/:id/attachments')
   @UseInterceptors(ATTACHMENT_UPLOAD)
   uploadMine(
-    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('id', new UuidPipe()) id: string,
     @UploadedFile() file: Express.Multer.File | undefined,
     @Body(new ZodValidationPipe(uploadRequestAttachmentSchema)) body: UploadRequestAttachmentInput,
     @CurrentUser() user: SessionClaims,
@@ -146,13 +136,13 @@ export class CitizenRequestsController {
   /** «ادفع الآن»: the fee's bill, raised now or answered if it already is. */
   @Throttle(CITIZEN_SUBMISSION_THROTTLE)
   @Post('mine/:id/bill')
-  billMine(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: SessionClaims) {
+  billMine(@Param('id', new UuidPipe()) id: string, @CurrentUser() user: SessionClaims) {
     const citizenId = asCitizen(user);
     return this.requests.raiseBill(id, { kind: 'CITIZEN', id: citizenId }, { citizenId });
   }
 
   @Post('mine/:id/cancel')
-  async cancelMine(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: SessionClaims) {
+  async cancelMine(@Param('id', new UuidPipe()) id: string, @CurrentUser() user: SessionClaims) {
     const citizenId = asCitizen(user);
     await this.requests.cancel(id, { kind: 'CITIZEN', id: citizenId }, { citizenId });
     return this.requests.mineOne(citizenId, id);
@@ -195,21 +185,21 @@ export class CitizenRequestsController {
 
   @Roles(...REQUEST_READ_ROLES)
   @Get(':id')
-  get(@Param('id', new ParseUUIDPipe()) id: string) {
+  get(@Param('id', new UuidPipe()) id: string) {
     return this.requests.get(id);
   }
 
   /** «تحصيل الرسم»: the fee's bill, for the counter to settle. */
   @Roles(...REQUEST_BILL_ROLES)
   @Post(':id/bill')
-  bill(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: SessionClaims) {
+  bill(@Param('id', new UuidPipe()) id: string, @CurrentUser() user: SessionClaims) {
     return this.requests.raiseBill(id, { kind: 'STAFF', ...staff(user) });
   }
 
   @Roles(...REQUEST_HANDLE_ROLES)
   @Post(':id/approve')
   approve(
-    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(approveRequestSchema)) body: ApproveRequestInput,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -219,7 +209,7 @@ export class CitizenRequestsController {
   @Roles(...REQUEST_HANDLE_ROLES)
   @Post(':id/reject')
   reject(
-    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(rejectRequestSchema)) body: RejectRequestInput,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -228,13 +218,13 @@ export class CitizenRequestsController {
 
   @Roles(...REQUEST_HANDLE_ROLES)
   @Post(':id/complete')
-  complete(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: SessionClaims) {
+  complete(@Param('id', new UuidPipe()) id: string, @CurrentUser() user: SessionClaims) {
     return this.requests.complete(id, staff(user));
   }
 
   @Roles(...REQUEST_HANDLE_ROLES)
   @Post(':id/cancel')
-  async cancel(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: SessionClaims) {
+  async cancel(@Param('id', new UuidPipe()) id: string, @CurrentUser() user: SessionClaims) {
     await this.requests.cancel(id, { kind: 'STAFF', ...staff(user) });
     return this.requests.get(id);
   }
@@ -243,7 +233,7 @@ export class CitizenRequestsController {
   @Post(':id/attachments')
   @UseInterceptors(ATTACHMENT_UPLOAD)
   upload(
-    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('id', new UuidPipe()) id: string,
     @UploadedFile() file: Express.Multer.File | undefined,
     @Body(new ZodValidationPipe(uploadRequestAttachmentSchema)) body: UploadRequestAttachmentInput,
     @CurrentUser() user: SessionClaims,
@@ -255,8 +245,8 @@ export class CitizenRequestsController {
   @Roles(...REQUEST_READ_ROLES)
   @Get(':id/attachments/:attachmentId/url')
   attachmentUrl(
-    @Param('id', new ParseUUIDPipe()) id: string,
-    @Param('attachmentId', new ParseUUIDPipe()) attachmentId: string,
+    @Param('id', new UuidPipe()) id: string,
+    @Param('attachmentId', new UuidPipe()) attachmentId: string,
     @CurrentUser() user: SessionClaims,
   ) {
     return this.requests.attachmentUrl(id, attachmentId, staff(user));

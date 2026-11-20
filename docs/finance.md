@@ -1539,7 +1539,28 @@ already closed A5 and A6), and the owner's decisions D10–D12. Each item is pin
   into the safe, never another collector (`COLLECTOR_CANNOT_SELECT_METHOD`). The settle page offers
   him those two, and «عبر المحصّل» is himself, with no staff list read.
 - **A counter retry key is bound to its act (B6).** Method, collector, reference, and the notes or
-  the sum; `PAYMENT_IDEMPOTENCY_KEY_REUSED` now names the receipt the key wrote.
+  the sum; `PAYMENT_IDEMPOTENCY_KEY_REUSED` now names the receipt the key wrote. Since 2026-11-15
+  (finding F18 of the billing audit, task B11) also the payer of a shared unit bill and the municipal
+  day the money moved (`sameAct`): a payer or a date corrected after a lost answer was answered with
+  the first receipt, which names the other debtor or prints the other day. The key is required on
+  `settlePaymentSchema`; a press without one was the one case the server could not tell from a
+  second payment.
+- **A single counter payment says what the screen showed (F18).** `expected` — the credit and the
+  change, in the bill's currency — is required, and `recordIn` refuses the press
+  (`PAYMENT_FIGURES_CHANGED`, the server's figures in `params`) when what its lock reads disagrees by
+  more than the bill's tolerance: another desk took part of the bill since, or the official rate
+  moved, which the payment reads `FOR SHARE` at that moment. Compared after the replay, so a retry
+  is answered from its first receipt whatever has moved since. A settlement of several bills has
+  carried its own figure (`expectedDue`) since §3.7. The rule for credit and change is one function,
+  `counterCredit` (`payment-ledger.service.ts`), which the ledger records and the service judges by.
+- **Large change needs a reason (F19; Abed's decision of 2026-11-15).** «الباقي» is an exchange:
+  foreign notes in, ليرة out of the safe. Change worth more, in the foreign currency (the change over
+  the payment's rate), than the manager's `largeExchangeThreshold` — the bar that sends a transfer to
+  review, read with the rate in `ledger.config` — needs `adjustmentReason`
+  (`PAYMENT_LARGE_CHANGE_REASON_REQUIRED`), kept on the receipt's row; the `PAYMENT_CONFIRMED` row
+  carries `largeChange`, `changeForeignValue` and the threshold. A reason and a flag, not a review
+  queue: a queue would need a column and a screen, and was not chosen. Not yet applied to the change
+  a settlement of several bills hands back (§3.7).
 - **One Whish reference, one receipt (B2).** Refused in `recordIn` on every path while a
   receipt carrying it still stands (`PAYMENT_EXTERNAL_REF_REUSED`), behind an advisory lock on the
   reference; one settlement's rows share theirs. Only a Whish settlement writes `externalRef`. The

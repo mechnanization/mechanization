@@ -753,7 +753,13 @@ export function CitizenForm({
   canMerge = false,
   canOverrideDuplicates = false,
   onMerged,
+  canAnswerLandlord,
 }: {
+  /**
+   * Whether this session may answer an owner claim (`LANDLORD_LINK_ANSWER_ROLES`),
+   * for each card's «نعم، هو». Required: a default would fail open (task S17).
+   */
+  canAnswerLandlord: boolean;
   tenant: string;
   /**
    * The staff session's token, for the parcel roster lookup.
@@ -1091,6 +1097,7 @@ export function CitizenForm({
             locale={locale}
             token={token}
             censusPicker
+            canAnswerLandlord={canAnswerLandlord}
             nonResident={ownerRecord}
             recordKind={values.residence}
             // Only the first card inherits a matrix launch: the officer opened
@@ -1135,6 +1142,7 @@ export function CitizenForm({
                 locale={locale}
                 token={token}
                 censusPicker
+                canAnswerLandlord={canAnswerLandlord}
                 nonResident={ownerRecord}
                 recordKind={values.residence}
                 lockedCensusTarget={index === 0 ? (lockedCensusTarget ?? null) : null}

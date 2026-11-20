@@ -35,6 +35,7 @@ import { createInterface } from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { ROOT, resolveTarget, parseConnection } from './targets.mjs';
+import { withTruncateGuardsOff } from './truncate-guards.mjs';
 
 const require = createRequire(join(ROOT, 'apps', 'backend', 'package.json'));
 const { Client } = require('pg');
@@ -175,7 +176,8 @@ export async function deleteCitizensAndBuildings({ tenantSlug = null, autoConfir
         );
         if (existingMoneyTables.rows.length > 0) {
           const toTruncate = existingMoneyTables.rows.map((r) => `"${s}"."${r.table_name}"`).join(', ');
-          await client.query(`TRUNCATE TABLE ${toTruncate} CASCADE`);
+          // 0103's guards refuse TRUNCATE on the append-only tables; off for this local reset only.
+          await withTruncateGuardsOff(client, s, () => client.query(`TRUNCATE TABLE ${toTruncate} CASCADE`));
         }
 
         // Reset payment receipt sequence if present

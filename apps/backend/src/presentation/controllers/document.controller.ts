@@ -3,9 +3,10 @@ import {
   WORKING_STAFF_ROLES,
 } from '@mechanization/shared-schemas';
 import { DocumentService } from '../../application/features/documents/document.service';
-import { CurrentUser } from '../decorators/current-user.decorator';
+import { CurrentTenant, CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
+import { UuidPipe } from '../pipes/uuid.pipe';
 
 @Controller('t/:tenantSlug/documents')
 export class DocumentController {
@@ -13,7 +14,7 @@ export class DocumentController {
 
   @Roles(...WORKING_STAFF_ROLES)
   @Get('registration/:registrationId')
-  async listForRegistration(@Param('registrationId') registrationId: string) {
+  async listForRegistration(@Param('registrationId', new UuidPipe()) registrationId: string) {
     const documents = await this.documents.listForRegistration(registrationId);
 
     // Storage paths are internal. Staff get ids and open each document through
@@ -38,8 +39,8 @@ export class DocumentController {
   @Roles(...WORKING_STAFF_ROLES)
   @Get(':id/url')
   async getViewUrl(
-    @Param('tenantSlug') tenantSlug: string,
-    @Param('id') id: string,
+    @CurrentTenant('slug') tenantSlug: string,
+    @Param('id', new UuidPipe()) id: string,
     @CurrentUser() user: SessionClaims,
   ) {
     return this.documents.createViewUrl({

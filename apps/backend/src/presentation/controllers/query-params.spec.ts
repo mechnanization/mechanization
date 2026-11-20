@@ -1,5 +1,14 @@
 import { ValidationError } from '../../application/common/exceptions';
-import { optionalInt, parseDate, requireDate, requireRangeEnd, requireRangeStart } from './query-params';
+import {
+  optionalInt,
+  optionalOneOf,
+  parseDate,
+  queryLimit,
+  queryOffset,
+  requireDate,
+  requireRangeEnd,
+  requireRangeStart,
+} from './query-params';
 
 /**
  * A query string is whatever arrived.
@@ -90,5 +99,41 @@ describe('optionalInt — a limit or a page', () => {
     for (const raw of ['12abc', '-5', '1.5', ' 7']) {
       expect(() => optionalInt(raw)).toThrow(expect.objectContaining({ code: 'INVALID_QUERY_VALUE' }));
     }
+  });
+});
+
+/** Task S11 of the 2026-11-14 security audit: each value that reached the database as a 500. */
+describe('queryLimit / queryOffset — a page of rows', () => {
+  it('defaults an absent limit and clamps one out of range', () => {
+    expect(queryLimit(undefined, 50, 200)).toBe(50);
+    expect(queryLimit('999999', 50, 200)).toBe(200);
+    expect(queryLimit('0', 50, 200)).toBe(1);
+  });
+
+  it('refuses what `Number()` used to wave through', () => {
+    for (const value of ['1e20', '-5', 'Infinity', '12abc']) {
+      expect(() => queryLimit(value, 50, 200)).toThrow(ValidationError);
+      expect(() => queryOffset(value)).toThrow(ValidationError);
+    }
+  });
+
+  it('reads an offset as zero when absent and keeps it within nine digits', () => {
+    expect(queryOffset(undefined)).toBe(0);
+    expect(queryOffset('40')).toBe(40);
+    expect(() => queryOffset('1000000000')).toThrow(ValidationError);
+  });
+});
+
+describe('optionalOneOf — a filter the database holds as an enum', () => {
+  const METHODS = ['CASH', 'WHISH_MONEY'] as const;
+
+  it('takes a listed value, and nothing for absent or empty', () => {
+    expect(optionalOneOf('CASH', METHODS)).toBe('CASH');
+    expect(optionalOneOf(undefined, METHODS)).toBeUndefined();
+    expect(optionalOneOf('', METHODS)).toBeUndefined();
+  });
+
+  it('refuses a value the list does not hold, case included', () => {
+    expect(() => optionalOneOf('cash', METHODS)).toThrow(expect.objectContaining({ code: 'INVALID_QUERY_VALUE' }));
   });
 });

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import {
   duplexMergeSchema,
   unitCorrectionDeleteSchema,
@@ -10,6 +10,7 @@ import { ZodValidationPipe } from '../../application/common/pipes/zod-validation
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
+import { UuidPipe } from '../pipes/uuid.pipe';
 
 /**
  * «حذف تصحيحي» — corrections the ordinary routes refuse on purpose.
@@ -29,7 +30,7 @@ export class CorrectionsController {
   /** What deleting this unit would remove, close and change, with the fingerprint the delete must quote. */
   @Roles('SUPER_ADMIN')
   @Get('units/:unitId')
-  previewUnit(@Param('unitId', new ParseUUIDPipe()) unitId: string) {
+  previewUnit(@Param('unitId', new UuidPipe()) unitId: string) {
     return this.units.preview(unitId);
   }
 
@@ -37,7 +38,7 @@ export class CorrectionsController {
   @Roles('SUPER_ADMIN')
   @Post('units/:unitId')
   deleteUnit(
-    @Param('unitId', new ParseUUIDPipe()) unitId: string,
+    @Param('unitId', new UuidPipe()) unitId: string,
     @Body(new ZodValidationPipe(unitCorrectionDeleteSchema)) body: UnitCorrectionDeleteInput,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -50,7 +51,7 @@ export class CorrectionsController {
    */
   @Roles('SUPER_ADMIN')
   @Get('units/:unitId/merge-upper')
-  previewMerge(@Param('unitId', new ParseUUIDPipe()) unitId: string) {
+  previewMerge(@Param('unitId', new UuidPipe()) unitId: string) {
     return this.units.previewMerge(unitId);
   }
 
@@ -58,7 +59,7 @@ export class CorrectionsController {
   @Roles('SUPER_ADMIN')
   @Post('units/:unitId/merge-upper')
   mergeUpper(
-    @Param('unitId', new ParseUUIDPipe()) unitId: string,
+    @Param('unitId', new UuidPipe()) unitId: string,
     @Body(new ZodValidationPipe(duplexMergeSchema)) body: DuplexMergeInput,
     @CurrentUser() user: SessionClaims,
   ) {

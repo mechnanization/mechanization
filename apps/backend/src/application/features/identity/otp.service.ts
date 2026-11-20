@@ -48,6 +48,27 @@ export class OtpService {
   }
 
   /**
+   * Refuses the phone-code sign-in, first and in every environment, while no
+   * text can reach a phone (`SmsSender.isLive`; security audit N-2).
+   *
+   * Without it a request wrote a challenge and sent nothing, and wherever
+   * `NODE_ENV` was not `production` the code came back in the response as
+   * `devCode`: knowing a citizen's phone was enough to open their file. With
+   * `OTP_ENABLED` off, `verify` accepted the phone alone. Both close here,
+   * before the number is parsed or a row is read or written, as online payment
+   * is refused while the Whish gateway is not live. The portal offers no
+   * phone-code sign-in (open-decisions §21); a citizen signs in by رقم مرجعي.
+   */
+  private assertAvailable(): void {
+    if (!this.sms.isLive) {
+      throw new ConflictError({
+        code: 'CITIZEN_OTP_UNAVAILABLE',
+        message: 'Phone-code sign-in is unavailable: no SMS provider is live',
+      });
+    }
+  }
+
+  /**
    * Issues a code and sends it.
    *
    * `attempt` is the citizen's resend count for this session. From
@@ -56,6 +77,7 @@ export class OtpService {
    * fallback, it is the same failure again.
    */
   async issue(rawPhone: string, attempt = 1): Promise<OtpIssueResult> {
+    this.assertAvailable();
     const phone = PhoneNumber.parse(rawPhone);
 
     // The number is still parsed above, so a malformed one is still rejected
@@ -149,6 +171,7 @@ export class OtpService {
    * looks up citizens by exactly what was stored.
    */
   async verify(rawPhone: string, code: string): Promise<string> {
+    this.assertAvailable();
     const phone = PhoneNumber.parse(rawPhone);
 
     // Returns the canonical number without checking anything — there is no

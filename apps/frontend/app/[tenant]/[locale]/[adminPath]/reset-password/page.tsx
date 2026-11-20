@@ -17,35 +17,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { LanguageSwitcher } from '@/components/language-switcher';
 import { LoadingState } from '@/components/ui/states';
-
-type ParsedLink =
-  | { kind: 'recovery'; accessToken: string }
-  | { kind: 'email_change' }
-  | { kind: 'invalid' };
+import { parseResetLink, type ResetLink } from '@/lib/reset-link';
 
 /**
- * Reads the token Supabase's own `/auth/v1/verify` redirect appends to this
- * page's URL fragment.
- *
- * Not a query string: GoTrue's classic (non-PKCE) flow puts the session in
- * the hash specifically so it never reaches a server access log. `type`
- * tells the two links this page has to handle apart — `recovery` from
- * "send-reset-password-email", `email_change` from Supabase's own automatic
- * notification when a staff member's email changes.
- */
-function parseAuthHash(hash: string): ParsedLink {
-  const params = new URLSearchParams(hash.replace(/^#/, ''));
-  const type = params.get('type');
-  const accessToken = params.get('access_token');
-
-  if (type?.startsWith('email_change')) return { kind: 'email_change' };
-  if (type === 'recovery' && accessToken) return { kind: 'recovery', accessToken };
-  return { kind: 'invalid' };
-}
-
-/**
- * Where every "send-reset-password-email" and Supabase's own email-change
- * notification land — see `SecuritySection.handleSendResetPasswordEmail`.
+ * Where every "send-reset-password-email" lands — see
+ * `SecuritySection.handleSendResetPasswordEmail`. The token is in the URL's
+ * fragment, read by the rule the server wrote it with (`parseResetLink`).
  *
  * Reached with no session: whoever clicked the email link may not be signed
  * in on this device at all, so this route lives beside `login`, outside
@@ -59,7 +36,7 @@ export default function ResetPasswordPage({
   const { tenant, locale, adminPath } = use(params);
   const tAuth = useTranslations('auth');
 
-  const [link, setLink] = useState<ParsedLink | null>(null);
+  const [link, setLink] = useState<ResetLink | null>(null);
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -68,7 +45,7 @@ export default function ResetPasswordPage({
   const [done, setDone] = useState(false);
 
   useEffect(() => {
-    setLink(parseAuthHash(window.location.hash));
+    setLink(parseResetLink(window.location.hash));
     // The token is single-use proof of identity — stripped from the address
     // bar and history the moment it is read, rather than left sitting there
     // for a shared computer's next user or a screenshot to pick up.
@@ -136,17 +113,6 @@ export default function ResetPasswordPage({
               {tAuth('invalidResetLinkTitle')}
             </h1>
             <p className="text-muted-foreground">{tAuth('invalidResetLinkDesc')}</p>
-            <a href={loginHref} className={buttonVariants({ className: 'mt-4' })}>
-              {tAuth('goToSignIn')}
-            </a>
-          </div>
-        ) : link.kind === 'email_change' ? (
-          <div className="space-y-2.5 text-center">
-            <CheckCircle2 className="mx-auto size-8 text-success" aria-hidden />
-            <h1 className="font-display text-2xl font-bold tracking-tight">
-              {tAuth('emailChangeConfirmedTitle')}
-            </h1>
-            <p className="text-muted-foreground">{tAuth('emailChangeConfirmedDesc')}</p>
             <a href={loginHref} className={buttonVariants({ className: 'mt-4' })}>
               {tAuth('goToSignIn')}
             </a>

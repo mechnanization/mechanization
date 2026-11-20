@@ -9,9 +9,10 @@ import {
 } from '@mechanization/shared-schemas';
 import { ZonesService } from '../../application/features/zones/zones.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
-import { CurrentUser } from '../decorators/current-user.decorator';
+import { CurrentTenant, CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
+import { UuidPipe } from '../pipes/uuid.pipe';
 
 /**
  * Sits under `t/:tenantSlug` like every other tenant-scoped controller — that
@@ -44,13 +45,13 @@ export class ZonesController {
   @Roles(...EVERY_STAFF_ROLE)
   @Get('geojson')
   @Header('Cache-Control', 'no-store')
-  async geojson(@Param('tenantSlug') tenantSlug: string) {
+  async geojson(@CurrentTenant('slug') tenantSlug: string) {
     return this.zones.buildGeoJson(tenantSlug);
   }
 
   @Roles(...EVERY_STAFF_ROLE)
   @Get(':id')
-  async get(@Param('id') id: string) {
+  async get(@Param('id', new UuidPipe()) id: string) {
     return this.zones.get(id);
   }
 
@@ -65,7 +66,7 @@ export class ZonesController {
   @Roles(...REGISTER_ADMIN_ROLES)
   @Post()
   async create(
-    @Param('tenantSlug') tenantSlug: string,
+    @CurrentTenant('slug') tenantSlug: string,
     @Body(new ZodValidationPipe(createZoneSchema)) body: CreateZoneInput,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -75,8 +76,8 @@ export class ZonesController {
   @Roles(...REGISTER_ADMIN_ROLES)
   @Put(':id')
   async update(
-    @Param('tenantSlug') tenantSlug: string,
-    @Param('id') id: string,
+    @CurrentTenant('slug') tenantSlug: string,
+    @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(updateZoneSchema)) body: UpdateZoneInput,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -86,8 +87,8 @@ export class ZonesController {
   @Roles('SUPER_ADMIN')
   @Delete(':id')
   async remove(
-    @Param('tenantSlug') tenantSlug: string,
-    @Param('id') id: string,
+    @CurrentTenant('slug') tenantSlug: string,
+    @Param('id', new UuidPipe()) id: string,
     @CurrentUser() user: SessionClaims,
   ) {
     await this.zones.remove(tenantSlug, id, { id: user.sub, role: user.role ?? '' });

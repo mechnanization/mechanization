@@ -62,6 +62,18 @@ describe('ownerShareOf — what part of a co-owned flat each owner is billed for
     });
   });
 
+  it('falls back to the equal split when the responsible owner’s own file no longer claims the flat (F13)', () => {
+    const chosen = rule({ mode: 'RESPONSIBLE_OWNER', responsibleOwnerId: 'ali' });
+    const unbilled = { ...chosen, responsibleBilled: false };
+    expect(effectiveOwnerBilling(unbilled)).toMatchObject({ mode: 'EQUAL', fallback: 'RESPONSIBLE_NOT_BILLED' });
+    for (const owner of ['ali', 'maarouf']) {
+      expect(ownerShareOf(unbilled, owner)).toEqual({ kind: 'SHARE', share: { mode: 'EQUAL', numerator: 1, denominator: 4 } });
+    }
+    // Asked and answered, or not asked at all: the choice stands.
+    expect(effectiveOwnerBilling({ ...chosen, responsibleBilled: true })).toMatchObject({ mode: 'RESPONSIBLE_OWNER', fallback: null });
+    expect(effectiveOwnerBilling(chosen)).toMatchObject({ mode: 'RESPONSIBLE_OWNER', fallback: null });
+  });
+
   it('divides by أسهم over the sum of every owner’s, not over 2400', () => {
     // An unpartitioned building: the 2400 cover the whole of it, so these four
     // hold 900 of it between them and the flat is divided 300/200/200/200.

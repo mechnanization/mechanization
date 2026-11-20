@@ -43,6 +43,21 @@ export const APP_CONFIG = {
     fallbackAfterAttempt: 2,
   },
 
+  /**
+   * A staff account's second factor (migration 0101).
+   *
+   * Counted per account, in Postgres, because the sign-in throttle is per
+   * address and per process: it does not follow someone who holds the
+   * password and tries codes from several addresses. A code is checked only
+   * after the password matched, so only that person can lock the account.
+   */
+  totp: {
+    /** Wrong codes in a row before the account stops checking codes. */
+    maxFailures: 5,
+    /** How long it stops. */
+    lockSeconds: 15 * 60,
+  },
+
   throttle: {
     /** Staff login — credential stuffing is the threat here. */
     staffLogin: { ttlSeconds: 60, limit: 5 },
@@ -77,6 +92,12 @@ export const APP_CONFIG = {
     referenceOnlyLogin: { ttlSeconds: 60, limit: 5 },
     /** OTP request — SMS costs money and texts are a nuisance vector. */
     otpRequest: { ttlSeconds: 60, limit: 3 },
+    /**
+     * OTP verify — the code check itself, so the route worth guessing at. The
+     * challenge burns after `otp.maxAttempts` wrong codes; this bounds how fast
+     * new challenges can be worked through, as the staff sign-in's bar does.
+     */
+    otpVerify: { ttlSeconds: 60, limit: 5 },
     /** Submission — generous; a citizen retrying a flaky upload is not an attack. */
     submission: { ttlSeconds: 60, limit: 10 },
   },

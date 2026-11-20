@@ -71,6 +71,12 @@ export interface TreasuryConfig {
   baseCurrency: string;
   secondaryCurrency: string | null;
   exchangeRateTolerancePercent: Prisma.Decimal | null;
+  /**
+   * The manager's large-exchange threshold (0084), in the foreign currency. A
+   * transfer above it is booked for review; counter change worth more than it
+   * needs a reason (finding F19 of the 2026-11-14 billing audit).
+   */
+  largeExchangeThreshold: Prisma.Decimal | null;
 }
 
 /**
@@ -197,11 +203,12 @@ export class TreasuryLedgerService {
         baseCurrency: string;
         secondaryCurrency: string | null;
         exchangeRateTolerancePercent: Prisma.Decimal | null;
+        largeExchangeThreshold: Prisma.Decimal | null;
       }>
     >`
       SELECT "treasuryGoLiveAt", "exchangeRate", "urgentExpenseCeilingLbp", "urgentExpenseCeilingUsd",
              "salaryUrgentCeilingLbp", "salaryUrgentCeilingUsd", "baseCurrency", "secondaryCurrency",
-             "exchangeRateTolerancePercent"
+             "exchangeRateTolerancePercent", "largeExchangeThreshold"
         FROM ${this.S}system_settings
        LIMIT 1
          FOR SHARE
@@ -220,6 +227,7 @@ export class TreasuryLedgerService {
       baseCurrency: rows[0]?.baseCurrency ?? 'LBP',
       secondaryCurrency: rows[0]?.secondaryCurrency ?? null,
       exchangeRateTolerancePercent: rows[0]?.exchangeRateTolerancePercent ?? null,
+      largeExchangeThreshold: rows[0]?.largeExchangeThreshold ?? null,
     };
   }
 

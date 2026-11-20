@@ -891,10 +891,16 @@ export function SecuritySection({
                         );
                       } catch (caught) {
                         logApiError(caught);
+                        // A code already used, or a lockout, is said in the server's
+                        // own words (messages `errors.*`); anything else reads as a
+                        // wrong code, as it did.
                         const msg =
-                          locale === 'en'
-                            ? 'Invalid verification code. Please check the 6-digit code in your app and try again.'
-                            : 'رمز التحقق غير صحيح. يرجى التأكد من الرمز والمحاولة مجدداً.';
+                          caught instanceof ApiRequestError &&
+                          (caught.code === 'TOTP_CODE_REUSED' || caught.code === 'TOTP_LOCKED')
+                            ? caught.message
+                            : locale === 'en'
+                              ? 'Invalid verification code. Please check the 6-digit code in your app and try again.'
+                              : 'رمز التحقق غير صحيح. يرجى التأكد من الرمز والمحاولة مجدداً.';
                         setTotpConfirmError(msg);
                         toast.error(msg);
                       } finally {

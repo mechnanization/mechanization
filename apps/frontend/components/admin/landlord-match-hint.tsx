@@ -51,6 +51,7 @@ export function LandlordMatchHint({
   phone,
   typedName,
   agreedCitizenId,
+  canAnswer,
   onAgree,
   onWithdraw,
 }: {
@@ -61,6 +62,13 @@ export function LandlordMatchHint({
   typedName?: string;
   /** The card's standing answer, so the control re-opens showing it. */
   agreedCitizenId?: string;
+  /**
+   * Whether this session may answer a claim (`LANDLORD_LINK_ANSWER_ROLES`).
+   * Required, so no screen offers «نعم، هو» by default: a collector files the
+   * registration and the claim waits on the queue for someone who may answer
+   * it, and the server sets his answers aside (task S17).
+   */
+  canAnswer: boolean;
   /** «نعم، هو المالك» — the officer took the register's answer for this number. */
   onAgree: (candidate: LandlordCandidate) => void;
   /** «لا أحد منهم» here, and «تغيير» on the locked name — one decision. */
@@ -82,6 +90,13 @@ export function LandlordMatchHint({
 
   useEffect(() => {
     const trimmed = phone.trim();
+
+    // Nothing to ask of a session that may not answer: no lookup either.
+    if (!canAnswer) {
+      setCandidates([]);
+      setLooking(false);
+      return;
+    }
 
     // Eight digits is the shortest thing `internationalPhone` accepts, so
     // below that there is nothing the server could match even in principle.
@@ -118,13 +133,15 @@ export function LandlordMatchHint({
       controller.abort();
       clearTimeout(timer);
     };
-  }, [tenant, token, phone]);
+  }, [tenant, token, phone, canAnswer]);
 
   // A new number is a new question.
   useEffect(() => {
     setRejected(false);
     setChosen(null);
   }, [phone]);
+
+  if (!canAnswer) return null;
 
   if (looking) {
     return (
