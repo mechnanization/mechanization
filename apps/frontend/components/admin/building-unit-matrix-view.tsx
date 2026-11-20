@@ -114,7 +114,7 @@ import { OwnerBillingPanel } from './owner-billing-panel';
 import { UnitAreaPanel } from './unit-area-panel';
 import { FeeExemptionPanel } from './fee-exemption-panel';
 import { showsOwnerBilling } from '@/lib/owner-billing';
-import { CENSUS_WRITE_ROLES, hasRole } from '@/lib/staff-roles';
+import { CENSUS_WRITE_ROLES, FEE_EXEMPTION_GRANT_ROLES, FEE_EXEMPTION_READ_ROLES, hasRole } from '@/lib/staff-roles';
 import { DamageForm } from './damage/damage-form';
 import { DamageHistory } from './damage/damage-history';
 import { ReinspectNotice } from './damage/reinspect-notice';
@@ -1773,7 +1773,8 @@ export function BuildingUnitMatrixView({
                 unit={selectedUnit}
                 locale={locale}
                 busy={busy}
-                canGrant={role === 'SUPER_ADMIN'}
+                canGrant={hasRole(FEE_EXEMPTION_GRANT_ROLES, role)}
+                whitelistHref={hasRole(FEE_EXEMPTION_READ_ROLES, role) ? `${base}/fees/exemptions` : undefined}
                 onSave={(input) => void saveFeeExemption(selectedUnit, input)}
               />
 

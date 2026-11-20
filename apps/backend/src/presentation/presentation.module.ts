@@ -7,6 +7,7 @@ import { AuthController } from './controllers/auth.controller';
 import { CadastreController } from './controllers/cadastre.controller';
 import { BuildingsController } from './controllers/buildings.controller';
 import { CorrectionsController } from './controllers/corrections.controller';
+import { FeeExemptionsController } from './controllers/fee-exemptions.controller';
 import { TreasuryController } from './controllers/treasury.controller';
 import { ExpensesController } from './controllers/expenses.controller';
 import { IncomeController } from './controllers/income.controller';
@@ -54,6 +55,7 @@ import { SingleQueryValuePipe } from './pipes/single-query-value.pipe';
     QualityController,
     BuildingsController,
     CorrectionsController,
+    FeeExemptionsController,
     TreasuryController,
     ExpensesController,
     IncomeController,

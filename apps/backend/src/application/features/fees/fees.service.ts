@@ -7,6 +7,7 @@ import {
   feeMatrixSchema,
   feeNoticeScopeSchema,
   feeUnitState,
+  isFeeExemptOn,
   judgeExchange,
   NON_PERSON_RESIDENCE,
 } from '@mechanization/shared-schemas';
@@ -62,6 +63,7 @@ import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-re
 import { allocateDocumentNumbers } from '../../common/document-number';
 import { unitsUnderReview } from '../buildings/unit-status';
 import { uninhabitableUnitIds } from '../buildings/habitability';
+import { billingDayOfPeriod } from '../buildings/fee-exemption';
 import { checkResponsibleOwners, ownerBillingRules } from '../buildings/owner-billing';
 import { cancelRequestOfCancelledBill } from '../citizen-requests/cancelled-bill';
 import { assertNotMergedAway } from '../citizens/merged-away';
@@ -1009,6 +1011,18 @@ const WHISH_UNBANKABLE = new Set<string>([
   'PAYMENT_CLAIM_UNDER_REVIEW',
 ]);
 
+/**
+ * The day a new notice's first bills judge a unit's fee exemption on (0104): the
+ * first day of the period its due date falls in — the period `issue` writes its
+ * bills under — or, for a one-off notice, today, the day its bills are raised.
+ * The preview asks the same, so the two agree.
+ */
+export function issueBillingDay(frequency: string, dueDate: string, today: string = municipalToday()): string {
+  const due = new Date(dueDate);
+  if (Number.isNaN(due.getTime())) return today;
+  return billingDayOfPeriod(periodKeyFor(frequency, due), today);
+}
+
 /** Days in a UTC month. `day 0` of the next month is the last day of this one. */
 function daysInUtcMonth(year: number, month: number): number {
   return new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
@@ -1667,6 +1681,8 @@ export class FeesService {
       matrixBrackets?: readonly FeeMatrixBracket[];
     },
     citizenIds: readonly string[],
+    /** The first day of the period billed (`billingDayOfPeriod`): a unit's exemption is judged on it (0104). */
+    exemptOn: string,
   ): Promise<{
     /**
      * Every citizen assessed, before the shared units came off, and the
@@ -1708,7 +1724,7 @@ export class FeesService {
     /** The same units by type; empty under every other basis. */
     outsideTable: Array<{ unitType: string | null; count: number }>;
   }> {
-    const { assessed: raw, unassessable, withheld } = await this.assessTargets(citizenIds, input);
+    const { assessed: raw, unassessable, withheld } = await this.assessTargets(citizenIds, input, exemptOn);
     const { own: assessed, shared, conflicts } =
       input.basis === 'TIERED_AREA'
         ? splitSharedUnitBills(raw, { withheld })
@@ -1751,7 +1767,8 @@ export class FeesService {
    */
   async previewNotice(input: FeeNoticePreviewInput): Promise<FeeNoticePreviewResult> {
     const citizenIds = await this.resolveTargets(input);
-    const plan = await this.planNotice(input, citizenIds);
+    // Judged on the day the issue would judge it, so the preview and the issue agree (0104).
+    const plan = await this.planNotice(input, citizenIds, issueBillingDay(input.frequency, input.dueDate));
     /*
       Who the residence filter left out (0100): the files the same notice would
       reach with every kind ticked, less the ones it reaches. One more read of
@@ -1868,7 +1885,11 @@ export class FeesService {
     }
 
     // The same reading the preview makes (`planNotice`): what the preview showed is what this bills.
-    const { billable, shared, conflicts, unassessable, counts } = await this.planNotice(input, citizenIds);
+    const { billable, shared, conflicts, unassessable, counts } = await this.planNotice(
+      input,
+      citizenIds,
+      issueBillingDay(input.frequency, input.dueDate),
+    );
     const { heldUnits, uninhabitableUnits, feeExemptUnits, coOwnerPaidUnits, outOfScopeUnits, outsideTableUnits } =
       counts;
     /*
@@ -2547,6 +2568,8 @@ export class FeesService {
           matrixBrackets,
         },
         citizenIds,
+        // A unit whose exemption runs out before this period starts is billed for it (0104).
+        billingDayOfPeriod(periodKey, municipalToday(now)),
       );
 
       /*
@@ -2981,6 +3004,8 @@ export class FeesService {
       /** Under TIERED_AREA, the bracket table every citizen is priced by. */
       matrixBrackets?: readonly FeeMatrixBracket[];
     },
+    /** The first day of the period billed: a unit's exemption is judged on it (0104). */
+    exemptOn: string,
   ): Promise<{
     assessed: CitizenAssessment[];
     unassessable: UnassessableCitizen[];
@@ -3007,7 +3032,7 @@ export class FeesService {
       // Per holder — unless all they hold of the categories is charged nothing (`flatCategoryCharge`).
       const assessed: CitizenAssessment[] = [];
       const seen = new Set<string>();
-      for await (const batch of this.holdingsOf(citizenIds)) {
+      for await (const batch of this.holdingsOf(citizenIds, { exemptOn })) {
         for (const holding of batch) {
           seen.add(holding.citizenId);
           const charge = flatCategoryCharge(holding.entries, { amount: notice.amount, targetCategories: categories });
@@ -3027,7 +3052,7 @@ export class FeesService {
     // Read once per run: every citizen of one notice is weighed by the same table.
     const levelFactors = notice.basis === 'PER_UNIT' ? await this.levelFactors() : undefined;
 
-    for await (const batch of this.holdingsOf(citizenIds)) {
+    for await (const batch of this.holdingsOf(citizenIds, { exemptOn })) {
       for (const holding of batch) {
         const outcome = assessCitizen(holding.entries, { ...notice, levelFactors });
 
@@ -3082,7 +3107,13 @@ export class FeesService {
    */
   async *holdingsOf(
     citizenIds: readonly string[],
-    options: { checkResponsible?: boolean } = {},
+    /**
+     * `exemptOn`: the municipal day a unit's fee exemption is judged on (`isFeeExemptOn`,
+     * 0104): the first day of the period being billed (`billingDayOfPeriod`),
+     * or today for a reading of the register as it stands. `checkResponsible: false`
+     * skips the responsible-owner question, for `ownerClaims`, which asks it.
+     */
+    options: { exemptOn: string; checkResponsible?: boolean },
   ): AsyncGenerator<CitizenHoldings[]> {
     // One read of each responsible owner's file per call, however many batches name them.
     const claims = new Map<string, Promise<ReadonlySet<string>>>();
@@ -3180,6 +3211,8 @@ export class FeesService {
                             unitCode: true,
                             // «معفاة من الرسوم» (0077) — charged nothing, whoever bears the fee.
                             feeExemption: true,
+                            // …until its last day, if it has one (0104, `isFeeExemptOn`).
+                            feeExemptionValidUntil: true,
                             // «دوبلكس» (0095) — weighed in roofs under a PER_UNIT notice.
                             levels: true,
                           },
@@ -3217,6 +3250,7 @@ export class FeesService {
                     unitStatus: true,
                     unitCode: true,
                     feeExemption: true,
+                    feeExemptionValidUntil: true,
                     levels: true,
                   },
                 },
@@ -3245,7 +3279,14 @@ export class FeesService {
       /** The one flat of each structure a منزل card here names — what the card bills. */
       const soleUnits = new Map<
         string,
-        { id: string; unitStatus: string | null; unitCode: string; feeExemption: string | null; levels: number }
+        {
+          id: string;
+          unitStatus: string | null;
+          unitCode: string;
+          feeExemption: string | null;
+          feeExemptionValidUntil: Date | null;
+          levels: number;
+        }
       >();
       const houseBuildings = [
         ...new Set(
@@ -3260,7 +3301,15 @@ export class FeesService {
         const houseUnits = await withConnectionRetry(() =>
           this.db.unit.findMany({
             where: { buildingId: { in: houseBuildings } },
-            select: { id: true, buildingId: true, unitStatus: true, unitCode: true, feeExemption: true, levels: true },
+            select: {
+              id: true,
+              buildingId: true,
+              unitStatus: true,
+              unitCode: true,
+              feeExemption: true,
+              feeExemptionValidUntil: true,
+              levels: true,
+            },
           }),
         );
         const perBuilding = new Map<string, typeof houseUnits>();
@@ -3360,7 +3409,7 @@ export class FeesService {
             underReview: underReview(occupancy.unit.id),
             uninhabitable: uninhabitable(occupancy.unit.id),
             unitCode: occupancy.unit.unitCode,
-            exempt: occupancy.unit.feeExemption !== null,
+            exempt: isFeeExemptOn(occupancy.unit, options.exemptOn),
             levels: occupancy.unit.levels,
             ...(occupancy.role === 'OWNER' ? ownerShareFor(occupancy.unit.id, row.id) : {}),
           });
@@ -3403,7 +3452,7 @@ export class FeesService {
                   return {
                     soleUnitId: sole.id,
                     soleUnitCode: sole.unitCode,
-                    exempt: sole.feeExemption !== null,
+                    exempt: isFeeExemptOn(sole, options.exemptOn),
                     // A house on several storeys is that many roofs (D28).
                     levels: sole.levels,
                     ...(card.occupancyType === 'OWNER' ? ownerShareFor(sole.id, row.id) : {}),
@@ -3427,7 +3476,7 @@ export class FeesService {
                     unitStatus: settledStatus(line.unit.id, line.unit.unitStatus) as never,
                     underReview: underReview(line.unit.id),
                     uninhabitable: uninhabitable(line.unit.id),
-                    exempt: line.unit.feeExemption !== null,
+                    exempt: isFeeExemptOn(line.unit, options.exemptOn),
                     ...(card.occupancyType === 'OWNER' ? ownerShareFor(line.unit.id, row.id) : {}),
                   }
                 : line.unit,
@@ -3466,7 +3515,9 @@ export class FeesService {
    */
   async ownerClaims(citizenId: string): Promise<Set<string>> {
     const claimed = new Set<string>();
-    for await (const batch of this.holdingsOf([citizenId], { checkResponsible: false })) {
+    // Which flats the file claims does not depend on the day exemptions are judged on:
+    // `billableUnits` keeps an exempt unit (flagged, not dropped), so today will do.
+    for await (const batch of this.holdingsOf([citizenId], { exemptOn: municipalToday(), checkResponsible: false })) {
       for (const holding of batch) {
         for (const unit of holding.entries.flatMap(billableUnits)) {
           if (unit.unitId && unit.occupancyType === 'OWNER') claimed.add(unit.unitId);

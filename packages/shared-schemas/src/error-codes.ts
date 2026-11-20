@@ -195,6 +195,12 @@ export const ERROR_CODES = [
   'OWNER_BILLING_SHARES_MISSING',
   // «معفاة من الرسوم» (migration 0077)
   'FEE_EXEMPTION_STRUCTURAL_UNIT',
+  // «قائمة الإعفاء من الرسوم» (migration 0104): a last day before today (`params.validUntil`, `params.today`),
+  // a lift with no reason in words, and a unit with an exemption history that a delete would erase
+  // (`params.unitCode`; the building delete names the first such unit).
+  'FEE_EXEMPTION_VALID_UNTIL_PAST',
+  'FEE_EXEMPTION_LIFT_REASON_REQUIRED',
+  'UNIT_HAS_FEE_EXEMPTION_HISTORY',
   // «تركة (ورثة المرحوم)» (migration 0076)
   'ESTATE_OWNS_ONLY',
   // One home on several levels, and a house that grows (migration 0095, decision D28)

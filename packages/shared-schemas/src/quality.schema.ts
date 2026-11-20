@@ -165,6 +165,14 @@ export const QUALITY_FINDING_KIND = [
    * can own and live in two separate flats, and an upper storey can be unbuilt.
    */
   'UNIT_LEVELS_TO_CONFIRM',
+  /**
+   * A unit whose fee exemption ran past its last day and was never lifted
+   * (migration 0104; decision 1 of 2026-11-16). Billing already charges it
+   * again (`isFeeExemptOn`); the whitelist still lists it until someone lifts
+   * it or sets a new last day. MEDIUM, not dismissable: it closes when the
+   * exemption is lifted or renewed. No job lifts it.
+   */
+  'FEE_EXEMPTION_ENDED',
 ] as const;
 export type QualityFindingKind = (typeof QUALITY_FINDING_KIND)[number];
 
@@ -224,6 +232,7 @@ export function qualityLabels(locale: string) {
         ? 'House card on a building with several units'
         : 'بطاقة «منزل» على مبنى من عدّة وحدات',
       UNIT_LEVELS_TO_CONFIRM: en ? 'Levels of a home to confirm' : 'عدد طوابق مسكن للتأكيد',
+      FEE_EXEMPTION_ENDED: en ? 'Fee exemption ended, not lifted' : 'إعفاء من الرسوم انتهى ولم يُرفع',
     } satisfies Record<QualityFindingKind, string>,
     /**
      * What the re-check found, as one word.

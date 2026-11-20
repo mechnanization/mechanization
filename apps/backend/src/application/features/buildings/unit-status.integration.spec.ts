@@ -16,6 +16,7 @@ import { TenancyService } from '../citizens/tenancy.service';
 import { BuildingsService } from './buildings.service';
 import { CensusSyncService } from './census-sync.service';
 import { settleUnit, unitsUnderReview } from './unit-status';
+import { municipalToday } from '@mechanization/shared-schemas';
 
 /**
  * «حالة الوحدة» kept in step with who is recorded in the flat — against a real
@@ -184,7 +185,7 @@ describeIfDb('the one rule for «حالة الوحدة»', () => {
   /** What a per-unit occupancy fee charges this citizen, and how many flats it held. */
   const occupancyBill = async (citizenId: string) =>
     within(async () => {
-      for await (const batch of fees.holdingsOf([citizenId])) {
+      for await (const batch of fees.holdingsOf([citizenId], { exemptOn: municipalToday() })) {
         const outcome = assessCitizen(batch[0]!.entries, { amount: 1000, basis: 'PER_UNIT', bearer: 'OCCUPANT' });
         if (outcome.kind !== 'assessed') return { amount: 0, held: 0 };
         return { amount: outcome.amount, held: outcome.assessment.heldUnitCount };

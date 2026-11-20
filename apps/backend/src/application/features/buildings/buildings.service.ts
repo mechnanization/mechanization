@@ -1,4 +1,4 @@
-import { citizenDisplayName, citizenStoredName, storedLandlordName } from '@mechanization/shared-schemas';
+import { calendarDayOf, citizenDisplayName, citizenStoredName, storedLandlordName } from '@mechanization/shared-schemas';
 import { Injectable, Logger } from '@nestjs/common';
 import { OWNER_RECORD_RESIDENCE, isNonPersonRecord, isOwnerRecord } from '@mechanization/shared-schemas';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -43,6 +43,7 @@ import {
 } from '@mechanization/shared-schemas';
 import { worklistOwner, type WorklistViewer } from '../../common/worklist-viewer';
 import { reinspections, unsurveyedUnits } from './census-worklists';
+import { assertNoFeeExemptionHistory } from './fee-exemption';
 import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
@@ -1992,6 +1993,9 @@ export class BuildingsService {
       );
     }
 
+    // A unit's fee exemption history keys onto it with RESTRICT (0104): refused here, with a code.
+    await assertNoFeeExemptionHistory(this.db, { buildingId: id });
+
     await this.db.building.delete({ where: { id } });
 
     this.record({
@@ -3655,6 +3659,9 @@ export class BuildingsService {
         `لا يمكن حذف الوحدة ${unit.unitCode}: سُجِّل عليها ${vacancies} تأكيد شغور، وعليه تُعفى من رسوم الإشغال. ألغِ تأكيد الشغور بسبب «سُجِّل بالخطأ» إن لم تكن الوحدة موجودة أصلاً`,
       );
     }
+
+    // Its fee exemption history, granted or lifted, keys onto it with RESTRICT (0104).
+    await assertNoFeeExemptionHistory(this.db, { unitIds: [unitId] });
 
     /*
       `unitsTotal` and `unitsSurveyed` are corrected by the database, not here.
@@ -5708,6 +5715,7 @@ function toUnitRow(row: {
   feeExemptionNote?: string | null;
   feeExemptedAt?: Date | null;
   feeExemptedBy?: { firstName: string; lastName: string } | null;
+  feeExemptionValidUntil?: Date | null;
   levels?: number;
   notes: string | null;
   createdAt: Date;
@@ -5738,6 +5746,7 @@ function toUnitRow(row: {
     feeExemptionNote: row.feeExemptionNote ?? null,
     feeExemptedAt: row.feeExemptedAt ?? null,
     feeExemptedByName: row.feeExemptedBy ? `${row.feeExemptedBy.firstName} ${row.feeExemptedBy.lastName}` : null,
+    feeExemptionValidUntil: row.feeExemptionValidUntil ? calendarDayOf(row.feeExemptionValidUntil) : null,
     levels: row.levels ?? 1,
     notes: row.notes,
     createdAt: row.createdAt,
