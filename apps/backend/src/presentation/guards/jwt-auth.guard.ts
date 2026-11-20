@@ -5,6 +5,7 @@ import { Request } from 'express';
 import { BACKGROUND_REQUEST_HEADER } from '@mechanization/shared-schemas';
 import { SessionClaims } from '../../application/features/identity/identity.service';
 import { SessionRevocationService } from '../../application/features/identity/session-revocation.service';
+import { verifySessionToken } from '../../application/features/identity/session-token';
 import { StaffPresenceService } from '../../application/features/identity/staff-presence.service';
 import {
   TenantMismatchError,
@@ -46,7 +47,7 @@ export class JwtAuthGuard implements CanActivate {
 
     let claims: SessionClaims;
     try {
-      claims = this.jwt.verify<SessionClaims>(token);
+      claims = verifySessionToken<SessionClaims>(this.jwt, token);
     } catch {
       // Expired, wrong signature, malformed — all the same answer. Saying which
       // tells an attacker whether they have a real token to work with.

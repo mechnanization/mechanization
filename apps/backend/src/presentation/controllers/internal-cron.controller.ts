@@ -12,6 +12,7 @@ import { OtpCleanupJob } from '../../application/background-jobs/otp-cleanup.job
 import { RecurringBillingJob } from '../../application/background-jobs/recurring-billing.job';
 import { StaffRefreshTokenCleanupJob } from '../../application/background-jobs/staff-refresh-token-cleanup.job';
 import { Public } from '../decorators/public.decorator';
+import { bearerMatches } from '../http/bearer-secret';
 
 /**
  * HTTP triggers for the jobs that `@Cron` runs in the long-lived deployment.
@@ -57,12 +58,8 @@ export class InternalCronController {
       );
     }
 
-    /**
-     * Length-prefixed comparison rather than `===` would be better still, but
-     * the secret is high-entropy and the route is rate-limited by the platform;
-     * the realistic threat here is a guessed URL, not a timing oracle.
-     */
-    if (header !== `Bearer ${secret}`) {
+    // In constant time, as `/metrics` compares its token: these routes skip the throttler.
+    if (!bearerMatches(header, secret)) {
       throw new ForbiddenException();
     }
   }
