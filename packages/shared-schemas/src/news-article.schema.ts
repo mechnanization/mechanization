@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { NewsArticleStatus } from './enums';
 import { NEWS_LANGUAGE, type NewsLanguage, type NewsLocalizedName } from './news.schema';
+import type { NewsMediaView } from './news-media.schema';
 import { uuid } from './primitives';
 
 /**
@@ -141,6 +142,8 @@ export interface NewsArticleView {
   publisherId: string;
   defaultLanguage: NewsLanguage;
   texts: NewsArticleTextView[];
+  /** Photos and PDFs, in their display order. */
+  media: NewsMediaView[];
   placeLabel: NewsLocalizedName | null;
   areaId: string | null;
   notifyResidents: boolean;

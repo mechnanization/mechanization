@@ -14,6 +14,7 @@ import {
 } from '@mechanization/shared-schemas';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
+import { NewsAvailabilityService } from '../../application/features/news/news-availability.service';
 import { NewsCatalogService, type NewsActor } from '../../application/features/news/news-catalog.service';
 import { CurrentTenant, CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
@@ -32,7 +33,17 @@ import { optionalOneOf } from './query-params';
  */
 @Controller('t/:tenantSlug/news')
 export class NewsController {
-  constructor(private readonly catalog: NewsCatalogService) {}
+  constructor(
+    private readonly catalog: NewsCatalogService,
+    private readonly availability: NewsAvailabilityService,
+  ) {}
+
+  /** Whether News is on for this municipality (its Day3ati village lists the module): what hides the screens. */
+  @Roles(...NEWS_EDITOR_ROLES)
+  @Get('availability')
+  isAvailable(@CurrentTenant('slug') tenantSlug: string) {
+    return this.availability.of(tenantSlug);
+  }
 
   @Roles(...NEWS_EDITOR_ROLES)
   @Get('categories')

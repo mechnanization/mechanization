@@ -143,7 +143,7 @@ export class Day3atiNewsClient implements Day3atiNews {
       throw newsErrorFromFailure(error);
     }
 
-    const hasBody = call.body !== undefined;
+    const hasBody = call.body !== undefined && call.form === undefined;
     try {
       return await fetch(url, {
         method: call.method,
@@ -155,7 +155,9 @@ export class Day3atiNewsClient implements Day3atiNews {
           ...(hasBody ? { 'content-type': 'application/json' } : {}),
         },
         ...(hasBody ? { body: JSON.stringify(call.body) } : {}),
-        signal: AbortSignal.timeout(DAY3ATI_REQUEST_TIMEOUT_MS),
+        // A form is sent whole and re-sent whole when a 401 asks for a fresh token: a `FormData` can go twice.
+        ...(call.form ? { body: call.form } : {}),
+        signal: AbortSignal.timeout(call.timeoutMs ?? DAY3ATI_REQUEST_TIMEOUT_MS),
       });
     } catch {
       // The cause can carry the URL and the user's id; say only what an operator can act on.

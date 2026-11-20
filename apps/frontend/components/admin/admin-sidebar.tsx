@@ -111,11 +111,14 @@ export function AdminSidebar({
   locale,
   adminPath,
   role,
+  newsEnabled,
 }: {
   tenant: string;
   locale: string;
   adminPath: string;
   role: string | undefined;
+  /** `false` hides the News rows: this municipality's Day3ati village does not list the module. */
+  newsEnabled?: boolean;
 }) {
   const base = `/${tenant}/${locale}/${adminPath}`;
   const [collapsed, setCollapsed] = useState(false);
@@ -182,7 +185,7 @@ export function AdminSidebar({
         </button>
       </div>
 
-      <SidebarNav base={base} role={role} collapsed={collapsed} locale={locale} />
+      <SidebarNav base={base} role={role} collapsed={collapsed} locale={locale} newsEnabled={newsEnabled} />
     </aside>
   );
 }
@@ -202,16 +205,18 @@ export function SidebarNav({
   role,
   collapsed = false,
   locale = 'ar',
+  newsEnabled,
   onNavigate,
 }: {
   base: string;
   role: string | undefined;
   collapsed?: boolean;
   locale?: string;
+  newsEnabled?: boolean;
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
-  const groups = visibleGroups(role);
+  const groups = visibleGroups(role, { newsEnabled });
   const active = activeNavItem(pathname, base, role);
   const folded = useFoldedGroups();
 

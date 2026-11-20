@@ -772,13 +772,19 @@ export const NAV_GROUPS: NavGroup[] = [
  * before the session is read, and "we do not know who this is yet" must not be
  * the state in which the most permissive answer is given.
  */
-export function visibleGroups(role: string | undefined): NavGroup[] {
+export function visibleGroups(role: string | undefined, options: { newsEnabled?: boolean } = {}): NavGroup[] {
   if (!role) return [];
   return NAV_GROUPS
     .filter((group) => !group.roles || group.roles.includes(role))
     .map((group) => ({
       ...group,
-      items: group.items.filter((item) => item.roles.includes(role)),
+      items: group.items.filter(
+        (item) =>
+          item.roles.includes(role) &&
+          // News is hidden from a municipality whose Day3ati village lacks the module. Only a definite «no»
+          // hides it: while that is unknown (`undefined`) the rows stay.
+          !(options.newsEnabled === false && item.path.startsWith('/news')),
+      ),
     }))
     .filter((group) => group.items.length > 0);
 }

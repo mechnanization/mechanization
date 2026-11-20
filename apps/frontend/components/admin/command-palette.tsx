@@ -15,6 +15,7 @@ export function CommandPalette({
   tenant,
   token,
   role,
+  newsEnabled,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -23,6 +24,8 @@ export function CommandPalette({
   tenant: string;
   token: string | undefined;
   role: string | undefined;
+  /** `false` leaves the News rows out of the palette too. */
+  newsEnabled?: boolean;
 }): React.JSX.Element | null {
   const router = useRouter();
   const [query, setQuery] = React.useState('');
@@ -32,7 +35,7 @@ export function CommandPalette({
   const inputRef = React.useRef<HTMLInputElement>(null);
 
   const sections = React.useMemo(() => {
-    const all = visibleGroups(role).flatMap((group) => group.items);
+    const all = visibleGroups(role, { newsEnabled }).flatMap((group) => group.items);
     const term = query.trim();
     if (!term) return all;
     return all.filter(
@@ -40,7 +43,7 @@ export function CommandPalette({
         item.label.includes(term) ||
         (item.keywords ?? []).some((keyword) => keyword.includes(term)),
     );
-  }, [query, role]);
+  }, [query, role, newsEnabled]);
 
   // Reset on every open so the palette never re-opens showing the previous
   // search — a clerk pressing Ctrl+K expects an empty box.

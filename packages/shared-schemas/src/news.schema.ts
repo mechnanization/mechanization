@@ -10,6 +10,21 @@ import { newsPublisherKindSchema, type NewsPublisherKind } from './enums';
  * will not take with its own refusal, which reaches the form field by field.
  */
 
+/** The key of News among a village's modules on Day3ati. */
+export const NEWS_MODULE_KEY = 'news';
+
+/** Why News is not available for a municipality, when it is not. */
+export type NewsUnavailableReason = 'NOT_CONFIGURED' | 'NOT_LINKED' | 'MODULE_OFF';
+
+/**
+ * Whether News is on for the municipality: its Day3ati village lists the news
+ * module. The screens are hidden from a municipality for which it is `false`.
+ */
+export interface NewsAvailability {
+  enabled: boolean;
+  reason: NewsUnavailableReason | null;
+}
+
 /** A name's longest: ours, so a paste of a page is refused before it travels. */
 export const NEWS_NAME_MAX = 200;
 /** A category key's longest. Day3ati's rule is «lowercase, e.g. water-power»; its own refusal is the authority. */
@@ -134,6 +149,9 @@ export const NEWS_FIELD_ERROR_CODES = {
   'news.invalid_category_key': 'key',
   'news.category_key_taken': 'key',
   'news.name_required': 'nameAr',
+  // A photo or PDF the file box refuses (task «Photos and documents»).
+  'news.unsupported_file': 'file',
+  'news.file_too_large': 'file',
 } as const;
 
 export type NewsFieldErrorCode = keyof typeof NEWS_FIELD_ERROR_CODES;

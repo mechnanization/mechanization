@@ -46,8 +46,15 @@ export interface Day3atiNewsCall {
   path: string;
   /** Query values; `undefined` and `null` are left out. `lang` is set by `language`, not here. */
   query?: Readonly<Record<string, string | number | boolean | null | undefined>>;
-  /** A JSON body. */
+  /** A JSON body. Not with `form`. */
   body?: unknown;
+  /**
+   * A multipart form, for a file. Sent as it is, with its own boundary: the content type is not set.
+   * Not with `body`.
+   */
+  form?: FormData;
+  /** How long to wait for Day3ati's answer. A file takes longer than the default of ten seconds. */
+  timeoutMs?: number;
   /** The language the answer is written in (ours is `ar` unless the screen says otherwise). */
   language?: Day3atiLanguage;
 }
