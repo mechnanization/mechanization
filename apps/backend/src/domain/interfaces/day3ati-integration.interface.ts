@@ -19,6 +19,18 @@ export interface Day3atiStaffAccount {
   language: Day3atiLanguage;
 }
 
+/**
+ * One village in Day3ati: where a municipality's News lives
+ * (`GET /api/v1/integration/villages`). `externalTenant` is our own tenant
+ * slug, the `{tenant}` of the staff paths; `slug` and `name` are Day3ati's.
+ */
+export interface Day3atiVillage {
+  villageId: string;
+  externalTenant: string;
+  /** The modules switched on for the village, as Day3ati names them. */
+  modules: readonly string[];
+}
+
 export interface Day3atiIntegration {
   /** False when the four `DAY3ATI_*` settings are not all set: nothing is sent. */
   readonly isConfigured: boolean;
@@ -28,6 +40,9 @@ export interface Day3atiIntegration {
    * (`PUT …/tenants/{tenant}/staff/{userId}`). Safe to repeat.
    */
   upsertStaff(tenantSlug: string, userId: string, account: Day3atiStaffAccount): Promise<void>;
+
+  /** Every village this client may use, with the municipality each one belongs to. */
+  listVillages(): Promise<Day3atiVillage[]>;
 
   /**
    * Removes one user from a village (`DELETE …/tenants/{tenant}/staff/{userId}`).

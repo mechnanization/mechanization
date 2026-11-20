@@ -138,6 +138,42 @@ describe('Day3atiIntegrationClient', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  describe('the list of villages', () => {
+    it('GETs it with the client token and keeps each village with its id, municipality and modules', async () => {
+      fetchMock.mockResolvedValue(
+        answer(200, [
+          { villageId: 'v1', externalTenant: 'albazourieh', slug: 'albazourieh', name: 'x', modules: ['news', 3, 'events'] },
+          { villageId: 'v2', externalTenant: 'maarakeh', slug: 'maarakeh', name: 'y' },
+        ]),
+      );
+
+      await expect(make().listVillages()).resolves.toEqual([
+        { villageId: 'v1', externalTenant: 'albazourieh', modules: ['news', 'events'] },
+        { villageId: 'v2', externalTenant: 'maarakeh', modules: [] },
+      ]);
+
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe('https://day3ati.example.test/api/v1/integration/villages');
+      expect(init.method).toBe('GET');
+      expect((init.headers as Record<string, string>).authorization).toBe('Bearer client-token');
+    });
+
+    it('leaves out an entry it cannot use', async () => {
+      fetchMock.mockResolvedValue(answer(200, [{ villageId: 'v1' }, null, { externalTenant: 'x' }, { villageId: 'v3', externalTenant: 'z' }]));
+      await expect(make().listVillages()).resolves.toEqual([{ villageId: 'v3', externalTenant: 'z', modules: [] }]);
+    });
+
+    it('is a bad answer when it is not a list', async () => {
+      fetchMock.mockResolvedValue(answer(200, { villages: [] }));
+      await expect(make().listVillages()).rejects.toMatchObject({ code: 'day3ati.bad_response' });
+    });
+
+    it('does not treat a missing list as an empty one', async () => {
+      fetchMock.mockResolvedValue(answer(404, { code: 'x.y' }));
+      await expect(make().listVillages()).rejects.toMatchObject({ code: 'x.y', status: 404 });
+    });
+  });
+
   it('refuses while Day3ati is not configured', async () => {
     const off = tokens({ isConfigured: false });
     await expect(make(off).removeStaff('albazourieh', 'user-1')).rejects.toMatchObject({

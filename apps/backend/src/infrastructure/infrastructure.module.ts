@@ -18,10 +18,13 @@ import {
   ZONE_REPOSITORY,
 } from '../domain/interfaces/base-repository.interface';
 import { DAY3ATI_INTEGRATION } from '../domain/interfaces/day3ati-integration.interface';
+import { DAY3ATI_NEWS, DAY3ATI_VILLAGES } from '../domain/interfaces/day3ati-news.interface';
 import { DAY3ATI_TOKENS } from '../domain/interfaces/day3ati-tokens.interface';
 import { WHISH_GATEWAY } from '../domain/interfaces/whish-gateway.interface';
 import { Day3atiIntegrationClient } from './day3ati/day3ati-integration.client';
+import { Day3atiNewsClient } from './day3ati/day3ati-news.client';
 import { Day3atiTokenService } from './day3ati/day3ati-token.service';
+import { Day3atiVillageDirectory } from './day3ati/day3ati-village-directory';
 import { WhishGatewayService } from './payments/whish-gateway.service';
 import { S3CadastreStorageService } from './aws/s3-cadastre-storage.service';
 import { S3RequestFileStorageService } from './aws/s3-request-file-storage.service';
@@ -93,6 +96,9 @@ import { SmsProviderService } from './sms/sms-provider.service';
     { provide: DAY3ATI_TOKENS, useClass: Day3atiTokenService },
     // Day3ati's staff accounts (/api/v1/integration), called with the client token. Same switch.
     { provide: DAY3ATI_INTEGRATION, useClass: Day3atiIntegrationClient },
+    // Where each municipality's News lives, and the one client every News screen calls Day3ati through.
+    { provide: DAY3ATI_VILLAGES, useClass: Day3atiVillageDirectory },
+    { provide: DAY3ATI_NEWS, useClass: Day3atiNewsClient },
     { provide: PASSWORD_HASHER, useClass: BcryptPasswordHasher },
     { provide: TOTP_SERVICE, useClass: OtplibTotpService },
   ],
@@ -120,6 +126,8 @@ import { SmsProviderService } from './sms/sms-provider.service';
     WHISH_GATEWAY,
     DAY3ATI_TOKENS,
     DAY3ATI_INTEGRATION,
+    DAY3ATI_VILLAGES,
+    DAY3ATI_NEWS,
     PASSWORD_HASHER,
     TOTP_SERVICE,
   ],
