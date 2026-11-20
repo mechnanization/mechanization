@@ -16,6 +16,7 @@ import type { Request } from 'express';
 import {
   BILL_CANCEL_ROLES,
   BULK_SETTLE_ROLES,
+  CITIZEN_SETTINGS_FIELDS,
   bulkSettlePaymentsSchema,
   cancelBillSchema,
   cancelNoticeSchema,
@@ -40,6 +41,7 @@ import {
   systemSettingsSchema,
   type BillBasisReview,
   type CancelBill,
+  type CitizenSettingsField,
   type CancelNotice,
   type ChargeCitizen,
   type CreateFeeNotice,
@@ -109,19 +111,17 @@ export class FeesController {
     // Still staff-only when asked for — a citizen cannot opt in.
     const settings = await this.fees.getSettings(includeLogo === 'true' && Boolean(user.role));
     if (user.role) return settings;
-    // A citizen reads how to pay, not the limits the treasury sets on its own staff:
-    // the urgent-payment ceilings (D6) and the exchange rule that decides which
-    // exchanges an auditor reviews (0084).
-    const {
-      urgentExpenseCeilingLbp: _lbp,
-      urgentExpenseCeilingUsd: _usd,
-      salaryUrgentCeilingLbp: _salaryLbp,
-      salaryUrgentCeilingUsd: _salaryUsd,
-      exchangeRateTolerancePercent: _tolerance,
-      largeExchangeThreshold: _large,
-      ...forCitizen
-    } = settings;
-    return forCitizen;
+    /*
+      A citizen reads how to pay, and only that: the fields a portal screen
+      reads (`CITIZEN_SETTINGS_FIELDS`, task S13). Stripping a list instead let
+      every new field through by default — the treasury's ceilings and exchange
+      rule had to be named one by one, and the letterhead, the levels table and
+      the numbering never were.
+    */
+    const record = settings as Record<string, unknown>;
+    return Object.fromEntries(
+      CITIZEN_SETTINGS_FIELDS.filter((field) => field in record).map((field) => [field, record[field]]),
+    ) as Partial<Record<CitizenSettingsField, string | null>>;
   }
 
   @Roles(...FEE_ADMIN_ROLES)

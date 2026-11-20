@@ -1050,6 +1050,21 @@ const urgentCeiling = z
   .nullable()
   .optional();
 
+/**
+ * What a citizen reads of the municipality's settings (`GET fees/settings`):
+ * how to pay — the Whish number, and where and when the cash office is open,
+ * which the portal's pay dialog prints — and nothing else.
+ *
+ * An allowlist, not a list of what to strip (task S13 of the 2026-11-14
+ * security audit, N-6): the route used to send a citizen the whole record
+ * less the treasury's own limits, so every field added to the settings since
+ * — the letterhead, the levels table, the numbering, the backup schedule —
+ * reached the portal unless someone remembered to strip it. A field joins
+ * this list when a portal screen reads it, in the same change.
+ */
+export const CITIZEN_SETTINGS_FIELDS = ['whishMoneyNumber', 'cashOfficeAddress', 'cashOfficeHours'] as const;
+export type CitizenSettingsField = (typeof CITIZEN_SETTINGS_FIELDS)[number];
+
 /** The municipality-wide settings a clerk edits without a deploy. */
 export const systemSettingsSchema = z.object({
   /**
