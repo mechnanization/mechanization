@@ -195,6 +195,9 @@ const SPECIAL_KEYS = new Set([
   'cards',
   'requestedBy',
   'reinspectAt',
+  // A fee exemption's last day and a lift's reason (0104), said by their own rule.
+  'validUntil',
+  'liftReason',
 ]);
 
 /**
@@ -419,6 +422,26 @@ export function describeAudit(entry: AuditEntry, locale: string): AuditDescripti
   const reinspectAt = after?.reinspectAt;
   if (typeof reinspectAt === 'string' && reinspectAt) {
     fact(t('text.reinspectAt'), formatDate(`${calendarDayOf(reinspectAt)}T12:00:00.000Z`));
+  }
+  /*
+    A fee exemption's period (0104): its last day is a calendar day like the one
+    above, before → after when it moved; why a lift was made is a person's
+    sentence, quoted. The note is never in the row (decision of 2026-11-16).
+  */
+  if (entry.action === 'UNIT_FEE_EXEMPTION_SET' || entry.action === 'UNIT_FEE_EXEMPTION_LIFTED') {
+    const day = (value: unknown) =>
+      typeof value === 'string' && value ? formatDate(`${calendarDayOf(value)}T12:00:00.000Z`) : t('text.noEndDay');
+    const untilBefore = before?.validUntil;
+    const untilAfter = after?.validUntil;
+    if (entry.action === 'UNIT_FEE_EXEMPTION_SET' && (untilAfter !== undefined || untilBefore !== undefined)) {
+      if (untilBefore !== undefined && untilBefore !== untilAfter) {
+        result.changes.push({ label: t('text.validUntil'), before: day(untilBefore), after: day(untilAfter) });
+      } else {
+        fact(t('text.validUntil'), day(untilAfter));
+      }
+    }
+    const liftReason = after?.liftReason;
+    if (typeof liftReason === 'string' && liftReason) result.quotes.push({ label: t('text.liftReason'), value: liftReason });
   }
   /*
     `changed` names every field a save moved. The ones whose values the entry

@@ -353,6 +353,11 @@ model User {
   unitsPaidAsResponsibleOwner Unit[] @relation("UnitResponsibleOwner")
   /// Unit fee exemptions this staff member granted (0077).
   unitFeeExemptionsGranted    Unit[] @relation("UnitFeeExemptedBy")
+  /// Exemption periods this staff member granted, and lifted (0104).
+  feeExemptionPeriodsGranted  UnitFeeExemption[] @relation("UnitFeeExemptionGrantedBy")
+  feeExemptionPeriodsLifted   UnitFeeExemption[] @relation("UnitFeeExemptionLiftedBy")
+  /// Building types this staff member added (0106).
+  buildingTypesCreated        BuildingType[]     @relation("BuildingTypeCreatedBy")
 
   /// Staff email is unique within the municipality (i.e. within this schema).
   @@unique([email])
@@ -1025,6 +1030,12 @@ enum StructureType {
   /// season; minting a building shell for each would corrupt every density and
   /// structural-inventory figure the census exists to produce.
   TENT_SHELTER
+  /// «منشأة عامة / خدماتية» — a school, a dispensary, the municipality's own
+  /// hall (0105; decision 4 of 2026-11-16). The behaviour behind the
+  /// administrator's public building types (`BuildingType`). Units default to
+  /// an office. Not `FeeExemptionReason.PUBLIC_FACILITY`: a building's type
+  /// exempts nothing.
+  PUBLIC_INSTITUTION
 }
 
 /// Where a structure is in its own life — the third axis, beside *what kind of
@@ -1246,7 +1257,16 @@ model Building {
   /// survey correction must not cascade a municipality's buildings away.
   sharedParcelNumbers String[] @default([])
 
+  /// The behaviour every reader keys on. Since 0106 the server sets it from
+  /// `buildingType` on create and edit, never from the body beside a type.
   structureType StructureType
+
+  /// «نوع المبنى» (0106): the municipality's type this building was filed as,
+  /// system or custom. Nullable in this release (expand, backfill, contract):
+  /// 0106 filled every building with the system row of its `structureType`.
+  /// RESTRICT: a type in use is never deleted.
+  buildingTypeId String?       @db.Uuid
+  buildingType   BuildingType? @relation(fields: [buildingTypeId], references: [id], onDelete: Restrict)
 
   /// Where the structure is in its own life. `IN_USE` for everything created
   /// before this column existed, which is the true answer for all of them: the
@@ -1311,7 +1331,44 @@ model Building {
   /// `ORDER BY … DESC` with no index behind it sorts the whole table on every
   /// page turn.
   @@index([createdAt])
+  @@index([buildingTypeId])
   @@map("buildings")
+}
+
+/// «أنواع المباني» (migration 0106; decision 5 of 2026-11-16: each
+/// municipality's own list). Every type takes the behaviour of one
+/// `StructureType` value, and a building's `structureType` is set from it by
+/// the server; the enum is not replaced.
+///
+/// One system row per `StructureType` (the partial unique index
+/// `building_types_system_structure_key`, which Prisma 5 cannot express),
+/// inserted by the migration. A system row's `structureType` never changes,
+/// and `isSystem` never flips (trigger `building_types_system_rewrite`).
+/// Renaming changes the label only. Never deleted, only deactivated: an
+/// inactive type is refused on a new building and kept on old ones.
+model BuildingType {
+  id              String        @id @default(uuid()) @db.Uuid
+  /// Unique; trimmed and not empty (CHECK building_types_names_trimmed).
+  nameAr          String        @unique
+  nameEn          String?
+  structureType   StructureType
+  /// What a unit of a building of this type starts as. Never PILOTIS or
+  /// EMPTY_FLOOR (CHECK building_types_unit_not_structural).
+  defaultUnitType UnitType
+  isSystem        Boolean       @default(false)
+  isActive        Boolean       @default(true)
+  sortOrder       Int           @default(100)
+  /// NULL on a system row (CHECK building_types_system_has_no_author); SET
+  /// NULL when the person is removed.
+  createdById     String?       @db.Uuid
+  createdBy       User?         @relation("BuildingTypeCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @default(now()) @updatedAt
+
+  buildings Building[]
+
+  @@index([createdById])
+  @@map("building_types")
 }
 
 /// A building code retired by «تصحيح رقم العقار» (migration 0060).
@@ -1489,6 +1546,13 @@ model Unit {
   feeExemptedById  String?             @db.Uuid
   feeExemptedBy    User?               @relation("UnitFeeExemptedBy", fields: [feeExemptedById], references: [id], onDelete: SetNull)
   feeExemptedAt    DateTime?
+  /// The open exemption period's last day (migration 0104), NULL for none.
+  /// Exempt on day D while `feeExemption` is set and D <= this
+  /// (`isFeeExemptOn` in shared-schemas). Only on an exempt unit (CHECK
+  /// units_fee_exemption_valid_until_needs_reason). The history of every
+  /// period is `UnitFeeExemption`; these columns are its live mirror.
+  feeExemptionValidUntil DateTime? @db.Date
+  feeExemptionPeriods    UnitFeeExemption[]
 
   /// How many levels this one unit spans, from `floor` (its entrance) upward
   /// (migration 0095, decision D28): 2 is a «دوبلكس», 3 a «تريبلكس». 1 for
@@ -1523,6 +1587,46 @@ model Unit {
 /// deed — Lebanese inheritance makes multi-owner the normal case, not the
 /// exception. And because a previous tenant is information the municipality
 /// needs, not history to overwrite.
+/// «قائمة الإعفاء من الرسوم» — one exemption period of one unit (migration
+/// 0104). The unit's `feeExemption*` columns are the live state billing reads;
+/// this is their history, written in the same transaction. The exemption
+/// belongs to the unit, never to a person.
+///
+/// At most one open period (`liftedAt` NULL) per unit: the partial unique
+/// index `unit_fee_exemptions_one_open_key`, which Prisma 5 cannot express.
+/// CHECKs: `unit_fee_exemptions_other_note` (OTHER needs its note),
+/// `unit_fee_exemptions_text_not_blank`, `unit_fee_exemptions_lift_fields`
+/// (lifted ⇔ `liftedAt` and `liftReason`; the lifter may be SET NULL) and
+/// `unit_fee_exemptions_lifted_after_grant`.
+///
+/// `note` and `liftReason` are free text about a place and, through it, the
+/// people on it: neither goes into a log or a Sentry event, and `note` stays
+/// out of the audit row too (decision of 2026-11-16).
+model UnitFeeExemption {
+  id          String             @id @default(uuid()) @db.Uuid
+  /// RESTRICT: a unit with an exemption history is not deleted under it.
+  unitId      String             @db.Uuid
+  unit        Unit               @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  reason      FeeExemptionReason
+  note        String?
+  /// «رقم قرار المجلس البلدي», when the exemption rests on one.
+  decisionRef String?
+  /// The last exempt day, NULL for none (decision 1 of 2026-11-16).
+  validUntil  DateTime?          @db.Date
+  grantedById String?            @db.Uuid
+  grantedBy   User?              @relation("UnitFeeExemptionGrantedBy", fields: [grantedById], references: [id], onDelete: SetNull)
+  grantedAt   DateTime
+  liftedById  String?            @db.Uuid
+  liftedBy    User?              @relation("UnitFeeExemptionLiftedBy", fields: [liftedById], references: [id], onDelete: SetNull)
+  liftedAt    DateTime?
+  liftReason  String?
+
+  @@index([unitId, grantedAt])
+  @@index([grantedById])
+  @@index([liftedById])
+  @@map("unit_fee_exemptions")
+}
+
 model UnitOccupancy {
   id     String @id @default(uuid()) @db.Uuid
   unitId String @db.Uuid

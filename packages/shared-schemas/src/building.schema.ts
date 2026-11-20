@@ -17,7 +17,12 @@ import {
 } from './enums';
 import { habitabilityFor, isReinspectDayAhead } from './damage-rule';
 import { areaField, propertyNumberField } from './property.schema';
-import { arabicOrLatinName, internationalPhone, normalizeDigits, uuid } from './primitives';
+import { arabicOrLatinName, businessDay, internationalPhone, normalizeDigits, uuid } from './primitives';
+import {
+  FEE_EXEMPTION_DECISION_REF_MAX,
+  FEE_EXEMPTION_LIFT_REASON_MIN,
+  FEE_EXEMPTION_TEXT_MAX,
+} from './fee-exemption.schema';
 import { unitLevelsField } from './unit-levels';
 import type { OwnerBillingFallback } from './owner-share';
 
@@ -339,7 +344,14 @@ export const createBuildingSchema = z
     parcelNumber,
     name: buildingName.optional(),
     postedNumber: postedNumber.optional(),
+    /**
+     * Still sent, and still all an older client or a queued offline save sends:
+     * without a type, the building is filed under this structure's system type.
+     * With one, the server takes the structure from the type and ignores this.
+     */
     structureType: structureTypeSchema,
+    /** «نوع المبنى» (0106): the municipality's type, system or custom; an inactive one is refused. */
+    buildingTypeId: uuid.optional(),
     /**
      * Where the structure is in its own life. Defaults to «قائم ومستعمل»
      * because that is what an officer is standing in front of nineteen times
@@ -525,6 +537,8 @@ const updateBuildingFields = z
     name: buildingName.nullable().optional(),
     postedNumber: postedNumber.nullable().optional(),
     structureType: structureTypeSchema.optional(),
+    /** «نوع المبنى» (0106): decides `structureType`; one switched off is kept only if the building has it already. */
+    buildingTypeId: uuid.optional(),
     lifecycleStatus: buildingLifecycleSchema.optional(),
     latitude: latitude.nullable().optional(),
     longitude: longitude.nullable().optional(),
@@ -1410,18 +1424,32 @@ export type SetOwnerBillingInput = z.infer<typeof setOwnerBillingSchema>;
 
 /**
  * «معفاة من الرسوم» — granting (`reason` set) or lifting (`reason` null) a
- * unit's exemption from every fee (migration 0077). SUPER_ADMIN only. «سبب
- * آخر» needs its reason in words; a lift takes no note — the audit row records
- * who lifted it and when, and the exemption it ended.
+ * unit's exemption from every fee (migration 0077), and since 0104 its period:
+ * the council's decision number and an optional last day. SUPER_ADMIN only.
+ *
+ * - «سبب آخر» needs its reason in words (`note`).
+ * - `validUntil` is the last exempt day (decision 1 of 2026-11-16); the server
+ *   refuses one before today (`FEE_EXEMPTION_VALID_UNTIL_PAST`), since a day
+ *   that already passed would exempt nothing.
+ * - A lift needs its reason in words (`liftReason`), kept on the period.
+ *
+ * Saving an exempt unit again amends its open period (reason, note, number,
+ * last day); a lift closes it, and the next grant opens a new one.
  */
 export const setUnitFeeExemptionSchema = z
   .object({
     reason: feeExemptionReasonSchema.nullable(),
-    note: z.string().trim().max(500, 'السبب طويل جداً').optional(),
+    note: z.string().trim().max(FEE_EXEMPTION_TEXT_MAX, 'السبب طويل جداً').optional(),
+    decisionRef: z.string().trim().max(FEE_EXEMPTION_DECISION_REF_MAX, 'رقم القرار طويل جداً').optional(),
+    validUntil: businessDay.nullable().optional(),
+    liftReason: z.string().trim().max(FEE_EXEMPTION_TEXT_MAX, 'السبب طويل جداً').optional(),
   })
   .superRefine((value, ctx) => {
     if (value.reason === 'OTHER' && (value.note ?? '').length < 3) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['note'], message: 'اكتب سبب الإعفاء' });
+      ctx.addIssue({ code: 'custom', path: ['note'], message: 'اكتب سبب الإعفاء' });
+    }
+    if (value.reason === null && (value.liftReason ?? '').length < FEE_EXEMPTION_LIFT_REASON_MIN) {
+      ctx.addIssue({ code: 'custom', path: ['liftReason'], message: 'اكتب سبب رفع الإعفاء' });
     }
   });
 
@@ -1472,6 +1500,8 @@ export const buildingFilterSchema = z.object({
     .optional(),
   zoneId: uuid.optional(),
   structureType: structureTypeSchema.optional(),
+  /** «نوع المبنى» (0106). */
+  buildingTypeId: uuid.optional(),
   lifecycleStatus: buildingLifecycleSchema.optional(),
   surveyStatus: surveyStatusSchema.optional(),
   damageLevel: damageLevelSchema.optional(),

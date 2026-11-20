@@ -26,8 +26,18 @@ import { ValidationError } from '../../common/exceptions';
  * **5** adds `citizenPaymentDebtor` (migration 0099): who may pay a shared unit
  * bill. Its rows cascade from `citizen_payments`, which restore empties, so a
  * v4 file would bring the shared bills back with nobody to owe them.
+ *
+ * **6** adds `unitFeeExemption` (migration 0104): every exemption period of a
+ * unit. Its key onto `units` is RESTRICT, so a restore that did not empty it
+ * could not empty `units`; and a v5 file would put back exempt units with no
+ * history of why, by whose decision, or until when.
+ *
+ * **7** adds `buildingType` (migration 0106): the municipality's building types.
+ * `buildings.buildingTypeId` keys onto them with RESTRICT, so they are written
+ * before the buildings and deleted after; a v6 file would put back buildings
+ * whose type no longer exists.
  */
-const SNAPSHOT_VERSION = 5;
+const SNAPSHOT_VERSION = 7;
 
 /**
  * Ceiling on the *decompressed* snapshot, enforced by `gunzipSync`.
@@ -106,10 +116,14 @@ const TABLE_ORDER = [
   'parcel',
   'zone',
   'systemSettings',
+  // «أنواع المباني» (0106): a building is filed under one, so before it; a type's author is a `users` row.
+  'buildingType',
   // A building stands on a parcel and is created by a user; it depends on no
   // registration, which is the entire point of it existing (D1).
   'building',
   'unit',
+  // «قائمة الإعفاء من الرسوم» (0104): a unit's exemption periods, after the unit and the `users` who granted them.
+  'unitFeeExemption',
   'registration',
   'propertyEntry',
   'buildingUnit',

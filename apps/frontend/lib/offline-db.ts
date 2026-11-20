@@ -44,10 +44,17 @@ const DB_NAME = 'mechanization.offline';
  * offline need their own store. The upgrade is additive — the citizen store and
  * everything in it is untouched — so a phone carrying thirty queued
  * registrations opens the new version and still has all thirty.
+ *
+ * **Bumped to 3** for «أنواع المباني» (migration 0106): an inspector with no
+ * network still picks a building's type, so the list is kept on the device in a
+ * store of its own (`REFERENCE_STORE`). Additive like 2: both queues and every
+ * record in them are untouched.
  */
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const STORE = 'citizenSubmissions';
 const BUILDING_STORE = 'buildingSubmissions';
+/** Lists a screen needs offline and the server owns — one row per tenant and list. */
+const REFERENCE_STORE = 'referenceData';
 
 /** Groups a queue read by municipality without scanning every record. */
 const TENANT_INDEX = 'by-tenant';
@@ -164,7 +171,7 @@ function open(): Promise<IDBDatabase> {
     */
     request.onupgradeneeded = () => {
       const db = request.result;
-      for (const name of [STORE, BUILDING_STORE]) {
+      for (const name of [STORE, BUILDING_STORE, REFERENCE_STORE]) {
         if (db.objectStoreNames.contains(name)) continue;
         const store = db.createObjectStore(name, { keyPath: 'id' });
         store.createIndex(TENANT_INDEX, 'tenant', { unique: false });
@@ -548,4 +555,33 @@ export function updateQueuedBuilding(
       ? { attempts: existing.attempts + 1, lastAttemptAt: Date.now() }
       : {}),
   }));
+}
+
+// ─────────────────────────────  Reference lists  ─────────────────────────────
+
+/** A list kept for offline use: what the server last answered, and when. */
+export interface CachedReference<T> {
+  /** `<tenant>:<list>`. */
+  id: string;
+  tenant: string;
+  savedAt: string;
+  data: T;
+}
+
+/**
+ * Keeps the server's last answer for a list a screen needs with no network —
+ * «أنواع المباني» first (0106). Not citizen data: a municipality's own
+ * vocabulary. Overwritten by every answer, never merged.
+ */
+export async function saveReference<T>(tenant: string, list: string, data: T): Promise<void> {
+  const row: CachedReference<T> = { id: `${tenant}:${list}`, tenant, savedAt: new Date().toISOString(), data };
+  await runOn(REFERENCE_STORE, 'readwrite', (store) => store.put(row));
+}
+
+/** The list as last saved for this municipality, or null when none was. */
+export async function loadReference<T>(tenant: string, list: string): Promise<CachedReference<T> | null> {
+  const row = await runOn<CachedReference<T> | undefined>(REFERENCE_STORE, 'readonly', (store) =>
+    store.get(`${tenant}:${list}`),
+  );
+  return row ?? null;
 }

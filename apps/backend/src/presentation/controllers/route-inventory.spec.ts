@@ -140,7 +140,7 @@ describe('the «مشاهد فقط» (VIEWER) role — the municipality leader’
 
   it('is not admitted to the audit trail, staff, quality decisions, settings or identity documents', () => {
     const forbidden = viewer.filter((route) =>
-      /^(AuditController|StaffController|QualityController|BackupController|TenantController|DocumentController|CorrectionsController|CadastreController)\./.test(
+      /^(AuditController|StaffController|QualityController|BackupController|TenantController|DocumentController|CorrectionsController|CadastreController|FeeExemptionsController)\./.test(
         route.name,
       ),
     );
@@ -418,6 +418,69 @@ describe('the municipal request routes', () => {
     const paths = all.filter((route) => route.name.startsWith('CitizenRequestsController.')).map((route) => route.path);
     expect(paths.indexOf('mine')).toBeLessThan(paths.indexOf(':id'));
     expect(paths.indexOf('types')).toBeLessThan(paths.indexOf(':id'));
+  });
+});
+
+/*
+  «قائمة الإعفاء من الرسوم» (migration 0104; decision 3 of 2026-11-16). Every
+  read names the people on the units, so it is the manager, the administrative
+  officer, the accountant and the auditor — never the collector, the field
+  inspector or «مشاهد فقط», whose search must not reach a citizen's رقم مرجعي
+  either. Granting and lifting stay the manager's.
+*/
+describe('the fee whitelist routes', () => {
+  const READ = ['ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'AUDITOR', 'SUPER_ADMIN'];
+  const expected: Record<string, string[]> = {
+    'FeeExemptionsController.list': READ,
+    'FeeExemptionsController.unitByReference': READ,
+    'FeeExemptionsController.unit': READ,
+    'FeeExemptionsController.citizenUnits': READ,
+    'BuildingsController.setFeeExemption': ['SUPER_ADMIN'],
+  };
+  const all = routes();
+
+  it.each(Object.entries(expected))('%s admits exactly its roles', (name, roles) => {
+    const route = all.find((candidate) => candidate.name === name);
+    expect(route).toBeDefined();
+    expect([...(route?.roles ?? [])].sort()).toEqual([...roles].sort());
+  });
+
+  it('knows every whitelist handler, and no other', () => {
+    expect(all.filter((route) => route.name.startsWith('FeeExemptionsController.')).map((route) => route.name).sort()).toEqual(
+      Object.keys(expected).filter((name) => name.startsWith('FeeExemptionsController.')).sort(),
+    );
+  });
+
+  it('reads «units» as a path before a unit id', () => {
+    const paths = all.filter((route) => route.name.startsWith('FeeExemptionsController.')).map((route) => route.path);
+    expect(paths.indexOf('units')).toBeLessThan(paths.indexOf('units/:unitId'));
+  });
+});
+
+/*
+  «أنواع المباني» (migration 0106). Read by every staff role — the building
+  wizard, the map and the census, and an inspector's offline store — and
+  written by the manager alone. There is no delete: a type is switched off.
+*/
+describe('the building type routes', () => {
+  const EVERY = ['ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'AUDITOR', 'COLLECTOR', 'FIELD_INSPECTOR', 'SUPER_ADMIN', 'VIEWER'];
+  const expected: Record<string, string[]> = {
+    'BuildingTypesController.list': EVERY,
+    'BuildingTypesController.create': ['SUPER_ADMIN'],
+    'BuildingTypesController.update': ['SUPER_ADMIN'],
+  };
+  const all = routes();
+
+  it.each(Object.entries(expected))('%s admits exactly its roles', (name, roles) => {
+    const route = all.find((candidate) => candidate.name === name);
+    expect(route).toBeDefined();
+    expect([...(route?.roles ?? [])].sort()).toEqual([...roles].sort());
+  });
+
+  it('knows every building type handler, and deletes none', () => {
+    const handlers = all.filter((route) => route.name.startsWith('BuildingTypesController.'));
+    expect(handlers.map((route) => route.name).sort()).toEqual(Object.keys(expected).sort());
+    expect(handlers.some((route) => route.method === RequestMethod.DELETE)).toBe(false);
   });
 });
 

@@ -1,4 +1,4 @@
-import { citizenDisplayName } from '@mechanization/shared-schemas';
+import { calendarDayOf, citizenDisplayName, isFeeExemptOn, municipalToday } from '@mechanization/shared-schemas';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
@@ -116,6 +116,12 @@ export interface DashboardAnalytics {
     unitsSurveyed: number;
     /** The same units as `unitsTotal`, split by نوع الوحدة. Sums to it. */
     unitsByType: Record<string, number>;
+    /**
+     * Every structure on the register by «نوع المبنى» (0106), keyed by the type's
+     * id — `NONE` for a building not typed yet. Sums to `buildings`. The names
+     * come from `GET building-types`, which the screen already holds.
+     */
+    buildingsByType: Record<string, number>;
     /** Census buildings at least one live property card points at. */
     buildingsWithFilings: number;
   };
@@ -326,6 +332,12 @@ export interface CitizenProfileUnit {
    */
   feeExemption: 'PLACE_OF_WORSHIP' | 'PUBLIC_FACILITY' | 'OTHER' | null;
   /**
+   * The exemption's last day, `YYYY-MM-DD`, or null for none (0104). Both are
+   * as of today (`isFeeExemptOn`): an exemption that ran out reads as none,
+   * since billing charges the unit again.
+   */
+  feeExemptionValidUntil: string | null;
+  /**
    * «توزيع الرسم على المالكين» (migration 0075), when the linked flat has
    * several current owners; null otherwise. `share` is this file's owner's
    * part — what an owner-borne charge on the flat bills them for — or null
@@ -504,6 +516,7 @@ export interface CitizenProfileHeldUnit {
   unitId: string;
   unitCode: string;
   feeExemption: CitizenProfileUnit['feeExemption'];
+  feeExemptionValidUntil: CitizenProfileUnit['feeExemptionValidUntil'];
   ownerBilling: CitizenProfileUnit['ownerBilling'];
 }
 
@@ -823,6 +836,7 @@ export class ReportingService {
       censusUnitsTotal: number;
       censusUnitsSurveyed: number;
       censusUnitsByType: Record<string, number>;
+      censusBuildingsByType: Record<string, number>;
       censusBuildingsWithFilings: number;
     };
 
@@ -933,6 +947,12 @@ export class ReportingService {
                       AND b."lifecycleStatus" IN ('IN_USE', 'DERELICT')
                     GROUP BY 1) x)
             AS "censusUnitsByType",
+          -- Every structure by its building type (0106); NONE before its first save since.
+          (SELECT COALESCE(json_object_agg(t, n), '{}'::json)
+             FROM (SELECT COALESCE(b."buildingTypeId"::text, 'NONE') AS t, count(*)::int AS n
+                     FROM ${this.S}buildings b
+                    GROUP BY 1) x)
+            AS "censusBuildingsByType",
           -- Coverage: structures some live card points at. Over the
           -- countable entries and not every live card (and no backticks in
           -- this comment, for the reason given above), so a tenant duplicate
@@ -999,6 +1019,7 @@ export class ReportingService {
       censusUnitsTotal,
       censusUnitsSurveyed,
       censusUnitsByType,
+      censusBuildingsByType,
       censusBuildingsWithFilings,
       ...rest
     } = row;
@@ -1013,6 +1034,7 @@ export class ReportingService {
         unitsTotal: censusUnitsTotal,
         unitsSurveyed: censusUnitsSurveyed,
         unitsByType: censusUnitsByType,
+        buildingsByType: censusBuildingsByType,
         buildingsWithFilings: censusBuildingsWithFilings,
       },
     };
@@ -1105,6 +1127,8 @@ export class ReportingService {
   }
 
   private async computeCitizenProfile(citizenId: string): Promise<CitizenProfile | null> {
+    // The day a unit's fee exemption is read on (0104).
+    const today = municipalToday();
     const citizen = await withConnectionRetry(() => this.db.user.findFirst({
       // `kind` is part of the filter, not an afterthought: without it a staff
       // id in the URL would render a staff member through the citizen view.
@@ -1269,6 +1293,7 @@ export class ReportingService {
                         ownerBillingMode: true,
                         responsibleOwnerId: true,
                         feeExemption: true,
+                        feeExemptionValidUntil: true,
                         presenceMonths: true,
                         ownerLastStayAt: true,
                         vacancyDeclaredAt: true,
@@ -1587,7 +1612,7 @@ export class ReportingService {
                 contactPhone: owner.citizen.contactPhone,
                 shares: owner.shares,
               })),
-              feeExemption: unit.unit?.feeExemption ?? null,
+              ...exemptionToday(unit.unit, today),
               ownerBilling: profileOwnerBilling(unit.unit, citizenId),
             };
           }),
@@ -1634,6 +1659,7 @@ export class ReportingService {
           buildingId: true,
           unitCode: true,
           feeExemption: true,
+          feeExemptionValidUntil: true,
           ownerBillingMode: true,
           responsibleOwnerId: true,
           occupancies: {
@@ -1646,7 +1672,7 @@ export class ReportingService {
     const toHeld = (unit: (typeof units)[number]): CitizenProfileHeldUnit => ({
       unitId: unit.id,
       unitCode: unit.unitCode,
-      feeExemption: unit.feeExemption,
+      ...exemptionToday(unit, municipalToday()),
       ownerBilling: profileOwnerBilling(unit, citizenId),
     });
 
@@ -2151,6 +2177,22 @@ export class ReportingService {
 }
 
 /** «الاسم الأول اسم الأب الشهرة», skipping whichever part is missing. */
+/**
+ * A unit's fee exemption as a file shows it today (0104): the reason and its
+ * last day while it runs (`isFeeExemptOn`), none once it ran out — billing
+ * charges it again. The note is never here: this reaches the portal by spread.
+ */
+function exemptionToday(
+  unit: { feeExemption: CitizenProfileUnit['feeExemption']; feeExemptionValidUntil: Date | null } | null | undefined,
+  today: string,
+): Pick<CitizenProfileUnit, 'feeExemption' | 'feeExemptionValidUntil'> {
+  if (!unit || !isFeeExemptOn(unit, today)) return { feeExemption: null, feeExemptionValidUntil: null };
+  return {
+    feeExemption: unit.feeExemption,
+    feeExemptionValidUntil: unit.feeExemptionValidUntil ? calendarDayOf(unit.feeExemptionValidUntil) : null,
+  };
+}
+
 function personName(person: {
   firstName: string;
   middleName: string | null;

@@ -56,6 +56,20 @@ export const LANDLORD_SUMMARY_READ_ROLES = [
   'VIEWER',
 ] as const satisfies readonly StaffRole[];
 
+/**
+ * Read «أنواع المباني» (`GET building-types`): everyone who creates or reads
+ * buildings — the building list, the map and the census are read by every staff
+ * role — and the offline store keeps the list for an inspector with no network.
+ */
+export const BUILDING_TYPE_READ_ROLES: readonly StaffRole[] = EVERY_STAFF_ROLE;
+
+/**
+ * Add, rename, reorder, switch off or on a building type (`POST`/`PATCH building-types`):
+ * the manager's, as the expense and income categories are. A named set because the
+ * screen shows its controls by it.
+ */
+export const BUILDING_TYPE_ADMIN_ROLES = ['SUPER_ADMIN'] as const satisfies readonly StaffRole[];
+
 /** The register's own administration: zones. */
 export const REGISTER_ADMIN_ROLES = [
   'SUPER_ADMIN',
@@ -129,6 +143,28 @@ export const FEE_SETTLE_ROLES = [
   'COLLECTOR',
   'ACCOUNTANT',
 ] as const satisfies readonly StaffRole[];
+
+/**
+ * Read «قائمة الإعفاء من الرسوم» — the whitelist of exempt units with the
+ * names of the people on them, a unit's exemption history, and the units one
+ * person holds, for the grant panel (migration 0104; decision 3 of
+ * 2026-11-16): the manager, the administrative officer, the accountant and the
+ * auditor. Never the collector, the field inspector or «مشاهد فقط». Granting and
+ * lifting stay the manager's alone (`@Roles('SUPER_ADMIN')` on the PUT).
+ */
+export const FEE_EXEMPTION_READ_ROLES = [
+  'SUPER_ADMIN',
+  'ADMINISTRATIVE_OFFICER',
+  'ACCOUNTANT',
+  'AUDITOR',
+] as const satisfies readonly StaffRole[];
+
+/**
+ * Grant, amend or lift a unit's fee exemption (`PUT buildings/units/:unitId/fee-exemption`):
+ * the manager's alone — it takes a unit off every bill, for everyone on it. A named set
+ * although it holds one role, because the whitelist and the unit drawer show the actions by it.
+ */
+export const FEE_EXEMPTION_GRANT_ROLES = ['SUPER_ADMIN'] as const satisfies readonly StaffRole[];
 
 /** The fee settings, notices' active flag, the recurring run and payment review. */
 export const FEE_ADMIN_ROLES = ['SUPER_ADMIN', 'ACCOUNTANT'] as const satisfies readonly StaffRole[];

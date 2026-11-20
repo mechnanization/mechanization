@@ -39,7 +39,9 @@ import {
   logApiError,
   type DashboardAnalytics,
 } from '@/lib/api-client';
-import type { InspectorProfileResponse } from '@mechanization/shared-schemas';
+import { buildingTypeName, type InspectorProfileResponse } from '@mechanization/shared-schemas';
+import { useBuildingTypes } from '@/lib/building-types';
+import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
 import { clearSession, loadSession } from '@/lib/session';
 import { formatLbp } from '@/lib/currency';
 import { formatMonth } from '@/lib/dates';
@@ -364,6 +366,18 @@ export default function StaffDashboard({
     () => monthlyTrend(data?.monthly, 'overdue', false, locale),
     [data, locale],
   );
+
+  const tTypes = useTranslations('buildingTypes');
+  const typesQuery = useBuildingTypes(tenant, base, token, { includeInactive: true, errorMessage: tTypes('loadError') });
+  /** Each type with its buildings, the list's order; buildings not typed yet last. */
+  const buildingsByType = useMemo(() => {
+    const counts = data?.census.buildingsByType ?? {};
+    const rows = (typesQuery.data ?? [])
+      .filter((type) => (counts[type.id] ?? 0) > 0)
+      .map((type) => ({ key: type.id, label: buildingTypeName(type, locale), count: counts[type.id]! }));
+    if ((counts.NONE ?? 0) > 0) rows.push({ key: 'NONE', label: tTypes('notTyped'), count: counts.NONE! });
+    return rows;
+  }, [data, typesQuery.data, locale, tTypes]);
 
   /** Every tile reads the census, so they sum to the header above them. */
   const unitCards = useMemo(
@@ -717,6 +731,19 @@ export default function StaffDashboard({
                 ? `${count(data.propertyTotal)} property filing(s) on ${count(data.census.buildingsWithFilings)} of these buildings; ${count(data.census.buildings - data.census.buildingsWithFilings)} have none yet.`
                 : `سُجّلت ${count(data.propertyTotal)} بطاقة عقارية على ${count(data.census.buildingsWithFilings)} من هذه المباني، و${count(data.census.buildings - data.census.buildingsWithFilings)} مبنى لم يُسجّل عليه أحد بعد.`}
             </p>
+          ) : null}
+          {/* «أنواع المباني» (0106): every structure by its type, summing to the count above. */}
+          {buildingsByType.length > 0 ? (
+            <div className="space-y-1">
+              <p className="text-xs font-semibold">{tTypes('byType')}</p>
+              <SummaryList>
+                {buildingsByType.map((row) => (
+                  <SummaryRow key={row.key} label={row.label}>
+                    {count(row.count)}
+                  </SummaryRow>
+                ))}
+              </SummaryList>
+            </div>
           ) : null}
           {data &&
           (data.duplicateFilingsExcluded.properties > 0 ||

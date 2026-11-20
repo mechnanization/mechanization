@@ -1,0 +1,27 @@
+-- 0105_structure_type_public_institution
+--
+-- «منشأة عامة / خدماتية» — a building put up for a public or a service use:
+-- a school, a dispensary, the municipality's own hall.
+--
+-- == What it is for ======================================================
+--
+-- The administrator adds building types the census list does not have
+-- (مدرسة, مستوصف, مبنى بلدي, …), and every such type takes the behaviour of
+-- one `StructureType` (0106, `building_types`). None of the six values fits a
+-- public building: it is not housing, not a commercial centre, not a hangar.
+-- The user's decision 4 of 2026-11-16: `PUBLIC_INSTITUTION`, its units an
+-- office by default (`STRUCTURE_TYPE_MAP` in shared-schemas), a dispensary
+-- created as a clinic by its own type. Deliberately not `PUBLIC_FACILITY`,
+-- which `FeeExemptionReason` already uses for a different thing.
+--
+-- == Safety ==============================================================
+--
+-- One enum value, alone in its file: a value added in a transaction cannot be
+-- used in it (docs/database.md, "How tenant migrations run"). 0106 inserts its
+-- system type row. No row holds the value until the code that writes it ships,
+-- in a later release (docs/database.md, "Release"): a build that does not know
+-- it would throw on reading such a building. `ADD VALUE IF NOT EXISTS` is
+-- idempotent and takes no table lock. Written unqualified: the migrator sets
+-- `search_path` to the tenant schema.
+
+ALTER TYPE "StructureType" ADD VALUE IF NOT EXISTS 'PUBLIC_INSTITUTION';

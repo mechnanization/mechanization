@@ -1,4 +1,4 @@
-import { citizenDisplayName, citizenStoredName, storedLandlordName } from '@mechanization/shared-schemas';
+import { calendarDayOf, citizenDisplayName, citizenStoredName, storedLandlordName } from '@mechanization/shared-schemas';
 import { Injectable, Logger } from '@nestjs/common';
 import { OWNER_RECORD_RESIDENCE, isNonPersonRecord, isOwnerRecord } from '@mechanization/shared-schemas';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -43,6 +43,8 @@ import {
 } from '@mechanization/shared-schemas';
 import { worklistOwner, type WorklistViewer } from '../../common/worklist-viewer';
 import { reinspections, unsurveyedUnits } from './census-worklists';
+import { assertNoFeeExemptionHistory } from './fee-exemption';
+import { resolveBuildingType } from './building-types';
 import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
@@ -625,6 +627,8 @@ export class BuildingsService {
    */
   async filterOptions(): Promise<{
     structureTypes: string[];
+    /** The types buildings are filed under (0106); the names come from `GET building-types`. */
+    buildingTypeIds: string[];
     lifecycleStatuses: string[];
     surveyStatuses: string[];
     damageLevels: string[];
@@ -634,6 +638,9 @@ export class BuildingsService {
     );
     const lifecycles = await withConnectionRetry(() =>
       this.db.building.groupBy({ by: ['lifecycleStatus'], orderBy: { lifecycleStatus: 'asc' } }),
+    );
+    const types = await withConnectionRetry(() =>
+      this.db.building.groupBy({ by: ['buildingTypeId'], where: { buildingTypeId: { not: null } } }),
     );
 
     /*
@@ -673,6 +680,7 @@ export class BuildingsService {
 
     return {
       structureTypes: structures.map((row) => String(row.structureType)),
+      buildingTypeIds: types.map((row) => row.buildingTypeId).filter((id): id is string => id !== null),
       lifecycleStatuses: lifecycles.map((row) => String(row.lifecycleStatus)),
       surveyStatuses: [...surveyStatuses].sort(),
       damageLevels: await this.currentDamageLevelsPresent(),
@@ -792,6 +800,7 @@ export class BuildingsService {
       ];
     }
     if (filter.structureType) where.structureType = filter.structureType as never;
+    if (filter.buildingTypeId) where.buildingTypeId = filter.buildingTypeId;
     if (filter.lifecycleStatus) where.lifecycleStatus = filter.lifecycleStatus as never;
 
     /*
@@ -1413,6 +1422,9 @@ export class BuildingsService {
     */
     const neighbours = await this.parcelNeighbours(parcelNumber, input);
 
+    // «نوع المبنى» (0106): the type decides the structure; refused here, before the transaction, if inactive.
+    const typed = (await resolveBuildingType(this.db, input, null))!;
+
     if (!input.acknowledgedDuplicates && neighbours.length > 0) {
       throw new ConflictError(
         `يوجد ${neighbours.length === 1 ? 'مبنى مسجَّل' : `${neighbours.length} مبانٍ مسجَّلة`} على العقار ${parcelNumber}. تأكَّد أن هذه منشأة مختلفة قبل المتابعة.`,
@@ -1462,7 +1474,8 @@ export class BuildingsService {
           partitionNumbers: partitionNumbersFor(input.isPartitioned, input.partitionNumbers),
           // Never the parcel the code derives from — see `sharedParcelsExcluding`.
           sharedParcelNumbers: sharedParcelsExcluding(input.sharedParcelNumbers, parcelNumber),
-          structureType: input.structureType as never,
+          structureType: typed.structureType as never,
+          buildingTypeId: typed.buildingTypeId,
           lifecycleStatus: input.lifecycleStatus as never,
           latitude: input.latitude ?? null,
           longitude: input.longitude ?? null,
@@ -1689,9 +1702,11 @@ export class BuildingsService {
       exist rather than the ones this request carries: an update never creates
       any.
     */
-    if (input.structureType !== undefined && input.structureType !== before.structureType) {
+    // «نوع المبنى» (0106): a type sent decides the structure; the body's `structureType` beside it is not read.
+    const typed = await resolveBuildingType(this.db, input, before);
+    if (typed && typed.structureType !== before.structureType) {
       this.assertUnitFits(
-        { structureType: input.structureType, code: before.code },
+        { structureType: typed.structureType, code: before.code },
         await this.db.unit.count({ where: { buildingId: id } }),
         0,
       );
@@ -1766,9 +1781,7 @@ export class BuildingsService {
               ),
             }
           : {}),
-        ...(input.structureType !== undefined
-          ? { structureType: input.structureType as never }
-          : {}),
+        ...(typed ? { structureType: typed.structureType as never, buildingTypeId: typed.buildingTypeId } : {}),
         ...(input.lifecycleStatus !== undefined
           ? { lifecycleStatus: input.lifecycleStatus as never }
           : {}),
@@ -1991,6 +2004,9 @@ export class BuildingsService {
         `لا يمكن حذف مبنى سُجّل فيه سكان: ${historical} إشغال سابق على وحداته. حذفه يمحو سجل من سكنها. عدّل بيانات المبنى أو غيّر حالته إلى «مهدوم» بدلاً من الحذف، وإن كان رقم العقار خاطئاً فاستخدم «تصحيح رقم العقار»`,
       );
     }
+
+    // A unit's fee exemption history keys onto it with RESTRICT (0104): refused here, with a code.
+    await assertNoFeeExemptionHistory(this.db, { buildingId: id });
 
     await this.db.building.delete({ where: { id } });
 
@@ -3656,6 +3672,9 @@ export class BuildingsService {
       );
     }
 
+    // Its fee exemption history, granted or lifted, keys onto it with RESTRICT (0104).
+    await assertNoFeeExemptionHistory(this.db, { unitIds: [unitId] });
+
     /*
       `unitsTotal` and `unitsSurveyed` are corrected by the database, not here.
 
@@ -5167,6 +5186,7 @@ export class BuildingsService {
           longitude: true,
           parcelNumber: true,
           structureType: true,
+          buildingTypeId: true,
           lifecycleStatus: true,
           unitsTotal: true,
           unitsSurveyed: true,
@@ -5213,6 +5233,7 @@ export class BuildingsService {
       longitude: building.longitude!,
       parcelNumber: building.parcelNumber,
       structureType: building.structureType,
+      buildingTypeId: building.buildingTypeId,
       lifecycleStatus: building.lifecycleStatus,
       unitsTotal: building.unitsTotal,
       unitsSurveyed: building.unitsSurveyed,
@@ -5323,6 +5344,8 @@ const AUDITED_BUILDING_FIELDS = [
   'partitionNumbers',
   'sharedParcelNumbers',
   'structureType',
+  // «نوع المبنى» (0106): an id; the type's names are read from the list it points to.
+  'buildingTypeId',
   'lifecycleStatus',
   'latitude',
   'longitude',
@@ -5529,6 +5552,7 @@ function toBuildingRow(row: {
   partitionNumbers: string[];
   sharedParcelNumbers: string[];
   structureType: string;
+  buildingTypeId?: string | null;
   lifecycleStatus: string;
   latitude: number | null;
   longitude: number | null;
@@ -5552,6 +5576,7 @@ function toBuildingRow(row: {
     partitionNumbers: row.partitionNumbers,
     sharedParcelNumbers: row.sharedParcelNumbers,
     structureType: row.structureType,
+    buildingTypeId: row.buildingTypeId ?? null,
     lifecycleStatus: row.lifecycleStatus,
     latitude: row.latitude,
     longitude: row.longitude,
@@ -5708,6 +5733,7 @@ function toUnitRow(row: {
   feeExemptionNote?: string | null;
   feeExemptedAt?: Date | null;
   feeExemptedBy?: { firstName: string; lastName: string } | null;
+  feeExemptionValidUntil?: Date | null;
   levels?: number;
   notes: string | null;
   createdAt: Date;
@@ -5738,6 +5764,7 @@ function toUnitRow(row: {
     feeExemptionNote: row.feeExemptionNote ?? null,
     feeExemptedAt: row.feeExemptedAt ?? null,
     feeExemptedByName: row.feeExemptedBy ? `${row.feeExemptedBy.firstName} ${row.feeExemptedBy.lastName}` : null,
+    feeExemptionValidUntil: row.feeExemptionValidUntil ? calendarDayOf(row.feeExemptionValidUntil) : null,
     levels: row.levels ?? 1,
     notes: row.notes,
     createdAt: row.createdAt,

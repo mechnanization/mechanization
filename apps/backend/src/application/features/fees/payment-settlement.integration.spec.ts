@@ -203,7 +203,9 @@ describeIfDb('Bulk settlement', () => {
       const { rows } = await ddl.query(
         `SELECT count(*)::int AS n FROM pg_trigger tg JOIN pg_class c ON c.oid = tg.tgrelid
            JOIN pg_namespace n ON n.oid = c.relnamespace
-          WHERE n.nspname = $1 AND c.relname = 'payment_settlements' AND NOT tg.tgisinternal`,
+          WHERE n.nspname = $1 AND c.relname = 'payment_settlements' AND NOT tg.tgisinternal
+            -- 0085's own triggers; 0103's TRUNCATE guard is counted by its own spec.
+            AND tg.tgname NOT LIKE '%\\_no\\_truncate'`,
         [SCHEMA],
       );
       expect(rows[0].n).toBe(2);

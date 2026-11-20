@@ -39,6 +39,12 @@ export interface BuildingRow {
   sharedParcelNumbers: string[];
   structureType: string;
   /**
+   * «نوع المبنى» (0106): the municipality's type it was filed as, system or
+   * custom; `structureType` is set from it. Null only on a building the build
+   * before 0106 created after it ran, until its next save.
+   */
+  buildingTypeId: string | null;
+  /**
    * Where the structure is in its own life — permitted, going up, standing,
    * abandoned, gone. Distinct from `structureType` (what it is) and from its
    * damage level (what happened to it). See `BUILDING_LIFECYCLE`.
@@ -94,6 +100,12 @@ export interface UnitRow {
   feeExemptionNote: string | null;
   feeExemptedAt: Date | null;
   feeExemptedByName: string | null;
+  /**
+   * The exemption's last day, `YYYY-MM-DD`, or null for none (0104). Past it
+   * the unit is billed again although `feeExemption` is still set, until
+   * someone lifts or renews it (`isFeeExemptOn`).
+   */
+  feeExemptionValidUntil: string | null;
   /**
    * How many levels this one unit spans, upward from `floor` (0095, D28): 2 is
    * a «دوبلكس». 1 for an ordinary unit. The matrix draws the levels above as
@@ -334,6 +346,8 @@ export interface BuildingListFilter {
    */
   zoneId?: string;
   structureType?: string;
+  /** «نوع المبنى» (0106). */
+  buildingTypeId?: string;
   /** Permitted / going up / standing / abandoned / gone. See `BUILDING_LIFECYCLE`. */
   lifecycleStatus?: string;
   surveyStatus?: string;
@@ -446,6 +460,8 @@ export interface BuildingMapPin {
   longitude: number;
   parcelNumber: string;
   structureType: string;
+  /** «نوع المبنى» (0106) — what the map's type filter and legend read; null until its next save. */
+  buildingTypeId: string | null;
   /** Permitted / going up / standing / abandoned / gone — the map's fourth channel. */
   lifecycleStatus: string;
   unitsTotal: number;

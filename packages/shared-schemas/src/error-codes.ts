@@ -195,6 +195,20 @@ export const ERROR_CODES = [
   'OWNER_BILLING_SHARES_MISSING',
   // «معفاة من الرسوم» (migration 0077)
   'FEE_EXEMPTION_STRUCTURAL_UNIT',
+  // «قائمة الإعفاء من الرسوم» (migration 0104): a last day before today (`params.validUntil`, `params.today`),
+  // a lift with no reason in words, and a unit with an exemption history that a delete would erase
+  // (`params.unitCode`; the building delete names the first such unit).
+  'FEE_EXEMPTION_VALID_UNTIL_PAST',
+  'FEE_EXEMPTION_LIFT_REASON_REQUIRED',
+  'UNIT_HAS_FEE_EXEMPTION_HISTORY',
+  // «أنواع المباني» (migration 0106): a type that does not exist; one switched off, on a new building
+  // (`params.name`); a name another type has (`params.name`); a system type's structure, which never
+  // changes; a custom type's structure while buildings are filed under it (`params.count`).
+  'BUILDING_TYPE_NOT_FOUND',
+  'BUILDING_TYPE_INACTIVE',
+  'BUILDING_TYPE_NAME_TAKEN',
+  'BUILDING_TYPE_SYSTEM_STRUCTURE',
+  'BUILDING_TYPE_STRUCTURE_IN_USE',
   // «تركة (ورثة المرحوم)» (migration 0076)
   'ESTATE_OWNS_ONLY',
   // One home on several levels, and a house that grows (migration 0095, decision D28)

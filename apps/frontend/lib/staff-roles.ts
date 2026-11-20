@@ -14,6 +14,9 @@ import {
   type StaffRole,
   REQUEST_BILL_ROLES as SHARED_REQUEST_BILL_ROLES,
   REQUEST_HANDLE_ROLES as SHARED_REQUEST_HANDLE_ROLES,
+  BUILDING_TYPE_ADMIN_ROLES as SHARED_BUILDING_TYPE_ADMIN_ROLES,
+  FEE_EXEMPTION_GRANT_ROLES as SHARED_FEE_EXEMPTION_GRANT_ROLES,
+  FEE_EXEMPTION_READ_ROLES as SHARED_FEE_EXEMPTION_READ_ROLES,
   REQUEST_READ_ROLES as SHARED_REQUEST_READ_ROLES,
   REQUEST_SETTINGS_ROLES as SHARED_REQUEST_SETTINGS_ROLES,
 } from '@mechanization/shared-schemas';
@@ -145,3 +148,16 @@ export const QUALITY_REVIEWER_ROLES: readonly string[] = SHARED_QUALITY_REVIEWER
 export function hasRole(roles: readonly string[], role: string | null | undefined): boolean {
   return hasStaffRole(roles, role);
 }
+
+/**
+ * «قائمة الإعفاء من الرسوم» (0104): the whitelist, a unit's exemption history and
+ * the units one person holds — every read names the people on the units, so it
+ * is the manager, the office, the accountant and the auditor. Granting and
+ * lifting are the manager's alone (`FEE_EXEMPTION_GRANT_ROLES`).
+ */
+export const FEE_EXEMPTION_READ_ROLES: readonly string[] = SHARED_FEE_EXEMPTION_READ_ROLES;
+/** `PUT buildings/units/:unitId/fee-exemption`: the manager's alone. */
+export const FEE_EXEMPTION_GRANT_ROLES: readonly string[] = SHARED_FEE_EXEMPTION_GRANT_ROLES;
+
+/** «أنواع المباني» (0106): add, edit, switch off or on a building type — the manager's. */
+export const BUILDING_TYPE_ADMIN_ROLES: readonly string[] = SHARED_BUILDING_TYPE_ADMIN_ROLES;

@@ -27,7 +27,7 @@ import {
 import { useStaffSession } from '@/lib/use-staff-session';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { param, useUrlState } from '@/lib/use-url-state';
-import { formatDate, formatMonthList } from '@/lib/dates';
+import { formatDate, formatDay, formatMonthList } from '@/lib/dates';
 import { mapHref } from '@/lib/map-link';
 import { formatPhone } from '@/lib/phone';
 import { PageHeader } from '@/components/ui/page-header';
@@ -824,7 +824,12 @@ function HeldUnitBilling({
     <>
       {unit.feeExemption ? (
         <SummaryRow label={tFeeExemption('fileLabel')} className="text-success">
-          {tFeeExemption('fileValue', { reason: labels.feeExemptionReason[unit.feeExemption] })}
+          {unit.feeExemptionValidUntil
+            ? tFeeExemption('fileValueUntil', {
+                reason: labels.feeExemptionReason[unit.feeExemption],
+                date: formatDay(unit.feeExemptionValidUntil),
+              })
+            : tFeeExemption('fileValue', { reason: labels.feeExemptionReason[unit.feeExemption] })}
           {suffix}
         </SummaryRow>
       ) : null}
@@ -945,7 +950,12 @@ function UnitRows({
           {/* «معفاة من الرسوم» (0077): nothing is charged on this unit, whoever holds it. */}
           {unit.feeExemption ? (
             <SummaryRow label={tFeeExemption('fileLabel')} className="text-success">
-              {tFeeExemption('fileValue', { reason: labels.feeExemptionReason[unit.feeExemption] })}
+              {unit.feeExemptionValidUntil
+            ? tFeeExemption('fileValueUntil', {
+                reason: labels.feeExemptionReason[unit.feeExemption],
+                date: formatDay(unit.feeExemptionValidUntil),
+              })
+            : tFeeExemption('fileValue', { reason: labels.feeExemptionReason[unit.feeExemption] })}
             </SummaryRow>
           ) : null}
           {/*
