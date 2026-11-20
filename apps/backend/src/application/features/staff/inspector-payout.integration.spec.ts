@@ -855,7 +855,9 @@ describeIfDb('StaffService.recordInspectorPayout', () => {
       const triggers = await ddl.query(
         `SELECT tg.tgname FROM pg_trigger tg
            JOIN pg_class c ON c.oid = tg.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace
-          WHERE n.nspname = $1 AND c.relname = 'inspector_payouts' AND NOT tg.tgisinternal`,
+          WHERE n.nspname = $1 AND c.relname = 'inspector_payouts' AND NOT tg.tgisinternal
+            -- 0089's own triggers; 0103's TRUNCATE guard is counted by its own spec.
+            AND tg.tgname NOT LIKE '%\\_no\\_truncate'`,
         [SCHEMA],
       );
       expect(triggers.rows.map((row: { tgname: string }) => row.tgname)).toEqual(['inspector_payouts_written_once']);
