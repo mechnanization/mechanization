@@ -269,7 +269,7 @@ function build() {
       // The subject is sessions, not credentials: every password is accepted.
       verify: jest.fn().mockResolvedValue(true),
     } as unknown as PasswordHasher,
-    { verify: jest.fn().mockReturnValue(true) } as unknown as TotpService,
+    { matchStep: jest.fn().mockReturnValue(1) } as unknown as TotpService,
     {
       isConfigured: false,
       send: jest.fn(() => {
