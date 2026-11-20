@@ -60,6 +60,7 @@ describe('newsErrorFromAnswer', () => {
     [403, undefined, 'NEWS_FORBIDDEN', 'FORBIDDEN'],
     [403, 'village.not_member', 'NEWS_NOT_A_MEMBER', 'FORBIDDEN'],
     [409, 'village.module_disabled', 'NEWS_MODULE_DISABLED', 'CONFLICT'],
+    [409, 'news.already_published', 'NEWS_ARTICLE_ALREADY_PUBLISHED', 'CONFLICT'],
     [403, 'integration.village_not_allowed', 'NEWS_VILLAGE_NOT_LINKED', 'CONFLICT'],
     [404, 'news.not_found', 'NEWS_NOT_FOUND', 'NOT_FOUND'],
     [500, undefined, 'NEWS_UNAVAILABLE', 'CONFLICT'],
@@ -102,6 +103,7 @@ describe('newsErrorFromAnswer', () => {
       'NEWS_INVALID_INPUT',
       'NEWS_NOT_FOUND',
       'NEWS_REQUEST_REFUSED',
+      'NEWS_ARTICLE_ALREADY_PUBLISHED',
     ]) {
       expect(ERROR_CODES).toContain(code);
     }

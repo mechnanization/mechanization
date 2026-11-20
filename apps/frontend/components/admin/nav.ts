@@ -21,6 +21,7 @@ import {
   Link2,
   Map as MapIcon,
   Megaphone,
+  Newspaper,
   ReceiptText,
   ScanSearch,
   ScrollText,
@@ -695,13 +696,21 @@ export const NAV_GROUPS: NavGroup[] = [
     as the signed-in user (`NEWS_EDITOR_ROLES`: the administrator and the
     administrative officer, the two who have an account there). Its own group
     because it is neither the register nor the books: a screen of its own job,
-    with the articles to join these two rows.
+    with the articles first and the two lists they are filed and published by.
   */
   {
     label: 'الأخبار',
     labelEn: 'News',
     roles: NEWS_EDITOR_ROLES,
     items: [
+      {
+        path: '/news/articles',
+        label: 'الأخبار',
+        labelEn: 'News articles',
+        icon: Newspaper,
+        roles: NEWS_EDITOR_ROLES,
+        keywords: ['أخبار', 'خبر', 'نشر', 'مقال', 'news', 'article', 'articles', 'publish'],
+      },
       {
         path: '/news/categories',
         label: 'أقسام الأخبار',
