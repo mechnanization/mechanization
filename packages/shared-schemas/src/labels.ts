@@ -22,6 +22,7 @@ import type {
   RequestType,
   PropertyType,
   ResidentStatus,
+  NewsPublisherKind,
   StaffRole,
   StructureType,
   SurveyStatus,
@@ -37,6 +38,13 @@ import type { FeeBasis, FeeBearer, FeeTargetCategory } from './fee.schema';
 /** Arabic display labels. Keep UI copy here, not inside the schemas. */
 export const ar = {
   gender: { MALE: 'ذكر', FEMALE: 'أنثى' } satisfies Record<Gender, string>,
+
+  newsPublisherKind: {
+    municipality: 'البلدية',
+    department: 'قسم',
+    committee: 'لجنة',
+    organization: 'جهة أو جمعية',
+  } satisfies Record<NewsPublisherKind, string>,
 
   bloodType: {
     A_POSITIVE: 'A+',
@@ -509,6 +517,13 @@ export const ar = {
 
 export const en = {
   gender: { MALE: 'Male', FEMALE: 'Female' } satisfies Record<Gender, string>,
+
+  newsPublisherKind: {
+    municipality: 'Municipality',
+    department: 'Department',
+    committee: 'Committee',
+    organization: 'Organization',
+  } satisfies Record<NewsPublisherKind, string>,
 
   bloodType: {
     A_POSITIVE: 'A+',

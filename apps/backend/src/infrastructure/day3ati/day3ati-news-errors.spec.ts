@@ -33,6 +33,24 @@ describe('readProblem', () => {
   });
 });
 
+describe('a refusal that names its field by code', () => {
+  it.each([
+    [409, 'news.category_key_taken', 'key'],
+    [400, 'news.invalid_category_key', 'key'],
+    [400, 'news.name_required', 'nameAr'],
+  ])('%i %s is shown under %s, as a refused form', (status, code, path) => {
+    const error = newsErrorFromAnswer(status, { code, title: 'That key is in use', fields: [] });
+    expect(error.code).toBe('NEWS_INVALID_INPUT');
+    expect(error.kind).toBe('VALIDATION_FAILED');
+    expect(error.details).toEqual([{ path, message: 'That key is in use', code }]);
+  });
+
+  it('falls back to the code when the partner sent no title', () => {
+    const error = newsErrorFromAnswer(409, { code: 'news.category_key_taken', fields: [] });
+    expect(error.details).toEqual([{ path: 'key', message: 'news.category_key_taken', code: 'news.category_key_taken' }]);
+  });
+});
+
 describe('newsErrorFromAnswer', () => {
   const answer = (status: number, code?: string, fields: Array<{ path: string; message: string }> = []) =>
     newsErrorFromAnswer(status, { code, fields });

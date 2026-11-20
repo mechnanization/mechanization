@@ -27,6 +27,15 @@ function staffPath(tenantSlug: string, userId: string): string {
   return `/api/v1/integration/tenants/${tenantSlug}/staff/${encodeURIComponent(userId)}`;
 }
 
+/** The keys of a village's enabled modules: the list is `[{ key, displayName, sortOrder }]`, and only the key is ours to use. */
+function moduleKeysOf(modules: unknown): string[] {
+  if (!Array.isArray(modules)) return [];
+  return modules.flatMap((module: unknown) => {
+    const key = (module as { key?: unknown } | null)?.key;
+    return typeof key === 'string' ? [key] : [];
+  });
+}
+
 /**
  * The staff accounts Day3ati keeps for the users who manage News
  * (`/api/v1/integration/tenants/{tenant}/staff/{userId}`) and the list of
@@ -86,7 +95,7 @@ export class Day3atiIntegrationClient implements Day3atiIntegration {
       villages.push({
         villageId: entry.villageId,
         externalTenant: entry.externalTenant,
-        modules: Array.isArray(entry.modules) ? entry.modules.filter((m): m is string => typeof m === 'string') : [],
+        modules: moduleKeysOf(entry.modules),
       });
     }
     return villages;

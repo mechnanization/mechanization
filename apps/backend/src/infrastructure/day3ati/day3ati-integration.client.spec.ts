@@ -142,7 +142,19 @@ describe('Day3atiIntegrationClient', () => {
     it('GETs it with the client token and keeps each village with its id, municipality and modules', async () => {
       fetchMock.mockResolvedValue(
         answer(200, [
-          { villageId: 'v1', externalTenant: 'albazourieh', slug: 'albazourieh', name: 'x', modules: ['news', 3, 'events'] },
+          {
+            villageId: 'v1',
+            externalTenant: 'albazourieh',
+            slug: 'albazourieh',
+            name: { ar: 'البازورية', en: 'Al Bazourieh' },
+            // As the partner guide shows them: objects, of which only the key is ours.
+            modules: [
+              { key: 'news', displayName: { ar: 'الأخبار' }, sortOrder: 1 },
+              { key: 'events', displayName: null, sortOrder: 2 },
+              { displayName: null, sortOrder: 3 },
+              'not-an-object',
+            ],
+          },
           { villageId: 'v2', externalTenant: 'maarakeh', slug: 'maarakeh', name: 'y' },
         ]),
       );

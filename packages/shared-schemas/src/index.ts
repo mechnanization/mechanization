@@ -19,6 +19,7 @@ export * from './tenant.schema';
 export * from './zone.schema';
 export * from './building.schema';
 export * from './building-type.schema';
+export * from './news.schema';
 export * from './fee-exemption.schema';
 export * from './unit-layout';
 export * from './unit-levels';

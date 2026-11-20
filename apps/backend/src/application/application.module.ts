@@ -47,6 +47,7 @@ import { DayClosureService } from './features/treasury/day-closure.service';
 import { DailyCountService } from './features/treasury/daily-count.service';
 import { DailyCashReportService } from './features/treasury/daily-cash-report.service';
 import { Day3atiStaffSyncService } from './features/day3ati/day3ati-staff-sync.service';
+import { NewsCatalogService } from './features/news/news-catalog.service';
 import { StaffService } from './features/staff/staff.service';
 import { ZonesService } from './features/zones/zones.service';
 import { DataQualityService } from './features/quality/data-quality.service';
@@ -107,6 +108,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
     DailyCashReportService,
     StaffService,
     Day3atiStaffSyncService,
+    NewsCatalogService,
     ZonesService,
     CasesService,
     BuildingsService,
@@ -158,6 +160,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
     DailyCashReportService,
     StaffService,
     Day3atiStaffSyncService,
+    NewsCatalogService,
     ZonesService,
     CasesService,
     BuildingsService,
