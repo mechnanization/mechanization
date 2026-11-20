@@ -1,4 +1,4 @@
-import { Controller, Get, Param, ParseUUIDPipe, Query } from '@nestjs/common';
+import { Controller, Get, Param, Query } from '@nestjs/common';
 import {
   FEE_EXEMPTION_READ_ROLES,
   feeExemptionListQuerySchema,
@@ -10,6 +10,7 @@ import { FeeExemptionService } from '../../application/features/buildings/fee-ex
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
+import { UuidPipe } from '../pipes/uuid.pipe';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
 
 /**
@@ -49,14 +50,14 @@ export class FeeExemptionsController {
   /** One unit: who holds it, its standing exemption and every period. */
   @Roles(...FEE_EXEMPTION_READ_ROLES)
   @Get('units/:unitId')
-  unit(@Param('unitId', new ParseUUIDPipe()) unitId: string) {
+  unit(@Param('unitId', new UuidPipe()) unitId: string) {
     return this.exemptions.unitView(unitId);
   }
 
   /** Every unit one person holds now, structural floors left out, each with its exemption. */
   @Roles(...FEE_EXEMPTION_READ_ROLES)
   @Get('citizens/:citizenId/units')
-  citizenUnits(@Param('citizenId', new ParseUUIDPipe()) citizenId: string) {
+  citizenUnits(@Param('citizenId', new UuidPipe()) citizenId: string) {
     return this.exemptions.citizenUnits(citizenId);
   }
 }

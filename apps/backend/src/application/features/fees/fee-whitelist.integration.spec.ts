@@ -173,6 +173,7 @@ describeIfDb('the fee whitelist', () => {
       emitter,
       { get: jest.fn().mockResolvedValue(null), set: jest.fn(), invalidatePrefix: jest.fn() } as never,
       { get: () => 0 } as never,
+      fees,
     );
     for (const prisma of [db, other]) {
       await prisma.user.create({
