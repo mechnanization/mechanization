@@ -14,6 +14,7 @@ import {
   DEED_SHARES,
   NON_PERSON_RESIDENCE,
   sharesOffDeed,
+  type OwnerBillingRule,
 } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
@@ -24,7 +25,13 @@ import { metresBetween } from '../buildings/buildings.service';
 import { LandlordLinkService } from '../citizens/landlord-link.service';
 import { unitsUnderReview } from '../buildings/unit-status';
 import { currentReadingForUnit, uninhabitableSql } from '../buildings/habitability';
-import { activeOwnerSpells, ownerBillingBlock, type OwnerBillingBlock } from '../buildings/owner-billing';
+import {
+  activeOwnerSpells,
+  checkResponsibleOwners,
+  ownerBillingBlock,
+  type OwnerBillingBlock,
+} from '../buildings/owner-billing';
+import { FeesService } from '../fees/fees.service';
 import {
   duplicateSignals,
   foldNamePart,
@@ -100,6 +107,7 @@ export class DataQualityService {
     private readonly events: EventEmitter2,
     private readonly cache: RedisCacheService,
     private readonly config: ConfigService,
+    private readonly fees: FeesService,
   ) {}
 
   private get db() {
@@ -1094,9 +1102,11 @@ export class DataQualityService {
    * save, an occupancy write and «أرشفة الملف» all emit `building.changed` or
    * `citizen.changed`, which clear the cache (`onRegisterChanged`).
    *
-   * Not here: a responsible owner whose own file stopped claiming the flat.
-   * Only `holdingsOf` knows which file claims a flat — the census claim rule
-   * and its four readers — and a set-based copy of it would be a fifth.
+   * A responsible owner whose own file stopped claiming the flat is asked
+   * through `FeesService.ownerClaims` (`checkResponsibleOwners`), the reading
+   * billing makes at every run, never a set-based copy of the census claim rule
+   * (finding F13 of the 2026-11-14 billing audit). One read per responsible
+   * owner. A filing that changes what a file claims emits `citizen.changed`.
    */
   private async ownerBillingBlocked(): Promise<RawFinding[]> {
     const units = await this.db.unit.findMany({
@@ -1123,12 +1133,19 @@ export class DataQualityService {
       block: OwnerBillingBlock | null;
       off: { total: number } | null;
     };
+    const rules = new Map<string, OwnerBillingRule>(
+      units.map((unit) => [
+        unit.id,
+        {
+          mode: unit.ownerBillingMode,
+          responsibleOwnerId: unit.responsibleOwnerId,
+          owners: unit.occupancies.map((spell) => ({ citizenId: spell.citizenId, shares: spell.shares })),
+        },
+      ]),
+    );
+    await checkResponsibleOwners(rules, (citizenId) => this.fees.ownerClaims(citizenId));
     const blocked = units.flatMap((unit): Flagged[] => {
-      const rule = {
-        mode: unit.ownerBillingMode,
-        responsibleOwnerId: unit.responsibleOwnerId,
-        owners: unit.occupancies.map((spell) => ({ citizenId: spell.citizenId, shares: spell.shares })),
-      };
+      const rule = rules.get(unit.id)!;
       const block = ownerBillingBlock(rule);
       if (block) return [{ unit, block, off: null }];
       const off = sharesOffDeed(rule);
@@ -1327,7 +1344,9 @@ export function ownerBillingBlockedFinding(
   const detail =
     block.reason === 'SHARES_MISSING'
       ? `الوحدة ${unit.unitCode}: يتوزّع رسمها حسب الأسهم، وأسهم بعض مالكيها غير مسجّلة (${block.missing} من ${block.owners}) — فواتير جميع مالكيها مرفوضة حتى تُسجَّل الأسهم أو تُختار طريقة أخرى`
-      : `الوحدة ${unit.unitCode}: المالك المسؤول المختار لم يعد بين مالكيها الحاليين (انتهت ملكيته أو أُرشف ملفه) — يُقسَم رسمها بالتساوي بين مالكيها حتى تُختار طريقة جديدة`;
+      : block.reason === 'RESPONSIBLE_NOT_BILLED'
+        ? `الوحدة ${unit.unitCode}: المالك المسؤول المختار ما زال مالكاً لها، لكن ملفه لم يعد يذكرها بين أملاكه فلا تصدر عليه فاتورتها — يُقسَم رسمها بالتساوي بين مالكيها حتى يُستكمل ملفه أو تُختار طريقة جديدة`
+        : `الوحدة ${unit.unitCode}: المالك المسؤول المختار لم يعد بين مالكيها الحاليين (انتهت ملكيته أو أُرشف ملفه) — يُقسَم رسمها بالتساوي بين مالكيها حتى تُختار طريقة جديدة`;
   return {
     kind: 'OWNER_BILLING_BLOCKED',
     subjectKey: unit.unitId,

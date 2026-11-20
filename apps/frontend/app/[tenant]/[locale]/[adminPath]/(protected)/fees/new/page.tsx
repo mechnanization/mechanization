@@ -145,6 +145,15 @@ export default function IssueFeePage({
       logApiError(caught);
       // A key whose notice exists is spent; every other failure keeps it, so a retry is answered from the first.
       if (keyIsSpent(caught)) spendKey(tenant, 'fee-notice:new');
+      /*
+        Another notice bills these people for this period and was not among
+        the ones confirmed — issued by someone else since the preview was read
+        (F11). The preview is read again, so it lists it with its box, and
+        «إصدار» waits for that box. Nothing was written: the key is kept.
+      */
+      if (caught instanceof ApiRequestError && caught.code === 'FEE_NOTICE_DUPLICATE') {
+        void queryClient.invalidateQueries({ queryKey: ['fee-notice-preview', tenant] });
+      }
       // Shown inside the wizard, on the review step the clerk pressed from (TXT-6).
       setError(caught instanceof ApiRequestError ? caught.message : t('failed'));
       inFlight.current = false;

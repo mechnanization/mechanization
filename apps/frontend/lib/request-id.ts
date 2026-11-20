@@ -40,6 +40,8 @@ export type KeyScope =
   | `commission:${string}`
   | `custody:${string}`
   | 'expense:pay'
+  /** «تكليف مالي», a one-off charge raised on one citizen (0102). */
+  | 'charge:new'
   | 'fee-notice:new'
   | 'expense:request'
   | 'income:new'
@@ -135,6 +137,7 @@ const ACT_RECORDED = new Set<string>([
   'PAYMENT_IDEMPOTENCY_KEY_REUSED',
   'BULK_SETTLE_REQUEST_REUSED',
   'FEE_NOTICE_REQUEST_REUSED',
+  'FEE_CHARGE_REQUEST_REUSED',
   'REQUEST_KEY_REUSED',
 ]);
 

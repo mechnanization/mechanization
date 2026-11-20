@@ -3,7 +3,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { createHmac } from 'node:crypto';
-import type { StaffSelf } from '@mechanization/shared-schemas';
+import { resetTokenFragment, type StaffSelf } from '@mechanization/shared-schemas';
 import {
   EMAIL_SENDER,
   PASSWORD_HASHER,
@@ -30,6 +30,7 @@ import {
 import { APP_CONFIG } from '../../../presentation/config/app.config';
 import { OtpService } from './otp.service';
 import { SessionRevocationService } from './session-revocation.service';
+import { sessionSignOptions, verifySessionToken } from './session-token';
 import { IssuedRefreshToken, StaffRefreshTokenService } from './staff-refresh-token.service';
 
 /**
@@ -437,8 +438,16 @@ export class IdentityService {
       return token;
     }
 
+    /*
+      In the fragment (`resetTokenFragment`, shared with the page that reads
+      it): a fragment is never sent to a server, so the token reaches no
+      access log and no `Referer`. It used to be `?token=`, while the page read
+      a Supabase-style fragment — the token leaked and no reset could succeed
+      (task S14 of the 2026-11-14 security audit).
+    */
     const url = new URL(base);
-    url.searchParams.set('token', token);
+    url.searchParams.delete('token');
+    url.hash = resetTokenFragment(token);
     return url.toString();
   }
 
@@ -937,6 +946,24 @@ export class IdentityService {
   }
 
   /**
+   * «تسجيل الخروج» on the portal, ended on the server (task S14 of the
+   * 2026-11-14 security audit).
+   *
+   * A citizen token lives seven days, and signing out only forgot it in the
+   * browser: a copy — another tab, a shared phone's history, a token read off
+   * a screen — went on opening the citizen's file for the rest of the week.
+   * Bumping `tokenVersion` ends every session the citizen holds, on every
+   * device, the same way a staff password change ends a staff member's; the
+   * revocation cache is cleared so the guard reads the new version at once
+   * rather than within its 30 s window. A citizen has one credential, the
+   * رقم مرجعي, so "every session" is the only scope there is.
+   */
+  async logoutCitizen(userId: string): Promise<void> {
+    await this.users.endCitizenSessions(userId);
+    await this.revocation.forget(userId);
+  }
+
+  /**
    * Verifies the code, then resolves *which person* is logging in.
    *
    * A household sharing one phone is the normal case, not an edge case, so a
@@ -1191,7 +1218,7 @@ export class IdentityService {
 
     let claims: SessionClaims;
     try {
-      claims = this.jwt.verify<SessionClaims>(accessToken, { ignoreExpiration: true });
+      claims = verifySessionToken<SessionClaims>(this.jwt, accessToken, { ignoreExpiration: true });
     } catch {
       return null;
     }
@@ -1288,7 +1315,7 @@ export class IdentityService {
       };
 
       return {
-        accessToken: this.jwt.sign(claims, { expiresIn }),
+        accessToken: this.jwt.sign(claims, sessionSignOptions(expiresIn)),
         expiresIn,
         user: { id: input.id, name: input.name, kind: input.kind, role: input.role },
       };
@@ -1324,7 +1351,7 @@ export class IdentityService {
     };
 
     return {
-      accessToken: this.jwt.sign(claims, { expiresIn }),
+      accessToken: this.jwt.sign(claims, sessionSignOptions(expiresIn)),
       expiresIn: `${expiresIn}s`,
       expiresAt: new Date((nowSeconds + expiresIn) * 1000).toISOString(),
       sessionExpiresAt: new Date(sessionExpiresAt * 1000).toISOString(),

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
   COMMISSION_URGENT_REASON,
+  MAX_LIST_PAGE,
   isReservedExpenseCategory,
   municipalToday,
   SALARY_PERIOD_MONTHS_BACK,
@@ -34,6 +35,7 @@ import { planExpenseDate, urgentCeilingBreached } from './expenses.plan';
 import { isUniqueViolationOn } from './retry-key';
 import { TreasuryLedgerService } from './treasury-ledger.service';
 import { documentOccurredAt } from './treasury.plan';
+import { sameId } from '../../common/ids';
 
 /** One page of the register. A municipality's year of spending is thousands of rows, not all of them. */
 const PAGE_MAX = 200;
@@ -302,7 +304,8 @@ export class ExpensesService {
     pageSize?: number;
   }): Promise<ExpenseListResult> {
     const pageSize = Math.min(Math.max(filters.pageSize ?? PAGE_DEFAULT, 1), PAGE_MAX);
-    const page = Math.max(filters.page ?? 1, 1);
+    // Bounded (MAX_LIST_PAGE): an unbounded page made an offset past what Prisma and Postgres take, a 500.
+    const page = Math.min(Math.max(filters.page ?? 1, 1), MAX_LIST_PAGE);
 
     const where: Prisma.ExpenseVoucherWhereInput = {
       ...(filters.categoryId ? { categoryId: filters.categoryId } : {}),
@@ -448,7 +451,7 @@ export class ExpensesService {
           CUSTODY_SELF_RECEIPT, for the same reason. The manager records it, or it
           goes as a request for his order.
         */
-        if (!ordersPayments(actor.role) && staff.id === actor.id) {
+        if (!ordersPayments(actor.role) && sameId(staff.id, actor.id)) {
           throw new ForbiddenError({
             code: 'SALARY_SELF_PAYOUT',
             message: 'Staff cannot pay their own salary; the manager records it, or send it as a request.',
@@ -1216,7 +1219,8 @@ export class ExpensesService {
     pageSize?: number;
   }): Promise<ExpenseRequestListResult> {
     const pageSize = Math.min(Math.max(filters.pageSize ?? PAGE_DEFAULT, 1), PAGE_MAX);
-    const page = Math.max(filters.page ?? 1, 1);
+    // Bounded (MAX_LIST_PAGE): an unbounded page made an offset past what Prisma and Postgres take, a 500.
+    const page = Math.min(Math.max(filters.page ?? 1, 1), MAX_LIST_PAGE);
     const status = filters.status ?? 'PENDING';
     const where: Prisma.ExpenseRequestWhereInput = status === 'PENDING' ? { decision: null } : { decision: status };
 

@@ -143,9 +143,16 @@ describe('assertCashAdjustment — who may depart from the ordinary', () => {
   });
 });
 
+/**
+ * A press as a page sends it: the retry key and what the screen showed are required (finding F18),
+ * so each case here varies only the field it names, and a refusal is that field's, not theirs.
+ */
+const PRESS = { clientRequestId: '00000000-0000-4000-8000-000000000001', expected: { credit: 0, change: 0 } };
+
 describe('settlePaymentSchema — tendered', () => {
   it('accepts both currencies, with or without a typed rate', () => {
     const parsed = settlePaymentSchema.parse({
+      ...PRESS,
       method: 'CASH',
       tendered: { local: 200_000, foreign: 20 },
     });
@@ -153,20 +160,21 @@ describe('settlePaymentSchema — tendered', () => {
   });
 
   it('refuses a tender with nothing in it', () => {
-    expect(settlePaymentSchema.safeParse({ method: 'CASH', tendered: { local: 0, foreign: 0 } }).success).toBe(false);
+    expect(settlePaymentSchema.safeParse({ ...PRESS, method: 'CASH', tendered: { local: 0, foreign: 0 } }).success).toBe(false);
   });
 
   it('refuses a figure the column cannot hold, as a validation error rather than a 500', () => {
-    expect(settlePaymentSchema.safeParse({ method: 'CASH', tendered: { local: 1e12 } }).success).toBe(false);
+    expect(settlePaymentSchema.safeParse({ ...PRESS, method: 'CASH', tendered: { local: 1e12 } }).success).toBe(false);
   });
 
   it('refuses a tender alongside an amount — one figure, not two', () => {
-    expect(settlePaymentSchema.safeParse({ method: 'CASH', amount: 100, tendered: { local: 100 } }).success).toBe(false);
+    expect(settlePaymentSchema.safeParse({ ...PRESS, method: 'CASH', amount: 100, tendered: { local: 100 } }).success).toBe(false);
   });
 
   it('refuses a tender on anything but cash', () => {
     expect(
       settlePaymentSchema.safeParse({
+        ...PRESS,
         method: 'WHISH_MONEY',
         whishTransactionRef: 'TX-1',
         tendered: { local: 100 },
@@ -204,10 +212,20 @@ describe('the day the money was taken', () => {
 
   it('refuses tomorrow on the Beirut calendar, or not a day at all', () => {
     const tomorrow = new Date(Date.parse(`${municipalToday()}T12:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
-    expect(settlePaymentSchema.safeParse({ method: 'CASH', paidOn: tomorrow }).success).toBe(false);
-    expect(settlePaymentSchema.safeParse({ method: 'CASH', paidOn: municipalToday() }).success).toBe(true);
-    expect(settlePaymentSchema.safeParse({ method: 'CASH', paidOn: '28/09/2026' }).success).toBe(false);
+    expect(settlePaymentSchema.safeParse({ ...PRESS, method: 'CASH', paidOn: tomorrow }).success).toBe(false);
+    expect(settlePaymentSchema.safeParse({ ...PRESS, method: 'CASH', paidOn: municipalToday() }).success).toBe(true);
+    expect(settlePaymentSchema.safeParse({ ...PRESS, method: 'CASH', paidOn: '28/09/2026' }).success).toBe(false);
     // A day that does not exist, which Date would quietly roll over to 2 March.
-    expect(settlePaymentSchema.safeParse({ method: 'CASH', paidOn: '2026-02-30' }).success).toBe(false);
+    expect(settlePaymentSchema.safeParse({ ...PRESS, method: 'CASH', paidOn: '2026-02-30' }).success).toBe(false);
+  });
+});
+
+describe('settlePaymentSchema — the press (F18)', () => {
+  it('refuses a press with no retry key, or without what the screen showed', () => {
+    expect(settlePaymentSchema.safeParse({ ...PRESS, method: 'CASH' }).success).toBe(true);
+    const { clientRequestId: _key, ...noKey } = PRESS;
+    expect(settlePaymentSchema.safeParse({ ...noKey, method: 'CASH' }).success).toBe(false);
+    const { expected: _shown, ...noFigures } = PRESS;
+    expect(settlePaymentSchema.safeParse({ ...noFigures, method: 'CASH' }).success).toBe(false);
   });
 });

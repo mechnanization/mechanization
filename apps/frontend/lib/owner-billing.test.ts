@@ -111,6 +111,14 @@ describe('ownerBillingWording — one wording for the staff file and «ملفّ�
     expect(ownerBillingWording(fallen, 'en', 'file').fallback).toMatch(/split equally/);
     expect(ownerBillingWording(billing({}), 'en', 'file').fallback).toBeNull();
   });
+
+  it('says which fallback: an owner no longer, or an owner whose own file no longer lists the flat (F13)', () => {
+    const notBilled = billing({ effectiveMode: 'EQUAL', fallback: 'RESPONSIBLE_NOT_BILLED', share: { numerator: 1, denominator: 3 } });
+    const notOwner = billing({ effectiveMode: 'EQUAL', fallback: 'RESPONSIBLE_NOT_OWNER', share: { numerator: 1, denominator: 3 } });
+    expect(ownerBillingWording(notBilled, 'en', 'file').fallback).toMatch(/own file no longer lists this unit/);
+    expect(ownerBillingWording(notBilled, 'ar', 'file').fallback).toContain('لم يعد يذكر هذه الوحدة');
+    expect(ownerBillingWording(notBilled, 'en', 'file').fallback).not.toBe(ownerBillingWording(notOwner, 'en', 'file').fallback);
+  });
 });
 
 describe('ownerBillingApplies — a split nobody is billed is not shown as one', () => {
