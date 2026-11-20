@@ -228,6 +228,15 @@ model User {
   /// presenting a step at or below this one is refused whatever the digits say.
   lastTotpStep BigInt?
 
+  /// Wrong TOTP codes since the last accepted one or the last lockout
+  /// (migration 0101). Reaching `APP_CONFIG.totp.maxFailures` sets
+  /// `totpLockedUntil` and starts the count again.
+  totpFailedAttempts Int @default(0)
+
+  /// While in the future, no TOTP code is checked for this account, right or
+  /// wrong. NULL when it is not locked. Migration 0101.
+  totpLockedUntil DateTime?
+
   /// Read-only. A Postgres `GENERATED ALWAYS AS ... STORED` column holding
   /// every value this row can be looked up by, folded to one alphabet:
   /// hamza-carrying alefs to bare alef, taa marbuta to haa, alef maqsura to
