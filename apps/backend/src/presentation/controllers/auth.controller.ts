@@ -17,6 +17,7 @@ import {
 import { IdentityService } from '../../application/features/identity/identity.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { CurrentTenant, CurrentUser } from '../decorators/current-user.decorator';
+import { ForbiddenError } from '../../application/common/exceptions';
 import { Public } from '../decorators/public.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
@@ -414,6 +415,27 @@ export class AuthController {
       referenceNumber: body.referenceNumber,
       context: { ip: request.ip, userAgent: request.header('user-agent') },
     });
+  }
+
+  /**
+   * «تسجيل الخروج» on the portal, ended on the server (task S14): every
+   * session the citizen holds stops working, not only the one in this
+   * browser. The citizen's own, by `user.sub`, with no id to choose — a
+   * reviewed self-service route (`route-inventory.spec.ts`). Answers the same
+   * whatever there was to end, so the portal clears its storage either way.
+   */
+  @Post('citizen/logout')
+  @HttpCode(200)
+  @Throttle(OWN_ACCOUNT_THROTTLE)
+  async logoutCitizen(@CurrentUser() user: SessionClaims) {
+    if (user.kind !== 'CITIZEN') {
+      throw new ForbiddenError({
+        code: 'CITIZENS_ONLY',
+        message: 'This is available to citizens only.',
+      });
+    }
+    await this.identity.logoutCitizen(user.sub);
+    return { signedOut: true };
   }
 
   // ────────────────────────────  Shared  ────────────────────────────

@@ -121,6 +121,14 @@ export interface UserRepository {
     policy: TotpLockoutPolicy,
     now: Date,
   ): Promise<{ lockedUntil: Date | null }>;
+
+  /**
+   * Ends every session a citizen holds, by bumping `tokenVersion`: the guard
+   * refuses each token stamped with the old one. Citizens only — a staff
+   * session ends with its refresh family. False when no citizen has the id.
+   */
+  endCitizenSessions(userId: string): Promise<boolean>;
+
   /** Stores an unconfirmed secret; `confirmTotp` is what activates it. */
   saveTotpSecret(userId: string, secret: string): Promise<void>;
   /** Marks enrolment complete once the admin has proved the app works. */
