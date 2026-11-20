@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Put, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import {
   CENSUS_WORKLIST_ROLES,
   EVERY_STAFF_ROLE,
@@ -54,6 +54,8 @@ import { ZodValidationPipe } from '../../application/common/pipes/zod-validation
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
+import { UuidPipe } from '../pipes/uuid.pipe';
+import { queryLimit, queryOffset } from './query-params';
 
 /**
  * The building census.
@@ -101,12 +103,12 @@ export class BuildingsController {
    */
   @Roles(...EVERY_STAFF_ROLE)
   @Get(':id/history')
-  history(@Param('id') id: string, @Query('limit') limit = '30', @Query('offset') offset = '0') {
+  history(@Param('id', new UuidPipe()) id: string, @Query('limit') limit = '30', @Query('offset') offset = '0') {
     return this.audit.history({
       entityType: 'Building',
       entityId: id,
-      limit: Math.min(Math.max(Number(limit) || 30, 1), 100),
-      offset: Math.max(Number(offset) || 0, 0),
+      limit: queryLimit(limit, 30, 100),
+      offset: queryOffset(offset),
     });
   }
 
@@ -170,7 +172,7 @@ export class BuildingsController {
   /** One building with its whole unit matrix and each unit's occupants. */
   @Roles(...EVERY_STAFF_ROLE)
   @Get(':id')
-  async get(@Param('id') id: string) {
+  async get(@Param('id', new UuidPipe()) id: string) {
     return this.buildings.get(id);
   }
 
@@ -181,7 +183,7 @@ export class BuildingsController {
    */
   @Roles(...EVERY_STAFF_ROLE)
   @Get(':id/damage')
-  async damageHistory(@Param('id') id: string) {
+  async damageHistory(@Param('id', new UuidPipe()) id: string) {
     const [current, history] = await Promise.all([
       this.damage.currentLevel(id),
       this.damage.history(id),
@@ -201,7 +203,7 @@ export class BuildingsController {
   @Roles(...REGISTER_WRITE_ROLES)
   @Patch(':id')
   async update(
-    @Param('id') id: string,
+    @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(updateBuildingSchema)) body: UpdateBuildingInput,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -215,7 +217,7 @@ export class BuildingsController {
   @Roles(...REGISTER_WRITE_ROLES)
   @Post(':id/matrix-save')
   async saveMatrix(
-    @Param('id') id: string,
+    @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(saveBuildingMatrixSchema)) body: SaveBuildingMatrixInput,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -230,7 +232,7 @@ export class BuildingsController {
   @Roles(...REGISTER_WRITE_ROLES)
   @Get(':id/parcel-correction')
   async parcelCorrectionPreview(
-    @Param('id') id: string,
+    @Param('id', new UuidPipe()) id: string,
     @Query(new ZodValidationPipe(correctBuildingParcelSchema.pick({ parcelNumber: true })))
     query: Pick<CorrectBuildingParcelInput, 'parcelNumber'>,
   ) {
@@ -244,7 +246,7 @@ export class BuildingsController {
   @Roles(...REGISTER_WRITE_ROLES)
   @Post(':id/parcel-correction')
   async correctParcel(
-    @Param('id') id: string,
+    @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(correctBuildingParcelSchema)) body: CorrectBuildingParcelInput,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -253,7 +255,7 @@ export class BuildingsController {
 
   @Roles('SUPER_ADMIN')
   @Delete(':id')
-  async remove(@Param('id') id: string, @CurrentUser() user: SessionClaims) {
+  async remove(@Param('id', new UuidPipe()) id: string, @CurrentUser() user: SessionClaims) {
     await this.buildings.remove(id, this.actor(user));
     return { deleted: true };
   }
@@ -268,7 +270,7 @@ export class BuildingsController {
   @Roles(...REGISTER_WRITE_ROLES)
   @Post(':id/units/generate')
   async generateUnits(
-    @Param('id') id: string,
+    @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(unitBlueprintSchema)) body: UnitBlueprint,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -278,7 +280,7 @@ export class BuildingsController {
   @Roles(...REGISTER_WRITE_ROLES)
   @Post(':id/units')
   async addUnit(
-    @Param('id') id: string,
+    @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(upsertUnitSchema)) body: UpsertUnitInput,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -293,7 +295,7 @@ export class BuildingsController {
   @Roles(...REGISTER_WRITE_ROLES)
   @Patch('units/:unitId')
   async updateUnit(
-    @Param('unitId') unitId: string,
+    @Param('unitId', new UuidPipe()) unitId: string,
     @Body(new ZodValidationPipe(updateUnitSchema)) body: UpdateUnitInput,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -308,7 +310,7 @@ export class BuildingsController {
   @Roles(...REGISTER_WRITE_ROLES)
   @Patch('units/:unitId/span')
   async resizeUnitSpan(
-    @Param('unitId') unitId: string,
+    @Param('unitId', new UuidPipe()) unitId: string,
     @Body(new ZodValidationPipe(resizeUnitSpanSchema)) body: ResizeUnitSpanInput,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -326,7 +328,7 @@ export class BuildingsController {
    */
   @Roles(...REGISTER_WRITE_ROLES)
   @Delete('units/:unitId')
-  async deleteUnit(@Param('unitId') unitId: string, @CurrentUser() user: SessionClaims) {
+  async deleteUnit(@Param('unitId', new UuidPipe()) unitId: string, @CurrentUser() user: SessionClaims) {
     await this.buildings.deleteUnit(unitId, this.actor(user));
     return { deleted: true };
   }
@@ -347,7 +349,7 @@ export class BuildingsController {
   @Roles(...REGISTER_WRITE_ROLES)
   @Post('units/:unitId/vacancy')
   async confirmVacancy(
-    @Param('unitId') unitId: string,
+    @Param('unitId', new UuidPipe()) unitId: string,
     @Body(new ZodValidationPipe(confirmVacancySchema)) body: ConfirmVacancyInput,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -364,7 +366,7 @@ export class BuildingsController {
   @Roles(...REGISTER_WRITE_ROLES)
   @Post('units/:unitId/vacancy/end')
   async endVacancy(
-    @Param('unitId') unitId: string,
+    @Param('unitId', new UuidPipe()) unitId: string,
     @Body(new ZodValidationPipe(endVacancySchema)) body: EndVacancyInput,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -385,7 +387,7 @@ export class BuildingsController {
   @Roles(...REGISTER_WRITE_ROLES)
   @Put('units/:unitId/owner-billing')
   async setOwnerBilling(
-    @Param('unitId', new ParseUUIDPipe()) unitId: string,
+    @Param('unitId', new UuidPipe()) unitId: string,
     @Body(new ZodValidationPipe(setOwnerBillingSchema)) body: SetOwnerBillingInput,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -401,7 +403,7 @@ export class BuildingsController {
   @Roles('SUPER_ADMIN')
   @Put('units/:unitId/fee-exemption')
   async setFeeExemption(
-    @Param('unitId', new ParseUUIDPipe()) unitId: string,
+    @Param('unitId', new UuidPipe()) unitId: string,
     @Body(new ZodValidationPipe(setUnitFeeExemptionSchema)) body: SetUnitFeeExemptionInput,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -446,7 +448,7 @@ export class BuildingsController {
   @Roles(...REGISTER_WRITE_ROLES)
   @Post('occupancies/:occupancyId/owner-link')
   async linkOccupancyOwner(
-    @Param('occupancyId') occupancyId: string,
+    @Param('occupancyId', new UuidPipe()) occupancyId: string,
     @Body(new ZodValidationPipe(linkOccupancyOwnerSchema)) body: LinkOccupancyOwnerInput,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -470,7 +472,7 @@ export class BuildingsController {
   @Roles(...REGISTER_WRITE_ROLES)
   @Patch('occupancies/:occupancyId/end')
   async endOccupancy(
-    @Param('occupancyId') occupancyId: string,
+    @Param('occupancyId', new UuidPipe()) occupancyId: string,
     @Body(new ZodValidationPipe(endOccupancySchema)) body: EndOccupancyInput,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -495,7 +497,7 @@ export class BuildingsController {
    */
   @Roles(...REGISTER_WRITE_ROLES)
   @Get('occupancies/:occupancyId/ownership-preview')
-  ownershipPreview(@Param('occupancyId') occupancyId: string) {
+  ownershipPreview(@Param('occupancyId', new UuidPipe()) occupancyId: string) {
     return this.ownership.previewOccupancy(occupancyId);
   }
 
@@ -520,7 +522,7 @@ export class BuildingsController {
   /** Every attempt on one unit — the panel behind «٣ محاولات». */
   @Roles(...EVERY_STAFF_ROLE)
   @Get('units/:unitId/visits')
-  async unitVisits(@Param('unitId') unitId: string) {
+  async unitVisits(@Param('unitId', new UuidPipe()) unitId: string) {
     return { visits: await this.buildings.visits(unitId) };
   }
 

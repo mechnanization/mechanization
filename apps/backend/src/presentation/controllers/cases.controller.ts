@@ -1,5 +1,7 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import {
+  CASE_STATUS,
+  CASE_TYPE,
   EVERY_STAFF_ROLE,
   REGISTER_WRITE_ROLES,
   createCaseSchema,
@@ -12,7 +14,8 @@ import { ZodValidationPipe } from '../../application/common/pipes/zod-validation
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
-import { parseDate } from './query-params';
+import { optionalOneOf, parseDate } from './query-params';
+import { UuidPipe } from '../pipes/uuid.pipe';
 
 /**
  * Sits under `t/:tenantSlug` like every other tenant-scoped controller — that
@@ -43,16 +46,16 @@ export class CasesController {
     @Query('propertyNumber') propertyNumber?: string,
     @Query('status') status?: string,
     @Query('caseType') caseType?: string,
-    @Query('buildingId') buildingId?: string,
-    @Query('unitId') unitId?: string,
+    @Query('buildingId', new UuidPipe({ optional: true })) buildingId?: string,
+    @Query('unitId', new UuidPipe({ optional: true })) unitId?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
   ) {
     return {
       cases: await this.cases.list({
         propertyNumber,
-        status,
-        caseType,
+        status: optionalOneOf(status, CASE_STATUS),
+        caseType: optionalOneOf(caseType, CASE_TYPE),
         buildingId,
         unitId,
         // An unparseable date is dropped rather than sent on as `Invalid Date`,
@@ -65,7 +68,7 @@ export class CasesController {
 
   @Roles(...EVERY_STAFF_ROLE)
   @Get(':id')
-  async get(@Param('id') id: string) {
+  async get(@Param('id', new UuidPipe()) id: string) {
     return this.cases.get(id);
   }
 
@@ -81,7 +84,7 @@ export class CasesController {
   @Roles(...REGISTER_WRITE_ROLES)
   @Patch(':id')
   async update(
-    @Param('id') id: string,
+    @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(updateCaseSchema)) body: UpdateCaseInput,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -90,7 +93,7 @@ export class CasesController {
 
   @Roles('SUPER_ADMIN')
   @Delete(':id')
-  async remove(@Param('id') id: string, @CurrentUser() user: SessionClaims) {
+  async remove(@Param('id', new UuidPipe()) id: string, @CurrentUser() user: SessionClaims) {
     await this.cases.remove(id, { id: user.sub, role: user.role ?? '' });
     return { deleted: true };
   }

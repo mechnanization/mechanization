@@ -1,17 +1,4 @@
-import {
-  Body,
-  Controller,
-  Get,
-  HttpCode,
-  Logger,
-  Param,
-  ParseUUIDPipe,
-  Patch,
-  Post,
-  Query,
-  Req,
-  type RawBodyRequest,
-} from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Logger, Param, Patch, Post, Query, Req, type RawBodyRequest } from '@nestjs/common';
 import type { Request } from 'express';
 import {
   BILL_CANCEL_ROLES,
@@ -34,6 +21,8 @@ import {
   declarePaymentSchema,
   feeNoticePreviewSchema,
   noticeActiveSchema,
+  PAYMENT_METHOD,
+  PAYMENT_STATUS,
   parcelDuesQuerySchema,
   reverseTransactionSchema,
   reviewPaymentSchema,
@@ -57,12 +46,14 @@ import { CorrectionBillsService } from '../../application/features/fees/correcti
 import { ParcelDuesService } from '../../application/features/fees/parcel-dues.service';
 import { PaymentSettlementService } from '../../application/features/fees/payment-settlement.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
-import { CurrentUser } from '../decorators/current-user.decorator';
+import { CurrentTenant, CurrentUser } from '../decorators/current-user.decorator';
 import { Public } from '../decorators/public.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import { APP_CONFIG } from '../config/app.config';
 import { ForbiddenError } from '../../application/common/exceptions';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
+import { UuidPipe } from '../pipes/uuid.pipe';
+import { optionalInt, optionalOneOf, queryLimit, queryOffset } from './query-params';
 
 /**
  * Fees, invoices, and the settings the citizen portal quotes.
@@ -167,7 +158,7 @@ export class FeesController {
   @Post('notices/:id/cancel')
   @HttpCode(200)
   async cancelNotice(
-    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(cancelNoticeSchema)) body: CancelNotice,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -185,7 +176,7 @@ export class FeesController {
    */
   @Roles(...BILL_CANCEL_ROLES)
   @Get('notices/:id/periods')
-  async noticePeriods(@Param('id', new ParseUUIDPipe()) id: string) {
+  async noticePeriods(@Param('id', new UuidPipe()) id: string) {
     return { items: await this.fees.noticePeriods(id) };
   }
 
@@ -217,7 +208,7 @@ export class FeesController {
   @Roles(...FEE_ADMIN_ROLES)
   @Patch('notices/:id/active')
   async setNoticeActive(
-    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(noticeActiveSchema)) body: { isActive: boolean },
     @CurrentUser() user: SessionClaims,
   ) {
@@ -298,7 +289,7 @@ export class FeesController {
     @Query('search') search?: string,
     @Query('feeTitle') feeTitle?: string,
     /** Narrows the ledger to one citizen — the «عرض» drill-down. */
-    @Query('citizenId') citizenId?: string,
+    @Query('citizenId', new UuidPipe({ optional: true })) citizenId?: string,
     @Query('method') method?: string,
     @Query('transactionsOnly') transactionsOnly?: string,
     @Query('limit') limit?: string,
@@ -309,14 +300,14 @@ export class FeesController {
     // rather than counting the rows it happens to be holding.
     return this.fees.listAllPayments(
       {
-        status,
+        status: optionalOneOf(status, PAYMENT_STATUS),
         search,
         feeTitle,
         citizenId,
-        method,
+        method: optionalOneOf(method, PAYMENT_METHOD),
         transactionsOnly: transactionsOnly === 'true',
-        limit: limit ? Number(limit) : undefined,
-        offset: offset ? Number(offset) : undefined,
+        limit: optionalInt(limit),
+        offset: optionalInt(offset),
       },
       user ? { role: user.role ?? '' } : undefined,
     );
@@ -358,7 +349,7 @@ export class FeesController {
   /** A consolidated receipt, for a reprint. Readable by whoever reads the fee ledger. */
   @Roles(...FEE_READ_ROLES)
   @Get('settlements/:id')
-  async settlement(@Param('id', new ParseUUIDPipe()) id: string) {
+  async settlement(@Param('id', new UuidPipe()) id: string) {
     return this.settlements.get(id);
   }
 
@@ -373,7 +364,7 @@ export class FeesController {
   @Roles(...FEE_SETTLE_ROLES)
   @Patch('payments/:id/settle')
   async settle(
-    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(settlePaymentSchema)) body: SettlePayment,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -406,7 +397,7 @@ export class FeesController {
    */
   @Roles(...FEE_READ_ROLES)
   @Get('payments/:id/transactions')
-  async transactions(@Param('id', new ParseUUIDPipe()) id: string) {
+  async transactions(@Param('id', new UuidPipe()) id: string) {
     return { items: await this.fees.listTransactions(id) };
   }
 
@@ -418,7 +409,7 @@ export class FeesController {
   @Roles(...BILL_CANCEL_ROLES)
   @Post('payments/:id/cancel')
   async cancelBill(
-    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(cancelBillSchema)) body: CancelBill,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -436,7 +427,7 @@ export class FeesController {
   @Roles(...PAYMENT_REVERSE_ROLES)
   @Post('transactions/:transactionId/reverse')
   async reverseTransaction(
-    @Param('transactionId', new ParseUUIDPipe()) transactionId: string,
+    @Param('transactionId', new UuidPipe()) transactionId: string,
     @Body(new ZodValidationPipe(reverseTransactionSchema)) body: { note: string },
     @CurrentUser() user: SessionClaims,
   ) {
@@ -458,7 +449,7 @@ export class FeesController {
   /** Marks a pending payment notification as seen. */
   @Roles(...PAYMENT_REVIEW_MARK_ROLES)
   @Patch('payments/:id/seen')
-  async markAsSeen(@Param('id', new ParseUUIDPipe()) id: string) {
+  async markAsSeen(@Param('id', new UuidPipe()) id: string) {
     return this.fees.markAsSeen(id);
   }
 
@@ -473,7 +464,7 @@ export class FeesController {
   @Roles(...FEE_ADMIN_ROLES)
   @Patch('payments/:id/review')
   async review(
-    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(reviewPaymentSchema))
     body: { confirmed: boolean; note?: string },
     @CurrentUser() user: SessionClaims,
@@ -499,8 +490,8 @@ export class FeesController {
   ) {
     return this.correctionBills.list({
       includeReviewed: includeReviewed === 'true',
-      limit: Math.min(Math.max(Number(limit) || 20, 1), 100),
-      offset: Math.max(Number(offset) || 0, 0),
+      limit: queryLimit(limit, 20, 100),
+      offset: queryOffset(offset),
     });
   }
 
@@ -519,7 +510,7 @@ export class FeesController {
   @Roles(...FEE_ADMIN_ROLES)
   @Post('payments/:id/basis-review')
   async reviewBasis(
-    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(billBasisReviewSchema)) body: BillBasisReview,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -562,7 +553,7 @@ export class FeesController {
    */
   @Roles(...FEE_READ_ROLES)
   @Get('payments/:id')
-  async getPayment(@Param('id', new ParseUUIDPipe()) id: string) {
+  async getPayment(@Param('id', new UuidPipe()) id: string) {
     return this.fees.getPaymentById(id);
   }
 
@@ -576,8 +567,8 @@ export class FeesController {
    */
   @Post('payments/mine/:id/whish/checkout')
   async whishCheckout(
-    @Param('tenantSlug') tenantSlug: string,
-    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentTenant('slug') tenantSlug: string,
+    @Param('id', new UuidPipe()) id: string,
     @CurrentUser() user: SessionClaims,
   ) {
     if (user.kind !== 'CITIZEN') {
@@ -629,7 +620,7 @@ export class FeesController {
   /** The citizen declaring they have paid — moves to PENDING_REVIEW only. */
   @Post('payments/mine/:id/declare')
   async declare(
-    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(declarePaymentSchema)) body: DeclarePayment,
     @CurrentUser() user: SessionClaims,
   ) {

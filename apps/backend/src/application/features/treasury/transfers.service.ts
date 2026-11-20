@@ -35,6 +35,7 @@ import { incomePeriod } from './income.plan';
 import { TreasuryLedgerService } from './treasury-ledger.service';
 import { planTransferDate, transferKindOf } from './transfers.plan';
 import { documentOccurredAt, roundMoney } from './treasury.plan';
+import { sameId } from '../../common/ids';
 
 /** The row a screen reads a transfer as. */
 const TRANSFER_SELECT = {
@@ -992,7 +993,7 @@ export class TransfersService {
         not then count his own pocket into the safe. Custody, booking and
         receipt in different hands is the first rule of cash handling.
       */
-      if (custody.ownerId === actor.id) {
+      if (sameId(custody.ownerId, actor.id)) {
         throw new ForbiddenError({
           code: 'CUSTODY_SELF_RECEIPT',
           message: 'A collector cannot receive his own custody; another accountant or the manager must.',

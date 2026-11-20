@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import {
   createExpenseCategorySchema,
   recordExpenseSchema,
@@ -27,6 +27,7 @@ import { ExpensesService } from '../../application/features/treasury/expenses.se
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import { optionalInt, requireRangeEnd, requireRangeStart } from './query-params';
+import { UuidPipe } from '../pipes/uuid.pipe';
 
 /** A request status from a query string, or nothing; anything else refuses (non-negotiable 6). */
 function requestStatus(value: string | undefined): ExpenseRequestStatus | undefined {
@@ -72,7 +73,7 @@ export class ExpensesController {
   @Roles(...TREASURY_ADMIN_ROLES)
   @Patch('categories/:id')
   updateCategory(
-    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(updateExpenseCategorySchema)) body: UpdateExpenseCategoryInput,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -86,8 +87,8 @@ export class ExpensesController {
     @Query('from') from?: string,
     @Query('to') to?: string,
     // Validated like a path id (non-negotiable 6): an unreadable one is a 400, not a database error.
-    @Query('categoryId', new ParseUUIDPipe({ optional: true })) categoryId?: string,
-    @Query('accountId', new ParseUUIDPipe({ optional: true })) accountId?: string,
+    @Query('categoryId', new UuidPipe({ optional: true })) categoryId?: string,
+    @Query('accountId', new UuidPipe({ optional: true })) accountId?: string,
     @Query('includeVoid') includeVoid?: string,
     @Query('awaitingOrder') awaitingOrder?: string,
     @Query('page') page?: string,
@@ -151,7 +152,7 @@ export class ExpensesController {
   /** «إصدار أمر الصرف» — the manager orders a request, and the money leaves. */
   @Roles(...TREASURY_ADMIN_ROLES)
   @Post('requests/:id/order')
-  orderRequest(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: SessionClaims) {
+  orderRequest(@Param('id', new UuidPipe()) id: string, @CurrentUser() user: SessionClaims) {
     return this.expenses.orderRequest(id, { id: user.sub, role: user.role ?? '' });
   }
 
@@ -159,7 +160,7 @@ export class ExpensesController {
   @Roles(...TREASURY_ADMIN_ROLES)
   @Post('requests/:id/reject')
   rejectRequest(
-    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(rejectExpenseRequestSchema)) body: RejectExpenseRequestInput,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -169,7 +170,7 @@ export class ExpensesController {
   /** «سحب الطلب» — its author (or the manager) takes back a request still waiting. */
   @Roles(...TREASURY_WORK_ROLES)
   @Post('requests/:id/withdraw')
-  withdrawRequest(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: SessionClaims) {
+  withdrawRequest(@Param('id', new UuidPipe()) id: string, @CurrentUser() user: SessionClaims) {
     return this.expenses.withdrawRequest(id, { id: user.sub, role: user.role ?? '' });
   }
 
@@ -183,7 +184,7 @@ export class ExpensesController {
   @Roles(...TREASURY_WORK_ROLES)
   @Post('salaries/:staffId')
   recordSalary(
-    @Param('staffId', new ParseUUIDPipe()) staffId: string,
+    @Param('staffId', new UuidPipe()) staffId: string,
     @Body(new ZodValidationPipe(recordStaffSalarySchema)) body: RecordStaffSalaryInput,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -192,14 +193,14 @@ export class ExpensesController {
 
   @Roles(...TREASURY_READ_ROLES)
   @Get(':id')
-  get(@Param('id', new ParseUUIDPipe()) id: string) {
+  get(@Param('id', new UuidPipe()) id: string) {
     return this.expenses.get(id);
   }
 
   /** «تسوية بأمر صرف» — the manager's order for an urgent payment already made (art. 35). */
   @Roles(...TREASURY_ADMIN_ROLES)
   @Post(':id/order')
-  regularize(@Param('id', new ParseUUIDPipe()) id: string, @CurrentUser() user: SessionClaims) {
+  regularize(@Param('id', new UuidPipe()) id: string, @CurrentUser() user: SessionClaims) {
     return this.expenses.regularize(id, { id: user.sub, role: user.role ?? '' });
   }
 
@@ -207,7 +208,7 @@ export class ExpensesController {
   @Roles(...TREASURY_ADMIN_ROLES)
   @Post(':id/void')
   void(
-    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(voidExpenseSchema)) body: VoidExpenseInput,
     @CurrentUser() user: SessionClaims,
   ) {

@@ -1,14 +1,4 @@
-import {
-  Body,
-  Controller,
-  Get,
-  HttpCode,
-  Param,
-  Post,
-  Req,
-  Res,
-  UseGuards,
-} from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Post, Req, Res, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { Request, Response } from 'express';
 import { createHash } from 'node:crypto';
@@ -26,7 +16,7 @@ import {
 } from '@mechanization/shared-schemas';
 import { IdentityService } from '../../application/features/identity/identity.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
-import { CurrentUser } from '../decorators/current-user.decorator';
+import { CurrentTenant, CurrentUser } from '../decorators/current-user.decorator';
 import { Public } from '../decorators/public.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
@@ -118,7 +108,7 @@ export class AuthController {
    * response object is used for the header and nothing else.
    */
   async loginStaff(
-    @Param('tenantSlug') tenantSlug: string,
+    @CurrentTenant('slug') tenantSlug: string,
     @Body(new ZodValidationPipe(staffLoginSchema))
     body: { email: string; password: string; totpToken?: string; remember?: boolean },
     @Req() request: Request,
@@ -166,7 +156,7 @@ export class AuthController {
   @UseGuards(TrustedOriginGuard)
   @Throttle(STAFF_SESSION_THROTTLE)
   async refreshStaff(
-    @Param('tenantSlug') tenantSlug: string,
+    @CurrentTenant('slug') tenantSlug: string,
     @Req() request: Request,
     @Res({ passthrough: true }) response: Response,
   ) {
@@ -202,7 +192,7 @@ export class AuthController {
   @UseGuards(TrustedOriginGuard)
   @Throttle(STAFF_SESSION_THROTTLE)
   async logoutStaff(
-    @Param('tenantSlug') tenantSlug: string,
+    @CurrentTenant('slug') tenantSlug: string,
     @Req() request: Request,
     @Res({ passthrough: true }) response: Response,
   ) {
@@ -223,7 +213,7 @@ export class AuthController {
    */
   @Post('staff/totp/enrol')
   async beginTotpEnrolment(
-    @Param('tenantSlug') tenantSlug: string,
+    @CurrentTenant('slug') tenantSlug: string,
     @CurrentUser() user: SessionClaims,
   ) {
     return this.identity.beginTotpEnrolment(user.sub, tenantSlug);
@@ -241,7 +231,7 @@ export class AuthController {
   @Post('staff/totp/disable')
   @Throttle(OWN_ACCOUNT_THROTTLE)
   async disableTotp(
-    @Param('tenantSlug') tenantSlug: string,
+    @CurrentTenant('slug') tenantSlug: string,
     @CurrentUser() user: SessionClaims,
     @Body() body: { currentPassword?: string },
   ) {
@@ -263,7 +253,7 @@ export class AuthController {
   @Post('staff/change-password')
   @Throttle(OWN_ACCOUNT_THROTTLE)
   async changePassword(
-    @Param('tenantSlug') tenantSlug: string,
+    @CurrentTenant('slug') tenantSlug: string,
     @CurrentUser() user: SessionClaims,
     @Body(new ZodValidationPipe(changePasswordSchema))
     body: { currentPassword: string; newPassword: string },
@@ -275,7 +265,7 @@ export class AuthController {
   @Post('staff/change-email')
   @Throttle(OWN_ACCOUNT_THROTTLE)
   async changeEmail(
-    @Param('tenantSlug') tenantSlug: string,
+    @CurrentTenant('slug') tenantSlug: string,
     @CurrentUser() user: SessionClaims,
     @Body(new ZodValidationPipe(changeEmailSchema))
     body: { newEmail: string; currentPassword: string },
@@ -353,7 +343,7 @@ export class AuthController {
   @Public()
   @Post('citizen/otp/verify')
   async verifyOtp(
-    @Param('tenantSlug') tenantSlug: string,
+    @CurrentTenant('slug') tenantSlug: string,
     @Body(new ZodValidationPipe(verifyOtpSchema))
     body: { phone: string; code?: string; citizenId?: string },
     @Req() request: Request,
@@ -382,7 +372,7 @@ export class AuthController {
     },
   })
   async loginByReference(
-    @Param('tenantSlug') tenantSlug: string,
+    @CurrentTenant('slug') tenantSlug: string,
     @Body(new ZodValidationPipe(referenceLoginSchema))
     body: { referenceNumber: string; phone: string },
     @Req() request: Request,
@@ -414,7 +404,7 @@ export class AuthController {
     },
   })
   async openByReference(
-    @Param('tenantSlug') tenantSlug: string,
+    @CurrentTenant('slug') tenantSlug: string,
     @Body(new ZodValidationPipe(referenceOnlyLoginSchema))
     body: { referenceNumber: string },
     @Req() request: Request,
