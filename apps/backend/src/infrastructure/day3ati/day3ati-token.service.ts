@@ -29,6 +29,12 @@ const TOKEN_EXCHANGE_GRANT = 'urn:ietf:params:oauth:grant-type:token-exchange';
 const TENANT_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const USER_ID = /^[A-Za-z0-9._-]{1,128}$/;
 
+/** Whether `value` is a tenant slug Day3ati's `{tenant}` can carry. Shared with the integration client's paths. */
+export const isDay3atiTenantSlug = (value: string): boolean => TENANT_SLUG.test(value);
+
+/** Whether `value` is a user id in the partner's alphabet (letters, digits, `-`, `_`, `.`). */
+export const isDay3atiUserId = (value: string): boolean => USER_ID.test(value);
+
 interface CachedToken {
   token: string;
   /** Epoch milliseconds after which the token is no longer handed out. */

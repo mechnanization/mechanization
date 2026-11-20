@@ -19,6 +19,7 @@
     "reissue-references": "ts-node -r tsconfig-paths/register src/scripts/reissue-references.ts",
     "backfill:buildings": "ts-node -r tsconfig-paths/register src/scripts/backfill-buildings.ts",
     "backfill:boundaries": "ts-node -r tsconfig-paths/register src/scripts/backfill-parcel-boundaries.ts",
+    "day3ati:backfill-staff": "ts-node -r tsconfig-paths/register src/scripts/day3ati-backfill-staff.ts",
     "seed": "ts-node -r tsconfig-paths/register src/scripts/seed.ts",
     "seed:census": "ts-node -r tsconfig-paths/register src/scripts/seed-census.ts",
     "test": "jest",

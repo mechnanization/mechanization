@@ -274,6 +274,13 @@ for up to three minutes after seeding.
   --slug albazourieh`, dry run unless `--apply`) turns property cards into
   census buildings with a pin on each parcel's survey point. It does not
   place pins where a building would stand. Prefer the census seed.
+- **The Day3ati staff backfill** (`pnpm --filter @mechanization/backend
+  day3ati:backfill-staff --slug albazourieh`, dry run unless `--apply`) reads one
+  municipality's staff and creates or removes their News accounts on Day3ati. It
+  reads whichever database `apps/backend/.env` names and calls whichever Day3ati
+  `DAY3ATI_*` names, so against the local database it would send seeded staff
+  names to that Day3ati: run it for real only against staging, with a temporary
+  env file and a tunnel. It prints ids and counts, never a name.
 
 The one thing this list does not contain is "copy it from staging".
 
