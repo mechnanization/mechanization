@@ -520,7 +520,12 @@
     "CITIZEN_OTP_UNAVAILABLE": "الدخول برمز يُرسَل إلى الهاتف غير متاح حالياً. ادخل برقمك المرجعي، أو راجع البلدية.",
     "FEE_EXEMPTION_VALID_UNTIL_PAST": "آخر يوم للإعفاء ({validUntil}) قبل اليوم ({today}) — اختر اليوم أو يوماً بعده",
     "FEE_EXEMPTION_LIFT_REASON_REQUIRED": "اكتب سبب رفع الإعفاء",
-    "UNIT_HAS_FEE_EXEMPTION_HISTORY": "للوحدة {unitCode} سجلّ إعفاء من الرسوم، وحذفها يمحوه. صحّح بيانات الوحدة بدلاً من حذفها"
+    "UNIT_HAS_FEE_EXEMPTION_HISTORY": "للوحدة {unitCode} سجلّ إعفاء من الرسوم، وحذفها يمحوه. صحّح بيانات الوحدة بدلاً من حذفها",
+    "BUILDING_TYPE_NOT_FOUND": "نوع المبنى هذا غير موجود",
+    "BUILDING_TYPE_INACTIVE": "النوع «{name}» موقوف ولا يُختار لمبنى جديد. اختر نوعاً آخر، أو أعد تفعيله من «أنواع المباني»",
+    "BUILDING_TYPE_NAME_TAKEN": "يوجد نوع آخر باسم «{name}»",
+    "BUILDING_TYPE_SYSTEM_STRUCTURE": "نوع النظام يبقى على منشأته. أضف نوعاً جديداً بدلاً من تغييره",
+    "BUILDING_TYPE_STRUCTURE_IN_USE": "{count, plural, one {مبنى واحد مسجَّل} two {مبنيان مسجَّلان} few {{count} مبانٍ مسجَّلة} many {{count} مبنى مسجَّلاً} other {{count} مبنى مسجَّل}} بهذا النوع، فلا تتغيّر منشأته. أضف نوعاً جديداً بدلاً من ذلك"
   },
   "damage": {
     "level": "مستوى الضرر",
@@ -2016,7 +2021,9 @@
     "REQUEST_CANCELLED": "إلغاء طلب",
     "REQUEST_ATTACHMENT_ADDED": "إرفاق مستند بطلب",
     "REQUEST_ATTACHMENT_VIEWED": "فتح مستند طلب",
-    "REQUEST_FEE_WAIVED": "طلب صار مجانياً فانتقل إلى الدراسة"
+    "REQUEST_FEE_WAIVED": "طلب صار مجانياً فانتقل إلى الدراسة",
+    "BUILDING_TYPE_CREATED": "إضافة نوع مبنى",
+    "BUILDING_TYPE_UPDATED": "تعديل نوع مبنى"
   },
   "auditEntities": {
     "User": "مواطن أو موظف",
@@ -2042,7 +2049,8 @@
     "ExpenseRequest": "طلب أمر صرف",
     "TreasuryDay": "يومية الخزينة",
     "CitizenRequest": "طلب معاملة",
-    "RequestTypeSetting": "نوع معاملة"
+    "RequestTypeSetting": "نوع معاملة",
+    "BuildingType": "نوع مبنى"
   },
   "audit": {
     "families": {
@@ -4182,5 +4190,57 @@
     "endedNotLifted": "انتهى إعفاؤها ولم يُرفع",
     "area": "{area} م²",
     "close": "إغلاق"
+  },
+  "buildingTypes": {
+    "title": "أنواع المباني",
+    "back": "سجل المباني",
+    "intro": "كل نوع يأخذ سلوك منشأة من منشآت النظام: كيف تُعدّ في الإحصاء، وما تبدأ به وحداتها. أنواع النظام ثابتة على منشآتها؛ وتضيف البلدية ما ينقصها (مدرسة، مستوصف، مبنى بلدي…). لا يُحذف نوع، بل يوقَف ويبقى على المباني المسجَّلة به.",
+    "picker": "نوع المبنى",
+    "filter": "نوع المبنى",
+    "allTypes": "كل أنواع المباني",
+    "loadError": "تعذّر تحميل أنواع المباني",
+    "empty": "لا أنواع بعد",
+    "add": "إضافة نوع",
+    "addTitle": "إضافة نوع مبنى",
+    "editTitle": "تعديل نوع المبنى",
+    "dialogDescription": "يظهر النوع في معالج المبنى والخريطة والتقارير.",
+    "nameAr": "الاسم بالعربية",
+    "nameArPlaceholder": "مثال: مستوصف",
+    "nameRequired": "اكتب اسم النوع",
+    "nameEn": "الاسم بالإنكليزية",
+    "nameEnPlaceholder": "e.g. Dispensary",
+    "structure": "سلوك المنشأة",
+    "structureFixedSystem": "نوع النظام يبقى على منشأته.",
+    "structureFixedUsed": "{count, plural, one {مبنى واحد مسجَّل} two {مبنيان مسجَّلان} few {{count} مبانٍ مسجَّلة} many {{count} مبنى مسجَّلاً} other {{count} مبنى مسجَّل}} بهذا النوع، فلا تتغيّر منشأته.",
+    "defaultUnitType": "تبدأ الوحدات بنوع",
+    "sortOrder": "الترتيب",
+    "noFee": "نوع المبنى لا يغيّر أيّ رسم: الرسوم تُحتسب على نوع كل وحدة. لإعفاء مدرسة رسمية، أعفِ وحداتها من «قائمة الإعفاء من الرسوم».",
+    "save": "حفظ",
+    "saving": "جارٍ الحفظ…",
+    "saveFailed": "تعذّر حفظ النوع",
+    "cancel": "إلغاء",
+    "close": "إغلاق",
+    "edit": "تعديل",
+    "deactivate": "إيقاف",
+    "activate": "إعادة تفعيل",
+    "deactivateTitle": "إيقاف النوع «{name}»؟",
+    "deactivateBody": "لن يُعرض عند تسجيل مبنى جديد، ويبقى على المباني المسجَّلة به.",
+    "activateTitle": "إعادة تفعيل النوع «{name}»؟",
+    "activateBody": "يُعرض من جديد عند تسجيل مبنى.",
+    "deactivated": "أُوقف النوع «{name}»",
+    "activated": "أُعيد تفعيل النوع «{name}»",
+    "system": "نوع النظام",
+    "custom": "نوع البلدية",
+    "inactive": "موقوف",
+    "notTyped": "بلا نوع بعد",
+    "byType": "المباني حسب النوع",
+    "columns": {
+      "name": "النوع",
+      "structure": "سلوك المنشأة",
+      "defaultUnitType": "تبدأ الوحدات بنوع",
+      "kind": "الصنف",
+      "buildings": "المباني",
+      "actions": "إجراءات"
+    }
   }
 }

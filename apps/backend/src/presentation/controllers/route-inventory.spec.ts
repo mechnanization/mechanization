@@ -457,6 +457,33 @@ describe('the fee whitelist routes', () => {
   });
 });
 
+/*
+  «أنواع المباني» (migration 0106). Read by every staff role — the building
+  wizard, the map and the census, and an inspector's offline store — and
+  written by the manager alone. There is no delete: a type is switched off.
+*/
+describe('the building type routes', () => {
+  const EVERY = ['ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'AUDITOR', 'COLLECTOR', 'FIELD_INSPECTOR', 'SUPER_ADMIN', 'VIEWER'];
+  const expected: Record<string, string[]> = {
+    'BuildingTypesController.list': EVERY,
+    'BuildingTypesController.create': ['SUPER_ADMIN'],
+    'BuildingTypesController.update': ['SUPER_ADMIN'],
+  };
+  const all = routes();
+
+  it.each(Object.entries(expected))('%s admits exactly its roles', (name, roles) => {
+    const route = all.find((candidate) => candidate.name === name);
+    expect(route).toBeDefined();
+    expect([...(route?.roles ?? [])].sort()).toEqual([...roles].sort());
+  });
+
+  it('knows every building type handler, and deletes none', () => {
+    const handlers = all.filter((route) => route.name.startsWith('BuildingTypesController.'));
+    expect(handlers.map((route) => route.name).sort()).toEqual(Object.keys(expected).sort());
+    expect(handlers.some((route) => route.method === RequestMethod.DELETE)).toBe(false);
+  });
+});
+
 describe('the routes that raise a bill', () => {
   const all = routes();
 

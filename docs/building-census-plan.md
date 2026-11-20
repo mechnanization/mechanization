@@ -12,6 +12,9 @@
 > have **not** been run; see §11.3 before trusting it in the field.
 > The handful of things deliberately not covered are listed under "What is not
 > covered" in §6 and §10 — none of them block field use.
+> **Last verified against the code:** `chore/migration-0105`, `chore/migration-0106` and the building types
+> (on `develop@e9e79ff`, uncommitted): §16, «أنواع المباني» and «قائمة الإعفاء من الرسوم» on the unit
+> drawer, 2026-11-16.
 > **Created:** 2026-09-09 · **Branch to use:** `feat/building-census` (off `develop`)
 > **Owner:** Hashem Nasrallah
 >
@@ -2377,3 +2380,62 @@ house with more storeys than its unit's levels. All dismissable.
 **Still open:** existing two-storey houses keep `levels = 1` until an officer
 sets it — the municipality approves that list, since each storey raises the
 bill. Multi-level shops are out of scope.
+
+## 16. Building types an administrator adds, «أنواع المباني» (2026-11-16)
+
+The user's request of 2026-11-16: the administrator adds the building types the list does not have
+(مدرسة, مستوصف, مبنى بلدي, …) and picks them in the building wizard, on the map and in the reports.
+
+### 16.1 A hybrid, not a table in place of the enum
+
+`StructureType` drives behaviour — `STRUCTURE_TYPE_MAP`, `isDwellingUnitType`, the estate and house
+rules, what the census counts — and a type typed into a form would have none of it. So each type
+**takes the behaviour of one `StructureType`**, and a building keeps `buildings.structureType`, written
+by the server from its type (`resolveBuildingType`, `buildings/building-types.ts`) and read everywhere as
+before.
+
+| # | Decision (2026-11-16) |
+|---|---|
+| 4 | A new `StructureType`, `PUBLIC_INSTITUTION` «منشأة عامة / خدماتية», for public and service buildings (0105, alone). Not `PUBLIC_FACILITY`, which `FeeExemptionReason` uses. `STRUCTURE_TYPE_MAP`: `BUILDING`, units start as `OFFICE`; a dispensary's own type starts them as `CLINIC`. On the map: a pediment on columns. |
+| 5 | Each municipality keeps its own list: `building_types`, a tenant table (0106). |
+
+### 16.2 The rules
+
+- 0106 inserts one **system** type per `StructureType`, named as `labels.ts` names it, its units as
+  `STRUCTURE_TYPE_MAP` starts them. A system type's structure never changes
+  (`BUILDING_TYPE_SYSTEM_STRUCTURE`, and the trigger `building_types_system_rewrite` under it); a custom
+  type's only while no building has it (`BUILDING_TYPE_STRUCTURE_IN_USE`). Renaming changes the label.
+- A type is never deleted, only switched off, as the expense categories are. A switched-off type is
+  refused on a new building (`BUILDING_TYPE_INACTIVE`) and kept on the buildings that have it.
+- Create and edit: a type sent decides the structure, and the body's `structureType` beside it is not
+  read. Only a structure sent (an older client, a queued offline save): the building is filed under
+  that structure's system type. Neither, on an edit of a building with no type yet: it is given its
+  structure's system type. `buildings.buildingTypeId` is nullable in this release and backfilled; making
+  it NOT NULL is a later contract step.
+- **A building's type changes no fee.** Units keep their `UnitType`, and fees read it. To exempt a
+  public school, exempt its units («قائمة الإعفاء من الرسوم», docs/fees-system-rearchitecture-specification.md §9).
+
+### 16.3 Where it shows
+
+- Routes: `GET building-types` (`BUILDING_TYPE_READ_ROLES`, every staff role; `?includeInactive=true`),
+  `POST` and `PATCH :id` (`BUILDING_TYPE_ADMIN_ROLES`, the manager), Tier 1 `BUILDING_TYPE_CREATED` /
+  `BUILDING_TYPE_UPDATED` filed as `BuildingType`. No delete route.
+- `buildings/types` «أنواع المباني» (linked from «سجل المباني»): the list, and the manager's add, edit,
+  switch off and on.
+- The wizard and the editor pick a type (system types first, then the municipality's; a type
+  switched off shows only on the building that has it), and the matrix starts a new unit above ground
+  as the type's `defaultUnitType`. Without a list on the device and without a network, the structures
+  are offered as before.
+- «سجل المباني»: a type filter (`buildingTypeId`, the facet `buildingTypeIds`), the type's name in the
+  column and the CSV. The map: a type filter and the types with their counts in the legend
+  (`BuildingMapPin.buildingTypeId`). The dashboard: «المباني حسب النوع» (`census.buildingsByType`,
+  `NONE` for a building not typed yet).
+- Offline: the active list is kept on the device (`lib/offline-db.ts` `referenceData`, `DB_VERSION` 3;
+  `useBuildingTypes` in `lib/building-types.ts` answers it when the network is unreachable).
+- The in-app backup carries the table (snapshot version 7).
+
+Tests: `infrastructure/prisma/building-types.integration.spec.ts` (0105/0106: the system rows against
+the SQL enum, the backfill, the trigger, the keys), `features/buildings/building-types.integration.spec.ts`
+(the system types against the shared `STRUCTURE_TYPE`, the structure from the type, an inactive type,
+the fixed structures, the audit rows), `lib/building-types.test.ts` (the offline copy, the types
+offered), `route-inventory.spec.ts`.

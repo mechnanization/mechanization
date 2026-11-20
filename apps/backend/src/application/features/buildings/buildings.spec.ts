@@ -141,6 +141,7 @@ describe('BUILDING_UPDATED — the audit row names what changed', () => {
     partitionNumbers: [] as string[],
     sharedParcelNumbers: [] as string[],
     structureType: 'RESIDENTIAL_BUILDING',
+    buildingTypeId: null as string | null,
     lifecycleStatus: 'IN_USE',
     latitude: 33.2,
     longitude: 35.2,

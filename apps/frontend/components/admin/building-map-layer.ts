@@ -376,6 +376,19 @@ export function ensureStructureIcons(map: mapboxgl.Map): void {
       ctx.fillRect(7.5, 9, 2, 2);
       ctx.fillRect(14.5, 14, 2, 4);
     },
+    // A pediment on columns — a school, a dispensary, the municipality's hall (0105).
+    PUBLIC_INSTITUTION: (ctx) => {
+      ctx.beginPath();
+      ctx.moveTo(4, 9);
+      ctx.lineTo(12, 4);
+      ctx.lineTo(20, 9);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.fillRect(6.5, 10, 2, 8);
+      ctx.fillRect(11, 10, 2, 8);
+      ctx.fillRect(15.5, 10, 2, 8);
+      ctx.fillRect(4, 18.5, 16, 1.5);
+    },
     // A tent.
     TENT_SHELTER: (ctx) => {
       ctx.beginPath();

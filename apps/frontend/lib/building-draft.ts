@@ -87,6 +87,11 @@ export interface BuildingDraft {
   /** The other عقارات, as typed, blanks included. */
   sharedParcels: string[];
   structureType: StructureType;
+  /**
+   * «نوع المبنى» (0106) as chosen, '' for none yet. Optional: a draft saved before
+   * it has none, and the editor then files it under its structure's system type.
+   */
+  buildingTypeId?: string;
   lifecycleStatus: BuildingLifecycle;
   floorsCount: string;
   basementsCount: string;
@@ -159,6 +164,7 @@ export type EditDraftFields = Pick<
   | 'partitionNumbers'
   | 'sharedParcels'
   | 'structureType'
+  | 'buildingTypeId'
   | 'lifecycleStatus'
   | 'floorsCount'
   | 'basementsCount'
@@ -176,6 +182,7 @@ export function editDraftFingerprint(draft: EditDraftFields): string {
     draft.partitionNumbers,
     draft.sharedParcels,
     draft.structureType,
+    draft.buildingTypeId ?? '',
     draft.lifecycleStatus,
     draft.floorsCount,
     draft.basementsCount,

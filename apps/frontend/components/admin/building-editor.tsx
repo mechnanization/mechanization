@@ -33,6 +33,7 @@ import {
   nextBuildingSuffix,
   STRUCTURE_TYPE,
   UNZONED_CODE,
+  buildingTypeName,
   type BuildingLifecycle,
   type HouseGrowth,
   type StructureType,
@@ -81,6 +82,7 @@ import { queueBuilding } from '@/lib/offline-sync';
 import { heldInDoubt, heldKey, keyIsSpent, markInDoubt, outcomeInDoubt, spendKey } from '@/lib/request-id';
 import { loadSession, clearSession } from '@/lib/session';
 import { CENSUS_WRITE_ROLES, hasRole } from '@/lib/staff-roles';
+import { systemTypeOf, typesToOffer, useBuildingTypes } from '@/lib/building-types';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -395,10 +397,22 @@ export function BuildingEditor({
   const tEditor = useTranslations('buildingEditor');
   const labels = getLabels(locale);
   const base = `/${tenant}/${locale}/${adminPath}`;
+  const tTypes = useTranslations('buildingTypes');
   const editing = Boolean(buildingId);
 
   const session = useMemo(() => loadSession(tenant), [tenant]);
   const token = session?.accessToken;
+
+  /*
+    «أنواع المباني» (0106): the active list, kept on the device for a phone with no
+    network; every type when editing, so a type switched off since still shows on
+    the building that has it (`typesToOffer`). The structure follows the type, and
+    a building with none yet shows its structure's system type.
+  */
+  const buildingTypes = useBuildingTypes(tenant, base, token ?? null, {
+    includeInactive: editing,
+    errorMessage: tTypes('loadError'),
+  });
 
   /*
     A role that cannot survey — «مشاهد فقط», an auditor, the accountant — is
@@ -475,6 +489,19 @@ export function BuildingEditor({
   const [name, setName] = useState('');
   const [postedNumber, setPostedNumber] = useState('');
   const [structureType, setStructureType] = useState<StructureType>('RESIDENTIAL_BUILDING');
+  /** «نوع المبنى» (0106): '' until chosen; the structure follows it, and the server takes the type's. */
+  const [buildingTypeId, setBuildingTypeId] = useState('');
+  const offeredTypes = useMemo(
+    () => typesToOffer(buildingTypes.data ?? [], buildingTypeId),
+    [buildingTypes.data, buildingTypeId],
+  );
+  const chosenTypeId = buildingTypeId || systemTypeOf(buildingTypes.data ?? [], structureType)?.id || '';
+  const chosenType = offeredTypes.find((type) => type.id === chosenTypeId);
+  const chooseType = (id: string) => {
+    const type = offeredTypes.find((candidate) => candidate.id === id);
+    setBuildingTypeId(id);
+    if (type) setStructureType(type.structureType);
+  };
   const [floorsCount, setFloorsCount] = useState('3');
   /** How far the structure goes down, as a depth: '2' means B1 and B2. */
   const [basementsCount, setBasementsCount] = useState('0');
@@ -628,6 +655,7 @@ export function BuildingEditor({
     setPartitionNumbers(draft.partitionNumbers);
     setSharedParcels(draft.sharedParcels);
     setStructureType(draft.structureType);
+    setBuildingTypeId(draft.buildingTypeId ?? '');
     setLifecycleStatus(draft.lifecycleStatus);
     setFloorsCount(draft.floorsCount);
     setBasementsCount(draft.basementsCount);
@@ -657,6 +685,7 @@ export function BuildingEditor({
       partitionNumbers,
       sharedParcels,
       structureType,
+      buildingTypeId,
       lifecycleStatus,
       floorsCount,
       basementsCount,
@@ -694,6 +723,7 @@ export function BuildingEditor({
     partitionNumbers,
     sharedParcels,
     structureType,
+    buildingTypeId,
     lifecycleStatus,
     floorsCount,
     basementsCount,
@@ -807,6 +837,7 @@ export function BuildingEditor({
           partitionNumbers: detail.partitionNumbers ?? [],
           sharedParcels: detail.sharedParcelNumbers ?? [],
           structureType: detail.structureType,
+          buildingTypeId: detail.buildingTypeId ?? '',
           lifecycleStatus: detail.lifecycleStatus,
           notes: detail.notes ?? '',
           pin: detail.latitude != null && detail.longitude != null ? [detail.longitude, detail.latitude] : null,
@@ -832,6 +863,7 @@ export function BuildingEditor({
         setPartitionNumbers(loaded.partitionNumbers);
         setSharedParcels(loaded.sharedParcels);
         setStructureType(loaded.structureType);
+        setBuildingTypeId(loaded.buildingTypeId ?? '');
         setLifecycleStatus(loaded.lifecycleStatus);
         setNotes(loaded.notes);
         setPin(loaded.pin);
@@ -1663,6 +1695,7 @@ export function BuildingEditor({
         partitionNumbers: cleanedPartitionNumbers,
         sharedParcelNumbers: cleanedSharedParcels,
         structureType,
+        ...(chosenTypeId ? { buildingTypeId: chosenTypeId } : {}),
         lifecycleStatus,
         latitude: pin ? pin[1] : null,
         longitude: pin ? pin[0] : null,
@@ -1823,6 +1856,7 @@ export function BuildingEditor({
               ? { sharedParcelNumbers: cleanedSharedParcels }
               : {}),
             structureType,
+            ...(chosenTypeId ? { buildingTypeId: chosenTypeId } : {}),
             lifecycleStatus,
             latitude: pin ? pin[1] : undefined,
             longitude: pin ? pin[0] : undefined,
@@ -1867,6 +1901,7 @@ export function BuildingEditor({
           ? { sharedParcelNumbers: cleanedSharedParcels }
           : {}),
         structureType,
+        ...(chosenTypeId ? { buildingTypeId: chosenTypeId } : {}),
         lifecycleStatus,
         latitude: pin ? pin[1] : undefined,
         longitude: pin ? pin[0] : undefined,
@@ -2855,26 +2890,43 @@ export function BuildingEditor({
             <CardContent className="space-y-4 pt-5">
               <div className="grid gap-4">
                 <Field
-                  label={en ? 'Structure Type' : 'نوع المنشأة'}
+                  label={tTypes('picker')}
                   htmlFor="building-structure-type"
                   required
                   error={fieldErrors.structureType}
                 >
-                  <Select
-                    value={structureType}
-                    onValueChange={(value) => setStructureType(value as StructureType)}
-                  >
-                    <SelectTrigger id="building-structure-type" className="h-10">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {STRUCTURE_TYPE.map((type) => (
-                        <SelectItem key={type} value={type}>
-                          {labels.structureType[type]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  {offeredTypes.length > 0 ? (
+                    <Select value={chosenTypeId} onValueChange={chooseType}>
+                      <SelectTrigger id="building-structure-type" className="h-10">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {offeredTypes.map((type) => (
+                          <SelectItem key={type.id} value={type.id}>
+                            {buildingTypeName(type, locale)}
+                            {type.isActive ? '' : ` — ${tTypes('inactive')}`}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    // No list on this device yet and no network: the structures, as before types existed.
+                    <Select
+                      value={structureType}
+                      onValueChange={(value) => setStructureType(value as StructureType)}
+                    >
+                      <SelectTrigger id="building-structure-type" className="h-10">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {STRUCTURE_TYPE.map((type) => (
+                          <SelectItem key={type} value={type}>
+                            {labels.structureType[type]}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
                 </Field>
 
                 <Field
@@ -3192,7 +3244,12 @@ export function BuildingEditor({
               <UnitGridPicker
                 locale={locale}
                 structureType={structureType}
-                onStructureTypeChange={setStructureType}
+                defaultUnitType={chosenType?.defaultUnitType}
+                onStructureTypeChange={(next) => {
+                  // The grid re-typed the structure (a lone house): its system type follows (0106).
+                  setStructureType(next);
+                  setBuildingTypeId(systemTypeOf(buildingTypes.data ?? [], next)?.id ?? '');
+                }}
                 floorsCount={Number(floorsCount) || 1}
                 onFloorsCountChange={(newFloors) => setFloorsCount(String(newFloors))}
                 basementsCount={Number(basementsCount) || 0}
@@ -3299,8 +3356,8 @@ export function BuildingEditor({
                   {zoneCode ? `${zoneCode} · ${zoneName ?? ''}` : trimmedParcel ? UNZONED_CODE : '—'}
                 </SummaryRow>
 
-                <SummaryRow label={en ? 'Structure Type' : 'نوع المنشأة'}>
-                  {labels.structureType[structureType]}
+                <SummaryRow label={tTypes('picker')}>
+                  {chosenType ? buildingTypeName(chosenType, locale) : labels.structureType[structureType]}
                 </SummaryRow>
 
                 <SummaryRow label={en ? 'Floors & Units' : 'الطوابق والوحدات'}>

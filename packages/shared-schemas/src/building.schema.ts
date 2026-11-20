@@ -344,7 +344,14 @@ export const createBuildingSchema = z
     parcelNumber,
     name: buildingName.optional(),
     postedNumber: postedNumber.optional(),
+    /**
+     * Still sent, and still all an older client or a queued offline save sends:
+     * without a type, the building is filed under this structure's system type.
+     * With one, the server takes the structure from the type and ignores this.
+     */
     structureType: structureTypeSchema,
+    /** «نوع المبنى» (0106): the municipality's type, system or custom; an inactive one is refused. */
+    buildingTypeId: uuid.optional(),
     /**
      * Where the structure is in its own life. Defaults to «قائم ومستعمل»
      * because that is what an officer is standing in front of nineteen times
@@ -530,6 +537,8 @@ const updateBuildingFields = z
     name: buildingName.nullable().optional(),
     postedNumber: postedNumber.nullable().optional(),
     structureType: structureTypeSchema.optional(),
+    /** «نوع المبنى» (0106): decides `structureType`; one switched off is kept only if the building has it already. */
+    buildingTypeId: uuid.optional(),
     lifecycleStatus: buildingLifecycleSchema.optional(),
     latitude: latitude.nullable().optional(),
     longitude: longitude.nullable().optional(),
@@ -1491,6 +1500,8 @@ export const buildingFilterSchema = z.object({
     .optional(),
   zoneId: uuid.optional(),
   structureType: structureTypeSchema.optional(),
+  /** «نوع المبنى» (0106). */
+  buildingTypeId: uuid.optional(),
   lifecycleStatus: buildingLifecycleSchema.optional(),
   surveyStatus: surveyStatusSchema.optional(),
   damageLevel: damageLevelSchema.optional(),

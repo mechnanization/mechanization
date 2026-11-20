@@ -201,6 +201,14 @@ export const ERROR_CODES = [
   'FEE_EXEMPTION_VALID_UNTIL_PAST',
   'FEE_EXEMPTION_LIFT_REASON_REQUIRED',
   'UNIT_HAS_FEE_EXEMPTION_HISTORY',
+  // «أنواع المباني» (migration 0106): a type that does not exist; one switched off, on a new building
+  // (`params.name`); a name another type has (`params.name`); a system type's structure, which never
+  // changes; a custom type's structure while buildings are filed under it (`params.count`).
+  'BUILDING_TYPE_NOT_FOUND',
+  'BUILDING_TYPE_INACTIVE',
+  'BUILDING_TYPE_NAME_TAKEN',
+  'BUILDING_TYPE_SYSTEM_STRUCTURE',
+  'BUILDING_TYPE_STRUCTURE_IN_USE',
   // «تركة (ورثة المرحوم)» (migration 0076)
   'ESTATE_OWNS_ONLY',
   // One home on several levels, and a house that grows (migration 0095, decision D28)
