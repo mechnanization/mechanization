@@ -265,6 +265,7 @@
     "PAYMENT_BILL_CANCELLED": "This bill has been cancelled and takes no payment.",
     "BILL_CANCEL_HAS_PAYMENTS": "Money has been taken on this bill. Reverse its receipts first, then cancel it.",
     "BILL_ALREADY_CANCELLED": "This bill has already been cancelled.",
+    "FEE_CHARGE_REQUEST_REUSED": "This operation’s identifier already recorded a different charge ({invoiceNumber}). Check the citizen’s bills before anything else: adding again records a new, separate charge.",
     "FEE_NOTICE_REQUEST_REUSED": "This operation’s identifier was already used to issue a different notice. Check the notices issued before anything else: issuing again issues a new, separate notice.",
     "BULK_SETTLE_CITIZEN_MISMATCH": "The selected bills do not all belong to one citizen. Only one person’s bills can be settled together.",
     "BULK_SETTLE_SOME_ALREADY_PAID": "Bill «{invoice}» was settled after it was selected. Deselect it and try again. Nothing was recorded.",
@@ -1719,7 +1720,10 @@
       "billTypePlaceholder": "Select from previous bills or type a new title…",
       "amount": "Amount (LBP)",
       "dueDate": "Due Date",
-      "submit": "Add Charge"
+      "submit": "Add Charge",
+      "done": "The charge was recorded on the citizen.",
+      "replayed": "This charge was already recorded ({number}), so it was not recorded again.",
+      "failed": "The charge could not be recorded."
     },
     "scope": {
       "separator": ", ",
