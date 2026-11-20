@@ -61,6 +61,20 @@ describeIfDb('the duplicate notice guard', () => {
       ...overrides,
     }) as CreateFeeNotice;
 
+  /**
+   * The notice's `FEE_ISSUED` row, once it is written. It is a Tier 2 row: the
+   * listener runs after `issue` returns and nothing awaits it, so reading at once
+   * races the write. Waits up to five seconds; null if it never arrives.
+   */
+  const issuedRowFor = async (noticeId: string) => {
+    const deadline = Date.now() + 5_000;
+    for (;;) {
+      const row = await db.auditLogEntry.findFirst({ where: { action: 'FEE_ISSUED', entityId: noticeId } });
+      if (row || Date.now() > deadline) return row;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  };
+
   const refusal = async (call: Promise<unknown>) => {
     try {
       await call;
@@ -158,10 +172,8 @@ describeIfDb('the duplicate notice guard', () => {
     );
 
     expect(second.issued).toBe(citizens.length);
-    const row = await db.auditLogEntry.findFirstOrThrow({
-      where: { action: 'FEE_ISSUED', entityId: second.noticeId },
-    });
-    expect(row.after).toMatchObject({ duplicatesConfirmed: [first.noticeId] });
+    const row = await issuedRowFor(second.noticeId);
+    expect(row?.after).toMatchObject({ duplicatesConfirmed: [first.noticeId] });
   });
 
   it('does not take a confirmation of another notice for this one', async () => {
