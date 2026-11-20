@@ -682,6 +682,40 @@ describe('applyAgreements — an answer given before the card existed', () => {
     expect(result).toEqual({ remaining: filed, linked: 0 });
   });
 
+  it.each(['COLLECTOR', 'ACCOUNTANT', 'VIEWER', ''])(
+    'leaves every answer open on a save by %s, a role that does not answer claims (S17)',
+    async (role) => {
+      const { service } = harness();
+      const confirm = jest.spyOn(service, 'confirm').mockResolvedValue(confirmed);
+      const filed = [proposal()];
+
+      const result = await service.applyAgreements({
+        filed,
+        agreements: [{ phone: LANDLORD_PHONE, citizenId: OWNER }],
+        actor: { id: 'staff-2', role },
+      });
+
+      expect(result).toEqual({ remaining: filed, linked: 0 });
+      expect(confirm).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['SUPER_ADMIN', 'FIELD_INSPECTOR', 'ADMINISTRATIVE_OFFICER'])(
+    'applies the answer on a save by %s, who may answer a claim',
+    async (role) => {
+      const { service } = harness();
+      jest.spyOn(service, 'confirm').mockResolvedValue(confirmed);
+
+      const result = await service.applyAgreements({
+        filed: [proposal()],
+        agreements: [{ phone: LANDLORD_PHONE, citizenId: OWNER }],
+        actor: { id: 'staff-3', role },
+      });
+
+      expect(result).toEqual({ remaining: [], linked: 1 });
+    },
+  );
+
   it('applies one answer without disturbing the claims it says nothing about', async () => {
     const { service } = harness();
     jest.spyOn(service, 'confirm').mockResolvedValue(confirmed);

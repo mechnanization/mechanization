@@ -29,6 +29,7 @@ import {
   type UnitCorrectionState,
 } from './unit-correction.plan';
 import { mergeBlockerReason, planDuplexMerge, type DuplexMergeState, type MergeFlat } from './duplex-merge.plan';
+import { assertNoFeeExemptionHistory } from '../buildings/fee-exemption';
 
 type Actor = { id: string; role: string };
 
@@ -246,6 +247,8 @@ export class UnitCorrectionService {
     }
 
     const { upperState: state, upperPlan: removal, lower, upper } = merge;
+    // The upper flat is deleted: its fee exemption history keys onto it with RESTRICT (0104).
+    await assertNoFeeExemptionHistory(this.db, { unitIds: [upper.id] });
     const snapshot = await this.snapshot(state, removal);
     const lowerBefore = await this.db.unit.findUnique({ where: { id: lower.id } });
     const now = new Date();
@@ -483,6 +486,8 @@ export class UnitCorrectionService {
     if (plan.blockers.length > 0) {
       throw new ConflictError(blockerMessage(plan.blockers[0]!), { reason: 'BLOCKED', blockers: plan.blockers });
     }
+    // A unit with a fee exemption history is corrected, not deleted: the history keys onto it (0104).
+    await assertNoFeeExemptionHistory(this.db, { unitIds: [unitId] });
     if (input.confirmCode.trim() !== state.unit.unitCode) {
       throw new ValidationError({
         code: 'UNIT_CONFIRM_CODE_MISMATCH',

@@ -2,7 +2,13 @@
 
 import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { BULK_SETTLE_ROLES, PAYMENT_SETTLE_ROLES, REFERENCE_SEND_ROLES, hasRole } from '@/lib/staff-roles';
+import {
+  BULK_SETTLE_ROLES,
+  FEE_EXEMPTION_READ_ROLES,
+  PAYMENT_SETTLE_ROLES,
+  REFERENCE_SEND_ROLES,
+  hasRole,
+} from '@/lib/staff-roles';
 import {
   fromAdminPayment,
   isBulkSettleable,
@@ -18,6 +24,7 @@ import {
   CheckCircle2,
   FileWarning,
   Megaphone,
+  ShieldCheck,
   Loader2,
   Plus,
   Receipt,
@@ -70,6 +77,7 @@ import { BillCheckbox } from '@/components/admin/bulk-settle/bill-checkbox';
 import { BulkSettleBar } from '@/components/admin/bulk-settle/bulk-settle-bar';
 import { FeesSummaryStrip } from '@/components/admin/fees/fees-summary-strip';
 import { PaymentReviewDialog } from '@/components/admin/fees/payment-review-dialog';
+import { heldKey, keyIsSpent, spendKey } from '@/lib/request-id';
 import { cn } from '@/lib/utils';
 
 /**
@@ -192,12 +200,15 @@ export default function FeesPage({
   const tReview = useTranslations('fees.register.review');
   const tCommon = useTranslations('common');
   const tNotices = useTranslations('fees.notices');
+  const tExemptions = useTranslations('feeExemptions');
+  const tCharge = useTranslations('fees.charge');
   /** «تأكيد» / «رفض» on a declared transfer — `FEE_ADMIN_ROLES`, as `PATCH fees/payments/:id/review`. */
   const canDecide = hasRole(FEE_ADMIN_ROLES, role);
   /** «تكليف مباشر» and «إصدار رسم جديد» — `FEE_ISSUE_ROLES`, as `POST fees/payments`, `POST fees/notices` and the `fees/new` page. */
   const canIssue = hasRole(FEE_ISSUE_ROLES, role);
   /** «فواتير تأثّرت بتصحيحات» — `PAYMENT_REVIEW_READ_ROLES`, as the nav row of `/fees/corrections`. */
   const canReadCorrections = hasRole(PAYMENT_REVIEW_READ_ROLES, role);
+  const canReadExemptions = hasRole(FEE_EXEMPTION_READ_ROLES, role);
   /** «تسجيل دفعة» — `PAYMENT_SETTLE_ROLES` (`SUPER_ADMIN`, `ACCOUNTANT`, `COLLECTOR`). */
   const canSettle = hasRole(PAYMENT_SETTLE_ROLES, role);
   /** «تسديد الفواتير المحددة» — `BULK_SETTLE_ROLES`, as the route's `@Roles`; the server is the enforcement. */
@@ -403,18 +414,36 @@ export default function FeesPage({
     chargeInFlight.current = true;
     setCharging(true);
     try {
-      await chargeCitizen(tenant, token, {
+      const charged = await chargeCitizen(tenant, token, {
         citizenId: values.citizenId,
         title: values.title,
         amount: Number(values.amount.replace(/\D/g, '')),
         dueDate: values.dueDate,
+        /*
+          «تكليف مالي»'s retry key (0102), held for the act across every
+          failure and edit, so a press repeated after a lost answer is answered
+          with the first bill instead of billing the citizen twice. Spent once
+          the server confirms the bill exists.
+        */
+        clientRequestId: heldKey(tenant, 'charge:new'),
       });
-      toast.success('تم تسجيل التكليف المالي على المواطن بنجاح.');
+      spendKey(tenant, 'charge:new');
+      if (charged.replayed) {
+        // Answered from the first press: nothing new was billed, and the bill it raised stands.
+        toast.warning(tCharge('replayed', { number: charged.invoiceNumber ?? '—' }));
+      } else {
+        toast.success(tCharge('done'));
+      }
       setChargeOpen(false);
       void load();
     } catch (caught) {
       logApiError(caught);
-      toast.error(caught instanceof ApiRequestError ? caught.message : 'تعذّر تكليف المواطن.');
+      toast.error(caught instanceof ApiRequestError ? caught.message : tCharge('failed'));
+      // A key whose charge exists is spent, and the register read again; every other failure keeps it.
+      if (keyIsSpent(caught)) {
+        spendKey(tenant, 'charge:new');
+        void load();
+      }
     } finally {
       chargeInFlight.current = false;
       setCharging(false);
@@ -773,6 +802,14 @@ export default function FeesPage({
               <Megaphone className="size-4" aria-hidden />
               {tNotices('title')}
             </Link>
+
+            {/* «قائمة الإعفاء من الرسوم» (0104): names the people on each unit, so `FEE_EXEMPTION_READ_ROLES` only. */}
+            {canReadExemptions ? (
+              <Link href={`${base}/fees/exemptions`} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+                <ShieldCheck className="size-4" aria-hidden />
+                {tExemptions('link')}
+              </Link>
+            ) : null}
 
             {canIssue ? (
               <>

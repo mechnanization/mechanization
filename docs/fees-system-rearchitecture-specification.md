@@ -5,7 +5,10 @@
 > PRs #133–#138 (D8–D14; D6 amended by D12), and on 2026-10-27 with D5's payer.
 > Replaces the earlier draft, which re-specified rules the fee engine already
 > has and contradicted decisions already taken (D28, migration 0075).
-> **Last verified against the code:** `fix/fee-wizard-review`, merged with the
+> **Last verified against the code:** `chore/migration-0104` (on `develop@e9e79ff`, uncommitted):
+> §9, «قائمة الإعفاء من الرسوم» — the exemption periods, the last day judged on the first
+> day of the billing period in the preview, the issue, the recurring run and «فواتير تأثّرت
+> بتصحيحات», and the whitelist's routes, 2026-11-16; `fix/fee-wizard-review`, merged with the
 > review's `c10d3c0`: D15 beside D8–D14, D5's payer, the unassessable reason
 > codes, 2026-10-27; `fix/fee-wizard-review` (on
 > `feat/tiered-fees-cancel-and-wizard@aa35d4a`): the review's fixes and §1's
@@ -556,3 +559,69 @@ recorded as D8–D14 above.
 | T-17 | A residential table issued to all citizens; a citizen holds a flat, a garage and a plot | The flat is billed; the garage and the plot counted outside the table, not refused (D11) |
 | T-18 | A shared bill paid in two parts by two brothers, reprinted | Each receipt names its own payer and amount, the balance after it (D9) |
 | T-19 | A shared bill's payer is a file merged into another | Not offered at the counter; refused by the ledger with `CITIZEN_MERGED_AWAY` (D14) |
+
+---
+
+## 9. The fee whitelist, «قائمة الإعفاء من الرسوم» (migration 0104)
+
+The user's request and decisions of 2026-11-16. An administrator puts **units** on a whitelist and
+no fee is raised on them. The exemption belongs to the unit, never to the person: someone who holds
+three units may have one exempt and pay on the other two. Nothing is keyed by a citizen.
+
+**The billing rules are 0077's, unchanged.** An exempt unit is charged no rate-based fee (`PER_UNIT`,
+`PER_AREA`, `TIERED_AREA`) and no category FLAT fee, whoever bears it (`holdingsOf` marks it,
+`assessCitizen` takes it out before the review hold and the bearer rule, `flatCategoryCharge` lets a
+holder off when all their units of the category are exempt). A FLAT notice to ALL_CITIZENS is a
+per-person charge and stays outside it. Municipal request fees are untouched.
+
+### 9.1 Decisions (2026-11-16)
+
+| # | Decision |
+|---|---|
+| 1 | An exemption may have a last day (`validUntil`). A unit is exempt for a billing period if its exemption runs on the period's **first day** (`billingDayOfPeriod`: the first of the month, of the half-year, of the year; for a one-off notice, the day its bills are raised). No proration. A last day before today is refused (`FEE_EXEMPTION_VALID_UNTIL_PAST`). Past it the unit is billed again; nothing lifts it, and «ملاحظات الجودة» lists it (`FEE_EXEMPTION_ENDED`). |
+| 2 | `FeeExemptionReason` keeps its three values. A new one, if the user names one, gets its own migration. |
+| 3 | The whitelist is read by `FEE_EXEMPTION_READ_ROLES`: SUPER_ADMIN, ADMINISTRATIVE_OFFICER, ACCOUNTANT, AUDITOR. Never COLLECTOR, FIELD_INSPECTOR or VIEWER, never the portal: it names the people on the units. Grant and lift stay SUPER_ADMIN (`FEE_EXEMPTION_GRANT_ROLES`). |
+| 6 | The audit row carries the period id, the reason, the decision number, the last day and a lift's reason — never the note, never a name. Rows written before keep what they have. |
+| 7 | A lift needs its reason in words, 3 to 500 characters (`FEE_EXEMPTION_LIFT_REASON_REQUIRED`). |
+
+(4 and 5 are the building types', in docs/building-census-plan.md.)
+
+### 9.2 Data
+
+`unit_fee_exemptions` holds one row per period (docs/database.md). The unit's `feeExemption*` columns,
+with `feeExemptionValidUntil`, stay the live state every billing reader asks; a grant, an amendment
+and a lift write both in one transaction (`FeeExemptionService.set`, under the unit's row lock). Saving
+an exempt unit again amends its open period and keeps who granted it; a lift closes the period; the
+next grant opens a new one. A unit whose live state and open period disagree (written by the build
+before 0104) is reconciled on its next write. A unit with any period is not deleted: every delete path
+refuses first (`UNIT_HAS_FEE_EXEMPTION_HISTORY`).
+
+### 9.3 The one predicate
+
+`isFeeExemptOn(unit, day)` in shared-schemas, and its SQL twin `feeExemptSql` (`buildings/fee-exemption.ts`).
+Read by `holdingsOf` (which now takes `exemptOn`), `assessTargets` and `planNotice` (the preview and the
+issue judge the same day, `issueBillingDay`; the recurring run judges its period's first day), «فواتير
+تأثّرت بتصحيحات» (each bill on its own period's first day), the citizen file and the portal (as of
+today, with the last day), the owner-billing check (today), and `DataQualityService`.
+
+### 9.4 Routes
+
+| Route | Roles | What |
+|---|---|---|
+| `PUT buildings/units/:unitId/fee-exemption` | `FEE_EXEMPTION_GRANT_ROLES` | grant, amend, lift; takes `decisionRef`, `validUntil`, `liftReason`; answers the unit view |
+| `GET fee-exemptions` | `FEE_EXEMPTION_READ_ROLES` | the whitelist: `OPEN` or `LIFTED`, by reason, searched on the server (the whole text against unit, building and full code and parcel; the folded words against the holders' names through `citizenSearchText`), paged |
+| `GET fee-exemptions/units?reference=` | same | one unit by «<building code>-<unit code>» |
+| `GET fee-exemptions/units/:unitId` | same | one unit, its holders and every period |
+| `GET fee-exemptions/citizens/:citizenId/units` | same | every unit a person holds now, structural floors left out |
+
+No bulk endpoint in v1. The screen is `fees/exemptions` («قائمة الإعفاء من الرسوم»), under the `/fees`
+nav row and linked from the fees page; the unit drawer's panel takes the last day and asks a lift's
+reason.
+
+### 9.5 Tests
+
+`fee-whitelist.integration.spec.ts` (three flats one exempt under PER_UNIT, PER_AREA and TIERED_AREA,
+preview against issue; a category FLAT; co-owners; a lift with and without a reason and the next
+bill; a running and an ended last day; the list's search, pages, lifted periods and isolation; the
+delete refusals; the reconciliation), `unit-fee-exemption-periods.integration.spec.ts` (0104's backfill
+and rules), `buildings/fee-exemption.spec.ts` (the predicate and the billing day), `route-inventory.spec.ts`.

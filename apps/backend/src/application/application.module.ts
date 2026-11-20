@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
+import { SESSION_TOKEN_ALGORITHM } from './features/identity/session-token';
 import { OtpCleanupJob } from './background-jobs/otp-cleanup.job';
 import { RecurringBillingJob } from './background-jobs/recurring-billing.job';
 import { StaffRefreshTokenCleanupJob } from './background-jobs/staff-refresh-token-cleanup.job';
@@ -13,6 +14,7 @@ import { DamageService } from './features/buildings/damage.service';
 import { ParcelCorrectionService } from './features/buildings/parcel-correction.service';
 import { OwnerBillingService } from './features/buildings/owner-billing.service';
 import { FeeExemptionService } from './features/buildings/fee-exemption.service';
+import { BuildingTypesService } from './features/buildings/building-types.service';
 import { UnitCorrectionService } from './features/corrections/unit-correction.service';
 import { CasesService } from './features/cases/cases.service';
 import { CitizensService } from './features/citizens/citizens.service';
@@ -62,6 +64,10 @@ import { RecordReviewService } from './features/quality/record-review.service';
         // One signing key for citizen and staff tokens alike — the unification
         // in Section 10 is what makes a single JwtAuthGuard correct.
         secret: config.getOrThrow<string>('JWT_SECRET'),
+        // HS256 for every token this module signs or reads, the reset token
+        // included. A session token's issuer and audience: `session-token.ts`.
+        signOptions: { algorithm: SESSION_TOKEN_ALGORITHM },
+        verifyOptions: { algorithms: [SESSION_TOKEN_ALGORITHM] },
       }),
     }),
   ],
@@ -107,6 +113,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
     ParcelCorrectionService,
     OwnerBillingService,
     FeeExemptionService,
+    BuildingTypesService,
     UnitCorrectionService,
     BackupService,
     RecordReviewService,
@@ -156,6 +163,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
     ParcelCorrectionService,
     OwnerBillingService,
     FeeExemptionService,
+    BuildingTypesService,
     UnitCorrectionService,
     BackupService,
     RecordReviewService,

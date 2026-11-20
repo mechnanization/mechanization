@@ -6,6 +6,7 @@ import { BACKGROUND_REQUEST_HEADER } from '@mechanization/shared-schemas';
 import { SessionClaims } from '../../application/features/identity/identity.service';
 import { SessionRevocationService } from '../../application/features/identity/session-revocation.service';
 import { StaffPresenceService } from '../../application/features/identity/staff-presence.service';
+import { sessionSignOptions } from '../../application/features/identity/session-token';
 import { JwtAuthGuard } from './jwt-auth.guard';
 
 /**
@@ -182,5 +183,28 @@ describe('JwtAuthGuard — staff presence', () => {
       guard.canActivate(contextFor(bearer({ kind: 'CITIZEN', role: undefined, sub: 'citizen-1' })).context),
     ).resolves.toBe(true);
     expect(presence.touch).toHaveBeenCalledWith('citizen-1', 'CITIZEN');
+  });
+});
+
+describe('JwtAuthGuard — how a token is read (S18)', () => {
+  const claims = { sub: 'staff-1', kind: 'STAFF', tenantSlug: 'albazourieh', role: 'ADMINISTRATIVE_OFFICER', tokenVersion: 0 };
+
+  it('admits a token signed as sessions are signed now, and one minted before the deploy', async () => {
+    const { guard } = build();
+    const jwt = new JwtService({ secret: SECRET });
+    for (const token of [jwt.sign(claims, sessionSignOptions('15m')), jwt.sign(claims)]) {
+      await expect(guard.canActivate(contextFor(`Bearer ${token}`).context)).resolves.toBe(true);
+    }
+  });
+
+  it.each([
+    ['another algorithm with the same secret', { ...sessionSignOptions('15m'), algorithm: 'HS512' as const }],
+    ['another audience', { ...sessionSignOptions('15m'), audience: 'password-reset' }],
+  ])('refuses %s as an invalid session', async (_label, options) => {
+    const { guard } = build();
+    const token = new JwtService({ secret: SECRET }).sign(claims, options);
+    await expect(guard.canActivate(contextFor(`Bearer ${token}`).context)).rejects.toMatchObject({
+      code: 'SESSION_INVALID',
+    });
   });
 });

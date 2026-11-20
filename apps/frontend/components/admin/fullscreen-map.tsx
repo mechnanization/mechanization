@@ -35,7 +35,11 @@ import {
   type RegisteredParcel,
   type ZoneSummary,
 } from '@/lib/api-client';
-import { getLabels } from '@mechanization/shared-schemas';
+import { buildingTypeName, getLabels } from '@mechanization/shared-schemas';
+import { useTranslations } from 'next-intl';
+import { systemTypeOf, useBuildingTypes } from '@/lib/building-types';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   BUILDING_LAYER,
   BUILDING_SOURCE,
@@ -400,6 +404,7 @@ function attachMeasureLayers(map: mapboxgl.Map): void {
 export function FullscreenMap({
   parcels,
   tenant,
+  base,
   token,
   refreshToken,
   citizenHref,
@@ -411,6 +416,8 @@ export function FullscreenMap({
 }: {
   parcels: RegisteredParcel[];
   tenant: string;
+  /** `/{tenant}/{locale}/{adminPath}`, for the reads that send a lapsed session to sign in. */
+  base: string;
   token?: string;
   refreshToken?: string | number;
   citizenHref: (citizenId: string) => string;
@@ -681,8 +688,32 @@ export function FullscreenMap({
   }, [tenant, token, buildingsVisible, buildingPins.length]);
 
   const censusLegend = useMemo(() => buildingLegend(getLabels(locale)), [locale]);
-  const buildingData = useMemo(() => buildingsGeoJson(buildingPins), [buildingPins]);
-  const parcelRollupData = useMemo(() => parcelRollupGeoJson(buildingPins), [buildingPins]);
+
+  /*
+    «نوع المبنى» (0106): one type at a time, or all. A pin with no type yet reads as its
+    structure's system type, as the ledger names it. The legend lists the types the
+    layer holds, with how many of each; the icon still draws the structure.
+  */
+  const tTypes = useTranslations('buildingTypes');
+  const typesQuery = useBuildingTypes(tenant, base, token ?? null, { includeInactive: true, errorMessage: tTypes('loadError') });
+  const [typeFilter, setTypeFilter] = useState('');
+  const typeOfPin = useCallback(
+    (pin: BuildingMapPin) => pin.buildingTypeId ?? systemTypeOf(typesQuery.data ?? [], pin.structureType)?.id ?? '',
+    [typesQuery.data],
+  );
+  const typeCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const pin of buildingPins) counts.set(typeOfPin(pin), (counts.get(typeOfPin(pin)) ?? 0) + 1);
+    return (typesQuery.data ?? [])
+      .filter((type) => counts.has(type.id))
+      .map((type) => ({ type, count: counts.get(type.id)! }));
+  }, [buildingPins, typeOfPin, typesQuery.data]);
+  const shownPins = useMemo(
+    () => (typeFilter ? buildingPins.filter((pin) => typeOfPin(pin) === typeFilter) : buildingPins),
+    [buildingPins, typeFilter, typeOfPin],
+  );
+  const buildingData = useMemo(() => buildingsGeoJson(shownPins), [shownPins]);
+  const parcelRollupData = useMemo(() => parcelRollupGeoJson(shownPins), [shownPins]);
 
   /**
    * The parcel outlines the plan asks for, from the asset that already exists.
@@ -2409,6 +2440,35 @@ export function FullscreenMap({
               ? 'Icon = structure · fill = survey · ring = damage. No ring means nobody has assessed it.'
               : 'الأيقونة = نوع المنشأة · التعبئة = حالة المسح · الحلقة = مستوى الضرر. غياب الحلقة يعني أنه لم يُكشف عليه بعد.'}
           </p>
+
+          {typeCounts.length > 0 ? (
+            <div className="mb-2 space-y-1">
+              <Label htmlFor="map-building-type" className="text-xs font-medium">
+                {tTypes('filter')}
+              </Label>
+              <Select value={typeFilter || 'ALL'} onValueChange={(value) => setTypeFilter(value === 'ALL' ? '' : value)}>
+                <SelectTrigger id="map-building-type" className="h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ALL">{tTypes('allTypes')}</SelectItem>
+                  {typeCounts.map(({ type }) => (
+                    <SelectItem key={type.id} value={type.id}>
+                      {buildingTypeName(type, locale)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <ul className="space-y-0.5">
+                {typeCounts.map(({ type, count }) => (
+                  <li key={type.id} className="flex items-center justify-between gap-2">
+                    <span className="truncate">{buildingTypeName(type, locale)}</span>
+                    <span className="tabular-nums text-muted-foreground">{count.toLocaleString('en-US')}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
 
           <p className="mb-1 font-medium">
             {locale === 'en' ? 'Fill — survey' : 'التعبئة — حالة المسح'}

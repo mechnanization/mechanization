@@ -50,7 +50,7 @@ import type {
 import { clearSession, loadSession } from '@/lib/session';
 import { billFigure, citizenPaymentTotals, isPartlyPaid, isSettled, partlyPaidFigures } from '@/lib/citizen-payments';
 import { formatLbp } from '@/lib/currency';
-import { formatDate, formatMonthList } from '@/lib/dates';
+import { formatDate, formatDay, formatMonthList } from '@/lib/dates';
 import { describeAssessment } from '@/lib/fee-assessment';
 import { ONLINE_PAYMENT_OPEN } from '@/lib/online-payment';
 import { ownerBillingApplies, ownerBillingWording } from '@/lib/owner-billing';
@@ -62,6 +62,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { StatItem, StatStrip } from '@/components/ui/stat-strip';
 import { MyRequests } from '@/components/citizen/my-requests';
 import { cn } from '@/lib/utils';
+import { signOutCitizen } from '@/lib/citizen-sign-out';
 
 /**
  * First letters of the first two words, for the avatar.
@@ -230,8 +231,9 @@ export default function MyFilePage({
     void load();
   }, [load]);
 
-  const signOut = useCallback(() => {
-    clearSession(tenant);
+  // Ended on the server too, not only forgotten here (S14).
+  const signOut = useCallback(async () => {
+    await signOutCitizen(tenant);
     router.replace(base);
   }, [tenant, base, router]);
 
@@ -815,6 +817,7 @@ function PropertyRow({
             <UnitBillingNotes
               key={unit.unitId}
               feeExemption={unit.feeExemption}
+              feeExemptionValidUntil={unit.feeExemptionValidUntil}
               ownerBilling={unit.ownerBilling}
               unitCode={(property.heldUnits ?? []).length > 1 ? unit.unitCode : undefined}
               locale={locale}
@@ -938,7 +941,12 @@ function MyUnitRow({ unit, locale }: { unit: CitizenProfileUnit; locale: string 
         </p>
       ) : null}
 
-      <UnitBillingNotes feeExemption={unit.feeExemption} ownerBilling={unit.ownerBilling} locale={locale} />
+      <UnitBillingNotes
+        feeExemption={unit.feeExemption}
+        feeExemptionValidUntil={unit.feeExemptionValidUntil}
+        ownerBilling={unit.ownerBilling}
+        locale={locale}
+      />
     </li>
   );
 }
@@ -951,10 +959,14 @@ function MyUnitRow({ unit, locale }: { unit: CitizenProfileUnit; locale: string 
  */
 function UnitBillingNotes({
   feeExemption,
+  feeExemptionValidUntil,
   ownerBilling,
   unitCode,
   locale,
-}: Pick<CitizenProfileUnit, 'feeExemption' | 'ownerBilling'> & { unitCode?: string; locale: string }) {
+}: Pick<CitizenProfileUnit, 'feeExemption' | 'feeExemptionValidUntil' | 'ownerBilling'> & {
+  unitCode?: string;
+  locale: string;
+}) {
   const labels = getLabels(locale);
   const tFeeExemption = useTranslations('feeExemption');
   const code = unitCode ? (
@@ -969,7 +981,15 @@ function UnitBillingNotes({
         <p className="flex flex-wrap items-center gap-x-2 px-2 text-success">
           <BadgeCheck className="size-3 shrink-0" aria-hidden />
           {code}
-          <span>{tFeeExemption('fileValue', { reason: labels.feeExemptionReason[feeExemption] })}</span>
+          <span>
+            {/* Its last day, when it has one (0104): after it the unit is billed again. */}
+            {feeExemptionValidUntil
+              ? tFeeExemption('fileValueUntil', {
+                  reason: labels.feeExemptionReason[feeExemption],
+                  date: formatDay(feeExemptionValidUntil),
+                })
+              : tFeeExemption('fileValue', { reason: labels.feeExemptionReason[feeExemption] })}
+          </span>
         </p>
       ) : null}
       {/* An exempt unit is billed to no owner: no part to tell them (`ownerBillingApplies`). */}

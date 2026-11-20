@@ -137,6 +137,7 @@ export default function FullscreenMapPage({
         ) : (
           <FullscreenMap
             tenant={tenant}
+            base={base}
             token={token}
             parcels={parcels}
             citizenHref={(citizenId) => `${base}/citizens/${citizenId}`}

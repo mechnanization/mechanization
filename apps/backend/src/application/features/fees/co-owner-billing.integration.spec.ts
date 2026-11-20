@@ -14,6 +14,7 @@ import { CasesService } from '../cases/cases.service';
 import { BuildingsService } from '../buildings/buildings.service';
 import { OwnerBillingService } from '../buildings/owner-billing.service';
 import { assessCitizen, FeesService } from './fees.service';
+import { municipalToday } from '@mechanization/shared-schemas';
 
 /**
  * «توزيع الرسم على المالكين» against a real tenant schema (migration 0075
@@ -37,6 +38,13 @@ const SETUP_TIMEOUT_MS = 240_000;
 describeIfDb('co-owner billing', () => {
   let ddl: Client;
   let db: TenantPrismaClient;
+  /**
+   * Every notice still active. These cases issue several fees of one basis and
+   * target on purpose, each its own, so each confirms the others as different
+   * fees, as a clerk must since the duplicate guard (finding F11).
+   */
+  const otherFees = async () =>
+    (await db.feeNotice.findMany({ where: { isActive: true }, select: { id: true } })).map((notice) => notice.id);
   let context: TenantContextService;
   let fees: FeesService;
   let buildings: BuildingsService;
@@ -173,7 +181,7 @@ describeIfDb('co-owner billing', () => {
     },
   ) {
     return within(async () => {
-      for await (const batch of fees.holdingsOf([citizenId])) {
+      for await (const batch of fees.holdingsOf([citizenId], { exemptOn: municipalToday() })) {
         return assessCitizen(batch[0]!.entries, notice);
       }
       throw new Error('no holdings');
@@ -248,7 +256,7 @@ describeIfDb('co-owner billing', () => {
   */
   async function issueShopFee() {
     const title = `رسم المحلات ${randomUUID().slice(0, 8)}`;
-    const outcome = await within(() =>
+    const outcome = await within(async () =>
       fees.issue(
         {
           title,
@@ -258,6 +266,7 @@ describeIfDb('co-owner billing', () => {
           targetType: 'BUILDING_CATEGORY',
           targetCategory: 'SHOP',
           dueDate: '2026-12-31',
+          acknowledgedDuplicates: await otherFees(),
         } as CreateFeeNotice,
         actor,
       ),
@@ -339,6 +348,35 @@ describeIfDb('co-owner billing', () => {
     });
     const rest = await amounts(brothers.slice(1));
     expect(rest).toEqual([1_000_000, 1_000_000, 1_000_000]);
+  });
+
+  it('splits the shop equally when the responsible owner’s own file stops claiming it, his spell still open (F13)', async () => {
+    /*
+      Saved while علي's file claimed the shop. Then a later filing on his file
+      did not restate it (audit finding 10 is one way): he still owns it, his
+      file no longer bills it, and his brothers paid nothing because he pays —
+      the shop billed to nobody, every period. Billing now asks his file again.
+    */
+    const { shop, brothers } = await seed();
+    const ali = brothers[0]!;
+    await within(() => ownerBilling.set(shop.id, { mode: 'RESPONSIBLE_OWNER', responsibleOwnerId: ali }, actor));
+    expect(await amounts(brothers)).toEqual([3_000_000, 0, 0, 0]);
+
+    await db.registration.create({
+      data: {
+        citizenId: ali,
+        referenceNumber: `COB-${randomUUID()}`,
+        createdById: officerId,
+        submittedAt: new Date(Date.now() + 60_000),
+      },
+    });
+    expect(await db.unitOccupancy.count({ where: { unitId: shop.id, citizenId: ali, toDate: null } })).toBe(1);
+    expect([...(await within(() => fees.ownerClaims(ali)))]).toEqual([]);
+
+    // A quarter each to the brothers whose files claim it; علي's quarter waits on his file.
+    expect(await amounts(brothers.slice(1))).toEqual([750_000, 750_000, 750_000]);
+    const brother = await billOf(brothers[1]!);
+    expect(brother.kind === 'assessed' && brother.assessment.coOwnerPaidUnitCount).toBe(0);
   });
 
   it('keeps an owner’s أسهم when the drawer re-records him with the box empty', async () => {

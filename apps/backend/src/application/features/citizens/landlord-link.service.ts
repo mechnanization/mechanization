@@ -8,6 +8,7 @@ import {
   citizenDisplayName,
   citizenStoredName,
   ESTATE_PREFIX_PATTERN,
+  LANDLORD_LINK_ANSWER_ROLES,
   withoutEstatePrefix,
 } from '@mechanization/shared-schemas';
 import type { StructureType } from '@mechanization/shared-schemas';
@@ -1818,6 +1819,24 @@ export class LandlordLinkService {
     actor: { id: string; role: string };
   }): Promise<{ remaining: LandlordProposal[]; linked: number }> {
     if (input.agreements.length === 0) return { remaining: input.filed, linked: 0 };
+
+    /*
+      The same people who may answer a claim on its own routes
+      (`LANDLORD_LINK_ANSWER_ROLES`, task S17 of the 2026-11-14 security
+      audit). A collector may file a registration (`REGISTER_WRITE_ROLES`) but
+      not answer a claim, and an answer carried by a save he sends straight to
+      the API linked an owner — and put flats and owner-borne fees on that
+      file — with no role rule at all. His answers are set aside rather than
+      refused: the registration is his to file, the claims stay open on the
+      queue for someone who may answer them, and a record queued offline is
+      not blocked over them.
+    */
+    if (!(LANDLORD_LINK_ANSWER_ROLES as readonly string[]).includes(input.actor.role)) {
+      this.logger.warn(
+        `${input.agreements.length} owner answer(s) on a save by ${input.actor.role} left open: that role does not answer claims`,
+      );
+      return { remaining: input.filed, linked: 0 };
+    }
 
     const remaining: LandlordProposal[] = [];
     let linked = 0;

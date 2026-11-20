@@ -12,6 +12,7 @@ import { FeeExemptionService } from '../buildings/fee-exemption.service';
 import { DataQualityService } from '../quality/data-quality.service';
 import { ReportingService } from '../reporting/reporting.service';
 import { assessCitizen, FeesService } from './fees.service';
+import { municipalToday } from '@mechanization/shared-schemas';
 
 /**
  * The two ways a unit is charged nothing (the user's decisions of 2026-10-07),
@@ -77,6 +78,7 @@ describeIfDb('units charged nothing', () => {
       emitter,
       { get: jest.fn().mockResolvedValue(null), set: jest.fn(), invalidatePrefix: jest.fn() } as never,
       { get: () => 0 } as never,
+      fees,
     );
 
     await db.user.create({
@@ -173,7 +175,7 @@ describeIfDb('units charged nothing', () => {
 
   async function bill(citizenId: string, bearer: 'OWNER' | 'OCCUPANT') {
     return within(async () => {
-      for await (const batch of fees.holdingsOf([citizenId])) {
+      for await (const batch of fees.holdingsOf([citizenId], { exemptOn: municipalToday() })) {
         return assessCitizen(batch[0]!.entries, { amount: 1000, basis: 'PER_AREA', bearer });
       }
       throw new Error('no holdings');
@@ -187,7 +189,10 @@ describeIfDb('units charged nothing', () => {
     const state = await within(() =>
       exemptions.set(parcel.mosque.id, { reason: 'PLACE_OF_WORSHIP', note: 'المسجد الجامع' }, admin),
     );
-    expect(state).toMatchObject({ feeExemption: 'PLACE_OF_WORSHIP', feeExemptionNote: 'المسجد الجامع', feeExemptedById: adminId });
+    expect(state).toMatchObject({
+      exemptToday: true,
+      current: { reason: 'PLACE_OF_WORSHIP', note: 'المسجد الجامع', grantedBy: { id: adminId } },
+    });
 
     for (const bearer of ['OWNER', 'OCCUPANT'] as const) {
       expect(await bill(parcel.waqf, bearer)).toMatchObject({
@@ -209,7 +214,7 @@ describeIfDb('units charged nothing', () => {
   it('bills the mosque again once the exemption is lifted, and records the lifting', async () => {
     const parcel = await waqfParcel();
     await within(() => exemptions.set(parcel.mosque.id, { reason: 'PUBLIC_FACILITY' }, admin));
-    await within(() => exemptions.set(parcel.mosque.id, { reason: null }, admin));
+    await within(() => exemptions.set(parcel.mosque.id, { reason: null, liftReason: 'لم يعد مرفقاً عاماً' }, admin));
 
     const unit = await db.unit.findUniqueOrThrow({ where: { id: parcel.mosque.id } });
     expect([unit.feeExemption, unit.feeExemptionNote, unit.feeExemptedById, unit.feeExemptedAt]).toEqual([null, null, null, null]);
@@ -268,7 +273,7 @@ describeIfDb('units charged nothing', () => {
       params: expect.objectContaining({ feeExempt: 1 }),
     });
 
-    await within(() => exemptions.set(store.id, { reason: null }, admin));
+    await within(() => exemptions.set(store.id, { reason: null, liftReason: 'انتهى قرار الإعفاء' }, admin));
     await within(() => fees.issue(notice, admin));
     const bills = await db.citizenPayment.findMany({ where: { citizenId: owner } });
     expect(bills.map((bill) => Number(bill.amount))).toEqual([50_000]);
@@ -318,7 +323,7 @@ describeIfDb('units charged nothing', () => {
     const cards = new Map(profile!.registrations[0]!.properties.map((card) => [card.id, card]));
 
     expect(cards.get(houseCard.id)!.heldUnits).toEqual([
-      { unitId: flat.id, unitCode: '0001', feeExemption: 'OTHER', ownerBilling: null },
+      { unitId: flat.id, unitCode: '0001', feeExemption: 'OTHER', feeExemptionValidUntil: null, ownerBilling: null },
     ]);
     // The shop and nothing else of the building: the mosque is not this person's.
     expect(cards.get(blockCard.id)!.heldUnits).toEqual([
@@ -388,7 +393,7 @@ describeIfDb('units charged nothing', () => {
     await db.unitOccupancy.create({ data: { unitId: parcel.shop.id, citizenId, role: 'OWNER' as never, registrationId: latest.id } });
 
     const billed = await within(async () => {
-      for await (const batch of fees.holdingsOf([citizenId])) return assessCitizen(batch[0]!.entries, { amount: 1000, basis: 'PER_UNIT', bearer: 'OWNER' });
+      for await (const batch of fees.holdingsOf([citizenId], { exemptOn: municipalToday() })) return assessCitizen(batch[0]!.entries, { amount: 1000, basis: 'PER_UNIT', bearer: 'OWNER' });
       throw new Error('no holdings');
     });
     expect(billed).toMatchObject({ kind: 'assessed', exemptUnitIds: [parcel.shop.id] });

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import {
   activateTreasurySchema,
   createTreasuryAccountSchema,
@@ -16,6 +16,7 @@ import { TreasuryService } from '../../application/features/treasury/treasury.se
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import { optionalInt, requireRangeEnd, requireRangeStart } from './query-params';
+import { UuidPipe } from '../pipes/uuid.pipe';
 
 /**
  * الخزينة — the wallets and the ledger behind them (docs/finance.md).
@@ -43,7 +44,7 @@ export class TreasuryController {
   @Roles(...TREASURY_READ_ROLES)
   @Get('accounts/:accountId/statement')
   statement(
-    @Param('accountId', new ParseUUIDPipe()) accountId: string,
+    @Param('accountId', new UuidPipe()) accountId: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('limit') limit?: string,

@@ -45,6 +45,22 @@ export function isSchedulerEnabled(env: NodeJS.ProcessEnv = process.env): boolea
   );
 }
 
+/** A blank string is "not set", so a bare `NAME=` line in a dotenv file is not a value. */
+function optionalWhenBlank<T extends z.ZodType>(schema: T) {
+  return z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    schema.optional(),
+  );
+}
+
+/** The Day3ati variables, which are configured together or not at all. */
+export const DAY3ATI_VARIABLES = [
+  'DAY3ATI_API_BASE_URL',
+  'DAY3ATI_TOKEN_URL',
+  'DAY3ATI_CLIENT_ID',
+  'DAY3ATI_CLIENT_SECRET',
+] as const;
+
 /**
  * Boot fails on a missing or malformed secret rather than surfacing it as a 500
  * on the first request that needs it — a JWT secret that is silently `undefined`
@@ -52,7 +68,23 @@ export function isSchedulerEnabled(env: NodeJS.ProcessEnv = process.env): boolea
  */
 export const envSchema = z
   .object({
-    NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+    /**
+     * Required, with no default (security audit N-2, 2026-11-15).
+     *
+     * It decides whether an OTP response carries `devCode`, whether
+     * `OTP_ENABLED=false` is allowed, whether S3 is demanded and whether SMS
+     * bodies are logged, and every one of those relaxes outside `production`.
+     * The default was `development`, so a host that forgot to set it ran with
+     * all of them relaxed and said nothing. Unset now fails boot: a deploy has
+     * to say what it is. Jest sets `test` itself; the Dockerfile and the local
+     * `.env` block in docs/database-environments.md set theirs.
+     */
+    NODE_ENV: z.enum(['development', 'test', 'production'], {
+      error: (issue) =>
+        issue.input === undefined
+          ? 'NODE_ENV is required — set production, development or test explicitly (unset used to read as development, which returns OTP codes in responses and lifts every production check)'
+          : 'NODE_ENV must be one of production, development, test',
+    }),
     PORT: z.coerce.number().int().positive().default(4000),
 
     /** Pooled connection (pgbouncer) for application queries. */
@@ -220,6 +252,31 @@ export const envSchema = z
     JWT_STAFF_REMEMBER_TTL: z.string().default('7d'),
     JWT_CITIZEN_TTL: z.string().default('7d'),
 
+    /**
+     * Day3ati — the partner API this backend calls to manage a municipality's
+     * News. Server-side only: the secret is never sent to the browser, never
+     * logged, never committed (`.env` is git-ignored), and nothing in
+     * `apps/frontend` reads these.
+     *
+     * **All four or none.** A group rather than four required variables, for
+     * the §8.7 reason spelt out on `SENTRY_DSN`: production does not hold
+     * Day3ati credentials yet (the integration runs against staging), so
+     * demanding them everywhere would make the next push to `main` refuse to
+     * boot the register over a feature that is not switched on. Unset means the
+     * integration is off. Set *some* of them and boot fails naming every one
+     * that is missing — see the superRefine below — because a half-configured
+     * client is the kind of fault that otherwise surfaces as a 401 on the first
+     * News request. Production values are swapped in by setting these four; no
+     * code reads a URL or a client id from anywhere else.
+     *
+     * A blank value (`DAY3ATI_CLIENT_ID=` in a dotenv file) counts as unset, not
+     * as an empty credential.
+     */
+    DAY3ATI_API_BASE_URL: optionalWhenBlank(z.string().url()),
+    DAY3ATI_TOKEN_URL: optionalWhenBlank(z.string().url()),
+    DAY3ATI_CLIENT_ID: optionalWhenBlank(z.string().min(1)),
+    DAY3ATI_CLIENT_SECRET: optionalWhenBlank(z.string().min(1)),
+
     SMS_PROVIDER_API_KEY: z.string().optional(),
     /** Second delivery route. See the OTP fallback requirement below. */
     SMS_PROVIDER_FALLBACK_API_KEY: z.string().optional(),
@@ -351,10 +408,32 @@ export const envSchema = z
     PUBLIC_API_URL: z.string().url().optional(),
     PUBLIC_PORTAL_URL: z.string().url().optional(),
 
+    /**
+     * The portal's origins, comma-separated. Credentialed: the staff refresh
+     * cookie crosses from the portal to the API (`bootstrap.ts`). In production
+     * each must be an https origin, checked below.
+     */
     CORS_ORIGINS: z
       .string()
       .default('http://localhost:3000')
       .transform((value) => value.split(',').map((origin) => origin.trim()).filter(Boolean)),
+
+    /**
+     * Whish Money (`WhishGatewayService`). Declared so a value set in the `.env`
+     * file reaches the gateway in a deployed build: `validate` copies into
+     * `process.env` only the keys this schema returns (security gap closed by
+     * task S18, 2026-11-16). Setting them does not open online payment: the
+     * gateway stays closed until `postCheckout` is written
+     * (`WHISH_PROVIDER_WIRED`, open-decisions §21).
+     *
+     * No pair rule or URL check yet, for the reason the SMS keys below have
+     * none: a boot refusal over a route that cannot carry a payment enforces
+     * nothing but an outage (§8.7). Add both in the change that writes
+     * `postCheckout`: the URL with the key, the webhook secret with them.
+     */
+    WHISH_API_URL: z.string().min(1).optional(),
+    WHISH_API_KEY: z.string().min(1).optional(),
+    WHISH_WEBHOOK_SECRET: z.string().min(1).optional(),
 
     /**
      * Error reporting. Declared here so the variable is documented and
@@ -456,6 +535,27 @@ export const envSchema = z
       });
     }
 
+    /**
+     * Day3ati is all four variables or none. Above the production early-return,
+     * like the pairs before it: a half-set group is wrong in every environment,
+     * and the person who set one of them wants to hear about the other three
+     * now, not as a 401 from the token endpoint. Each missing variable gets its
+     * own issue so one failed boot lists all of them.
+     */
+    const day3atiSet = DAY3ATI_VARIABLES.filter((name) => env[name] !== undefined);
+    if (day3atiSet.length > 0 && day3atiSet.length < DAY3ATI_VARIABLES.length) {
+      for (const name of DAY3ATI_VARIABLES) {
+        if (env[name] !== undefined) continue;
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [name],
+          message: `${name} is required because ${day3atiSet.join(', ')} ${
+            day3atiSet.length === 1 ? 'is' : 'are'
+          } set — the Day3ati variables are configured together or not at all`,
+        });
+      }
+    }
+
     if (env.NODE_ENV !== 'production') return;
 
     /**
@@ -514,6 +614,26 @@ export const envSchema = z
     }
 
     /**
+     * The portal's origins, credentialed (the staff refresh cookie), as https
+     * origins: scheme, host and port, as a browser sends them. An http origin
+     * hands a session cookie's requests to anyone on the network path, and an
+     * entry with a path, a trailing slash or a wildcard never matches an
+     * `Origin` header, so a portal listed that way is silently cut off. The
+     * default (`http://localhost:3000`) is refused here too: in production the
+     * variable must be set.
+     */
+    const notHttpsOrigins = env.CORS_ORIGINS.filter((origin) => !isHttpsOrigin(origin));
+    if (env.CORS_ORIGINS.length === 0 || notHttpsOrigins.length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['CORS_ORIGINS'],
+        message: `CORS_ORIGINS must list the portal's https origins in production (scheme, host and port, no path or wildcard)${
+          notHttpsOrigins.length > 0 ? ` — refused: ${notHttpsOrigins.join(', ')}` : ''
+        }`,
+      });
+    }
+
+    /**
      * SMS_PROVIDER_API_KEY and SMS_PROVIDER_FALLBACK_API_KEY used to be demanded
      * here. They are not any more, and the reason is worth writing down so the
      * check is restored for the right reason rather than reflexively.
@@ -540,6 +660,16 @@ export const envSchema = z
   });
 
 export type Env = z.infer<typeof envSchema>;
+
+/** An `https://host[:port]` origin exactly as a browser sends it. */
+function isHttpsOrigin(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.origin === value;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Parses the environment or throws with every problem listed at once —

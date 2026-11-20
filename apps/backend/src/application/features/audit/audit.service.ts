@@ -422,6 +422,8 @@ export class AuditService {
     targetType: string;
     /** «من يشمل الإشعار» (0100): the categories, statuses and kinds of file chosen, and the warnings confirmed. */
     scope?: unknown;
+    /** The active notices the clerk was warned this one duplicates and issued beside (F11), by id. */
+    duplicatesConfirmed?: readonly string[];
     issuedCount: number;
     actorId?: string | null;
     actorRole?: string | null;
@@ -449,6 +451,7 @@ export class AuditService {
         amount: payload.amount,
         targetType: payload.targetType,
         ...(payload.scope ? { scope: payload.scope } : {}),
+        ...(payload.duplicatesConfirmed?.length ? { duplicatesConfirmed: payload.duplicatesConfirmed } : {}),
         issuedCount: payload.issuedCount,
         periodKey: payload.periodKey,
       },

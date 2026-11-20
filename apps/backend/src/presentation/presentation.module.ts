@@ -1,5 +1,5 @@
 import { MiddlewareConsumer, Module, NestModule, RequestMethod } from '@nestjs/common';
-import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { ApplicationModule } from '../application/application.module';
 import { AuditController } from './controllers/audit.controller';
@@ -7,6 +7,8 @@ import { AuthController } from './controllers/auth.controller';
 import { CadastreController } from './controllers/cadastre.controller';
 import { BuildingsController } from './controllers/buildings.controller';
 import { CorrectionsController } from './controllers/corrections.controller';
+import { FeeExemptionsController } from './controllers/fee-exemptions.controller';
+import { BuildingTypesController } from './controllers/building-types.controller';
 import { TreasuryController } from './controllers/treasury.controller';
 import { ExpensesController } from './controllers/expenses.controller';
 import { IncomeController } from './controllers/income.controller';
@@ -32,6 +34,7 @@ import { ViewerCredentialMaskInterceptor } from './interceptors/viewer-credentia
 import { CorrelationIdMiddleware } from './middleware/correlation-id.middleware';
 import { TenantMiddleware } from './middleware/tenant.middleware';
 import { MetricsModule } from './metrics.module';
+import { SingleQueryValuePipe } from './pipes/single-query-value.pipe';
 
 @Module({
   imports: [ApplicationModule, MetricsModule],
@@ -53,6 +56,8 @@ import { MetricsModule } from './metrics.module';
     QualityController,
     BuildingsController,
     CorrectionsController,
+    FeeExemptionsController,
+    BuildingTypesController,
     TreasuryController,
     ExpensesController,
     IncomeController,
@@ -70,6 +75,11 @@ import { MetricsModule } from './metrics.module';
   ],
   providers: [
     { provide: APP_FILTER, useClass: DomainExceptionFilter },
+    /**
+     * A named query value is one string or absent (`SingleQueryValuePipe`, task S11):
+     * a repeated key arrives as an array, and a handler typed `string` crashed on it.
+     */
+    { provide: APP_PIPE, useClass: SingleQueryValuePipe },
     /**
      * Rate limit, then authenticate, then authorise — in that order, because
      * guards run in the order they are registered and a flood should be turned

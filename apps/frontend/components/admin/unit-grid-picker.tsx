@@ -204,6 +204,7 @@ interface Panel {
 export function UnitGridPicker({
   locale,
   structureType,
+  defaultUnitType,
   onStructureTypeChange,
   floorsCount,
   onFloorsCountChange,
@@ -223,6 +224,8 @@ export function UnitGridPicker({
    */
   unfinished?: boolean;
   structureType: StructureType;
+  /** What a new block above ground starts as: the building type's (0106), else the structure's. */
+  defaultUnitType?: UnitType;
   /**
    * Raised when painting a second unit turns a «منزل مستقل» into a building.
    *
@@ -322,7 +325,8 @@ export function UnitGridPicker({
    * stands on the parcel, what is under it is storage.
    */
   const firstUnitTypeFor = (floor: number): UnitType =>
-    defaultUnitTypeFor(structureType, floor);
+    // A building type may start its units as something else above ground (0106): a dispensary's as clinics.
+    floor >= 0 && defaultUnitType ? defaultUnitType : defaultUnitTypeFor(structureType, floor);
 
   // ── Drag-to-select, via Pointer Events so mouse/touch/pen share one path ──
   useEffect(() => {

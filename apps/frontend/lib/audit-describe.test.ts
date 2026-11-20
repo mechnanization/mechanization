@@ -170,3 +170,34 @@ describe('describeAudit — the archive, the relative’s number, and damage rea
     expect(all).not.toMatch(/[؀-ۿ]/);
   });
 });
+
+describe('describeAudit — a unit’s fee exemption (0104)', () => {
+  const exemption = (action: string, before: unknown, after: unknown): AuditEntry => ({
+    ...entry(before, after),
+    action,
+    entityType: 'Building',
+  });
+
+  it('says a renewed last day as before and after, and keeps the period id out of the sentence and the people out of every part', () => {
+    const renewed = describeAudit(
+      exemption(
+        'UNIT_FEE_EXEMPTION_SET',
+        { unitCode: '0101', feeExemption: 'PUBLIC_FACILITY', periodId: 'p1', validUntil: '2026-12-31' },
+        { unitCode: '0101', feeExemption: 'PUBLIC_FACILITY', periodId: 'p1', decisionRef: '12/2026', validUntil: '2027-06-30', citizens: ['c1'] },
+      ),
+      'ar',
+    );
+    expect(renewed.changes).toContainEqual({ label: 'آخر يوم للإعفاء', before: '31/12/2026', after: '30/06/2027' });
+    // Ids are for «كل التفاصيل», never the sentence; the people on the unit appear nowhere.
+    expect(JSON.stringify([renewed.changes, renewed.facts, renewed.quotes])).not.toContain('p1');
+    expect(JSON.stringify(renewed)).not.toContain('c1');
+  });
+
+  it('quotes why a lift was made', () => {
+    const lifted = describeAudit(
+      exemption('UNIT_FEE_EXEMPTION_LIFTED', { feeExemption: 'OTHER' }, { feeExemption: null, liftReason: 'انتهى القرار' }),
+      'en',
+    );
+    expect(lifted.quotes).toContainEqual({ label: 'Why it was lifted', value: 'انتهى القرار' });
+  });
+});

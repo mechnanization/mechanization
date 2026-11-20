@@ -3,6 +3,7 @@ import {
   IMPORT_BATCH_SIZE,
   type ErrorParams,
   type HouseGrowth,
+  type OwnerBillingFallback,
   type ReinspectionsPage,
   type StaffPresenceResponse,
   type StaffSelf,
@@ -29,7 +30,13 @@ import type {
   FeeAssessment,
   FeeAssessmentLine,
   FeeBasis,
+  BuildingTypeView,
+  CreateBuildingTypeInput,
+  FeeExemptionCitizenUnits,
+  FeeExemptionListQuery,
+  FeeExemptionListResult,
   FeeExemptionReason,
+  FeeExemptionUnitView,
   FeeBearer,
   FeeFrequency,
   FeeMatrixBracket,
@@ -59,6 +66,7 @@ import type {
   SequenceKey,
   SetOwnerBillingInput,
   SetUnitFeeExemptionInput,
+  UpdateBuildingTypeInput,
   SettlePayment,
   BulkSettlePayments,
   SettlementReceipt,
@@ -759,12 +767,13 @@ const SESSION_ROUTES = ['/auth/staff/login', '/auth/staff/refresh', '/auth/staff
 
 /**
  * 401s that answer the request, not the session: the current password typed to
- * confirm a change to one's own account («أمان الحساب») is wrong. Exchanged and
+ * confirm a change to one's own account («أمان الحساب») is wrong, or the code
+ * typed to confirm an authenticator is (`TOTP_CODE_INVALID`). Exchanged and
  * replayed like an expiry, each wrong guess rotated the refresh cookie and had
- * the server check the password twice. A 401 with any other code on those
- * routes is still an expired session and renewed as one.
+ * the server check it twice. A 401 with any other code on those routes is
+ * still an expired session and renewed as one.
  */
-const ANSWERED_401 = new Set<string>(['STAFF_CURRENT_PASSWORD_INCORRECT']);
+const ANSWERED_401 = new Set<string>(['STAFF_CURRENT_PASSWORD_INCORRECT', 'TOTP_CODE_INVALID']);
 
 type ApiFetchInit = RequestInit & {
   token?: string;
@@ -1142,6 +1151,26 @@ export async function logoutStaff(tenant: string, accessToken?: string): Promise
   );
 }
 
+/**
+ * A citizen's «خروج», ended on the server (task S14 of the 2026-11-14
+ * security audit): every session the citizen holds stops working, not only
+ * the one in this browser — a citizen token otherwise lives seven days.
+ *
+ * **May throw**, like `logoutStaff`: callers clear the local session anyway
+ * (`signOutCitizen` in `lib/citizen-sign-out.ts`), and a session this could
+ * not end runs out at its cap, which is all signing out did before.
+ */
+export async function logoutCitizen(tenant: string, accessToken?: string): Promise<void> {
+  if (!accessToken) return;
+  await apiFetch<{ signedOut: boolean }>(tenant, '/auth/citizen/logout', {
+    method: 'POST',
+    token: accessToken,
+    // A 401 here means there was nothing to end, never "exchange and retry".
+    skipTokenRefresh: true,
+    signal: timeoutSignal(5_000),
+  });
+}
+
 export interface DashboardCounters {
   total: number;
   byPropertyType: Record<string, number>;
@@ -1218,6 +1247,11 @@ export interface DashboardAnalytics {
     unitsSurveyed: number;
     /** The same units as `unitsTotal`, split by نوع الوحدة. Sums to it. */
     unitsByType: Record<string, number>;
+    /**
+     * Every structure by «نوع المبنى» (0106), keyed by the type's id — `NONE` for one
+     * not typed yet. Optional on the wire for an answer from before it.
+     */
+    buildingsByType?: Record<string, number>;
     /** Census buildings at least one live property card points at. */
     buildingsWithFilings: number;
   };
@@ -1646,6 +1680,11 @@ export interface BuildingSummary {
   sharedParcelNumbers?: string[];
   structureType: StructureType;
   /**
+   * «نوع المبنى» (0106): the municipality's type it was filed as; `structureType`
+   * is set from it. Optional on the wire for an answer from before it.
+   */
+  buildingTypeId?: string | null;
+  /**
    * Where the structure is in its own life — permitted, going up, standing,
    * abandoned, gone. The third axis beside *what it is* (`structureType`) and
    * *what happened to it* (its damage level).
@@ -1787,6 +1826,11 @@ export interface UnitRow {
   feeExemptionNote?: string | null;
   feeExemptedAt?: string | null;
   feeExemptedByName?: string | null;
+  /**
+   * The exemption's last day, `YYYY-MM-DD`, or null for none (0104). Past it the
+   * unit is billed again although `feeExemption` is still set (`isFeeExemptOn`).
+   */
+  feeExemptionValidUntil?: string | null;
   /**
    * How many levels this one home spans upward from `floor` (0095, D28): 2 is
    * a «دوبلكس». Optional on the wire for older responses, where it is 1.
@@ -1951,6 +1995,8 @@ export interface BuildingListFilter {
   parcelNumber?: string;
   zoneId?: string;
   structureType?: StructureType;
+  /** «نوع المبنى» (0106). */
+  buildingTypeId?: string;
   lifecycleStatus?: BuildingLifecycle;
   surveyStatus?: SurveyStatus;
   damageLevel?: DamageLevel;
@@ -1992,7 +2038,10 @@ export interface CreateBuildingInput {
    * as straddling itself.
    */
   sharedParcelNumbers?: string[];
+  /** Sent beside the type for an older server and the offline queue; the server takes the type's. */
   structureType: StructureType;
+  /** «نوع المبنى» (0106): an inactive type is refused on a new building. */
+  buildingTypeId?: string;
   /** Defaults to `IN_USE` server-side — what an officer is looking at most days. */
   lifecycleStatus?: BuildingLifecycle;
   latitude?: number;
@@ -2079,6 +2128,8 @@ export type UpdateBuildingInput = Partial<{
   /** Replaces the stored list wholesale — an empty array clears it. */
   sharedParcelNumbers: string[];
   structureType: StructureType;
+  /** «نوع المبنى» (0106): decides `structureType`; an inactive one is kept only if the building has it. */
+  buildingTypeId: string;
   lifecycleStatus: BuildingLifecycle;
   latitude: number | null;
   longitude: number | null;
@@ -2239,6 +2290,8 @@ export interface RecordDamageInput {
  */
 export interface BuildingFilterOptions {
   structureTypes: StructureType[];
+  /** The types buildings are filed under (0106). Optional on the wire for an answer from before it. */
+  buildingTypeIds?: string[];
   lifecycleStatuses: BuildingLifecycle[];
   surveyStatuses: SurveyStatus[];
   damageLevels: DamageLevel[];
@@ -3043,8 +3096,9 @@ export async function logUnitVisit(tenant: string, token: string, input: LogVisi
 }
 
 /**
- * «معفاة من الرسوم» — grants (`reason` set) or lifts (`reason` null) a unit's
- * exemption from every fee. SUPER_ADMIN only.
+ * «معفاة من الرسوم» — grants (`reason` set), amends, or lifts (`reason` null,
+ * with `liftReason`) a unit's exemption from every fee. SUPER_ADMIN only.
+ * Answers the unit as the whitelist shows it (0104).
  */
 export async function setUnitFeeExemption(
   tenant: string,
@@ -3052,14 +3106,72 @@ export async function setUnitFeeExemption(
   unitId: string,
   input: SetUnitFeeExemptionInput,
   signal?: AbortSignal,
-): Promise<{ unitId: string; feeExemption: FeeExemptionReason | null }> {
-  const result = await apiFetch<{ unitId: string; feeExemption: FeeExemptionReason | null }>(
+): Promise<FeeExemptionUnitView> {
+  const result = await apiFetch<FeeExemptionUnitView>(
     tenant,
     `/buildings/units/${encodeURIComponent(unitId)}/fee-exemption`,
     { token, method: 'PUT', body: JSON.stringify(input), signal },
   );
   invalidateCensus(tenant);
   return result;
+}
+
+/**
+ * «قائمة الإعفاء من الرسوم» — the exemption periods standing or lifted, searched
+ * and paged on the server (`GET fee-exemptions`, `FEE_EXEMPTION_READ_ROLES`).
+ */
+export async function getFeeExemptions(
+  tenant: string,
+  token: string,
+  query: Partial<FeeExemptionListQuery>,
+  signal?: AbortSignal,
+): Promise<FeeExemptionListResult> {
+  const params = new URLSearchParams();
+  if (query.q) params.set('q', query.q);
+  if (query.reason) params.set('reason', query.reason);
+  if (query.status) params.set('status', query.status);
+  if (query.page) params.set('page', String(query.page));
+  if (query.pageSize) params.set('pageSize', String(query.pageSize));
+  const search = params.toString();
+  return apiFetch<FeeExemptionListResult>(tenant, `/fee-exemptions${search ? `?${search}` : ''}`, { token, signal });
+}
+
+/** One unit with its holders, its standing exemption and every period. */
+export async function getFeeExemptionUnit(
+  tenant: string,
+  token: string,
+  unitId: string,
+  signal?: AbortSignal,
+): Promise<FeeExemptionUnitView> {
+  return apiFetch<FeeExemptionUnitView>(tenant, `/fee-exemptions/units/${encodeURIComponent(unitId)}`, { token, signal });
+}
+
+/** One unit by its full reference, «<building code>-<unit code>». */
+export async function findFeeExemptionUnit(
+  tenant: string,
+  token: string,
+  reference: string,
+  signal?: AbortSignal,
+): Promise<FeeExemptionUnitView> {
+  return apiFetch<FeeExemptionUnitView>(
+    tenant,
+    `/fee-exemptions/units?reference=${encodeURIComponent(reference)}`,
+    { token, signal },
+  );
+}
+
+/** Every unit one person holds now, structural floors left out, each with its exemption. */
+export async function getCitizenFeeExemptionUnits(
+  tenant: string,
+  token: string,
+  citizenId: string,
+  signal?: AbortSignal,
+): Promise<FeeExemptionCitizenUnits> {
+  return apiFetch<FeeExemptionCitizenUnits>(
+    tenant,
+    `/fee-exemptions/citizens/${encodeURIComponent(citizenId)}/units`,
+    { token, signal },
+  );
 }
 
 /**
@@ -3176,6 +3288,8 @@ export interface BuildingMapPin {
   longitude: number;
   parcelNumber: string;
   structureType: StructureType;
+  /** «نوع المبنى» (0106), for the map's type filter and legend. */
+  buildingTypeId?: string | null;
   lifecycleStatus: BuildingLifecycle;
   unitsTotal: number;
   unitsSurveyed: number;
@@ -3322,8 +3436,13 @@ export interface CitizenProfileUnit {
     contactPhone?: string | null;
     shares: number | null;
   }>;
-  /** «معفاة من الرسوم» (0077): why the linked unit is charged nothing, or null. */
+  /**
+   * «معفاة من الرسوم» (0077): why the linked unit is charged nothing, or null —
+   * as of today: an exemption past its last day reads as none (0104).
+   */
   feeExemption?: FeeExemptionReason | null;
+  /** Its last day, `YYYY-MM-DD`, or null for none (0104). Optional for a profile cached before it. */
+  feeExemptionValidUntil?: string | null;
   /**
    * «توزيع الرسم على المالكين» (0075) when the linked flat has several current
    * owners; null otherwise. `share` is this file's owner's part — under «مالك
@@ -3335,7 +3454,7 @@ export interface CitizenProfileUnit {
     mode: OwnerBillingMode | null;
     effectiveMode: OwnerBillingMode;
     responsibleOwnerId?: string | null;
-    fallback?: 'RESPONSIBLE_NOT_OWNER' | null;
+    fallback?: OwnerBillingFallback | null;
     share: { numerator: number; denominator: number } | null;
   } | null;
 }
@@ -3415,7 +3534,7 @@ export interface CitizenProfileProperty {
    * changes their bill. Optional on the wire for a profile cached before it.
    */
   heldUnits?: Array<
-    { unitId: string; unitCode: string } & Pick<CitizenProfileUnit, 'feeExemption' | 'ownerBilling'>
+    { unitId: string; unitCode: string } & Pick<CitizenProfileUnit, 'feeExemption' | 'feeExemptionValidUntil' | 'ownerBilling'>
   >;
 }
 
@@ -5379,6 +5498,8 @@ export async function issueFeeNotice(
     residences?: FeeNoticePreviewInput['residences'];
     /** The scope's warnings the clerk confirmed; the server refuses a scope with one unconfirmed. */
     acknowledgedWarnings?: FeeNoticePreviewInput['acknowledgedWarnings'];
+    /** The active notices the preview listed as duplicates and the clerk issued beside (`FEE_NOTICE_DUPLICATE`), by id. */
+    acknowledgedDuplicates?: string[];
     targetCitizenId?: string;
     dueDate: string;
     instructions?: string;
@@ -5922,9 +6043,15 @@ export function getPaymentById(tenant: string, token: string, id: string) {
 export async function chargeCitizen(
   tenant: string,
   token: string,
-  input: { citizenId: string; title: string; amount: number; dueDate: string },
+  /** `clientRequestId`: one id per press (`charge:new` in `lib/request-id.ts`, 0102); a retry is answered with the first bill. */
+  input: { citizenId: string; title: string; amount: number; dueDate: string; clientRequestId: string },
 ) {
-  const result = await apiFetch<{ id: string }>(tenant, '/fees/payments', {
+  const result = await apiFetch<{
+    id: string;
+    invoiceNumber: string | null;
+    /** True when the key had already raised this charge: nothing new was billed. */
+    replayed: boolean;
+  }>(tenant, '/fees/payments', {
     token,
     method: 'POST',
     body: JSON.stringify(input),
@@ -7139,6 +7266,57 @@ export function getTreasuryClosures(
 export function getDailyCashReport(tenant: string, token: string, args: { date: string }, signal?: AbortSignal) {
   return apiFetch<DailyCashReport>(tenant, `/treasury/reports/daily?date=${encodeURIComponent(args.date)}`, {
     token,
+    signal,
+  });
+}
+
+// ─────────────────────────────  «أنواع المباني» (0106)  ─────────────────────────────
+
+/**
+ * The municipality's building types, system types first (`GET building-types`,
+ * every staff role). `includeInactive` for the screen that edits the list.
+ * Read through `useBuildingTypes`, which keeps it for offline use.
+ */
+export async function getBuildingTypes(
+  tenant: string,
+  token: string,
+  options: { includeInactive?: boolean } = {},
+  signal?: AbortSignal,
+): Promise<BuildingTypeView[]> {
+  return apiFetch<BuildingTypeView[]>(
+    tenant,
+    `/building-types${options.includeInactive ? '?includeInactive=true' : ''}`,
+    { token, signal },
+  );
+}
+
+/** Adds a custom type. The manager's (`BUILDING_TYPE_ADMIN_ROLES`). */
+export async function createBuildingType(
+  tenant: string,
+  token: string,
+  input: CreateBuildingTypeInput,
+  signal?: AbortSignal,
+): Promise<BuildingTypeView> {
+  return apiFetch<BuildingTypeView>(tenant, '/building-types', {
+    token,
+    method: 'POST',
+    body: JSON.stringify(input),
+    signal,
+  });
+}
+
+/** Renames, reorders, switches off or on, or moves a type unused by any building. The manager's. */
+export async function updateBuildingType(
+  tenant: string,
+  token: string,
+  id: string,
+  input: UpdateBuildingTypeInput,
+  signal?: AbortSignal,
+): Promise<BuildingTypeView> {
+  return apiFetch<BuildingTypeView>(tenant, `/building-types/${encodeURIComponent(id)}`, {
+    token,
+    method: 'PATCH',
+    body: JSON.stringify(input),
     signal,
   });
 }

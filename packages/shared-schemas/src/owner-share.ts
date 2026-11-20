@@ -25,6 +25,13 @@ export interface OwnerBillingRule {
   responsibleOwnerId: string | null;
   /** The flat's current OWNER spells, with their أسهم where recorded. */
   owners: ReadonlyArray<{ citizenId: string; shares: number | null }>;
+  /**
+   * Under RESPONSIBLE_OWNER, whether the responsible owner's own file claims the
+   * flat as its owner — whether billing would charge them for it — read at
+   * billing time (`checkResponsibleOwners`). Absent means not asked: the rule
+   * applies as chosen. False sets the choice aside (`RESPONSIBLE_NOT_BILLED`).
+   */
+  responsibleBilled?: boolean;
 }
 
 /** One owner's part of a flat, as a fraction so nothing is lost to floats until the amount is rounded. */
@@ -41,8 +48,14 @@ export interface OwnerShare {
  *  - `RESPONSIBLE_NOT_OWNER` — the responsible owner no longer holds a current
  *    OWNER spell on the flat (sold, ended, merged away), so naming them would
  *    bill nobody. The flat is split equally until someone chooses again.
+ *  - `RESPONSIBLE_NOT_BILLED` — they still hold the spell, but their own file no
+ *    longer claims the flat (a later filing that did not restate it, a card
+ *    ended), so billing would charge them nothing for it while the others pay
+ *    nothing either. Checked when the choice is saved, and since 2026-11-16 at
+ *    billing time too (finding F13 of the billing audit, task B13). Split
+ *    equally, and reported, until the file is completed or someone chooses again.
  */
-export type OwnerBillingFallback = 'RESPONSIBLE_NOT_OWNER';
+export type OwnerBillingFallback = 'RESPONSIBLE_NOT_OWNER' | 'RESPONSIBLE_NOT_BILLED';
 
 /** The method in force on a flat, and the owners it is applied to. */
 export interface EffectiveOwnerBilling {
@@ -115,6 +128,9 @@ export function effectiveOwnerBilling(rule: OwnerBillingRule): EffectiveOwnerBil
   if (rule.mode === 'RESPONSIBLE_OWNER') {
     const current = owners.some((owner) => owner.citizenId === rule.responsibleOwnerId);
     if (!current) return { mode: 'EQUAL', defaulted: false, fallback: 'RESPONSIBLE_NOT_OWNER', owners };
+    if (rule.responsibleBilled === false) {
+      return { mode: 'EQUAL', defaulted: false, fallback: 'RESPONSIBLE_NOT_BILLED', owners };
+    }
   }
   return { mode: rule.mode ?? 'EQUAL', defaulted: rule.mode === null, fallback: null, owners };
 }

@@ -3,17 +3,21 @@ import { ConfigService } from '@nestjs/config';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import {
   ar,
-  describeUnitStatusConflict,
-  duplicateMatchedOnLabels,
-  POSSIBLE_DUPLICATE_FLAG_PATH,
-  UNINHABITABLE_LIFECYCLE,
-  type DismissFindingInput,
-  type FieldFlag,
-  type QualityFindingKind,
+  calendarDayOf,
   citizenDisplayName,
   DEED_SHARES,
+  describeUnitStatusConflict,
+  type DismissFindingInput,
+  duplicateMatchedOnLabels,
+  type FieldFlag,
+  formatFullUnitReference,
+  municipalToday,
   NON_PERSON_RESIDENCE,
+  POSSIBLE_DUPLICATE_FLAG_PATH,
+  type QualityFindingKind,
   sharesOffDeed,
+  UNINHABITABLE_LIFECYCLE,
+  type OwnerBillingRule,
 } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
@@ -24,7 +28,14 @@ import { metresBetween } from '../buildings/buildings.service';
 import { LandlordLinkService } from '../citizens/landlord-link.service';
 import { unitsUnderReview } from '../buildings/unit-status';
 import { currentReadingForUnit, uninhabitableSql } from '../buildings/habitability';
-import { activeOwnerSpells, ownerBillingBlock, type OwnerBillingBlock } from '../buildings/owner-billing';
+import { feeExemptSql } from '../buildings/fee-exemption';
+import {
+  activeOwnerSpells,
+  checkResponsibleOwners,
+  ownerBillingBlock,
+  type OwnerBillingBlock,
+} from '../buildings/owner-billing';
+import { FeesService } from '../fees/fees.service';
 import {
   duplicateSignals,
   foldNamePart,
@@ -100,6 +111,7 @@ export class DataQualityService {
     private readonly events: EventEmitter2,
     private readonly cache: RedisCacheService,
     private readonly config: ConfigService,
+    private readonly fees: FeesService,
   ) {}
 
   private get db() {
@@ -164,6 +176,7 @@ export class DataQualityService {
       this.uninhabitedWithoutReading(),
       this.houseCardsOnMultiUnitBuildings(),
       this.unitLevelsToConfirm(),
+      this.feeExemptionsEnded(),
     ]);
 
     const computed = groups
@@ -865,7 +878,7 @@ export class DataQualityService {
         JOIN ${this.S}units u ON u."buildingId" = b.id
         LEFT JOIN LATERAL (${currentReadingForUnit(this.S, Prisma.sql`u.id`, Prisma.sql`u."buildingId"`, { answering: true })}) cur ON true
        WHERE b."lifecycleStatus"::text = ANY(${[...UNINHABITABLE_LIFECYCLE]}::text[])
-         AND u."feeExemption" IS NULL
+         AND NOT ${feeExemptSql(Prisma.sql`u`, municipalToday())}
          AND EXISTS (
            -- An archived file is never billed (resolveTargets reads active files only).
            SELECT 1 FROM ${this.S}unit_occupancies o
@@ -1027,6 +1040,59 @@ export class DataQualityService {
    *
    * Counts every unit row, as the census readers do.
    */
+  /**
+   * Units whose fee exemption ran past its last day and was never lifted
+   * (`FEE_EXEMPTION_ENDED`, migration 0104). Billing charges them again
+   * already (`isFeeExemptOn`); this tells the office the whitelist still lists
+   * them, so someone lifts the exemption or records the council's renewal. No
+   * job lifts it (decision of 2026-11-16). Judged on today's municipal day, by
+   * the SQL twin of the rule billing reads (`feeExemptSql`). Not dismissable:
+   * it closes when the exemption is lifted or given a new last day.
+   */
+  private async feeExemptionsEnded(): Promise<RawFinding[]> {
+    const today = municipalToday();
+    const rows = await this.db.$queryRaw<
+      Array<{
+        unitId: string;
+        unitCode: string;
+        validUntil: Date;
+        buildingId: string;
+        code: string;
+        name: string | null;
+        parcelNumber: string;
+        grantedById: string | null;
+      }>
+    >`
+      SELECT u.id AS "unitId", u."unitCode", u."feeExemptionValidUntil" AS "validUntil",
+             b.id AS "buildingId", b.code, b.name, b."parcelNumber", u."feeExemptedById" AS "grantedById"
+        FROM ${this.S}units u
+        JOIN ${this.S}buildings b ON b.id = u."buildingId"
+       WHERE u."feeExemption" IS NOT NULL
+         AND NOT ${feeExemptSql(Prisma.sql`u`, today)}
+       ORDER BY u."feeExemptionValidUntil", b.code, u."unitCode"
+    `;
+    return rows.map((row) => {
+      const until = calendarDayOf(row.validUntil);
+      return {
+        kind: 'FEE_EXEMPTION_ENDED' as const,
+        subjectKey: row.unitId,
+        severity: 'MEDIUM' as const,
+        detail: `انتهى إعفاء الوحدة ${formatFullUnitReference(row.code, row.unitCode)} من الرسوم في ${until} ولم يُرفع — تُفوتر من جديد. ارفع الإعفاء من «قائمة الإعفاء من الرسوم»، أو سجّل تاريخ انتهاء جديداً إن جُدِّد القرار`,
+        subjects: [
+          {
+            kind: 'building' as const,
+            id: row.buildingId,
+            label: row.name ? `${row.code} — ${row.name}` : row.code,
+            secondary: `عقار ${row.parcelNumber}`,
+          },
+        ],
+        officerIds: row.grantedById ? [row.grantedById] : [],
+        at: row.validUntil.toISOString(),
+        dismissable: false,
+      };
+    });
+  }
+
   private async houseCardsOnMultiUnitBuildings(): Promise<RawFinding[]> {
     const rows = await this.db.$queryRaw<
       Array<{
@@ -1094,9 +1160,11 @@ export class DataQualityService {
    * save, an occupancy write and «أرشفة الملف» all emit `building.changed` or
    * `citizen.changed`, which clear the cache (`onRegisterChanged`).
    *
-   * Not here: a responsible owner whose own file stopped claiming the flat.
-   * Only `holdingsOf` knows which file claims a flat — the census claim rule
-   * and its four readers — and a set-based copy of it would be a fifth.
+   * A responsible owner whose own file stopped claiming the flat is asked
+   * through `FeesService.ownerClaims` (`checkResponsibleOwners`), the reading
+   * billing makes at every run, never a set-based copy of the census claim rule
+   * (finding F13 of the 2026-11-14 billing audit). One read per responsible
+   * owner. A filing that changes what a file claims emits `citizen.changed`.
    */
   private async ownerBillingBlocked(): Promise<RawFinding[]> {
     const units = await this.db.unit.findMany({
@@ -1123,12 +1191,19 @@ export class DataQualityService {
       block: OwnerBillingBlock | null;
       off: { total: number } | null;
     };
+    const rules = new Map<string, OwnerBillingRule>(
+      units.map((unit) => [
+        unit.id,
+        {
+          mode: unit.ownerBillingMode,
+          responsibleOwnerId: unit.responsibleOwnerId,
+          owners: unit.occupancies.map((spell) => ({ citizenId: spell.citizenId, shares: spell.shares })),
+        },
+      ]),
+    );
+    await checkResponsibleOwners(rules, (citizenId) => this.fees.ownerClaims(citizenId));
     const blocked = units.flatMap((unit): Flagged[] => {
-      const rule = {
-        mode: unit.ownerBillingMode,
-        responsibleOwnerId: unit.responsibleOwnerId,
-        owners: unit.occupancies.map((spell) => ({ citizenId: spell.citizenId, shares: spell.shares })),
-      };
+      const rule = rules.get(unit.id)!;
       const block = ownerBillingBlock(rule);
       if (block) return [{ unit, block, off: null }];
       const off = sharesOffDeed(rule);
@@ -1327,7 +1402,9 @@ export function ownerBillingBlockedFinding(
   const detail =
     block.reason === 'SHARES_MISSING'
       ? `الوحدة ${unit.unitCode}: يتوزّع رسمها حسب الأسهم، وأسهم بعض مالكيها غير مسجّلة (${block.missing} من ${block.owners}) — فواتير جميع مالكيها مرفوضة حتى تُسجَّل الأسهم أو تُختار طريقة أخرى`
-      : `الوحدة ${unit.unitCode}: المالك المسؤول المختار لم يعد بين مالكيها الحاليين (انتهت ملكيته أو أُرشف ملفه) — يُقسَم رسمها بالتساوي بين مالكيها حتى تُختار طريقة جديدة`;
+      : block.reason === 'RESPONSIBLE_NOT_BILLED'
+        ? `الوحدة ${unit.unitCode}: المالك المسؤول المختار ما زال مالكاً لها، لكن ملفه لم يعد يذكرها بين أملاكه فلا تصدر عليه فاتورتها — يُقسَم رسمها بالتساوي بين مالكيها حتى يُستكمل ملفه أو تُختار طريقة جديدة`
+        : `الوحدة ${unit.unitCode}: المالك المسؤول المختار لم يعد بين مالكيها الحاليين (انتهت ملكيته أو أُرشف ملفه) — يُقسَم رسمها بالتساوي بين مالكيها حتى تُختار طريقة جديدة`;
   return {
     kind: 'OWNER_BILLING_BLOCKED',
     subjectKey: unit.unitId,

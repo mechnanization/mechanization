@@ -250,6 +250,7 @@ export const ar = {
     WAREHOUSE_HANGAR: 'مستودع / هنغار',
     MIXED_USE: 'سكني - تجاري',
     TENT_SHELTER: 'تجمّع خيم / مأوى',
+    PUBLIC_INSTITUTION: 'منشأة عامة / خدماتية',
   } satisfies Record<StructureType, string>,
 
   /**
@@ -686,6 +687,7 @@ export const en = {
     WAREHOUSE_HANGAR: 'Warehouse / Hangar',
     MIXED_USE: 'Mixed Use',
     TENT_SHELTER: 'Tent Settlement / Shelter',
+    PUBLIC_INSTITUTION: 'Public or Service Facility',
   } satisfies Record<StructureType, string>,
 
   buildingLifecycle: {
