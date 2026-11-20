@@ -21,11 +21,13 @@ export const DESTRUCTIVE = [
   { level: 'blocking', re: /\bDROP\s+SCHEMA\b/i, what: 'DROP SCHEMA' },
   // A TRUNCATE statement empties a table. The word also names a trigger event
   // (`BEFORE TRUNCATE`, `… OR TRUNCATE`: 0103's guards on the append-only
-  // tables) and a value of `TG_OP` in a string, and those empty nothing. Any
-  // other use, a function body's included, is still blocked.
+  // tables) and a value `TG_OP` is compared with (`TG_OP = 'TRUNCATE'`), and
+  // those empty nothing. Any other use is still blocked, a function body's and a
+  // dynamic statement's included: `EXECUTE 'TRUNCATE …'` and
+  // `format('TRUNCATE %I', …)` run one, so a quote beside the word exempts nothing.
   {
     level: 'blocking',
-    re: /(?<!\b(?:BEFORE|AFTER|OR)\s+)(?<!['"])\bTRUNCATE\b(?!['"])/i,
+    re: /(?<!\b(?:BEFORE|AFTER|OR)\s+)(?<!\bTG_OP\s*(?:=|<>|!=)\s*')\bTRUNCATE\b/i,
     what: 'TRUNCATE',
   },
   // Across line breaks, with or without the optional COLUMN keyword, and in

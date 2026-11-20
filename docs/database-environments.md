@@ -1,6 +1,6 @@
 # Database environments
 
-Last verified against the code: `fix/citizen-otp-closed` (on `develop@e9e79ff`): the phone-code sign-in refused while no SMS provider is live (`SmsSender.isLive`, `CITIZEN_OTP_UNAVAILABLE`), `otp/verify` throttled (`APP_CONFIG.throttle.otpVerify`), `NODE_ENV` required with no default, security audit N-2, 2026-11-15; `chore/migration-0103` (on `chore/migration-0102@72f0974`): `0103_append_only_no_truncate`, TRUNCATE refused on the append-only and written-once tables, the scanner narrowed to the statement, the local reset tools switching the guards (`truncate-guards.mjs`), applied with `pnpm db:deploy:local` and its integration spec run on a throwaway Postgres 17, and the next free number `0104` (task S19), 2026-11-16; `fix/pr88-review` (on `develop@be4f053`), 2026-10-06; the rollback caveat for a new enum value against `chore/migration-0090-0091` (on `develop@5e8f5c3`), 2026-10-13.
+Last verified against the code: `chore/migration-0103` updated onto `develop@e8bb71f`: the scanner's TRUNCATE rule narrowed to the trigger event and `TG_OP` only, so a dynamic `EXECUTE 'TRUNCATE …'` blocks again, and `withTruncateGuardsOff` keeps the work's own error when the aborted transaction refuses the ENABLEs, 2026-11-20; `fix/citizen-otp-closed` (on `develop@e9e79ff`): the phone-code sign-in refused while no SMS provider is live (`SmsSender.isLive`, `CITIZEN_OTP_UNAVAILABLE`), `otp/verify` throttled (`APP_CONFIG.throttle.otpVerify`), `NODE_ENV` required with no default, security audit N-2, 2026-11-15; `chore/migration-0103` (on `chore/migration-0102@72f0974`): `0103_append_only_no_truncate`, TRUNCATE refused on the append-only and written-once tables, the scanner narrowed to the statement, the local reset tools switching the guards (`truncate-guards.mjs`), applied with `pnpm db:deploy:local` and its integration spec run on a throwaway Postgres 17, and the next free number `0104` (task S19), 2026-11-16; `fix/pr88-review` (on `develop@be4f053`), 2026-10-06; the rollback caveat for a new enum value against `chore/migration-0090-0091` (on `develop@5e8f5c3`), 2026-10-13.
 
 Three databases, three targets, and a set of checks whose only job is to make
 "I ran it against the wrong one" impossible rather than unlikely. This is the
@@ -416,8 +416,9 @@ refuses to run without `--allow-destructive`, which only the manual
 *Deploy production* workflow can pass; a heavy lock or a row rewrite prints a
 warning and continues, because a backfill is expected to fill new columns and a
 scanner cannot tell that from an overwrite. What blocks and what warns:
-[database.md](database.md#destructive-changes-go-in-a-later-release). A `TRUNCATE` statement blocks; the
-word as a trigger event (`BEFORE TRUNCATE`, `0103`'s guards on the append-only tables) does not.
+[database.md](database.md#destructive-changes-go-in-a-later-release). A `TRUNCATE` statement blocks, run
+directly or as dynamic SQL (`EXECUTE 'TRUNCATE …'`); the word as a trigger event (`BEFORE TRUNCATE`,
+`0103`'s guards on the append-only tables) or compared with `TG_OP` does not.
 
 The two local reset tools, `scripts/db/reset-local-money.mjs` and
 `scripts/db/delete-local-citizens-and-buildings.mjs`, refuse any database but `municipality_db_local` on

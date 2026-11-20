@@ -25,6 +25,10 @@ describe('blocks everything that loses data', () => {
     'truncate only "payment_transactions";',
     'CREATE FUNCTION f() RETURNS trigger AS $ BEGIN TRUNCATE "audit_log_entries"; RETURN NULL; END $ LANGUAGE plpgsql;',
     'SELECT 1; TRUNCATE "inspector_payouts", "expense_vouchers";',
+    // A TRUNCATE run as dynamic SQL empties the table all the same.
+    `DO $$ BEGIN EXECUTE 'TRUNCATE "audit_log_entries" CASCADE'; END $$;`,
+    `DO $$ BEGIN EXECUTE format('TRUNCATE %I CASCADE', 'citizen_payments'); END $$;`,
+    `DO $$ BEGIN EXECUTE 'TRUNCATE' || ' "buildings"'; END $$;`,
     'ALTER TABLE "units" ALTER COLUMN "area" TYPE integer;',
     'ALTER TABLE "users" RENAME COLUMN "phone" TO "mobile";',
     'ALTER TABLE "units" RENAME TO "flats";',
@@ -56,6 +60,7 @@ describe('lets additive and harmless statements through', () => {
     'CREATE TRIGGER t BEFORE UPDATE OR DELETE OR TRUNCATE ON "x" FOR EACH STATEMENT EXECUTE FUNCTION f();',
     "DO $ BEGIN EXECUTE format('CREATE TRIGGER %I BEFORE TRUNCATE ON %I FOR EACH STATEMENT EXECUTE FUNCTION f()', 'a', 'b'); END $;",
     "CREATE FUNCTION f() RETURNS trigger AS $ BEGIN IF TG_OP = 'TRUNCATE' THEN RAISE EXCEPTION 'no'; END IF; RETURN NULL; END $ LANGUAGE plpgsql;",
+    "CREATE FUNCTION f() RETURNS trigger AS $ BEGIN IF TG_OP <> 'TRUNCATE' THEN RETURN NEW; END IF; RETURN NULL; END $ LANGUAGE plpgsql;",
     'SELECT 1 FROM "units" FOR UPDATE;',
     '-- DROP TABLE "units"; kept for reference',
     '/* DELETE FROM users; */ SELECT 1;',

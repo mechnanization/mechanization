@@ -56,6 +56,23 @@ test('switches them on again when the work fails, and passes the failure on', as
   assert.equal(client.statements.filter((sql) => sql.includes('ENABLE TRIGGER')).length, 2);
 });
 
+test('passes the work’s own failure on when the aborted transaction refuses the ENABLEs too', async () => {
+  const client = fakeClient(guards);
+  const query = client.query;
+  let aborted = false;
+  client.query = async (sql, params) => {
+    if (aborted) throw new Error('current transaction is aborted, commands ignored until end of transaction block');
+    return query(sql, params);
+  };
+  await assert.rejects(
+    withTruncateGuardsOff(client, 'tenant_x', async () => {
+      aborted = true;
+      throw new Error('lock timeout on "treasury_entries"');
+    }),
+    /lock timeout on "treasury_entries"/,
+  );
+});
+
 test('does nothing to a schema migrated before 0103, which has no guards', async () => {
   const client = fakeClient([]);
   await withTruncateGuardsOff(client, 'tenant_x', async () => client.statements.push('TRUNCATE'));

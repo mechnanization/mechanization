@@ -8,19 +8,32 @@
  * any database but `municipality_db_local` on loopback before they get here.
  *
  * Call it inside the caller's transaction. `ALTER TABLE … DISABLE TRIGGER` is
- * transactional: a rollback restores the guards by itself, and the `finally`
- * switches them on again before a commit, so no path commits a schema with its
- * guards off. Never call it against staging or production: there, getting past
- * these triggers is circumventing a control (docs/database.md).
+ * transactional: a rollback restores the guards by itself, and the guards are
+ * switched on again before the work's result is returned, so no path commits a
+ * schema with its guards off. Never call it against staging or production:
+ * there, getting past these triggers is circumventing a control
+ * (docs/database.md).
+ *
+ * When the work fails on a statement, the transaction is aborted and Postgres
+ * refuses every query until ROLLBACK, the ENABLEs included. Their failure must
+ * not replace the work's own error, which is the one the operator needs; the
+ * rollback restores the guards. A failure in the work's own code leaves the
+ * transaction usable, and the ENABLEs then run as usual.
  */
 export async function withTruncateGuardsOff(client, schema, work) {
   const guards = await truncateGuards(client, schema);
   for (const guard of guards) await client.query(guardStatement(schema, guard, 'DISABLE'));
+  let result;
   try {
-    return await work();
-  } finally {
-    for (const guard of guards) await client.query(guardStatement(schema, guard, 'ENABLE'));
+    result = await work();
+  } catch (error) {
+    for (const guard of guards) {
+      await client.query(guardStatement(schema, guard, 'ENABLE')).catch(() => undefined);
+    }
+    throw error;
   }
+  for (const guard of guards) await client.query(guardStatement(schema, guard, 'ENABLE'));
+  return result;
 }
 
 /** Every `_no_truncate` trigger in `schema`, as `{ table, trigger }`. */
