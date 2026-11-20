@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Banknote, Building2, Clock, Loader2, MapPin, Smartphone } from 'lucide-react';
 import type { DeclarePayment } from '@mechanization/shared-schemas';
-import type { CitizenPaymentItem, MunicipalitySettings } from '@/lib/api-client';
+import type { CitizenPaymentItem, CitizenPortalSettings } from '@/lib/api-client';
 import { Alert } from '@/components/ui/alert';
 import { isPartlyPaid, partlyPaidFigures } from '@/lib/citizen-payments';
 import { Button } from '@/components/ui/button';
@@ -41,7 +41,7 @@ export function PayDialog({
   locale = 'ar',
 }: {
   payment: CitizenPaymentItem | null;
-  settings: MunicipalitySettings | null;
+  settings: CitizenPortalSettings | null;
   submitting: boolean;
   error: string | null;
   onOpenChange: (open: boolean) => void;

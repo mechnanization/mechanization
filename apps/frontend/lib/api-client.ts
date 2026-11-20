@@ -1,6 +1,7 @@
 import {
   BACKGROUND_REQUEST_HEADER,
   IMPORT_BATCH_SIZE,
+  type CitizenSettingsField,
   type ErrorParams,
   type HouseGrowth,
   type OwnerBillingFallback,
@@ -5209,11 +5210,12 @@ export interface MunicipalitySettings {
 const SETTINGS_TTL_MS = 60_000;
 
 /**
- * Readable by any signed-in user — the portal prints these on the pay modal.
+ * The staff screens' read of the settings. A citizen is answered three fields
+ * alone (task S13) and reads them through `getCitizenPortalSettings`, never here.
  *
- * De-duplicated and briefly cached, because six unrelated screens read it: the
- * fees ledger, the payments log, every citizen profile, the citizen pay dialog
- * and each settings tab as it opens. Concurrent callers share one request.
+ * De-duplicated and briefly cached, because several unrelated screens read it: the
+ * fees ledger, the payments log, every citizen profile and each settings tab as
+ * it opens. Concurrent callers share one request.
  *
  * `includeLogo` is opt-in and off by default. The crest is a data URI in the
  * hundreds of kilobytes, and every one of those screens except the settings
@@ -5237,6 +5239,21 @@ export function getMunicipalitySettings(
         { token },
       ),
   );
+}
+
+/** What a citizen's `GET fees/settings` answers: `CITIZEN_SETTINGS_FIELDS` alone (task S13). */
+export type CitizenPortalSettings = Pick<MunicipalitySettings, CitizenSettingsField>;
+
+/**
+ * The portal's read of the settings: the three fields a citizen is given, typed as such.
+ *
+ * Not through `cachedRequest`. Its key names the tenant, not who asked, and a
+ * citizen's answer is a different shape from staff's, so sharing the entry let a
+ * citizen's three fields stand in for the staff settings on the same tab for up
+ * to a minute (review of 2026-11-20). The portal reads it once per page.
+ */
+export function getCitizenPortalSettings(tenant: string, token: string) {
+  return apiFetch<CitizenPortalSettings>(tenant, '/fees/settings', { token });
 }
 
 /**
