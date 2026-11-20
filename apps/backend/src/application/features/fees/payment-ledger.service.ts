@@ -43,6 +43,14 @@ export interface LedgerEntryInput {
    */
   paidByCitizenId?: string | null;
   /**
+   * What the clerk was shown for a single counter payment — the credit and the
+   * change, in the bill's currency (finding F18). `recordIn` refuses the
+   * payment (`PAYMENT_FIGURES_CHANGED`) when what its lock reads disagrees;
+   * absent, nothing is compared, as for a settlement of several bills, which
+   * carries its own figure (`expectedDue`).
+   */
+  expected?: { credit: number; change: number } | null;
+  /**
    * Set only by the two writes that settle a citizen's claim (PENDING_REVIEW):
    * the staff confirmation and the Whish success callback. Any other `record`
    * on a bill under review is refused (`PAYMENT_CLAIM_UNDER_REVIEW`): `append`
@@ -299,34 +307,36 @@ export class PaymentLedgerService {
       });
     }
 
-    const tolerance = toleranceFor(invoice.currency);
-    let credit = input.amount;
-    let changeGiven = 0;
+    const { credit, changeGiven } = counterCredit({
+      amount: input.amount,
+      tendered: input.tendered ?? null,
+      outstanding,
+      currency: invoice.currency,
+    });
+
     /*
-      «الباقي»: a citizen pays a smaller bill with a larger dollar note and
-      gets the difference back. The credit is what was owed; the rest is
-      recorded as change, so tender − change = credit on the row. Only the
-      foreign notes can produce change — ليرة handed over beyond the balance
-      is a typing mistake, not a note too large to split.
+      What the clerk was shown, against what this lock reads (finding F18 of
+      the 2026-11-14 billing audit): the balance, and the rate the notes are
+      judged by, are read here under the bill's lock, and either may have moved
+      since the screen worked the figures out — another desk took part of the
+      bill, or the official rate changed. Recorded anyway, the receipt would
+      credit and hand back other figures than the ones counted out at the
+      counter. Refused instead, before a number is drawn, as a settlement of
+      several bills is (`BULK_SETTLE_DUE_CHANGED`). After the replay: a retry
+      is answered from its first receipt whatever has moved since.
     */
-    if (input.tendered && input.amount > outstanding + tolerance) {
-      if (!input.tendered.foreign || input.tendered.local > outstanding + tolerance) {
+    if (input.expected) {
+      const tolerance = toleranceFor(invoice.currency);
+      if (
+        Math.abs(credit - input.expected.credit) > tolerance ||
+        Math.abs(changeGiven - input.expected.change) > tolerance
+      ) {
         throw new ConflictError({
-          code: 'PAYMENT_TENDER_EXCEEDS_BALANCE',
-          message: `The amount in the invoice currency (${input.tendered.local}) is more than the balance due (${outstanding}).`,
-          params: { amount: input.tendered.local, outstanding },
+          code: 'PAYMENT_FIGURES_CHANGED',
+          message: `The payment now credits ${credit} with ${changeGiven} change, not the ${input.expected.credit} and ${input.expected.change} shown.`,
+          params: { credit, change: changeGiven, currency: invoice.currency },
         });
       }
-      credit = outstanding;
-      changeGiven = roundTo(input.amount - outstanding, invoice.currency);
-    }
-
-    if (credit > outstanding + tolerance) {
-      throw new ConflictError({
-        code: 'PAYMENT_EXCEEDS_BALANCE',
-        message: `The amount received (${credit}) is more than the balance due (${outstanding}).`,
-        params: { amount: credit, outstanding },
-      });
     }
 
     const settled = await this.append(tx, invoice, credit, input, undefined, changeGiven);
@@ -658,7 +668,11 @@ export class PaymentLedgerService {
    *
    * A key names one act (finance audit B6): this bill, by this method, with this
    * collector and reference, for this sum — or these notes, when cash came in
-   * two currencies. Replayed with all of them it answers with the first receipt.
+   * two currencies — paid by this debtor of a shared bill, on this day (finding
+   * F18 of the 2026-11-14 billing audit: a payer or a date corrected after a
+   * lost answer was answered with the first receipt, which names the other
+   * debtor or prints the other day). Replayed with all of them it answers with
+   * the first receipt.
    * Anything else under the key is refused (`PAYMENT_IDEMPOTENCY_KEY_REUSED`)
    * rather than answered: the screens keep a key across every edit, so a figure
    * corrected after a lost answer arrives here, and answering it with the first
@@ -687,6 +701,7 @@ export class PaymentLedgerService {
         tenderedForeignCurrency: true,
         changeGiven: true,
         occurredAt: true,
+        paidByCitizenId: true,
         reversedBy: { select: { id: true } },
       },
     });
@@ -907,6 +922,8 @@ function sameAct(
     tenderedLocal: Prisma.Decimal | null;
     tenderedForeign: Prisma.Decimal | null;
     tenderedForeignCurrency: string | null;
+    paidByCitizenId: string | null;
+    occurredAt: Date;
   },
   input: LedgerEntryInput,
 ): boolean {
@@ -914,6 +931,13 @@ function sameAct(
   if (row.method !== input.method) return false;
   if (id(row.collectedById) !== id(input.collectedById)) return false;
   if (normaliseExternalRef(row.externalRef) !== normaliseExternalRef(input.externalRef)) return false;
+  if (id(row.paidByCitizenId) !== id(input.paidByCitizenId)) return false;
+  /*
+    The municipal day the money moved. A press with no date is today's, so a
+    retry of it is too — unless midnight passed between the two, and then the
+    refusal names the earlier receipt, which is the answer the clerk needs.
+  */
+  if (municipalToday(row.occurredAt) !== municipalToday(input.occurredAt ?? new Date())) return false;
   const near = (a: number, b: number) => Math.abs(a - b) < 0.005;
   if (input.tendered) {
     if (row.tenderedLocal === null) return false;
@@ -968,4 +992,48 @@ function toleranceFor(currency: string): number {
 /** Whole ليرة for a ليرة bill, cents for any other currency. */
 function roundTo(value: number, currency: string): number {
   return currency === 'LBP' ? Math.round(value) : Math.round(value * 100) / 100;
+}
+
+/**
+ * What a counter payment credits the bill and hands back, from what was
+ * received and what is owed — the one rule, for `recordIn` and for
+ * `FeesService.settleInPerson`, which judges large change on the same figure
+ * the ledger records.
+ *
+ * «الباقي»: a citizen pays a smaller bill with a larger dollar note and gets
+ * the difference back. The credit is what was owed; the rest is recorded as
+ * change, so tender − change = credit on the row. Only the foreign notes can
+ * produce change — ليرة handed over beyond the balance is a typing mistake,
+ * not a note too large to split. Anything else above the balance is refused.
+ */
+export function counterCredit(input: {
+  /** What was received, in the bill's currency (the tender's worth when there is one). */
+  amount: number;
+  tendered: Pick<Tender, 'local' | 'foreign'> | null;
+  outstanding: number;
+  currency: string;
+}): { credit: number; changeGiven: number } {
+  const { amount, tendered, outstanding, currency } = input;
+  const tolerance = toleranceFor(currency);
+  let credit = amount;
+  let changeGiven = 0;
+  if (tendered && amount > outstanding + tolerance) {
+    if (!tendered.foreign || tendered.local > outstanding + tolerance) {
+      throw new ConflictError({
+        code: 'PAYMENT_TENDER_EXCEEDS_BALANCE',
+        message: `The amount in the invoice currency (${tendered.local}) is more than the balance due (${outstanding}).`,
+        params: { amount: tendered.local, outstanding },
+      });
+    }
+    credit = outstanding;
+    changeGiven = roundTo(amount - outstanding, currency);
+  }
+  if (credit > outstanding + tolerance) {
+    throw new ConflictError({
+      code: 'PAYMENT_EXCEEDS_BALANCE',
+      message: `The amount received (${credit}) is more than the balance due (${outstanding}).`,
+      params: { amount: credit, outstanding },
+    });
+  }
+  return { credit, changeGiven };
 }

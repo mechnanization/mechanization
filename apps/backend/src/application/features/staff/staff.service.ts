@@ -48,6 +48,7 @@ import {
   UnauthorizedError,
   ValidationError,
 } from '../../common/exceptions';
+import { sameId } from '../../common/ids';
 
 /**
  * Staff accounts, managed by a SUPER_ADMIN.
@@ -204,7 +205,7 @@ export class StaffService {
 
     // Demoting yourself out of SUPER_ADMIN can leave a municipality with no
     // one able to manage accounts at all — including no one able to undo it.
-    if (input.id === input.actor.id && input.role && input.role !== 'SUPER_ADMIN') {
+    if (sameId(input.id, input.actor.id) && input.role && input.role !== 'SUPER_ADMIN') {
       throw new ForbiddenError('لا يمكنك تغيير صلاحيتك الخاصة');
     }
 
@@ -254,7 +255,7 @@ export class StaffService {
     }
 
     // Locking yourself out is not a decision worth honouring at 2am.
-    if (input.id === input.actor.id && !input.isActive) {
+    if (sameId(input.id, input.actor.id) && !input.isActive) {
       throw new ForbiddenError('لا يمكنك إلغاء تفعيل حسابك الخاص');
     }
 
@@ -293,7 +294,7 @@ export class StaffService {
       throw new NotFoundError('Staff user', input.id);
     }
 
-    if (input.id === input.actor.id) {
+    if (sameId(input.id, input.actor.id)) {
       throw new ForbiddenError('لا يمكنك حذف حسابك الخاص');
     }
 
@@ -733,14 +734,14 @@ export class StaffService {
       actor: { ...request.actor, id: request.actor.id.toLowerCase() },
     };
     const ordersPayments = (TREASURY_ADMIN_ROLES as readonly string[]).includes(input.actor.role);
-    if (!ordersPayments && input.inspectorId === input.actor.id) {
+    if (!ordersPayments && sameId(input.inspectorId, input.actor.id)) {
       throw new ForbiddenError({
         code: 'COMMISSION_SELF_PAYOUT',
         message: 'Staff cannot pay their own commission; the manager records it.',
       });
     }
     // Who may read the figure: `StaffController.getInspectorProfile`'s rule, the manager or the inspector himself.
-    const showOwed = input.actor.role === 'SUPER_ADMIN' || input.actor.id === input.inspectorId;
+    const showOwed = input.actor.role === 'SUPER_ADMIN' || sameId(input.actor.id, input.inspectorId);
 
     try {
       return await this.recordInspectorPayoutInTransaction(input, ordersPayments, showOwed);

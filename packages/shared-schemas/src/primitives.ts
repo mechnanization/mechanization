@@ -161,6 +161,15 @@ export const tenantSlug = z
 export const uuid = z.string().guid();
 
 /**
+ * The last page a paged register serves. A million pages of 200 is far past any
+ * municipality's books, and keeps the offset the server computes inside what
+ * Prisma's `skip` and Postgres take: unbounded, `page=1e20` passed the schema
+ * and failed in the database, a 500 with the URL and its query string in the
+ * proxy's log (docs/security.md; task S11 of the 2026-11-14 security audit).
+ */
+export const MAX_LIST_PAGE = 1_000_000;
+
+/**
  * A real calendar day as `YYYY-MM-DD`: «2026-02-30» or «2026-10-00» is refused,
  * not rolled into the next month. The pattern alone let both through — `Date`
  * reads «2026-09-31» as 1 October — so a back-dated document was stored on a day

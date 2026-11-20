@@ -46,3 +46,4 @@ export * from './treasury-closing.schema';
 export * from './owner-share';
 export * from './citizen-name';
 export * from './error-codes';
+export * from './password-reset-link';

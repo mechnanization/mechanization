@@ -12,6 +12,7 @@ import { AuditService } from '../audit/audit.service';
 import { CasesService } from '../cases/cases.service';
 import { BuildingsService } from '../buildings/buildings.service';
 import { LandlordLinkService } from '../citizens/landlord-link.service';
+import { FeesService } from '../fees/fees.service';
 import { DataQualityService } from './data-quality.service';
 import { RecordReviewService } from './record-review.service';
 
@@ -94,7 +95,9 @@ describeIfDb('Quality review', () => {
     failingReviews = new RecordReviewService(context, events, cache as never, { get: () => 0 } as never, {
       recordChangeInTransaction: () => Promise.reject(new Error('audit insert refused')),
     } as never);
-    quality = new DataQualityService(context, links, events, cache as never, { get: () => 0 } as never);
+    // Billing's own reading of a file, asked of a «مالك مسؤول» (F13).
+    const fees = new FeesService(context, events, {} as never, cache as never, {} as never, {} as never);
+    quality = new DataQualityService(context, links, events, cache as never, { get: () => 0 } as never, fees);
     events.on('citizen.changed', (payload) => reviews.onCitizenChanged(payload));
 
     for (const [key, first, role] of [
@@ -527,8 +530,8 @@ describeIfDb('Quality review', () => {
   /**
    * «توزيع على المالكين لا يُطبَّق» against the real `activeOwnerSpells` read:
    * a «حسب الأسهم» shop that gained an owner with no أسهم, and a responsible
-   * owner whose file was archived. Each finding closes by itself once the flat
-   * is one billing can divide again.
+   * owner whose own file stopped claiming the shop (F13), then was archived.
+   * Each finding closes by itself once the flat is one billing can divide again.
    */
   it('warns of a co-owned flat whose saved billing method cannot be carried out', async () => {
     const tag = randomUUID().slice(0, 8);
@@ -572,6 +575,20 @@ describeIfDb('Quality review', () => {
       where: { id: responsible.id },
       data: { ownerBillingMode: 'RESPONSIBLE_OWNER', responsibleOwnerId: aref },
     });
+    // عارف's file claims the shop, as the save requires (`OwnerBillingService`).
+    const arefFiling = await db.registration.findFirstOrThrow({ where: { citizenId: aref }, select: { id: true } });
+    const card = await db.propertyEntry.create({
+      data: {
+        registrationId: arefFiling.id,
+        occupancyType: 'OWNER',
+        propertyType: 'BUILDING',
+        buildingId: building.id,
+        propertyNumber: building.parcelNumber,
+      },
+    });
+    await db.buildingUnit.create({
+      data: { propertyEntryId: card.id, unitId: responsible.id, unitType: 'SHOP', unitStatus: 'OWNER_OCCUPIED' },
+    });
 
     const blocked = async () =>
       new Map(
@@ -590,10 +607,19 @@ describeIfDb('Quality review', () => {
     expect(found.get(byShares.id)!.detail).toContain('(1 من 2)');
     expect(found.has(responsible.id)).toBe(false);
 
+    // A later filing on عارف's file that does not restate the shop: he still owns it and is billed nothing for it (F13).
+    await db.registration.create({
+      data: { citizenId: aref, referenceNumber: `QLT-${randomUUID().slice(0, 8)}`, createdById: staff.jawad, submittedAt: new Date(Date.now() + 60_000) },
+    });
+    found = await blocked();
+    expect(found.get(responsible.id)).toMatchObject({ severity: 'MEDIUM', dismissable: false });
+    expect(found.get(responsible.id)!.detail).toContain('ما زال مالكاً');
+
     // «أرشفة الملف» on the responsible owner: billing falls back to the equal split, and says so here.
     await db.user.update({ where: { id: aref }, data: { isActive: false } });
     found = await blocked();
     expect(found.get(responsible.id)).toMatchObject({ severity: 'MEDIUM' });
+    expect(found.get(responsible.id)!.detail).toContain('لم يعد بين مالكيها');
 
     // The أسهم recorded: the shop divides again, and the finding is gone.
     await db.unitOccupancy.updateMany({ where: { unitId: byShares.id, citizenId: maarouf }, data: { shares: 1200 } });

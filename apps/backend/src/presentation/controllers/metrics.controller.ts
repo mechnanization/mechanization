@@ -3,8 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { SkipThrottle } from '@nestjs/throttler';
 import { PrometheusController } from '@willsoto/nestjs-prometheus';
 import { Response } from 'express';
-import { createHash, timingSafeEqual } from 'node:crypto';
 import { Public } from '../decorators/public.decorator';
+import { bearerMatches } from '../http/bearer-secret';
 
 /**
  * `GET /metrics`, the Prometheus scrape endpoint, outside `/api/v1` (see
@@ -62,14 +62,8 @@ export class MetricsController extends PrometheusController {
       throw new NotFoundException();
     }
 
-    // Digests first, because `timingSafeEqual` throws on inputs of different
-    // lengths, and the length check that avoids it would itself leak the length.
-    if (!timingSafeEqual(digest(header ?? ''), digest(`Bearer ${token}`))) {
+    if (!bearerMatches(header, token)) {
       throw new ForbiddenException();
     }
   }
-}
-
-function digest(value: string): Buffer {
-  return createHash('sha256').update(value).digest();
 }

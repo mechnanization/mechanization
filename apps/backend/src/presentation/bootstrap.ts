@@ -63,6 +63,14 @@ export async function createApiApp(): Promise<NestExpressApplication> {
    */
   app.useBodyParser('json', { limit: '1mb' });
 
+  /*
+    `credentials: true` stays (reviewed by task S18, 2026-11-16). A Bearer call
+    needs none, but the staff refresh cookie does: the portal posts
+    `auth/staff/refresh` and `auth/staff/logout` with `credentials: 'include'`,
+    and without this header the browser drops the cross-origin `Set-Cookie` and
+    hides the answer. What makes it safe is the list: exact origins, https in
+    production (`envSchema`), never a wildcard.
+  */
   app.enableCors({
     origin: config.get<string[]>('CORS_ORIGINS') ?? ['http://localhost:3000'],
     credentials: true,

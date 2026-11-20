@@ -1,0 +1,33 @@
+-- 0101_totp_failure_counter
+--
+-- Wrong second-factor codes, counted per staff account.
+--
+-- == What it is for ======================================================
+--
+-- A TOTP code is six digits, and nothing counted the wrong ones. The sign-in
+-- throttle is per client address and kept in each process's memory, so it does
+-- not follow the account: someone holding a staff password could try codes from
+-- as many addresses, and against as many API processes, as they had. Security
+-- audit N-1 and the Medium gap «nothing counts failed codes» (docs/security.md).
+--
+--   totpFailedAttempts  wrong codes since the last accepted one or the last
+--                       lockout. 0 for every row today.
+--   totpLockedUntil     while in the future, no code is checked at all for
+--                       this account; NULL when it is not locked.
+--
+-- Kept on `users` rather than in Redis: production's Redis is undecided
+-- (docs/security.md, «Rate-limit topology»), and a count kept in one process's
+-- memory is reset by reaching another. A code is only checked after the
+-- password has matched, so only someone who already holds the password can
+-- lock an account.
+--
+-- == Safety ==============================================================
+--
+-- Additive only. The integer's constant default is stored in the catalogue
+-- (Postgres 11+), so no row is rewritten, as for `units.levels` in 0095; the
+-- timestamp is nullable with no default. The build serving production when
+-- this lands never reads or writes either column, and its inserts take the
+-- default, so a rollback is a redeploy.
+
+ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "totpFailedAttempts" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "totpLockedUntil" TIMESTAMP(3);

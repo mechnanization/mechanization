@@ -2,7 +2,13 @@ import { calendarDayOf, citizenDisplayName, isFeeExemptOn, municipalToday } from
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
-import type { FeeAssessment, RequestStatus, RequestType, SharedUnitBillView } from '@mechanization/shared-schemas';
+import type {
+  FeeAssessment,
+  OwnerBillingFallback,
+  RequestStatus,
+  RequestType,
+  SharedUnitBillView,
+} from '@mechanization/shared-schemas';
 import { effectiveOwnerBilling, isCoOwned, ownerShareOf } from '@mechanization/shared-schemas';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
@@ -342,7 +348,8 @@ export interface CitizenProfileUnit {
     mode: 'EQUAL' | 'BY_SHARES' | 'RESPONSIBLE_OWNER' | null;
     effectiveMode: 'EQUAL' | 'BY_SHARES' | 'RESPONSIBLE_OWNER';
     responsibleOwnerId: string | null;
-    fallback: 'RESPONSIBLE_NOT_OWNER' | null;
+    /** Read without asking whether the responsible owner's file claims the flat (`RESPONSIBLE_NOT_BILLED`): see docs/code-quality.md. */
+    fallback: OwnerBillingFallback | null;
     share: { numerator: number; denominator: number } | null;
   } | null;
 }

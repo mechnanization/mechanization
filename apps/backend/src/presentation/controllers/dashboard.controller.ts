@@ -1,4 +1,4 @@
-import { Controller, Get, Header, Param } from '@nestjs/common';
+import { Controller, Get, Header } from '@nestjs/common';
 import {
   DASHBOARD_READ_ROLES,
   REGISTER_EXPORT_ROLES,
@@ -6,7 +6,7 @@ import {
 } from '@mechanization/shared-schemas';
 import { BuildingsService } from '../../application/features/buildings/buildings.service';
 import { ReportingService } from '../../application/features/reporting/reporting.service';
-import { CurrentUser } from '../decorators/current-user.decorator';
+import { CurrentTenant, CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
 
@@ -114,7 +114,7 @@ export class DashboardController {
   @Header('Content-Type', 'text/csv; charset=utf-8')
   @Header('Content-Disposition', 'attachment; filename="registrations.csv"')
   async exportCsv(
-    @Param('tenantSlug') tenantSlug: string,
+    @CurrentTenant('slug') tenantSlug: string,
     @CurrentUser() user: SessionClaims,
   ) {
     // The `status` filter is gone with the review workflow — there is one

@@ -98,8 +98,6 @@
     "goToSignIn": "Go to sign in",
     "invalidResetLinkTitle": "Link invalid or expired",
     "invalidResetLinkDesc": "This password reset link is no longer valid. Request a new one from Settings, or contact your system administrator.",
-    "emailChangeConfirmedTitle": "Email address confirmed",
-    "emailChangeConfirmedDesc": "Your sign-in email address has already been updated. You can close this page and sign in.",
     "passwordsDontMatch": "Passwords do not match.",
     "passwordTooShort": "Use at least 10 characters.",
     "staffSignIn": {
@@ -258,6 +256,8 @@
     "TRANSACTION_ALREADY_REVERSED": "This transaction has already been reversed.",
     "TRANSACTION_IS_REVERSAL": "A reversal cannot itself be reversed.",
     "PAYMENT_IDEMPOTENCY_KEY_REUSED": "This operation’s identifier was already used for another payment ({receiptNumber}). Reload the page and check the bill’s receipts.",
+    "PAYMENT_FIGURES_CHANGED": "What this payment credits changed since it was shown, so nothing was recorded: it would now credit {credit, number} and hand back {change, number} ({currency}). The bill and the rate were read again — check the amount and the change, then press again.",
+    "PAYMENT_LARGE_CHANGE_REASON_REQUIRED": "The change handed back is worth more than the large-exchange threshold ({threshold, number} {currency}). Write why it is given.",
     "COLLECTOR_CANNOT_SELECT_METHOD": "A collector records the cash he collects as his own collection (method “Via Collector”, with himself named), or a Whish transfer — never cash into the safe, nor in another collector’s name. Nothing was recorded.",
     "PAYMENT_EXTERNAL_REF_REUSED": "This reference is already on receipt {receiptNumber}. One transfer is not recorded twice. Nothing was recorded.",
     "PAYMENT_CHECKOUT_MISMATCHED": "This Whish payment did not match the checkout it was opened for, so it was not banked. Reject the claim, then record at the counter what Whish shows (transaction number {reference}). Nothing was recorded.",
@@ -265,7 +265,9 @@
     "PAYMENT_BILL_CANCELLED": "This bill has been cancelled and takes no payment.",
     "BILL_CANCEL_HAS_PAYMENTS": "Money has been taken on this bill. Reverse its receipts first, then cancel it.",
     "BILL_ALREADY_CANCELLED": "This bill has already been cancelled.",
+    "FEE_CHARGE_REQUEST_REUSED": "This operation’s identifier already recorded a different charge ({invoiceNumber}). Check the citizen’s bills before anything else: adding again records a new, separate charge.",
     "FEE_NOTICE_REQUEST_REUSED": "This operation’s identifier was already used to issue a different notice. Check the notices issued before anything else: issuing again issues a new, separate notice.",
+    "FEE_NOTICE_DUPLICATE": "{count, plural, one {The notice «{title}» is active and already bills the same people for this period, so nothing was issued. Review it under «Before you issue», and confirm if this is a different fee.} other {{count} active notices, the first «{title}», already bill the same people for this period, so nothing was issued. Review them under «Before you issue», and confirm if this is a different fee.}}",
     "BULK_SETTLE_CITIZEN_MISMATCH": "The selected bills do not all belong to one citizen. Only one person’s bills can be settled together.",
     "BULK_SETTLE_SOME_ALREADY_PAID": "Bill «{invoice}» was settled after it was selected. Deselect it and try again. Nothing was recorded.",
     "BULK_SETTLE_TENDER_SHORT": "The money received does not cover the selected bills: {shortBy, number} {currency} short. Nothing was recorded.",
@@ -512,6 +514,10 @@
     "CITIZEN_IDENTITY_DOC_TAKEN": "This document number is already recorded for someone else in the register. Check the number.",
     "CITIZEN_FILE_ARCHIVED": "This person's file is archived, so nothing new is filed on it — no card, no flat, no sale. Restore it first («Restore from the archive» on the citizens register), then try again.",
     "STAFF_CURRENT_PASSWORD_INCORRECT": "The current password is incorrect.",
+    "TOTP_CODE_INVALID": "The verification code is incorrect. Check the code in your authenticator app.",
+    "TOTP_CODE_REUSED": "This code has already been used. Wait for your authenticator app to show a new one, then enter it.",
+    "TOTP_LOCKED": "Too many wrong verification codes, so codes are not being checked for this account. {minutes, plural, one {Try again in a minute.} other {Try again in {minutes} minutes.}}",
+    "CITIZEN_OTP_UNAVAILABLE": "Signing in with a code sent to your phone is not available yet. Sign in with your reference number, or visit the municipality.",
     "FEE_EXEMPTION_VALID_UNTIL_PAST": "The last exempt day ({validUntil}) is before today ({today}) — choose today or a later day",
     "FEE_EXEMPTION_LIFT_REASON_REQUIRED": "Write why the exemption is lifted",
     "UNIT_HAS_FEE_EXEMPTION_HISTORY": "Unit {unitCode} has a fee exemption history, which deleting it would erase. Correct the unit instead of deleting it",
@@ -1689,7 +1695,14 @@
         }
       },
       "confirmScope": "I confirm issuing this notice with this scope despite the warnings",
-      "confirmScopeNeeded": "Confirm the warnings on the notice’s scope to enable «Issue bills»."
+      "confirmScopeNeeded": "Confirm the warnings on the notice’s scope to enable «Issue bills».",
+      "duplicates": {
+        "title": "{count, plural, one {An active notice already bills the same people for this period} other {{count} active notices already bill the same people for this period}}",
+        "item": "{frequency}, issued {issuedAt}, {count, plural, one {one bill} other {{count} bills}} this period",
+        "body": "If this is the same fee, it has already been issued: issuing it again bills everyone twice. Issue it only if it is a different fee on the same basis and target.",
+        "confirm": "{count, plural, one {This is a different fee from the one above, and I want to issue it} other {This is a different fee from the ones above, and I want to issue it}}",
+        "confirmNeeded": "Confirm that it is a different fee to enable «Issue the bills»."
+      }
     },
     "register": {
       "summary": {
@@ -1724,7 +1737,10 @@
       "billTypePlaceholder": "Select from previous bills or type a new title…",
       "amount": "Amount (LBP)",
       "dueDate": "Due Date",
-      "submit": "Add Charge"
+      "submit": "Add Charge",
+      "done": "The charge was recorded on the citizen.",
+      "replayed": "This charge was already recorded ({number}), so it was not recorded again.",
+      "failed": "The charge could not be recorded."
     },
     "scope": {
       "separator": ", ",
@@ -1965,6 +1981,7 @@
     "STAFF_RESTORED": "Restore deleted staff",
     "TOTP_ENROLLED": "2FA enrollment",
     "TOTP_CONFIRMED": "2FA confirmed",
+    "TOTP_LOCKED_OUT": "2FA locked after wrong codes",
     "DATA_REPAIR": "Data repair",
     "DAMAGE_RECORDED": "Damage assessment recorded",
     "TREASURY_ACTIVATED": "Treasury activated",
@@ -3312,6 +3329,7 @@
     "partUnknown": "Unknown — shares not recorded",
     "notOnFile": "Their file does not claim this unit, so their part is not billed until their file is completed",
     "fallback": "The chosen responsible owner no longer owns this unit, so the fee is split equally until a new method is chosen.",
+    "fallbackNotBilled": "The chosen responsible owner's own file no longer lists this unit, so the fee is split equally until the file is completed or a new method is chosen.",
     "singleOwner": "This unit has only one owner now, so the saved method ({mode}) does not apply. You can withdraw it.",
     "withdraw": "Withdraw the saved method",
     "save": "Save the method",
@@ -3632,6 +3650,10 @@
     "recorded": "Amount recorded:",
     "receiptLine": "Receipt {number}",
     "selfCollector": "What you collect is recorded in your name: it stays in your custody until you hand it in to the safe.",
+    "largeChange": {
+      "label": "Why such large change: it is worth {amount}{unit}, above the large-exchange threshold ({threshold}{unit})",
+      "needed": "Write why this change is given: it comes out of the safe in pounds, and is worth more than the large-exchange threshold."
+    },
     "cancelBill": {
       "action": "Cancel bill",
       "title": "Cancel this bill?",

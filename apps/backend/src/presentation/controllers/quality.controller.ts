@@ -19,7 +19,7 @@ import {
 import { z } from 'zod';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { ValidationError } from '../../application/common/exceptions';
-import { requireDate } from './query-params';
+import { queryLimit, queryOffset, requireDate } from './query-params';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
 import { DataQualityService } from '../../application/features/quality/data-quality.service';
 import {
@@ -29,6 +29,7 @@ import {
 } from '../../application/features/quality/record-review.service';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
+import { UuidPipe } from '../pipes/uuid.pipe';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -79,21 +80,21 @@ export class QualityController {
       states,
       officerId: optionalUuid(officerId, 'الموظف'),
       flaggedOnly: flaggedOnly === 'true',
-      limit: Number(limit) || 20,
-      offset: Number(offset) || 0,
+      limit: queryLimit(limit, 20, 200),
+      offset: queryOffset(offset),
     });
   }
 
   @Roles(...QUALITY_REVIEWER_ROLES)
   @Post('reviews/:registrationId/approve')
-  async approve(@Param('registrationId') registrationId: string, @CurrentUser() user: SessionClaims) {
+  async approve(@Param('registrationId', new UuidPipe()) registrationId: string, @CurrentUser() user: SessionClaims) {
     return this.reviews.approve(optionalUuid(registrationId, 'السجل')!, actorOf(user));
   }
 
   @Roles(...QUALITY_REVIEWER_ROLES)
   @Post('reviews/:registrationId/return')
   async returnToOfficer(
-    @Param('registrationId') registrationId: string,
+    @Param('registrationId', new UuidPipe()) registrationId: string,
     @Body(new ZodValidationPipe(returnRecordSchema)) body: ReturnRecordInput,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -103,7 +104,7 @@ export class QualityController {
   /** The open return on a citizen's record — shown on its edit form to whoever fixes it. */
   @Roles(...QUALITY_RETURN_READ_ROLES)
   @Get('citizens/:citizenId/open-return')
-  async openReturn(@Param('citizenId') citizenId: string) {
+  async openReturn(@Param('citizenId', new UuidPipe()) citizenId: string) {
     return { openReturn: await this.reviews.openReturnFor(optionalUuid(citizenId, 'المواطن')!) };
   }
 
@@ -192,7 +193,7 @@ export class QualityController {
   @Roles(...QUALITY_REVIEWER_ROLES)
   @Patch('checks/:id/assign')
   async assign(
-    @Param('id') id: string,
+    @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(assignCheckSchema)) body: AssignCheckInput,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -202,7 +203,7 @@ export class QualityController {
   @Roles(...QUALITY_CHECK_ROLES)
   @Post('checks/:id/complete')
   async complete(
-    @Param('id') id: string,
+    @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(completeCheckSchema)) body: CompleteCheckInput,
     @CurrentUser() user: SessionClaims,
   ) {

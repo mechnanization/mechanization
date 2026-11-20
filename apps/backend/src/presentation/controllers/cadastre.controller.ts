@@ -1,21 +1,11 @@
-import {
-  Controller,
-  Get,
-  Inject,
-  NotFoundException,
-  Param,
-  Post,
-  Res,
-  UploadedFile,
-  UseInterceptors,
-} from '@nestjs/common';
+import { Controller, Get, Inject, NotFoundException, Param, Post, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Response } from 'express';
 import { CadastreImportService } from '../../application/features/cadastre/cadastre-import.service';
 import { ValidationError } from '../../application/common/exceptions';
 import { CADASTRE_STORAGE_SERVICE } from '../../domain/interfaces/base-repository.interface';
 import type { CadastreStorage } from '../../domain/interfaces/cadastre-storage.interface';
-import { CurrentUser } from '../decorators/current-user.decorator';
+import { CurrentTenant, CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
 import { APP_CONFIG } from '../config/app.config';
@@ -42,7 +32,7 @@ export class CadastreController {
    */
   @Get('assets/:assetName')
   async getAsset(
-    @Param('tenantSlug') tenantSlug: string,
+    @CurrentTenant('slug') tenantSlug: string,
     @Param('assetName') assetName: string,
     @Res() res: Response,
   ) {
@@ -80,7 +70,7 @@ export class CadastreController {
     FileInterceptor('file', { limits: { fileSize: APP_CONFIG.cadastre.maxFileSizeBytes } }),
   )
   async import(
-    @Param('tenantSlug') tenantSlug: string,
+    @CurrentTenant('slug') tenantSlug: string,
     @UploadedFile() file: Express.Multer.File | undefined,
     @CurrentUser() user: SessionClaims,
   ) {

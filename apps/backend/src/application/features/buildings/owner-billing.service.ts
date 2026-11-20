@@ -2,7 +2,6 @@ import { Injectable } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   isStructuralUnitType,
-  municipalToday,
   type OwnerBillingRule,
   type OwnerBillingState,
   type SetOwnerBillingInput,
@@ -10,7 +9,6 @@ import {
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
-import { billableUnits } from '../../../domain/entities/billable-unit';
 import { NotFoundError, ValidationError } from '../../common/exceptions';
 import { AuditService, type BuildingChange } from '../audit/audit.service';
 import { FeesService } from '../fees/fees.service';
@@ -156,14 +154,8 @@ export class OwnerBillingService {
   }
 
   private async assertBilledHere(unitId: string, unitCode: string, citizenId: string): Promise<void> {
-    for await (const batch of this.fees.holdingsOf([citizenId], { exemptOn: municipalToday() })) {
-      for (const holding of batch) {
-        const billed = holding.entries
-          .flatMap(billableUnits)
-          .some((unit) => unit.unitId === unitId && unit.occupancyType === 'OWNER');
-        if (billed) return;
-      }
-    }
+    // The question billing asks again at every run (`checkResponsibleOwners`), so the two agree.
+    if ((await this.fees.ownerClaims(citizenId)).has(unitId)) return;
     throw new ValidationError({
       code: 'OWNER_BILLING_RESPONSIBLE_NOT_BILLED',
       message: 'The responsible owner’s own file does not claim this unit, so billing could not charge them for it.',
