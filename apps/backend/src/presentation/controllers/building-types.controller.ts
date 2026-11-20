@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import {
   BUILDING_TYPE_ADMIN_ROLES,
   BUILDING_TYPE_READ_ROLES,
@@ -13,6 +13,7 @@ import { BuildingTypesService } from '../../application/features/buildings/build
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
+import { UuidPipe } from '../pipes/uuid.pipe';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
 
 /**
@@ -46,7 +47,7 @@ export class BuildingTypesController {
   @Roles(...BUILDING_TYPE_ADMIN_ROLES)
   @Patch(':id')
   update(
-    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(updateBuildingTypeSchema)) body: UpdateBuildingTypeInput,
     @CurrentUser() user: SessionClaims,
   ) {
