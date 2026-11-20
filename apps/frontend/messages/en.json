@@ -516,7 +516,8 @@
     "STAFF_CURRENT_PASSWORD_INCORRECT": "The current password is incorrect.",
     "TOTP_CODE_INVALID": "The verification code is incorrect. Check the code in your authenticator app.",
     "TOTP_CODE_REUSED": "This code has already been used. Wait for your authenticator app to show a new one, then enter it.",
-    "TOTP_LOCKED": "Too many wrong verification codes, so codes are not being checked for this account. {minutes, plural, one {Try again in a minute.} other {Try again in {minutes} minutes.}}"
+    "TOTP_LOCKED": "Too many wrong verification codes, so codes are not being checked for this account. {minutes, plural, one {Try again in a minute.} other {Try again in {minutes} minutes.}}",
+    "CITIZEN_OTP_UNAVAILABLE": "Signing in with a code sent to your phone is not available yet. Sign in with your reference number, or visit the municipality."
   },
   "damage": {
     "level": "Damage level",

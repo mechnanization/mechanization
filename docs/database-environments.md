@@ -1,6 +1,6 @@
 # Database environments
 
-Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06; the rollback caveat for a new enum value against `chore/migration-0090-0091` (on `develop@5e8f5c3`), 2026-10-13.
+Last verified against the code: `fix/citizen-otp-closed` (on `develop@e9e79ff`): the phone-code sign-in refused while no SMS provider is live (`SmsSender.isLive`, `CITIZEN_OTP_UNAVAILABLE`), `otp/verify` throttled (`APP_CONFIG.throttle.otpVerify`), `NODE_ENV` required with no default, security audit N-2, 2026-11-15; `fix/pr88-review` (on `develop@be4f053`), 2026-10-06; the rollback caveat for a new enum value against `chore/migration-0090-0091` (on `develop@5e8f5c3`), 2026-10-13.
 
 Three databases, three targets, and a set of checks whose only job is to make
 "I ran it against the wrong one" impossible rather than unlikely. This is the
@@ -146,7 +146,7 @@ DATABASE_URL="postgresql://appuser_local:localdev@127.0.0.1:5434/municipality_db
 DIRECT_URL="postgresql://appuser_local:localdev@127.0.0.1:5434/municipality_db_local"
 
 JWT_SECRET=<your generated value>
-# false: citizen OTP accepts any code. true: the code comes back as `devCode`.
+# citizen/otp/* is refused (CITIZEN_OTP_UNAVAILABLE) while no SMS provider is live, whatever this says.
 OTP_ENABLED=false
 
 REDIS_URL="redis://localhost:6379"

@@ -412,6 +412,8 @@ export const ERROR_CODES = [
   'TOTP_CODE_INVALID',
   'TOTP_CODE_REUSED',
   'TOTP_LOCKED',
+  // The phone-code sign-in (`citizen/otp/*`) while no SMS provider is live; the portal signs in by رقم مرجعي.
+  'CITIZEN_OTP_UNAVAILABLE',
   // Raised by the portal itself when no response arrives or it cannot be read
   'NETWORK_ERROR',
   'UNKNOWN',
