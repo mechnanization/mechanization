@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import {
   INSPECTOR_PROFILE_ROLES,
   TREASURY_WORK_ROLES,
@@ -12,11 +12,13 @@ import type { RecordInspectorPayoutInput } from '@mechanization/shared-schemas';
 import { StaffService } from '../../application/features/staff/staff.service';
 import { StaffPresenceService } from '../../application/features/identity/staff-presence.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
-import { CurrentUser } from '../decorators/current-user.decorator';
+import { CurrentTenant, CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import { ForbiddenError } from '../../application/common/exceptions';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
 import type { StaffRole } from '../../domain/entities/user.entity';
+import { UuidPipe } from '../pipes/uuid.pipe';
+import { sameId } from '../../application/common/ids';
 
 /**
  * Staff account administration.
@@ -66,8 +68,8 @@ export class StaffController {
   /** Brings a deleted account back onto the list, still disabled. */
   @Post(':id/restore')
   async restore(
-    @Param('tenantSlug') tenantSlug: string,
-    @Param('id') id: string,
+    @CurrentTenant('slug') tenantSlug: string,
+    @Param('id', new UuidPipe()) id: string,
     @CurrentUser() user: SessionClaims,
   ) {
     await this.staff.restore({ tenantSlug, id, actor: { id: user.sub, role: user.role ?? '' } });
@@ -76,7 +78,7 @@ export class StaffController {
 
   @Post()
   async create(
-    @Param('tenantSlug') tenantSlug: string,
+    @CurrentTenant('slug') tenantSlug: string,
     @Body(new ZodValidationPipe(createStaffUserSchema))
     body: {
       email: string;
@@ -96,8 +98,8 @@ export class StaffController {
 
   @Patch(':id')
   async update(
-    @Param('tenantSlug') tenantSlug: string,
-    @Param('id') id: string,
+    @CurrentTenant('slug') tenantSlug: string,
+    @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(updateStaffUserSchema))
     body: {
       email?: string;
@@ -120,8 +122,8 @@ export class StaffController {
   /** Soft delete, and its undo — one route because they are one decision. */
   @Patch(':id/active')
   async setActive(
-    @Param('tenantSlug') tenantSlug: string,
-    @Param('id') id: string,
+    @CurrentTenant('slug') tenantSlug: string,
+    @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(staffActiveSchema)) body: { isActive: boolean },
     @CurrentUser() user: SessionClaims,
   ) {
@@ -137,8 +139,8 @@ export class StaffController {
   /** Hides the account — off the list and signed out, its row and history kept. */
   @Delete(':id')
   async remove(
-    @Param('tenantSlug') tenantSlug: string,
-    @Param('id') id: string,
+    @CurrentTenant('slug') tenantSlug: string,
+    @Param('id', new UuidPipe()) id: string,
     @CurrentUser() user: SessionClaims,
   ) {
     await this.staff.remove({
@@ -156,7 +158,7 @@ export class StaffController {
   @Roles(...WORKING_STAFF_ROLES)
   @Get('inspector/me/profile')
   async getMyProfile(
-    @Param('tenantSlug') tenantSlug: string,
+    @CurrentTenant('slug') tenantSlug: string,
     @CurrentUser() user: SessionClaims,
   ) {
     return this.staff.getInspectorProfile(tenantSlug, user.sub);
@@ -168,11 +170,11 @@ export class StaffController {
   @Roles(...INSPECTOR_PROFILE_ROLES)
   @Get('inspectors/:id/profile')
   async getInspectorProfile(
-    @Param('tenantSlug') tenantSlug: string,
-    @Param('id') id: string,
+    @CurrentTenant('slug') tenantSlug: string,
+    @Param('id', new UuidPipe()) id: string,
     @CurrentUser() user: SessionClaims,
   ) {
-    if (user.role !== 'SUPER_ADMIN' && user.sub !== id) {
+    if (user.role !== 'SUPER_ADMIN' && !sameId(user.sub, id)) {
       throw new ForbiddenError('You do not have permission to view this inspector profile');
     }
     return this.staff.getInspectorProfile(tenantSlug, id);
@@ -193,8 +195,8 @@ export class StaffController {
   @Roles(...TREASURY_WORK_ROLES)
   @Post('inspectors/:id/payouts')
   async recordPayout(
-    @Param('tenantSlug') tenantSlug: string,
-    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentTenant('slug') tenantSlug: string,
+    @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(recordInspectorPayoutSchema))
     body: RecordInspectorPayoutInput,
     @CurrentUser() user: SessionClaims,

@@ -1,6 +1,6 @@
 import type { OwnerBillingRule } from '@mechanization/shared-schemas';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
-import { activeOwnerSpells, ownerBillingBlock } from '../buildings/owner-billing';
+import { activeOwnerSpells, checkResponsibleOwners, ownerBillingBlock } from '../buildings/owner-billing';
 import { DataQualityService, ownerBillingBlockedFinding } from './data-quality.service';
 
 /**
@@ -52,6 +52,15 @@ describe('ownerBillingBlock — what stops a saved method', () => {
     expect(ownerBillingBlock(rule({ mode: 'RESPONSIBLE_OWNER', responsibleOwnerId: 'ali' }))).toBeNull();
   });
 
+  it('names a responsible owner whose own file no longer claims the flat (F13), once billing has asked', () => {
+    const responsible = rule({ mode: 'RESPONSIBLE_OWNER', responsibleOwnerId: 'ali' });
+    expect(ownerBillingBlock({ ...responsible, responsibleBilled: false })).toEqual({
+      reason: 'RESPONSIBLE_NOT_BILLED',
+      owners: 2,
+    });
+    expect(ownerBillingBlock({ ...responsible, responsibleBilled: true })).toBeNull();
+  });
+
   it('has nothing to say about the equal split, or a flat one person owns', () => {
     expect(ownerBillingBlock(rule({ mode: null, owners: [{ citizenId: 'ali', shares: null }, { citizenId: 'maarouf', shares: null }] }))).toBeNull();
     expect(ownerBillingBlock(rule({ mode: 'EQUAL' }))).toBeNull();
@@ -85,10 +94,49 @@ describe('ownerBillingBlockedFinding', () => {
     expect(finding.severity).toBe('MEDIUM');
     expect(finding.detail.split(' — ')[1]).toMatch(/بالتساوي/);
   });
+
+  it('says of a responsible owner whose file stopped claiming the flat that he still owns it and is not billed for it', () => {
+    const finding = ownerBillingBlockedFinding(unit, { reason: 'RESPONSIBLE_NOT_BILLED', owners: 3 }, building);
+    expect(finding.severity).toBe('MEDIUM');
+    const [fact, meanwhile] = finding.detail.split(' — ');
+    expect(fact).toContain('ما زال مالكاً');
+    expect(fact).toContain('ملفه');
+    expect(meanwhile).toMatch(/بالتساوي/);
+    expect(finding.detail).not.toBe(ownerBillingBlockedFinding(unit, { reason: 'RESPONSIBLE_NOT_OWNER', owners: 3 }, building).detail);
+  });
+});
+
+describe('checkResponsibleOwners — the question billing asks of «مالك مسؤول» (F13)', () => {
+  const responsible = (id: string, owner = 'ali') => [id, rule({ mode: 'RESPONSIBLE_OWNER', responsibleOwnerId: owner })] as const;
+
+  it('marks each flat by whether the responsible owner’s own file claims it, reading each owner once', async () => {
+    const rules = new Map<string, OwnerBillingRule>([responsible('u-1'), responsible('u-2'), responsible('u-3', 'maarouf')]);
+    const asked: string[] = [];
+    await checkResponsibleOwners(rules, async (citizenId) => {
+      asked.push(citizenId);
+      return new Set(citizenId === 'ali' ? ['u-1'] : ['u-3']);
+    });
+    expect(asked.sort()).toEqual(['ali', 'maarouf']);
+    expect(rules.get('u-1')!.responsibleBilled).toBe(true);
+    expect(rules.get('u-2')!.responsibleBilled).toBe(false);
+    expect(rules.get('u-3')!.responsibleBilled).toBe(true);
+  });
+
+  it('asks nothing of another method, or of a responsible owner who is no longer an owner', async () => {
+    const rules = new Map<string, OwnerBillingRule>([
+      ['u-1', rule()],
+      ['u-2', rule({ mode: 'EQUAL' })],
+      responsible('u-3', 'gone'),
+    ]);
+    const claimsOf = jest.fn(async () => new Set<string>());
+    await checkResponsibleOwners(rules, claimsOf);
+    expect(claimsOf).not.toHaveBeenCalled();
+    for (const checked of rules.values()) expect(checked.responsibleBilled).toBeUndefined();
+  });
 });
 
 describe('the OWNER_BILLING_BLOCKED scan', () => {
-  function scanWith(units: unknown[]) {
+  function scanWith(units: unknown[], claims: Record<string, string[]> = {}) {
     const context = new TenantContextService();
     const unitQueries: unknown[] = [];
     const db = {
@@ -102,13 +150,20 @@ describe('the OWNER_BILLING_BLOCKED scan', () => {
         findMany: async () => [{ id: 'b-1', code: 'A2-420-A', name: 'سرور', parcelNumber: '420' }],
       },
     };
-    const quality = new DataQualityService(context, {} as never, {} as never, {} as never, {} as never);
+    const claimsAsked: string[] = [];
+    const fees = {
+      ownerClaims: async (citizenId: string) => {
+        claimsAsked.push(citizenId);
+        return new Set(claims[citizenId] ?? []);
+      },
+    };
+    const quality = new DataQualityService(context, {} as never, {} as never, {} as never, {} as never, fees as never);
     const run = () =>
       context.run(
         { tenantId: 't-1', tenantSlug: 'albazourieh', schemaName: 'tenant_albazourieh', prisma: db as never },
         () => quality['ownerBillingBlocked'](),
       );
-    return { run, unitQueries };
+    return { run, unitQueries, claimsAsked };
   }
 
   const shop = (over: Record<string, unknown>) => ({
@@ -162,5 +217,16 @@ describe('the OWNER_BILLING_BLOCKED scan', () => {
     // 1200 + nothing is short of 2400 too, but billing refuses it outright, and that is what the office must hear.
     const findings = await scanWith([shop({})]).run();
     expect(findings.map((finding) => finding.kind)).toEqual(['OWNER_BILLING_BLOCKED']);
+  });
+
+  it('reports a flat whose responsible owner’s own file stopped claiming it, through billing’s own reading of the file (F13)', async () => {
+    const responsible = (id: string) => shop({ id, ownerBillingMode: 'RESPONSIBLE_OWNER', responsibleOwnerId: 'ali' });
+    const scan = scanWith([responsible('u-1'), responsible('u-2')], { ali: ['u-2'] });
+    const findings = await scan.run();
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ kind: 'OWNER_BILLING_BLOCKED', subjectKey: 'u-1', severity: 'MEDIUM' });
+    expect(findings[0]!.detail).toContain('ملفه');
+    // One read of the responsible owner's file for both of his flats.
+    expect(scan.claimsAsked).toEqual(['ali']);
   });
 });

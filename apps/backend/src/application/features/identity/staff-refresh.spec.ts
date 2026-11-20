@@ -20,6 +20,7 @@ import {
   StaffSessionGrant,
 } from './identity.service';
 import { OtpService } from './otp.service';
+import { SESSION_TOKEN_AUDIENCE, SESSION_TOKEN_ISSUER } from './session-token';
 import { SessionRevocationService } from './session-revocation.service';
 import { StaffRefreshTokenService } from './staff-refresh-token.service';
 
@@ -269,7 +270,7 @@ function build() {
       // The subject is sessions, not credentials: every password is accepted.
       verify: jest.fn().mockResolvedValue(true),
     } as unknown as PasswordHasher,
-    { verify: jest.fn().mockReturnValue(true) } as unknown as TotpService,
+    { matchStep: jest.fn().mockReturnValue(1) } as unknown as TotpService,
     {
       isConfigured: false,
       send: jest.fn(() => {
@@ -385,6 +386,33 @@ describe('loginStaff — what a staff sign-in hands out', () => {
     expect(grant.refresh.persistent).toBe(false);
     expect(grant.refresh.cookieName).toMatch(/^mz_sr_[0-9a-f]{24}$/);
     expect(JSON.stringify(grant.session)).not.toContain(grant.refresh.token);
+  });
+
+  it('signs the access token as a session: HS256, the issuer and the audience (S18)', async () => {
+    const harness = build();
+    const grant = await signIn(harness);
+    const header = JSON.parse(Buffer.from(grant.session.accessToken.split('.')[0]!, 'base64url').toString());
+    expect(header.alg).toBe('HS256');
+    expect(claimsOf(harness, grant.session.accessToken)).toMatchObject({
+      iss: SESSION_TOKEN_ISSUER,
+      aud: SESSION_TOKEN_AUDIENCE,
+    });
+  });
+
+  it('still refreshes a tab whose token was minted before the deploy, with neither claim (S18 phase 1)', async () => {
+    const harness = build();
+    const grant = await signIn(harness);
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { iss, aud, exp, iat, ...before } = claimsOf(harness, grant.session.accessToken) as SessionClaims & {
+      iss?: string;
+      aud?: string;
+      exp: number;
+      iat: number;
+    };
+    const legacy = harness.jwt.sign(before, { expiresIn: 15 * 60 });
+    later(20);
+    const renewed = granted(await refresh(harness, legacy, cookieOf(grant)));
+    expect(claimsOf(harness, renewed.session.accessToken)).toMatchObject({ sub: before.sub, aud: SESSION_TOKEN_AUDIENCE });
   });
 
   it('«تذكّرني» lengthens the session and the cookie, not the access token', async () => {

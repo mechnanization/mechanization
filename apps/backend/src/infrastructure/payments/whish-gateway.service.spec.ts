@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto';
 import type { ConfigService } from '@nestjs/config';
-import { WhishGatewayService } from './whish-gateway.service';
+import { WHISH_PROVIDER_WIRED, WhishGatewayService } from './whish-gateway.service';
 
 /**
  * `parseCallback` is the only path in this system that can move an invoice to
@@ -135,7 +135,10 @@ describe('WhishGatewayService.createCheckout', () => {
 
   it('reports sandbox and live correctly', () => {
     expect(sandbox().isLive).toBe(false);
-    expect(live().isLive).toBe(true);
+    // Credentials alone are not live while `postCheckout` is not written (S18): since
+    // `WHISH_*` reach the gateway, a value left in a deployed `.env` must not lift
+    // ONLINE_PAYMENT_UNAVAILABLE into a 500.
+    expect(live().isLive).toBe(WHISH_PROVIDER_WIRED);
   });
 
   /**

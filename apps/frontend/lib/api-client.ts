@@ -3,6 +3,7 @@ import {
   IMPORT_BATCH_SIZE,
   type ErrorParams,
   type HouseGrowth,
+  type OwnerBillingFallback,
   type ReinspectionsPage,
   type StaffPresenceResponse,
   type StaffSelf,
@@ -759,12 +760,13 @@ const SESSION_ROUTES = ['/auth/staff/login', '/auth/staff/refresh', '/auth/staff
 
 /**
  * 401s that answer the request, not the session: the current password typed to
- * confirm a change to one's own account («أمان الحساب») is wrong. Exchanged and
+ * confirm a change to one's own account («أمان الحساب») is wrong, or the code
+ * typed to confirm an authenticator is (`TOTP_CODE_INVALID`). Exchanged and
  * replayed like an expiry, each wrong guess rotated the refresh cookie and had
- * the server check the password twice. A 401 with any other code on those
- * routes is still an expired session and renewed as one.
+ * the server check it twice. A 401 with any other code on those routes is
+ * still an expired session and renewed as one.
  */
-const ANSWERED_401 = new Set<string>(['STAFF_CURRENT_PASSWORD_INCORRECT']);
+const ANSWERED_401 = new Set<string>(['STAFF_CURRENT_PASSWORD_INCORRECT', 'TOTP_CODE_INVALID']);
 
 type ApiFetchInit = RequestInit & {
   token?: string;
@@ -1140,6 +1142,26 @@ export async function logoutStaff(tenant: string, accessToken?: string): Promise
       signal: timeoutSignal(5_000),
     }),
   );
+}
+
+/**
+ * A citizen's «خروج», ended on the server (task S14 of the 2026-11-14
+ * security audit): every session the citizen holds stops working, not only
+ * the one in this browser — a citizen token otherwise lives seven days.
+ *
+ * **May throw**, like `logoutStaff`: callers clear the local session anyway
+ * (`signOutCitizen` in `lib/citizen-sign-out.ts`), and a session this could
+ * not end runs out at its cap, which is all signing out did before.
+ */
+export async function logoutCitizen(tenant: string, accessToken?: string): Promise<void> {
+  if (!accessToken) return;
+  await apiFetch<{ signedOut: boolean }>(tenant, '/auth/citizen/logout', {
+    method: 'POST',
+    token: accessToken,
+    // A 401 here means there was nothing to end, never "exchange and retry".
+    skipTokenRefresh: true,
+    signal: timeoutSignal(5_000),
+  });
 }
 
 export interface DashboardCounters {
@@ -3335,7 +3357,7 @@ export interface CitizenProfileUnit {
     mode: OwnerBillingMode | null;
     effectiveMode: OwnerBillingMode;
     responsibleOwnerId?: string | null;
-    fallback?: 'RESPONSIBLE_NOT_OWNER' | null;
+    fallback?: OwnerBillingFallback | null;
     share: { numerator: number; denominator: number } | null;
   } | null;
 }
@@ -5379,6 +5401,8 @@ export async function issueFeeNotice(
     residences?: FeeNoticePreviewInput['residences'];
     /** The scope's warnings the clerk confirmed; the server refuses a scope with one unconfirmed. */
     acknowledgedWarnings?: FeeNoticePreviewInput['acknowledgedWarnings'];
+    /** The active notices the preview listed as duplicates and the clerk issued beside (`FEE_NOTICE_DUPLICATE`), by id. */
+    acknowledgedDuplicates?: string[];
     targetCitizenId?: string;
     dueDate: string;
     instructions?: string;
@@ -5922,9 +5946,15 @@ export function getPaymentById(tenant: string, token: string, id: string) {
 export async function chargeCitizen(
   tenant: string,
   token: string,
-  input: { citizenId: string; title: string; amount: number; dueDate: string },
+  /** `clientRequestId`: one id per press (`charge:new` in `lib/request-id.ts`, 0102); a retry is answered with the first bill. */
+  input: { citizenId: string; title: string; amount: number; dueDate: string; clientRequestId: string },
 ) {
-  const result = await apiFetch<{ id: string }>(tenant, '/fees/payments', {
+  const result = await apiFetch<{
+    id: string;
+    invoiceNumber: string | null;
+    /** True when the key had already raised this charge: nothing new was billed. */
+    replayed: boolean;
+  }>(tenant, '/fees/payments', {
     token,
     method: 'POST',
     body: JSON.stringify(input),

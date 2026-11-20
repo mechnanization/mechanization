@@ -62,6 +62,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { StatItem, StatStrip } from '@/components/ui/stat-strip';
 import { MyRequests } from '@/components/citizen/my-requests';
 import { cn } from '@/lib/utils';
+import { signOutCitizen } from '@/lib/citizen-sign-out';
 
 /**
  * First letters of the first two words, for the avatar.
@@ -230,8 +231,9 @@ export default function MyFilePage({
     void load();
   }, [load]);
 
-  const signOut = useCallback(() => {
-    clearSession(tenant);
+  // Ended on the server too, not only forgotten here (S14).
+  const signOut = useCallback(async () => {
+    await signOutCitizen(tenant);
     router.replace(base);
   }, [tenant, base, router]);
 

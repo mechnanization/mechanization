@@ -1,13 +1,4 @@
-import {
-  Body,
-  Controller,
-  Delete,
-  Get,
-  Param,
-  Patch,
-  Post,
-  Query,
-} from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import {
   EVERY_STAFF_ROLE,
   LANDLORD_LINK_ANSWER_ROLES,
@@ -47,9 +38,11 @@ import { TenancyService } from '../../application/features/citizens/tenancy.serv
 import { ReportingService, type CitizenProfileUnit } from '../../application/features/reporting/reporting.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { NotFoundError } from '../../application/common/exceptions';
-import { CurrentUser } from '../decorators/current-user.decorator';
+import { CurrentTenant, CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
+import { UuidPipe } from '../pipes/uuid.pipe';
+import { queryLimit, queryOffset } from './query-params';
 
 /**
  * Shows only the tail of an identifier — `•••567`.
@@ -105,12 +98,12 @@ export class CitizenController {
    */
   @Roles(...EVERY_STAFF_ROLE)
   @Get(':id/history')
-  history(@Param('id') id: string, @Query('limit') limit = '30', @Query('offset') offset = '0') {
+  history(@Param('id', new UuidPipe()) id: string, @Query('limit') limit = '30', @Query('offset') offset = '0') {
     return this.audit.history({
       entityType: 'User',
       entityId: id,
-      limit: Math.min(Math.max(Number(limit) || 30, 1), 100),
-      offset: Math.max(Number(offset) || 0, 0),
+      limit: queryLimit(limit, 30, 100),
+      offset: queryOffset(offset),
     });
   }
 
@@ -139,8 +132,8 @@ export class CitizenController {
       {
         search,
         status,
-        limit: Number(limit) || 200,
-        offset: Number(offset) || 0,
+        limit: queryLimit(limit, 200, 500),
+        offset: queryOffset(offset),
       },
       // «يتطلب مراجعة» is the viewer's own queue unless they are an admin.
       user ? { id: user.sub, role: user.role ?? '' } : undefined,
@@ -377,7 +370,7 @@ export class CitizenController {
    */
   @Roles(...EVERY_STAFF_ROLE)
   @Get('landlord-links/:propertyEntryId')
-  async landlordLink(@Param('propertyEntryId') propertyEntryId: string) {
+  async landlordLink(@Param('propertyEntryId', new UuidPipe()) propertyEntryId: string) {
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     const proposal = uuid.test(propertyEntryId)
       ? await this.landlordLinkService.proposal(propertyEntryId)
@@ -393,7 +386,7 @@ export class CitizenController {
    */
   @Roles(...REGISTER_WRITE_ROLES)
   @Get('tenancies/:propertyEntryId/end-preview')
-  tenancyEndPreview(@Param('propertyEntryId') propertyEntryId: string) {
+  tenancyEndPreview(@Param('propertyEntryId', new UuidPipe()) propertyEntryId: string) {
     return this.tenancy.previewCard(propertyEntryId);
   }
 
@@ -405,7 +398,7 @@ export class CitizenController {
   @Roles(...REGISTER_WRITE_ROLES)
   @Post('tenancies/:propertyEntryId/end')
   endTenancy(
-    @Param('propertyEntryId') propertyEntryId: string,
+    @Param('propertyEntryId', new UuidPipe()) propertyEntryId: string,
     @Body(new ZodValidationPipe(endTenancySchema)) body: EndTenancyInput,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -431,7 +424,7 @@ export class CitizenController {
    */
   @Roles(...REGISTER_WRITE_ROLES)
   @Get('ownerships/:propertyEntryId/end-preview')
-  ownershipEndPreview(@Param('propertyEntryId') propertyEntryId: string) {
+  ownershipEndPreview(@Param('propertyEntryId', new UuidPipe()) propertyEntryId: string) {
     return this.ownership.previewCard(propertyEntryId);
   }
 
@@ -443,7 +436,7 @@ export class CitizenController {
   @Roles(...REGISTER_WRITE_ROLES)
   @Post('ownerships/:propertyEntryId/end')
   endOwnership(
-    @Param('propertyEntryId') propertyEntryId: string,
+    @Param('propertyEntryId', new UuidPipe()) propertyEntryId: string,
     @Body(new ZodValidationPipe(endOwnershipSchema)) body: EndOwnershipInput,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -469,7 +462,7 @@ export class CitizenController {
    */
   @Roles(...LANDLORD_LINK_ANSWER_ROLES)
   @Get('landlord-links/:propertyEntryId/unlink-preview')
-  landlordUnlinkPreview(@Param('propertyEntryId') propertyEntryId: string) {
+  landlordUnlinkPreview(@Param('propertyEntryId', new UuidPipe()) propertyEntryId: string) {
     return this.landlordLinkService.unlinkPreview(propertyEntryId);
   }
 
@@ -489,7 +482,7 @@ export class CitizenController {
   @Roles(...LANDLORD_LINK_ANSWER_ROLES)
   @Post('landlord-links/:propertyEntryId/confirm')
   confirmLandlordLink(
-    @Param('propertyEntryId') propertyEntryId: string,
+    @Param('propertyEntryId', new UuidPipe()) propertyEntryId: string,
     @Body('citizenId') citizenId: string,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -509,7 +502,7 @@ export class CitizenController {
   @Roles(...LANDLORD_LINK_ANSWER_ROLES)
   @Post('landlord-links/:propertyEntryId/dismiss')
   dismissLandlordLink(
-    @Param('propertyEntryId') propertyEntryId: string,
+    @Param('propertyEntryId', new UuidPipe()) propertyEntryId: string,
     @Body('candidateIds') candidateIds: unknown,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -526,7 +519,7 @@ export class CitizenController {
   @Roles(...LANDLORD_LINK_ANSWER_ROLES)
   @Post('landlord-links/:propertyEntryId/restore')
   restoreLandlordLink(
-    @Param('propertyEntryId') propertyEntryId: string,
+    @Param('propertyEntryId', new UuidPipe()) propertyEntryId: string,
     @Body('candidateIds') candidateIds: unknown,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -548,7 +541,7 @@ export class CitizenController {
   @Roles(...LANDLORD_LINK_ANSWER_ROLES)
   @Delete('landlord-links/:propertyEntryId')
   unlinkLandlord(
-    @Param('propertyEntryId') propertyEntryId: string,
+    @Param('propertyEntryId', new UuidPipe()) propertyEntryId: string,
     @CurrentUser() user: SessionClaims,
   ) {
     return this.landlordLinkService.unlink({
@@ -578,7 +571,7 @@ export class CitizenController {
    */
   @Roles(...EVERY_STAFF_ROLE)
   @Get(':id')
-  async getById(@Param('id') id: string) {
+  async getById(@Param('id', new UuidPipe()) id: string) {
     const citizen = await this.reporting.getCitizenProfile(id);
     if (!citizen) throw new NotFoundError('Citizen', id);
     return citizen;
@@ -591,7 +584,7 @@ export class CitizenController {
    */
   @Roles(...REGISTER_WRITE_ROLES)
   @Get(':id/form')
-  async getEditable(@Param('id') id: string, @CurrentUser() user: SessionClaims) {
+  async getEditable(@Param('id', new UuidPipe()) id: string, @CurrentUser() user: SessionClaims) {
     return this.citizens.getEditable(id, user.sub);
   }
 
@@ -608,7 +601,7 @@ export class CitizenController {
   @Roles(...REGISTER_WRITE_ROLES)
   @Post()
   async create(
-    @Param('tenantSlug') tenantSlug: string,
+    @CurrentTenant('slug') tenantSlug: string,
     @Body(new ZodValidationPipe(adminCreateCitizenSubmissionSchema))
     payload: AdminCitizenSubmission,
     @CurrentUser() user: SessionClaims,
@@ -676,7 +669,7 @@ export class CitizenController {
   @Roles('SUPER_ADMIN')
   @Post('merge')
   async merge(
-    @Param('tenantSlug') tenantSlug: string,
+    @CurrentTenant('slug') tenantSlug: string,
     @Body(new ZodValidationPipe(citizenMergeSchema)) body: CitizenMergeInput,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -690,14 +683,14 @@ export class CitizenController {
    */
   @Roles(...EVERY_STAFF_ROLE)
   @Get(':id/merges')
-  async mergesOf(@Param('id') id: string) {
+  async mergesOf(@Param('id', new UuidPipe()) id: string) {
     return this.merges.mergesOf(id);
   }
 
   /** Whether «التراجع عن الدمج» would go through, and if not, why. */
   @Roles('SUPER_ADMIN')
   @Get('merges/:mergeId/undo-preview')
-  async unmergePreview(@Param('mergeId') mergeId: string) {
+  async unmergePreview(@Param('mergeId', new UuidPipe()) mergeId: string) {
     return this.merges.unmergePreview(mergeId);
   }
 
@@ -705,8 +698,8 @@ export class CitizenController {
   @Roles('SUPER_ADMIN')
   @Post('merges/:mergeId/undo')
   async unmerge(
-    @Param('tenantSlug') tenantSlug: string,
-    @Param('mergeId') mergeId: string,
+    @CurrentTenant('slug') tenantSlug: string,
+    @Param('mergeId', new UuidPipe()) mergeId: string,
     @Body(new ZodValidationPipe(citizenUnmergeSchema)) body: CitizenUnmergeInput,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -732,7 +725,7 @@ export class CitizenController {
   @Roles(...REGISTER_WRITE_ROLES)
   @Post('import')
   async import(
-    @Param('tenantSlug') tenantSlug: string,
+    @CurrentTenant('slug') tenantSlug: string,
     @Body(new ZodValidationPipe(citizenImportSchema)) payload: CitizenImportRequest,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -753,7 +746,7 @@ export class CitizenController {
   @Roles(...REGISTER_WRITE_ROLES)
   @Post(':id/edit-review')
   async reviewEdit(
-    @Param('id') id: string,
+    @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(adminUpdateCitizenSubmissionSchema))
     payload: AdminCitizenUpdateSubmission,
   ) {
@@ -764,8 +757,8 @@ export class CitizenController {
   @Roles(...REGISTER_WRITE_ROLES)
   @Patch(':id')
   async update(
-    @Param('tenantSlug') tenantSlug: string,
-    @Param('id') id: string,
+    @CurrentTenant('slug') tenantSlug: string,
+    @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(adminUpdateCitizenSubmissionSchema))
     payload: AdminCitizenUpdateSubmission,
     @CurrentUser() user: SessionClaims,
@@ -787,8 +780,8 @@ export class CitizenController {
   @Roles(...REGISTER_WRITE_ROLES)
   @Patch(':id/active')
   async setActive(
-    @Param('tenantSlug') tenantSlug: string,
-    @Param('id') id: string,
+    @CurrentTenant('slug') tenantSlug: string,
+    @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(setCitizenActiveSchema)) body: SetCitizenActive,
     @CurrentUser() user: SessionClaims,
   ) {

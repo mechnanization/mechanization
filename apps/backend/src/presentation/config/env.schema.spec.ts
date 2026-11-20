@@ -63,6 +63,7 @@ describe('isSchedulerEnabled', () => {
 
 describe('validateEnv — SCHEDULER_ENABLED', () => {
   const base = {
+    NODE_ENV: 'development',
     DATABASE_URL: 'postgresql://u:p@localhost:5432/db?schema=public',
     DIRECT_URL: 'postgresql://u:p@localhost:5432/db',
     SUPABASE_URL: 'https://example.supabase.co',
@@ -83,6 +84,7 @@ describe('validateEnv — SCHEDULER_ENABLED', () => {
 
 describe('validateEnv — METRICS_TOKEN', () => {
   const base = {
+    NODE_ENV: 'development',
     DATABASE_URL: 'postgresql://u:p@localhost:5432/db?schema=public',
     DIRECT_URL: 'postgresql://u:p@localhost:5432/db',
     JWT_SECRET: 'y'.repeat(40),
@@ -119,6 +121,7 @@ describe('validateEnv — METRICS_TOKEN', () => {
  */
 describe('validateEnv — S3', () => {
   const base = {
+    NODE_ENV: 'development',
     DATABASE_URL: 'postgresql://u:p@localhost:5432/db?schema=public',
     DIRECT_URL: 'postgresql://u:p@localhost:5432/db',
     SUPABASE_URL: 'https://example.supabase.co',
@@ -180,7 +183,8 @@ describe('validateEnv — S3', () => {
   });
 
   describe('in production', () => {
-    const productionBase = { ...base, NODE_ENV: 'production' };
+    // The portal's origin is required in production since S18; set here so these cases test S3 alone.
+    const productionBase = { ...base, NODE_ENV: 'production', CORS_ORIGINS: 'https://portal.example.invalid' };
 
     it('names all three missing variables in one failure, not one per deploy', () => {
       let message = '';
@@ -228,5 +232,111 @@ describe('validateEnv — S3', () => {
         validateEnv({ ...productionBase, ...s3, AWS_ACCESS_KEY_ID: 'A'.repeat(20) }),
       ).toThrow(/AWS_SECRET_ACCESS_KEY/);
     });
+  });
+});
+
+/**
+ * The portal's origins (task S18). Credentialed — the staff refresh cookie
+ * crosses to the API — so production takes https origins only, each exactly as
+ * a browser sends it. A laptop keeps its localhost default.
+ */
+describe('validateEnv — CORS_ORIGINS', () => {
+  const base = {
+    NODE_ENV: 'development',
+    DATABASE_URL: 'postgresql://u:p@localhost:5432/db?schema=public',
+    DIRECT_URL: 'postgresql://u:p@localhost:5432/db',
+    JWT_SECRET: 'y'.repeat(40),
+  };
+  const production = {
+    ...base,
+    NODE_ENV: 'production',
+    AWS_REGION: 'eu-west-3',
+    S3_DOCUMENTS_BUCKET: 'municipality-documents',
+    S3_CADASTRE_BUCKET: 'municipality-cadastre',
+  };
+
+  it('keeps the localhost default on a developer machine', () => {
+    expect(validateEnv(base).CORS_ORIGINS).toEqual(['http://localhost:3000']);
+  });
+
+  it('refuses the localhost default in production: the variable must be set', () => {
+    expect(() => validateEnv(production)).toThrow('refused: http://localhost:3000');
+  });
+
+  it.each([
+    ['an http origin', 'http://portal.example.invalid'],
+    ['a trailing slash', 'https://portal.example.invalid/'],
+    ['a path', 'https://portal.example.invalid/albazourieh'],
+    ['a wildcard', '*'],
+  ])('refuses %s in production, naming it', (_label, origin) => {
+    expect(() =>
+      validateEnv({ ...production, CORS_ORIGINS: `https://staff.example.invalid,${origin}` }),
+    ).toThrow(`CORS_ORIGINS must list the portal's https origins in production (scheme, host and port, no path or wildcard) — refused: ${origin}`);
+  });
+
+  it('accepts https origins, with a port', () => {
+    const env = validateEnv({ ...production, CORS_ORIGINS: 'https://portal.example.invalid, https://staff.example.invalid:8443' });
+    expect(env.CORS_ORIGINS).toEqual(['https://portal.example.invalid', 'https://staff.example.invalid:8443']);
+  });
+});
+
+/**
+ * `WHISH_*` are declared (task S18) so a value in a deployed `.env` reaches the
+ * gateway; `validate` copies only the keys the schema returns. No pair rule
+ * yet: the provider call is not written, and a boot refusal over it would
+ * enforce nothing but an outage (§8.7).
+ */
+describe('validateEnv — WHISH_*', () => {
+  const base = {
+    NODE_ENV: 'development',
+    DATABASE_URL: 'postgresql://u:p@localhost:5432/db?schema=public',
+    DIRECT_URL: 'postgresql://u:p@localhost:5432/db',
+    JWT_SECRET: 'y'.repeat(40),
+  };
+
+  it('returns the three, so they reach the gateway', () => {
+    const env = validateEnv({
+      ...base,
+      WHISH_API_URL: 'https://whish.example.invalid',
+      WHISH_API_KEY: 'key',
+      WHISH_WEBHOOK_SECRET: 'secret',
+    });
+    expect([env.WHISH_API_URL, env.WHISH_API_KEY, env.WHISH_WEBHOOK_SECRET]).toEqual([
+      'https://whish.example.invalid',
+      'key',
+      'secret',
+    ]);
+  });
+
+  it('boots with them absent or half-set while the provider call is not written', () => {
+    expect(() => validateEnv(base)).not.toThrow();
+    expect(() => validateEnv({ ...base, WHISH_API_KEY: 'key' })).not.toThrow();
+  });
+});
+
+/**
+ * `NODE_ENV` has no default (security audit N-2). Unset, it used to read as
+ * `development`: an OTP response carried `devCode`, `OTP_ENABLED=false` was
+ * allowed and S3 was not demanded, on whatever host forgot to set it.
+ */
+describe('validateEnv — NODE_ENV', () => {
+  const withoutNodeEnv = {
+    DATABASE_URL: 'postgresql://u:p@localhost:5432/db?schema=public',
+    DIRECT_URL: 'postgresql://u:p@localhost:5432/db',
+    JWT_SECRET: 'y'.repeat(40),
+  };
+
+  it('refuses to boot when it is unset, and says what to do', () => {
+    expect(() => validateEnv({ ...withoutNodeEnv })).toThrow(/NODE_ENV is required/);
+  });
+
+  it('refuses a value it does not know, rather than reading it as development', () => {
+    expect(() => validateEnv({ ...withoutNodeEnv, NODE_ENV: 'prod' })).toThrow(
+      /NODE_ENV must be one of/,
+    );
+  });
+
+  it.each(['development', 'test'])('takes %s as it is', (value) => {
+    expect(validateEnv({ ...withoutNodeEnv, NODE_ENV: value }).NODE_ENV).toBe(value);
   });
 });

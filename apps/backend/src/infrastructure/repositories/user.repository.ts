@@ -7,6 +7,8 @@ import {
   CitizenChoice,
   DeletedStaffSummary,
   StaffSummary,
+  TotpLockoutPolicy,
+  TotpStepOutcome,
   UserRepository,
 } from '../../domain/interfaces/user-repository.interface';
 import { cardsCreditedTo, COMMISSION_RATE, creditBillableUnits } from '@mechanization/shared-schemas';
@@ -41,6 +43,7 @@ export class PrismaUserRepository implements UserRepository {
       lastTotpStep: row.lastTotpStep,
       totpSecret: row.totpSecret,
       totpConfirmedAt: row.totpConfirmedAt,
+      totpLockedUntil: row.totpLockedUntil,
     });
   }
 
@@ -63,6 +66,7 @@ export class PrismaUserRepository implements UserRepository {
         lastTotpStep: row.lastTotpStep,
         totpSecret: row.totpSecret,
         totpConfirmedAt: row.totpConfirmedAt,
+      totpLockedUntil: row.totpLockedUntil,
       });
     }
 
@@ -139,26 +143,76 @@ export class PrismaUserRepository implements UserRepository {
     });
   }
 
+  /** Scoped to `kind = 'CITIZEN'` in the write itself, so a staff id here changes nothing. */
+  async endCitizenSessions(userId: string): Promise<boolean> {
+    const { count } = await this.db.user.updateMany({
+      where: { id: userId, kind: 'CITIZEN' },
+      data: { tokenVersion: { increment: 1 } },
+    });
+    return count === 1;
+  }
+
   /**
-   * Burns a TOTP step.
+   * Burns a TOTP step, and clears the failure count and any lockout.
    *
    * Guarded in the `where` rather than checked first: two logins racing with
    * the same code both read `lastTotpStep` as the older value, and only a
-   * conditional write lets exactly one of them win. The caller treats "no row
-   * updated" as a replay.
+   * conditional write lets exactly one of them win. The lockout is in the same
+   * `where`, so a right code that was already on its way when the fifth wrong
+   * one locked the account is refused too. Only a refusal reads the row again,
+   * to say which of the two it was.
    */
-  async recordTotpStep(userId: string, step: number): Promise<void> {
+  async recordTotpStep(userId: string, step: number, now: Date): Promise<TotpStepOutcome> {
     const { count } = await this.db.user.updateMany({
       where: {
         id: userId,
-        OR: [{ lastTotpStep: null }, { lastTotpStep: { lt: BigInt(step) } }],
+        AND: [
+          { OR: [{ lastTotpStep: null }, { lastTotpStep: { lt: BigInt(step) } }] },
+          { OR: [{ totpLockedUntil: null }, { totpLockedUntil: { lte: now } }] },
+        ],
       },
-      data: { lastTotpStep: BigInt(step) },
+      data: { lastTotpStep: BigInt(step), totpFailedAttempts: 0, totpLockedUntil: null },
     });
+    if (count === 1) return { accepted: true };
 
-    if (count === 0) {
-      throw new ConflictError('تم استخدام هذا الرمز بالفعل');
-    }
+    const row = await this.db.user.findUnique({
+      where: { id: userId },
+      select: { totpLockedUntil: true },
+    });
+    const lockedUntil =
+      row?.totpLockedUntil && row.totpLockedUntil.getTime() > now.getTime()
+        ? row.totpLockedUntil
+        : null;
+    return { accepted: false, lockedUntil };
+  }
+
+  /**
+   * Counts a wrong code, and locks the account on the one that reaches the
+   * limit.
+   *
+   * The increment is atomic, so two wrong codes at once count as two. The
+   * lock is a second, conditional write: whichever request saw the count reach
+   * the limit sets it and starts the count again, and if two did, both set
+   * the same kind of lockout and the later one stands.
+   */
+  async recordTotpFailure(
+    userId: string,
+    policy: TotpLockoutPolicy,
+    now: Date,
+  ): Promise<{ lockedUntil: Date | null }> {
+    const { totpFailedAttempts } = await this.db.user.update({
+      where: { id: userId },
+      data: { totpFailedAttempts: { increment: 1 } },
+      select: { totpFailedAttempts: true },
+    });
+    if (totpFailedAttempts < policy.maxFailures) return { lockedUntil: null };
+
+    const lockedUntil = new Date(now.getTime() + policy.lockSeconds * 1000);
+    await this.db.user.updateMany({
+      where: { id: userId, totpFailedAttempts: { gte: policy.maxFailures } },
+      data: { totpFailedAttempts: 0, totpLockedUntil: lockedUntil },
+    });
+    return { lockedUntil };
   }
 
   /** Writes an unconfirmed secret. Sessions stay blocked until confirmed. */
@@ -181,7 +235,13 @@ export class PrismaUserRepository implements UserRepository {
   async disableTotp(userId: string): Promise<void> {
     await this.db.user.update({
       where: { id: userId },
-      data: { totpSecret: null, totpConfirmedAt: null, lastTotpStep: null },
+      data: {
+        totpSecret: null,
+        totpConfirmedAt: null,
+        lastTotpStep: null,
+        totpFailedAttempts: 0,
+        totpLockedUntil: null,
+      },
     });
   }
 

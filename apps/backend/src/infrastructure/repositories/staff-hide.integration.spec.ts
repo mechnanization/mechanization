@@ -83,4 +83,19 @@ describeIfDb('PrismaUserRepository.hideStaff', () => {
     expect(await db.auditLogEntry.count({ where: { actorId: id } })).toBe(1);
     expect((await within(() => users.listStaff())).some((staff) => staff.id === id)).toBe(false);
   });
+
+  it('ends a citizen’s sessions by their version, and touches no staff row (S14)', async () => {
+    const citizen = randomUUID();
+    const staffId = randomUUID();
+    await db.user.create({ data: { id: citizen, kind: 'CITIZEN', tenantSlug: 'hide', firstName: 'سامي', lastName: 'نصر' } });
+    await db.user.create({
+      data: { id: staffId, kind: 'STAFF', tenantSlug: 'hide', email: `s-${staffId}@hide.gov.lb`, firstName: 'م', lastName: 'ن', role: 'COLLECTOR' },
+    });
+
+    await expect(within(() => users.endCitizenSessions(citizen))).resolves.toBe(true);
+    await expect(within(() => users.endCitizenSessions(staffId))).resolves.toBe(false);
+
+    expect((await db.user.findUniqueOrThrow({ where: { id: citizen } })).tokenVersion).toBe(1);
+    expect((await db.user.findUniqueOrThrow({ where: { id: staffId } })).tokenVersion).toBe(0);
+  });
 });

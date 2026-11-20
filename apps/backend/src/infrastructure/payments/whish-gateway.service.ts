@@ -22,6 +22,12 @@ import type {
  * `ONLINE_PAYMENT_UNAVAILABLE` while `isLive` is false. Nothing in this file can
  * move an invoice to PAID without a signature that verifies — see `parseCallback`.
  */
+/**
+ * Whether `postCheckout` calls the provider. False until the contract arrives
+ * (open-decisions §21); set it true in the change that writes the call.
+ */
+export const WHISH_PROVIDER_WIRED = false;
+
 @Injectable()
 export class WhishGatewayService implements WhishGateway {
   private readonly logger = new Logger(WhishGatewayService.name);
@@ -36,9 +42,12 @@ export class WhishGatewayService implements WhishGateway {
 
     if (!this.isLive) {
       this.logger.warn(
-        'Whish is not configured: online checkout is refused (ONLINE_PAYMENT_UNAVAILABLE, ' +
-          'open-decisions §21). Write postCheckout first, then set WHISH_API_URL, ' +
-          'WHISH_API_KEY and WHISH_WEBHOOK_SECRET.',
+        this.hasCredentials
+          ? 'Whish credentials are set, but postCheckout is not written (WHISH_PROVIDER_WIRED): ' +
+              'online checkout stays refused (ONLINE_PAYMENT_UNAVAILABLE, open-decisions §21).'
+          : 'Whish is not configured: online checkout is refused (ONLINE_PAYMENT_UNAVAILABLE, ' +
+              'open-decisions §21). Write postCheckout first, then set WHISH_API_URL, ' +
+              'WHISH_API_KEY and WHISH_WEBHOOK_SECRET.',
       );
     } else if (!this.webhookSecret) {
       // Credentials without a secret is the dangerous half-configuration: the
@@ -51,7 +60,18 @@ export class WhishGatewayService implements WhishGateway {
     }
   }
 
+  /**
+   * Credentials alone do not make the gateway live while `postCheckout` is
+   * not written (`WHISH_PROVIDER_WIRED`): since the three variables are in
+   * `envSchema` (task S18), a value left in a deployed `.env` reaches this
+   * class, and it would have lifted `ONLINE_PAYMENT_UNAVAILABLE` into a 500.
+   */
   get isLive(): boolean {
+    return WHISH_PROVIDER_WIRED && this.hasCredentials;
+  }
+
+  /** Both halves of the provider's credentials; what chooses sandbox or `postCheckout`. */
+  private get hasCredentials(): boolean {
     return Boolean(this.apiUrl && this.apiKey);
   }
 
@@ -67,7 +87,8 @@ export class WhishGatewayService implements WhishGateway {
     // `postCheckout` overwrites it, so a row always has something to match on.
     const externalRef = `WSH-${randomBytes(9).toString('base64url').toUpperCase()}`;
 
-    if (!this.isLive) {
+    // Credentials, not `isLive`: configured but not wired goes to `postCheckout` and fails loudly.
+    if (!this.hasCredentials) {
       this.logger.log(
         `[sandbox] Whish checkout for payment ${input.paymentId} (${input.amount} ${input.currency})`,
       );

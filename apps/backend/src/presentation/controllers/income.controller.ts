@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import {
   createIncomeCategorySchema,
   listIncomeVouchersQuerySchema,
@@ -19,6 +19,7 @@ import type { SessionClaims } from '../../application/features/identity/identity
 import { IncomeService } from '../../application/features/treasury/income.service';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
+import { UuidPipe } from '../pipes/uuid.pipe';
 
 /**
  * الإيرادات العامة — «سند قبض إيرادات» (docs/finance.md §4).
@@ -52,7 +53,7 @@ export class IncomeController {
   @Roles(...TREASURY_ADMIN_ROLES)
   @Patch('categories/:id')
   updateCategory(
-    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(updateIncomeCategorySchema)) body: UpdateIncomeCategoryInput,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -78,7 +79,7 @@ export class IncomeController {
 
   @Roles(...TREASURY_READ_ROLES)
   @Get(':id')
-  get(@Param('id', new ParseUUIDPipe()) id: string) {
+  get(@Param('id', new UuidPipe()) id: string) {
     return this.income.get(id);
   }
 
@@ -86,7 +87,7 @@ export class IncomeController {
   @Roles(...TREASURY_ADMIN_ROLES)
   @Post(':id/void')
   void(
-    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(voidIncomeVoucherSchema)) body: VoidIncomeVoucherInput,
     @CurrentUser() user: SessionClaims,
   ) {

@@ -135,7 +135,12 @@ export function ownerBillingWording(
   return {
     method,
     part,
-    fallback: billing.fallback === 'RESPONSIBLE_NOT_OWNER' ? t('fallback') : null,
+    fallback:
+      billing.fallback === 'RESPONSIBLE_NOT_OWNER'
+        ? t('fallback')
+        : billing.fallback === 'RESPONSIBLE_NOT_BILLED'
+          ? t('fallbackNotBilled')
+          : null,
     line: t('summaryLine', { method, part }),
   };
 }

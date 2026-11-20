@@ -1,14 +1,4 @@
-import {
-  Body,
-  Controller,
-  Get,
-  HttpCode,
-  Param,
-  Post,
-  Req,
-  Res,
-  UseGuards,
-} from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Post, Req, Res, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { Request, Response } from 'express';
 import { createHash } from 'node:crypto';
@@ -26,7 +16,8 @@ import {
 } from '@mechanization/shared-schemas';
 import { IdentityService } from '../../application/features/identity/identity.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
-import { CurrentUser } from '../decorators/current-user.decorator';
+import { CurrentTenant, CurrentUser } from '../decorators/current-user.decorator';
+import { ForbiddenError } from '../../application/common/exceptions';
 import { Public } from '../decorators/public.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
@@ -118,7 +109,7 @@ export class AuthController {
    * response object is used for the header and nothing else.
    */
   async loginStaff(
-    @Param('tenantSlug') tenantSlug: string,
+    @CurrentTenant('slug') tenantSlug: string,
     @Body(new ZodValidationPipe(staffLoginSchema))
     body: { email: string; password: string; totpToken?: string; remember?: boolean },
     @Req() request: Request,
@@ -166,7 +157,7 @@ export class AuthController {
   @UseGuards(TrustedOriginGuard)
   @Throttle(STAFF_SESSION_THROTTLE)
   async refreshStaff(
-    @Param('tenantSlug') tenantSlug: string,
+    @CurrentTenant('slug') tenantSlug: string,
     @Req() request: Request,
     @Res({ passthrough: true }) response: Response,
   ) {
@@ -202,7 +193,7 @@ export class AuthController {
   @UseGuards(TrustedOriginGuard)
   @Throttle(STAFF_SESSION_THROTTLE)
   async logoutStaff(
-    @Param('tenantSlug') tenantSlug: string,
+    @CurrentTenant('slug') tenantSlug: string,
     @Req() request: Request,
     @Res({ passthrough: true }) response: Response,
   ) {
@@ -223,7 +214,7 @@ export class AuthController {
    */
   @Post('staff/totp/enrol')
   async beginTotpEnrolment(
-    @Param('tenantSlug') tenantSlug: string,
+    @CurrentTenant('slug') tenantSlug: string,
     @CurrentUser() user: SessionClaims,
   ) {
     return this.identity.beginTotpEnrolment(user.sub, tenantSlug);
@@ -241,7 +232,7 @@ export class AuthController {
   @Post('staff/totp/disable')
   @Throttle(OWN_ACCOUNT_THROTTLE)
   async disableTotp(
-    @Param('tenantSlug') tenantSlug: string,
+    @CurrentTenant('slug') tenantSlug: string,
     @CurrentUser() user: SessionClaims,
     @Body() body: { currentPassword?: string },
   ) {
@@ -263,7 +254,7 @@ export class AuthController {
   @Post('staff/change-password')
   @Throttle(OWN_ACCOUNT_THROTTLE)
   async changePassword(
-    @Param('tenantSlug') tenantSlug: string,
+    @CurrentTenant('slug') tenantSlug: string,
     @CurrentUser() user: SessionClaims,
     @Body(new ZodValidationPipe(changePasswordSchema))
     body: { currentPassword: string; newPassword: string },
@@ -275,7 +266,7 @@ export class AuthController {
   @Post('staff/change-email')
   @Throttle(OWN_ACCOUNT_THROTTLE)
   async changeEmail(
-    @Param('tenantSlug') tenantSlug: string,
+    @CurrentTenant('slug') tenantSlug: string,
     @CurrentUser() user: SessionClaims,
     @Body(new ZodValidationPipe(changeEmailSchema))
     body: { newEmail: string; currentPassword: string },
@@ -352,8 +343,14 @@ export class AuthController {
 
   @Public()
   @Post('citizen/otp/verify')
+  @Throttle({
+    default: {
+      limit: APP_CONFIG.throttle.otpVerify.limit,
+      ttl: APP_CONFIG.throttle.otpVerify.ttlSeconds * 1000,
+    },
+  })
   async verifyOtp(
-    @Param('tenantSlug') tenantSlug: string,
+    @CurrentTenant('slug') tenantSlug: string,
     @Body(new ZodValidationPipe(verifyOtpSchema))
     body: { phone: string; code?: string; citizenId?: string },
     @Req() request: Request,
@@ -382,7 +379,7 @@ export class AuthController {
     },
   })
   async loginByReference(
-    @Param('tenantSlug') tenantSlug: string,
+    @CurrentTenant('slug') tenantSlug: string,
     @Body(new ZodValidationPipe(referenceLoginSchema))
     body: { referenceNumber: string; phone: string },
     @Req() request: Request,
@@ -414,7 +411,7 @@ export class AuthController {
     },
   })
   async openByReference(
-    @Param('tenantSlug') tenantSlug: string,
+    @CurrentTenant('slug') tenantSlug: string,
     @Body(new ZodValidationPipe(referenceOnlyLoginSchema))
     body: { referenceNumber: string },
     @Req() request: Request,
@@ -424,6 +421,27 @@ export class AuthController {
       referenceNumber: body.referenceNumber,
       context: { ip: request.ip, userAgent: request.header('user-agent') },
     });
+  }
+
+  /**
+   * «تسجيل الخروج» on the portal, ended on the server (task S14): every
+   * session the citizen holds stops working, not only the one in this
+   * browser. The citizen's own, by `user.sub`, with no id to choose — a
+   * reviewed self-service route (`route-inventory.spec.ts`). Answers the same
+   * whatever there was to end, so the portal clears its storage either way.
+   */
+  @Post('citizen/logout')
+  @HttpCode(200)
+  @Throttle(OWN_ACCOUNT_THROTTLE)
+  async logoutCitizen(@CurrentUser() user: SessionClaims) {
+    if (user.kind !== 'CITIZEN') {
+      throw new ForbiddenError({
+        code: 'CITIZENS_ONLY',
+        message: 'This is available to citizens only.',
+      });
+    }
+    await this.identity.logoutCitizen(user.sub);
+    return { signedOut: true };
   }
 
   // ────────────────────────────  Shared  ────────────────────────────

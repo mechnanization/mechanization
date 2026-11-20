@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import {
   createTransferSchema,
   listTransfersQuerySchema,
@@ -22,6 +22,7 @@ import { TransfersService } from '../../application/features/treasury/transfers.
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import { optionalInt } from './query-params';
+import { UuidPipe } from '../pipes/uuid.pipe';
 
 /**
  * المناقلات — money between the municipality's own wallets (docs/finance.md §6).
@@ -75,7 +76,7 @@ export class TransfersController {
   @Roles(...TREASURY_READ_ROLES)
   @Get('custody/:collectorId/collections')
   collections(
-    @Param('collectorId', new ParseUUIDPipe()) collectorId: string,
+    @Param('collectorId', new UuidPipe()) collectorId: string,
     @Query('limit') limit?: string,
   ) {
     return this.transfers.collections(collectorId, optionalInt(limit));
@@ -112,7 +113,7 @@ export class TransfersController {
   @Roles(...TREASURY_ADMIN_ROLES)
   @Post(':id/void')
   void(
-    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(voidTransferSchema)) body: VoidTransferInput,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -123,7 +124,7 @@ export class TransfersController {
   @Roles(...TREASURY_REVIEW_ROLES)
   @Post(':id/review')
   review(
-    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(reviewTransferSchema)) body: ReviewTransferInput,
     @CurrentUser() user: SessionClaims,
   ) {
@@ -133,7 +134,7 @@ export class TransfersController {
   /** One transfer, for its printed «سند». Last, so no static path above is read as an id. */
   @Roles(...TREASURY_READ_ROLES)
   @Get(':id')
-  get(@Param('id', new ParseUUIDPipe()) id: string) {
+  get(@Param('id', new UuidPipe()) id: string) {
     return this.transfers.get(id);
   }
 }

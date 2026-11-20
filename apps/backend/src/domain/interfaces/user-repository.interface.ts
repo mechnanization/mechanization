@@ -1,5 +1,16 @@
 import { StaffRole, User } from '../entities/user.entity';
 
+/** What `recordTotpStep` did: accepted the code, or refused it as a replay or while locked. */
+export type TotpStepOutcome =
+  | { accepted: true }
+  | { accepted: false; lockedUntil: Date | null };
+
+/** How many wrong codes lock an account, and for how long (`APP_CONFIG.totp`). */
+export interface TotpLockoutPolicy {
+  maxFailures: number;
+  lockSeconds: number;
+}
+
 /**
  * The citizen half of a filing.
  *
@@ -91,8 +102,33 @@ export interface UserRepository {
   /** Stamps `lastLoginAt`, which the staff list surfaces as dormancy. */
   markLoggedIn(userId: string): Promise<void>;
 
-  /** Burns a TOTP step so the same code cannot be presented twice. */
-  recordTotpStep(userId: string, step: number): Promise<void>;
+  /**
+   * Burns the TOTP step a code was generated in, so it cannot be presented
+   * twice, and clears the failure count and any lockout.
+   *
+   * One conditional write: refused, writing nothing, when the step is at or
+   * below the last one burned (a replay, `lockedUntil: null`) or the account
+   * is locked at `now` (`lockedUntil` set). Two sign-ins racing with the same
+   * code cannot both be accepted.
+   */
+  recordTotpStep(userId: string, step: number, now: Date): Promise<TotpStepOutcome>;
+  /**
+   * Counts a wrong code. The one that reaches `policy.maxFailures` locks the
+   * account until `now + policy.lockSeconds` and starts the count again.
+   */
+  recordTotpFailure(
+    userId: string,
+    policy: TotpLockoutPolicy,
+    now: Date,
+  ): Promise<{ lockedUntil: Date | null }>;
+
+  /**
+   * Ends every session a citizen holds, by bumping `tokenVersion`: the guard
+   * refuses each token stamped with the old one. Citizens only — a staff
+   * session ends with its refresh family. False when no citizen has the id.
+   */
+  endCitizenSessions(userId: string): Promise<boolean>;
+
   /** Stores an unconfirmed secret; `confirmTotp` is what activates it. */
   saveTotpSecret(userId: string, secret: string): Promise<void>;
   /** Marks enrolment complete once the admin has proved the app works. */

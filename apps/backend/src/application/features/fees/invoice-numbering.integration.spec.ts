@@ -32,6 +32,13 @@ const SETUP_TIMEOUT_MS = 240_000;
 describeIfDb('invoice numbering', () => {
   let ddl: Client;
   let db: TenantPrismaClient;
+  /**
+   * Every notice still active. These cases issue several fees of one basis and
+   * target on purpose, each its own, so each confirms the others as different
+   * fees, as a clerk must since the duplicate guard (finding F11).
+   */
+  const otherFees = async () =>
+    (await db.feeNotice.findMany({ where: { isActive: true }, select: { id: true } })).map((notice) => notice.id);
   let fees: FeesService;
   let clerkId: string;
 
@@ -149,6 +156,7 @@ describeIfDb('invoice numbering', () => {
         frequency: 'ONCE',
         targetType: 'ALL_CITIZENS',
         dueDate: '2026-12-31',
+        acknowledgedDuplicates: await otherFees(),
       } as never,
       actor(),
     );
@@ -192,6 +200,7 @@ describeIfDb('invoice numbering', () => {
         frequency: 'ONCE',
         targetType: 'ALL_CITIZENS',
         dueDate: '2026-12-31',
+        acknowledgedDuplicates: await otherFees(),
       } as never,
       actor(),
     );
@@ -305,6 +314,7 @@ describeIfDb('invoice numbering', () => {
           frequency: 'ONCE',
           targetType: 'ALL_CITIZENS',
           dueDate: '2026-12-31',
+          acknowledgedDuplicates: await otherFees(),
         } as never,
         actor(),
       );
@@ -346,6 +356,7 @@ describeIfDb('invoice numbering', () => {
         frequency: 'ONCE',
         targetType: 'ALL_CITIZENS',
         dueDate: '2026-12-31',
+        acknowledgedDuplicates: await otherFees(),
       } as never,
       actor(),
     );

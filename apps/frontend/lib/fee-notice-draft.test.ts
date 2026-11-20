@@ -3,6 +3,7 @@ import { CITIZEN_RESIDENCE, createFeeNoticeSchema, FEE_TARGET_CATEGORY, matchBra
 import {
   chainedFollowers,
   coverage,
+  duplicatesConfirmed,
   emptyBracket,
   extendBracket,
   extensionsOf,
@@ -44,6 +45,7 @@ const draft = (over: Partial<NoticeDraft> = {}): NoticeDraft => ({
   unitStates: null,
   residences: [...CITIZEN_RESIDENCE],
   scopeConfirmed: false,
+  duplicatesConfirmed: [],
   targetCitizenId: '',
   dueDate: '2026-12-31',
   instructions: '',
@@ -423,5 +425,27 @@ describe('«الوحدات المشمولة»: occupied, vacant or both', () => 
 
   it('asks for confirmation before an occupancy fee reaches an empty unit', () => {
     expect(noticeWarnings(draft({ basis: 'PER_UNIT', bearer: 'OCCUPANT', unitStates: unitStatesFor('VACANT', 'OCCUPANT') })).length).toBeGreaterThan(0);
+  });
+});
+
+describe('the duplicate notice confirmation (finding F11)', () => {
+  const first = '11111111-1111-4111-8111-111111111111';
+  const second = '22222222-2222-4222-8222-222222222222';
+  const issue = (values: NoticeDraft) => ({ ...issuePayload(values), clientRequestId: '00000000-0000-4000-8000-000000000000' });
+
+  it('sends no confirmation until the clerk gives one, and the ids once they do', () => {
+    expect(issuePayload(draft()).acknowledgedDuplicates).toBeUndefined();
+    const confirmed = draft({ duplicatesConfirmed: [first] });
+    expect(issuePayload(confirmed).acknowledgedDuplicates).toEqual([first]);
+    // What the server takes: the same field, by id.
+    expect(createFeeNoticeSchema.safeParse(issue(confirmed)).success).toBe(true);
+  });
+
+  it('holds «إصدار» until every duplicate the preview listed is confirmed', () => {
+    expect(duplicatesConfirmed(draft(), [])).toBe(true);
+    expect(duplicatesConfirmed(draft(), [{ id: first }])).toBe(false);
+    expect(duplicatesConfirmed(draft({ duplicatesConfirmed: [first] }), [{ id: first }])).toBe(true);
+    // A notice issued since the box was ticked is not covered by it.
+    expect(duplicatesConfirmed(draft({ duplicatesConfirmed: [first] }), [{ id: first }, { id: second }])).toBe(false);
   });
 });

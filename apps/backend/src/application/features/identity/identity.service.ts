@@ -3,7 +3,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { createHmac } from 'node:crypto';
-import type { StaffSelf } from '@mechanization/shared-schemas';
+import { resetTokenFragment, type StaffSelf } from '@mechanization/shared-schemas';
 import {
   EMAIL_SENDER,
   PASSWORD_HASHER,
@@ -27,8 +27,10 @@ import {
   NotFoundError,
   UnauthorizedError,
 } from '../../common/exceptions';
+import { APP_CONFIG } from '../../../presentation/config/app.config';
 import { OtpService } from './otp.service';
 import { SessionRevocationService } from './session-revocation.service';
+import { sessionSignOptions, verifySessionToken } from './session-token';
 import { IssuedRefreshToken, StaffRefreshTokenService } from './staff-refresh-token.service';
 
 /**
@@ -52,6 +54,35 @@ function currentPasswordIncorrect(): UnauthorizedError {
   return new UnauthorizedError({
     code: 'STAFF_CURRENT_PASSWORD_INCORRECT',
     message: 'The current password does not match',
+  });
+}
+
+/**
+ * A wrong TOTP code. A 401, as it always was: the sign-in page words every 401
+ * of its code step as a wrong code, and «أمان الحساب» takes it as an answer,
+ * not an expired session (`ANSWERED_401`).
+ */
+function totpCodeInvalid(): UnauthorizedError {
+  return new UnauthorizedError({ code: 'TOTP_CODE_INVALID', message: 'The TOTP code does not verify' });
+}
+
+/** A right code whose step this account has already spent. */
+function totpCodeReused(): ConflictError {
+  return new ConflictError({
+    code: 'TOTP_CODE_REUSED',
+    message: 'The TOTP code has already been used',
+  });
+}
+
+/**
+ * Wrong codes have locked the account's second factor. Not a 401, which the
+ * sign-in page would word as one more wrong code; the minutes left, rounded up.
+ */
+function totpLocked(until: Date, now: Date): ForbiddenError {
+  return new ForbiddenError({
+    code: 'TOTP_LOCKED',
+    message: 'Too many wrong TOTP codes; the account is locked for a while',
+    params: { minutes: Math.max(1, Math.ceil((until.getTime() - now.getTime()) / 60_000)) },
   });
 }
 
@@ -407,8 +438,16 @@ export class IdentityService {
       return token;
     }
 
+    /*
+      In the fragment (`resetTokenFragment`, shared with the page that reads
+      it): a fragment is never sent to a server, so the token reaches no
+      access log and no `Referer`. It used to be `?token=`, while the page read
+      a Supabase-style fragment — the token leaked and no reset could succeed
+      (task S14 of the 2026-11-14 security audit).
+    */
     const url = new URL(base);
-    url.searchParams.set('token', token);
+    url.searchParams.delete('token');
+    url.hash = resetTokenFragment(token);
     return url.toString();
   }
 
@@ -461,25 +500,61 @@ export class IdentityService {
 
     if (!token) return { status: 'TOTP_REQUIRED' };
 
-    if (!this.totp.verify(token, secret)) {
-      throw new UnauthorizedError('رمز التحقق غير صحيح');
+    await this.acceptTotpCode(user, secret, token, { countFailures: true });
+    return null;
+  }
+
+  /**
+   * Accepts a TOTP code once, or throws.
+   *
+   * Verified is not yet accepted: the code must also be one this account has
+   * not already used. A code verifies for about ninety seconds (one step
+   * either side), long enough for one observed over a shoulder, relayed
+   * through a phishing page, or left on a shared municipal screen to be
+   * replayed. So the step the *code* was generated in is burned — not the
+   * clock's: burning the clock's step let a code accepted at step S be
+   * accepted again at S+1 (security audit N-1). The write is conditional, so
+   * two sign-ins racing with the same code cannot both win.
+   *
+   * Wrong codes are counted per account when `countFailures` is set (sign-in),
+   * and the one that reaches `APP_CONFIG.totp.maxFailures` locks the account:
+   * while locked no code is checked at all, so guessing on learns nothing.
+   * The lockout is recorded, because the person locking it holds the
+   * password. Enrolment's confirmation does not count: its caller is already
+   * signed in, and the secret it guesses at is the one it was just given.
+   */
+  private async acceptTotpCode(
+    user: User,
+    secret: string,
+    token: string,
+    { countFailures }: { countFailures: boolean },
+  ): Promise<void> {
+    const now = new Date();
+    const locked = user.totpLockedAt(now);
+    if (locked) throw totpLocked(locked, now);
+
+    const step = this.totp.matchStep(token, secret, now);
+    if (step === null) {
+      if (countFailures) {
+        const { lockedUntil } = await this.users.recordTotpFailure(user.id, APP_CONFIG.totp, now);
+        if (lockedUntil) {
+          this.events.emit('staff.changed', {
+            action: 'TOTP_LOCKED_OUT',
+            tenantSlug: user.tenantSlug,
+            staffId: user.id,
+            actorId: user.id,
+            actorRole: user.role ?? '',
+          });
+          throw totpLocked(lockedUntil, now);
+        }
+      }
+      throw totpCodeInvalid();
     }
 
-    /**
-     * Verified is not yet accepted: the code must also be one this account has
-     * not already used.
-     *
-     * `otplib` runs with a one-step window, so a given six digits verify for
-     * roughly ninety seconds. That window is exactly long enough for a code
-     * observed over a shoulder, relayed through a phishing page, or left on a
-     * shared municipal screen to be replayed. Burning the step closes it.
-     *
-     * The write is conditional inside the repository, so two logins racing
-     * with the same code cannot both win; the loser lands here as a replay.
-     */
-    await this.users.recordTotpStep(user.id, this.totp.currentStep());
-
-    return null;
+    const outcome = await this.users.recordTotpStep(user.id, step, now);
+    if (!outcome.accepted) {
+      throw outcome.lockedUntil ? totpLocked(outcome.lockedUntil, now) : totpCodeReused();
+    }
   }
 
   /**
@@ -536,15 +611,18 @@ export class IdentityService {
     };
   }
 
-  /** Confirms enrolment only after the admin proves the app produces valid codes. */
+  /**
+   * Confirms enrolment only after the admin proves the app produces valid codes.
+   *
+   * The code is burned like a sign-in's, so the one typed here cannot then be
+   * used to sign in while it is still valid.
+   */
   async confirmTotpEnrolment(userId: string, token: string): Promise<void> {
     const user = await this.users.findById(userId);
     if (!user || !user.totpSecret) {
       throw new NotFoundError('TOTP enrolment', userId);
     }
-    if (!this.totp.verify(token, user.totpSecret)) {
-      throw new UnauthorizedError('رمز التحقق غير صحيح');
-    }
+    await this.acceptTotpCode(user, user.totpSecret, token, { countFailures: false });
 
     await this.users.confirmTotp(user.id);
 
@@ -868,6 +946,24 @@ export class IdentityService {
   }
 
   /**
+   * «تسجيل الخروج» on the portal, ended on the server (task S14 of the
+   * 2026-11-14 security audit).
+   *
+   * A citizen token lives seven days, and signing out only forgot it in the
+   * browser: a copy — another tab, a shared phone's history, a token read off
+   * a screen — went on opening the citizen's file for the rest of the week.
+   * Bumping `tokenVersion` ends every session the citizen holds, on every
+   * device, the same way a staff password change ends a staff member's; the
+   * revocation cache is cleared so the guard reads the new version at once
+   * rather than within its 30 s window. A citizen has one credential, the
+   * رقم مرجعي, so "every session" is the only scope there is.
+   */
+  async logoutCitizen(userId: string): Promise<void> {
+    await this.users.endCitizenSessions(userId);
+    await this.revocation.forget(userId);
+  }
+
+  /**
    * Verifies the code, then resolves *which person* is logging in.
    *
    * A household sharing one phone is the normal case, not an edge case, so a
@@ -1122,7 +1218,7 @@ export class IdentityService {
 
     let claims: SessionClaims;
     try {
-      claims = this.jwt.verify<SessionClaims>(accessToken, { ignoreExpiration: true });
+      claims = verifySessionToken<SessionClaims>(this.jwt, accessToken, { ignoreExpiration: true });
     } catch {
       return null;
     }
@@ -1219,7 +1315,7 @@ export class IdentityService {
       };
 
       return {
-        accessToken: this.jwt.sign(claims, { expiresIn }),
+        accessToken: this.jwt.sign(claims, sessionSignOptions(expiresIn)),
         expiresIn,
         user: { id: input.id, name: input.name, kind: input.kind, role: input.role },
       };
@@ -1255,7 +1351,7 @@ export class IdentityService {
     };
 
     return {
-      accessToken: this.jwt.sign(claims, { expiresIn }),
+      accessToken: this.jwt.sign(claims, sessionSignOptions(expiresIn)),
       expiresIn: `${expiresIn}s`,
       expiresAt: new Date((nowSeconds + expiresIn) * 1000).toISOString(),
       sessionExpiresAt: new Date(sessionExpiresAt * 1000).toISOString(),

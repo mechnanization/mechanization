@@ -124,6 +124,12 @@ async function rejection(call: Promise<unknown>): Promise<Error> {
   throw new Error('expected this call to be refused, but it resolved');
 }
 
+/**
+ * The step the mocked checker says a right code was generated in. Not the
+ * clock's: the guard burns the code's own step (security audit N-1).
+ */
+const CODE_STEP = 58_000_000;
+
 interface BuildOptions {
   /** Whether the six digits are accepted. */
   totpVerifies?: boolean;
@@ -185,10 +191,17 @@ function build(repository: Partial<UserRepository> = {}, options: BuildOptions =
     findStaffByEmail: jest.fn().mockResolvedValue(null),
     findById: jest.fn().mockResolvedValue(null),
     markLoggedIn: jest.fn().mockResolvedValue(undefined),
-    recordTotpStep: jest.fn().mockResolvedValue(undefined),
+    recordTotpStep: jest.fn().mockResolvedValue({ accepted: true }),
+    recordTotpFailure: jest.fn().mockResolvedValue({ lockedUntil: null }),
     createStaff,
     ...repository,
   } as unknown as UserRepository;
+
+  const totp = {
+    generateSecret: jest.fn().mockReturnValue('SECRET'),
+    keyUri: jest.fn().mockReturnValue('otpauth://x'),
+    matchStep: jest.fn().mockReturnValue(totpVerifies ? CODE_STEP : null),
+  } satisfies TotpService;
 
   const hasher = {
     hash: jest.fn().mockResolvedValue(PASSWORD_HASH),
@@ -219,12 +232,7 @@ function build(repository: Partial<UserRepository> = {}, options: BuildOptions =
   const service = new IdentityService(
     users,
     hasher as unknown as PasswordHasher,
-    {
-      generateSecret: jest.fn().mockReturnValue('SECRET'),
-      keyUri: jest.fn().mockReturnValue('otpauth://x'),
-      verify: jest.fn().mockReturnValue(totpVerifies),
-      currentStep: jest.fn().mockReturnValue(58_000_000),
-    } as unknown as TotpService,
+    totp,
     email as unknown as never,
     {} as OtpService,
     revocation as unknown as never,
@@ -240,6 +248,7 @@ function build(repository: Partial<UserRepository> = {}, options: BuildOptions =
     hasher,
     email,
     users,
+    totp,
     jwt,
     events,
     refreshTokens,
@@ -493,9 +502,9 @@ describe('loginStaff — the second factor is actually checked', () => {
       { totpVerifies: false },
     );
 
-    await expect(
-      service.loginStaff({ ...LOGIN, totpToken: '000000' }),
-    ).rejects.toThrow('رمز التحقق غير صحيح');
+    const refused = await rejection(service.loginStaff({ ...LOGIN, totpToken: '000000' }));
+    expect(refused).toBeInstanceOf(UnauthorizedError);
+    expect((refused as UnauthorizedError).code).toBe('TOTP_CODE_INVALID');
   });
 
   it('issues a session for a correct code', async () => {
@@ -550,42 +559,124 @@ describe('loginStaff — the second factor is actually checked', () => {
 });
 
 describe('loginStaff — a TOTP code is single-use', () => {
-  it('burns the step so the same code cannot be replayed', async () => {
-    const recordTotpStep = jest.fn().mockResolvedValue(undefined);
-    const { service } = build({
+  it("burns the step the code was generated in, not the clock's", async () => {
+    // The clock is at CODE_STEP + 1 and the code is from CODE_STEP, inside the
+    // window. Burning the clock's step is what let this code be accepted a
+    // second time a step later (security audit N-1).
+    const recordTotpStep = jest.fn().mockResolvedValue({ accepted: true });
+    const { service, totp } = build({
       findStaffByEmail: jest.fn().mockResolvedValue(staff()),
       recordTotpStep,
     });
 
     await service.loginStaff({ ...LOGIN, totpToken: '123456' });
 
-    // Verified is not accepted: with otplib's one-step window the same digits
-    // stay valid for about ninety seconds, so the step has to be spent.
-    expect(recordTotpStep).toHaveBeenCalledWith('staff-1', 58_000_000);
+    expect(totp.matchStep).toHaveBeenCalledWith('123456', 'SECRET', expect.any(Date));
+    expect(recordTotpStep).toHaveBeenCalledWith('staff-1', CODE_STEP, expect.any(Date));
   });
 
   it('refuses a code whose step has already been spent', async () => {
     // What a second login with the same digits looks like: the conditional
-    // write in the repository matches no row and raises.
-    const { service } = build({
+    // write in the repository matches no row, and the account is not locked.
+    const { service, createFamily } = build({
       findStaffByEmail: jest.fn().mockResolvedValue(staff()),
-      recordTotpStep: jest.fn().mockRejectedValue(new Error('تم استخدام هذا الرمز بالفعل')),
+      recordTotpStep: jest.fn().mockResolvedValue({ accepted: false, lockedUntil: null }),
     });
 
-    await expect(
-      service.loginStaff({ ...LOGIN, totpToken: '123456' }),
-    ).rejects.toThrow(/تم استخدام هذا الرمز/);
+    const refused = await rejection(service.loginStaff({ ...LOGIN, totpToken: '123456' }));
+    expect((refused as { code?: string }).code).toBe('TOTP_CODE_REUSED');
+    expect(createFamily).not.toHaveBeenCalled();
   });
 
-  it('does not burn a step when the code was wrong', async () => {
+  it('does not burn a step when the code was wrong, and counts it', async () => {
     const recordTotpStep = jest.fn();
+    const recordTotpFailure = jest.fn().mockResolvedValue({ lockedUntil: null });
     const { service } = build(
-      { findStaffByEmail: jest.fn().mockResolvedValue(staff()), recordTotpStep },
+      { findStaffByEmail: jest.fn().mockResolvedValue(staff()), recordTotpStep, recordTotpFailure },
       { totpVerifies: false },
     );
 
     await expect(service.loginStaff({ ...LOGIN, totpToken: '000000' })).rejects.toThrow();
     expect(recordTotpStep).not.toHaveBeenCalled();
+    expect(recordTotpFailure).toHaveBeenCalledWith(
+      'staff-1',
+      { maxFailures: 5, lockSeconds: 900 },
+      expect.any(Date),
+    );
+  });
+});
+
+describe('loginStaff — wrong codes lock the second factor', () => {
+  const inMinutes = (minutes: number) => new Date(Date.now() + minutes * 60_000);
+
+  it('locks on the wrong code that reaches the limit, and records it', async () => {
+    const { service, events } = build(
+      {
+        findStaffByEmail: jest.fn().mockResolvedValue(staff()),
+        recordTotpFailure: jest.fn().mockResolvedValue({ lockedUntil: inMinutes(15) }),
+      },
+      { totpVerifies: false },
+    );
+
+    const refused = await rejection(service.loginStaff({ ...LOGIN, totpToken: '000000' }));
+
+    // Not a 401: the sign-in page words every 401 of its code step as a wrong code.
+    expect(refused).not.toBeInstanceOf(UnauthorizedError);
+    expect(refused).toMatchObject({ code: 'TOTP_LOCKED', kind: 'FORBIDDEN', params: { minutes: 15 } });
+    expect(events.emit).toHaveBeenCalledWith(
+      'staff.changed',
+      expect.objectContaining({ action: 'TOTP_LOCKED_OUT', staffId: 'staff-1' }),
+    );
+  });
+
+  it('checks no code at all while locked, right or wrong', async () => {
+    const recordTotpFailure = jest.fn();
+    const recordTotpStep = jest.fn();
+    const { service, totp, createFamily } = build({
+      findStaffByEmail: jest.fn().mockResolvedValue(staff({ totpLockedUntil: inMinutes(10) })),
+      recordTotpFailure,
+      recordTotpStep,
+    });
+
+    const refused = await rejection(service.loginStaff({ ...LOGIN, totpToken: '123456' }));
+
+    expect(refused).toMatchObject({ code: 'TOTP_LOCKED', params: { minutes: 10 } });
+    // Guessing on during the lockout learns nothing and counts nothing.
+    expect(totp.matchStep).not.toHaveBeenCalled();
+    expect(recordTotpFailure).not.toHaveBeenCalled();
+    expect(recordTotpStep).not.toHaveBeenCalled();
+    expect(createFamily).not.toHaveBeenCalled();
+  });
+
+  it('still asks for a code while locked, rather than saying so before one is sent', async () => {
+    const { service } = build({
+      findStaffByEmail: jest.fn().mockResolvedValue(staff({ totpLockedUntil: inMinutes(10) })),
+    });
+
+    await expect(service.loginStaff(LOGIN)).resolves.toEqual({ status: 'TOTP_REQUIRED' });
+  });
+
+  it('refuses a right code when the lockout landed while it was on its way', async () => {
+    // Loaded unlocked; by the conditional write the fifth wrong code had locked it.
+    const { service, createFamily } = build({
+      findStaffByEmail: jest.fn().mockResolvedValue(staff()),
+      recordTotpStep: jest.fn().mockResolvedValue({ accepted: false, lockedUntil: inMinutes(15) }),
+    });
+
+    const refused = await rejection(service.loginStaff({ ...LOGIN, totpToken: '123456' }));
+    expect(refused).toMatchObject({ code: 'TOTP_LOCKED' });
+    expect(createFamily).not.toHaveBeenCalled();
+  });
+
+  it('checks codes again once the lockout has passed', async () => {
+    const { service } = build({
+      findStaffByEmail: jest.fn().mockResolvedValue(
+        staff({ totpLockedUntil: new Date(Date.now() - 1_000) }),
+      ),
+    });
+
+    const result = (await service.loginStaff({ ...LOGIN, totpToken: '123456' })) as StaffSessionGrant;
+    expect(result.session.accessToken).toBe('jwt-token');
   });
 });
 
