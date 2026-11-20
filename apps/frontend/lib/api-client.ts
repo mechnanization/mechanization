@@ -3,6 +3,7 @@ import {
   IMPORT_BATCH_SIZE,
   type ErrorParams,
   type HouseGrowth,
+  type OwnerBillingFallback,
   type ReinspectionsPage,
   type StaffPresenceResponse,
   type StaffSelf,
@@ -3356,7 +3357,7 @@ export interface CitizenProfileUnit {
     mode: OwnerBillingMode | null;
     effectiveMode: OwnerBillingMode;
     responsibleOwnerId?: string | null;
-    fallback?: 'RESPONSIBLE_NOT_OWNER' | null;
+    fallback?: OwnerBillingFallback | null;
     share: { numerator: number; denominator: number } | null;
   } | null;
 }

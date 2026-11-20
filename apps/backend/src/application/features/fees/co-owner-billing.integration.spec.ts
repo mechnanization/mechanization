@@ -349,6 +349,35 @@ describeIfDb('co-owner billing', () => {
     expect(rest).toEqual([1_000_000, 1_000_000, 1_000_000]);
   });
 
+  it('splits the shop equally when the responsible owner’s own file stops claiming it, his spell still open (F13)', async () => {
+    /*
+      Saved while علي's file claimed the shop. Then a later filing on his file
+      did not restate it (audit finding 10 is one way): he still owns it, his
+      file no longer bills it, and his brothers paid nothing because he pays —
+      the shop billed to nobody, every period. Billing now asks his file again.
+    */
+    const { shop, brothers } = await seed();
+    const ali = brothers[0]!;
+    await within(() => ownerBilling.set(shop.id, { mode: 'RESPONSIBLE_OWNER', responsibleOwnerId: ali }, actor));
+    expect(await amounts(brothers)).toEqual([3_000_000, 0, 0, 0]);
+
+    await db.registration.create({
+      data: {
+        citizenId: ali,
+        referenceNumber: `COB-${randomUUID()}`,
+        createdById: officerId,
+        submittedAt: new Date(Date.now() + 60_000),
+      },
+    });
+    expect(await db.unitOccupancy.count({ where: { unitId: shop.id, citizenId: ali, toDate: null } })).toBe(1);
+    expect([...(await within(() => fees.ownerClaims(ali)))]).toEqual([]);
+
+    // A quarter each to the brothers whose files claim it; علي's quarter waits on his file.
+    expect(await amounts(brothers.slice(1))).toEqual([750_000, 750_000, 750_000]);
+    const brother = await billOf(brothers[1]!);
+    expect(brother.kind === 'assessed' && brother.assessment.coOwnerPaidUnitCount).toBe(0);
+  });
+
   it('keeps an owner’s أسهم when the drawer re-records him with the box empty', async () => {
     const { shop, brothers } = await seed();
     await within(() =>

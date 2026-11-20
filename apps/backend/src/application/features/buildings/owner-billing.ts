@@ -11,10 +11,15 @@ import type { PrismaClient as TenantPrismaClient } from '../../../generated/tena
  *    recorded after the choice was saved, without أسهم.
  *  - `RESPONSIBLE_NOT_OWNER` — «مالك مسؤول» naming someone with no current
  *    OWNER spell on an open file. Billing splits the flat equally instead.
+ *  - `RESPONSIBLE_NOT_BILLED` — «مالك مسؤول» naming an owner whose own file no
+ *    longer claims the flat, so billing would charge them nothing for it (finding
+ *    F13, task B13). Read only when the rule was checked (`checkResponsibleOwners`).
+ *    Billing splits the flat equally instead.
  */
 export type OwnerBillingBlock =
   | { reason: 'SHARES_MISSING'; owners: number; missing: number }
-  | { reason: 'RESPONSIBLE_NOT_OWNER'; owners: number };
+  | { reason: 'RESPONSIBLE_NOT_OWNER'; owners: number }
+  | { reason: 'RESPONSIBLE_NOT_BILLED'; owners: number };
 
 /**
  * The block on this flat's saved method, if any, read through the rule billing
@@ -26,6 +31,7 @@ export function ownerBillingBlock(rule: OwnerBillingRule): OwnerBillingBlock | n
   const preview = ownerSharesPreview(rule);
   const owners = preview.owners.length;
   if (preview.effective.fallback === 'RESPONSIBLE_NOT_OWNER') return { reason: 'RESPONSIBLE_NOT_OWNER', owners };
+  if (preview.effective.fallback === 'RESPONSIBLE_NOT_BILLED') return { reason: 'RESPONSIBLE_NOT_BILLED', owners };
   if (preview.owners.some((owner) => owner.outcome.kind === 'UNDECIDABLE')) {
     return {
       reason: 'SHARES_MISSING',
@@ -78,6 +84,41 @@ export async function ownerBillingRules(
     if (isCoOwned(rule)) rules.set(unit.id, rule);
   }
   return rules;
+}
+
+/**
+ * Marks each «مالك مسؤول» rule with whether its responsible owner's own file
+ * claims the flat as owner (`responsibleBilled`), so the rule falls back to the
+ * equal split when it does not (finding F13 of the 2026-11-14 billing audit,
+ * task B13).
+ *
+ * The choice is checked when it is saved (`OwnerBillingService`), and a file
+ * can stop claiming the flat after that — a later filing that did not restate
+ * it, a card ended — while the OWNER spell stays. Then the others paid nothing
+ * because «مالك مسؤول» pays, and he was not billed because his file holds
+ * nothing: the flat was billed to nobody, period after period. `claimsOf` is
+ * billing's own reading of a file (`FeesService.ownerClaims`), never a second
+ * statement of it. One read per responsible owner, however many of their flats
+ * the rules hold; a rule whose responsible owner is no longer an owner falls
+ * back already (`RESPONSIBLE_NOT_OWNER`) and is left alone.
+ */
+export async function checkResponsibleOwners(
+  rules: Map<string, OwnerBillingRule>,
+  claimsOf: (citizenId: string) => Promise<ReadonlySet<string>>,
+): Promise<void> {
+  const flatsByOwner = new Map<string, string[]>();
+  for (const [unitId, rule] of rules) {
+    const responsible = rule.responsibleOwnerId;
+    if (rule.mode !== 'RESPONSIBLE_OWNER' || !responsible) continue;
+    if (!rule.owners.some((owner) => owner.citizenId === responsible)) continue;
+    flatsByOwner.set(responsible, [...(flatsByOwner.get(responsible) ?? []), unitId]);
+  }
+  for (const [ownerId, unitIds] of flatsByOwner) {
+    const claimed = await claimsOf(ownerId);
+    for (const unitId of unitIds) {
+      rules.set(unitId, { ...rules.get(unitId)!, responsibleBilled: claimed.has(unitId) });
+    }
+  }
 }
 
 /**
