@@ -267,6 +267,7 @@
     "BILL_ALREADY_CANCELLED": "This bill has already been cancelled.",
     "FEE_CHARGE_REQUEST_REUSED": "This operation’s identifier already recorded a different charge ({invoiceNumber}). Check the citizen’s bills before anything else: adding again records a new, separate charge.",
     "FEE_NOTICE_REQUEST_REUSED": "This operation’s identifier was already used to issue a different notice. Check the notices issued before anything else: issuing again issues a new, separate notice.",
+    "FEE_NOTICE_DUPLICATE": "{count, plural, one {The notice «{title}» is active and already bills the same people for this period, so nothing was issued. Review it under «Before you issue», and confirm if this is a different fee.} other {{count} active notices, the first «{title}», already bill the same people for this period, so nothing was issued. Review them under «Before you issue», and confirm if this is a different fee.}}",
     "BULK_SETTLE_CITIZEN_MISMATCH": "The selected bills do not all belong to one citizen. Only one person’s bills can be settled together.",
     "BULK_SETTLE_SOME_ALREADY_PAID": "Bill «{invoice}» was settled after it was selected. Deselect it and try again. Nothing was recorded.",
     "BULK_SETTLE_TENDER_SHORT": "The money received does not cover the selected bills: {shortBy, number} {currency} short. Nothing was recorded.",
@@ -1685,7 +1686,14 @@
         }
       },
       "confirmScope": "I confirm issuing this notice with this scope despite the warnings",
-      "confirmScopeNeeded": "Confirm the warnings on the notice’s scope to enable «Issue bills»."
+      "confirmScopeNeeded": "Confirm the warnings on the notice’s scope to enable «Issue bills».",
+      "duplicates": {
+        "title": "{count, plural, one {An active notice already bills the same people for this period} other {{count} active notices already bill the same people for this period}}",
+        "item": "{frequency}, issued {issuedAt}, {count, plural, one {one bill} other {{count} bills}} this period",
+        "body": "If this is the same fee, it has already been issued: issuing it again bills everyone twice. Issue it only if it is a different fee on the same basis and target.",
+        "confirm": "{count, plural, one {This is a different fee from the one above, and I want to issue it} other {This is a different fee from the ones above, and I want to issue it}}",
+        "confirmNeeded": "Confirm that it is a different fee to enable «Issue the bills»."
+      }
     },
     "register": {
       "summary": {

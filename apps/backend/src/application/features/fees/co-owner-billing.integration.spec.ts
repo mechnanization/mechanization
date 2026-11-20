@@ -37,6 +37,13 @@ const SETUP_TIMEOUT_MS = 240_000;
 describeIfDb('co-owner billing', () => {
   let ddl: Client;
   let db: TenantPrismaClient;
+  /**
+   * Every notice still active. These cases issue several fees of one basis and
+   * target on purpose, each its own, so each confirms the others as different
+   * fees, as a clerk must since the duplicate guard (finding F11).
+   */
+  const otherFees = async () =>
+    (await db.feeNotice.findMany({ where: { isActive: true }, select: { id: true } })).map((notice) => notice.id);
   let context: TenantContextService;
   let fees: FeesService;
   let buildings: BuildingsService;
@@ -248,7 +255,7 @@ describeIfDb('co-owner billing', () => {
   */
   async function issueShopFee() {
     const title = `رسم المحلات ${randomUUID().slice(0, 8)}`;
-    const outcome = await within(() =>
+    const outcome = await within(async () =>
       fees.issue(
         {
           title,
@@ -258,6 +265,7 @@ describeIfDb('co-owner billing', () => {
           targetType: 'BUILDING_CATEGORY',
           targetCategory: 'SHOP',
           dueDate: '2026-12-31',
+          acknowledgedDuplicates: await otherFees(),
         } as CreateFeeNotice,
         actor,
       ),

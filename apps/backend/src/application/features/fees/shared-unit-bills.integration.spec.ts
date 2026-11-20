@@ -50,6 +50,13 @@ const TABLE: FeeMatrixBracket[] = [
 describeIfDb('shared unit bills', () => {
   let ddl: Client;
   let db: TenantPrismaClient;
+  /**
+   * Every notice still active. These cases issue several fees of one basis and
+   * target on purpose, each its own, so each confirms the others as different
+   * fees, as a clerk must since the duplicate guard (finding F11).
+   */
+  const otherFees = async () =>
+    (await db.feeNotice.findMany({ where: { isActive: true }, select: { id: true } })).map((notice) => notice.id);
   let context: TenantContextService;
   let fees: FeesService;
   let parcelDues: ParcelDuesService;
@@ -414,7 +421,8 @@ describeIfDb('shared unit bills', () => {
   });
 
   it('refuses a merged-away debtor as the payer and does not offer them at the counter (D14)', async () => {
-    const issued = await within(() => fees.issue(notice(), actor));
+    const acknowledgedDuplicates = await otherFees();
+    const issued = await within(() => fees.issue(notice({ acknowledgedDuplicates }), actor));
     const shared = await db.citizenPayment.findFirstOrThrow({ where: { feeNoticeId: issued.noticeId, unitId: shopId } });
 
     // The youngest brother's file is folded into the middle one's: the merge keeps both debtor rows.

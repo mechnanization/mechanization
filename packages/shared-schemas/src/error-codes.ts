@@ -97,6 +97,10 @@ export const ERROR_CODES = [
   // «تكليف مالي»: a retry key already used for a different one-off charge (0102). `params.invoiceNumber`
   // names the bill the key raised.
   'FEE_CHARGE_REQUEST_REUSED',
+  // An active notice would bill the same people for the same period (`FeeNoticeDuplicate`), not
+  // confirmed in `acknowledgedDuplicates`. `params.title` is the first one's title, `params.count`
+  // how many; `details.duplicates` lists them.
+  'FEE_NOTICE_DUPLICATE',
   // Several of one citizen's bills settled in one press (docs/finance.md §3.7)
   'BULK_SETTLE_CITIZEN_MISMATCH',
   // A selected bill was settled since it was ticked (`params.invoice`: its INV- number, or its title).
