@@ -298,9 +298,11 @@ describeIfDb('shared unit bills', () => {
   });
 
   it('takes the money on a shared bill from one of its debtors only, and names them on the receipt', async () => {
-    const settle = (paymentId: string, paidByCitizenId?: string) =>
+    const key = randomUUID();
+    // The sum as the counter sends it: a page always sends its figure, so a retry is the same act.
+    const settle = (paymentId: string, paidByCitizenId?: string, clientRequestId = randomUUID()) =>
       within(() =>
-        fees.settleInPerson({ paymentId, method: 'CASH', paidByCitizenId, clientRequestId: randomUUID(), actor }),
+        fees.settleInPerson({ paymentId, method: 'CASH', amount: 30_000_000, paidByCitizenId, clientRequestId, actor }),
       );
 
     await expect(settle(sharedBillId)).rejects.toMatchObject({ code: 'SHARED_BILL_PAYER_REQUIRED' });
@@ -308,12 +310,19 @@ describeIfDb('shared unit bills', () => {
     await expect(settle(ownBillId, brothers[1])).rejects.toMatchObject({ code: 'SHARED_BILL_PAYER_ON_OWN_BILL' });
     expect(await db.paymentTransaction.count({ where: { paymentId: { in: [sharedBillId, ownBillId] } } })).toBe(0);
 
-    await settle(sharedBillId, brothers[1]);
+    const first = await settle(sharedBillId, brothers[1], key);
 
     // Paid once, for all three.
     expect((await db.citizenPayment.findUniqueOrThrow({ where: { id: sharedBillId } })).paymentStatus).toBe('PAID');
     const receipts = await db.paymentTransaction.findMany({ where: { paymentId: sharedBillId } });
     expect(receipts.map((receipt) => [Number(receipt.amount), receipt.paidByCitizenId])).toEqual([[30_000_000, brothers[1]]]);
+
+    // The key names its payer (F18): the receipt names brothers[1], so a retry naming another is not that act.
+    await expect(settle(sharedBillId, brothers[2], key)).rejects.toMatchObject({
+      code: 'PAYMENT_IDEMPOTENCY_KEY_REUSED',
+      params: { receiptNumber: first.receiptNumber },
+    });
+    await expect(settle(sharedBillId, brothers[1], key)).resolves.toMatchObject({ replayed: true });
   });
 
   it('bills a recurring bracket notice once a period, the shared bill and its debtors included, however often it runs', async () => {

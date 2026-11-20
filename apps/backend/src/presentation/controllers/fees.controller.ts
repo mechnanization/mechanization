@@ -389,6 +389,7 @@ export class FeesController {
       paidOn: body.paidOn,
       adjustmentReason: body.adjustmentReason,
       clientRequestId: body.clientRequestId,
+      expected: body.expected,
       actor: { id: user.sub, role: user.role ?? '' },
     });
   }

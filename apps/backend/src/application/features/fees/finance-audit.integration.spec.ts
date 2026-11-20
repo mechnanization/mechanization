@@ -236,6 +236,134 @@ describeIfDb('finance audit remediation', () => {
       });
       expect(await db.paymentTransaction.count({ where: { paymentId } })).toBe(1);
     });
+
+    it('refuses the key for the same sum on another day (F18)', async () => {
+      const paymentId = await bill(500_000);
+      const key = randomUUID();
+      const yesterday = new Date(Date.now() - 86_400_000).toLocaleDateString('en-CA', { timeZone: 'Asia/Beirut' });
+      const settle = (paidOn?: string) =>
+        scoped(() =>
+          fees.settleInPerson({
+            paymentId,
+            method: 'CASH',
+            amount: 200_000,
+            clientRequestId: key,
+            ...(paidOn ? { paidOn, adjustmentReason: 'قُبضت أمس وأُدخلت اليوم' } : {}),
+            actor: MANAGER(),
+          }),
+        );
+      const first = await settle();
+      // The receipt says today: answered as it, it would tell the clerk yesterday's date was recorded.
+      await expect(settle(yesterday)).rejects.toMatchObject({
+        code: 'PAYMENT_IDEMPOTENCY_KEY_REUSED',
+        params: { receiptNumber: first.receiptNumber },
+      });
+      await expect(settle()).resolves.toMatchObject({ replayed: true });
+    });
+  });
+
+  // ─────────────────────  F18 and F19: what the counter showed, and large change  ─────────────────────
+
+  describe('a counter payment’s figures and its change (F18, F19)', () => {
+    const settleDollars = (
+      paymentId: string,
+      expected: { credit: number; change: number },
+      more: { clientRequestId?: string; adjustmentReason?: string } = {},
+    ) =>
+      scoped(() =>
+        fees.settleInPerson({
+          paymentId,
+          method: 'CASH',
+          tendered: { local: 0, foreign: 20, foreignCurrency: 'USD' },
+          expected,
+          ...more,
+          actor: MANAGER(),
+        }),
+      );
+    // $20 at the official rate against a bill of 500,000: the bill is paid and the rest handed back.
+    const worth = OFFICIAL_RATE * 20;
+    const shown = { credit: 500_000, change: worth - 500_000 };
+    const setRate = (exchangeRate: number) =>
+      db.systemSettings.update({ where: { singleton: true }, data: { exchangeRate } });
+
+    it('refuses a press whose balance moved since the screen showed it, and writes nothing', async () => {
+      const paymentId = await bill(500_000);
+      // Another desk takes part of the bill after this one read it.
+      await scoped(() => fees.settleInPerson({ paymentId, method: 'CASH', amount: 100_000, actor: MANAGER() }));
+
+      await expect(
+        scoped(() =>
+          fees.settleInPerson({ paymentId, method: 'CASH', expected: { credit: 500_000, change: 0 }, actor: MANAGER() }),
+        ),
+      ).rejects.toMatchObject({ code: 'PAYMENT_FIGURES_CHANGED', params: { credit: 400_000, change: 0 } });
+      expect(await db.paymentTransaction.count({ where: { paymentId } })).toBe(1);
+    });
+
+    it('refuses change worked out at a rate that moved since, and takes it at the rate shown', async () => {
+      const paymentId = await bill(500_000);
+      await setRate(OFFICIAL_RATE + 500);
+      try {
+        await expect(settleDollars(paymentId, shown)).rejects.toMatchObject({
+          code: 'PAYMENT_FIGURES_CHANGED',
+          params: { credit: 500_000, change: (OFFICIAL_RATE + 500) * 20 - 500_000 },
+        });
+        expect(await db.paymentTransaction.count({ where: { paymentId } })).toBe(0);
+      } finally {
+        await setRate(OFFICIAL_RATE);
+      }
+      await expect(settleDollars(paymentId, shown)).resolves.toMatchObject({
+        paymentStatus: 'PAID',
+        changeGiven: shown.change,
+      });
+    });
+
+    it('answers a retry from its first receipt even when the rate moved since', async () => {
+      const paymentId = await bill(500_000);
+      const key = randomUUID();
+      const first = await settleDollars(paymentId, shown, { clientRequestId: key });
+      await setRate(OFFICIAL_RATE + 500);
+      try {
+        // The same press after a lost answer: the money was counted out at the first rate, and that receipt stands.
+        await expect(settleDollars(paymentId, shown, { clientRequestId: key })).resolves.toMatchObject({
+          replayed: true,
+          receiptNumber: first.receiptNumber,
+        });
+      } finally {
+        await setRate(OFFICIAL_RATE);
+      }
+    });
+
+    it('asks a reason for change worth more than the large-exchange threshold, keeps it and flags the row', async () => {
+      const paymentId = await bill(500_000);
+      // Ten dollars, so the $14 of change handed back for $20 is «large».
+      await db.systemSettings.update({ where: { singleton: true }, data: { largeExchangeThreshold: 10 } });
+      try {
+        await expect(settleDollars(paymentId, shown)).rejects.toMatchObject({
+          code: 'PAYMENT_LARGE_CHANGE_REASON_REQUIRED',
+          params: { threshold: 10, currency: 'USD' },
+        });
+        expect(await db.paymentTransaction.count({ where: { paymentId } })).toBe(0);
+
+        const reason = 'دفع بورقة المئة دولار الوحيدة معه';
+        const settled = await settleDollars(paymentId, shown, { adjustmentReason: reason });
+        expect(settled).toMatchObject({ paymentStatus: 'PAID', changeGiven: shown.change });
+        const row = await db.paymentTransaction.findFirstOrThrow({ where: { paymentId } });
+        expect(row.adjustmentReason).toBe(reason);
+        const audit = await db.auditLogEntry.findFirstOrThrow({
+          where: { action: 'PAYMENT_CONFIRMED', entityId: paymentId },
+        });
+        expect(audit.after).toMatchObject({ largeChange: true, largeExchangeThreshold: 10, adjustmentReason: reason });
+      } finally {
+        await db.systemSettings.update({ where: { singleton: true }, data: { largeExchangeThreshold: 1000 } });
+      }
+    });
+
+    it('asks nothing of change under the threshold', async () => {
+      const paymentId = await bill(500_000);
+      await expect(settleDollars(paymentId, shown)).resolves.toMatchObject({ paymentStatus: 'PAID' });
+      const audit = await db.auditLogEntry.findFirstOrThrow({ where: { action: 'PAYMENT_CONFIRMED', entityId: paymentId } });
+      expect(audit.after).not.toHaveProperty('largeChange');
+    });
   });
 
   // ─────────────────────  B2: one Whish reference, one receipt  ─────────────────────

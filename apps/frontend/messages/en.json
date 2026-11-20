@@ -258,6 +258,8 @@
     "TRANSACTION_ALREADY_REVERSED": "This transaction has already been reversed.",
     "TRANSACTION_IS_REVERSAL": "A reversal cannot itself be reversed.",
     "PAYMENT_IDEMPOTENCY_KEY_REUSED": "This operation’s identifier was already used for another payment ({receiptNumber}). Reload the page and check the bill’s receipts.",
+    "PAYMENT_FIGURES_CHANGED": "What this payment credits changed since it was shown, so nothing was recorded: it would now credit {credit, number} and hand back {change, number} ({currency}). The bill and the rate were read again — check the amount and the change, then press again.",
+    "PAYMENT_LARGE_CHANGE_REASON_REQUIRED": "The change handed back is worth more than the large-exchange threshold ({threshold, number} {currency}). Write why it is given.",
     "COLLECTOR_CANNOT_SELECT_METHOD": "A collector records the cash he collects as his own collection (method “Via Collector”, with himself named), or a Whish transfer — never cash into the safe, nor in another collector’s name. Nothing was recorded.",
     "PAYMENT_EXTERNAL_REF_REUSED": "This reference is already on receipt {receiptNumber}. One transfer is not recorded twice. Nothing was recorded.",
     "PAYMENT_CHECKOUT_MISMATCHED": "This Whish payment did not match the checkout it was opened for, so it was not banked. Reject the claim, then record at the counter what Whish shows (transaction number {reference}). Nothing was recorded.",
@@ -3612,6 +3614,10 @@
     "recorded": "Amount recorded:",
     "receiptLine": "Receipt {number}",
     "selfCollector": "What you collect is recorded in your name: it stays in your custody until you hand it in to the safe.",
+    "largeChange": {
+      "label": "Why such large change: it is worth {amount}{unit}, above the large-exchange threshold ({threshold}{unit})",
+      "needed": "Write why this change is given: it comes out of the safe in pounds, and is worth more than the large-exchange threshold."
+    },
     "cancelBill": {
       "action": "Cancel bill",
       "title": "Cancel this bill?",

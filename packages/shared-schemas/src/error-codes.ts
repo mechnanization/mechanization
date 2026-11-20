@@ -101,6 +101,12 @@ export const ERROR_CODES = [
   // confirmed in `acknowledgedDuplicates`. `params.title` is the first one's title, `params.count`
   // how many; `details.duplicates` lists them.
   'FEE_NOTICE_DUPLICATE',
+  // A single counter payment whose credit or change, worked out under the bill's lock, is not what the
+  // screen showed (`expected`): `params.credit`, `params.change` and `params.currency` are the server's.
+  'PAYMENT_FIGURES_CHANGED',
+  // Counter change worth more than the manager's large-exchange threshold, with no reason given.
+  // `params.threshold` is the threshold and `params.currency` the foreign currency it is counted in.
+  'PAYMENT_LARGE_CHANGE_REASON_REQUIRED',
   // Several of one citizen's bills settled in one press (docs/finance.md §3.7)
   'BULK_SETTLE_CITIZEN_MISMATCH',
   // A selected bill was settled since it was ticked (`params.invoice`: its INV- number, or its title).

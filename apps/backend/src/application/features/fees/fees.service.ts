@@ -87,7 +87,7 @@ import { sameMonth, sameTarget, unconfirmed } from './duplicate-notice';
 import { likePattern, searchTokens } from '../../common/search-terms';
 import { citizenSearchText } from '../../common/citizen-search';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
-import { PaymentLedgerService, type Tender } from './payment-ledger.service';
+import { counterCredit, PaymentLedgerService, type Tender } from './payment-ledger.service';
 import { creditsWallets, documentOccurredAt } from '../treasury/treasury.plan';
 import { assertLiveCollector } from './live-collector';
 import { AuditService, type AuditEntryInput } from '../audit/audit.service';
@@ -5055,6 +5055,8 @@ export class FeesService {
     adjustmentReason?: string;
     /** The page's id for this press of the button — a retry returns the first receipt. */
     clientRequestId?: string;
+    /** What the screen showed: the credit and the change; the ledger refuses figures that moved (F18). */
+    expected?: { credit: number; change: number };
     actor: { id: string; role: string };
   }) {
     /*
@@ -5137,6 +5139,49 @@ export class FeesService {
       });
 
       /*
+        «الباقي» is an exchange: foreign notes in, ليرة out of the safe (finding
+        F19 of the 2026-11-14 billing audit). Change worth more, in the foreign
+        currency, than the manager's large-exchange threshold — the bar that
+        sends a transfer to review — needs a reason, kept on the receipt and
+        flagged in the audit row (Abed's decision of 2026-11-15: a reason and a
+        flag, no review queue). Judged on the figure the ledger records
+        (`counterCredit`). A payment the ledger will refuse, or a retry of one
+        already recorded — the bill is settled, so nothing is owed — has no
+        change to judge here: `recordIn` answers it, after the replay.
+      */
+      const largeChange = (() => {
+        if (!tender?.foreign || !tender.exchangeRate) return null;
+        let changeGiven: number;
+        try {
+          ({ changeGiven } = counterCredit({
+            amount: received,
+            tendered: tender,
+            outstanding: invoice.amount - invoice.paidAmount,
+            currency: invoice.currency,
+          }));
+        } catch {
+          return null;
+        }
+        const threshold =
+          config.largeExchangeThreshold === null
+            ? DEFAULT_LARGE_EXCHANGE_THRESHOLD
+            : Number(config.largeExchangeThreshold);
+        const foreignValue = Math.round((changeGiven / tender.exchangeRate) * 100) / 100;
+        return Math.round(foreignValue * 100) > Math.round(threshold * 100)
+          ? { foreignValue, threshold, currency: tender.foreignCurrency }
+          : null;
+      })();
+      if (largeChange && !input.adjustmentReason?.trim()) {
+        throw new ValidationError({
+          code: 'PAYMENT_LARGE_CHANGE_REASON_REQUIRED',
+          message: `The change is worth ${largeChange.foreignValue} ${largeChange.currency}, above the large-exchange threshold of ${largeChange.threshold}; give the reason.`,
+          params: { threshold: largeChange.threshold, currency: largeChange.currency ?? '' },
+          details: { adjustmentReason: '' },
+        });
+      }
+      const reasonKept = adjustment.required || largeChange !== null;
+
+      /*
         After go-live, a payment dated before it credits no wallet (docs/finance.md
         §3.3). That is right for cash already inside the counted opening balance,
         and a silent hole for anything else: cash taken today and dated last week
@@ -5177,8 +5222,9 @@ export class FeesService {
         note: input.note,
         tendered: tender,
         occurredAt,
-        adjustmentReason: adjustment.required ? (input.adjustmentReason ?? null) : null,
+        adjustmentReason: reasonKept ? (input.adjustmentReason ?? null) : null,
         clientRequestId: input.clientRequestId ?? null,
+        expected: input.expected ?? null,
         /*
           What a Court of Audit reviewer asks of a cash entry: how much, on which
           receipt, on what day, in which notes, at what rate against the official
@@ -5216,7 +5262,15 @@ export class FeesService {
                   changeGiven: movement.changeGiven,
                 }
               : {}),
-            ...(adjustment.required ? { adjustmentReason: input.adjustmentReason } : {}),
+            // Change worth more than the large-exchange threshold (F19): flagged, so it can be found.
+            ...(largeChange
+              ? {
+                  largeChange: true,
+                  changeForeignValue: largeChange.foreignValue,
+                  largeExchangeThreshold: largeChange.threshold,
+                }
+              : {}),
+            ...(reasonKept ? { adjustmentReason: input.adjustmentReason } : {}),
           },
         }),
       });
