@@ -17,7 +17,9 @@ import {
   USER_REPOSITORY,
   ZONE_REPOSITORY,
 } from '../domain/interfaces/base-repository.interface';
+import { DAY3ATI_TOKENS } from '../domain/interfaces/day3ati-tokens.interface';
 import { WHISH_GATEWAY } from '../domain/interfaces/whish-gateway.interface';
+import { Day3atiTokenService } from './day3ati/day3ati-token.service';
 import { WhishGatewayService } from './payments/whish-gateway.service';
 import { S3CadastreStorageService } from './aws/s3-cadastre-storage.service';
 import { S3RequestFileStorageService } from './aws/s3-request-file-storage.service';
@@ -85,6 +87,8 @@ import { SmsProviderService } from './sms/sms-provider.service';
     { provide: EMAIL_SENDER, useClass: SmtpEmailSender },
     { provide: SMS_SENDER, useClass: SmsProviderService },
     { provide: WHISH_GATEWAY, useClass: WhishGatewayService },
+    // Day3ati's tokens, for the News partner API. Off, and harmless, until the four DAY3ATI_* settings are set.
+    { provide: DAY3ATI_TOKENS, useClass: Day3atiTokenService },
     { provide: PASSWORD_HASHER, useClass: BcryptPasswordHasher },
     { provide: TOTP_SERVICE, useClass: OtplibTotpService },
   ],
@@ -110,6 +114,7 @@ import { SmsProviderService } from './sms/sms-provider.service';
     EMAIL_SENDER,
     SMS_SENDER,
     WHISH_GATEWAY,
+    DAY3ATI_TOKENS,
     PASSWORD_HASHER,
     TOTP_SERVICE,
   ],
