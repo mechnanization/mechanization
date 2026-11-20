@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية)
 
-Last verified against the code: `fix/pr88-review` (on `develop@be4f053`), 2026-10-06; the frontend dev server on Turbopack, `develop@4634bdb`, 2026-10-15.
+Last verified against the code: `feat/day3ati-staff-sync` (on `feat/day3ati-token-service@c10c166`): the `day3ati:backfill-staff` script and the News accounts it creates, 2026-11-20; `fix/pr88-review` (on `develop@be4f053`), 2026-10-06; the frontend dev server on Turbopack, `develop@4634bdb`, 2026-10-15.
 
 A registration system for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastre map, fees and payments. Each
