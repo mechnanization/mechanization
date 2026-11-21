@@ -6,6 +6,7 @@ Last verified against the code: `feat/arrears-approval` (on `develop@c6e7462`), 
 > return, discard, approve and the «ARR-» bills, a single line, the link of a «للمطابقة» line, the cutoff year, and «دمج
 > ملفين» moving old debts — built on `feat/arrears-approval` (on `develop@c6e7462`). **Not built, with its reason:** the in-app backup (§8); and the old books'
 > totals per year, which stay read only until open-decisions §23.4 is decided.
+> Task 9, «شطب», built on `feat/arrears-write-off` (PR #179): [finance.md](finance.md) §3.8.
 > Task 7, the export, import and submit screens, built on `feat/arrears-import-ui` (PR #181): «المتأخرات»
 > (`fees/arrears`), on task 4's and task 5's routes.
 >
@@ -315,7 +316,10 @@ receipts read it as any bill, and the money reaches a wallet as any payment does
 - **`WRITTEN_OFF` in every read** (tasks 9, 10): any read that treats "not PAID" as owed
   must leave it out, as it leaves out CANCELLED.
 - **A fee notice for a year before the cutoff** is refused, so no year is billed twice
-  (task 6). Totals that report arrears include old-debt bills, and say so (task 6).
+  (task 6, built on `feat/arrears-fee-guards` (on `develop@c6e7462`): the preview and the issue refuse it, the recurring run skips the
+  period; [finance.md](finance.md) §3.6b). Totals that report arrears include old-debt bills (task 6, built: pinned by
+  `arrears-fee-guards.integration.spec.ts`; they already did, since no total reads a bill's notice). **Not built from
+  task 6:** the cutoff setting's lock once a batch is approved, which belongs with the setter on `feat/arrears-approval`.
 - **«دمج ملفين»** moves `arrears_lines.citizenId` and `arrears_batch_citizens`, and its
   undo puts them back (task 5, built). A live line the kept file already holds for the same debt stays on the absorbed
   file, as a colliding bill does.

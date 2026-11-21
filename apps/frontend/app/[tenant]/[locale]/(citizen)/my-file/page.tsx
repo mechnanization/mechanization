@@ -1,5 +1,6 @@
 'use client';
 
+import { billOwesNothing } from '@mechanization/shared-schemas';
 import { use, useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -280,8 +281,8 @@ export default function MyFilePage({
     );
   }
 
-  // A bill the municipality cancelled (CANCELLED) is not owed, and takes no payment.
-  const outstanding = payments.filter((payment) => !isSettled(payment) && payment.paymentStatus !== 'CANCELLED');
+  // A bill the municipality cancelled or wrote off is not owed, and takes no payment.
+  const outstanding = payments.filter((payment) => !isSettled(payment) && !billOwesNothing(payment.paymentStatus));
   const settled = payments.filter(isSettled);
   const notes = payments.filter((payment) => payment.reviewNote);
   /*

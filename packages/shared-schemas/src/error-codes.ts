@@ -40,6 +40,9 @@ export const ERROR_CODES = [
   'FEE_NOTHING_TO_CHARGE',
   'FEE_CITIZEN_ARCHIVED',
   'FEE_DUE_DATE_INVALID',
+  // A notice's period is a year before the old-debts cutoff (`params.year`, `params.cutoffYear`): those years are
+  // entered as old debts, and a notice would bill them a second time (docs/old-debts-plan.md §8).
+  'FEE_PERIOD_BEFORE_ARREARS_CUTOFF',
   'FEE_NOTICE_NOT_FOUND',
   'PAYMENT_NOT_FOUND',
   'PAYMENT_ALREADY_PAID',
@@ -92,6 +95,15 @@ export const ERROR_CODES = [
   // Cancelling a bill that has money on it, or one already cancelled.
   'BILL_CANCEL_HAS_PAYMENTS',
   'BILL_ALREADY_CANCELLED',
+  // «شطب» (0107, docs/old-debts-plan.md decision 10): a bill already written off takes no write-off,
+  // cancellation, payment, claim or checkout, and none of its receipts is reversed while it stands.
+  'BILL_ALREADY_WRITTEN_OFF',
+  'PAYMENT_BILL_WRITTEN_OFF',
+  'PAYMENT_REVERSAL_BILL_WRITTEN_OFF',
+  // Nothing is left on the bill to write off: it is paid.
+  'BILL_WRITE_OFF_NOTHING_LEFT',
+  // The council's decision is dated after today (`params.today`).
+  'BILL_WRITE_OFF_DECISION_IN_FUTURE',
   // A retry key already used to issue a different notice.
   'FEE_NOTICE_REQUEST_REUSED',
   // «تكليف مالي»: a retry key already used for a different one-off charge (0102). `params.invoiceNumber`

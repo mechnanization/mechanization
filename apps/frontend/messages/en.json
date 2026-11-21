@@ -133,6 +133,7 @@
     "unsettled": "Unsettled",
     "totalOwed": "Total Amount Due",
     "partlyPaid": "Paid {paid} of {total}",
+    "writtenOff": "The municipality wrote off what was left on this charge by a council decision. Nothing is owed on it.",
     "noBills": "No unpaid bills found",
     "propertiesSummary": "Registered Properties & Units",
     "invoicesSummary": "Invoices & Demands",
@@ -224,6 +225,7 @@
     "INTERNAL_ERROR": "Something went wrong. Try again later or contact the municipality.",
     "FEE_NO_MATCHING_CITIZENS": "No citizens match this category, so no notice will be issued.",
     "FEE_DUE_DATE_INVALID": "The due date is not valid.",
+    "FEE_PERIOD_BEFORE_ARREARS_CUTOFF": "{year} is before the billing start year ({cutoffYear}): those years are entered as old debts, and a notice would bill them twice.",
     "FEE_NOTICE_NOT_FOUND": "This fee notice could not be found.",
     "PAYMENT_NOT_FOUND": "This payment could not be found.",
     "PAYMENT_ALREADY_PAID": "This payment has already been settled.",
@@ -265,6 +267,11 @@
     "PAYMENT_BILL_CANCELLED": "This bill has been cancelled and takes no payment.",
     "BILL_CANCEL_HAS_PAYMENTS": "Money has been taken on this bill. Reverse its receipts first, then cancel it.",
     "BILL_ALREADY_CANCELLED": "This bill has already been cancelled.",
+    "BILL_ALREADY_WRITTEN_OFF": "What was left on this bill has already been written off.",
+    "PAYMENT_BILL_WRITTEN_OFF": "What was left on this bill was written off by a council decision. It takes no payment.",
+    "PAYMENT_REVERSAL_BILL_WRITTEN_OFF": "What was left on this bill was written off, so none of its receipts can be reversed while the write-off stands.",
+    "BILL_WRITE_OFF_NOTHING_LEFT": "Nothing is left on this bill to write off: it is paid.",
+    "BILL_WRITE_OFF_DECISION_IN_FUTURE": "The council decision is dated after today ({today}).",
     "FEE_CHARGE_REQUEST_REUSED": "This operation’s identifier already recorded a different charge ({invoiceNumber}). Check the citizen’s bills before anything else: adding again records a new, separate charge.",
     "FEE_NOTICE_REQUEST_REUSED": "This operation’s identifier was already used to issue a different notice. Check the notices issued before anything else: issuing again issues a new, separate notice.",
     "FEE_NOTICE_DUPLICATE": "{count, plural, one {The notice «{title}» is active and already bills the same people for this period, so nothing was issued. Review it under «Before you issue», and confirm if this is a different fee.} other {{count} active notices, the first «{title}», already bill the same people for this period, so nothing was issued. Review them under «Before you issue», and confirm if this is a different fee.}}",
@@ -1443,7 +1450,7 @@
       "noPeriods": "This notice has no bills.",
       "once": "One-off",
       "periodCancels": "{count, plural, =0 {nothing to cancel} one {# bill to cancel} other {# bills to cancel}}",
-      "periodLeaves": "Left as they are: {withPayments} with money taken, {underReview} under review, {alreadyCancelled} already cancelled",
+      "periodLeaves": "Left as they are: {withPayments} with money taken, {underReview} under review, {alreadyCancelled} already cancelled, {writtenOff} written off",
       "confirmAction": "Cancel the chosen periods' bills",
       "keep": "Keep the notice",
       "busy": "Cancelling…",
@@ -1468,7 +1475,8 @@
       "reasons": {
         "BILL_CANCEL_HAS_PAYMENTS": "money has been taken on it — reverse its receipts first",
         "PAYMENT_CLAIM_UNDER_REVIEW": "a payment claim on it is under review — decide it first",
-        "BILL_ALREADY_CANCELLED": "already cancelled"
+        "BILL_ALREADY_CANCELLED": "already cancelled",
+        "BILL_ALREADY_WRITTEN_OFF": "written off"
       }
     },
     "matrix": {
@@ -1989,6 +1997,7 @@
     "PAYMENT_REVERSED": "Payment reversed",
     "FEE_INDIVIDUAL_LEVIED": "One-off charge raised",
     "FEE_BILL_CANCELLED": "Bill cancelled",
+    "FEE_BILL_WRITTEN_OFF": "Wrote off what was left on a bill",
     "FEE_NOTICE_CANCELLED": "Fee notice cancelled",
     "FEE_NOTICE_STOPPED": "Fee notice stopped",
     "FEE_NOTICE_RESUMED": "Fee notice resumed",
@@ -2046,6 +2055,7 @@
     "REQUEST_SUBMITTED": "Request filed",
     "REQUEST_BILL_RAISED": "Request fee billed",
     "REQUEST_PAID": "Request fee paid",
+    "REQUEST_FEE_WRITTEN_OFF": "A request’s fee was written off and the request moved to review",
     "REQUEST_PAYMENT_REVERSED": "Request fee payment reversed",
     "REQUEST_READY": "Request ready for pickup",
     "REQUEST_REJECTED": "Request rejected",
@@ -3733,6 +3743,28 @@
       "openRequest": "Open the request",
       "cancelledTitle": "This bill has been cancelled",
       "cancelledBody": "The manager cancelled it; nothing is owed on it."
+    },
+    "writeOff": {
+      "action": "Write off",
+      "title": "Write off what is left on this bill?",
+      "description": "A write-off forgives what is left on the bill by a council decision: an amnesty, a debt too old to collect, or one that cannot be collected. It is not a cancellation: the debt was real, and what was paid on it stays paid. The bill stays on the citizen’s file, written off, with your name, the date, the decision and the reason, and it takes no payment after that.",
+      "amount": "{amount} will be written off: the whole bill.",
+      "amountPartPaid": "{amount} will be written off: what is left after what was paid on it.",
+      "requestNote": "This bill is the fee for request <code>{number}</code>. Once it is written off the citizen has nothing left to pay, and the request moves to «In review» for staff to finish.",
+      "reason": "Reason for the write-off (at least {min} characters)",
+      "reasonTooShort": "Write the reason for the write-off in at least {min} characters",
+      "reasonPlaceholder": "e.g. amnesty on fees before 2020 by council decision",
+      "decisionRef": "Council decision number",
+      "decisionRefPlaceholder": "e.g. 45/2026",
+      "decisionDate": "Decision date",
+      "confirm": "Write off what is left",
+      "keep": "Keep it",
+      "busy": "Writing off…",
+      "done": "What was left on the bill was written off.",
+      "doneWithRequest": "What was left on the bill was written off, and request {number} moved to «In review».",
+      "writtenOffTitle": "What was left on this bill was written off",
+      "writtenOffBody": "It was written off by a council decision; nothing is owed on it.",
+      "writtenOffDetail": "{amount} written off by council decision {decisionRef} of {decisionDate}. Reason: {reason}"
     }
   },
   "bulkSettle": {

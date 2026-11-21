@@ -133,6 +133,7 @@
     "unsettled": "غير مسدّد",
     "totalOwed": "المبلغ المستحق",
     "partlyPaid": "سدّدت {paid} من {total}",
+    "writtenOff": "شطبت البلدية ما تبقّى على هذه المطالبة بقرار من المجلس البلدي، ولا مبلغ مستحقاً عليها.",
     "noBills": "لا توجد فواتير غير مسددة",
     "propertiesSummary": "العقارات والوحدات المسجّلة",
     "invoicesSummary": "الفواتير والمطالبات",
@@ -224,6 +225,7 @@
     "INTERNAL_ERROR": "حدث خطأ غير متوقع. يرجى المحاولة لاحقاً أو مراجعة البلدية.",
     "FEE_NO_MATCHING_CITIZENS": "لا يوجد مواطنون مطابقون لهذه الفئة — لن يتم إصدار أي إشعار",
     "FEE_DUE_DATE_INVALID": "تاريخ الاستحقاق غير صالح",
+    "FEE_PERIOD_BEFORE_ARREARS_CUTOFF": "سنة {year} قبل سنة بدء الفوترة ({cutoffYear}): تُدخل كمتأخرات سنوات سابقة، ولا يصدر بها إشعار حتى لا تُفوتر مرتين",
     "FEE_NOTICE_NOT_FOUND": "إشعار الرسم غير موجود",
     "PAYMENT_NOT_FOUND": "الدفعة غير موجودة",
     "PAYMENT_ALREADY_PAID": "هذه الدفعة مسدّدة بالفعل",
@@ -265,6 +267,11 @@
     "PAYMENT_BILL_CANCELLED": "هذه الفاتورة ملغاة ولا تقبل أي دفعة",
     "BILL_CANCEL_HAS_PAYMENTS": "على هذه الفاتورة مبالغ مقبوضة — اعكس وصولاتها أولاً، ثم ألغِها",
     "BILL_ALREADY_CANCELLED": "هذه الفاتورة ملغاة أصلاً",
+    "BILL_ALREADY_WRITTEN_OFF": "ما تبقّى على هذه الفاتورة مشطوب أصلاً",
+    "PAYMENT_BILL_WRITTEN_OFF": "شُطب ما تبقّى على هذه الفاتورة بقرار من المجلس، ولا تقبل أي دفعة",
+    "PAYMENT_REVERSAL_BILL_WRITTEN_OFF": "شُطب ما تبقّى على هذه الفاتورة، فلا يُعكس أي وصل عليها ما دام الشطب قائماً",
+    "BILL_WRITE_OFF_NOTHING_LEFT": "لا شيء متبقٍّ على هذه الفاتورة لشطبه: هي مسدّدة",
+    "BILL_WRITE_OFF_DECISION_IN_FUTURE": "تاريخ قرار المجلس بعد اليوم ({today})",
     "FEE_CHARGE_REQUEST_REUSED": "معرّف هذه العملية سجّل مطالبة أخرى ({invoiceNumber}). راجع فواتير المواطن قبل أي شيء آخر: الإضافة مجدداً تسجّل مطالبة جديدة منفصلة.",
     "FEE_NOTICE_REQUEST_REUSED": "معرّف هذه العملية استُخدم لإصدار رسم آخر. راجع الرسوم الصادرة قبل أي شيء آخر: الإصدار مجدداً يُصدر رسماً جديداً منفصلاً",
     "FEE_NOTICE_DUPLICATE": "{count, plural, one {الإشعار «{title}» نافذ ويطالب الأشخاص أنفسهم عن الفترة نفسها، ولم يُصدَر شيء. راجعه في «قبل الإصدار»، وأكّد إن كان هذا رسماً آخر.} other {{count} إشعارات نافذة، أولها «{title}»، تطالب الأشخاص أنفسهم عن الفترة نفسها، ولم يُصدَر شيء. راجعها في «قبل الإصدار»، وأكّد إن كان هذا رسماً آخر.}}",
@@ -1443,7 +1450,7 @@
       "noPeriods": "لا فواتير لهذا الإشعار.",
       "once": "لمرة واحدة",
       "periodCancels": "{count, plural, =0 {لا فاتورة تُلغى} one {فاتورة واحدة تُلغى} two {فاتورتان تُلغيان} few {{count} فواتير تُلغى} many {{count} فاتورة تُلغى} other {{count} فاتورة تُلغى}}",
-      "periodLeaves": "تبقى: {withPayments} عليها مبالغ مقبوضة، {underReview} قيد المراجعة، {alreadyCancelled} ملغاة أصلاً",
+      "periodLeaves": "تبقى: {withPayments} عليها مبالغ مقبوضة، {underReview} قيد المراجعة، {alreadyCancelled} ملغاة أصلاً، {writtenOff} مشطوبة",
       "confirmAction": "ألغِ فواتير الفترات المختارة",
       "keep": "تراجع",
       "busy": "يُلغى…",
@@ -1468,7 +1475,8 @@
       "reasons": {
         "BILL_CANCEL_HAS_PAYMENTS": "عليها مبالغ مقبوضة — تُعكس وصولاتها أولاً",
         "PAYMENT_CLAIM_UNDER_REVIEW": "عليها إبلاغ دفع قيد المراجعة — يُبتّ فيه أولاً",
-        "BILL_ALREADY_CANCELLED": "ملغاة أصلاً"
+        "BILL_ALREADY_CANCELLED": "ملغاة أصلاً",
+        "BILL_ALREADY_WRITTEN_OFF": "مشطوبة"
       }
     },
     "matrix": {
@@ -1989,6 +1997,7 @@
     "PAYMENT_REVERSED": "عكس حركة دفع",
     "FEE_INDIVIDUAL_LEVIED": "تكليف مالي فردي",
     "FEE_BILL_CANCELLED": "إلغاء فاتورة",
+    "FEE_BILL_WRITTEN_OFF": "شطب ما تبقّى على فاتورة",
     "FEE_NOTICE_CANCELLED": "إلغاء إشعار رسم",
     "FEE_NOTICE_STOPPED": "إيقاف إشعار رسم",
     "FEE_NOTICE_RESUMED": "استئناف إشعار رسم",
@@ -2046,6 +2055,7 @@
     "REQUEST_SUBMITTED": "تقديم طلب معاملة",
     "REQUEST_BILL_RAISED": "إصدار فاتورة رسم طلب",
     "REQUEST_PAID": "تسديد رسم طلب",
+    "REQUEST_FEE_WRITTEN_OFF": "شُطب رسم طلب فانتقل الطلب إلى المعالجة",
     "REQUEST_PAYMENT_REVERSED": "عكس تسديد رسم طلب",
     "REQUEST_READY": "تجهيز طلب للاستلام",
     "REQUEST_REJECTED": "رفض طلب",
@@ -3733,6 +3743,28 @@
       "openRequest": "فتح الطلب",
       "cancelledTitle": "هذه الفاتورة ملغاة",
       "cancelledBody": "ألغاها المدير، ولا مبلغ مستحقاً عليها."
+    },
+    "writeOff": {
+      "action": "شطب",
+      "title": "شطب ما تبقّى على هذه الفاتورة؟",
+      "description": "الشطب يُسقط ما تبقّى على الفاتورة بقرار من المجلس البلدي: عفو، أو دين مرّ عليه الزمن، أو دين يتعذّر تحصيله. ليس إلغاءً: الدين كان صحيحاً، وما دُفع منه يبقى مدفوعاً. تبقى الفاتورة في ملف المواطن «مشطوبة» مع اسمك والتاريخ والقرار والسبب، ولا يُقبل عليها أي دفع بعد ذلك.",
+      "amount": "سيُشطب {amount}، أي كامل الفاتورة.",
+      "amountPartPaid": "سيُشطب {amount}، وهو ما تبقّى بعد ما دُفع منها.",
+      "requestNote": "هذه الفاتورة رسم الطلب <code>{number}</code>. بعد الشطب لا يبقى على المواطن ما يدفعه، فينتقل الطلب إلى «قيد المعالجة» ليكمله الموظف.",
+      "reason": "سبب الشطب (لا يقل عن {min} أحرف)",
+      "reasonTooShort": "اكتب سبب الشطب في {min} أحرف على الأقل",
+      "reasonPlaceholder": "مثال: عفو عن رسوم ما قبل 2020 بقرار المجلس",
+      "decisionRef": "رقم قرار المجلس",
+      "decisionRefPlaceholder": "مثال: 45/2026",
+      "decisionDate": "تاريخ القرار",
+      "confirm": "شطب ما تبقّى",
+      "keep": "تراجع",
+      "busy": "جارٍ الشطب…",
+      "done": "شُطب ما تبقّى على الفاتورة.",
+      "doneWithRequest": "شُطب ما تبقّى على الفاتورة، وانتقل الطلب {number} إلى «قيد المعالجة».",
+      "writtenOffTitle": "شُطب ما تبقّى على هذه الفاتورة",
+      "writtenOffBody": "شُطب بقرار من المجلس البلدي، ولا مبلغ مستحقاً عليها.",
+      "writtenOffDetail": "شُطب {amount} بقرار المجلس رقم {decisionRef} تاريخ {decisionDate}. السبب: {reason}"
     }
   },
   "bulkSettle": {
