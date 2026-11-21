@@ -4,7 +4,8 @@ import { migrateTenantSchema } from './tenant-migrator';
 /**
  * 0103: TRUNCATE is refused on every append-only and written-once table, the
  * one way past their row triggers (`TRUNCATE treasury_day_closures CASCADE`
- * reopened every closed day; docs/security.md, task S19).
+ * reopened every closed day; docs/security.md, task S19), and on the tables a
+ * later migration guards in the file that creates them (0108, old debts).
  *
  * Set `TEST_DATABASE_URL` to run it (Postgres 17). Never point it at staging.
  */
@@ -27,6 +28,10 @@ const GUARDED = [
   'income_vouchers',
   'treasury_transfers',
   'inspector_payouts',
+  // 0108: old debts, written once their batch is approved.
+  'arrears_batches',
+  'arrears_lines',
+  'arrears_batch_citizens',
 ];
 
 describeIfDb('0103 — TRUNCATE on the append-only tables', () => {

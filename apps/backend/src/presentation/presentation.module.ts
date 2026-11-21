@@ -8,6 +8,7 @@ import { CadastreController } from './controllers/cadastre.controller';
 import { BuildingsController } from './controllers/buildings.controller';
 import { CorrectionsController } from './controllers/corrections.controller';
 import { FeeExemptionsController } from './controllers/fee-exemptions.controller';
+import { ArrearsController } from './controllers/arrears.controller';
 import { BuildingTypesController } from './controllers/building-types.controller';
 import { NewsArticlesController } from './controllers/news-articles.controller';
 import { NewsController } from './controllers/news.controller';
@@ -60,6 +61,7 @@ import { SingleQueryValuePipe } from './pipes/single-query-value.pipe';
     BuildingsController,
     CorrectionsController,
     FeeExemptionsController,
+    ArrearsController,
     BuildingTypesController,
     NewsController,
     NewsArticlesController,
