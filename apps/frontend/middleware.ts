@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { httpsOrigin } from './lib/https-origin';
 
 const LOCALES = ['ar', 'en'] as const;
 const DEFAULT_LOCALE = 'ar';
@@ -59,7 +60,9 @@ function contentSecurityPolicy(nonce: string): string {
     scriptSrc,
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     'font-src https://fonts.gstatic.com data:',
-    `img-src 'self' data: blob: ${MAPBOX}`,
+    // Day3ati's media host, when one is named (`NEXT_PUBLIC_DAY3ATI_MEDIA_ORIGIN`, https only): the News article
+    // thumbnails. Unset or not https, the policy is what it was.
+    `img-src 'self' data: blob: ${MAPBOX} ${httpsOrigin(process.env.NEXT_PUBLIC_DAY3ATI_MEDIA_ORIGIN)}`.trim(),
     `connect-src 'self' ${api} ${MAPBOX}`.replace(/\s+/g, ' ').trim(),
     "worker-src 'self' blob:",
     "child-src 'self' blob:",

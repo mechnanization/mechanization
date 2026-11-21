@@ -53,6 +53,31 @@ export function municipalDayStart(day: string): Date {
   return new Date(instant);
 }
 
+/**
+ * The instant a wall-clock time on the municipality's clock is: `day` is
+ * `YYYY-MM-DD` and `time` is `HH:MM`, both as a person typed them in Beirut.
+ *
+ * What a scheduled News article's `publishAt` is made from: the editor picks
+ * «1 December, 08:00», Day3ati wants UTC. The offset is read for that moment
+ * rather than assumed (UTC+2 in winter, +3 in summer), as `municipalDayStart`
+ * does for a day's start. A time the clock skips when it moves forward
+ * (a spring-forward gap) lands an hour later, on the first instant after it.
+ */
+export function municipalInstant(day: string, time: string): Date {
+  const target = Date.UTC(
+    Number(day.slice(0, 4)),
+    Number(day.slice(5, 7)) - 1,
+    Number(day.slice(8, 10)),
+    Number(time.slice(0, 2)),
+    Number(time.slice(3, 5)),
+  );
+  let instant = target;
+  for (let pass = 0; pass < 2; pass++) {
+    instant = target - (municipalWallClock(instant) - instant);
+  }
+  return new Date(instant);
+}
+
 /** What the municipal clock reads at `instant`, written as if that wall time were UTC. */
 function municipalWallClock(instant: number): number {
   const parts = new Intl.DateTimeFormat('en-US', {
