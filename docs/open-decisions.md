@@ -1077,3 +1077,17 @@ SUPER_ADMIN, an accountant prepares every batch.
 Proposed, not confirmed. What the plan does now: `arrears_control_totals` ships empty with the
 migration; nothing writes or reads it. **Undecided:** whether SUPER_ADMIN enters each year's arrears
 total from the last «قطع الحساب», so the report shows how much is still to import against it.
+
+### 23.5 Writing off many bills at once
+
+**Later step.** «شطب» ([finance.md](finance.md) §3.8, task 9) is one bill at a time, on the bill's own
+page. A bulk write-off — «all penalties before 2020, by decision X» — is wanted eventually; it is not
+built or designed.
+
+### 23.6 A municipal request's fee is not written off
+
+What the code does now (2026-11-21, task 9): «شطب» refuses a bill that is a municipal request's fee
+(`BILL_WRITE_OFF_REQUEST_FEE`) and points to «إلغاء الفاتورة», which withdraws the bill and cancels the
+request with it. Written off, the request would wait in «بانتظار الدفع» on a bill nothing can pay, since
+the request moves on only once its bill is PAID. **Undecided:** whether a forgiven fee should instead
+let the request go ahead, as a fee waived does (`REQUEST_FEE_WAIVED`).

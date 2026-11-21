@@ -1,5 +1,6 @@
 'use client';
 
+import { billOwesNothing } from '@mechanization/shared-schemas';
 import { use, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -67,9 +68,9 @@ export default function MyAccount({
       });
   }, [tenant, locale, router]);
 
-  // A bill the municipality cancelled (CANCELLED) is not owed, and is not listed as unpaid.
+  // A bill the municipality cancelled or wrote off owes nothing, and is not listed as unpaid.
   const unpaid =
-    summary?.payments.filter((payment) => payment.paymentStatus !== 'PAID' && payment.paymentStatus !== 'CANCELLED') ?? [];
+    summary?.payments.filter((payment) => payment.paymentStatus !== 'PAID' && !billOwesNothing(payment.paymentStatus)) ?? [];
   /*
     What is owed, by the portal's one rule: what is left on the bills the
     citizen can still pay. A bill whose reported transfer waits for a clerk is

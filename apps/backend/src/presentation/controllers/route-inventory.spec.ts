@@ -501,6 +501,12 @@ describe('the routes that raise a bill', () => {
     expect(batch?.roles).toEqual(['SUPER_ADMIN']);
   });
 
+  it('lets only the manager write off what is left on a bill («شطب», 0107)', () => {
+    const writeOff = all.find((candidate) => candidate.name === 'FeesController.writeOffBill');
+    expect(writeOff).toMatchObject({ method: RequestMethod.POST, path: 'payments/:id/write-off', isPublic: false });
+    expect(writeOff?.roles).toEqual(['SUPER_ADMIN']);
+  });
+
   it('shows a notice’s periods before the cancel to the same roles as the cancel itself (D12)', () => {
     const periods = all.find((candidate) => candidate.name === 'FeesController.noticePeriods');
     const batch = all.find((candidate) => candidate.name === 'FeesController.cancelNotice');

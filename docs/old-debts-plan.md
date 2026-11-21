@@ -2,7 +2,10 @@
 
 Last verified against the code: `feat/arrears-import` (stacked on PRs #175 and #176), 2026-11-21.
 
-> **Status: tasks 1–4 in review, 2026-11-21, none merged.** This spec (PR #174); the migrations
+> **Status, 2026-11-21:** tasks 1–4 merged to `develop` (PRs #174–#177). Task 9, «شطب», built on
+> `feat/arrears-write-off` (on `develop@67a1ffe`): [finance.md](finance.md) §3.8.
+>
+> **Earlier status: tasks 1–4 in review, 2026-11-21, none merged.** This spec (PR #174); the migrations
 > `0107`/`0108` (`chore/migration-0107-old-debts`, PR #175); the contract in shared-schemas
 > (`feat/arrears-contract`, PR #176, stacked on #175); the export and the import's dry run
 > (`feat/arrears-import`, PR #177, stacked on #176). Tasks 5–12 are not started. The decisions are the

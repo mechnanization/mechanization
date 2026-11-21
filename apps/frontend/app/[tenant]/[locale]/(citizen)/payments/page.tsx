@@ -1,5 +1,6 @@
 'use client';
 
+import { billOwesNothing } from '@mechanization/shared-schemas';
 import { use, useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
@@ -50,6 +51,7 @@ const STATUS_TONE: Record<string, string> = {
   PENDING_REVIEW: 'border-warning/30 bg-warning/10 text-warning',
   PAID: 'border-success/30 bg-success/10 text-success',
   CANCELLED: 'border-border bg-muted text-muted-foreground',
+  WRITTEN_OFF: 'border-border bg-muted text-muted-foreground',
 };
 
 const STATUS_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -58,6 +60,7 @@ const STATUS_ICON: Record<string, React.ComponentType<{ className?: string }>> =
   PENDING_REVIEW: Clock,
   PAID: CheckCircle2,
   CANCELLED: Ban,
+  WRITTEN_OFF: Ban,
 };
 
 export default function CitizenPayments({
@@ -260,7 +263,9 @@ export default function CitizenPayments({
           {items.map((item) => {
             const Icon = STATUS_ICON[item.paymentStatus] ?? Clock;
             const payable = isPayable(item);
-            const cancelled = item.paymentStatus === 'CANCELLED';
+            // Cancelled, or written off («شطب»): it owes nothing; shown as it was, struck through.
+            const cancelled = billOwesNothing(item.paymentStatus);
+            const writtenOff = item.paymentStatus === 'WRITTEN_OFF';
 
             return (
               <Card key={item.id}>
@@ -319,9 +324,11 @@ export default function CitizenPayments({
 
                   {cancelled ? (
                     <p className="rounded-lg border bg-muted/40 p-3 text-sm text-muted-foreground">
-                      {locale === 'en'
-                        ? 'The municipality cancelled this charge. Nothing is owed on it.'
-                        : 'ألغت البلدية هذه المطالبة، ولا مبلغ مستحقاً عليها.'}
+                      {writtenOff
+                        ? tCitizen('writtenOff')
+                        : locale === 'en'
+                          ? 'The municipality cancelled this charge. Nothing is owed on it.'
+                          : 'ألغت البلدية هذه المطالبة، ولا مبلغ مستحقاً عليها.'}
                     </p>
                   ) : null}
 

@@ -1,6 +1,7 @@
 # Finance (الخزينة والمالية) — design draft
 
-Status: **DESIGN, with stages 1 to 5 built, settling several bills at once (§3.7), and one
+Status: **DESIGN, with stages 1 to 5 built, settling several bills at once (§3.7), «شطب» a bill's
+remainder (§3.8, 2026-11-21), and one
 register for income and expenses with its own recording page (§4.6, 2026-10-12) (see section 14).** It records the design agreed in discussion, 2026-10-06. The §7.2 adjustment
 entry, an opening balance for a wallet added after go-live, and transfer write-offs are not
 built, and every table, column, enum value and error code for them is a *proposal* until its
@@ -486,6 +487,46 @@ again by `recordIn` under the same lock). Paid once, it is paid for all its debt
   unit, period and amount, totals per currency, the notes, the rate and the change, two signatures, and a
   QR code of the BRC number only (assumption 13.1.3). Printed A4, downloaded as PDF, sent on WhatsApp.
   **Not built:** a thermal (80 mm) layout.
+
+### 3.8 «شطب» — writing off what is left on a bill (built 2026-11-21, `feat/arrears-write-off` (on `develop@67a1ffe`))
+
+Old-debts decision 10 ([old-debts-plan.md](old-debts-plan.md)): the council forgives what is left on a
+bill — an amnesty, a debt too old to collect, one that cannot be collected. It is **not** «إلغاء
+الفاتورة»: that withdraws a bill issued by mistake, with nothing paid on it; a write-off ends a debt
+that was real, and a part-paid bill keeps its receipts.
+
+- **Route.** `POST fees/payments/:id/write-off` (`FeesService.writeOffBill`), `BILL_WRITE_OFF_ROLES`
+  (the manager alone), body `writeOffBillSchema`: the reason (at least `ADJUSTMENT_REASON_MIN`, as a
+  cancellation's), the council decision number and its date. The amount is never sent.
+- **The write.** Under the bill's row lock (`PaymentLedgerService.lockInvoices`), one `UPDATE` sets
+  `paymentStatus = 'WRITTEN_OFF'`, the stamp and `writeOffAmount = amount − paidAmount`, computed by
+  the database; 0108's CHECKs hold it (`paidAmount + writeOffAmount = amount`, all six columns
+  together, status and stamp in step). A Tier 1 `FEE_BILL_WRITTEN_OFF` row in the same transaction:
+  the amounts, the decision, the reason. **No money moves**: no receipt, no ledger entry, no wallet.
+- **Refused**, in this order (`billWriteOffRefusal`, `fees/bill-write-off.ts`):
+  `BILL_ALREADY_WRITTEN_OFF`; `BILL_ALREADY_CANCELLED`; `PAYMENT_CLAIM_UNDER_REVIEW` (the claim is
+  decided first, as for a cancellation); `BILL_WRITE_OFF_NOTHING_LEFT` (paid). Then
+  `BILL_WRITE_OFF_DECISION_IN_FUTURE` (a decision dated after today on the municipality's calendar)
+  and `BILL_WRITE_OFF_REQUEST_FEE`: a municipal request's fee is withdrawn with «إلغاء الفاتورة», which
+  cancels the request too; written off, the request would wait on a bill nothing can pay
+  (open-decisions §23.6).
+- **A written-off bill takes nothing.** The counter and the ledger (`PAYMENT_BILL_WRITTEN_OFF`), a
+  settlement of several bills, a citizen's claim and the Whish checkout refuse it; «إلغاء الفاتورة»
+  and «إلغاء الإشعار» leave it as it is (`BILL_ALREADY_WRITTEN_OFF`, counted apart as `writtenOff` in
+  the notice's periods); a receipt on it is not reversed while the write-off stands
+  (`PAYMENT_REVERSAL_BILL_WRITTEN_OFF`, before the CHECK refuses it).
+- **What is owed leaves it out**, as it leaves out a cancelled bill: `billOwesNothing` /
+  `billRemaining` in shared-schemas (a written-off bill's `amount − paidAmount` is the sum forgiven,
+  never a sum owed). The bill's and the profile's `remaining` is 0; the outstanding totals of the
+  citizen file, the register and the dashboard exclude it; «المستحق على عقار» and so «براءة ذمة» never
+  counted it (they read open statuses only). **Billed** keeps the rule of 2026-10-13, billed =
+  collected + outstanding: of a written-off bill only what was paid counts as billed
+  (`amount − writeOffAmount`).
+- **Screens.** «شطب» on the bill's counter page (`WriteOffBillDialog`) for the manager, on a bill
+  still owed and no request's fee; the page then says it was written off, with the amount, the decision
+  and the reason (`writeOff` on the bill's views, `BillWriteOffView`). The portal shows it «مشطوبة»,
+  struck through, owing nothing.
+- **Not built:** writing off many bills at once (open-decisions §23.5); undoing a write-off.
 
 ---
 

@@ -1,3 +1,4 @@
+import { billOwesNothing } from '@mechanization/shared-schemas';
 import type { QueryState } from '@tanstack/react-query';
 import { reverseTransactionSchema } from '@mechanization/shared-schemas';
 import type { RecordedMovement } from '@/components/admin/payment-receipt';
@@ -49,8 +50,9 @@ export function mayReverseReceipt(
  * by typing the address (review of PR #113).
  */
 export function billPageLink(bill: { paymentStatus: string }): 'settle' | 'receipts' {
-  // A cancelled bill (0090) takes no cash either: what is left to see is its receipts, if any.
-  return bill.paymentStatus === 'PAID' || bill.paymentStatus === 'CANCELLED' ? 'receipts' : 'settle';
+  // A cancelled bill (0090) or a written-off one («شطب», 0107) takes no cash either: what is left
+  // to see is its receipts, if any.
+  return bill.paymentStatus === 'PAID' || billOwesNothing(bill.paymentStatus) ? 'receipts' : 'settle';
 }
 
 /**
