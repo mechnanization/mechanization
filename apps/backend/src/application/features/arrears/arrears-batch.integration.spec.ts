@@ -399,6 +399,10 @@ describeIfDb('old debts: submit, approve, link', () => {
       });
     });
 
+    it('does not take an archived file: restore it first', async () => {
+      await expect(add(line({ citizenId: person.dalal }))).rejects.toMatchObject({ code: 'FEE_CITIZEN_ARCHIVED' });
+    });
+
     it('keeps a person not on the register by the name in the books, waiting for a link', async () => {
       const view = await add(line({ sourceName: 'مقيم لم يسجَّل بعد' }));
       expect(await db.arrearsLine.findFirstOrThrow({ where: { batchId: view.id } })).toMatchObject({ citizenId: null, sourceName: 'مقيم لم يسجَّل بعد' });
@@ -422,17 +426,25 @@ describeIfDb('old debts: submit, approve, link', () => {
     it('raises its bill on the chosen file, stamps who and when, and does it once', async () => {
       const { batchId, lineId, propertyNumber } = await waiting();
       await approve(batchId);
-      await expect(within(() => batches.link(lineId, { citizenId: person.dalal }, OTHER_ACCOUNTANT))).resolves.toMatchObject({ id: lineId });
+      await expect(within(() => batches.link(lineId, { citizenId: person.fadi }, OTHER_ACCOUNTANT))).resolves.toMatchObject({ id: lineId });
 
-      expect(await db.arrearsLine.findUniqueOrThrow({ where: { id: lineId } })).toMatchObject({ citizenId: person.dalal, linkedById: ids.otherAccountant });
+      expect(await db.arrearsLine.findUniqueOrThrow({ where: { id: lineId } })).toMatchObject({ citizenId: person.fadi, linkedById: ids.otherAccountant });
       const [bill] = await billsOf(batchId);
-      expect(bill).toMatchObject({ citizenId: person.dalal, issuedById: ids.otherAccountant, periodKey: String(LAST) });
+      expect(bill).toMatchObject({ citizenId: person.fadi, issuedById: ids.otherAccountant, periodKey: String(LAST) });
       expect(bill!.invoiceNumber).toMatch(/^ARR-/);
       expect(await within(() => parcelDues.dues(propertyNumber))).toMatchObject({ total: 22_000 });
       expect(await db.auditLogEntry.count({ where: { action: 'ARREARS_LINE_LINKED', entityId: lineId } })).toBe(1);
 
       await expect(within(() => batches.link(lineId, { citizenId: person.amal }, ACCOUNTANT))).rejects.toMatchObject({ code: 'ARREARS_LINE_NOT_WAITING' });
       expect(await billsOf(batchId)).toHaveLength(1);
+    });
+
+    it('does not choose an archived file, and the line keeps waiting', async () => {
+      const { batchId, lineId } = await waiting();
+      await approve(batchId);
+      await expect(within(() => batches.link(lineId, { citizenId: person.dalal }, ACCOUNTANT))).rejects.toMatchObject({ code: 'FEE_CITIZEN_ARCHIVED' });
+      expect(await db.arrearsLine.findUniqueOrThrow({ where: { id: lineId } })).toMatchObject({ citizenId: null, linkedAt: null });
+      expect(await billsOf(batchId)).toHaveLength(0);
     });
 
     it('is refused before the batch is approved, for a file folded into another, and for a debt the file already holds', async () => {

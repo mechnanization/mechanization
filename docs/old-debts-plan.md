@@ -79,7 +79,9 @@ There is also no bulk path: thousands of lines would be typed by hand.
     not habitable, with the reading's date. The accountant keeps or drops each one, and
     a drop keeps its reason.
 12. **Archived files** can receive old debt through an approved batch only. «تكليف مالي»
-    stays refused (`FEE_CITIZEN_ARCHIVED`).
+    stays refused (`FEE_CITIZEN_ARCHIVED`). Nor is an archived file chosen for a single line or for
+    the link of a «للمطابقة» line (the owner, 2026-11-21): both refuse it with the same code, and the
+    file is restored first.
 13. **Currency.** LBP at face value. Any other currency is refused.
 14. **Prescription («مرور الزمن»).** A debt older than 5 years is dropped (added
     2026-11-20). The default chosen, still to be confirmed (§2.3): the 5 years count

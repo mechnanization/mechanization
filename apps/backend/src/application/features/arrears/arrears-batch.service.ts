@@ -475,6 +475,10 @@ export class ArrearsBatchService {
       if (verdict.flags.prescribed) {
         throw new ConflictError({ code: 'ARREARS_LINE_PRESCRIBED', message: 'A debt this old is prescribed and is not entered' });
       }
+      // A single line is written on a file someone chose: not an archived one (see `link`).
+      if (verdict.flags.archived) {
+        throw new ConflictError({ code: 'FEE_CITIZEN_ARCHIVED', message: 'An archived file is not chosen for a single debt or a link' });
+      }
       const planned = plan.lines[0]!;
 
       const batch = await tx.arrearsBatch.create({
@@ -519,8 +523,13 @@ export class ArrearsBatchService {
       if (row.citizenId !== null || row.decision !== 'KEEP' || row.discardedAt !== null || row.batch.status !== 'APPROVED') {
         throw new ConflictError({ code: 'ARREARS_LINE_NOT_WAITING', message: 'This line is not waiting for a file' });
       }
-      const citizen = await tx.user.findFirst({ where: { id: input.citizenId, kind: 'CITIZEN' }, select: { id: true } });
+      const citizen = await tx.user.findFirst({ where: { id: input.citizenId, kind: 'CITIZEN' }, select: { id: true, isActive: true } });
       if (!citizen) throw new NotFoundError({ code: 'CITIZEN_NOT_FOUND', message: `Citizen ${input.citizenId} was not found` });
+      // An archived file is not chosen here (the owner's decision of 2026-11-21): a debt reaches one only
+      // through an approved batch (decision 12), where its citizen was exported, and restoring the file comes first.
+      if (!citizen.isActive) {
+        throw new ConflictError({ code: 'FEE_CITIZEN_ARCHIVED', message: 'An archived file is not chosen for a single debt or a link' });
+      }
       await assertNotMergedAway(tx, citizen.id);
 
       const cutoff = (await tx.systemSettings.findFirst({ select: { arrearsCutoffYear: true } }))?.arrearsCutoffYear ?? null;
