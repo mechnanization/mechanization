@@ -34,8 +34,14 @@ import type {
   CreateBuildingTypeInput,
   CreateNewsCategoryInput,
   CreateNewsPublisherInput,
+  NewsArticlePage,
+  NewsArticleStatus,
+  NewsArticleView,
   NewsCategoryView,
+  NewsPlacementInput,
   NewsPublisherView,
+  PublishNewsArticleInput,
+  SaveNewsArticleInput,
   UpdateNewsCategoryInput,
   UpdateNewsPublisherInput,
   FeeExemptionCitizenUnits,
@@ -7415,6 +7421,147 @@ export async function updateNewsPublisher(
   signal?: AbortSignal,
 ): Promise<NewsPublisherView> {
   return apiFetch<NewsPublisherView>(tenant, `/news/publishers/${encodeURIComponent(id)}${newsLang(locale)}`, {
+    token,
+    method: 'PUT',
+    body: JSON.stringify(input),
+    signal,
+  });
+}
+
+// ─────────────────────────────  «الأخبار» on Day3ati: articles  ─────────────────────────────
+
+const newsArticlePath = (id: string): string => `/news/articles/${encodeURIComponent(id)}`;
+
+/**
+ * One page of articles, newest edit first (`GET news/articles`). Day3ati pages
+ * with a cursor: pass the last page's `nextCursor`; a page without one is the last.
+ */
+export async function getNewsArticles(
+  tenant: string,
+  token: string,
+  locale: string,
+  options: { status?: NewsArticleStatus; cursor?: string; limit?: number } = {},
+  signal?: AbortSignal,
+): Promise<NewsArticlePage> {
+  const query = new URLSearchParams({ lang: locale === 'en' ? 'en' : 'ar' });
+  if (options.status) query.set('status', options.status);
+  if (options.cursor) query.set('cursor', options.cursor);
+  if (options.limit) query.set('limit', String(options.limit));
+  return apiFetch<NewsArticlePage>(tenant, `/news/articles?${query.toString()}`, { token, signal });
+}
+
+/** One article in full. */
+export async function getNewsArticle(
+  tenant: string,
+  token: string,
+  locale: string,
+  id: string,
+  signal?: AbortSignal,
+): Promise<NewsArticleView> {
+  return apiFetch<NewsArticleView>(tenant, `${newsArticlePath(id)}${newsLang(locale)}`, { token, signal });
+}
+
+/** A new draft. */
+export async function createNewsArticle(
+  tenant: string,
+  token: string,
+  locale: string,
+  input: SaveNewsArticleInput,
+  signal?: AbortSignal,
+): Promise<NewsArticleView> {
+  return apiFetch<NewsArticleView>(tenant, `/news/articles${newsLang(locale)}`, {
+    token,
+    method: 'POST',
+    body: JSON.stringify(input),
+    signal,
+  });
+}
+
+/** Saves an article. It replaces the content, so a language left out is removed. */
+export async function updateNewsArticle(
+  tenant: string,
+  token: string,
+  locale: string,
+  id: string,
+  input: SaveNewsArticleInput,
+  signal?: AbortSignal,
+): Promise<NewsArticleView> {
+  return apiFetch<NewsArticleView>(tenant, `${newsArticlePath(id)}${newsLang(locale)}`, {
+    token,
+    method: 'PUT',
+    body: JSON.stringify(input),
+    signal,
+  });
+}
+
+/** Publishes now (`publishAt` null) or at a time. */
+export async function publishNewsArticle(
+  tenant: string,
+  token: string,
+  locale: string,
+  id: string,
+  input: PublishNewsArticleInput,
+  signal?: AbortSignal,
+): Promise<NewsArticleView> {
+  return apiFetch<NewsArticleView>(tenant, `${newsArticlePath(id)}/publish${newsLang(locale)}`, {
+    token,
+    method: 'POST',
+    body: JSON.stringify(input),
+    signal,
+  });
+}
+
+/** Out of the feed; it can be published again. */
+export async function archiveNewsArticle(
+  tenant: string,
+  token: string,
+  locale: string,
+  id: string,
+  signal?: AbortSignal,
+): Promise<NewsArticleView> {
+  return apiFetch<NewsArticleView>(tenant, `${newsArticlePath(id)}/archive${newsLang(locale)}`, {
+    token,
+    method: 'POST',
+    signal,
+  });
+}
+
+/** Cancels a schedule: the article goes back to a draft. */
+export async function cancelNewsArticleSchedule(
+  tenant: string,
+  token: string,
+  locale: string,
+  id: string,
+  signal?: AbortSignal,
+): Promise<NewsArticleView> {
+  return apiFetch<NewsArticleView>(tenant, `${newsArticlePath(id)}/draft${newsLang(locale)}`, {
+    token,
+    method: 'POST',
+    signal,
+  });
+}
+
+/** Deletes an article for good. */
+export async function deleteNewsArticle(
+  tenant: string,
+  token: string,
+  locale: string,
+  id: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  await apiFetch<void>(tenant, `${newsArticlePath(id)}${newsLang(locale)}`, { token, method: 'DELETE', signal });
+}
+
+/** Pins an article on top of the feed, and/or features it in the carousel until a time. */
+export async function setNewsArticlePlacement(
+  tenant: string,
+  token: string,
+  locale: string,
+  id: string,
+  input: NewsPlacementInput,
+  signal?: AbortSignal,
+): Promise<NewsArticleView> {
+  return apiFetch<NewsArticleView>(tenant, `${newsArticlePath(id)}/placement${newsLang(locale)}`, {
     token,
     method: 'PUT',
     body: JSON.stringify(input),

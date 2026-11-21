@@ -11,14 +11,10 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ConflictError } from '../../../domain/errors/domain-error';
 import { DAY3ATI_NEWS, type Day3atiNews } from '../../../domain/interfaces/day3ati-news.interface';
+import { emitNewsChanged, type NewsActor } from './news-changes';
 import { readAll, toCategoryView, toPublisherView } from './news-views';
 
-/** Who is asking: their municipality, and the account Day3ati knows them by (our staff id). */
-export interface NewsActor {
-  tenantSlug: string;
-  id: string;
-  role: string;
-}
+export type { NewsActor } from './news-changes';
 
 const CATEGORIES = '/api/v1/news/manage/categories';
 const PUBLISHERS = '/api/v1/news/manage/publishers';
@@ -140,15 +136,7 @@ export class NewsCatalogService {
     after: Record<string, unknown>,
   ): void {
     // After Day3ati accepted it: a refused change leaves no row. Ids and switches only, never the names.
-    this.events.emit('news.changed', {
-      tenantSlug: who.tenantSlug,
-      action,
-      entityType,
-      entityId,
-      after,
-      actorId: who.id,
-      actorRole: who.role,
-    });
+    emitNewsChanged(this.events, who, { action, entityType, entityId, after });
   }
 }
 

@@ -440,6 +440,8 @@ export const ERROR_CODES = [
   'NEWS_INVALID_INPUT',
   'NEWS_NOT_FOUND',
   'NEWS_REQUEST_REFUSED',
+  // Scheduling an article that is already published (Day3ati's `news.already_published`, 409).
+  'NEWS_ARTICLE_ALREADY_PUBLISHED',
   // Raised by the portal itself when no response arrives or it cannot be read
   'NETWORK_ERROR',
   'UNKNOWN',

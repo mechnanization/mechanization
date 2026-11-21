@@ -1,6 +1,14 @@
 import {
+  NEWS_ARTICLE_STATUS,
+  NEWS_LANGUAGE,
   NEWS_PUBLISHER_KIND,
+  type NewsArticleListItem,
+  type NewsArticlePage,
+  type NewsArticleStatus,
+  type NewsArticleTextView,
+  type NewsArticleView,
   type NewsCategoryView,
+  type NewsLanguage,
   type NewsLocalizedName,
   type NewsPublisherKind,
   type NewsPublisherView,
@@ -82,4 +90,127 @@ export function readAll<T>(raw: unknown, read: (item: unknown) => T | null): T[]
     items.push(item);
   }
   return items;
+}
+
+const isStatus = (value: unknown): value is NewsArticleStatus =>
+  (NEWS_ARTICLE_STATUS as readonly unknown[]).includes(value);
+const isLanguage = (value: unknown): value is NewsLanguage => (NEWS_LANGUAGE as readonly unknown[]).includes(value);
+
+/** A date-time as Day3ati sends one, or `null` for none; `undefined` when it is neither (an unreadable answer). */
+function instant(value: unknown): string | null | undefined {
+  if (value === null) return null;
+  return typeof value === 'string' && !Number.isNaN(Date.parse(value)) ? value : undefined;
+}
+
+export function toArticleListItem(raw: unknown): NewsArticleListItem | null {
+  if (!isObject(raw)) return null;
+  const publishAt = instant(raw.publishAt);
+  const publishedAt = instant(raw.publishedAt);
+  const updatedAt = instant(raw.updatedAt);
+  if (
+    typeof raw.id !== 'string' ||
+    !isStatus(raw.status) ||
+    typeof raw.title !== 'string' ||
+    typeof raw.categoryId !== 'string' ||
+    publishAt === undefined ||
+    publishedAt === undefined ||
+    typeof updatedAt !== 'string' ||
+    typeof raw.isPinned !== 'boolean' ||
+    typeof raw.isFeatured !== 'boolean'
+  ) {
+    return null;
+  }
+  return {
+    id: raw.id,
+    status: raw.status,
+    title: raw.title,
+    categoryId: raw.categoryId,
+    publishAt,
+    publishedAt,
+    isPinned: raw.isPinned,
+    isFeatured: raw.isFeatured,
+    updatedAt,
+  };
+}
+
+/** One page of the article list: its items, and the cursor of the next page when there is one. */
+export function toArticlePage(raw: unknown): NewsArticlePage | null {
+  if (!isObject(raw)) return null;
+  const items = readAll(raw.items, toArticleListItem);
+  if (!items) return null;
+  // Day3ati's page says there is no next one by `nextCursor: null` (or by leaving it out).
+  if (raw.nextCursor !== undefined && raw.nextCursor !== null && typeof raw.nextCursor !== 'string') return null;
+  return { items, nextCursor: typeof raw.nextCursor === 'string' && raw.nextCursor !== '' ? raw.nextCursor : null };
+}
+
+function toArticleText(raw: unknown): NewsArticleTextView | null {
+  if (!isObject(raw) || !isLanguage(raw.language) || typeof raw.title !== 'string' || typeof raw.body !== 'string') {
+    return null;
+  }
+  return {
+    language: raw.language,
+    title: raw.title,
+    summary: typeof raw.summary === 'string' ? raw.summary : '',
+    body: raw.body,
+  };
+}
+
+/**
+ * One article in full. The author (a Day3ati user id of theirs, not ours) and
+ * the media are left out: the media come with the photo screens.
+ */
+export function toArticleView(raw: unknown): NewsArticleView | null {
+  if (!isObject(raw)) return null;
+  const texts = readAll(raw.texts, toArticleText);
+  const placeLabel = raw.placeLabel === null || raw.placeLabel === undefined ? null : localizedName(raw.placeLabel);
+  const publishAt = instant(raw.publishAt);
+  const publishedAt = instant(raw.publishedAt);
+  const featuredUntil = instant(raw.featuredUntil);
+  const createdAt = instant(raw.createdAt);
+  const updatedAt = instant(raw.updatedAt);
+  const readingMinutes = wholeNumber(raw.readingMinutes);
+  const viewCount = wholeNumber(raw.viewCount);
+  const bookmarkCount = wholeNumber(raw.bookmarkCount);
+  if (
+    typeof raw.id !== 'string' ||
+    !isStatus(raw.status) ||
+    typeof raw.categoryId !== 'string' ||
+    typeof raw.publisherId !== 'string' ||
+    !isLanguage(raw.defaultLanguage) ||
+    !texts ||
+    (raw.placeLabel !== null && raw.placeLabel !== undefined && placeLabel === null) ||
+    (raw.areaId !== null && raw.areaId !== undefined && typeof raw.areaId !== 'string') ||
+    typeof raw.notifyResidents !== 'boolean' ||
+    typeof raw.isPinned !== 'boolean' ||
+    publishAt === undefined ||
+    publishedAt === undefined ||
+    featuredUntil === undefined ||
+    typeof createdAt !== 'string' ||
+    typeof updatedAt !== 'string' ||
+    readingMinutes === null ||
+    viewCount === null ||
+    bookmarkCount === null
+  ) {
+    return null;
+  }
+  return {
+    id: raw.id,
+    status: raw.status,
+    categoryId: raw.categoryId,
+    publisherId: raw.publisherId,
+    defaultLanguage: raw.defaultLanguage,
+    texts,
+    placeLabel,
+    areaId: typeof raw.areaId === 'string' ? raw.areaId : null,
+    notifyResidents: raw.notifyResidents,
+    publishAt,
+    publishedAt,
+    isPinned: raw.isPinned,
+    featuredUntil,
+    readingMinutes,
+    viewCount,
+    bookmarkCount,
+    createdAt,
+    updatedAt,
+  };
 }

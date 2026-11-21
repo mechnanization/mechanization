@@ -13,7 +13,7 @@ import { Day3atiAuthError } from '../../domain/interfaces/day3ati-tokens.interfa
  * What Day3ati refuses with, as the refusals a News screen can explain.
  *
  * Day3ati answers with ProblemDetails: a stable `code`, and for a form the
- * `errors` of each field. Both are read here and turned into one of eight
+ * `errors` of each field. Both are read here and turned into one of nine
  * `NEWS_*` codes, which the frontend words in both languages. Nothing of the
  * answer's own text is passed on except the per-field messages, which are
  * written for the person filling the form in, in the language they asked for.
@@ -22,6 +22,7 @@ import { Day3atiAuthError } from '../../domain/interfaces/day3ati-tokens.interfa
  * |---|---|
  * | `auth.forbidden`, or any other 403 | `NEWS_FORBIDDEN` (the role may not do this) |
  * | `village.not_member`, `oauth.invalid_grant` | `NEWS_NOT_A_MEMBER` (no account there, or removed) |
+ * | `news.already_published` (scheduling a published article) | `NEWS_ARTICLE_ALREADY_PUBLISHED` |
  * | `village.module_disabled` | `NEWS_MODULE_DISABLED` |
  * | `integration.village_not_allowed`, no village for the municipality | `NEWS_VILLAGE_NOT_LINKED` |
  * | 400 and 422, with their per-field `errors` | `NEWS_INVALID_INPUT` |
@@ -108,6 +109,11 @@ export function newsErrorFromAnswer(status: number, problem: NewsProblem): Domai
       return new ForbiddenError({ code: 'NEWS_FORBIDDEN', message: 'Day3ati refused the role (auth.forbidden)' });
     case 'village.not_member':
       return new ForbiddenError({ code: 'NEWS_NOT_A_MEMBER', message: 'The user is not a member of the village' });
+    case 'news.already_published':
+      return new ConflictError({
+        code: 'NEWS_ARTICLE_ALREADY_PUBLISHED',
+        message: 'The article is already published, so it cannot be scheduled',
+      });
     case 'village.module_disabled':
       return new ConflictError({ code: 'NEWS_MODULE_DISABLED', message: 'The News module is off for the village' });
     case 'integration.village_not_allowed':

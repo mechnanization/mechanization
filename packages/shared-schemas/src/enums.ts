@@ -106,6 +106,16 @@ export const NEWS_PUBLISHER_KIND = ['municipality', 'department', 'committee', '
 export const newsPublisherKindSchema = arabicEnum(NEWS_PUBLISHER_KIND, 'نوع الناشر غير صالح');
 export type NewsPublisherKind = z.infer<typeof newsPublisherKindSchema>;
 
+/**
+ * Where a News article stands on Day3ati. The four values are its own, as it
+ * sends and takes them: never rename one. A draft is being written; scheduled
+ * waits for its `publishAt`; published is in the feed; archived is out of it
+ * and can be published again.
+ */
+export const NEWS_ARTICLE_STATUS = ['draft', 'scheduled', 'published', 'archived'] as const;
+export const newsArticleStatusSchema = arabicEnum(NEWS_ARTICLE_STATUS, 'حالة الخبر غير صالحة');
+export type NewsArticleStatus = z.infer<typeof newsArticleStatusSchema>;
+
 export const GENDER = ['MALE', 'FEMALE'] as const;
 export const genderSchema = arabicEnum(GENDER, 'الجنس مطلوب');
 export type Gender = z.infer<typeof genderSchema>;
