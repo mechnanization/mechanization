@@ -368,6 +368,8 @@ model User {
   writtenOffPayments      CitizenPayment[]      @relation("PaymentWrittenOffBy")
   /// Building types this staff member added (0106).
   buildingTypesCreated        BuildingType[]     @relation("BuildingTypeCreatedBy")
+  /// Unit types this staff member added (0109).
+  unitTypesCreated            UnitTypeEntry[]    @relation("UnitTypeCreatedBy")
 
   /// Staff email is unique within the municipality (i.e. within this schema).
   @@unique([email])
@@ -1381,6 +1383,38 @@ model BuildingType {
   @@map("building_types")
 }
 
+/// «أنواع الوحدات» (migration 0109): the unit types a municipality picks from,
+/// the ones it adds (مدرسة, شركة كهرباء, …) beside one system row per premises
+/// `UnitType`. A type takes the behaviour of its `baseType`: units keep
+/// `units.unitType`, written from it, and fees, brackets and the census read
+/// that. Named `UnitTypeEntry` because `UnitType` is the enum. A type is
+/// deactivated, never deleted.
+model UnitTypeEntry {
+  id          String   @id @default(uuid()) @db.Uuid
+  /// Unique; trimmed and not empty (CHECK unit_types_names_trimmed).
+  nameAr      String   @unique
+  nameEn      String?
+  /// The behaviour it takes. Never PILOTIS or EMPTY_FLOOR (CHECK
+  /// unit_types_base_not_structural). Fixed on a system row (trigger
+  /// unit_types_system_rewrite); one system row per value, by the partial
+  /// unique index unit_types_system_base_key, which Prisma 5 cannot express.
+  baseType    UnitType
+  isSystem    Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(100)
+  /// NULL on a system row (CHECK unit_types_system_has_no_author); SET NULL
+  /// when the person is removed.
+  createdById String?  @db.Uuid
+  createdBy   User?    @relation("UnitTypeCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
+
+  units Unit[]
+
+  @@index([createdById])
+  @@map("unit_types")
+}
+
 /// A building code retired by «تصحيح رقم العقار» (migration 0060).
 ///
 /// Correcting a building's parcel reallocates its suffix on the right parcel,
@@ -1516,6 +1550,15 @@ model Unit {
 
   unitType UnitType
 
+  /// «نوع الوحدة» (migration 0109): the type this unit was filed as, system or
+  /// custom. `unitType` above stays what every reader keys on and is written
+  /// from the type's `baseType`. Nullable in this release (expand, backfill,
+  /// contract): 0109 filled every premises unit with the system row of its
+  /// `unitType`; a PILOTIS or EMPTY_FLOOR block has none. RESTRICT: a type in
+  /// use is never deleted.
+  unitTypeId    String?        @db.Uuid
+  unitTypeEntry UnitTypeEntry? @relation(fields: [unitTypeId], references: [id], onDelete: Restrict)
+
   /// Orientation — يمين / يسار / أمامي. Free text, matching the existing `side`.
   side String?
 
@@ -1589,6 +1632,7 @@ model Unit {
   @@index([buildingId])
   @@index([surveyStatus])
   @@index([responsibleOwnerId])
+  @@index([unitTypeId])
   @@map("units")
 }
 
