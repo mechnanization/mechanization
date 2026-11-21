@@ -264,6 +264,7 @@ export class CitizenMergeService {
         started from opposite ends wait for each other instead of deadlocking.
         Every edit of either file takes the same row lock through its update.
       */
+      await this.lockArrearsLines();
       const ids = [input.keepId, input.absorbId].sort();
       await this.db.$queryRaw`
         SELECT id FROM ${this.S}users WHERE id IN (${ids[0]}::uuid, ${ids[1]}::uuid) ORDER BY id FOR UPDATE
@@ -392,6 +393,8 @@ export class CitizenMergeService {
         message: 'This merge could not be found.',
       });
 
+      // The undo moves old-debt lines back: the same lock as the merge, before the rows.
+      await this.lockArrearsLines();
       const ids = [merge.survivorId, merge.absorbedId].sort();
       await this.db.$queryRaw`
         SELECT id FROM ${this.S}users WHERE id IN (${ids[0]}::uuid, ${ids[1]}::uuid) ORDER BY id FOR UPDATE
@@ -985,10 +988,24 @@ export class CitizenMergeService {
     return theirs.filter((row) => !(open.has(row.status) && taken.has(openKey(row)))).map((row) => row.id);
   }
 
-  /** Moves the absorbed person's old-debt lines and export-set places to the kept person; what moved. */
+  /**
+   * The lock every writer of live old-debt lines takes (`ArrearsService.importLines`,
+   * `ArrearsBatchService`). A merge and its undo move lines, so they take it too, and take it
+   * **first**, before the two users' rows: an import, an approval or a link holds it and then
+   * touches those rows (the foreign key of every line and bill it writes takes `FOR KEY SHARE` on
+   * the citizen), so taken after the rows' `FOR UPDATE` the two waited on each other and Postgres
+   * killed one as a deadlock.
+   */
+  private async lockArrearsLines(): Promise<void> {
+    await this.db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${this.tenantContext.schemaName}:arrears-lines`}))`;
+  }
+
+  /**
+   * Moves the absorbed person's old-debt lines and export-set places to the kept person; what moved.
+   * The caller holds the `arrears-lines` lock (`lockArrearsLines`).
+   */
   private async moveArrears(keepId: string, absorbId: string): Promise<{ lines: string[]; set: string[] }> {
     const db = this.db;
-    await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${this.tenantContext.schemaName}:arrears-lines`}))`;
     const [theirs, kept, set] = await Promise.all([
       db.arrearsLine.findMany({
         where: { citizenId: absorbId },
