@@ -118,7 +118,19 @@ export async function createStaff(args: Args): Promise<void> {
         const secret = authenticator.generateSecret();
         await db.user.update({
           where: { id: existing.id },
-          data: { totpSecret: secret, totpConfirmedAt: new Date() },
+          data: {
+            totpSecret: secret,
+            totpConfirmedAt: new Date(),
+            /*
+              A new secret starts clean, as `disableTotp` leaves an account: no step
+              burned under the old one, no wrong codes counted, and no lockout (0101).
+              An admin who locked themselves out is the usual reason for a reset, and
+              kept, the lock refused every code of the new secret until it ran out.
+            */
+            lastTotpStep: null,
+            totpFailedAttempts: 0,
+            totpLockedUntil: null,
+          },
         });
 
         report(args.email, secret, slug.value, existing.role as Role);

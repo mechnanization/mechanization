@@ -20,12 +20,12 @@ import { getLabels, type DeclarePayment } from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
   declarePayment,
-  getMunicipalitySettings,
+  getCitizenPortalSettings,
   getMyPayments,
   logApiError,
   startWhishCheckout,
 } from '@/lib/api-client';
-import type { CitizenPaymentItem, MunicipalitySettings } from '@/lib/api-client';
+import type { CitizenPaymentItem, CitizenPortalSettings } from '@/lib/api-client';
 import { clearSession, loadSession } from '@/lib/session';
 import { formatLbp } from '@/lib/currency';
 import { Alert } from '@/components/ui/alert';
@@ -74,7 +74,7 @@ export default function CitizenPayments({
   const [token, setToken] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [items, setItems] = useState<CitizenPaymentItem[]>([]);
-  const [settings, setSettings] = useState<MunicipalitySettings | null>(null);
+  const [settings, setSettings] = useState<CitizenPortalSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -98,7 +98,7 @@ export default function CitizenPayments({
     try {
       const [paymentsResult, settingsResult] = await Promise.all([
         getMyPayments(tenant, token),
-        getMunicipalitySettings(tenant, token),
+        getCitizenPortalSettings(tenant, token),
       ]);
       setItems(paymentsResult.items);
       setSettings(settingsResult);
