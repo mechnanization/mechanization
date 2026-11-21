@@ -17,7 +17,7 @@
  *   - Quality & audit checks on files (`record_reviews`, `quality_checks`, `data_quality_dismissals`)
  *   - Citizen requests & attachments (`citizen_requests`, `citizen_request_attachments`)
  *   - Buildings & census records (`buildings`, `building_code_aliases`, `units`, `unit_occupancies`, `unit_visits`, `unit_vacancy_confirmations`, `damage_assessments`, `cases`)
- *   - Associated billing & payments linked to citizens or units (`citizen_payments`, `fee_notices`, `citizen_payment_debtors`, `payment_transactions`, `payment_settlements`, `whish_checkouts`, `billing_run_entries`)
+ *   - Associated billing & payments linked to citizens or units (`citizen_payments`, `fee_notices`, `citizen_payment_debtors`, `payment_transactions`, `payment_settlements`, `whish_checkouts`, `billing_run_entries`), and old debts (`arrears_lines`, `arrears_batch_citizens`, `arrears_batches`)
  *   - Short-lived citizen OTP challenges (`otp_challenges`)
  *
  * What it PRESERVES:
@@ -167,6 +167,10 @@ export async function deleteCitizensAndBuildings({ tenantSlug = null, autoConfir
           'whish_checkouts',
           'citizen_payment_debtors',
           'citizen_payments',
+          // Old debts (0108) name citizens and units, RESTRICT on the citizen.
+          'arrears_lines',
+          'arrears_batch_citizens',
+          'arrears_batches',
           'billing_run_entries',
           'fee_notices',
         ];

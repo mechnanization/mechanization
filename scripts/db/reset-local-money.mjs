@@ -143,6 +143,10 @@ async function main() {
         'whish_checkouts',
         'billing_run_entries',
         'citizen_payments',
+        // Old debts (0108): a bill and the line it was raised for go together.
+        'arrears_lines',
+        'arrears_batch_citizens',
+        'arrears_batches',
         'fee_notices',
         'treasury_entries',
         'treasury_counts',
