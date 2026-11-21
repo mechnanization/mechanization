@@ -450,6 +450,8 @@ export const ERROR_CODES = [
   'ARREARS_IMPORT_TOO_MANY_ROWS',
   // Submit, approve, return: the batch is not in the state the act needs (`params.status`).
   'ARREARS_BATCH_NOT_SUBMITTED',
+  // The batch sheet is for an approved batch: a draft, a submitted or a discarded one has none to sign.
+  'ARREARS_BATCH_NOT_APPROVED',
   // A batch with no line is not submitted.
   'ARREARS_BATCH_EMPTY',
   // Only the preparer, or the manager, acts on a draft batch.

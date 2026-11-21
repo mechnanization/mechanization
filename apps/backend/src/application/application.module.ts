@@ -15,6 +15,7 @@ import { ParcelCorrectionService } from './features/buildings/parcel-correction.
 import { OwnerBillingService } from './features/buildings/owner-billing.service';
 import { FeeExemptionService } from './features/buildings/fee-exemption.service';
 import { ArrearsBatchService } from './features/arrears/arrears-batch.service';
+import { ArrearsReportService } from './features/arrears/arrears-report.service';
 import { ArrearsService } from './features/arrears/arrears.service';
 import { BuildingTypesService } from './features/buildings/building-types.service';
 import { UnitCorrectionService } from './features/corrections/unit-correction.service';
@@ -127,6 +128,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
     FeeExemptionService,
     ArrearsService,
     ArrearsBatchService,
+    ArrearsReportService,
     BuildingTypesService,
     UnitCorrectionService,
     BackupService,
@@ -184,6 +186,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
     FeeExemptionService,
     ArrearsService,
     ArrearsBatchService,
+    ArrearsReportService,
     BuildingTypesService,
     UnitCorrectionService,
     BackupService,

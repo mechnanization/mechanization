@@ -493,6 +493,8 @@ describe('old debts: who may call what', () => {
   const all = routes();
   const prepare = ['ACCOUNTANT', 'SUPER_ADMIN'];
   const approve = ['SUPER_ADMIN'];
+  // The finance reports' readers (`TREASURY_READ_ROLES`): the report and a batch's sheet name no citizen.
+  const report = ['ACCOUNTANT', 'AUDITOR', 'SUPER_ADMIN', 'VIEWER'];
   const expected: Record<string, { method: RequestMethod; path: string; roles: string[] }> = {
     'ArrearsController.exportTemplate': { method: RequestMethod.POST, path: 'batches/export', roles: prepare },
     'ArrearsController.importLines': { method: RequestMethod.POST, path: 'batches/:batchId/import', roles: prepare },
@@ -506,6 +508,8 @@ describe('old debts: who may call what', () => {
     'ArrearsController.approve': { method: RequestMethod.POST, path: 'batches/:batchId/approve', roles: approve },
     'ArrearsController.returnBatch': { method: RequestMethod.POST, path: 'batches/:batchId/return', roles: approve },
     'ArrearsController.settings': { method: RequestMethod.GET, path: 'settings', roles: approve },
+    'ArrearsController.report': { method: RequestMethod.GET, path: 'report', roles: report },
+    'ArrearsController.sheet': { method: RequestMethod.GET, path: 'batches/:batchId/sheet', roles: report },
     'ArrearsController.setCutoff': { method: RequestMethod.PUT, path: 'settings/cutoff', roles: approve },
   };
 
