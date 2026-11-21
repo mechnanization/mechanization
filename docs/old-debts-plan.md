@@ -2,7 +2,13 @@
 
 Last verified against the code: `feat/arrears-import` (stacked on PRs #175 and #176), 2026-11-21.
 
-> **Status: tasks 1–4 in review, 2026-11-21, none merged.** This spec (PR #174); the migrations
+> **Status, 2026-11-21:** tasks 1–4 merged to `develop` (PRs #174–#177). Task 7, the export, import and
+> submit screens, built on `feat/arrears-import-ui` (on `develop@c6e7462`): «المتأخرات» (`fees/arrears`). It calls three routes task 5 has not built
+> — `GET arrears/batches`, `POST arrears/batches/:id/submit`, `POST arrears/lines` — whose paths are proposed in
+> `apps/frontend/lib/arrears-api.ts` alone; until task 5 serves them (or changes them there), the batch list, the
+> submit and the single line answer 404.
+>
+> **Earlier status: tasks 1–4 in review, 2026-11-21, none merged.** This spec (PR #174); the migrations
 > `0107`/`0108` (`chore/migration-0107-old-debts`, PR #175); the contract in shared-schemas
 > (`feat/arrears-contract`, PR #176, stacked on #175); the export and the import's dry run
 > (`feat/arrears-import`, PR #177, stacked on #176). Tasks 5–12 are not started. The decisions are the
