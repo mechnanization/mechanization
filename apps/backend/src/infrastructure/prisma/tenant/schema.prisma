@@ -1399,6 +1399,10 @@ model UnitTypeEntry {
   /// unit_types_system_rewrite); one system row per value, by the partial
   /// unique index unit_types_system_base_key, which Prisma 5 cannot express.
   baseType    UnitType
+  /// The elevation's drawing for the type (migration 0111, `UNIT_FIGURE` in
+  /// shared-schemas), or NULL for its base's own front. Written by the migration
+  /// for the default types; no form sets it. CHECK unit_types_figure_key_shape.
+  figureKey   String?
   isSystem    Boolean  @default(false)
   isActive    Boolean  @default(true)
   sortOrder   Int      @default(100)
