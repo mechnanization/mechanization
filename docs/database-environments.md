@@ -1,6 +1,6 @@
 # Database environments
 
-Last verified against the code: `chore/migration-0107-old-debts` (on `develop@abc8644`): the two local reset tools empty the old-debts tables, 2026-11-21; `chore/migration-0103` updated onto `develop@e8bb71f`: the scanner's TRUNCATE rule narrowed to the trigger event and `TG_OP` only, so a dynamic `EXECUTE 'TRUNCATE …'` blocks again, and `withTruncateGuardsOff` keeps the work's own error when the aborted transaction refuses the ENABLEs, 2026-11-20; `fix/citizen-otp-closed` (on `develop@e9e79ff`): the phone-code sign-in refused while no SMS provider is live (`SmsSender.isLive`, `CITIZEN_OTP_UNAVAILABLE`), `otp/verify` throttled (`APP_CONFIG.throttle.otpVerify`), `NODE_ENV` required with no default, security audit N-2, 2026-11-15; `chore/migration-0103` (on `chore/migration-0102@72f0974`): `0103_append_only_no_truncate`, TRUNCATE refused on the append-only and written-once tables, the scanner narrowed to the statement, the local reset tools switching the guards (`truncate-guards.mjs`), applied with `pnpm db:deploy:local` and its integration spec run on a throwaway Postgres 17, and the next free number `0104` (task S19), 2026-11-16; `fix/pr88-review` (on `develop@be4f053`), 2026-10-06; the rollback caveat for a new enum value against `chore/migration-0090-0091` (on `develop@5e8f5c3`), 2026-10-13.
+Last verified against the code: `chore/migration-0107-old-debts` (on `develop@abc8644`): the two local reset tools empty the old-debts tables, 2026-11-21; `feat/day3ati-staff-sync` (on `feat/day3ati-token-service@c10c166`): the `day3ati:backfill-staff` script (reads one tenant's staff, calls Day3ati, no schema change), 2026-11-20; `chore/migration-0103` updated onto `develop@e8bb71f`: the scanner's TRUNCATE rule narrowed to the trigger event and `TG_OP` only, so a dynamic `EXECUTE 'TRUNCATE …'` blocks again, and `withTruncateGuardsOff` keeps the work's own error when the aborted transaction refuses the ENABLEs, 2026-11-20; `fix/citizen-otp-closed` (on `develop@e9e79ff`): the phone-code sign-in refused while no SMS provider is live (`SmsSender.isLive`, `CITIZEN_OTP_UNAVAILABLE`), `otp/verify` throttled (`APP_CONFIG.throttle.otpVerify`), `NODE_ENV` required with no default, security audit N-2, 2026-11-15; `chore/migration-0103` (on `chore/migration-0102@72f0974`): `0103_append_only_no_truncate`, TRUNCATE refused on the append-only and written-once tables, the scanner narrowed to the statement, the local reset tools switching the guards (`truncate-guards.mjs`), applied with `pnpm db:deploy:local` and its integration spec run on a throwaway Postgres 17, and the next free number `0104` (task S19), 2026-11-16; `fix/pr88-review` (on `develop@be4f053`), 2026-10-06; the rollback caveat for a new enum value against `chore/migration-0090-0091` (on `develop@5e8f5c3`), 2026-10-13.
 
 Three databases, three targets, and a set of checks whose only job is to make
 "I ran it against the wrong one" impossible rather than unlikely. This is the
@@ -274,6 +274,13 @@ for up to three minutes after seeding.
   --slug albazourieh`, dry run unless `--apply`) turns property cards into
   census buildings with a pin on each parcel's survey point. It does not
   place pins where a building would stand. Prefer the census seed.
+- **The Day3ati staff backfill** (`pnpm --filter @mechanization/backend
+  day3ati:backfill-staff --slug albazourieh`, dry run unless `--apply`) reads one
+  municipality's staff and creates or removes their News accounts on Day3ati. It
+  reads whichever database `apps/backend/.env` names and calls whichever Day3ati
+  `DAY3ATI_*` names, so against the local database it would send seeded staff
+  names to that Day3ati: run it for real only against staging, with a temporary
+  env file and a tunnel. It prints ids and counts, never a name.
 
 The one thing this list does not contain is "copy it from staging".
 

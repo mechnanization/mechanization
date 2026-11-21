@@ -195,3 +195,37 @@ describe('activeNavItem', () => {
     expect(activeNavItem(`${BASE}/finance/incomes`, BASE, 'SUPER_ADMIN')?.path).toBe('/finance');
   });
 });
+
+describe('News and the village that may not have it', () => {
+  const newsPaths = (groups: ReturnType<typeof visibleGroups>) =>
+    groups.flatMap((group) => group.items).filter((item) => item.path.startsWith('/news')).map((item) => item.path);
+
+  it('shows the three News rows to the administrator and the administrative officer', () => {
+    for (const role of ['SUPER_ADMIN', 'ADMINISTRATIVE_OFFICER']) {
+      expect(newsPaths(visibleGroups(role))).toEqual(['/news/articles', '/news/categories', '/news/publishers']);
+    }
+  });
+
+  it('never shows them to any other role', () => {
+    for (const role of ['AUDITOR', 'FIELD_INSPECTOR', 'COLLECTOR', 'ACCOUNTANT', 'VIEWER']) {
+      expect(newsPaths(visibleGroups(role))).toEqual([]);
+    }
+  });
+
+  it('hides them, and the group with them, only when Day3ati says News is off', () => {
+    const off = visibleGroups('SUPER_ADMIN', { newsEnabled: false });
+    expect(newsPaths(off)).toEqual([]);
+    expect(off.map((group) => group.label)).not.toContain('الأخبار');
+  });
+
+  it('keeps them while it is on, or not yet known, so a slow Day3ati does not take the menu away', () => {
+    expect(newsPaths(visibleGroups('SUPER_ADMIN', { newsEnabled: true }))).toHaveLength(3);
+    expect(newsPaths(visibleGroups('SUPER_ADMIN', { newsEnabled: undefined }))).toHaveLength(3);
+  });
+
+  it('leaves every other row alone when News is off', () => {
+    const all = visibleGroups('SUPER_ADMIN').flatMap((group) => group.items).length;
+    const without = visibleGroups('SUPER_ADMIN', { newsEnabled: false }).flatMap((group) => group.items).length;
+    expect(all - without).toBe(3);
+  });
+});
