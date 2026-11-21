@@ -2044,7 +2044,10 @@
     "NEWS_ARTICLE_SCHEDULE_CANCELLED": "إلغاء جدولة خبر",
     "NEWS_ARTICLE_ARCHIVED": "أرشفة خبر",
     "NEWS_ARTICLE_DELETED": "حذف خبر",
-    "NEWS_ARTICLE_PLACEMENT_CHANGED": "تثبيت خبر أو تمييزه"
+    "NEWS_ARTICLE_PLACEMENT_CHANGED": "تثبيت خبر أو تمييزه",
+    "NEWS_MEDIA_UPLOADED": "إضافة ملف إلى خبر",
+    "NEWS_MEDIA_COVER_CHANGED": "تغيير غلاف خبر",
+    "NEWS_MEDIA_DELETED": "حذف ملف من خبر"
   },
   "auditEntities": {
     "User": "مواطن أو موظف",
@@ -4403,6 +4406,48 @@
           "deleted": "تم حذف الخبر",
           "placementSaved": "تم الحفظ"
         },
+        "media": {
+          "title": "الصور والملفات",
+          "saveFirst": "احفظ الخبر أولاً، ثم أضف صوره وملفاته.",
+          "count": "{count} من {max} ملفاً",
+          "empty": "لا توجد صور أو ملفات بعد.",
+          "photo": "صورة",
+          "pdf": "PDF",
+          "cover": "الغلاف",
+          "makeCover": "اجعلها الغلاف",
+          "open": "فتح",
+          "statuses": {
+            "processing": "قيد المعالجة…",
+            "ready": "جاهزة",
+            "failed": "فشلت"
+          },
+          "processingNote": "يجري تجهيز صورة. تتحقق هذه الصفحة من جديد تلقائياً.",
+          "checkAgain": "تحقق من جديد",
+          "failedHelp": "تعذّر تجهيز هذه الصورة. ارفعها من جديد أو احذفها.",
+          "uploadAgain": "رفع من جديد",
+          "replacing": "اختر الصورة التي تحلّ مكان الصورة التي فشلت.",
+          "cancelReplace": "إلغاء",
+          "delete": "حذف",
+          "deleteTitle": "حذف هذا الملف؟",
+          "deleteBody": "يُزال من الخبر. لا يمكن التراجع عن ذلك.",
+          "cancel": "إلغاء",
+          "deleted": "تم حذف الملف",
+          "coverSet": "تم تغيير الغلاف",
+          "uploaded": "تمت إضافة الملف",
+          "dropLabel": "اختر صورة أو ملف PDF، أو اسحبه إلى هنا",
+          "hint": "الصور: JPEG أو PNG أو WebP أو HEIC حتى 10 ميغابايت. ملفات PDF حتى 15 ميغابايت. حتى 20 ملفاً لكل خبر.",
+          "limitReached": "بلغ هذا الخبر أقصى عدد من الملفات. احذف ملفاً لتضيف غيره.",
+          "useAsCover": "استعمل هذه الصورة غلافاً للخبر",
+          "captionAr": "الوصف بالعربية",
+          "captionEn": "الوصف بالإنكليزية",
+          "captionFr": "الوصف بالفرنسية",
+          "uploading": "جارٍ رفع {name}… {percent}%",
+          "actionFailed": "تعذّر تنفيذ ذلك. حاول مجدداً.",
+          "problems": {
+            "unsupported": "{name} ليس صورة أو ملف PDF يمكن استعماله (JPEG أو PNG أو WebP أو HEIC أو PDF).",
+            "tooLarge": "{name} كبير جداً. الصور حتى 10 ميغابايت وملفات PDF حتى 15 ميغابايت."
+          }
+        },
         "schedule": {
           "title": "جدولة النشر",
           "description": "اختر اليوم والساعة بتوقيت البلدية (بيروت). يُنشر الخبر في ذلك الموعد.",
@@ -4431,10 +4476,14 @@
         }
       }
     },
+    "loadFailedTitle": "تعذّر تحميل الأخبار",
+    "retry": "إعادة المحاولة",
     "fieldErrors": {
       "invalidCategoryKey": "هذا المفتاح غير صالح. استعمل أحرفاً إنكليزية صغيرة وأرقاماً، وافصل بين الكلمات بشرطة، مثل water-power.",
       "categoryKeyTaken": "هذا المفتاح مستعمل في قسم آخر. اختر مفتاحاً مختلفاً.",
-      "nameRequired": "الاسم بالعربية مطلوب."
+      "nameRequired": "الاسم بالعربية مطلوب.",
+      "unsupportedFile": "هذا الملف ليس صورة أو ملف PDF يمكن استعماله هنا (JPEG أو PNG أو WebP أو HEIC أو PDF).",
+      "fileTooLarge": "هذا الملف كبير جداً. الصور حتى 10 ميغابايت وملفات PDF حتى 15 ميغابايت."
     }
   },
   "buildingTypes": {

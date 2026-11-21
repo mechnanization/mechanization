@@ -107,6 +107,32 @@ describe('Day3atiNewsClient', () => {
       expect((without.headers as Record<string, string>)['content-type']).toBeUndefined();
     });
 
+    it('sends a form as it is, with no content type of ours so its boundary is set, and waits as long as asked', async () => {
+      fetchMock.mockImplementation(async () => json(200, { id: 'm1' }));
+      const form = new FormData();
+      form.set('File', new Blob(['x'], { type: 'image/jpeg' }), 'photo.jpg');
+      const timeout = jest.spyOn(AbortSignal, 'timeout');
+
+      await make().request({ ...call, method: 'POST', path: '/api/v1/news/manage/articles/a1/media', form, timeoutMs: 90_000 });
+
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(init.body).toBe(form);
+      expect((init.headers as Record<string, string>)['content-type']).toBeUndefined();
+      expect(timeout).toHaveBeenCalledWith(90_000);
+    });
+
+    it('sends the same form again with a fresh token after a 401', async () => {
+      const t = tokens({ staffToken: jest.fn().mockResolvedValueOnce('old').mockResolvedValueOnce('new') });
+      fetchMock.mockResolvedValueOnce(json(401, {})).mockResolvedValueOnce(json(200, { id: 'm1' }));
+      const form = new FormData();
+      form.set('File', new Blob(['x']), 'photo.jpg');
+
+      await make(t).request({ ...call, method: 'POST', form });
+
+      expect((fetchMock.mock.calls[0][1] as RequestInit).body).toBe(form);
+      expect((fetchMock.mock.calls[1][1] as RequestInit).body).toBe(form);
+    });
+
     it('answers undefined when Day3ati sends no body', async () => {
       fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
       await expect(make().request({ ...call, method: 'DELETE' })).resolves.toBeUndefined();

@@ -2044,7 +2044,10 @@
     "NEWS_ARTICLE_SCHEDULE_CANCELLED": "News article schedule cancelled",
     "NEWS_ARTICLE_ARCHIVED": "News article archived",
     "NEWS_ARTICLE_DELETED": "News article deleted",
-    "NEWS_ARTICLE_PLACEMENT_CHANGED": "News article pinned or featured"
+    "NEWS_ARTICLE_PLACEMENT_CHANGED": "News article pinned or featured",
+    "NEWS_MEDIA_UPLOADED": "File added to a news article",
+    "NEWS_MEDIA_COVER_CHANGED": "News article cover changed",
+    "NEWS_MEDIA_DELETED": "File removed from a news article"
   },
   "auditEntities": {
     "User": "Citizen or staff",
@@ -4403,6 +4406,48 @@
           "deleted": "Article deleted",
           "placementSaved": "Saved"
         },
+        "media": {
+          "title": "Photos and files",
+          "saveFirst": "Save the article first, then add its photos and files.",
+          "count": "{count} of {max} files",
+          "empty": "No photos or files yet.",
+          "photo": "Photo",
+          "pdf": "PDF",
+          "cover": "Cover",
+          "makeCover": "Make cover",
+          "open": "Open",
+          "statuses": {
+            "processing": "Processing…",
+            "ready": "Ready",
+            "failed": "Failed"
+          },
+          "processingNote": "A photo is being prepared. This page checks again by itself.",
+          "checkAgain": "Check again",
+          "failedHelp": "This photo could not be prepared. Upload it again, or delete it.",
+          "uploadAgain": "Upload again",
+          "replacing": "Choose the photo that replaces the one that failed.",
+          "cancelReplace": "Cancel",
+          "delete": "Delete",
+          "deleteTitle": "Delete this file?",
+          "deleteBody": "It is removed from the article. This cannot be undone.",
+          "cancel": "Cancel",
+          "deleted": "File deleted",
+          "coverSet": "Cover changed",
+          "uploaded": "File added",
+          "dropLabel": "Choose a photo or PDF, or drag it here",
+          "hint": "Photos: JPEG, PNG, WebP or HEIC, up to 10 MB. PDFs: up to 15 MB. Up to 20 files per article.",
+          "limitReached": "This article has the most files it can have. Delete one to add another.",
+          "useAsCover": "Use this photo as the article cover",
+          "captionAr": "Caption in Arabic",
+          "captionEn": "Caption in English",
+          "captionFr": "Caption in French",
+          "uploading": "Uploading {name}… {percent}%",
+          "actionFailed": "Could not do that. Try again.",
+          "problems": {
+            "unsupported": "{name} is not a photo or PDF that can be used (JPEG, PNG, WebP, HEIC or PDF).",
+            "tooLarge": "{name} is too large. Photos can be up to 10 MB and PDFs up to 15 MB."
+          }
+        },
         "schedule": {
           "title": "Schedule publishing",
           "description": "Choose the day and time on the municipality clock (Beirut). The article is published then.",
@@ -4431,10 +4476,14 @@
         }
       }
     },
+    "loadFailedTitle": "Could not load News",
+    "retry": "Try again",
     "fieldErrors": {
       "invalidCategoryKey": "This key is not valid. Use lowercase English letters and digits, with hyphens between words, like water-power.",
       "categoryKeyTaken": "This key is already used by another category. Choose a different one.",
-      "nameRequired": "The name in Arabic is required."
+      "nameRequired": "The name in Arabic is required.",
+      "unsupportedFile": "This file is not a photo or PDF that can be used here (JPEG, PNG, WebP, HEIC or PDF).",
+      "fileTooLarge": "This file is too large. Photos can be up to 10 MB and PDFs up to 15 MB."
     }
   },
   "buildingTypes": {

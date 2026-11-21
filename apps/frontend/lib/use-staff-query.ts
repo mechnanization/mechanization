@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { isSpecificErrorCode } from '@mechanization/shared-schemas';
 import { ApiRequestError, logApiError } from './api-client';
 import { clearSession } from './session';
 
@@ -35,6 +36,13 @@ export interface StaffQueryResult<T> {
   fetching: boolean;
   /** The caller's own message, or null. Never the raw API text. */
   error: string | null;
+  /**
+   * Why the API refused, in the page's language, when it gave a reason we have
+   * words for (a specific error code: «no access», «News is off»), else null.
+   * Never an uncoded server message. A screen that can say more than `error`
+   * does shows this in its place; the rest keep showing `error`.
+   */
+  refusal: string | null;
   refetch: () => void;
 }
 
@@ -176,6 +184,17 @@ export function useStaffQuery<T>({
     loading: query.isPending && Boolean(token),
     fetching: query.isFetching,
     error: error ? errorMessage : null,
+    refusal: refusalOf(error),
     refetch: () => void query.refetch(),
   };
+}
+
+/**
+ * The API's own words for a refusal it gave a specific code for, already in the
+ * page's language (`ApiRequestError.message` is the translated code). Null for
+ * anything else: an error with no code of ours, which may carry raw server text,
+ * and anything that is not an API refusal at all.
+ */
+export function refusalOf(error: unknown): string | null {
+  return error instanceof ApiRequestError && isSpecificErrorCode(error.code) ? error.message : null;
 }

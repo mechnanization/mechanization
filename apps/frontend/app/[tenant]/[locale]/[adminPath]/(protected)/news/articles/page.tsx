@@ -22,6 +22,7 @@ import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DataTable } from '@/components/ui/data-table';
+import { ErrorState } from '@/components/ui/states';
 import { PageHeader } from '@/components/ui/page-header';
 import { SegmentedControl } from '@/components/ui/segmented-control';
 
@@ -90,6 +91,7 @@ export default function NewsArticlesPage({
     return (id: string): string => byId.get(id) ?? t('noCategory');
   }, [categories.data, locale, t]);
 
+  const tNews = useTranslations('news');
   const tableLabels = useTableLabels({ empty: t('empty') });
 
   const columns = useMemo<ColumnDef<NewsArticleListItem>[]>(
@@ -183,19 +185,29 @@ export default function NewsArticlesPage({
         fullWidth={false}
       />
 
-      {/* `DataTable` draws its own frame; a card around it would be the double frame BAN-4 refuses. */}
-      <DataTable
-        columns={columns}
-        data={items}
-        labels={tableLabels}
-        getRowId={(article) => article.id}
-        searchable={false}
-        sortable={false}
-        paginated={false}
-        loading={first.loading}
-        error={first.error}
-        onRetry={first.refetch}
-      />
+      {first.error && !first.data ? (
+        // `DataTable` shows one generic line for any failure. Here the reason matters: no News access, News switched
+        // off for the municipality and Day3ati being down each need a different next step, so it is said.
+        <ErrorState
+          title={tNews('loadFailedTitle')}
+          description={first.refusal ?? first.error}
+          retryLabel={tNews('retry')}
+          onRetry={first.refetch}
+        />
+      ) : (
+        /* `DataTable` draws its own frame; a card around it would be the double frame BAN-4 refuses. */
+        <DataTable
+          columns={columns}
+          data={items}
+          labels={tableLabels}
+          getRowId={(article) => article.id}
+          searchable={false}
+          sortable={false}
+          paginated={false}
+          loading={first.loading}
+          error={null}
+        />
+      )}
 
       {moreFailed ? (
         <Alert variant="destructive" live="alert">

@@ -16,6 +16,7 @@ import {
   cancelNewsArticleSchedule,
   createNewsArticle,
   deleteNewsArticle,
+  getNewsArticle,
   logApiError,
   publishNewsArticle,
   setNewsArticlePlacement,
@@ -48,6 +49,7 @@ import { PageHeader } from '@/components/ui/page-header';
 import { ErrorState, LoadingState } from '@/components/ui/states';
 import { useToast } from '@/components/ui/toast';
 import { ArticleFields } from './article-fields';
+import { ArticleMedia } from './article-media';
 import { ArticlePlacementDialog } from './article-placement-dialog';
 import { ArticleScheduleDialog } from './article-schedule-dialog';
 
@@ -83,6 +85,7 @@ export function ArticleEditor({
 }) {
   const t = useTranslations('news.articles.editor');
   const tList = useTranslations('news.articles');
+  const tNews = useTranslations('news');
   const labels = getLabels(locale);
   const router = useRouter();
   const toast = useToast();
@@ -114,6 +117,22 @@ export function ArticleEditor({
     setSavedPrint(formFingerprint(next));
     queryClient.setQueryData(['news-article', tenant, saved.id], saved);
     await queryClient.invalidateQueries({ queryKey: ['news-articles', tenant] });
+  };
+
+  /**
+   * The article's files, read again from Day3ati and put into the saved copy.
+   * Only the files: the form is left as it is, so unsaved text is not lost. A
+   * photo being prepared is followed this way until it is ready, and a failed
+   * read is only logged (the next one tries again).
+   */
+  const refreshMedia = async (): Promise<void> => {
+    if (!article) return;
+    try {
+      const fresh = await getNewsArticle(tenant, token, locale, article.id, undefined, { background: true });
+      setArticle((current) => (current && current.id === fresh.id ? { ...current, media: fresh.media } : current));
+    } catch (caught) {
+      logApiError(caught);
+    }
   };
 
   const explain = (caught: unknown): string => {
@@ -225,7 +244,9 @@ export function ArticleEditor({
   if ((categories.error && !categories.data) || (publishers.error && !publishers.data)) {
     return (
       <ErrorState
-        description={categories.error ?? publishers.error ?? tList('loadError')}
+        title={tNews('loadFailedTitle')}
+        description={categories.refusal ?? publishers.refusal ?? categories.error ?? publishers.error ?? tList('loadError')}
+        retryLabel={tNews('retry')}
         onRetry={() => {
           void categories.refetch();
           void publishers.refetch();
@@ -276,6 +297,21 @@ export function ArticleEditor({
         disabled={busy}
         onChange={(patch) => setForm(patch)}
       />
+
+      <div className="border-t pt-6">
+        {article ? (
+          <ArticleMedia
+            tenant={tenant}
+            token={token}
+            locale={locale}
+            articleId={article.id}
+            media={article.media}
+            onChanged={refreshMedia}
+          />
+        ) : (
+          <p className="text-sm text-muted-foreground">{t('media.saveFirst')}</p>
+        )}
+      </div>
 
       <div className="space-y-3 border-t pt-6">
         {article && dirty && allowed.some((action) => action !== 'save' && action !== 'delete') ? (

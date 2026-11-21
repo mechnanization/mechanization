@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { CellTag } from '@/components/ui/cell-tag';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { DataTable } from '@/components/ui/data-table';
+import { ErrorState } from '@/components/ui/states';
 import { PageHeader } from '@/components/ui/page-header';
 import { useToast } from '@/components/ui/toast';
 
@@ -73,6 +74,7 @@ export default function NewsPublishersPage({
     }
   };
 
+  const tNews = useTranslations('news');
   const tableLabels = useTableLabels({ empty: t('empty') });
 
   const columns = useMemo<ColumnDef<NewsPublisherView>[]>(
@@ -152,19 +154,29 @@ export default function NewsPublishersPage({
 
       <p className="max-w-3xl text-sm text-muted-foreground">{t('intro')}</p>
 
-      {/* `DataTable` draws its own frame; a card around it would be the double frame BAN-4 refuses. */}
-      <DataTable
-        columns={columns}
-        data={publishers}
-        labels={tableLabels}
-        getRowId={(publisher) => publisher.id}
-        searchable={false}
-        sortable={false}
-        paginated={false}
-        loading={query.loading}
-        error={query.error}
-        onRetry={query.refetch}
-      />
+      {query.error && !query.data ? (
+        // `DataTable` shows one generic line for any failure. Here the reason matters: no News access, News switched
+        // off for the municipality and Day3ati being down each need a different next step, so it is said.
+        <ErrorState
+          title={tNews('loadFailedTitle')}
+          description={query.refusal ?? query.error}
+          retryLabel={tNews('retry')}
+          onRetry={query.refetch}
+        />
+      ) : (
+        /* `DataTable` draws its own frame; a card around it would be the double frame BAN-4 refuses. */
+        <DataTable
+          columns={columns}
+          data={publishers}
+          labels={tableLabels}
+          getRowId={(publisher) => publisher.id}
+          searchable={false}
+          sortable={false}
+          paginated={false}
+          loading={query.loading}
+          error={null}
+        />
+      )}
 
       {editing !== undefined && token ? (
         <NewsPublisherDialog

@@ -21,6 +21,7 @@ export * from './building.schema';
 export * from './building-type.schema';
 export * from './news.schema';
 export * from './news-article.schema';
+export * from './news-media.schema';
 export * from './fee-exemption.schema';
 export * from './unit-layout';
 export * from './unit-levels';

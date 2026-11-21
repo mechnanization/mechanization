@@ -1,6 +1,8 @@
 import {
   NEWS_ARTICLE_STATUS,
   NEWS_LANGUAGE,
+  NEWS_MEDIA_KIND,
+  NEWS_MEDIA_STATUS,
   NEWS_PUBLISHER_KIND,
   type NewsArticleListItem,
   type NewsArticlePage,
@@ -10,6 +12,7 @@ import {
   type NewsCategoryView,
   type NewsLanguage,
   type NewsLocalizedName,
+  type NewsMediaView,
   type NewsPublisherKind,
   type NewsPublisherView,
 } from '@mechanization/shared-schemas';
@@ -156,12 +159,14 @@ function toArticleText(raw: unknown): NewsArticleTextView | null {
 }
 
 /**
- * One article in full. The author (a Day3ati user id of theirs, not ours) and
- * the media are left out: the media come with the photo screens.
+ * One article in full. The author (a Day3ati user id of theirs, not ours) is
+ * left out. A photo or file that cannot be read makes the whole article
+ * unreadable: a list of files shown short is a file the editor thinks is gone.
  */
 export function toArticleView(raw: unknown): NewsArticleView | null {
   if (!isObject(raw)) return null;
   const texts = readAll(raw.texts, toArticleText);
+  const media = readAll(raw.media, toMediaView);
   const placeLabel = raw.placeLabel === null || raw.placeLabel === undefined ? null : localizedName(raw.placeLabel);
   const publishAt = instant(raw.publishAt);
   const publishedAt = instant(raw.publishedAt);
@@ -178,6 +183,7 @@ export function toArticleView(raw: unknown): NewsArticleView | null {
     typeof raw.publisherId !== 'string' ||
     !isLanguage(raw.defaultLanguage) ||
     !texts ||
+    !media ||
     (raw.placeLabel !== null && raw.placeLabel !== undefined && placeLabel === null) ||
     (raw.areaId !== null && raw.areaId !== undefined && typeof raw.areaId !== 'string') ||
     typeof raw.notifyResidents !== 'boolean' ||
@@ -200,6 +206,7 @@ export function toArticleView(raw: unknown): NewsArticleView | null {
     publisherId: raw.publisherId,
     defaultLanguage: raw.defaultLanguage,
     texts,
+    media,
     placeLabel,
     areaId: typeof raw.areaId === 'string' ? raw.areaId : null,
     notifyResidents: raw.notifyResidents,
@@ -212,5 +219,48 @@ export function toArticleView(raw: unknown): NewsArticleView | null {
     bookmarkCount,
     createdAt,
     updatedAt,
+  };
+}
+
+/**
+ * One photo or PDF of an article. The address and the thumbnail are Day3ati's
+ * and are passed on as sent (an editor opens them); the blurhash, a placeholder
+ * for a decoder this portal does not have, is left out.
+ */
+export function toMediaView(raw: unknown): NewsMediaView | null {
+  if (!isObject(raw)) return null;
+  const caption = raw.caption === null || raw.caption === undefined ? null : localizedName(raw.caption);
+  const sortOrder = wholeNumber(raw.sortOrder);
+  const sizeBytes = wholeNumber(raw.sizeBytes);
+  const dimension = (value: unknown): number | null | undefined =>
+    value === null || value === undefined ? null : (wholeNumber(value) ?? undefined);
+  const width = dimension(raw.width);
+  const height = dimension(raw.height);
+  if (
+    typeof raw.id !== 'string' ||
+    !(NEWS_MEDIA_KIND as readonly unknown[]).includes(raw.kind) ||
+    !(NEWS_MEDIA_STATUS as readonly unknown[]).includes(raw.status) ||
+    (raw.caption !== null && raw.caption !== undefined && caption === null) ||
+    typeof raw.isCover !== 'boolean' ||
+    sortOrder === null ||
+    sizeBytes === null ||
+    width === undefined ||
+    height === undefined
+  ) {
+    return null;
+  }
+  return {
+    id: raw.id,
+    kind: raw.kind as NewsMediaView['kind'],
+    status: raw.status as NewsMediaView['status'],
+    url: typeof raw.url === 'string' ? raw.url : null,
+    thumbnailUrl: typeof raw.thumbnailUrl === 'string' ? raw.thumbnailUrl : null,
+    width,
+    height,
+    caption,
+    isCover: raw.isCover,
+    sortOrder,
+    sizeBytes,
+    failureCode: typeof raw.failureCode === 'string' ? raw.failureCode : null,
   };
 }

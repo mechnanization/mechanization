@@ -32,6 +32,7 @@ const view = (patch: Partial<NewsArticleView> = {}): NewsArticleView => ({
     { language: 'ar', title: 'عنوان', summary: 'ملخص', body: 'نص' },
     { language: 'en', title: 'Title', summary: '', body: 'Body' },
   ],
+  media: [],
   placeLabel: { ar: 'الساحة', en: null, fr: null },
   areaId: '44444444-4444-4444-8444-444444444444',
   notifyResidents: true,

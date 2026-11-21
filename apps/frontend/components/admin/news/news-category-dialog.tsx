@@ -12,7 +12,7 @@ import {
   type NewsCategoryView,
 } from '@mechanization/shared-schemas';
 import { createNewsCategory, logApiError, updateNewsCategory } from '@/lib/api-client';
-import { newsFieldErrors, type NewsFieldWording } from '@/lib/news';
+import { newsFieldErrors, useNewsFieldWording } from '@/lib/news';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -54,7 +54,6 @@ export function NewsCategoryDialog({
   onClose: () => void;
 }) {
   const t = useTranslations('news.categories');
-  const tf = useTranslations('news.fieldErrors');
   const queryClient = useQueryClient();
   const [key, setKey] = useState(editing?.key ?? '');
   const [nameAr, setNameAr] = useState(editing?.name.ar ?? '');
@@ -67,11 +66,7 @@ export function NewsCategoryDialog({
   const [busy, setBusy] = useState(false);
   const inFlight = useRef(false);
 
-  const wording: NewsFieldWording = {
-    'news.invalid_category_key': tf('invalidCategoryKey'),
-    'news.category_key_taken': tf('categoryKeyTaken'),
-    'news.name_required': tf('nameRequired'),
-  };
+  const wording = useNewsFieldWording();
 
   const clear = (field: string): void => setErrors((current) => ({ ...current, [field]: '' }));
 

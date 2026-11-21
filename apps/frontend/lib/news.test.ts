@@ -6,6 +6,8 @@ const wording: NewsFieldWording = {
   'news.invalid_category_key': 'Key not valid',
   'news.category_key_taken': 'Key already used',
   'news.name_required': 'Arabic name required',
+  'news.unsupported_file': 'Not a photo or PDF',
+  'news.file_too_large': 'Too large',
 };
 
 const refusal = (details: unknown) =>

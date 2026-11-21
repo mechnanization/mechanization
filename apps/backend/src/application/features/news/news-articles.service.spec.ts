@@ -96,11 +96,11 @@ describe('NewsArticlesService', () => {
   });
 
   describe('reading one article', () => {
-    it('leaves out the author and the media, which belong to Day3ati and to a later screen', async () => {
+    it('leaves out the author, which is a Day3ati user and not ours, and keeps the files', async () => {
       const { service } = setup(article());
       const view = await service.get(ID, who, 'ar');
       expect(view).not.toHaveProperty('authorUserId');
-      expect(view).not.toHaveProperty('media');
+      expect(view.media).toEqual([]);
       expect(view).toMatchObject({ id: ID, status: 'draft', defaultLanguage: 'ar' });
     });
 

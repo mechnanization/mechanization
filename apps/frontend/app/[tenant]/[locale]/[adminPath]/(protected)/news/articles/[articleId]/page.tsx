@@ -20,6 +20,7 @@ export default function NewsArticlePage({
   const { tenant, locale, adminPath, articleId } = use(params);
   const base = `/${tenant}/${locale}/${adminPath}`;
   const t = useTranslations('news.articles.editor');
+  const tNews = useTranslations('news');
   const { token } = useStaffSession(tenant, base);
   const query = useNewsArticle(tenant, base, token, articleId, {
     locale: locale === 'en' ? 'en' : 'ar',
@@ -27,7 +28,16 @@ export default function NewsArticlePage({
   });
 
   if (!query.data) {
-    if (query.error) return <ErrorState description={query.error} onRetry={query.refetch} />;
+    if (query.error) {
+      return (
+        <ErrorState
+          title={tNews('loadFailedTitle')}
+          description={query.refusal ?? query.error}
+          retryLabel={tNews('retry')}
+          onRetry={query.refetch}
+        />
+      );
+    }
     return <LoadingState />;
   }
   if (!token) return <LoadingState />;

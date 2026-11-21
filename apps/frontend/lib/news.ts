@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import {
   MUNICIPAL_TIME_ZONE,
   NEWS_ARTICLES_PAGE_DEFAULT,
@@ -7,12 +8,21 @@ import {
   type NewsArticlePage,
   type NewsArticleStatus,
   type NewsArticleView,
+  type NewsAvailability,
   type NewsCategoryView,
   type NewsFieldError,
   type NewsLocalizedName,
   type NewsPublisherView,
 } from '@mechanization/shared-schemas';
-import { ApiRequestError, getNewsArticle, getNewsArticles, getNewsCategories, getNewsPublishers } from './api-client';
+import {
+  ApiRequestError,
+  getNewsArticle,
+  getNewsArticles,
+  getNewsAvailability,
+  getNewsCategories,
+  getNewsPublishers,
+} from './api-client';
+import { NEWS_EDITOR_ROLES, hasRole } from './staff-roles';
 import { useStaffQuery } from './use-staff-query';
 
 /**
@@ -22,6 +32,34 @@ import { useStaffQuery } from './use-staff-query';
 export function newsName(name: NewsLocalizedName, locale: string): string {
   const own = locale === 'en' ? name.en : null;
   return own && own.trim() !== '' ? own : name.ar;
+}
+
+/**
+ * Whether the News screens should be offered at all: `false` only when Day3ati
+ * says, for this municipality, that News is off (no village, or its village does
+ * not list the module), and `undefined` while that is not known. Only an editor
+ * can ask, and a failed read leaves it unknown: the rows stay, and each screen
+ * says in words why it cannot load, rather than the menu hiding News because
+ * Day3ati was slow. A reference read, kept for the session.
+ */
+export function useNewsAvailability(
+  tenant: string,
+  base: string,
+  token: string | null,
+  role: string | undefined,
+): boolean | undefined {
+  const mayAsk = role !== undefined && hasRole(NEWS_EDITOR_ROLES, role);
+  const query = useStaffQuery<NewsAvailability>({
+    queryKey: ['news-availability', tenant],
+    queryFn: (accessToken, signal) => getNewsAvailability(tenant, accessToken, signal),
+    tenant,
+    base,
+    // No token, no read: a role that cannot use News never asks, and is never answered with a refusal.
+    token: mayAsk ? token : null,
+    reference: true,
+    errorMessage: '',
+  });
+  return query.data?.enabled;
 }
 
 /** Categories, every one (switched-off ones too: this is the screen that switches them back on). */
@@ -166,6 +204,18 @@ export function newsStatusVariant(
 
 /** The words for the field refusals Day3ati names by code, in the page's language. */
 export type NewsFieldWording = Readonly<Record<keyof typeof NEWS_FIELD_ERROR_CODES, string>>;
+
+/** The words for every refusal Day3ati names by code, in the page's language (`news.fieldErrors`). */
+export function useNewsFieldWording(): NewsFieldWording {
+  const t = useTranslations('news.fieldErrors');
+  return {
+    'news.invalid_category_key': t('invalidCategoryKey'),
+    'news.category_key_taken': t('categoryKeyTaken'),
+    'news.name_required': t('nameRequired'),
+    'news.unsupported_file': t('unsupportedFile'),
+    'news.file_too_large': t('fileTooLarge'),
+  };
+}
 
 /**
  * What a refused News form says under each field: `{ key: '…', nameAr: '…' }`.
