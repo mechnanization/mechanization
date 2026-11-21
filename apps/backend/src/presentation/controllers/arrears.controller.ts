@@ -1,13 +1,28 @@
 import { createHash } from 'node:crypto';
-import { Body, Controller, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Put } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import {
+  ARREARS_APPROVE_ROLES,
   ARREARS_PREPARE_ROLES,
+  approveArrearsBatchSchema,
+  arrearsCutoffSchema,
+  arrearsSingleLineSchema,
+  discardArrearsBatchSchema,
   exportArrearsTemplateSchema,
   importArrearsSchema,
+  linkArrearsLineSchema,
+  returnArrearsBatchSchema,
+  submitArrearsBatchSchema,
+  type ArrearsCutoffInput,
+  type ArrearsSingleLineInput,
+  type DiscardArrearsBatchInput,
   type ExportArrearsTemplateInput,
   type ImportArrearsInput,
+  type LinkArrearsLineInput,
+  type ReturnArrearsBatchInput,
+  type SubmitArrearsBatchInput,
 } from '@mechanization/shared-schemas';
+import { ArrearsBatchService } from '../../application/features/arrears/arrears-batch.service';
 import { ArrearsService } from '../../application/features/arrears/arrears.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
@@ -35,14 +50,19 @@ const ARREARS_BULK_THROTTLE = {
 
 /**
  * Old debts, «متأخرات سنوات سابقة» (docs/old-debts-plan.md): the template's
- * export and the import's dry run and write (task 4). The accountant and the
- * manager (`ARREARS_PREPARE_ROLES`); nothing here reaches the portal, and a
- * DRAFT batch is seen by no citizen. Submitting, approving and the bills are
- * task 5.
+ * export and the import's dry run and write (task 4), and a batch's life after
+ * it (task 5): submit, return, discard, approve, a single line, the link of a
+ * «للمطابقة» line, and the cutoff year. The accountant and the manager prepare
+ * (`ARREARS_PREPARE_ROLES`); the manager alone approves, returns, reads the
+ * review and sets the cutoff (`ARREARS_APPROVE_ROLES`). Nothing here reaches
+ * the portal until a batch is approved and its bills are raised.
  */
 @Controller('t/:tenantSlug/arrears')
 export class ArrearsController {
-  constructor(private readonly arrears: ArrearsService) {}
+  constructor(
+    private readonly arrears: ArrearsService,
+    private readonly batches: ArrearsBatchService,
+  ) {}
 
   /**
    * «تصدير قالب»: a DRAFT batch for the next `count` citizens of a zone or a
@@ -68,5 +88,108 @@ export class ArrearsController {
     @CurrentUser() user: SessionClaims,
   ) {
     return this.arrears.importLines(batchId, body, { id: user.sub, role: user.role ?? '' });
+  }
+
+  /** The batches, newest first. */
+  @Roles(...ARREARS_PREPARE_ROLES)
+  @Get('batches')
+  listBatches() {
+    return this.batches.list();
+  }
+
+  /** A submitted batch as the manager reviews it. */
+  @Roles(...ARREARS_APPROVE_ROLES)
+  @Get('batches/:batchId/review')
+  review(@Param('batchId', new UuidPipe()) batchId: string) {
+    return this.batches.review(batchId);
+  }
+
+  /** «إرسال للاعتماد»: a draft with the total of the pages copied. */
+  @Roles(...ARREARS_PREPARE_ROLES)
+  @Post('batches/:batchId/submit')
+  submit(
+    @Param('batchId', new UuidPipe()) batchId: string,
+    @Body(new ZodValidationPipe(submitArrearsBatchSchema)) body: SubmitArrearsBatchInput,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.batches.submit(batchId, body, { id: user.sub, role: user.role ?? '' });
+  }
+
+  /** Approval raises the bills and locks the batch. */
+  @Roles(...ARREARS_APPROVE_ROLES)
+  @Post('batches/:batchId/approve')
+  approve(
+    @Param('batchId', new UuidPipe()) batchId: string,
+    @Body(new ZodValidationPipe(approveArrearsBatchSchema)) _body: Record<string, never>,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.batches.approve(batchId, { id: user.sub, role: user.role ?? '' });
+  }
+
+  /** Back to the preparer as a draft, with what to fix. */
+  @Roles(...ARREARS_APPROVE_ROLES)
+  @Post('batches/:batchId/return')
+  returnBatch(
+    @Param('batchId', new UuidPipe()) batchId: string,
+    @Body(new ZodValidationPipe(returnArrearsBatchSchema)) body: ReturnArrearsBatchInput,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.batches.returnBatch(batchId, body, { id: user.sub, role: user.role ?? '' });
+  }
+
+  /** A draft by its preparer or the manager; a submitted batch by the manager alone (the service asks). */
+  @Roles(...ARREARS_PREPARE_ROLES)
+  @Post('batches/:batchId/discard')
+  discard(
+    @Param('batchId', new UuidPipe()) batchId: string,
+    @Body(new ZodValidationPipe(discardArrearsBatchSchema)) body: DiscardArrearsBatchInput,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.batches.discard(batchId, body, { id: user.sub, role: user.role ?? '' });
+  }
+
+  /** One line found later: a one-line batch through the same checks and the same approval. */
+  @Roles(...ARREARS_PREPARE_ROLES)
+  @Post('lines')
+  addLine(
+    @Body(new ZodValidationPipe(arrearsSingleLineSchema)) body: ArrearsSingleLineInput,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.batches.addSingleLine(body, { id: user.sub, role: user.role ?? '' });
+  }
+
+  /** The lines of approved batches whose person is not on the register yet. */
+  @Roles(...ARREARS_PREPARE_ROLES)
+  @Get('lines/unmatched')
+  unmatched() {
+    return this.batches.unmatched();
+  }
+
+  /** Links a «للمطابقة» line to a file; its bill is raised then. */
+  @Roles(...ARREARS_PREPARE_ROLES)
+  @Post('lines/:lineId/link')
+  link(
+    @Param('lineId', new UuidPipe()) lineId: string,
+    @Body(new ZodValidationPipe(linkArrearsLineSchema)) body: LinkArrearsLineInput,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.batches.link(lineId, body, { id: user.sub, role: user.role ?? '' });
+  }
+
+  /** The cutoff year, and the old books' totals as the table holds them. */
+  @Roles(...ARREARS_APPROVE_ROLES)
+  @Get('settings')
+  settings() {
+    return this.batches.settings();
+  }
+
+  /** Sets the year before which a debt is old (decision 5). */
+  @Roles(...ARREARS_APPROVE_ROLES)
+  @Put('settings/cutoff')
+  setCutoff(
+    @Body(new ZodValidationPipe(arrearsCutoffSchema)) body: ArrearsCutoffInput,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.batches.setCutoff(body, { id: user.sub, role: user.role ?? '' });
   }
 }

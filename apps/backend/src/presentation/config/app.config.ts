@@ -111,6 +111,13 @@ export const APP_CONFIG = {
     arrearsBulk: { ttlSeconds: 60, limit: 20 },
   },
 
+  /**
+   * Old debts (docs/old-debts-plan.md). `approverMustDifferFromPreparer`: whoever prepared a batch
+   * does not approve it (maker ≠ checker). **Off:** open-decisions §23.3 has not decided it, and with
+   * one manager it would make an accountant prepare every batch. The one place it is turned on.
+   */
+  arrears: { approverMustDifferFromPreparer: false },
+
   documents: {
     signedUrlTtlSeconds: 300,
     maxFilesPerSubmission: 40,

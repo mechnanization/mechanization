@@ -548,7 +548,17 @@
     "ARREARS_EXPORT_NOTHING_LEFT": "لا يوجد في هذه المنطقة أو هذا المبنى مواطن لم يدخل دفعة بعد",
     "ARREARS_EXPORT_REQUEST_REUSED": "سبق تصدير قالب بهذا الطلب لمنطقة أو عدد آخر. ابدأ تصديراً جديداً",
     "ARREARS_IMPORT_HAS_REFUSED_ROWS": "في الملف {count} من الأسطر المرفوضة، فلم يُحفظ شيء. صحّحها في المعاينة ثم أعد الاستيراد",
-    "ARREARS_IMPORT_TOO_MANY_ROWS": "الملف أكبر مما يُستورد مرة واحدة ({max} سطراً على الأكثر). صدّر قالباً لعدد أقل من المواطنين"
+    "ARREARS_IMPORT_TOO_MANY_ROWS": "الملف أكبر مما يُستورد مرة واحدة ({max} سطراً على الأكثر). صدّر قالباً لعدد أقل من المواطنين",
+    "ARREARS_BATCH_NOT_SUBMITTED": "هذه الدفعة ليست بانتظار الاعتماد ({status}): لا تُعتمد ولا تُعاد",
+    "ARREARS_BATCH_EMPTY": "لا أسطر في هذه الدفعة، فلا تُرسل للاعتماد",
+    "ARREARS_BATCH_NOT_YOURS": "تتصرّف بالدفعة من حضّرها أو مدير النظام، وتُلغى الدفعة المرسلة للاعتماد بيد مدير النظام وحده",
+    "ARREARS_APPROVAL_CHECKS_FAILED": "لم يعد {count} من أسطر الدفعة يجتاز الفحوص (سنة بدء الفوترة، أو مرور الزمن، أو ملف دُمج في غيره). أعدها إلى المحضّر ليستوردها من جديد",
+    "ARREARS_LINE_NOT_FOUND": "لا سطر متأخرات بهذا الرقم",
+    "ARREARS_LINE_NOT_WAITING": "هذا السطر لا ينتظر ربطاً بملف",
+    "ARREARS_LINE_REFUSED": "لا يجتاز السطر الفحوص، فصحّح بياناته",
+    "ARREARS_LINE_PRESCRIBED": "سقط هذا الدين بمرور الزمن، فلا يُدخل ولا تُرفع به فاتورة",
+    "ARREARS_LINE_REQUEST_REUSED": "استُعمل هذا الطلب لسطر آخر. ابدأ سطراً جديداً",
+    "ARREARS_CUTOFF_LOCKED": "اعتُمدت دفعة متأخرات، فلا تتغيّر سنة بدء الفوترة بعد الآن (تبقى {cutoffYear})"
   },
   "damage": {
     "level": "مستوى الضرر",
@@ -2063,7 +2073,15 @@
     "NEWS_ARTICLE_PLACEMENT_CHANGED": "تثبيت خبر أو تمييزه",
     "NEWS_MEDIA_UPLOADED": "إضافة ملف إلى خبر",
     "NEWS_MEDIA_COVER_CHANGED": "تغيير غلاف خبر",
-    "NEWS_MEDIA_DELETED": "حذف ملف من خبر"
+    "NEWS_MEDIA_DELETED": "حذف ملف من خبر",
+    "ARREARS_BATCH_SUBMITTED": "أُرسلت دفعة متأخرات للاعتماد",
+    "ARREARS_BATCH_RETURNED": "أُعيدت دفعة متأخرات إلى محضّرها",
+    "ARREARS_BATCH_DISCARDED": "أُلغيت دفعة متأخرات",
+    "ARREARS_BATCH_APPROVED": "اعتُمدت دفعة متأخرات ورُفعت فواتيرها",
+    "ARREARS_BILL_RAISED": "رُفعت فاتورة متأخرات",
+    "ARREARS_LINE_ADDED": "أُدخل سطر متأخرات منفرد",
+    "ARREARS_LINE_LINKED": "رُبط سطر متأخرات بملف ورُفعت فاتورته",
+    "ARREARS_CUTOFF_CHANGED": "غُيّرت سنة بدء الفوترة"
   },
   "auditEntities": {
     "User": "مواطن أو موظف",
@@ -2094,7 +2112,8 @@
     "ArrearsBatch": "دفعة ديون قديمة",
     "NewsCategory": "قسم أخبار",
     "NewsPublisher": "ناشر أخبار",
-    "NewsArticle": "خبر"
+    "NewsArticle": "خبر",
+    "ArrearsLine": "سطر متأخرات"
   },
   "audit": {
     "families": {

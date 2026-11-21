@@ -31,6 +31,7 @@ import { AuditService, type BuildingChange, type CitizenChange } from '../audit/
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { ConflictError, NotFoundError } from '../../common/exceptions';
 import { citizenPhoneRuleError } from '../../../infrastructure/prisma/check-violation';
+import { arrearsLineKey } from '../arrears/arrears-import.plan';
 import { readFootprint } from './landlord-link.service';
 import {
   filedOn,
@@ -96,6 +97,14 @@ interface MergeFootprint {
    * person's. Absent on a merge recorded before requests existed.
    */
   requests?: string[];
+  /**
+   * The absorbed person's old-debt lines (`arrears_lines`, 0108) and their places in the
+   * sets old-debts templates were exported for (`arrears_batch_citizens`), now the kept
+   * person's. Their «ARR-» bills moved with `payments`. Absent on a merge recorded before
+   * old debts existed.
+   */
+  arrearsLines?: string[];
+  arrearsSet?: string[];
   /**
    * Shared unit bills (0099) the absorbed person was a debtor on, now owed by
    * the kept one. Absent on a merge recorded before shared bills existed.
@@ -255,6 +264,7 @@ export class CitizenMergeService {
         started from opposite ends wait for each other instead of deadlocking.
         Every edit of either file takes the same row lock through its update.
       */
+      await this.lockArrearsLines();
       const ids = [input.keepId, input.absorbId].sort();
       await this.db.$queryRaw`
         SELECT id FROM ${this.S}users WHERE id IN (${ids[0]}::uuid, ${ids[1]}::uuid) ORDER BY id FOR UPDATE
@@ -383,6 +393,8 @@ export class CitizenMergeService {
         message: 'This merge could not be found.',
       });
 
+      // The undo moves old-debt lines back: the same lock as the merge, before the rows.
+      await this.lockArrearsLines();
       const ids = [merge.survivorId, merge.absorbedId].sort();
       await this.db.$queryRaw`
         SELECT id FROM ${this.S}users WHERE id IN (${ids[0]}::uuid, ${ids[1]}::uuid) ORDER BY id FOR UPDATE
@@ -976,6 +988,46 @@ export class CitizenMergeService {
     return theirs.filter((row) => !(open.has(row.status) && taken.has(openKey(row)))).map((row) => row.id);
   }
 
+  /**
+   * The lock every writer of live old-debt lines takes (`ArrearsService.importLines`,
+   * `ArrearsBatchService`). A merge and its undo move lines, so they take it too, and take it
+   * **first**, before the two users' rows: an import, an approval or a link holds it and then
+   * touches those rows (the foreign key of every line and bill it writes takes `FOR KEY SHARE` on
+   * the citizen), so taken after the rows' `FOR UPDATE` the two waited on each other and Postgres
+   * killed one as a deadlock.
+   */
+  private async lockArrearsLines(): Promise<void> {
+    await this.db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${this.tenantContext.schemaName}:arrears-lines`}))`;
+  }
+
+  /**
+   * Moves the absorbed person's old-debt lines and export-set places to the kept person; what moved.
+   * The caller holds the `arrears-lines` lock (`lockArrearsLines`).
+   */
+  private async moveArrears(keepId: string, absorbId: string): Promise<{ lines: string[]; set: string[] }> {
+    const db = this.db;
+    const [theirs, kept, set] = await Promise.all([
+      db.arrearsLine.findMany({
+        where: { citizenId: absorbId },
+        select: { id: true, decision: true, discardedAt: true, propertyNumber: true, unitCode: true, year: true, feeType: true, component: true },
+      }),
+      db.arrearsLine.findMany({
+        where: { citizenId: keepId, decision: 'KEEP', discardedAt: null },
+        select: { citizenId: true, propertyNumber: true, unitCode: true, year: true, feeType: true, component: true },
+      }),
+      db.arrearsBatchCitizen.findMany({ where: { citizenId: absorbId }, select: { id: true } }),
+    ]);
+    const held = new Set(kept.map((line) => arrearsLineKey({ ...line, citizenId: keepId })));
+    const lines = theirs
+      .filter((line) => !(line.decision === 'KEEP' && line.discardedAt === null && held.has(arrearsLineKey({ ...line, citizenId: keepId }))))
+      .map((line) => line.id);
+    if (lines.length > 0) await db.arrearsLine.updateMany({ where: { id: { in: lines } }, data: { citizenId: keepId } });
+    if (set.length > 0) {
+      await db.arrearsBatchCitizen.updateMany({ where: { id: { in: set.map((row) => row.id) } }, data: { citizenId: keepId } });
+    }
+    return { lines, set: set.map((row) => row.id) };
+  }
+
   private async apply(loaded: Loaded): Promise<MergeFootprint> {
     const { plan, keep, absorb } = loaded;
     const at = new Date();
@@ -1204,6 +1256,16 @@ export class CitizenMergeService {
       await db.citizenRequest.updateMany({ where: { id: { in: requests } }, data: { citizenId: keep.id } });
     }
 
+    /*
+      Old debts follow the person, as their bills did (docs/old-debts-plan.md §8): the
+      lines, and the person's place in each export's set, so «checked against the old
+      books» stays with the file that is kept. Under the lock every writer of live lines
+      takes, so an approval cannot raise a bill for a file halfway through this move. A
+      live line the kept file already holds for the same debt cannot move (the one-live-line
+      index): it stays on the absorbed file, as a colliding bill does.
+    */
+    const { lines: arrearsLines, set: arrearsSet } = await this.moveArrears(keep.id, absorb.id);
+
     await db.user.update({
       where: { id: absorb.id },
       // Deactivated, and any session they hold on the citizen portal ends.
@@ -1235,6 +1297,8 @@ export class CitizenMergeService {
       mints: loaded.mints.map((card) => card.id),
       responsibleUnits: loaded.responsibleUnits,
       requests,
+      arrearsLines,
+      arrearsSet,
       sharedBillDebts: loaded.sharedBillDebts,
       dismissals,
       reviewMoves,
@@ -1410,6 +1474,13 @@ export class CitizenMergeService {
         where: { id: { in: footprint.requests }, citizenId: keepId },
         data: { citizenId: absorbId },
       });
+    }
+
+    if ((footprint.arrearsLines ?? []).length > 0) {
+      await db.arrearsLine.updateMany({ where: { id: { in: footprint.arrearsLines }, citizenId: keepId }, data: { citizenId: absorbId } });
+    }
+    if ((footprint.arrearsSet ?? []).length > 0) {
+      await db.arrearsBatchCitizen.updateMany({ where: { id: { in: footprint.arrearsSet }, citizenId: keepId }, data: { citizenId: absorbId } });
     }
 
     for (const write of footprint.flagWrites) {
@@ -1602,16 +1673,33 @@ export class CitizenMergeService {
     const leftBehind = new Set(
       [...collidingBills(loaded.payments, loaded.keep.id, absorbId)],
     );
-    const [registrations, spells, cases, notices, links, bills] = await Promise.all([
+    const [registrations, spells, cases, notices, links, bills, strayLines, straySet] = await Promise.all([
       this.db.registration.count({ where: { citizenId: absorbId } }),
       this.db.unitOccupancy.count({ where: { citizenId: absorbId } }),
       this.db.case.count({ where: { resolvedCitizenId: absorbId } }),
       this.db.feeNotice.count({ where: { targetCitizenId: absorbId } }),
       this.db.propertyEntry.count({ where: { landlordCitizenId: absorbId } }),
       this.db.citizenPayment.findMany({ where: { citizenId: absorbId }, select: { id: true } }),
+      // A live line the kept file already held for the same debt stays (see `moveArrears`); the rest moved.
+      this.db.arrearsLine.findMany({
+        where: { citizenId: absorbId },
+        select: { decision: true, discardedAt: true, propertyNumber: true, unitCode: true, year: true, feeType: true, component: true },
+      }),
+      this.db.arrearsBatchCitizen.count({ where: { citizenId: absorbId } }),
     ]);
     const strayBills = bills.filter((bill) => !leftBehind.has(bill.id)).length;
-    if (registrations + spells + cases + notices + links + strayBills > 0) {
+    const keptLive = new Set(
+      (
+        await this.db.arrearsLine.findMany({
+          where: { citizenId: loaded.keep.id, decision: 'KEEP', discardedAt: null },
+          select: { propertyNumber: true, unitCode: true, year: true, feeType: true, component: true },
+        })
+      ).map((line) => arrearsLineKey({ ...line, citizenId: loaded.keep.id })),
+    );
+    const strayArrears = strayLines.filter(
+      (line) => !(line.decision === 'KEEP' && line.discardedAt === null && keptLive.has(arrearsLineKey({ ...line, citizenId: loaded.keep.id }))),
+    ).length;
+    if (registrations + spells + cases + notices + links + strayBills + strayArrears + straySet > 0) {
       throw new ConflictError({
         code: 'MERGE_ABSORBED_CHANGED',
         message: 'The file being merged changed during the merge (something new was recorded on it). Reopen the preview and try again.',

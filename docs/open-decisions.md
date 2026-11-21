@@ -1068,8 +1068,9 @@ the municipality's legal adviser confirms them.
 
 ### 23.3 Maker ≠ checker on a batch
 
-Proposed, not confirmed. What the plan does now: nothing; the code `ARREARS_APPROVER_IS_PREPARER` is
-reserved. **Undecided:** whether SUPER_ADMIN may approve a batch they prepared. If not, with one
+Proposed, not confirmed. What the code does now (task 5, 2026-11-21): whoever prepared a batch may approve
+it. `ARREARS_APPROVER_IS_PREPARER` exists and `APP_CONFIG.arrears.approverMustDifferFromPreparer` turns it on,
+in one place, off today. **Undecided:** whether SUPER_ADMIN may approve a batch they prepared. If not, with one
 SUPER_ADMIN, an accountant prepares every batch.
 
 ### 23.4 The old books' total per year
