@@ -484,6 +484,43 @@ describe('the building type routes', () => {
   });
 });
 
+/*
+  Old debts («متأخرات سنوات سابقة», docs/old-debts-plan.md §9): the accountant and the
+  manager prepare, and only the manager approves, returns, reads the review and sets the
+  cutoff. Approving raises bills on citizens' files, so it is pinned by name.
+*/
+describe('old debts: who may call what', () => {
+  const all = routes();
+  const prepare = ['ACCOUNTANT', 'SUPER_ADMIN'];
+  const approve = ['SUPER_ADMIN'];
+  const expected: Record<string, { method: RequestMethod; path: string; roles: string[] }> = {
+    'ArrearsController.exportTemplate': { method: RequestMethod.POST, path: 'batches/export', roles: prepare },
+    'ArrearsController.importLines': { method: RequestMethod.POST, path: 'batches/:batchId/import', roles: prepare },
+    'ArrearsController.listBatches': { method: RequestMethod.GET, path: 'batches', roles: prepare },
+    'ArrearsController.submit': { method: RequestMethod.POST, path: 'batches/:batchId/submit', roles: prepare },
+    'ArrearsController.discard': { method: RequestMethod.POST, path: 'batches/:batchId/discard', roles: prepare },
+    'ArrearsController.addLine': { method: RequestMethod.POST, path: 'lines', roles: prepare },
+    'ArrearsController.unmatched': { method: RequestMethod.GET, path: 'lines/unmatched', roles: prepare },
+    'ArrearsController.link': { method: RequestMethod.POST, path: 'lines/:lineId/link', roles: prepare },
+    'ArrearsController.review': { method: RequestMethod.GET, path: 'batches/:batchId/review', roles: approve },
+    'ArrearsController.approve': { method: RequestMethod.POST, path: 'batches/:batchId/approve', roles: approve },
+    'ArrearsController.returnBatch': { method: RequestMethod.POST, path: 'batches/:batchId/return', roles: approve },
+    'ArrearsController.settings': { method: RequestMethod.GET, path: 'settings', roles: approve },
+    'ArrearsController.setCutoff': { method: RequestMethod.PUT, path: 'settings/cutoff', roles: approve },
+  };
+
+  it.each(Object.entries(expected))('%s', (name, want) => {
+    const route = all.find((candidate) => candidate.name === name);
+    expect(route).toMatchObject({ method: want.method, path: want.path, isPublic: false });
+    expect([...(route?.roles ?? [])].sort()).toEqual([...want.roles].sort());
+  });
+
+  it('knows every old-debts handler: a new one is pinned here', () => {
+    const handlers = all.filter((route) => route.name.startsWith('ArrearsController.'));
+    expect(handlers.map((route) => route.name).sort()).toEqual(Object.keys(expected).sort());
+  });
+});
+
 describe('the routes that raise a bill', () => {
   const all = routes();
 

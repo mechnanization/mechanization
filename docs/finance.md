@@ -406,6 +406,15 @@ from) are settled in the integration tests (see 12.2).
   `exchangeRateAtPosting`, so changing the rate later never rewrites history.
   Official LBP reports use each entry's own stored rate, not today's.
 
+### 3.6a Old-debt bills («ARR-»)
+
+A bill raised from an approved old-debts batch (docs/old-debts-plan.md §7, task 5) is an ordinary `citizen_payments` row:
+the counter, «تسديد الفواتير المحددة», the Whish checkout and the receipts read it as any bill, and the money it takes
+reaches a wallet as any payment does. What differs is on the row: its number is «ARR-YYMM-NNNN» (`DOCUMENT_PREFIX.ARREARS`,
+a book of its own), `periodKey` is the debt's year, `arrearsLineId` links it to its line, there is no `feeNoticeId`, and
+its `assessment` is a one-line FLAT carrying the رقم العقار so «المستحق على عقار» holds a «براءة ذمة» back on it. Writing off
+what is left on one is §3.8 (task 9).
+
 ### 3.7 Settling several bills at once — «تسديد الفواتير المحددة» (built 2026-10-10)
 
 From the owner's phase-4 brief (branch `feat/fees-bulk-settlement`). A cashier ticks several unpaid

@@ -339,6 +339,8 @@ export const ARREARS_LINE_ISSUE = [
   'DUPLICATE_IN_FILE',
   'DUPLICATE_LIVE_LINE',
   'DROP_NOT_A_LINE',
+  // At approval: a kept line is older than the prescription period now (decision 14).
+  'PRESCRIBED_SINCE_IMPORT',
 ] as const;
 export type ArrearsLineIssue = (typeof ARREARS_LINE_ISSUE)[number];
 
@@ -437,6 +439,57 @@ export interface ArrearsBatchView {
   citizenCount: number;
   lineCount: number;
   createdAt: string;
+}
+
+/** One year × fee type × component of a batch, summed: what the manager approves. */
+export interface ArrearsBatchTotalRow {
+  year: number;
+  feeType: ArrearsFeeType;
+  component: ArrearsComponent;
+  count: number;
+  amount: number;
+}
+
+/**
+ * A submitted batch as the manager reviews it (`GET arrears/batches/:id/review`):
+ * what it holds, by year and fee, the lines whose handling the preparer decided
+ * (war damage, an archived file, a person not yet on the register), and what
+ * approval would raise. `flagged[i].row` is the line's place in the batch, not a
+ * row of the accountant's file, which a stored line does not keep.
+ */
+export interface ArrearsBatchReview {
+  batch: ArrearsBatchView;
+  totals: ArrearsImportTotals;
+  byYearAndFee: ArrearsBatchTotalRow[];
+  flagged: ArrearsLineVerdict[];
+  /** One bill per kept line with a citizen. */
+  bills: { count: number; amount: number; citizens: number };
+}
+
+/** A «للمطابقة» line of an approved batch, waiting to be linked to a file (`GET arrears/lines/unmatched`). */
+export interface ArrearsUnmatchedLine {
+  id: string;
+  batchId: string;
+  sourceName: string;
+  propertyNumber: string;
+  unitCode: string | null;
+  year: number;
+  feeType: ArrearsFeeType;
+  component: ArrearsComponent;
+  amount: number;
+}
+
+/** What approval found wrong with a kept line (`ARREARS_APPROVAL_CHECKS_FAILED`, `details.problems`). */
+export interface ArrearsApprovalProblem {
+  lineId: string;
+  issue: ArrearsLineIssue;
+}
+
+/** The cutoff year and the old books' totals per year (`GET arrears/settings`). */
+export interface ArrearsSettingsView {
+  arrearsCutoffYear: number | null;
+  /** Read only until open-decisions §23.4 is decided: nothing writes them yet. */
+  controlTotals: ArrearsControlTotalInput[];
 }
 
 // ──────────────────────────  reading a row  ──────────────────────────

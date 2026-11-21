@@ -2159,6 +2159,8 @@ export class ReportingService {
   @OnEvent('payment.cancelled')
   /** A municipal request raising its fee is a new bill on the citizen's profile and the totals (0092). */
   @OnEvent('request.bill.raised')
+  /** An approved old-debts batch, or one linked line, raises bills on citizens' files (task 5). */
+  @OnEvent('arrears.bills.raised')
   /**
    * The census moves the map, so the census has to clear the map's cache.
    *
