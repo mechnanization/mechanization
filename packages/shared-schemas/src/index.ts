@@ -23,6 +23,7 @@ export * from './news.schema';
 export * from './news-article.schema';
 export * from './news-media.schema';
 export * from './fee-exemption.schema';
+export * from './arrears.schema';
 export * from './unit-layout';
 export * from './unit-levels';
 export * from './cash-policy';

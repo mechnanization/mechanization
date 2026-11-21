@@ -534,7 +534,20 @@
     "BUILDING_TYPE_INACTIVE": "النوع «{name}» موقوف ولا يُختار لمبنى جديد. اختر نوعاً آخر، أو أعد تفعيله من «أنواع المباني»",
     "BUILDING_TYPE_NAME_TAKEN": "يوجد نوع آخر باسم «{name}»",
     "BUILDING_TYPE_SYSTEM_STRUCTURE": "نوع النظام يبقى على منشأته. أضف نوعاً جديداً بدلاً من تغييره",
-    "BUILDING_TYPE_STRUCTURE_IN_USE": "{count, plural, one {مبنى واحد مسجَّل} two {مبنيان مسجَّلان} few {{count} مبانٍ مسجَّلة} many {{count} مبنى مسجَّلاً} other {{count} مبنى مسجَّل}} بهذا النوع، فلا تتغيّر منشأته. أضف نوعاً جديداً بدلاً من ذلك"
+    "BUILDING_TYPE_STRUCTURE_IN_USE": "{count, plural, one {مبنى واحد مسجَّل} two {مبنيان مسجَّلان} few {{count} مبانٍ مسجَّلة} many {{count} مبنى مسجَّلاً} other {{count} مبنى مسجَّل}} بهذا النوع، فلا تتغيّر منشأته. أضف نوعاً جديداً بدلاً من ذلك",
+    "ARREARS_CUTOFF_NOT_SET": "لم تُحدَّد سنة بدء الفوترة بعد، فلا تُستورد ديون قديمة. يحدّدها مدير النظام في الإعدادات",
+    "ARREARS_YEAR_NOT_BEFORE_CUTOFF": "سنة {year} ليست قبل سنة بدء الفوترة ({cutoffYear}): يفوترها النظام، فلا تدخل ديناً قديماً",
+    "ARREARS_LINE_DUPLICATE": "هذا الدين مسجّل من قبل في دفعة أخرى: المواطن نفسه ورقم العقار والوحدة والسنة ونوع الرسم",
+    "ARREARS_BATCH_NOT_DRAFT": "هذه الدفعة لم تعد مسودة ({status})، فلا تُعدَّل ولا تُرسل",
+    "ARREARS_APPROVER_IS_PREPARER": "من أعدّ الدفعة لا يعتمدها. يعتمدها مدير آخر",
+    "ARREARS_CONTROL_TOTAL_MISMATCH": "مجموع الصفحات ({controlTotal, number}) لا يساوي مجموع أسطر الدفعة ({linesTotal, number}). راجع الصفحات أو الملف ثم أعد الإرسال",
+    "ARREARS_CURRENCY_NOT_LBP": "الديون القديمة بالليرة اللبنانية فقط، لا بـ{currency}",
+    "ARREARS_BATCH_NOT_FOUND": "دفعة الديون القديمة هذه غير موجودة",
+    "ZONE_NOT_FOUND": "المنطقة غير موجودة",
+    "ARREARS_EXPORT_NOTHING_LEFT": "لا يوجد في هذه المنطقة أو هذا المبنى مواطن لم يدخل دفعة بعد",
+    "ARREARS_EXPORT_REQUEST_REUSED": "سبق تصدير قالب بهذا الطلب لمنطقة أو عدد آخر. ابدأ تصديراً جديداً",
+    "ARREARS_IMPORT_HAS_REFUSED_ROWS": "في الملف {count} من الأسطر المرفوضة، فلم يُحفظ شيء. صحّحها في المعاينة ثم أعد الاستيراد",
+    "ARREARS_IMPORT_TOO_MANY_ROWS": "الملف أكبر مما يُستورد مرة واحدة ({max} سطراً على الأكثر). صدّر قالباً لعدد أقل من المواطنين"
   },
   "damage": {
     "level": "مستوى الضرر",

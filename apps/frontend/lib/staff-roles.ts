@@ -1,5 +1,8 @@
 import {
+  ARREARS_APPROVE_ROLES as SHARED_ARREARS_APPROVE_ROLES,
+  ARREARS_PREPARE_ROLES as SHARED_ARREARS_PREPARE_ROLES,
   BILL_CANCEL_ROLES as SHARED_BILL_CANCEL_ROLES,
+  BILL_WRITE_OFF_ROLES as SHARED_BILL_WRITE_OFF_ROLES,
   BULK_SETTLE_ROLES as SHARED_BULK_SETTLE_ROLES,
   CENSUS_WORKLIST_ROLES,
   FEE_SETTLE_ROLES,
@@ -163,5 +166,15 @@ export const FEE_EXEMPTION_GRANT_ROLES: readonly string[] = SHARED_FEE_EXEMPTION
 /** «أنواع المباني» (0106): add, edit, switch off or on a building type — the manager's. */
 export const BUILDING_TYPE_ADMIN_ROLES: readonly string[] = SHARED_BUILDING_TYPE_ADMIN_ROLES;
 
+/**
+ * Old debts, «متأخرات سنوات سابقة» (0108, docs/old-debts-plan.md): export the template,
+ * import it, submit, enter a single line, link a «للمطابقة» line — the accountant and
+ * the manager. Approving, returning and discarding a batch, the cutoff year and the
+ * books' totals are the manager's.
+ */
+export const ARREARS_PREPARE_ROLES: readonly string[] = SHARED_ARREARS_PREPARE_ROLES;
+export const ARREARS_APPROVE_ROLES: readonly string[] = SHARED_ARREARS_APPROVE_ROLES;
+/** «شطب» what is left on a bill, on a council decision: the manager's alone. */
+export const BILL_WRITE_OFF_ROLES: readonly string[] = SHARED_BILL_WRITE_OFF_ROLES;
 /** «الأخبار»: the staff who manage News on Day3ati — the administrator and the administrative officer. */
 export const NEWS_EDITOR_ROLES: readonly string[] = SHARED_NEWS_EDITOR_ROLES;

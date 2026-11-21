@@ -177,6 +177,26 @@ export const FEE_ADMIN_ROLES = ['SUPER_ADMIN', 'ACCOUNTANT'] as const satisfies 
 export const BILL_CANCEL_ROLES = ['SUPER_ADMIN'] as const satisfies readonly StaffRole[];
 
 /**
+ * «شطب» — write off what is left on a bill, on a council decision (0108,
+ * docs/old-debts-plan.md decision 10). The manager's alone, like a cancellation:
+ * a debt forgiven is a decision, not counter work.
+ */
+export const BILL_WRITE_OFF_ROLES = ['SUPER_ADMIN'] as const satisfies readonly StaffRole[];
+
+/**
+ * Old debts, «متأخرات سنوات سابقة» (0108): export the template, import it, submit
+ * the batch, enter a single line, link a «للمطابقة» line to a citizen file. The
+ * accountant prepares, as decision 7 says; the manager may too.
+ */
+export const ARREARS_PREPARE_ROLES = ['SUPER_ADMIN', 'ACCOUNTANT'] as const satisfies readonly StaffRole[];
+
+/**
+ * Approve, return or discard a submitted batch, and set the cutoff year and the
+ * books' totals: the manager's (decision 7). Approving raises the bills.
+ */
+export const ARREARS_APPROVE_ROLES = ['SUPER_ADMIN'] as const satisfies readonly StaffRole[];
+
+/**
  * Read the municipal-requests queue, a request, its papers (each view audited)
  * and the list of request types: the manager, the administrative officer (قلم
  * البلدية, who handles them), the accountant (who collects their fees) and the

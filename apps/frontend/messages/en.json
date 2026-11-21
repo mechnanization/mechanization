@@ -534,7 +534,20 @@
     "BUILDING_TYPE_INACTIVE": "The type “{name}” is switched off and cannot be chosen for a new building. Choose another, or switch it back on under Building types",
     "BUILDING_TYPE_NAME_TAKEN": "Another type is already called “{name}”",
     "BUILDING_TYPE_SYSTEM_STRUCTURE": "A system type keeps its structure. Add a new type instead of changing it",
-    "BUILDING_TYPE_STRUCTURE_IN_USE": "{count, plural, one {One building is} other {{count} buildings are}} filed under this type, so its structure cannot change. Add a new type instead"
+    "BUILDING_TYPE_STRUCTURE_IN_USE": "{count, plural, one {One building is} other {{count} buildings are}} filed under this type, so its structure cannot change. Add a new type instead",
+    "ARREARS_CUTOFF_NOT_SET": "No billing start year is set yet, so no old debts can be imported. The system administrator sets it in Settings.",
+    "ARREARS_YEAR_NOT_BEFORE_CUTOFF": "{year} is not before the billing start year ({cutoffYear}): the system bills it, so it cannot be entered as an old debt.",
+    "ARREARS_LINE_DUPLICATE": "This debt is already recorded in another batch: the same citizen, property number, unit, year and fee type.",
+    "ARREARS_BATCH_NOT_DRAFT": "This batch is no longer a draft ({status}), so it cannot be changed or submitted.",
+    "ARREARS_APPROVER_IS_PREPARER": "Whoever prepared a batch does not approve it. Another administrator approves it.",
+    "ARREARS_CONTROL_TOTAL_MISMATCH": "The pages' total ({controlTotal, number}) is not the total of the batch's lines ({linesTotal, number}). Check the pages or the file, then submit again.",
+    "ARREARS_CURRENCY_NOT_LBP": "Old debts are in Lebanese pounds only, not {currency}.",
+    "ARREARS_BATCH_NOT_FOUND": "This old-debts batch could not be found.",
+    "ZONE_NOT_FOUND": "This zone could not be found.",
+    "ARREARS_EXPORT_NOTHING_LEFT": "Every citizen in this zone or building is already in a batch.",
+    "ARREARS_EXPORT_REQUEST_REUSED": "A template was already exported under this request for another zone or count. Start a new export.",
+    "ARREARS_IMPORT_HAS_REFUSED_ROWS": "The file has {count} refused rows, so nothing was saved. Correct them in the preview, then import again.",
+    "ARREARS_IMPORT_TOO_MANY_ROWS": "The file is larger than one import takes (at most {max} rows). Export a template for fewer citizens."
   },
   "damage": {
     "level": "Damage level",
