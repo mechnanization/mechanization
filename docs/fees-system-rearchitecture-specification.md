@@ -618,6 +618,12 @@ No bulk endpoint in v1. The screen is `fees/exemptions` («قائمة الإعف
 nav row and linked from the fees page; the unit drawer's panel takes the last day and asks a lift's
 reason.
 
+### 9.4a Old debts (task 6, 2026-11-21)
+
+A notice may not bill a year that old debts cover. `FeesService.previewNotice` and `issue` refuse a notice whose first
+period is before `system_settings.arrearsCutoffYear` (`FEE_PERIOD_BEFORE_ARREARS_CUTOFF`); `runRecurringBilling` skips such a
+period. The rule and the totals it keeps true are in [finance.md](finance.md) §3.6b.
+
 ### 9.5 Tests
 
 `fee-whitelist.integration.spec.ts` (three flats one exempt under PER_UNIT, PER_AREA and TIERED_AREA,

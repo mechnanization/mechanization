@@ -224,6 +224,7 @@
     "INTERNAL_ERROR": "Something went wrong. Try again later or contact the municipality.",
     "FEE_NO_MATCHING_CITIZENS": "No citizens match this category, so no notice will be issued.",
     "FEE_DUE_DATE_INVALID": "The due date is not valid.",
+    "FEE_PERIOD_BEFORE_ARREARS_CUTOFF": "{year} is before the billing start year ({cutoffYear}): those years are entered as old debts, and a notice would bill them twice.",
     "FEE_NOTICE_NOT_FOUND": "This fee notice could not be found.",
     "PAYMENT_NOT_FOUND": "This payment could not be found.",
     "PAYMENT_ALREADY_PAID": "This payment has already been settled.",

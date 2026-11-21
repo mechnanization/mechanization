@@ -40,6 +40,9 @@ export const ERROR_CODES = [
   'FEE_NOTHING_TO_CHARGE',
   'FEE_CITIZEN_ARCHIVED',
   'FEE_DUE_DATE_INVALID',
+  // A notice's period is a year before the old-debts cutoff (`params.year`, `params.cutoffYear`): those years are
+  // entered as old debts, and a notice would bill them a second time (docs/old-debts-plan.md §8).
+  'FEE_PERIOD_BEFORE_ARREARS_CUTOFF',
   'FEE_NOTICE_NOT_FOUND',
   'PAYMENT_NOT_FOUND',
   'PAYMENT_ALREADY_PAID',

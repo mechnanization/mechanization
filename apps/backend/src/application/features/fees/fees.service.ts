@@ -1029,6 +1029,21 @@ function daysInUtcMonth(year: number, month: number): number {
 }
 
 /**
+ * The year a billing period belongs to. A period key starts with its year (`2026-11`,
+ * `2026-H1`, `2026`); a one-off notice's key is `ONCE`, and its year is the due date's.
+ * Old debts cover the years before `arrearsCutoffYear`, and a notice must not bill one
+ * of them again (docs/old-debts-plan.md §8).
+ */
+export function periodYearOf(periodKey: string, dueDate: Date): number {
+  return periodKey === 'ONCE' ? dueDate.getUTCFullYear() : Number(periodKey.slice(0, 4));
+}
+
+/** True when a period of this notice falls before the cutoff; false while no cutoff is set. */
+export function periodBeforeCutoff(periodKey: string, dueDate: Date, cutoffYear: number | null): boolean {
+  return cutoffYear !== null && periodYearOf(periodKey, dueDate) < cutoffYear;
+}
+
+/**
  * Which billing period a date falls in, for a given recurrence.
  *
  * This string is the uniqueness key for an invoice, so its format is load
@@ -1755,6 +1770,26 @@ export class FeesService {
   }
 
   /**
+   * No year billed twice (old-debts task 6): a notice whose first period is a year before
+   * `system_settings.arrearsCutoffYear` is refused. Those years come in as old debts through
+   * an approved batch (docs/old-debts-plan.md), and a notice for one would bill it a second
+   * time. While no cutoff is set nothing is refused. An invalid date is the issue's own
+   * refusal (`FEE_DUE_DATE_INVALID`), not this one.
+   */
+  private async assertPeriodNotBeforeCutoff(db: Prisma.TransactionClient, frequency: string, dueDate: Date): Promise<void> {
+    if (Number.isNaN(dueDate.getTime())) return;
+    const cutoffYear = (await db.systemSettings.findFirst({ select: { arrearsCutoffYear: true } }))?.arrearsCutoffYear ?? null;
+    const periodKey = periodKeyFor(frequency, dueDate);
+    if (periodBeforeCutoff(periodKey, dueDate, cutoffYear)) {
+      throw new ValidationError({
+        code: 'FEE_PERIOD_BEFORE_ARREARS_CUTOFF',
+        message: 'This notice would bill a year that old debts cover; enter it as old debts instead',
+        params: { year: periodYearOf(periodKey, dueDate), cutoffYear: cutoffYear! },
+      });
+    }
+  }
+
+  /**
    * «معاينة قبل الإصدار»: what issuing this notice now would bill, without
    * billing anyone (Phase 4 of docs/fees-system-rearchitecture-specification.md).
    *
@@ -1766,6 +1801,8 @@ export class FeesService {
    * rather than refusing: telling the clerk so is the preview's job.
    */
   async previewNotice(input: FeeNoticePreviewInput): Promise<FeeNoticePreviewResult> {
+    // Refused here as the issue refuses it, so the clerk learns at the preview, not at the press.
+    await this.assertPeriodNotBeforeCutoff(this.db as Prisma.TransactionClient, input.frequency, new Date(input.dueDate));
     const citizenIds = await this.resolveTargets(input);
     // Judged on the day the issue would judge it, so the preview and the issue agree (0104).
     const plan = await this.planNotice(input, citizenIds, issueBillingDay(input.frequency, input.dueDate));
@@ -1883,6 +1920,8 @@ export class FeesService {
         message: 'The due date is not valid.',
       });
     }
+
+    await this.assertPeriodNotBeforeCutoff(this.db as Prisma.TransactionClient, input.frequency, dueDate);
 
     // The same reading the preview makes (`planNotice`): what the preview showed is what this bills.
     const { billable, shared, conflicts, unassessable, counts } = await this.planNotice(
@@ -2487,6 +2526,11 @@ export class FeesService {
 
     let noticesFailed = 0;
 
+    // Read once per run: the same for every notice (old-debts task 6).
+    const cutoffYear =
+      (await withConnectionRetry(() => this.db.systemSettings.findFirst({ select: { arrearsCutoffYear: true } })))
+        ?.arrearsCutoffYear ?? null;
+
     for (const notice of notices) {
       const periodKey = periodKeyFor(notice.frequency, now);
       const startedAt = new Date();
@@ -2513,6 +2557,14 @@ export class FeesService {
           continue;
         }
         if (notice.dueDate > now) {
+          await this.recordBillingRun(notice.id, periodKey, startedAt, { outcome: 'SKIPPED' });
+          continue;
+        }
+        // A year old debts cover is never billed by a notice (old-debts task 6): the period is skipped and said.
+        if (periodBeforeCutoff(periodKey, notice.dueDate, cutoffYear)) {
+          this.logger.warn(
+            `Recurring "${notice.title}" (${periodKey}): skipped, the period is before the old-debts cutoff year (${cutoffYear})`,
+          );
           await this.recordBillingRun(notice.id, periodKey, startedAt, { outcome: 'SKIPPED' });
           continue;
         }
