@@ -1,9 +1,12 @@
 # Old debts — «متأخرات سنوات سابقة» (code: `arrears`)
 
-Last verified against the code: `docs/old-debts-plan` (on `develop@abc8644`), 2026-11-21.
+Last verified against the code: `feat/arrears-import` (stacked on PRs #175 and #176), 2026-11-21.
 
-> **Status: planned, nothing built.** The decisions are the product owner's (Hashem,
-> 2026-11-20). The work is split into twelve ClickUp tasks in the list
+> **Status: tasks 1–4 in review, 2026-11-21, none merged.** This spec (PR #174); the migrations
+> `0107`/`0108` (`chore/migration-0107-old-debts`, PR #175); the contract in shared-schemas
+> (`feat/arrears-contract`, PR #176, stacked on #175); the export and the import's dry run
+> (`feat/arrears-import`, PR #177, stacked on #176). Tasks 5–12 are not started. The decisions are the
+> product owner's (Hashem, 2026-11-20). The work is split into twelve ClickUp tasks in the list
 > «Mechanization – Old debts (البقايا)» (§10). Where a name here and the code
 > disagree once the code exists, the code wins and this file is the bug.
 
@@ -150,6 +153,7 @@ anything was owed.
 | `batchId` | RESTRICT |
 | `citizenId` | NULL while the line waits in «للمطابقة»; RESTRICT |
 | `sourceName` | the name as written in the old books; required while `citizenId` is NULL, kept after linking |
+| `rowKey` | the template row a matched line came from; NULL for an unmatched row or a single line |
 | `propertyNumber` | رقم العقار as typed; required |
 | `unitId`, `unitCode` | both nullable; `unitId` is SET NULL when a unit is deleted, `unitCode` stays |
 | `year` | the debt's year |
@@ -161,7 +165,7 @@ anything was owed.
 | `oldReference` | the old books' reference (page, receipt book) |
 | `note` | |
 | `decision`, `dropReason` | KEEP with no reason, or DROP with one (CHECK) |
-| `flags` | jsonb object: `prescribed`, `war` (`{ level, habitable, assessedAt }`), `archived` |
+| `flags` | jsonb object: `prescribed`, `war` (`{ level, habitable, assessedAt }`), `archived`, `unitNotHeld` |
 | `linkedAt`, `linkedById` | set together when a «للمطابقة» line is linked |
 | `discardedAt` | stamped on every line when its batch is discarded |
 
@@ -211,7 +215,8 @@ export (N citizens) ─▶ CSV in Excel ─▶ import: dry run ─▶ import: wr
 
 1. **Export («تصدير قالب»)** — task 4. The next N citizens of a zone or a building who
    are in no batch that is not DISCARDED, by رقم العقار then name; active and archived
-   files, never a merged-away one. One row per citizen × unit they hold now (as owner or
+   files, never a merged-away one. "Of a zone or a building" means holding a unit there on an
+   open spell, or a current card on one on the citizen's latest registration. One row per citizen × unit they hold now (as owner or
    occupant), plus one bare row for a citizen with no unit. Writes the DRAFT batch and
    its citizen set, returns the rows, and the browser writes the CSV (`csv.ts` guards
    against formula injection). Audit `ARREARS_TEMPLATE_EXPORTED`: the batch id and the
@@ -258,8 +263,11 @@ description. The column is text, so the final list needs no migration.
 
 ## 6. The dry run's checks (task 4)
 
-Pure rules in `apps/backend/src/application/features/arrears/arrears-import.plan.ts`,
-each with a test that fails only for its own reason.
+Pure rules in `apps/backend/src/application/features/arrears/arrears-import.plan.ts`
+(`planArrearsImport`), each with a test that fails only for its own reason. A unit is named
+by its full code, «<building code>-<unit code>», as the export writes it. A write takes
+`<schema>:arrears-lines`, which every writer of live lines takes, so the duplicate check is
+answered in words before the index has to.
 
 | Check | Verdict |
 |---|---|
