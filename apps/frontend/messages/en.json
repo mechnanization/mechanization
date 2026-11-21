@@ -547,7 +547,17 @@
     "ARREARS_EXPORT_NOTHING_LEFT": "Every citizen in this zone or building is already in a batch.",
     "ARREARS_EXPORT_REQUEST_REUSED": "A template was already exported under this request for another zone or count. Start a new export.",
     "ARREARS_IMPORT_HAS_REFUSED_ROWS": "The file has {count} refused rows, so nothing was saved. Correct them in the preview, then import again.",
-    "ARREARS_IMPORT_TOO_MANY_ROWS": "The file is larger than one import takes (at most {max} rows). Export a template for fewer citizens."
+    "ARREARS_IMPORT_TOO_MANY_ROWS": "The file is larger than one import takes (at most {max} rows). Export a template for fewer citizens.",
+    "ARREARS_BATCH_NOT_SUBMITTED": "This batch is not waiting for approval ({status}), so it is neither approved nor returned.",
+    "ARREARS_BATCH_EMPTY": "This batch has no lines, so it is not sent for approval.",
+    "ARREARS_BATCH_NOT_YOURS": "A batch is handled by whoever prepared it or the system administrator, and a batch sent for approval is discarded by the system administrator alone.",
+    "ARREARS_APPROVAL_CHECKS_FAILED": "{count} of the batch’s lines no longer pass the checks (the billing start year, prescription, or a file merged into another). Return it to its preparer to import again.",
+    "ARREARS_LINE_NOT_FOUND": "No arrears line has this number.",
+    "ARREARS_LINE_NOT_WAITING": "This line is not waiting to be linked to a file.",
+    "ARREARS_LINE_REFUSED": "The line does not pass the checks. Correct its details.",
+    "ARREARS_LINE_PRESCRIBED": "This debt is prescribed, so it is not entered and no bill is raised for it.",
+    "ARREARS_LINE_REQUEST_REUSED": "This request was already used for another line. Start a new line.",
+    "ARREARS_CUTOFF_LOCKED": "An old-debts batch has been approved, so the billing start year can no longer change (it stays {cutoffYear})."
   },
   "damage": {
     "level": "Damage level",
@@ -2062,7 +2072,15 @@
     "NEWS_ARTICLE_PLACEMENT_CHANGED": "News article pinned or featured",
     "NEWS_MEDIA_UPLOADED": "File added to a news article",
     "NEWS_MEDIA_COVER_CHANGED": "News article cover changed",
-    "NEWS_MEDIA_DELETED": "File removed from a news article"
+    "NEWS_MEDIA_DELETED": "File removed from a news article",
+    "ARREARS_BATCH_SUBMITTED": "Sent an arrears batch for approval",
+    "ARREARS_BATCH_RETURNED": "Returned an arrears batch to its preparer",
+    "ARREARS_BATCH_DISCARDED": "Discarded an arrears batch",
+    "ARREARS_BATCH_APPROVED": "Approved an arrears batch and raised its bills",
+    "ARREARS_BILL_RAISED": "Raised an arrears bill",
+    "ARREARS_LINE_ADDED": "Entered a single arrears line",
+    "ARREARS_LINE_LINKED": "Linked an arrears line to a file and raised its bill",
+    "ARREARS_CUTOFF_CHANGED": "Changed the billing start year"
   },
   "auditEntities": {
     "User": "Citizen or staff",
@@ -2093,7 +2111,8 @@
     "ArrearsBatch": "Old-debts batch",
     "NewsCategory": "News category",
     "NewsPublisher": "News publisher",
-    "NewsArticle": "News article"
+    "NewsArticle": "News article",
+    "ArrearsLine": "Arrears line"
   },
   "audit": {
     "families": {
