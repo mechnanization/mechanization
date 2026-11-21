@@ -410,6 +410,32 @@ export const ERROR_CODES = [
   'REQUEST_ATTACHMENTS_CLOSED',
   'FILE_UPLOAD_FAILED',
   'FILE_OPEN_FAILED',
+  // Old debts, «متأخرات سنوات سابقة» (0108, docs/old-debts-plan.md).
+  // No cutoff year set yet: every import is refused until the manager sets it.
+  'ARREARS_CUTOFF_NOT_SET',
+  // A year that is not before the cutoff (`params.year`, `params.cutoffYear`): the system bills it.
+  'ARREARS_YEAR_NOT_BEFORE_CUTOFF',
+  // The same citizen, رقم العقار, unit, year, fee and component already has a live line
+  // (`params.year`, `params.propertyNumber`).
+  'ARREARS_LINE_DUPLICATE',
+  // The batch is no longer a draft (`params.status`): only a draft takes lines or is submitted.
+  'ARREARS_BATCH_NOT_DRAFT',
+  // Maker ≠ checker, reserved: open-decisions §23.3 has not decided it yet.
+  'ARREARS_APPROVER_IS_PREPARER',
+  // The control total is not the sum of the batch's lines (`params.controlTotal`, `params.linesTotal`).
+  'ARREARS_CONTROL_TOTAL_MISMATCH',
+  // Old debts are in LBP at face value (decision 13); `params.currency` is what was sent.
+  'ARREARS_CURRENCY_NOT_LBP',
+  'ARREARS_BATCH_NOT_FOUND',
+  'ZONE_NOT_FOUND',
+  // The export found no citizen in the zone or building who is not already in a batch.
+  'ARREARS_EXPORT_NOTHING_LEFT',
+  // An export's retry key already used for another zone, building or count.
+  'ARREARS_EXPORT_REQUEST_REUSED',
+  // A non-dry import with rows the dry run refuses (`params.count`): nothing was written.
+  'ARREARS_IMPORT_HAS_REFUSED_ROWS',
+  // A batch's file holds more rows than one import takes (`params.max`).
+  'ARREARS_IMPORT_TOO_MANY_ROWS',
   // Fixed messages the filter and the tenant layer already send
   'INTERNAL_ERROR',
   'TENANT_MISMATCH',

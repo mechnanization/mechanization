@@ -20,6 +20,7 @@ export * from './zone.schema';
 export * from './building.schema';
 export * from './building-type.schema';
 export * from './fee-exemption.schema';
+export * from './arrears.schema';
 export * from './unit-layout';
 export * from './unit-levels';
 export * from './cash-policy';

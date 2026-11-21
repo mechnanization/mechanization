@@ -29,7 +29,11 @@ import type {
   UnitType,
   VacancyBasis,
   VacancyEndReason,
+  ArrearsBatchStatus,
+  ArrearsComponent,
+  ArrearsLineDecision,
 } from './enums';
+import type { ArrearsFeeType } from './arrears.schema';
 import type { CaseStatus } from './case.schema';
 import type { TreasuryDayStatus } from './treasury-closing.schema';
 import type { FeeBasis, FeeBearer, FeeTargetCategory } from './fee.schema';
@@ -114,6 +118,7 @@ export const ar = {
     PAID: 'مدفوع',
     OVERDUE: 'متأخّر',
     CANCELLED: 'ملغاة',
+    WRITTEN_OFF: 'مشطوبة',
   },
 
   paymentMethod: {
@@ -385,6 +390,33 @@ export const ar = {
     COUNTER: 'في قلم البلدية',
   } satisfies Record<RequestChannel, string>,
 
+  /** Old debts (0107/0108, docs/old-debts-plan.md). */
+  arrearsBatchStatus: {
+    DRAFT: 'مسودة',
+    SUBMITTED: 'بانتظار الاعتماد',
+    APPROVED: 'معتمدة',
+    DISCARDED: 'ملغاة',
+  } satisfies Record<ArrearsBatchStatus, string>,
+
+  arrearsComponent: {
+    PRINCIPAL: 'أصل',
+    PENALTY: 'غرامة',
+  } satisfies Record<ArrearsComponent, string>,
+
+  arrearsLineDecision: {
+    KEEP: 'يُبقى',
+    DROP: 'يُسقط',
+  } satisfies Record<ArrearsLineDecision, string>,
+
+  /** Provisional until the municipality's accountant gives the list (open-decisions §23.1). */
+  arrearsFeeType: {
+    RENTAL_VALUE: 'رسم القيمة التأجيرية',
+    SEWER_SIDEWALK_MAINTENANCE: 'رسم صيانة المجاري والأرصفة',
+    SEWER_SIDEWALK_CONSTRUCTION: 'رسم إنشاء الأرصفة والمجاري',
+    CLEANING: 'رسم النظافة',
+    OTHER: 'رسم آخر',
+  } satisfies Record<ArrearsFeeType, string>,
+
   requestAttachmentType: {
     IDENTITY: 'بطاقة الهوية أو إخراج القيد',
     OWNERSHIP_PROOF: 'سند ملكية',
@@ -573,6 +605,7 @@ export const en = {
     PAID: 'Paid',
     OVERDUE: 'Overdue',
     CANCELLED: 'Cancelled',
+    WRITTEN_OFF: 'Written off',
   },
 
   paymentMethod: {
@@ -792,6 +825,31 @@ export const en = {
     ONLINE: 'Online',
     COUNTER: 'At the counter',
   } satisfies Record<RequestChannel, string>,
+
+  arrearsBatchStatus: {
+    DRAFT: 'Draft',
+    SUBMITTED: 'Awaiting approval',
+    APPROVED: 'Approved',
+    DISCARDED: 'Discarded',
+  } satisfies Record<ArrearsBatchStatus, string>,
+
+  arrearsComponent: {
+    PRINCIPAL: 'Principal',
+    PENALTY: 'Penalty',
+  } satisfies Record<ArrearsComponent, string>,
+
+  arrearsLineDecision: {
+    KEEP: 'Keep',
+    DROP: 'Drop',
+  } satisfies Record<ArrearsLineDecision, string>,
+
+  arrearsFeeType: {
+    RENTAL_VALUE: 'Rental value fee',
+    SEWER_SIDEWALK_MAINTENANCE: 'Sewer and pavement maintenance fee',
+    SEWER_SIDEWALK_CONSTRUCTION: 'Sewer and pavement construction fee',
+    CLEANING: 'Cleaning fee',
+    OTHER: 'Other fee',
+  } satisfies Record<ArrearsFeeType, string>,
 
   requestAttachmentType: {
     IDENTITY: 'Identity card or civil record',

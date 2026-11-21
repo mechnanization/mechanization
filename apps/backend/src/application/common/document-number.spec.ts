@@ -52,9 +52,9 @@ describe('document numbering', () => {
     });
 
     it('gives each book its own letters', () => {
-      expect(Object.values(DOCUMENT_PREFIX).sort()).toEqual(['BRC', 'INV', 'PV', 'RCP', 'REQ', 'RV', 'TR']);
-      // Seven distinct prefixes, so a number read aloud says which book it is from.
-      expect(new Set(Object.values(DOCUMENT_PREFIX)).size).toBe(7);
+      expect(Object.values(DOCUMENT_PREFIX).sort()).toEqual(['ARR', 'BRC', 'INV', 'PV', 'RCP', 'REQ', 'RV', 'TR']);
+      // Eight distinct prefixes, so a number read aloud says which book it is from.
+      expect(new Set(Object.values(DOCUMENT_PREFIX)).size).toBe(8);
     });
   });
 

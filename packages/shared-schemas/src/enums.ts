@@ -1216,3 +1216,23 @@ export const BLOOD_TYPE = [
 ] as const;
 export const bloodTypeSchema = arabicEnum(BLOOD_TYPE, 'فئة الدم مطلوبة');
 export type BloodType = z.infer<typeof bloodTypeSchema>;
+
+/**
+ * Old debts, «متأخرات سنوات سابقة» (migrations 0107/0108, docs/old-debts-plan.md).
+ * Each mirrors the Prisma enum of the same name.
+ */
+
+/** An import: DRAFT → SUBMITTED → APPROVED; SUBMITTED → DRAFT when returned; DRAFT or SUBMITTED → DISCARDED. */
+export const ARREARS_BATCH_STATUS = ['DRAFT', 'SUBMITTED', 'APPROVED', 'DISCARDED'] as const;
+export const arrearsBatchStatusSchema = arabicEnum(ARREARS_BATCH_STATUS, 'اختر حالة الدفعة');
+export type ArrearsBatchStatus = z.infer<typeof arrearsBatchStatusSchema>;
+
+/** The principal of a year's fee, or the penalty the old books charged on it (never one the system adds). */
+export const ARREARS_COMPONENT = ['PRINCIPAL', 'PENALTY'] as const;
+export const arrearsComponentSchema = arabicEnum(ARREARS_COMPONENT, 'اختر أصلاً أو غرامة');
+export type ArrearsComponent = z.infer<typeof arrearsComponentSchema>;
+
+/** KEEP, or DROP with a reason: prescription, war damage, the accountant's call. */
+export const ARREARS_LINE_DECISION = ['KEEP', 'DROP'] as const;
+export const arrearsLineDecisionSchema = arabicEnum(ARREARS_LINE_DECISION, 'اختر الإبقاء أو الإسقاط');
+export type ArrearsLineDecision = z.infer<typeof arrearsLineDecisionSchema>;
