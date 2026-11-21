@@ -1,8 +1,13 @@
 # Old debts — «متأخرات سنوات سابقة» (code: `arrears`)
 
-Last verified against the code: `feat/arrears-import` (stacked on PRs #175 and #176), 2026-11-21.
+Last verified against the code: `feat/arrears-approval` (on `develop@c6e7462`), 2026-11-21.
 
-> **Status: tasks 1–4 in review, 2026-11-21, none merged.** This spec (PR #174); the migrations
+> **Status, 2026-11-21:** tasks 1–4 merged to `develop` (PRs #174–#177). Task 5, the backend after the import — submit,
+> return, discard, approve and the «ARR-» bills, a single line, the link of a «للمطابقة» line, the cutoff year, and «دمج
+> ملفين» moving old debts — built on `feat/arrears-approval` (on `develop@c6e7462`). **Not built, with its reason:** the in-app backup (§8); and the old books'
+> totals per year, which stay read only until open-decisions §23.4 is decided.
+>
+> **Earlier status: tasks 1–4 in review, 2026-11-21, none merged.** This spec (PR #174); the migrations
 > `0107`/`0108` (`chore/migration-0107-old-debts`, PR #175); the contract in shared-schemas
 > (`feat/arrears-contract`, PR #176, stacked on #175); the export and the import's dry run
 > (`feat/arrears-import`, PR #177, stacked on #176). Tasks 5–12 are not started. The decisions are the
@@ -308,8 +313,12 @@ receipts read it as any bill, and the money reaches a wallet as any payment does
 - **A fee notice for a year before the cutoff** is refused, so no year is billed twice
   (task 6). Totals that report arrears include old-debt bills, and say so (task 6).
 - **«دمج ملفين»** moves `arrears_lines.citizenId` and `arrears_batch_citizens`, and its
-  undo puts them back (task 5).
-- **The in-app backup** takes the new tables (task 5, a new snapshot version).
+  undo puts them back (task 5, built). A live line the kept file already holds for the same debt stays on the absorbed
+  file, as a colliding bill does.
+- **The in-app backup** does **not** take the new tables, and this is a change from this plan: restore empties every
+  table it carries, and the old-debts tables refuse a delete by trigger, as `payment_transactions` does, so adding them
+  would make every restore fail once a batch exists. It is the same open question the ledger waits on, a decision for a
+  person (docs/gotchas.md, "The in-app backup cannot restore old debts"). `BackupController` is unregistered today.
 - **Reports** (task 11): imported against the books per year, collected, written off,
   cancelled, prescribed; never mixed with the year's own revenue.
 
@@ -331,7 +340,7 @@ ClickUp list «Mechanization – Old debts (البقايا)». Hashem: 1–6 and
 | 2 | `0107` + `0108` (§3) | `chore/migration-0107-old-debts`, before any code |
 | 3 | The contract: `arrears.schema.ts`, role sets, `ARREARS` book, error codes | shared-schemas |
 | 4 | Export and the import dry run (§4.1–4.3, §6) | backend |
-| 5 | Submit, approve, return, discard; the bills; single line; link; merge; backup | backend |
+| 5 | Submit, approve, return, discard; the bills; single line; link; merge (built); backup (not built: §8); the cutoff year | backend |
 | 6 | The cutoff on fee notices; totals that include old debts | backend |
 | 7 | UI: export, import preview, submit | frontend |
 | 8 | UI: approval and «للمطابقة» | frontend |

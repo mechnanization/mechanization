@@ -436,6 +436,24 @@ export const ERROR_CODES = [
   'ARREARS_IMPORT_HAS_REFUSED_ROWS',
   // A batch's file holds more rows than one import takes (`params.max`).
   'ARREARS_IMPORT_TOO_MANY_ROWS',
+  // Submit, approve, return: the batch is not in the state the act needs (`params.status`).
+  'ARREARS_BATCH_NOT_SUBMITTED',
+  // A batch with no line is not submitted.
+  'ARREARS_BATCH_EMPTY',
+  // Only the preparer, or the manager, acts on a draft batch.
+  'ARREARS_BATCH_NOT_YOURS',
+  // Approval re-ran the checks that change with time and some line fails (`details.problems`): the manager
+  // returns the batch, and the preparer imports it again.
+  'ARREARS_APPROVAL_CHECKS_FAILED',
+  'ARREARS_LINE_NOT_FOUND',
+  // A line is linked once, from «للمطابقة», on an approved batch.
+  'ARREARS_LINE_NOT_WAITING',
+  // A single line refused by the same checks as an imported one (`details.issues`).
+  'ARREARS_LINE_REFUSED',
+  // A debt older than the prescription period is never entered or linked (decision 14).
+  'ARREARS_LINE_PRESCRIBED',
+  // A single line's retry key already used for another line (`params.batchId`).
+  'ARREARS_LINE_REQUEST_REUSED',
   // Fixed messages the filter and the tenant layer already send
   'INTERNAL_ERROR',
   'TENANT_MISMATCH',

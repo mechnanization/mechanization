@@ -1204,6 +1204,23 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **Where:** the money fields of `treasury.schema.ts`, `expense.schema.ts` and
   `transfer.schema.ts`.
 
+### The in-app backup cannot restore old debts, and does not carry them
+
+- **What happens:** `BackupService` empties every table of its `TABLE_ORDER` and rewrites them, in an
+  all-or-nothing restore. The old-debts tables (`arrears_batches`, `arrears_lines`,
+  `arrears_batch_citizens`, 0108) refuse a `DELETE` by trigger — a batch is never deleted, a line leaves
+  only a DRAFT batch, a batch's set never loses anyone — as `payment_transactions` does, and their keys to
+  `users` and `citizen_payments.arrearsLineId` are RESTRICT. So once a municipality holds one batch,
+  deleting its users (restore does) is refused, and putting the tables in the list would be refused too.
+- **Why:** the triggers are the controls that make an approved batch final. Disabling them to let a restore
+  through would be reaching past a control someone installed on purpose.
+- **Do this:** do not add the tables to `TABLE_ORDER` to make a version bump look complete. Whether a
+  restore means anything for an append-only ledger is a decision for a person, the same one
+  `payment_transactions` waits on (the note above `TABLE_ORDER`). `BackupController` is unregistered today,
+  so no route runs a restore; docs/old-debts-plan.md §8 had it as task 5 and it is not built.
+- **Where:** `apps/backend/src/application/features/backup/backup.service.ts`, migration
+  `0108_arrears`.
+
 ## Auth
 
 ### A route without `@Roles` is open to citizens
