@@ -556,7 +556,8 @@
     "ARREARS_LINE_NOT_WAITING": "هذا السطر لا ينتظر ربطاً بملف",
     "ARREARS_LINE_REFUSED": "لا يجتاز السطر الفحوص، فصحّح بياناته",
     "ARREARS_LINE_PRESCRIBED": "سقط هذا الدين بمرور الزمن، فلا يُدخل ولا تُرفع به فاتورة",
-    "ARREARS_LINE_REQUEST_REUSED": "استُعمل هذا الطلب لسطر آخر. ابدأ سطراً جديداً"
+    "ARREARS_LINE_REQUEST_REUSED": "استُعمل هذا الطلب لسطر آخر. ابدأ سطراً جديداً",
+    "ARREARS_CUTOFF_LOCKED": "اعتُمدت دفعة متأخرات، فلا تتغيّر سنة بدء الفوترة بعد الآن (تبقى {cutoffYear})"
   },
   "damage": {
     "level": "مستوى الضرر",

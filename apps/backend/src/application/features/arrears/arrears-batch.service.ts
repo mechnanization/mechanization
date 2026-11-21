@@ -605,14 +605,25 @@ export class ArrearsBatchService {
   }
 
   /**
-   * Sets the year before which a debt is old (decision 5). Moving it never touches
-   * a bill or a line already approved; it governs the next import and the next
-   * approval. `null` clears it, and every import is refused again.
+   * Sets the year before which a debt is old (decision 5). It is set once and then fixed:
+   * once any batch has been approved, a different year is refused (`ARREARS_CUTOFF_LOCKED`),
+   * since moving it would let one year be old debt in an approved batch and billed by a notice
+   * (task 6). The same year is accepted. Before the first approval it moves freely, and `null`
+   * clears it, and every import is refused again. Under the lock every writer of live lines
+   * takes, so an approval cannot slip in between the check and the write.
    */
   async setCutoff(input: ArrearsCutoffInput, actor: Actor): Promise<ArrearsSettingsView> {
     await runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Db;
+      await this.linesLock(tx);
       const before = (await tx.systemSettings.findFirst({ select: { arrearsCutoffYear: true } }))?.arrearsCutoffYear ?? null;
+      if (input.arrearsCutoffYear !== before && (await tx.arrearsBatch.count({ where: { status: 'APPROVED' } })) > 0) {
+        throw new ConflictError({
+          code: 'ARREARS_CUTOFF_LOCKED',
+          message: 'A batch has been approved, so the cutoff year is fixed',
+          params: before === null ? {} : { cutoffYear: before },
+        });
+      }
       await tx.systemSettings.upsert({
         where: { singleton: true },
         create: { singleton: true, arrearsCutoffYear: input.arrearsCutoffYear },

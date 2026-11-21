@@ -1,6 +1,6 @@
 # Old debts — «متأخرات سنوات سابقة» (code: `arrears`)
 
-Last verified against the code: `feat/arrears-approval` (on `develop@c6e7462`), 2026-11-21.
+Last verified against the code: `feat/arrears-approval` (on `develop@c6e7462`), 2026-11-21; the cutoff year fixed once a batch is approved (`ARREARS_CUTOFF_LOCKED`, task 6), 2026-11-21.
 
 > **Status, 2026-11-21:** tasks 1–4 merged to `develop` (PRs #174–#177). Task 5, the backend after the import — submit,
 > return, discard, approve and the «ARR-» bills, a single line, the link of a «للمطابقة» line, the cutoff year, and «دمج

@@ -556,7 +556,8 @@
     "ARREARS_LINE_NOT_WAITING": "This line is not waiting to be linked to a file.",
     "ARREARS_LINE_REFUSED": "The line does not pass the checks. Correct its details.",
     "ARREARS_LINE_PRESCRIBED": "This debt is prescribed, so it is not entered and no bill is raised for it.",
-    "ARREARS_LINE_REQUEST_REUSED": "This request was already used for another line. Start a new line."
+    "ARREARS_LINE_REQUEST_REUSED": "This request was already used for another line. Start a new line.",
+    "ARREARS_CUTOFF_LOCKED": "An old-debts batch has been approved, so the billing start year can no longer change (it stays {cutoffYear})."
   },
   "damage": {
     "level": "Damage level",

@@ -79,6 +79,8 @@ describeIfDb('old debts: submit, approve, link', () => {
   const approve = (batchId: string, actor = MANAGER) => within(() => batches.approve(batchId, actor));
   const billsOf = (batchId: string) => db.citizenPayment.findMany({ where: { arrearsLine: { batchId } }, include: { arrearsLine: true }, orderBy: { amount: 'asc' } });
   const setCutoff = (year: number | null) => within(() => batches.setCutoff({ arrearsCutoffYear: year }, MANAGER));
+  /** Moves the cutoff behind the service's back: what an earlier state of the register looked like, for a scenario. */
+  const forceCutoff = (year: number | null) => db.systemSettings.updateMany({ data: { arrearsCutoffYear: year } });
 
   beforeAll(async () => {
     ddl = new Client({ connectionString: TEST_DATABASE_URL });
@@ -118,6 +120,23 @@ describeIfDb('old debts: submit, approve, link', () => {
     await ddl?.query(`DROP SCHEMA IF EXISTS "${SCHEMA}" CASCADE`);
     await ddl?.end();
   }, SETUP_TIMEOUT_MS);
+
+  describe('the cutoff year, before any batch is approved', () => {
+    it('is read, set, cleared and audited, and moves freely', async () => {
+      try {
+        expect(await within(() => batches.settings())).toMatchObject({ arrearsCutoffYear: CUTOFF, controlTotals: [] });
+        await expect(setCutoff(CUTOFF + 1)).resolves.toMatchObject({ arrearsCutoffYear: CUTOFF + 1 });
+        await expect(setCutoff(null)).resolves.toMatchObject({ arrearsCutoffYear: null });
+        const row = await db.auditLogEntry.findFirstOrThrow({
+          where: { action: 'ARREARS_CUTOFF_CHANGED' },
+          orderBy: { createdAt: 'desc' },
+        });
+        expect(row).toMatchObject({ actorId: ids.manager, before: { arrearsCutoffYear: CUTOFF + 1 }, after: { arrearsCutoffYear: null } });
+      } finally {
+        await forceCutoff(CUTOFF);
+      }
+    });
+  });
 
   describe('submit', () => {
     it('refuses a batch with no line, and a total that is not the lines’ sum', async () => {
@@ -319,12 +338,12 @@ describeIfDb('old debts: submit, approve, link', () => {
       const batch = await draft([person.fadi], [debt(1, unique(), LAST, '9000')]);
       await submit(batch);
       try {
-        await setCutoff(LAST);
+        await forceCutoff(LAST);
         await expect(approve(batch)).rejects.toMatchObject({ code: 'ARREARS_APPROVAL_CHECKS_FAILED' });
-        await setCutoff(null);
+        await forceCutoff(null);
         await expect(approve(batch)).rejects.toMatchObject({ code: 'ARREARS_APPROVAL_CHECKS_FAILED' });
       } finally {
-        await setCutoff(CUTOFF);
+        await forceCutoff(CUTOFF);
       }
       await expect(approve(batch)).resolves.toMatchObject({ status: 'APPROVED' });
     });
@@ -545,20 +564,18 @@ describeIfDb('old debts: submit, approve, link', () => {
     });
   });
 
-  describe('the cutoff year', () => {
-    it('is read, set, cleared and audited', async () => {
-      try {
-        expect(await within(() => batches.settings())).toMatchObject({ arrearsCutoffYear: CUTOFF, controlTotals: [] });
-        await expect(setCutoff(CUTOFF + 1)).resolves.toMatchObject({ arrearsCutoffYear: CUTOFF + 1 });
-        await expect(setCutoff(null)).resolves.toMatchObject({ arrearsCutoffYear: null });
-        const row = await db.auditLogEntry.findFirstOrThrow({
-          where: { action: 'ARREARS_CUTOFF_CHANGED' },
-          orderBy: { createdAt: 'desc' },
-        });
-        expect(row).toMatchObject({ actorId: ids.manager, before: { arrearsCutoffYear: CUTOFF + 1 }, after: { arrearsCutoffYear: null } });
-      } finally {
-        await setCutoff(CUTOFF);
-      }
+  describe('the cutoff year, once a batch is approved', () => {
+    it('is fixed: another year is refused and nothing changes, the same year is accepted', async () => {
+      // Earlier cases approved batches in this schema.
+      expect(await db.arrearsBatch.count({ where: { status: 'APPROVED' } })).toBeGreaterThan(0);
+      const audits = await db.auditLogEntry.count({ where: { action: 'ARREARS_CUTOFF_CHANGED' } });
+
+      await expect(setCutoff(CUTOFF + 1)).rejects.toMatchObject({ code: 'ARREARS_CUTOFF_LOCKED', params: { cutoffYear: CUTOFF } });
+      await expect(setCutoff(null)).rejects.toMatchObject({ code: 'ARREARS_CUTOFF_LOCKED' });
+      expect(await within(() => batches.settings())).toMatchObject({ arrearsCutoffYear: CUTOFF });
+      expect(await db.auditLogEntry.count({ where: { action: 'ARREARS_CUTOFF_CHANGED' } })).toBe(audits);
+
+      await expect(setCutoff(CUTOFF)).resolves.toMatchObject({ arrearsCutoffYear: CUTOFF });
     });
   });
 

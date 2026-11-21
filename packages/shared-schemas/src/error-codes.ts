@@ -454,6 +454,9 @@ export const ERROR_CODES = [
   'ARREARS_LINE_PRESCRIBED',
   // A single line's retry key already used for another line (`params.batchId`).
   'ARREARS_LINE_REQUEST_REUSED',
+  // The cutoff year is set once and then fixed: a batch has been approved, so moving it would let one year be old
+  // debt in one batch and billed by a notice in another (`params.cutoffYear` is the year it stays).
+  'ARREARS_CUTOFF_LOCKED',
   // Fixed messages the filter and the tenant layer already send
   'INTERNAL_ERROR',
   'TENANT_MISMATCH',
