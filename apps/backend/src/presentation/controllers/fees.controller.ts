@@ -2,6 +2,7 @@ import { Body, Controller, Get, HttpCode, Logger, Param, Patch, Post, Query, Req
 import type { Request } from 'express';
 import {
   BILL_CANCEL_ROLES,
+  BILL_WRITE_OFF_ROLES,
   BULK_SETTLE_ROLES,
   CITIZEN_SETTINGS_FIELDS,
   bulkSettlePaymentsSchema,
@@ -28,6 +29,8 @@ import {
   reviewPaymentSchema,
   settlePaymentSchema,
   systemSettingsSchema,
+  writeOffBillSchema,
+  type WriteOffBillInput,
   type BillBasisReview,
   type CancelBill,
   type CitizenSettingsField,
@@ -414,6 +417,21 @@ export class FeesController {
     @CurrentUser() user: SessionClaims,
   ) {
     return this.fees.cancelBill(id, body.reason, { id: user.sub, role: user.role ?? '' });
+  }
+
+  /**
+   * «شطب» — what is left on a bill is written off on a council decision (0107,
+   * docs/old-debts-plan.md decision 10): the manager's alone. The amount is not
+   * sent; it is what is left when the server looks. No money moves.
+   */
+  @Roles(...BILL_WRITE_OFF_ROLES)
+  @Post('payments/:id/write-off')
+  async writeOffBill(
+    @Param('id', new UuidPipe()) id: string,
+    @Body(new ZodValidationPipe(writeOffBillSchema)) body: WriteOffBillInput,
+    @CurrentUser() user: SessionClaims,
+  ) {
+    return this.fees.writeOffBill(id, body, { id: user.sub, role: user.role ?? '' });
   }
 
   /**

@@ -225,6 +225,7 @@ export class PaymentLedgerService {
     }
 
     if (invoice.paymentStatus === 'CANCELLED') throw billCancelled();
+    if (invoice.paymentStatus === 'WRITTEN_OFF') throw billWrittenOff();
     const outstanding = invoice.amount - invoice.paidAmount;
     if (invoice.paymentStatus === 'PAID' || outstanding <= 0) {
       throw new ConflictError({
@@ -510,6 +511,17 @@ export class PaymentLedgerService {
       const invoice = await this.lock(tx, original.paymentId);
       // `append` writes PAID or UNPAID, which would erase the citizen's pending claim.
       if (invoice.paymentStatus === 'PENDING_REVIEW') throw claimUnderReview();
+      /*
+        A written-off bill (0107) holds `paidAmount + writeOffAmount = amount`:
+        taking a receipt's money back off it would break that, and the database
+        refuses it. Said here first, in words.
+      */
+      if (invoice.paymentStatus === 'WRITTEN_OFF') {
+        throw new ConflictError({
+          code: 'PAYMENT_REVERSAL_BILL_WRITTEN_OFF',
+          message: 'The rest of this bill has been written off; its receipts cannot be reversed while the write-off stands.',
+        });
+      }
 
       /*
         The unique index on `reversalOfId` enforces this too; checking here
@@ -973,6 +985,14 @@ function billCancelled(): ConflictError {
   return new ConflictError({
     code: 'PAYMENT_BILL_CANCELLED',
     message: 'This bill has been cancelled; it takes no payment.',
+  });
+}
+
+/** A bill the council wrote off («شطب», 0107): it owes nothing more and takes nothing. */
+function billWrittenOff(): ConflictError {
+  return new ConflictError({
+    code: 'PAYMENT_BILL_WRITTEN_OFF',
+    message: 'What was left on this bill has been written off; it takes no payment.',
   });
 }
 

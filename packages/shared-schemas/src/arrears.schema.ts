@@ -7,6 +7,7 @@ import {
   type ArrearsComponent,
   type ArrearsLineDecision,
 } from './enums';
+import { ADJUSTMENT_REASON_MIN } from './cash-policy';
 import { hasAtMostTwoDecimals } from './money-amount';
 import { businessDay, isCalendarDay, normalizeDigits, uuid } from './primitives';
 import { typeError } from './type-error';
@@ -276,11 +277,24 @@ export type LinkArrearsLineInput = z.infer<typeof linkArrearsLineSchema>;
  * the database holds it to (`paidAmount + writeOffAmount = amount`).
  */
 export const writeOffBillSchema = z.object({
-  reason: text().min(3, 'اكتب سبب الشطب'),
+  // As long as a cancellation's (`cancelBillSchema`): a debt forgiven is as much a decision as one withdrawn.
+  reason: text().min(ADJUSTMENT_REASON_MIN, 'اكتب سبب الشطب'),
   decisionRef: text(100),
   decisionDate: businessDay,
 });
 export type WriteOffBillInput = z.infer<typeof writeOffBillSchema>;
+
+/** A bill's write-off as the screens read it: null on a bill not written off. */
+export interface BillWriteOffView {
+  /** When it was written off. */
+  at: string;
+  /** What was forgiven: what was left on the bill then. */
+  amount: number;
+  reason: string;
+  decisionRef: string;
+  /** The council decision's day, `YYYY-MM-DD`. */
+  decisionDate: string;
+}
 
 /** The cutoff: old debt is a year before this one. `null` clears it, and every import is refused. */
 export const arrearsCutoffSchema = z.object({

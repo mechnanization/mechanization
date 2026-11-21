@@ -67,9 +67,11 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
 import { PaymentReceipt, type RecordedMovement } from '@/components/admin/payment-receipt';
 import { BillReceipts } from '@/components/admin/finance/bill-receipts';
+import { WriteOffBillDialog } from '@/components/admin/fees/write-off-bill-dialog';
 import { cn } from '@/lib/utils';
 import {
   BILL_CANCEL_ROLES,
+  BILL_WRITE_OFF_ROLES,
   CASH_COUNTER_ROLES,
   PAYMENT_SETTLE_ROLES,
   REQUEST_READ_ROLES,
@@ -227,6 +229,9 @@ export default function SettleCashPage({
   /** «إلغاء الفاتورة» (finance audit B3): the manager's, on a bill nothing was paid on. */
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
+  /** «شطب» (0107): the manager's, on a bill with something left on it. */
+  const [writeOffOpen, setWriteOffOpen] = useState(false);
+  const tWriteOff = useTranslations('counterPayment.writeOff');
   const tCancel = useTranslations('counterPayment.cancelBill');
   /*
     The shared contract decides the reason (`cancelBillSchema`, as the route
@@ -518,6 +523,17 @@ export default function SettleCashPage({
 
   /** The municipal request this bill is the fee of (0092); null for any other bill. */
   const linkedRequest = payment?.request ?? null;
+  /*
+    «شطب» on a bill with something left on it, part-paid included, for the manager.
+    A request's fee may be written off too: the request goes on to review, and the
+    dialog says so. The server asks all of it again.
+  */
+  const canWriteOff =
+    Boolean(payment) &&
+    !receipt &&
+    hasRole(BILL_WRITE_OFF_ROLES, user?.role) &&
+    (payment?.paymentStatus === 'UNPAID' || payment?.paymentStatus === 'OVERDUE') &&
+    (payment?.remaining ?? 0) > 0;
   /** Cancelling the bill cancels the request while it is open (`cancelRequestOfCancelledBill`), so the dialog says so. */
   const requestOpen = linkedRequest?.status === 'AWAITING_PAYMENT' || linkedRequest?.status === 'IN_REVIEW';
   /** The request's panel in the queue, for a role that may read it. */
@@ -598,13 +614,41 @@ export default function SettleCashPage({
         }
       />
 
-      {canCancel ? (
-        <div className="flex justify-end">
-          <Button type="button" variant="outline" size="sm" onClick={() => setCancelOpen(true)}>
-            <Ban className="size-4" aria-hidden />
-            {tCancel('action')}
-          </Button>
+      {canCancel || canWriteOff ? (
+        <div className="flex flex-wrap justify-end gap-2">
+          {canWriteOff ? (
+            <Button type="button" variant="outline" size="sm" onClick={() => setWriteOffOpen(true)}>
+              <Eraser className="size-4" aria-hidden />
+              {tWriteOff('action')}
+            </Button>
+          ) : null}
+          {canCancel ? (
+            <Button type="button" variant="outline" size="sm" onClick={() => setCancelOpen(true)}>
+              <Ban className="size-4" aria-hidden />
+              {tCancel('action')}
+            </Button>
+          ) : null}
         </div>
+      ) : null}
+      {payment && canWriteOff ? (
+        <WriteOffBillDialog
+          open={writeOffOpen}
+          onOpenChange={setWriteOffOpen}
+          tenant={tenant}
+          token={token}
+          locale={locale}
+          bill={payment}
+          requestNumber={linkedRequest?.requestNumber ?? null}
+          onWrittenOff={async (settledRequest) => {
+            toast.success(
+              settledRequest ? tWriteOff('doneWithRequest', { number: settledRequest.requestNumber }) : tWriteOff('done'),
+            );
+            // The queue and its panel move the request on now, not when their cache next goes stale.
+            void queryClient.invalidateQueries({ queryKey: ['requests', tenant] });
+            void queryClient.invalidateQueries({ queryKey: ['fees', tenant] });
+            await queryClient.invalidateQueries({ queryKey: ['citizen-profile', tenant, citizenId] });
+          }}
+        />
       ) : null}
       <ConfirmDialog
         open={cancelOpen}
@@ -656,6 +700,21 @@ export default function SettleCashPage({
             <Link href={citizenHref} className="text-sm font-medium text-primary underline-offset-4 hover:underline">
               {en ? 'Open the citizen file' : 'فتح ملف المواطن'}
             </Link>
+          }
+        />
+      ) : payment.paymentStatus === 'WRITTEN_OFF' ? (
+        <EmptyState
+          icon={Eraser}
+          title={tWriteOff('writtenOffTitle')}
+          description={
+            payment.writeOff
+              ? tWriteOff('writtenOffDetail', {
+                  amount: formatLbp(payment.writeOff.amount, locale),
+                  decisionRef: payment.writeOff.decisionRef,
+                  decisionDate: formatDate(payment.writeOff.decisionDate),
+                  reason: payment.writeOff.reason,
+                })
+              : tWriteOff('writtenOffBody')
           }
         />
       ) : payment.paymentStatus === 'CANCELLED' ? (

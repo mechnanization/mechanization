@@ -317,6 +317,15 @@ export class PaymentSettlementService {
           details: { paymentId: invoice.id },
         });
       }
+      // Written off by the council since it was ticked («شطب», 0107): it owes nothing more.
+      if (invoice.paymentStatus === 'WRITTEN_OFF') {
+        throw new ConflictError({
+          code: 'PAYMENT_BILL_WRITTEN_OFF',
+          message: `Payment ${invoice.id} has been written off.`,
+          params: { invoice: bill?.invoiceNumber ?? bill?.title ?? invoice.id },
+          details: { paymentId: invoice.id },
+        });
+      }
       if (invoice.paymentStatus === 'PAID' || invoice.amount - invoice.paidAmount <= toleranceFor(invoice.currency)) {
         throw new ConflictError({
           code: 'BULK_SETTLE_SOME_ALREADY_PAID',

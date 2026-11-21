@@ -6,6 +6,7 @@ Last verified against the code: `feat/arrears-approval` (on `develop@c6e7462`), 
 > return, discard, approve and the «ARR-» bills, a single line, the link of a «للمطابقة» line, the cutoff year, and «دمج
 > ملفين» moving old debts — built on `feat/arrears-approval` (on `develop@c6e7462`). **Not built, with its reason:** the in-app backup (§8); and the old books'
 > totals per year, which stay read only until open-decisions §23.4 is decided.
+> Task 9, «شطب», built on `feat/arrears-write-off` (PR #179): [finance.md](finance.md) §3.8.
 >
 > **Earlier status: tasks 1–4 in review, 2026-11-21, none merged.** This spec (PR #174); the migrations
 > `0107`/`0108` (`chore/migration-0107-old-debts`, PR #175); the contract in shared-schemas

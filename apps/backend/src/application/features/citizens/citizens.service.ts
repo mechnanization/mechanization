@@ -573,14 +573,15 @@ export class CitizensService {
             AS "unestablishedFieldCount",
           -- Not a cancelled bill (0090): withdrawn, it was never billed (decision of 2026-10-13).
           -- Each figure is what this person owes: their own bills and the shared unit bills they are a debtor on.
-          COALESCE((SELECT sum(p.amount) FROM ${this.S}citizen_payments p
+          -- What a bill written off («شطب», 0107) forgave is not billed either.
+          COALESCE((SELECT sum(p.amount - COALESCE(p."writeOffAmount", 0)) FROM ${this.S}citizen_payments p
                      WHERE ${owes} AND p."paymentStatus" <> 'CANCELLED'), 0)::float8
             AS "feesTotal",
           COALESCE((SELECT sum(p."paidAmount") FROM ${this.S}citizen_payments p
                      WHERE ${owes}), 0)::float8
             AS "paidTotal",
           COALESCE((SELECT sum(p.amount - p."paidAmount") FROM ${this.S}citizen_payments p
-                     WHERE ${owes} AND p."paymentStatus" NOT IN ('PAID', 'CANCELLED')), 0)::float8
+                     WHERE ${owes} AND p."paymentStatus" NOT IN ('PAID', 'CANCELLED', 'WRITTEN_OFF')), 0)::float8
             AS "outstandingTotal",
           COALESCE((SELECT sum(p.amount - p."paidAmount") FROM ${this.S}citizen_payments p
                      WHERE ${owes}
@@ -636,7 +637,7 @@ export class CitizensService {
         SELECT
           count(*)::int AS total,
           (SELECT COALESCE(sum(o.amount - o."paidAmount"), 0)::float8 FROM owed o
-            WHERE o."paymentStatus" NOT IN ('PAID', 'CANCELLED')) AS "allOutstanding",
+            WHERE o."paymentStatus" NOT IN ('PAID', 'CANCELLED', 'WRITTEN_OFF')) AS "allOutstanding",
           (SELECT COALESCE(sum(o.amount - o."paidAmount"), 0)::float8 FROM owed o
             WHERE o."paymentStatus" = 'UNPAID' AND o."dueDate" < now()) AS "allOverdue",
           -- People in arrears: a shared bill overdue puts each of its debtors there.
