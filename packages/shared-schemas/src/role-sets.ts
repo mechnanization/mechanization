@@ -296,6 +296,15 @@ export const MAP_READ_ROLES = [
 /** A field inspector's earnings profile. */
 export const INSPECTOR_PROFILE_ROLES = ['SUPER_ADMIN', 'FIELD_INSPECTOR'] as const satisfies readonly StaffRole[];
 
+/**
+ * Who manages the municipality's News on Day3ati (decided 2026-11-20: the
+ * administrator and the administrative officer). These are the roles the server
+ * creates a Day3ati staff account for (`news_editor`); every other role has no
+ * account there, so no News call can be made on its behalf. A role added here is
+ * provisioned the next time its account changes or the backfill runs.
+ */
+export const NEWS_EDITOR_ROLES = ['SUPER_ADMIN', 'ADMINISTRATIVE_OFFICER'] as const satisfies readonly StaffRole[];
+
 /** Whether `role` is one of `roles`. Null and unknown roles are not. */
 export function hasStaffRole(roles: readonly string[], role: string | null | undefined): boolean {
   return role != null && roles.includes(role);

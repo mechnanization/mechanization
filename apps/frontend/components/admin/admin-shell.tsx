@@ -10,6 +10,7 @@ import { HeaderBackContext, type HeaderBack } from '@/components/admin/header-ba
 import { loadSession } from '@/lib/session';
 import type { Session } from '@/lib/api-client';
 import { useRecordNavigation } from '@/lib/nav-history';
+import { useNewsAvailability } from '@/lib/news';
 import { useServiceWorker } from '@/lib/use-service-worker';
 import { cn } from '@/lib/utils';
 
@@ -115,10 +116,12 @@ export function AdminShell({
   }, [drawerOpen]);
 
   const role = session?.user.role;
+  // Whether this municipality has News on Day3ati; only a definite «no» hides its rows (`useNewsAvailability`).
+  const newsEnabled = useNewsAvailability(tenant, base, session?.accessToken ?? null, role);
 
   return (
     <div className="flex h-[100dvh] overflow-hidden">
-      <AdminSidebar tenant={tenant} locale={locale} adminPath={adminPath} role={role} />
+      <AdminSidebar tenant={tenant} locale={locale} adminPath={adminPath} role={role} newsEnabled={newsEnabled} />
 
       {/* Drawer. Mounted only while open so its links are not in the tab order
           of a page that is not showing them. */}
@@ -163,7 +166,13 @@ export function AdminShell({
                 <X className="size-5" />
               </button>
             </div>
-            <SidebarNav base={base} role={role} locale={locale} onNavigate={() => setDrawerOpen(false)} />
+            <SidebarNav
+              base={base}
+              role={role}
+              locale={locale}
+              newsEnabled={newsEnabled}
+              onNavigate={() => setDrawerOpen(false)}
+            />
           </aside>
         </div>
       ) : null}
@@ -204,6 +213,7 @@ export function AdminShell({
         tenant={tenant}
         token={session?.accessToken}
         role={role}
+        newsEnabled={newsEnabled}
       />
     </div>
   );
