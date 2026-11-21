@@ -2031,7 +2031,11 @@
     "REQUEST_ATTACHMENT_VIEWED": "فتح مستند طلب",
     "REQUEST_FEE_WAIVED": "طلب صار مجانياً فانتقل إلى الدراسة",
     "BUILDING_TYPE_CREATED": "إضافة نوع مبنى",
-    "BUILDING_TYPE_UPDATED": "تعديل نوع مبنى"
+    "BUILDING_TYPE_UPDATED": "تعديل نوع مبنى",
+    "NEWS_CATEGORY_CREATED": "إضافة قسم أخبار",
+    "NEWS_CATEGORY_UPDATED": "تعديل قسم أخبار",
+    "NEWS_PUBLISHER_CREATED": "إضافة ناشر أخبار",
+    "NEWS_PUBLISHER_UPDATED": "تعديل ناشر أخبار"
   },
   "auditEntities": {
     "User": "مواطن أو موظف",
@@ -2058,7 +2062,9 @@
     "TreasuryDay": "يومية الخزينة",
     "CitizenRequest": "طلب معاملة",
     "RequestTypeSetting": "نوع معاملة",
-    "BuildingType": "نوع مبنى"
+    "BuildingType": "نوع مبنى",
+    "NewsCategory": "قسم أخبار",
+    "NewsPublisher": "ناشر أخبار"
   },
   "audit": {
     "families": {
@@ -4198,6 +4204,98 @@
     "endedNotLifted": "انتهى إعفاؤها ولم يُرفع",
     "area": "{area} م²",
     "close": "إغلاق"
+  },
+  "news": {
+    "categories": {
+      "title": "أقسام الأخبار",
+      "intro": "الأقسام التي تُصنَّف تحتها الأخبار. تظهر كأزرار تصفية في تطبيق Day3ati ولوحته: ما تضيفه هنا يظهر هناك، وما يُعدَّل هناك يظهر هنا.",
+      "empty": "لا توجد أقسام بعد. أضف القسم الأول.",
+      "loadError": "تعذّر تحميل الأقسام.",
+      "add": "إضافة قسم",
+      "addTitle": "إضافة قسم",
+      "editTitle": "تعديل القسم",
+      "dialogDescription": "الاسم بالعربية مطلوب. اللغات الأخرى اختيارية، وتظهر العربية حيث تغيب.",
+      "columns": {
+        "name": "الاسم",
+        "key": "المفتاح",
+        "icon": "الأيقونة",
+        "sortOrder": "الترتيب",
+        "status": "الحالة",
+        "actions": "الإجراءات"
+      },
+      "nameAr": "الاسم بالعربية",
+      "nameEn": "الاسم بالإنكليزية",
+      "nameFr": "الاسم بالفرنسية",
+      "nameArPlaceholder": "مثال: مياه وكهرباء",
+      "key": "المفتاح",
+      "keyHint": "أحرف إنكليزية صغيرة وأرقام تفصل بين كلماتها شرطة، مثل water-power. لا يمكن تغييره بعد إضافة القسم.",
+      "keyPlaceholder": "water-power",
+      "icon": "الأيقونة",
+      "sortOrder": "ترتيب العرض",
+      "edit": "تعديل",
+      "activate": "تفعيل",
+      "deactivate": "إيقاف",
+      "active": "مفعّل",
+      "inactive": "متوقف",
+      "activateTitle": "تفعيل «{name}»؟",
+      "deactivateTitle": "إيقاف «{name}»؟",
+      "activateBody": "يعود القسم زراً في التطبيق ويمكن اختياره للأخبار.",
+      "deactivateBody": "يُخفى زر القسم من التطبيق. الأخبار المصنّفة تحته تبقى عليه.",
+      "activated": "تم تفعيل «{name}»",
+      "deactivated": "تم إيقاف «{name}»",
+      "saving": "جارٍ الحفظ…",
+      "save": "حفظ",
+      "cancel": "إلغاء",
+      "close": "إغلاق",
+      "saveFailed": "تعذّر الحفظ. حاول مجدداً.",
+      "nameRequired": "اكتب الاسم بالعربية",
+      "keyInvalid": "استعمل أحرفاً إنكليزية صغيرة وأرقاماً، وافصل بين الكلمات بشرطة، مثل water-power",
+      "keyRequired": "اكتب المفتاح",
+      "sortOrderInvalid": "اكتب عدداً صحيحاً"
+    },
+    "publishers": {
+      "title": "ناشرو الأخبار",
+      "intro": "باسم من يُنشر الخبر: البلدية أو قسم أو لجنة أو جهة. الناشرون مشتركون مع تطبيق Day3ati ولوحته.",
+      "empty": "لا يوجد ناشرون بعد. أضف الناشر الأول.",
+      "loadError": "تعذّر تحميل الناشرين.",
+      "add": "إضافة ناشر",
+      "addTitle": "إضافة ناشر",
+      "editTitle": "تعديل الناشر",
+      "dialogDescription": "الاسم بالعربية مطلوب. اللغات الأخرى اختيارية، وتظهر العربية حيث تغيب.",
+      "columns": {
+        "name": "الاسم",
+        "kind": "النوع",
+        "status": "الحالة",
+        "actions": "الإجراءات"
+      },
+      "nameAr": "الاسم بالعربية",
+      "nameEn": "الاسم بالإنكليزية",
+      "nameFr": "الاسم بالفرنسية",
+      "nameArPlaceholder": "مثال: بلدية البازورية",
+      "kind": "النوع",
+      "edit": "تعديل",
+      "activate": "تفعيل",
+      "deactivate": "إيقاف",
+      "active": "مفعّل",
+      "inactive": "متوقف",
+      "activateTitle": "تفعيل «{name}»؟",
+      "deactivateTitle": "إيقاف «{name}»؟",
+      "activateBody": "يمكن اختيار الناشر للأخبار الجديدة من جديد.",
+      "deactivateBody": "لا يمكن بعد الآن اختيار الناشر للأخبار الجديدة. الأخبار المنشورة باسمه تبقى عليه.",
+      "activated": "تم تفعيل «{name}»",
+      "deactivated": "تم إيقاف «{name}»",
+      "saving": "جارٍ الحفظ…",
+      "save": "حفظ",
+      "cancel": "إلغاء",
+      "close": "إغلاق",
+      "saveFailed": "تعذّر الحفظ. حاول مجدداً.",
+      "nameRequired": "اكتب الاسم بالعربية"
+    },
+    "fieldErrors": {
+      "invalidCategoryKey": "هذا المفتاح غير صالح. استعمل أحرفاً إنكليزية صغيرة وأرقاماً، وافصل بين الكلمات بشرطة، مثل water-power.",
+      "categoryKeyTaken": "هذا المفتاح مستعمل في قسم آخر. اختر مفتاحاً مختلفاً.",
+      "nameRequired": "الاسم بالعربية مطلوب."
+    }
   },
   "buildingTypes": {
     "title": "أنواع المباني",

@@ -32,6 +32,12 @@ import type {
   FeeBasis,
   BuildingTypeView,
   CreateBuildingTypeInput,
+  CreateNewsCategoryInput,
+  CreateNewsPublisherInput,
+  NewsCategoryView,
+  NewsPublisherView,
+  UpdateNewsCategoryInput,
+  UpdateNewsPublisherInput,
   FeeExemptionCitizenUnits,
   FeeExemptionListQuery,
   FeeExemptionListResult,
@@ -104,7 +110,7 @@ export interface ApiError {
    * which turned a conflict into a `TypeError` in the catch block meant to
    * display it.
    */
-  details?: { path: string; message: string }[] | Record<string, unknown>;
+  details?: { path: string; message: string; code?: string }[] | Record<string, unknown>;
   correlationId?: string;
 }
 
@@ -7316,6 +7322,101 @@ export async function updateBuildingType(
   return apiFetch<BuildingTypeView>(tenant, `/building-types/${encodeURIComponent(id)}`, {
     token,
     method: 'PATCH',
+    body: JSON.stringify(input),
+    signal,
+  });
+}
+
+// ─────────────────────────────  «الأخبار» on Day3ati: categories and publishers  ─────────────────────────────
+
+/**
+ * The language Day3ati writes its own messages in (a refused form's field
+ * errors): the page's, `ar` or `en`. The names themselves come in all of
+ * their languages.
+ */
+const newsLang = (locale: string): string => `?lang=${locale === 'en' ? 'en' : 'ar'}`;
+
+/** Every category, switched-off ones included (`GET news/categories`, `NEWS_EDITOR_ROLES`). */
+export async function getNewsCategories(
+  tenant: string,
+  token: string,
+  locale: string,
+  signal?: AbortSignal,
+): Promise<NewsCategoryView[]> {
+  return apiFetch<NewsCategoryView[]>(tenant, `/news/categories${newsLang(locale)}`, { token, signal });
+}
+
+/** Adds a category, whose key is fixed from then on. */
+export async function createNewsCategory(
+  tenant: string,
+  token: string,
+  locale: string,
+  input: CreateNewsCategoryInput,
+  signal?: AbortSignal,
+): Promise<NewsCategoryView> {
+  return apiFetch<NewsCategoryView>(tenant, `/news/categories${newsLang(locale)}`, {
+    token,
+    method: 'POST',
+    body: JSON.stringify(input),
+    signal,
+  });
+}
+
+/** Edits a category. It replaces the whole record, so every field is sent. */
+export async function updateNewsCategory(
+  tenant: string,
+  token: string,
+  locale: string,
+  id: string,
+  input: UpdateNewsCategoryInput,
+  signal?: AbortSignal,
+): Promise<NewsCategoryView> {
+  return apiFetch<NewsCategoryView>(tenant, `/news/categories/${encodeURIComponent(id)}${newsLang(locale)}`, {
+    token,
+    method: 'PUT',
+    body: JSON.stringify(input),
+    signal,
+  });
+}
+
+/** Every publisher, switched-off ones included (`GET news/publishers`). */
+export async function getNewsPublishers(
+  tenant: string,
+  token: string,
+  locale: string,
+  signal?: AbortSignal,
+): Promise<NewsPublisherView[]> {
+  return apiFetch<NewsPublisherView[]>(tenant, `/news/publishers${newsLang(locale)}`, { token, signal });
+}
+
+/** Adds a publisher: who an article is published as. */
+export async function createNewsPublisher(
+  tenant: string,
+  token: string,
+  locale: string,
+  input: CreateNewsPublisherInput,
+  signal?: AbortSignal,
+): Promise<NewsPublisherView> {
+  return apiFetch<NewsPublisherView>(tenant, `/news/publishers${newsLang(locale)}`, {
+    token,
+    method: 'POST',
+    body: JSON.stringify(input),
+    signal,
+  });
+}
+
+/** Edits a publisher. It replaces the whole record, so every field is sent. */
+export async function updateNewsPublisher(
+  tenant: string,
+  token: string,
+  locale: string,
+  id: string,
+  input: UpdateNewsPublisherInput,
+  signal?: AbortSignal,
+): Promise<NewsPublisherView> {
+  return apiFetch<NewsPublisherView>(tenant, `/news/publishers/${encodeURIComponent(id)}${newsLang(locale)}`, {
+    token,
+    method: 'PUT',
     body: JSON.stringify(input),
     signal,
   });

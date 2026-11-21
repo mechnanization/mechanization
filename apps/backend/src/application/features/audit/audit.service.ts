@@ -198,6 +198,31 @@ export class AuditService {
     });
   }
 
+  /**
+   * A change to News on Day3ati — a category or a publisher added or edited —
+   * after Day3ati accepted it. The content is Day3ati's; who changed it is ours.
+   * `after` holds ids and switches (a key, a kind, whether it is on), never a name.
+   */
+  @OnEvent('news.changed')
+  async onNewsChanged(payload: {
+    action: string;
+    entityType: string;
+    entityId: string;
+    after?: Record<string, unknown>;
+    actorId: string;
+    actorRole: string;
+  }): Promise<void> {
+    await this.record({
+      actorId: payload.actorId,
+      actorType: 'STAFF',
+      actorRole: payload.actorRole as never,
+      action: payload.action,
+      entityType: payload.entityType,
+      entityId: payload.entityId,
+      after: payload.after,
+    });
+  }
+
   /** Sector writes — who redrew which sector, and how its membership moved. */
   @OnEvent('zone.changed')
   async onZoneChanged(payload: {

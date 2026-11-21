@@ -98,6 +98,14 @@ export function isNonPersonRecord(residence: string | null | undefined): boolean
   return residence != null && (NON_PERSON_RESIDENCE as readonly string[]).includes(residence);
 }
 
+/**
+ * Who an article is published as on Day3ati (`kind` of a publisher). The four
+ * values are Day3ati's own, written as it sends and takes them: never rename one.
+ */
+export const NEWS_PUBLISHER_KIND = ['municipality', 'department', 'committee', 'organization'] as const;
+export const newsPublisherKindSchema = arabicEnum(NEWS_PUBLISHER_KIND, 'نوع الناشر غير صالح');
+export type NewsPublisherKind = z.infer<typeof newsPublisherKindSchema>;
+
 export const GENDER = ['MALE', 'FEMALE'] as const;
 export const genderSchema = arabicEnum(GENDER, 'الجنس مطلوب');
 export type Gender = z.infer<typeof genderSchema>;

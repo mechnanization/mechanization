@@ -1,3 +1,4 @@
+import { NEWS_FIELD_ERROR_CODES, type NewsFieldError } from '@mechanization/shared-schemas';
 import {
   ConflictError,
   DomainError,
@@ -36,6 +37,8 @@ const MAX_FIELD_MESSAGE_LENGTH = 300;
 export interface NewsProblem {
   /** The partner's stable code, when it sent a readable one. */
   code?: string;
+  /** The partner's one-line title, cut short: the words for a refusal that names no field. */
+  title?: string;
   /** One entry per message, the field named as the form names it. */
   fields: Array<{ path: string; message: string }>;
 }
@@ -50,8 +53,9 @@ export function readProblem(body: unknown): NewsProblem {
   const problem: NewsProblem = { fields: [] };
   if (typeof body !== 'object' || body === null) return problem;
 
-  const { code, errors } = body as { code?: unknown; errors?: unknown };
+  const { code, title, errors } = body as { code?: unknown; title?: unknown; errors?: unknown };
   if (typeof code === 'string' && /^[a-z0-9_.]{1,64}$/i.test(code)) problem.code = code;
+  if (typeof title === 'string' && title !== '') problem.title = title.slice(0, MAX_FIELD_MESSAGE_LENGTH);
 
   if (typeof errors === 'object' && errors !== null && !Array.isArray(errors)) {
     for (const [field, messages] of Object.entries(errors)) {
@@ -80,6 +84,25 @@ export const newsVillageNotLinked = (message: string): DomainError =>
 
 /** The refusal for an answer Day3ati sent to a village call. */
 export function newsErrorFromAnswer(status: number, problem: NewsProblem): DomainError {
+  // A refusal that belongs to one field of a form (a key already taken) is shown under that field,
+  // whatever status it came with; the screen words the code, and the partner's title is the fallback.
+  const fieldCode =
+    problem.code && problem.code in NEWS_FIELD_ERROR_CODES
+      ? (problem.code as keyof typeof NEWS_FIELD_ERROR_CODES)
+      : undefined;
+  if (fieldCode) {
+    const field: NewsFieldError = {
+      path: NEWS_FIELD_ERROR_CODES[fieldCode],
+      message: problem.title ?? fieldCode,
+      code: fieldCode,
+    };
+    return new ValidationError({
+      code: 'NEWS_INVALID_INPUT',
+      message: `Day3ati refused a field (${fieldCode})`,
+      details: [field],
+    });
+  }
+
   switch (problem.code) {
     case 'auth.forbidden':
       return new ForbiddenError({ code: 'NEWS_FORBIDDEN', message: 'Day3ati refused the role (auth.forbidden)' });

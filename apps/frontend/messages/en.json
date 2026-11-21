@@ -2031,7 +2031,11 @@
     "REQUEST_ATTACHMENT_VIEWED": "Request document opened",
     "REQUEST_FEE_WAIVED": "Request made free, moved to review",
     "BUILDING_TYPE_CREATED": "Building type added",
-    "BUILDING_TYPE_UPDATED": "Building type edited"
+    "BUILDING_TYPE_UPDATED": "Building type edited",
+    "NEWS_CATEGORY_CREATED": "News category added",
+    "NEWS_CATEGORY_UPDATED": "News category edited",
+    "NEWS_PUBLISHER_CREATED": "News publisher added",
+    "NEWS_PUBLISHER_UPDATED": "News publisher edited"
   },
   "auditEntities": {
     "User": "Citizen or staff",
@@ -2058,7 +2062,9 @@
     "TreasuryDay": "Treasury day",
     "CitizenRequest": "Request",
     "RequestTypeSetting": "Request type",
-    "BuildingType": "Building type"
+    "BuildingType": "Building type",
+    "NewsCategory": "News category",
+    "NewsPublisher": "News publisher"
   },
   "audit": {
     "families": {
@@ -4198,6 +4204,98 @@
     "endedNotLifted": "Exemption ended, not lifted",
     "area": "{area} m²",
     "close": "Close"
+  },
+  "news": {
+    "categories": {
+      "title": "News categories",
+      "intro": "The categories articles are filed under. They appear as filter chips in the Day3ati app and dashboard: what you add here shows up there, and the other way round.",
+      "empty": "No categories yet. Add the first one.",
+      "loadError": "Could not load the categories.",
+      "add": "Add a category",
+      "addTitle": "Add a category",
+      "editTitle": "Edit the category",
+      "dialogDescription": "The Arabic name is required. The other languages are optional; Arabic is shown where one is missing.",
+      "columns": {
+        "name": "Name",
+        "key": "Key",
+        "icon": "Icon",
+        "sortOrder": "Order",
+        "status": "Status",
+        "actions": "Actions"
+      },
+      "nameAr": "Name in Arabic",
+      "nameEn": "Name in English",
+      "nameFr": "Name in French",
+      "nameArPlaceholder": "e.g. Water and power",
+      "key": "Key",
+      "keyHint": "Lowercase English letters and digits, words joined by a hyphen, like water-power. It cannot be changed after the category is added.",
+      "keyPlaceholder": "water-power",
+      "icon": "Icon",
+      "sortOrder": "Display order",
+      "edit": "Edit",
+      "activate": "Switch on",
+      "deactivate": "Switch off",
+      "active": "On",
+      "inactive": "Off",
+      "activateTitle": "Switch on “{name}”?",
+      "deactivateTitle": "Switch off “{name}”?",
+      "activateBody": "The category shows again as a chip in the app and can be chosen for articles.",
+      "deactivateBody": "The chip is hidden from the app. Articles already filed under it keep it.",
+      "activated": "“{name}” is switched on",
+      "deactivated": "“{name}” is switched off",
+      "saving": "Saving…",
+      "save": "Save",
+      "cancel": "Cancel",
+      "close": "Close",
+      "saveFailed": "Could not save. Try again.",
+      "nameRequired": "Write the name in Arabic",
+      "keyInvalid": "Use lowercase English letters and digits, with hyphens between words, like water-power",
+      "keyRequired": "Write the key",
+      "sortOrderInvalid": "Write a whole number"
+    },
+    "publishers": {
+      "title": "News publishers",
+      "intro": "Who an article is published as: the municipality, a department, a committee or an organization. Publishers are shared with the Day3ati app and dashboard.",
+      "empty": "No publishers yet. Add the first one.",
+      "loadError": "Could not load the publishers.",
+      "add": "Add a publisher",
+      "addTitle": "Add a publisher",
+      "editTitle": "Edit the publisher",
+      "dialogDescription": "The Arabic name is required. The other languages are optional; Arabic is shown where one is missing.",
+      "columns": {
+        "name": "Name",
+        "kind": "Kind",
+        "status": "Status",
+        "actions": "Actions"
+      },
+      "nameAr": "Name in Arabic",
+      "nameEn": "Name in English",
+      "nameFr": "Name in French",
+      "nameArPlaceholder": "e.g. Al Bazourieh Municipality",
+      "kind": "Kind",
+      "edit": "Edit",
+      "activate": "Switch on",
+      "deactivate": "Switch off",
+      "active": "On",
+      "inactive": "Off",
+      "activateTitle": "Switch on “{name}”?",
+      "deactivateTitle": "Switch off “{name}”?",
+      "activateBody": "The publisher can be chosen for new articles again.",
+      "deactivateBody": "The publisher can no longer be chosen for new articles. Articles already published as it keep it.",
+      "activated": "“{name}” is switched on",
+      "deactivated": "“{name}” is switched off",
+      "saving": "Saving…",
+      "save": "Save",
+      "cancel": "Cancel",
+      "close": "Close",
+      "saveFailed": "Could not save. Try again.",
+      "nameRequired": "Write the name in Arabic"
+    },
+    "fieldErrors": {
+      "invalidCategoryKey": "This key is not valid. Use lowercase English letters and digits, with hyphens between words, like water-power.",
+      "categoryKeyTaken": "This key is already used by another category. Choose a different one.",
+      "nameRequired": "The name in Arabic is required."
+    }
   },
   "buildingTypes": {
     "title": "Building types",

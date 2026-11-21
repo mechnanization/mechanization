@@ -27,7 +27,7 @@ export interface Day3atiStaffAccount {
 export interface Day3atiVillage {
   villageId: string;
   externalTenant: string;
-  /** The modules switched on for the village, as Day3ati names them. */
+  /** The keys of the modules switched on for the village (`news`, …), as Day3ati names them. */
   modules: readonly string[];
 }
 

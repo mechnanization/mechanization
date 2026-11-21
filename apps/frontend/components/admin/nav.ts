@@ -20,12 +20,14 @@ import {
   Layers,
   Link2,
   Map as MapIcon,
+  Megaphone,
   ReceiptText,
   ScanSearch,
   ScrollText,
   Settings,
   ShieldCheck,
   ShieldQuestion,
+  Tags,
   UserPlus,
   UserRoundCheck,
   Users,
@@ -39,6 +41,7 @@ import {
   EVERY_STAFF_ROLE,
   FEE_READ_ROLES,
   MAP_READ_ROLES,
+  NEWS_EDITOR_ROLES,
   PAYMENT_REVIEW_READ_ROLES,
   REQUEST_READ_ROLES,
   TREASURY_READ_ROLES,
@@ -119,11 +122,11 @@ export interface NavGroup {
 }
 
 /**
- * An unlabelled landing group, then seven groups — one per job, in the order a
+ * An unlabelled landing group, then eight groups — one per job, in the order a
  * municipality's day runs: the people in the register, the buildings and the
  * land they live on, the visits still owed in the field, the fees raised and
- * collected, the treasury's books, the checking of all of it, and the portal's
- * own administration.
+ * collected, the treasury's books, the checking of all of it, the News kept on
+ * Day3ati, and the portal's own administration.
  *
  * ## How it is cut (reorganised 2026-10-09)
  *
@@ -684,6 +687,36 @@ export const NAV_GROUPS: NavGroup[] = [
         // The two roles `AuditController` serves — the auditor is who the log is for.
         roles: AUDIT_READ_ROLES,
         keywords: ['تدقيق', 'تاريخ', 'تغييرات', 'audit', 'logs'],
+      },
+    ],
+  },
+  /*
+    «الأخبار» — the municipality's News, kept on Day3ati and managed from here
+    as the signed-in user (`NEWS_EDITOR_ROLES`: the administrator and the
+    administrative officer, the two who have an account there). Its own group
+    because it is neither the register nor the books: a screen of its own job,
+    with the articles to join these two rows.
+  */
+  {
+    label: 'الأخبار',
+    labelEn: 'News',
+    roles: NEWS_EDITOR_ROLES,
+    items: [
+      {
+        path: '/news/categories',
+        label: 'أقسام الأخبار',
+        labelEn: 'News categories',
+        icon: Tags,
+        roles: NEWS_EDITOR_ROLES,
+        keywords: ['أخبار', 'قسم', 'تصنيف', 'news', 'category', 'categories'],
+      },
+      {
+        path: '/news/publishers',
+        label: 'ناشرو الأخبار',
+        labelEn: 'News publishers',
+        icon: Megaphone,
+        roles: NEWS_EDITOR_ROLES,
+        keywords: ['أخبار', 'ناشر', 'جهة', 'news', 'publisher', 'publishers'],
       },
     ],
   },
