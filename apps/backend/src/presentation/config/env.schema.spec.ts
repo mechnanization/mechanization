@@ -340,3 +340,92 @@ describe('validateEnv — NODE_ENV', () => {
     expect(validateEnv({ ...withoutNodeEnv, NODE_ENV: value }).NODE_ENV).toBe(value);
   });
 });
+
+/**
+ * The Day3ati partner API settings.
+ *
+ * All four or none. The case pinned hardest is "none": production holds no
+ * Day3ati credentials yet, so demanding them would stop the next deploy from
+ * booting over a feature that is not switched on. The case that must fail is
+ * the half-set group, and it must name every missing variable at once.
+ */
+describe('validateEnv — Day3ati', () => {
+  const base = {
+    NODE_ENV: 'development',
+    DATABASE_URL: 'postgresql://u:p@localhost:5432/db?schema=public',
+    DIRECT_URL: 'postgresql://u:p@localhost:5432/db',
+    JWT_SECRET: 'y'.repeat(40),
+  };
+
+  const production = {
+    ...base,
+    NODE_ENV: 'production',
+    CORS_ORIGINS: 'https://portal.example.invalid',
+    AWS_REGION: 'eu-west-3',
+    S3_DOCUMENTS_BUCKET: 'documents',
+    S3_CADASTRE_BUCKET: 'cadastre',
+  };
+
+  const day3ati = {
+    DAY3ATI_API_BASE_URL: 'https://api.example.test',
+    DAY3ATI_TOKEN_URL: 'https://api.example.test/api/v1/oauth/token',
+    DAY3ATI_CLIENT_ID: 'mechanization-staging',
+    DAY3ATI_CLIENT_SECRET: 's'.repeat(32),
+  };
+
+  const names = Object.keys(day3ati);
+
+  it.each([['development', base], ['production', production]])('boots with none of them set in %s', (_name, env) => {
+    expect(validateEnv({ ...env }).DAY3ATI_CLIENT_SECRET).toBeUndefined();
+  });
+
+  it('reads all four when they are set together', () => {
+    const env = validateEnv({ ...base, ...day3ati });
+
+    expect(env.DAY3ATI_API_BASE_URL).toBe(day3ati.DAY3ATI_API_BASE_URL);
+    expect(env.DAY3ATI_TOKEN_URL).toBe(day3ati.DAY3ATI_TOKEN_URL);
+    expect(env.DAY3ATI_CLIENT_ID).toBe(day3ati.DAY3ATI_CLIENT_ID);
+    expect(env.DAY3ATI_CLIENT_SECRET).toBe(day3ati.DAY3ATI_CLIENT_SECRET);
+  });
+
+  it.each(names)('refuses to boot when %s alone is missing', (missing) => {
+    const partial: Record<string, unknown> = { ...base, ...day3ati };
+    delete partial[missing];
+
+    expect(() => validateEnv(partial)).toThrow(new RegExp(`${missing} is required`));
+  });
+
+  it('names every missing variable in one failure, not one per deploy', () => {
+    let message = '';
+    try {
+      validateEnv({ ...base, DAY3ATI_CLIENT_ID: 'mechanization-staging' });
+    } catch (error) {
+      message = (error as Error).message;
+    }
+
+    expect(message).toMatch(/DAY3ATI_API_BASE_URL/);
+    expect(message).toMatch(/DAY3ATI_TOKEN_URL/);
+    expect(message).toMatch(/DAY3ATI_CLIENT_SECRET/);
+  });
+
+  it('applies the half-set rule in production too', () => {
+    expect(() =>
+      validateEnv({ ...production, DAY3ATI_CLIENT_ID: 'mechanization-staging' }),
+    ).toThrow(/DAY3ATI_CLIENT_SECRET/);
+  });
+
+  it('treats a blank value as unset, so a bare NAME= line does not count as configured', () => {
+    const blank = Object.fromEntries(names.map((name) => [name, '']));
+
+    expect(() => validateEnv({ ...base, ...blank })).not.toThrow();
+    expect(() => validateEnv({ ...base, ...day3ati, DAY3ATI_CLIENT_SECRET: '  ' })).toThrow(
+      /DAY3ATI_CLIENT_SECRET/,
+    );
+  });
+
+  it.each(['DAY3ATI_API_BASE_URL', 'DAY3ATI_TOKEN_URL'])('rejects a %s that is not a URL', (name) => {
+    expect(() => validateEnv({ ...base, ...day3ati, [name]: 'not a url' })).toThrow(
+      new RegExp(name),
+    );
+  });
+});

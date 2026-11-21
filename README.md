@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية)
 
-Last verified against the code: `fix/review-follow-ups` (on `develop@e8bb71f`): `--reset-totp` clears the TOTP lockout, 2026-11-20; `fix/pr88-review` (on `develop@be4f053`), 2026-10-06; the frontend dev server on Turbopack, `develop@4634bdb`, 2026-10-15.
+Last verified against the code: `fix/review-follow-ups` (on `develop@e8bb71f`): `--reset-totp` clears the TOTP lockout, 2026-11-20; `feat/day3ati-staff-sync` (on `feat/day3ati-token-service@c10c166`): the `day3ati:backfill-staff` script and the News accounts it creates, 2026-11-20; `fix/pr88-review` (on `develop@be4f053`), 2026-10-06; the frontend dev server on Turbopack, `develop@4634bdb`, 2026-10-15.
 
 A registration system for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastre map, fees and payments. Each
@@ -100,6 +100,12 @@ never arrives, reissue it with `--reset-totp`; nothing reads it back out of the
 database. A reissue also clears the account's lockout after wrong codes (`0101`),
 so it is the way back in for an administrator who locked themselves out. Staff added later come from the dashboard, and a `SUPER_ADMIN`
 created there gets its enrolment secret in the same response.
+
+When the four `DAY3ATI_*` settings are set, an administrator or administrative
+officer also gets a News account on Day3ati as they are created or changed. Staff
+who existed before are brought across with
+`pnpm --filter @mechanization/backend day3ati:backfill-staff --slug <slug>`
+(a dry run; add `--apply` to send).
 
 **The server does not require 2FA for a `SUPER_ADMIN`.** An admin whose factor
 was disabled or never confirmed signs in with the password alone

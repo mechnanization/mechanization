@@ -428,6 +428,20 @@ export const ERROR_CODES = [
   'TOTP_LOCKED',
   // The phone-code sign-in (`citizen/otp/*`) while no SMS provider is live; the portal signs in by رقم مرجعي.
   'CITIZEN_OTP_UNAVAILABLE',
+  // News on Day3ati, the partner API (task «Day3ati HTTP client and error handling»). The first two are the
+  // user's role and account (403); the next three are the municipality's setup or the service (409); the rest
+  // are the call itself: `NEWS_INVALID_INPUT` carries `details: [{ path, message }]` for the form (422), as
+  // every validation refusal does. `NEWS_REQUEST_REFUSED` is any other refusal, with `details.status`.
+  'NEWS_FORBIDDEN',
+  'NEWS_NOT_A_MEMBER',
+  'NEWS_MODULE_DISABLED',
+  'NEWS_VILLAGE_NOT_LINKED',
+  'NEWS_UNAVAILABLE',
+  'NEWS_INVALID_INPUT',
+  'NEWS_NOT_FOUND',
+  'NEWS_REQUEST_REFUSED',
+  // Scheduling an article that is already published (Day3ati's `news.already_published`, 409).
+  'NEWS_ARTICLE_ALREADY_PUBLISHED',
   // Raised by the portal itself when no response arrives or it cannot be read
   'NETWORK_ERROR',
   'UNKNOWN',

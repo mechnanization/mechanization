@@ -45,6 +45,22 @@ export function isSchedulerEnabled(env: NodeJS.ProcessEnv = process.env): boolea
   );
 }
 
+/** A blank string is "not set", so a bare `NAME=` line in a dotenv file is not a value. */
+function optionalWhenBlank<T extends z.ZodType>(schema: T) {
+  return z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    schema.optional(),
+  );
+}
+
+/** The Day3ati variables, which are configured together or not at all. */
+export const DAY3ATI_VARIABLES = [
+  'DAY3ATI_API_BASE_URL',
+  'DAY3ATI_TOKEN_URL',
+  'DAY3ATI_CLIENT_ID',
+  'DAY3ATI_CLIENT_SECRET',
+] as const;
+
 /**
  * Boot fails on a missing or malformed secret rather than surfacing it as a 500
  * on the first request that needs it — a JWT secret that is silently `undefined`
@@ -235,6 +251,31 @@ export const envSchema = z
      */
     JWT_STAFF_REMEMBER_TTL: z.string().default('7d'),
     JWT_CITIZEN_TTL: z.string().default('7d'),
+
+    /**
+     * Day3ati — the partner API this backend calls to manage a municipality's
+     * News. Server-side only: the secret is never sent to the browser, never
+     * logged, never committed (`.env` is git-ignored), and nothing in
+     * `apps/frontend` reads these.
+     *
+     * **All four or none.** A group rather than four required variables, for
+     * the §8.7 reason spelt out on `SENTRY_DSN`: production does not hold
+     * Day3ati credentials yet (the integration runs against staging), so
+     * demanding them everywhere would make the next push to `main` refuse to
+     * boot the register over a feature that is not switched on. Unset means the
+     * integration is off. Set *some* of them and boot fails naming every one
+     * that is missing — see the superRefine below — because a half-configured
+     * client is the kind of fault that otherwise surfaces as a 401 on the first
+     * News request. Production values are swapped in by setting these four; no
+     * code reads a URL or a client id from anywhere else.
+     *
+     * A blank value (`DAY3ATI_CLIENT_ID=` in a dotenv file) counts as unset, not
+     * as an empty credential.
+     */
+    DAY3ATI_API_BASE_URL: optionalWhenBlank(z.string().url()),
+    DAY3ATI_TOKEN_URL: optionalWhenBlank(z.string().url()),
+    DAY3ATI_CLIENT_ID: optionalWhenBlank(z.string().min(1)),
+    DAY3ATI_CLIENT_SECRET: optionalWhenBlank(z.string().min(1)),
 
     SMS_PROVIDER_API_KEY: z.string().optional(),
     /** Second delivery route. See the OTP fallback requirement below. */
@@ -492,6 +533,27 @@ export const envSchema = z
         message:
           'SMTP_HOST and MAIL_FROM must be set together — with only one of them the mail sender stays disabled and password resets silently keep going through Supabase',
       });
+    }
+
+    /**
+     * Day3ati is all four variables or none. Above the production early-return,
+     * like the pairs before it: a half-set group is wrong in every environment,
+     * and the person who set one of them wants to hear about the other three
+     * now, not as a 401 from the token endpoint. Each missing variable gets its
+     * own issue so one failed boot lists all of them.
+     */
+    const day3atiSet = DAY3ATI_VARIABLES.filter((name) => env[name] !== undefined);
+    if (day3atiSet.length > 0 && day3atiSet.length < DAY3ATI_VARIABLES.length) {
+      for (const name of DAY3ATI_VARIABLES) {
+        if (env[name] !== undefined) continue;
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [name],
+          message: `${name} is required because ${day3atiSet.join(', ')} ${
+            day3atiSet.length === 1 ? 'is' : 'are'
+          } set — the Day3ati variables are configured together or not at all`,
+        });
+      }
     }
 
     if (env.NODE_ENV !== 'production') return;
