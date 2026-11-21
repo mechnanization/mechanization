@@ -8,6 +8,12 @@ Last verified against the code: `feat/arrears-import` (stacked on PRs #175 and #
 > `apps/frontend/lib/arrears-api.ts` alone; until task 5 serves them (or changes them there), the batch list, the
 > submit and the single line answer 404.
 >
+> Task 8, approval, «للمطابقة» and the settings screens, built on `feat/arrears-approval-ui` (on `feat/arrears-import-ui@af7b2a4`): `fees/arrears/review`,
+> `/match` and `/settings`. **Nothing serves them yet.** Approve, return, discard, the batch's review, the unmatched
+> lines and the link are task 5's; the cutoff year and the books' totals have **no task**, and nothing writes
+> `system_settings.arrearsCutoffYear`, so every import is refused (`ARREARS_CUTOFF_NOT_SET`) until a route does.
+> The paths and the views the contract lacks are proposed in `apps/frontend/lib/arrears-api.ts` alone.
+>
 > **Earlier status: tasks 1–4 in review, 2026-11-21, none merged.** This spec (PR #174); the migrations
 > `0107`/`0108` (`chore/migration-0107-old-debts`, PR #175); the contract in shared-schemas
 > (`feat/arrears-contract`, PR #176, stacked on #175); the export and the import's dry run

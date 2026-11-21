@@ -1,14 +1,15 @@
 'use client';
 
 import { use, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useQueryClient } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
-import { Download, History, Plus, Upload } from 'lucide-react';
+import { ClipboardCheck, Download, History, Plus, Settings2, Upload, UserSearch } from 'lucide-react';
 import { getLabels, type ArrearsBatchView } from '@mechanization/shared-schemas';
 import { listArrearsBatches } from '@/lib/arrears-api';
 import { formatDate } from '@/lib/dates';
-import { ARREARS_PREPARE_ROLES, hasRole } from '@/lib/staff-roles';
+import { ARREARS_APPROVE_ROLES, ARREARS_PREPARE_ROLES, hasRole } from '@/lib/staff-roles';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { useTableLabels } from '@/lib/use-table-labels';
@@ -18,7 +19,7 @@ import { ArrearsImportPanel } from '@/components/admin/arrears/arrears-import-pa
 import { ExportTemplateDialog } from '@/components/admin/arrears/export-template-dialog';
 import { SingleLineDialog } from '@/components/admin/arrears/single-line-dialog';
 import { HeaderBackLink } from '@/components/admin/header-back-link';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { CellTag } from '@/components/ui/cell-tag';
 import { DataTable } from '@/components/ui/data-table';
 import { PageHeader } from '@/components/ui/page-header';
@@ -54,6 +55,7 @@ export default function ArrearsPage({
   const queryClient = useQueryClient();
   const { token, user } = useStaffSession(tenant, base);
   const canPrepare = user ? hasRole(ARREARS_PREPARE_ROLES, user.role) : false;
+  const canApprove = user ? hasRole(ARREARS_APPROVE_ROLES, user.role) : false;
   const [{ batch: batchId }, setUrl] = useUrlState(ARREARS_URL);
   const [exportOpen, setExportOpen] = useState(false);
   const [singleOpen, setSingleOpen] = useState(false);
@@ -126,6 +128,22 @@ export default function ArrearsPage({
         title={t('title')}
         actions={
           <div className="flex flex-wrap gap-2">
+            {canApprove ? (
+              <Link href={`${base}/fees/arrears/review`} className={buttonVariants({ variant: 'outline' })}>
+                <ClipboardCheck className="size-4" aria-hidden />
+                {t('review.link')}
+              </Link>
+            ) : null}
+            <Link href={`${base}/fees/arrears/match`} className={buttonVariants({ variant: 'outline' })}>
+              <UserSearch className="size-4" aria-hidden />
+              {t('match.link')}
+            </Link>
+            {canApprove ? (
+              <Link href={`${base}/fees/arrears/settings`} className={buttonVariants({ variant: 'outline' })}>
+                <Settings2 className="size-4" aria-hidden />
+                {t('settings.link')}
+              </Link>
+            ) : null}
             <Button variant="outline" onClick={() => setSingleOpen(true)}>
               <Plus className="size-4" aria-hidden />
               {t('single.open')}

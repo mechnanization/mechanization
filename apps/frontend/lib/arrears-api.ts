@@ -1,10 +1,19 @@
 import type {
   ArrearsBatchView,
+  ArrearsComponent,
+  ArrearsControlTotalInput,
+  ArrearsCutoffInput,
   ArrearsExportResult,
+  ArrearsFeeType,
   ArrearsImportResult,
+  ArrearsImportTotals,
+  ArrearsLineVerdict,
   ArrearsSingleLineInput,
+  DiscardArrearsBatchInput,
   ExportArrearsTemplateInput,
   ImportArrearsInput,
+  LinkArrearsLineInput,
+  ReturnArrearsBatchInput,
   SubmitArrearsBatchInput,
 } from '@mechanization/shared-schemas';
 import { apiFetch } from './api-client';
@@ -54,6 +63,118 @@ export function submitArrearsBatch(tenant: string, token: string, batchId: strin
   return apiFetch<ArrearsBatchView>(tenant, `${batch(batchId)}/submit`, {
     token,
     method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+// ───────────────────  approval, «للمطابقة», settings (task 8)  ───────────────────
+//
+// Every route below is task 5's (or, for the settings, no task's yet) and not
+// built, and so are the two views the contract does not hold: a batch as the
+// manager reviews it, and a line waiting for a file. Both shapes are this
+// screen's proposal, built from the contract's own pieces; task 5 serves them or
+// changes them here.
+
+/** One year × fee type × component of a batch, summed: what the manager approves. */
+export interface ArrearsBatchTotalRow {
+  year: number;
+  feeType: ArrearsFeeType;
+  component: ArrearsComponent;
+  count: number;
+  amount: number;
+}
+
+/** Proposed for task 5: a submitted batch as the manager reviews it. */
+export interface ArrearsBatchReview {
+  batch: ArrearsBatchView;
+  totals: ArrearsImportTotals;
+  byYearAndFee: ArrearsBatchTotalRow[];
+  /** The lines the preparer kept or dropped by hand: war damage, an archived file, «للمطابقة». */
+  flagged: ArrearsLineVerdict[];
+  /** What approval raises: one bill per kept line with a citizen. */
+  bills: { count: number; amount: number; citizens: number };
+}
+
+/** Proposed for task 5: a «للمطابقة» line of an approved batch, waiting for a file. */
+export interface ArrearsUnmatchedLine {
+  id: string;
+  batchId: string;
+  sourceName: string;
+  propertyNumber: string;
+  unitCode: string | null;
+  year: number;
+  feeType: ArrearsFeeType;
+  component: ArrearsComponent;
+  amount: number;
+}
+
+/** Proposed: the cutoff and the old books' totals per year (open-decisions §23.4). */
+export interface ArrearsSettingsView {
+  arrearsCutoffYear: number | null;
+  controlTotals: ArrearsControlTotalInput[];
+}
+
+/** Task 5, proposed path. */
+export function getArrearsBatchReview(tenant: string, token: string, batchId: string, signal?: AbortSignal) {
+  return apiFetch<ArrearsBatchReview>(tenant, `${batch(batchId)}/review`, { token, signal });
+}
+
+/** Task 5, proposed path. Approval raises the bills, in one transaction, and locks the batch. */
+export function approveArrearsBatch(tenant: string, token: string, batchId: string) {
+  return apiFetch<ArrearsBatchView>(tenant, `${batch(batchId)}/approve`, { token, method: 'POST', body: '{}' });
+}
+
+/** Task 5, proposed path. Back to the preparer as a DRAFT, with what to fix. */
+export function returnArrearsBatch(tenant: string, token: string, batchId: string, input: ReturnArrearsBatchInput) {
+  return apiFetch<ArrearsBatchView>(tenant, `${batch(batchId)}/return`, {
+    token,
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+/** Task 5, proposed path. */
+export function discardArrearsBatch(tenant: string, token: string, batchId: string, input: DiscardArrearsBatchInput) {
+  return apiFetch<ArrearsBatchView>(tenant, `${batch(batchId)}/discard`, {
+    token,
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+/** Task 5, proposed path. */
+export function getUnmatchedArrearsLines(tenant: string, token: string, signal?: AbortSignal) {
+  return apiFetch<{ items: ArrearsUnmatchedLine[] }>(tenant, '/arrears/lines/unmatched', { token, signal });
+}
+
+/** Task 5, proposed path. Links a «للمطابقة» line to a file; its bill is raised then. */
+export function linkArrearsLine(tenant: string, token: string, lineId: string, input: LinkArrearsLineInput) {
+  return apiFetch<ArrearsUnmatchedLine>(tenant, `/arrears/lines/${encodeURIComponent(lineId)}/link`, {
+    token,
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+/** Proposed path, no task yet. */
+export function getArrearsSettings(tenant: string, token: string, signal?: AbortSignal) {
+  return apiFetch<ArrearsSettingsView>(tenant, '/arrears/settings', { token, signal });
+}
+
+/** Proposed path, no task yet. */
+export function saveArrearsCutoff(tenant: string, token: string, input: ArrearsCutoffInput) {
+  return apiFetch<ArrearsSettingsView>(tenant, '/arrears/settings/cutoff', {
+    token,
+    method: 'PUT',
+    body: JSON.stringify(input),
+  });
+}
+
+/** Proposed path, no task yet. One year's total; the table is undecided (open-decisions §23.4). */
+export function saveArrearsControlTotal(tenant: string, token: string, input: ArrearsControlTotalInput) {
+  return apiFetch<ArrearsSettingsView>(tenant, '/arrears/settings/control-totals', {
+    token,
+    method: 'PUT',
     body: JSON.stringify(input),
   });
 }
