@@ -92,6 +92,8 @@ import type {
   UnitType,
   VacancyBasis,
   VacancyEndReason,
+  BillWriteOffView,
+  WriteOffBillInput,
 } from '@mechanization/shared-schemas';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
@@ -3616,6 +3618,8 @@ export interface CitizenProfilePayment {
   reviewNote: string | null;
   /** Why the manager cancelled the bill (0091); null unless `paymentStatus` is CANCELLED. */
   cancellationReason?: string | null;
+  /** «شطب» (0107): when, how much, why and on which decision; null unless WRITTEN_OFF. Optional for an older API. */
+  writeOff?: BillWriteOffView | null;
   /**
    * The municipal request whose fee this bill is (0092), or null. Cancelling the
    * bill cancels the request while it is still open (AWAITING_PAYMENT or
@@ -5609,7 +5613,7 @@ export interface FeeNoticeCancelResult {
   skipped: Array<{
     paymentId: string;
     invoiceNumber: string | null;
-    reason: 'BILL_ALREADY_CANCELLED' | 'PAYMENT_CLAIM_UNDER_REVIEW' | 'BILL_CANCEL_HAS_PAYMENTS';
+    reason: 'BILL_ALREADY_CANCELLED' | 'BILL_ALREADY_WRITTEN_OFF' | 'PAYMENT_CLAIM_UNDER_REVIEW' | 'BILL_CANCEL_HAS_PAYMENTS';
   }>;
   /** True when the notice was still recurring and has now stopped. */
   deactivated: boolean;
@@ -5840,6 +5844,8 @@ export interface CitizenPaymentItem {
   reviewNote: string | null;
   /** Why the manager cancelled the bill (0091); null unless `paymentStatus` is CANCELLED. */
   cancellationReason?: string | null;
+  /** «شطب» (0107): when, how much, why and on which decision; null unless WRITTEN_OFF. Optional for an older API. */
+  writeOff?: BillWriteOffView | null;
   frequency: string | null;
   /**
    * How this amount was arrived at — «6 محل تجاري × 100,000 ل.ل».
@@ -5940,6 +5946,8 @@ export interface AdminPaymentItem {
   /** «إلغاء الفاتورة» (0091): when, and why; null on a bill still standing. Optional for an older API. */
   cancelledAt?: string | null;
   cancellationReason?: string | null;
+  /** «شطب» (0107): when, how much, why and on which decision; null unless WRITTEN_OFF. Optional for an older API. */
+  writeOff?: BillWriteOffView | null;
   /**
    * Last write to the row. Stands in for the payment time on a *partial*
    * settlement, which never gets a `paidAt` — see the note on the server.
@@ -6152,6 +6160,29 @@ export interface CancelBillResult extends AdminPaymentItem {
 
 export async function cancelBill(tenant: string, token: string, id: string, input: CancelBill) {
   const result = await apiFetch<CancelBillResult>(tenant, `/fees/payments/${encodeURIComponent(id)}/cancel`, {
+    token,
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+  invalidateRequests(`fee-summary:${tenant}`);
+  return result;
+}
+
+/**
+ * «شطب» — what is left on a bill is written off on a council decision (0107,
+ * docs/old-debts-plan.md decision 10; `BILL_WRITE_OFF_ROLES`). No money moves.
+ * Refused with `BILL_ALREADY_WRITTEN_OFF`, `BILL_ALREADY_CANCELLED`,
+ * `PAYMENT_CLAIM_UNDER_REVIEW`, `BILL_WRITE_OFF_NOTHING_LEFT`,
+ * and `BILL_WRITE_OFF_DECISION_IN_FUTURE`. Answers with the bill as it now stands,
+ * WRITTEN_OFF, and the municipal request that was waiting on it, now in review (null when
+ * it was no request's fee). The body is the shared schema's.
+ */
+export interface WriteOffBillResult extends AdminPaymentItem {
+  settledRequest: { requestId: string; requestNumber: string } | null;
+}
+
+export async function writeOffBill(tenant: string, token: string, id: string, input: WriteOffBillInput) {
+  const result = await apiFetch<WriteOffBillResult>(tenant, `/fees/payments/${encodeURIComponent(id)}/write-off`, {
     token,
     method: 'POST',
     body: JSON.stringify(input),

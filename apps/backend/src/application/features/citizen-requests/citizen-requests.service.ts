@@ -44,6 +44,7 @@ import { raiseOneOffBill } from '../fees/one-off-bill';
 import { ParcelDuesService } from '../fees/parcel-dues.service';
 import { isUniqueViolationOn } from '../treasury/retry-key';
 import { cancelRequestOfCancelledBill } from './cancelled-bill';
+import { settleRequestOfWrittenOffBill } from './written-off-bill';
 
 /** Who is acting: a citizen through the portal, or a member of staff. */
 export type RequestActor = { kind: 'CITIZEN'; id: string } | { kind: 'STAFF'; id: string; role: string };
@@ -689,6 +690,10 @@ export class CitizenRequestsService {
    * AWAITING_PAYMENT on a cancelled bill before that step existed. CANCELLED is
    * kept out of the "not paid" move: it took such a request back to
    * AWAITING_PAYMENT on a bill nobody can pay (review of PR #122).
+   *
+   * And a bill that is WRITTEN_OFF («شطب», 0107) lets its request go on to review, the
+   * council having forgiven the fee (`settleRequestOfWrittenOffBill`); WRITTEN_OFF is kept
+   * out of the "not paid" move for the same reason as CANCELLED.
    */
   async reconcile(filter: { requestIds?: string[]; citizenId?: string } = {}): Promise<void> {
     const S = this.S;
@@ -702,7 +707,8 @@ export class CitizenRequestsService {
       LEFT JOIN ${S}citizen_payments b ON b."id" = r."citizenPaymentId"
       LEFT JOIN ${S}request_type_settings t ON t."requestType" = r."requestType"
       WHERE ((r."status" = 'AWAITING_PAYMENT' AND b."paymentStatus" = 'PAID')
-          OR (r."status" = 'IN_REVIEW' AND b."paymentStatus" NOT IN ('PAID', 'CANCELLED'))
+          OR (r."status" = 'AWAITING_PAYMENT' AND b."paymentStatus" = 'WRITTEN_OFF')
+          OR (r."status" = 'IN_REVIEW' AND b."paymentStatus" NOT IN ('PAID', 'CANCELLED', 'WRITTEN_OFF'))
           OR (r."status" IN ('AWAITING_PAYMENT', 'IN_REVIEW') AND b."paymentStatus" = 'CANCELLED')
           OR (r."status" = 'AWAITING_PAYMENT' AND r."citizenPaymentId" IS NULL AND t."feeAmount" = 0))
       ${byIds} ${byCitizen}
@@ -724,6 +730,11 @@ export class CitizenRequestsService {
       for (const row of rows) {
         if (row.paymentStatus === 'CANCELLED' && row.citizenPaymentId) {
           await cancelRequestOfCancelledBill(tx, this.audit, { billId: row.citizenPaymentId, actor: null });
+          continue;
+        }
+        if (row.paymentStatus === 'WRITTEN_OFF' && row.citizenPaymentId) {
+          // The fee was forgiven («شطب»): there is nothing to pay, so the request goes on to review.
+          await settleRequestOfWrittenOffBill(tx, this.audit, { billId: row.citizenPaymentId, actor: null });
           continue;
         }
         if (row.paymentStatus === null) {

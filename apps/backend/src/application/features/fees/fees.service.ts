@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
+  billOwesNothing,
+  billRemaining,
   citizenDisplayName,
   DEFAULT_EXCHANGE_TOLERANCE_PERCENT,
   DEFAULT_LARGE_EXCHANGE_THRESHOLD,
@@ -35,6 +37,7 @@ import type {
   PaymentMethod,
   SharedUnitBillView,
   SystemSettingsInput,
+  WriteOffBillInput,
 } from '@mechanization/shared-schemas';
 import {
   BACKDATE_WINDOW_DAYS,
@@ -66,6 +69,7 @@ import { uninhabitableUnitIds } from '../buildings/habitability';
 import { billingDayOfPeriod } from '../buildings/fee-exemption';
 import { checkResponsibleOwners, ownerBillingRules } from '../buildings/owner-billing';
 import { cancelRequestOfCancelledBill } from '../citizen-requests/cancelled-bill';
+import { settleRequestOfWrittenOffBill } from '../citizen-requests/written-off-bill';
 import { assertNotMergedAway } from '../citizens/merged-away';
 import { ConflictError, DomainError, ForbiddenError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { exchangeRuleChangeAllowed } from '../treasury/transfers.plan';
@@ -93,20 +97,28 @@ import { counterCredit, PaymentLedgerService, type Tender } from './payment-ledg
 import { creditsWallets, documentOccurredAt } from '../treasury/treasury.plan';
 import { assertLiveCollector } from './live-collector';
 import { AuditService, type AuditEntryInput } from '../audit/audit.service';
+import { billWriteOffRefusal, writeOffDecisionInFuture, writeOffView } from './bill-write-off';
 
 /**
  * Why a bill cannot be cancelled now, or null when it can — «إلغاء الفاتورة»'s
  * rule, applied by `cancelBill` to one bill and by `cancelNoticeBatch` to each
  * bill of a notice, so a batch never cancels what one press would refuse: one
- * already cancelled; one with a citizen's claim under review (the claim is
+ * already cancelled or written off («شطب»); one with a citizen's claim under review (the claim is
  * decided first); one with money on it, paid or part-paid (its receipts are
  * reversed first, so the money's own record is corrected before the debt is).
  */
 function billCancelRefusal(bill: {
   paymentStatus: string;
   paidAmount: number;
-}): 'BILL_ALREADY_CANCELLED' | 'PAYMENT_CLAIM_UNDER_REVIEW' | 'BILL_CANCEL_HAS_PAYMENTS' | null {
+}):
+  | 'BILL_ALREADY_CANCELLED'
+  | 'BILL_ALREADY_WRITTEN_OFF'
+  | 'PAYMENT_CLAIM_UNDER_REVIEW'
+  | 'BILL_CANCEL_HAS_PAYMENTS'
+  | null {
   if (bill.paymentStatus === 'CANCELLED') return 'BILL_ALREADY_CANCELLED';
+  // Forgiven by the council (0107): the debt was real, so it is never withdrawn as a mistake after.
+  if (bill.paymentStatus === 'WRITTEN_OFF') return 'BILL_ALREADY_WRITTEN_OFF';
   if (bill.paymentStatus === 'PENDING_REVIEW') return 'PAYMENT_CLAIM_UNDER_REVIEW';
   if (bill.paymentStatus === 'PAID' || bill.paidAmount > 0) return 'BILL_CANCEL_HAS_PAYMENTS';
   return null;
@@ -1029,6 +1041,21 @@ function daysInUtcMonth(year: number, month: number): number {
 }
 
 /**
+ * The year a billing period belongs to. A period key starts with its year (`2026-11`,
+ * `2026-H1`, `2026`); a one-off notice's key is `ONCE`, and its year is the due date's.
+ * Old debts cover the years before `arrearsCutoffYear`, and a notice must not bill one
+ * of them again (docs/old-debts-plan.md §8).
+ */
+export function periodYearOf(periodKey: string, dueDate: Date): number {
+  return periodKey === 'ONCE' ? dueDate.getUTCFullYear() : Number(periodKey.slice(0, 4));
+}
+
+/** True when a period of this notice falls before the cutoff; false while no cutoff is set. */
+export function periodBeforeCutoff(periodKey: string, dueDate: Date, cutoffYear: number | null): boolean {
+  return cutoffYear !== null && periodYearOf(periodKey, dueDate) < cutoffYear;
+}
+
+/**
  * Which billing period a date falls in, for a given recurrence.
  *
  * This string is the uniqueness key for an invoice, so its format is load
@@ -1755,6 +1782,26 @@ export class FeesService {
   }
 
   /**
+   * No year billed twice (old-debts task 6): a notice whose first period is a year before
+   * `system_settings.arrearsCutoffYear` is refused. Those years come in as old debts through
+   * an approved batch (docs/old-debts-plan.md), and a notice for one would bill it a second
+   * time. While no cutoff is set nothing is refused. An invalid date is the issue's own
+   * refusal (`FEE_DUE_DATE_INVALID`), not this one.
+   */
+  private async assertPeriodNotBeforeCutoff(db: Prisma.TransactionClient, frequency: string, dueDate: Date): Promise<void> {
+    if (Number.isNaN(dueDate.getTime())) return;
+    const cutoffYear = (await db.systemSettings.findFirst({ select: { arrearsCutoffYear: true } }))?.arrearsCutoffYear ?? null;
+    const periodKey = periodKeyFor(frequency, dueDate);
+    if (periodBeforeCutoff(periodKey, dueDate, cutoffYear)) {
+      throw new ValidationError({
+        code: 'FEE_PERIOD_BEFORE_ARREARS_CUTOFF',
+        message: 'This notice would bill a year that old debts cover; enter it as old debts instead',
+        params: { year: periodYearOf(periodKey, dueDate), cutoffYear: cutoffYear! },
+      });
+    }
+  }
+
+  /**
    * «معاينة قبل الإصدار»: what issuing this notice now would bill, without
    * billing anyone (Phase 4 of docs/fees-system-rearchitecture-specification.md).
    *
@@ -1766,6 +1813,8 @@ export class FeesService {
    * rather than refusing: telling the clerk so is the preview's job.
    */
   async previewNotice(input: FeeNoticePreviewInput): Promise<FeeNoticePreviewResult> {
+    // Refused here as the issue refuses it, so the clerk learns at the preview, not at the press.
+    await this.assertPeriodNotBeforeCutoff(this.db as Prisma.TransactionClient, input.frequency, new Date(input.dueDate));
     const citizenIds = await this.resolveTargets(input);
     // Judged on the day the issue would judge it, so the preview and the issue agree (0104).
     const plan = await this.planNotice(input, citizenIds, issueBillingDay(input.frequency, input.dueDate));
@@ -1883,6 +1932,8 @@ export class FeesService {
         message: 'The due date is not valid.',
       });
     }
+
+    await this.assertPeriodNotBeforeCutoff(this.db as Prisma.TransactionClient, input.frequency, dueDate);
 
     // The same reading the preview makes (`planNotice`): what the preview showed is what this bills.
     const { billable, shared, conflicts, unassessable, counts } = await this.planNotice(
@@ -2487,6 +2538,11 @@ export class FeesService {
 
     let noticesFailed = 0;
 
+    // Read once per run: the same for every notice (old-debts task 6).
+    const cutoffYear =
+      (await withConnectionRetry(() => this.db.systemSettings.findFirst({ select: { arrearsCutoffYear: true } })))
+        ?.arrearsCutoffYear ?? null;
+
     for (const notice of notices) {
       const periodKey = periodKeyFor(notice.frequency, now);
       const startedAt = new Date();
@@ -2513,6 +2569,14 @@ export class FeesService {
           continue;
         }
         if (notice.dueDate > now) {
+          await this.recordBillingRun(notice.id, periodKey, startedAt, { outcome: 'SKIPPED' });
+          continue;
+        }
+        // A year old debts cover is never billed by a notice (old-debts task 6): the period is skipped and said.
+        if (periodBeforeCutoff(periodKey, notice.dueDate, cutoffYear)) {
+          this.logger.warn(
+            `Recurring "${notice.title}" (${periodKey}): skipped, the period is before the old-debts cutoff year (${cutoffYear})`,
+          );
           await this.recordBillingRun(notice.id, periodKey, startedAt, { outcome: 'SKIPPED' });
           continue;
         }
@@ -3546,7 +3610,7 @@ export class FeesService {
       amount: Number(row.amount),
       paidAmount: Number(row.paidAmount),
       // A cancelled bill (0090) owes nothing.
-      remaining: row.paymentStatus === 'CANCELLED' ? 0 : Math.max(Number(row.amount) - Number(row.paidAmount), 0),
+      remaining: billRemaining({ paymentStatus: row.paymentStatus, amount: Number(row.amount), paidAmount: Number(row.paidAmount) }),
       currency: row.currency,
       dueDate: row.dueDate.toISOString(),
       // OVERDUE is derived on read rather than written by a nightly job: a
@@ -3668,6 +3732,13 @@ export class FeesService {
         message: 'This bill has been cancelled; it takes no payment.',
       });
     }
+    // Nor does one the council wrote off («شطب», 0107).
+    if (payment.paymentStatus === 'WRITTEN_OFF') {
+      throw new ConflictError({
+        code: 'PAYMENT_BILL_WRITTEN_OFF',
+        message: 'What was left on this bill has been written off; it takes no payment.',
+      });
+    }
     if (payment.paymentStatus === 'PAID') {
       throw new ConflictError({
         code: 'PAYMENT_ALREADY_PAID',
@@ -3741,7 +3812,7 @@ export class FeesService {
       amount: Number(row.amount),
       paidAmount: Number(row.paidAmount),
       // A cancelled bill (0090) owes nothing.
-      remaining: row.paymentStatus === 'CANCELLED' ? 0 : Math.max(Number(row.amount) - Number(row.paidAmount), 0),
+      remaining: billRemaining({ paymentStatus: row.paymentStatus, amount: Number(row.amount), paidAmount: Number(row.paidAmount) }),
       currency: row.currency,
       dueDate: row.dueDate.toISOString(),
       paymentMethod: row.paymentMethod,
@@ -4212,7 +4283,7 @@ export class FeesService {
       amount: Number(row.amount),
       paidAmount: Number(row.paidAmount),
       // A cancelled bill (0090) owes nothing.
-      remaining: row.paymentStatus === 'CANCELLED' ? 0 : Math.max(Number(row.amount) - Number(row.paidAmount), 0),
+      remaining: billRemaining({ paymentStatus: row.paymentStatus, amount: Number(row.amount), paidAmount: Number(row.paidAmount) }),
       currency: row.currency,
       dueDate: row.dueDate.toISOString(),
       /** When the bill was raised — the tie-break of «oldest first» in a bulk settlement. */
@@ -4225,6 +4296,8 @@ export class FeesService {
       /** «إلغاء الفاتورة» (0091): when, and why. Null on every bill still standing. */
       cancelledAt: row.cancelledAt?.toISOString() ?? null,
       cancellationReason: row.cancellationReason,
+      /** «شطب» (0107): when, how much, why and on which council decision. Null on a bill not written off. */
+      writeOff: writeOffView(row),
       /**
        * Exposed because `paidAt` is not the whole answer.
        *
@@ -4731,6 +4804,13 @@ export class FeesService {
         message: 'This bill has been cancelled; it takes no payment.',
       });
     }
+    // Nor does one the council wrote off («شطب», 0107).
+    if (payment.paymentStatus === 'WRITTEN_OFF') {
+      throw new ConflictError({
+        code: 'PAYMENT_BILL_WRITTEN_OFF',
+        message: 'What was left on this bill has been written off; it takes no payment.',
+      });
+    }
     if (payment.paymentStatus === 'PAID') {
       throw new ConflictError({
         code: 'CHARGE_ALREADY_PAID',
@@ -4904,9 +4984,9 @@ export class FeesService {
     const payment = checkout.payment;
 
     if (!callback.succeeded) {
-      // Nothing moved, and a bill settled or cancelled another way has nothing to undo; the
+      // Nothing moved, and a bill settled, cancelled or written off another way has nothing to undo; the
       // attempt is still over, so the checkout is closed rather than left OPEN for ever.
-      if (payment.paymentStatus === 'PAID' || payment.paymentStatus === 'CANCELLED') {
+      if (payment.paymentStatus === 'PAID' || billOwesNothing(payment.paymentStatus)) {
         await this.db.whishCheckout.updateMany({
           where: { id: checkout.id, state: 'OPEN' },
           data: { state: 'FAILED', settledAt: new Date(), providerTxnRef: callback.transactionRef ?? null },
@@ -5481,6 +5561,12 @@ export class FeesService {
       if (refusal === 'BILL_ALREADY_CANCELLED') {
         throw new ConflictError({ code: 'BILL_ALREADY_CANCELLED', message: 'This bill has already been cancelled.' });
       }
+      if (refusal === 'BILL_ALREADY_WRITTEN_OFF') {
+        throw new ConflictError({
+          code: 'BILL_ALREADY_WRITTEN_OFF',
+          message: 'What was left on this bill has been written off; a debt forgiven is not withdrawn after.',
+        });
+      }
       if (refusal === 'PAYMENT_CLAIM_UNDER_REVIEW') {
         throw new ConflictError({
           code: 'PAYMENT_CLAIM_UNDER_REVIEW',
@@ -5546,6 +5632,114 @@ export class FeesService {
   }
 
   /**
+   * «شطب» — what is left on a bill is written off on a council decision
+   * (0107, docs/old-debts-plan.md decision 10, docs/finance.md §3.8): an
+   * amnesty, a debt too old to collect, one that cannot be collected. The
+   * manager's alone (`BILL_WRITE_OFF_ROLES`).
+   *
+   * Not «إلغاء الفاتورة»: the debt was real. A part-paid bill keeps its
+   * receipts and its rest is written off; the amount is never sent, it is what
+   * is left when the row is locked, written by the database itself
+   * (`"amount" - "paidAmount"`), which holds it there
+   * (`paidAmount + writeOffAmount = amount`). No money moves: no ledger row, no
+   * wallet. Refused, behind the bill's lock, by `billWriteOffRefusal`. A municipal
+   * request's fee may be written off (the owner's decision of 2026-11-21): the
+   * forgiven fee leaves nothing to pay, so the request waiting on it goes on to
+   * review in the same transaction (`settleRequestOfWrittenOffBill`). A Tier 1 row
+   * in the same transaction.
+   */
+  async writeOffBill(paymentId: string, input: WriteOffBillInput, actor: { id: string; role: string }) {
+    const today = municipalToday();
+    if (writeOffDecisionInFuture(input.decisionDate, today)) {
+      throw new ValidationError({
+        code: 'BILL_WRITE_OFF_DECISION_IN_FUTURE',
+        message: 'The council decision is dated after today.',
+        params: { today },
+      });
+    }
+    const reason = input.reason.trim();
+    const decisionRef = input.decisionRef.trim();
+
+    const { citizenId, settledRequest } = await runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.db as Prisma.TransactionClient;
+      const [bill] = await this.ledger.lockInvoices(tx, [paymentId]);
+      if (!bill) {
+        throw new NotFoundError({ code: 'PAYMENT_NOT_FOUND', message: `Payment ${paymentId} was not found` });
+      }
+      const refusal = billWriteOffRefusal(bill);
+      if (refusal === 'BILL_ALREADY_WRITTEN_OFF') {
+        throw new ConflictError({ code: refusal, message: 'What was left on this bill has already been written off.' });
+      }
+      if (refusal === 'BILL_ALREADY_CANCELLED') {
+        throw new ConflictError({ code: refusal, message: 'This bill has been cancelled; it owes nothing to write off.' });
+      }
+      if (refusal === 'PAYMENT_CLAIM_UNDER_REVIEW') {
+        throw new ConflictError({
+          code: refusal,
+          message: 'A citizen payment claim on this bill is under review; confirm or reject it first.',
+        });
+      }
+      if (refusal === 'BILL_WRITE_OFF_NOTHING_LEFT') {
+        throw new ConflictError({ code: refusal, message: 'Nothing is left on this bill to write off.' });
+      }
+      const [row] = await tx.$queryRaw<
+        Array<{ writeOffAmount: string; invoiceNumber: string | null; title: string; periodKey: string | null }>
+      >`
+        UPDATE ${this.S}citizen_payments
+           SET "paymentStatus" = 'WRITTEN_OFF',
+               "writtenOffAt" = now(),
+               "writtenOffById" = ${actor.id}::uuid,
+               "writeOffAmount" = "amount" - "paidAmount",
+               "writeOffReason" = ${reason},
+               "writeOffDecisionRef" = ${decisionRef},
+               "writeOffDecisionDate" = ${input.decisionDate}::date,
+               "updatedAt" = now()
+         WHERE "id" = ${paymentId}::uuid
+           AND "paymentStatus" IN ('UNPAID', 'OVERDUE')
+        RETURNING "writeOffAmount"::text AS "writeOffAmount", "invoiceNumber", "title", "periodKey"
+      `;
+      if (!row) throw new Error(`writeOffBill: bill ${paymentId} passed the checks under its lock and was not written off`);
+
+      await this.auditTrail.recordInTransaction({
+        actorId: actor.id,
+        actorType: 'STAFF',
+        actorRole: actor.role as never,
+        action: 'FEE_BILL_WRITTEN_OFF',
+        entityType: 'Payment',
+        entityId: paymentId,
+        before: { paymentStatus: bill.paymentStatus, paidAmount: bill.paidAmount },
+        after: {
+          citizenId: bill.citizenId,
+          invoiceNumber: row.invoiceNumber,
+          title: row.title,
+          periodKey: row.periodKey,
+          amount: bill.amount,
+          writeOffAmount: Number(row.writeOffAmount),
+          currency: bill.currency,
+          reason,
+          decisionRef,
+          decisionDate: input.decisionDate,
+        },
+      });
+      // A municipal request waiting on this fee goes on to review: nothing is left to pay.
+      const request = await settleRequestOfWrittenOffBill(tx, this.auditTrail, { billId: paymentId, actor });
+      return { citizenId: bill.citizenId, settledRequest: request };
+    });
+
+    // For the caches that count what is owed, as a cancellation; the audit row is already written.
+    this.events.emit('payment.cancelled', {
+      tenantSlug: this.tenantContext.tenantSlug,
+      paymentId,
+      citizenId,
+      actorId: actor.id,
+      actorRole: actor.role,
+    });
+
+    // The request moved on with the bill, so the page can say so: null when it was no request's fee.
+    return { ...(await this.getPaymentById(paymentId)), settledRequest };
+  }
+
+  /**
    * «إلغاء الإشعار» — the manager withdraws a notice's bills, for the periods
    * he names, in one step (decisions D6 of 2026-10-23 and D12 of 2026-10-26,
    * docs/fees-system-rearchitecture-specification.md): a notice issued with the
@@ -5606,7 +5800,7 @@ export class FeesService {
           // The rows are locked; the status and the money are asked again all the same.
           where: {
             id: { in: cancellable.map((bill) => bill.id) },
-            paymentStatus: { notIn: ['CANCELLED', 'PAID', 'PENDING_REVIEW'] },
+            paymentStatus: { notIn: ['CANCELLED', 'WRITTEN_OFF', 'PAID', 'PENDING_REVIEW'] },
             paidAmount: 0,
           },
           data: { paymentStatus: 'CANCELLED', cancelledAt: new Date(), cancelledById: actor.id, cancellationReason: why },
@@ -5691,7 +5885,7 @@ export class FeesService {
    * A notice's periods as «إلغاء الإشعار» shows them before the press (D12):
    * each period's bills, how many the cancel would cancel and for how much, and
    * how many it would leave and why — by `billCancelRefusal`'s own order, so the
-   * figures are the cancel's: cancelled first, then a claim under review, then
+   * figures are the cancel's: cancelled first, then written off, then a claim under review, then
    * money taken. Newest period first.
    */
   async noticePeriods(noticeId: string): Promise<FeeNoticePeriodSummary[]> {
@@ -5708,23 +5902,25 @@ export class FeesService {
           withPayments: number;
           underReview: number;
           alreadyCancelled: number;
+          writtenOff: number;
           currency: string;
         }>
       >`
         SELECT p."periodKey",
                count(*)::int AS "bills",
                count(*) FILTER (
-                 WHERE p."paymentStatus"::text NOT IN ('CANCELLED', 'PENDING_REVIEW', 'PAID') AND p."paidAmount" = 0
+                 WHERE p."paymentStatus"::text NOT IN ('CANCELLED', 'WRITTEN_OFF', 'PENDING_REVIEW', 'PAID') AND p."paidAmount" = 0
                )::int AS "cancellable",
                COALESCE(sum(p.amount) FILTER (
-                 WHERE p."paymentStatus"::text NOT IN ('CANCELLED', 'PENDING_REVIEW', 'PAID') AND p."paidAmount" = 0
+                 WHERE p."paymentStatus"::text NOT IN ('CANCELLED', 'WRITTEN_OFF', 'PENDING_REVIEW', 'PAID') AND p."paidAmount" = 0
                ), 0)::float8 AS "cancellableAmount",
                count(*) FILTER (
-                 WHERE p."paymentStatus"::text NOT IN ('CANCELLED', 'PENDING_REVIEW')
+                 WHERE p."paymentStatus"::text NOT IN ('CANCELLED', 'WRITTEN_OFF', 'PENDING_REVIEW')
                    AND (p."paymentStatus"::text = 'PAID' OR p."paidAmount" > 0)
                )::int AS "withPayments",
                count(*) FILTER (WHERE p."paymentStatus"::text = 'PENDING_REVIEW')::int AS "underReview",
                count(*) FILTER (WHERE p."paymentStatus"::text = 'CANCELLED')::int AS "alreadyCancelled",
+               count(*) FILTER (WHERE p."paymentStatus"::text = 'WRITTEN_OFF')::int AS "writtenOff",
                min(p.currency) AS "currency"
           FROM ${this.S}citizen_payments p
          WHERE p."feeNoticeId" = ${noticeId}::uuid

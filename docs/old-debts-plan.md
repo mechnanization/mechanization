@@ -1,18 +1,18 @@
 # Old debts — «متأخرات سنوات سابقة» (code: `arrears`)
 
-Last verified against the code: `feat/arrears-import` (stacked on PRs #175 and #176), 2026-11-21.
+Last verified against the code: `feat/arrears-approval` (on `develop@c6e7462`), 2026-11-21; the cutoff year fixed once a batch is approved (`ARREARS_CUTOFF_LOCKED`, task 6), 2026-11-21.
 
-> **Status, 2026-11-21:** tasks 1–4 merged to `develop` (PRs #174–#177). Task 7, the export, import and
-> submit screens, built on `feat/arrears-import-ui` (on `develop@c6e7462`): «المتأخرات» (`fees/arrears`). It calls three routes task 5 has not built
-> — `GET arrears/batches`, `POST arrears/batches/:id/submit`, `POST arrears/lines` — whose paths are proposed in
-> `apps/frontend/lib/arrears-api.ts` alone; until task 5 serves them (or changes them there), the batch list, the
-> submit and the single line answer 404.
+> **Status, 2026-11-21:** tasks 1–4 merged to `develop` (PRs #174–#177). Task 5, the backend after the import — submit,
+> return, discard, approve and the «ARR-» bills, a single line, the link of a «للمطابقة» line, the cutoff year, and «دمج
+> ملفين» moving old debts — built on `feat/arrears-approval` (on `develop@c6e7462`). **Not built, with its reason:** the in-app backup (§8); and the old books'
+> totals per year, which stay read only until open-decisions §23.4 is decided.
+> Task 9, «شطب», built on `feat/arrears-write-off` (PR #179): [finance.md](finance.md) §3.8.
+> Task 7, the export, import and submit screens, built on `feat/arrears-import-ui` (PR #181): «المتأخرات»
+> (`fees/arrears`), on task 4's and task 5's routes.
 >
-> Task 8, approval, «للمطابقة» and the settings screens, built on `feat/arrears-approval-ui` (on `feat/arrears-import-ui@af7b2a4`): `fees/arrears/review`,
-> `/match` and `/settings`. **Nothing serves them yet.** Approve, return, discard, the batch's review, the unmatched
-> lines and the link are task 5's; the cutoff year and the books' totals have **no task**, and nothing writes
-> `system_settings.arrearsCutoffYear`, so every import is refused (`ARREARS_CUTOFF_NOT_SET`) until a route does.
-> The paths and the views the contract lacks are proposed in `apps/frontend/lib/arrears-api.ts` alone.
+> Task 8, approval, «للمطابقة» and the settings screens, built on `feat/arrears-approval-ui` (PR #182): `fees/arrears/review`,
+> `/match` and `/settings`, on task 5's routes. The cutoff year is set there (`PUT arrears/settings/cutoff`); the books'
+> totals per year are shown read-only until open-decisions §23.4 is decided.
 >
 > **Earlier status: tasks 1–4 in review, 2026-11-21, none merged.** This spec (PR #174); the migrations
 > `0107`/`0108` (`chore/migration-0107-old-debts`, PR #175); the contract in shared-schemas
@@ -86,7 +86,9 @@ There is also no bulk path: thousands of lines would be typed by hand.
     not habitable, with the reading's date. The accountant keeps or drops each one, and
     a drop keeps its reason.
 12. **Archived files** can receive old debt through an approved batch only. «تكليف مالي»
-    stays refused (`FEE_CITIZEN_ARCHIVED`).
+    stays refused (`FEE_CITIZEN_ARCHIVED`). Nor is an archived file chosen for a single line or for
+    the link of a «للمطابقة» line (the owner, 2026-11-21): both refuse it with the same code, and the
+    file is restored first.
 13. **Currency.** LBP at face value. Any other currency is refused.
 14. **Prescription («مرور الزمن»).** A debt older than 5 years is dropped (added
     2026-11-20). The default chosen, still to be confirmed (§2.3): the 5 years count
@@ -318,10 +320,17 @@ receipts read it as any bill, and the money reaches a wallet as any payment does
 - **`WRITTEN_OFF` in every read** (tasks 9, 10): any read that treats "not PAID" as owed
   must leave it out, as it leaves out CANCELLED.
 - **A fee notice for a year before the cutoff** is refused, so no year is billed twice
-  (task 6). Totals that report arrears include old-debt bills, and say so (task 6).
+  (task 6, built on `feat/arrears-fee-guards` (on `develop@c6e7462`): the preview and the issue refuse it, the recurring run skips the
+  period; [finance.md](finance.md) §3.6b). Totals that report arrears include old-debt bills (task 6, built: pinned by
+  `arrears-fee-guards.integration.spec.ts`; they already did, since no total reads a bill's notice). **Not built from
+  task 6:** the cutoff setting's lock once a batch is approved, which belongs with the setter on `feat/arrears-approval`.
 - **«دمج ملفين»** moves `arrears_lines.citizenId` and `arrears_batch_citizens`, and its
-  undo puts them back (task 5).
-- **The in-app backup** takes the new tables (task 5, a new snapshot version).
+  undo puts them back (task 5, built). A live line the kept file already holds for the same debt stays on the absorbed
+  file, as a colliding bill does.
+- **The in-app backup** does **not** take the new tables, and this is a change from this plan: restore empties every
+  table it carries, and the old-debts tables refuse a delete by trigger, as `payment_transactions` does, so adding them
+  would make every restore fail once a batch exists. It is the same open question the ledger waits on, a decision for a
+  person (docs/gotchas.md, "The in-app backup cannot restore old debts"). `BackupController` is unregistered today.
 - **Reports** (task 11): imported against the books per year, collected, written off,
   cancelled, prescribed; never mixed with the year's own revenue.
 
@@ -343,7 +352,7 @@ ClickUp list «Mechanization – Old debts (البقايا)». Hashem: 1–6 and
 | 2 | `0107` + `0108` (§3) | `chore/migration-0107-old-debts`, before any code |
 | 3 | The contract: `arrears.schema.ts`, role sets, `ARREARS` book, error codes | shared-schemas |
 | 4 | Export and the import dry run (§4.1–4.3, §6) | backend |
-| 5 | Submit, approve, return, discard; the bills; single line; link; merge; backup | backend |
+| 5 | Submit, approve, return, discard; the bills; single line; link; merge (built); backup (not built: §8); the cutoff year | backend |
 | 6 | The cutoff on fee notices; totals that include old debts | backend |
 | 7 | UI: export, import preview, submit | frontend |
 | 8 | UI: approval and «للمطابقة» | frontend |

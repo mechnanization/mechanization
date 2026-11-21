@@ -1068,8 +1068,9 @@ the municipality's legal adviser confirms them.
 
 ### 23.3 Maker ≠ checker on a batch
 
-Proposed, not confirmed. What the plan does now: nothing; the code `ARREARS_APPROVER_IS_PREPARER` is
-reserved. **Undecided:** whether SUPER_ADMIN may approve a batch they prepared. If not, with one
+Proposed, not confirmed. What the code does now (task 5, 2026-11-21): whoever prepared a batch may approve
+it. `ARREARS_APPROVER_IS_PREPARER` exists and `APP_CONFIG.arrears.approverMustDifferFromPreparer` turns it on,
+in one place, off today. **Undecided:** whether SUPER_ADMIN may approve a batch they prepared. If not, with one
 SUPER_ADMIN, an accountant prepares every batch.
 
 ### 23.4 The old books' total per year
@@ -1077,3 +1078,17 @@ SUPER_ADMIN, an accountant prepares every batch.
 Proposed, not confirmed. What the plan does now: `arrears_control_totals` ships empty with the
 migration; nothing writes or reads it. **Undecided:** whether SUPER_ADMIN enters each year's arrears
 total from the last «قطع الحساب», so the report shows how much is still to import against it.
+
+### 23.5 Writing off many bills at once
+
+**Later step.** «شطب» ([finance.md](finance.md) §3.8, task 9) is one bill at a time, on the bill's own
+page. A bulk write-off — «all penalties before 2020, by decision X» — is wanted eventually; it is not
+built or designed.
+
+### 23.6 A municipal request's fee may be written off (decided 2026-11-21)
+
+Decided by the owner (Abed, 2026-11-21): «شطب» works on a municipal request's fee too. What the code does:
+the request waiting on the bill goes on to «قيد المعالجة», as one whose fee was made free does
+(`REQUEST_FEE_WAIVED`), and the audit row is `REQUEST_FEE_WRITTEN_OFF`. Its `paidAt` is the moment the fee
+stopped being owed, because a database CHECK wants a stamp on a billed request in review; if a screen must tell
+"paid" from "forgiven", read the audit row, or give the request its own column in a later migration.

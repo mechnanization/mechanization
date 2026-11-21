@@ -391,7 +391,7 @@ function NoticePeriodsPicker({
       <ul className="divide-y rounded-lg border">
         {items.map((row) => {
           const id = `notice-period-${row.periodKey}`;
-          const left = row.withPayments + row.underReview + row.alreadyCancelled;
+          const left = row.withPayments + row.underReview + row.alreadyCancelled + row.writtenOff;
           return (
             <li key={row.periodKey} className="flex items-start gap-3 p-3">
               <Checkbox
@@ -420,6 +420,7 @@ function NoticePeriodsPicker({
                       withPayments: row.withPayments,
                       underReview: row.underReview,
                       alreadyCancelled: row.alreadyCancelled,
+                      writtenOff: row.writtenOff,
                     })}
                   </p>
                 ) : null}

@@ -90,6 +90,20 @@ export const PAYMENT_STATUS = ['UNPAID', 'PENDING_REVIEW', 'PAID', 'OVERDUE', 'C
 export const paymentStatusSchema = z.enum(PAYMENT_STATUS);
 export type PaymentStatus = (typeof PAYMENT_STATUS)[number];
 
+/**
+ * A bill that owes nothing more, whatever its amounts say: cancelled (0090) or
+ * written off (0107). On a written-off bill `amount − paidAmount` is the sum
+ * forgiven, never a sum owed, so a reader that subtracts asks this first.
+ */
+export function billOwesNothing(paymentStatus: string): boolean {
+  return paymentStatus === 'CANCELLED' || paymentStatus === 'WRITTEN_OFF';
+}
+
+/** What is still owed on a bill: 0 on a cancelled or written-off one, never below 0. */
+export function billRemaining(bill: { paymentStatus: string; amount: number; paidAmount: number }): number {
+  return billOwesNothing(bill.paymentStatus) ? 0 : Math.max(bill.amount - bill.paidAmount, 0);
+}
+
 export const PAYMENT_METHOD = ['CASH', 'WHISH_MONEY', 'COLLECTOR'] as const;
 export const paymentMethodSchema = z.enum(PAYMENT_METHOD);
 export type PaymentMethod = (typeof PAYMENT_METHOD)[number];
@@ -1564,13 +1578,15 @@ export interface FeeNoticePeriodSummary {
   periodKey: string;
   /** Every bill of the period, cancelled ones included. */
   bills: number;
-  /** What the cancel would cancel: nothing paid on it, no claim waiting, not cancelled. */
+  /** What the cancel would cancel: nothing paid on it, no claim waiting, not cancelled or written off. */
   cancellable: number;
   cancellableAmount: number;
   /** What it would leave, and why. */
   withPayments: number;
   underReview: number;
   alreadyCancelled: number;
+  /** Written off («شطب», 0107): forgiven, never cancelled. */
+  writtenOff: number;
   currency: string;
 }
 

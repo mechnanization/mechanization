@@ -6,6 +6,8 @@ import {
   normalizeDigits,
   type ArrearsExportResult,
   type ArrearsImportResult,
+  type ArrearsSingleLineInput,
+  type ArrearsTemplateCells,
   type ArrearsTemplateRow,
   type ExportArrearsTemplateInput,
   type ImportArrearsInput,
@@ -25,6 +27,7 @@ import {
   type ArrearsImportContext,
   type ArrearsMember,
   type ArrearsUnit,
+  type PlannedArrearsLine,
 } from './arrears-import.plan';
 
 type Actor = { id: string; role: string };
@@ -280,36 +283,7 @@ export class ArrearsService {
       }
 
       await tx.arrearsLine.deleteMany({ where: { batchId } });
-      try {
-        await tx.arrearsLine.createMany({
-          data: plan.lines.map((line) => ({
-            batchId,
-            citizenId: line.citizenId,
-            sourceName: line.sourceName,
-            rowKey: line.rowKey,
-            propertyNumber: line.propertyNumber,
-            unitId: line.unitId,
-            unitCode: line.unitCode,
-            year: line.year,
-            feeType: line.feeType,
-            feeTypeNote: line.feeTypeNote,
-            component: line.component,
-            amount: new Prisma.Decimal(line.amount),
-            dueDate: line.dueDate ? new Date(`${line.dueDate}T00:00:00.000Z`) : null,
-            oldReference: line.oldReference,
-            note: line.note,
-            decision: line.decision,
-            dropReason: line.dropReason,
-            flags: line.flags as Prisma.InputJsonObject,
-          })),
-        });
-      } catch (error) {
-        // The index's last word, for a writer that skipped the lock above.
-        if ((error as { code?: unknown }).code === 'P2002') {
-          throw new ConflictError({ code: 'ARREARS_LINE_DUPLICATE', message: 'A line of this file is already recorded in another batch' });
-        }
-        throw error;
-      }
+      await this.insertPlannedLines(tx, batchId, plan.lines);
 
       const { totals } = plan;
       await this.auditTrail.recordInTransaction({
@@ -331,6 +305,104 @@ export class ArrearsService {
       });
       return this.resultOf(batchId, false, context, plan, plan.lines.length);
     });
+  }
+
+  /**
+   * Writes planned lines into a DRAFT batch: the import's write, and the single
+   * line's. The one-live-line index has the last word, for a writer that skipped
+   * the `arrears-lines` lock the callers take.
+   */
+  async insertPlannedLines(tx: Db, batchId: string, lines: readonly PlannedArrearsLine[]): Promise<void> {
+    try {
+      await tx.arrearsLine.createMany({
+        data: lines.map((line) => ({
+          batchId,
+          citizenId: line.citizenId,
+          sourceName: line.sourceName,
+          rowKey: line.rowKey,
+          propertyNumber: line.propertyNumber,
+          unitId: line.unitId,
+          unitCode: line.unitCode,
+          year: line.year,
+          feeType: line.feeType,
+          feeTypeNote: line.feeTypeNote,
+          component: line.component,
+          amount: new Prisma.Decimal(line.amount),
+          dueDate: line.dueDate ? new Date(`${line.dueDate}T00:00:00.000Z`) : null,
+          oldReference: line.oldReference,
+          note: line.note,
+          decision: line.decision,
+          dropReason: line.dropReason,
+          flags: line.flags as Prisma.InputJsonObject,
+        })),
+      });
+    } catch (error) {
+      if ((error as { code?: unknown }).code === 'P2002') {
+        throw new ConflictError({ code: 'ARREARS_LINE_DUPLICATE', message: 'A line of this file is already recorded in another batch' });
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * One line found later, run through the import's own checks (`planArrearsImport`)
+   * as a file of one row: the cutoff, prescription, the unit on the رقم العقار,
+   * a file folded into another, a duplicate of a live line, war damage. A citizen
+   * stands in as row key 1 without joining any batch's set: «checked against the
+   * old books» is what an export means, and a single line says nothing of the
+   * rest of that person's debts. Not written.
+   */
+  async planSingleLine(tx: Db, input: ArrearsSingleLineInput): Promise<ReturnType<typeof planArrearsImport>> {
+    const settings = await tx.systemSettings.findFirst({ select: { arrearsCutoffYear: true } });
+    const members = new Map<number, ArrearsMember>();
+    const liveKeys = new Set<string>();
+    if (input.citizenId) {
+      const citizen = await tx.user.findFirst({
+        where: { id: input.citizenId, kind: 'CITIZEN' },
+        select: { id: true, isActive: true, ...NAME_SELECT },
+      });
+      if (!citizen) throw new NotFoundError({ code: 'CITIZEN_NOT_FOUND', message: `Citizen ${input.citizenId} was not found` });
+      const [merged, spells, live] = await Promise.all([
+        tx.citizenMerge.findFirst({ where: { absorbedId: citizen.id, undoneAt: null }, select: { absorbedId: true } }),
+        tx.unitOccupancy.findMany({ where: { citizenId: citizen.id, toDate: null }, select: { unitId: true } }),
+        tx.arrearsLine.findMany({
+          where: { citizenId: citizen.id, decision: 'KEEP', discardedAt: null },
+          select: { citizenId: true, propertyNumber: true, unitCode: true, year: true, feeType: true, component: true },
+        }),
+      ]);
+      members.set(1, {
+        citizenId: citizen.id,
+        name: citizenDisplayName(citizen),
+        archived: !citizen.isActive,
+        mergedAway: merged !== null,
+        heldUnitIds: new Set(spells.map((spell) => spell.unitId)),
+      });
+      for (const line of live) liveKeys.add(arrearsLineKey({ ...line, citizenId: line.citizenId! }));
+    }
+
+    const cells: ArrearsTemplateCells = {
+      ...(input.citizenId ? { rowKey: '1' } : { fullName: input.sourceName }),
+      propertyNumber: input.propertyNumber,
+      ...(input.unitCode ? { unitCode: input.unitCode } : {}),
+      year: String(input.year),
+      feeType: input.feeType,
+      ...(input.feeTypeNote ? { feeTypeNote: input.feeTypeNote } : {}),
+      [input.component === 'PRINCIPAL' ? 'principal' : 'penalty']: String(input.amount),
+      ...(input.dueDate ? { dueDate: input.dueDate } : {}),
+      ...(input.oldReference ? { oldReference: input.oldReference } : {}),
+      ...(input.note ? { note: input.note } : {}),
+    };
+    const context: ArrearsImportContext = {
+      today: municipalToday(),
+      cutoffYear: settings?.arrearsCutoffYear ?? null,
+      startRow: 1,
+      members,
+      units: await this.unitsNamed(tx, [input.unitCode ?? '']),
+      liveKeys,
+      drops: [],
+      controlTotal: null,
+    };
+    return planArrearsImport([cells], context);
   }
 
   /** The batch, which must be a DRAFT; locked for the write. */

@@ -1,5 +1,6 @@
 'use client';
 
+import { billOwesNothing } from '@mechanization/shared-schemas';
 import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
@@ -646,8 +647,8 @@ export default function FeesPage({
         meta: { align: 'end' },
         cell: ({ row }) => {
           const remaining = row.original.remaining;
-          // Settled or cancelled: nothing is owed on it either way.
-          const isClosed = row.original.paymentStatus === 'PAID' || row.original.paymentStatus === 'CANCELLED';
+          // Settled, cancelled or written off: nothing is owed on it either way.
+          const isClosed = row.original.paymentStatus === 'PAID' || billOwesNothing(row.original.paymentStatus);
           return (
             <Money
               amount={remaining}
@@ -692,8 +693,8 @@ export default function FeesPage({
           const payment = row.original;
           const isPaid = payment.paymentStatus === 'PAID';
           const isPendingReview = payment.paymentStatus === 'PENDING_REVIEW';
-          // A cancelled bill takes no payment (0090); the server refuses one anyway.
-          const isCancelled = payment.paymentStatus === 'CANCELLED';
+          // A cancelled or written-off bill takes no payment (0090, 0107); the server refuses one anyway.
+          const isCancelled = billOwesNothing(payment.paymentStatus);
           const isBusy = busyPaymentId === payment.id;
 
           return (

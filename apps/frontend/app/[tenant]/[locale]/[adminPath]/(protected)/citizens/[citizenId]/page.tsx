@@ -1,5 +1,6 @@
 'use client';
 
+import { billOwesNothing } from '@mechanization/shared-schemas';
 import { isValidElement, use, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
@@ -1625,9 +1626,9 @@ function FeesPanel({
   } | null>(null);
 
   const labels = getLabels(locale);
-  // A cancelled bill (CANCELLED) owes nothing.
+  // A cancelled bill, or one written off («شطب»), owes nothing.
   const outstanding = payments.filter(
-    (payment) => payment.paymentStatus !== 'PAID' && payment.paymentStatus !== 'CANCELLED',
+    (payment) => payment.paymentStatus !== 'PAID' && !billOwesNothing(payment.paymentStatus),
   );
   const [{ feesPage: page }, setFeesUrl] = useUrlState(FEES_URL);
   const setPage = useCallback((next: number) => setFeesUrl({ feesPage: next }), [setFeesUrl]);

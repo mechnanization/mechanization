@@ -463,6 +463,21 @@ export default function SettlePaymentPage({
     is said so, with his reason, as the citizen cash page says it — not shown as
     a form with nothing due and a button that stays off without a word.
   */
+  if (payment.paymentStatus === 'WRITTEN_OFF' && !settled) {
+    // Written off on a council decision («شطب», 0107): it takes no payment (`PAYMENT_BILL_WRITTEN_OFF`).
+    return (
+      <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
+        <HeaderBackLink fallbackHref={`${base}/fees`} label={t('back')} />
+        <PageHeader icon={Banknote} title={t('title')} />
+        <EmptyState
+          icon={Ban}
+          title={t('writeOff.writtenOffTitle')}
+          description={payment.writeOff?.reason ?? t('writeOff.writtenOffBody')}
+        />
+      </div>
+    );
+  }
+
   if (payment.paymentStatus === 'CANCELLED' && !settled) {
     return (
       <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
