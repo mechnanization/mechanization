@@ -10,6 +10,10 @@ Last verified against the code: `feat/arrears-approval` (on `develop@c6e7462`), 
 > Task 7, the export, import and submit screens, built on `feat/arrears-import-ui` (PR #181): «المتأخرات»
 > (`fees/arrears`), on task 4's and task 5's routes.
 >
+> Task 8, approval, «للمطابقة» and the settings screens, built on `feat/arrears-approval-ui` (PR #182): `fees/arrears/review`,
+> `/match` and `/settings`, on task 5's routes. The cutoff year is set there (`PUT arrears/settings/cutoff`); the books'
+> totals per year are shown read-only until open-decisions §23.4 is decided.
+>
 > **Earlier status: tasks 1–4 in review, 2026-11-21, none merged.** This spec (PR #174); the migrations
 > `0107`/`0108` (`chore/migration-0107-old-debts`, PR #175); the contract in shared-schemas
 > (`feat/arrears-contract`, PR #176, stacked on #175); the export and the import's dry run
