@@ -2046,6 +2046,8 @@
     "REQUEST_FEE_WAIVED": "طلب صار مجانياً فانتقل إلى الدراسة",
     "BUILDING_TYPE_CREATED": "إضافة نوع مبنى",
     "BUILDING_TYPE_UPDATED": "تعديل نوع مبنى",
+    "ARREARS_TEMPLATE_EXPORTED": "تصدير قالب ديون قديمة",
+    "ARREARS_LINES_IMPORTED": "استيراد ديون قديمة إلى مسودة",
     "NEWS_CATEGORY_CREATED": "إضافة قسم أخبار",
     "NEWS_CATEGORY_UPDATED": "تعديل قسم أخبار",
     "NEWS_PUBLISHER_CREATED": "إضافة ناشر أخبار",
@@ -2088,6 +2090,7 @@
     "CitizenRequest": "طلب معاملة",
     "RequestTypeSetting": "نوع معاملة",
     "BuildingType": "نوع مبنى",
+    "ArrearsBatch": "دفعة ديون قديمة",
     "NewsCategory": "قسم أخبار",
     "NewsPublisher": "ناشر أخبار",
     "NewsArticle": "خبر"

@@ -2046,6 +2046,8 @@
     "REQUEST_FEE_WAIVED": "Request made free, moved to review",
     "BUILDING_TYPE_CREATED": "Building type added",
     "BUILDING_TYPE_UPDATED": "Building type edited",
+    "ARREARS_TEMPLATE_EXPORTED": "Old-debts template exported",
+    "ARREARS_LINES_IMPORTED": "Old debts imported into a draft",
     "NEWS_CATEGORY_CREATED": "News category added",
     "NEWS_CATEGORY_UPDATED": "News category edited",
     "NEWS_PUBLISHER_CREATED": "News publisher added",
@@ -2088,6 +2090,7 @@
     "CitizenRequest": "Request",
     "RequestTypeSetting": "Request type",
     "BuildingType": "Building type",
+    "ArrearsBatch": "Old-debts batch",
     "NewsCategory": "News category",
     "NewsPublisher": "News publisher",
     "NewsArticle": "News article"
