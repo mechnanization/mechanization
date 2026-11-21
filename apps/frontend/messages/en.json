@@ -4476,6 +4476,8 @@
         }
       }
     },
+    "loadFailedTitle": "Could not load News",
+    "retry": "Try again",
     "fieldErrors": {
       "invalidCategoryKey": "This key is not valid. Use lowercase English letters and digits, with hyphens between words, like water-power.",
       "categoryKeyTaken": "This key is already used by another category. Choose a different one.",

@@ -85,6 +85,7 @@ export function ArticleEditor({
 }) {
   const t = useTranslations('news.articles.editor');
   const tList = useTranslations('news.articles');
+  const tNews = useTranslations('news');
   const labels = getLabels(locale);
   const router = useRouter();
   const toast = useToast();
@@ -243,7 +244,9 @@ export function ArticleEditor({
   if ((categories.error && !categories.data) || (publishers.error && !publishers.data)) {
     return (
       <ErrorState
-        description={categories.error ?? publishers.error ?? tList('loadError')}
+        title={tNews('loadFailedTitle')}
+        description={categories.refusal ?? publishers.refusal ?? categories.error ?? publishers.error ?? tList('loadError')}
+        retryLabel={tNews('retry')}
         onRetry={() => {
           void categories.refetch();
           void publishers.refetch();
