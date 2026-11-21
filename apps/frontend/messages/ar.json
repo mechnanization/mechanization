@@ -225,6 +225,7 @@
     "INTERNAL_ERROR": "حدث خطأ غير متوقع. يرجى المحاولة لاحقاً أو مراجعة البلدية.",
     "FEE_NO_MATCHING_CITIZENS": "لا يوجد مواطنون مطابقون لهذه الفئة — لن يتم إصدار أي إشعار",
     "FEE_DUE_DATE_INVALID": "تاريخ الاستحقاق غير صالح",
+    "FEE_PERIOD_BEFORE_ARREARS_CUTOFF": "سنة {year} قبل سنة بدء الفوترة ({cutoffYear}): تُدخل كمتأخرات سنوات سابقة، ولا يصدر بها إشعار حتى لا تُفوتر مرتين",
     "FEE_NOTICE_NOT_FOUND": "إشعار الرسم غير موجود",
     "PAYMENT_NOT_FOUND": "الدفعة غير موجودة",
     "PAYMENT_ALREADY_PAID": "هذه الدفعة مسدّدة بالفعل",

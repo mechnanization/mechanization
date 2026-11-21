@@ -415,6 +415,19 @@ a book of its own), `periodKey` is the debt's year, `arrearsLineId` links it to 
 its `assessment` is a one-line FLAT carrying the رقم العقار so «المستحق على عقار» holds a «براءة ذمة» back on it. Writing off
 what is left on one is §3.8 (task 9).
 
+### 3.6b Old debts and the fee system (task 6)
+
+- **No year is billed twice.** A year before `system_settings.arrearsCutoffYear` comes in as old debt
+  ([old-debts-plan.md](old-debts-plan.md)), so a fee notice may not bill it: the wizard's preview and issue refuse
+  a notice whose first period is such a year (`FEE_PERIOD_BEFORE_ARREARS_CUTOFF`), and the recurring run skips a
+  period before the cutoff, recording it SKIPPED. Nothing is refused while no cutoff is set. A «تكليف مباشر» is not
+  held to it.
+- **The totals are one rule.** An «ARR-» bill has no notice, and nothing that says what a person owes asks for one:
+  the register, the citizen's file, the dashboard, the fees summary, the portal and the overdue tab all count it
+  (an old debt is overdue from the day after 31 December of its year) and all leave out a CANCELLED bill.
+- **Order of payment.** A settlement of several bills pays the oldest due date first (`bulkSettlementOrder`), so
+  an old debt goes before a current bill whenever the money does not cover both.
+
 ### 3.7 Settling several bills at once — «تسديد الفواتير المحددة» (built 2026-10-10)
 
 From the owner's phase-4 brief (branch `feat/fees-bulk-settlement`). A cashier ticks several unpaid
