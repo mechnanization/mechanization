@@ -140,8 +140,7 @@ and today's date, which is a different document from the one the citizen was han
       reason — on every flagged line, `needsDecision` in `lib/arrears.ts`, the drops sent with the check and the write,
       the save held by `writeBlocker`, then the file's sum against the pages' total to the cent, `reconciles`, before
       «إرسال للاعتماد»), the batch list, and «سطر منفرد» (`single-line-dialog.tsx`, `CitizenPicker` with archived files
-      or the name as the books wrote it; key `arrears:line`). The calls are `lib/arrears-api.ts`: export and import are
-      task 4's; listing, submitting and a single line are task 5's and not built, their paths proposed there only)
+      or the name as the books wrote it; key `arrears:line`). The calls are `lib/arrears-api.ts`, every one served by `ArrearsController`)
     fees/exemptions («قائمة الإعفاء من الرسوم», 0104: FEE_EXEMPTION_READ_ROLES, turned away otherwise on the
       page; under the `/fees` nav row, whose group already has five rows, and linked from the fees page. The
       standing or lifted periods server-paged, a reason filter and the status in the URL, the unit open in a

@@ -14,14 +14,8 @@ import { apiFetch } from './api-client';
  * `ARREARS_PREPARE_ROLES`. Its own module, as `requests-api.ts` is, rather than
  * more of `api-client.ts`.
  *
- * **Built on the server (task 4):** `exportArrearsTemplate` and `importArrears`.
- *
- * **Not built yet (task 5):** listing batches, submitting one and entering a
- * single line. The contract (`arrears.schema.ts`) fixes their bodies and
- * `ArrearsBatchView`, not their paths: the paths below follow task 4's
- * (`batches/…`) and are this screen's proposal, kept here and nowhere else, so
- * task 5 either serves them or changes them in this one file. Until it lands
- * they answer 404 and the screen says it could not load or save.
+ * Every route here is served by `ArrearsController` (tasks 4 and 5), and every
+ * body and answer is a type from the shared contract (`arrears.schema.ts`).
  */
 
 const batch = (id: string) => `/arrears/batches/${encodeURIComponent(id)}`;
@@ -44,12 +38,12 @@ export function importArrears(tenant: string, token: string, batchId: string, in
   });
 }
 
-/** Task 5, proposed path. The batches, newest first. */
+/** The batches, newest first. */
 export function listArrearsBatches(tenant: string, token: string, signal?: AbortSignal) {
   return apiFetch<{ items: ArrearsBatchView[] }>(tenant, '/arrears/batches', { token, signal });
 }
 
-/** Task 5, proposed path. «إرسال للاعتماد»: the draft, with the hand-added total of the pages copied. */
+/** «إرسال للاعتماد»: the draft, with the hand-added total of the pages copied. */
 export function submitArrearsBatch(tenant: string, token: string, batchId: string, input: SubmitArrearsBatchInput) {
   return apiFetch<ArrearsBatchView>(tenant, `${batch(batchId)}/submit`, {
     token,
@@ -58,7 +52,7 @@ export function submitArrearsBatch(tenant: string, token: string, batchId: strin
   });
 }
 
-/** Task 5, proposed path. One line found later: a one-line batch through the same checks and approval. */
+/** One line found later: a one-line batch through the same checks and approval. */
 export function addArrearsSingleLine(tenant: string, token: string, input: ArrearsSingleLineInput) {
   return apiFetch<ArrearsBatchView>(tenant, '/arrears/lines', {
     token,
