@@ -416,7 +416,7 @@ export const ERROR_CODES = [
   // A year that is not before the cutoff (`params.year`, `params.cutoffYear`): the system bills it.
   'ARREARS_YEAR_NOT_BEFORE_CUTOFF',
   // The same citizen, رقم العقار, unit, year, fee and component already has a live line
-  // (`params.year`, `params.propertyNumber`).
+  // (the index's last word; the import names the line itself in its verdicts).
   'ARREARS_LINE_DUPLICATE',
   // The batch is no longer a draft (`params.status`): only a draft takes lines or is submitted.
   'ARREARS_BATCH_NOT_DRAFT',

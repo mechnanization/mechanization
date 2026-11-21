@@ -528,7 +528,7 @@
     "BUILDING_TYPE_STRUCTURE_IN_USE": "{count, plural, one {مبنى واحد مسجَّل} two {مبنيان مسجَّلان} few {{count} مبانٍ مسجَّلة} many {{count} مبنى مسجَّلاً} other {{count} مبنى مسجَّل}} بهذا النوع، فلا تتغيّر منشأته. أضف نوعاً جديداً بدلاً من ذلك",
     "ARREARS_CUTOFF_NOT_SET": "لم تُحدَّد سنة بدء الفوترة بعد، فلا تُستورد ديون قديمة. يحدّدها مدير النظام في الإعدادات",
     "ARREARS_YEAR_NOT_BEFORE_CUTOFF": "سنة {year} ليست قبل سنة بدء الفوترة ({cutoffYear}): يفوترها النظام، فلا تدخل ديناً قديماً",
-    "ARREARS_LINE_DUPLICATE": "هذا الدين مسجّل من قبل: نفس المواطن ورقم العقار {propertyNumber} والسنة {year} ونوع الرسم",
+    "ARREARS_LINE_DUPLICATE": "هذا الدين مسجّل من قبل في دفعة أخرى: المواطن نفسه ورقم العقار والوحدة والسنة ونوع الرسم",
     "ARREARS_BATCH_NOT_DRAFT": "هذه الدفعة لم تعد مسودة ({status})، فلا تُعدَّل ولا تُرسل",
     "ARREARS_APPROVER_IS_PREPARER": "من أعدّ الدفعة لا يعتمدها. يعتمدها مدير آخر",
     "ARREARS_CONTROL_TOTAL_MISMATCH": "مجموع الصفحات ({controlTotal, number}) لا يساوي مجموع أسطر الدفعة ({linesTotal, number}). راجع الصفحات أو الملف ثم أعد الإرسال",
