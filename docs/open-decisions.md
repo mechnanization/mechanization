@@ -1040,3 +1040,40 @@ count differs in both currencies until he exchanges them.
 
 **Undecided:** allow `tendered` with method COLLECTOR, crediting each currency to that collector's
 custody wallet, or keep collectors on the bill's currency.
+
+## 23. Old debts: what the municipality must answer (2026-11-21)
+
+Plan and the fourteen decisions already taken: [old-debts-plan.md](old-debts-plan.md).
+Nothing is built yet; these change what the code does once it is.
+
+### 23.1 The fee types on the template
+
+What the plan does now: a provisional list from Law 60/1988 (القيمة التأجيرية, صيانة المجاري
+والأرصفة, إنشاء الأرصفة والمجاري, النظافة) and `OTHER` with a description
+([old-debts-plan.md](old-debts-plan.md) §5.2). The column is text, so the final list needs no
+migration.
+
+**Undecided:** the list the municipality's books actually use. Ask its accountant, with a photo of
+one page of the old books.
+
+### 23.2 When prescription («مرور الزمن») starts, and what interrupts it
+
+Decided (Hashem, 2026-11-20): a debt older than 5 years is dropped (decision 14). What the plan does
+now: the 5 years count from 31 December of the debt's year, so a line of year *Y* is dropped from
+1 January of *Y* + 6, and the dry run marks it DROP with the reason «مرور الزمن»; no bill is raised.
+
+**Undecided:** whether the 5 years count from each debt's due date instead, and whether a notice or a
+demand to pay interrupts them. The 5 years themselves could not be verified in Lebanese law online:
+the municipality's legal adviser confirms them.
+
+### 23.3 Maker ≠ checker on a batch
+
+Proposed, not confirmed. What the plan does now: nothing; the code `ARREARS_APPROVER_IS_PREPARER` is
+reserved. **Undecided:** whether SUPER_ADMIN may approve a batch they prepared. If not, with one
+SUPER_ADMIN, an accountant prepares every batch.
+
+### 23.4 The old books' total per year
+
+Proposed, not confirmed. What the plan does now: `arrears_control_totals` ships empty with the
+migration; nothing writes or reads it. **Undecided:** whether SUPER_ADMIN enters each year's arrears
+total from the last «قطع الحساب», so the report shows how much is still to import against it.

@@ -231,6 +231,9 @@ wallet today.
   wallet**.
 - Old payments before go-live are **not** replayed. History would be guesswork (the
   `0017` backfill already collapsed instalments into one row).
+- An opening balance is cash the municipality **holds**. Money citizens **owe** from the
+  years before the system («متأخرات سنوات سابقة») is not one: it comes in as bills, never
+  as a wallet entry ([old-debts-plan.md](old-debts-plan.md)).
 
 ### 3.3 Auto-credit from citizen payments
 
