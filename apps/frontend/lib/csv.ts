@@ -1,7 +1,11 @@
 import {
+  ARREARS_TEMPLATE_COLUMNS,
   IMPORT_COLUMNS,
   IMPORT_HEADER_TO_KEY,
   normalizeArabic,
+  type ArrearsTemplateCells,
+  type ArrearsTemplateColumnKey,
+  type ArrearsTemplateRow,
   type ImportColumnKey,
   type ImportRow,
 } from '@mechanization/shared-schemas';
@@ -242,6 +246,95 @@ export function buildCitizenTemplate(): string {
   // Leading BOM so Excel opens it as UTF-8 rather than mojibake — the same
   // BOM `stripBom` removes on the way back in.
   return `﻿${header}\n${row}\n`;
+}
+
+/**
+ * The old-debts template («متأخرات سنوات سابقة», docs/old-debts-plan.md §5): the
+ * header row in `ARREARS_TEMPLATE_COLUMNS` order, then one row per citizen ×
+ * unit the export returned, with only what the export fills in — the row key,
+ * the name, رقم العقار and the unit code. The accountant fills the rest from the
+ * old books. Every cell through `csvCell`: a name typed into this system must
+ * not run a formula on the municipality's machine.
+ */
+export function buildArrearsTemplate(rows: readonly ArrearsTemplateRow[]): string {
+  const header = ARREARS_TEMPLATE_COLUMNS.map((column) => column.header);
+  const body = rows.map((row) =>
+    ARREARS_TEMPLATE_COLUMNS.map((column) => {
+      if (column.key === 'rowKey') return String(row.rowKey);
+      if (column.key === 'fullName') return row.fullName;
+      if (column.key === 'propertyNumber') return row.propertyNumber ?? '';
+      if (column.key === 'unitCode') return row.unitCode ?? '';
+      return '';
+    }),
+  );
+  return buildCsv(header, body);
+}
+
+/**
+ * The columns an old-debts file cannot be read without: who (the row key, or a
+ * name for a person not in the template), where, and the debt itself.
+ */
+const ARREARS_REQUIRED_COLUMNS: readonly ArrearsTemplateColumnKey[] = [
+  'rowKey',
+  'fullName',
+  'propertyNumber',
+  'year',
+  'feeType',
+  'principal',
+];
+
+export interface ParsedArrearsCsv {
+  /** Rows keyed by template column, header excluded, as typed: `rows[i]` is the file's row i + 1. */
+  rows: ArrearsTemplateCells[];
+  unknownHeaders: string[];
+  /** Required columns the file lacks, by their Arabic header. */
+  missingColumns: string[];
+}
+
+/**
+ * Reads a filled old-debts template. Headers are matched through
+ * `normalizeArabic`, in any order, as the citizen import's are. Each row keeps
+ * its own number in the file, so the server's verdicts name the line the
+ * accountant sees in Excel.
+ */
+export function parseArrearsCsv(text: string): ParsedArrearsCsv {
+  const cleaned = stripBom(text).trim();
+  const empty: ParsedArrearsCsv = { rows: [], unknownHeaders: [], missingColumns: [] };
+  if (cleaned === '') return empty;
+
+  const firstLineEnd = cleaned.indexOf('\n');
+  const headerLine = firstLineEnd < 0 ? cleaned : cleaned.slice(0, firstLineEnd);
+  const table = parseRows(cleaned, detectDelimiter(headerLine));
+  if (table.length === 0) return empty;
+
+  const lookup = new Map(
+    ARREARS_TEMPLATE_COLUMNS.map((column) => [normalizeArabic(column.header), column.key] as const),
+  );
+  const [headerCells, ...bodyRows] = table;
+  const unknownHeaders: string[] = [];
+  const columnKeys = headerCells.map((header) => {
+    const key = lookup.get(normalizeArabic(header));
+    if (!key && header.trim() !== '') unknownHeaders.push(header.trim());
+    return key;
+  });
+  const present = new Set(columnKeys.filter(Boolean));
+  const missingColumns = ARREARS_TEMPLATE_COLUMNS.filter(
+    (column) => ARREARS_REQUIRED_COLUMNS.includes(column.key) && !present.has(column.key),
+  ).map((column) => column.header);
+
+  const rows: ArrearsTemplateCells[] = bodyRows.map((cells) => {
+    const row: ArrearsTemplateCells = {};
+    columnKeys.forEach((key, column) => {
+      if (!key) return;
+      const value = (cells[column] ?? '').trim();
+      if (value !== '') row[key] = value;
+    });
+    return row;
+  });
+  // Trailing empty rows are Excel's, not the accountant's; one in the middle is sent as it is (the
+  // server reads it as nothing), so every row keeps the number Excel shows it under.
+  while (rows.length > 0 && Object.keys(rows[rows.length - 1]!).length === 0) rows.pop();
+  return { rows, unknownHeaders, missingColumns };
 }
 
 /** Triggers a client-side download without a round trip to the server. */

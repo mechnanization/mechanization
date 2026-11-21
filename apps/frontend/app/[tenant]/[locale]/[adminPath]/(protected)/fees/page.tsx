@@ -4,6 +4,7 @@ import { billOwesNothing } from '@mechanization/shared-schemas';
 import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
+  ARREARS_PREPARE_ROLES,
   BULK_SETTLE_ROLES,
   FEE_EXEMPTION_READ_ROLES,
   PAYMENT_SETTLE_ROLES,
@@ -24,6 +25,7 @@ import {
   Banknote,
   CheckCircle2,
   FileWarning,
+  History,
   Megaphone,
   ShieldCheck,
   Loader2,
@@ -210,6 +212,9 @@ export default function FeesPage({
   /** «فواتير تأثّرت بتصحيحات» — `PAYMENT_REVIEW_READ_ROLES`, as the nav row of `/fees/corrections`. */
   const canReadCorrections = hasRole(PAYMENT_REVIEW_READ_ROLES, role);
   const canReadExemptions = hasRole(FEE_EXEMPTION_READ_ROLES, role);
+  const tArrears = useTranslations('arrears');
+  /** «المتأخرات» (old debts, task 7): the accountant and the manager prepare them. */
+  const canPrepareArrears = hasRole(ARREARS_PREPARE_ROLES, role);
   /** «تسجيل دفعة» — `PAYMENT_SETTLE_ROLES` (`SUPER_ADMIN`, `ACCOUNTANT`, `COLLECTOR`). */
   const canSettle = hasRole(PAYMENT_SETTLE_ROLES, role);
   /** «تسديد الفواتير المحددة» — `BULK_SETTLE_ROLES`, as the route's `@Roles`; the server is the enforcement. */
@@ -809,6 +814,13 @@ export default function FeesPage({
               <Link href={`${base}/fees/exemptions`} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
                 <ShieldCheck className="size-4" aria-hidden />
                 {tExemptions('link')}
+              </Link>
+            ) : null}
+
+            {canPrepareArrears ? (
+              <Link href={`${base}/fees/arrears`} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+                <History className="size-4" aria-hidden />
+                {tArrears('link')}
               </Link>
             ) : null}
 
