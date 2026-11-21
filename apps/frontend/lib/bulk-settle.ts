@@ -1,4 +1,4 @@
-import { BULK_SETTLE_MAX_BILLS } from '@mechanization/shared-schemas';
+import { BULK_SETTLE_MAX_BILLS, type BillArrearsView } from '@mechanization/shared-schemas';
 import type { AdminPaymentItem, CitizenProfilePayment } from './api-client';
 import { heldInDoubt } from './request-id';
 
@@ -32,6 +32,8 @@ export interface SelectedBill {
    * the tie to the id (`bulkSettlementOrder`).
    */
   createdAt: string;
+  /** «متأخرات سنوات سابقة»: the line of an old debt, so the dialog marks it (task 10); null on any other bill. */
+  arrears: BillArrearsView | null;
 }
 
 /**
@@ -51,6 +53,7 @@ export function fromAdminPayment(row: AdminPaymentItem): SelectedBill {
     remaining: row.remaining,
     dueDate: row.dueDate,
     createdAt: row.createdAt ?? row.dueDate,
+    arrears: row.arrears ?? null,
   };
 }
 
@@ -66,6 +69,7 @@ export function fromCitizenPayment(citizen: { id: string; fullName: string }, ro
     remaining: row.remaining,
     dueDate: row.dueDate,
     createdAt: row.dueDate,
+    arrears: row.arrears ?? null,
   };
 }
 

@@ -22,6 +22,7 @@ import type {
   WhishGateway,
 } from '../../../domain/interfaces/whish-gateway.interface';
 import type {
+  BillArrearsView,
   CreateFeeNotice,
   DeclarePayment,
   FeeAssessment,
@@ -98,6 +99,7 @@ import { creditsWallets, documentOccurredAt } from '../treasury/treasury.plan';
 import { assertLiveCollector } from './live-collector';
 import { AuditService, type AuditEntryInput } from '../audit/audit.service';
 import { billWriteOffRefusal, writeOffDecisionInFuture, writeOffView } from './bill-write-off';
+import { ARREARS_LINE_SELECT, arrearsView } from './bill-arrears';
 
 /**
  * Why a bill cannot be cancelled now, or null when it can — «إلغاء الفاتورة»'s
@@ -1188,6 +1190,10 @@ export interface PaymentSummary {
    * bill. Paid at the office only, until a claim on one can name its claimant.
    */
   sharedUnit: SharedUnitBillView | null;
+  /** «ARR-2611-0001» on an old debt (task 10), «INV-…» on a bill the system raised, null before 0079. */
+  invoiceNumber: string | null;
+  /** The year, the fee and the رقم العقار of an old debt, without the old books' reference; null on any other bill. */
+  arrears: BillArrearsView | null;
 }
 
 /**
@@ -3599,13 +3605,14 @@ export class FeesService {
       this.db.citizenPayment.findMany({
         where: billsOwedBy(citizenId),
         orderBy: [{ paymentStatus: 'asc' }, { dueDate: 'asc' }],
-        include: { feeNotice: { select: { frequency: true } }, ...SHARED_BILL_INCLUDE },
+        include: { feeNotice: { select: { frequency: true } }, arrearsLine: ARREARS_LINE_SELECT, ...SHARED_BILL_INCLUDE },
       }),
     );
 
     const now = new Date();
     return rows.map((row) => ({
       id: row.id,
+      invoiceNumber: row.invoiceNumber,
       title: row.title,
       amount: Number(row.amount),
       paidAmount: Number(row.paidAmount),
@@ -3625,6 +3632,8 @@ export class FeesService {
       frequency: row.feeNotice?.frequency ?? null,
       assessment: (row.assessment as FeeAssessment | null) ?? null,
       sharedUnit: sharedUnitView(row),
+      // The portal's own list: the old books' reference stays with the municipality.
+      arrears: arrearsView(row, 'CITIZEN'),
     }));
   }
 
@@ -4260,6 +4269,8 @@ export class FeesService {
     },
     collectedBy: { select: { firstName: true, lastName: true } },
     feeNotice: { select: { frequency: true } },
+    // An old debt's line (task 10): its year, fee and old ledger reference.
+    arrearsLine: ARREARS_LINE_SELECT,
     ...SHARED_BILL_INCLUDE,
     // On a shared unit bill (0099): the debtor who last paid on it, whose file the receipt is reprinted from.
     transactions: {
@@ -4298,6 +4309,8 @@ export class FeesService {
       cancellationReason: row.cancellationReason,
       /** «شطب» (0107): when, how much, why and on which council decision. Null on a bill not written off. */
       writeOff: writeOffView(row),
+      /** «متأخرات سنوات سابقة» (task 10): the line behind an «ARR-» bill, with the old ledger reference; null on any other bill. */
+      arrears: arrearsView(row, 'STAFF'),
       /**
        * Exposed because `paidAt` is not the whole answer.
        *

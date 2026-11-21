@@ -4285,6 +4285,18 @@
     "area": "{area} م²",
     "close": "إغلاق"
   },
+  "arrearsBill": {
+    "tag": "متأخرات سنوات سابقة",
+    "penalty": "غرامة",
+    "summary": "{year} · {fee}",
+    "property": "عقار {propertyNumber}{hasUnit, select, yes { · وحدة {unitCode}} other {}}",
+    "oldReference": "مرجع الدفاتر القديمة: {reference}",
+    "groupTitle": "متأخرات سنوات سابقة",
+    "groupYear": "متأخرات سنة {year}",
+    "groupHint": "رسوم سُجّلت في دفاتر البلدية قبل بدء النظام ولم تُسدَّد. تُسدَّد كأي فاتورة.",
+    "cancelHint": "إذا أثبت المواطن أنه سدّدها من قبل، اذكر في السبب رقم الإيصال القديم وتاريخه.",
+    "cancelPlaceholder": "مثلاً: سدّدها المواطن سابقاً، إيصال رقم 123 في دفتر 7 بتاريخ 2019/05/12"
+  },
   "arrears": {
     "title": "متأخرات سنوات سابقة",
     "link": "المتأخرات",

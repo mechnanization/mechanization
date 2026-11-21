@@ -296,6 +296,29 @@ export interface BillWriteOffView {
   decisionDate: string;
 }
 
+/**
+ * An old-debt bill's line as the screens read it (task 10): what the bill is
+ * for, in fields rather than in its Arabic `title`, so each screen words it in
+ * the page's language and groups by year. Null on every bill that is not an
+ * «ARR-» bill. The bill's own number is its `invoiceNumber`.
+ */
+export interface BillArrearsView {
+  /** The debt's year, which is also the bill's `periodKey`. */
+  year: number;
+  feeType: ArrearsFeeType;
+  /** What «رسم آخر» was, when `feeType` is `OTHER`. */
+  feeTypeNote: string | null;
+  /** `PENALTY` is a line of its own, carried over from the books, never added by the system. */
+  component: ArrearsComponent;
+  propertyNumber: string;
+  unitCode: string | null;
+  /**
+   * The old books' reference (page, receipt book). Staff only: the portal's
+   * readers set it to null, because it is the municipality's own bookkeeping.
+   */
+  oldReference: string | null;
+}
+
 /** The cutoff: old debt is a year before this one. `null` clears it, and every import is refused. */
 export const arrearsCutoffSchema = z.object({
   arrearsCutoffYear: z.number().int().min(2000).max(2100).nullable(),

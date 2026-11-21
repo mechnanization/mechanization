@@ -9,6 +9,7 @@ import { Money } from '@/components/ui/money';
 import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ActionTooltip } from '@/components/ui/tooltip';
+import { ArrearsBillMark } from '@/components/arrears-bill-mark';
 import { MoneyList } from './money-list';
 
 /**
@@ -60,7 +61,10 @@ export function BulkBillsTable({
                     t('noInvoice')
                   )}
                 </TableCell>
-                <TableCell className="min-w-32 whitespace-normal py-2">{bill.title}</TableCell>
+                <TableCell className="min-w-32 whitespace-normal py-2">
+                  {bill.title}
+                  {bill.arrears ? <ArrearsBillMark arrears={bill.arrears} className="mt-1 flex" /> : null}
+                </TableCell>
                 <TableCell className="py-2 text-xs tabular-nums">{formatDate(bill.dueDate)}</TableCell>
                 <TableCell className="py-2 text-end">
                   <Money amount={bill.remaining} currency={bill.currency} locale={locale} exact />
