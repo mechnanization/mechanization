@@ -9,6 +9,7 @@ import {
   discardArrearsBatchSchema,
   getLabels,
   returnArrearsBatchSchema,
+  type ArrearsBatchTotalRow,
 } from '@mechanization/shared-schemas';
 import { logApiError } from '@/lib/api-client';
 import {
@@ -16,7 +17,6 @@ import {
   discardArrearsBatch,
   getArrearsBatchReview,
   returnArrearsBatch,
-  type ArrearsBatchTotalRow,
 } from '@/lib/arrears-api';
 import { formatLbp } from '@/lib/currency';
 import { useStaffQuery } from '@/lib/use-staff-query';

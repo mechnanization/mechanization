@@ -5,13 +5,9 @@ import { useTranslations } from 'next-intl';
 import { useQueryClient } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
 import { Loader2, Save, Settings2 } from 'lucide-react';
-import {
-  arrearsControlTotalSchema,
-  arrearsCutoffSchema,
-  type ArrearsControlTotalInput,
-} from '@mechanization/shared-schemas';
+import { arrearsCutoffSchema, type ArrearsControlTotalInput } from '@mechanization/shared-schemas';
 import { ApiRequestError, logApiError } from '@/lib/api-client';
-import { getArrearsSettings, saveArrearsControlTotal, saveArrearsCutoff } from '@/lib/arrears-api';
+import { getArrearsSettings, saveArrearsCutoff } from '@/lib/arrears-api';
 import { ARREARS_APPROVE_ROLES, hasRole } from '@/lib/staff-roles';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
@@ -31,9 +27,10 @@ import { useToast } from '@/components/ui/toast';
 /**
  * Old debts' settings (task 8), the manager's (`ARREARS_APPROVE_ROLES`): the
  * cutoff year — old debt is a year before it; while none is set every import is
- * refused (decision 5) — and the old books' arrears total per year, which the
- * report reads against what was imported (proposed, open-decisions §23.4).
- * No route saves either yet; the paths are proposed in `lib/arrears-api.ts`.
+ * refused (decision 5), and once a batch is approved it is fixed
+ * (`ARREARS_CUTOFF_LOCKED`) — and the old books' arrears total per year, shown
+ * read-only: whether the municipality enters them is open-decisions §23.4, so
+ * nothing here writes them and no route takes them.
  */
 export default function ArrearsSettingsPage({
   params,
@@ -48,9 +45,7 @@ export default function ArrearsSettingsPage({
   const { token, user } = useStaffSession(tenant, base);
   const canEdit = user ? hasRole(ARREARS_APPROVE_ROLES, user.role) : false;
   const [cutoff, setCutoff] = useState<string | null>(null);
-  const [year, setYear] = useState('');
-  const [amount, setAmount] = useState('');
-  const [busy, setBusy] = useState<'cutoff' | 'total' | null>(null);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef(false);
 
@@ -66,32 +61,23 @@ export default function ArrearsSettingsPage({
   const cutoffInput = arrearsCutoffSchema.safeParse({
     arrearsCutoffYear: shownCutoff.trim() === '' ? null : Number(shownCutoff),
   });
-  const totalInput = arrearsControlTotalSchema.safeParse({
-    year: year.trim() === '' ? undefined : Number(year),
-    amount: amount.trim() === '' ? undefined : Number(amount.replace(/,/g, '')),
-  });
 
-  const save = async (what: 'cutoff' | 'total') => {
-    if (!token || inFlight.current) return;
+  const saveCutoff = async () => {
+    if (!token || inFlight.current || !cutoffInput.success) return;
     inFlight.current = true;
-    setBusy(what);
+    setBusy(true);
     setError(null);
     try {
-      if (what === 'cutoff' && cutoffInput.success) await saveArrearsCutoff(tenant, token, cutoffInput.data);
-      if (what === 'total' && totalInput.success) await saveArrearsControlTotal(tenant, token, totalInput.data);
-      toast.success(t(what === 'cutoff' ? 'cutoffSaved' : 'totalSaved'));
-      if (what === 'cutoff') setCutoff(null);
-      else {
-        setYear('');
-        setAmount('');
-      }
+      await saveArrearsCutoff(tenant, token, cutoffInput.data);
+      toast.success(t('cutoffSaved'));
+      setCutoff(null);
       await queryClient.invalidateQueries({ queryKey: ['arrears-settings', tenant] });
     } catch (caught) {
       logApiError(caught);
       setError(caught instanceof ApiRequestError ? caught.message : t('saveFailed'));
     } finally {
       inFlight.current = false;
-      setBusy(null);
+      setBusy(false);
     }
   };
 
@@ -141,8 +127,8 @@ export default function ArrearsSettingsPage({
                     onChange={(event) => setCutoff(event.target.value)}
                   />
                 </Field>
-                <Button onClick={() => void save('cutoff')} disabled={!cutoffInput.success || busy !== null || cutoff === null}>
-                  {busy === 'cutoff' ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Save className="size-4" aria-hidden />}
+                <Button onClick={() => void saveCutoff()} disabled={!cutoffInput.success || busy || cutoff === null}>
+                  {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Save className="size-4" aria-hidden />}
                   {t('save')}
                 </Button>
               </div>
@@ -153,18 +139,6 @@ export default function ArrearsSettingsPage({
             <CardContent className="space-y-4 p-5">
               <h2 className="text-base font-semibold">{t('totalsTitle')}</h2>
               <p className="text-sm text-muted-foreground">{t('totalsBody')}</p>
-              <div className="flex flex-wrap items-end gap-3">
-                <Field label={t('year')} htmlFor="arrears-total-year" className="w-32">
-                  <Input id="arrears-total-year" inputMode="numeric" dir="ltr" value={year} onChange={(event) => setYear(event.target.value)} />
-                </Field>
-                <Field label={t('amountLbp')} htmlFor="arrears-total-amount" className="w-56">
-                  <Input id="arrears-total-amount" inputMode="decimal" dir="ltr" value={amount} onChange={(event) => setAmount(event.target.value)} />
-                </Field>
-                <Button onClick={() => void save('total')} disabled={!totalInput.success || busy !== null}>
-                  {busy === 'total' ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Save className="size-4" aria-hidden />}
-                  {t('saveTotal')}
-                </Button>
-              </div>
             </CardContent>
           </Card>
           <DataTable

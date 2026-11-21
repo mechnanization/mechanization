@@ -4392,7 +4392,8 @@
       "UNIT_NOT_ON_PROPERTY": "The unit code is not on this property number",
       "DUPLICATE_IN_FILE": "The line is repeated in the same file",
       "DUPLICATE_LIVE_LINE": "This debt is already recorded in another batch",
-      "DROP_NOT_A_LINE": "There is no line at this row to drop"
+      "DROP_NOT_A_LINE": "There is no line at this row to drop",
+      "PRESCRIBED_SINCE_IMPORT": "Past prescription since the import: return the batch so its preparer imports it again"
     },
     "review": {
       "link": "Approval",
@@ -4465,19 +4466,16 @@
       "back": "Arrears",
       "loadFailed": "Could not load the settings",
       "notAllowedTitle": "Settings are the system administrator’s",
-      "notAllowedBody": "Only the system administrator sets the billing start year and the books’ totals.",
+      "notAllowedBody": "Only the system administrator sets the billing start year.",
       "cutoffTitle": "Billing start year",
       "cutoffBody": "An old debt is one before this year; from it on, only the system bills. While it is not set, every import is refused.",
       "cutoff": "Year",
       "save": "Save",
       "cutoffSaved": "The billing start year was saved.",
       "totalsTitle": "The books’ arrears total per year",
-      "totalsBody": "From the last closed accounts, once per year. The report compares what was imported with it. (Proposed, not decided yet.)",
+      "totalsBody": "From the last closed accounts, once per year; the report compares what was imported with them. Entering them waits on the municipality's decision (open decisions §23.4), so they are shown here and not entered yet.",
       "year": "Year",
       "amount": "Total",
-      "amountLbp": "Total (LBP)",
-      "saveTotal": "Save the year’s total",
-      "totalSaved": "The year’s total was saved.",
       "noTotals": "No totals yet.",
       "saveFailed": "Could not save."
     }
