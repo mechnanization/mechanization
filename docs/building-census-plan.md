@@ -12,7 +12,7 @@
 > have **not** been run; see §11.3 before trusting it in the field.
 > The handful of things deliberately not covered are listed under "What is not
 > covered" in §6 and §10 — none of them block field use.
-> **Last verified against the code:** `chore/migration-0105`, `chore/migration-0106` and the building types
+> **Last verified against the code:** `feat/unit-types` (on `chore/migration-0109`): §17, «أنواع الوحدات», 2026-11-21; `chore/migration-0105`, `chore/migration-0106` and the building types
 > (on `develop@e9e79ff`, uncommitted): §16, «أنواع المباني» and «قائمة الإعفاء من الرسوم» on the unit
 > drawer, 2026-11-16.
 > **Created:** 2026-09-09 · **Branch to use:** `feat/building-census` (off `develop`)
@@ -2439,3 +2439,82 @@ the SQL enum, the backfill, the trigger, the keys), `features/buildings/building
 (the system types against the shared `STRUCTURE_TYPE`, the structure from the type, an inactive type,
 the fixed structures, the audit rows), `lib/building-types.test.ts` (the offline copy, the types
 offered), `route-inventory.spec.ts`.
+
+## 17. Unit types an administrator adds, «أنواع الوحدات» (2026-11-21)
+
+The user's request of 2026-11-21: the manager adds the unit types the list does not have (مدرسة, شركة
+كهرباء, شركة مياه, …) as he adds building types, and picks them in the building editor and the matrix.
+It sat on the same page, `buildings/types`, as a second tab.
+
+### 17.1 The same hybrid, one level down
+
+`UnitType` is a Postgres enum that fees, the area brackets, `isDwellingUnitType`, the structural rule
+and the census all read. So each unit type **takes the behaviour of one premises `UnitType`**
+(`baseType`), and a unit keeps `units.unitType`, written by the server from its type
+(`resolveUnitType`, `buildings/unit-types.ts`) and read everywhere as before.
+
+| # | Decision (2026-11-21) |
+|---|---|
+| 6 | Hybrid: a custom type follows a base type by default, and may later carry a fee of its own. |
+| 7 | The type's own fee is set **on the fee notice** (the notice picks the custom type as a target), not stored on the type. A later phase. |
+| 8 | Phase 1 now: types that follow a base, in their own migration PR (0109) first, then the API, the tab and the pickers. |
+| 10 | Every municipality starts with 27 default types (0110): the public, utility, worship, health, shop and workshop types, **one type per name** — a pair such as «مسجد / كنيسة» is two. Each takes the base whose picture and billing fit: `OFFICE` for مدرسة, شركة كهرباء, مؤسسة مياه, سرايا, مبنى بلدي, مخفر, مركز أمني, مسجد, كنيسة, دار عبادة, مصرف; `CLINIC` for مستوصف, مركز صحي; `SHOP` for مطعم, مقهى, صيدلية, مخبز, فرن, محطة وقود, سوبرماركت, ملحمة, صالون حلاقة, صالون تجميل; `WAREHOUSE` for ورشة, مشغل, معمل, مصنع. The «figure» a type shows is its base's elevation picture (`property-illustrations.tsx` draws by `unitType`), so no drawing code changed. They are ordinary rows, not system rows (one system row per base). Public buildings and places of worship are billed as offices until exempted on «قائمة الإعفاء من الرسوم». |
+| 11 | «Their figures» (the user, with a screenshot of the building drawing): each default type is drawn **as itself** in the elevation, as **fully separate drawings**, not a symbol on the base's front; **defaults only** — the manager picks no figure. 27 drawings, one per default type (`UNIT_FIGURE`, `unit-figures.tsx`), kept in `unit_types.figureKey` (0111) so a rename keeps it. This corrects the reading of decision 10, where "figures" meant the base's picture. |
+| 9 | One flat list on screen (after the first build showed a base column and a system / municipality badge): the form asks for the names only, nothing says what a type bills as, and a new type bills as `DEFAULT_UNIT_TYPE_BASE` (`OFFICE`). The base stays in the data and the API. |
+
+### 17.2 The rules
+
+- 0109 inserts one **system** type per premises `UnitType` (seven), named as `labels.ts` names it.
+  `PILOTIS` and `EMPTY_FLOOR` describe a floor, not premises: no type, no base, and a unit of either
+  keeps `unitTypeId` NULL. A system type's base never changes (`UNIT_TYPE_SYSTEM_BASE`, and the trigger
+  `unit_types_system_rewrite`); a custom type's only while no unit has it (`UNIT_TYPE_BASE_IN_USE`).
+- A type is never deleted, only switched off. Refused on a new unit (`UNIT_TYPE_INACTIVE`), kept on the
+  units that have it.
+- Create and edit: a type sent decides `unitType`, and the body's value beside it is not read. Only a
+  `unitType` sent (an older client, a queued offline save): the unit is filed under that base's system
+  type — **unless it already has a type with that base**, so a school stays a school when its base is sent
+  again. Neither, on an edit of a unit with no type yet: it is given its base's system type.
+  `units.unitTypeId` is nullable in this release and backfilled; reading it as always set is a later
+  contract step.
+- **A custom type bills as its base** — `OFFICE` for one added from the screen. The same fees, brackets
+  and exemptions. To exempt a unit, use «قائمة الإعفاء من الرسوم». No screen shows or changes a type's
+  base, and none offers a fee of its own for a type yet.
+- The duplicate-unit question on a floor still matches on the **base** (`floor` and `unitType`), so two
+  custom types with one base on a floor are asked about, as two shops are.
+
+### 17.3 Where it shows
+
+- Routes: `GET unit-types` (`UNIT_TYPE_READ_ROLES`, every staff role; `?includeInactive=true`), `POST` and
+  `PATCH :id` (`UNIT_TYPE_ADMIN_ROLES`, the manager), Tier 1 `UNIT_TYPE_CREATED` / `UNIT_TYPE_UPDATED` filed
+  as `UnitType`. No delete route. `unitTypeId` is audited on `UNIT_UPDATED`.
+- `buildings/types?tab=units` «أنواع الوحدات»: one flat list with each type's unit count (no base, no
+  system / municipality badge), and the manager's add, rename, switch off and on. The form asks for the
+  names and the order; a type added there bills as an office.
+- The building editor's paint grid, the matrix view's and the drawer's «إضافة وحدة» offer the types (system
+  first, then the municipality's; one switched off shows only on the unit that has it); tiles, the legend's
+  tally and headings name a unit by its type. Without a list and without a network, the base types are
+  offered as before and the server files each under its system type.
+- The in-app backup carries the table (snapshot version 8).
+- The building drawing (the matrix page and the unit drawer): a unit whose type has a figure shows it on its front —
+  the unit must be filed under the type, and the pickers set that. Units of the seven system types, and of a type
+  the manager adds, keep their base's front. The drawings were checked on screenshots at three pixel densities, as a
+  single unit two columns wide and as a street of six shops under flats; see §17.4.
+
+### 17.4 The drawings
+
+Each is CSS shapes in the elevation's two inks (grey wall, dark openings, `foreground` at an alpha for trim, a
+`lucide-react` glyph on the sign) — tokens only. The stage is a centred box no wider than 1.9 times its height, so a
+unit one column wide and four draw the same dome. A bakery and its oven, a workshop and an atelier are four
+drawings: the oven shows its mouth and chimney, the bakery its shelf of loaves. Eleven public types on a glazed office
+front (مدرسة with its flag, شركة كهرباء with louvred cabinets, مسجد with dome and minaret, كنيسة with a bell tower and
+a gabled nave …), two health, ten shop fronts, four workshops and works. A place of worship is billed as an office,
+whatever it is drawn as.
+
+Not covered: a custom type on a citizen's property card or on `building-unit-picker` (they choose a base),
+the ledger's, the map's and the dashboard's unit-type breakdowns (they read the base), and the type's own fee.
+
+Tests: `infrastructure/prisma/unit-types.integration.spec.ts` (0109: the system rows against the SQL enum,
+the backfill, the trigger, the keys), `features/buildings/unit-types.spec.ts` (the resolver),
+`features/buildings/unit-types.integration.spec.ts` (a unit filed under its type, the base taken from it, an
+inactive type, the fill on the next save, blueprints and inline units, the fixed bases, the audit rows),
+`lib/unit-types.test.ts` (the options a picker offers), `route-inventory.spec.ts`.

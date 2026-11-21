@@ -485,6 +485,34 @@ describe('the building type routes', () => {
 });
 
 /*
+  «أنواع الوحدات» (migration 0109). The same shape as the building types: read by
+  every staff role — the matrix, the building editor and an inspector's offline
+  store — and written by the manager alone. There is no delete: a type is
+  switched off.
+*/
+describe('the unit type routes', () => {
+  const EVERY = ['ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'AUDITOR', 'COLLECTOR', 'FIELD_INSPECTOR', 'SUPER_ADMIN', 'VIEWER'];
+  const expected: Record<string, string[]> = {
+    'UnitTypesController.list': EVERY,
+    'UnitTypesController.create': ['SUPER_ADMIN'],
+    'UnitTypesController.update': ['SUPER_ADMIN'],
+  };
+  const all = routes();
+
+  it.each(Object.entries(expected))('%s admits exactly its roles', (name, roles) => {
+    const route = all.find((candidate) => candidate.name === name);
+    expect(route).toBeDefined();
+    expect([...(route?.roles ?? [])].sort()).toEqual([...roles].sort());
+  });
+
+  it('knows every unit type handler, and deletes none', () => {
+    const handlers = all.filter((route) => route.name.startsWith('UnitTypesController.'));
+    expect(handlers.map((route) => route.name).sort()).toEqual(Object.keys(expected).sort());
+    expect(handlers.some((route) => route.method === RequestMethod.DELETE)).toBe(false);
+  });
+});
+
+/*
   Old debts («متأخرات سنوات سابقة», docs/old-debts-plan.md §9): the accountant and the
   manager prepare, and only the manager approves, returns, reads the review and sets the
   cutoff. Approving raises bills on citizens' files, so it is pinned by name.

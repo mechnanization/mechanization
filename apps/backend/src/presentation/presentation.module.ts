@@ -10,6 +10,7 @@ import { CorrectionsController } from './controllers/corrections.controller';
 import { FeeExemptionsController } from './controllers/fee-exemptions.controller';
 import { ArrearsController } from './controllers/arrears.controller';
 import { BuildingTypesController } from './controllers/building-types.controller';
+import { UnitTypesController } from './controllers/unit-types.controller';
 import { NewsArticlesController } from './controllers/news-articles.controller';
 import { NewsController } from './controllers/news.controller';
 import { NewsMediaController } from './controllers/news-media.controller';
@@ -63,6 +64,7 @@ import { SingleQueryValuePipe } from './pipes/single-query-value.pipe';
     FeeExemptionsController,
     ArrearsController,
     BuildingTypesController,
+    UnitTypesController,
     NewsController,
     NewsArticlesController,
     NewsMediaController,
