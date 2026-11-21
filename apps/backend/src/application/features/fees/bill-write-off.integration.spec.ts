@@ -10,6 +10,7 @@ import { PrismaAuditRepository } from '../../../infrastructure/repositories/audi
 import { AuditService } from '../audit/audit.service';
 import { ReportingService } from '../reporting/reporting.service';
 import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
+import { CitizenRequestsService } from '../citizen-requests/citizen-requests.service';
 import { TreasuryService } from '../treasury/treasury.service';
 import { FeesService } from './fees.service';
 import { ParcelDuesService } from './parcel-dues.service';
@@ -38,6 +39,7 @@ describeIfDb('«شطب»: writing off what is left on a bill', () => {
   let settlements: PaymentSettlementService;
   let reporting: ReportingService;
   let parcelDues: ParcelDuesService;
+  let requests: CitizenRequestsService;
 
   let citizenId: string;
   const ids = { manager: '', clerk: '' };
@@ -110,6 +112,14 @@ describeIfDb('«شطب»: writing off what is left on a bill', () => {
     settlements = new PaymentSettlementService(context, new EventEmitter2(), payments, auditService, ledger);
     reporting = new ReportingService(context, new EventEmitter2(), cache, { get: () => undefined } as never);
     parcelDues = new ParcelDuesService(context);
+    requests = new CitizenRequestsService(
+      context,
+      auditService,
+      parcelDues,
+      new EventEmitter2(),
+      {} as never,
+      { isLive: false } as never,
+    );
 
     citizenId = randomUUID();
     ids.manager = randomUUID();
@@ -222,24 +232,71 @@ describeIfDb('«شطب»: writing off what is left on a bill', () => {
       });
     });
 
-    it('refuses a municipal request’s fee: «إلغاء الفاتورة» withdraws it with its request', async () => {
-      const paymentId = await bill(50_000);
+    /** A request waiting on a bill of this size, as the counter files it. */
+    const requestOn = async (paymentId: string, requestType: 'RESIDENCY' | 'OTHER' = 'RESIDENCY') => {
       const request = await db.citizenRequest.create({
         data: {
           requestNumber: `REQ-${randomUUID().slice(0, 8)}`,
           citizenId,
           channel: 'COUNTER',
-          requestType: 'RESIDENCY',
+          requestType,
           applicantCapacity: 'OWNER',
           createdById: ids.clerk,
           clientRequestId: randomUUID(),
         },
       });
       await db.citizenRequest.update({ where: { id: request.id }, data: { citizenPaymentId: paymentId } });
-      await expect(writeOff(paymentId)).rejects.toMatchObject({
-        code: 'BILL_WRITE_OFF_REQUEST_FEE',
-        params: { requestNumber: request.requestNumber },
+      return request;
+    };
+
+    it('writes off a municipal request’s fee, and the request goes on to review: nothing is left to pay', async () => {
+      const paymentId = await bill(50_000);
+      const request = await requestOn(paymentId);
+
+      await expect(writeOff(paymentId)).resolves.toMatchObject({
+        paymentStatus: 'WRITTEN_OFF',
+        settledRequest: { requestId: request.id, requestNumber: request.requestNumber },
       });
+      const after = await db.citizenRequest.findUniqueOrThrow({ where: { id: request.id } });
+      expect(after).toMatchObject({ status: 'IN_REVIEW', citizenPaymentId: paymentId });
+      // The CHECK wants a stamp on a billed request in review: it is when the fee stopped being owed.
+      expect(after.paidAt).not.toBeNull();
+      const row = await db.auditLogEntry.findFirstOrThrow({ where: { action: 'REQUEST_FEE_WRITTEN_OFF', entityId: request.id } });
+      expect(row).toMatchObject({
+        actorId: ids.manager,
+        before: { status: 'AWAITING_PAYMENT' },
+        after: { status: 'IN_REVIEW', cause: 'BILL_WRITTEN_OFF', citizenPaymentId: paymentId },
+      });
+      // No payment was recorded: the request was not «paid».
+      expect(await db.auditLogEntry.count({ where: { action: 'REQUEST_PAID', entityId: request.id } })).toBe(0);
+    });
+
+    it('heals a request the write-off could not reach, and never sends it back to waiting for payment', async () => {
+      const paymentId = await bill(50_000);
+      // One open request per type for a citizen: the first test's is still open.
+      const request = await requestOn(paymentId, 'OTHER');
+      // As if the request's move had been lost: the bill is written off by the database's own rules, the request not touched.
+      await db.citizenPayment.update({
+        where: { id: paymentId },
+        data: {
+          paymentStatus: 'WRITTEN_OFF',
+          writtenOffAt: new Date(),
+          writtenOffById: ids.manager,
+          writeOffAmount: 50_000,
+          writeOffReason: 'عفو',
+          writeOffDecisionRef: '7/2026',
+          writeOffDecisionDate: new Date('2026-11-01'),
+        },
+      });
+      await scoped(() => requests.reconcile({ requestIds: [request.id] }));
+      expect(await db.citizenRequest.findUniqueOrThrow({ where: { id: request.id } })).toMatchObject({ status: 'IN_REVIEW' });
+      const row = await db.auditLogEntry.findFirstOrThrow({ where: { action: 'REQUEST_FEE_WRITTEN_OFF', entityId: request.id } });
+      expect(row).toMatchObject({ actorType: 'SYSTEM' });
+
+      // A second read changes nothing: the written-off bill is not "not paid".
+      await scoped(() => requests.reconcile({ requestIds: [request.id] }));
+      expect(await db.citizenRequest.findUniqueOrThrow({ where: { id: request.id } })).toMatchObject({ status: 'IN_REVIEW' });
+      expect(await db.auditLogEntry.count({ where: { action: 'REQUEST_FEE_WRITTEN_OFF', entityId: request.id } })).toBe(1);
     });
 
     it('is held by the database too: what is written off is exactly what was left', async () => {

@@ -69,6 +69,7 @@ import { uninhabitableUnitIds } from '../buildings/habitability';
 import { billingDayOfPeriod } from '../buildings/fee-exemption';
 import { checkResponsibleOwners, ownerBillingRules } from '../buildings/owner-billing';
 import { cancelRequestOfCancelledBill } from '../citizen-requests/cancelled-bill';
+import { settleRequestOfWrittenOffBill } from '../citizen-requests/written-off-bill';
 import { assertNotMergedAway } from '../citizens/merged-away';
 import { ConflictError, DomainError, ForbiddenError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { exchangeRuleChangeAllowed } from '../treasury/transfers.plan';
@@ -5589,10 +5590,11 @@ export class FeesService {
    * is left when the row is locked, written by the database itself
    * (`"amount" - "paidAmount"`), which holds it there
    * (`paidAmount + writeOffAmount = amount`). No money moves: no ledger row, no
-   * wallet. Refused, behind the bill's lock, by `billWriteOffRefusal`; and for a
-   * municipal request's fee (`BILL_WRITE_OFF_REQUEST_FEE`), which «إلغاء
-   * الفاتورة» withdraws with its request: written off, the request would wait
-   * for ever on a bill nothing can pay. A Tier 1 row in the same transaction.
+   * wallet. Refused, behind the bill's lock, by `billWriteOffRefusal`. A municipal
+   * request's fee may be written off (the owner's decision of 2026-11-21): the
+   * forgiven fee leaves nothing to pay, so the request waiting on it goes on to
+   * review in the same transaction (`settleRequestOfWrittenOffBill`). A Tier 1 row
+   * in the same transaction.
    */
   async writeOffBill(paymentId: string, input: WriteOffBillInput, actor: { id: string; role: string }) {
     const today = municipalToday();
@@ -5606,7 +5608,7 @@ export class FeesService {
     const reason = input.reason.trim();
     const decisionRef = input.decisionRef.trim();
 
-    const citizenId = await runInTenantTransaction(this.tenantContext, async () => {
+    const { citizenId, settledRequest } = await runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
       const [bill] = await this.ledger.lockInvoices(tx, [paymentId]);
       if (!bill) {
@@ -5628,18 +5630,6 @@ export class FeesService {
       if (refusal === 'BILL_WRITE_OFF_NOTHING_LEFT') {
         throw new ConflictError({ code: refusal, message: 'Nothing is left on this bill to write off.' });
       }
-      const request = await tx.citizenRequest.findFirst({
-        where: { citizenPaymentId: paymentId },
-        select: { requestNumber: true },
-      });
-      if (request) {
-        throw new ConflictError({
-          code: 'BILL_WRITE_OFF_REQUEST_FEE',
-          message: "This bill is a municipal request's fee; cancel the bill, and the request with it.",
-          params: { requestNumber: request.requestNumber },
-        });
-      }
-
       const [row] = await tx.$queryRaw<
         Array<{ writeOffAmount: string; invoiceNumber: string | null; title: string; periodKey: string | null }>
       >`
@@ -5679,7 +5669,9 @@ export class FeesService {
           decisionDate: input.decisionDate,
         },
       });
-      return bill.citizenId;
+      // A municipal request waiting on this fee goes on to review: nothing is left to pay.
+      const request = await settleRequestOfWrittenOffBill(tx, this.auditTrail, { billId: paymentId, actor });
+      return { citizenId: bill.citizenId, settledRequest: request };
     });
 
     // For the caches that count what is owed, as a cancellation; the audit row is already written.
@@ -5691,7 +5683,8 @@ export class FeesService {
       actorRole: actor.role,
     });
 
-    return this.getPaymentById(paymentId);
+    // The request moved on with the bill, so the page can say so: null when it was no request's fee.
+    return { ...(await this.getPaymentById(paymentId)), settledRequest };
   }
 
   /**

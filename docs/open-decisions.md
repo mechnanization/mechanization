@@ -1084,10 +1084,10 @@ total from the last «قطع الحساب», so the report shows how much is sti
 page. A bulk write-off — «all penalties before 2020, by decision X» — is wanted eventually; it is not
 built or designed.
 
-### 23.6 A municipal request's fee is not written off
+### 23.6 A municipal request's fee may be written off (decided 2026-11-21)
 
-What the code does now (2026-11-21, task 9): «شطب» refuses a bill that is a municipal request's fee
-(`BILL_WRITE_OFF_REQUEST_FEE`) and points to «إلغاء الفاتورة», which withdraws the bill and cancels the
-request with it. Written off, the request would wait in «بانتظار الدفع» on a bill nothing can pay, since
-the request moves on only once its bill is PAID. **Undecided:** whether a forgiven fee should instead
-let the request go ahead, as a fee waived does (`REQUEST_FEE_WAIVED`).
+Decided by the owner (Abed, 2026-11-21): «شطب» works on a municipal request's fee too. What the code does:
+the request waiting on the bill goes on to «قيد المعالجة», as one whose fee was made free does
+(`REQUEST_FEE_WAIVED`), and the audit row is `REQUEST_FEE_WRITTEN_OFF`. Its `paidAt` is the moment the fee
+stopped being owed, because a database CHECK wants a stamp on a billed request in review; if a screen must tell
+"paid" from "forgiven", read the audit row, or give the request its own column in a later migration.

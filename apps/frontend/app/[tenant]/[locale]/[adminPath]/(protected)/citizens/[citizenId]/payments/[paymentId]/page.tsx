@@ -524,14 +524,13 @@ export default function SettleCashPage({
   /** The municipal request this bill is the fee of (0092); null for any other bill. */
   const linkedRequest = payment?.request ?? null;
   /*
-    «شطب» on a bill with something left on it, part-paid included, for the
-    manager; never a request's fee (`BILL_WRITE_OFF_REQUEST_FEE`), which «إلغاء الفاتورة»
-    withdraws with its request. The server asks all of it again.
+    «شطب» on a bill with something left on it, part-paid included, for the manager.
+    A request's fee may be written off too: the request goes on to review, and the
+    dialog says so. The server asks all of it again.
   */
   const canWriteOff =
     Boolean(payment) &&
     !receipt &&
-    !linkedRequest &&
     hasRole(BILL_WRITE_OFF_ROLES, user?.role) &&
     (payment?.paymentStatus === 'UNPAID' || payment?.paymentStatus === 'OVERDUE') &&
     (payment?.remaining ?? 0) > 0;
@@ -639,8 +638,13 @@ export default function SettleCashPage({
           token={token}
           locale={locale}
           bill={payment}
-          onWrittenOff={async () => {
-            toast.success(tWriteOff('done'));
+          requestNumber={linkedRequest?.requestNumber ?? null}
+          onWrittenOff={async (settledRequest) => {
+            toast.success(
+              settledRequest ? tWriteOff('doneWithRequest', { number: settledRequest.requestNumber }) : tWriteOff('done'),
+            );
+            // The queue and its panel move the request on now, not when their cache next goes stale.
+            void queryClient.invalidateQueries({ queryKey: ['requests', tenant] });
             void queryClient.invalidateQueries({ queryKey: ['fees', tenant] });
             await queryClient.invalidateQueries({ queryKey: ['citizen-profile', tenant, citizenId] });
           }}

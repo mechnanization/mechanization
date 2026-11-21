@@ -6156,11 +6156,16 @@ export async function cancelBill(tenant: string, token: string, id: string, inpu
  * docs/old-debts-plan.md decision 10; `BILL_WRITE_OFF_ROLES`). No money moves.
  * Refused with `BILL_ALREADY_WRITTEN_OFF`, `BILL_ALREADY_CANCELLED`,
  * `PAYMENT_CLAIM_UNDER_REVIEW`, `BILL_WRITE_OFF_NOTHING_LEFT`,
- * `BILL_WRITE_OFF_REQUEST_FEE` and `BILL_WRITE_OFF_DECISION_IN_FUTURE`. Answers
- * with the bill as it now stands, WRITTEN_OFF. The body is the shared schema's.
+ * and `BILL_WRITE_OFF_DECISION_IN_FUTURE`. Answers with the bill as it now stands,
+ * WRITTEN_OFF, and the municipal request that was waiting on it, now in review (null when
+ * it was no request's fee). The body is the shared schema's.
  */
+export interface WriteOffBillResult extends AdminPaymentItem {
+  settledRequest: { requestId: string; requestNumber: string } | null;
+}
+
 export async function writeOffBill(tenant: string, token: string, id: string, input: WriteOffBillInput) {
-  const result = await apiFetch<AdminPaymentItem>(tenant, `/fees/payments/${encodeURIComponent(id)}/write-off`, {
+  const result = await apiFetch<WriteOffBillResult>(tenant, `/fees/payments/${encodeURIComponent(id)}/write-off`, {
     token,
     method: 'POST',
     body: JSON.stringify(input),

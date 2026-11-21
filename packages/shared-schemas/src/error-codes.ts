@@ -101,9 +101,6 @@ export const ERROR_CODES = [
   'BILL_WRITE_OFF_NOTHING_LEFT',
   // The council's decision is dated after today (`params.today`).
   'BILL_WRITE_OFF_DECISION_IN_FUTURE',
-  // The bill is a municipal request's fee (`params.requestNumber`): the request is cancelled with
-  // «إلغاء الفاتورة», never left waiting on a bill that will not be paid.
-  'BILL_WRITE_OFF_REQUEST_FEE',
   // A retry key already used to issue a different notice.
   'FEE_NOTICE_REQUEST_REUSED',
   // «تكليف مالي»: a retry key already used for a different one-off charge (0102). `params.invoiceNumber`

@@ -506,10 +506,15 @@ that was real, and a part-paid bill keeps its receipts.
 - **Refused**, in this order (`billWriteOffRefusal`, `fees/bill-write-off.ts`):
   `BILL_ALREADY_WRITTEN_OFF`; `BILL_ALREADY_CANCELLED`; `PAYMENT_CLAIM_UNDER_REVIEW` (the claim is
   decided first, as for a cancellation); `BILL_WRITE_OFF_NOTHING_LEFT` (paid). Then
-  `BILL_WRITE_OFF_DECISION_IN_FUTURE` (a decision dated after today on the municipality's calendar)
-  and `BILL_WRITE_OFF_REQUEST_FEE`: a municipal request's fee is withdrawn with «إلغاء الفاتورة», which
-  cancels the request too; written off, the request would wait on a bill nothing can pay
-  (open-decisions §23.6).
+  `BILL_WRITE_OFF_DECISION_IN_FUTURE` (a decision dated after today on the municipality's calendar).
+- **A municipal request's fee may be written off** (the owner's decision of 2026-11-21, open-decisions §23.6):
+  the forgiven fee leaves nothing to pay, so the request waiting on it goes AWAITING_PAYMENT → IN_REVIEW in the
+  same transaction (`settleRequestOfWrittenOffBill`, `citizen-requests/written-off-bill.ts`), as one whose
+  fee the manager made free does. `paidAt` is written with the move because `citizen_requests_paid_stamp` and the
+  0094 guard require it on a billed request in review: it is the moment the fee stopped being owed, not a
+  payment, and the Tier 1 row says so (`REQUEST_FEE_WRITTEN_OFF`, `cause: BILL_WRITTEN_OFF`, never `REQUEST_PAID`).
+  `CitizenRequestsService.reconcile` heals a request the write-off could not reach (a SYSTEM row) and keeps
+  `WRITTEN_OFF` out of its "not paid" move, which would send the request back to waiting.
 - **A written-off bill takes nothing.** The counter and the ledger (`PAYMENT_BILL_WRITTEN_OFF`), a
   settlement of several bills, a citizen's claim and the Whish checkout refuse it; «إلغاء الفاتورة»
   and «إلغاء الإشعار» leave it as it is (`BILL_ALREADY_WRITTEN_OFF`, counted apart as `writtenOff` in

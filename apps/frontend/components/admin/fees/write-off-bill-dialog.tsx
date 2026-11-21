@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { ADJUSTMENT_REASON_MIN, municipalToday, writeOffBillSchema } from '@mechanization/shared-schemas';
-import { logApiError, writeOffBill } from '@/lib/api-client';
+import { logApiError, writeOffBill, type WriteOffBillResult } from '@/lib/api-client';
 import { formatLbp } from '@/lib/currency';
 import { Alert } from '@/components/ui/alert';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -30,6 +30,7 @@ export function WriteOffBillDialog({
   token,
   locale,
   bill,
+  requestNumber,
   onWrittenOff,
 }: {
   open: boolean;
@@ -38,8 +39,10 @@ export function WriteOffBillDialog({
   token: string | null;
   locale: string;
   bill: { id: string; remaining: number; paidAmount: number; currency: string };
-  /** Called once the server has written it off: the page re-reads the bill. */
-  onWrittenOff: () => Promise<void> | void;
+  /** The municipal request this bill is the fee of, when it is one: writing it off sends that request to review. */
+  requestNumber: string | null;
+  /** Called once the server has written it off, with the request it moved on: the page re-reads the bill. */
+  onWrittenOff: (settledRequest: WriteOffBillResult['settledRequest']) => Promise<void> | void;
 }) {
   const t = useTranslations('counterPayment.writeOff');
   const today = useMemo(() => municipalToday(), []);
@@ -53,8 +56,9 @@ export function WriteOffBillDialog({
 
   const confirm = async (): Promise<void> => {
     if (!token || !input.success || !ready) return;
+    let result: WriteOffBillResult;
     try {
-      await writeOffBill(tenant, token, bill.id, input.data);
+      result = await writeOffBill(tenant, token, bill.id, input.data);
     } catch (caught) {
       logApiError(caught);
       throw caught;
@@ -62,7 +66,7 @@ export function WriteOffBillDialog({
     setReason('');
     setDecisionRef('');
     setDecisionDate('');
-    await onWrittenOff();
+    await onWrittenOff(result.settledRequest);
   };
 
   const amount = bill.currency === 'LBP' ? formatLbp(bill.remaining, locale) : `${bill.remaining} ${bill.currency}`;
@@ -83,6 +87,18 @@ export function WriteOffBillDialog({
       <Alert variant="warning">
         {bill.paidAmount > 0 ? t('amountPartPaid', { amount }) : t('amount', { amount })}
       </Alert>
+      {requestNumber ? (
+        <Alert variant="info">
+          {t.rich('requestNote', {
+            number: requestNumber,
+            code: (chunks) => (
+              <bdi dir="ltr" className="font-mono">
+                {chunks}
+              </bdi>
+            ),
+          })}
+        </Alert>
+      ) : null}
       <Field
         label={t('reason', { min: ADJUSTMENT_REASON_MIN })}
         htmlFor="write-off-reason"
