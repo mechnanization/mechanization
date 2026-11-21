@@ -2036,7 +2036,9 @@
     "REQUEST_ATTACHMENT_VIEWED": "Request document opened",
     "REQUEST_FEE_WAIVED": "Request made free, moved to review",
     "BUILDING_TYPE_CREATED": "Building type added",
-    "BUILDING_TYPE_UPDATED": "Building type edited"
+    "BUILDING_TYPE_UPDATED": "Building type edited",
+    "ARREARS_TEMPLATE_EXPORTED": "Old-debts template exported",
+    "ARREARS_LINES_IMPORTED": "Old debts imported into a draft"
   },
   "auditEntities": {
     "User": "Citizen or staff",
@@ -2063,7 +2065,8 @@
     "TreasuryDay": "Treasury day",
     "CitizenRequest": "Request",
     "RequestTypeSetting": "Request type",
-    "BuildingType": "Building type"
+    "BuildingType": "Building type",
+    "ArrearsBatch": "Old-debts batch"
   },
   "audit": {
     "families": {

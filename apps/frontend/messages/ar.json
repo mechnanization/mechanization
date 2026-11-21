@@ -2036,7 +2036,9 @@
     "REQUEST_ATTACHMENT_VIEWED": "فتح مستند طلب",
     "REQUEST_FEE_WAIVED": "طلب صار مجانياً فانتقل إلى الدراسة",
     "BUILDING_TYPE_CREATED": "إضافة نوع مبنى",
-    "BUILDING_TYPE_UPDATED": "تعديل نوع مبنى"
+    "BUILDING_TYPE_UPDATED": "تعديل نوع مبنى",
+    "ARREARS_TEMPLATE_EXPORTED": "تصدير قالب ديون قديمة",
+    "ARREARS_LINES_IMPORTED": "استيراد ديون قديمة إلى مسودة"
   },
   "auditEntities": {
     "User": "مواطن أو موظف",
@@ -2063,7 +2065,8 @@
     "TreasuryDay": "يومية الخزينة",
     "CitizenRequest": "طلب معاملة",
     "RequestTypeSetting": "نوع معاملة",
-    "BuildingType": "نوع مبنى"
+    "BuildingType": "نوع مبنى",
+    "ArrearsBatch": "دفعة ديون قديمة"
   },
   "audit": {
     "families": {
