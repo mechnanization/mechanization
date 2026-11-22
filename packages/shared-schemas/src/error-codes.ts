@@ -438,6 +438,8 @@ export const ERROR_CODES = [
   'REQUEST_FORM_NOT_PUBLISHABLE',
   // A form that has requests is archived, never deleted (F7).
   'REQUEST_FORM_HAS_REQUESTS',
+  // A built-in form stands for a request type and is switched off, never deleted.
+  'REQUEST_FORM_SYSTEM',
   // Two questions of one version with one key (`params.key`).
   'REQUEST_FORM_FIELD_KEY_TAKEN',
   'FILE_UPLOAD_FAILED',

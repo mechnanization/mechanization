@@ -37,6 +37,7 @@ import { FeesService } from './features/fees/fees.service';
 import { CorrectionBillsService } from './features/fees/correction-bills.service';
 import { ParcelDuesService } from './features/fees/parcel-dues.service';
 import { CitizenRequestsService } from './features/citizen-requests/citizen-requests.service';
+import { RequestFormsService } from './features/request-forms/request-forms.service';
 import { PaymentLedgerService } from './features/fees/payment-ledger.service';
 import { PaymentSettlementService } from './features/fees/payment-settlement.service';
 import { TreasuryLedgerService } from './features/treasury/treasury-ledger.service';
@@ -106,6 +107,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
     ExpensesService,
     IncomeService,
     CitizenRequestsService,
+    RequestFormsService,
     TreasuryMovementsService,
     TransfersService,
     DayClosureService,
@@ -163,6 +165,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
     ExpensesService,
     IncomeService,
     CitizenRequestsService,
+    RequestFormsService,
     TreasuryMovementsService,
     TransfersService,
     DayClosureService,

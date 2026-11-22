@@ -17,6 +17,7 @@ import { TreasuryController } from './controllers/treasury.controller';
 import { ExpensesController } from './controllers/expenses.controller';
 import { IncomeController } from './controllers/income.controller';
 import { CitizenRequestsController } from './controllers/citizen-requests.controller';
+import { RequestFormsController } from './controllers/request-forms.controller';
 import { TransfersController } from './controllers/transfers.controller';
 import { TreasuryClosingController } from './controllers/treasury-closing.controller';
 import { CasesController } from './controllers/cases.controller';
@@ -70,6 +71,7 @@ import { SingleQueryValuePipe } from './pipes/single-query-value.pipe';
     ExpensesController,
     IncomeController,
     CitizenRequestsController,
+    RequestFormsController,
     TransfersController,
     TreasuryClosingController,
     /*

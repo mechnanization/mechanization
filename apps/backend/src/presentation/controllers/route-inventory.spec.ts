@@ -422,6 +422,43 @@ describe('the municipal request routes', () => {
 });
 
 /*
+  «نماذج الإفادات» (migrations 0112 and 0113, open decisions §24 F5). The forms are read by the staff who read
+  requests (the answers on a request are theirs to see) and built by the manager alone. A form is deleted only while
+  nothing was filed on it, so DELETE exists and is the manager's too; a citizen never reaches these routes.
+*/
+describe('the request form routes', () => {
+  const READ = ['ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'AUDITOR', 'SUPER_ADMIN'];
+  const MANAGER = ['SUPER_ADMIN'];
+  const expected: Record<string, { method: RequestMethod; path: string; roles: string[] }> = {
+    'RequestFormsController.list': { method: RequestMethod.GET, path: '/', roles: READ },
+    'RequestFormsController.get': { method: RequestMethod.GET, path: ':id', roles: READ },
+    'RequestFormsController.create': { method: RequestMethod.POST, path: '/', roles: MANAGER },
+    'RequestFormsController.update': { method: RequestMethod.PUT, path: ':id', roles: MANAGER },
+    'RequestFormsController.startDraft': { method: RequestMethod.POST, path: ':id/draft', roles: MANAGER },
+    'RequestFormsController.saveDraft': { method: RequestMethod.PUT, path: ':id/draft', roles: MANAGER },
+    'RequestFormsController.publish': { method: RequestMethod.POST, path: ':id/publish', roles: MANAGER },
+    'RequestFormsController.enable': { method: RequestMethod.POST, path: ':id/enable', roles: MANAGER },
+    'RequestFormsController.disable': { method: RequestMethod.POST, path: ':id/disable', roles: MANAGER },
+    'RequestFormsController.archive': { method: RequestMethod.POST, path: ':id/archive', roles: MANAGER },
+    'RequestFormsController.remove': { method: RequestMethod.DELETE, path: ':id', roles: MANAGER },
+  };
+  const all = routes();
+
+  it.each(Object.entries(expected))('%s admits exactly its roles, on its method and path', (name, want) => {
+    const route = all.find((candidate) => candidate.name === name);
+    expect(route).toBeDefined();
+    expect([...(route?.roles ?? [])].sort()).toEqual([...want.roles].sort());
+    expect(route?.method).toBe(want.method);
+    expect(route?.path).toBe(want.path);
+  });
+
+  it('knows every request form handler', () => {
+    const handlers = all.filter((route) => route.name.startsWith('RequestFormsController.'));
+    expect(handlers.map((route) => route.name).sort()).toEqual(Object.keys(expected).sort());
+  });
+});
+
+/*
   «قائمة الإعفاء من الرسوم» (migration 0104; decision 3 of 2026-11-16). Every
   read names the people on the units, so it is the manager, the administrative
   officer, the accountant and the auditor — never the collector, the field
