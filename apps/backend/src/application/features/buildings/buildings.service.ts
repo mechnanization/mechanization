@@ -45,6 +45,7 @@ import { worklistOwner, type WorklistViewer } from '../../common/worklist-viewer
 import { reinspections, unsurveyedUnits } from './census-worklists';
 import { assertNoFeeExemptionHistory } from './fee-exemption';
 import { resolveBuildingType } from './building-types';
+import { loadUnitTypes } from './unit-types';
 import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
@@ -1424,6 +1425,8 @@ export class BuildingsService {
 
     // «نوع المبنى» (0106): the type decides the structure; refused here, before the transaction, if inactive.
     const typed = (await resolveBuildingType(this.db, input, null))!;
+    // «نوع الوحدة» (0109): each inline unit's type decides its `unitType`; refused here too if inactive.
+    const unitTypes = input.units?.length ? await loadUnitTypes(this.db) : null;
 
     if (!input.acknowledgedDuplicates && neighbours.length > 0) {
       throw new ConflictError(
@@ -1512,6 +1515,7 @@ export class BuildingsService {
           data: input.units.map((unit) => {
             const next = unit.sequence ?? (usedByFloor.get(unit.floor) ?? 0) + 1;
             usedByFloor.set(unit.floor, Math.max(usedByFloor.get(unit.floor) ?? 0, next));
+            const unitTyped = unitTypes!.resolve(unit, null)!;
 
             return {
               ...(unit.id ? { id: unit.id } : {}),
@@ -1521,7 +1525,8 @@ export class BuildingsService {
               startCol: unit.startCol ?? null,
               endCol: unit.endCol ?? null,
               unitCode: formatUnitCode(unit.floor, next),
-              unitType: unit.unitType as never,
+              unitType: unitTyped.unitType as never,
+              unitTypeId: unitTyped.unitTypeId,
               postedNumber: unit.postedNumber?.trim() || null,
               side: unit.side?.trim() || null,
               unitArea: unit.unitArea ?? null,
@@ -1887,7 +1892,13 @@ export class BuildingsService {
         for (const cell of input.update) {
           const row = await this.updateUnit(
             cell.id,
-            { floor: cell.floor, startCol: cell.startCol, endCol: cell.endCol, unitType: cell.unitType },
+            {
+              floor: cell.floor,
+              startCol: cell.startCol,
+              endCol: cell.endCol,
+              unitType: cell.unitType,
+              unitTypeId: cell.unitTypeId,
+            },
             actor,
           );
           summary.updated.push(row.unitCode);
@@ -2050,6 +2061,7 @@ export class BuildingsService {
               floor: blueprint.fromFloor + index,
               unitCount: blueprint.unitsPerFloor,
               unitType: blueprint.unitType,
+              unitTypeId: blueprint.unitTypeId,
             }),
           )
         : blueprint.floors;
@@ -2116,8 +2128,11 @@ export class BuildingsService {
 
     const data: Prisma.UnitCreateManyInput[] = [];
     let skipped = 0;
+    // «نوع الوحدة» (0109): a floor's type decides the `unitType` of every unit generated on it.
+    const unitTypes = await loadUnitTypes(this.db);
 
     for (const entry of plan) {
+      const entryType = unitTypes.resolve(entry, null)!;
       const used = taken.get(entry.floor) ?? new Set<number>();
       taken.set(entry.floor, used);
 
@@ -2143,7 +2158,8 @@ export class BuildingsService {
           floor: entry.floor,
           sequence,
           unitCode: formatUnitCode(entry.floor, sequence),
-          unitType: entry.unitType as never,
+          unitType: entryType.unitType as never,
+          unitTypeId: entryType.unitTypeId,
         });
       }
     }
@@ -2260,11 +2276,20 @@ export class BuildingsService {
   /** One unit added by hand, at the next free position on its floor. */
   async addUnit(
     buildingId: string,
-    input: UpsertUnitInput,
+    asked: UpsertUnitInput,
     actor: { id: string; role: string },
   ): Promise<UnitRow> {
     const building = await this.db.building.findUnique({ where: { id: buildingId } });
     if (!building) throw new NotFoundError('المبنى غير موجود');
+
+    /*
+      «نوع الوحدة» (0109): the type decides `unitType`, so every guard below —
+      the sibling check, the house question, the structural rules — reads the
+      base the unit will be billed as, whichever custom type it was filed under.
+      Refused here, before anything is written, if the type is switched off.
+    */
+    const typed = (await loadUnitTypes(this.db)).resolve(asked, null)!;
+    const input: UpsertUnitInput = { ...asked, unitType: typed.unitType as UpsertUnitInput['unitType'] };
 
     /*
       «هذا المنزل يصبح مبنى» (decision D28) — see `house-growth.ts`. Asked before
@@ -2415,6 +2440,7 @@ export class BuildingsService {
           endCol: input.endCol ?? null,
           unitCode: formatUnitCode(input.floor, sequence),
           unitType: input.unitType as never,
+          unitTypeId: typed.unitTypeId,
           postedNumber: input.postedNumber?.trim() || null,
           side: input.side?.trim() || null,
           unitArea: input.unitArea ?? null,
@@ -2644,11 +2670,26 @@ export class BuildingsService {
 
   async updateUnit(
     unitId: string,
-    input: UpdateUnitInput,
+    asked: UpdateUnitInput,
     actor: { id: string; role: string },
   ): Promise<UnitRow> {
     const before = await this.db.unit.findUnique({ where: { id: unitId } });
     if (!before) throw new NotFoundError('الوحدة غير موجودة');
+
+    /*
+      «نوع الوحدة» (0109): when a type or a base is sent it decides `unitType`,
+      and every guard below reads that base. A unit that has no type yet is
+      given its base's system type the first time it is saved, whatever else
+      changed — the fill the migration promised. A custom type survives a save
+      that re-sends its own base (`resolve` keeps it).
+    */
+    const typeChosen = asked.unitType !== undefined || asked.unitTypeId !== undefined;
+    const typed =
+      typeChosen || before.unitTypeId === null
+        ? (await loadUnitTypes(this.db)).resolve(asked, { unitTypeId: before.unitTypeId, unitType: before.unitType })
+        : null;
+    const input: UpdateUnitInput =
+      typed && typeChosen ? { ...asked, unitType: typed.unitType as UpdateUnitInput['unitType'] } : asked;
 
     /*
       Confirming a vacancy is not a field edit, and this is no longer the door
@@ -2962,6 +3003,7 @@ export class BuildingsService {
           ...(input.startCol !== undefined ? { startCol: input.startCol } : {}),
           ...(input.endCol !== undefined ? { endCol: input.endCol } : {}),
           ...(input.unitType !== undefined ? { unitType: input.unitType as never } : {}),
+          ...(typed ? { unitTypeId: typed.unitTypeId } : {}),
           ...(input.levels !== undefined ? { levels: input.levels } : {}),
           ...(input.postedNumber !== undefined
             ? { postedNumber: input.postedNumber?.trim() || null }
@@ -5402,6 +5444,8 @@ const AUDITED_UNIT_FIELDS = [
   'sequence',
   'unitCode',
   'unitType',
+  // «نوع الوحدة» (0109): a school retyped as an office keeps its base, so `unitType` alone would say nothing.
+  'unitTypeId',
   'unitArea',
   'unitStatus',
   'surveyStatus',
@@ -5416,7 +5460,8 @@ const AUDITED_UNIT_FIELDS = [
   'notes',
 ] as const;
 
-type AuditedUnit = { [K in (typeof AUDITED_UNIT_FIELDS)[number]]: unknown };
+/** Optional keys: a caller that predates a field (the older specs, a change record) simply does not carry it. */
+type AuditedUnit = { [K in (typeof AUDITED_UNIT_FIELDS)[number]]?: unknown };
 
 /**
  * The fields that differ between two versions of a unit, each side keyed by
@@ -5720,6 +5765,7 @@ function toUnitRow(row: {
   unitCode: string;
   postedNumber: string | null;
   unitType: string;
+  unitTypeId?: string | null;
   side: string | null;
   unitArea: { toString(): string } | null;
   unitStatus: string | null;
@@ -5749,6 +5795,7 @@ function toUnitRow(row: {
     unitCode: row.unitCode,
     postedNumber: row.postedNumber,
     unitType: row.unitType,
+    unitTypeId: row.unitTypeId ?? null,
     side: row.side,
     // Decimal → number at the edge; a `Decimal` serialises as an object, which
     // the client would render as "[object Object]".

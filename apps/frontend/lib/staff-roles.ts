@@ -18,6 +18,7 @@ import {
   REQUEST_BILL_ROLES as SHARED_REQUEST_BILL_ROLES,
   REQUEST_HANDLE_ROLES as SHARED_REQUEST_HANDLE_ROLES,
   BUILDING_TYPE_ADMIN_ROLES as SHARED_BUILDING_TYPE_ADMIN_ROLES,
+  UNIT_TYPE_ADMIN_ROLES as SHARED_UNIT_TYPE_ADMIN_ROLES,
   NEWS_EDITOR_ROLES as SHARED_NEWS_EDITOR_ROLES,
   FEE_EXEMPTION_GRANT_ROLES as SHARED_FEE_EXEMPTION_GRANT_ROLES,
   FEE_EXEMPTION_READ_ROLES as SHARED_FEE_EXEMPTION_READ_ROLES,
@@ -165,6 +166,9 @@ export const FEE_EXEMPTION_GRANT_ROLES: readonly string[] = SHARED_FEE_EXEMPTION
 
 /** «أنواع المباني» (0106): add, edit, switch off or on a building type — the manager's. */
 export const BUILDING_TYPE_ADMIN_ROLES: readonly string[] = SHARED_BUILDING_TYPE_ADMIN_ROLES;
+
+/** «أنواع الوحدات» (0109): add, edit, switch off or on a unit type — the manager's. */
+export const UNIT_TYPE_ADMIN_ROLES: readonly string[] = SHARED_UNIT_TYPE_ADMIN_ROLES;
 
 /**
  * Old debts, «متأخرات سنوات سابقة» (0108, docs/old-debts-plan.md): export the template,

@@ -1,14 +1,15 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Client } from 'pg';
+import { UNIT_FIGURE, knownUnitFigure } from '@mechanization/shared-schemas';
 import { PrismaClient as TenantPrismaClient } from '../../generated/tenant-client';
 import { migrateTenantSchema } from './tenant-migrator';
 import { tenantTestClient } from './tenant-test-client';
 
 /**
  * Migration 0111, the drawing of each default unit type: one key per default,
- * each of the 27 the elevation draws, none on a system type, and a replay that
- * changes nothing. The code PR checks the same keys against `UNIT_FIGURE`.
+ * every key one the shared package knows (so the elevation can draw it), none on
+ * a system type, and a replay that changes nothing.
  *
  * Set `TEST_DATABASE_URL` to a throwaway Postgres 17; never staging.
  */
@@ -20,14 +21,6 @@ jest.setTimeout(60_000);
 const SETUP_TIMEOUT_MS = 240_000;
 
 const MIGRATION = readFileSync(join(__dirname, 'tenant/migrations/0111_unit_type_figures/migration.sql'), 'utf8');
-
-/** The drawings the elevation has, one per default type (`UNIT_FIGURE` in shared-schemas, which ships with the code PR). */
-const FIGURE_KEYS = [
-  'SCHOOL', 'ELECTRICITY', 'WATER', 'SERAIL', 'MUNICIPAL', 'POLICE', 'SECURITY', 'MOSQUE', 'CHURCH', 'WORSHIP', 'BANK',
-  'DISPENSARY', 'HEALTH_CENTRE',
-  'RESTAURANT', 'CAFE', 'PHARMACY', 'BAKERY', 'OVEN', 'FUEL', 'SUPERMARKET', 'BUTCHER', 'BARBER', 'BEAUTY',
-  'WORKSHOP', 'ATELIER', 'PLANT', 'FACTORY',
-];
 
 describeIfDb('migration 0111: unit type figures', () => {
   let ddl: Client;
@@ -76,10 +69,10 @@ describeIfDb('migration 0111: unit type figures', () => {
   it('gives every default type its own drawing, each one the shared package knows, and the system types none', async () => {
     const defaults = await db.unitTypeEntry.findMany({ where: { isSystem: false } });
     expect(defaults).toHaveLength(27);
-    expect(defaults.every((row) => FIGURE_KEYS.includes(row.figureKey ?? ''))).toBe(true);
-    // One drawing per type, and every key one of the 27.
+    expect(defaults.every((row) => knownUnitFigure(row.figureKey) !== null)).toBe(true);
+    // One drawing per type, and a drawing for every key the package lists.
     expect(new Set(defaults.map((row) => row.figureKey)).size).toBe(27);
-    expect(defaults.map((row) => row.figureKey).sort()).toEqual([...FIGURE_KEYS].sort());
+    expect(defaults.map((row) => row.figureKey).sort()).toEqual([...UNIT_FIGURE].sort());
     expect(defaults.find((row) => row.nameAr === 'مسجد')?.figureKey).toBe('MOSQUE');
     expect(defaults.find((row) => row.nameAr === 'محطة وقود')?.figureKey).toBe('FUEL');
     expect((await db.unitTypeEntry.findMany({ where: { isSystem: true } })).every((row) => row.figureKey === null)).toBe(true);

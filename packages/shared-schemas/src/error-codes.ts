@@ -221,6 +221,14 @@ export const ERROR_CODES = [
   'BUILDING_TYPE_NAME_TAKEN',
   'BUILDING_TYPE_SYSTEM_STRUCTURE',
   'BUILDING_TYPE_STRUCTURE_IN_USE',
+  // «أنواع الوحدات» (migration 0109): a type that does not exist; one switched off, on a new unit
+  // (`params.name`); a name another type has (`params.name`); a system type's base, which never
+  // changes; a custom type's base while units are filed under it (`params.count`).
+  'UNIT_TYPE_NOT_FOUND',
+  'UNIT_TYPE_INACTIVE',
+  'UNIT_TYPE_NAME_TAKEN',
+  'UNIT_TYPE_SYSTEM_BASE',
+  'UNIT_TYPE_BASE_IN_USE',
   // «تركة (ورثة المرحوم)» (migration 0076)
   'ESTATE_OWNS_ONLY',
   // One home on several levels, and a house that grows (migration 0095, decision D28)

@@ -83,6 +83,7 @@ import { heldInDoubt, heldKey, keyIsSpent, markInDoubt, outcomeInDoubt, spendKey
 import { loadSession, clearSession } from '@/lib/session';
 import { CENSUS_WRITE_ROLES, hasRole } from '@/lib/staff-roles';
 import { systemTypeOf, typesToOffer, useBuildingTypes } from '@/lib/building-types';
+import { useUnitTypes } from '@/lib/unit-types';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -224,6 +225,8 @@ interface UnitBaseline {
   startCol: number;
   endCol: number;
   unitType: UnitType;
+  /** «نوع الوحدة» (0109), as loaded: a change of type alone is a change even when the base stays. */
+  unitTypeId?: string | null;
 }
 
 /**
@@ -304,6 +307,7 @@ function gridFromUnits(
         startCol,
         endCol,
         unitType: unit.unitType,
+        unitTypeId: unit.unitTypeId ?? undefined,
         colorIndex: colorIndex++,
         existingId: unit.id,
         unitCode: unit.unitCode,
@@ -398,6 +402,7 @@ export function BuildingEditor({
   const labels = getLabels(locale);
   const base = `/${tenant}/${locale}/${adminPath}`;
   const tTypes = useTranslations('buildingTypes');
+  const tUnitTypes = useTranslations('unitTypes');
   const editing = Boolean(buildingId);
 
   const session = useMemo(() => loadSession(tenant), [tenant]);
@@ -412,6 +417,16 @@ export function BuildingEditor({
   const buildingTypes = useBuildingTypes(tenant, base, token ?? null, {
     includeInactive: editing,
     errorMessage: tTypes('loadError'),
+  });
+  /*
+    «أنواع الوحدات» (0109), the same way: the active list, kept on the device,
+    or every type when editing so a unit whose type was switched off since still
+    shows its own name. Empty while it loads or offline with nothing kept — the
+    grid then offers the base types, and the server files each under its system type.
+  */
+  const unitTypes = useUnitTypes(tenant, base, token ?? null, {
+    includeInactive: editing,
+    errorMessage: tUnitTypes('loadError'),
   });
 
   /*
@@ -886,6 +901,7 @@ export function BuildingEditor({
               startCol: draft.startCol,
               endCol: draft.endCol,
               unitType: draft.unitType,
+              unitTypeId: draft.unitTypeId,
             },
           ]),
       );
@@ -1678,7 +1694,8 @@ export function BuildingEditor({
         (was.floor !== unit.floor ||
           was.startCol !== unit.startCol ||
           was.endCol !== unit.endCol ||
-          was.unitType !== unit.unitType)
+          was.unitType !== unit.unitType ||
+          (was.unitTypeId ?? undefined) !== (unit.unitTypeId ?? undefined))
       );
     };
     return {
@@ -1714,12 +1731,19 @@ export function BuildingEditor({
             startCol: unit.startCol,
             endCol: unit.endCol,
             unitType: unit.unitType,
+            ...(unit.unitTypeId ? { unitTypeId: unit.unitTypeId } : {}),
           })),
       add: infoOnly
         ? []
         : gridUnits
             .filter((unit) => !unit.existingId)
-            .map((unit) => ({ floor: unit.floor, startCol: unit.startCol, endCol: unit.endCol, unitType: unit.unitType })),
+            .map((unit) => ({
+              floor: unit.floor,
+              startCol: unit.startCol,
+              endCol: unit.endCol,
+              unitType: unit.unitType,
+              ...(unit.unitTypeId ? { unitTypeId: unit.unitTypeId } : {}),
+            })),
       ...(houseGrowth ? { houseGrowth } : {}),
     };
   };
@@ -3257,6 +3281,7 @@ export function BuildingEditor({
                 gridSize={gridSize}
                 onGridSizeChange={setGridSize}
                 units={gridUnits}
+                unitTypes={unitTypes.data ?? undefined}
                 // Not `setGridUnits` — a house gaining a second block is a
                 // question before it is a change. See `requestUnits`.
                 onUnitsChange={requestUnits}

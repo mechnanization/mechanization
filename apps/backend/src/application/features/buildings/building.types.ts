@@ -74,6 +74,8 @@ export interface UnitRow {
   unitCode: string;
   postedNumber: string | null;
   unitType: string;
+  /** «نوع الوحدة» (0109): the type it was filed as; `unitType` is that type's base. Null on a floor block. */
+  unitTypeId: string | null;
   side: string | null;
   unitArea: number | null;
   unitStatus: string | null;
