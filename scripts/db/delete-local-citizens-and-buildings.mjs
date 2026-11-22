@@ -15,7 +15,8 @@
  *   - Citizens (`users` WHERE `kind = 'CITIZEN'`)
  *   - Citizen registrations (`registrations`, `property_entries`, `building_units`, `documents`, `citizen_merges`)
  *   - Quality & audit checks on files (`record_reviews`, `quality_checks`, `data_quality_dismissals`)
- *   - Citizen requests & attachments (`citizen_requests`, `citizen_request_attachments`)
+ *   - Citizen requests, their answers & attachments (`citizen_requests`, `citizen_request_answers`, `citizen_request_attachments`).
+ *     The forms themselves (`request_forms`, `request_form_versions`, `request_form_fields`) are municipal configuration, not citizen data, and stay.
  *   - Buildings & census records (`buildings`, `building_code_aliases`, `units`, `unit_occupancies`, `unit_visits`, `unit_vacancy_confirmations`, `damage_assessments`, `cases`)
  *   - Associated billing & payments linked to citizens or units (`citizen_payments`, `fee_notices`, `citizen_payment_debtors`, `payment_transactions`, `payment_settlements`, `whish_checkouts`, `billing_run_entries`), and old debts (`arrears_lines`, `arrears_batch_citizens`, `arrears_batches`)
  *   - Short-lived citizen OTP challenges (`otp_challenges`)
@@ -150,7 +151,13 @@ export async function deleteCitizensAndBuildings({ tenantSlug = null, autoConfir
       await client.query('BEGIN');
 
       try {
-        // 2a. Citizen requests and attachments
+        // 2a. Citizen requests, their answers and attachments. The answers go first: they key onto the
+        // requests with RESTRICT, they are citizen PII, and their guard refuses a DELETE.
+        if (await tableExists(client, s, 'citizen_request_answers')) {
+          await client.query(`ALTER TABLE "${s}".citizen_request_answers DISABLE TRIGGER USER`);
+          await client.query(`DELETE FROM "${s}".citizen_request_answers`);
+          await client.query(`ALTER TABLE "${s}".citizen_request_answers ENABLE TRIGGER USER`);
+        }
         if (await tableExists(client, s, 'citizen_requests')) {
           await client.query(`ALTER TABLE "${s}".citizen_requests DISABLE TRIGGER USER`);
           if (await tableExists(client, s, 'citizen_request_attachments')) {

@@ -91,7 +91,9 @@ export function RequestDocument({
               '—'
             )}
           </DocumentRow>
-          <DocumentRow label={t('capacity')}>{labels.applicantCapacity[request.applicantCapacity]}</DocumentRow>
+          {request.applicantCapacity ? (
+            <DocumentRow label={t('capacity')}>{labels.applicantCapacity[request.applicantCapacity]}</DocumentRow>
+          ) : null}
         </SummaryList>
         {property ? (
           <SummaryList>

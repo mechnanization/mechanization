@@ -246,7 +246,8 @@ export interface CitizenRequestView {
   status: RequestStatus;
   channel: RequestChannel;
   requestType: RequestType;
-  applicantCapacity: ApplicantCapacity;
+  /** Null when the request's form does not ask for it (0113); every request filed before forms has one. */
+  applicantCapacity: ApplicantCapacity | null;
   citizen: {
     id: string;
     name: string;
@@ -280,7 +281,8 @@ export interface MyCitizenRequestView {
   status: RequestStatus;
   channel: RequestChannel;
   requestType: RequestType;
-  applicantCapacity: ApplicantCapacity;
+  /** Null when the request's form does not ask for it (0113); every request filed before forms has one. */
+  applicantCapacity: ApplicantCapacity | null;
   property: RequestPropertyView | null;
   /** As `CitizenRequestListItem.fee`: null when no bill was raised and none will be. */
   fee: number | null;

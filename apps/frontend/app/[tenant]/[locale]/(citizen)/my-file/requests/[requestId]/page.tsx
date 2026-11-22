@@ -206,7 +206,9 @@ export default function MyRequestPage({
           <Card>
             <CardContent className="p-4 sm:p-6">
               <SummaryList>
-                <SummaryRow label={t('capacity')}>{labels.applicantCapacity[request.applicantCapacity]}</SummaryRow>
+                {request.applicantCapacity ? (
+                  <SummaryRow label={t('capacity')}>{labels.applicantCapacity[request.applicantCapacity]}</SummaryRow>
+                ) : null}
                 <SummaryRow label={t('property')}>
                   {request.property ? (
                     <>

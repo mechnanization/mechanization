@@ -321,6 +321,11 @@ model User {
   requestsCancelled        CitizenRequest[]     @relation("RequestCancelledBy")
   requestAttachments       CitizenRequestAttachment[] @relation("RequestAttachmentUploadedBy")
   requestTypesUpdated      RequestTypeSetting[] @relation("RequestTypeUpdatedBy")
+  requestFormsCreated      RequestForm[]        @relation("RequestFormCreatedBy")
+  requestFormsUpdated      RequestForm[]        @relation("RequestFormUpdatedBy")
+  requestFormsArchived     RequestForm[]        @relation("RequestFormArchivedBy")
+  requestFormVersionsCreated   RequestFormVersion[] @relation("RequestFormVersionCreatedBy")
+  requestFormVersionsPublished RequestFormVersion[] @relation("RequestFormVersionPublishedBy")
   createdCases          Case[]               @relation("CaseCreatedBy")
   resolvedCases         Case[]               @relation("CaseResolvedCitizen")
   unitOccupancies       UnitOccupancy[]      @relation("UnitOccupant")
@@ -3507,8 +3512,10 @@ model RequestTypeSetting {
 ///   (`_counter_names_clerk`), a flat only with a card (`_unit_on_card`), and a
 ///   purpose never blank (`_purpose_present`).
 /// - One open request per citizen, type and card: `citizen_requests_one_open_key`,
-///   a partial unique index over AWAITING_PAYMENT, IN_REVIEW and READY_FOR_PICKUP;
-///   a request on no card keys on the nil uuid.
+///   a partial unique index over AWAITING_PAYMENT, IN_REVIEW and READY_FOR_PICKUP
+///   on a request with no form (`"formId" IS NULL`, since 0113); a request on a form keys
+///   on the form instead (`citizen_requests_one_open_form_key`, F11). A request on no
+///   card keys on the nil uuid.
 /// - Its life (0094, `citizen_requests_guard`): only the documented transitions;
 ///   nothing changes once COMPLETED, REJECTED or CANCELLED but `citizenId`, which
 ///   a merge of two files moves; each step's stamps written by that step; the
@@ -3525,8 +3532,16 @@ model CitizenRequest {
 
   channel           RequestChannel
   requestType       RequestType
-  applicantCapacity ApplicantCapacity
+  /// NULL when the form does not ask for it (0113, F6). Every request filed before it has one.
+  applicantCapacity ApplicantCapacity?
   status            RequestStatus     @default(AWAITING_PAYMENT)
+
+  /// The form and version the request was filled against (0113, F2); NULL on every request filed
+  /// before forms, until the built-in types are linked (Story 9). Both or neither (CHECK
+  /// `citizen_requests_form_pair`); never changed once set, but NULL to a value once (the guard).
+  formId        String? @db.Uuid
+  formVersionId String? @db.Uuid
+  formVersion   RequestFormVersion? @relation(fields: [formId, formVersionId], references: [formId, id], onDelete: Restrict)
 
   /// The citizen's card, and optionally one unit line on it (D4).
   propertyEntryId String?        @db.Uuid
@@ -3572,10 +3587,13 @@ model CitizenRequest {
   updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(3)
 
   attachments CitizenRequestAttachment[]
+  answers     CitizenRequestAnswer[]
 
   @@index([status, createdAt(sort: Desc)])
   @@index([createdAt(sort: Desc)])
   @@index([citizenId, createdAt(sort: Desc)])
+  @@index([formId])
+  @@index([formVersionId])
   @@index([propertyEntryId])
   @@index([buildingUnitId])
   @@index([createdById])
@@ -3601,12 +3619,195 @@ model CitizenRequestAttachment {
   /// The citizen (online) or the clerk who uploaded it.
   uploadedById String @db.Uuid
   uploadedBy   User   @relation("RequestAttachmentUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
+  /// The FILE question of the form a paper answers (0113); NULL for a paper filed for no question.
+  /// The trigger `citizen_request_attachments_field_guard` holds it to the request's own version.
+  fieldId String? @db.Uuid
+  field   RequestFormField? @relation(fields: [fieldId], references: [id], onDelete: Restrict)
   createdAt DateTime @default(now()) @db.Timestamptz(3)
 
   /// 0092 named it for the request alone; `map:` keeps Prisma on that name.
   @@index([requestId, createdAt], map: "citizen_request_attachments_requestId_idx")
   @@index([uploadedById])
+  @@index([fieldId])
   @@map("citizen_request_attachments")
+}
+
+// ─────────────────────  Request forms (0112, 0113)  ─────────────────────
+//
+// Forms the manager defines instead of a code change. Plan, decisions and flow:
+// docs/request-forms-plan.md and docs/open-decisions.md §24. Every rule the database holds
+// is in 0113's header; the partial unique indexes and the triggers are not expressible in
+// Prisma 5 and are named on the models below.
+
+/// What a question on a form asks (F3). A fixed catalogue: no pattern the manager types.
+enum RequestFieldType {
+  SHORT_TEXT
+  LONG_TEXT
+  INTEGER
+  DECIMAL
+  DATE
+  PHONE
+  DOCUMENT_NUMBER
+  SINGLE_CHOICE
+  MULTI_CHOICE
+  YES_NO
+  FILE
+}
+
+/// Whether a form names one of the citizen's property cards (F6, D4).
+enum RequestPropertyMode {
+  NONE
+  OPTIONAL
+  REQUIRED
+}
+
+/// A version is edited as a DRAFT, then PUBLISHED once and frozen (F2).
+enum RequestFormVersionStatus {
+  DRAFT
+  PUBLISHED
+}
+
+/// The column of the citizen's file a linked field is copied from (F4). Never a رقم مرجعي.
+enum RequestLinkedSource {
+  FIRST_NAME
+  FATHER_NAME
+  LAST_NAME
+  MOTHER_NAME
+  PHONE
+  IDENTITY_NUMBER
+  CIVIL_RECORD_NUMBER
+}
+
+/// An answer was typed, or copied from the citizen's file (F4).
+enum RequestAnswerOrigin {
+  ANSWERED
+  FROM_FILE
+}
+
+/// One form: its fee, what it asks of the applicant, and its current published version.
+/// What the database holds, none of which Prisma can express:
+/// - CHECKs (0113): the fee not negative and whole pounds; names and the template not blank
+///   and bounded; archived is never enabled; enabled needs a published version.
+/// - `request_forms_guard` (BEFORE UPDATE): `systemType` never changes, and the current
+///   version is one of the form's own, published.
+/// - `systemType` is set on a form standing for one of the eight built-in types (F1), unique.
+model RequestForm {
+  id                String              @id @default(uuid()) @db.Uuid
+  nameAr            String
+  nameEn            String?
+  /// Whole Lebanese pounds, as `request_type_settings.feeAmount`; not versioned (F2).
+  feeAmount         Decimal             @default(0) @db.Decimal(14, 2)
+  enabled           Boolean             @default(false)
+  propertyMode      RequestPropertyMode @default(NONE)
+  askCapacity       Boolean             @default(false)
+  askPurpose        Boolean             @default(false)
+  /// A draft the clerk starts the statement from (F9); never the certificate.
+  statementTemplate String?
+  systemType        RequestType?        @unique
+  sortOrder         Int                 @default(0)
+
+  archivedAt   DateTime? @db.Timestamptz(3)
+  archivedById String?   @db.Uuid
+  archivedBy   User?     @relation("RequestFormArchivedBy", fields: [archivedById], references: [id], onDelete: Restrict)
+
+  /// SET NULL: deleting a form's last version (a form never filled) is not blocked by the pointer to it.
+  currentVersionId String?             @db.Uuid
+  currentVersion   RequestFormVersion? @relation("RequestFormCurrentVersion", fields: [currentVersionId], references: [id], onDelete: SetNull)
+
+  /// NULL on a system form made by a migration.
+  createdById String? @db.Uuid
+  createdBy   User?   @relation("RequestFormCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedById String? @db.Uuid
+  updatedBy   User?   @relation("RequestFormUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+
+  versions RequestFormVersion[] @relation("RequestFormVersions")
+
+  @@index([enabled, sortOrder])
+  @@index([currentVersionId])
+  @@index([archivedById])
+  @@index([createdById])
+  @@index([updatedById])
+  @@map("request_forms")
+}
+
+/// A version of a form. `request_form_versions_guard`: a PUBLISHED version never changes, a DRAFT may be
+/// published once, its form, number and creator never change, and a version filled by a request is never
+/// removed. `request_form_versions_one_draft_key` (partial unique on `formId` where DRAFT) allows one
+/// working copy a form. `revision` is what a draft's saves compare, for concurrent edits.
+model RequestFormVersion {
+  id            String                   @id @default(uuid()) @db.Uuid
+  formId        String                   @db.Uuid
+  form          RequestForm              @relation("RequestFormVersions", fields: [formId], references: [id], onDelete: Restrict)
+  versionNumber Int
+  status        RequestFormVersionStatus @default(DRAFT)
+  revision      Int                      @default(1)
+
+  publishedAt   DateTime? @db.Timestamptz(3)
+  publishedById String?   @db.Uuid
+  publishedBy   User?     @relation("RequestFormVersionPublishedBy", fields: [publishedById], references: [id], onDelete: Restrict)
+  createdById   String?   @db.Uuid
+  createdBy     User?     @relation("RequestFormVersionCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt     DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime  @default(now()) @updatedAt @db.Timestamptz(3)
+
+  fields       RequestFormField[]
+  requests     CitizenRequest[]
+  currentOf    RequestForm[]       @relation("RequestFormCurrentVersion")
+
+  /// The target of a request's composite key: a request points at a version of its own form.
+  @@unique([formId, id])
+  @@unique([formId, versionNumber])
+  @@index([publishedById])
+  @@index([createdById])
+  @@map("request_form_versions")
+}
+
+/// A question. Every field is required (F4), so there is no `required` column. `key` is stable across
+/// versions (CHECK `request_form_fields_key_shape`); `position` is 0–39 (at most 40 questions);
+/// `config` is validated by the shared zod schema of its type; `linkedSource` fits only the type that can
+/// hold it (CHECK). `request_form_fields_guard`: written into a DRAFT version only.
+model RequestFormField {
+  id           String               @id @default(uuid()) @db.Uuid
+  versionId    String               @db.Uuid
+  version      RequestFormVersion   @relation(fields: [versionId], references: [id], onDelete: Restrict)
+  key          String
+  position     Int
+  type         RequestFieldType
+  labelAr      String
+  labelEn      String?
+  helpAr       String?
+  helpEn       String?
+  config       Json                 @default("{}")
+  linkedSource RequestLinkedSource?
+  createdAt    DateTime             @default(now()) @db.Timestamptz(3)
+
+  answers     CitizenRequestAnswer[]
+  attachments CitizenRequestAttachment[]
+
+  @@unique([versionId, key])
+  @@unique([versionId, position])
+  @@map("request_form_fields")
+}
+
+/// An answer to a question, written once with the request (`citizen_request_answers_guard`: no UPDATE, no
+/// DELETE, a question of the request's own version, never a file question, before the request has a bill),
+/// and under 0103's TRUNCATE guard. `value` is a typed JSON value shaped by the field's type; a choice's
+/// stored value is its key, never its label. Not in the in-app backup (docs/gotchas.md).
+model CitizenRequestAnswer {
+  id        String              @id @default(uuid()) @db.Uuid
+  requestId String              @db.Uuid
+  request   CitizenRequest      @relation(fields: [requestId], references: [id], onDelete: Restrict)
+  fieldId   String              @db.Uuid
+  field     RequestFormField    @relation(fields: [fieldId], references: [id], onDelete: Restrict)
+  value     Json
+  origin    RequestAnswerOrigin @default(ANSWERED)
+  createdAt DateTime            @default(now()) @db.Timestamptz(3)
+
+  @@unique([requestId, fieldId])
+  @@index([fieldId])
+  @@map("citizen_request_answers")
 }
 
 // ─────────────────────────  Old debts (0107, 0108)  ─────────────────────────

@@ -32,6 +32,10 @@ const GUARDED = [
   'arrears_batches',
   'arrears_lines',
   'arrears_batch_citizens',
+  // 0113: request forms. A published version, its fields and an answer are written once.
+  'request_form_versions',
+  'request_form_fields',
+  'citizen_request_answers',
 ];
 
 describeIfDb('0103 — TRUNCATE on the append-only tables', () => {

@@ -284,7 +284,9 @@ export function RequestSheet({
             <SummaryRow label={t('identityNumber')} className="font-mono">
               <bdi dir="ltr">{request.citizen.identityDocNumber ?? '—'}</bdi>
             </SummaryRow>
-            <SummaryRow label={t('capacity')}>{labels.applicantCapacity[request.applicantCapacity]}</SummaryRow>
+            {request.applicantCapacity ? (
+              <SummaryRow label={t('capacity')}>{labels.applicantCapacity[request.applicantCapacity]}</SummaryRow>
+            ) : null}
             {request.purpose ? <SummaryRow label={t('purpose')}>{request.purpose}</SummaryRow> : null}
           </SummaryList>
         </section>
