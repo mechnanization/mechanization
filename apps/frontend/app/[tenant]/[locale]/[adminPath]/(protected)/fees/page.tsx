@@ -82,6 +82,7 @@ import { BillCheckbox } from '@/components/admin/bulk-settle/bill-checkbox';
 import { BulkSettleBar } from '@/components/admin/bulk-settle/bulk-settle-bar';
 import { FeesSummaryStrip } from '@/components/admin/fees/fees-summary-strip';
 import { PaymentReviewDialog } from '@/components/admin/fees/payment-review-dialog';
+import { ArrearsBillMark } from '@/components/arrears-bill-mark';
 import { heldKey, keyIsSpent, spendKey } from '@/lib/request-id';
 import { cn } from '@/lib/utils';
 
@@ -585,6 +586,7 @@ export default function FeesPage({
           return (
             <div className="space-y-1">
               <p className="font-medium text-foreground">{payment.title}</p>
+              <ArrearsBillMark arrears={payment.arrears} invoiceNumber={payment.invoiceNumber} showOldReference />
               {breakdown ? (
                 <p className="font-mono text-xs text-muted-foreground">
                   <bdi dir="ltr">{breakdown}</bdi>

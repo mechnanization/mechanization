@@ -5,14 +5,16 @@ import {
   isStructuralUnitType,
   layoutBuildingFloors,
   unitTopFloor,
+  type UnitFigure,
   type UnitSpan,
 } from '@mechanization/shared-schemas';
 import type { BuildingDetail, UnitWithOccupants } from '@/lib/api-client';
+import { UnitFigureFront } from './unit-figures';
 
 /** A unit as a drawing reads it: where it is and what it is — never who lives there. */
 export type ElevationUnit = Pick<
   UnitWithOccupants,
-  'id' | 'floor' | 'sequence' | 'unitType' | 'unitCode' | 'startCol' | 'endCol' | 'levels'
+  'id' | 'floor' | 'sequence' | 'unitType' | 'unitTypeId' | 'unitCode' | 'startCol' | 'endCol' | 'levels'
 >;
 
 /**
@@ -190,8 +192,16 @@ export function BuildingElevation({
   marker = 'fill',
   locale = 'ar',
   stage = false,
+  figures,
 }: {
   building: ElevationBuilding;
+  /**
+   * The drawing of each unit type that has one (`unitTypeId` → figure, from
+   * `figuresByType`): a mosque, a pharmacy, a fuel station drawn as itself
+   * instead of with its base's plain front (migration 0111). Absent, or a unit
+   * whose type has none, is drawn as before.
+   */
+  figures?: ReadonlyMap<string, UnitFigure>;
   highlight: ReadonlySet<string>;
   tone: PropertyTone;
   /**
@@ -380,6 +390,7 @@ export function BuildingElevation({
                         <>
                           <UnitFace
                             unitType={unit.unitType}
+                            figure={unit.unitTypeId ? (figures?.get(unit.unitTypeId) ?? null) : null}
                             kind={faceKind}
                             columns={span}
                             lit={filled}
@@ -987,6 +998,7 @@ function Window({ className }: { className?: string }) {
  */
 function UnitFace({
   unitType,
+  figure = null,
   kind,
   columns,
   lit,
@@ -994,6 +1006,8 @@ function UnitFace({
   underground = false,
 }: {
   unitType: string | null;
+  /** The drawing of the unit's type, when it has one (0111): premises and stores only. */
+  figure?: UnitFigure | null;
   kind: FaceKind;
   columns: number;
   lit: boolean;
@@ -1054,6 +1068,10 @@ function UnitFace({
         ))}
       </span>
     );
+  }
+  // A type with a drawing of its own: a mosque, a pharmacy, a fuel station (0111).
+  if (figure && (kind === 'premises' || kind === 'storage')) {
+    return <UnitFigureFront figure={figure} columns={columns} lit={lit} />;
   }
   if (kind === 'storage' && unitType !== 'GARAGE') {
     // «مستودع» — a roller door of horizontal slats, the loading sill under it.

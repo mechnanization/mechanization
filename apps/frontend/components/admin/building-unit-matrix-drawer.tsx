@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import type { SetOwnerBillingInput, SetUnitFeeExemptionInput } from '@mechanization/shared-schemas';
 import {
@@ -20,6 +21,7 @@ import {
 import {
   getLabels,
   isStructuralUnitType,
+  type UnitType,
   defaultUnitTypeFor,
   unitLevelsLabel,
   type CitizenResidence,
@@ -70,6 +72,7 @@ import { Sheet } from '@/components/ui/sheet';
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 import { MATRIX_UNIT_TYPES } from '@/components/citizen/unit-fields';
+import { chosenType, figuresByType, unitTypeLabel, unitTypeOptions, useUnitTypes } from '@/lib/unit-types';
 import { endTenancyMessage } from '@/components/admin/after-tenancy-question';
 import { BuildingElevation } from '@/components/admin/property-illustrations';
 import { UnitCorrectionDeleteButton, useStaffRole } from '@/components/admin/unit-correction-delete-dialog';
@@ -188,6 +191,8 @@ export function BuildingUnitMatrixDrawer({
   locale?: string;
 }) {
   const en = locale === 'en';
+  const { adminPath = '' } = useParams<{ adminPath?: string }>();
+  const base = `/${tenant}/${locale}/${adminPath}`;
   const tOwnerBilling = useTranslations('ownerBilling');
   const tFeeExemption = useTranslations('feeExemption');
   const labels = getLabels(locale);
@@ -319,7 +324,38 @@ export function BuildingUnitMatrixDrawer({
 
   /** Which floor's «إضافة وحدة» row is open, and the type chosen in it. */
   const [addingFloor, setAddingFloor] = useState<number | null>(null);
+  /** The select's value: a unit type's id, or a base `UnitType` while the list is not loaded. */
   const [addingType, setAddingType] = useState('');
+  /*
+    «أنواع الوحدات» (0109): every type, so a unit whose type was switched off
+    since still shows its own name; only the active ones are offered for a new
+    unit. Empty while it loads — the select then offers the base types, and the
+    server files the unit under its system type.
+  */
+  const tUnitTypes = useTranslations('unitTypes');
+  const unitTypesQuery = useUnitTypes(tenant, base, token, {
+    includeInactive: true,
+    errorMessage: tUnitTypes('loadError'),
+  });
+  const unitTypes = useMemo(() => unitTypesQuery.data ?? [], [unitTypesQuery.data]);
+  /** The drawings the elevation gives the types that have one (0111). */
+  const figures = useMemo(() => figuresByType(unitTypes), [unitTypes]);
+  const addTypeOptions = useMemo(
+    () =>
+      unitTypeOptions({
+        types: unitTypes,
+        locale,
+        unitTypeLabels: labels.unitType,
+        fallback: MATRIX_UNIT_TYPES,
+        // A building does not contain a «منزل مستقل»; the house question is asked by the server.
+        omitBases: ['INDEPENDENT_HOUSE'],
+        withStructural: true,
+      }),
+    [unitTypes, locale, labels],
+  );
+  /** A unit's type name: the municipality's name for its type, else its base's label. */
+  const typeName = (unit: { unitType: UnitType; unitTypeId?: string | null }): string =>
+    unitTypeLabel(unitTypes, unit, locale, labels.unitType);
   /**
    * The units the server held out when «إضافة وحدة» hit its duplicate guard.
    *
@@ -382,14 +418,17 @@ export function BuildingUnitMatrixDrawer({
    * same position.
    */
   const addOnFloor = async (floor: number, unitType: string, acknowledged = false, houseGrowth?: HouseGrowth) => {
-    if (!building || !unitType) return;
+    // `unitType` here is the select's value (see `addingType`); what is sent is what it stands for.
+    const chosen = chosenType(unitType, addTypeOptions);
+    if (!building || !chosen) return;
 
     setBusy(true);
     setActionError(null);
     try {
       const created = await addUnit(tenant, token, building.id, {
         floor,
-        unitType: unitType as UpsertUnitInput['unitType'],
+        unitType: chosen.unitType as UpsertUnitInput['unitType'],
+        ...(chosen.unitTypeId ? { unitTypeId: chosen.unitTypeId } : {}),
         ...(acknowledged ? { acknowledgedDuplicates: true } : {}),
         ...(houseGrowth ? { houseGrowth } : {}),
       });
@@ -755,6 +794,7 @@ export function BuildingUnitMatrixDrawer({
                     selected={selectedUnitId}
                     pickAny
                     stage
+                    figures={figures}
                     onSelect={(unitId) => {
                       setSelectedUnitId(unitId === selectedUnitId ? null : unitId);
                       setAction(null);
@@ -816,9 +856,9 @@ export function BuildingUnitMatrixDrawer({
                             <SelectValue placeholder={en ? 'Unit type…' : 'نوع الوحدة…'} />
                           </SelectTrigger>
                           <SelectContent>
-                            {MATRIX_UNIT_TYPES.map((option) => (
-                              <SelectItem key={option} value={option}>
-                                {labels.unitType[option]}
+                            {addTypeOptions.map((option) => (
+                              <SelectItem key={option.value} value={option.value}>
+                                {option.label}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -1006,7 +1046,7 @@ export function BuildingUnitMatrixDrawer({
                                 {unit.unitCode}
                               </span>
                               <span className="text-xs text-muted-foreground">
-                                {labels.unitType[unit.unitType]}
+                                {typeName(unit)}
                               </span>
                             </div>
                             <Badge variant={badge.variant} className="mt-1.5 max-w-full truncate">
@@ -1071,7 +1111,7 @@ export function BuildingUnitMatrixDrawer({
                     {building.code}-{selectedUnit.unitCode}
                   </h3>
                   <p className="text-xs text-muted-foreground">
-                    {floorLabel(selectedUnit.floor, en)} · {labels.unitType[selectedUnit.unitType]} ·{' '}
+                    {floorLabel(selectedUnit.floor, en)} · {typeName(selectedUnit)} ·{' '}
                     {labels.surveyStatus[selectedUnit.surveyStatus]}
                   </p>
                   <Badge variant={cellBadge(selectedUnit, labels, en).variant} className="max-w-full truncate">

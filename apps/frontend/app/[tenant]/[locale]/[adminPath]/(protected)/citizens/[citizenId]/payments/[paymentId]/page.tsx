@@ -68,6 +68,7 @@ import { useToast } from '@/components/ui/toast';
 import { PaymentReceipt, type RecordedMovement } from '@/components/admin/payment-receipt';
 import { BillReceipts } from '@/components/admin/finance/bill-receipts';
 import { WriteOffBillDialog } from '@/components/admin/fees/write-off-bill-dialog';
+import { ArrearsBillMark, useArrearsPropertyText } from '@/components/arrears-bill-mark';
 import { cn } from '@/lib/utils';
 import {
   BILL_CANCEL_ROLES,
@@ -233,6 +234,8 @@ export default function SettleCashPage({
   const [writeOffOpen, setWriteOffOpen] = useState(false);
   const tWriteOff = useTranslations('counterPayment.writeOff');
   const tCancel = useTranslations('counterPayment.cancelBill');
+  const tArrears = useTranslations('arrearsBill');
+  const arrearsPropertyText = useArrearsPropertyText();
   /*
     The shared contract decides the reason (`cancelBillSchema`, as the route
     validates it); its message is Arabic by design, so the words under the field
@@ -614,6 +617,14 @@ export default function SettleCashPage({
         }
       />
 
+      {payment?.arrears ? (
+        // An old debt (task 10): what it is for and where it is held, and the old books' reference the clerk may need to quote.
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+          <ArrearsBillMark arrears={payment.arrears} invoiceNumber={payment.invoiceNumber} showOldReference />
+          <span className="text-xs text-muted-foreground">{arrearsPropertyText(payment.arrears)}</span>
+        </div>
+      ) : null}
+
       {canCancel || canWriteOff ? (
         <div className="flex flex-wrap justify-end gap-2">
           {canWriteOff ? (
@@ -674,6 +685,10 @@ export default function SettleCashPage({
             })}
           </Alert>
         ) : null}
+        {payment?.arrears ? (
+          // A citizen who proves they paid long ago: the reason cites the old receipt, as the books never held it.
+          <Alert variant="info">{tArrears('cancelHint')}</Alert>
+        ) : null}
         {/* The minimum in the caption from the start; a reason typed short of it says so under the field. */}
         <Field
           label={tCancel('reason', { min: ADJUSTMENT_REASON_MIN })}
@@ -685,7 +700,7 @@ export default function SettleCashPage({
             id="cancel-bill-reason"
             value={cancelReason}
             maxLength={500}
-            placeholder={tCancel('reasonPlaceholder')}
+            placeholder={payment?.arrears ? tArrears('cancelPlaceholder') : tCancel('reasonPlaceholder')}
             onChange={(event) => setCancelReason(event.target.value)}
           />
         </Field>

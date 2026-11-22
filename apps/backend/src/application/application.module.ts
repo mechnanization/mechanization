@@ -18,6 +18,7 @@ import { ArrearsBatchService } from './features/arrears/arrears-batch.service';
 import { ArrearsReportService } from './features/arrears/arrears-report.service';
 import { ArrearsService } from './features/arrears/arrears.service';
 import { BuildingTypesService } from './features/buildings/building-types.service';
+import { UnitTypesService } from './features/buildings/unit-types.service';
 import { UnitCorrectionService } from './features/corrections/unit-correction.service';
 import { CasesService } from './features/cases/cases.service';
 import { CitizensService } from './features/citizens/citizens.service';
@@ -130,6 +131,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
     ArrearsBatchService,
     ArrearsReportService,
     BuildingTypesService,
+    UnitTypesService,
     UnitCorrectionService,
     BackupService,
     RecordReviewService,
@@ -188,6 +190,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
     ArrearsBatchService,
     ArrearsReportService,
     BuildingTypesService,
+    UnitTypesService,
     UnitCorrectionService,
     BackupService,
     RecordReviewService,

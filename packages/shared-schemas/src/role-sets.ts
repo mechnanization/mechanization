@@ -71,6 +71,20 @@ export const BUILDING_TYPE_READ_ROLES: readonly StaffRole[] = EVERY_STAFF_ROLE;
  */
 export const BUILDING_TYPE_ADMIN_ROLES = ['SUPER_ADMIN'] as const satisfies readonly StaffRole[];
 
+/**
+ * Read «أنواع الوحدات» (`GET unit-types`): everyone who reads or edits a
+ * building's units — the matrix, the editor, the ledger — and the offline store
+ * keeps the list for an inspector with no network (migration 0109).
+ */
+export const UNIT_TYPE_READ_ROLES: readonly StaffRole[] = EVERY_STAFF_ROLE;
+
+/**
+ * Add, rename, reorder, switch off or on a unit type (`POST`/`PATCH unit-types`):
+ * the manager's, as the building types are. A named set because the screen
+ * shows its controls by it.
+ */
+export const UNIT_TYPE_ADMIN_ROLES = ['SUPER_ADMIN'] as const satisfies readonly StaffRole[];
+
 /** The register's own administration: zones. */
 export const REGISTER_ADMIN_ROLES = [
   'SUPER_ADMIN',

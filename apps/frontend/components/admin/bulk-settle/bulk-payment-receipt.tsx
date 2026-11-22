@@ -20,6 +20,7 @@ import { Money } from '@/components/ui/money';
 import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ReceiptLetterhead } from '@/components/admin/payment-receipt';
+import { ArrearsBillMark } from '@/components/arrears-bill-mark';
 import { MoneyList } from './money-list';
 
 /**
@@ -238,6 +239,8 @@ export function BulkPaymentReceipt({
                           <span className={cn('block text-xs', struck)}>{t('none')}</span>
                         )}
                         <span className={cn('block text-xs', struck)}>{item.title}</span>
+                        {/* An old debt: the chip, its year and fee. Never the old books' reference: this is the citizen's paper. */}
+                        {item.arrears ? <ArrearsBillMark arrears={item.arrears} className={cn('mt-1 flex', struck)} /> : null}
                         {item.reversed ? <span className="block text-xs font-semibold">{t('reversed')}</span> : null}
                       </TableCell>
                       <TableCell className={cn('whitespace-normal py-2 align-top text-xs', struck)}>

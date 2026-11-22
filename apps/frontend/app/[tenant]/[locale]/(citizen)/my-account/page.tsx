@@ -26,6 +26,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Money } from '@/components/ui/money';
+import { ArrearsBillMark } from '@/components/arrears-bill-mark';
 import { LoadingState } from '@/components/ui/states';
 import { signOutCitizen } from '@/lib/citizen-sign-out';
 
@@ -190,6 +191,8 @@ export default function MyAccount({
                             {/* What is left on it, not its face value (`billFigure`). */}
                             <Money amount={billFigure(payment)} exact className="font-medium" locale={locale} />
                           </span>
+                          {/* An old debt says so, with its year and fee, on a line of its own (task 10). */}
+                          <ArrearsBillMark arrears={payment.arrears} invoiceNumber={payment.invoiceNumber} className="basis-full" />
                         </li>
                       ))}
                     </ul>

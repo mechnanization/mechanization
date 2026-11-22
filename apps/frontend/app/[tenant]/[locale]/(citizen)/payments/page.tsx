@@ -1,7 +1,7 @@
 'use client';
 
 import { billOwesNothing } from '@mechanization/shared-schemas';
-import { use, useCallback, useEffect, useState } from 'react';
+import { Fragment, use, useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import {
@@ -39,6 +39,8 @@ import { PayDialog } from '@/components/citizen/pay-dialog';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/dates';
 import { signOutCitizen } from '@/lib/citizen-sign-out';
+import { groupArrearsByYear, splitArrears } from '@/lib/arrears-bill';
+import { ArrearsBillMark } from '@/components/arrears-bill-mark';
 
 /*
   A bill the municipality cancelled (CANCELLED) is muted: it stays on the list,
@@ -73,6 +75,7 @@ export default function CitizenPayments({
   const labels = getLabels(locale);
   const tCitizen = useTranslations('citizen');
   const tPay = useTranslations('onlinePayment');
+  const tArrears = useTranslations('arrearsBill');
 
   const [token, setToken] = useState<string | null>(null);
   const [name, setName] = useState('');
@@ -176,6 +179,9 @@ export default function CitizenPayments({
     .map((item) => item.dueDate)
     .sort()
     .at(0);
+  // This year's bills as the server listed them, then the old debts under their own heading, the oldest year first.
+  const { current, arrears } = splitArrears(items);
+  const ordered = [...current, ...groupArrearsByYear(arrears).flatMap((group) => group.bills)];
 
   return (
     <div className="space-y-8">
@@ -260,19 +266,37 @@ export default function CitizenPayments({
         ) : null}
 
         <div className="space-y-3">
-          {items.map((item) => {
+          {ordered.map((item, index) => {
             const Icon = STATUS_ICON[item.paymentStatus] ?? Clock;
             const payable = isPayable(item);
             // Cancelled, or written off («شطب»): it owes nothing; shown as it was, struck through.
             const cancelled = billOwesNothing(item.paymentStatus);
             const writtenOff = item.paymentStatus === 'WRITTEN_OFF';
+            // The old debts follow the current bills under one heading, and each year under its own.
+            const before = ordered[index - 1];
+            const startsArrears = Boolean(item.arrears) && !before?.arrears;
+            const startsYear = Boolean(item.arrears) && before?.arrears?.year !== item.arrears?.year;
 
             return (
-              <Card key={item.id}>
+              <Fragment key={item.id}>
+                {startsArrears ? (
+                  <div className="space-y-1 pt-4">
+                    <h3 className="text-base font-semibold">{tArrears('groupTitle')}</h3>
+                    <p className="text-sm text-muted-foreground">{tArrears('groupHint')}</p>
+                  </div>
+                ) : null}
+                {startsYear && item.arrears ? (
+                  <h4 className="pt-1 text-sm font-medium text-muted-foreground">
+                    {tArrears('groupYear', { year: String(item.arrears.year) })}
+                  </h4>
+                ) : null}
+              <Card>
                 <CardContent className="space-y-3 p-5">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0 space-y-1">
                       <p className="font-semibold">{item.title}</p>
+                      {/* The year, the fee and the «ARR-» number; never the old books' reference, which the API keeps from the portal. */}
+                      <ArrearsBillMark arrears={item.arrears} invoiceNumber={item.invoiceNumber} />
                       <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
                         <span className="inline-flex items-center gap-1.5">
                           <CalendarClock className="size-3.5" aria-hidden />
@@ -382,6 +406,7 @@ export default function CitizenPayments({
                   ) : null}
                 </CardContent>
               </Card>
+              </Fragment>
             );
           })}
         </div>

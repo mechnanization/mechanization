@@ -32,6 +32,9 @@ import type {
   FeeAssessmentLine,
   FeeBasis,
   BuildingTypeView,
+  UnitTypeView,
+  CreateUnitTypeInput,
+  UpdateUnitTypeInput,
   CreateBuildingTypeInput,
   CreateNewsCategoryInput,
   CreateNewsPublisherInput,
@@ -92,6 +95,7 @@ import type {
   UnitType,
   VacancyBasis,
   VacancyEndReason,
+  BillArrearsView,
   BillWriteOffView,
   WriteOffBillInput,
 } from '@mechanization/shared-schemas';
@@ -1814,6 +1818,11 @@ export interface UnitRow {
   unitCode: string;
   postedNumber: string | null;
   unitType: UnitType;
+  /**
+   * «نوع الوحدة» (0109): the type it was filed as; `unitType` is that type's
+   * base. Null on a floor block, and absent on a response from before 0109.
+   */
+  unitTypeId?: string | null;
   side: string | null;
   unitArea: number | null;
   unitStatus: UnitStatus | null;
@@ -3620,6 +3629,11 @@ export interface CitizenProfilePayment {
   cancellationReason?: string | null;
   /** «شطب» (0107): when, how much, why and on which decision; null unless WRITTEN_OFF. Optional for an older API. */
   writeOff?: BillWriteOffView | null;
+  /**
+   * «متأخرات سنوات سابقة»: the year, the fee and the رقم العقار of an «ARR-» bill, with the old books'
+   * reference on a staff read (the portal's is null); null on any other bill. Optional for an older API.
+   */
+  arrears?: BillArrearsView | null;
   /**
    * The municipal request whose fee this bill is (0092), or null. Cancelling the
    * bill cancels the request while it is still open (AWAITING_PAYMENT or
@@ -5830,6 +5844,8 @@ export function reviewBillBasis(
 
 export interface CitizenPaymentItem {
   id: string;
+  /** «ARR-2611-0001» on an old debt, «INV-…» on any other bill the system raised; null before 0079. Optional for an older API. */
+  invoiceNumber?: string | null;
   title: string;
   amount: number;
   paidAmount: number;
@@ -5846,6 +5862,8 @@ export interface CitizenPaymentItem {
   cancellationReason?: string | null;
   /** «شطب» (0107): when, how much, why and on which decision; null unless WRITTEN_OFF. Optional for an older API. */
   writeOff?: BillWriteOffView | null;
+  /** «متأخرات سنوات سابقة»: the year, the fee and the رقم العقار of an old debt, without the old books' reference; null on any other bill. */
+  arrears?: BillArrearsView | null;
   frequency: string | null;
   /**
    * How this amount was arrived at — «6 محل تجاري × 100,000 ل.ل».
@@ -5948,6 +5966,8 @@ export interface AdminPaymentItem {
   cancellationReason?: string | null;
   /** «شطب» (0107): when, how much, why and on which decision; null unless WRITTEN_OFF. Optional for an older API. */
   writeOff?: BillWriteOffView | null;
+  /** «متأخرات سنوات سابقة»: the line behind an «ARR-» bill, with the old books' reference (staff only); null on any other bill. */
+  arrears?: BillArrearsView | null;
   /**
    * Last write to the row. Stands in for the payment time on a *partial*
    * settlement, which never gets a `paidAt` — see the note on the server.
@@ -7376,6 +7396,54 @@ export async function updateBuildingType(
   signal?: AbortSignal,
 ): Promise<BuildingTypeView> {
   return apiFetch<BuildingTypeView>(tenant, `/building-types/${encodeURIComponent(id)}`, {
+    token,
+    method: 'PATCH',
+    body: JSON.stringify(input),
+    signal,
+  });
+}
+
+/**
+ * The municipality's unit types, system types first (`GET unit-types`, 0109).
+ * Every staff role reads it: the matrix and the building editor offer it, and
+ * an inspector keeps it for offline use. Read through `useUnitTypes`.
+ */
+export async function getUnitTypes(
+  tenant: string,
+  token: string,
+  options: { includeInactive?: boolean } = {},
+  signal?: AbortSignal,
+): Promise<UnitTypeView[]> {
+  return apiFetch<UnitTypeView[]>(tenant, `/unit-types${options.includeInactive ? '?includeInactive=true' : ''}`, {
+    token,
+    signal,
+  });
+}
+
+/** Adds a custom unit type. The manager's (`UNIT_TYPE_ADMIN_ROLES`). */
+export async function createUnitType(
+  tenant: string,
+  token: string,
+  input: CreateUnitTypeInput,
+  signal?: AbortSignal,
+): Promise<UnitTypeView> {
+  return apiFetch<UnitTypeView>(tenant, '/unit-types', {
+    token,
+    method: 'POST',
+    body: JSON.stringify(input),
+    signal,
+  });
+}
+
+/** Renames, reorders, switches off or on, or moves a type unused by any unit. The manager's. */
+export async function updateUnitType(
+  tenant: string,
+  token: string,
+  id: string,
+  input: UpdateUnitTypeInput,
+  signal?: AbortSignal,
+): Promise<UnitTypeView> {
+  return apiFetch<UnitTypeView>(tenant, `/unit-types/${encodeURIComponent(id)}`, {
     token,
     method: 'PATCH',
     body: JSON.stringify(input),

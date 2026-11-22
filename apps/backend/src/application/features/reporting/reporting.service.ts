@@ -15,9 +15,11 @@ import type {
   RequestStatus,
   RequestType,
   SharedUnitBillView,
+  BillArrearsView,
 } from '@mechanization/shared-schemas';
 import { effectiveOwnerBilling, isCoOwned, ownerShareOf } from '@mechanization/shared-schemas';
 import { writeOffView } from '../fees/bill-write-off';
+import { ARREARS_LINE_SELECT, arrearsView } from '../fees/bill-arrears';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
@@ -622,6 +624,12 @@ export interface CitizenProfilePayment {
    * and how many may pay it, never who (O2). Null on their own bill.
    */
   sharedUnit: SharedUnitBillView | null;
+  /**
+   * «متأخرات سنوات سابقة» (task 10): the year, the fee, the رقم العقار and the
+   * old books' reference behind an «ARR-» bill; null on any other bill. The
+   * reference is the municipality's, so the portal's summary nulls it.
+   */
+  arrears: BillArrearsView | null;
 }
 
 /**
@@ -1405,6 +1413,8 @@ export class ReportingService {
           assessment: true,
           feeNotice: { select: { frequency: true } },
           citizenRequest: { select: { id: true, requestNumber: true, requestType: true, status: true } },
+          // An old debt's line (task 10).
+          arrearsLine: ARREARS_LINE_SELECT,
           ...SHARED_BILL_INCLUDE,
         },
       }),
@@ -1438,6 +1448,8 @@ export class ReportingService {
       reviewNote: payment.reviewNote,
       cancellationReason: payment.cancellationReason,
       writeOff: writeOffView(payment),
+      // Staff read the old ledger reference too; `CitizenController.mySummary` clears it before the portal sees it.
+      arrears: arrearsView(payment, 'STAFF'),
       frequency: payment.feeNotice?.frequency ?? null,
       assessment: (payment.assessment as FeeAssessment | null) ?? null,
       request: payment.citizenRequest
