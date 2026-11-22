@@ -1,7 +1,9 @@
 # Request form builder — implementation plan
 ## نماذج الإفادات: نماذج طلبات يعرّفها المدير
 
-> **Status: a plan, 2026-11-21. Nothing is built.** The product questions are
+> **Status: built on stacked branches, 2026-11-22; none merged, no PR opened** — what was built, where it differs from this plan and
+> how to release it: [§11](#11-what-was-built-2026-11-22) and [§12](#12-release-runbook-for-the-people-who-merge). §1–§10 are the plan as written
+> on 2026-11-21 and a name marked _(proposal)_ below may be built under another. The product questions are
 > [open-decisions.md §24](open-decisions.md#24-request-form-builder-what-the-owner-must-decide-2026-11-21) (F1–F12), each
 > all **decided** by Abed on 2026-11-21 (Hashem's sign-off pending; F8's retention waits on §1 and F9's wording on the municipality). §1 was verified against `develop@90cebdc` on 2026-11-21; every name in it was grepped and opened.
 > A name marked _(proposal)_ is invented here and does not exist; where this plan and the code disagree once the code
@@ -187,8 +189,8 @@ hand-written SQL, idempotent, with `CURRENT_SCHEMA` guards ([database.md](databa
 
 Enum values ship in their own migration, alone, before anything uses them
 ([database.md](database.md#how-tenant-migrations-run)), as `0107` did for old debts. That makes **two** migrations for
-the expand step: values (`0112`), then tables and columns (`0113`), unless every use of the new enums can sit in a later
-file than the one that adds them — decided when the SQL is written.
+the expand step: values (`0112`), then tables and columns (`0113`) — **decided and built that way** — and a third, `0114`, for the
+backfill of system forms (§3.8 step 2).
 
 ### 3.2 `request_forms` _(proposal)_
 
@@ -546,3 +548,99 @@ runs the repository's definition of done ([CLAUDE.md](../CLAUDE.md#definition-of
 - A UI change meets the pre-merge checklist ([ui-ux-standards.md](ui-ux-standards.md) §16).
 - Docs are updated per [Keeping the docs true](../CLAUDE.md#keeping-the-docs-true) and their "Last verified" lines bumped.
 - The report says what ran, what failed and what was skipped.
+
+---
+
+## 11. What was built (2026-11-22)
+
+Stories 3 to 10 were built in one sitting as **stacked branches, each pushed, none merged and no PR opened** (the owner asked
+for a commit and a push per story). Where this section and §1–§10 differ, this section and the code win.
+
+| Story | Branch | Head | What it holds |
+|---|---|---|---|
+| 1 | `docs/request-forms-decisions` | `f02c07f` | open-decisions §24, F1–F12, decided by Abed on 2026-11-21 |
+| 2 | `docs/request-forms-plan` | `d3f73bb` | this plan, and its rows in `CLAUDE.md` |
+| 3 | `chore/migration-0112` | `3be0182` | `0112_request_form_enums` and `0113_request_forms`, `schema.prisma`, 43 migration tests |
+| 4 | `feat/request-forms-contract` | `d4aac72` | shared enums, labels, field catalogue, `parseAnswers`, error codes |
+| 5 | `feat/request-forms-admin-api` | `6675add` | the manager's routes, `RequestFormsService`, 77 integration tests |
+| 6 | `feat/request-forms-submit` | `067c7ff` | a request on a form: answers, papers, fee, views; 37 integration tests |
+| 7 | `feat/request-forms-builder` | `a75a284` | the builder screens, `lib/request-form-draft.ts` |
+| 8 | `feat/request-forms-fill` | `5bec264` | the one renderer, the portal wizard, the counter form, the staff panel, the citizen's own page |
+| 9 | `chore/migration-0114`, then `feat/request-forms-system` | `5358171`, `14fc503` | the backfill, then the code that reads the system forms |
+| 10 | `docs/request-forms-release` | this branch | this section and §12 |
+
+Each branch is based on the one above it in the table; `chore/migration-0112` and the docs branches start from `develop`.
+
+> **Superseded on 2026-11-22 by Hashem's change to F1 ([§24](open-decisions.md)): there are no built-in types.** Story 9 — `0114`, `chore/migration-0114`
+> and `feat/request-forms-system` below — is **dropped and must not be merged**. A later story removes the typed path and adds the dues check as a
+> form setting (F13, migration `0115`), once every production municipality is confirmed to hold zero requests (confirmed by the owner on 2026-11-22).
+> Rows and notes below that describe system forms record what was built, not what ships.
+
+### Where the build differs from the plan
+
+- **Migrations.** Three, not one or two: `0112` the enum types alone, `0113` the tables, columns, CHECKs, indexes and guards
+  (the one-open index split in two, `guard_citizen_request()` replaced forward, five new guards), and `0114` the backfill of
+  system forms (§3.8 step 2), in its own PR ahead of the code that reads it. The next free number is `0115`.
+- **Contract.** There is no `buildAnswersSchema`: the validator is `parseAnswers(fields, raw, citizenFile)`, which returns every
+  issue at once with a stable code and never a value. A body that names a `formId` is a request on a form, any other is the
+  request of 0092 untouched (`onlineRequestBodySchema`, `counterRequestBodySchema`); a form body also carries `formVersionId`,
+  so a form republished while it was filled is `REQUEST_FORM_VERSION_STALE`. Uploads carry `type` or `fieldKey`
+  (`uploadRequestPaperSchema`): a question decides its paper's kind, its file kinds and its count.
+- **Routes added.** `POST request-forms/:id/draft` (start a draft from a copy of the published questions) is not in §5.
+  `requests/mine/forms`, `requests/forms` and `requests/forms/:formId/prefill` are as §5 says.
+- **Error codes.** The ten of §5 and one more, `REQUEST_FORM_SYSTEM` (a built-in form is switched off, never edited, archived or deleted).
+- **Request tables stay out of the in-app backup**, as §0 already corrected ([gotchas](gotchas.md)).
+- **`CitizenRequestsService` only delegates.** The answers, the offered forms, the papers and the linked questions are
+  `RequestAnswersService` and `request-answers.plan.ts`; the service still holds the retry key's lock, the replay, the one-open
+  check, the «REQ-» number and the audit row.
+- **System forms (F1).** Their questions are none and fixed; what a built-in type asked until now is the form's own settings
+  (a card for the types tied to a property, always the capacity and the purpose). `request_type_settings` stays, written beside
+  the form by «أنواع الطلبات والرسوم», until a later release drops it.
+
+### Known limits, said plainly
+
+- **The screens have not been rendered** against a mocked API at 360 and 1440 px, light and dark, `ar` and `en`
+  ([ui-ux-standards.md](ui-ux-standards.md) §16.4). They typecheck, lint, build and their pure logic is tested; nobody has looked at them.
+- **The printed paper does not carry the answers.** What is printed is the statement the clerk writes, started from the form's
+  draft (F9); the answers are read on the panel.
+- **A free form has no bill to hold its papers back**, so «جاهزة للاستلام» asks for them (`REQUEST_FORM_FILE_REQUIRED`). A paid one asks when the fee is raised.
+- **A form request's `requestType` is `OTHER`** (or its built-in type), so the queue's type filter shows custom-form requests with «طلب عام».
+- **No unarchive.** Archiving is final (F7); nothing offers to undo it.
+- **F8's retention** waits on open-decisions §1, **F9's wording** on the municipality, and **Hashem's sign-off** on every F is pending.
+- **Not done by me, and not doable from here:** the staging end-to-end, the production release, any Jira transition.
+
+---
+
+## 12. Release runbook (for the people who merge)
+
+CLAUDE.md non-negotiable 5: a push to `main` migrates production, so a migration reaches `main` in its own release, and is
+verified there before the code that needs it ships. Nothing below was run against staging or production.
+
+1. **Docs.** Merge `docs/request-forms-decisions`, `docs/request-forms-plan` and this branch. Hashem reviews §24 and this plan (D3-151, D3-157).
+2. **Migration PR 1 — `0112` and `0113`** (`chore/migration-0112`), to `develop`, then in a release to `main`. Additive but for two
+   changes justified in `0113`'s header: `applicantCapacity` loses `NOT NULL`, and the one-open index is dropped and recreated. After the
+   release, in CI's output for production: `0112` and `0113` applied to every municipality, none failed. Production code is unchanged and works.
+3. **Code PRs, in order:** `feat/request-forms-contract`, `-admin-api`, `-submit`, `-builder`, `-fill`. Until step 4, built-in types read as before.
+4. **Migration PR 2 — `0114`** (`chore/migration-0114`), alone. It writes rows and one column, so the scanner warns of an `UPDATE`.
+   **Rehearse it first on staging**, on a copy that holds requests, and compare:
+
+   ```sql
+   -- per municipality schema; expect 8 system forms, each with a published current version
+   SELECT "systemType", "enabled", "feeAmount", "currentVersionId" IS NOT NULL AS "hasVersion"
+     FROM request_forms WHERE "systemType" IS NOT NULL ORDER BY "sortOrder";
+   -- each should equal request_type_settings for its type (a type never set: off and 0)
+   SELECT "requestType", "enabled", "feeAmount" FROM request_type_settings ORDER BY "requestType";
+   -- expect 0 once linked
+   SELECT count(*) FROM citizen_requests WHERE "formId" IS NULL;
+   ```
+
+   Then release it to `main` and run the same three reads on production through the read-only path your team uses; never write to production by hand.
+5. **Code PR — `feat/request-forms-system`**, after step 4 is verified on production.
+6. **Staging end-to-end** (the staff and citizen paths, with synthetic people only): create a form, add one question of each type, publish,
+   switch on; file it online and at the counter, with a linked question the file can fill and one it cannot (the request must be refused,
+   then accepted after a clerk completes the file); refuse bad answers; retry a lost answer; file twice (one open request); raise the bill
+   with and without the identity copy and the file question's paper; approve from the form's statement draft; republish the form and
+   confirm the filed request keeps its questions; archive; switch a built-in type off and on and change its fee, and file a typed request.
+7. **Rollback.** Code can go back one step at a time: `0112`–`0114` are additive or fill-only and the build before them ignores every
+   column they add; the system forms' switch and fee are written to `request_type_settings` too, so the build before `feat/request-forms-system`
+   finds its settings. A migration is never edited: a fix is a new one.
