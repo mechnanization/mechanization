@@ -1098,8 +1098,7 @@ stopped being owed, because a database CHECK wants a stamp on a billed request i
 ## 24. Request form builder: what the owner must decide (2026-11-21)
 
 The plan is [request-forms-plan.md](request-forms-plan.md) (Jira epic D3-139), whose §2 gives each question's
-reason in the plan's own format. **Every question below is decided** by Abed on 2026-11-21 (F8's retention waits on §1 and F9's wording on the municipality), with Hashem's sign-off
-still pending; each carried a recommendation to
+reason in the plan's own format. **Every question below is decided** by Abed on 2026-11-21 and signed off by Hashem on 2026-11-22, who changed F1 (no built-in types) and added F13 (F9's wording still waits on the municipality); each carried a recommendation to
 bring to the decision meeting; the **Status** line of each says who decided and when, or that it is waiting on
 the owner or the municipality, and what the code does until then. No code is written until F1–F12 are answered
 (Story 1's acceptance criterion), because the migration they shape cannot be edited once applied
@@ -1129,7 +1128,7 @@ and permanent. If the answer is (b), Story 9 is dropped and `formId` simply stay
 
 **Blocks.** Story 3 (does the table carry a system kind?) and Story 9.
 
-**Status.** **Decided: (a), the built-in types become system forms** (built last, Story 9). Decided by: Abed · Date: 2026-11-21. Hashem's sign-off (Story 1): pending.
+**Status.** **Changed by Hashem, 2026-11-22: (c) there are no built-in types.** The manager creates every form. Abed had decided (a) on 2026-11-21; Hashem decided to remove the built-ins because no request has been filed on them. **Conditional on a count of zero requests in every production municipality** (`SELECT count(*) FROM citizen_requests`): if any exists, a used form can never be deleted (F7), so that municipality's built-in type is archived instead. Consequences: Story 9 is dropped (`0114` and the system-forms code are never merged); a later story removes the typed path (the types screen, typed submit and, in a release of its own, `request_type_settings`); the dues check moves to a form setting (F13). Decided by: Hashem (as stated in the session) · Date: 2026-11-22.
 
 ### F2 — Editing a form that already has requests
 
@@ -1147,7 +1146,7 @@ orphaned.
 
 **Blocks.** Stories 3, 5 and 6.
 
-**Status.** **Decided: (a), a published form is versioned.** Decided by: Abed · Date: 2026-11-21. Hashem's sign-off (Story 1): pending.
+**Status.** **Decided: (a), a published form is versioned.** Decided by: Abed · Date: 2026-11-21. Hashem's sign-off: approved · 2026-11-22.
 
 ### F3 — Field types and their validation
 
@@ -1169,7 +1168,7 @@ in both and a migration for any stored enum.
 
 **Blocks.** Stories 4 and 7.
 
-**Status.** **Decided: (a), a fixed catalogue of field types with fixed options, no pattern typed by the admin; files keep today's limits.** Decided by: Abed · Date: 2026-11-21. Hashem's sign-off (Story 1): pending.
+**Status.** **Decided: (a), a fixed catalogue of field types with fixed options, no pattern typed by the admin; files keep today's limits.** Decided by: Abed · Date: 2026-11-21. Hashem's sign-off: approved · 2026-11-22.
 
 ### F4 — Fields that already exist on the citizen's file
 
@@ -1198,7 +1197,7 @@ leaves unanswered. It is also what saves a clerk re-typing a name wrongly.
 
 **Blocks.** Stories 4, 6 and 8.
 
-**Status.** **Decided: every field on every form is required, and a required linked field the citizen's file cannot fill blocks the request until a clerk completes the file.** The manager cannot mark a field optional, so a field has no «required» setting; a yes/no must be answered, a multiple choice needs at least one choice, a file field needs at least one paper. Decided by: Abed · Date: 2026-11-21. Hashem's sign-off (Story 1): pending.
+**Status.** **Decided: every field on every form is required, and a required linked field the citizen's file cannot fill blocks the request until a clerk completes the file.** The manager cannot mark a field optional, so a field has no «required» setting; a yes/no must be answered, a multiple choice needs at least one choice, a file field needs at least one paper. Decided by: Abed · Date: 2026-11-21. Hashem's sign-off: approved · 2026-11-22. **«civil ID» means both:** a question may be linked to the identity number or to the civil record number (Hashem, 2026-11-22).
 
 ### F5 — Who builds and enables forms, and where they live
 
@@ -1214,7 +1213,7 @@ library would need a schema outside the tenants.
 
 **Blocks.** Story 5.
 
-**Status.** **Decided: (a), the manager only, per municipality, no shared template library in the first release.** Decided by: Abed · Date: 2026-11-21. Hashem's sign-off (Story 1): pending.
+**Status.** **Decided: (a), the manager only, per municipality, no shared template library in the first release.** Decided by: Abed · Date: 2026-11-21. Hashem's sign-off: approved · 2026-11-22.
 
 ### F6 — The property card and the applicant's capacity
 
@@ -1229,7 +1228,7 @@ card). A system form keeps its own rule.
 
 **Blocks.** Stories 3 and 6.
 
-**Status.** **Decided: a per-form property mode (not asked, optional or required) and a per-form switch for the applicant's capacity.** Decided by: Abed · Date: 2026-11-21. Hashem's sign-off (Story 1): pending.
+**Status.** **Decided: a per-form property mode (not asked, optional or required) and a per-form switch for the applicant's capacity.** Decided by: Abed · Date: 2026-11-21. Hashem's sign-off: approved · 2026-11-22.
 
 ### F7 — Disabling and deleting a form
 
@@ -1244,7 +1243,7 @@ can read.
 
 **Blocks.** Stories 3 and 5.
 
-**Status.** **Decided: disabled means hidden from new requests and open requests continue; a form with any request is archived, never deleted.** Decided by: Abed · Date: 2026-11-21. Hashem's sign-off (Story 1): pending.
+**Status.** **Decided: disabled means hidden from new requests and open requests continue; a form with any request is archived, never deleted.** Decided by: Abed · Date: 2026-11-21. Hashem's sign-off: approved · 2026-11-22.
 
 ### F8 — Who sees the answers, and for how long
 
@@ -1265,8 +1264,8 @@ still unanswered: until then answers are kept as long as the request, like its p
 
 **Blocks.** Stories 6 and 8.
 
-**Status.** **Decided: staff read answers as `REQUEST_READ_ROLES` (never «مشاهد فقط»); the portal shows the citizen their own text answers with identity and civil-record numbers masked to their last 3 characters; files never come back.** Decided by: Abed · Date: 2026-11-21. Hashem's sign-off (Story 1): pending.
-**Retention is waiting on §1**; until then answers are kept as long as the request.
+**Status.** **Decided: staff read answers as `REQUEST_READ_ROLES` (never «مشاهد فقط»); the portal shows the citizen their own text answers with identity and civil-record numbers masked to their last 3 characters; files never come back.** Decided by: Abed · Date: 2026-11-21. Hashem's sign-off: approved · 2026-11-22.
+**Retention (Hashem, 2026-11-22): answers are kept as long as the request**, like its papers (D6), and nothing is deleted. A fixed deletion period, if the municipality wants one, is a later decision under §1.
 
 ### F9 — The printed paper
 
@@ -1282,7 +1281,7 @@ a form carries no template and the clerk writes every statement, as for «طلب
 
 **Blocks.** Story 8 (print) and whether Story 3 has the column.
 
-**Status.** **Decided: (a), an optional statement template the clerk starts from; the clerk still writes and approves the final statement.** Decided by: Abed · Date: 2026-11-21. Hashem's sign-off (Story 1): pending.
+**Status.** **Decided: (a), an optional statement template the clerk starts from; the clerk still writes and approves the final statement.** Decided by: Abed · Date: 2026-11-21. Hashem's sign-off: approved · 2026-11-22.
 **The wording is waiting on the municipality:** until it answers, a form carries no template and the clerk writes every statement.
 
 ### F10 — Languages
@@ -1301,7 +1300,7 @@ value is.
 
 **Blocks.** Stories 3, 7 and 8.
 
-**Status.** **Decided: (a), Arabic required, English optional, the English screen falling back to Arabic; form text counts as the manager's data, not the product's own copy (non-negotiable 9).** Decided by: Abed · Date: 2026-11-21. Hashem's sign-off (Story 1): pending.
+**Status.** **Decided: (a), Arabic required, English optional, the English screen falling back to Arabic; form text counts as the manager's data, not the product's own copy (non-negotiable 9).** Decided by: Abed · Date: 2026-11-21. Hashem's sign-off: approved · 2026-11-22.
 
 ### F11 — One open request per citizen and form
 
@@ -1317,7 +1316,7 @@ different forms would block each other. That is a new index in the migration, no
 
 **Blocks.** Stories 3 and 6.
 
-**Status.** **Decided: one open request per citizen, form and card, with no setting to relax it in the first release.** Decided by: Abed · Date: 2026-11-21. Hashem's sign-off (Story 1): pending.
+**Status.** **Decided: one open request per citizen, form and card, with no setting to relax it in the first release.** Decided by: Abed · Date: 2026-11-21. Hashem's sign-off: approved · 2026-11-22.
 
 ### F12 — The identity copy on an online request (found while writing the plan)
 
@@ -1340,4 +1339,10 @@ bill an online request nobody has identified.
 
 **Blocks.** Stories 6 and 8.
 
-**Status.** **Decided: (a), every online request carries an identity copy before its fee can be paid, whatever the form.** Decided by: Abed · Date: 2026-11-21. Hashem's sign-off (Story 1): pending.
+**Status.** **Decided: (a), every online request carries an identity copy before its fee can be paid, whatever the form.** Decided by: Abed · Date: 2026-11-21. Hashem's sign-off: approved · 2026-11-22. **Online only** (Hashem, 2026-11-22): at the counter the clerk checks the original card, so the counter takes no identity copy.
+
+### F13 — The dues check on a clearance (added by Hashem, 2026-11-22)
+
+**Question.** Today a براءة ذمة is refused while the property owes (`ParcelDuesService`, D3). With no built-in types (F1), where does that rule live?
+
+**Decided.** It becomes a **setting of a form**: a form may ask for the dues check, which then needs a property (`propertyMode` required) and refuses approval while the property owes, exactly as the clearance does today. A story of its own, after the built-ins are removed; until then the check stays with the built-in clearance. Decided by: Hashem (as stated in the session) · Date: 2026-11-22.
