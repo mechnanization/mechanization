@@ -19,6 +19,7 @@ export * from './tenant.schema';
 export * from './zone.schema';
 export * from './building.schema';
 export * from './building-type.schema';
+export * from './unit-type.schema';
 export * from './news.schema';
 export * from './news-article.schema';
 export * from './news-media.schema';

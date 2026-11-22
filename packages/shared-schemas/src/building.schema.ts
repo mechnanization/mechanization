@@ -293,6 +293,14 @@ export const upsertUnitSchema = z.object({
     .max(20)
     .optional(),
   unitType: unitTypeSchema,
+  /**
+   * «نوع الوحدة» (0109): the municipality's type, system or custom. With one,
+   * the server takes `unitType` from the type's base and ignores the value
+   * beside it; without one, `unitType` is all there is — an older client or a
+   * queued offline save — and the unit is filed under that base's system type.
+   * An inactive type is refused on a new unit and kept on an old one.
+   */
+  unitTypeId: uuid.optional(),
   postedNumber: postedNumber.optional(),
   side: z.string().trim().max(60).optional(),
   unitArea: areaField.optional(),
@@ -632,6 +640,8 @@ const uniformBlueprint = z.object({
     .min(1, 'وحدة واحدة على الأقل في كل طابق')
     .max(20, 'عدد الوحدات في الطابق كبير جداً'),
   unitType: unitTypeSchema,
+  /** See `upsertUnitSchema.unitTypeId`. */
+  unitTypeId: uuid.optional(),
   /** See `HOUSE_GROWTH`. A blueprint only ever creates units, so only `SEPARATE_UNIT` is accepted. */
   houseGrowth: houseGrowthSchema.optional(),
 });
@@ -650,6 +660,8 @@ const explicitBlueprint = z.object({
           .min(1, 'وحدة واحدة على الأقل في كل طابق')
           .max(20, 'عدد الوحدات في الطابق كبير جداً'),
         unitType: unitTypeSchema,
+        /** See `upsertUnitSchema.unitTypeId`. */
+        unitTypeId: uuid.optional(),
       }),
     )
     .min(1, 'يجب تحديد طابق واحد على الأقل')
@@ -735,7 +747,13 @@ export const updateUnitSchema = upsertUnitSchema
 export type UpdateUnitInput = z.infer<typeof updateUnitSchema>;
 
 /** A unit's place on the grid — all a matrix save moves. */
-const matrixCell = upsertUnitSchema.pick({ floor: true, startCol: true, endCol: true, unitType: true });
+const matrixCell = upsertUnitSchema.pick({
+  floor: true,
+  startCol: true,
+  endCol: true,
+  unitType: true,
+  unitTypeId: true,
+});
 
 /**
  * A whole building edit in one request: the shell and the difference between

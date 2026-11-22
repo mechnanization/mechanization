@@ -11,15 +11,22 @@ import { useBuildingTypes } from '@/lib/building-types';
 import { BUILDING_TYPE_ADMIN_ROLES, hasRole } from '@/lib/staff-roles';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { useTableLabels } from '@/lib/use-table-labels';
+import { param, useUrlState } from '@/lib/use-url-state';
 import { BuildingTypeDialog } from '@/components/admin/building-types/building-type-dialog';
 import { HeaderBackLink } from '@/components/admin/header-back-link';
+import { UnitTypesPanel } from '@/components/admin/unit-types/unit-types-panel';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CellTag } from '@/components/ui/cell-tag';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { DataTable } from '@/components/ui/data-table';
 import { PageHeader } from '@/components/ui/page-header';
+import { SegmentedControl } from '@/components/ui/segmented-control';
 import { useToast } from '@/components/ui/toast';
+
+const TABS = ['buildings', 'units'] as const;
+/** Which list the page shows, in the URL (`?tab=units`): a link opens the right one, and a reload keeps it. */
+const PAGE_URL = { tab: param.oneOf(TABS, 'buildings') };
 
 /**
  * «أنواع المباني» — the municipality's building types (migration 0106; the
@@ -32,6 +39,10 @@ import { useToast } from '@/components/ui/toast';
  * off and on (`BUILDING_TYPE_ADMIN_ROLES`); a type is never deleted, and one
  * switched off stays on the buildings that have it. A building's type changes
  * no fee: to exempt a public school, exempt its units.
+ *
+ * The second tab is «أنواع الوحدات» (0109, the request of 2026-11-21): the same
+ * list for units, `UnitTypesPanel`. A custom unit type bills as the type it
+ * takes the behaviour of.
  */
 export default function BuildingTypesPage({
   params,
@@ -41,6 +52,8 @@ export default function BuildingTypesPage({
   const { tenant, locale, adminPath } = use(params);
   const base = `/${tenant}/${locale}/${adminPath}`;
   const t = useTranslations('buildingTypes');
+  const tUnits = useTranslations('unitTypes');
+  const [{ tab }, setUrl] = useUrlState(PAGE_URL);
   const labels = getLabels(locale);
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -153,9 +166,9 @@ export default function BuildingTypesPage({
 
       <PageHeader
         icon={Shapes}
-        title={t('title')}
+        title={tab === 'units' ? tUnits('title') : t('title')}
         actions={
-          canEdit ? (
+          tab === 'buildings' && canEdit ? (
             <Button onClick={() => setEditing(null)}>
               <Plus className="size-4" aria-hidden />
               {t('add')}
@@ -164,21 +177,38 @@ export default function BuildingTypesPage({
         }
       />
 
-      <p className="max-w-3xl text-sm text-muted-foreground">{t('intro')}</p>
-
-      {/* `DataTable` draws its own frame; a card around it would be the double frame BAN-4 refuses. */}
-      <DataTable
-        columns={columns}
-        data={types}
-        labels={tableLabels}
-        getRowId={(type) => type.id}
-        searchable={false}
-        sortable={false}
-        paginated={false}
-        loading={query.loading}
-        error={query.error}
-        onRetry={query.refetch}
+      <SegmentedControl
+        aria-label={tUnits('tabLabel')}
+        value={tab}
+        onChange={(next) => setUrl({ tab: next as (typeof TABS)[number] })}
+        fullWidth={false}
+        options={[
+          { value: 'buildings', label: tUnits('tabBuildings') },
+          { value: 'units', label: tUnits('tabUnits') },
+        ]}
       />
+
+      {tab === 'units' ? (
+        <UnitTypesPanel tenant={tenant} base={base} locale={locale} token={token} role={user?.role} />
+      ) : (
+        <>
+          <p className="max-w-3xl text-sm text-muted-foreground">{t('intro')}</p>
+
+          {/* `DataTable` draws its own frame; a card around it would be the double frame BAN-4 refuses. */}
+          <DataTable
+            columns={columns}
+            data={types}
+            labels={tableLabels}
+            getRowId={(type) => type.id}
+            searchable={false}
+            sortable={false}
+            paginated={false}
+            loading={query.loading}
+            error={query.error}
+            onRetry={query.refetch}
+          />
+        </>
+      )}
 
       {editing !== undefined && token ? (
         <BuildingTypeDialog tenant={tenant} token={token} locale={locale} editing={editing} onClose={() => setEditing(undefined)} />

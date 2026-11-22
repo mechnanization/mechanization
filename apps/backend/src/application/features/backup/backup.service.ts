@@ -36,8 +36,13 @@ import { ValidationError } from '../../common/exceptions';
  * `buildings.buildingTypeId` keys onto them with RESTRICT, so they are written
  * before the buildings and deleted after; a v6 file would put back buildings
  * whose type no longer exists.
+ *
+ * **8** adds `unitTypeEntry` (migration 0109): the municipality's unit types.
+ * `units.unitTypeId` keys onto them with RESTRICT, so they are written before
+ * the units and deleted after; a v7 file would put back units whose type, and
+ * the name a custom type gave them, no longer exists.
  */
-const SNAPSHOT_VERSION = 7;
+const SNAPSHOT_VERSION = 8;
 
 /**
  * Ceiling on the *decompressed* snapshot, enforced by `gunzipSync`.
@@ -118,6 +123,8 @@ const TABLE_ORDER = [
   'systemSettings',
   // «أنواع المباني» (0106): a building is filed under one, so before it; a type's author is a `users` row.
   'buildingType',
+  // «أنواع الوحدات» (0109): a unit is filed under one, so before `unit`; a type's author is a `users` row.
+  'unitTypeEntry',
   // A building stands on a parcel and is created by a user; it depends on no
   // registration, which is the entire point of it existing (D1).
   'building',

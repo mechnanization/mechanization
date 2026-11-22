@@ -10,8 +10,10 @@ import {
   type StructureType,
   type UnitStatus,
   type UnitType,
+  type UnitTypeView,
 } from '@mechanization/shared-schemas';
 import { MATRIX_UNIT_TYPES } from '@/components/citizen/unit-fields';
+import { chosenType, optionValueOf, unitTypeLabel, unitTypeOptions } from '@/lib/unit-types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
@@ -40,6 +42,13 @@ export interface GridUnitDraft {
   startCol: number;
   endCol: number;
   unitType: UnitType;
+  /**
+   * «نوع الوحدة» (0109): the municipality's type this block was filed as, when
+   * one was chosen from the list. `unitType` is always its base. Absent means
+   * the base alone — the list was not loaded, or nothing was chosen — and the
+   * server files the unit under that base's system type.
+   */
+  unitTypeId?: string;
   colorIndex: number;
   /**
    * The id of the `Unit` this cell already is, when the grid is editing a
@@ -134,7 +143,7 @@ const PALETTE = [
  */
 export function flattenGridUnits(
   units: GridUnitDraft[],
-): Array<{ id: string; floor: number; unitType: UnitType; startCol: number; endCol: number }> {
+): Array<{ id: string; floor: number; unitType: UnitType; unitTypeId?: string; startCol: number; endCol: number }> {
   const byFloor = new Map<number, GridUnitDraft[]>();
   for (const unit of units) {
     const list = byFloor.get(unit.floor);
@@ -146,6 +155,7 @@ export function flattenGridUnits(
     id: string;
     floor: number;
     unitType: UnitType;
+    unitTypeId?: string;
     startCol: number;
     endCol: number;
   }> = [];
@@ -155,6 +165,7 @@ export function flattenGridUnits(
         id: unit.clientId,
         floor,
         unitType: unit.unitType,
+        ...(unit.unitTypeId ? { unitTypeId: unit.unitTypeId } : {}),
         startCol: unit.startCol,
         endCol: unit.endCol,
       });
@@ -197,9 +208,12 @@ interface Panel {
   startCol: number;
   endCol: number;
   unitType: UnitType;
+  unitTypeId?: string;
   /** Only set in edit mode. */
   clientId?: string;
 }
+
+const NO_UNIT_TYPES: readonly UnitTypeView[] = [];
 
 export function UnitGridPicker({
   locale,
@@ -215,6 +229,7 @@ export function UnitGridPicker({
   units,
   onUnitsChange,
   unfinished = false,
+  unitTypes = NO_UNIT_TYPES,
 }: {
   locale: string;
   /**
@@ -223,6 +238,13 @@ export function UnitGridPicker({
    * finished roof line would say the drawing is complete when it is not.
    */
   unfinished?: boolean;
+  /**
+   * The municipality's unit types (0109), for the panel's type list and the
+   * names on the blocks. Empty while it loads or offline with nothing kept: the
+   * panel then offers the base types alone, and the server files each under its
+   * base's system type.
+   */
+  unitTypes?: readonly UnitTypeView[];
   structureType: StructureType;
   /** What a new block above ground starts as: the building type's (0106), else the structure's. */
   defaultUnitType?: UnitType;
@@ -406,6 +428,7 @@ export function UnitGridPicker({
       startCol: unit.startCol,
       endCol: unit.endCol,
       unitType: unit.unitType,
+      unitTypeId: unit.unitTypeId,
       clientId: unit.clientId,
     });
   };
@@ -452,6 +475,7 @@ export function UnitGridPicker({
         startCol: panel.startCol,
         endCol: panel.endCol,
         unitType: panel.unitType,
+        ...(panel.unitTypeId ? { unitTypeId: panel.unitTypeId } : {}),
         colorIndex: nextColor.current++ % PALETTE.length,
       };
       const next = [...units, draft];
@@ -460,7 +484,13 @@ export function UnitGridPicker({
     } else if (panel.clientId) {
       const next = units.map((unit) =>
         unit.clientId === panel.clientId
-          ? { ...unit, unitType: panel.unitType, startCol: panel.startCol, endCol: panel.endCol }
+          ? {
+              ...unit,
+              unitType: panel.unitType,
+              unitTypeId: panel.unitTypeId,
+              startCol: panel.startCol,
+              endCol: panel.endCol,
+            }
           : unit,
       );
       onUnitsChange(next);
@@ -529,9 +559,21 @@ export function UnitGridPicker({
    * already leaves such a block out of `unitsTotal` — so a building part-way
    * through its survey reads as zero habitable units, which is what it is.
    */
-  const panelUnitTypes: readonly UnitType[] = panelIsSoleUnit
-    ? ['INDEPENDENT_HOUSE', ...MATRIX_UNIT_TYPES]
-    : MATRIX_UNIT_TYPES;
+  const panelUnitTypes = unitTypeOptions({
+    types: unitTypes,
+    locale,
+    unitTypeLabels: labels.unitType,
+    // With no list to read, the same bases as before 0109.
+    fallback: panelIsSoleUnit ? ['INDEPENDENT_HOUSE', ...MATRIX_UNIT_TYPES] : MATRIX_UNIT_TYPES,
+    // The list carries «منزل مستقل» like any type: it is offered only while it is the one block.
+    omitBases: panelIsSoleUnit ? [] : ['INDEPENDENT_HOUSE'],
+    current: panel,
+    withStructural: true,
+  });
+
+  /** A block's type name: the municipality's name for its type, else its base's label. */
+  const typeName = (unit: { unitType: UnitType; unitTypeId?: string | null }): string =>
+    unitTypeLabel(unitTypes, unit, locale, labels.unitType);
 
   /**
    * Widens the grid by one column if it has to, then opens the create panel on
@@ -1181,8 +1223,8 @@ export function UnitGridPicker({
                   }}
                   title={
                     structural
-                      ? labels.unitType[unit.unitType]
-                      : [unit.unitCode, labels.unitType[unit.unitType]].filter(Boolean).join(' — ')
+                      ? typeName(unit)
+                      : [unit.unitCode, typeName(unit)].filter(Boolean).join(' — ')
                   }
                   onPointerDown={(event) => {
                     event.preventDefault();
@@ -1211,13 +1253,11 @@ export function UnitGridPicker({
                         structural && 'rounded-sm bg-background/85 px-1',
                       )}
                     >
-                      {structural
-                        ? labels.unitType[unit.unitType]
-                        : (unit.unitCode ?? labels.unitType[unit.unitType])}
+                      {structural ? typeName(unit) : (unit.unitCode ?? typeName(unit))}
                     </span>
                     {!structural && unit.unitCode && span > 1 ? (
                       <span className="max-w-full truncate text-[8px] font-medium leading-tight opacity-80">
-                        {labels.unitType[unit.unitType]}
+                        {typeName(unit)}
                       </span>
                     ) : null}
                   </span>
@@ -1395,12 +1435,12 @@ export function UnitGridPicker({
               `BUILDING_UNIT_TYPES`. That list excludes «منزل مستقل» — correctly,
               as a list of what a building contains — so counting against it
               silently omitted the one-block house from its own tally. */}
-          {[...new Set(units.map((unit) => unit.unitType))].map((type) => {
-            const count = units.filter((u) => u.unitType === type).length;
+          {[...new Set(units.map((unit) => typeName(unit)))].map((name) => {
+            const count = units.filter((u) => typeName(u) === name).length;
             if (count === 0) return null;
             return (
-              <Badge key={type} variant="outline" className="text-xs h-5 px-2 gap-1 font-normal">
-                <span>{labels.unitType[type]}:</span>
+              <Badge key={name} variant="outline" className="text-xs h-5 px-2 gap-1 font-normal">
+                <span>{name}:</span>
                 <span className="font-semibold font-mono">{count}</span>
               </Badge>
             );
@@ -1427,18 +1467,22 @@ export function UnitGridPicker({
 
             <Field label={en ? 'Unit Type' : 'نوع الوحدة'} htmlFor="grid-unit-type" required>
               <Select
-                value={panel.unitType}
-                onValueChange={(value) =>
-                  setPanel((current) => (current ? { ...current, unitType: value as UnitType } : current))
-                }
+                value={optionValueOf(panel, panelUnitTypes)}
+                onValueChange={(value) => {
+                  const chosen = chosenType(value, panelUnitTypes);
+                  if (!chosen) return;
+                  setPanel((current) =>
+                    current ? { ...current, unitType: chosen.unitType, unitTypeId: chosen.unitTypeId } : current,
+                  );
+                }}
               >
                 <SelectTrigger id="grid-unit-type" className="h-9">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {panelUnitTypes.map((type) => (
-                    <SelectItem key={type} value={type}>
-                      {labels.unitType[type]}
+                  {panelUnitTypes.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
