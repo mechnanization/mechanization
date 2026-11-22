@@ -36,6 +36,8 @@ import { Money } from '@/components/ui/money';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
+import { formName } from '@/components/request-forms/form-renderer';
+import { answerText, questionName } from '@/lib/request-form-display';
 
 /**
  * One of the citizen's requests, on its own page: where it stands and what is
@@ -131,6 +133,7 @@ export default function MyRequestPage({
     request?.status === 'AWAITING_PAYMENT' &&
     (request.fee ?? 0) > 0 &&
     !request.needsIdentityCopy &&
+    request.missingPapers.length === 0 &&
     request.bill?.paymentStatus !== 'PENDING_REVIEW';
   /** «إلغاء الطلب», while no bill has been raised (D10). */
   const canCancel = request?.status === 'AWAITING_PAYMENT' && !request.bill;
@@ -179,7 +182,7 @@ export default function MyRequestPage({
             </Alert>
           ) : null}
 
-          <StatusNote request={request} />
+          <StatusNote request={request} locale={locale} />
 
           {actionError ? (
             <Alert variant="destructive" live="alert">
@@ -203,9 +206,26 @@ export default function MyRequestPage({
             </div>
           ) : null}
 
+          {request.answers.length > 0 ? (
+            <Card>
+              <CardContent className="space-y-3 p-4 sm:p-6">
+                <h2 className="text-lg font-semibold">{t('answers')}</h2>
+                <SummaryList>
+                  {request.answers.map((answer) => (
+                    <SummaryRow key={answer.fieldKey} label={locale === 'en' && answer.labelEn ? answer.labelEn : answer.labelAr}>
+                      <span className="whitespace-pre-line">{answerText(answer, locale, t('yes'), t('no'))}</span>
+                    </SummaryRow>
+                  ))}
+                </SummaryList>
+                <p className="text-xs text-muted-foreground">{t('answersNote')}</p>
+              </CardContent>
+            </Card>
+          ) : null}
+
           <Card>
             <CardContent className="p-4 sm:p-6">
               <SummaryList>
+                {request.form ? <SummaryRow label={t('form')}>{formName(request.form, locale)}</SummaryRow> : null}
                 {request.applicantCapacity ? (
                   <SummaryRow label={t('capacity')}>{labels.applicantCapacity[request.applicantCapacity]}</SummaryRow>
                 ) : null}
@@ -300,11 +320,18 @@ export default function MyRequestPage({
 }
 
 /** Where the request stands, in a sentence, and what is the citizen's to do. */
-function StatusNote({ request }: { request: MyCitizenRequestView }): React.JSX.Element | null {
+function StatusNote({ request, locale }: { request: MyCitizenRequestView; locale: string }): React.JSX.Element | null {
   const t = useTranslations('citizenRequests.detail.status');
   switch (request.status) {
     case 'AWAITING_PAYMENT':
       if (request.needsIdentityCopy) return <Alert variant="warning">{t('needsIdentity', onlineCopy())}</Alert>;
+      if (request.missingPapers.length > 0) {
+        return (
+          <Alert variant="warning">
+            {t('needsPapers', { list: request.missingPapers.map((paper) => questionName(paper, locale)).join('، ') })}
+          </Alert>
+        );
+      }
       if (request.bill?.paymentStatus === 'PENDING_REVIEW') return <Alert variant="info">{t('paymentPending')}</Alert>;
       return <Alert variant="info">{t('awaitingPayment', onlineCopy())}</Alert>;
     case 'IN_REVIEW':
@@ -353,7 +380,10 @@ function Papers({
 }): React.JSX.Element {
   const t = useTranslations('citizenRequests.detail');
   const labels = getLabels(locale);
-  const [type, setType] = useState<RequestAttachmentType>(request.needsIdentityCopy ? 'IDENTITY' : 'OTHER');
+  // A target is `q:<key>` for a question of the form still holding no paper, `t:<TYPE>` for a kind of paper.
+  const firstTarget = (): string =>
+    request.needsIdentityCopy ? 't:IDENTITY' : request.missingPapers[0] ? `q:${request.missingPapers[0].fieldKey}` : 't:OTHER';
+  const [target, setTarget] = useState<string>(firstTarget);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const open = (REQUEST_STATUSES_TAKING_ATTACHMENTS as readonly string[]).includes(request.status);
@@ -361,8 +391,9 @@ function Papers({
 
   // The identity copy is what the fee waits for: once it is missing, it is the paper offered.
   useEffect(() => {
-    if (request.needsIdentityCopy) setType('IDENTITY');
-  }, [request.needsIdentityCopy]);
+    if (request.needsIdentityCopy) setTarget('t:IDENTITY');
+    else if (request.missingPapers[0]) setTarget(`q:${request.missingPapers[0].fieldKey}`);
+  }, [request.needsIdentityCopy, request.missingPapers]);
 
   const add = async (files: File[]) => {
     const picked = files[0];
@@ -376,7 +407,13 @@ function Papers({
         setError(t(`fileProblem.${problem}`, { name: picked.name, max: REQUEST_ATTACHMENT_MAX_MB }));
         return;
       }
-      await uploadMyRequestAttachment(tenant, token, { id: request.id, type, file, fileName: file.name });
+      await uploadMyRequestAttachment(
+        tenant,
+        token,
+        target.startsWith('q:')
+          ? { id: request.id, fieldKey: target.slice(2), file, fileName: file.name }
+          : { id: request.id, type: target.slice(2) as RequestAttachmentType, file, fileName: file.name },
+      );
       onAdded();
     } catch (caught) {
       logApiError(caught);
@@ -405,7 +442,9 @@ function Papers({
           {request.attachments.map((paper) => (
             <li key={paper.id} className="flex items-center gap-3 px-3 py-2.5">
               <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-              <span className="min-w-0 flex-1 text-sm font-medium">{labels.requestAttachmentType[paper.type]}</span>
+              <span className="min-w-0 flex-1 text-sm font-medium">
+                {paper.fieldLabelAr ? (locale === 'en' && paper.fieldLabelEn ? paper.fieldLabelEn : paper.fieldLabelAr) : labels.requestAttachmentType[paper.type]}
+              </span>
               <span className="text-xs text-muted-foreground">{formatDate(paper.createdAt)}</span>
             </li>
           ))}
@@ -413,13 +452,22 @@ function Papers({
       )}
       {open && room ? (
         <div className="space-y-2 rounded-lg border border-dashed p-3">
-          <Select value={type} onValueChange={(value) => setType(value as RequestAttachmentType)}>
+          <Select value={target} onValueChange={setTarget}>
             <SelectTrigger aria-label={t('paperType')}>
-              <SelectValue>{labels.requestAttachmentType[type]}</SelectValue>
+              <SelectValue>
+                {target.startsWith('q:')
+                  ? questionName(request.missingPapers.find((paper) => `q:${paper.fieldKey}` === target), locale)
+                  : labels.requestAttachmentType[target.slice(2) as RequestAttachmentType]}
+              </SelectValue>
             </SelectTrigger>
             <SelectContent>
+              {request.missingPapers.map((paper) => (
+                <SelectItem key={`q:${paper.fieldKey}`} value={`q:${paper.fieldKey}`}>
+                  {questionName(paper, locale)}
+                </SelectItem>
+              ))}
               {REQUEST_ATTACHMENT_TYPE.map((value) => (
-                <SelectItem key={value} value={value}>
+                <SelectItem key={value} value={`t:${value}`}>
                   {labels.requestAttachmentType[value]}
                 </SelectItem>
               ))}

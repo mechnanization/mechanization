@@ -855,7 +855,14 @@
       "uploading": "Uploading…",
       "addPaper": "Add a paper: choose a file or drop it here",
       "fileHint": "JPG, PNG, WebP or PDF, up to {max} MB.",
-      "needsIdentity": "Filed online with no identity copy: its fee cannot be taken until one is attached, in the portal or by the manager or the administrative officer."
+      "needsIdentity": "Filed online with no identity copy: its fee cannot be taken until one is attached, in the portal or by the manager or the administrative officer.",
+      "form": "Form",
+      "formVersion": "version {number}",
+      "answers": "Form answers",
+      "yes": "Yes",
+      "no": "No",
+      "answerFromFile": "Taken from the citizen's file",
+      "missingPapers": "Files asked for and not yet attached:"
     },
     "dialogs": {
       "cancel": "Back",
@@ -952,7 +959,8 @@
         "buildingUnitId": "Choose the unit.",
         "applicantCapacity": "Choose the applicant’s capacity.",
         "purpose": "The purpose is too long (500 characters at most).",
-        "clientRequestId": "Reload the page and try again."
+        "clientRequestId": "Reload the page and try again.",
+        "papers": "Attach the files the form asks for."
       },
       "summaryTitle": "Summary",
       "summaryCitizen": "Citizen",
@@ -981,7 +989,9 @@
         "actionFailed": "Could not raise the bill. Try again.",
         "view": "View the request",
         "another": "Another request"
-      }
+      },
+      "answers": "Form answers",
+      "fileIncomplete": "The citizen's file is missing: {field}. Complete the file first, then file the request."
     },
     "document": {
       "pageTitle": "Certificate",
@@ -1251,7 +1261,8 @@
         "type": "What do you need?",
         "property": "Property and capacity",
         "papers": "Papers",
-        "review": "Review and send"
+        "review": "Review and send",
+        "answers": "Answers"
       },
       "loadError": "Could not load the request types and your properties.",
       "retry": "Try again",
@@ -1293,7 +1304,10 @@
         "type": "Choose what you need.",
         "property": "Choose the property.",
         "capacity": "Choose your capacity.",
-        "identity": "Attach a copy of your identity card."
+        "identity": "Attach a copy of your identity card.",
+        "fileComplete": "This request cannot be filed until the municipality completes your file.",
+        "answers": "Answer the questions marked.",
+        "papers": "Attach the files asked for."
       },
       "summary": {
         "type": "Request",
@@ -1311,7 +1325,8 @@
       "sendingPapers": "Uploading the papers…",
       "back": "Back",
       "next": "Next",
-      "cancel": "Cancel"
+      "cancel": "Cancel",
+      "fileIncomplete": "Your file at the municipality is missing: {field}. Visit the municipality to complete it, then file the request."
     },
     "detail": {
       "back": "My file",
@@ -1363,7 +1378,13 @@
         "rejectedTitle": "Your request was rejected",
         "rejectedPaid": "The fee you paid is not refunded on its own; ask the municipality about it.",
         "cancelled": "This request was cancelled."
-      }
+      },
+      "form": "Form",
+      "answers": "Your answers",
+      "answersNote": "Identity and civil record numbers are shown here with all but their last digits hidden, to protect you. The municipality sees them whole.",
+      "yes": "Yes",
+      "no": "No",
+      "needsPapers": "The fee cannot be paid until you attach: {list}."
     }
   },
   "onlinePayment": {
@@ -5055,6 +5076,46 @@
       "kind": "Kind",
       "buildings": "Buildings",
       "actions": "Actions"
+    }
+  },
+  "requestForms": {
+    "fill": {
+      "choose": "Choose",
+      "yes": "Yes",
+      "no": "No",
+      "fromFile": "Taken from your file at the municipality.",
+      "blockedField": "Your file at the municipality does not hold this. Visit the municipality to complete your file, then file the request again.",
+      "copiedAtFiling": "This is taken from your file when the request is filed.",
+      "size": "{kb} KB",
+      "removePaper": "Remove {name}",
+      "preparing": "Preparing the file…",
+      "pickPaper": "Choose a file",
+      "fileHint": "A photo or a PDF up to {max} MB.",
+      "paperRequired": "Attach the file asked for.",
+      "issues": {
+        "REQUIRED": "This answer is required.",
+        "WRONG_TYPE": "This answer is not valid.",
+        "UNKNOWN_FIELD": "This question is no longer on the form.",
+        "LINKED_FIELD_NOT_ANSWERABLE": "This answer comes from the file.",
+        "LINKED_FIELD_EMPTY": "Your file does not hold this.",
+        "TOO_SHORT": "Too short: at least {min} characters.",
+        "TOO_LONG": "Too long: at most {max} characters.",
+        "NOT_A_NUMBER": "Enter a number.",
+        "NOT_INTEGER": "Enter a whole number, no fractions.",
+        "BELOW_MIN": "The smallest value is {min}.",
+        "ABOVE_MAX": "The largest value is {max}.",
+        "TOO_MANY_DECIMALS": "At most {decimals} decimal places.",
+        "NOT_A_DATE": "Enter a valid date.",
+        "BEFORE_MIN_DATE": "The date is not before {min}.",
+        "AFTER_MAX_DATE": "The date is not after {max}.",
+        "INVALID_PHONE": "This phone number is not valid.",
+        "INVALID_DOCUMENT_NUMBER": "This number is not valid.",
+        "NOT_A_CHOICE": "Choose from the options shown.",
+        "TOO_FEW_CHOICES": "Choose at least {min}.",
+        "TOO_MANY_CHOICES": "Choose at most {max}.",
+        "DUPLICATE_CHOICE": "A choice is repeated.",
+        "NOT_YES_NO": "Choose yes or no."
+      }
     }
   }
 }

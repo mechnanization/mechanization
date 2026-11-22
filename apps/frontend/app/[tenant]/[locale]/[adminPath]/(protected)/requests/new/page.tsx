@@ -4,6 +4,7 @@ import { use } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { FilePlus2 } from 'lucide-react';
+import { getCounterForms } from '@/lib/request-forms-api';
 import { getRequestTypes } from '@/lib/requests-api';
 import { hasRole, REQUEST_HANDLE_ROLES, REQUEST_SETTINGS_ROLES } from '@/lib/staff-roles';
 import { useStaffQuery } from '@/lib/use-staff-query';
@@ -45,7 +46,17 @@ export default function NewCounterRequestPage({
     token: canHandle ? token : null,
     errorMessage: t('typesError'),
   });
+  const forms = useStaffQuery({
+    queryKey: ['requests', tenant, 'counter-forms'],
+    queryFn: (accessToken, signal) => getCounterForms(tenant, accessToken, signal),
+    tenant,
+    base,
+    token: canHandle ? token : null,
+    errorMessage: t('typesError'),
+    fresh: true,
+  });
   const offered = (types.data ?? []).filter((setting) => setting.enabled);
+  const offeredForms = forms.data ?? [];
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
@@ -56,11 +67,18 @@ export default function NewCounterRequestPage({
         <Skeleton className="h-64 w-full" />
       ) : !canHandle ? (
         <Alert variant="warning">{t('notAllowed')}</Alert>
-      ) : types.loading ? (
+      ) : types.loading || forms.loading ? (
         <Skeleton className="h-64 w-full" />
-      ) : types.error ? (
-        <ErrorState title={types.error} onRetry={types.refetch} retryLabel={t('retry')} />
-      ) : offered.length === 0 ? (
+      ) : types.error || forms.error ? (
+        <ErrorState
+          title={types.error ?? forms.error ?? t('typesError')}
+          onRetry={() => {
+            void types.refetch();
+            void forms.refetch();
+          }}
+          retryLabel={t('retry')}
+        />
+      ) : offered.length === 0 && offeredForms.length === 0 ? (
         <EmptyState
           icon={FilePlus2}
           title={t('noTypes')}
@@ -81,6 +99,7 @@ export default function NewCounterRequestPage({
           token={token}
           role={user.role}
           types={offered}
+          forms={offeredForms}
         />
       )}
     </div>

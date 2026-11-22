@@ -546,6 +546,12 @@ describeIfDb('requests on a form', () => {
   });
 
   describe('what is read back', () => {
+    it('hands staff the form\x27s statement draft with the request, and a request on no form none', async () => {
+      const form = await liveForm([text('reason')], { statementTemplate: 'يفيد المختار بأن', nameAr: 'نموذج بمسودة' });
+      const filed = await file(await citizen(), form);
+      expect((await within(() => service.get(filed.id))).statementTemplate).toBe('يفيد المختار بأن');
+    });
+
     it('shows staff the stored answers with where each came from, and the citizen the same with identity numbers masked (F8)', async () => {
       const form = await liveForm([
         text('reason'),
@@ -570,11 +576,13 @@ describeIfDb('requests on a form', () => {
       expect(mine.answers.find((a) => a.fieldKey === 'reason')?.value).toBe('سبب');
       expect(JSON.stringify(mine)).not.toContain('123456789');
       expect(mine.missingPapers).toHaveLength(1);
+      // The clerk's draft for the statement is staff's: the citizen's view has no such key.
+      expect('statementTemplate' in mine).toBe(false);
 
       await within(() => service.addAttachment(filed.id, { buffer: PDF, size: PDF.length }, undefined, person.actor, { citizenId: person.id }, 'id_copy'));
       const after = await within(() => service.get(filed.id));
       expect(after.missingPapers).toEqual([]);
-      expect(after.attachments[0]).toMatchObject({ type: 'IDENTITY', fieldKey: 'id_copy' });
+      expect(after.attachments[0]).toMatchObject({ type: 'IDENTITY', fieldKey: 'id_copy', fieldLabelAr: 'سؤال id_copy' });
     });
 
     it('lists the form on the queue and on the citizen\'s own list, and nothing on a request on no form', async () => {

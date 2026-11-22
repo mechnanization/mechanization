@@ -44,7 +44,7 @@ import { raiseOneOffBill } from '../fees/one-off-bill';
 import { ParcelDuesService } from '../fees/parcel-dues.service';
 import { isUniqueViolationOn } from '../treasury/retry-key';
 import { RequestAnswersService, type FormSubmissionInput } from '../request-forms/request-answers.service';
-import { answerViewsOf, fieldKeyOfPaper, formRefOf, missingPapersOf } from '../request-forms/request-answers.plan';
+import { answerViewsOf, fieldOfPaper, formRefOf, missingPapersOf } from '../request-forms/request-answers.plan';
 import { cancelRequestOfCancelledBill } from './cancelled-bill';
 import { settleRequestOfWrittenOffBill } from './written-off-bill';
 
@@ -153,7 +153,7 @@ const REQUEST_SELECT = {
     select: {
       id: true,
       versionNumber: true,
-      form: { select: { id: true, nameAr: true, nameEn: true } },
+      form: { select: { id: true, nameAr: true, nameEn: true, statementTemplate: true } },
       fields: {
         where: { type: 'FILE' as const },
         select: { id: true, key: true, labelAr: true, labelEn: true },
@@ -162,7 +162,11 @@ const REQUEST_SELECT = {
     },
   },
   answers: {
-    select: { value: true, origin: true, field: { select: { key: true, position: true, type: true, labelAr: true, labelEn: true } } },
+    select: {
+      value: true,
+      origin: true,
+      field: { select: { key: true, position: true, type: true, labelAr: true, labelEn: true, config: true } },
+    },
   },
   createdBy: { select: { firstName: true, middleName: true, lastName: true } },
   readyBy: { select: { firstName: true, middleName: true, lastName: true } },
@@ -1116,6 +1120,8 @@ export class CitizenRequestsService {
           createdAt: created.createdAt.toISOString(),
           uploadedByKind: actor.kind,
           fieldKey: fieldKey ?? null,
+          fieldLabelAr: target?.label ?? null,
+          fieldLabelEn: null,
         };
       });
     } catch (error) {
@@ -1224,6 +1230,7 @@ export class CitizenRequestsService {
       form: formRefOf(row),
       answers: answerViewsOf(row, 'STAFF'),
       missingPapers: missingPapersOf(row),
+      statementTemplate: row.formVersion?.form.statementTemplate ?? null,
       createdByName: row.createdBy ? citizenDisplayName(row.createdBy) : null,
       readyByName: row.readyBy ? citizenDisplayName(row.readyBy) : null,
       createdAt: row.createdAt.toISOString(),
@@ -1331,6 +1338,7 @@ function propertyView(row: RequestRow): RequestPropertyView | null {
 }
 
 function attachmentView(row: RequestRow, attachment: RequestRow['attachments'][number]): RequestAttachmentView {
+  const paperQuestion = fieldOfPaper(row, attachment);
   return {
     id: attachment.id,
     type: attachment.type as RequestAttachmentType,
@@ -1338,6 +1346,8 @@ function attachmentView(row: RequestRow, attachment: RequestRow['attachments'][n
     sizeBytes: attachment.sizeBytes,
     createdAt: attachment.createdAt.toISOString(),
     uploadedByKind: attachment.uploadedBy.kind === 'CITIZEN' ? 'CITIZEN' : 'STAFF',
-    fieldKey: fieldKeyOfPaper(row, attachment),
+    fieldKey: paperQuestion?.key ?? null,
+    fieldLabelAr: paperQuestion?.labelAr ?? null,
+    fieldLabelEn: paperQuestion?.labelEn ?? null,
   };
 }

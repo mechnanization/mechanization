@@ -35,6 +35,8 @@ import { Sheet } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ErrorState } from '@/components/ui/states';
 import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
+import { formName } from '@/components/request-forms/form-renderer';
+import { answerText, questionName } from '@/lib/request-form-display';
 import {
   ApproveRequestDialog,
   CancelRequestDialog,
@@ -284,12 +286,39 @@ export function RequestSheet({
             <SummaryRow label={t('identityNumber')} className="font-mono">
               <bdi dir="ltr">{request.citizen.identityDocNumber ?? '—'}</bdi>
             </SummaryRow>
+            {request.form ? (
+              <SummaryRow label={t('form')}>
+                {formName(request.form, locale)} <span className="text-xs text-muted-foreground">· {t('formVersion', { number: request.form.versionNumber })}</span>
+              </SummaryRow>
+            ) : null}
             {request.applicantCapacity ? (
               <SummaryRow label={t('capacity')}>{labels.applicantCapacity[request.applicantCapacity]}</SummaryRow>
             ) : null}
             {request.purpose ? <SummaryRow label={t('purpose')}>{request.purpose}</SummaryRow> : null}
           </SummaryList>
         </section>
+
+        {request.answers.length > 0 ? (
+          <section className="space-y-2" aria-labelledby="request-answers">
+            <h3 id="request-answers" className="text-sm font-semibold">
+              {t('answers')}
+            </h3>
+            <SummaryList>
+              {request.answers.map((answer) => (
+                <SummaryRow key={answer.fieldKey} label={locale === 'en' && answer.labelEn ? answer.labelEn : answer.labelAr}>
+                  <span className="whitespace-pre-line">{answerText(answer, locale, t('yes'), t('no'))}</span>
+                  {answer.origin === 'FROM_FILE' ? <span className="block text-xs text-muted-foreground">{t('answerFromFile')}</span> : null}
+                </SummaryRow>
+              ))}
+            </SummaryList>
+          </section>
+        ) : null}
+
+        {request.missingPapers.length > 0 && !['REJECTED', 'CANCELLED', 'COMPLETED'].includes(request.status) ? (
+          <Alert variant="warning" title={t('missingPapers')}>
+            {request.missingPapers.map((paper) => (locale === 'en' && paper.labelEn ? paper.labelEn : paper.labelAr)).join('، ')}
+          </Alert>
+        ) : null}
 
         {request.property ? (
           <section className="space-y-2" aria-labelledby="request-property">
@@ -490,10 +519,12 @@ function Papers({
 }) {
   const t = useTranslations('requests.sheet');
   const labels = getLabels(locale);
-  // The paper the request is missing comes first: an online request's identity copy (D2).
-  const [type, setType] = useState<RequestAttachmentType>(() =>
-    request.channel === 'ONLINE' && !request.attachments.some((paper) => paper.type === 'IDENTITY') ? 'IDENTITY' : 'OTHER',
-  );
+  // The paper the request is missing comes first: a question of its form still holding none, else an online request's
+  // identity copy (D2). A target is `q:<key>` for a question and `t:<TYPE>` for a kind of paper.
+  const [target, setTarget] = useState<string>(() => {
+    if (request.missingPapers[0]) return `q:${request.missingPapers[0].fieldKey}`;
+    return request.channel === 'ONLINE' && !request.attachments.some((paper) => paper.type === 'IDENTITY') ? 't:IDENTITY' : 't:OTHER';
+  });
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
@@ -525,7 +556,13 @@ function Papers({
     setUploading(true);
     setError(null);
     try {
-      await uploadRequestAttachment(tenant, token, { id: request.id, type, file, fileName: file.name });
+      await uploadRequestAttachment(
+        tenant,
+        token,
+        target.startsWith('q:')
+          ? { id: request.id, fieldKey: target.slice(2), file, fileName: file.name }
+          : { id: request.id, type: target.slice(2) as RequestAttachmentType, file, fileName: file.name },
+      );
       onAdded();
     } catch (caught) {
       logApiError(caught);
@@ -554,7 +591,9 @@ function Papers({
             <li key={paper.id} className="flex items-center gap-3 px-3 py-2">
               <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden />
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-medium">{labels.requestAttachmentType[paper.type]}</span>
+                <span className="block truncate text-sm font-medium">
+                  {paper.fieldLabelAr ? (locale === 'en' && paper.fieldLabelEn ? paper.fieldLabelEn : paper.fieldLabelAr) : labels.requestAttachmentType[paper.type]}
+                </span>
                 <span className="block text-xs text-muted-foreground">
                   {formatDate(paper.createdAt)} · {paper.uploadedByKind === 'CITIZEN' ? t('byCitizen') : t('byStaff')}
                 </span>
@@ -581,13 +620,22 @@ function Papers({
       ) : null}
       {canAdd && !full ? (
         <div className="space-y-2 rounded-lg border border-dashed p-3">
-          <Select value={type} onValueChange={(value) => setType(value as RequestAttachmentType)}>
+          <Select value={target} onValueChange={setTarget}>
             <SelectTrigger aria-label={t('paperType')}>
-              <SelectValue>{labels.requestAttachmentType[type]}</SelectValue>
+              <SelectValue>
+                {target.startsWith('q:')
+                  ? questionName(request.missingPapers.find((paper) => `q:${paper.fieldKey}` === target), locale)
+                  : labels.requestAttachmentType[target.slice(2) as RequestAttachmentType]}
+              </SelectValue>
             </SelectTrigger>
             <SelectContent>
+              {request.missingPapers.map((paper) => (
+                <SelectItem key={`q:${paper.fieldKey}`} value={`q:${paper.fieldKey}`}>
+                  {questionName(paper, locale)}
+                </SelectItem>
+              ))}
               {REQUEST_ATTACHMENT_TYPE.map((value) => (
-                <SelectItem key={value} value={value}>
+                <SelectItem key={value} value={`t:${value}`}>
                   {labels.requestAttachmentType[value]}
                 </SelectItem>
               ))}

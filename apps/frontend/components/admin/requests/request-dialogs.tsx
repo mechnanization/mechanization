@@ -50,7 +50,9 @@ export function ApproveRequestDialog({ tenant, token, locale, request, onDone, o
   const t = useTranslations('requests.dialogs');
   const labels = getLabels(locale);
   const propertyNumber = request.property?.propertyNumber ?? '—';
+  // A form's own draft (F9) when it has one: the clerk edits it, and it is never printed as it stands.
   const [statement, setStatement] = useState(() =>
+    request.statementTemplate ??
     t(`approve.templates.${request.requestType}`, {
       name: request.citizen.name,
       property: propertyNumber,

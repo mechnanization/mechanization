@@ -12,8 +12,11 @@ import {
   REQUEST_ATTACHMENT_TYPE,
   REQUEST_ATTACHMENTS_MAX,
   requestNeedsProperty,
+  submitCounterFormRequestSchema,
   submitCounterRequestSchema,
   type ApplicantCapacity,
+  type OfferedRequestForm,
+  type RequestAnswerIssueCode,
   type RequestAttachmentType,
   type RequestType,
 } from '@mechanization/shared-schemas';
@@ -29,6 +32,18 @@ import {
   spendKey,
   type KeyScope,
 } from '@/lib/request-id';
+import {
+  answerIssues,
+  answersToSend,
+  blockedFields,
+  copiedFields,
+  issuesOfRefusal,
+  paperFields,
+  typedFields,
+  unansweredPapers,
+  type AnswerInput,
+} from '@/lib/request-form-fill';
+import { getRequestFormPrefill } from '@/lib/request-forms-api';
 import { requestStatusBadge } from '@/lib/request-status';
 import {
   raiseRequestBill,
@@ -50,6 +65,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton';
 import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
 import { Textarea } from '@/components/ui/textarea';
+import { AnswerFields, PaperFields, formName } from '@/components/request-forms/form-renderer';
+import { ApiRequestError } from '@/lib/api-client';
 import { CitizenPicker, type PickedCitizen } from '../citizen-picker';
 
 /** A heading over a group of fields — the recording forms' own (BAN-4, TYP-5). */
@@ -70,6 +87,8 @@ interface QueuedPaper {
   key: string;
   file: File;
   type: RequestAttachmentType;
+  /** The file question of a form it answers: the question then decides its kind. */
+  fieldKey?: string;
 }
 
 /** What filing came back with, and how the papers went after it. */
@@ -121,6 +140,7 @@ export function CounterRequestForm({
   token,
   role,
   types,
+  forms,
 }: {
   tenant: string;
   base: string;
@@ -129,6 +149,8 @@ export function CounterRequestForm({
   role: string | undefined;
   /** The types the municipality offers now, with their fees. */
   types: RequestTypeSettingView[];
+  /** The forms the manager defined that are switched on and published (open decisions §24). */
+  forms: OfferedRequestForm[];
 }): React.JSX.Element {
   const t = useTranslations('requests.form');
   const labels = getLabels(locale);
@@ -139,6 +161,10 @@ export function CounterRequestForm({
 
   const [citizen, setCitizen] = useState<PickedCitizen | null>(null);
   const [requestType, setRequestType] = useState<RequestType | ''>('');
+  const [formId, setFormId] = useState('');
+  const [answers, setAnswers] = useState<Record<string, AnswerInput | undefined>>({});
+  const [refused, setRefused] = useState<Record<string, RequestAnswerIssueCode>>({});
+  const [showIssues, setShowIssues] = useState(false);
   const [propertyEntryId, setPropertyEntryId] = useState('');
   const [buildingUnitId, setBuildingUnitId] = useState('');
   const [capacity, setCapacity] = useState<ApplicantCapacity | ''>('');
@@ -170,7 +196,38 @@ export function CounterRequestForm({
   const property = properties.find((card) => card.id === propertyEntryId);
   const units = (property?.units ?? []).filter((unit) => !unit.endedAt);
   const chosenType = types.find((setting) => setting.requestType === requestType);
-  const needsProperty = requestType ? requestNeedsProperty(requestType) : false;
+  const baseForm = forms.find((form) => form.id === formId) ?? null;
+
+  /** What the chosen citizen's file holds for the form's copied questions (F4): read once both are chosen. */
+  const prefill = useStaffQuery({
+    queryKey: ['request-form-prefill', tenant, formId, citizen?.id],
+    queryFn: (accessToken, signal) => getRequestFormPrefill(tenant, accessToken, { formId, citizenId: citizen?.id as string }, signal),
+    tenant,
+    base,
+    token: baseForm && citizen ? token : null,
+    errorMessage: t('profileError'),
+    fresh: true,
+  });
+  /** The form with each copied question's value from the file, once it is known. */
+  const chosenForm = useMemo<OfferedRequestForm | null>(() => {
+    if (!baseForm) return null;
+    const values = prefill.data?.linkedValues;
+    if (!values) return baseForm;
+    return {
+      ...baseForm,
+      fields: baseForm.fields.map((field) => (field.linkedSource !== null ? { ...field, linkedValue: values[field.key] ?? null } : field)),
+    };
+  }, [baseForm, prefill.data]);
+
+  const needsProperty = chosenForm ? chosenForm.propertyMode === 'REQUIRED' : requestType ? requestNeedsProperty(requestType) : false;
+  const asksProperty = chosenForm ? chosenForm.propertyMode !== 'NONE' : true;
+  const asksCapacity = chosenForm ? chosenForm.askCapacity : true;
+  const asksPurpose = chosenForm ? chosenForm.askPurpose : true;
+  const fee = chosenForm ? chosenForm.feeAmount : (chosenType?.feeAmount ?? null);
+  const blocked = chosenForm && prefill.data ? blockedFields(chosenForm) : [];
+  const issues = chosenForm ? answerIssues(chosenForm, answers) : {};
+  const shownIssues: Record<string, RequestAnswerIssueCode | undefined> = showIssues ? { ...issues, ...refused } : refused;
+  const missingFilePapers = chosenForm ? unansweredPapers(chosenForm, papers.map((paper) => paper.fieldKey)) : [];
 
   const clear = (field: string) => setErrors(({ [field]: _cleared, ...rest }) => rest);
 
@@ -179,7 +236,20 @@ export function CounterRequestForm({
     setPropertyEntryId('');
     setBuildingUnitId('');
     setCapacity('');
+    setRefused({});
     clear('citizenId');
+  };
+
+  /** Another choice is another request: what was answered for the last does not follow. */
+  const chooseType = (next: RequestType | '', nextForm: string) => {
+    setRequestType(next);
+    setFormId(nextForm);
+    setAnswers({});
+    setRefused({});
+    setShowIssues(false);
+    setPapers((current) => current.filter((paper) => !paper.fieldKey));
+    clear('requestType');
+    clear('propertyEntryId');
   };
 
   const pickProperty = (id: string) => {
@@ -197,7 +267,7 @@ export function CounterRequestForm({
 
   // ── papers ────────────────────────────────────────────────────────────────────
 
-  const addPapers = (files: File[]) => {
+  const addPapers = (files: File[], fieldKey?: string) => {
     setPaperError(null);
     const room = REQUEST_ATTACHMENTS_MAX - papers.length;
     const accepted: QueuedPaper[] = [];
@@ -212,7 +282,7 @@ export function CounterRequestForm({
         break;
       }
       const hasIdentity = [...papers, ...accepted].some((paper) => paper.type === 'IDENTITY');
-      accepted.push({ key: newRequestId(), file, type: hasIdentity ? 'OTHER' : 'IDENTITY' });
+      accepted.push({ key: newRequestId(), file, type: fieldKey ? 'OTHER' : hasIdentity ? 'OTHER' : 'IDENTITY', ...(fieldKey ? { fieldKey } : {}) });
     }
     if (accepted.length) setPapers((current) => [...current, ...accepted]);
   };
@@ -229,23 +299,51 @@ export function CounterRequestForm({
     if (inFlight.current || !token) return;
     setFormError(null);
 
-    const parsed = submitCounterRequestSchema.safeParse({
-      citizenId: citizen?.id,
-      requestType: requestType || undefined,
-      applicantCapacity: capacity || undefined,
-      propertyEntryId: propertyEntryId || undefined,
-      buildingUnitId: buildingUnitId || undefined,
-      purpose,
-      clientRequestId: heldKey(tenant, COUNTER_SCOPE),
-    });
+    if (chosenForm && (blocked.length > 0 || prefill.loading || prefill.error)) return;
+    const parsed = chosenForm
+      ? submitCounterFormRequestSchema.safeParse({
+          citizenId: citizen?.id,
+          formId: chosenForm.id,
+          formVersionId: chosenForm.versionId,
+          answers: answersToSend(chosenForm, answers),
+          applicantCapacity: asksCapacity ? capacity || undefined : undefined,
+          propertyEntryId: asksProperty ? propertyEntryId || undefined : undefined,
+          buildingUnitId: asksProperty ? buildingUnitId || undefined : undefined,
+          purpose: asksPurpose ? purpose : undefined,
+          clientRequestId: heldKey(tenant, COUNTER_SCOPE),
+        })
+      : submitCounterRequestSchema.safeParse({
+          citizenId: citizen?.id,
+          requestType: requestType || undefined,
+          applicantCapacity: capacity || undefined,
+          propertyEntryId: propertyEntryId || undefined,
+          buildingUnitId: buildingUnitId || undefined,
+          purpose,
+          clientRequestId: heldKey(tenant, COUNTER_SCOPE),
+        });
+    const invalid: Record<string, string> = {};
     if (!parsed.success) {
-      const failed: Record<string, string> = {};
       for (const issue of parsed.error.issues) {
-        const field = String(issue.path[0] ?? '');
-        if (field && !failed[field]) failed[field] = t(`required.${field}`);
+        const raw = String(issue.path[0] ?? '');
+        const field = raw === 'formId' ? 'requestType' : raw;
+        if (field && !invalid[field]) invalid[field] = t(`required.${field}`);
       }
-      setErrors(failed);
-      focusFirst(failed);
+    }
+    if (chosenForm && asksCapacity && !capacity) invalid.applicantCapacity ??= t('required.applicantCapacity');
+    if (!chosenForm && !requestType) invalid.requestType ??= t('required.requestType');
+    if (chosenForm && Object.keys(issues).length > 0) setShowIssues(true);
+    if (Object.keys(invalid).length > 0 || (chosenForm && Object.keys(issues).length > 0) || !parsed.success) {
+      setErrors(invalid);
+      focusFirst(invalid);
+      if (chosenForm && Object.keys(invalid).length === 0) {
+        const first = Object.keys(issues)[0];
+        if (first) document.getElementById('counter-answer-' + first)?.focus();
+      }
+      return;
+    }
+    if (missingFilePapers.length > 0) {
+      setShowIssues(true);
+      setFormError(t('required.papers'));
       return;
     }
     setErrors({});
@@ -259,6 +357,11 @@ export function CounterRequestForm({
       logApiError(caught);
       if (keyIsSpent(caught)) spendKey(tenant, COUNTER_SCOPE);
       else if (outcomeInDoubt(caught)) markInDoubt(tenant, COUNTER_SCOPE);
+      // The server judged what the screen could not: each refused answer is shown beside its question.
+      if (caught instanceof ApiRequestError && caught.code === 'REQUEST_ANSWERS_INVALID') {
+        setRefused(issuesOfRefusal(caught.payload.details));
+        setShowIssues(true);
+      }
       setFormError(caught instanceof Error && caught.message ? caught.message : t('failed'));
       inFlight.current = false;
       setSubmitting(false);
@@ -274,12 +377,13 @@ export function CounterRequestForm({
     let sent = 0;
     for (const paper of papers) {
       try {
-        await uploadRequestAttachment(tenant, token, {
-          id: result.id,
-          type: paper.type,
-          file: paper.file,
-          fileName: paper.file.name,
-        });
+        await uploadRequestAttachment(
+          tenant,
+          token,
+          paper.fieldKey
+            ? { id: result.id, fieldKey: paper.fieldKey, file: paper.file, fileName: paper.file.name }
+            : { id: result.id, type: paper.type, file: paper.file, fileName: paper.file.name },
+        );
         sent += 1;
       } catch (caught) {
         logApiError(caught);
@@ -298,6 +402,10 @@ export function CounterRequestForm({
     setFiled(null);
     setCitizen(null);
     setRequestType('');
+    setFormId('');
+    setAnswers({});
+    setRefused({});
+    setShowIssues(false);
     setPropertyEntryId('');
     setBuildingUnitId('');
     setCapacity('');
@@ -348,11 +456,7 @@ export function CounterRequestForm({
                 name="counter-type"
                 value={setting.requestType}
                 checked={requestType === setting.requestType}
-                onChange={(value) => {
-                  setRequestType(value as RequestType);
-                  clear('requestType');
-                  clear('propertyEntryId');
-                }}
+                onChange={(value) => chooseType(value as RequestType, '')}
                 title={labels.requestType[setting.requestType]}
                 description={
                   setting.feeAmount > 0 ? <Money amount={setting.feeAmount} locale={locale} exact /> : t('free')
@@ -360,10 +464,23 @@ export function CounterRequestForm({
                 className="min-h-touch"
               />
             ))}
+            {forms.map((form) => (
+              <ChoiceCard
+                key={form.id}
+                name="counter-type"
+                value={form.id}
+                checked={formId === form.id}
+                onChange={() => chooseType('', form.id)}
+                title={formName(form, locale)}
+                description={form.feeAmount > 0 ? <Money amount={form.feeAmount} locale={locale} exact /> : t('free')}
+                className="min-h-touch"
+              />
+            ))}
           </div>
           {errors.requestType ? <FieldError>{errors.requestType}</FieldError> : null}
         </FormSection>
 
+        {asksProperty ? (
         <FormSection title={needsProperty ? t('propertyNeeded') : t('property')}>
           {!citizen ? (
             <p className="text-sm text-muted-foreground">{t('chooseCitizenFirst')}</p>
@@ -460,9 +577,12 @@ export function CounterRequestForm({
             </>
           )}
         </FormSection>
+        ) : null}
 
+        {asksCapacity || asksPurpose ? (
         <FormSection title={t('details')}>
           <div className="grid gap-4 sm:grid-cols-2">
+            {asksCapacity ? (
             <Field htmlFor={FIELD_ID.applicantCapacity} label={t('capacity')} error={errors.applicantCapacity} required>
               <Select
                 value={capacity}
@@ -483,6 +603,8 @@ export function CounterRequestForm({
                 </SelectContent>
               </Select>
             </Field>
+            ) : null}
+            {asksPurpose ? (
             <Field
               htmlFor={FIELD_ID.purpose}
               label={t('purpose')}
@@ -502,13 +624,64 @@ export function CounterRequestForm({
                 }}
               />
             </Field>
+            ) : null}
           </div>
         </FormSection>
+        ) : null}
+
+        {chosenForm && typedFields(chosenForm).length + copiedFields(chosenForm).length > 0 ? (
+          <FormSection title={t('answers')}>
+            {!citizen ? (
+              <p className="text-sm text-muted-foreground">{t('chooseCitizenFirst')}</p>
+            ) : prefill.loading ? (
+              <Skeleton className="h-14" />
+            ) : prefill.error ? (
+              <Alert variant="destructive" live="alert">
+                {prefill.error}{' '}
+                <Button type="button" variant="link" className="h-auto p-0" onClick={prefill.refetch}>
+                  {t('retry')}
+                </Button>
+              </Alert>
+            ) : (
+              <>
+                {blocked.length > 0 ? (
+                  <Alert variant="warning" live="alert">
+                    {t('fileIncomplete', { field: blocked.map((field) => field.labelAr).join('، ') })}
+                  </Alert>
+                ) : null}
+                <AnswerFields
+                  fields={[...typedFields(chosenForm), ...copiedFields(chosenForm)].sort((a, b) => a.position - b.position)}
+                  values={answers}
+                  issues={shownIssues}
+                  locale={locale}
+                  disabled={busy}
+                  idPrefix="counter-answer"
+                  onChange={(key, value) => {
+                    setAnswers((current) => ({ ...current, [key]: value }));
+                    setRefused(({ [key]: _gone, ...rest }) => rest);
+                  }}
+                />
+              </>
+            )}
+          </FormSection>
+        ) : null}
 
         <FormSection title={t('papers')}>
-          {papers.length > 0 ? (
+          {chosenForm && paperFields(chosenForm).length > 0 ? (
+            <PaperFields
+              fields={paperFields(chosenForm)}
+              papers={papers.filter((paper): paper is QueuedPaper & { fieldKey: string } => paper.fieldKey !== undefined)}
+              issues={showIssues ? Object.fromEntries(missingFilePapers.map((field) => [field.key, true])) : {}}
+              locale={locale}
+              preparing={false}
+              idPrefix="counter-paper"
+              onPick={(field, files) => addPapers(files, field.key)}
+              onRemove={(key) => setPapers((current) => current.filter((entry) => entry.key !== key))}
+            />
+          ) : null}
+          {papers.some((paper) => !paper.fieldKey) ? (
             <ul className="divide-y rounded-lg border">
-              {papers.map((paper) => (
+              {papers.filter((paper) => !paper.fieldKey).map((paper) => (
                 <li key={paper.key} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2">
                   <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden />
                   <span className="min-w-0 flex-1">
@@ -581,7 +754,7 @@ export function CounterRequestForm({
             <SummaryList>
               <SummaryRow label={t('summaryCitizen')}>{citizen?.fullName ?? '—'}</SummaryRow>
               <SummaryRow label={t('summaryType')}>
-                {requestType ? labels.requestType[requestType] : '—'}
+                {chosenForm ? formName(chosenForm, locale) : requestType ? labels.requestType[requestType] : '—'}
               </SummaryRow>
               <SummaryRow label={t('summaryProperty')}>
                 {property?.propertyNumber ? (
@@ -596,9 +769,9 @@ export function CounterRequestForm({
               </SummaryRow>
               <SummaryRow label={t('summaryPapers')}>{papers.length}</SummaryRow>
               <SummaryRow label={t('summaryFee')}>
-                {chosenType ? (
-                  chosenType.feeAmount > 0 ? (
-                    <Money amount={chosenType.feeAmount} locale={locale} exact />
+                {fee !== null ? (
+                  fee > 0 ? (
+                    <Money amount={fee} locale={locale} exact />
                   ) : (
                     t('free')
                   )
@@ -607,7 +780,7 @@ export function CounterRequestForm({
                 )}
               </SummaryRow>
             </SummaryList>
-            {chosenType && chosenType.feeAmount > 0 ? (
+            {fee !== null && fee > 0 ? (
               <p className="text-xs text-muted-foreground">{t('feeLater')}</p>
             ) : null}
 
@@ -618,7 +791,7 @@ export function CounterRequestForm({
               </Alert>
             ) : null}
 
-            <Button type="submit" className="w-full" disabled={busy || !token}>
+            <Button type="submit" className="w-full" disabled={busy || !token || blocked.length > 0}>
               {submitting ? t('submitting') : uploading ? t('uploading') : t('submit')}
             </Button>
           </CardContent>

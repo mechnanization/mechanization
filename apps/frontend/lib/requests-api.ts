@@ -12,8 +12,8 @@ import type {
   RequestStatus,
   RequestType,
   RequestTypeSettingView,
-  SubmitCounterRequestInput,
-  SubmitOnlineRequestInput,
+  CounterRequestBody,
+  OnlineRequestBody,
   SubmitRequestResult,
   UpdateRequestTypeSettingInput,
 } from '@mechanization/shared-schemas';
@@ -99,7 +99,7 @@ export function updateRequestType(
 }
 
 /** A request filed at the counter — `REQUEST_HANDLE_ROLES`, `POST /requests`. */
-export function submitCounterRequest(tenant: string, token: string, args: SubmitCounterRequestInput, signal?: AbortSignal) {
+export function submitCounterRequest(tenant: string, token: string, args: CounterRequestBody, signal?: AbortSignal) {
   return apiFetch<SubmitRequestResult>(tenant, '/requests', { method: 'POST', token, body: JSON.stringify(args), signal });
 }
 
@@ -134,7 +134,7 @@ export function cancelRequest(tenant: string, token: string, args: { id: string 
 export function uploadRequestAttachment(
   tenant: string,
   token: string,
-  args: { id: string; type: RequestAttachmentType; file: Blob; fileName?: string },
+  args: { id: string; type?: RequestAttachmentType; fieldKey?: string; file: Blob; fileName?: string },
   signal?: AbortSignal,
 ) {
   return apiFetch<RequestAttachmentView>(tenant, `${path(args.id)}/attachments`, {
@@ -177,7 +177,7 @@ export function getOfferedRequestTypes(tenant: string, token: string, signal?: A
 }
 
 /** «إرسال الطلب» — `POST /requests/mine`. */
-export function submitMyRequest(tenant: string, token: string, args: SubmitOnlineRequestInput, signal?: AbortSignal) {
+export function submitMyRequest(tenant: string, token: string, args: OnlineRequestBody, signal?: AbortSignal) {
   return apiFetch<SubmitRequestResult>(tenant, '/requests/mine', { method: 'POST', token, body: JSON.stringify(args), signal });
 }
 
@@ -185,7 +185,7 @@ export function submitMyRequest(tenant: string, token: string, args: SubmitOnlin
 export function uploadMyRequestAttachment(
   tenant: string,
   token: string,
-  args: { id: string; type: RequestAttachmentType; file: Blob; fileName?: string },
+  args: { id: string; type?: RequestAttachmentType; fieldKey?: string; file: Blob; fileName?: string },
   signal?: AbortSignal,
 ) {
   return apiFetch<RequestAttachmentView>(tenant, `/requests/mine/${encodeURIComponent(args.id)}/attachments`, {
@@ -214,10 +214,14 @@ export function cancelMyRequest(tenant: string, token: string, args: { id: strin
   });
 }
 
-/** The text field first, then the file: the server reads the type before the bytes. */
-function attachmentForm(args: { type: RequestAttachmentType; file: Blob; fileName?: string }): FormData {
+/**
+ * The text fields first, then the file: the server reads them before the bytes. A paper for a question of a form names the
+ * question (`fieldKey`) and the question decides its kind; any other paper names its kind (`type`).
+ */
+function attachmentForm(args: { type?: RequestAttachmentType; fieldKey?: string; file: Blob; fileName?: string }): FormData {
   const form = new FormData();
-  form.append('type', args.type);
+  if (args.type) form.append('type', args.type);
+  if (args.fieldKey) form.append('fieldKey', args.fieldKey);
   form.append('file', args.file, args.fileName ?? 'paper');
   return form;
 }

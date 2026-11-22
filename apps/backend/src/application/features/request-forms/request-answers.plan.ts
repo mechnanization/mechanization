@@ -135,9 +135,22 @@ export interface RequestFormRow {
   answers: Array<{
     value: unknown;
     origin: string;
-    field: { key: string; position: number; type: string; labelAr: string; labelEn: string | null };
+    field: { key: string; position: number; type: string; labelAr: string; labelEn: string | null; config: unknown };
   }>;
   attachments: Array<{ fieldId: string | null }>;
+}
+
+/** The words of a choice answer, from the choices the version defined; null for any other type or a key it no longer lists. */
+function choiceWords(type: RequestFieldType, value: RequestAnswerValue, config: unknown): { ar: string; en: string | null } | null {
+  if (type !== 'SINGLE_CHOICE' && type !== 'MULTI_CHOICE') return null;
+  const choices = (config as { choices?: Array<{ key: string; labelAr: string; labelEn?: string | null }> } | null)?.choices ?? [];
+  const keys = Array.isArray(value) ? value : [String(value)];
+  const found = keys.map((key) => choices.find((choice) => choice.key === key)).filter((choice): choice is NonNullable<typeof choice> => Boolean(choice));
+  if (found.length === 0) return null;
+  return {
+    ar: found.map((choice) => choice.labelAr).join('، '),
+    en: found.every((choice) => choice.labelEn) ? found.map((choice) => choice.labelEn).join(', ') : null,
+  };
 }
 
 export function formRefOf(row: {
@@ -167,6 +180,7 @@ export function answerViewsOf(row: Pick<RequestFormRow, 'answers'>, audience: 'S
         labelEn: answer.field.labelEn,
         type,
         value: audience === 'CITIZEN' ? answerValueForCitizen(type, value) : value,
+        display: choiceWords(type, value, answer.field.config),
         origin: answer.origin as RequestAnswerOrigin,
       };
     });
@@ -183,6 +197,17 @@ export function missingPapersOf(row: Pick<RequestFormRow, 'formVersion' | 'attac
   return version.fields
     .filter((field) => !held.has(field.id))
     .map((field) => ({ fieldKey: field.key, labelAr: field.labelAr, labelEn: field.labelEn }));
+}
+
+/** The key of the question a paper answers, or null. */
+/** The question a paper answers, with its words, or null. */
+export function fieldOfPaper(
+  row: Pick<RequestFormRow, 'formVersion'>,
+  attachment: { fieldId: string | null },
+): { key: string; labelAr: string; labelEn: string | null } | null {
+  if (!attachment.fieldId) return null;
+  const field = row.formVersion?.fields.find((candidate) => candidate.id === attachment.fieldId);
+  return field ? { key: field.key, labelAr: field.labelAr, labelEn: field.labelEn } : null;
 }
 
 /** The key of the question a paper answers, or null. */

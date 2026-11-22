@@ -129,9 +129,9 @@ describe('a request read back', () => {
       ],
     },
     answers: [
-      { value: '123456789', origin: 'ANSWERED', field: { key: 'idn', position: 2, type: 'DOCUMENT_NUMBER', labelAr: 'رقم الهوية', labelEn: null } },
-      { value: 'سبب', origin: 'ANSWERED', field: { key: 'reason', position: 0, type: 'SHORT_TEXT', labelAr: 'السبب', labelEn: null } },
-      { value: '+96171123456', origin: 'FROM_FILE', field: { key: 'phone', position: 1, type: 'PHONE', labelAr: 'الهاتف', labelEn: null } },
+      { value: '123456789', origin: 'ANSWERED', field: { key: 'idn', position: 2, type: 'DOCUMENT_NUMBER', labelAr: 'رقم الهوية', labelEn: null, config: {} } },
+      { value: 'سبب', origin: 'ANSWERED', field: { key: 'reason', position: 0, type: 'SHORT_TEXT', labelAr: 'السبب', labelEn: null, config: {} } },
+      { value: '+96171123456', origin: 'FROM_FILE', field: { key: 'phone', position: 1, type: 'PHONE', labelAr: 'الهاتف', labelEn: null, config: {} } },
     ],
     attachments: [{ fieldId: FILE_FIELD }, { fieldId: null }],
   };
@@ -155,6 +155,18 @@ describe('a request read back', () => {
     expect(mine.find((a) => a.fieldKey === 'idn')?.value).toBe('••••••789');
     expect(mine.find((a) => a.fieldKey === 'reason')?.value).toBe('سبب');
     expect(JSON.stringify(mine)).not.toContain('123456789');
+  });
+
+  it('gives a choice its words, in the form\x27s own order, and no words to any other type', () => {
+    const choices = { choices: [{ key: 'a', labelAr: 'أ', labelEn: 'A' }, { key: 'b', labelAr: 'ب', labelEn: null }] };
+    const withChoice = (type: string, value: unknown, config: unknown = choices): RequestFormRow => ({
+      ...row,
+      answers: [{ value, origin: 'ANSWERED', field: { key: 'k', position: 0, type, labelAr: 'س', labelEn: null, config } }],
+    });
+    expect(answerViewsOf(withChoice('SINGLE_CHOICE', 'a'), 'STAFF')[0]!.display).toEqual({ ar: 'أ', en: 'A' });
+    expect(answerViewsOf(withChoice('MULTI_CHOICE', ['a', 'b']), 'STAFF')[0]!.display).toEqual({ ar: 'أ، ب', en: null });
+    expect(answerViewsOf(withChoice('SINGLE_CHOICE', 'gone'), 'STAFF')[0]!.display).toBeNull();
+    expect(answerViewsOf(withChoice('SHORT_TEXT', 'a', {}), 'STAFF')[0]!.display).toBeNull();
   });
 
   it('does not reorder or touch the rows it was given', () => {

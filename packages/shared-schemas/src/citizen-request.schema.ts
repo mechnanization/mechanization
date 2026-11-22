@@ -208,6 +208,9 @@ export interface RequestAttachmentView {
   uploadedByKind: 'CITIZEN' | 'STAFF';
   /** The file question of its form this paper answers (0113), or null for a paper on no question. */
   fieldKey: string | null;
+  /** That question's words, so a screen names the paper by what it was asked for. Null with `fieldKey`. */
+  fieldLabelAr: string | null;
+  fieldLabelEn: string | null;
 }
 
 /** For a براءة ذمة: what was owed on the property when it was approved. */
@@ -279,6 +282,8 @@ export interface CitizenRequestView {
   answers: RequestAnswerView[];
   /** The file questions of the form still holding no paper. */
   missingPapers: RequestMissingPaper[];
+  /** The form's draft for the statement, which «جاهزة للاستلام» starts from (F9); never the certificate. Staff only. */
+  statementTemplate: string | null;
   createdByName: string | null;
   readyByName: string | null;
   createdAt: string;

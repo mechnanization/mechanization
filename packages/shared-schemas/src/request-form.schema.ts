@@ -521,6 +521,8 @@ export interface RequestAnswerView {
   type: RequestFieldType;
   /** A file question has no value here: its papers are the request's attachments. */
   value: string | number | boolean | string[];
+  /** For a choice question, the words of what was chosen (the stored value is its key); null for every other type. */
+  display: { ar: string; en: string | null } | null;
   origin: RequestAnswerOrigin;
 }
 
