@@ -4,7 +4,7 @@ import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import type { ColumnDef } from '@tanstack/react-table';
-import { Eye, FileCheck, Plus, Tags } from 'lucide-react';
+import { Eye, FileCheck, FileText, Plus, Tags } from 'lucide-react';
 import {
   getLabels,
   REQUEST_CHANNEL,
@@ -262,6 +262,12 @@ export default function RequestsPage({
         title={t('title')}
         actions={
           <>
+            <Button asChild variant="outline">
+              <Link href={`${base}/requests/forms`}>
+                <FileText className="size-4" aria-hidden />
+                {t('forms')}
+              </Link>
+            </Button>
             <Button asChild variant="outline">
               <Link href={`${base}/requests/types`}>
                 <Tags className="size-4" aria-hidden />
