@@ -585,7 +585,7 @@ describeIfDb('requests on a form', () => {
       expect(after.attachments[0]).toMatchObject({ type: 'IDENTITY', fieldKey: 'id_copy', fieldLabelAr: 'سؤال id_copy' });
     });
 
-    it('lists the form on the queue and on the citizen\'s own list, and nothing on a request on no form', async () => {
+    it('lists the form on the queue and on the citizen\'s own list, and a built-in type as its system form', async () => {
       const form = await liveForm([text('reason')], { nameAr: 'نموذج الطابور' });
       const person = await citizen();
       const filed = await file(person, form);
@@ -600,7 +600,7 @@ describeIfDb('requests on a form', () => {
         service.submit({ citizenId: typed.id, requestType: 'OTHER', applicantCapacity: 'OWNER', clientRequestId: randomUUID() } as never, typed.actor),
       );
       const [only] = await within(() => service.mine(typed.id));
-      expect(only).toMatchObject({ form: null, answers: [], missingPapers: [] });
+      expect(only).toMatchObject({ form: { nameAr: 'طلب عام' }, answers: [], missingPapers: [] });
     });
 
     it('keeps a request\'s answers whole after its form is republished and archived', async () => {
@@ -614,6 +614,100 @@ describeIfDb('requests on a form', () => {
       const read = await within(() => service.get(filed.id));
       expect(read.form).toMatchObject({ versionNumber: 1 });
       expect(read.answers.map((a) => a.fieldKey)).toEqual(['reason']);
+    });
+  });
+
+  describe('the built-in types as system forms (F1)', () => {
+    const typed = (person: { id: string }, extra: Record<string, unknown> = {}) => ({
+      citizenId: person.id,
+      requestType: 'RESIDENCY',
+      applicantCapacity: 'OWNER',
+      clientRequestId: randomUUID(),
+      ...extra,
+    });
+    const submitTyped = (person: { id: string; actor: RequestActor }, extra: Record<string, unknown> = {}) =>
+      within(() => service.submit(typed(person, extra) as never, person.actor));
+    const systemForm = (type: string) => db.requestForm.findUniqueOrThrow({ where: { systemType: type as never } });
+
+    beforeAll(async () => {
+      await within(() => service.updateType('RESIDENCY', { enabled: true, feeAmount: 100_000 }, manager));
+    });
+
+    it("files a typed request on its type's system form, at the form's fee", async () => {
+      const form = await systemForm('RESIDENCY');
+      const person = await citizen();
+      const filed = await submitTyped(person);
+      expect(filed).toMatchObject({ fee: 100_000, status: 'AWAITING_PAYMENT' });
+      expect(await row(filed.id)).toMatchObject({ requestType: 'RESIDENCY', formId: form.id, formVersionId: form.currentVersionId });
+    });
+
+    it("writes the manager's switch and fee to the form and to the settings beside it, and reads the form", async () => {
+      await within(() => service.updateType('SIGNAGE', { enabled: true, feeAmount: 25_000 }, manager));
+      const form = await systemForm('SIGNAGE');
+      expect(form.enabled).toBe(true);
+      expect(Number(form.feeAmount)).toBe(25_000);
+      expect(await db.requestTypeSetting.findUniqueOrThrow({ where: { requestType: 'SIGNAGE' } })).toMatchObject({ enabled: true });
+      expect((await within(() => service.listTypes())).find((type) => type.requestType === 'SIGNAGE')).toMatchObject({ enabled: true, feeAmount: 25_000 });
+      // A fee changed on the form itself (the builder's settings) is what the list and the next request read.
+      await within(() => forms.update(form.id, { ...settings, nameAr: 'رخصة لافتة', feeAmount: 30_000 } as never, manager));
+      expect((await within(() => service.listTypes())).find((type) => type.requestType === 'SIGNAGE')?.feeAmount).toBe(30_000);
+    });
+
+    it('refuses a type whose form is switched off, as it refused a type switched off', async () => {
+      await within(() => service.updateType('VACANCY', { enabled: false, feeAmount: 0 }, manager));
+      const person = await citizen();
+      await expect(submitTyped(person, { requestType: 'VACANCY', propertyEntryId: person.cardId })).rejects.toMatchObject({ code: 'REQUEST_TYPE_NOT_OFFERED' });
+    });
+
+    it('answers a retry of a typed request as the same request, and refuses the key for another', async () => {
+      const person = await citizen();
+      const key = randomUUID();
+      const first = await submitTyped(person, { clientRequestId: key });
+      expect(await submitTyped(person, { clientRequestId: key })).toMatchObject({ id: first.id, replayed: true });
+      await expect(submitTyped(person, { clientRequestId: key, applicantCapacity: 'TENANT' })).rejects.toMatchObject({ code: 'REQUEST_KEY_REUSED' });
+    });
+
+    it('keeps one open request per citizen and type', async () => {
+      const person = await citizen();
+      const first = await submitTyped(person);
+      await expect(submitTyped(person)).rejects.toMatchObject({ code: 'REQUEST_ALREADY_OPEN', params: { number: first.requestNumber } });
+    });
+
+    it('bills the fee under the same title as before', async () => {
+      const person = await citizen();
+      const filed = await submitTyped(person);
+      await within(() => service.addAttachment(filed.id, { buffer: PDF, size: PDF.length }, 'IDENTITY', person.actor, { citizenId: person.id }));
+      const bill = await within(() => service.raiseBill(filed.id, staffActor));
+      expect((await db.citizenPayment.findUniqueOrThrow({ where: { id: bill.citizenPaymentId } })).title).toBe('رسم إفادة سكن');
+    });
+
+    it('is not offered a second time as a form', async () => {
+      const offered = await within(() => answers.offeredForms());
+      const system = await db.requestForm.findMany({ where: { systemType: { not: null } }, select: { id: true } });
+      expect(offered.some((form) => system.some((entry) => entry.id === form.id))).toBe(false);
+      // ...and every built-in type is a system form: a form of no type is a custom one.
+      expect(system).toHaveLength(8);
+    });
+
+    it('keeps its questions, its card rule and its place: only its name, fee and switch move', async () => {
+      const form = await systemForm('CLEARANCE');
+      await expect(within(() => forms.startDraft(form.id, manager))).rejects.toMatchObject({ code: 'REQUEST_FORM_SYSTEM' });
+      await expect(within(() => forms.publish(form.id, manager))).rejects.toMatchObject({ code: 'REQUEST_FORM_SYSTEM' });
+      await expect(within(() => forms.archive(form.id, manager))).rejects.toMatchObject({ code: 'REQUEST_FORM_SYSTEM' });
+      await expect(within(() => forms.saveDraft(form.id, { expectedRevision: 1, fields: [] } as never, manager))).rejects.toMatchObject({ code: 'REQUEST_FORM_SYSTEM' });
+      const edited = await within(() =>
+        forms.update(form.id, { ...settings, nameAr: 'براءة ذمة', propertyMode: 'NONE', askCapacity: false, askPurpose: false } as never, manager),
+      );
+      expect(edited).toMatchObject({ nameAr: 'براءة ذمة', propertyMode: 'REQUIRED', askCapacity: true, askPurpose: true });
+    });
+
+    it("reads a linked request's fee from the form, so a fee changed on the form reaches a request still waiting", async () => {
+      const form = await systemForm('OCCUPANCY');
+      const person = await citizen();
+      await within(() => service.updateType('OCCUPANCY', { enabled: true, feeAmount: 40_000 }, manager));
+      const filed = await submitTyped(person, { requestType: 'OCCUPANCY', propertyEntryId: person.cardId });
+      await within(() => forms.update(form.id, { ...settings, nameAr: 'إفادة إشغال', feeAmount: 45_000 } as never, manager));
+      expect((await within(() => service.get(filed.id))).fee).toBe(45_000);
     });
   });
 });

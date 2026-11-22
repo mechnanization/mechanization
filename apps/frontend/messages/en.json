@@ -525,7 +525,7 @@
     "REQUEST_FORM_EDIT_CONFLICT": "Someone else saved this draft since you opened it. Reload the page before you continue.",
     "REQUEST_FORM_NOT_PUBLISHABLE": "The form cannot be published yet. Check the notes on the questions.",
     "REQUEST_FORM_HAS_REQUESTS": "It has requests, so it cannot be deleted. Archive it instead.",
-    "REQUEST_FORM_SYSTEM": "This is a built-in form for a request type, so it cannot be deleted. Switch it off instead.",
+    "REQUEST_FORM_SYSTEM": "This is a built-in form for a request type: its questions are not edited and it is never archived or deleted. Switch it off instead.",
     "REQUEST_FORM_FIELD_KEY_TAKEN": "The key \"{key}\" is used by another question of the form.",
     "FILE_UPLOAD_FAILED": "The file could not be saved. Try again.",
     "FILE_OPEN_FAILED": "The file could not be opened.",
@@ -1234,7 +1234,8 @@
           "description": "The draft has unsaved changes that will be lost.",
           "leave": "Leave",
           "stay": "Stay"
-        }
+        },
+        "systemNotice": "This is the built-in form of a request type. It keeps its questions and rules as they were; only its name, fee and switch are set here."
       }
     }
   },

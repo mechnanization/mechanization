@@ -40,6 +40,8 @@ export function FormSettings({
   const modes = useTranslations('requests.forms.builder.settings.propertyModes');
   const toast = useToast();
   const readOnly = !canManage || form.archivedAt !== null;
+  /** A built-in type's form keeps what its type has always asked: the card, the capacity and the purpose (F1). */
+  const fixed = readOnly || form.systemType !== null;
 
   const [nameAr, setNameAr] = useState(form.nameAr);
   const [nameEn, setNameEn] = useState(form.nameEn ?? '');
@@ -123,7 +125,7 @@ export function FormSettings({
                 aria-label={t('propertyMode')}
                 size="field"
                 value={propertyMode}
-                disabled={readOnly}
+                disabled={fixed}
                 onChange={(value) => setPropertyMode(value as typeof propertyMode)}
                 options={REQUEST_PROPERTY_MODE.map((mode) => ({ value: mode, label: modes(mode) }))}
               />
@@ -133,14 +135,14 @@ export function FormSettings({
 
           <div className="space-y-3">
             <label className="flex items-start gap-2 text-sm">
-              <Checkbox className="mt-0.5" checked={askCapacity} disabled={readOnly} onCheckedChange={(next) => setAskCapacity(next === true)} />
+              <Checkbox className="mt-0.5" checked={askCapacity} disabled={fixed} onCheckedChange={(next) => setAskCapacity(next === true)} />
               <span className="space-y-0.5">
                 <span className="block font-medium">{t('askCapacity')}</span>
                 <span className="block text-xs text-muted-foreground">{t('askCapacityHint')}</span>
               </span>
             </label>
             <label className="flex items-start gap-2 text-sm">
-              <Checkbox className="mt-0.5" checked={askPurpose} disabled={readOnly} onCheckedChange={(next) => setAskPurpose(next === true)} />
+              <Checkbox className="mt-0.5" checked={askPurpose} disabled={fixed} onCheckedChange={(next) => setAskPurpose(next === true)} />
               <span className="space-y-0.5">
                 <span className="block font-medium">{t('askPurpose')}</span>
                 <span className="block text-xs text-muted-foreground">{t('askPurposeHint')}</span>

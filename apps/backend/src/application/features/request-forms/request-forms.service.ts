@@ -184,20 +184,24 @@ export class RequestFormsService {
     return this.get(id);
   }
 
-  /** The form's own settings: its name, fee, property and capacity questions, and the statement draft. Not versioned (F2). */
+  /**
+   * The form's own settings: its name, fee, property and capacity questions, and the statement draft. Not versioned (F2).
+   * A system form keeps what its type has always asked (the card, the capacity, the purpose): those three are not changed here.
+   */
   async update(id: string, input: UpdateRequestFormInput, actor: Actor): Promise<RequestFormView> {
     await runInTenantTransaction(this.tenantContext, async () => {
       const before = await this.lock(id);
       this.refuseArchived(before);
+      const fixed = before.systemType !== null;
       const after = (await this.db.requestForm.update({
         where: { id },
         data: {
           nameAr: input.nameAr,
           nameEn: input.nameEn ?? null,
           feeAmount: input.feeAmount,
-          propertyMode: input.propertyMode as never,
-          askCapacity: input.askCapacity,
-          askPurpose: input.askPurpose,
+          ...(fixed
+            ? {}
+            : { propertyMode: input.propertyMode as never, askCapacity: input.askCapacity, askPurpose: input.askPurpose }),
           statementTemplate: input.statementTemplate ?? null,
           sortOrder: input.sortOrder,
           updatedById: actor.id,
@@ -216,6 +220,7 @@ export class RequestFormsService {
     await runInTenantTransaction(this.tenantContext, async () => {
       const form = await this.lock(id);
       this.refuseArchived(form);
+      this.refuseSystem(form);
       const existing = await this.db.requestFormVersion.findFirst({ where: { formId: id, status: 'DRAFT' }, select: { id: true } });
       if (existing) return;
 
@@ -281,6 +286,7 @@ export class RequestFormsService {
     await runInTenantTransaction(this.tenantContext, async () => {
       const form = await this.lock(id);
       this.refuseArchived(form);
+      this.refuseSystem(form);
       const draft = await this.db.requestFormVersion.findFirst({
         where: { formId: id, status: 'DRAFT' },
         select: { id: true, revision: true },
@@ -316,6 +322,7 @@ export class RequestFormsService {
     await runInTenantTransaction(this.tenantContext, async () => {
       const form = await this.lock(id);
       this.refuseArchived(form);
+      this.refuseSystem(form);
       const draft = (await this.db.requestFormVersion.findFirst({
         where: { formId: id, status: 'DRAFT' },
         select: VERSION_SELECT,
@@ -383,6 +390,8 @@ export class RequestFormsService {
     await runInTenantTransaction(this.tenantContext, async () => {
       const form = await this.lock(id);
       if (form.archivedAt !== null) return;
+      // A built-in form is switched off, never archived: archiving is final, and the type would be gone for good.
+      this.refuseSystem(form);
       await this.db.requestForm.update({
         where: { id },
         data: { archivedAt: new Date(), archivedById: actor.id, enabled: false, updatedById: actor.id },
@@ -423,6 +432,13 @@ export class RequestFormsService {
     const form = (await this.db.requestForm.findUnique({ where: { id } })) as unknown as FormRow | null;
     if (!form) throw this.notFound();
     return form;
+  }
+
+  /** A system form (F1) keeps its type's questions and is never archived or deleted: it is switched on and off. */
+  private refuseSystem(form: FormRow): void {
+    if (form.systemType !== null) {
+      throw new ConflictError({ code: 'REQUEST_FORM_SYSTEM', message: 'A built-in form keeps its own questions and is never archived or deleted.' });
+    }
   }
 
   private refuseArchived(form: FormRow): void {

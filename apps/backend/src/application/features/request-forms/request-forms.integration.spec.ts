@@ -372,10 +372,8 @@ describeIfDb('request forms (the manager)', () => {
     });
 
     it('refuses a built-in form even with no request', async () => {
-      // The guard never lets a form become a built-in one afterwards: it is made one, as the backfill does.
-      const { rows } = await ddl.query(
-        `INSERT INTO "${SCHEMA}".request_forms ("nameAr", "systemType") VALUES ('نموذج أساسي', 'VACANCY') RETURNING "id"`,
-      );
+      // 0114 made a system form of every built-in type.
+      const { rows } = await ddl.query(`SELECT "id" FROM "${SCHEMA}".request_forms WHERE "systemType" = 'VACANCY'`);
       await expect(within(() => forms.remove(rows[0].id, manager))).rejects.toMatchObject({ code: 'REQUEST_FORM_SYSTEM' });
       expect((await within(() => forms.get(rows[0].id))).systemType).toBe('VACANCY');
     });

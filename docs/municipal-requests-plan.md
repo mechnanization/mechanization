@@ -13,6 +13,8 @@
 > `develop@5e8f5c3` on 2026-10-12; where a **Proposal** name differs from §7, §7 and the
 > code win.
 >
+> **System forms (2026-11-22, `feat/request-forms-system`, `0114`):** each type above is now also a system form (open decisions §24 F1): its fee and switch live on the form, a typed request is filed on it, and the requests already filed are linked to it. The manager's «أنواع الطلبات والرسوم» still edits them and still writes `request_type_settings` beside, which a later release drops.
+>
 > **Request forms (2026-11-22, `feat/request-forms-submit`):** a request may now be filled on a form the manager defined
 > (migrations 0112 and 0113): `submit` takes `formId` + `answers` beside the old body, the fee is the form's, `raiseBill` and
 > `approve` ask for a paper on every file question, and the one-open rule is per citizen and form. The request types here stay as

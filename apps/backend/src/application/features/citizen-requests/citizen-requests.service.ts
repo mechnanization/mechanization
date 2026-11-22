@@ -240,9 +240,28 @@ export class CitizenRequestsService {
 
   /** Every type, offered or not, with its fee — the manager's list, read by staff. */
   async listTypes(): Promise<RequestTypeSettingView[]> {
-    const rows = await this.db.requestTypeSetting.findMany();
+    const [rows, systemForms] = await Promise.all([
+      this.db.requestTypeSetting.findMany(),
+      this.db.requestForm.findMany({
+        where: { systemType: { not: null } },
+        select: { systemType: true, enabled: true, feeAmount: true, updatedAt: true },
+      }),
+    ]);
     const byType = new Map(rows.map((row) => [row.requestType as RequestType, row]));
+    // Since 0114 the system form of a type holds its fee and its switch (F1); the settings row is the fallback for a
+    // municipality whose migration has not run yet, and is kept in step by `updateType`.
+    const formOf = new Map(systemForms.map((form) => [form.systemType as RequestType, form]));
     return REQUEST_TYPE.map((type) => {
+      const form = formOf.get(type);
+      if (form) {
+        return {
+          requestType: type,
+          enabled: form.enabled,
+          feeAmount: Number(form.feeAmount),
+          needsProperty: requestNeedsProperty(type),
+          updatedAt: form.updatedAt.toISOString(),
+        };
+      }
       const row = byType.get(type);
       return {
         requestType: type,
@@ -266,12 +285,29 @@ export class CitizenRequestsService {
   ): Promise<RequestTypeSettingView[]> {
     await runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
-      const before = await tx.requestTypeSetting.findUnique({ where: { requestType: type } });
+      const beforeSetting = await tx.requestTypeSetting.findUnique({ where: { requestType: type } });
+      const form = await tx.requestForm.findUnique({
+        where: { systemType: type },
+        select: { enabled: true, feeAmount: true, currentVersionId: true },
+      });
+      // What the manager saw before: the system form's, once the type has one.
+      const before = form
+        ? { enabled: form.enabled, feeAmount: form.feeAmount }
+        : beforeSetting
+          ? { enabled: beforeSetting.enabled, feeAmount: beforeSetting.feeAmount }
+          : null;
+      // Both are written for as long as the settings table stays: a rollback to the build before the forms finds its settings.
       await tx.requestTypeSetting.upsert({
         where: { requestType: type },
         create: { requestType: type, enabled: input.enabled, feeAmount: input.feeAmount, updatedById: actor.id },
         update: { enabled: input.enabled, feeAmount: input.feeAmount, updatedById: actor.id },
       });
+      if (form) {
+        await tx.requestForm.update({
+          where: { systemType: type },
+          data: { enabled: input.enabled && form.currentVersionId !== null, feeAmount: input.feeAmount, updatedById: actor.id },
+        });
+      }
       await this.audit.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
@@ -280,6 +316,7 @@ export class CitizenRequestsService {
         entityType: 'RequestTypeSetting',
         entityId: null,
         before: before ? { requestType: type, enabled: before.enabled, feeAmount: Number(before.feeAmount) } : null,
+        // (`before` is the system form's once 0114 has made it, else the settings row's)
         after: { requestType: type, enabled: input.enabled, feeAmount: input.feeAmount },
       });
     });
@@ -304,7 +341,7 @@ export class CitizenRequestsService {
             citizenId: input.citizenId,
             ...(input.formId !== undefined
               ? { formId: input.formId }
-              : { requestType: input.requestType, formId: null, propertyEntryId: input.propertyEntryId ?? null }),
+              : { requestType: input.requestType, propertyEntryId: input.propertyEntryId ?? null }),
             status: { in: [...OPEN_REQUEST_STATUSES] },
           },
           select: { requestNumber: true },
@@ -415,6 +452,33 @@ export class CitizenRequestsService {
 
   /** A request on a built-in type: switched on by the manager, naming a card where its type needs one (D1, D4). */
   private async typedTarget(tx: Prisma.TransactionClient, input: TypedSubmitInput): Promise<SubmitTarget> {
+    // Since 0114 a built-in type is a system form (F1): its switch and fee are the form's, and the request is filed on it.
+    const system = await tx.requestForm.findUnique({
+      where: { systemType: input.requestType },
+      select: { id: true, enabled: true, archivedAt: true, feeAmount: true, currentVersionId: true },
+    });
+    if (system) {
+      if (!system.enabled || system.archivedAt !== null || system.currentVersionId === null) {
+        throw new ValidationError({
+          code: 'REQUEST_TYPE_NOT_OFFERED',
+          message: 'This request type is not offered.',
+          params: { type: input.requestType },
+        });
+      }
+      if (requestNeedsProperty(input.requestType) && !input.propertyEntryId) {
+        throw new ValidationError({ code: 'REQUEST_PROPERTY_REQUIRED', message: 'This request names a property.' });
+      }
+      return {
+        requestType: input.requestType,
+        applicantCapacity: input.applicantCapacity,
+        propertyEntryId: input.propertyEntryId ?? null,
+        buildingUnitId: input.buildingUnitId ?? null,
+        purpose: input.purpose ?? null,
+        fee: Number(system.feeAmount),
+        formId: system.id,
+        formVersionId: system.currentVersionId,
+      };
+    }
     const setting = await tx.requestTypeSetting.findUnique({ where: { requestType: input.requestType } });
     if (!setting?.enabled) {
       throw new ValidationError({
@@ -458,20 +522,21 @@ export class CitizenRequestsService {
         channel: true,
         formId: true,
         formVersionId: true,
+        formVersion: { select: { form: { select: { systemType: true } } } },
         citizenPayment: { select: { amount: true } },
       },
     });
     if (!row) return null;
     const channel = actor.kind === 'CITIZEN' ? 'ONLINE' : 'COUNTER';
+    // A typed request is on no form, or on its own type's system form (0114): either is the same request to a retry.
+    const typedRow = row.formId === null || row.formVersion?.form.systemType === row.requestType;
     // Every field the paper reads: an edit made after a lost answer (another unit, another
     // capacity, another answer) is another request, refused under this key, never answered as the first.
     const same =
-      input.formId !== undefined || row.formId !== null
-        ? input.formId !== undefined &&
+      input.formId !== undefined
+        ? row.citizenId === input.citizenId && row.channel === channel && (await this.formAnswers.sameSubmission(row, input))
+        : typedRow &&
           row.citizenId === input.citizenId &&
-          row.channel === channel &&
-          (await this.formAnswers.sameSubmission(row, input))
-        : row.citizenId === input.citizenId &&
           row.requestType === input.requestType &&
           row.applicantCapacity === input.applicantCapacity &&
           (row.propertyEntryId ?? null) === (input.propertyEntryId ?? null) &&

@@ -94,7 +94,8 @@ export class RequestAnswersService {
    */
   async offeredForms(citizenId?: string): Promise<OfferedRequestForm[]> {
     const forms = await this.db.requestForm.findMany({
-      where: { enabled: true, archivedAt: null, currentVersionId: { not: null } },
+      // A built-in type's system form is offered as the type it has always been (the wizard's list of types), not twice.
+      where: { enabled: true, archivedAt: null, currentVersionId: { not: null }, systemType: null },
       orderBy: [{ sortOrder: 'asc' }, { nameAr: 'asc' }],
       select: {
         id: true,

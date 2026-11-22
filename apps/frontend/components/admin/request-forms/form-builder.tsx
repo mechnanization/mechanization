@@ -78,8 +78,10 @@ export function FormBuilder({
   const toast = useToast();
 
   const archived = form.archivedAt !== null;
+  /** A built-in type's form keeps its questions and its place: it is switched on and off, and its fee changes (F1). */
+  const system = form.systemType !== null;
   const draft = form.draft;
-  const editable = canManage && !archived && draft !== null;
+  const editable = canManage && !archived && !system && draft !== null;
   const shown = draft ?? form.current;
 
   const saved = useMemo(() => (shown?.fields ?? []).map(fromView), [shown]);
@@ -195,6 +197,7 @@ export function FormBuilder({
   return (
     <div className="space-y-6">
       {archived ? <Alert variant="info" title={t('archivedNotice')} /> : null}
+      {system ? <Alert variant="info" title={t('systemNotice')} /> : null}
       {!canManage && !archived ? <Alert variant="info" title={t('readOnlyNotice')} /> : null}
 
       <Card>
@@ -267,7 +270,7 @@ export function FormBuilder({
             </div>
           ) : null}
 
-          {canManage && !archived && !draft ? (
+          {canManage && !archived && !system && !draft ? (
             <div className="space-y-2">
               <Button type="button" onClick={startDraft} disabled={busy !== null}>
                 {busy === 'start' ? t('questions.editing') : t('questions.edit')}
@@ -304,14 +307,18 @@ export function FormBuilder({
             {form.enabled ? <CirclePause className="size-4" aria-hidden /> : <CirclePlay className="size-4" aria-hidden />}
             {form.enabled ? t('actions.disable') : t('actions.enable')}
           </Button>
-          <Button type="button" variant="outline" onClick={() => setDialog('archive')} disabled={busy !== null}>
-            <Archive className="size-4" aria-hidden />
-            {t('actions.archive')}
-          </Button>
-          <Button type="button" variant="outline" onClick={() => setDialog('delete')} disabled={busy !== null}>
-            <Trash2 className="size-4" aria-hidden />
-            {t('actions.delete')}
-          </Button>
+          {system ? null : (
+            <>
+              <Button type="button" variant="outline" onClick={() => setDialog('archive')} disabled={busy !== null}>
+                <Archive className="size-4" aria-hidden />
+                {t('actions.archive')}
+              </Button>
+              <Button type="button" variant="outline" onClick={() => setDialog('delete')} disabled={busy !== null}>
+                <Trash2 className="size-4" aria-hidden />
+                {t('actions.delete')}
+              </Button>
+            </>
+          )}
         </div>
       ) : null}
 
