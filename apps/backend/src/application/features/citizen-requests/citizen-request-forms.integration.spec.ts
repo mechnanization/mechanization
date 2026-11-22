@@ -616,4 +616,65 @@ describeIfDb('requests on a form', () => {
       expect(read.answers.map((a) => a.fieldKey)).toEqual(['reason']);
     });
   });
+
+  describe('the dues check as a setting of a form (F13)', () => {
+    const owe = async (person: { id: string; cardId: string }) => {
+      const card = await db.propertyEntry.findUniqueOrThrow({ where: { id: person.cardId } });
+      return db.citizenPayment.create({
+        data: {
+          citizenId: person.id,
+          title: 'رسم القيمة التأجيرية',
+          amount: 40_000,
+          dueDate: new Date('2030-12-31'),
+          assessment: {
+            basis: 'PER_AREA',
+            rate: 1000,
+            unitCount: 1,
+            totalArea: 40,
+            excludedUnitCount: 0,
+            heldUnitCount: 0,
+            uninhabitableUnitCount: 0,
+            lines: [{ propertyNumber: card.propertyNumber, propertyType: 'LAND', unitType: 'APARTMENT', unitArea: 40 }],
+          } as never,
+        },
+      });
+    };
+    const ready = async (extra: Record<string, unknown>) => {
+      const form = await liveForm([text('reason')], { feeAmount: 0, propertyMode: 'REQUIRED', ...extra });
+      const person = await citizen();
+      const filed = await file(person, form, { propertyEntryId: person.cardId });
+      expect(filed.status).toBe('IN_REVIEW');
+      return { person, filed, form };
+    };
+
+    it('refuses to approve while the property the request names owes, and keeps the check once it is clear', async () => {
+      const { person, filed } = await ready({ requiresNoDues: true, nameAr: 'نموذج يفحص المستحقات' });
+      const bill = await owe(person);
+      await expect(within(() => service.approve(filed.id, 'لا رسوم مستحقة على العقار.', clerk))).rejects.toMatchObject({
+        code: 'REQUEST_CLEARANCE_DUES_OUTSTANDING',
+        params: { total: 40_000 },
+      });
+      await db.citizenPayment.update({ where: { id: bill.id }, data: { paidAmount: 40_000, paymentStatus: 'PAID' } });
+      const approved = await within(() => service.approve(filed.id, 'لا رسوم مستحقة على العقار.', clerk));
+      expect(approved.status).toBe('READY_FOR_PICKUP');
+      expect(approved.clearance).toMatchObject({ total: 0 });
+    });
+
+    it('does not ask a form that does not set it, whatever the property owes', async () => {
+      const { person, filed } = await ready({ nameAr: 'نموذج لا يفحص' });
+      await owe(person);
+      expect((await within(() => service.approve(filed.id, 'تشهد البلدية.', clerk))).status).toBe('READY_FOR_PICKUP');
+    });
+
+    it('is saved on the form, audited, and refused without a required card', async () => {
+      const form = await liveForm([text('reason')], { requiresNoDues: true, propertyMode: 'REQUIRED', nameAr: 'يفحص' });
+      expect((await within(() => forms.get(form.id))).requiresNoDues).toBe(true);
+      const { rows } = await ddl.query(`SELECT "after" FROM "${SCHEMA}".audit_log_entries WHERE "entityId" = $1 AND "action" = 'REQUEST_FORM_CREATED'`, [form.id]);
+      expect(rows[0].after).toMatchObject({ requiresNoDues: true });
+      // The service does not run the body's schema, so this is the database's own CHECK refusing.
+      await expect(
+        within(() => forms.update(form.id, { ...settings, propertyMode: 'OPTIONAL', requiresNoDues: true } as never, manager)),
+      ).rejects.toThrow(/request_forms_dues_needs_property/);
+    });
+  });
 });

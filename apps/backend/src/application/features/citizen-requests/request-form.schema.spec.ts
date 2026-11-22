@@ -213,6 +213,17 @@ describe('the manager\'s inputs', () => {
     expect(createRequestFormSchema.safeParse({ ...settings, ...overrides }).success).toBe(false);
   });
 
+  it('asks for the dues check only with a required card (F13)', () => {
+    expect(createRequestFormSchema.parse(settings).requiresNoDues).toBe(false);
+    expect(createRequestFormSchema.safeParse({ ...settings, requiresNoDues: true, propertyMode: 'REQUIRED' }).success).toBe(true);
+    for (const propertyMode of ['NONE', 'OPTIONAL']) {
+      const result = createRequestFormSchema.safeParse({ ...settings, requiresNoDues: true, propertyMode });
+      expect(result.success).toBe(false);
+      if (!result.success) expect(result.error.issues.map((issue) => issue.path.join('.'))).toEqual(['requiresNoDues']);
+    }
+    expect(createRequestFormSchema.safeParse({ ...settings, requiresNoDues: 'yes' }).success).toBe(false);
+  });
+
   it('shares the fee rule with the request type setting', () => {
     for (const fee of [0, 50_000, '50000', 1_000_000_000]) {
       expect(requestFeeAmountSchema.safeParse(fee).success).toBe(true);

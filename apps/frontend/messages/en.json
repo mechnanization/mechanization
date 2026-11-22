@@ -1124,7 +1124,9 @@
           "saved": "The form's settings were saved.",
           "saveError": "The settings could not be saved.",
           "nameRequired": "Enter the form's name.",
-          "feeInvalid": "The fee is a whole number of pounds, zero or more."
+          "feeInvalid": "The fee is a whole number of pounds, zero or more.",
+          "requiresNoDues": "Check the property's dues before approval",
+          "requiresNoDuesHint": "The clerk cannot approve while the property named owes. Needs a required property."
         },
         "questions": {
           "title": "Questions",

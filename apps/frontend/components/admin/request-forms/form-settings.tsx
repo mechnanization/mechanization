@@ -47,6 +47,7 @@ export function FormSettings({
   const [propertyMode, setPropertyMode] = useState(form.propertyMode);
   const [askCapacity, setAskCapacity] = useState(form.askCapacity);
   const [askPurpose, setAskPurpose] = useState(form.askPurpose);
+  const [requiresNoDues, setRequiresNoDues] = useState(form.requiresNoDues);
   const [template, setTemplate] = useState(form.statementTemplate ?? '');
   const [errors, setErrors] = useState<{ name?: string; fee?: string; save?: string }>({});
   const [saving, setSaving] = useState(false);
@@ -62,6 +63,7 @@ export function FormSettings({
       propertyMode,
       askCapacity,
       askPurpose,
+      requiresNoDues,
       statementTemplate: template,
       sortOrder: form.sortOrder,
     });
@@ -124,7 +126,11 @@ export function FormSettings({
                 size="field"
                 value={propertyMode}
                 disabled={readOnly}
-                onChange={(value) => setPropertyMode(value as typeof propertyMode)}
+                onChange={(value) => {
+                  setPropertyMode(value as typeof propertyMode);
+                  // The dues check needs a required card: leaving it off the check is the only consistent answer.
+                  if (value !== 'REQUIRED') setRequiresNoDues(false);
+                }}
                 options={REQUEST_PROPERTY_MODE.map((mode) => ({ value: mode, label: modes(mode) }))}
               />
             </Field>
@@ -137,6 +143,18 @@ export function FormSettings({
               <span className="space-y-0.5">
                 <span className="block font-medium">{t('askCapacity')}</span>
                 <span className="block text-xs text-muted-foreground">{t('askCapacityHint')}</span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2 text-sm">
+              <Checkbox
+                className="mt-0.5"
+                checked={requiresNoDues}
+                disabled={readOnly || propertyMode !== 'REQUIRED'}
+                onCheckedChange={(next) => setRequiresNoDues(next === true)}
+              />
+              <span className="space-y-0.5">
+                <span className="block font-medium">{t('requiresNoDues')}</span>
+                <span className="block text-xs text-muted-foreground">{t('requiresNoDuesHint')}</span>
               </span>
             </label>
             <label className="flex items-start gap-2 text-sm">

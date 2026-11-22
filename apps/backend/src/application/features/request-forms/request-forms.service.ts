@@ -60,6 +60,7 @@ type FormRow = {
   propertyMode: string;
   askCapacity: boolean;
   askPurpose: boolean;
+  requiresNoDues: boolean;
   statementTemplate: string | null;
   systemType: string | null;
   sortOrder: number;
@@ -78,6 +79,7 @@ function auditedSettings(form: FormRow) {
     propertyMode: form.propertyMode,
     askCapacity: form.askCapacity,
     askPurpose: form.askPurpose,
+    requiresNoDues: form.requiresNoDues,
     hasTemplate: form.statementTemplate !== null,
     sortOrder: form.sortOrder,
   };
@@ -169,6 +171,7 @@ export class RequestFormsService {
           propertyMode: input.propertyMode as never,
           askCapacity: input.askCapacity,
           askPurpose: input.askPurpose,
+          requiresNoDues: input.requiresNoDues,
           statementTemplate: input.statementTemplate ?? null,
           sortOrder: input.sortOrder,
           createdById: actor.id,
@@ -198,6 +201,7 @@ export class RequestFormsService {
           propertyMode: input.propertyMode as never,
           askCapacity: input.askCapacity,
           askPurpose: input.askPurpose,
+          requiresNoDues: input.requiresNoDues,
           statementTemplate: input.statementTemplate ?? null,
           sortOrder: input.sortOrder,
           updatedById: actor.id,
@@ -491,6 +495,7 @@ export class RequestFormsService {
       propertyMode: form.propertyMode as RequestPropertyMode,
       askCapacity: form.askCapacity,
       askPurpose: form.askPurpose,
+      requiresNoDues: form.requiresNoDues,
       statementTemplate: form.statementTemplate,
       systemType: form.systemType as RequestType | null,
       sortOrder: form.sortOrder,

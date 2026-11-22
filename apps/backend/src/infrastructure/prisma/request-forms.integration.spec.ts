@@ -602,6 +602,31 @@ describeIfDb('migrations 0112 and 0113: request forms', () => {
       expect(await refusal(...attachmentSql(await addRequest(), live.fieldIds[1]!))).toBe(CHECK_VIOLATION); // a request on no form
     });
   });
+
+  describe('0115: the dues check is a setting of a form', () => {
+    it('is off by default, and on only for a form that requires a card', async () => {
+      const formId = await newForm();
+      expect((await run(`SELECT "requiresNoDues" FROM request_forms WHERE "id" = $1`, [formId])).rows[0].requiresNoDues).toBe(false);
+      expect(await refusal(`UPDATE request_forms SET "requiresNoDues" = true WHERE "id" = $1`, [formId])).toBe(CHECK_VIOLATION);
+      expect(await refusal(`UPDATE request_forms SET "requiresNoDues" = true, "propertyMode" = 'OPTIONAL' WHERE "id" = $1`, [formId])).toBe(CHECK_VIOLATION);
+      expect(await refusal(`UPDATE request_forms SET "requiresNoDues" = true, "propertyMode" = 'REQUIRED' WHERE "id" = $1`, [formId])).toBeNull();
+    });
+
+    it('cannot lose its card once the check is on', async () => {
+      const formId = await newForm();
+      await run(`UPDATE request_forms SET "requiresNoDues" = true, "propertyMode" = 'REQUIRED' WHERE "id" = $1`, [formId]);
+      expect(await refusal(`UPDATE request_forms SET "propertyMode" = 'NONE' WHERE "id" = $1`, [formId])).toBe(CHECK_VIOLATION);
+    });
+
+    it('replays without a second copy of the constraint', async () => {
+      const count = async () =>
+        (await run(`SELECT count(*)::int AS n FROM pg_constraint WHERE conname = 'request_forms_dues_needs_property' AND connamespace = '"` + SCHEMA + `"'::regnamespace`)).rows[0].n;
+      const before = await count();
+      await run(readFileSync(join(__dirname, 'tenant/migrations/0115_request_form_dues_check/migration.sql'), 'utf8'));
+      expect(before).toBe(1);
+      expect(await count()).toBe(1);
+    });
+  });
 });
 
 /** The count of enum types the spec expects, so a type dropped from 0112 fails here rather than at a CHECK. */
@@ -644,4 +669,5 @@ describeIfDb('migration 0112: the enum types', () => {
     // A رقم مرجعي is the citizen's credential and is not a source a form can link to.
     expect([...(byName.get('RequestLinkedSource') ?? [])].join(' ')).not.toMatch(/REFERENCE/);
   });
+
 });

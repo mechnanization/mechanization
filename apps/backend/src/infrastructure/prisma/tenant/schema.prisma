@@ -3701,6 +3701,8 @@ model RequestForm {
   propertyMode      RequestPropertyMode @default(NONE)
   askCapacity       Boolean             @default(false)
   askPurpose        Boolean             @default(false)
+  /// «يفحص مستحقات العقار» (F13, 0115): approval is refused while the property the request names owes. CHECK: needs `propertyMode` REQUIRED.
+  requiresNoDues    Boolean             @default(false)
   /// A draft the clerk starts the statement from (F9); never the certificate.
   statementTemplate String?
   systemType        RequestType?        @unique

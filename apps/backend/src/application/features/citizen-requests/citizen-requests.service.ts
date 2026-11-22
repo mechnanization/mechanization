@@ -887,10 +887,16 @@ export class CitizenRequestsService {
       await this.formAnswers.assertPapers(id);
       const row = await tx.citizenRequest.findUniqueOrThrow({
         where: { id },
-        select: { requestNumber: true, requestType: true, propertyEntry: { select: { propertyNumber: true } } },
+        select: {
+          requestNumber: true,
+          requestType: true,
+          propertyEntry: { select: { propertyNumber: true } },
+          formVersion: { select: { form: { select: { requiresNoDues: true } } } },
+        },
       });
       let clearance: RequestClearanceSnapshot | null = null;
-      if (row.requestType === 'CLEARANCE') {
+      // The built-in clearance, and any form that asks for the dues check (F13): refused while the property owes.
+      if (row.requestType === 'CLEARANCE' || row.formVersion?.form.requiresNoDues) {
         const propertyNumber = row.propertyEntry?.propertyNumber?.trim();
         if (!propertyNumber) {
           throw new ValidationError({

@@ -262,17 +262,26 @@ const formSettings = {
   propertyMode: requestPropertyModeSchema,
   askCapacity: z.boolean(),
   askPurpose: z.boolean(),
+  /** «يفحص مستحقات العقار» (F13): the clerk cannot approve while the property the request names owes. Needs a required card. */
+  requiresNoDues: z.boolean().default(false),
   /** A draft the clerk starts the statement from (F9): never the certificate. */
   statementTemplate: optionalText(REQUEST_FORM_TEMPLATE_MAX, 'نص الإفادة طويل جداً'),
   sortOrder: z.number().int().min(0).max(1_000_000).default(0),
 };
 
+/** A form that checks dues names a property: the card is required (CHECK `request_forms_dues_needs_property`). */
+function duesNeedsProperty(value: { requiresNoDues: boolean; propertyMode: RequestPropertyMode }, ctx: z.RefinementCtx): void {
+  if (value.requiresNoDues && value.propertyMode !== 'REQUIRED') {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['requiresNoDues'], message: 'فحص المستحقات يحتاج عقاراً إلزامياً' });
+  }
+}
+
 /** «نموذج جديد»: the settings only. The questions are saved as a draft, then published. */
-export const createRequestFormSchema = z.object(formSettings).strict();
+export const createRequestFormSchema = z.object(formSettings).strict().superRefine(duesNeedsProperty);
 export type CreateRequestFormInput = z.infer<typeof createRequestFormSchema>;
 
 /** The settings of an existing form (`PUT request-forms/:id`). */
-export const updateRequestFormSchema = z.object(formSettings).strict();
+export const updateRequestFormSchema = z.object(formSettings).strict().superRefine(duesNeedsProperty);
 export type UpdateRequestFormInput = z.infer<typeof updateRequestFormSchema>;
 
 /** Keys are unique inside a version, and a form holds at most `REQUEST_FORM_MAX_FIELDS` questions. */
@@ -480,6 +489,7 @@ export interface RequestFormView {
   propertyMode: RequestPropertyMode;
   askCapacity: boolean;
   askPurpose: boolean;
+  requiresNoDues: boolean;
   statementTemplate: string | null;
   systemType: RequestType | null;
   sortOrder: number;
