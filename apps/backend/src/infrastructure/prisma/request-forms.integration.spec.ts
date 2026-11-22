@@ -338,12 +338,12 @@ describeIfDb('migrations 0112 and 0113: request forms', () => {
     });
 
     it('stands for one built-in type at most, and never for another once made', async () => {
-      await newForm({ systemType: 'SIGNAGE' });
+      // 0114 made one system form of every type, so each type is taken already.
       expect(await refusal(`INSERT INTO request_forms ("nameAr", "systemType") VALUES ('أخرى', 'SIGNAGE')`)).toBe(UNIQUE_VIOLATION);
       // Any number of custom forms: a NULL system type never collides.
       expect(await refusal(`INSERT INTO request_forms ("nameAr") VALUES ('مخصص')`)).toBeNull();
 
-      const formId = await newForm({ systemType: 'VACANCY' });
+      const formId = (await run(`SELECT "id" FROM request_forms WHERE "systemType" = 'VACANCY'`)).rows[0].id as string;
       expect(await refusal(`UPDATE request_forms SET "systemType" = 'OTHER' WHERE "id" = $1`, [formId])).toBe(CHECK_VIOLATION);
       expect(await refusal(`UPDATE request_forms SET "systemType" = NULL WHERE "id" = $1`, [formId])).toBe(CHECK_VIOLATION);
       expect(await refusal(`UPDATE request_forms SET "nameAr" = 'اسم جديد' WHERE "id" = $1`, [formId])).toBeNull();
