@@ -43,8 +43,47 @@ import { assertNotMergedAway } from '../citizens/merged-away';
 import { raiseOneOffBill } from '../fees/one-off-bill';
 import { ParcelDuesService } from '../fees/parcel-dues.service';
 import { isUniqueViolationOn } from '../treasury/retry-key';
+import { RequestAnswersService, type FormSubmissionInput } from '../request-forms/request-answers.service';
+import { answerViewsOf, fieldKeyOfPaper, formRefOf, missingPapersOf } from '../request-forms/request-answers.plan';
 import { cancelRequestOfCancelledBill } from './cancelled-bill';
 import { settleRequestOfWrittenOffBill } from './written-off-bill';
+
+/** A request on no form: one of the built-in types, as before the form builder. */
+interface TypedSubmitInput {
+  formId?: undefined;
+  citizenId: string;
+  requestType: RequestType;
+  applicantCapacity: NonNullable<RequestRow['applicantCapacity']>;
+  propertyEntryId?: string;
+  buildingUnitId?: string;
+  purpose?: string;
+  clientRequestId: string;
+}
+
+/** A request on a form the manager defined (migration 0113); its answers are `RequestAnswersService`'s. */
+interface FormSubmitInput extends FormSubmissionInput {
+  citizenId: string;
+  clientRequestId: string;
+}
+
+export type SubmitInput = TypedSubmitInput | FormSubmitInput;
+
+/** What a request is created with, whichever way it was filed. */
+interface SubmitTarget {
+  requestType: RequestType;
+  applicantCapacity: RequestRow['applicantCapacity'];
+  propertyEntryId: string | null;
+  buildingUnitId: string | null;
+  purpose: string | null;
+  fee: number;
+  formId: string | null;
+  formVersionId: string | null;
+}
+
+/** What the manager charges: by type for a request on no form, by form for one on a form (D1; F2: not versioned). */
+interface FeeTable {
+  of(row: { requestType: string; formId: string | null }): number | undefined;
+}
 
 /** Who is acting: a citizen through the portal, or a member of staff. */
 export type RequestActor = { kind: 'CITIZEN'; id: string } | { kind: 'STAFF'; id: string; role: string };
@@ -105,8 +144,25 @@ const REQUEST_SELECT = {
     },
   },
   attachments: {
-    select: { id: true, type: true, mimeType: true, sizeBytes: true, createdAt: true, uploadedBy: { select: { kind: true } } },
+    select: { id: true, type: true, mimeType: true, sizeBytes: true, createdAt: true, fieldId: true, uploadedBy: { select: { kind: true } } },
     orderBy: { createdAt: 'asc' as const },
+  },
+  formId: true,
+  // The form this request was filled on, and its file questions (what a paper may answer, and what is still missing).
+  formVersion: {
+    select: {
+      id: true,
+      versionNumber: true,
+      form: { select: { id: true, nameAr: true, nameEn: true } },
+      fields: {
+        where: { type: 'FILE' as const },
+        select: { id: true, key: true, labelAr: true, labelEn: true },
+        orderBy: { position: 'asc' as const },
+      },
+    },
+  },
+  answers: {
+    select: { value: true, origin: true, field: { select: { key: true, position: true, type: true, labelAr: true, labelEn: true } } },
   },
   createdBy: { select: { firstName: true, middleName: true, lastName: true } },
   readyBy: { select: { firstName: true, middleName: true, lastName: true } },
@@ -162,6 +218,7 @@ export class CitizenRequestsService {
     private readonly audit: AuditService,
     private readonly parcelDues: ParcelDuesService,
     private readonly events: EventEmitter2,
+    private readonly formAnswers: RequestAnswersService,
     @Inject(REQUEST_FILE_STORAGE) private readonly files: RequestFileStorage,
     /** Read for `isLive` only: whether a citizen can pay online at all (open-decisions §21). */
     @Inject(WHISH_GATEWAY) private readonly whish: Pick<WhishGateway, 'isLive'>,
@@ -227,18 +284,7 @@ export class CitizenRequestsService {
 
   // ─────────────────────────────  Submitting  ─────────────────────────────
 
-  async submit(
-    input: {
-      citizenId: string;
-      requestType: RequestType;
-      applicantCapacity: RequestRow['applicantCapacity'];
-      propertyEntryId?: string;
-      buildingUnitId?: string;
-      purpose?: string;
-      clientRequestId: string;
-    },
-    actor: RequestActor,
-  ): Promise<SubmitRequestResult> {
+  async submit(input: SubmitInput, actor: RequestActor): Promise<SubmitRequestResult> {
     try {
       return await runInTenantTransaction(this.tenantContext, () => this.submitInTransaction(input, actor));
     } catch (error) {
@@ -252,8 +298,9 @@ export class CitizenRequestsService {
         const open = await this.db.citizenRequest.findFirst({
           where: {
             citizenId: input.citizenId,
-            requestType: input.requestType,
-            propertyEntryId: input.propertyEntryId ?? null,
+            ...(input.formId !== undefined
+              ? { formId: input.formId }
+              : { requestType: input.requestType, formId: null, propertyEntryId: input.propertyEntryId ?? null }),
             status: { in: [...OPEN_REQUEST_STATUSES] },
           },
           select: { requestNumber: true },
@@ -268,10 +315,7 @@ export class CitizenRequestsService {
     }
   }
 
-  private async submitInTransaction(
-    input: Parameters<CitizenRequestsService['submit']>[0],
-    actor: RequestActor,
-  ): Promise<SubmitRequestResult> {
+  private async submitInTransaction(input: SubmitInput, actor: RequestActor): Promise<SubmitRequestResult> {
     const tx = this.db as Prisma.TransactionClient;
     const lockKey = `${this.tenantContext.schemaName}:citizen-request:${input.clientRequestId}`;
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
@@ -288,24 +332,15 @@ export class CitizenRequestsService {
     }
     await assertNotMergedAway(tx, citizen.id);
 
-    const setting = await tx.requestTypeSetting.findUnique({ where: { requestType: input.requestType } });
-    if (!setting?.enabled) {
-      throw new ValidationError({
-        code: 'REQUEST_TYPE_NOT_OFFERED',
-        message: 'This request type is not offered.',
-        params: { type: input.requestType },
-      });
-    }
-    if (requestNeedsProperty(input.requestType) && !input.propertyEntryId) {
-      throw new ValidationError({ code: 'REQUEST_PROPERTY_REQUIRED', message: 'This request names a property.' });
-    }
-    await this.assertOwnCard(tx, citizen.id, input.propertyEntryId, input.buildingUnitId);
+    const resolved = input.formId !== undefined ? await this.formAnswers.resolveSubmission(input, citizen.id) : null;
+    const target = resolved ? this.formTarget(resolved) : await this.typedTarget(tx, input as TypedSubmitInput);
+    await this.assertOwnCard(tx, citizen.id, target.propertyEntryId ?? undefined, target.buildingUnitId ?? undefined);
 
     const open = await tx.citizenRequest.findFirst({
       where: {
         citizenId: citizen.id,
-        requestType: input.requestType,
-        propertyEntryId: input.propertyEntryId ?? null,
+        ...(target.formId ? { formId: target.formId } : { requestType: target.requestType, formId: null }),
+        propertyEntryId: target.propertyEntryId,
         status: { in: ['AWAITING_PAYMENT', 'IN_REVIEW', 'READY_FOR_PICKUP'] },
       },
       select: { requestNumber: true },
@@ -318,7 +353,7 @@ export class CitizenRequestsService {
       });
     }
 
-    const fee = Number(setting.feeAmount);
+    const fee = target.fee;
     const status: RequestStatus = fee > 0 ? 'AWAITING_PAYMENT' : 'IN_REVIEW';
     const requestNumber = await allocateDocumentNumber(tx, this.S, 'REQUEST');
     const channel = actor.kind === 'CITIZEN' ? 'ONLINE' : 'COUNTER';
@@ -327,44 +362,83 @@ export class CitizenRequestsService {
         requestNumber,
         citizenId: citizen.id,
         channel,
-        requestType: input.requestType,
-        applicantCapacity: input.applicantCapacity,
+        requestType: target.requestType,
+        applicantCapacity: target.applicantCapacity,
         status,
-        propertyEntryId: input.propertyEntryId ?? null,
-        buildingUnitId: input.buildingUnitId ?? null,
-        purpose: input.purpose ?? null,
+        propertyEntryId: target.propertyEntryId,
+        buildingUnitId: target.buildingUnitId,
+        purpose: target.purpose,
+        formId: target.formId,
+        formVersionId: target.formVersionId,
         clientRequestId: input.clientRequestId,
         createdById: actor.kind === 'STAFF' ? actor.id : null,
       },
       select: { id: true },
     });
+    if (resolved) await this.formAnswers.writeAnswers(created.id, resolved);
     await this.audit.recordInTransaction({
       ...this.actorEntry(actor),
       action: 'REQUEST_SUBMITTED',
       entityType: 'CitizenRequest',
       entityId: created.id,
-      // Ids, numbers and enums only: `purpose` is free text and may name a person.
+      // Ids, numbers and enums only: `purpose` is free text and may name a person, and an answer is never here.
       after: {
         requestNumber,
-        requestType: input.requestType,
+        requestType: target.requestType,
         channel,
         citizenId: citizen.id,
-        propertyEntryId: input.propertyEntryId ?? null,
+        propertyEntryId: target.propertyEntryId,
         fee,
         status,
+        ...(target.formId ? { formId: target.formId, formVersionId: target.formVersionId } : {}),
       },
     });
     return { id: created.id, requestNumber, status, fee, replayed: false };
+  }
+
+  private formTarget(resolved: Awaited<ReturnType<RequestAnswersService['resolveSubmission']>>): SubmitTarget {
+    return {
+      requestType: resolved.requestType,
+      applicantCapacity: resolved.applicantCapacity,
+      propertyEntryId: resolved.propertyEntryId,
+      buildingUnitId: resolved.buildingUnitId,
+      purpose: resolved.purpose,
+      fee: resolved.fee,
+      formId: resolved.formId,
+      formVersionId: resolved.formVersionId,
+    };
+  }
+
+  /** A request on a built-in type: switched on by the manager, naming a card where its type needs one (D1, D4). */
+  private async typedTarget(tx: Prisma.TransactionClient, input: TypedSubmitInput): Promise<SubmitTarget> {
+    const setting = await tx.requestTypeSetting.findUnique({ where: { requestType: input.requestType } });
+    if (!setting?.enabled) {
+      throw new ValidationError({
+        code: 'REQUEST_TYPE_NOT_OFFERED',
+        message: 'This request type is not offered.',
+        params: { type: input.requestType },
+      });
+    }
+    if (requestNeedsProperty(input.requestType) && !input.propertyEntryId) {
+      throw new ValidationError({ code: 'REQUEST_PROPERTY_REQUIRED', message: 'This request names a property.' });
+    }
+    return {
+      requestType: input.requestType,
+      applicantCapacity: input.applicantCapacity,
+      propertyEntryId: input.propertyEntryId ?? null,
+      buildingUnitId: input.buildingUnitId ?? null,
+      purpose: input.purpose ?? null,
+      fee: Number(setting.feeAmount),
+      formId: null,
+      formVersionId: null,
+    };
   }
 
   /**
    * A key already used: the same request answers again, flagged; a different
    * request under it is refused, never silently mapped onto the first.
    */
-  private async replay(
-    input: Parameters<CitizenRequestsService['submit']>[0],
-    actor: RequestActor,
-  ): Promise<SubmitRequestResult | null> {
+  private async replay(input: SubmitInput, actor: RequestActor): Promise<SubmitRequestResult | null> {
     const row = await this.db.citizenRequest.findUnique({
       where: { clientRequestId: input.clientRequestId },
       select: {
@@ -378,20 +452,28 @@ export class CitizenRequestsService {
         buildingUnitId: true,
         purpose: true,
         channel: true,
+        formId: true,
+        formVersionId: true,
         citizenPayment: { select: { amount: true } },
       },
     });
     if (!row) return null;
+    const channel = actor.kind === 'CITIZEN' ? 'ONLINE' : 'COUNTER';
     // Every field the paper reads: an edit made after a lost answer (another unit, another
-    // capacity) is another request, refused under this key, never answered as the first.
+    // capacity, another answer) is another request, refused under this key, never answered as the first.
     const same =
-      row.citizenId === input.citizenId &&
-      row.requestType === input.requestType &&
-      row.applicantCapacity === input.applicantCapacity &&
-      (row.propertyEntryId ?? null) === (input.propertyEntryId ?? null) &&
-      (row.buildingUnitId ?? null) === (input.buildingUnitId ?? null) &&
-      (row.purpose ?? null) === (input.purpose ?? null) &&
-      row.channel === (actor.kind === 'CITIZEN' ? 'ONLINE' : 'COUNTER');
+      input.formId !== undefined || row.formId !== null
+        ? input.formId !== undefined &&
+          row.citizenId === input.citizenId &&
+          row.channel === channel &&
+          (await this.formAnswers.sameSubmission(row, input))
+        : row.citizenId === input.citizenId &&
+          row.requestType === input.requestType &&
+          row.applicantCapacity === input.applicantCapacity &&
+          (row.propertyEntryId ?? null) === (input.propertyEntryId ?? null) &&
+          (row.buildingUnitId ?? null) === (input.buildingUnitId ?? null) &&
+          (row.purpose ?? null) === (input.purpose ?? null) &&
+          row.channel === channel;
     if (!same) {
       throw new ConflictError({
         code: 'REQUEST_KEY_REUSED',
@@ -399,7 +481,7 @@ export class CitizenRequestsService {
         params: { number: row.requestNumber },
       });
     }
-    const fee = row.citizenPayment ? Number(row.citizenPayment.amount) : await this.currentFee(row.requestType as RequestType);
+    const fee = row.citizenPayment ? Number(row.citizenPayment.amount) : await this.currentFee(row);
     return { id: row.id, requestNumber: row.requestNumber, status: row.status as RequestStatus, fee, replayed: true };
   }
 
@@ -429,8 +511,10 @@ export class CitizenRequestsService {
     }
   }
 
-  private async currentFee(type: RequestType): Promise<number> {
-    const setting = await this.db.requestTypeSetting.findUnique({ where: { requestType: type } });
+  /** What a request's fee is now: its form's, else its type's (D1: the fee in force when the bill is raised). */
+  private async currentFee(row: { requestType: string; formId: string | null }): Promise<number> {
+    if (row.formId) return this.formAnswers.feeOf(row.formId);
+    const setting = await this.db.requestTypeSetting.findUnique({ where: { requestType: row.requestType as RequestType } });
     return setting ? Number(setting.feeAmount) : 0;
   }
 
@@ -466,6 +550,8 @@ export class CitizenRequestsService {
           status: true,
           channel: true,
           requestType: true,
+          formId: true,
+          formVersion: { select: { id: true, versionNumber: true, form: { select: { id: true, nameAr: true, nameEn: true } } } },
           citizenId: true,
           createdAt: true,
           citizen: { select: { firstName: true, middleName: true, lastName: true, residence: true } },
@@ -475,7 +561,7 @@ export class CitizenRequestsService {
         },
       }),
       this.db.citizenRequest.count({ where }),
-      this.feesByType(),
+      this.feeTable(),
     ]);
     return {
       total,
@@ -485,10 +571,11 @@ export class CitizenRequestsService {
         status: row.status as RequestStatus,
         channel: row.channel,
         requestType: row.requestType as RequestType,
+        form: formRefOf(row),
         citizenId: row.citizenId,
         citizenName: citizenDisplayName(row.citizen),
         propertyNumber: row.propertyEntry?.propertyNumber ?? null,
-        fee: feeShown(row, fees.get(row.requestType as RequestType)),
+        fee: feeShown(row, fees.of(row)),
         billStatus: row.citizenPayment ? billStatus(row.citizenPayment) : null,
         attachmentCount: row._count.attachments,
         createdAt: row.createdAt.toISOString(),
@@ -503,7 +590,7 @@ export class CitizenRequestsService {
     if (!row) throw new NotFoundError({ code: 'REQUEST_NOT_FOUND', message: `Request ${id} was not found` });
     // The type's current fee is read only for a request still waiting to be billed (`feeShown`).
     const awaitingBill = !row.citizenPayment && row.status === 'AWAITING_PAYMENT';
-    const currentFee = awaitingBill ? await this.currentFee(row.requestType as RequestType) : undefined;
+    const currentFee = awaitingBill ? await this.currentFee(row) : undefined;
     return this.staffView(row, feeShown(row, currentFee));
   }
 
@@ -515,7 +602,7 @@ export class CitizenRequestsService {
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       select: REQUEST_SELECT,
     });
-    const fees = await this.feesByType();
+    const fees = await this.feeTable();
     return rows.map((row) => this.citizenView(row, fees));
   }
 
@@ -523,12 +610,18 @@ export class CitizenRequestsService {
     await this.reconcile({ requestIds: [id] });
     const row = await this.db.citizenRequest.findFirst({ where: { id, citizenId }, select: REQUEST_SELECT });
     if (!row) throw new NotFoundError({ code: 'REQUEST_NOT_FOUND', message: `Request ${id} was not found` });
-    return this.citizenView(row, await this.feesByType());
+    return this.citizenView(row, await this.feeTable());
   }
 
-  private async feesByType(): Promise<Map<RequestType, number>> {
-    const rows = await this.db.requestTypeSetting.findMany({ select: { requestType: true, feeAmount: true } });
-    return new Map(rows.map((row) => [row.requestType as RequestType, Number(row.feeAmount)]));
+  /** The fee each request type and each form charges now, read once for a list of requests. */
+  private async feeTable(): Promise<FeeTable> {
+    const [types, forms] = await Promise.all([
+      this.db.requestTypeSetting.findMany({ select: { requestType: true, feeAmount: true } }),
+      this.db.requestForm.findMany({ select: { id: true, feeAmount: true } }),
+    ]);
+    const byType = new Map(types.map((row) => [row.requestType as string, Number(row.feeAmount)]));
+    const byForm = new Map(forms.map((row) => [row.id, Number(row.feeAmount)]));
+    return { of: (row) => (row.formId ? byForm.get(row.formId) : byType.get(row.requestType)) };
   }
 
   // ─────────────────────────────  The fee's bill  ─────────────────────────────
@@ -560,6 +653,8 @@ export class CitizenRequestsService {
         select: {
           requestNumber: true,
           requestType: true,
+          formId: true,
+          formVersion: { select: { form: { select: { nameAr: true } } } },
           channel: true,
           citizenId: true,
           citizenPayment: { select: { id: true, invoiceNumber: true, amount: true, currency: true } },
@@ -592,13 +687,15 @@ export class CitizenRequestsService {
           message: 'Attach a copy of an identity paper first.',
         });
       }
-      const fee = await this.currentFee(existing.requestType as RequestType);
+      // Every question of the request's form has its answer, papers included (F4), before a fee is asked of anyone.
+      if (existing.formId) await this.formAnswers.assertPapers(id);
+      const fee = await this.currentFee(existing);
       if (fee <= 0) {
         throw new ConflictError({ code: 'REQUEST_FREE_NO_BILL', message: 'This request type has no fee.' });
       }
       const bill = await raiseOneOffBill(tx, this.S, {
         citizenId: existing.citizenId,
-        title: billTitle(existing.requestType as RequestType),
+        title: existing.formVersion ? `رسم ${existing.formVersion.form.nameAr}` : billTitle(existing.requestType as RequestType),
         amount: fee,
         dueDate: dueDate(),
         // Who raised it (0091): the clerk at the counter; online, the citizen's own press, so nobody on the staff.
@@ -705,12 +802,13 @@ export class CitizenRequestsService {
              b."paymentStatus"::text AS "paymentStatus"
       FROM ${S}citizen_requests r
       LEFT JOIN ${S}citizen_payments b ON b."id" = r."citizenPaymentId"
-      LEFT JOIN ${S}request_type_settings t ON t."requestType" = r."requestType"
+      LEFT JOIN ${S}request_type_settings t ON t."requestType" = r."requestType" AND r."formId" IS NULL
+      LEFT JOIN ${S}request_forms f ON f."id" = r."formId"
       WHERE ((r."status" = 'AWAITING_PAYMENT' AND b."paymentStatus" = 'PAID')
           OR (r."status" = 'AWAITING_PAYMENT' AND b."paymentStatus" = 'WRITTEN_OFF')
           OR (r."status" = 'IN_REVIEW' AND b."paymentStatus" NOT IN ('PAID', 'CANCELLED', 'WRITTEN_OFF'))
           OR (r."status" IN ('AWAITING_PAYMENT', 'IN_REVIEW') AND b."paymentStatus" = 'CANCELLED')
-          OR (r."status" = 'AWAITING_PAYMENT' AND r."citizenPaymentId" IS NULL AND t."feeAmount" = 0))
+          OR (r."status" = 'AWAITING_PAYMENT' AND r."citizenPaymentId" IS NULL AND COALESCE(f."feeAmount", t."feeAmount") = 0))
       ${byIds} ${byCitizen}
       ${lock ? Prisma.sql`FOR UPDATE OF r` : Prisma.empty}`;
     const candidates = await this.db.$queryRaw<Array<{ id: string }>>(moved(false));
@@ -781,6 +879,8 @@ export class CitizenRequestsService {
       const tx = this.db as Prisma.TransactionClient;
       const locked = await this.lock(tx, id);
       this.expectStatus(locked.status, ['IN_REVIEW']);
+      // A free form has no bill to hold its papers back, so approval asks for them too (F4).
+      await this.formAnswers.assertPapers(id);
       const row = await tx.citizenRequest.findUniqueOrThrow({
         where: { id },
         select: { requestNumber: true, requestType: true, propertyEntry: { select: { propertyNumber: true } } },
@@ -934,9 +1034,10 @@ export class CitizenRequestsService {
   async addAttachment(
     id: string,
     file: { buffer: Buffer; size: number },
-    type: RequestAttachmentType,
+    type: RequestAttachmentType | undefined,
     actor: RequestActor,
     scope: Scope = {},
+    fieldKey?: string,
   ): Promise<RequestAttachmentView> {
     const open = actor.kind === 'CITIZEN' ? REQUEST_STATUSES_TAKING_ATTACHMENTS : ['AWAITING_PAYMENT', 'IN_REVIEW', 'READY_FOR_PICKUP'];
     const before = await this.db.citizenRequest.findFirst({
@@ -945,6 +1046,8 @@ export class CitizenRequestsService {
     });
     if (!before) throw new NotFoundError({ code: 'REQUEST_NOT_FOUND', message: `Request ${id} was not found` });
     this.assertTakesAttachments(before.status as RequestStatus, before._count.attachments, open);
+    // A paper for a question of the request's form: the question decides its kind, how many and which files (F3).
+    const target = fieldKey ? await this.formAnswers.paperTarget(id, fieldKey, scope.citizenId) : null;
 
     if (!file.buffer || file.size === 0 || file.buffer.length === 0) {
       throw new ValidationError({ code: 'REQUEST_ATTACHMENT_EMPTY', message: 'The file is empty.' });
@@ -956,6 +1059,8 @@ export class CitizenRequestsService {
         message: 'Only JPEG, PNG, WebP and PDF files are accepted.',
       });
     }
+    if (target) this.formAnswers.assertPaperKind(target, sniffed.mimeType);
+    const paperType: RequestAttachmentType = target?.type ?? type ?? 'OTHER';
 
     const { storagePath } = await this.files.put({
       tenantSlug: this.tenantContext.tenantSlug,
@@ -970,8 +1075,23 @@ export class CitizenRequestsService {
         const locked = await this.lock(tx, id, scope);
         const count = await tx.citizenRequestAttachment.count({ where: { requestId: id } });
         this.assertTakesAttachments(locked.status, count, open);
+        if (target && (await this.formAnswers.papersFiledFor(id, target.fieldId)) >= target.maxFiles) {
+          throw new ValidationError({
+            code: 'REQUEST_ATTACHMENT_LIMIT',
+            message: 'This question takes no more papers.',
+            params: { max: target.maxFiles },
+          });
+        }
         const created = await tx.citizenRequestAttachment.create({
-          data: { requestId: id, type, storagePath, mimeType: sniffed.mimeType, sizeBytes: file.buffer.length, uploadedById: actor.id },
+          data: {
+            requestId: id,
+            type: paperType,
+            storagePath,
+            mimeType: sniffed.mimeType,
+            sizeBytes: file.buffer.length,
+            uploadedById: actor.id,
+            fieldId: target?.fieldId ?? null,
+          },
           select: { id: true, type: true, mimeType: true, sizeBytes: true, createdAt: true },
         });
         await this.audit.recordInTransaction({
@@ -982,7 +1102,8 @@ export class CitizenRequestsService {
           after: {
             requestNumber: locked.requestNumber,
             attachmentId: created.id,
-            type,
+            type: paperType,
+            ...(fieldKey ? { fieldKey } : {}),
             mimeType: sniffed.mimeType,
             sizeBytes: file.buffer.length,
           },
@@ -994,6 +1115,7 @@ export class CitizenRequestsService {
           sizeBytes: created.sizeBytes,
           createdAt: created.createdAt.toISOString(),
           uploadedByKind: actor.kind,
+          fieldKey: fieldKey ?? null,
         };
       });
     } catch (error) {
@@ -1098,7 +1220,10 @@ export class CitizenRequestsService {
       statement: row.statement,
       rejectionReason: row.rejectionReason,
       clearance: (row.clearanceSnapshot as RequestClearanceSnapshot | null) ?? null,
-      attachments: row.attachments.map(attachmentView),
+      attachments: row.attachments.map((attachment) => attachmentView(row, attachment)),
+      form: formRefOf(row),
+      answers: answerViewsOf(row, 'STAFF'),
+      missingPapers: missingPapersOf(row),
       createdByName: row.createdBy ? citizenDisplayName(row.createdBy) : null,
       readyByName: row.readyBy ? citizenDisplayName(row.readyBy) : null,
       createdAt: row.createdAt.toISOString(),
@@ -1110,7 +1235,7 @@ export class CitizenRequestsService {
     };
   }
 
-  private citizenView(row: RequestRow, fees: Map<RequestType, number>): MyCitizenRequestView {
+  private citizenView(row: RequestRow, fees: FeeTable): MyCitizenRequestView {
     const type = row.requestType as RequestType;
     return {
       id: row.id,
@@ -1120,11 +1245,14 @@ export class CitizenRequestsService {
       requestType: type,
       applicantCapacity: row.applicantCapacity,
       property: propertyView(row),
-      fee: feeShown(row, fees.get(type)),
+      fee: feeShown(row, fees.of(row)),
       bill: billView(row),
       purpose: row.purpose,
       rejectionReason: row.rejectionReason,
-      attachments: row.attachments.map(attachmentView),
+      attachments: row.attachments.map((attachment) => attachmentView(row, attachment)),
+      form: formRefOf(row),
+      answers: answerViewsOf(row, 'CITIZEN'),
+      missingPapers: missingPapersOf(row),
       needsIdentityCopy:
         row.channel === 'ONLINE' &&
         row.status === 'AWAITING_PAYMENT' &&
@@ -1202,7 +1330,7 @@ function propertyView(row: RequestRow): RequestPropertyView | null {
   };
 }
 
-function attachmentView(attachment: RequestRow['attachments'][number]): RequestAttachmentView {
+function attachmentView(row: RequestRow, attachment: RequestRow['attachments'][number]): RequestAttachmentView {
   return {
     id: attachment.id,
     type: attachment.type as RequestAttachmentType,
@@ -1210,5 +1338,6 @@ function attachmentView(attachment: RequestRow['attachments'][number]): RequestA
     sizeBytes: attachment.sizeBytes,
     createdAt: attachment.createdAt.toISOString(),
     uploadedByKind: attachment.uploadedBy.kind === 'CITIZEN' ? 'CITIZEN' : 'STAFF',
+    fieldKey: fieldKeyOfPaper(row, attachment),
   };
 }

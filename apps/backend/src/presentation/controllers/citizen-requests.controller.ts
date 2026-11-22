@@ -11,23 +11,24 @@ import {
   REQUEST_HANDLE_ROLES,
   REQUEST_READ_ROLES,
   REQUEST_SETTINGS_ROLES,
+  counterRequestBodySchema,
+  onlineRequestBodySchema,
   requestTypeSchema,
-  submitCounterRequestSchema,
-  submitOnlineRequestSchema,
   updateRequestTypeSettingSchema,
-  uploadRequestAttachmentSchema,
+  uploadRequestPaperSchema,
   type ApproveRequestInput,
+  type CounterRequestBody,
   type ListRequestsQuery,
+  type OnlineRequestBody,
   type RejectRequestInput,
   type RequestType,
-  type SubmitCounterRequestInput,
-  type SubmitOnlineRequestInput,
   type UpdateRequestTypeSettingInput,
-  type UploadRequestAttachmentInput,
+  type UploadRequestPaperInput,
 } from '@mechanization/shared-schemas';
 import { ForbiddenError, ValidationError } from '../../application/common/exceptions';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { CitizenRequestsService } from '../../application/features/citizen-requests/citizen-requests.service';
+import { RequestAnswersService } from '../../application/features/request-forms/request-answers.service';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
 import { APP_CONFIG } from '../config/app.config';
 import { CurrentUser } from '../decorators/current-user.decorator';
@@ -54,11 +55,13 @@ const CITIZEN_SUBMISSION_THROTTLE = {
 };
 
 /**
- * One paper per request, read into memory: the size is capped here, before the
- * service sees a byte, and its type is sniffed from the bytes there.
+ * One paper per upload, read into memory: the size is capped here, before the
+ * service sees a byte, and its type is sniffed from the bytes there. The text
+ * fields are the paper's kind or the question of the form it answers (`type`,
+ * `fieldKey`): up to three, with the file four parts.
  */
 const ATTACHMENT_UPLOAD = FileInterceptor('file', {
-  limits: { fileSize: REQUEST_ATTACHMENT_MAX_BYTES, files: 1, fields: 2, parts: 3 },
+  limits: { fileSize: REQUEST_ATTACHMENT_MAX_BYTES, files: 1, fields: 3, parts: 4 },
 });
 
 /** The citizen's own routes have no `@Roles`: they check the token's kind and read only `user.sub`. */
@@ -89,7 +92,10 @@ function requireFile(file: Express.Multer.File | undefined): { buffer: Buffer; s
  */
 @Controller('t/:tenantSlug/requests')
 export class CitizenRequestsController {
-  constructor(private readonly requests: CitizenRequestsService) {}
+  constructor(
+    private readonly requests: CitizenRequestsService,
+    private readonly formAnswers: RequestAnswersService,
+  ) {}
 
   // ─────────────────────────────  The citizen's own  ─────────────────────────────
 
@@ -105,10 +111,16 @@ export class CitizenRequestsController {
     return this.requests.offeredTypes();
   }
 
+  /** The forms a citizen may file now, with their questions and, for a linked one, what their own file holds. */
+  @Get('mine/forms')
+  mineForms(@CurrentUser() user: SessionClaims) {
+    return this.formAnswers.offeredForms(asCitizen(user));
+  }
+
   @Throttle(CITIZEN_SUBMISSION_THROTTLE)
   @Post('mine')
   submitMine(
-    @Body(new ZodValidationPipe(submitOnlineRequestSchema)) body: SubmitOnlineRequestInput,
+    @Body(new ZodValidationPipe(onlineRequestBodySchema)) body: OnlineRequestBody,
     @CurrentUser() user: SessionClaims,
   ) {
     const citizenId = asCitizen(user);
@@ -126,11 +138,11 @@ export class CitizenRequestsController {
   uploadMine(
     @Param('id', new UuidPipe()) id: string,
     @UploadedFile() file: Express.Multer.File | undefined,
-    @Body(new ZodValidationPipe(uploadRequestAttachmentSchema)) body: UploadRequestAttachmentInput,
+    @Body(new ZodValidationPipe(uploadRequestPaperSchema)) body: UploadRequestPaperInput,
     @CurrentUser() user: SessionClaims,
   ) {
     const citizenId = asCitizen(user);
-    return this.requests.addAttachment(id, requireFile(file), body.type, { kind: 'CITIZEN', id: citizenId }, { citizenId });
+    return this.requests.addAttachment(id, requireFile(file), body.type, { kind: 'CITIZEN', id: citizenId }, { citizenId }, body.fieldKey);
   }
 
   /** «ادفع الآن»: the fee's bill, raised now or answered if it already is. */
@@ -174,10 +186,24 @@ export class CitizenRequestsController {
   }
 
   /** A request filed at the counter for a citizen who is present (D8). */
+  /** The forms the counter may file now (the questions, not a citizen's values). */
+  @Roles(...REQUEST_HANDLE_ROLES)
+  @Get('forms')
+  forms() {
+    return this.formAnswers.offeredForms();
+  }
+
+  /** What the chosen citizen's file holds for each linked question of a form: so the clerk sees an empty one before filing. */
+  @Roles(...REQUEST_HANDLE_ROLES)
+  @Get('forms/:formId/prefill')
+  prefill(@Param('formId', new UuidPipe()) formId: string, @Query('citizenId', new UuidPipe()) citizenId: string) {
+    return this.formAnswers.prefill(formId, citizenId);
+  }
+
   @Roles(...REQUEST_HANDLE_ROLES)
   @Post()
   submit(
-    @Body(new ZodValidationPipe(submitCounterRequestSchema)) body: SubmitCounterRequestInput,
+    @Body(new ZodValidationPipe(counterRequestBodySchema)) body: CounterRequestBody,
     @CurrentUser() user: SessionClaims,
   ) {
     return this.requests.submit(body, { kind: 'STAFF', ...staff(user) });
@@ -235,10 +261,10 @@ export class CitizenRequestsController {
   upload(
     @Param('id', new UuidPipe()) id: string,
     @UploadedFile() file: Express.Multer.File | undefined,
-    @Body(new ZodValidationPipe(uploadRequestAttachmentSchema)) body: UploadRequestAttachmentInput,
+    @Body(new ZodValidationPipe(uploadRequestPaperSchema)) body: UploadRequestPaperInput,
     @CurrentUser() user: SessionClaims,
   ) {
-    return this.requests.addAttachment(id, requireFile(file), body.type, { kind: 'STAFF', ...staff(user) });
+    return this.requests.addAttachment(id, requireFile(file), body.type, { kind: 'STAFF', ...staff(user) }, {}, body.fieldKey);
   }
 
   /** A five-minute link to one paper; every use is an audit row (D6). */

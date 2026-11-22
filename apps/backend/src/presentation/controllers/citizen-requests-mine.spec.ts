@@ -26,14 +26,16 @@ describe('CitizenRequestsController — the citizen\'s own routes', () => {
       raiseBill: jest.fn().mockResolvedValue({}),
       cancel: jest.fn().mockResolvedValue(undefined),
     };
-    return { service, controller: new CitizenRequestsController(service as never) };
+    const forms = { offeredForms: jest.fn().mockResolvedValue([]) };
+    return { service, forms, controller: new CitizenRequestsController(service as never, forms as never) };
   };
 
   it('refuses a staff token on every one of them, before the service is asked anything', async () => {
-    const { service, controller } = build();
+    const { service, forms, controller } = build();
     const calls: Array<() => unknown> = [
       () => controller.mine(staffToken),
       () => controller.mineTypes(staffToken),
+      () => controller.mineForms(staffToken),
       () => controller.submitMine({} as never, staffToken),
       () => controller.mineOne(REQUEST_ID, staffToken),
       () => controller.uploadMine(REQUEST_ID, file, { type: 'IDENTITY' } as never, staffToken),
@@ -43,13 +45,17 @@ describe('CitizenRequestsController — the citizen\'s own routes', () => {
     for (const call of calls) {
       await expect(Promise.resolve().then(call)).rejects.toMatchObject({ code: 'CITIZENS_ONLY' });
     }
-    for (const method of Object.values(service)) expect(method).not.toHaveBeenCalled();
+    for (const method of [...Object.values(service), ...Object.values(forms)]) expect(method).not.toHaveBeenCalled();
   });
 
   it('scopes every call by the token\'s subject, whatever the body names', async () => {
-    const { service, controller } = build();
+    const { service, forms, controller } = build();
     await controller.mine(citizen);
     expect(service.mine).toHaveBeenCalledWith(ME);
+
+    // The forms come with this citizen's own file values, never another's.
+    await controller.mineForms(citizen);
+    expect(forms.offeredForms).toHaveBeenCalledWith(ME);
 
     // A body that names another citizen is overridden by the token.
     await controller.submitMine({ citizenId: SOMEONE_ELSE, requestType: 'RESIDENCY' } as never, citizen);
@@ -59,7 +65,11 @@ describe('CitizenRequestsController — the citizen\'s own routes', () => {
     expect(service.mineOne).toHaveBeenCalledWith(ME, REQUEST_ID);
 
     await controller.uploadMine(REQUEST_ID, file, { type: 'IDENTITY' } as never, citizen);
-    expect(service.addAttachment).toHaveBeenCalledWith(REQUEST_ID, expect.anything(), 'IDENTITY', { kind: 'CITIZEN', id: ME }, { citizenId: ME });
+    expect(service.addAttachment).toHaveBeenCalledWith(REQUEST_ID, expect.anything(), 'IDENTITY', { kind: 'CITIZEN', id: ME }, { citizenId: ME }, undefined);
+
+    // A paper for a question of a form carries its key.
+    await controller.uploadMine(REQUEST_ID, file, { fieldKey: 'id_copy' } as never, citizen);
+    expect(service.addAttachment).toHaveBeenLastCalledWith(REQUEST_ID, expect.anything(), undefined, { kind: 'CITIZEN', id: ME }, { citizenId: ME }, 'id_copy');
 
     await controller.billMine(REQUEST_ID, citizen);
     expect(service.raiseBill).toHaveBeenCalledWith(REQUEST_ID, { kind: 'CITIZEN', id: ME }, { citizenId: ME });

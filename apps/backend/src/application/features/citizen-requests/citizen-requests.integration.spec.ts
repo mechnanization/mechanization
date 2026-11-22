@@ -10,6 +10,7 @@ import { PrismaAuditRepository } from '../../../infrastructure/repositories/audi
 import { AuditService } from '../audit/audit.service';
 import { ParcelDuesService } from '../fees/parcel-dues.service';
 import { CitizenRequestsService, type RequestActor } from './citizen-requests.service';
+import { RequestAnswersService } from '../request-forms/request-answers.service';
 
 /**
  * Municipal requests against a real tenant schema (migration 0092): the CHECKs
@@ -65,6 +66,7 @@ describeIfDb('CitizenRequestsService', () => {
       audit,
       new ParcelDuesService(context),
       new EventEmitter2(),
+      new RequestAnswersService(context),
       files as unknown as RequestFileStorage,
       whish,
     );

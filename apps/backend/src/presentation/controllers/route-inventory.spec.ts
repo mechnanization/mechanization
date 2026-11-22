@@ -43,6 +43,7 @@ const SELF_SERVICE: Record<string, string> = {
   'FeesController.declare': "a citizen declaring their own payment; refuses staff",
   'CitizenRequestsController.mine': "a citizen's own municipal requests; refuses staff",
   'CitizenRequestsController.mineTypes': "the request types a citizen may file; refuses staff",
+  'CitizenRequestsController.mineForms': "the request forms a citizen may file, with the values of their own file; refuses staff",
   'CitizenRequestsController.submitMine': "a citizen filing their own request; refuses staff",
   'CitizenRequestsController.mineOne': "one of a citizen's own requests; refuses staff",
   'CitizenRequestsController.uploadMine': "a paper on a citizen's own request; refuses staff",
@@ -399,6 +400,8 @@ describe('the municipal request routes', () => {
     'CitizenRequestsController.attachmentUrl': READ,
     'CitizenRequestsController.updateType': ['SUPER_ADMIN'],
     'CitizenRequestsController.submit': HANDLE,
+    'CitizenRequestsController.forms': HANDLE,
+    'CitizenRequestsController.prefill': HANDLE,
     'CitizenRequestsController.approve': HANDLE,
     'CitizenRequestsController.reject': HANDLE,
     'CitizenRequestsController.complete': HANDLE,
@@ -418,6 +421,8 @@ describe('the municipal request routes', () => {
     const paths = all.filter((route) => route.name.startsWith('CitizenRequestsController.')).map((route) => route.path);
     expect(paths.indexOf('mine')).toBeLessThan(paths.indexOf(':id'));
     expect(paths.indexOf('types')).toBeLessThan(paths.indexOf(':id'));
+    expect(paths.indexOf('forms')).toBeLessThan(paths.indexOf(':id'));
+    expect(paths.indexOf('mine/forms')).toBeLessThan(paths.indexOf('mine/:id'));
   });
 });
 

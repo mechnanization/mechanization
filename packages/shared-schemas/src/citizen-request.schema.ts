@@ -13,6 +13,8 @@ import {
   type RequestStatus,
   type RequestType,
 } from './enums';
+// Type-only: the form's views are named here, and `request-form.schema.ts` reads this file's values.
+import type { RequestAnswerView, RequestFormRef, RequestMissingPaper } from './request-form.schema';
 
 /**
  * المعاملات والإفادات — a citizen asks the municipality for a paper, pays its fee,
@@ -204,6 +206,8 @@ export interface RequestAttachmentView {
   createdAt: string;
   /** Who added it: the citizen online, or staff. */
   uploadedByKind: 'CITIZEN' | 'STAFF';
+  /** The file question of its form this paper answers (0113), or null for a paper on no question. */
+  fieldKey: string | null;
 }
 
 /** For a براءة ذمة: what was owed on the property when it was approved. */
@@ -223,6 +227,8 @@ export interface CitizenRequestListItem {
   status: RequestStatus;
   channel: RequestChannel;
   requestType: RequestType;
+  /** The form the request was filled on (0113), or null for a request on no form; a form request's `requestType` is `OTHER` or its built-in type. */
+  form: RequestFormRef | null;
   citizenId: string;
   citizenName: string;
   propertyNumber: string | null;
@@ -267,6 +273,12 @@ export interface CitizenRequestView {
   rejectionReason: string | null;
   clearance: RequestClearanceSnapshot | null;
   attachments: RequestAttachmentView[];
+  /** The form this request was filled on, with the version it kept (0113), or null for a request on no form. */
+  form: RequestFormRef | null;
+  /** Every answer, as stored, with where it came from (staff read them as `REQUEST_READ_ROLES`, F8). Empty on no form. */
+  answers: RequestAnswerView[];
+  /** The file questions of the form still holding no paper. */
+  missingPapers: RequestMissingPaper[];
   createdByName: string | null;
   readyByName: string | null;
   createdAt: string;
@@ -293,6 +305,10 @@ export interface MyCitizenRequestView {
   purpose: string | null;
   rejectionReason: string | null;
   attachments: RequestAttachmentView[];
+  form: RequestFormRef | null;
+  /** The citizen's own text answers, identity and civil numbers masked to their last three characters (F8). Never a paper. */
+  answers: RequestAnswerView[];
+  missingPapers: RequestMissingPaper[];
   /** The citizen still has to attach an identity paper before paying online (D2). */
   needsIdentityCopy: boolean;
   createdAt: string;

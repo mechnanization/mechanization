@@ -11,6 +11,7 @@ import { AuditService } from '../audit/audit.service';
 import { ReportingService } from '../reporting/reporting.service';
 import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
 import { CitizenRequestsService } from '../citizen-requests/citizen-requests.service';
+import { RequestAnswersService } from '../request-forms/request-answers.service';
 import { TreasuryService } from '../treasury/treasury.service';
 import { FeesService } from './fees.service';
 import { ParcelDuesService } from './parcel-dues.service';
@@ -117,6 +118,7 @@ describeIfDb('«شطب»: writing off what is left on a bill', () => {
       auditService,
       parcelDues,
       new EventEmitter2(),
+      new RequestAnswersService(context),
       {} as never,
       { isLive: false } as never,
     );

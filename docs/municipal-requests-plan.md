@@ -12,6 +12,12 @@
 > left: [§7](#7-what-was-built-2026-10-13). §1–§6 are the plan as reviewed against
 > `develop@5e8f5c3` on 2026-10-12; where a **Proposal** name differs from §7, §7 and the
 > code win.
+>
+> **Request forms (2026-11-22, `feat/request-forms-submit`):** a request may now be filled on a form the manager defined
+> (migrations 0112 and 0113): `submit` takes `formId` + `answers` beside the old body, the fee is the form's, `raiseBill` and
+> `approve` ask for a paper on every file question, and the one-open rule is per citizen and form. The request types here stay as
+> they are until their built-ins become system forms (F1, a later migration). The plan and the decisions: `request-forms-plan.md`,
+> [open-decisions.md §24](open-decisions.md).
 
 A citizen asks the municipality for a paper — a براءة ذمة, a إفادة سكن, a lease
 registered — pays its fee, and collects the stamped paper at the counter. Staff

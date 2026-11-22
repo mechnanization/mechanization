@@ -967,22 +967,23 @@ export class CitizenMergeService {
 
   /**
    * The absorbed person's requests that can move to the kept person: all of
-   * them, but an open one whose type and card the kept person already holds an
-   * open request for. A request on no card keys on «no card», as the index does.
+   * them, but an open one whose type (or form, for a request on a form: the index
+   * of 0113 keys on the form) and card the kept person already holds an open
+   * request for. A request on no card keys on «no card», as the index does.
    */
   private async movableRequests(keepId: string, absorbId: string): Promise<string[]> {
     const [theirs, kept] = await Promise.all([
       this.db.citizenRequest.findMany({
         where: { citizenId: absorbId },
-        select: { id: true, status: true, requestType: true, propertyEntryId: true },
+        select: { id: true, status: true, requestType: true, formId: true, propertyEntryId: true },
       }),
       this.db.citizenRequest.findMany({
         where: { citizenId: keepId, status: { in: [...OPEN_REQUEST_STATUSES] } },
-        select: { requestType: true, propertyEntryId: true },
+        select: { requestType: true, formId: true, propertyEntryId: true },
       }),
     ]);
-    const openKey = (row: { requestType: string; propertyEntryId: string | null }) =>
-      `${row.requestType}:${row.propertyEntryId ?? ''}`;
+    const openKey = (row: { requestType: string; formId: string | null; propertyEntryId: string | null }) =>
+      `${row.formId ?? row.requestType}:${row.propertyEntryId ?? ''}`;
     const taken = new Set(kept.map(openKey));
     const open = new Set<string>(OPEN_REQUEST_STATUSES);
     return theirs.filter((row) => !(open.has(row.status) && taken.has(openKey(row)))).map((row) => row.id);

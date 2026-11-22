@@ -616,7 +616,14 @@ export interface CitizenProfilePayment {
    * a request still open on it (review of PR #122). Its status moves with the
    * bill's money events, which clear this cache.
    */
-  request: { id: string; requestNumber: string; requestType: RequestType; status: RequestStatus } | null;
+  request: {
+    id: string;
+    requestNumber: string;
+    requestType: RequestType;
+    /** The form the request was filled on (0113), whose name the bill's page shows instead of the type's. */
+    form: { nameAr: string; nameEn: string | null } | null;
+    status: RequestStatus;
+  } | null;
   /**
    * On a shared unit bill (0099, D5) this citizen owes with others: the unit
    * and how many may pay it, never who (O2). Null on their own bill.
@@ -1404,7 +1411,15 @@ export class ReportingService {
           // «ليش عليّ هالمبلغ؟» — see `CitizenProfilePayment.assessment`.
           assessment: true,
           feeNotice: { select: { frequency: true } },
-          citizenRequest: { select: { id: true, requestNumber: true, requestType: true, status: true } },
+          citizenRequest: {
+            select: {
+              id: true,
+              requestNumber: true,
+              requestType: true,
+              status: true,
+              formVersion: { select: { form: { select: { nameAr: true, nameEn: true } } } },
+            },
+          },
           ...SHARED_BILL_INCLUDE,
         },
       }),
@@ -1445,6 +1460,7 @@ export class ReportingService {
             id: payment.citizenRequest.id,
             requestNumber: payment.citizenRequest.requestNumber,
             requestType: payment.citizenRequest.requestType as RequestType,
+            form: payment.citizenRequest.formVersion?.form ?? null,
             status: payment.citizenRequest.status as RequestStatus,
           }
         : null,

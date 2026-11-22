@@ -360,6 +360,11 @@ export type RequestAnswersInput = z.infer<typeof requestAnswersInputSchema>;
 
 const formRequestFields = {
   formId: formUuid('اختر النموذج'),
+  /**
+   * The published version the screen showed (`OfferedRequestForm.versionId`). Sent by the portal and the counter, so a form
+   * republished while the person filled it in is `REQUEST_FORM_VERSION_STALE` and not answered against other questions.
+   */
+  formVersionId: formUuid('النسخة غير معروفة').optional(),
   answers: requestAnswersInputSchema.default({}),
   /** Asked only when the form asks for it (`askCapacity`): the server checks. */
   applicantCapacity: applicantCapacitySchema.optional(),
@@ -420,9 +425,18 @@ export function isFormRequestBody<T extends object>(body: T): body is Extract<T,
   return 'formId' in body && typeof (body as { formId?: unknown }).formId === 'string';
 }
 
-/** The text field sent beside a paper filed for a question (`multipart/form-data`): the question's key. */
-export const uploadFormAttachmentFieldSchema = z.object({ fieldKey: keySchema.optional() });
-export type UploadFormAttachmentFieldInput = z.infer<typeof uploadFormAttachmentFieldSchema>;
+/**
+ * The text fields sent beside a paper (`multipart/form-data`): the kind of paper (a request on no form), or the file question
+ * it answers (a request on a form, whose own `attachmentType` the server then files it under, so the client's is ignored).
+ */
+export const uploadRequestPaperSchema = z
+  .object({ type: requestAttachmentTypeSchema.optional(), fieldKey: keySchema.optional() })
+  .superRefine((value, ctx) => {
+    if (!value.type && !value.fieldKey) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['type'], message: 'اختر نوع المستند' });
+    }
+  });
+export type UploadRequestPaperInput = z.infer<typeof uploadRequestPaperSchema>;
 
 // ─── views ───
 
@@ -517,6 +531,21 @@ export interface RequestFormRef {
   versionNumber: number;
   nameAr: string;
   nameEn: string | null;
+}
+
+/** A file question of the request's form that holds no paper yet. */
+export interface RequestMissingPaper {
+  fieldKey: string;
+  labelAr: string;
+  labelEn: string | null;
+}
+
+/** What the counter reads once a citizen is chosen (`GET requests/forms/:formId/prefill?citizenId=`): the file's value for each linked question. */
+export interface RequestFormPrefill {
+  formId: string;
+  citizenId: string;
+  /** By field key; null where the file holds nothing, so the request is refused until a clerk completes it (F4). */
+  linkedValues: Record<string, string | null>;
 }
 
 /** The applicant's capacity is on a request only when its form asked. */

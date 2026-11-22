@@ -12,6 +12,7 @@ import {
   saveRequestFormDraftSchema,
   submitOnlineFormRequestSchema,
   updateRequestTypeSettingSchema,
+  uploadRequestPaperSchema,
   type RequestFormFieldDefinition,
 } from '@mechanization/shared-schemas';
 
@@ -343,5 +344,27 @@ describe('a request body', () => {
       expect(counterRequestBodySchema.safeParse({ ...legacy, citizenId: ID }).success).toBe(true);
       expect(counterRequestBodySchema.safeParse(legacy).success).toBe(false);
     });
+  });
+});
+
+describe('the form version a body carries', () => {
+  const body = { formId: ID, answers: {}, clientRequestId: KEY };
+  it('is optional, and must be an id when sent', () => {
+    expect(submitOnlineFormRequestSchema.safeParse(body).success).toBe(true);
+    expect(submitOnlineFormRequestSchema.safeParse({ ...body, formVersionId: ID }).success).toBe(true);
+    expect(submitOnlineFormRequestSchema.safeParse({ ...body, formVersionId: 'latest' }).success).toBe(false);
+  });
+});
+
+describe('the text fields beside a paper', () => {
+  it('take the kind of paper, or the question it answers', () => {
+    expect(uploadRequestPaperSchema.safeParse({ type: 'IDENTITY' }).success).toBe(true);
+    expect(uploadRequestPaperSchema.safeParse({ fieldKey: 'id_copy' }).success).toBe(true);
+    expect(uploadRequestPaperSchema.safeParse({ type: 'OTHER', fieldKey: 'id_copy' }).success).toBe(true);
+  });
+  it('refuse neither, a kind that does not exist, and a key that is not a key', () => {
+    expect(uploadRequestPaperSchema.safeParse({}).success).toBe(false);
+    expect(uploadRequestPaperSchema.safeParse({ type: 'PASSPORT' }).success).toBe(false);
+    expect(uploadRequestPaperSchema.safeParse({ fieldKey: 'Bad Key' }).success).toBe(false);
   });
 });
