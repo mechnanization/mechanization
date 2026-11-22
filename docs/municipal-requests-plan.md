@@ -12,6 +12,9 @@
 > left: [§7](#7-what-was-built-2026-10-13). §1–§6 are the plan as reviewed against
 > `develop@5e8f5c3` on 2026-10-12; where a **Proposal** name differs from §7, §7 and the
 > code win.
+>
+> **Forms the manager defines** (a new kind of paper without a code change) are planned, not built, in
+> [request-forms-plan.md](request-forms-plan.md) (2026-11-21); it builds on D1–D10 here.
 
 A citizen asks the municipality for a paper — a براءة ذمة, a إفادة سكن, a lease
 registered — pays its fee, and collects the stamped paper at the counter. Staff
