@@ -571,6 +571,11 @@ for a commit and a push per story). Where this section and §1–§10 differ, th
 
 Each branch is based on the one above it in the table; `chore/migration-0112` and the docs branches start from `develop`.
 
+> **Superseded on 2026-11-22 by Hashem's change to F1 ([§24](open-decisions.md)): there are no built-in types.** Story 9 — `0114`, `chore/migration-0114`
+> and `feat/request-forms-system` below — is **dropped and must not be merged**. A later story removes the typed path and adds the dues check as a
+> form setting (F13, migration `0115`), once every production municipality is confirmed to hold zero requests (confirmed by the owner on 2026-11-22).
+> Rows and notes below that describe system forms record what was built, not what ships.
+
 ### Where the build differs from the plan
 
 - **Migrations.** Three, not one or two: `0112` the enum types alone, `0113` the tables, columns, CHECKs, indexes and guards
