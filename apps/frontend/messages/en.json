@@ -4293,6 +4293,18 @@
     "area": "{area} m²",
     "close": "Close"
   },
+  "arrearsBill": {
+    "tag": "Arrears from previous years",
+    "penalty": "Penalty",
+    "summary": "{year} · {fee}",
+    "property": "Property {propertyNumber}{hasUnit, select, yes { · unit {unitCode}} other {}}",
+    "oldReference": "Old ledger reference: {reference}",
+    "groupTitle": "Arrears from previous years",
+    "groupYear": "Arrears of {year}",
+    "groupHint": "Fees recorded in the municipality’s books before the system began and never paid. Paid like any bill.",
+    "cancelHint": "If the citizen shows they already paid, cite the old receipt number and its date in the reason.",
+    "cancelPlaceholder": "e.g. paid earlier by the citizen, receipt 123 in book 7 dated 12/05/2019"
+  },
   "arrears": {
     "title": "Arrears from earlier years",
     "link": "Arrears",

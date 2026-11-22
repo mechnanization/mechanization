@@ -92,6 +92,7 @@ import { fromCitizenPayment, isBulkSettleable, pageSelection, rowBlock } from '@
 import { billPageLink } from '@/lib/bill-receipts';
 import { useBulkSelection, type BulkSelection } from '@/lib/use-bulk-selection';
 import { BillCheckbox } from '@/components/admin/bulk-settle/bill-checkbox';
+import { ArrearsBillMark, useArrearsPropertyText } from '@/components/arrears-bill-mark';
 import { BulkSettleBar } from '@/components/admin/bulk-settle/bulk-settle-bar';
 
 interface FactItem {
@@ -1606,6 +1607,7 @@ function FeesPanel({
   const { tenant, adminPath } = useParams<{ tenant: string; adminPath: string }>();
   const tSelect = useTranslations('bulkSettle.select');
   const tReceipts = useTranslations('billReceipts');
+  const arrearsPropertyText = useArrearsPropertyText();
   /**
    * The bill's own page, payments/[paymentId]: «تسجيل دفعة نقدية» — ليرة, dollars,
    * the rate — while it is owed, and under it «وصولات الفاتورة», every receipt
@@ -1782,6 +1784,13 @@ function FeesPanel({
                     ) : null}
                     <div className="min-w-0 space-y-0.5">
                       <p className="truncate font-semibold">{payment.title}</p>
+                      {payment.arrears ? (
+                        // An old debt (task 10): the chip, its year and fee, the «ARR-» number, the parcel and the old books' reference.
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                          <ArrearsBillMark arrears={payment.arrears} invoiceNumber={payment.invoiceNumber} showOldReference />
+                          <span className="text-xs text-muted-foreground">{arrearsPropertyText(payment.arrears)}</span>
+                        </div>
+                      ) : null}
                       {/*
                         «ليش عليّ هالمبلغ؟» — the breakdown stored on the
                         payment since per-unit billing, answered where the

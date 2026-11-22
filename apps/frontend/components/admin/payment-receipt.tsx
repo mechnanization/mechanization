@@ -2,8 +2,9 @@
 
 import * as React from 'react';
 import { Download, Loader2, MessageCircle, Printer, X } from 'lucide-react';
-import { ar } from '@mechanization/shared-schemas';
+import { ar, normalizeDigits } from '@mechanization/shared-schemas';
 import type { CitizenProfile, CitizenProfilePayment, CitizenProfileProperty } from '@/lib/api-client';
+import { arrearsFeeName, isArrearsPenalty } from '@/lib/arrears-bill';
 import { formatForeign, formatLbp } from '@/lib/currency';
 import { formatDate } from '@/lib/dates';
 import { Button } from '@/components/ui/button';
@@ -249,7 +250,14 @@ export function PaymentReceipt({
   // The day the money moved: the recorded one, else the bill's settlement day, else today.
   const receivedOn = formatDate(recorded?.occurredAt ?? payment.paidAt ?? new Date());
   const properties = citizen.registrations.flatMap((r) => r.properties);
-  const property = properties[0] ?? null;
+  // An old debt is held on the parcel its line names, which need not be the citizen's first card;
+  // when no card of theirs is that parcel (a debt that outlived a sale) the card fields stay blank,
+  // and the رقم العقار below is still the line's (old debts task 10).
+  const property = payment.arrears
+    ? (properties.find(
+        (p) => normalizeDigits(p.propertyNumber ?? '').trim() === normalizeDigits(payment.arrears?.propertyNumber ?? '').trim(),
+      ) ?? null)
+    : (properties[0] ?? null);
 
   // The template's tick boxes, resolved from register
   const isCommercial = properties.some(
@@ -551,7 +559,7 @@ function DrawnFacsimile({
               />
               <DottedField
                 label="رقم العقار"
-                value={property?.propertyNumber || '—'}
+                value={payment.arrears?.propertyNumber || property?.propertyNumber || '—'}
                 flex="flex-[1]"
               />
               <DottedField
@@ -588,7 +596,7 @@ function DrawnFacsimile({
                 />
                 <DottedField
                   label="رقم الوحدة"
-                  value={property.units?.find((unit) => unit.unitCode)?.unitCode || '—'}
+                  value={payment.arrears?.unitCode || property.units?.find((unit) => unit.unitCode)?.unitCode || '—'}
                   flex="flex-[1]"
                 />
               </div>
@@ -641,6 +649,17 @@ function DrawnFacsimile({
               value={payment.title ? `عن: ${payment.title}` : 'بدل رسوم خدمات بلدية'}
               flex="w-full"
             />
+            {payment.arrears ? (
+              // Never the old books' reference: the receipt is the citizen's, and that is the municipality's own bookkeeping.
+              <DottedField
+                label="نوع الدين"
+                value={`متأخرات سنوات سابقة • ${payment.arrears.year} • ${arrearsFeeName(payment.arrears, ar)}${
+                  isArrearsPenalty(payment.arrears) ? ` • ${ar.arrearsComponent.PENALTY}` : ''
+                }${payment.invoiceNumber ? ` • فاتورة ${payment.invoiceNumber}` : ''}`}
+                flex="w-full"
+                wrap
+              />
+            ) : null}
             {tenderLine ? <DottedField label="نقداً" value={tenderLine} flex="w-full" wrap /> : null}
             <DottedField
               label="ملاحظات / طريقة الدفع"
@@ -938,8 +957,10 @@ function ImageFacsimile({
       <ImageCheckbox field={IMAGE_CHECKBOXES.displaced} checked={citizen.residentStatus === 'DISPLACED'} />
       <ImageCheckbox field={IMAGE_CHECKBOXES.bloodType} checked={Boolean(citizen.bloodType)} />
 
-      {property?.propertyNumber ? (
-        <ImageOverlay field={IMAGE_FIELDS.propertyNumber}>{property.propertyNumber}</ImageOverlay>
+      {payment.arrears?.propertyNumber || property?.propertyNumber ? (
+        <ImageOverlay field={IMAGE_FIELDS.propertyNumber}>
+          {payment.arrears?.propertyNumber || property?.propertyNumber}
+        </ImageOverlay>
       ) : null}
       {property?.buildingName ? (
         <ImageOverlay field={IMAGE_FIELDS.buildingName}>{property.buildingName}</ImageOverlay>

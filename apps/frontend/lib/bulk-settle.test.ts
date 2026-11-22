@@ -32,6 +32,7 @@ function bill(id: string, overrides: Partial<SelectedBill> = {}): SelectedBill {
     remaining: 500_000,
     dueDate: '2026-09-01T00:00:00.000Z',
     createdAt: '2026-08-01T00:00:00.000Z',
+    arrears: null,
     ...overrides,
   };
 }

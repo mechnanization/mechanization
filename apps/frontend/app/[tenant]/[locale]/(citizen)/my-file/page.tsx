@@ -1,7 +1,7 @@
 'use client';
 
 import { billOwesNothing } from '@mechanization/shared-schemas';
-import { use, useCallback, useEffect, useState } from 'react';
+import { Fragment, use, useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
@@ -53,6 +53,8 @@ import { billFigure, citizenPaymentTotals, isPartlyPaid, isSettled, partlyPaidFi
 import { formatLbp } from '@/lib/currency';
 import { formatDate, formatDay, formatMonthList } from '@/lib/dates';
 import { describeAssessment } from '@/lib/fee-assessment';
+import { groupArrearsByYear, splitArrears } from '@/lib/arrears-bill';
+import { ArrearsBillMark } from '@/components/arrears-bill-mark';
 import { ONLINE_PAYMENT_OPEN } from '@/lib/online-payment';
 import { ownerBillingApplies, ownerBillingWording } from '@/lib/owner-billing';
 import { flagFieldLabel } from '@/lib/field-flags';
@@ -1059,6 +1061,10 @@ function PaymentList({
 }) {
   const labels = getLabels(locale);
   const tCitizen = useTranslations('citizen');
+  const tArrears = useTranslations('arrearsBill');
+  // The current bills as the server listed them, then the old debts under their own heading, the oldest year first.
+  const { current, arrears } = splitArrears(items);
+  const ordered = [...current, ...groupArrearsByYear(arrears).flatMap((group) => group.bills)];
 
   return (
     <Card>
@@ -1073,16 +1079,32 @@ function PaymentList({
           <p className="p-6 text-sm text-muted-foreground">{empty}</p>
         ) : (
           <ul className="divide-y">
-            {items.map((payment) => {
+            {ordered.map((payment, index) => {
               const settled = isSettled(payment);
               const breakdown = describeAssessment(payment.assessment, locale);
+              const before = ordered[index - 1];
+              const startsArrears = Boolean(payment.arrears) && !before?.arrears;
+              const startsYear = Boolean(payment.arrears) && before?.arrears?.year !== payment.arrears?.year;
               return (
+                <Fragment key={payment.id}>
+                  {startsArrears ? (
+                    <li className="space-y-0.5 bg-muted/40 px-4 py-3">
+                      <p className="text-sm font-semibold">{tArrears('groupTitle')}</p>
+                      <p className="text-xs text-muted-foreground">{tArrears('groupHint')}</p>
+                    </li>
+                  ) : null}
+                  {startsYear && payment.arrears ? (
+                    <li className="px-4 pt-3 text-xs font-medium text-muted-foreground">
+                      {tArrears('groupYear', { year: String(payment.arrears.year) })}
+                    </li>
+                  ) : null}
                 <li
-                  key={payment.id}
                   className="flex flex-col gap-3 p-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between"
                 >
                   <div className="min-w-0 space-y-1">
                     <p className="font-medium">{payment.title}</p>
+                    {/* The year, the fee and the «ARR-» number; the API keeps the old books' reference from the portal. */}
+                    <ArrearsBillMark arrears={payment.arrears} invoiceNumber={payment.invoiceNumber} />
                     {/*
                       «ليش عليّ هالمبلغ؟» — the only question anyone asks about a
                       bill, answered on the bill.
@@ -1157,6 +1179,7 @@ function PaymentList({
                     ) : null}
                   </div>
                 </li>
+                </Fragment>
               );
             })}
           </ul>

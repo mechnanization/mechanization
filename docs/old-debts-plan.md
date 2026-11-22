@@ -1,6 +1,6 @@
 # Old debts — «متأخرات سنوات سابقة» (code: `arrears`)
 
-Last verified against the code: `feat/arrears-approval` (on `develop@c6e7462`), 2026-11-21; the cutoff year fixed once a batch is approved (`ARREARS_CUTOFF_LOCKED`, task 6), 2026-11-21.
+Last verified against the code: `feat/arrears-bills-everywhere` (on `develop@90cebdc`), 2026-11-21; task 10, an old-debt bill read as one on every screen that shows a bill (§7); `feat/arrears-approval` (on `develop@c6e7462`), 2026-11-21; the cutoff year fixed once a batch is approved (`ARREARS_CUTOFF_LOCKED`, task 6), 2026-11-21.
 
 > **Status, 2026-11-21:** tasks 1–4 merged to `develop` (PRs #174–#177). Task 5, the backend after the import — submit,
 > return, discard, approve and the «ARR-» bills, a single line, the link of a «للمطابقة» line, the cutoff year, and «دمج
@@ -13,6 +13,11 @@ Last verified against the code: `feat/arrears-approval` (on `develop@c6e7462`), 
 > Task 8, approval, «للمطابقة» and the settings screens, built on `feat/arrears-approval-ui` (PR #182): `fees/arrears/review`,
 > `/match` and `/settings`, on task 5's routes. The cutoff year is set there (`PUT arrears/settings/cutoff`); the books'
 > totals per year are shown read-only until open-decisions §23.4 is decided.
+> Task 10, old-debt bills shown properly everywhere a bill appears, built on `feat/arrears-bills-everywhere` (on
+> `develop@90cebdc`): the bill's views carry `arrears` (§7), and the staff file, the cash counter, the settle page, the fees list,
+> «تسديد الفواتير المحددة», the receipts and the portal («مدفوعاتي», «ملفّي», «حسابي») mark and group an «ARR-» bill.
+> **Not built, with its reason:** the Al-Bazourieh image receipt has no free box for the debt's type, so it prints the bill's title
+> (which carries the year, the fee and «غرامة») and the debt's own رقم العقار, not a «نوع الدين» line.
 >
 > **Earlier status: tasks 1–4 in review, 2026-11-21, none merged.** This spec (PR #174); the migrations
 > `0107`/`0108` (`chore/migration-0107-old-debts`, PR #175); the contract in shared-schemas
@@ -315,6 +320,16 @@ One `citizen_payments` row per KEEP line with a citizen:
 Paying it changes nothing: the counter, «تسديد الفواتير المحددة», the portal and the
 receipts read it as any bill, and the money reaches a wallet as any payment does.
 
+**How it reads (task 10).** What marks the bill is the server's `arrears` field, never its number or its title: `BillArrearsView`
+(shared-schemas `arrears.schema.ts`) — the year, the fee (`feeType`, and `feeTypeNote` for «رسم آخر»), the component (`PENALTY` is
+marked), the رقم العقار and the unit, and `oldReference`, the old books' page or receipt book. `oldReference` is for staff only: the
+portal's own list and the consolidated receipt never carry it, and `mySummary` clears it from the profile's bills
+(`citizenArrears`; `bill-arrears.integration.spec.ts` pins every read). Screens word it through `ArrearsBillMark`
+(`components/arrears-bill-mark.tsx`) and the rules in `lib/arrears-bill.ts`; the portal groups the old debts under
+«متأخرات سنوات سابقة», the oldest year first, the order a settlement pays them in. On the printed receipt an old debt names its own
+parcel, not the citizen's first card. «إلغاء الفاتورة» and «عكس الوصل» need no change: they read the same row (the spec cancels and
+reverses on «ARR-» bills), and the cancel dialog asks staff to cite the old receipt when a citizen proves they paid.
+
 ## 8. What else it touches
 
 - **`WRITTEN_OFF` in every read** (tasks 9, 10): any read that treats "not PAID" as owed
@@ -357,7 +372,7 @@ ClickUp list «Mechanization – Old debts (البقايا)». Hashem: 1–6 and
 | 7 | UI: export, import preview, submit | frontend |
 | 8 | UI: approval and «للمطابقة» | frontend |
 | 9 | «شطب» (backend + UI) | both |
-| 10 | Old-debt bills shown properly everywhere a bill appears, portal included | frontend |
+| 10 | Old-debt bills shown properly everywhere a bill appears, portal included | both: `arrears` on the bill's views (§7), then the screens (built) |
 | 11 | Old-debts report and the batch sheet | both |
 | 12 | Release, then the first real batch | ops |
 

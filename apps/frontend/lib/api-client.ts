@@ -95,6 +95,7 @@ import type {
   UnitType,
   VacancyBasis,
   VacancyEndReason,
+  BillArrearsView,
   BillWriteOffView,
   WriteOffBillInput,
 } from '@mechanization/shared-schemas';
@@ -3629,6 +3630,11 @@ export interface CitizenProfilePayment {
   /** «شطب» (0107): when, how much, why and on which decision; null unless WRITTEN_OFF. Optional for an older API. */
   writeOff?: BillWriteOffView | null;
   /**
+   * «متأخرات سنوات سابقة»: the year, the fee and the رقم العقار of an «ARR-» bill, with the old books'
+   * reference on a staff read (the portal's is null); null on any other bill. Optional for an older API.
+   */
+  arrears?: BillArrearsView | null;
+  /**
    * The municipal request whose fee this bill is (0092), or null. Cancelling the
    * bill cancels the request while it is still open (AWAITING_PAYMENT or
    * IN_REVIEW). Optional: a profile cached before the field existed has none.
@@ -5838,6 +5844,8 @@ export function reviewBillBasis(
 
 export interface CitizenPaymentItem {
   id: string;
+  /** «ARR-2611-0001» on an old debt, «INV-…» on any other bill the system raised; null before 0079. Optional for an older API. */
+  invoiceNumber?: string | null;
   title: string;
   amount: number;
   paidAmount: number;
@@ -5854,6 +5862,8 @@ export interface CitizenPaymentItem {
   cancellationReason?: string | null;
   /** «شطب» (0107): when, how much, why and on which decision; null unless WRITTEN_OFF. Optional for an older API. */
   writeOff?: BillWriteOffView | null;
+  /** «متأخرات سنوات سابقة»: the year, the fee and the رقم العقار of an old debt, without the old books' reference; null on any other bill. */
+  arrears?: BillArrearsView | null;
   frequency: string | null;
   /**
    * How this amount was arrived at — «6 محل تجاري × 100,000 ل.ل».
@@ -5956,6 +5966,8 @@ export interface AdminPaymentItem {
   cancellationReason?: string | null;
   /** «شطب» (0107): when, how much, why and on which decision; null unless WRITTEN_OFF. Optional for an older API. */
   writeOff?: BillWriteOffView | null;
+  /** «متأخرات سنوات سابقة»: the line behind an «ARR-» bill, with the old books' reference (staff only); null on any other bill. */
+  arrears?: BillArrearsView | null;
   /**
    * Last write to the row. Stands in for the payment time on a *partial*
    * settlement, which never gets a `paidAt` — see the note on the server.
