@@ -1092,3 +1092,252 @@ the request waiting on the bill goes on to «قيد المعالجة», as one w
 (`REQUEST_FEE_WAIVED`), and the audit row is `REQUEST_FEE_WRITTEN_OFF`. Its `paidAt` is the moment the fee
 stopped being owed, because a database CHECK wants a stamp on a billed request in review; if a screen must tell
 "paid" from "forgiven", read the audit row, or give the request its own column in a later migration.
+
+---
+
+## 24. Request form builder: what the owner must decide (2026-11-21)
+
+The plan is [request-forms-plan.md](request-forms-plan.md) (Jira epic D3-139), whose §2 gives each question's
+reason in the plan's own format. **Every question below is decided** by Abed on 2026-11-21 (F8's retention waits on §1 and F9's wording on the municipality), with Hashem's sign-off
+still pending; each carried a recommendation to
+bring to the decision meeting; the **Status** line of each says who decided and when, or that it is waiting on
+the owner or the municipality, and what the code does until then. No code is written until F1–F12 are answered
+(Story 1's acceptance criterion), because the migration they shape cannot be edited once applied
+([CLAUDE.md](../CLAUDE.md), non-negotiable 2). F12 was found while writing the plan; the Jira story lists F1–F11.
+
+What this builds: a form the manager defines (its questions, its fee), which a citizen fills in online and a clerk
+fills in at the counter, producing the same request, bill and queue as today ([§20](#20-municipal-requests-and-certificates-decided-2026-10-12-and-2026-10-13)).
+Decisions D1–D10 of §20 stand; F1–F11 only say how a form fits inside them. Read §1 (retention), §20 and §21 first:
+F4, F8 and F10 touch them.
+
+### F1 — The eight built-in request types
+
+**Question.** `RequestType` has eight values (`CLEARANCE`, `RESIDENCY`, `OCCUPANCY`, `VACANCY`,
+`LEASE_REGISTRATION`, `RENOVATION`, `SIGNAGE`, `OTHER`). Do they become forms too, or stay as they are beside the
+custom forms?
+
+**Options.** (a) They become *system forms*: one model, the manager's fee list moves onto the form, a backfill
+migration links every existing request. (b) They stay: two models for ever, and every reader of `requestType`
+(the reporting grouping, «دمج ملفين», the printed paper, the types screen) handles both.
+
+**Recommendation.** (a), built last (Story 9) and only after custom forms work. A system form keeps its special
+behaviour keyed on a fixed **system kind**, never on its name: the براءة ذمة dues check before approval
+(`ParcelDuesService`, D3) and the list of types tied to a property (`REQUEST_TYPES_ON_PROPERTY`, D4).
+
+**Why it matters.** (a) rewrites live rows in two municipalities and needs a rehearsed backfill; (b) is cheap now
+and permanent. If the answer is (b), Story 9 is dropped and `formId` simply stays nullable on a request.
+
+**Blocks.** Story 3 (does the table carry a system kind?) and Story 9.
+
+**Status.** **Decided: (a), the built-in types become system forms** (built last, Story 9). Decided by: Abed · Date: 2026-11-21. Hashem's sign-off (Story 1): pending.
+
+### F2 — Editing a form that already has requests
+
+**Question.** What happens to a request already filed when the manager changes the form's questions?
+
+**Options.** (a) A published form is **versioned**: a request is tied to the version it was filled against, so an
+old request still shows the questions its answers belong to. (b) Edit in place, answers keyed by field: an old
+request loses or misreads answers when a field is removed or retyped. (c) A form with any request is frozen, and a
+change is a new form.
+
+**Recommendation.** (a). The fee is not versioned: it stays «the one in force when the bill is raised» (§20 D1).
+
+**Why it matters.** It decides whether a form has a versions table at all, and whether an answer can ever be
+orphaned.
+
+**Blocks.** Stories 3, 5 and 6.
+
+**Status.** **Decided: (a), a published form is versioned.** Decided by: Abed · Date: 2026-11-21. Hashem's sign-off (Story 1): pending.
+
+### F3 — Field types and their validation
+
+**Question.** Which kinds of question may a form ask, and how much may the manager configure?
+
+**Options.** (a) A fixed catalogue, each type with fixed, safe options. (b) Also a free-form pattern (a regular
+expression) the manager types.
+
+**Recommendation.** (a): short text, long text, whole number, decimal number, date, phone, civil ID or document
+number, single choice, multiple choice, yes/no, file (image or PDF). Per type: minimum and maximum length or value,
+the choices, the accepted file kinds, the maximum files. **Every field is required** (F4), so there is no «required» setting. **No free-form pattern**: a pattern typed by a
+non-engineer is a way to reject a real citizen or to hang the server. Files keep today's limits, which are
+shared by the request: the kinds the server sniffs (`REQUEST_ATTACHMENT_MIME_TYPES`: JPEG, PNG, WebP, PDF), 5 MB
+a file (`REQUEST_ATTACHMENT_MAX_BYTES`) and at most 10 for the whole request (`REQUEST_ATTACHMENTS_MAX`). A form
+with several file fields shares that 10; the builder refuses to promise more.
+
+**Why it matters.** The catalogue is the validator both apps share (Story 4); adding a type later is a code change
+in both and a migration for any stored enum.
+
+**Blocks.** Stories 4 and 7.
+
+**Status.** **Decided: (a), a fixed catalogue of field types with fixed options, no pattern typed by the admin; files keep today's limits.** Decided by: Abed · Date: 2026-11-21. Hashem's sign-off (Story 1): pending.
+
+### F4 — Fields that already exist on the citizen's file
+
+**Question.** A form asks for a name, a phone or an ID the register already holds. Typed again, or taken from the
+file?
+
+**Options.** (a) **Linked fields**: prefilled from the file and read-only, their value **copied onto the request** at
+submission, so the paper and the audit show what was submitted even if the file changes later. (b) Always typed
+again. (c) Read from the file live, never copied.
+
+**Recommendation.** (a). The sources are the file's own columns: first name (`firstName`), father's name
+(`middleName`), last name (`lastName`), mother's name (`motherName`), phone (`phone`), and an identity number
+(`identityDocNumber`, with its type) or the civil record number (`civilRecordNumber`). **To confirm: which of
+the last two «civil ID» means**, or both. The رقم مرجعي is **never** a linkable source: it is the citizen's
+sign-in credential ([§21](#21-online-payment-citizen-sign-in-and-notifications-decided-2026-10-13), non-negotiable 7).
+
+**The empty-value case.** Only `firstName` and `lastName` are always present. `motherName` is NULL on every file
+filed before migration 0044 and on non-resident owners (NULL means «لم يُسأل», not blank); `phone` can be NULL when
+the person has no phone (`hasNoPhone`); the identity and civil record numbers are nullable. So a *required* linked
+field must say what happens when the file has no value. **Decided (Abed, 2026-11-21): the request is refused** until a
+clerk has completed the file at the counter, through the file's own review. Nothing is typed on the request in its
+place and nothing is written back to the file; the portal tells the citizen the municipality must complete their file.
+
+**Why it matters.** A copy of an identity number on a request is a second copy of PII, under the retention that §1
+leaves unanswered. It is also what saves a clerk re-typing a name wrongly.
+
+**Blocks.** Stories 4, 6 and 8.
+
+**Status.** **Decided: every field on every form is required, and a required linked field the citizen's file cannot fill blocks the request until a clerk completes the file.** The manager cannot mark a field optional, so a field has no «required» setting; a yes/no must be answered, a multiple choice needs at least one choice, a file field needs at least one paper. Decided by: Abed · Date: 2026-11-21. Hashem's sign-off (Story 1): pending.
+
+### F5 — Who builds and enables forms, and where they live
+
+**Question.** Which roles build, publish, enable and archive forms, and is a form per municipality or shared?
+
+**Recommendation.** The manager only, as for the types list today (`REQUEST_SETTINGS_ROLES` is `SUPER_ADMIN`):
+a form sets a fee and what papers are demanded, which are the council's. Reading a form's requests stays
+`REQUEST_READ_ROLES`. Forms live in each municipality's tenant schema, as `request_type_settings` does. A shared
+template library across municipalities is out of scope for the first release.
+
+**Why it matters.** A role set is part of the API and pinned per route (`route-inventory.spec.ts`); a template
+library would need a schema outside the tenants.
+
+**Blocks.** Story 5.
+
+**Status.** **Decided: (a), the manager only, per municipality, no shared template library in the first release.** Decided by: Abed · Date: 2026-11-21. Hashem's sign-off (Story 1): pending.
+
+### F6 — The property card and the applicant's capacity
+
+**Question.** Does a form name one of the citizen's property cards (§20 D4)? Does it ask in what capacity the
+applicant asks (owner, tenant, heir, agent, free occupant: `ApplicantCapacity`, D2)?
+
+**Recommendation.** Two per-form settings. Property: *not asked*, *optional* or *required*. Capacity: asked or
+not. Today the property rule is per type and fixed (`REQUEST_TYPES_ON_PROPERTY`: six of the eight types require a
+card). A system form keeps its own rule.
+
+**Why it matters.** A form with no property cannot run a dues check, and the one-open rule (F11) keys on the card.
+
+**Blocks.** Stories 3 and 6.
+
+**Status.** **Decided: a per-form property mode (not asked, optional or required) and a per-form switch for the applicant's capacity.** Decided by: Abed · Date: 2026-11-21. Hashem's sign-off (Story 1): pending.
+
+### F7 — Disabling and deleting a form
+
+**Question.** What does switching a form off do to requests already open, and can a form be deleted?
+
+**Recommendation.** Disabled means hidden from new requests; open requests continue to their end (as a stopped type
+does today). A form that has any request is **never deleted, only archived**; a form that never had one may be
+deleted. This matches the request itself: `0094` allows no `DELETE` on a request.
+
+**Why it matters.** It is the forms' own guard trigger: what it refuses, and the reason a request keeps a form it
+can read.
+
+**Blocks.** Stories 3 and 5.
+
+**Status.** **Decided: disabled means hidden from new requests and open requests continue; a form with any request is archived, never deleted.** Decided by: Abed · Date: 2026-11-21. Hashem's sign-off (Story 1): pending.
+
+### F8 — Who sees the answers, and for how long
+
+**Question.** Who may read a request's answers, do the citizen's own answers come back to the portal, and how long
+are they kept?
+
+**Recommendation.** Staff: the same readers as the request's papers, `REQUEST_READ_ROLES` (the manager, the
+administrative officer, the accountant, the auditor), never «مشاهد فقط» (D6). A file answer opens only through the
+signed five-minute URL, each view audited, and never goes back to the portal as a file. **The portal shows the
+citizen their own text answers** so they can check what they sent, but because sign-in is the رقم مرجعي alone
+([§21](#21-online-payment-citizen-sign-in-and-notifications-decided-2026-10-13), an accepted risk: whoever holds the
+reference reads the file), an **identity or civil record number is shown masked**, as the portal already masks the
+reference, and never in full. Retention follows §1,
+still unanswered: until then answers are kept as long as the request, like its papers (D6), and nothing is deleted.
+
+**Why it matters.** The answers are citizen PII: never logged, never sent to Sentry, never exposed by
+`scripts/db/setup-claude-ro.sql`, and deliberately in the backup's table order.
+
+**Blocks.** Stories 6 and 8.
+
+**Status.** **Decided: staff read answers as `REQUEST_READ_ROLES` (never «مشاهد فقط»); the portal shows the citizen their own text answers with identity and civil-record numbers masked to their last 3 characters; files never come back.** Decided by: Abed · Date: 2026-11-21. Hashem's sign-off (Story 1): pending.
+**Retention is waiting on §1**; until then answers are kept as long as the request.
+
+### F9 — The printed paper
+
+**Question.** Does a form carry the statement the paper certifies?
+
+**Recommendation.** An optional **template text** the clerk starts from, with placeholders for answers (plain
+substitution of a field's key, no logic, nothing that can print a رقم مرجعي). The clerk still writes and approves
+the final statement (D3), so the template is a draft, not the certificate.
+
+**Why it matters.** The paper's wording is a legal statement and **the municipality's to confirm**
+([municipal-requests-plan.md](municipal-requests-plan.md) §7): nothing here claims a legal form. Until it answers,
+a form carries no template and the clerk writes every statement, as for «طلب عام» today.
+
+**Blocks.** Story 8 (print) and whether Story 3 has the column.
+
+**Status.** **Decided: (a), an optional statement template the clerk starts from; the clerk still writes and approves the final statement.** Decided by: Abed · Date: 2026-11-21. Hashem's sign-off (Story 1): pending.
+**The wording is waiting on the municipality:** until it answers, a form carries no template and the clerk writes every statement.
+
+### F10 — Languages
+
+**Question.** The form's name, its field labels, help text and choices: Arabic only, or Arabic and English?
+
+**Options.** (a) Arabic required, English optional, the screen falling back to Arabic. (b) Both required.
+(c) Arabic only.
+
+**Recommendation.** (a). **To confirm against non-negotiable 9** («both locales are complete»): the rule is about
+the product's own copy, which stays in the message files, and a form's questions are the manager's data. On the
+English portal a form with no English shows its Arabic text, never a blank or a key.
+
+**Why it matters.** It decides the columns on a form and on a field (one label or two) and what a choice's stored
+value is.
+
+**Blocks.** Stories 3, 7 and 8.
+
+**Status.** **Decided: (a), Arabic required, English optional, the English screen falling back to Arabic; form text counts as the manager's data, not the product's own copy (non-negotiable 9).** Decided by: Abed · Date: 2026-11-21. Hashem's sign-off (Story 1): pending.
+
+### F11 — One open request per citizen and form
+
+**Question.** Today a citizen has one open request per type and card (§20 D10: the partial unique index
+`citizen_requests_one_open_key`, on the citizen, `requestType` and the card, a request on no card keying on the nil
+uuid). Does the same rule hold per form?
+
+**Recommendation.** Yes: one open request per citizen, form and card, with no setting to relax it in the first
+release; revisit on a real case that needs two at once. A cancelled, rejected or completed request frees its place.
+
+**Why it matters.** The existing index keys on `requestType`, so custom forms need their own key (the form) or two
+different forms would block each other. That is a new index in the migration, not an edit of `0092`.
+
+**Blocks.** Stories 3 and 6.
+
+**Status.** **Decided: one open request per citizen, form and card, with no setting to relax it in the first release.** Decided by: Abed · Date: 2026-11-21. Hashem's sign-off (Story 1): pending.
+
+### F12 — The identity copy on an online request (found while writing the plan)
+
+**Question.** D2 ([§20](#20-municipal-requests-and-certificates-decided-2026-10-12-and-2026-10-13)) says an online
+request carries a copy of an identity paper before its fee can be paid, and the server enforces it
+(`REQUEST_IDENTITY_COPY_REQUIRED` when the fee's bill is raised, for an `ONLINE` request with no attachment of type
+`IDENTITY`). Does that hold for every custom form?
+
+**Options.** (a) Yes, for every form: the portal adds the standard identity step to each form and the server keeps
+the check. (b) A per-form setting. (c) Not for custom forms.
+
+**Recommendation.** (a). The reason D2 gave still holds: sign-in is the رقم مرجعي alone
+([§21](#21-online-payment-citizen-sign-in-and-notifications-decided-2026-10-13)), so whoever holds the reference can
+file as that citizen, and the paper is handed over against the original card. A form can ask for further papers with
+file fields; it cannot waive this one. A form the manager publishes with a file field of type `IDENTITY` already
+satisfies it, so the builder's only job is to say so.
+
+**Why it matters.** Under (b) or (c) the server's check becomes conditional on the form, and a custom form could
+bill an online request nobody has identified.
+
+**Blocks.** Stories 6 and 8.
+
+**Status.** **Decided: (a), every online request carries an identity copy before its fee can be paid, whatever the form.** Decided by: Abed · Date: 2026-11-21. Hashem's sign-off (Story 1): pending.
