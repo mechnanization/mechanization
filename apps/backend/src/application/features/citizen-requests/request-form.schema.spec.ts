@@ -1,17 +1,14 @@
 import {
   REQUEST_ATTACHMENTS_MAX,
   REQUEST_FORM_MAX_FIELDS,
-  counterRequestBodySchema,
   createRequestFormSchema,
   formAsksForIdentityCopy,
   formPublishIssues,
-  isFormRequestBody,
-  onlineRequestBodySchema,
   requestFormFieldSchema,
   requestFeeAmountSchema,
   saveRequestFormDraftSchema,
   submitOnlineFormRequestSchema,
-  updateRequestTypeSettingSchema,
+  submitCounterFormRequestSchema,
   uploadRequestPaperSchema,
   type RequestFormFieldDefinition,
 } from '@mechanization/shared-schemas';
@@ -224,15 +221,9 @@ describe('the manager\'s inputs', () => {
     expect(createRequestFormSchema.safeParse({ ...settings, requiresNoDues: 'yes' }).success).toBe(false);
   });
 
-  it('shares the fee rule with the request type setting', () => {
-    for (const fee of [0, 50_000, '50000', 1_000_000_000]) {
-      expect(requestFeeAmountSchema.safeParse(fee).success).toBe(true);
-      expect(updateRequestTypeSettingSchema.safeParse({ enabled: true, feeAmount: fee }).success).toBe(true);
-    }
-    for (const fee of [-1, 0.5, 1_000_000_001, 'abc']) {
-      expect(requestFeeAmountSchema.safeParse(fee).success).toBe(false);
-      expect(updateRequestTypeSettingSchema.safeParse({ enabled: true, feeAmount: fee }).success).toBe(false);
-    }
+  it('holds the fee to whole pounds, zero or more, and a billion at most', () => {
+    for (const fee of [0, 50_000, '50000', 1_000_000_000]) expect(requestFeeAmountSchema.safeParse(fee).success).toBe(true);
+    for (const fee of [-1, 0.5, 1_000_000_001, 'abc']) expect(requestFeeAmountSchema.safeParse(fee).success).toBe(false);
   });
 
   describe('saving a draft', () => {
@@ -293,7 +284,6 @@ describe('the identity copy every online request carries (F12)', () => {
 describe('a request body', () => {
   const answers = { reason: 'سبب' };
   const onForm = { formId: ID, answers, clientRequestId: KEY };
-  const legacy = { requestType: 'OTHER', applicantCapacity: 'OWNER', clientRequestId: KEY };
 
   it('on a form carries the form, its answers and a retry key', () => {
     expect(submitOnlineFormRequestSchema.parse(onForm)).toMatchObject({ formId: ID, answers });
@@ -304,7 +294,7 @@ describe('a request body', () => {
     expect(submitOnlineFormRequestSchema.parse(bare).answers).toEqual({});
   });
 
-  it('on a form refuses a request type beside the form id: two requests in one', () => {
+  it('on a form refuses a request type beside the form id', () => {
     expect(submitOnlineFormRequestSchema.safeParse({ ...onForm, requestType: 'OTHER' }).success).toBe(false);
   });
 
@@ -328,32 +318,15 @@ describe('a request body', () => {
     expect(submitOnlineFormRequestSchema.safeParse({ ...onForm, answers: many }).success).toBe(false);
   });
 
-  describe('the route\'s body: the request of 0092, or a request on a form', () => {
-    it('reads a body with no form id as the request of 0092, untouched', () => {
-      expect(onlineRequestBodySchema.parse(legacy)).toMatchObject({ requestType: 'OTHER', applicantCapacity: 'OWNER' });
+  describe('the counter\'s body', () => {
+    it('names the citizen', () => {
+      expect(submitCounterFormRequestSchema.safeParse({ ...onForm, citizenId: ID }).success).toBe(true);
+      expect(submitCounterFormRequestSchema.safeParse(onForm).success).toBe(false);
     });
-    it('reads a body with a form id as a request on a form', () => {
-      const body = onlineRequestBodySchema.parse(onForm);
-      expect(isFormRequestBody(body)).toBe(true);
-      expect(isFormRequestBody(onlineRequestBodySchema.parse(legacy))).toBe(false);
-    });
-    it('keeps the error of the schema it chose, with its path', () => {
-      const result = onlineRequestBodySchema.safeParse({ ...onForm, formId: 'nope' });
-      expect(result.success).toBe(false);
-      if (!result.success) expect(result.error.issues.map((i) => i.path.join('.'))).toEqual(['formId']);
-      const old = onlineRequestBodySchema.safeParse({ ...legacy, applicantCapacity: 'NOBODY' });
-      expect(old.success).toBe(false);
-      if (!old.success) expect(old.error.issues.map((i) => i.path.join('.'))).toEqual(['applicantCapacity']);
-    });
-    it('refuses something that is not an object', () => {
-      expect(onlineRequestBodySchema.safeParse(null).success).toBe(false);
-      expect(onlineRequestBodySchema.safeParse('x').success).toBe(false);
-    });
-    it('the counter\'s names the citizen in both shapes', () => {
-      expect(counterRequestBodySchema.safeParse({ ...onForm, citizenId: ID }).success).toBe(true);
-      expect(counterRequestBodySchema.safeParse(onForm).success).toBe(false);
-      expect(counterRequestBodySchema.safeParse({ ...legacy, citizenId: ID }).success).toBe(true);
-      expect(counterRequestBodySchema.safeParse(legacy).success).toBe(false);
+    it('is a request on a form only: a body with no form id is refused', () => {
+      const { formId: _formId, ...noForm } = onForm;
+      expect(submitOnlineFormRequestSchema.safeParse(noForm).success).toBe(false);
+      expect(submitCounterFormRequestSchema.safeParse({ ...noForm, citizenId: ID }).success).toBe(false);
     });
   });
 });

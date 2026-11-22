@@ -10,6 +10,7 @@ import {
   type CitizenRequestView,
 } from '@mechanization/shared-schemas';
 import { logApiError } from '@/lib/api-client';
+import { requestTitle } from '@/lib/request-title';
 import { formatDay } from '@/lib/dates';
 import { approveRequest, cancelRequest, completeRequest, rejectRequest } from '@/lib/requests-api';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -53,7 +54,7 @@ export function ApproveRequestDialog({ tenant, token, locale, request, onDone, o
   // A form's own draft (F9) when it has one: the clerk edits it, and it is never printed as it stands.
   const [statement, setStatement] = useState(() =>
     request.statementTemplate ??
-    t(`approve.templates.${request.requestType}`, {
+    t('approve.templates.OTHER', {
       name: request.citizen.name,
       property: propertyNumber,
       date: formatDay(municipalToday()),
@@ -88,9 +89,9 @@ export function ApproveRequestDialog({ tenant, token, locale, request, onDone, o
       destructive={false}
       title={t('approve.title', { number: request.requestNumber })}
       description={
-        request.requestType === 'CLEARANCE'
+        request.requiresNoDues
           ? t('approve.clearanceNote', { property: propertyNumber })
-          : t('approve.description', { type: labels.requestType[request.requestType] })
+          : t('approve.description', { type: requestTitle(request, locale, labels.requestType) })
       }
       confirmLabel={t('approve.confirm')}
       cancelLabel={t('cancel')}

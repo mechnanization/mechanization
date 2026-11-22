@@ -10,12 +10,9 @@ import type {
   RequestAttachmentView,
   RequestChannel,
   RequestStatus,
-  RequestType,
-  RequestTypeSettingView,
-  CounterRequestBody,
-  OnlineRequestBody,
+  SubmitCounterFormRequestInput,
+  SubmitOnlineFormRequestInput,
   SubmitRequestResult,
-  UpdateRequestTypeSettingInput,
 } from '@mechanization/shared-schemas';
 import { apiFetch } from './api-client';
 
@@ -39,7 +36,6 @@ export type {
   RequestBillView,
   RequestClearanceSnapshot,
   RequestPropertyView,
-  RequestTypeSettingView,
   SubmitRequestResult,
 } from '@mechanization/shared-schemas';
 
@@ -54,7 +50,7 @@ export function getRequestQueue(
   args: {
     status?: RequestStatus;
     channel?: RequestChannel;
-    type?: RequestType;
+    formId?: string;
     search?: string;
     page?: number;
     pageSize?: number;
@@ -64,7 +60,7 @@ export function getRequestQueue(
   const query = new URLSearchParams();
   if (args.status) query.set('status', args.status);
   if (args.channel) query.set('channel', args.channel);
-  if (args.type) query.set('type', args.type);
+  if (args.formId) query.set('formId', args.formId);
   if (args.search) query.set('search', args.search);
   if (args.page) query.set('page', String(args.page));
   if (args.pageSize) query.set('pageSize', String(args.pageSize));
@@ -77,29 +73,8 @@ export function getRequest(tenant: string, token: string, args: { id: string }, 
   return apiFetch<CitizenRequestView>(tenant, path(args.id), { token, signal });
 }
 
-/** Every type, offered or not, with its fee — `REQUEST_READ_ROLES`, `GET /requests/types`. */
-export function getRequestTypes(tenant: string, token: string, signal?: AbortSignal) {
-  return apiFetch<RequestTypeSettingView[]>(tenant, '/requests/types', { token, signal });
-}
-
-/** Switch a type on or off and set its fee — the manager, `PUT /requests/types/:type`. */
-export function updateRequestType(
-  tenant: string,
-  token: string,
-  args: { type: RequestType } & UpdateRequestTypeSettingInput,
-  signal?: AbortSignal,
-) {
-  const { type, ...body } = args;
-  return apiFetch<RequestTypeSettingView[]>(tenant, `/requests/types/${encodeURIComponent(type)}`, {
-    method: 'PUT',
-    token,
-    body: JSON.stringify(body),
-    signal,
-  });
-}
-
 /** A request filed at the counter — `REQUEST_HANDLE_ROLES`, `POST /requests`. */
-export function submitCounterRequest(tenant: string, token: string, args: CounterRequestBody, signal?: AbortSignal) {
+export function submitCounterRequest(tenant: string, token: string, args: SubmitCounterFormRequestInput, signal?: AbortSignal) {
   return apiFetch<SubmitRequestResult>(tenant, '/requests', { method: 'POST', token, body: JSON.stringify(args), signal });
 }
 
@@ -171,13 +146,8 @@ export function getMyRequest(tenant: string, token: string, args: { id: string }
   return apiFetch<MyCitizenRequestView>(tenant, `/requests/mine/${encodeURIComponent(args.id)}`, { token, signal });
 }
 
-/** The types a citizen may file now, with their fees — `GET /requests/mine/types`. */
-export function getOfferedRequestTypes(tenant: string, token: string, signal?: AbortSignal) {
-  return apiFetch<RequestTypeSettingView[]>(tenant, '/requests/mine/types', { token, signal });
-}
-
 /** «إرسال الطلب» — `POST /requests/mine`. */
-export function submitMyRequest(tenant: string, token: string, args: OnlineRequestBody, signal?: AbortSignal) {
+export function submitMyRequest(tenant: string, token: string, args: SubmitOnlineFormRequestInput, signal?: AbortSignal) {
   return apiFetch<SubmitRequestResult>(tenant, '/requests/mine', { method: 'POST', token, body: JSON.stringify(args), signal });
 }
 

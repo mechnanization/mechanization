@@ -773,15 +773,14 @@
       "free": "Free",
       "openOf": "Open request {number}",
       "open": "Open",
-      "types": "Types & fees",
       "forms": "Request forms",
       "new": "Counter request",
       "statusFilter": "Filter by status",
       "allStatuses": "All",
       "allRequests": "All requests",
       "filters": {
-        "type": "Type",
-        "allTypes": "All types",
+        "form": "Form",
+        "allForms": "All forms",
         "channel": "Channel",
         "allChannels": "All channels"
       }
@@ -1020,38 +1019,6 @@
       "preparedBy": "Officer",
       "head": "Head of the municipality",
       "stamp": "Valid only with the stamp and signature."
-    },
-    "types": {
-      "title": "Request types & fees",
-      "back": "Requests",
-      "loadError": "Could not load the types.",
-      "empty": "No types",
-      "columns": {
-        "type": "Type",
-        "fee": "Fee",
-        "status": "Status",
-        "actions": "Actions"
-      },
-      "needsProperty": "Needs a property",
-      "propertyOptional": "Property optional",
-      "free": "Free",
-      "offered": "Offered",
-      "stoppedLabel": "Stopped",
-      "editFee": "Edit fee",
-      "stop": "Stop",
-      "restart": "Offer",
-      "stopped": "“{name}” stopped: it is no longer offered.",
-      "restarted": "“{name}” is offered again.",
-      "saveError": "Could not save. Try again.",
-      "editTitle": "Fee for {name}",
-      "fee": "Fee",
-      "feeHint": "In Lebanese pounds, whole. Zero is free. A request already billed keeps its bill.",
-      "feeInvalid": "The fee is a whole number between 0 and 1,000,000,000.",
-      "save": "Save",
-      "saving": "Saving…",
-      "cancel": "Cancel",
-      "saved": "Fee for “{name}” saved.",
-      "footnote": "A stopped type leaves the counter and the portal; requests already filed under it keep it."
     },
     "forms": {
       "list": {

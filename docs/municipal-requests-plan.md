@@ -15,8 +15,9 @@
 >
 > **Request forms (2026-11-22, `feat/request-forms-submit`):** a request may now be filled on a form the manager defined
 > (migrations 0112 and 0113): `submit` takes `formId` + `answers` beside the old body, the fee is the form's, `raiseBill` and
-> `approve` ask for a paper on every file question, and the one-open rule is per citizen and form. The request types here stay as
-> they are until their built-ins become system forms (F1, a later migration). The plan and the decisions: `request-forms-plan.md`,
+> `approve` ask for a paper on every file question, and the one-open rule is per citizen and form. **The built-in request types were removed on 2026-11-22
+> (`feat/request-forms-no-builtins`, F1):** every request is filed on a form, `request_type_settings` is no longer read, the types routes
+> and screen are gone, and the dues check (براءة ذمة) is a setting of a form (F13, `0115`). What this plan says of types is history. The plan and the decisions: `request-forms-plan.md`,
 > [open-decisions.md §24](open-decisions.md).
 
 A citizen asks the municipality for a paper — a براءة ذمة, a إفادة سكن, a lease

@@ -1,11 +1,9 @@
 import { z } from 'zod';
 import { typeError } from './type-error';
 import {
-  applicantCapacitySchema,
   requestAttachmentTypeSchema,
   requestChannelSchema,
   requestStatusSchema,
-  requestTypeSchema,
   type ApplicantCapacity,
   type PropertyType,
   type RequestAttachmentType,
@@ -24,24 +22,6 @@ import type { RequestAnswerView, RequestFormRef, RequestMissingPaper } from './r
  */
 
 // ─── rules both apps read ───
-
-/**
- * The types tied to a property: the request names one of the citizen's cards
- * (open decisions §20 D4). A residence certificate and a general request may
- * name one, and need not.
- */
-export const REQUEST_TYPES_ON_PROPERTY = [
-  'CLEARANCE',
-  'OCCUPANCY',
-  'VACANCY',
-  'LEASE_REGISTRATION',
-  'RENOVATION',
-  'SIGNAGE',
-] as const satisfies readonly RequestType[];
-
-export function requestNeedsProperty(type: RequestType): boolean {
-  return (REQUEST_TYPES_ON_PROPERTY as readonly RequestType[]).includes(type);
-}
 
 /** Open: not yet handed over, rejected or cancelled. One per citizen, type and card. */
 export const OPEN_REQUEST_STATUSES = [
@@ -77,43 +57,6 @@ export const REQUEST_STATUSES_TAKING_ATTACHMENTS = [
 
 const uuid = (message: string) => z.string(typeError({ required: message })).guid(message);
 
-const requestFields = {
-  requestType: requestTypeSchema,
-  applicantCapacity: applicantCapacitySchema,
-  propertyEntryId: uuid('اختر العقار').optional(),
-  buildingUnitId: uuid('اختر الوحدة').optional(),
-  purpose: z
-    .string()
-    .trim()
-    .max(500, 'الغرض طويل جداً')
-    .optional()
-    .transform((value) => (value ? value : undefined)),
-  clientRequestId: z.string().guid(),
-};
-
-/** A type tied to a property names a card; a unit line is always on a card. */
-function requestShape(
-  value: { requestType: RequestType; propertyEntryId?: string; buildingUnitId?: string },
-  context: z.RefinementCtx,
-): void {
-  if (requestNeedsProperty(value.requestType) && !value.propertyEntryId) {
-    context.addIssue({ code: z.ZodIssueCode.custom, path: ['propertyEntryId'], message: 'اختر العقار' });
-  }
-  if (value.buildingUnitId && !value.propertyEntryId) {
-    context.addIssue({ code: z.ZodIssueCode.custom, path: ['propertyEntryId'], message: 'اختر العقار' });
-  }
-}
-
-/** «إرسال الطلب» in the portal — the citizen is the token's (`POST requests/mine`). */
-export const submitOnlineRequestSchema = z.object(requestFields).superRefine(requestShape);
-export type SubmitOnlineRequestInput = z.infer<typeof submitOnlineRequestSchema>;
-
-/** A request filed by a clerk at the counter for a citizen who is present (`POST requests`). */
-export const submitCounterRequestSchema = z
-  .object({ ...requestFields, citizenId: uuid('اختر المواطن') })
-  .superRefine(requestShape);
-export type SubmitCounterRequestInput = z.infer<typeof submitCounterRequestSchema>;
-
 /** «جاهزة للاستلام»: what the paper certifies, in the clerk's words (open decisions §20 D3). */
 export const approveRequestSchema = z.object({
   statement: z
@@ -141,13 +84,6 @@ export const requestFeeAmountSchema = z.coerce
   .min(0, 'الرسم لا يكون سالباً')
   .max(1_000_000_000, 'الرسم كبير جداً — يرجى المراجعة');
 
-/** The manager's list of request types: switched on or off, and the fee in whole pounds (D1). */
-export const updateRequestTypeSettingSchema = z.object({
-  enabled: z.boolean(),
-  feeAmount: requestFeeAmountSchema,
-});
-export type UpdateRequestTypeSettingInput = z.infer<typeof updateRequestTypeSettingSchema>;
-
 /** The text field sent beside the file (`multipart/form-data`). */
 export const uploadRequestAttachmentSchema = z.object({ type: requestAttachmentTypeSchema });
 export type UploadRequestAttachmentInput = z.infer<typeof uploadRequestAttachmentSchema>;
@@ -156,7 +92,8 @@ export type UploadRequestAttachmentInput = z.infer<typeof uploadRequestAttachmen
 export const listRequestsQuerySchema = z.object({
   status: requestStatusSchema.optional(),
   channel: requestChannelSchema.optional(),
-  type: requestTypeSchema.optional(),
+  /** The form the request was filled on (0113). */
+  formId: uuid('اختر النموذج').optional(),
   search: z.string().trim().max(120).optional().transform((value) => (value ? value : undefined)),
   page: z.coerce.number().int().min(1).max(1_000_000).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(25),
@@ -165,15 +102,6 @@ export type ListRequestsQuery = z.infer<typeof listRequestsQuerySchema>;
 
 // ─── response shapes ───
 
-/** One line of the manager's list of request types. */
-export interface RequestTypeSettingView {
-  requestType: RequestType;
-  enabled: boolean;
-  /** Whole pounds; 0 is free. */
-  feeAmount: number;
-  needsProperty: boolean;
-  updatedAt: string | null;
-}
 
 /** The bill a request's fee was charged on. */
 export interface RequestBillView {
@@ -284,6 +212,8 @@ export interface CitizenRequestView {
   missingPapers: RequestMissingPaper[];
   /** The form's draft for the statement, which «جاهزة للاستلام» starts from (F9); never the certificate. Staff only. */
   statementTemplate: string | null;
+  /** The form checks the property's dues before approval (F13): the panel shows them and the approval says so. Staff only. */
+  requiresNoDues: boolean;
   createdByName: string | null;
   readyByName: string | null;
   createdAt: string;

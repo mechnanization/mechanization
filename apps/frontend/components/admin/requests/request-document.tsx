@@ -4,6 +4,7 @@ import { useTranslations } from 'next-intl';
 import { QRCodeSVG } from 'qrcode.react';
 import { getLabels, type CitizenRequestView } from '@mechanization/shared-schemas';
 import { formatDate, formatDateTime } from '@/lib/dates';
+import { requestTitle } from '@/lib/request-title';
 import { Money } from '@/components/ui/money';
 import { SummaryList } from '@/components/ui/summary-list';
 import {
@@ -58,7 +59,7 @@ export function RequestDocument({
         <LetterheadCrest crest={letterhead.crest} />
         <div className="flex items-start gap-3">
           <div className="space-y-1 text-end">
-            <h2 className="text-lg font-bold">{labels.requestType[request.requestType]}</h2>
+            <h2 className="text-lg font-bold">{requestTitle(request, locale, labels.requestType)}</h2>
             <p className="text-xs">
               {t('number')}{' '}
               {/* A document number is a code: Latin, left to right (BAN-9, RTL-2). */}

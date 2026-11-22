@@ -17,6 +17,7 @@ import { formatDate } from '@/lib/dates';
 import { compressPaper } from '@/lib/image-compression';
 import { ONLINE_PAYMENT_OPEN, onlineCopy } from '@/lib/online-payment';
 import { attachmentProblem, REQUEST_ATTACHMENT_ACCEPT, REQUEST_ATTACHMENT_MAX_MB } from '@/lib/request-attachments';
+import { requestTitle } from '@/lib/request-title';
 import { requestStatusBadge } from '@/lib/request-status';
 import {
   cancelMyRequest,
@@ -167,7 +168,7 @@ export default function MyRequestPage({
       ) : (
         <>
           <div className="space-y-2">
-            <h1 className="text-2xl font-bold">{labels.requestType[request.requestType]}</h1>
+            <h1 className="text-2xl font-bold">{requestTitle(request, locale, labels.requestType)}</h1>
             <p className="flex flex-wrap items-center gap-2 text-sm">
               <bdi dir="ltr" className="font-mono font-semibold">
                 {request.requestNumber}

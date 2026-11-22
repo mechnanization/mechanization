@@ -11,6 +11,8 @@ import { AuditService } from '../audit/audit.service';
 import { ParcelDuesService } from '../fees/parcel-dues.service';
 import { CitizenRequestsService, type RequestActor } from './citizen-requests.service';
 import { RequestAnswersService } from '../request-forms/request-answers.service';
+import { RequestFormsService } from '../request-forms/request-forms.service';
+import { getLabels, type RequestType } from '@mechanization/shared-schemas';
 
 /**
  * Municipal requests against a real tenant schema (migration 0092): the CHECKs
@@ -45,6 +47,52 @@ describeIfDb('CitizenRequestsService', () => {
 
   const within = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'tenant-cr', tenantSlug: 'cr', schemaName: SCHEMA, prisma: db }, work);
+
+  /*
+    Every request is on a form since the built-in types went (open decisions §24 F1, 2026-11-22). This suite was written for the types,
+    so it keeps its words: a «type» is a form of that name, made once, whose card rule, fee and switch are what the type had.
+    `setType` is the manager's list of types; `submitTyped` files a request the way the suite always has.
+  */
+  let formsService: RequestFormsService;
+  const typeForms = new Map<string, { id: string; versionId: string }>();
+  const TYPE_RULES: Record<string, { property: 'REQUIRED' | 'OPTIONAL'; dues: boolean }> = {
+    CLEARANCE: { property: 'REQUIRED', dues: true },
+    RESIDENCY: { property: 'OPTIONAL', dues: false },
+    OCCUPANCY: { property: 'REQUIRED', dues: false },
+    VACANCY: { property: 'REQUIRED', dues: false },
+    LEASE_REGISTRATION: { property: 'REQUIRED', dues: false },
+    RENOVATION: { property: 'REQUIRED', dues: false },
+    SIGNAGE: { property: 'REQUIRED', dues: false },
+    OTHER: { property: 'OPTIONAL', dues: false },
+  };
+  const setType = async (type: RequestType, input: { enabled: boolean; feeAmount: number }, actor: { id: string; role: string }) => {
+    const rule = TYPE_RULES[type]!;
+    let known = typeForms.get(type);
+    if (!known) {
+      const created = await formsService.create(
+        { nameAr: getLabels('ar').requestType[type], feeAmount: input.feeAmount, propertyMode: rule.property, askCapacity: true, askPurpose: true, requiresNoDues: rule.dues, sortOrder: 0 } as never,
+        actor,
+      );
+      await formsService.saveDraft(created.id, { expectedRevision: created.draft!.revision, fields: [] } as never, actor).catch(() => undefined);
+      // A form needs a question to be published through the API: a built-in type had none, so the version is made directly.
+      const version = await db.requestFormVersion.update({
+        where: { id: created.draft!.id },
+        data: { status: 'PUBLISHED', publishedAt: new Date(), revision: { increment: 1 } },
+      });
+      await db.requestForm.update({ where: { id: created.id }, data: { currentVersionId: version.id } });
+      known = { id: created.id, versionId: version.id };
+      typeForms.set(type, known);
+    }
+    await db.requestForm.update({
+      where: { id: known.id },
+      data: { enabled: input.enabled, feeAmount: input.feeAmount, updatedById: actor.id },
+    });
+  };
+  const submitTyped = (input: Record<string, unknown>, actor: RequestActor) => {
+    const { requestType, ...rest } = input as { requestType: RequestType } & Record<string, unknown>;
+    const form = typeForms.get(requestType)!;
+    return service.submit({ ...rest, formId: form.id, formVersionId: form.versionId, answers: {} } as never, actor);
+  };
 
   beforeAll(async () => {
     ddl = new Client({ connectionString: TEST_DATABASE_URL });
@@ -84,10 +132,13 @@ describeIfDb('CitizenRequestsService', () => {
     });
     clerk = { id: clerkId, role: 'ADMINISTRATIVE_OFFICER' };
     staffActor = { kind: 'STAFF', ...clerk };
+    formsService = new RequestFormsService(context, audit);
     await within(async () => {
-      await service.updateType('CLEARANCE', { enabled: true, feeAmount: 200_000 }, { id: clerkId, role: 'SUPER_ADMIN' });
-      await service.updateType('RESIDENCY', { enabled: true, feeAmount: 100_000 }, { id: clerkId, role: 'SUPER_ADMIN' });
-      await service.updateType('OTHER', { enabled: true, feeAmount: 0 }, { id: clerkId, role: 'SUPER_ADMIN' });
+      await setType('CLEARANCE', { enabled: true, feeAmount: 200_000 }, { id: clerkId, role: 'SUPER_ADMIN' });
+      await setType('RESIDENCY', { enabled: true, feeAmount: 100_000 }, { id: clerkId, role: 'SUPER_ADMIN' });
+      await setType('OTHER', { enabled: true, feeAmount: 0 }, { id: clerkId, role: 'SUPER_ADMIN' });
+      // A type nobody has switched on is a form that exists and is off.
+      await setType('SIGNAGE', { enabled: false, feeAmount: 0 }, { id: clerkId, role: 'SUPER_ADMIN' });
     });
   }, SETUP_TIMEOUT_MS);
 
@@ -110,7 +161,7 @@ describeIfDb('CitizenRequestsService', () => {
 
   const fileOnline = (citizen: { id: string; cardId: string; actor: RequestActor }, overrides: Record<string, unknown> = {}) =>
     within(() =>
-      service.submit(
+      submitTyped(
         {
           citizenId: citizen.id,
           requestType: 'CLEARANCE',
@@ -242,7 +293,7 @@ describeIfDb('CitizenRequestsService', () => {
     it('refuses a type the municipality has not switched on, a missing card, and another citizen’s card', async () => {
       const citizen = await citizenWithCard();
       const other = await citizenWithCard();
-      await expect(fileOnline(citizen, { requestType: 'SIGNAGE' })).rejects.toMatchObject({ code: 'REQUEST_TYPE_NOT_OFFERED' });
+      await expect(fileOnline(citizen, { requestType: 'SIGNAGE' })).rejects.toMatchObject({ code: 'REQUEST_FORM_NOT_OFFERED' });
       await expect(fileOnline(citizen, { propertyEntryId: undefined })).rejects.toMatchObject({
         code: 'REQUEST_PROPERTY_REQUIRED',
       });
@@ -263,7 +314,7 @@ describeIfDb('CitizenRequestsService', () => {
     it('records the clerk on a counter request', async () => {
       const citizen = await citizenWithCard();
       const result = await within(() =>
-        service.submit(
+        submitTyped(
           { citizenId: citizen.id, requestType: 'RESIDENCY', applicantCapacity: 'TENANT', clientRequestId: randomUUID() },
           staffActor,
         ),
@@ -314,7 +365,7 @@ describeIfDb('CitizenRequestsService', () => {
     it('raises no bill on a file archived since it was filed, as no other fee is (FEE_CITIZEN_ARCHIVED)', async () => {
       const citizen = await citizenWithCard();
       const filed = await within(() =>
-        service.submit(
+        submitTyped(
           { citizenId: citizen.id, requestType: 'RESIDENCY', applicantCapacity: 'OWNER', clientRequestId: randomUUID() },
           staffActor,
         ),
@@ -376,7 +427,7 @@ describeIfDb('CitizenRequestsService', () => {
     it('moves to review when its bill is paid, and back if the payment is reversed', async () => {
       const citizen = await citizenWithCard();
       const filed = await within(() =>
-        service.submit(
+        submitTyped(
           { citizenId: citizen.id, requestType: 'RESIDENCY', applicantCapacity: 'OWNER', clientRequestId: randomUUID() },
           staffActor,
         ),
@@ -408,10 +459,10 @@ describeIfDb('CitizenRequestsService', () => {
 
     it('goes to review without a bill when its type became free before it was billed', async () => {
       const manager = { id: clerk.id, role: 'SUPER_ADMIN' };
-      await within(() => service.updateType('OCCUPANCY', { enabled: true, feeAmount: 75_000 }, manager));
+      await within(() => setType('OCCUPANCY', { enabled: true, feeAmount: 75_000 }, manager));
       const atCounter = (citizen: { id: string; cardId: string }) =>
         within(() =>
-          service.submit(
+          submitTyped(
             {
               citizenId: citizen.id,
               requestType: 'OCCUPANCY',
@@ -427,7 +478,7 @@ describeIfDb('CitizenRequestsService', () => {
       await within(() => service.raiseBill(billed.id, staffActor));
       expect(unbilled.status).toBe('AWAITING_PAYMENT');
 
-      await within(() => service.updateType('OCCUPANCY', { enabled: true, feeAmount: 0 }, manager));
+      await within(() => setType('OCCUPANCY', { enabled: true, feeAmount: 0 }, manager));
       const view = await within(() => service.get(unbilled.id));
       // Past the wait with no bill: it shows no fee, not the type's (`feeShown`).
       expect(view).toMatchObject({ status: 'IN_REVIEW', fee: null, bill: null });
@@ -463,7 +514,7 @@ describeIfDb('CitizenRequestsService', () => {
       const citizen = await citizenWithCard();
       const residency = () =>
         within(() =>
-          service.submit(
+          submitTyped(
             { citizenId: citizen.id, requestType: 'RESIDENCY', applicantCapacity: 'OWNER', clientRequestId: randomUUID() },
             staffActor,
           ),
@@ -505,7 +556,7 @@ describeIfDb('CitizenRequestsService', () => {
     it('heals a request already left waiting on a cancelled bill, on the citizen’s own read', async () => {
       const citizen = await citizenWithCard();
       const filed = await within(() =>
-        service.submit(
+        submitTyped(
           { citizenId: citizen.id, requestType: 'RESIDENCY', applicantCapacity: 'OWNER', clientRequestId: randomUUID() },
           staffActor,
         ),
@@ -528,7 +579,7 @@ describeIfDb('CitizenRequestsService', () => {
     const paidRequest = async (type: 'CLEARANCE' | 'RESIDENCY', holder?: Awaited<ReturnType<typeof citizenWithCard>>) => {
       const citizen = holder ?? (await citizenWithCard());
       const filed = await within(() =>
-        service.submit(
+        submitTyped(
           {
             citizenId: citizen.id,
             requestType: type,

@@ -7,8 +7,6 @@ import {
   OPEN_REQUEST_STATUSES,
   REQUEST_ATTACHMENTS_MAX,
   REQUEST_STATUSES_TAKING_ATTACHMENTS,
-  REQUEST_TYPE,
-  requestNeedsProperty,
   type CitizenRequestListResult,
   type CitizenRequestView,
   type ListRequestsQuery,
@@ -22,9 +20,7 @@ import {
   type RequestPropertyView,
   type RequestStatus,
   type RequestType,
-  type RequestTypeSettingView,
   type SubmitRequestResult,
-  type UpdateRequestTypeSettingInput,
 } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
 import {
@@ -48,41 +44,15 @@ import { answerViewsOf, fieldOfPaper, formRefOf, missingPapersOf } from '../requ
 import { cancelRequestOfCancelledBill } from './cancelled-bill';
 import { settleRequestOfWrittenOffBill } from './written-off-bill';
 
-/** A request on no form: one of the built-in types, as before the form builder. */
-interface TypedSubmitInput {
-  formId?: undefined;
-  citizenId: string;
-  requestType: RequestType;
-  applicantCapacity: NonNullable<RequestRow['applicantCapacity']>;
-  propertyEntryId?: string;
-  buildingUnitId?: string;
-  purpose?: string;
-  clientRequestId: string;
-}
-
 /** A request on a form the manager defined (migration 0113); its answers are `RequestAnswersService`'s. */
-interface FormSubmitInput extends FormSubmissionInput {
+export interface SubmitInput extends FormSubmissionInput {
   citizenId: string;
   clientRequestId: string;
 }
 
-export type SubmitInput = TypedSubmitInput | FormSubmitInput;
-
-/** What a request is created with, whichever way it was filed. */
-interface SubmitTarget {
-  requestType: RequestType;
-  applicantCapacity: RequestRow['applicantCapacity'];
-  propertyEntryId: string | null;
-  buildingUnitId: string | null;
-  purpose: string | null;
-  fee: number;
-  formId: string | null;
-  formVersionId: string | null;
-}
-
-/** What the manager charges: by type for a request on no form, by form for one on a form (D1; F2: not versioned). */
+/** What each form charges now, read once for a list of requests (D1; F2: not versioned). */
 interface FeeTable {
-  of(row: { requestType: string; formId: string | null }): number | undefined;
+  of(row: { formId: string | null }): number | undefined;
 }
 
 /** Who is acting: a citizen through the portal, or a member of staff. */
@@ -153,7 +123,7 @@ const REQUEST_SELECT = {
     select: {
       id: true,
       versionNumber: true,
-      form: { select: { id: true, nameAr: true, nameEn: true, statementTemplate: true } },
+      form: { select: { id: true, nameAr: true, nameEn: true, statementTemplate: true, requiresNoDues: true } },
       fields: {
         where: { type: 'FILE' as const },
         select: { id: true, key: true, labelAr: true, labelEn: true },
@@ -236,58 +206,13 @@ export class CitizenRequestsService {
     return tenantSchemaRef(this.tenantContext.schemaName);
   }
 
-  // ─────────────────────────────  Request types (D1)  ─────────────────────────────
-
-  /** Every type, offered or not, with its fee — the manager's list, read by staff. */
-  async listTypes(): Promise<RequestTypeSettingView[]> {
-    const rows = await this.db.requestTypeSetting.findMany();
-    const byType = new Map(rows.map((row) => [row.requestType as RequestType, row]));
-    return REQUEST_TYPE.map((type) => {
-      const row = byType.get(type);
-      return {
-        requestType: type,
-        enabled: row?.enabled ?? false,
-        feeAmount: row ? Number(row.feeAmount) : 0,
-        needsProperty: requestNeedsProperty(type),
-        updatedAt: row?.updatedAt.toISOString() ?? null,
-      };
-    });
-  }
-
-  /** The types a citizen or a clerk may file now. */
-  async offeredTypes(): Promise<RequestTypeSettingView[]> {
-    return (await this.listTypes()).filter((type) => type.enabled);
-  }
-
-  async updateType(
-    type: RequestType,
-    input: UpdateRequestTypeSettingInput,
-    actor: { id: string; role: string },
-  ): Promise<RequestTypeSettingView[]> {
-    await runInTenantTransaction(this.tenantContext, async () => {
-      const tx = this.db as Prisma.TransactionClient;
-      const before = await tx.requestTypeSetting.findUnique({ where: { requestType: type } });
-      await tx.requestTypeSetting.upsert({
-        where: { requestType: type },
-        create: { requestType: type, enabled: input.enabled, feeAmount: input.feeAmount, updatedById: actor.id },
-        update: { enabled: input.enabled, feeAmount: input.feeAmount, updatedById: actor.id },
-      });
-      await this.audit.recordInTransaction({
-        actorId: actor.id,
-        actorType: 'STAFF',
-        actorRole: actor.role as never,
-        action: 'REQUEST_TYPE_UPDATED',
-        entityType: 'RequestTypeSetting',
-        entityId: null,
-        before: before ? { requestType: type, enabled: before.enabled, feeAmount: Number(before.feeAmount) } : null,
-        after: { requestType: type, enabled: input.enabled, feeAmount: input.feeAmount },
-      });
-    });
-    return this.listTypes();
-  }
-
   // ─────────────────────────────  Submitting  ─────────────────────────────
 
+  /**
+   * Every request is on a form the manager defined (open decisions §24; F1 as changed on 2026-11-22: there are no built-in
+   * types). The body names the form, the version the screen showed and the answers; what `resolveSubmission` judges is
+   * `RequestAnswersService`'s.
+   */
   async submit(input: SubmitInput, actor: RequestActor): Promise<SubmitRequestResult> {
     try {
       return await runInTenantTransaction(this.tenantContext, () => this.submitInTransaction(input, actor));
@@ -300,18 +225,12 @@ export class CitizenRequestsService {
         // The partial index on open requests: a race the friendly check below lost. The
         // winner is committed by now; its number is what the refusal's message names.
         const open = await this.db.citizenRequest.findFirst({
-          where: {
-            citizenId: input.citizenId,
-            ...(input.formId !== undefined
-              ? { formId: input.formId }
-              : { requestType: input.requestType, formId: null, propertyEntryId: input.propertyEntryId ?? null }),
-            status: { in: [...OPEN_REQUEST_STATUSES] },
-          },
+          where: { citizenId: input.citizenId, formId: input.formId, status: { in: [...OPEN_REQUEST_STATUSES] } },
           select: { requestNumber: true },
         });
         throw new ConflictError({
           code: 'REQUEST_ALREADY_OPEN',
-          message: 'An open request of this type exists.',
+          message: 'An open request on this form exists.',
           params: { number: open?.requestNumber ?? '—' },
         });
       }
@@ -336,15 +255,14 @@ export class CitizenRequestsService {
     }
     await assertNotMergedAway(tx, citizen.id);
 
-    const resolved = input.formId !== undefined ? await this.formAnswers.resolveSubmission(input, citizen.id) : null;
-    const target = resolved ? this.formTarget(resolved) : await this.typedTarget(tx, input as TypedSubmitInput);
-    await this.assertOwnCard(tx, citizen.id, target.propertyEntryId ?? undefined, target.buildingUnitId ?? undefined);
+    const resolved = await this.formAnswers.resolveSubmission(input, citizen.id);
+    await this.assertOwnCard(tx, citizen.id, resolved.propertyEntryId ?? undefined, resolved.buildingUnitId ?? undefined);
 
     const open = await tx.citizenRequest.findFirst({
       where: {
         citizenId: citizen.id,
-        ...(target.formId ? { formId: target.formId } : { requestType: target.requestType, formId: null }),
-        propertyEntryId: target.propertyEntryId,
+        formId: resolved.formId,
+        propertyEntryId: resolved.propertyEntryId,
         status: { in: ['AWAITING_PAYMENT', 'IN_REVIEW', 'READY_FOR_PICKUP'] },
       },
       select: { requestNumber: true },
@@ -352,12 +270,12 @@ export class CitizenRequestsService {
     if (open) {
       throw new ConflictError({
         code: 'REQUEST_ALREADY_OPEN',
-        message: 'An open request of this type exists for this property.',
+        message: 'An open request on this form exists for this property.',
         params: { number: open.requestNumber },
       });
     }
 
-    const fee = target.fee;
+    const fee = resolved.fee;
     const status: RequestStatus = fee > 0 ? 'AWAITING_PAYMENT' : 'IN_REVIEW';
     const requestNumber = await allocateDocumentNumber(tx, this.S, 'REQUEST');
     const channel = actor.kind === 'CITIZEN' ? 'ONLINE' : 'COUNTER';
@@ -366,20 +284,20 @@ export class CitizenRequestsService {
         requestNumber,
         citizenId: citizen.id,
         channel,
-        requestType: target.requestType,
-        applicantCapacity: target.applicantCapacity,
+        requestType: resolved.requestType,
+        applicantCapacity: resolved.applicantCapacity,
         status,
-        propertyEntryId: target.propertyEntryId,
-        buildingUnitId: target.buildingUnitId,
-        purpose: target.purpose,
-        formId: target.formId,
-        formVersionId: target.formVersionId,
+        propertyEntryId: resolved.propertyEntryId,
+        buildingUnitId: resolved.buildingUnitId,
+        purpose: resolved.purpose,
+        formId: resolved.formId,
+        formVersionId: resolved.formVersionId,
         clientRequestId: input.clientRequestId,
         createdById: actor.kind === 'STAFF' ? actor.id : null,
       },
       select: { id: true },
     });
-    if (resolved) await this.formAnswers.writeAnswers(created.id, resolved);
+    await this.formAnswers.writeAnswers(created.id, resolved);
     await this.audit.recordInTransaction({
       ...this.actorEntry(actor),
       action: 'REQUEST_SUBMITTED',
@@ -388,54 +306,17 @@ export class CitizenRequestsService {
       // Ids, numbers and enums only: `purpose` is free text and may name a person, and an answer is never here.
       after: {
         requestNumber,
-        requestType: target.requestType,
+        requestType: resolved.requestType,
         channel,
         citizenId: citizen.id,
-        propertyEntryId: target.propertyEntryId,
+        propertyEntryId: resolved.propertyEntryId,
         fee,
         status,
-        ...(target.formId ? { formId: target.formId, formVersionId: target.formVersionId } : {}),
+        formId: resolved.formId,
+        formVersionId: resolved.formVersionId,
       },
     });
     return { id: created.id, requestNumber, status, fee, replayed: false };
-  }
-
-  private formTarget(resolved: Awaited<ReturnType<RequestAnswersService['resolveSubmission']>>): SubmitTarget {
-    return {
-      requestType: resolved.requestType,
-      applicantCapacity: resolved.applicantCapacity,
-      propertyEntryId: resolved.propertyEntryId,
-      buildingUnitId: resolved.buildingUnitId,
-      purpose: resolved.purpose,
-      fee: resolved.fee,
-      formId: resolved.formId,
-      formVersionId: resolved.formVersionId,
-    };
-  }
-
-  /** A request on a built-in type: switched on by the manager, naming a card where its type needs one (D1, D4). */
-  private async typedTarget(tx: Prisma.TransactionClient, input: TypedSubmitInput): Promise<SubmitTarget> {
-    const setting = await tx.requestTypeSetting.findUnique({ where: { requestType: input.requestType } });
-    if (!setting?.enabled) {
-      throw new ValidationError({
-        code: 'REQUEST_TYPE_NOT_OFFERED',
-        message: 'This request type is not offered.',
-        params: { type: input.requestType },
-      });
-    }
-    if (requestNeedsProperty(input.requestType) && !input.propertyEntryId) {
-      throw new ValidationError({ code: 'REQUEST_PROPERTY_REQUIRED', message: 'This request names a property.' });
-    }
-    return {
-      requestType: input.requestType,
-      applicantCapacity: input.applicantCapacity,
-      propertyEntryId: input.propertyEntryId ?? null,
-      buildingUnitId: input.buildingUnitId ?? null,
-      purpose: input.purpose ?? null,
-      fee: Number(setting.feeAmount),
-      formId: null,
-      formVersionId: null,
-    };
   }
 
   /**
@@ -466,18 +347,7 @@ export class CitizenRequestsService {
     // Every field the paper reads: an edit made after a lost answer (another unit, another
     // capacity, another answer) is another request, refused under this key, never answered as the first.
     const same =
-      input.formId !== undefined || row.formId !== null
-        ? input.formId !== undefined &&
-          row.citizenId === input.citizenId &&
-          row.channel === channel &&
-          (await this.formAnswers.sameSubmission(row, input))
-        : row.citizenId === input.citizenId &&
-          row.requestType === input.requestType &&
-          row.applicantCapacity === input.applicantCapacity &&
-          (row.propertyEntryId ?? null) === (input.propertyEntryId ?? null) &&
-          (row.buildingUnitId ?? null) === (input.buildingUnitId ?? null) &&
-          (row.purpose ?? null) === (input.purpose ?? null) &&
-          row.channel === channel;
+      row.citizenId === input.citizenId && row.channel === channel && (await this.formAnswers.sameSubmission(row, input));
     if (!same) {
       throw new ConflictError({
         code: 'REQUEST_KEY_REUSED',
@@ -515,11 +385,9 @@ export class CitizenRequestsService {
     }
   }
 
-  /** What a request's fee is now: its form's, else its type's (D1: the fee in force when the bill is raised). */
-  private async currentFee(row: { requestType: string; formId: string | null }): Promise<number> {
-    if (row.formId) return this.formAnswers.feeOf(row.formId);
-    const setting = await this.db.requestTypeSetting.findUnique({ where: { requestType: row.requestType as RequestType } });
-    return setting ? Number(setting.feeAmount) : 0;
+  /** What a request's fee is now: its form's (D1: the fee in force when the bill is raised). A row on no form has none. */
+  private async currentFee(row: { formId: string | null }): Promise<number> {
+    return row.formId ? this.formAnswers.feeOf(row.formId) : 0;
   }
 
   // ─────────────────────────────  Reading  ─────────────────────────────
@@ -529,7 +397,7 @@ export class CitizenRequestsService {
     const where: Prisma.CitizenRequestWhereInput = {
       ...(query.status ? { status: query.status } : {}),
       ...(query.channel ? { channel: query.channel } : {}),
-      ...(query.type ? { requestType: query.type } : {}),
+      ...(query.formId ? { formId: query.formId } : {}),
       ...(query.search
         ? {
             OR: [
@@ -617,15 +485,11 @@ export class CitizenRequestsService {
     return this.citizenView(row, await this.feeTable());
   }
 
-  /** The fee each request type and each form charges now, read once for a list of requests. */
+  /** The fee each form charges now, read once for a list of requests. */
   private async feeTable(): Promise<FeeTable> {
-    const [types, forms] = await Promise.all([
-      this.db.requestTypeSetting.findMany({ select: { requestType: true, feeAmount: true } }),
-      this.db.requestForm.findMany({ select: { id: true, feeAmount: true } }),
-    ]);
-    const byType = new Map(types.map((row) => [row.requestType as string, Number(row.feeAmount)]));
+    const forms = await this.db.requestForm.findMany({ select: { id: true, feeAmount: true } });
     const byForm = new Map(forms.map((row) => [row.id, Number(row.feeAmount)]));
-    return { of: (row) => (row.formId ? byForm.get(row.formId) : byType.get(row.requestType)) };
+    return { of: (row) => (row.formId ? byForm.get(row.formId) : undefined) };
   }
 
   // ─────────────────────────────  The fee's bill  ─────────────────────────────
@@ -806,13 +670,12 @@ export class CitizenRequestsService {
              b."paymentStatus"::text AS "paymentStatus"
       FROM ${S}citizen_requests r
       LEFT JOIN ${S}citizen_payments b ON b."id" = r."citizenPaymentId"
-      LEFT JOIN ${S}request_type_settings t ON t."requestType" = r."requestType" AND r."formId" IS NULL
       LEFT JOIN ${S}request_forms f ON f."id" = r."formId"
       WHERE ((r."status" = 'AWAITING_PAYMENT' AND b."paymentStatus" = 'PAID')
           OR (r."status" = 'AWAITING_PAYMENT' AND b."paymentStatus" = 'WRITTEN_OFF')
           OR (r."status" = 'IN_REVIEW' AND b."paymentStatus" NOT IN ('PAID', 'CANCELLED', 'WRITTEN_OFF'))
           OR (r."status" IN ('AWAITING_PAYMENT', 'IN_REVIEW') AND b."paymentStatus" = 'CANCELLED')
-          OR (r."status" = 'AWAITING_PAYMENT' AND r."citizenPaymentId" IS NULL AND COALESCE(f."feeAmount", t."feeAmount") = 0))
+          OR (r."status" = 'AWAITING_PAYMENT' AND r."citizenPaymentId" IS NULL AND f."feeAmount" = 0))
       ${byIds} ${byCitizen}
       ${lock ? Prisma.sql`FOR UPDATE OF r` : Prisma.empty}`;
     const candidates = await this.db.$queryRaw<Array<{ id: string }>>(moved(false));
@@ -895,8 +758,8 @@ export class CitizenRequestsService {
         },
       });
       let clearance: RequestClearanceSnapshot | null = null;
-      // The built-in clearance, and any form that asks for the dues check (F13): refused while the property owes.
-      if (row.requestType === 'CLEARANCE' || row.formVersion?.form.requiresNoDues) {
+      // A form that asks for the dues check (F13): refused while the property owes.
+      if (row.formVersion?.form.requiresNoDues) {
         const propertyNumber = row.propertyEntry?.propertyNumber?.trim();
         if (!propertyNumber) {
           throw new ValidationError({
@@ -1237,6 +1100,7 @@ export class CitizenRequestsService {
       answers: answerViewsOf(row, 'STAFF'),
       missingPapers: missingPapersOf(row),
       statementTemplate: row.formVersion?.form.statementTemplate ?? null,
+      requiresNoDues: row.formVersion?.form.requiresNoDues ?? false,
       createdByName: row.createdBy ? citizenDisplayName(row.createdBy) : null,
       readyByName: row.readyBy ? citizenDisplayName(row.readyBy) : null,
       createdAt: row.createdAt.toISOString(),

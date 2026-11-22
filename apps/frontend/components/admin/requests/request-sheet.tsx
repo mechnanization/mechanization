@@ -15,6 +15,7 @@ import {
 import { ApiRequestError, getParcelDues, logApiError } from '@/lib/api-client';
 import { formatDate, formatDateTime } from '@/lib/dates';
 import { attachmentProblem, REQUEST_ATTACHMENT_ACCEPT, REQUEST_ATTACHMENT_MAX_MB } from '@/lib/request-attachments';
+import { requestTitle } from '@/lib/request-title';
 import { requestStatusBadge } from '@/lib/request-status';
 import {
   getRequest,
@@ -147,7 +148,7 @@ export function RequestSheet({
 
   const title = request ? (
     <span className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-      <span>{labels.requestType[request.requestType]}</span>
+      <span>{requestTitle(request, locale, labels.requestType)}</span>
       <bdi dir="ltr" className="font-mono text-base font-medium">
         {request.requestNumber}
       </bdi>
@@ -345,7 +346,7 @@ export function RequestSheet({
                 </SummaryRow>
               ) : null}
             </SummaryList>
-            {request.requestType === 'CLEARANCE' && request.status === 'IN_REVIEW' && request.property.propertyNumber ? (
+            {request.requiresNoDues && request.status === 'IN_REVIEW' && request.property.propertyNumber ? (
               <ParcelDuesNote
                 tenant={tenant}
                 base={base}

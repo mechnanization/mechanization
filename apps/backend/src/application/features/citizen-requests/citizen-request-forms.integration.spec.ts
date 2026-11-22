@@ -359,11 +359,6 @@ describeIfDb('requests on a form', () => {
       });
       const another = await liveForm([text('reason')], { nameAr: 'نموذج ثان' });
       await expect(file(person, another, { clientRequestId: key })).rejects.toMatchObject({ code: 'REQUEST_KEY_REUSED' });
-      await expect(
-        within(() =>
-          service.submit({ citizenId: person.id, requestType: 'OTHER', applicantCapacity: 'OWNER', clientRequestId: key } as never, person.actor),
-        ),
-      ).rejects.toMatchObject({ code: 'REQUEST_KEY_REUSED' });
     });
 
     it('answers the retry even after the file was completed, since linked answers are a snapshot', async () => {
@@ -375,16 +370,6 @@ describeIfDb('requests on a form', () => {
       expect(await file(person, form, { clientRequestId: key })).toMatchObject({ id: first.id, replayed: true });
     });
 
-    it('refuses a key of a typed request for a body on a form', async () => {
-      const form = await liveForm([text('reason')]);
-      const person = await citizen();
-      const key = randomUUID();
-      await within(() => service.updateType('OTHER', { enabled: true, feeAmount: 0 }, manager));
-      await within(() =>
-        service.submit({ citizenId: person.id, requestType: 'OTHER', applicantCapacity: 'OWNER', clientRequestId: key } as never, person.actor),
-      );
-      await expect(file(person, form, { clientRequestId: key })).rejects.toMatchObject({ code: 'REQUEST_KEY_REUSED' });
-    });
   });
 
   describe('one open request per citizen and form', () => {
@@ -414,15 +399,6 @@ describeIfDb('requests on a form', () => {
       expect(await db.citizenRequest.count({ where: { citizenId: person.id, formId: form.id } })).toBe(1);
     });
 
-    it('does not collide with a request on a built-in type of the same citizen', async () => {
-      const form = await liveForm([text('reason')]);
-      const person = await citizen();
-      await within(() => service.updateType('OTHER', { enabled: true, feeAmount: 0 }, manager));
-      await within(() =>
-        service.submit({ citizenId: person.id, requestType: 'OTHER', applicantCapacity: 'OWNER', clientRequestId: randomUUID() } as never, person.actor),
-      );
-      await expect(file(person, form)).resolves.toMatchObject({ replayed: false });
-    });
   });
 
   describe('at the counter', () => {
@@ -464,7 +440,7 @@ describeIfDb('requests on a form', () => {
       expect(await db.citizenRequestAttachment.count({ where: { requestId: filed.id } })).toBe(2);
     });
 
-    it('refuses a key that is no file question of the request\'s form, or any key on a request on no form', async () => {
+    it('refuses a key that is no file question of the request\'s form', async () => {
       const form = await liveForm([text('reason'), idCopy]);
       const person = await citizen();
       const filed = await file(person, form);
@@ -472,12 +448,6 @@ describeIfDb('requests on a form', () => {
       expect(refused).toMatchObject({ code: 'REQUEST_ANSWERS_INVALID' });
       expect(refused.details.issues).toEqual([{ fieldKey: 'reason', code: 'UNKNOWN_FIELD' }]);
       await expect(upload(person, filed.id, PDF, 'nope')).rejects.toMatchObject({ code: 'REQUEST_ANSWERS_INVALID' });
-
-      await within(() => service.updateType('OTHER', { enabled: true, feeAmount: 0 }, manager));
-      const typed = await within(() =>
-        service.submit({ citizenId: person.id, requestType: 'OTHER', applicantCapacity: 'OWNER', clientRequestId: randomUUID() } as never, person.actor),
-      );
-      await expect(upload(person, typed.id, PDF, 'id_copy')).rejects.toMatchObject({ code: 'REQUEST_ANSWERS_INVALID' });
     });
 
     it('takes an extra paper with no question on a request on a form, as on any request', async () => {
@@ -585,7 +555,7 @@ describeIfDb('requests on a form', () => {
       expect(after.attachments[0]).toMatchObject({ type: 'IDENTITY', fieldKey: 'id_copy', fieldLabelAr: 'سؤال id_copy' });
     });
 
-    it('lists the form on the queue and on the citizen\'s own list, and nothing on a request on no form', async () => {
+    it('lists the form on the queue, filters the queue by it, and lists it on the citizen\'s own list', async () => {
       const form = await liveForm([text('reason')], { nameAr: 'نموذج الطابور' });
       const person = await citizen();
       const filed = await file(person, form);
@@ -594,13 +564,10 @@ describeIfDb('requests on a form', () => {
       const mine = await within(() => service.mine(person.id));
       expect(mine[0]!.form?.nameAr).toBe('نموذج الطابور');
 
-      await within(() => service.updateType('OTHER', { enabled: true, feeAmount: 0 }, manager));
-      const typed = await citizen();
-      await within(() =>
-        service.submit({ citizenId: typed.id, requestType: 'OTHER', applicantCapacity: 'OWNER', clientRequestId: randomUUID() } as never, typed.actor),
-      );
-      const [only] = await within(() => service.mine(typed.id));
-      expect(only).toMatchObject({ form: null, answers: [], missingPapers: [] });
+      const other = await liveForm([text('reason')], { nameAr: 'نموذج آخر للطابور' });
+      await file(await citizen(), other);
+      const only = await within(() => service.queue({ page: 1, pageSize: 200, formId: form.id } as never));
+      expect(only.items.map((item) => item.id)).toEqual([filed.id]);
     });
 
     it('keeps a request\'s answers whole after its form is republished and archived', async () => {

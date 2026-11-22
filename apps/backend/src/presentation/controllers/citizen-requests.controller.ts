@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Put, Query, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Throttle } from '@nestjs/throttler';
 import { createHash } from 'node:crypto';
@@ -10,19 +10,14 @@ import {
   REQUEST_BILL_ROLES,
   REQUEST_HANDLE_ROLES,
   REQUEST_READ_ROLES,
-  REQUEST_SETTINGS_ROLES,
-  counterRequestBodySchema,
-  onlineRequestBodySchema,
-  requestTypeSchema,
-  updateRequestTypeSettingSchema,
+  submitCounterFormRequestSchema,
+  submitOnlineFormRequestSchema,
   uploadRequestPaperSchema,
   type ApproveRequestInput,
-  type CounterRequestBody,
   type ListRequestsQuery,
-  type OnlineRequestBody,
   type RejectRequestInput,
-  type RequestType,
-  type UpdateRequestTypeSettingInput,
+  type SubmitCounterFormRequestInput,
+  type SubmitOnlineFormRequestInput,
   type UploadRequestPaperInput,
 } from '@mechanization/shared-schemas';
 import { ForbiddenError, ValidationError } from '../../application/common/exceptions';
@@ -104,13 +99,6 @@ export class CitizenRequestsController {
     return this.requests.mine(asCitizen(user));
   }
 
-  /** The types a citizen may file now, with their fees. */
-  @Get('mine/types')
-  mineTypes(@CurrentUser() user: SessionClaims) {
-    asCitizen(user);
-    return this.requests.offeredTypes();
-  }
-
   /** The forms a citizen may file now, with their questions and, for a linked one, what their own file holds. */
   @Get('mine/forms')
   mineForms(@CurrentUser() user: SessionClaims) {
@@ -120,7 +108,7 @@ export class CitizenRequestsController {
   @Throttle(CITIZEN_SUBMISSION_THROTTLE)
   @Post('mine')
   submitMine(
-    @Body(new ZodValidationPipe(onlineRequestBodySchema)) body: OnlineRequestBody,
+    @Body(new ZodValidationPipe(submitOnlineFormRequestSchema)) body: SubmitOnlineFormRequestInput,
     @CurrentUser() user: SessionClaims,
   ) {
     const citizenId = asCitizen(user);
@@ -168,24 +156,6 @@ export class CitizenRequestsController {
     return this.requests.queue(query);
   }
 
-  /** Every type, offered or not, with its fee. */
-  @Roles(...REQUEST_READ_ROLES)
-  @Get('types')
-  types() {
-    return this.requests.listTypes();
-  }
-
-  @Roles(...REQUEST_SETTINGS_ROLES)
-  @Put('types/:type')
-  updateType(
-    @Param('type', new ZodValidationPipe(requestTypeSchema)) type: RequestType,
-    @Body(new ZodValidationPipe(updateRequestTypeSettingSchema)) body: UpdateRequestTypeSettingInput,
-    @CurrentUser() user: SessionClaims,
-  ) {
-    return this.requests.updateType(type, body, staff(user));
-  }
-
-  /** A request filed at the counter for a citizen who is present (D8). */
   /** The forms the counter may file now (the questions, not a citizen's values). */
   @Roles(...REQUEST_HANDLE_ROLES)
   @Get('forms')
@@ -203,7 +173,7 @@ export class CitizenRequestsController {
   @Roles(...REQUEST_HANDLE_ROLES)
   @Post()
   submit(
-    @Body(new ZodValidationPipe(counterRequestBodySchema)) body: CounterRequestBody,
+    @Body(new ZodValidationPipe(submitCounterFormRequestSchema)) body: SubmitCounterFormRequestInput,
     @CurrentUser() user: SessionClaims,
   ) {
     return this.requests.submit(body, { kind: 'STAFF', ...staff(user) });

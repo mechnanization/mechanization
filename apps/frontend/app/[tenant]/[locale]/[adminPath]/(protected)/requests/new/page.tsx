@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { FilePlus2 } from 'lucide-react';
 import { getCounterForms } from '@/lib/request-forms-api';
-import { getRequestTypes } from '@/lib/requests-api';
 import { hasRole, REQUEST_HANDLE_ROLES, REQUEST_SETTINGS_ROLES } from '@/lib/staff-roles';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
@@ -24,7 +23,7 @@ import { EmptyState, ErrorState } from '@/components/ui/states';
  * A page, not a dialog (BAN-10): finding the person, their property and the
  * papers they hand over is a sitting's work. Filing is `REQUEST_HANDLE_ROLES`;
  * anyone else who reaches the address is told so, and the server refuses them
- * regardless (CODE-4). The types offered are the manager's list, switched on.
+ * regardless (CODE-4). The forms offered are the manager's, switched on and published.
  */
 export default function NewCounterRequestPage({
   params,
@@ -38,14 +37,6 @@ export default function NewCounterRequestPage({
   const canHandle = user ? hasRole(REQUEST_HANDLE_ROLES, user.role) : false;
   const canSet = user ? hasRole(REQUEST_SETTINGS_ROLES, user.role) : false;
 
-  const types = useStaffQuery({
-    queryKey: ['requests', tenant, 'types'],
-    queryFn: (accessToken, signal) => getRequestTypes(tenant, accessToken, signal),
-    tenant,
-    base,
-    token: canHandle ? token : null,
-    errorMessage: t('typesError'),
-  });
   const forms = useStaffQuery({
     queryKey: ['requests', tenant, 'counter-forms'],
     queryFn: (accessToken, signal) => getCounterForms(tenant, accessToken, signal),
@@ -55,7 +46,6 @@ export default function NewCounterRequestPage({
     errorMessage: t('typesError'),
     fresh: true,
   });
-  const offered = (types.data ?? []).filter((setting) => setting.enabled);
   const offeredForms = forms.data ?? [];
 
   return (
@@ -67,18 +57,17 @@ export default function NewCounterRequestPage({
         <Skeleton className="h-64 w-full" />
       ) : !canHandle ? (
         <Alert variant="warning">{t('notAllowed')}</Alert>
-      ) : types.loading || forms.loading ? (
+      ) : forms.loading ? (
         <Skeleton className="h-64 w-full" />
-      ) : types.error || forms.error ? (
+      ) : forms.error ? (
         <ErrorState
-          title={types.error ?? forms.error ?? t('typesError')}
+          title={forms.error}
           onRetry={() => {
-            void types.refetch();
             void forms.refetch();
           }}
           retryLabel={t('retry')}
         />
-      ) : offered.length === 0 && offeredForms.length === 0 ? (
+      ) : offeredForms.length === 0 ? (
         <EmptyState
           icon={FilePlus2}
           title={t('noTypes')}
@@ -86,7 +75,7 @@ export default function NewCounterRequestPage({
           action={
             canSet ? (
               <Button asChild variant="outline">
-                <Link href={`${base}/requests/types`}>{t('openTypes')}</Link>
+                <Link href={`${base}/requests/forms`}>{t('openTypes')}</Link>
               </Button>
             ) : undefined
           }
@@ -98,7 +87,6 @@ export default function NewCounterRequestPage({
           locale={locale}
           token={token}
           role={user.role}
-          types={offered}
           forms={offeredForms}
         />
       )}

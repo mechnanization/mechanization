@@ -4,18 +4,19 @@ import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import type { ColumnDef } from '@tanstack/react-table';
-import { Eye, FileCheck, FileText, Plus, Tags } from 'lucide-react';
+import { Eye, FileCheck, FileText, Plus } from 'lucide-react';
 import {
   getLabels,
   REQUEST_CHANNEL,
   REQUEST_STATUS,
-  REQUEST_TYPE,
   type RequestChannel,
   type RequestStatus,
-  type RequestType,
 } from '@mechanization/shared-schemas';
 import { formatDate } from '@/lib/dates';
 import { requestStatusTone } from '@/lib/request-status';
+import { requestTitle } from '@/lib/request-title';
+import { getRequestForms } from '@/lib/request-forms-api';
+import { formName } from '@/components/request-forms/form-renderer';
 import { getRequestQueue, type CitizenRequestListItem } from '@/lib/requests-api';
 import { hasRole, REQUEST_HANDLE_ROLES } from '@/lib/staff-roles';
 import { applyUrlPatch, toSearch, type UrlValues } from '@/lib/url-state';
@@ -41,7 +42,8 @@ import { ChipGroup } from '@/components/ui/segmented-control';
 const PAGE_URL = {
   status: param.oneOf(['', ...REQUEST_STATUS] as const, ''),
   channel: param.oneOf(['', ...REQUEST_CHANNEL] as const, ''),
-  type: param.oneOf(['', ...REQUEST_TYPE] as const, ''),
+  /** The form the queue is narrowed to. */
+  form: param.id(),
   /** The request open in the panel — what the counter page's «عرض الطلب» links to. */
   request: param.id(),
 };
@@ -82,7 +84,7 @@ export default function RequestsPage({
   const narrow = (patch: Partial<PageUrl>) => setUrl(patch, { clear: ['page'] });
 
   const query = useStaffQuery({
-    queryKey: ['requests', tenant, 'queue', url.status, url.channel, url.type, search, pagination.pageIndex, pagination.pageSize],
+    queryKey: ['requests', tenant, 'queue', url.status, url.channel, url.form, search, pagination.pageIndex, pagination.pageSize],
     queryFn: (accessToken, signal) =>
       getRequestQueue(
         tenant,
@@ -90,7 +92,7 @@ export default function RequestsPage({
         {
           status: url.status || undefined,
           channel: url.channel || undefined,
-          type: url.type || undefined,
+          formId: url.form || undefined,
           search: search || undefined,
           // The server counts pages from 1; the URL's page is 1-based and the state 0-based.
           page: pagination.pageIndex + 1,
@@ -102,6 +104,15 @@ export default function RequestsPage({
     base,
     token,
     keepPrevious: true,
+    errorMessage: t('loadError'),
+  });
+  const formList = useStaffQuery({
+    queryKey: ['request-forms', tenant, 'list'],
+    queryFn: (accessToken, signal) => getRequestForms(tenant, accessToken, signal),
+    tenant,
+    base,
+    token,
+    reference: true,
     errorMessage: t('loadError'),
   });
   const items = query.data?.items ?? [];
@@ -151,8 +162,8 @@ export default function RequestsPage({
   const tableLabels = useTableLabels({
     loadError: t('loadError'),
     searchPlaceholder: t('searchPlaceholder'),
-    empty: url.status || url.channel || url.type || search ? t('emptyFiltered') : t('empty'),
-    emptyHint: url.status || url.channel || url.type || search ? t('emptyFilteredHint') : t('emptyHint'),
+    empty: url.status || url.channel || url.form || search ? t('emptyFiltered') : t('empty'),
+    emptyHint: url.status || url.channel || url.form || search ? t('emptyFilteredHint') : t('emptyHint'),
   });
 
   const columns = useMemo<ColumnDef<CitizenRequestListItem>[]>(
@@ -166,7 +177,7 @@ export default function RequestsPage({
             <bdi dir="ltr" className="block font-mono text-xs font-medium">
               {row.original.requestNumber}
             </bdi>
-            <span className="block truncate text-sm font-medium">{labels.requestType[row.original.requestType]}</span>
+            <span className="block truncate text-sm font-medium">{requestTitle(row.original, locale, labels.requestType)}</span>
           </div>
         ),
       },
@@ -253,7 +264,7 @@ export default function RequestsPage({
     [t, labels, locale, openRequest],
   );
 
-  const activeFilters = [url.channel, url.type].filter(Boolean).length;
+  const activeFilters = [url.channel, url.form].filter(Boolean).length;
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
@@ -266,12 +277,6 @@ export default function RequestsPage({
               <Link href={`${base}/requests/forms`}>
                 <FileText className="size-4" aria-hidden />
                 {t('forms')}
-              </Link>
-            </Button>
-            <Button asChild variant="outline">
-              <Link href={`${base}/requests/types`}>
-                <Tags className="size-4" aria-hidden />
-                {t('types')}
               </Link>
             </Button>
             {canHandle ? (
@@ -329,15 +334,15 @@ export default function RequestsPage({
               setPagination((current) => (current.pageIndex === 0 ? current : { ...current, pageIndex: 0 }));
             }}
             activeFiltersCount={activeFilters}
-            onClearFilters={() => narrow({ channel: '', type: '' })}
+            onClearFilters={() => narrow({ channel: '', form: '' })}
             filterBar={
               <div className="flex flex-wrap items-center gap-2">
                 <FilterSelect
-                  label={t('filters.type')}
-                  value={url.type}
-                  onChange={(value) => narrow({ type: value as RequestType | '' })}
-                  allLabel={t('filters.allTypes')}
-                  options={REQUEST_TYPE.map((value) => ({ value, label: labels.requestType[value] }))}
+                  label={t('filters.form')}
+                  value={url.form}
+                  onChange={(value) => narrow({ form: value })}
+                  allLabel={t('filters.allForms')}
+                  options={(formList.data ?? []).map((form) => ({ value: form.id, label: formName(form, locale) }))}
                 />
                 <FilterSelect
                   label={t('filters.channel')}

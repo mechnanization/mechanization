@@ -18,8 +18,6 @@ import {
   REQUEST_ATTACHMENT_MAX_BYTES,
   REQUEST_ATTACHMENT_MIME_TYPES,
   requestFeeAmountSchema,
-  submitCounterRequestSchema,
-  submitOnlineRequestSchema,
 } from './citizen-request.schema';
 import { isCalendarDay } from './primitives';
 
@@ -396,8 +394,8 @@ function formRequestShape(value: { propertyEntryId?: string; buildingUnitId?: st
 }
 
 /**
- * `.strict()`: a body that names a `formId` and also a `requestType` is two requests in one, and is refused. The shape of a
- * request on no form is `submitOnlineRequestSchema`, untouched.
+ * `.strict()`: a body that names a `requestType` beside the `formId` is refused. Every request is on a form (open decisions §24 F1,
+ * as changed on 2026-11-22: there are no built-in types).
  */
 export const submitOnlineFormRequestSchema = z.object(formRequestFields).strict().superRefine(formRequestShape);
 export type SubmitOnlineFormRequestInput = z.infer<typeof submitOnlineFormRequestSchema>;
@@ -407,32 +405,6 @@ export const submitCounterFormRequestSchema = z
   .strict()
   .superRefine(formRequestShape);
 export type SubmitCounterFormRequestInput = z.infer<typeof submitCounterFormRequestSchema>;
-
-/** Picks the schema a body is for: one that names a `formId` is a request on a form, any other the request of 0092. */
-function eitherRequestBody<A extends z.ZodType, B extends z.ZodType>(legacy: A, form: B) {
-  return z.unknown().transform((value, ctx): z.infer<A> | z.infer<B> => {
-    const chosen = typeof value === 'object' && value !== null && 'formId' in value ? form : legacy;
-    const result = chosen.safeParse(value);
-    if (result.success) return result.data;
-    for (const issue of result.error.issues) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: issue.message, path: [...issue.path] });
-    }
-    return z.NEVER;
-  });
-}
-
-/** `POST requests/mine`: a request on no form, or on a form. */
-export const onlineRequestBodySchema = eitherRequestBody(submitOnlineRequestSchema, submitOnlineFormRequestSchema);
-export type OnlineRequestBody = z.infer<typeof onlineRequestBodySchema>;
-
-/** `POST requests`: the counter's, the same two shapes with the citizen named. */
-export const counterRequestBodySchema = eitherRequestBody(submitCounterRequestSchema, submitCounterFormRequestSchema);
-export type CounterRequestBody = z.infer<typeof counterRequestBodySchema>;
-
-/** A body that is a request on a form. */
-export function isFormRequestBody<T extends object>(body: T): body is Extract<T, { formId: string }> {
-  return 'formId' in body && typeof (body as { formId?: unknown }).formId === 'string';
-}
 
 /**
  * The text fields sent beside a paper (`multipart/form-data`): the kind of paper (a request on no form), or the file question

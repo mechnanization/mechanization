@@ -9,14 +9,11 @@ import {
   getLabels,
   REQUEST_ATTACHMENT_TYPE,
   REQUEST_ATTACHMENTS_MAX,
-  requestNeedsProperty,
   submitOnlineFormRequestSchema,
-  submitOnlineRequestSchema,
   type ApplicantCapacity,
   type OfferedRequestForm,
   type RequestAnswerIssueCode,
   type RequestAttachmentType,
-  type RequestType,
 } from '@mechanization/shared-schemas';
 import { ApiRequestError, getMySummary, logApiError, type CitizenProfileProperty } from '@/lib/api-client';
 import { compressPaper } from '@/lib/image-compression';
@@ -49,10 +46,8 @@ import {
   type KeyScope,
 } from '@/lib/request-id';
 import {
-  getOfferedRequestTypes,
   submitMyRequest,
   uploadMyRequestAttachment,
-  type RequestTypeSettingView,
 } from '@/lib/requests-api';
 import { param } from '@/lib/url-state';
 import { useCitizenSession } from '@/lib/use-citizen-session';
@@ -89,8 +84,8 @@ const CAPACITY_FROM_OCCUPANCY: Partial<Record<string, ApplicantCapacity>> = {
   FREE_OCCUPANT: 'FREE_OCCUPANT',
 };
 
-/** What the first step chooses: one of the built-in types, or a form the manager defined. */
-type Choice = { kind: 'type'; type: RequestType } | { kind: 'form'; id: string } | null;
+/** What the first step chooses: a form the manager defined (open decisions §24 F1: there are no built-in types). */
+type Choice = { kind: 'form'; id: string } | null;
 
 /**
  * «طلب جديد» — a citizen asks the municipality for a paper online (open
@@ -131,7 +126,6 @@ export default function NewMyRequestPage({
   const scope: KeyScope = `request:mine:${citizenId ?? ''}`;
   const [{ step: urlStep }] = useUrlState(URL_STATE);
 
-  const [types, setTypes] = useState<RequestTypeSettingView[] | null>(null);
   const [forms, setForms] = useState<OfferedRequestForm[] | null>(null);
   const [properties, setProperties] = useState<CitizenProfileProperty[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -156,13 +150,11 @@ export default function NewMyRequestPage({
     async (signal?: AbortSignal) => {
       if (!token) return;
       try {
-        const [offered, offeredForms, summary] = await Promise.all([
-          getOfferedRequestTypes(tenant, token, signal),
+        const [offeredForms, summary] = await Promise.all([
           getMyOfferedForms(tenant, token, signal),
           getMySummary(tenant, token),
         ]);
         if (signal?.aborted) return;
-        setTypes(offered.filter((setting) => setting.enabled));
         setForms(offeredForms);
         // A card whose tenancy ended is history: nothing to certify on it.
         setProperties(summary.properties.filter((card) => !card.endedAt));
@@ -184,16 +176,14 @@ export default function NewMyRequestPage({
   }, [load]);
 
   const chosenForm = choice?.kind === 'form' ? (forms?.find((form) => form.id === choice.id) ?? null) : null;
-  const requestType = choice?.kind === 'type' ? choice.type : '';
-  const chosenType = types?.find((setting) => setting.requestType === requestType);
   const steps = useMemo(() => stepsFor(chosenForm), [chosenForm]);
 
   // What the chosen thing asks of the person.
-  const needsProperty = chosenForm ? chosenForm.propertyMode === 'REQUIRED' : requestType ? requestNeedsProperty(requestType) : false;
+  const needsProperty = chosenForm ? chosenForm.propertyMode === 'REQUIRED' : false;
   const asksProperty = chosenForm ? chosenForm.propertyMode !== 'NONE' : true;
   const asksCapacity = chosenForm ? chosenForm.askCapacity : true;
   const asksPurpose = chosenForm ? chosenForm.askPurpose : true;
-  const fee = chosenForm ? chosenForm.feeAmount : (chosenType?.feeAmount ?? 0);
+  const fee = chosenForm ? chosenForm.feeAmount : 0;
 
   const property = properties?.find((card) => card.id === propertyEntryId);
   const units = (property?.units ?? []).filter((unit) => !unit.endedAt);
@@ -325,8 +315,11 @@ export default function NewMyRequestPage({
   const send = async () => {
     if (inFlight.current || !token || !citizenId) return;
     setSendError(null);
-    const parsed = chosenForm
-      ? submitOnlineFormRequestSchema.safeParse({
+    if (!chosenForm) {
+      goTo('type');
+      return;
+    }
+    const parsed = submitOnlineFormRequestSchema.safeParse({
           formId: chosenForm.id,
           formVersionId: chosenForm.versionId,
           answers: answersToSend(chosenForm, answers),
@@ -334,14 +327,6 @@ export default function NewMyRequestPage({
           propertyEntryId: asksProperty ? propertyEntryId || undefined : undefined,
           buildingUnitId: asksProperty ? buildingUnitId || undefined : undefined,
           purpose: asksPurpose ? purpose : undefined,
-          clientRequestId: heldKey(tenant, scope),
-        })
-      : submitOnlineRequestSchema.safeParse({
-          requestType: requestType || undefined,
-          applicantCapacity: capacity || undefined,
-          propertyEntryId: propertyEntryId || undefined,
-          buildingUnitId: buildingUnitId || undefined,
-          purpose,
           clientRequestId: heldKey(tenant, scope),
         });
     if (!parsed.success) {
@@ -400,7 +385,7 @@ export default function NewMyRequestPage({
 
   const busy = sending !== null;
   const retrying = heldInDoubt(tenant, scope);
-  const nothingOffered = types !== null && forms !== null && types.length === 0 && forms.length === 0;
+  const nothingOffered = forms !== null && forms.length === 0;
   const shownIssues: Record<string, RequestAnswerIssueCode | undefined> = showIssues ? { ...issues, ...refusedIssues } : refusedIssues;
 
   return (
@@ -442,7 +427,7 @@ export default function NewMyRequestPage({
                 {t('retry')}
               </Button>
             </div>
-          ) : !types || !forms || !properties ? (
+          ) : !forms || !properties ? (
             <div className="space-y-2" aria-busy="true">
               <Skeleton className="h-14 w-full" />
               <Skeleton className="h-14 w-full" />
@@ -453,20 +438,6 @@ export default function NewMyRequestPage({
           ) : step === 'type' ? (
             <div className="space-y-3">
               <div role="radiogroup" aria-label={t('steps.type')} className="grid gap-2 sm:grid-cols-2">
-                {types.map((setting) => (
-                  <ChoiceCard
-                    key={setting.requestType}
-                    name="request-type"
-                    value={`type:${setting.requestType}`}
-                    checked={choice?.kind === 'type' && choice.type === setting.requestType}
-                    onChange={() => choose({ kind: 'type', type: setting.requestType })}
-                    title={labels.requestType[setting.requestType]}
-                    description={
-                      setting.feeAmount > 0 ? <Money amount={setting.feeAmount} locale={locale} exact /> : t('free')
-                    }
-                    className="min-h-touch"
-                  />
-                ))}
                 {forms.map((form) => (
                   <ChoiceCard
                     key={form.id}
@@ -724,7 +695,7 @@ export default function NewMyRequestPage({
             <div className="space-y-4">
               <SummaryList>
                 <SummaryRow label={t('summary.type')}>
-                  {chosenForm ? formName(chosenForm, locale) : requestType ? labels.requestType[requestType] : '—'}
+                  {chosenForm ? formName(chosenForm, locale) : '—'}
                 </SummaryRow>
                 {asksProperty ? (
                   <SummaryRow label={t('summary.property')}>
@@ -769,7 +740,7 @@ export default function NewMyRequestPage({
         </CardContent>
       </Card>
 
-      {types && forms && !nothingOffered && properties ? (
+      {forms && !nothingOffered && properties ? (
         <div className="flex flex-wrap items-center justify-between gap-3">
           {step === 'type' ? (
             <Button type="button" variant="outline" onClick={() => router.push(`${base}/my-file`)} disabled={busy}>

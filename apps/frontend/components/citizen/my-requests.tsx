@@ -9,6 +9,7 @@ import { logApiError } from '@/lib/api-client';
 import { formatDate } from '@/lib/dates';
 import { onlineCopy } from '@/lib/online-payment';
 import { requestStatusBadge } from '@/lib/request-status';
+import { requestTitle } from '@/lib/request-title';
 import { getMyRequests, type MyCitizenRequestView } from '@/lib/requests-api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -125,7 +126,7 @@ export function MyRequests({
                   >
                     <span className="min-w-0 flex-1 space-y-1">
                       <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                        <span className="font-medium">{labels.requestType[request.requestType]}</span>
+                        <span className="font-medium">{requestTitle(request, locale, labels.requestType)}</span>
                         <Badge variant={requestStatusBadge(request.status)}>{labels.requestStatus[request.status]}</Badge>
                       </span>
                       <span className="block text-xs text-muted-foreground">

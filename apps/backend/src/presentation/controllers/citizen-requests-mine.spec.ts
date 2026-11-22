@@ -19,7 +19,6 @@ describe('CitizenRequestsController — the citizen\'s own routes', () => {
   const build = () => {
     const service = {
       mine: jest.fn().mockResolvedValue([]),
-      offeredTypes: jest.fn().mockResolvedValue([]),
       submit: jest.fn().mockResolvedValue({}),
       mineOne: jest.fn().mockResolvedValue({}),
       addAttachment: jest.fn().mockResolvedValue({}),
@@ -34,7 +33,6 @@ describe('CitizenRequestsController — the citizen\'s own routes', () => {
     const { service, forms, controller } = build();
     const calls: Array<() => unknown> = [
       () => controller.mine(staffToken),
-      () => controller.mineTypes(staffToken),
       () => controller.mineForms(staffToken),
       () => controller.submitMine({} as never, staffToken),
       () => controller.mineOne(REQUEST_ID, staffToken),
@@ -58,7 +56,7 @@ describe('CitizenRequestsController — the citizen\'s own routes', () => {
     expect(forms.offeredForms).toHaveBeenCalledWith(ME);
 
     // A body that names another citizen is overridden by the token.
-    await controller.submitMine({ citizenId: SOMEONE_ELSE, requestType: 'RESIDENCY' } as never, citizen);
+    await controller.submitMine({ citizenId: SOMEONE_ELSE, formId: 'a-form' } as never, citizen);
     expect(service.submit).toHaveBeenCalledWith(expect.objectContaining({ citizenId: ME }), { kind: 'CITIZEN', id: ME });
 
     await controller.mineOne(REQUEST_ID, citizen);

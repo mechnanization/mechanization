@@ -11,14 +11,11 @@ import {
   getLabels,
   REQUEST_ATTACHMENT_TYPE,
   REQUEST_ATTACHMENTS_MAX,
-  requestNeedsProperty,
   submitCounterFormRequestSchema,
-  submitCounterRequestSchema,
   type ApplicantCapacity,
   type OfferedRequestForm,
   type RequestAnswerIssueCode,
   type RequestAttachmentType,
-  type RequestType,
 } from '@mechanization/shared-schemas';
 import { getCitizenProfile, logApiError, type CitizenProfileProperty } from '@/lib/api-client';
 import { attachmentProblem, REQUEST_ATTACHMENT_ACCEPT, REQUEST_ATTACHMENT_MAX_MB } from '@/lib/request-attachments';
@@ -49,7 +46,6 @@ import {
   raiseRequestBill,
   submitCounterRequest,
   uploadRequestAttachment,
-  type RequestTypeSettingView,
   type SubmitRequestResult,
 } from '@/lib/requests-api';
 import { hasRole, PAYMENT_SETTLE_ROLES, REQUEST_BILL_ROLES } from '@/lib/staff-roles';
@@ -139,7 +135,6 @@ export function CounterRequestForm({
   locale,
   token,
   role,
-  types,
   forms,
 }: {
   tenant: string;
@@ -147,8 +142,6 @@ export function CounterRequestForm({
   locale: string;
   token: string | null;
   role: string | undefined;
-  /** The types the municipality offers now, with their fees. */
-  types: RequestTypeSettingView[];
   /** The forms the manager defined that are switched on and published (open decisions §24). */
   forms: OfferedRequestForm[];
 }): React.JSX.Element {
@@ -160,7 +153,6 @@ export function CounterRequestForm({
   const canSettle = hasRole(PAYMENT_SETTLE_ROLES, role);
 
   const [citizen, setCitizen] = useState<PickedCitizen | null>(null);
-  const [requestType, setRequestType] = useState<RequestType | ''>('');
   const [formId, setFormId] = useState('');
   const [answers, setAnswers] = useState<Record<string, AnswerInput | undefined>>({});
   const [refused, setRefused] = useState<Record<string, RequestAnswerIssueCode>>({});
@@ -195,7 +187,6 @@ export function CounterRequestForm({
   );
   const property = properties.find((card) => card.id === propertyEntryId);
   const units = (property?.units ?? []).filter((unit) => !unit.endedAt);
-  const chosenType = types.find((setting) => setting.requestType === requestType);
   const baseForm = forms.find((form) => form.id === formId) ?? null;
 
   /** What the chosen citizen's file holds for the form's copied questions (F4): read once both are chosen. */
@@ -219,11 +210,11 @@ export function CounterRequestForm({
     };
   }, [baseForm, prefill.data]);
 
-  const needsProperty = chosenForm ? chosenForm.propertyMode === 'REQUIRED' : requestType ? requestNeedsProperty(requestType) : false;
+  const needsProperty = chosenForm ? chosenForm.propertyMode === 'REQUIRED' : false;
   const asksProperty = chosenForm ? chosenForm.propertyMode !== 'NONE' : true;
   const asksCapacity = chosenForm ? chosenForm.askCapacity : true;
   const asksPurpose = chosenForm ? chosenForm.askPurpose : true;
-  const fee = chosenForm ? chosenForm.feeAmount : (chosenType?.feeAmount ?? null);
+  const fee = chosenForm ? chosenForm.feeAmount : null;
   const blocked = chosenForm && prefill.data ? blockedFields(chosenForm) : [];
   const issues = chosenForm ? answerIssues(chosenForm, answers) : {};
   const shownIssues: Record<string, RequestAnswerIssueCode | undefined> = showIssues ? { ...issues, ...refused } : refused;
@@ -241,8 +232,7 @@ export function CounterRequestForm({
   };
 
   /** Another choice is another request: what was answered for the last does not follow. */
-  const chooseType = (next: RequestType | '', nextForm: string) => {
-    setRequestType(next);
+  const chooseType = (nextForm: string) => {
     setFormId(nextForm);
     setAnswers({});
     setRefused({});
@@ -312,15 +302,7 @@ export function CounterRequestForm({
           purpose: asksPurpose ? purpose : undefined,
           clientRequestId: heldKey(tenant, COUNTER_SCOPE),
         })
-      : submitCounterRequestSchema.safeParse({
-          citizenId: citizen?.id,
-          requestType: requestType || undefined,
-          applicantCapacity: capacity || undefined,
-          propertyEntryId: propertyEntryId || undefined,
-          buildingUnitId: buildingUnitId || undefined,
-          purpose,
-          clientRequestId: heldKey(tenant, COUNTER_SCOPE),
-        });
+      : submitCounterFormRequestSchema.safeParse({ citizenId: citizen?.id, clientRequestId: heldKey(tenant, COUNTER_SCOPE) });
     const invalid: Record<string, string> = {};
     if (!parsed.success) {
       for (const issue of parsed.error.issues) {
@@ -330,7 +312,7 @@ export function CounterRequestForm({
       }
     }
     if (chosenForm && asksCapacity && !capacity) invalid.applicantCapacity ??= t('required.applicantCapacity');
-    if (!chosenForm && !requestType) invalid.requestType ??= t('required.requestType');
+    if (!chosenForm) invalid.requestType ??= t('required.requestType');
     if (chosenForm && Object.keys(issues).length > 0) setShowIssues(true);
     if (Object.keys(invalid).length > 0 || (chosenForm && Object.keys(issues).length > 0) || !parsed.success) {
       setErrors(invalid);
@@ -401,7 +383,6 @@ export function CounterRequestForm({
     inFlight.current = false;
     setFiled(null);
     setCitizen(null);
-    setRequestType('');
     setFormId('');
     setAnswers({});
     setRefused({});
@@ -449,28 +430,13 @@ export function CounterRequestForm({
 
         <FormSection title={t('type')}>
           <div role="radiogroup" aria-label={t('type')} className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-            {types.map((setting, index) => (
-              <ChoiceCard
-                key={setting.requestType}
-                id={index === 0 ? FIELD_ID.requestType : undefined}
-                name="counter-type"
-                value={setting.requestType}
-                checked={requestType === setting.requestType}
-                onChange={(value) => chooseType(value as RequestType, '')}
-                title={labels.requestType[setting.requestType]}
-                description={
-                  setting.feeAmount > 0 ? <Money amount={setting.feeAmount} locale={locale} exact /> : t('free')
-                }
-                className="min-h-touch"
-              />
-            ))}
             {forms.map((form) => (
               <ChoiceCard
                 key={form.id}
                 name="counter-type"
                 value={form.id}
                 checked={formId === form.id}
-                onChange={() => chooseType('', form.id)}
+                onChange={() => chooseType(form.id)}
                 title={formName(form, locale)}
                 description={form.feeAmount > 0 ? <Money amount={form.feeAmount} locale={locale} exact /> : t('free')}
                 className="min-h-touch"
@@ -754,7 +720,7 @@ export function CounterRequestForm({
             <SummaryList>
               <SummaryRow label={t('summaryCitizen')}>{citizen?.fullName ?? '—'}</SummaryRow>
               <SummaryRow label={t('summaryType')}>
-                {chosenForm ? formName(chosenForm, locale) : requestType ? labels.requestType[requestType] : '—'}
+                {chosenForm ? formName(chosenForm, locale) : '—'}
               </SummaryRow>
               <SummaryRow label={t('summaryProperty')}>
                 {property?.propertyNumber ? (
