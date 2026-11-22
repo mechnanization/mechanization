@@ -153,11 +153,11 @@ describeIfDb('migration 0109: unit types', () => {
     expect(await insert('شقة')).toBe('23505');
     expect(await insert(' مدرسة')).toBe('23514');
     expect(await insert('')).toBe('23514');
-    expect(await insert('مدرسة', 'OFFICE', '  ')).toBe('23514');
-    expect(await insert('مدرسة', 'PILOTIS')).toBe('23514');
-    expect(await insert('مدرسة', 'EMPTY_FLOOR')).toBe('23514');
+    expect(await insert('جمعية', 'OFFICE', '  ')).toBe('23514');
+    expect(await insert('جمعية', 'PILOTIS')).toBe('23514');
+    expect(await insert('جمعية', 'EMPTY_FLOOR')).toBe('23514');
     expect(await insert('مكتب ثان', 'OFFICE', null, true)).toBe('23505');
-    expect(await insert('مدرسة')).toBeNull();
+    expect(await insert('جمعية')).toBeNull();
 
     const used = await unitOf('GARAGE');
     await replay();
