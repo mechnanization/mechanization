@@ -1,9 +1,11 @@
 import type {
   ArrearsBatchReview,
+  ArrearsBatchSheet,
   ArrearsBatchView,
   ArrearsCutoffInput,
   ArrearsExportResult,
   ArrearsImportResult,
+  ArrearsReport,
   ArrearsSettingsView,
   ArrearsSingleLineInput,
   ArrearsUnmatchedLine,
@@ -121,4 +123,16 @@ export function addArrearsSingleLine(tenant: string, token: string, input: Arrea
     method: 'POST',
     body: JSON.stringify(input),
   });
+}
+/**
+ * «تقرير المتأخرات» (task 11): by year and fee type, against the old books, with the old debts' collections apart.
+ * `ARREARS_REPORT_ROLES`, the finance reports' readers; sums only, no citizen.
+ */
+export function getArrearsReport(tenant: string, token: string, signal?: AbortSignal) {
+  return apiFetch<ArrearsReport>(tenant, '/arrears/report', { token, signal });
+}
+
+/** The page the head of the municipality signs for an approved batch (task 11). */
+export function getArrearsBatchSheet(tenant: string, token: string, batchId: string, signal?: AbortSignal) {
+  return apiFetch<ArrearsBatchSheet>(tenant, `${batch(batchId)}/sheet`, { token, signal });
 }

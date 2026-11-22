@@ -9,6 +9,7 @@ import {
 } from './enums';
 import { ADJUSTMENT_REASON_MIN } from './cash-policy';
 import { hasAtMostTwoDecimals } from './money-amount';
+import { sameMoney } from './treasury-closing.schema';
 import { businessDay, isCalendarDay, normalizeDigits, uuid } from './primitives';
 import { typeError } from './type-error';
 
@@ -513,6 +514,135 @@ export interface ArrearsSettingsView {
   arrearsCutoffYear: number | null;
   /** Read only until open-decisions §23.4 is decided: nothing writes them yet. */
   controlTotals: ArrearsControlTotalInput[];
+}
+
+// ─────────────────────────  the report and the sheet  ─────────────────────────
+
+/**
+ * «تقرير المتأخرات» (task 11, docs/old-debts-plan.md §8): what the approved
+ * batches imported, and where each pound of it stands now. Money is LBP, as
+ * every old debt is (decision 13). No row names a person.
+ */
+
+/**
+ * One year × fee type of the approved batches' kept lines, a penalty with its
+ * fee. For the lines that have a bill, `billed` is always
+ * `collected + cancelled + writtenOff + owed` (`arrearsReportBalances`): every
+ * pound of a bill is in exactly one of the four.
+ */
+export interface ArrearsReportRow {
+  year: number;
+  feeType: ArrearsFeeType;
+  /** Bills raised: the kept lines that have a citizen. */
+  billedCount: number;
+  billed: number;
+  /** Paid on those bills, net of reversed receipts (a bill's `paidAmount`). */
+  collected: number;
+  /** The face value of the bills cancelled with «إلغاء الفاتورة» (a mistake). */
+  cancelled: number;
+  /** What «شطب» forgave (forgiveness, prescription, an amnesty), apart from a cancellation. */
+  writtenOff: number;
+  /** Still to collect: what a bill not cancelled or written off has left. */
+  owed: number;
+  /** Kept lines with no citizen yet, waiting in «للمطابقة»: no bill, so not in the five figures above. */
+  waitingCount: number;
+  waiting: number;
+}
+
+/** One year against the old books: everything the approved batches read, and what the books say there is. */
+export interface ArrearsReportYear {
+  year: number;
+  /** Every line of the approved batches, kept, dropped and unmatched alike: what the pages held that was copied. */
+  imported: number;
+  /** Dropped by decision 14, «مرور الزمن». Counted apart. */
+  prescribed: number;
+  /** Dropped by the accountant for another reason (war damage, a duplicate of the books). */
+  dropped: number;
+  /** The old books' arrears total for the year, from the last «قطع الحساب»; null while none is entered (§23.4). */
+  controlTotal: number | null;
+  /** `controlTotal − imported`, floored at zero; null with no control total. */
+  remainingToImport: number | null;
+}
+
+/** Citizens checked against the old books over all citizens. */
+export interface ArrearsReportCoverage {
+  /** In the citizen set of an approved batch: checked, whether or not anything was owed. */
+  checked: number;
+  /** Every file but one merged into another. Archived files count: an approved batch may reach them (decision 12). */
+  total: number;
+}
+
+/**
+ * Money taken in one calendar year (Beirut), net of reversals, on bills of old
+ * debts and on every other bill, apart: the annual «قطع الحساب» needs them apart.
+ * `currency` is the bill's, since a bill the system raised may be in another.
+ */
+export interface ArrearsReportCollection {
+  year: number;
+  currency: string;
+  arrears: number;
+  other: number;
+}
+
+/**
+ * An approved batch, for the report to list: the way to its sheet. The report is read by
+ * roles that cannot list batches (the auditor, «مشاهد فقط»), so it carries them.
+ */
+export interface ArrearsReportBatch {
+  id: string;
+  /** The sheet's code (`ArrearsBatchSheet.code`). */
+  code: string;
+  approvedAt: string | null;
+  approvedBy: string | null;
+  preparedBy: string;
+  lineCount: number;
+  citizenCount: number;
+}
+
+/** `GET arrears/report`. */
+export interface ArrearsReport {
+  /** The year before which a debt is old; null until set. */
+  cutoffYear: number | null;
+  rows: ArrearsReportRow[];
+  years: ArrearsReportYear[];
+  coverage: ArrearsReportCoverage;
+  collections: ArrearsReportCollection[];
+  /** The approved batches, newest first. */
+  batches: ArrearsReportBatch[];
+  /** The rows summed. */
+  totals: Omit<ArrearsReportRow, 'year' | 'feeType'>;
+}
+
+/** A line an approved batch dropped, with why: for the batch sheet. Never a name. */
+export interface ArrearsSheetDroppedLine {
+  year: number;
+  feeType: ArrearsFeeType;
+  component: ArrearsComponent;
+  propertyNumber: string;
+  unitCode: string | null;
+  amount: number;
+  reason: string;
+  /** Dropped by prescription, which the sheet counts apart. */
+  prescribed: boolean;
+}
+
+/**
+ * `GET arrears/batches/:batchId/sheet`: the page the head of the municipality
+ * signs for an approved batch. The batch has no number of its own (no column
+ * holds one), so the sheet is named by `code`, the first eight characters of its id.
+ */
+export interface ArrearsBatchSheet {
+  code: string;
+  batch: ArrearsBatchView;
+  submittedBy: { id: string; name: string } | null;
+  totals: ArrearsImportTotals;
+  byYearAndFee: ArrearsBatchTotalRow[];
+  dropped: ArrearsSheetDroppedLine[];
+}
+
+/** The report's identity, as a total: every pound of a bill is in one of four places. Cent-exact. */
+export function arrearsReportBalances(row: Pick<ArrearsReportRow, 'billed' | 'collected' | 'cancelled' | 'writtenOff' | 'owed'>): boolean {
+  return sameMoney(row.billed, row.collected + row.cancelled + row.writtenOff + row.owed);
 }
 
 // ──────────────────────────  reading a row  ──────────────────────────

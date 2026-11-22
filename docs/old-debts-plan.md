@@ -1,6 +1,6 @@
 # Old debts — «متأخرات سنوات سابقة» (code: `arrears`)
 
-Last verified against the code: `feat/arrears-bills-everywhere` (on `develop@90cebdc`), 2026-11-21; task 10, an old-debt bill read as one on every screen that shows a bill (§7); `feat/arrears-approval` (on `develop@c6e7462`), 2026-11-21; the cutoff year fixed once a batch is approved (`ARREARS_CUTOFF_LOCKED`, task 6), 2026-11-21.
+Last verified against the code: `feat/arrears-bills-everywhere` (on `develop@90cebdc`), 2026-11-21; task 10, an old-debt bill read as one on every screen that shows a bill (§7); `feat/arrears-report` (on `develop@90cebdc`), 2026-11-21; task 11, «تقرير المتأخرات» and the batch sheet (§8); `feat/arrears-approval` (on `develop@c6e7462`), 2026-11-21; the cutoff year fixed once a batch is approved (`ARREARS_CUTOFF_LOCKED`, task 6), 2026-11-21.
 
 > **Status, 2026-11-21:** tasks 1–4 merged to `develop` (PRs #174–#177). Task 5, the backend after the import — submit,
 > return, discard, approve and the «ARR-» bills, a single line, the link of a «للمطابقة» line, the cutoff year, and «دمج
@@ -18,6 +18,13 @@ Last verified against the code: `feat/arrears-bills-everywhere` (on `develop@90c
 > «تسديد الفواتير المحددة», the receipts and the portal («مدفوعاتي», «ملفّي», «حسابي») mark and group an «ARR-» bill.
 > **Not built, with its reason:** the Al-Bazourieh image receipt has no free box for the debt's type, so it prints the bill's title
 > (which carries the year, the fee and «غرامة») and the debt's own رقم العقار, not a «نوع الدين» line.
+>
+> Task 11, «تقرير المتأخرات» and the batch sheet, built on `feat/arrears-report` (on `develop@90cebdc`): `GET arrears/report` and
+> `GET arrears/batches/:batchId/sheet` (§8), the screens `fees/arrears/report` and `fees/arrears/batches/:batchId/sheet`.
+> **Not built, with its reason:** entering the old books' totals, which is open-decisions §23.4: the report reads
+> `arrears_control_totals` and shows «غير مدخل» for a year with none, so «المتبقي للإدخال» appears the day a total exists, with
+> no change here. A batch has no number of its own (no column holds one, and a number is a migration), so its sheet is named by
+> a code, the first eight characters of its id.
 >
 > **Earlier status: tasks 1–4 in review, 2026-11-21, none merged.** This spec (PR #174); the migrations
 > `0107`/`0108` (`chore/migration-0107-old-debts`, PR #175); the contract in shared-schemas
@@ -346,8 +353,25 @@ reverses on «ARR-» bills), and the cancel dialog asks staff to cite the old re
   table it carries, and the old-debts tables refuse a delete by trigger, as `payment_transactions` does, so adding them
   would make every restore fail once a batch exists. It is the same open question the ledger waits on, a decision for a
   person (docs/gotchas.md, "The in-app backup cannot restore old debts"). `BackupController` is unregistered today.
-- **Reports** (task 11): imported against the books per year, collected, written off,
-  cancelled, prescribed; never mixed with the year's own revenue.
+- **Reports** (task 11, built): `ArrearsReportService` reads the approved batches only (a draft, a submitted or a discarded one is
+  in no figure), in SQL over the lines and their bills.
+  - **By year × fee type** (a penalty with its fee): `billed` (the bills raised: the kept lines that have a citizen),
+    and where each pound of it stands now — `collected` (a bill's `paidAmount`, net of reversed receipts), `cancelled` (the face value
+    of a bill cancelled with «إلغاء الفاتورة»), `writtenOff` (`writeOffAmount`) and `owed` (what a bill not cancelled or written off
+    has left). The four add up to `billed`, in every row and in the total (`arrearsReportBalances`; the integration spec pins it).
+    Kept lines with no citizen yet are `waiting` («للمطابقة»): no bill, so in none of the five.
+  - **Against the old books**, per year: `imported` is every line the approved batches read — kept, dropped and unmatched alike, as the
+    batch's own control total counts them, since the pages held all of them — with `prescribed` (decision 14) and the other drops
+    apart, beside `controlTotal` from `arrears_control_totals` and `remainingToImport` (`controlTotal − imported`, never below
+    zero; null with no total). A year with a total and nothing imported is listed.
+  - **Coverage**: the citizens in an approved batch's set (checked, whether or not anything was owed) over every citizen file but one
+    merged into another; archived files count, since an approved batch may reach them (decision 12).
+  - **Collections**, apart because the annual «قطع الحساب» needs them apart: the net of `payment_transactions` (signed, a reversal
+    is a negative row) by the calendar year of `occurredAt` in Beirut, on old-debt bills and on every other bill, per currency.
+  - **The batch sheet**: for an APPROVED batch only (`ARREARS_BATCH_NOT_APPROVED`) — its code, who prepared, submitted and approved it
+    and when, its totals, what it holds by year × fee × component, and the lines it dropped by رقم العقار with the reason, the
+    prescribed ones marked. A4 portrait, signed by the preparer and the head of the municipality.
+  - **No citizen anywhere**: sums, years and رقم العقار only; the CSV is the by-year table and goes through `csvCell`'s formula guard.
 
 ## 9. Roles
 
@@ -356,6 +380,7 @@ reverses on «ARR-» bills), and the cancel dialog asks staff to cite the old re
 | `ARREARS_PREPARE_ROLES` | SUPER_ADMIN, ACCOUNTANT | export, import, submit, single line, link |
 | `ARREARS_APPROVE_ROLES` | SUPER_ADMIN | approve, return, discard a submitted batch, the cutoff, control totals |
 | `BILL_WRITE_OFF_ROLES` | SUPER_ADMIN | «شطب» |
+| `ARREARS_REPORT_ROLES` | SUPER_ADMIN, ACCOUNTANT, AUDITOR, VIEWER | «تقرير المتأخرات» and a batch's sheet: the finance reports' readers (`TREASURY_READ_ROLES`) |
 
 ## 10. Tasks
 
@@ -373,7 +398,7 @@ ClickUp list «Mechanization – Old debts (البقايا)». Hashem: 1–6 and
 | 8 | UI: approval and «للمطابقة» | frontend |
 | 9 | «شطب» (backend + UI) | both |
 | 10 | Old-debt bills shown properly everywhere a bill appears, portal included | both: `arrears` on the bill's views (§7), then the screens (built) |
-| 11 | Old-debts report and the batch sheet | both |
+| 11 | Old-debts report and the batch sheet | both (built: §8, `feat/arrears-report`) |
 | 12 | Release, then the first real batch | ops |
 
 ## 11. What to get from the municipality

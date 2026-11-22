@@ -1,4 +1,5 @@
 import { SEES_ALL_STAFF_WORK, STAFF_ROLE, type StaffRole } from './enums';
+import { TREASURY_READ_ROLES } from './treasury.schema';
 
 /**
  * Who may call what: the named role sets every `@Roles(...)` in the API is
@@ -209,6 +210,13 @@ export const ARREARS_PREPARE_ROLES = ['SUPER_ADMIN', 'ACCOUNTANT'] as const sati
  * books' totals: the manager's (decision 7). Approving raises the bills.
  */
 export const ARREARS_APPROVE_ROLES = ['SUPER_ADMIN'] as const satisfies readonly StaffRole[];
+
+/**
+ * Read «تقرير المتأخرات» and print a batch's sheet (task 11): the same roles as the
+ * other finance reports, `TREASURY_READ_ROLES`. Neither names a citizen, so «مشاهد فقط»
+ * may read them.
+ */
+export const ARREARS_REPORT_ROLES = TREASURY_READ_ROLES;
 
 /**
  * Read the municipal-requests queue, a request, its papers (each view audited)

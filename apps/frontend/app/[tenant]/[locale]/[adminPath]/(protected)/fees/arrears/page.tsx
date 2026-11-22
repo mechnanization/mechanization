@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useQueryClient } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
-import { ClipboardCheck, Download, History, Plus, Settings2, Upload, UserSearch } from 'lucide-react';
+import { ClipboardCheck, Download, FileBarChart, History, Plus, Settings2, Upload, UserSearch } from 'lucide-react';
 import { getLabels, type ArrearsBatchView } from '@mechanization/shared-schemas';
 import { listArrearsBatches } from '@/lib/arrears-api';
 import { formatDate } from '@/lib/dates';
@@ -134,6 +134,10 @@ export default function ArrearsPage({
                 {t('review.link')}
               </Link>
             ) : null}
+            <Link href={`${base}/fees/arrears/report`} className={buttonVariants({ variant: 'outline' })}>
+              <FileBarChart className="size-4" aria-hidden />
+              {t('report.link')}
+            </Link>
             <Link href={`${base}/fees/arrears/match`} className={buttonVariants({ variant: 'outline' })}>
               <UserSearch className="size-4" aria-hidden />
               {t('match.link')}

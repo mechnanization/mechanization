@@ -5,6 +5,7 @@ import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   ARREARS_PREPARE_ROLES,
+  ARREARS_REPORT_ROLES,
   BULK_SETTLE_ROLES,
   FEE_EXEMPTION_READ_ROLES,
   PAYMENT_SETTLE_ROLES,
@@ -25,6 +26,7 @@ import {
   Banknote,
   CheckCircle2,
   FileWarning,
+  FileBarChart,
   History,
   Megaphone,
   ShieldCheck,
@@ -216,6 +218,7 @@ export default function FeesPage({
   const tArrears = useTranslations('arrears');
   /** «المتأخرات» (old debts, task 7): the accountant and the manager prepare them. */
   const canPrepareArrears = hasRole(ARREARS_PREPARE_ROLES, role);
+  const canReadArrearsReport = hasRole(ARREARS_REPORT_ROLES, role);
   /** «تسجيل دفعة» — `PAYMENT_SETTLE_ROLES` (`SUPER_ADMIN`, `ACCOUNTANT`, `COLLECTOR`). */
   const canSettle = hasRole(PAYMENT_SETTLE_ROLES, role);
   /** «تسديد الفواتير المحددة» — `BULK_SETTLE_ROLES`, as the route's `@Roles`; the server is the enforcement. */
@@ -823,6 +826,14 @@ export default function FeesPage({
               <Link href={`${base}/fees/arrears`} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
                 <History className="size-4" aria-hidden />
                 {tArrears('link')}
+              </Link>
+            ) : null}
+
+            {/* «تقرير المتأخرات» (task 11): sums only, no citizen, so every finance reader may open it. */}
+            {canReadArrearsReport ? (
+              <Link href={`${base}/fees/arrears/report`} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+                <FileBarChart className="size-4" aria-hidden />
+                {tArrears('report.link')}
               </Link>
             ) : null}
 

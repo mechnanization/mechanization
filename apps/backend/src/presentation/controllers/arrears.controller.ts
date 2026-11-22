@@ -4,6 +4,7 @@ import { Throttle } from '@nestjs/throttler';
 import {
   ARREARS_APPROVE_ROLES,
   ARREARS_PREPARE_ROLES,
+  ARREARS_REPORT_ROLES,
   approveArrearsBatchSchema,
   arrearsCutoffSchema,
   arrearsSingleLineSchema,
@@ -23,6 +24,7 @@ import {
   type SubmitArrearsBatchInput,
 } from '@mechanization/shared-schemas';
 import { ArrearsBatchService } from '../../application/features/arrears/arrears-batch.service';
+import { ArrearsReportService } from '../../application/features/arrears/arrears-report.service';
 import { ArrearsService } from '../../application/features/arrears/arrears.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
@@ -62,6 +64,7 @@ export class ArrearsController {
   constructor(
     private readonly arrears: ArrearsService,
     private readonly batches: ArrearsBatchService,
+    private readonly reports: ArrearsReportService,
   ) {}
 
   /**
@@ -95,6 +98,24 @@ export class ArrearsController {
   @Get('batches')
   listBatches() {
     return this.batches.list();
+  }
+
+  /**
+   * «تقرير المتأخرات» (task 11): by year and fee type, what was approved, collected, cancelled, written
+   * off and is still owed, against the old books' totals, with the old debts' collections apart from the
+   * rest. Sums only, no citizen: the finance reports' readers (`ARREARS_REPORT_ROLES`).
+   */
+  @Roles(...ARREARS_REPORT_ROLES)
+  @Get('report')
+  report() {
+    return this.reports.report();
+  }
+
+  /** The page the head of the municipality signs for an approved batch (task 11). */
+  @Roles(...ARREARS_REPORT_ROLES)
+  @Get('batches/:batchId/sheet')
+  sheet(@Param('batchId', new UuidPipe()) batchId: string) {
+    return this.reports.sheet(batchId);
   }
 
   /** A submitted batch as the manager reviews it. */

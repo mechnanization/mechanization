@@ -1,6 +1,7 @@
 import {
   ARREARS_APPROVE_ROLES as SHARED_ARREARS_APPROVE_ROLES,
   ARREARS_PREPARE_ROLES as SHARED_ARREARS_PREPARE_ROLES,
+  ARREARS_REPORT_ROLES as SHARED_ARREARS_REPORT_ROLES,
   BILL_CANCEL_ROLES as SHARED_BILL_CANCEL_ROLES,
   BILL_WRITE_OFF_ROLES as SHARED_BILL_WRITE_OFF_ROLES,
   BULK_SETTLE_ROLES as SHARED_BULK_SETTLE_ROLES,
@@ -178,6 +179,8 @@ export const UNIT_TYPE_ADMIN_ROLES: readonly string[] = SHARED_UNIT_TYPE_ADMIN_R
  */
 export const ARREARS_PREPARE_ROLES: readonly string[] = SHARED_ARREARS_PREPARE_ROLES;
 export const ARREARS_APPROVE_ROLES: readonly string[] = SHARED_ARREARS_APPROVE_ROLES;
+/** «تقرير المتأخرات» and a batch's printed sheet: the finance reports' readers. Sums and lines by رقم العقار, no citizen. */
+export const ARREARS_REPORT_ROLES: readonly string[] = SHARED_ARREARS_REPORT_ROLES;
 /** «شطب» what is left on a bill, on a council decision: the manager's alone. */
 export const BILL_WRITE_OFF_ROLES: readonly string[] = SHARED_BILL_WRITE_OFF_ROLES;
 /** «الأخبار»: the staff who manage News on Day3ati — the administrator and the administrative officer. */
