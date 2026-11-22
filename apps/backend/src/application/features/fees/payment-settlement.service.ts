@@ -20,6 +20,7 @@ import { ConflictError, NotFoundError, ValidationError } from '../../common/exce
 import { AuditService } from '../audit/audit.service';
 import { isUniqueViolationOn } from '../treasury/retry-key';
 import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
+import { ARREARS_LINE_SELECT, arrearsView } from './bill-arrears';
 import { officialRateFor } from './fees.service';
 import { assertLiveCollector } from './live-collector';
 import { PaymentLedgerService, type Tender } from './payment-ledger.service';
@@ -156,7 +157,14 @@ export class PaymentSettlementService {
             currency: true,
             reversedBy: { select: { id: true } },
             payment: {
-              select: { invoiceNumber: true, title: true, periodKey: true, dueDate: true, assessment: true },
+              select: {
+                invoiceNumber: true,
+                title: true,
+                periodKey: true,
+                dueDate: true,
+                assessment: true,
+                arrearsLine: ARREARS_LINE_SELECT,
+              },
             },
           },
         },
@@ -178,6 +186,8 @@ export class PaymentSettlementService {
       periodKey: tx.payment.periodKey,
       dueDate: tx.payment.dueDate.toISOString(),
       properties: propertiesOf(tx.payment.assessment as FeeAssessment | null),
+      // The receipt goes to the citizen: the old books' reference stays with the municipality.
+      arrears: arrearsView(tx.payment, 'CITIZEN'),
       amount: Number(tx.amount),
       currency: tx.currency,
       reversed: tx.reversedBy !== null,
@@ -313,6 +323,15 @@ export class PaymentSettlementService {
         throw new ConflictError({
           code: 'PAYMENT_BILL_CANCELLED',
           message: `Payment ${invoice.id} has been cancelled.`,
+          params: { invoice: bill?.invoiceNumber ?? bill?.title ?? invoice.id },
+          details: { paymentId: invoice.id },
+        });
+      }
+      // Written off by the council since it was ticked («شطب», 0107): it owes nothing more.
+      if (invoice.paymentStatus === 'WRITTEN_OFF') {
+        throw new ConflictError({
+          code: 'PAYMENT_BILL_WRITTEN_OFF',
+          message: `Payment ${invoice.id} has been written off.`,
           params: { invoice: bill?.invoiceNumber ?? bill?.title ?? invoice.id },
           details: { paymentId: invoice.id },
         });

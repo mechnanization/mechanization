@@ -59,6 +59,7 @@ import {
 } from '@/components/ui/select';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/states';
 import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
+import { ArrearsBillMark } from '@/components/arrears-bill-mark';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
 
@@ -93,12 +94,14 @@ function receiptPayment(
     dueDate: item.dueDate,
     paymentStatus: result.paymentStatus,
     paymentMethod: item.paymentMethod ?? method,
-    invoiceNumber: null,
+    invoiceNumber: item.invoiceNumber,
     whishTransactionRef: item.whishTransactionRef,
     paidAt: item.paidAt,
     reviewNote: null,
     frequency: item.frequency,
     assessment: item.assessment ?? null,
+    // An old debt keeps its «ARR-» number and its line on the receipt (task 10).
+    arrears: item.arrears ?? null,
   };
   return { ...row, remaining: result.remaining };
 }
@@ -463,6 +466,21 @@ export default function SettlePaymentPage({
     is said so, with his reason, as the citizen cash page says it — not shown as
     a form with nothing due and a button that stays off without a word.
   */
+  if (payment.paymentStatus === 'WRITTEN_OFF' && !settled) {
+    // Written off on a council decision («شطب», 0107): it takes no payment (`PAYMENT_BILL_WRITTEN_OFF`).
+    return (
+      <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
+        <HeaderBackLink fallbackHref={`${base}/fees`} label={t('back')} />
+        <PageHeader icon={Banknote} title={t('title')} />
+        <EmptyState
+          icon={Ban}
+          title={t('writeOff.writtenOffTitle')}
+          description={payment.writeOff?.reason ?? t('writeOff.writtenOffBody')}
+        />
+      </div>
+    );
+  }
+
   if (payment.paymentStatus === 'CANCELLED' && !settled) {
     return (
       <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
@@ -748,6 +766,11 @@ export default function SettlePaymentPage({
                     <span className="text-muted-foreground">{t('charge')}</span>
                     <span className="font-semibold text-foreground">{payment.title}</span>
                   </div>
+                  {payment.arrears ? (
+                    <div className="flex justify-end">
+                      <ArrearsBillMark arrears={payment.arrears} invoiceNumber={payment.invoiceNumber} showOldReference />
+                    </div>
+                  ) : null}
                   <div className="flex justify-between gap-3">
                     <span className="text-muted-foreground">{t('dueDate')}</span>
                     <span className="text-foreground">{formatDate(payment.dueDate)}</span>

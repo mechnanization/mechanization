@@ -1,8 +1,11 @@
 'use client';
 
+import { billOwesNothing } from '@mechanization/shared-schemas';
 import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
+  ARREARS_PREPARE_ROLES,
+  ARREARS_REPORT_ROLES,
   BULK_SETTLE_ROLES,
   FEE_EXEMPTION_READ_ROLES,
   PAYMENT_SETTLE_ROLES,
@@ -23,6 +26,8 @@ import {
   Banknote,
   CheckCircle2,
   FileWarning,
+  FileBarChart,
+  History,
   Megaphone,
   ShieldCheck,
   Loader2,
@@ -77,6 +82,7 @@ import { BillCheckbox } from '@/components/admin/bulk-settle/bill-checkbox';
 import { BulkSettleBar } from '@/components/admin/bulk-settle/bulk-settle-bar';
 import { FeesSummaryStrip } from '@/components/admin/fees/fees-summary-strip';
 import { PaymentReviewDialog } from '@/components/admin/fees/payment-review-dialog';
+import { ArrearsBillMark } from '@/components/arrears-bill-mark';
 import { heldKey, keyIsSpent, spendKey } from '@/lib/request-id';
 import { cn } from '@/lib/utils';
 
@@ -209,6 +215,10 @@ export default function FeesPage({
   /** «فواتير تأثّرت بتصحيحات» — `PAYMENT_REVIEW_READ_ROLES`, as the nav row of `/fees/corrections`. */
   const canReadCorrections = hasRole(PAYMENT_REVIEW_READ_ROLES, role);
   const canReadExemptions = hasRole(FEE_EXEMPTION_READ_ROLES, role);
+  const tArrears = useTranslations('arrears');
+  /** «المتأخرات» (old debts, task 7): the accountant and the manager prepare them. */
+  const canPrepareArrears = hasRole(ARREARS_PREPARE_ROLES, role);
+  const canReadArrearsReport = hasRole(ARREARS_REPORT_ROLES, role);
   /** «تسجيل دفعة» — `PAYMENT_SETTLE_ROLES` (`SUPER_ADMIN`, `ACCOUNTANT`, `COLLECTOR`). */
   const canSettle = hasRole(PAYMENT_SETTLE_ROLES, role);
   /** «تسديد الفواتير المحددة» — `BULK_SETTLE_ROLES`, as the route's `@Roles`; the server is the enforcement. */
@@ -576,6 +586,7 @@ export default function FeesPage({
           return (
             <div className="space-y-1">
               <p className="font-medium text-foreground">{payment.title}</p>
+              <ArrearsBillMark arrears={payment.arrears} invoiceNumber={payment.invoiceNumber} showOldReference />
               {breakdown ? (
                 <p className="font-mono text-xs text-muted-foreground">
                   <bdi dir="ltr">{breakdown}</bdi>
@@ -641,8 +652,8 @@ export default function FeesPage({
         meta: { align: 'end' },
         cell: ({ row }) => {
           const remaining = row.original.remaining;
-          // Settled or cancelled: nothing is owed on it either way.
-          const isClosed = row.original.paymentStatus === 'PAID' || row.original.paymentStatus === 'CANCELLED';
+          // Settled, cancelled or written off: nothing is owed on it either way.
+          const isClosed = row.original.paymentStatus === 'PAID' || billOwesNothing(row.original.paymentStatus);
           return (
             <Money
               amount={remaining}
@@ -687,8 +698,8 @@ export default function FeesPage({
           const payment = row.original;
           const isPaid = payment.paymentStatus === 'PAID';
           const isPendingReview = payment.paymentStatus === 'PENDING_REVIEW';
-          // A cancelled bill takes no payment (0090); the server refuses one anyway.
-          const isCancelled = payment.paymentStatus === 'CANCELLED';
+          // A cancelled or written-off bill takes no payment (0090, 0107); the server refuses one anyway.
+          const isCancelled = billOwesNothing(payment.paymentStatus);
           const isBusy = busyPaymentId === payment.id;
 
           return (
@@ -808,6 +819,21 @@ export default function FeesPage({
               <Link href={`${base}/fees/exemptions`} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
                 <ShieldCheck className="size-4" aria-hidden />
                 {tExemptions('link')}
+              </Link>
+            ) : null}
+
+            {canPrepareArrears ? (
+              <Link href={`${base}/fees/arrears`} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+                <History className="size-4" aria-hidden />
+                {tArrears('link')}
+              </Link>
+            ) : null}
+
+            {/* «تقرير المتأخرات» (task 11): sums only, no citizen, so every finance reader may open it. */}
+            {canReadArrearsReport ? (
+              <Link href={`${base}/fees/arrears/report`} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+                <FileBarChart className="size-4" aria-hidden />
+                {tArrears('report.link')}
               </Link>
             ) : null}
 

@@ -1,5 +1,6 @@
 'use client';
 
+import { billOwesNothing } from '@mechanization/shared-schemas';
 import { use, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -25,6 +26,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Money } from '@/components/ui/money';
+import { ArrearsBillMark } from '@/components/arrears-bill-mark';
 import { LoadingState } from '@/components/ui/states';
 import { signOutCitizen } from '@/lib/citizen-sign-out';
 
@@ -67,9 +69,9 @@ export default function MyAccount({
       });
   }, [tenant, locale, router]);
 
-  // A bill the municipality cancelled (CANCELLED) is not owed, and is not listed as unpaid.
+  // A bill the municipality cancelled or wrote off owes nothing, and is not listed as unpaid.
   const unpaid =
-    summary?.payments.filter((payment) => payment.paymentStatus !== 'PAID' && payment.paymentStatus !== 'CANCELLED') ?? [];
+    summary?.payments.filter((payment) => payment.paymentStatus !== 'PAID' && !billOwesNothing(payment.paymentStatus)) ?? [];
   /*
     What is owed, by the portal's one rule: what is left on the bills the
     citizen can still pay. A bill whose reported transfer waits for a clerk is
@@ -189,6 +191,8 @@ export default function MyAccount({
                             {/* What is left on it, not its face value (`billFigure`). */}
                             <Money amount={billFigure(payment)} exact className="font-medium" locale={locale} />
                           </span>
+                          {/* An old debt says so, with its year and fee, on a line of its own (task 10). */}
+                          <ArrearsBillMark arrears={payment.arrears} invoiceNumber={payment.invoiceNumber} className="basis-full" />
                         </li>
                       ))}
                     </ul>

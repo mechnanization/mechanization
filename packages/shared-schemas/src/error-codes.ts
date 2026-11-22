@@ -40,6 +40,9 @@ export const ERROR_CODES = [
   'FEE_NOTHING_TO_CHARGE',
   'FEE_CITIZEN_ARCHIVED',
   'FEE_DUE_DATE_INVALID',
+  // A notice's period is a year before the old-debts cutoff (`params.year`, `params.cutoffYear`): those years are
+  // entered as old debts, and a notice would bill them a second time (docs/old-debts-plan.md §8).
+  'FEE_PERIOD_BEFORE_ARREARS_CUTOFF',
   'FEE_NOTICE_NOT_FOUND',
   'PAYMENT_NOT_FOUND',
   'PAYMENT_ALREADY_PAID',
@@ -92,6 +95,15 @@ export const ERROR_CODES = [
   // Cancelling a bill that has money on it, or one already cancelled.
   'BILL_CANCEL_HAS_PAYMENTS',
   'BILL_ALREADY_CANCELLED',
+  // «شطب» (0107, docs/old-debts-plan.md decision 10): a bill already written off takes no write-off,
+  // cancellation, payment, claim or checkout, and none of its receipts is reversed while it stands.
+  'BILL_ALREADY_WRITTEN_OFF',
+  'PAYMENT_BILL_WRITTEN_OFF',
+  'PAYMENT_REVERSAL_BILL_WRITTEN_OFF',
+  // Nothing is left on the bill to write off: it is paid.
+  'BILL_WRITE_OFF_NOTHING_LEFT',
+  // The council's decision is dated after today (`params.today`).
+  'BILL_WRITE_OFF_DECISION_IN_FUTURE',
   // A retry key already used to issue a different notice.
   'FEE_NOTICE_REQUEST_REUSED',
   // «تكليف مالي»: a retry key already used for a different one-off charge (0102). `params.invoiceNumber`
@@ -209,6 +221,14 @@ export const ERROR_CODES = [
   'BUILDING_TYPE_NAME_TAKEN',
   'BUILDING_TYPE_SYSTEM_STRUCTURE',
   'BUILDING_TYPE_STRUCTURE_IN_USE',
+  // «أنواع الوحدات» (migration 0109): a type that does not exist; one switched off, on a new unit
+  // (`params.name`); a name another type has (`params.name`); a system type's base, which never
+  // changes; a custom type's base while units are filed under it (`params.count`).
+  'UNIT_TYPE_NOT_FOUND',
+  'UNIT_TYPE_INACTIVE',
+  'UNIT_TYPE_NAME_TAKEN',
+  'UNIT_TYPE_SYSTEM_BASE',
+  'UNIT_TYPE_BASE_IN_USE',
   // «تركة (ورثة المرحوم)» (migration 0076)
   'ESTATE_OWNS_ONLY',
   // One home on several levels, and a house that grows (migration 0095, decision D28)
@@ -410,6 +430,55 @@ export const ERROR_CODES = [
   'REQUEST_ATTACHMENTS_CLOSED',
   'FILE_UPLOAD_FAILED',
   'FILE_OPEN_FAILED',
+  // Old debts, «متأخرات سنوات سابقة» (0108, docs/old-debts-plan.md).
+  // No cutoff year set yet: every import is refused until the manager sets it.
+  'ARREARS_CUTOFF_NOT_SET',
+  // A year that is not before the cutoff (`params.year`, `params.cutoffYear`): the system bills it.
+  'ARREARS_YEAR_NOT_BEFORE_CUTOFF',
+  // The same citizen, رقم العقار, unit, year, fee and component already has a live line
+  // (the index's last word; the import names the line itself in its verdicts).
+  'ARREARS_LINE_DUPLICATE',
+  // The batch is no longer a draft (`params.status`): only a draft takes lines or is submitted.
+  'ARREARS_BATCH_NOT_DRAFT',
+  // Maker ≠ checker, reserved: open-decisions §23.3 has not decided it yet.
+  'ARREARS_APPROVER_IS_PREPARER',
+  // The control total is not the sum of the batch's lines (`params.controlTotal`, `params.linesTotal`).
+  'ARREARS_CONTROL_TOTAL_MISMATCH',
+  // Old debts are in LBP at face value (decision 13); `params.currency` is what was sent.
+  'ARREARS_CURRENCY_NOT_LBP',
+  'ARREARS_BATCH_NOT_FOUND',
+  'ZONE_NOT_FOUND',
+  // The export found no citizen in the zone or building who is not already in a batch.
+  'ARREARS_EXPORT_NOTHING_LEFT',
+  // An export's retry key already used for another zone, building or count.
+  'ARREARS_EXPORT_REQUEST_REUSED',
+  // A non-dry import with rows the dry run refuses (`params.count`): nothing was written.
+  'ARREARS_IMPORT_HAS_REFUSED_ROWS',
+  // A batch's file holds more rows than one import takes (`params.max`).
+  'ARREARS_IMPORT_TOO_MANY_ROWS',
+  // Submit, approve, return: the batch is not in the state the act needs (`params.status`).
+  'ARREARS_BATCH_NOT_SUBMITTED',
+  // The batch sheet is for an approved batch: a draft, a submitted or a discarded one has none to sign.
+  'ARREARS_BATCH_NOT_APPROVED',
+  // A batch with no line is not submitted.
+  'ARREARS_BATCH_EMPTY',
+  // Only the preparer, or the manager, acts on a draft batch.
+  'ARREARS_BATCH_NOT_YOURS',
+  // Approval re-ran the checks that change with time and some line fails (`details.problems`): the manager
+  // returns the batch, and the preparer imports it again.
+  'ARREARS_APPROVAL_CHECKS_FAILED',
+  'ARREARS_LINE_NOT_FOUND',
+  // A line is linked once, from «للمطابقة», on an approved batch.
+  'ARREARS_LINE_NOT_WAITING',
+  // A single line refused by the same checks as an imported one (`details.issues`).
+  'ARREARS_LINE_REFUSED',
+  // A debt older than the prescription period is never entered or linked (decision 14).
+  'ARREARS_LINE_PRESCRIBED',
+  // A single line's retry key already used for another line (`params.batchId`).
+  'ARREARS_LINE_REQUEST_REUSED',
+  // The cutoff year is set once and then fixed: a batch has been approved, so moving it would let one year be old
+  // debt in one batch and billed by a notice in another (`params.cutoffYear` is the year it stays).
+  'ARREARS_CUTOFF_LOCKED',
   // Fixed messages the filter and the tenant layer already send
   'INTERNAL_ERROR',
   'TENANT_MISMATCH',
@@ -428,6 +497,20 @@ export const ERROR_CODES = [
   'TOTP_LOCKED',
   // The phone-code sign-in (`citizen/otp/*`) while no SMS provider is live; the portal signs in by رقم مرجعي.
   'CITIZEN_OTP_UNAVAILABLE',
+  // News on Day3ati, the partner API (task «Day3ati HTTP client and error handling»). The first two are the
+  // user's role and account (403); the next three are the municipality's setup or the service (409); the rest
+  // are the call itself: `NEWS_INVALID_INPUT` carries `details: [{ path, message }]` for the form (422), as
+  // every validation refusal does. `NEWS_REQUEST_REFUSED` is any other refusal, with `details.status`.
+  'NEWS_FORBIDDEN',
+  'NEWS_NOT_A_MEMBER',
+  'NEWS_MODULE_DISABLED',
+  'NEWS_VILLAGE_NOT_LINKED',
+  'NEWS_UNAVAILABLE',
+  'NEWS_INVALID_INPUT',
+  'NEWS_NOT_FOUND',
+  'NEWS_REQUEST_REFUSED',
+  // Scheduling an article that is already published (Day3ati's `news.already_published`, 409).
+  'NEWS_ARTICLE_ALREADY_PUBLISHED',
   // Raised by the portal itself when no response arrives or it cannot be read
   'NETWORK_ERROR',
   'UNKNOWN',

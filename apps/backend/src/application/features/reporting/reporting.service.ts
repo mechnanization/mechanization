@@ -1,4 +1,11 @@
-import { calendarDayOf, citizenDisplayName, isFeeExemptOn, municipalToday } from '@mechanization/shared-schemas';
+import {
+  billOwesNothing,
+  billRemaining,
+  calendarDayOf,
+  citizenDisplayName,
+  isFeeExemptOn,
+  municipalToday,
+} from '@mechanization/shared-schemas';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
@@ -8,8 +15,11 @@ import type {
   RequestStatus,
   RequestType,
   SharedUnitBillView,
+  BillArrearsView,
 } from '@mechanization/shared-schemas';
 import { effectiveOwnerBilling, isCoOwned, ownerShareOf } from '@mechanization/shared-schemas';
+import { writeOffView } from '../fees/bill-write-off';
+import { ARREARS_LINE_SELECT, arrearsView } from '../fees/bill-arrears';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
@@ -614,6 +624,12 @@ export interface CitizenProfilePayment {
    * and how many may pay it, never who (O2). Null on their own bill.
    */
   sharedUnit: SharedUnitBillView | null;
+  /**
+   * «متأخرات سنوات سابقة» (task 10): the year, the fee, the رقم العقار and the
+   * old books' reference behind an «ARR-» bill; null on any other bill. The
+   * reference is the municipality's, so the portal's summary nulls it.
+   */
+  arrears: BillArrearsView | null;
 }
 
 /**
@@ -969,14 +985,15 @@ export class ReportingService {
                     WHERE bu."endedAt" IS NULL))
             AS "duplicateUnitsExcluded",
           -- A cancelled bill (0090) was raised in error and withdrawn: not billed,
-          -- so billed stays collected plus outstanding (decision of 2026-10-13).
-          COALESCE((SELECT sum(amount) FROM ${this.S}citizen_payments
+          -- so billed stays collected plus outstanding (decision of 2026-10-13). The part
+          -- of a bill written off («شطب», 0107) is forgiven, so it is left out the same way.
+          COALESCE((SELECT sum(amount - COALESCE("writeOffAmount", 0)) FROM ${this.S}citizen_payments
                      WHERE "paymentStatus" <> 'CANCELLED'), 0)::float8
             AS "billedTotal",
           COALESCE((SELECT sum("paidAmount") FROM ${this.S}citizen_payments), 0)::float8
             AS "collectedTotal",
           COALESCE((SELECT sum(amount - "paidAmount") FROM ${this.S}citizen_payments
-                     WHERE "paymentStatus" NOT IN ('PAID', 'CANCELLED')), 0)::float8
+                     WHERE "paymentStatus" NOT IN ('PAID', 'CANCELLED', 'WRITTEN_OFF')), 0)::float8
             AS "outstandingTotal",
           -- Derived from the due date on read, never stored: a flag written by
           -- a nightly job is wrong for every hour between a due date passing
@@ -993,7 +1010,7 @@ export class ReportingService {
           (SELECT COALESCE(json_agg(row_to_json(m) ORDER BY m.month), '[]'::json)
              FROM (
                SELECT to_char(d.m, 'YYYY-MM') AS month,
-                      COALESCE(sum(p.amount) FILTER (WHERE p."paymentStatus" <> 'CANCELLED'), 0)::float8 AS billed,
+                      COALESCE(sum(p.amount - COALESCE(p."writeOffAmount", 0)) FILTER (WHERE p."paymentStatus" <> 'CANCELLED'), 0)::float8 AS billed,
                       COALESCE(sum(p."paidAmount"), 0)::float8 AS collected,
                       COALESCE(sum(p.amount - p."paidAmount")
                         FILTER (WHERE p."paymentStatus" = 'UNPAID'
@@ -1386,10 +1403,18 @@ export class ReportingService {
           reviewNote: true,
           // Why the manager cancelled it, when he did (0091).
           cancellationReason: true,
+          // «شطب» (0107): when, how much, why and on which decision.
+          writtenOffAt: true,
+          writeOffAmount: true,
+          writeOffReason: true,
+          writeOffDecisionRef: true,
+          writeOffDecisionDate: true,
           // «ليش عليّ هالمبلغ؟» — see `CitizenProfilePayment.assessment`.
           assessment: true,
           feeNotice: { select: { frequency: true } },
           citizenRequest: { select: { id: true, requestNumber: true, requestType: true, status: true } },
+          // An old debt's line (task 10).
+          arrearsLine: ARREARS_LINE_SELECT,
           ...SHARED_BILL_INCLUDE,
         },
       }),
@@ -1405,8 +1430,11 @@ export class ReportingService {
       title: payment.title,
       amount: Number(payment.amount),
       paidAmount: Number(payment.paidAmount),
-      remaining:
-        payment.paymentStatus === 'CANCELLED' ? 0 : Math.max(Number(payment.amount) - Number(payment.paidAmount), 0),
+      remaining: billRemaining({
+        paymentStatus: payment.paymentStatus,
+        amount: Number(payment.amount),
+        paidAmount: Number(payment.paidAmount),
+      }),
       currency: payment.currency,
       dueDate: payment.dueDate.toISOString(),
       paymentStatus:
@@ -1419,6 +1447,9 @@ export class ReportingService {
       paidAt: payment.paidAt?.toISOString() ?? null,
       reviewNote: payment.reviewNote,
       cancellationReason: payment.cancellationReason,
+      writeOff: writeOffView(payment),
+      // Staff read the old ledger reference too; `CitizenController.mySummary` clears it before the portal sees it.
+      arrears: arrearsView(payment, 'STAFF'),
       frequency: payment.feeNotice?.frequency ?? null,
       assessment: (payment.assessment as FeeAssessment | null) ?? null,
       request: payment.citizenRequest
@@ -1475,11 +1506,12 @@ export class ReportingService {
       isActive: citizen.isActive,
       payments,
       fees: {
-        // A cancelled bill was withdrawn, not billed (decision of 2026-10-13).
-        feesTotal: sum(
-          payments.filter((payment) => payment.paymentStatus !== 'CANCELLED'),
-          'amount',
-        ),
+        // A cancelled bill was withdrawn, not billed (decision of 2026-10-13). Of a written-off
+        // one (0107) only what was paid stands as billed: the rest was forgiven
+        // (`paidAmount + writeOffAmount = amount`), so billed stays paid plus outstanding.
+        feesTotal: payments
+          .filter((payment) => payment.paymentStatus !== 'CANCELLED')
+          .reduce((total, payment) => total + (payment.paymentStatus === 'WRITTEN_OFF' ? payment.paidAmount : payment.amount), 0),
         // Every pound received, across all rows — a part-payment sitting on an
         // UNPAID invoice is money the municipality has, and filtering to PAID
         // would leave it out.
@@ -1488,7 +1520,7 @@ export class ReportingService {
         // the manager cancelled owes nothing (0090), named here rather than left
         // to its `remaining` of 0.
         outstandingTotal: sum(
-          payments.filter((payment) => payment.paymentStatus !== 'PAID' && payment.paymentStatus !== 'CANCELLED'),
+          payments.filter((payment) => payment.paymentStatus !== 'PAID' && !billOwesNothing(payment.paymentStatus)),
           'remaining',
         ),
         overdueTotal: sum(overdue, 'remaining'),
@@ -2139,6 +2171,8 @@ export class ReportingService {
   @OnEvent('payment.cancelled')
   /** A municipal request raising its fee is a new bill on the citizen's profile and the totals (0092). */
   @OnEvent('request.bill.raised')
+  /** An approved old-debts batch, or one linked line, raises bills on citizens' files (task 5). */
+  @OnEvent('arrears.bills.raised')
   /**
    * The census moves the map, so the census has to clear the map's cache.
    *

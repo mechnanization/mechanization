@@ -100,7 +100,23 @@ export const APP_CONFIG = {
     otpVerify: { ttlSeconds: 60, limit: 5 },
     /** Submission — generous; a citizen retrying a flaky upload is not an attack. */
     submission: { ttlSeconds: 60, limit: 10 },
+    /**
+     * Old debts' export and import (docs/old-debts-plan.md §4): a template's
+     * export picks citizens under a municipality-wide lock, and an import reads
+     * and checks up to `ARREARS_IMPORT_MAX_ROWS` lines. Load control per session,
+     * counted per `Authorization` header as the staff session's bar is: twenty a
+     * minute is far more than an accountant correcting a file and previewing it
+     * again needs, and bounds a stuck loop.
+     */
+    arrearsBulk: { ttlSeconds: 60, limit: 20 },
   },
+
+  /**
+   * Old debts (docs/old-debts-plan.md). `approverMustDifferFromPreparer`: whoever prepared a batch
+   * does not approve it (maker ≠ checker). **Off:** open-decisions §23.3 has not decided it, and with
+   * one manager it would make an accountant prepare every batch. The one place it is turned on.
+   */
+  arrears: { approverMustDifferFromPreparer: false },
 
   documents: {
     signedUrlTtlSeconds: 300,

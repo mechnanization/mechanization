@@ -1,6 +1,7 @@
 'use client';
 
-import { use, useCallback, useEffect, useState } from 'react';
+import { billOwesNothing } from '@mechanization/shared-schemas';
+import { Fragment, use, useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import {
@@ -20,12 +21,12 @@ import { getLabels, type DeclarePayment } from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
   declarePayment,
-  getMunicipalitySettings,
+  getCitizenPortalSettings,
   getMyPayments,
   logApiError,
   startWhishCheckout,
 } from '@/lib/api-client';
-import type { CitizenPaymentItem, MunicipalitySettings } from '@/lib/api-client';
+import type { CitizenPaymentItem, CitizenPortalSettings } from '@/lib/api-client';
 import { clearSession, loadSession } from '@/lib/session';
 import { formatLbp } from '@/lib/currency';
 import { Alert } from '@/components/ui/alert';
@@ -38,6 +39,8 @@ import { PayDialog } from '@/components/citizen/pay-dialog';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/dates';
 import { signOutCitizen } from '@/lib/citizen-sign-out';
+import { groupArrearsByYear, splitArrears } from '@/lib/arrears-bill';
+import { ArrearsBillMark } from '@/components/arrears-bill-mark';
 
 /*
   A bill the municipality cancelled (CANCELLED) is muted: it stays on the list,
@@ -50,6 +53,7 @@ const STATUS_TONE: Record<string, string> = {
   PENDING_REVIEW: 'border-warning/30 bg-warning/10 text-warning',
   PAID: 'border-success/30 bg-success/10 text-success',
   CANCELLED: 'border-border bg-muted text-muted-foreground',
+  WRITTEN_OFF: 'border-border bg-muted text-muted-foreground',
 };
 
 const STATUS_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -58,6 +62,7 @@ const STATUS_ICON: Record<string, React.ComponentType<{ className?: string }>> =
   PENDING_REVIEW: Clock,
   PAID: CheckCircle2,
   CANCELLED: Ban,
+  WRITTEN_OFF: Ban,
 };
 
 export default function CitizenPayments({
@@ -70,11 +75,12 @@ export default function CitizenPayments({
   const labels = getLabels(locale);
   const tCitizen = useTranslations('citizen');
   const tPay = useTranslations('onlinePayment');
+  const tArrears = useTranslations('arrearsBill');
 
   const [token, setToken] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [items, setItems] = useState<CitizenPaymentItem[]>([]);
-  const [settings, setSettings] = useState<MunicipalitySettings | null>(null);
+  const [settings, setSettings] = useState<CitizenPortalSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -98,7 +104,7 @@ export default function CitizenPayments({
     try {
       const [paymentsResult, settingsResult] = await Promise.all([
         getMyPayments(tenant, token),
-        getMunicipalitySettings(tenant, token),
+        getCitizenPortalSettings(tenant, token),
       ]);
       setItems(paymentsResult.items);
       setSettings(settingsResult);
@@ -173,6 +179,9 @@ export default function CitizenPayments({
     .map((item) => item.dueDate)
     .sort()
     .at(0);
+  // This year's bills as the server listed them, then the old debts under their own heading, the oldest year first.
+  const { current, arrears } = splitArrears(items);
+  const ordered = [...current, ...groupArrearsByYear(arrears).flatMap((group) => group.bills)];
 
   return (
     <div className="space-y-8">
@@ -257,17 +266,37 @@ export default function CitizenPayments({
         ) : null}
 
         <div className="space-y-3">
-          {items.map((item) => {
+          {ordered.map((item, index) => {
             const Icon = STATUS_ICON[item.paymentStatus] ?? Clock;
             const payable = isPayable(item);
-            const cancelled = item.paymentStatus === 'CANCELLED';
+            // Cancelled, or written off («شطب»): it owes nothing; shown as it was, struck through.
+            const cancelled = billOwesNothing(item.paymentStatus);
+            const writtenOff = item.paymentStatus === 'WRITTEN_OFF';
+            // The old debts follow the current bills under one heading, and each year under its own.
+            const before = ordered[index - 1];
+            const startsArrears = Boolean(item.arrears) && !before?.arrears;
+            const startsYear = Boolean(item.arrears) && before?.arrears?.year !== item.arrears?.year;
 
             return (
-              <Card key={item.id}>
+              <Fragment key={item.id}>
+                {startsArrears ? (
+                  <div className="space-y-1 pt-4">
+                    <h3 className="text-base font-semibold">{tArrears('groupTitle')}</h3>
+                    <p className="text-sm text-muted-foreground">{tArrears('groupHint')}</p>
+                  </div>
+                ) : null}
+                {startsYear && item.arrears ? (
+                  <h4 className="pt-1 text-sm font-medium text-muted-foreground">
+                    {tArrears('groupYear', { year: String(item.arrears.year) })}
+                  </h4>
+                ) : null}
+              <Card>
                 <CardContent className="space-y-3 p-5">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0 space-y-1">
                       <p className="font-semibold">{item.title}</p>
+                      {/* The year, the fee and the «ARR-» number; never the old books' reference, which the API keeps from the portal. */}
+                      <ArrearsBillMark arrears={item.arrears} invoiceNumber={item.invoiceNumber} />
                       <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
                         <span className="inline-flex items-center gap-1.5">
                           <CalendarClock className="size-3.5" aria-hidden />
@@ -319,9 +348,11 @@ export default function CitizenPayments({
 
                   {cancelled ? (
                     <p className="rounded-lg border bg-muted/40 p-3 text-sm text-muted-foreground">
-                      {locale === 'en'
-                        ? 'The municipality cancelled this charge. Nothing is owed on it.'
-                        : 'ألغت البلدية هذه المطالبة، ولا مبلغ مستحقاً عليها.'}
+                      {writtenOff
+                        ? tCitizen('writtenOff')
+                        : locale === 'en'
+                          ? 'The municipality cancelled this charge. Nothing is owed on it.'
+                          : 'ألغت البلدية هذه المطالبة، ولا مبلغ مستحقاً عليها.'}
                     </p>
                   ) : null}
 
@@ -375,6 +406,7 @@ export default function CitizenPayments({
                   ) : null}
                 </CardContent>
               </Card>
+              </Fragment>
             );
           })}
         </div>

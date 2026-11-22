@@ -1,4 +1,5 @@
 import { SEES_ALL_STAFF_WORK, STAFF_ROLE, type StaffRole } from './enums';
+import { TREASURY_READ_ROLES } from './treasury.schema';
 
 /**
  * Who may call what: the named role sets every `@Roles(...)` in the API is
@@ -69,6 +70,20 @@ export const BUILDING_TYPE_READ_ROLES: readonly StaffRole[] = EVERY_STAFF_ROLE;
  * screen shows its controls by it.
  */
 export const BUILDING_TYPE_ADMIN_ROLES = ['SUPER_ADMIN'] as const satisfies readonly StaffRole[];
+
+/**
+ * Read «أنواع الوحدات» (`GET unit-types`): everyone who reads or edits a
+ * building's units — the matrix, the editor, the ledger — and the offline store
+ * keeps the list for an inspector with no network (migration 0109).
+ */
+export const UNIT_TYPE_READ_ROLES: readonly StaffRole[] = EVERY_STAFF_ROLE;
+
+/**
+ * Add, rename, reorder, switch off or on a unit type (`POST`/`PATCH unit-types`):
+ * the manager's, as the building types are. A named set because the screen
+ * shows its controls by it.
+ */
+export const UNIT_TYPE_ADMIN_ROLES = ['SUPER_ADMIN'] as const satisfies readonly StaffRole[];
 
 /** The register's own administration: zones. */
 export const REGISTER_ADMIN_ROLES = [
@@ -177,6 +192,33 @@ export const FEE_ADMIN_ROLES = ['SUPER_ADMIN', 'ACCOUNTANT'] as const satisfies 
 export const BILL_CANCEL_ROLES = ['SUPER_ADMIN'] as const satisfies readonly StaffRole[];
 
 /**
+ * «شطب» — write off what is left on a bill, on a council decision (0108,
+ * docs/old-debts-plan.md decision 10). The manager's alone, like a cancellation:
+ * a debt forgiven is a decision, not counter work.
+ */
+export const BILL_WRITE_OFF_ROLES = ['SUPER_ADMIN'] as const satisfies readonly StaffRole[];
+
+/**
+ * Old debts, «متأخرات سنوات سابقة» (0108): export the template, import it, submit
+ * the batch, enter a single line, link a «للمطابقة» line to a citizen file. The
+ * accountant prepares, as decision 7 says; the manager may too.
+ */
+export const ARREARS_PREPARE_ROLES = ['SUPER_ADMIN', 'ACCOUNTANT'] as const satisfies readonly StaffRole[];
+
+/**
+ * Approve, return or discard a submitted batch, and set the cutoff year and the
+ * books' totals: the manager's (decision 7). Approving raises the bills.
+ */
+export const ARREARS_APPROVE_ROLES = ['SUPER_ADMIN'] as const satisfies readonly StaffRole[];
+
+/**
+ * Read «تقرير المتأخرات» and print a batch's sheet (task 11): the same roles as the
+ * other finance reports, `TREASURY_READ_ROLES`. Neither names a citizen, so «مشاهد فقط»
+ * may read them.
+ */
+export const ARREARS_REPORT_ROLES = TREASURY_READ_ROLES;
+
+/**
  * Read the municipal-requests queue, a request, its papers (each view audited)
  * and the list of request types: the manager, the administrative officer (قلم
  * البلدية, who handles them), the accountant (who collects their fees) and the
@@ -275,6 +317,15 @@ export const MAP_READ_ROLES = [
 
 /** A field inspector's earnings profile. */
 export const INSPECTOR_PROFILE_ROLES = ['SUPER_ADMIN', 'FIELD_INSPECTOR'] as const satisfies readonly StaffRole[];
+
+/**
+ * Who manages the municipality's News on Day3ati (decided 2026-11-20: the
+ * administrator and the administrative officer). These are the roles the server
+ * creates a Day3ati staff account for (`news_editor`); every other role has no
+ * account there, so no News call can be made on its behalf. A role added here is
+ * provisioned the next time its account changes or the backfill runs.
+ */
+export const NEWS_EDITOR_ROLES = ['SUPER_ADMIN', 'ADMINISTRATIVE_OFFICER'] as const satisfies readonly StaffRole[];
 
 /** Whether `role` is one of `roles`. Null and unknown roles are not. */
 export function hasStaffRole(roles: readonly string[], role: string | null | undefined): boolean {

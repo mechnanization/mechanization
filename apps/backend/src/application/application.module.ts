@@ -14,7 +14,11 @@ import { DamageService } from './features/buildings/damage.service';
 import { ParcelCorrectionService } from './features/buildings/parcel-correction.service';
 import { OwnerBillingService } from './features/buildings/owner-billing.service';
 import { FeeExemptionService } from './features/buildings/fee-exemption.service';
+import { ArrearsBatchService } from './features/arrears/arrears-batch.service';
+import { ArrearsReportService } from './features/arrears/arrears-report.service';
+import { ArrearsService } from './features/arrears/arrears.service';
 import { BuildingTypesService } from './features/buildings/building-types.service';
+import { UnitTypesService } from './features/buildings/unit-types.service';
 import { UnitCorrectionService } from './features/corrections/unit-correction.service';
 import { CasesService } from './features/cases/cases.service';
 import { CitizensService } from './features/citizens/citizens.service';
@@ -46,6 +50,11 @@ import { TransfersService } from './features/treasury/transfers.service';
 import { DayClosureService } from './features/treasury/day-closure.service';
 import { DailyCountService } from './features/treasury/daily-count.service';
 import { DailyCashReportService } from './features/treasury/daily-cash-report.service';
+import { Day3atiStaffSyncService } from './features/day3ati/day3ati-staff-sync.service';
+import { NewsArticlesService } from './features/news/news-articles.service';
+import { NewsAvailabilityService } from './features/news/news-availability.service';
+import { NewsCatalogService } from './features/news/news-catalog.service';
+import { NewsMediaService } from './features/news/news-media.service';
 import { StaffService } from './features/staff/staff.service';
 import { ZonesService } from './features/zones/zones.service';
 import { DataQualityService } from './features/quality/data-quality.service';
@@ -105,6 +114,11 @@ import { RecordReviewService } from './features/quality/record-review.service';
     DailyCountService,
     DailyCashReportService,
     StaffService,
+    Day3atiStaffSyncService,
+    NewsCatalogService,
+    NewsArticlesService,
+    NewsMediaService,
+    NewsAvailabilityService,
     ZonesService,
     CasesService,
     BuildingsService,
@@ -113,7 +127,11 @@ import { RecordReviewService } from './features/quality/record-review.service';
     ParcelCorrectionService,
     OwnerBillingService,
     FeeExemptionService,
+    ArrearsService,
+    ArrearsBatchService,
+    ArrearsReportService,
     BuildingTypesService,
+    UnitTypesService,
     UnitCorrectionService,
     BackupService,
     RecordReviewService,
@@ -155,6 +173,11 @@ import { RecordReviewService } from './features/quality/record-review.service';
     DailyCountService,
     DailyCashReportService,
     StaffService,
+    Day3atiStaffSyncService,
+    NewsCatalogService,
+    NewsArticlesService,
+    NewsMediaService,
+    NewsAvailabilityService,
     ZonesService,
     CasesService,
     BuildingsService,
@@ -163,7 +186,11 @@ import { RecordReviewService } from './features/quality/record-review.service';
     ParcelCorrectionService,
     OwnerBillingService,
     FeeExemptionService,
+    ArrearsService,
+    ArrearsBatchService,
+    ArrearsReportService,
     BuildingTypesService,
+    UnitTypesService,
     UnitCorrectionService,
     BackupService,
     RecordReviewService,

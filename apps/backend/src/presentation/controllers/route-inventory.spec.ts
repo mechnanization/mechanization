@@ -484,6 +484,75 @@ describe('the building type routes', () => {
   });
 });
 
+/*
+  «أنواع الوحدات» (migration 0109). The same shape as the building types: read by
+  every staff role — the matrix, the building editor and an inspector's offline
+  store — and written by the manager alone. There is no delete: a type is
+  switched off.
+*/
+describe('the unit type routes', () => {
+  const EVERY = ['ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'AUDITOR', 'COLLECTOR', 'FIELD_INSPECTOR', 'SUPER_ADMIN', 'VIEWER'];
+  const expected: Record<string, string[]> = {
+    'UnitTypesController.list': EVERY,
+    'UnitTypesController.create': ['SUPER_ADMIN'],
+    'UnitTypesController.update': ['SUPER_ADMIN'],
+  };
+  const all = routes();
+
+  it.each(Object.entries(expected))('%s admits exactly its roles', (name, roles) => {
+    const route = all.find((candidate) => candidate.name === name);
+    expect(route).toBeDefined();
+    expect([...(route?.roles ?? [])].sort()).toEqual([...roles].sort());
+  });
+
+  it('knows every unit type handler, and deletes none', () => {
+    const handlers = all.filter((route) => route.name.startsWith('UnitTypesController.'));
+    expect(handlers.map((route) => route.name).sort()).toEqual(Object.keys(expected).sort());
+    expect(handlers.some((route) => route.method === RequestMethod.DELETE)).toBe(false);
+  });
+});
+
+/*
+  Old debts («متأخرات سنوات سابقة», docs/old-debts-plan.md §9): the accountant and the
+  manager prepare, and only the manager approves, returns, reads the review and sets the
+  cutoff. Approving raises bills on citizens' files, so it is pinned by name.
+*/
+describe('old debts: who may call what', () => {
+  const all = routes();
+  const prepare = ['ACCOUNTANT', 'SUPER_ADMIN'];
+  const approve = ['SUPER_ADMIN'];
+  // The finance reports' readers (`TREASURY_READ_ROLES`): the report and a batch's sheet name no citizen.
+  const report = ['ACCOUNTANT', 'AUDITOR', 'SUPER_ADMIN', 'VIEWER'];
+  const expected: Record<string, { method: RequestMethod; path: string; roles: string[] }> = {
+    'ArrearsController.exportTemplate': { method: RequestMethod.POST, path: 'batches/export', roles: prepare },
+    'ArrearsController.importLines': { method: RequestMethod.POST, path: 'batches/:batchId/import', roles: prepare },
+    'ArrearsController.listBatches': { method: RequestMethod.GET, path: 'batches', roles: prepare },
+    'ArrearsController.submit': { method: RequestMethod.POST, path: 'batches/:batchId/submit', roles: prepare },
+    'ArrearsController.discard': { method: RequestMethod.POST, path: 'batches/:batchId/discard', roles: prepare },
+    'ArrearsController.addLine': { method: RequestMethod.POST, path: 'lines', roles: prepare },
+    'ArrearsController.unmatched': { method: RequestMethod.GET, path: 'lines/unmatched', roles: prepare },
+    'ArrearsController.link': { method: RequestMethod.POST, path: 'lines/:lineId/link', roles: prepare },
+    'ArrearsController.review': { method: RequestMethod.GET, path: 'batches/:batchId/review', roles: approve },
+    'ArrearsController.approve': { method: RequestMethod.POST, path: 'batches/:batchId/approve', roles: approve },
+    'ArrearsController.returnBatch': { method: RequestMethod.POST, path: 'batches/:batchId/return', roles: approve },
+    'ArrearsController.settings': { method: RequestMethod.GET, path: 'settings', roles: approve },
+    'ArrearsController.report': { method: RequestMethod.GET, path: 'report', roles: report },
+    'ArrearsController.sheet': { method: RequestMethod.GET, path: 'batches/:batchId/sheet', roles: report },
+    'ArrearsController.setCutoff': { method: RequestMethod.PUT, path: 'settings/cutoff', roles: approve },
+  };
+
+  it.each(Object.entries(expected))('%s', (name, want) => {
+    const route = all.find((candidate) => candidate.name === name);
+    expect(route).toMatchObject({ method: want.method, path: want.path, isPublic: false });
+    expect([...(route?.roles ?? [])].sort()).toEqual([...want.roles].sort());
+  });
+
+  it('knows every old-debts handler: a new one is pinned here', () => {
+    const handlers = all.filter((route) => route.name.startsWith('ArrearsController.'));
+    expect(handlers.map((route) => route.name).sort()).toEqual(Object.keys(expected).sort());
+  });
+});
+
 describe('the routes that raise a bill', () => {
   const all = routes();
 
@@ -499,6 +568,12 @@ describe('the routes that raise a bill', () => {
     expect(batch).toMatchObject({ method: RequestMethod.POST, path: 'notices/:id/cancel', isPublic: false });
     expect([...(batch?.roles ?? [])].sort()).toEqual([...(one?.roles ?? [])].sort());
     expect(batch?.roles).toEqual(['SUPER_ADMIN']);
+  });
+
+  it('lets only the manager write off what is left on a bill («شطب», 0107)', () => {
+    const writeOff = all.find((candidate) => candidate.name === 'FeesController.writeOffBill');
+    expect(writeOff).toMatchObject({ method: RequestMethod.POST, path: 'payments/:id/write-off', isPublic: false });
+    expect(writeOff?.roles).toEqual(['SUPER_ADMIN']);
   });
 
   it('shows a notice’s periods before the cancel to the same roles as the cancel itself (D12)', () => {

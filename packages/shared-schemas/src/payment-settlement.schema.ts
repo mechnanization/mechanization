@@ -4,6 +4,7 @@ import { uuid } from './primitives';
 import { paymentMethodSchema, type PaymentMethod } from './fee.schema';
 import { hasAtMostTwoDecimals } from './money-amount';
 import { roundRate } from './cash-policy';
+import type { BillArrearsView } from './arrears.schema';
 
 /**
  * «تسديد الفواتير المحددة» — one citizen settling several bills in one act.
@@ -366,6 +367,13 @@ export interface SettlementReceiptItem {
    * screen words them («عقار 123 — شقة»), so the wire stays language-neutral.
    */
   properties: Array<{ propertyNumber: string | null; unitType: string | null; unitCode: string | null }>;
+  /**
+   * «متأخرات سنوات سابقة» (old debts task 10): the year, the fee and the رقم العقار
+   * of an «ARR-» bill, so the receipt labels it in the page's language. Never
+   * carries the old books' reference: the receipt is the citizen's. Null on any
+   * other bill.
+   */
+  arrears: BillArrearsView | null;
   /** The credit applied to the bill, in its currency. */
   amount: number;
   currency: string;

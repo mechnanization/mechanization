@@ -38,6 +38,7 @@ import { TenancyService } from '../../application/features/citizens/tenancy.serv
 import { ReportingService, type CitizenProfileUnit } from '../../application/features/reporting/reporting.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { NotFoundError } from '../../application/common/exceptions';
+import { citizenArrears } from '../../application/features/fees/bill-arrears';
 import { CurrentTenant, CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
@@ -294,7 +295,8 @@ export class CitizenController {
           })),
         })),
       // Each bill's `request` (0092) is the citizen's own: its number, type and status, as «طلباتي» shows them.
-      payments: citizen.payments,
+      // An old debt's line goes with the old books' reference cleared: it is the municipality's own bookkeeping (task 10).
+      payments: citizen.payments.map((payment) => ({ ...payment, arrears: citizenArrears(payment.arrears) })),
       fees: citizen.fees,
     };
   }

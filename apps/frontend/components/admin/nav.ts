@@ -20,12 +20,15 @@ import {
   Layers,
   Link2,
   Map as MapIcon,
+  Megaphone,
+  Newspaper,
   ReceiptText,
   ScanSearch,
   ScrollText,
   Settings,
   ShieldCheck,
   ShieldQuestion,
+  Tags,
   UserPlus,
   UserRoundCheck,
   Users,
@@ -39,6 +42,7 @@ import {
   EVERY_STAFF_ROLE,
   FEE_READ_ROLES,
   MAP_READ_ROLES,
+  NEWS_EDITOR_ROLES,
   PAYMENT_REVIEW_READ_ROLES,
   REQUEST_READ_ROLES,
   TREASURY_READ_ROLES,
@@ -119,11 +123,11 @@ export interface NavGroup {
 }
 
 /**
- * An unlabelled landing group, then seven groups — one per job, in the order a
+ * An unlabelled landing group, then eight groups — one per job, in the order a
  * municipality's day runs: the people in the register, the buildings and the
  * land they live on, the visits still owed in the field, the fees raised and
- * collected, the treasury's books, the checking of all of it, and the portal's
- * own administration.
+ * collected, the treasury's books, the checking of all of it, the News kept on
+ * Day3ati, and the portal's own administration.
  *
  * ## How it is cut (reorganised 2026-10-09)
  *
@@ -687,6 +691,44 @@ export const NAV_GROUPS: NavGroup[] = [
       },
     ],
   },
+  /*
+    «الأخبار» — the municipality's News, kept on Day3ati and managed from here
+    as the signed-in user (`NEWS_EDITOR_ROLES`: the administrator and the
+    administrative officer, the two who have an account there). Its own group
+    because it is neither the register nor the books: a screen of its own job,
+    with the articles first and the two lists they are filed and published by.
+  */
+  {
+    label: 'الأخبار',
+    labelEn: 'News',
+    roles: NEWS_EDITOR_ROLES,
+    items: [
+      {
+        path: '/news/articles',
+        label: 'الأخبار',
+        labelEn: 'News articles',
+        icon: Newspaper,
+        roles: NEWS_EDITOR_ROLES,
+        keywords: ['أخبار', 'خبر', 'نشر', 'مقال', 'news', 'article', 'articles', 'publish'],
+      },
+      {
+        path: '/news/categories',
+        label: 'أقسام الأخبار',
+        labelEn: 'News categories',
+        icon: Tags,
+        roles: NEWS_EDITOR_ROLES,
+        keywords: ['أخبار', 'قسم', 'تصنيف', 'news', 'category', 'categories'],
+      },
+      {
+        path: '/news/publishers',
+        label: 'ناشرو الأخبار',
+        labelEn: 'News publishers',
+        icon: Megaphone,
+        roles: NEWS_EDITOR_ROLES,
+        keywords: ['أخبار', 'ناشر', 'جهة', 'news', 'publisher', 'publishers'],
+      },
+    ],
+  },
   {
     label: 'النظام',
     labelEn: 'System',
@@ -730,13 +772,19 @@ export const NAV_GROUPS: NavGroup[] = [
  * before the session is read, and "we do not know who this is yet" must not be
  * the state in which the most permissive answer is given.
  */
-export function visibleGroups(role: string | undefined): NavGroup[] {
+export function visibleGroups(role: string | undefined, options: { newsEnabled?: boolean } = {}): NavGroup[] {
   if (!role) return [];
   return NAV_GROUPS
     .filter((group) => !group.roles || group.roles.includes(role))
     .map((group) => ({
       ...group,
-      items: group.items.filter((item) => item.roles.includes(role)),
+      items: group.items.filter(
+        (item) =>
+          item.roles.includes(role) &&
+          // News is hidden from a municipality whose Day3ati village lacks the module. Only a definite «no»
+          // hides it: while that is unknown (`undefined`) the rows stay.
+          !(options.newsEnabled === false && item.path.startsWith('/news')),
+      ),
     }))
     .filter((group) => group.items.length > 0);
 }

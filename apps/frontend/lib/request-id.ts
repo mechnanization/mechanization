@@ -35,6 +35,10 @@ const held = new Map<string, string>();
  * already knows on another parcel.
  */
 export type KeyScope =
+  /** Old debts: «تصدير قالب», one export of a DRAFT batch (0108, docs/old-debts-plan.md). */
+  | 'arrears:export'
+  /** Old debts: one line entered by hand. */
+  | 'arrears:line'
   | `building:${string}`
   | `bulk-settle:${string}`
   | `commission:${string}`

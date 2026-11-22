@@ -98,6 +98,24 @@ export function isNonPersonRecord(residence: string | null | undefined): boolean
   return residence != null && (NON_PERSON_RESIDENCE as readonly string[]).includes(residence);
 }
 
+/**
+ * Who an article is published as on Day3ati (`kind` of a publisher). The four
+ * values are Day3ati's own, written as it sends and takes them: never rename one.
+ */
+export const NEWS_PUBLISHER_KIND = ['municipality', 'department', 'committee', 'organization'] as const;
+export const newsPublisherKindSchema = arabicEnum(NEWS_PUBLISHER_KIND, 'نوع الناشر غير صالح');
+export type NewsPublisherKind = z.infer<typeof newsPublisherKindSchema>;
+
+/**
+ * Where a News article stands on Day3ati. The four values are its own, as it
+ * sends and takes them: never rename one. A draft is being written; scheduled
+ * waits for its `publishAt`; published is in the feed; archived is out of it
+ * and can be published again.
+ */
+export const NEWS_ARTICLE_STATUS = ['draft', 'scheduled', 'published', 'archived'] as const;
+export const newsArticleStatusSchema = arabicEnum(NEWS_ARTICLE_STATUS, 'حالة الخبر غير صالحة');
+export type NewsArticleStatus = z.infer<typeof newsArticleStatusSchema>;
+
 export const GENDER = ['MALE', 'FEMALE'] as const;
 export const genderSchema = arabicEnum(GENDER, 'الجنس مطلوب');
 export type Gender = z.infer<typeof genderSchema>;
@@ -1216,3 +1234,23 @@ export const BLOOD_TYPE = [
 ] as const;
 export const bloodTypeSchema = arabicEnum(BLOOD_TYPE, 'فئة الدم مطلوبة');
 export type BloodType = z.infer<typeof bloodTypeSchema>;
+
+/**
+ * Old debts, «متأخرات سنوات سابقة» (migrations 0107/0108, docs/old-debts-plan.md).
+ * Each mirrors the Prisma enum of the same name.
+ */
+
+/** An import: DRAFT → SUBMITTED → APPROVED; SUBMITTED → DRAFT when returned; DRAFT or SUBMITTED → DISCARDED. */
+export const ARREARS_BATCH_STATUS = ['DRAFT', 'SUBMITTED', 'APPROVED', 'DISCARDED'] as const;
+export const arrearsBatchStatusSchema = arabicEnum(ARREARS_BATCH_STATUS, 'اختر حالة الدفعة');
+export type ArrearsBatchStatus = z.infer<typeof arrearsBatchStatusSchema>;
+
+/** The principal of a year's fee, or the penalty the old books charged on it (never one the system adds). */
+export const ARREARS_COMPONENT = ['PRINCIPAL', 'PENALTY'] as const;
+export const arrearsComponentSchema = arabicEnum(ARREARS_COMPONENT, 'اختر أصلاً أو غرامة');
+export type ArrearsComponent = z.infer<typeof arrearsComponentSchema>;
+
+/** KEEP, or DROP with a reason: prescription, war damage, the accountant's call. */
+export const ARREARS_LINE_DECISION = ['KEEP', 'DROP'] as const;
+export const arrearsLineDecisionSchema = arabicEnum(ARREARS_LINE_DECISION, 'اختر الإبقاء أو الإسقاط');
+export type ArrearsLineDecision = z.infer<typeof arrearsLineDecisionSchema>;

@@ -356,8 +356,20 @@ model User {
   /// Exemption periods this staff member granted, and lifted (0104).
   feeExemptionPeriodsGranted  UnitFeeExemption[] @relation("UnitFeeExemptionGrantedBy")
   feeExemptionPeriodsLifted   UnitFeeExemption[] @relation("UnitFeeExemptionLiftedBy")
+  /// Old debts (0108): batches by who moved them, lines by whose they are and who linked them.
+  arrearsBatchesPrepared  ArrearsBatch[]        @relation("ArrearsBatchPreparedBy")
+  arrearsBatchesSubmitted ArrearsBatch[]        @relation("ArrearsBatchSubmittedBy")
+  arrearsBatchesApproved  ArrearsBatch[]        @relation("ArrearsBatchApprovedBy")
+  arrearsBatchesDiscarded ArrearsBatch[]        @relation("ArrearsBatchDiscardedBy")
+  arrearsBatchMemberships ArrearsBatchCitizen[] @relation("ArrearsBatchCitizen")
+  arrearsLines            ArrearsLine[]         @relation("ArrearsLineCitizen")
+  arrearsLinesLinked      ArrearsLine[]         @relation("ArrearsLineLinkedBy")
+  arrearsControlTotals    ArrearsControlTotal[] @relation("ArrearsControlTotalEnteredBy")
+  writtenOffPayments      CitizenPayment[]      @relation("PaymentWrittenOffBy")
   /// Building types this staff member added (0106).
   buildingTypesCreated        BuildingType[]     @relation("BuildingTypeCreatedBy")
+  /// Unit types this staff member added (0109).
+  unitTypesCreated            UnitTypeEntry[]    @relation("UnitTypeCreatedBy")
 
   /// Staff email is unique within the municipality (i.e. within this schema).
   @@unique([email])
@@ -1371,6 +1383,42 @@ model BuildingType {
   @@map("building_types")
 }
 
+/// «أنواع الوحدات» (migration 0109): the unit types a municipality picks from,
+/// the ones it adds (مدرسة, شركة كهرباء, …) beside one system row per premises
+/// `UnitType`. A type takes the behaviour of its `baseType`: units keep
+/// `units.unitType`, written from it, and fees, brackets and the census read
+/// that. Named `UnitTypeEntry` because `UnitType` is the enum. A type is
+/// deactivated, never deleted.
+model UnitTypeEntry {
+  id          String   @id @default(uuid()) @db.Uuid
+  /// Unique; trimmed and not empty (CHECK unit_types_names_trimmed).
+  nameAr      String   @unique
+  nameEn      String?
+  /// The behaviour it takes. Never PILOTIS or EMPTY_FLOOR (CHECK
+  /// unit_types_base_not_structural). Fixed on a system row (trigger
+  /// unit_types_system_rewrite); one system row per value, by the partial
+  /// unique index unit_types_system_base_key, which Prisma 5 cannot express.
+  baseType    UnitType
+  /// The elevation's drawing for the type (migration 0111, `UNIT_FIGURE` in
+  /// shared-schemas), or NULL for its base's own front. Written by the migration
+  /// for the default types; no form sets it. CHECK unit_types_figure_key_shape.
+  figureKey   String?
+  isSystem    Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(100)
+  /// NULL on a system row (CHECK unit_types_system_has_no_author); SET NULL
+  /// when the person is removed.
+  createdById String?  @db.Uuid
+  createdBy   User?    @relation("UnitTypeCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
+
+  units Unit[]
+
+  @@index([createdById])
+  @@map("unit_types")
+}
+
 /// A building code retired by «تصحيح رقم العقار» (migration 0060).
 ///
 /// Correcting a building's parcel reallocates its suffix on the right parcel,
@@ -1506,6 +1554,15 @@ model Unit {
 
   unitType UnitType
 
+  /// «نوع الوحدة» (migration 0109): the type this unit was filed as, system or
+  /// custom. `unitType` above stays what every reader keys on and is written
+  /// from the type's `baseType`. Nullable in this release (expand, backfill,
+  /// contract): 0109 filled every premises unit with the system row of its
+  /// `unitType`; a PILOTIS or EMPTY_FLOOR block has none. RESTRICT: a type in
+  /// use is never deleted.
+  unitTypeId    String?        @db.Uuid
+  unitTypeEntry UnitTypeEntry? @relation(fields: [unitTypeId], references: [id], onDelete: Restrict)
+
   /// Orientation — يمين / يسار / أمامي. Free text, matching the existing `side`.
   side String?
 
@@ -1553,6 +1610,8 @@ model Unit {
   /// period is `UnitFeeExemption`; these columns are its live mirror.
   feeExemptionValidUntil DateTime? @db.Date
   feeExemptionPeriods    UnitFeeExemption[]
+  /// Old-debt lines that named this unit (0108, SET NULL on delete).
+  arrearsLines           ArrearsLine[]
 
   /// How many levels this one unit spans, from `floor` (its entrance) upward
   /// (migration 0095, decision D28): 2 is a «دوبلكس», 3 a «تريبلكس». 1 for
@@ -1577,6 +1636,7 @@ model Unit {
   @@index([buildingId])
   @@index([surveyStatus])
   @@index([responsibleOwnerId])
+  @@index([unitTypeId])
   @@map("units")
 }
 
@@ -2122,6 +2182,11 @@ model SystemSettings {
   /// than guessed. Shape validated by `levelFactorsSchema`; an object by CHECK.
   levelFactors Json @default("{\"2\": 1.8}")
 
+  /// Old debt is a year before this one (0108, decision 5 of
+  /// docs/old-debts-plan.md). NULL until the manager sets it, and every import
+  /// is refused while it is. 2000–2100 by CHECK.
+  arrearsCutoffYear Int?
+
   updatedAt   DateTime @updatedAt
   updatedById String?  @db.Uuid
 
@@ -2149,6 +2214,10 @@ enum PaymentStatus {
   /// «إلغاء الفاتورة» (0090): withdrawn by the manager before any money was
   /// taken on it. Owes nothing, takes nothing; `cancelledAt` says who and why.
   CANCELLED
+  /// «شطب» (0107): what was left on the bill is forgiven by a council decision.
+  /// Owes nothing more; `writtenOffAt` says who, how much, why and on which
+  /// decision (CHECKs in 0108).
+  WRITTEN_OFF
 }
 
 enum PaymentMethod {
@@ -2382,6 +2451,25 @@ model CitizenPayment {
   cancelledBy        User?     @relation("PaymentCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict)
   cancellationReason String?
 
+  /// The old-debt line this «ARR-» bill was raised for (0108). The only link
+  /// between the two; unique, RESTRICT. NULL on every other bill.
+  arrearsLineId String?      @unique @db.Uuid
+  arrearsLine   ArrearsLine? @relation(fields: [arrearsLineId], references: [id], onDelete: Restrict)
+
+  /// «شطب» (0108): who wrote off what was left on this bill, how much, why and
+  /// on which council decision. The six move together with `paymentStatus`
+  /// WRITTEN_OFF, the reason and the decision number are never blank, and the
+  /// amount is above zero and exactly what was left: `paidAmount +
+  /// writeOffAmount = amount` (CHECKs `citizen_payments_write_off_*`,
+  /// `citizen_payments_written_off_status`).
+  writtenOffAt         DateTime? @db.Timestamptz(3)
+  writtenOffById       String?   @db.Uuid
+  writtenOffBy         User?     @relation("PaymentWrittenOffBy", fields: [writtenOffById], references: [id], onDelete: Restrict)
+  writeOffAmount       Decimal?  @db.Decimal(14, 2)
+  writeOffReason       String?
+  writeOffDecisionRef  String?
+  writeOffDecisionDate DateTime? @db.Date
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -2411,6 +2499,7 @@ model CitizenPayment {
   @@index([paymentStatus, dueDate])
   @@index([issuedById])
   @@index([cancelledById])
+  @@index([writtenOffById])
   @@map("citizen_payments")
 }
 
@@ -3566,4 +3655,209 @@ model CitizenRequestAttachment {
   @@index([requestId, createdAt], map: "citizen_request_attachments_requestId_idx")
   @@index([uploadedById])
   @@map("citizen_request_attachments")
+}
+
+// ─────────────────────────  Old debts (0107, 0108)  ─────────────────────────
+//
+// «متأخرات سنوات سابقة»: what citizens owe from the municipality's old books.
+// Plan, decisions and flow: docs/old-debts-plan.md. Every rule the database
+// holds is in 0108's header; the partial unique index and the triggers are not
+// expressible in Prisma 5 and are named on the models below.
+
+/// DRAFT → SUBMITTED → APPROVED; SUBMITTED → DRAFT (returned); DRAFT or
+/// SUBMITTED → DISCARDED. APPROVED and DISCARDED are final.
+enum ArrearsBatchStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  DISCARDED
+}
+
+/// «أصل» or «غرامة». A penalty is carried over from the books, never added.
+enum ArrearsComponent {
+  PRINCIPAL
+  PENALTY
+}
+
+/// DROP carries a reason (CHECK `arrears_lines_drop_reason`): prescription,
+/// war damage, or the accountant's call.
+enum ArrearsLineDecision {
+  KEEP
+  DROP
+}
+
+/// One import, from the template's export to its approval.
+///
+/// Trigger `arrears_batches_guard`: the moves above, never deleted, an APPROVED
+/// or DISCARDED batch never changes, a SUBMITTED one only by leaving that status
+/// with its figures untouched; who prepared it and its retry key never change.
+/// Trigger `arrears_batches_discard_lines` stamps `discardedAt` on the lines when
+/// it is discarded. CHECKs `arrears_batches_*`: stamps move in pairs and with
+/// their status; a SUBMITTED or APPROVED batch carries `submittedAt` and
+/// `controlTotal`; a DRAFT has no `submittedAt` (a return clears it).
+model ArrearsBatch {
+  id     String             @id @default(uuid()) @db.Uuid
+  status ArrearsBatchStatus @default(DRAFT)
+
+  /// What the template was exported for: `{ zoneId }` or `{ buildingId }`, and
+  /// the count asked. A JSON object (CHECK).
+  scope Json?
+
+  preparedById String @db.Uuid
+  preparedBy   User   @relation("ArrearsBatchPreparedBy", fields: [preparedById], references: [id], onDelete: Restrict)
+
+  submittedAt   DateTime? @db.Timestamptz(3)
+  submittedById String?   @db.Uuid
+  submittedBy   User?     @relation("ArrearsBatchSubmittedBy", fields: [submittedById], references: [id], onDelete: Restrict)
+
+  approvedAt   DateTime? @db.Timestamptz(3)
+  approvedById String?   @db.Uuid
+  approvedBy   User?     @relation("ArrearsBatchApprovedBy", fields: [approvedById], references: [id], onDelete: Restrict)
+
+  discardedAt   DateTime? @db.Timestamptz(3)
+  discardedById String?   @db.Uuid
+  discardedBy   User?     @relation("ArrearsBatchDiscardedBy", fields: [discardedById], references: [id], onDelete: Restrict)
+
+  /// Why the manager sent it back to DRAFT.
+  returnNote   String?
+  /// The accountant's hand-added total of the pages copied; ≥ 0, required to submit.
+  controlTotal Decimal? @db.Decimal(14, 2)
+  /// Which books, which pages.
+  sourceNote   String?
+
+  /// The export press's retry key.
+  clientRequestId String? @unique @db.Uuid
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+
+  citizens ArrearsBatchCitizen[]
+  lines    ArrearsLine[]
+
+  @@index([status])
+  @@index([preparedById])
+  @@index([submittedById])
+  @@index([approvedById])
+  @@index([discardedById])
+  @@map("arrears_batches")
+}
+
+/// The citizens a template was exported for. `rowKey` is what the file carries
+/// instead of any identifier, unique within its batch. Coverage («checked
+/// against the old books») is counted from here.
+///
+/// Trigger `arrears_batch_citizens_guard`: written into a DRAFT batch only,
+/// never deleted, and only a merge moves `citizenId`.
+model ArrearsBatchCitizen {
+  id String @id @default(uuid()) @db.Uuid
+
+  batchId String       @db.Uuid
+  batch   ArrearsBatch @relation(fields: [batchId], references: [id], onDelete: Restrict)
+
+  citizenId String @db.Uuid
+  citizen   User   @relation("ArrearsBatchCitizen", fields: [citizenId], references: [id], onDelete: Restrict)
+
+  /// > 0 (CHECK).
+  rowKey Int
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([batchId, rowKey])
+  @@index([batchId, citizenId])
+  @@index([citizenId])
+  @@map("arrears_batch_citizens")
+}
+
+/// One debt: citizen × رقم العقار (unit if known) × year × fee type × component.
+///
+/// One live line per debt: the partial unique index `arrears_lines_one_live_key`
+/// over (citizen, the رقم العقار digit-folded and trimmed, the unit code upper-
+/// cased and trimmed or '', year, fee type, component) where the citizen is set,
+/// the decision KEEP and the line not discarded. Not expressible in Prisma 5.
+///
+/// Trigger `arrears_lines_guard`: written into and removed from a DRAFT batch
+/// only; outside a draft only `citizenId` moves (a link from NULL on an APPROVED
+/// batch with its stamps, or a merge), `unitId` is cleared, and `discardedAt` is
+/// stamped once on a DISCARDED batch. CHECKs `arrears_lines_*`.
+model ArrearsLine {
+  id String @id @default(uuid()) @db.Uuid
+
+  batchId String       @db.Uuid
+  batch   ArrearsBatch @relation(fields: [batchId], references: [id], onDelete: Restrict)
+
+  /// NULL while the line waits in «للمطابقة».
+  citizenId  String? @db.Uuid
+  citizen    User?   @relation("ArrearsLineCitizen", fields: [citizenId], references: [id], onDelete: Restrict)
+  /// The name as the old books wrote it. Required while `citizenId` is NULL.
+  sourceName String?
+  /// The template row it came from. NULL for an unmatched row or a single line.
+  rowKey     Int?
+
+  /// رقم العقار as typed.
+  propertyNumber String
+  /// SET NULL when the unit is deleted; `unitCode` keeps what the line said.
+  unitId         String? @db.Uuid
+  unit           Unit?   @relation(fields: [unitId], references: [id], onDelete: SetNull)
+  unitCode       String?
+
+  /// 1900–2100 by CHECK; before `arrearsCutoffYear` by the code.
+  year        Int
+  /// A code of `ARREARS_FEE_TYPE` (shared-schemas). Text, so a new code needs no
+  /// migration. `OTHER` needs `feeTypeNote` (CHECK).
+  feeType     String
+  feeTypeNote String?
+  component   ArrearsComponent
+
+  /// > 0 (CHECK).
+  amount   Decimal @db.Decimal(14, 2)
+  /// LBP only (CHECK, decision 13).
+  currency String  @default("LBP")
+
+  dueDate      DateTime? @db.Date
+  /// The old books' reference: page, receipt book.
+  oldReference String?
+  note         String?
+
+  decision   ArrearsLineDecision @default(KEEP)
+  dropReason String?
+  /// `{ prescribed?, war?: { level, habitable, assessedAt }, archived? }`. A JSON object (CHECK).
+  flags      Json                @default("{}")
+
+  linkedAt   DateTime? @db.Timestamptz(3)
+  linkedById String?   @db.Uuid
+  linkedBy   User?     @relation("ArrearsLineLinkedBy", fields: [linkedById], references: [id], onDelete: Restrict)
+
+  /// Stamped by the trigger when the batch is discarded.
+  discardedAt DateTime? @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+
+  /// The «ARR-» bill raised for it, once one is.
+  bill CitizenPayment?
+
+  @@index([batchId])
+  @@index([citizenId])
+  @@index([unitId])
+  @@index([linkedById])
+  @@index([year])
+  @@map("arrears_lines")
+}
+
+/// The old books' arrears total per year, from the last «قطع الحساب». Proposed,
+/// not decided (open-decisions §23.4): ships empty, nothing reads or writes it.
+model ArrearsControlTotal {
+  id String @id @default(uuid()) @db.Uuid
+
+  year     Int     @unique
+  amount   Decimal @db.Decimal(14, 2)
+  currency String  @default("LBP")
+
+  enteredById String   @db.Uuid
+  enteredBy   User     @relation("ArrearsControlTotalEnteredBy", fields: [enteredById], references: [id], onDelete: Restrict)
+  enteredAt   DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+
+  @@index([enteredById])
+  @@map("arrears_control_totals")
 }
