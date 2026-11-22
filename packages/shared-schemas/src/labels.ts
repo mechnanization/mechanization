@@ -16,7 +16,12 @@ import type {
   OwnerBillingMode,
   FeeExemptionReason,
   ApplicantCapacity,
+  RequestAnswerOrigin,
   RequestAttachmentType,
+  RequestFieldType,
+  RequestFormVersionStatus,
+  RequestLinkedSource,
+  RequestPropertyMode,
   RequestChannel,
   RequestStatus,
   RequestType,
@@ -442,6 +447,48 @@ export const ar = {
     MUKHTAR_STATEMENT: 'إفادة مختار',
     OTHER: 'مستند آخر',
   } satisfies Record<RequestAttachmentType, string>,
+
+  /** What a question on a request form asks (F3). */
+  requestFieldType: {
+    SHORT_TEXT: 'نص قصير',
+    LONG_TEXT: 'نص طويل',
+    INTEGER: 'عدد صحيح',
+    DECIMAL: 'عدد عشري',
+    DATE: 'تاريخ',
+    PHONE: 'رقم هاتف',
+    DOCUMENT_NUMBER: 'رقم هوية أو وثيقة',
+    SINGLE_CHOICE: 'اختيار واحد',
+    MULTI_CHOICE: 'اختيارات متعددة',
+    YES_NO: 'نعم أو لا',
+    FILE: 'ملف (صورة أو PDF)',
+  } satisfies Record<RequestFieldType, string>,
+
+  requestPropertyMode: {
+    NONE: 'لا يسأل عن عقار',
+    OPTIONAL: 'العقار اختياري',
+    REQUIRED: 'العقار إلزامي',
+  } satisfies Record<RequestPropertyMode, string>,
+
+  requestFormVersionStatus: {
+    DRAFT: 'مسودة',
+    PUBLISHED: 'منشورة',
+  } satisfies Record<RequestFormVersionStatus, string>,
+
+  /** Where a linked field's value comes from on the citizen's file (F4). */
+  requestLinkedSource: {
+    FIRST_NAME: 'الاسم الأول',
+    FATHER_NAME: 'اسم الأب',
+    LAST_NAME: 'الشهرة',
+    MOTHER_NAME: 'اسم الأم',
+    PHONE: 'رقم الهاتف',
+    IDENTITY_NUMBER: 'رقم الهوية',
+    CIVIL_RECORD_NUMBER: 'رقم السجل',
+  } satisfies Record<RequestLinkedSource, string>,
+
+  requestAnswerOrigin: {
+    ANSWERED: 'كتبه مقدّم الطلب',
+    FROM_FILE: 'مأخوذ من الملف',
+  } satisfies Record<RequestAnswerOrigin, string>,
 
   /** «توزيع الرسم على المالكين» on a flat with several owners. See `OWNER_BILLING_MODE`. */
   ownerBillingMode: {
@@ -890,6 +937,46 @@ export const en = {
     MUKHTAR_STATEMENT: "Mukhtar's statement",
     OTHER: 'Other document',
   } satisfies Record<RequestAttachmentType, string>,
+
+  requestFieldType: {
+    SHORT_TEXT: 'Short text',
+    LONG_TEXT: 'Long text',
+    INTEGER: 'Whole number',
+    DECIMAL: 'Decimal number',
+    DATE: 'Date',
+    PHONE: 'Phone number',
+    DOCUMENT_NUMBER: 'ID or document number',
+    SINGLE_CHOICE: 'Single choice',
+    MULTI_CHOICE: 'Multiple choice',
+    YES_NO: 'Yes or no',
+    FILE: 'File (image or PDF)',
+  } satisfies Record<RequestFieldType, string>,
+
+  requestPropertyMode: {
+    NONE: 'Does not ask for a property',
+    OPTIONAL: 'Property is optional',
+    REQUIRED: 'Property is required',
+  } satisfies Record<RequestPropertyMode, string>,
+
+  requestFormVersionStatus: {
+    DRAFT: 'Draft',
+    PUBLISHED: 'Published',
+  } satisfies Record<RequestFormVersionStatus, string>,
+
+  requestLinkedSource: {
+    FIRST_NAME: 'First name',
+    FATHER_NAME: "Father's name",
+    LAST_NAME: 'Family name',
+    MOTHER_NAME: "Mother's name",
+    PHONE: 'Phone number',
+    IDENTITY_NUMBER: 'ID number',
+    CIVIL_RECORD_NUMBER: 'Civil record number',
+  } satisfies Record<RequestLinkedSource, string>,
+
+  requestAnswerOrigin: {
+    ANSWERED: 'Typed by the applicant',
+    FROM_FILE: 'Taken from the file',
+  } satisfies Record<RequestAnswerOrigin, string>,
 
   ownerBillingMode: {
     EQUAL: 'Split equally between the owners',

@@ -420,6 +420,26 @@ export const ERROR_CODES = [
   // `params.max`: how many papers one request may carry.
   'REQUEST_ATTACHMENT_LIMIT',
   'REQUEST_ATTACHMENTS_CLOSED',
+  // Request forms (docs/request-forms-plan.md, open decisions §24).
+  'REQUEST_FORM_NOT_FOUND',
+  // A form that is switched off, archived, or has no published version.
+  'REQUEST_FORM_NOT_OFFERED',
+  // The form was republished after the screen loaded: reload and answer again.
+  'REQUEST_FORM_VERSION_STALE',
+  // `details.issues`: one entry per answer, each with the field key and a stable issue code.
+  'REQUEST_ANSWERS_INVALID',
+  // A file question with no paper (`params.field` is its label).
+  'REQUEST_FORM_FILE_REQUIRED',
+  // A linked question whose value the citizen's file does not hold: a clerk completes the file first (F4, `params.field`).
+  'REQUEST_FORM_LINKED_FIELD_EMPTY',
+  // The draft was saved by someone else since this screen loaded.
+  'REQUEST_FORM_EDIT_CONFLICT',
+  // The draft cannot be published yet (`details.issues`).
+  'REQUEST_FORM_NOT_PUBLISHABLE',
+  // A form that has requests is archived, never deleted (F7).
+  'REQUEST_FORM_HAS_REQUESTS',
+  // Two questions of one version with one key (`params.key`).
+  'REQUEST_FORM_FIELD_KEY_TAKEN',
   'FILE_UPLOAD_FAILED',
   'FILE_OPEN_FAILED',
   // Old debts, «متأخرات سنوات سابقة» (0108, docs/old-debts-plan.md).

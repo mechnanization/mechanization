@@ -1013,6 +1013,58 @@ export const requestAttachmentTypeSchema = arabicEnum(REQUEST_ATTACHMENT_TYPE, '
 export type RequestAttachmentType = z.infer<typeof requestAttachmentTypeSchema>;
 
 /**
+ * What a question on a request form asks (tenant migration 0112, open decisions §24 F3). A fixed
+ * catalogue: the manager chooses a type and its safe options and never types a pattern. The values
+ * match `RequestFieldType` in the tenant schema, in this order; `request-form-enums.spec.ts` fails on drift.
+ */
+export const REQUEST_FIELD_TYPE = [
+  'SHORT_TEXT',
+  'LONG_TEXT',
+  'INTEGER',
+  'DECIMAL',
+  'DATE',
+  'PHONE',
+  'DOCUMENT_NUMBER',
+  'SINGLE_CHOICE',
+  'MULTI_CHOICE',
+  'YES_NO',
+  'FILE',
+] as const;
+export const requestFieldTypeSchema = arabicEnum(REQUEST_FIELD_TYPE, 'اختر نوع السؤال');
+export type RequestFieldType = z.infer<typeof requestFieldTypeSchema>;
+
+/** Whether a form names one of the citizen's property cards (F6, D4): not asked, optional, or required. */
+export const REQUEST_PROPERTY_MODE = ['NONE', 'OPTIONAL', 'REQUIRED'] as const;
+export const requestPropertyModeSchema = arabicEnum(REQUEST_PROPERTY_MODE, 'اختر طريقة سؤال العقار');
+export type RequestPropertyMode = z.infer<typeof requestPropertyModeSchema>;
+
+/** A version of a form is edited as a DRAFT, then PUBLISHED once and frozen (F2). */
+export const REQUEST_FORM_VERSION_STATUS = ['DRAFT', 'PUBLISHED'] as const;
+export const requestFormVersionStatusSchema = arabicEnum(REQUEST_FORM_VERSION_STATUS, 'اختر حالة النسخة');
+export type RequestFormVersionStatus = z.infer<typeof requestFormVersionStatusSchema>;
+
+/**
+ * The column of the citizen's file a linked field is copied from (F4). There is no value for a رقم مرجعي:
+ * it is the citizen's sign-in credential, so a form can never read it (non-negotiable 7).
+ */
+export const REQUEST_LINKED_SOURCE = [
+  'FIRST_NAME',
+  'FATHER_NAME',
+  'LAST_NAME',
+  'MOTHER_NAME',
+  'PHONE',
+  'IDENTITY_NUMBER',
+  'CIVIL_RECORD_NUMBER',
+] as const;
+export const requestLinkedSourceSchema = arabicEnum(REQUEST_LINKED_SOURCE, 'اختر مصدر الحقل من الملف');
+export type RequestLinkedSource = z.infer<typeof requestLinkedSourceSchema>;
+
+/** An answer was typed, or copied from the citizen's file (F4). */
+export const REQUEST_ANSWER_ORIGIN = ['ANSWERED', 'FROM_FILE'] as const;
+export const requestAnswerOriginSchema = arabicEnum(REQUEST_ANSWER_ORIGIN, 'اختر مصدر الجواب');
+export type RequestAnswerOrigin = z.infer<typeof requestAnswerOriginSchema>;
+
+/**
  * What a «تأكيد الشغور» rests on — asked every time one is recorded.
  *
  * Confirming a vacancy is not a display state: it stops the occupancy fee

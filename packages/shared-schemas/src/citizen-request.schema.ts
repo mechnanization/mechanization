@@ -132,14 +132,17 @@ export const rejectRequestSchema = z.object({
 });
 export type RejectRequestInput = z.infer<typeof rejectRequestSchema>;
 
+/** A request's fee in whole pounds (D1): the one rule for a request type's setting and for a request form's own fee. */
+export const requestFeeAmountSchema = z.coerce
+  .number(typeError({ invalid: 'الرسم يجب أن يكون رقماً' }))
+  .int('الرسم بالليرة، رقماً صحيحاً')
+  .min(0, 'الرسم لا يكون سالباً')
+  .max(1_000_000_000, 'الرسم كبير جداً — يرجى المراجعة');
+
 /** The manager's list of request types: switched on or off, and the fee in whole pounds (D1). */
 export const updateRequestTypeSettingSchema = z.object({
   enabled: z.boolean(),
-  feeAmount: z.coerce
-    .number(typeError({ invalid: 'الرسم يجب أن يكون رقماً' }))
-    .int('الرسم بالليرة، رقماً صحيحاً')
-    .min(0, 'الرسم لا يكون سالباً')
-    .max(1_000_000_000, 'الرسم كبير جداً — يرجى المراجعة'),
+  feeAmount: requestFeeAmountSchema,
 });
 export type UpdateRequestTypeSettingInput = z.infer<typeof updateRequestTypeSettingSchema>;
 

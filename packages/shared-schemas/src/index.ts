@@ -44,6 +44,8 @@ export * from './income.schema';
 export * from './treasury-movements.schema';
 export * from './transfer.schema';
 export * from './citizen-request.schema';
+export * from './request-form.schema';
+export * from './request-form-answers';
 export * from './payment-settlement.schema';
 export * from './money-amount';
 export * from './treasury-closing.schema';
