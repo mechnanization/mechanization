@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { citizenDisplayName, municipalToday, type PaymentMethod } from '@mechanization/shared-schemas';
 import type { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
+import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { allocateDocumentNumber, allocateDocumentNumbers } from '../../common/document-number';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
@@ -173,6 +174,14 @@ export class PaymentLedgerService {
   }
 
   /**
+   * The client inside `runInTenantTransaction`, where the scope's `prisma` is
+   * the transaction (audit ARCH-02). Read it only inside that callback.
+   */
+  private get tx(): Prisma.TransactionClient {
+    return this.db;
+  }
+
+  /**
    * The schema prefix every raw query in this class writes into its SQL.
    *
    * Raw SQL is sent to Postgres untouched, so an unqualified table name resolves
@@ -193,7 +202,7 @@ export class PaymentLedgerService {
    */
   async record(input: LedgerEntryInput & { audit: LedgerAudit }): Promise<SettledTotals> {
     assertPositiveAmount(input.amount);
-    return this.db.$transaction((tx) => this.recordIn(tx, input));
+    return runInTenantTransaction(this.tenantContext, () => this.recordIn(this.tx, input));
   }
 
   /**
@@ -484,7 +493,8 @@ export class PaymentLedgerService {
     note?: string | null;
     audit: LedgerAudit;
   }): Promise<SettledTotals> {
-    return this.db.$transaction(async (tx) => {
+    return runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.tx;
       const original = await tx.paymentTransaction.findUnique({
         where: { id: input.transactionId },
         select: {
