@@ -1,0 +1,12 @@
+no-import  apps/backend/src/infrastructure/cadastre/cadastre-storage.service.ts
+no-import  apps/backend/src/infrastructure/supabase/auth/supabase-auth.service.ts
+no-import  apps/backend/src/infrastructure/supabase/storage/supabase-storage.service.ts
+no-import  apps/backend/src/types/express.d.ts
+no-import  apps/frontend/components/admin/confirm-cash-payment-dialog.tsx
+no-import  apps/frontend/components/admin/settings/backup-section.tsx
+no-import  apps/frontend/components/admin/workflow.tsx
+no-import  apps/frontend/lib/sentry-options.ts
+no-import  apps/frontend/lib/use-section-nav.ts
+tests-only apps/backend/src/infrastructure/prisma/tenant-test-client.ts
+tests-only apps/backend/src/presentation/controllers/route-discovery.ts
+tests-only apps/frontend/lib/icu-arguments.ts

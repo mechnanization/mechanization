@@ -1,0 +1,557 @@
+DEAD               apps/backend/src/application/features/buildings/building.types.ts  CreateBuildingRow
+DEAD               apps/backend/src/application/features/buildings/building.types.ts  CreateUnitRow
+DEAD               apps/backend/src/domain/interfaces/base-repository.interface.ts  BaseRepository
+DEAD               apps/frontend/components/accent-provider.tsx  useAccent
+DEAD               apps/frontend/components/admin/confirm-cash-payment-dialog.tsx  ConfirmCashPaymentDialog
+DEAD               apps/frontend/components/admin/quality/finding-parts.tsx  ROLLUP_KINDS
+DEAD               apps/frontend/components/admin/settings/settings-ui.tsx  LocalOnlyNotice
+DEAD               apps/frontend/components/admin/unit-figures.tsx  hasUnitFigure
+DEAD               apps/frontend/components/admin/unit-grid-picker.tsx  MAX_GRID_SIZE
+DEAD               apps/frontend/components/admin/unit-grid-picker.tsx  MIN_GRID_SIZE
+DEAD               apps/frontend/components/admin/workflow.tsx  WorkflowEmpty
+DEAD               apps/frontend/components/admin/workflow.tsx  WorkflowRail
+DEAD               apps/frontend/components/admin/workflow.tsx  WorkflowSection
+DEAD               apps/frontend/lib/accents.ts  isAccent
+DEAD               apps/frontend/lib/api-client.ts  getFeeTitles
+DEAD               apps/frontend/lib/api-client.ts  getUnitVisits
+DEAD               apps/frontend/lib/api-client.ts  updateBuilding
+DEAD               apps/frontend/lib/api-client.ts  updateExpenseCategory
+DEAD               apps/frontend/lib/map-geometry.ts  geometryCenter
+DEAD               apps/frontend/lib/sentry-options.ts  SHARED_SENTRY_OPTIONS
+DEAD               apps/frontend/lib/settings-i18n.ts  isRtlLocale
+DEAD               packages/shared-schemas/src/admin-citizen.schema.ts  AdminCreateCitizen
+DEAD               packages/shared-schemas/src/admin-citizen.schema.ts  AdminUpdateCitizen
+DEAD               packages/shared-schemas/src/admin-citizen.schema.ts  IdentifiedPropertyEntry
+DEAD               packages/shared-schemas/src/arrears.schema.ts  ApproveArrearsBatchInput
+DEAD               packages/shared-schemas/src/arrears.schema.ts  arrearsDecisionOf
+DEAD               packages/shared-schemas/src/auth.schema.ts  ChangeEmail
+DEAD               packages/shared-schemas/src/auth.schema.ts  ChangePassword
+DEAD               packages/shared-schemas/src/auth.schema.ts  ConfirmPasswordReset
+DEAD               packages/shared-schemas/src/citizen-request.schema.ts  isOpenRequestStatus
+DEAD               packages/shared-schemas/src/citizen.schema.ts  ContactDetails
+DEAD               packages/shared-schemas/src/citizen.schema.ts  PartialContactDetails
+DEAD               packages/shared-schemas/src/citizen.schema.ts  PartialPersonalDetails
+DEAD               packages/shared-schemas/src/citizen.schema.ts  PersonalDetails
+DEAD               packages/shared-schemas/src/error-codes.ts  ApiErrorBody
+DEAD               packages/shared-schemas/src/fee-exemption.schema.ts  FeeExemptionListStatus
+DEAD               packages/shared-schemas/src/fee.schema.ts  FeeMatrix
+DEAD               packages/shared-schemas/src/fee.schema.ts  FeeTargetType
+DEAD               packages/shared-schemas/src/fee.schema.ts  ReferenceLogin
+DEAD               packages/shared-schemas/src/fee.schema.ts  ReferenceOnlyLogin
+DEAD               packages/shared-schemas/src/fee.schema.ts  ReviewPayment
+DEAD               packages/shared-schemas/src/fee.schema.ts  paymentStatusSchema
+DEAD               packages/shared-schemas/src/field-flag.schema.ts  FieldFlagInput
+DEAD               packages/shared-schemas/src/field-flag.schema.ts  unverifiedPaths
+DEAD               packages/shared-schemas/src/news-article.schema.ts  NewsArticleTextInput
+DEAD               packages/shared-schemas/src/news.schema.ts  newsLanguageQuerySchema
+DEAD               packages/shared-schemas/src/payment-settlement.schema.ts  BulkTender
+DEAD               packages/shared-schemas/src/property.schema.ts  SUGGESTED_PROPERTY_TYPE
+DEAD               packages/shared-schemas/src/registration.schema.ts  PropertyNumberCheckResponse
+DEAD               packages/shared-schemas/src/staff.schema.ts  InspectorRegistrationLogItem
+DEAD               packages/shared-schemas/src/treasury-closing.schema.ts  DailyCountLineInput
+DEAD               packages/shared-schemas/src/treasury-closing.schema.ts  TREASURY_DAY_STORED_STATUSES
+DEAD               packages/shared-schemas/src/unit-levels.ts  unitCoversFloor
+DEAD       +tests  apps/backend/src/application/features/citizens/file-changes.ts  isEmptyChange
+DEAD       +tests  apps/backend/src/domain/entities/billable-unit.ts  isStructuralBillableType
+DEAD       +tests  apps/backend/src/infrastructure/prisma/tenant-test-client.ts  tenantTestClient
+DEAD       +tests  apps/backend/src/presentation/controllers/route-discovery.ts  discoverRoutes
+DEAD       +tests  apps/frontend/lib/icu-arguments.ts  argumentNames
+DEAD       +tests  apps/frontend/lib/icu-arguments.ts  tagNames
+DEAD       +tests  packages/shared-schemas/src/arrears.schema.ts  arrearsCellsFromHeaders
+DEAD       +tests  packages/shared-schemas/src/document-numbering.ts  isDocumentNumber
+DEAD       +tests  packages/shared-schemas/src/owner-share.ts  shareWeight
+DEAD       +tests  packages/shared-schemas/src/registration.schema.ts  propertyNumberCheckSchema
+DEAD       +tests  packages/shared-schemas/src/unit-layout.ts  levelSpanLimits
+local-only         apps/backend/src/application/common/file-sniff.ts  SniffedFile
+local-only         apps/backend/src/application/features/arrears/arrears-batch.service.ts  ARREARS_BATCH_DISCARDED
+local-only         apps/backend/src/application/features/arrears/arrears-batch.service.ts  ARREARS_BATCH_RETURNED
+local-only         apps/backend/src/application/features/arrears/arrears-batch.service.ts  ARREARS_BATCH_SUBMITTED
+local-only         apps/backend/src/application/features/arrears/arrears-batch.service.ts  ARREARS_LINE_ADDED
+local-only         apps/backend/src/application/features/arrears/arrears-import.plan.ts  ArrearsImportPlan
+local-only         apps/backend/src/application/features/audit/audit-view.ts  AuditActorView
+local-only         apps/backend/src/application/features/audit/audit-view.ts  AuditTargetView
+local-only         apps/backend/src/application/features/audit/audit.service.ts  AuditDailySummary
+local-only         apps/backend/src/application/features/buildings/building-types.ts  TypedStructure
+local-only         apps/backend/src/application/features/buildings/buildings.service.ts  MatrixSaveResult
+local-only         apps/backend/src/application/features/buildings/fee-exemption.service.ts  RECONCILED_LIFT_REASON
+local-only         apps/backend/src/application/features/buildings/house-growth.ts  HouseCard
+local-only         apps/backend/src/application/features/buildings/house-growth.ts  HouseUnit
+local-only         apps/backend/src/application/features/buildings/owner-billing.plan.ts  OwnerBillingWrite
+local-only         apps/backend/src/application/features/buildings/unit-status.ts  UnitStatusDb
+local-only         apps/backend/src/application/features/buildings/unit-status.ts  UnitStatusFactsRow
+local-only         apps/backend/src/application/features/buildings/unit-status.ts  loadUnitStatusFacts
+local-only         apps/backend/src/application/features/buildings/unit-types.ts  TypedUnit
+local-only         apps/backend/src/application/features/buildings/unit-types.ts  UnitTypeIndex
+local-only         apps/backend/src/application/features/buildings/unit-vacancy.ts  VacancyDb
+local-only         apps/backend/src/application/features/citizens/citizen-merge.plan.ts  CardMove
+local-only         apps/backend/src/application/features/citizens/citizen-merge.plan.ts  DuplicateClaim
+local-only         apps/backend/src/application/features/citizens/citizen-merge.plan.ts  FillableField
+local-only         apps/backend/src/application/features/citizens/citizen-merge.plan.ts  FlagWrite
+local-only         apps/backend/src/application/features/citizens/citizen-merge.plan.ts  MAX_MERGED_CARDS
+local-only         apps/backend/src/application/features/citizens/citizen-merge.plan.ts  PlanRow
+local-only         apps/backend/src/application/features/citizens/citizens.service.ts  EditReview
+local-only         apps/backend/src/application/features/citizens/landlord-link.service.ts  LandlordLinkResult
+local-only         apps/backend/src/application/features/citizens/landlord-link.service.ts  LinkMint
+local-only         apps/backend/src/application/features/citizens/ownership.service.ts  EndOwnershipCommand
+local-only         apps/backend/src/application/features/citizens/possible-duplicates.ts  ContactField
+local-only         apps/backend/src/application/features/citizens/possible-duplicates.ts  DuplicateSignals
+local-only         apps/backend/src/application/features/citizens/possible-duplicates.ts  DuplicateVerdict
+local-only         apps/backend/src/application/features/citizens/possible-duplicates.ts  LandlordPhoneCard
+local-only         apps/backend/src/application/features/citizens/possible-duplicates.ts  MotherMatch
+local-only         apps/backend/src/application/features/citizens/possible-duplicates.ts  PersonName
+local-only         apps/backend/src/application/features/citizens/possible-duplicates.ts  PhoneOwner
+local-only         apps/backend/src/application/features/citizens/possible-duplicates.ts  RECENT_SAME_PHONE_MS
+local-only         apps/backend/src/application/features/citizens/possible-duplicates.ts  duplicateScore
+local-only         apps/backend/src/application/features/corrections/duplex-merge.plan.ts  DuplexMergePlan
+local-only         apps/backend/src/application/features/corrections/unit-correction.plan.ts  CorrectionBuilding
+local-only         apps/backend/src/application/features/corrections/unit-correction.plan.ts  CorrectionCase
+local-only         apps/backend/src/application/features/corrections/unit-correction.plan.ts  CorrectionMerge
+local-only         apps/backend/src/application/features/corrections/unit-correction.plan.ts  CorrectionOccupancy
+local-only         apps/backend/src/application/features/corrections/unit-correction.plan.ts  CorrectionRegistration
+local-only         apps/backend/src/application/features/corrections/unit-correction.plan.ts  CorrectionUnit
+local-only         apps/backend/src/application/features/corrections/unit-correction.plan.ts  CorrectionVacancy
+local-only         apps/backend/src/application/features/corrections/unit-correction.plan.ts  CorrectionVisit
+local-only         apps/backend/src/application/features/corrections/unit-correction.plan.ts  LandlordLinkChange
+local-only         apps/backend/src/application/features/corrections/unit-correction.plan.ts  LineChange
+local-only         apps/backend/src/application/features/corrections/unit-correction.plan.ts  RegistrationFlagChange
+local-only         apps/backend/src/application/features/corrections/unit-correction.service.ts  blockerMessage
+local-only         apps/backend/src/application/features/day3ati/staff-sync.ts  DAY3ATI_STAFF_LANGUAGE
+local-only         apps/backend/src/application/features/day3ati/staff-sync.ts  StaffSyncOutcome
+local-only         apps/backend/src/application/features/documents/document.service.ts  DocumentSlot
+local-only         apps/backend/src/application/features/documents/document.service.ts  IncomingFile
+local-only         apps/backend/src/application/features/fees/bill-write-off.ts  BillWriteOffRefusal
+local-only         apps/backend/src/application/features/fees/duplicate-notice.ts  NoticeTarget
+local-only         apps/backend/src/application/features/fees/fees.service.ts  CitizenAssessment
+local-only         apps/backend/src/application/features/fees/fees.service.ts  NoticeScope
+local-only         apps/backend/src/application/features/fees/fees.service.ts  OutOfScopeUnit
+local-only         apps/backend/src/application/features/fees/fees.service.ts  PaymentSummary
+local-only         apps/backend/src/application/features/fees/fees.service.ts  UnassessableCitizen
+local-only         apps/backend/src/application/features/fees/fees.service.ts  periodBeforeCutoff
+local-only         apps/backend/src/application/features/fees/fees.service.ts  periodYearOf
+local-only         apps/backend/src/application/features/fees/payment-ledger.service.ts  LedgerEntryInput
+local-only         apps/backend/src/application/features/fees/payment-ledger.service.ts  LockedInvoice
+local-only         apps/backend/src/application/features/fees/payment-ledger.service.ts  SettledTotals
+local-only         apps/backend/src/application/features/fees/tiered-area.ts  TieredCounts
+local-only         apps/backend/src/application/features/fees/tiered-area.ts  TieredPricing
+local-only         apps/backend/src/application/features/identity/identity.service.ts  DisambiguationRequired
+local-only         apps/backend/src/application/features/identity/identity.service.ts  StaffLoginResult
+local-only         apps/backend/src/application/features/identity/identity.service.ts  TotpChallengeRequired
+local-only         apps/backend/src/application/features/identity/otp.service.ts  OtpIssueResult
+local-only         apps/backend/src/application/features/news/news-articles.service.ts  NewsArticleListQuery
+local-only         apps/backend/src/application/features/news/news-media-sniff.ts  SniffedNewsMedia
+local-only         apps/backend/src/application/features/news/news-views.ts  toArticleListItem
+local-only         apps/backend/src/application/features/quality/data-quality.service.ts  FindingSeverity
+local-only         apps/backend/src/application/features/quality/data-quality.service.ts  RawFinding
+local-only         apps/backend/src/application/features/quality/record-review.service.ts  QueuePage
+local-only         apps/backend/src/application/features/quality/record-review.service.ts  REVIEW_STATES
+local-only         apps/backend/src/application/features/registration/registration.service.ts  SubmitResult
+local-only         apps/backend/src/application/features/reporting/reporting.service.ts  CitizenProfileHeldUnit
+local-only         apps/backend/src/application/features/reporting/reporting.service.ts  SpatialFeature
+local-only         apps/backend/src/application/features/treasury/day-closing.plan.ts  CountDateVerdict
+local-only         apps/backend/src/application/features/treasury/day-closing.plan.ts  CountLineVerdict
+local-only         apps/backend/src/application/features/treasury/day-closing.plan.ts  DayEntry
+local-only         apps/backend/src/application/features/treasury/day-closing.plan.ts  ReopenVerdict
+local-only         apps/backend/src/application/features/treasury/day-closing.plan.ts  WalletDay
+local-only         apps/backend/src/application/features/treasury/day-closure.service.ts  BookState
+local-only         apps/backend/src/application/features/treasury/day-closure.service.ts  DayFacts
+local-only         apps/backend/src/application/features/treasury/day-closure.service.ts  closureRefusal
+local-only         apps/backend/src/application/features/treasury/expenses.plan.ts  ExpenseDateVerdict
+local-only         apps/backend/src/application/features/treasury/income.plan.ts  IncomeDateVerdict
+local-only         apps/backend/src/application/features/treasury/transfers.plan.ts  TransferDateVerdict
+local-only         apps/backend/src/application/features/treasury/treasury-ledger.service.ts  EntryDraft
+local-only         apps/backend/src/application/features/treasury/treasury-ledger.service.ts  PostContext
+local-only         apps/backend/src/domain/entities/aggregate-root.base.ts  DomainEvent
+local-only         apps/backend/src/domain/entities/audit-log-entry.entity.ts  AuditLogEntryProps
+local-only         apps/backend/src/domain/entities/billable-unit.ts  BillableOwnerShare
+local-only         apps/backend/src/domain/entities/census-claim.ts  ClaimingCard
+local-only         apps/backend/src/domain/entities/census-claim.ts  CurrentSpell
+local-only         apps/backend/src/domain/entities/document.entity.ts  DocumentProps
+local-only         apps/backend/src/domain/entities/property-entry.entity.ts  UnestablishedFields
+local-only         apps/backend/src/domain/entities/user.entity.ts  CitizenProps
+local-only         apps/backend/src/domain/entities/user.entity.ts  UserKind
+local-only         apps/backend/src/domain/errors/domain-error.ts  DomainErrorInit
+local-only         apps/backend/src/domain/interfaces/base-repository.interface.ts  SUPABASE_AUTH_SERVICE
+local-only         apps/backend/src/domain/interfaces/day3ati-integration.interface.ts  Day3atiStaffRole
+local-only         apps/backend/src/infrastructure/cadastre/cadastre-storage.service.ts  CadastreStorageService
+local-only         apps/backend/src/infrastructure/cadastre/parcel-geometry.ts  CadastreGeometryAssets
+local-only         apps/backend/src/infrastructure/cadastre/parcel-geometry.ts  ParcelBoundary
+local-only         apps/backend/src/infrastructure/cadastre/parcel-geometry.ts  ParcelShape
+local-only         apps/backend/src/infrastructure/day3ati/day3ati-news-errors.ts  NewsProblem
+local-only         apps/backend/src/infrastructure/day3ati/day3ati-news.client.ts  DAY3ATI_DEFAULT_MAX_PAGES
+local-only         apps/backend/src/infrastructure/day3ati/day3ati-token.service.ts  DAY3ATI_TOKEN_REQUEST_TIMEOUT_MS
+local-only         apps/backend/src/infrastructure/day3ati/day3ati-token.service.ts  DAY3ATI_TOKEN_SAFETY_MARGIN_SECONDS
+local-only         apps/backend/src/infrastructure/prisma/tenant-migrator.ts  TenantMigration
+local-only         apps/backend/src/infrastructure/prisma/tenant-migrator.ts  loadTenantMigrations
+local-only         apps/backend/src/infrastructure/supabase/auth/supabase-auth.service.ts  SupabaseAuthServiceImpl
+local-only         apps/backend/src/presentation/config/env.schema.ts  DAY3ATI_VARIABLES
+local-only         apps/backend/src/presentation/decorators/current-user.decorator.ts  RequestTenant
+local-only         apps/frontend/components/admin/audit-daily.tsx  AuditFilter
+local-only         apps/frontend/components/admin/building-census-summary.tsx  BuildingCensusFacts
+local-only         apps/frontend/components/admin/building-unit-forms.tsx  AddPersonValues
+local-only         apps/frontend/components/admin/building-unit-forms.tsx  BuildingBadgeFacts
+local-only         apps/frontend/components/admin/building-unit-forms.tsx  CellBadge
+local-only         apps/frontend/components/admin/building-unit-forms.tsx  CellVariant
+local-only         apps/frontend/components/admin/building-unit-forms.tsx  VISIT_OUTCOMES
+local-only         apps/frontend/components/admin/building-unit-forms.tsx  VisitValues
+local-only         apps/frontend/components/admin/building-unit-forms.tsx  livingOccupants
+local-only         apps/frontend/components/admin/bulk-settle/bill-checkbox.tsx  BillCheckboxSubject
+local-only         apps/frontend/components/admin/charts.tsx  ColumnDatum
+local-only         apps/frontend/components/admin/charts.tsx  GroupedDatum
+local-only         apps/frontend/components/admin/citizen-picker.tsx  pickedCitizen
+local-only         apps/frontend/components/admin/complete-record-dialog.tsx  RecordCompletionBody
+local-only         apps/frontend/components/admin/fee-exemptions/fee-exemption-form.tsx  EMPTY_FEE_EXEMPTION_DRAFT
+local-only         apps/frontend/components/admin/fee-exemptions/fee-exemption-form.tsx  grantInput
+local-only         apps/frontend/components/admin/fee-exemptions/fee-exemption-unit-card.tsx  invalidateFeeExemptions
+local-only         apps/frontend/components/admin/fees/notice-review.tsx  EditableStep
+local-only         apps/frontend/components/admin/fees/unassessable-words.ts  UnassessableWords
+local-only         apps/frontend/components/admin/landlord-proposal-card.tsx  BlockNotice
+local-only         apps/frontend/components/admin/landlord-proposal-card.tsx  LandlordResolution
+local-only         apps/frontend/components/admin/link-case-citizen-dialog.tsx  CaseLinkRole
+local-only         apps/frontend/components/admin/link-case-citizen-dialog.tsx  CaseLinkUnit
+local-only         apps/frontend/components/admin/nav.ts  NavGroup
+local-only         apps/frontend/components/admin/parcel-pin-picker.tsx  MAP_LOAD_TIMEOUT_MS
+local-only         apps/frontend/components/admin/parcel-pin-picker.tsx  PIN_COLOR
+local-only         apps/frontend/components/admin/parcel-pin-picker.tsx  SATELLITE_STYLE
+local-only         apps/frontend/components/admin/parcel-pin-picker.tsx  labelPointCache
+local-only         apps/frontend/components/admin/payment-receipt.tsx  RecordedTender
+local-only         apps/frontend/components/admin/payment-receipt.tsx  describeTender
+local-only         apps/frontend/components/admin/possible-duplicates.tsx  DuplicateCheck
+local-only         apps/frontend/components/admin/property-illustrations.tsx  ElevationUnit
+local-only         apps/frontend/components/admin/property-illustrations.tsx  StructureLook
+local-only         apps/frontend/components/admin/property-illustrations.tsx  UnitKind
+local-only         apps/frontend/components/admin/property-illustrations.tsx  occupiedColumns
+local-only         apps/frontend/components/admin/property-illustrations.tsx  runsWhere
+local-only         apps/frontend/components/admin/property-illustrations.tsx  structureLook
+local-only         apps/frontend/components/admin/property-illustrations.tsx  unitKind
+local-only         apps/frontend/components/admin/quality/finding-parts.tsx  SEVERITY
+local-only         apps/frontend/components/admin/quality/finding-parts.tsx  fixHref
+local-only         apps/frontend/components/admin/quality/finding-parts.tsx  readableDetail
+local-only         apps/frontend/components/admin/unit-correction-delete-dialog.tsx  UnitCorrectionDeleteDialog
+local-only         apps/frontend/components/admin/unit-grid-picker.tsx  DEFAULT_HORIZONTAL_BLOCKS
+local-only         apps/frontend/components/admin/unit-grid-picker.tsx  MAX_BASEMENT_BLOCKS
+local-only         apps/frontend/components/admin/unit-grid-picker.tsx  MAX_VERTICAL_BLOCKS
+local-only         apps/frontend/components/admin/unit-grid-picker.tsx  MIN_BASEMENT_BLOCKS
+local-only         apps/frontend/components/admin/unit-grid-picker.tsx  MIN_HORIZONTAL_BLOCKS
+local-only         apps/frontend/components/admin/unit-grid-picker.tsx  MIN_VERTICAL_BLOCKS
+local-only         apps/frontend/components/admin/unit-holdings-grid.tsx  HELD_CLASS
+local-only         apps/frontend/components/admin/unit-holdings-grid.tsx  HELD_DOT
+local-only         apps/frontend/components/admin/unit-levels.tsx  UnitLevelsBadge
+local-only         apps/frontend/components/admin/unit-levels.tsx  UnitLevelsSelect
+local-only         apps/frontend/components/admin/workflow.tsx  WorkflowStep
+local-only         apps/frontend/components/admin/zone-editor-map.tsx  ZoneEditorAssignments
+local-only         apps/frontend/components/admin/zone-editor-map.tsx  ZoneEditorMapProps
+local-only         apps/frontend/components/citizen/unit-fields.tsx  summariseUnit
+local-only         apps/frontend/components/language-switcher.tsx  LanguageSwitcherProps
+local-only         apps/frontend/components/ui/alert.tsx  AlertProps
+local-only         apps/frontend/components/ui/button.tsx  ButtonProps
+local-only         apps/frontend/components/ui/cell-tag.tsx  CellTagProps
+local-only         apps/frontend/components/ui/cell-tag.tsx  CellTone
+local-only         apps/frontend/components/ui/data-table.tsx  DataTableProps
+local-only         apps/frontend/components/ui/field.tsx  FieldFocus
+local-only         apps/frontend/components/ui/input.tsx  InputProps
+local-only         apps/frontend/components/ui/segmented-control.tsx  SegmentedControlProps
+local-only         apps/frontend/components/ui/segmented-control.tsx  SegmentedOption
+local-only         apps/frontend/lib/accents.ts  ACCENTS
+local-only         apps/frontend/lib/api-client.ts  ApiError
+local-only         apps/frontend/lib/api-client.ts  AuditFacets
+local-only         apps/frontend/lib/api-client.ts  BuildingFilterOptions
+local-only         apps/frontend/lib/api-client.ts  BuildingSummary
+local-only         apps/frontend/lib/api-client.ts  DuplicatePhoneOwner
+local-only         apps/frontend/lib/api-client.ts  EndOwnershipAnswer
+local-only         apps/frontend/lib/api-client.ts  FeeFilterOptions
+local-only         apps/frontend/lib/api-client.ts  MonthlyFees
+local-only         apps/frontend/lib/api-client.ts  RecordOccupancyInput
+local-only         apps/frontend/lib/api-client.ts  StaffLoginResponse
+local-only         apps/frontend/lib/api-client.ts  UnitBlueprintInput
+local-only         apps/frontend/lib/api-client.ts  VerifyOtpResponse
+local-only         apps/frontend/lib/api-client.ts  WorklistFilter
+local-only         apps/frontend/lib/api-client.ts  ZoneWriteInput
+local-only         apps/frontend/lib/api-errors.ts  ApiErrorText
+local-only         apps/frontend/lib/arrears-bill.ts  MaybeArrearsBill
+local-only         apps/frontend/lib/arrears-report.ts  ArrearsReportCsvText
+local-only         apps/frontend/lib/audit-describe.ts  AuditChange
+local-only         apps/frontend/lib/audit-describe.ts  AuditDescription
+local-only         apps/frontend/lib/audit-describe.ts  AuditFact
+local-only         apps/frontend/lib/audit-describe.ts  AuditFamily
+local-only         apps/frontend/lib/building-draft.ts  buildingDraftWorthKeeping
+local-only         apps/frontend/lib/building-types.ts  BUILDING_TYPES_REFERENCE
+local-only         apps/frontend/lib/bulk-settle.ts  PageSelection
+local-only         apps/frontend/lib/bulk-settle.ts  PreviewNote
+local-only         apps/frontend/lib/bulk-settle.ts  PropertyLine
+local-only         apps/frontend/lib/citizen-field-edit.ts  CITIZEN_EDITABLE_FIELDS
+local-only         apps/frontend/lib/commission-payout.ts  PayoutFieldErrors
+local-only         apps/frontend/lib/commission-payout.ts  PayoutRead
+local-only         apps/frontend/lib/csv.ts  ParsedArrearsCsv
+local-only         apps/frontend/lib/csv.ts  ParsedCsv
+local-only         apps/frontend/lib/currency.ts  MoneyParts
+local-only         apps/frontend/lib/daily-count.ts  DraftVerdict
+local-only         apps/frontend/lib/expense-form.ts  ExpenseField
+local-only         apps/frontend/lib/expense-order.ts  PrintedOrder
+local-only         apps/frontend/lib/fee-notice-draft.ts  CoverageStep
+local-only         apps/frontend/lib/fee-notice-draft.ts  extensionCode
+local-only         apps/frontend/lib/inspector-payouts.ts  PayoutForHistory
+local-only         apps/frontend/lib/inspector-payouts.ts  PayoutHistoryRow
+local-only         apps/frontend/lib/landlord-status.ts  LandlordLinkStatus
+local-only         apps/frontend/lib/news-article-form.ts  SCHEDULE_MIN_LEAD_MS
+local-only         apps/frontend/lib/news-article-form.ts  ScheduleResult
+local-only         apps/frontend/lib/news-media.ts  DAY3ATI_MEDIA_ORIGIN
+local-only         apps/frontend/lib/offline-db.ts  CachedReference
+local-only         apps/frontend/lib/offline-db.ts  QueuedBuildingStatus
+local-only         apps/frontend/lib/offline-db.ts  QueuedStatus
+local-only         apps/frontend/lib/offline-sync.ts  QueueState
+local-only         apps/frontend/lib/offline-sync.ts  namesQueuedBuilding
+local-only         apps/frontend/lib/owner-billing.ts  OwnerBillingWording
+local-only         apps/frontend/lib/quality-api.ts  ReviewHistoryEntry
+local-only         apps/frontend/lib/read-view.ts  ReadView
+local-only         apps/frontend/lib/receipt-pdf.ts  ReceiptPdfOptions
+local-only         apps/frontend/lib/register-period.ts  RegisterPeriod
+local-only         apps/frontend/lib/request-attachments.ts  AttachmentProblem
+local-only         apps/frontend/lib/request-status.ts  RequestStatusBadge
+local-only         apps/frontend/lib/request-status.ts  RequestStatusTone
+local-only         apps/frontend/lib/residence-move.ts  AWAY_HOME_STATUSES
+local-only         apps/frontend/lib/residence-move.ts  ESTATE_HOME_STATUSES
+local-only         apps/frontend/lib/residence-move.ts  ResidenceMovePlan
+local-only         apps/frontend/lib/settings-i18n.ts  SettingsLocale
+local-only         apps/frontend/lib/settings-store.ts  readSettingsSlice
+local-only         apps/frontend/lib/settings-store.ts  writeSettingsSlice
+local-only         apps/frontend/lib/treasury-convert.ts  ConvertedTotal
+local-only         apps/frontend/lib/treasury-convert.ts  CurrencyAmount
+local-only         apps/frontend/lib/treasury-input.ts  OpeningAmountResult
+local-only         apps/frontend/lib/unit-types.ts  TypedUnitFields
+local-only         apps/frontend/lib/unit-types.ts  UNIT_TYPES_REFERENCE
+local-only         apps/frontend/lib/unit-types.ts  UnitTypeOption
+local-only         apps/frontend/lib/urgent-ceiling.ts  CeilingChange
+local-only         apps/frontend/lib/url-state.ts  ParamReader
+local-only         apps/frontend/lib/use-citizen-search.ts  CITIZEN_PICKER_LIMIT
+local-only         apps/frontend/lib/use-citizen-search.ts  CitizenSearchFetch
+local-only         apps/frontend/lib/use-citizen-search.ts  CitizenSearchOptions
+local-only         apps/frontend/lib/use-staff-query.ts  StaffQueryResult
+local-only         apps/frontend/lib/use-staff-session.ts  StaffSessionUser
+local-only         apps/frontend/lib/use-url-state.ts  PAGE_SIZE_OPTIONS
+local-only         apps/frontend/lib/use-url-state.ts  UrlPaginationOptions
+local-only         apps/frontend/lib/use-url-state.ts  UrlStateOptions
+local-only         apps/frontend/lib/whatsapp.ts  formatWhatsappNumber
+local-only         apps/frontend/lib/zip.ts  ZipReadEntry
+local-only         packages/shared-schemas/src/admin-citizen.schema.ts  CARD_REMOVAL_REASON
+local-only         packages/shared-schemas/src/admin-citizen.schema.ts  CITIZEN_RECORD_STATUS
+local-only         packages/shared-schemas/src/admin-citizen.schema.ts  CardRemoval
+local-only         packages/shared-schemas/src/admin-citizen.schema.ts  NonResidentCardIssue
+local-only         packages/shared-schemas/src/admin-citizen.schema.ts  NonResidentCardIssueCode
+local-only         packages/shared-schemas/src/admin-citizen.schema.ts  duplicateReviewAnswerSchema
+local-only         packages/shared-schemas/src/arrears.schema.ts  ARREARS_AMOUNT_MAX
+local-only         packages/shared-schemas/src/arrears.schema.ts  ARREARS_CURRENCY
+local-only         packages/shared-schemas/src/arrears.schema.ts  ARREARS_LINE_VERDICT
+local-only         packages/shared-schemas/src/arrears.schema.ts  ARREARS_TEXT_MAX
+local-only         packages/shared-schemas/src/arrears.schema.ts  ARREARS_YEAR_MIN
+local-only         packages/shared-schemas/src/arrears.schema.ts  ArrearsLineVerdictStatus
+local-only         packages/shared-schemas/src/arrears.schema.ts  ArrearsTemplateColumn
+local-only         packages/shared-schemas/src/arrears.schema.ts  ParsedArrearsLine
+local-only         packages/shared-schemas/src/arrears.schema.ts  ParsedArrearsRow
+local-only         packages/shared-schemas/src/arrears.schema.ts  arrearsControlTotalSchema
+local-only         packages/shared-schemas/src/arrears.schema.ts  arrearsFeeTypeSchema
+local-only         packages/shared-schemas/src/auth.schema.ts  citizenChoiceSchema
+local-only         packages/shared-schemas/src/auth.schema.ts  disambiguationSchema
+local-only         packages/shared-schemas/src/auth.schema.ts  sessionSchema
+local-only         packages/shared-schemas/src/auth.schema.ts  totpRequiredSchema
+local-only         packages/shared-schemas/src/building.schema.ts  HOUSE_GROWTH
+local-only         packages/shared-schemas/src/building.schema.ts  afterTenancyStatusSchema
+local-only         packages/shared-schemas/src/building.schema.ts  houseGrowthSchema
+local-only         packages/shared-schemas/src/citizen-import.schema.ts  IMPORT_COLUMN_KEYS
+local-only         packages/shared-schemas/src/citizen-import.schema.ts  ImportColumn
+local-only         packages/shared-schemas/src/citizen-merge.schema.ts  CITIZEN_MERGE_BLOCKS
+local-only         packages/shared-schemas/src/citizen-merge.schema.ts  CITIZEN_UNMERGE_BLOCKS
+local-only         packages/shared-schemas/src/citizen-merge.schema.ts  CitizenMergeBlockCode
+local-only         packages/shared-schemas/src/citizen-merge.schema.ts  CitizenMergeDuplicateLine
+local-only         packages/shared-schemas/src/citizen-merge.schema.ts  DUPLICATE_MATCHED_ON
+local-only         packages/shared-schemas/src/citizen-name.ts  NamedRecord
+local-only         packages/shared-schemas/src/citizen-request.schema.ts  REQUEST_TYPES_ON_PROPERTY
+local-only         packages/shared-schemas/src/damage-rule.ts  HABITABLE_BY_DEFAULT_DAMAGE_LEVELS
+local-only         packages/shared-schemas/src/damage-rule.ts  HabitabilityDefault
+local-only         packages/shared-schemas/src/enums.ts  ARREARS_BATCH_STATUS
+local-only         packages/shared-schemas/src/enums.ts  ARREARS_LINE_DECISION
+local-only         packages/shared-schemas/src/enums.ts  DOCUMENT_TYPE
+local-only         packages/shared-schemas/src/enums.ts  UNSURVEYABLE_SHELL_LIFECYCLE
+local-only         packages/shared-schemas/src/enums.ts  arrearsBatchStatusSchema
+local-only         packages/shared-schemas/src/enums.ts  arrearsLineDecisionSchema
+local-only         packages/shared-schemas/src/enums.ts  newsArticleStatusSchema
+local-only         packages/shared-schemas/src/error-codes.ts  ERROR_KINDS
+local-only         packages/shared-schemas/src/exchange-policy.ts  ExchangeJudgement
+local-only         packages/shared-schemas/src/exchange-policy.ts  ExchangeLegs
+local-only         packages/shared-schemas/src/expense.schema.ts  EXPENSE_CATEGORY_KEYS
+local-only         packages/shared-schemas/src/expense.schema.ts  EXPENSE_ORDER_STATUSES
+local-only         packages/shared-schemas/src/expense.schema.ts  EXPENSE_STATUSES
+local-only         packages/shared-schemas/src/expense.schema.ts  SALARY_PERIOD_PATTERN
+local-only         packages/shared-schemas/src/fee-exemption.schema.ts  FEE_EXEMPTION_LIST_MAX_PAGE
+local-only         packages/shared-schemas/src/fee-exemption.schema.ts  FeeExemptionStaffRef
+local-only         packages/shared-schemas/src/fee-exemption.schema.ts  FeeExemptionUnitRef
+local-only         packages/shared-schemas/src/fee.schema.ts  BracketMiss
+local-only         packages/shared-schemas/src/fee.schema.ts  FEE_MATRIX_MAX_BRACKETS
+local-only         packages/shared-schemas/src/fee.schema.ts  FEE_SCOPE_WARNING
+local-only         packages/shared-schemas/src/fee.schema.ts  FEE_TARGET_TYPE
+local-only         packages/shared-schemas/src/fee.schema.ts  feeAssessmentLineSchema
+local-only         packages/shared-schemas/src/fee.schema.ts  feeBasisSchema
+local-only         packages/shared-schemas/src/fee.schema.ts  feeBearerSchema
+local-only         packages/shared-schemas/src/fee.schema.ts  feeFrequencySchema
+local-only         packages/shared-schemas/src/fee.schema.ts  feeNoticePreviewResultSchema
+local-only         packages/shared-schemas/src/fee.schema.ts  feeTargetCategorySchema
+local-only         packages/shared-schemas/src/fee.schema.ts  feeTargetTypeSchema
+local-only         packages/shared-schemas/src/fee.schema.ts  periodKeySchema
+local-only         packages/shared-schemas/src/field-flag.schema.ts  FieldFlagKind
+local-only         packages/shared-schemas/src/field-flag.schema.ts  fieldFlagSchema
+local-only         packages/shared-schemas/src/income.schema.ts  INCOME_CATEGORY_KEYS
+local-only         packages/shared-schemas/src/income.schema.ts  INCOME_RECEIVING_ACCOUNT_TYPES
+local-only         packages/shared-schemas/src/income.schema.ts  INCOME_STATUSES
+local-only         packages/shared-schemas/src/inspector-earnings.ts  EarningsPropertyEntry
+local-only         packages/shared-schemas/src/inspector-earnings.ts  EarningsUnit
+local-only         packages/shared-schemas/src/inspector-earnings.ts  UNEARNED_END_REASON
+local-only         packages/shared-schemas/src/news-article.schema.ts  newsArticleTextSchema
+local-only         packages/shared-schemas/src/news-media.schema.ts  NewsFileProblem
+local-only         packages/shared-schemas/src/news-media.schema.ts  NewsMediaKind
+local-only         packages/shared-schemas/src/news-media.schema.ts  NewsMediaStatus
+local-only         packages/shared-schemas/src/news.schema.ts  NEWS_CATEGORY_KEY_PATTERN
+local-only         packages/shared-schemas/src/news.schema.ts  NEWS_SORT_ORDER_MAX
+local-only         packages/shared-schemas/src/news.schema.ts  NewsFieldErrorCode
+local-only         packages/shared-schemas/src/news.schema.ts  NewsUnavailableReason
+local-only         packages/shared-schemas/src/owner-share.ts  EffectiveOwnerBilling
+local-only         packages/shared-schemas/src/owner-share.ts  OwnerShare
+local-only         packages/shared-schemas/src/password-reset-link.ts  RESET_TOKEN_FRAGMENT_KEY
+local-only         packages/shared-schemas/src/payment-settlement.schema.ts  BulkPlanResult
+local-only         packages/shared-schemas/src/payment-settlement.schema.ts  BulkRow
+local-only         packages/shared-schemas/src/payment-settlement.schema.ts  bulkTenderSchema
+local-only         packages/shared-schemas/src/payout-policy.ts  PayoutPolicyInput
+local-only         packages/shared-schemas/src/property.schema.ts  PartialPropertyEntry
+local-only         packages/shared-schemas/src/property.schema.ts  partialBuildingUnitSchema
+local-only         packages/shared-schemas/src/property.schema.ts  partialBuildingUnitsSchema
+local-only         packages/shared-schemas/src/property.schema.ts  sharedRightsField
+local-only         packages/shared-schemas/src/property.schema.ts  sharesField
+local-only         packages/shared-schemas/src/registration.schema.ts  propertyNumberCheckResponseSchema
+local-only         packages/shared-schemas/src/staff-presence.ts  StaffPresenceItem
+local-only         packages/shared-schemas/src/staff.schema.ts  inspectorPayoutItemSchema
+local-only         packages/shared-schemas/src/staff.schema.ts  inspectorProfileResponseSchema
+local-only         packages/shared-schemas/src/staff.schema.ts  inspectorPropertyBreakdownSchema
+local-only         packages/shared-schemas/src/staff.schema.ts  inspectorRegistrationLogItemSchema
+local-only         packages/shared-schemas/src/tenant.schema.ts  publicTenantConfigSchema
+local-only         packages/shared-schemas/src/tenant.schema.ts  tenantConfigSchema
+local-only         packages/shared-schemas/src/transfer.schema.ts  TRANSFER_KINDS
+local-only         packages/shared-schemas/src/treasury-closing.schema.ts  DailyCashSourceLine
+local-only         packages/shared-schemas/src/treasury-closing.schema.ts  TREASURY_DAY_STATUSES
+local-only         packages/shared-schemas/src/treasury-closing.schema.ts  dailyCountLineSchema
+local-only         packages/shared-schemas/src/treasury-movements.schema.ts  TREASURY_MOVEMENT_DIRECTIONS
+local-only         packages/shared-schemas/src/treasury.schema.ts  TREASURY_ACCOUNT_TYPES
+local-only         packages/shared-schemas/src/treasury.schema.ts  TREASURY_ENTRY_SOURCES
+local-only         packages/shared-schemas/src/treasury.schema.ts  TREASURY_NEW_ACCOUNT_TYPES
+local-only         packages/shared-schemas/src/unit-layout.ts  FloorLayout
+local-only         packages/shared-schemas/src/unit-layout.ts  LevelledUnit
+local-only         packages/shared-schemas/src/unit-status-rule.ts  UnitStatusConflict
+local-only         packages/shared-schemas/src/unit-status-rule.ts  occupantImpliedStatus
+local-only +tests  apps/backend/src/application/features/arrears/arrears-batch.service.ts  ARREARS_BATCH_APPROVED
+local-only +tests  apps/backend/src/application/features/arrears/arrears-batch.service.ts  ARREARS_BILL_RAISED
+local-only +tests  apps/backend/src/application/features/arrears/arrears-batch.service.ts  ARREARS_CUTOFF_CHANGED
+local-only +tests  apps/backend/src/application/features/arrears/arrears-batch.service.ts  ARREARS_LINE_LINKED
+local-only +tests  apps/backend/src/application/features/arrears/arrears-import.plan.ts  PRESCRIPTION_DROP_REASON
+local-only +tests  apps/backend/src/application/features/arrears/arrears-import.plan.ts  prescriptionEnds
+local-only +tests  apps/backend/src/application/features/arrears/arrears.service.ts  ARREARS_LINES_IMPORTED
+local-only +tests  apps/backend/src/application/features/arrears/arrears.service.ts  ARREARS_TEMPLATE_EXPORTED
+local-only +tests  apps/backend/src/application/features/buildings/buildings.service.ts  changedBuildingFields
+local-only +tests  apps/backend/src/application/features/buildings/buildings.service.ts  changedUnitFields
+local-only +tests  apps/backend/src/application/features/buildings/buildings.service.ts  nonResidentUnitConflict
+local-only +tests  apps/backend/src/application/features/buildings/buildings.service.ts  sortByDistance
+local-only +tests  apps/backend/src/application/features/buildings/buildings.service.ts  unitsOutsideFloors
+local-only +tests  apps/backend/src/application/features/buildings/census-sync.service.ts  spellEnding
+local-only +tests  apps/backend/src/application/features/buildings/owner-billing.plan.ts  OwnerBillingFacts
+local-only +tests  apps/backend/src/application/features/buildings/unit-types.ts  UnitTypeRow
+local-only +tests  apps/backend/src/application/features/buildings/unit-types.ts  indexUnitTypes
+local-only +tests  apps/backend/src/application/features/citizen-requests/citizen-requests.service.ts  RequestActor
+local-only +tests  apps/backend/src/application/features/citizens/citizen-merge.plan.ts  PlanRegistration
+local-only +tests  apps/backend/src/application/features/citizens/citizen-merge.plan.ts  PlanSpell
+local-only +tests  apps/backend/src/application/features/citizens/landlord-link.service.ts  landlordNameMatches
+local-only +tests  apps/backend/src/application/features/citizens/possible-duplicates.ts  PersonKey
+local-only +tests  apps/backend/src/application/features/citizens/possible-duplicates.ts  RegisterRow
+local-only +tests  apps/backend/src/application/features/citizens/possible-duplicates.ts  compareMothers
+local-only +tests  apps/backend/src/application/features/citizens/possible-duplicates.ts  editDistance
+local-only +tests  apps/backend/src/application/features/corrections/unit-correction.plan.ts  CorrectionCard
+local-only +tests  apps/backend/src/application/features/corrections/unit-correction.plan.ts  CorrectionLine
+local-only +tests  apps/backend/src/application/features/corrections/unit-correction.service.ts  UNITS_MERGED_AS_DUPLEX
+local-only +tests  apps/backend/src/application/features/day3ati/staff-sync.ts  STAFF_SYNC_RETRY_DELAYS_MS
+local-only +tests  apps/backend/src/application/features/day3ati/staff-sync.ts  StaffSyncUser
+local-only +tests  apps/backend/src/application/features/fees/bill-corrections.ts  TracedChange
+local-only +tests  apps/backend/src/application/features/fees/correction-bills.service.ts  BILL_BASIS_REVIEWED
+local-only +tests  apps/backend/src/application/features/fees/fees.service.ts  assertCashAdjustment
+local-only +tests  apps/backend/src/application/features/fees/fees.service.ts  creditOf
+local-only +tests  apps/backend/src/application/features/fees/fees.service.ts  dueDateInCurrentPeriod
+local-only +tests  apps/backend/src/application/features/fees/fees.service.ts  issueBillingDay
+local-only +tests  apps/backend/src/application/features/fees/fees.service.ts  occurredAtFor
+local-only +tests  apps/backend/src/application/features/fees/payment-ledger.service.ts  LedgerAudit
+local-only +tests  apps/backend/src/application/features/identity/identity.service.ts  SessionResult
+local-only +tests  apps/backend/src/application/features/identity/identity.service.ts  StaffRefreshOutcome
+local-only +tests  apps/backend/src/application/features/identity/identity.service.ts  StaffSessionGrant
+local-only +tests  apps/backend/src/application/features/identity/session-token.ts  SESSION_TOKEN_AUDIENCE
+local-only +tests  apps/backend/src/application/features/identity/session-token.ts  SESSION_TOKEN_CLAIMS_REQUIRED
+local-only +tests  apps/backend/src/application/features/identity/session-token.ts  SESSION_TOKEN_ISSUER
+local-only +tests  apps/backend/src/application/features/identity/session-token.ts  sessionClaimsProblem
+local-only +tests  apps/backend/src/application/features/identity/staff-refresh-token.service.ts  ExchangeResult
+local-only +tests  apps/backend/src/application/features/news/news-availability.service.ts  NEWS_AVAILABILITY_RECHECK_MS
+local-only +tests  apps/backend/src/application/features/quality/data-quality.service.ts  ownerBillingBlockedFinding
+local-only +tests  apps/backend/src/application/features/quality/data-quality.service.ts  ownerSharesIncompleteFinding
+local-only +tests  apps/backend/src/application/features/reporting/reporting.service.ts  ProfileBillingCard
+local-only +tests  apps/backend/src/application/features/reporting/reporting.service.ts  profileOwnerBilling
+local-only +tests  apps/backend/src/application/features/treasury/day-closing.plan.ts  daysFrom
+local-only +tests  apps/backend/src/domain/entities/billable-unit.ts  LinkedUnit
+local-only +tests  apps/backend/src/domain/entities/property-entry.entity.ts  BuildingUnitProps
+local-only +tests  apps/backend/src/domain/entities/property-entry.entity.ts  PropertyEntryProps
+local-only +tests  apps/backend/src/domain/entities/user.entity.ts  StaffProps
+local-only +tests  apps/backend/src/infrastructure/cadastre/parcel-geometry.ts  buildParcelShapes
+local-only +tests  apps/backend/src/infrastructure/cadastre/parcel-geometry.ts  deriveCityBoundary
+local-only +tests  apps/backend/src/infrastructure/context/tenant-context.service.ts  TenantScope
+local-only +tests  apps/backend/src/infrastructure/day3ati/day3ati-token.service.ts  DAY3ATI_MAX_CACHED_STAFF_TOKENS
+local-only +tests  apps/backend/src/infrastructure/day3ati/day3ati-village-directory.ts  DAY3ATI_VILLAGES_MISS_REFRESH_MS
+local-only +tests  apps/backend/src/infrastructure/day3ati/day3ati-village-directory.ts  DAY3ATI_VILLAGES_TTL_MS
+local-only +tests  apps/backend/src/infrastructure/prisma/check-violation.ts  violatedCheckConstraint
+local-only +tests  apps/backend/src/infrastructure/repositories/registration.repository.ts  isSamePerson
+local-only +tests  apps/backend/src/presentation/controllers/route-discovery.ts  DiscoveredRoute
+local-only +tests  apps/backend/src/presentation/interceptors/viewer-credential-mask.interceptor.ts  maskCredentials
+local-only +tests  apps/frontend/lib/arrears-bill.ts  isArrearsBill
+local-only +tests  apps/frontend/lib/currency.ts  MINUS_SIGN
+local-only +tests  apps/frontend/lib/damage-reading.ts  applicableReading
+local-only +tests  apps/frontend/lib/fee-notice-draft.ts  emptyBracket
+local-only +tests  apps/frontend/lib/fee-notice-draft.ts  occupancyStates
+local-only +tests  apps/frontend/lib/image-compression.ts  COMPRESS_ABOVE_BYTES
+local-only +tests  apps/frontend/lib/image-compression.ts  PAPER_MAX_EDGE
+local-only +tests  apps/frontend/lib/image-compression.ts  fitWithin
+local-only +tests  apps/frontend/lib/image-compression.ts  jpegName
+local-only +tests  apps/frontend/lib/image-compression.ts  shouldCompress
+local-only +tests  apps/frontend/lib/nav-history.ts  previousPathname
+local-only +tests  apps/frontend/lib/nav-history.ts  recordPathname
+local-only +tests  apps/frontend/lib/news.ts  NewsFieldWording
+local-only +tests  apps/frontend/lib/offline-db.ts  withAttempt
+local-only +tests  apps/frontend/lib/offline-db.ts  withRevision
+local-only +tests  apps/frontend/lib/offline-sync.ts  discardSubmission
+local-only +tests  apps/frontend/lib/offline-sync.ts  refreshQueue
+local-only +tests  apps/frontend/lib/offline-sync.ts  retrySubmission
+local-only +tests  apps/frontend/lib/owner-billing.ts  ownerSpells
+local-only +tests  apps/frontend/lib/urgent-ceiling.ts  CEILING_MAX
+local-only +tests  apps/frontend/lib/urgent-ceiling.ts  ceilingValue
+local-only +tests  apps/frontend/lib/use-citizen-search.ts  CitizenSearchState
+local-only +tests  apps/frontend/lib/use-citizen-search.ts  IDLE_CITIZEN_SEARCH
+local-only +tests  apps/frontend/lib/use-citizen-search.ts  SEARCH_DEBOUNCE_MS
+local-only +tests  apps/frontend/lib/use-citizen-search.ts  scheduleCitizenSearch
+local-only +tests  apps/frontend/lib/use-citizen-search.ts  withoutFiles
+local-only +tests  apps/frontend/lib/use-staff-query.ts  refusalOf
+local-only +tests  packages/shared-schemas/src/admin-citizen.schema.ts  CADASTRE_UNVERIFIED_REASON
+local-only +tests  packages/shared-schemas/src/admin-citizen.schema.ts  identifiedPropertyEntrySchema
+local-only +tests  packages/shared-schemas/src/arrears.schema.ts  ARREARS_HEADER_TO_KEY
+local-only +tests  packages/shared-schemas/src/arrears.schema.ts  ARREARS_TEMPLATE_COLUMN_KEYS
+local-only +tests  packages/shared-schemas/src/arrears.schema.ts  arrearsReportBalances
+local-only +tests  packages/shared-schemas/src/arrears.schema.ts  parseArrearsAmount
+local-only +tests  packages/shared-schemas/src/arrears.schema.ts  parseArrearsDueDate
+local-only +tests  packages/shared-schemas/src/arrears.schema.ts  parseArrearsFeeType
+local-only +tests  packages/shared-schemas/src/citizen.schema.ts  contactDetailsObject
+local-only +tests  packages/shared-schemas/src/document-numbering.ts  DOCUMENT_PREFIX
+local-only +tests  packages/shared-schemas/src/fee.schema.ts  bracketScales
+local-only +tests  packages/shared-schemas/src/fee.schema.ts  feeAssessmentSchema
+local-only +tests  packages/shared-schemas/src/fee.schema.ts  feeMatrixBracketSchema
+local-only +tests  packages/shared-schemas/src/numbering.ts  buildingSuffixAt
+local-only +tests  packages/shared-schemas/src/payment-settlement.schema.ts  BulkBill
+local-only +tests  packages/shared-schemas/src/payment-settlement.schema.ts  BulkPlan
+local-only +tests  packages/shared-schemas/src/primitives.ts  lebanesePhone
+local-only +tests  packages/shared-schemas/src/unit-layout.ts  spanOverlap

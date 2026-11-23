@@ -1,0 +1,698 @@
+{
+ "epics": {
+  "SEC": "D3-211",
+  "DRY": "D3-212",
+  "GOD": "D3-213",
+  "PAG": "D3-214",
+  "CACHE": "D3-215",
+  "SUBMIT": "D3-216",
+  "ARCH": "D3-217",
+  "UX": "D3-218",
+  "ERR": "D3-219",
+  "PERF": "D3-220",
+  "DEAD": "D3-221",
+  "NAV": "D3-222",
+  "PAGE": "D3-223"
+ },
+ "tasks": {
+  "ARCH-17": "D3-224",
+  "PAG-01": "D3-225",
+  "SEC-11": "D3-226",
+  "SEC-08": "D3-227",
+  "CACHE-01": "D3-228",
+  "ARCH-02": "D3-229",
+  "ARCH-01": "D3-230",
+  "SEC-05": "D3-231",
+  "SEC-02": "D3-232",
+  "SEC-10": "D3-233",
+  "NAV-01": "D3-234",
+  "DEAD-18": "D3-235",
+  "SUBMIT-01": "D3-236",
+  "UX-01": "D3-237",
+  "SEC-01": "D3-238",
+  "PAGE-02": "D3-239",
+  "SUBMIT-05": "D3-240",
+  "ERR-01": "D3-241",
+  "SUBMIT-02": "D3-242",
+  "DRY-12": "D3-243",
+  "NAV-09": "D3-244",
+  "DRY-01": "D3-245",
+  "DRY-02": "D3-246",
+  "DRY-03": "D3-247",
+  "DRY-04": "D3-248",
+  "DRY-05": "D3-249",
+  "DRY-06": "D3-250",
+  "DRY-07": "D3-251",
+  "DRY-08": "D3-252",
+  "DRY-09": "D3-253",
+  "DRY-10": "D3-254",
+  "DRY-11": "D3-255",
+  "DRY-13": "D3-256",
+  "DRY-14": "D3-257",
+  "DRY-15": "D3-258",
+  "DRY-16": "D3-259",
+  "DRY-17": "D3-260",
+  "DRY-18": "D3-261",
+  "GOD-01": "D3-262",
+  "GOD-02": "D3-263",
+  "GOD-03": "D3-264",
+  "GOD-04": "D3-265",
+  "GOD-05": "D3-266",
+  "GOD-06": "D3-267",
+  "GOD-07": "D3-268",
+  "GOD-08": "D3-269",
+  "GOD-09": "D3-270",
+  "GOD-10": "D3-271",
+  "GOD-11": "D3-272",
+  "GOD-12": "D3-273",
+  "GOD-13": "D3-274",
+  "GOD-14": "D3-275",
+  "GOD-15": "D3-276",
+  "GOD-16": "D3-277",
+  "GOD-17": "D3-278",
+  "GOD-18": "D3-279",
+  "GOD-19": "D3-280",
+  "GOD-20": "D3-281",
+  "GOD-21": "D3-282",
+  "GOD-22": "D3-283",
+  "GOD-23": "D3-284",
+  "GOD-24": "D3-285",
+  "PAG-02": "D3-286",
+  "PAG-03": "D3-287",
+  "PAG-04": "D3-288",
+  "PAG-05": "D3-289",
+  "PAG-06": "D3-290",
+  "PAG-07": "D3-291",
+  "CACHE-02": "D3-292",
+  "CACHE-03": "D3-293",
+  "SUBMIT-03": "D3-294",
+  "SUBMIT-04": "D3-295",
+  "SUBMIT-06": "D3-296",
+  "SUBMIT-07": "D3-297",
+  "SUBMIT-08": "D3-298",
+  "SEC-03": "D3-299",
+  "SEC-04": "D3-300",
+  "SEC-06": "D3-301",
+  "SEC-07": "D3-302",
+  "SEC-09": "D3-303",
+  "SEC-12": "D3-304",
+  "ARCH-03": "D3-305",
+  "ARCH-04": "D3-306",
+  "ARCH-05": "D3-307",
+  "ARCH-06": "D3-308",
+  "ARCH-07": "D3-309",
+  "ARCH-08": "D3-310",
+  "ARCH-09": "D3-311",
+  "ARCH-10": "D3-312",
+  "ARCH-11": "D3-313",
+  "ARCH-12": "D3-314",
+  "ARCH-13": "D3-315",
+  "ARCH-14": "D3-316",
+  "ARCH-15": "D3-317",
+  "ARCH-16": "D3-318",
+  "ARCH-18": "D3-319",
+  "ARCH-19": "D3-320",
+  "ARCH-20": "D3-321",
+  "ARCH-21": "D3-322",
+  "ARCH-22": "D3-323",
+  "ARCH-23": "D3-324",
+  "ARCH-24": "D3-325",
+  "UX-02": "D3-326",
+  "UX-03": "D3-327",
+  "UX-04": "D3-328",
+  "UX-05": "D3-329",
+  "UX-06": "D3-330",
+  "UX-07": "D3-331",
+  "UX-08": "D3-332",
+  "UX-09": "D3-333",
+  "UX-10": "D3-334",
+  "UX-11": "D3-335",
+  "UX-12": "D3-336",
+  "UX-13": "D3-337",
+  "UX-14": "D3-338",
+  "UX-15": "D3-339",
+  "UX-16": "D3-340",
+  "UX-17": "D3-341",
+  "UX-18": "D3-342",
+  "UX-19": "D3-343",
+  "UX-20": "D3-344",
+  "UX-21": "D3-345",
+  "UX-22": "D3-346",
+  "UX-23": "D3-347",
+  "UX-24": "D3-348",
+  "ERR-02": "D3-349",
+  "ERR-03": "D3-350",
+  "ERR-04": "D3-351",
+  "ERR-05": "D3-352",
+  "ERR-06": "D3-353",
+  "ERR-07": "D3-354",
+  "PERF-01": "D3-355",
+  "PERF-02": "D3-356",
+  "PERF-03": "D3-357",
+  "DEAD-01": "D3-358",
+  "DEAD-02": "D3-359",
+  "DEAD-03": "D3-360",
+  "DEAD-04": "D3-361",
+  "DEAD-05": "D3-362",
+  "DEAD-06": "D3-363",
+  "DEAD-07": "D3-364",
+  "DEAD-08": "D3-365",
+  "DEAD-09": "D3-366",
+  "DEAD-10": "D3-367",
+  "DEAD-11": "D3-368",
+  "DEAD-12": "D3-369",
+  "DEAD-13": "D3-370",
+  "DEAD-14": "D3-371",
+  "DEAD-15": "D3-372",
+  "DEAD-16": "D3-373",
+  "DEAD-17": "D3-374",
+  "NAV-02": "D3-375",
+  "NAV-03": "D3-376",
+  "NAV-04": "D3-377",
+  "NAV-05": "D3-378",
+  "NAV-06": "D3-379",
+  "NAV-07": "D3-380",
+  "NAV-08": "D3-381",
+  "NAV-10": "D3-382",
+  "NAV-11": "D3-383",
+  "NAV-12": "D3-384",
+  "PAGE-01": "D3-385",
+  "PAGE-03": "D3-386",
+  "PAGE-04": "D3-387",
+  "PAGE-05": "D3-388",
+  "PAGE-06": "D3-389",
+  "PAGE-07": "D3-390",
+  "PAGE-08": "D3-391",
+  "PAGE-09": "D3-392",
+  "PAGE-10": "D3-393",
+  "PAGE-11": "D3-394",
+  "PAGE-12": "D3-395",
+  "PAGE-13": "D3-396",
+  "PAGE-14": "D3-397",
+  "PAGE-15": "D3-398",
+  "PAGE-16": "D3-399"
+ },
+ "sprint": {
+  "id": 312,
+  "name": "MECH Sprint 3 – Cleanup (codebase audit 2026-11-23)",
+  "board": 34,
+  "state": "future",
+  "issues": "all 176 tasks"
+ },
+ "note": "Task keys assigned in creation order; spot-checked against the audit-<id> labels.",
+ "blocks": [
+  {
+   "blocker": "ARCH-22",
+   "blocked": "DRY-04",
+   "jira": "D3-323 blocks D3-248",
+   "soft": true
+  },
+  {
+   "blocker": "ARCH-07",
+   "blocked": "DRY-08",
+   "jira": "D3-309 blocks D3-252",
+   "soft": false
+  },
+  {
+   "blocker": "DRY-13",
+   "blocked": "DRY-14",
+   "jira": "D3-256 blocks D3-257",
+   "soft": false
+  },
+  {
+   "blocker": "ARCH-01",
+   "blocked": "GOD-01",
+   "jira": "D3-230 blocks D3-262",
+   "soft": false
+  },
+  {
+   "blocker": "ARCH-01",
+   "blocked": "GOD-02",
+   "jira": "D3-230 blocks D3-263",
+   "soft": false
+  },
+  {
+   "blocker": "ARCH-01",
+   "blocked": "GOD-03",
+   "jira": "D3-230 blocks D3-264",
+   "soft": false
+  },
+  {
+   "blocker": "GOD-02",
+   "blocked": "GOD-03",
+   "jira": "D3-263 blocks D3-264",
+   "soft": false
+  },
+  {
+   "blocker": "ARCH-03",
+   "blocked": "GOD-05",
+   "jira": "D3-305 blocks D3-266",
+   "soft": false
+  },
+  {
+   "blocker": "ARCH-03",
+   "blocked": "GOD-06",
+   "jira": "D3-305 blocks D3-267",
+   "soft": false
+  },
+  {
+   "blocker": "ARCH-03",
+   "blocked": "GOD-07",
+   "jira": "D3-305 blocks D3-268",
+   "soft": false
+  },
+  {
+   "blocker": "PAG-01",
+   "blocked": "GOD-09",
+   "jira": "D3-225 blocks D3-270",
+   "soft": false
+  },
+  {
+   "blocker": "SEC-03",
+   "blocked": "GOD-13",
+   "jira": "D3-299 blocks D3-274",
+   "soft": false
+  },
+  {
+   "blocker": "GOD-14",
+   "blocked": "GOD-15",
+   "jira": "D3-275 blocks D3-276",
+   "soft": false
+  },
+  {
+   "blocker": "GOD-14",
+   "blocked": "GOD-16",
+   "jira": "D3-275 blocks D3-277",
+   "soft": false
+  },
+  {
+   "blocker": "GOD-14",
+   "blocked": "GOD-17",
+   "jira": "D3-275 blocks D3-278",
+   "soft": false
+  },
+  {
+   "blocker": "GOD-14",
+   "blocked": "GOD-18",
+   "jira": "D3-275 blocks D3-279",
+   "soft": false
+  },
+  {
+   "blocker": "PAG-02",
+   "blocked": "PAG-03",
+   "jira": "D3-286 blocks D3-287",
+   "soft": false
+  },
+  {
+   "blocker": "PAG-04",
+   "blocked": "PAG-05",
+   "jira": "D3-288 blocks D3-289",
+   "soft": false
+  },
+  {
+   "blocker": "ARCH-07",
+   "blocked": "PAG-07",
+   "jira": "D3-309 blocks D3-291",
+   "soft": false
+  },
+  {
+   "blocker": "SUBMIT-07",
+   "blocked": "SUBMIT-08",
+   "jira": "D3-297 blocks D3-298",
+   "soft": false
+  },
+  {
+   "blocker": "ARCH-07",
+   "blocked": "SEC-12",
+   "jira": "D3-309 blocks D3-304",
+   "soft": false
+  },
+  {
+   "blocker": "DEAD-10",
+   "blocked": "ARCH-05",
+   "jira": "D3-367 blocks D3-307",
+   "soft": true
+  },
+  {
+   "blocker": "DRY-01",
+   "blocked": "ARCH-10",
+   "jira": "D3-245 blocks D3-312",
+   "soft": false
+  },
+  {
+   "blocker": "GOD-05",
+   "blocked": "ARCH-11",
+   "jira": "D3-266 blocks D3-313",
+   "soft": true
+  },
+  {
+   "blocker": "GOD-06",
+   "blocked": "ARCH-11",
+   "jira": "D3-267 blocks D3-313",
+   "soft": true
+  },
+  {
+   "blocker": "GOD-07",
+   "blocked": "ARCH-11",
+   "jira": "D3-268 blocks D3-313",
+   "soft": true
+  },
+  {
+   "blocker": "ARCH-10",
+   "blocked": "ARCH-11",
+   "jira": "D3-312 blocks D3-313",
+   "soft": false
+  },
+  {
+   "blocker": "ARCH-12",
+   "blocked": "ARCH-14",
+   "jira": "D3-314 blocks D3-316",
+   "soft": false
+  },
+  {
+   "blocker": "ARCH-13",
+   "blocked": "ARCH-14",
+   "jira": "D3-315 blocks D3-316",
+   "soft": false
+  },
+  {
+   "blocker": "GOD-19",
+   "blocked": "UX-02",
+   "jira": "D3-280 blocks D3-326",
+   "soft": true
+  },
+  {
+   "blocker": "GOD-23",
+   "blocked": "UX-04",
+   "jira": "D3-284 blocks D3-328",
+   "soft": false
+  },
+  {
+   "blocker": "SUBMIT-01",
+   "blocked": "UX-24",
+   "jira": "D3-236 blocks D3-348",
+   "soft": false
+  },
+  {
+   "blocker": "ERR-04",
+   "blocked": "ERR-05",
+   "jira": "D3-351 blocks D3-352",
+   "soft": false
+  },
+  {
+   "blocker": "DEAD-10",
+   "blocked": "DEAD-06",
+   "jira": "D3-367 blocks D3-363",
+   "soft": true
+  },
+  {
+   "blocker": "DEAD-06",
+   "blocked": "DEAD-14",
+   "jira": "D3-363 blocks D3-371",
+   "soft": false
+  },
+  {
+   "blocker": "DEAD-13",
+   "blocked": "DEAD-14",
+   "jira": "D3-370 blocks D3-371",
+   "soft": false
+  },
+  {
+   "blocker": "DEAD-18",
+   "blocked": "DEAD-16",
+   "jira": "D3-235 blocks D3-373",
+   "soft": false
+  },
+  {
+   "blocker": "NAV-01",
+   "blocked": "NAV-02",
+   "jira": "D3-234 blocks D3-375",
+   "soft": false
+  },
+  {
+   "blocker": "NAV-01",
+   "blocked": "NAV-03",
+   "jira": "D3-234 blocks D3-376",
+   "soft": false
+  },
+  {
+   "blocker": "UX-08",
+   "blocked": "NAV-03",
+   "jira": "D3-332 blocks D3-376",
+   "soft": true
+  },
+  {
+   "blocker": "NAV-01",
+   "blocked": "NAV-04",
+   "jira": "D3-234 blocks D3-377",
+   "soft": false
+  },
+  {
+   "blocker": "NAV-01",
+   "blocked": "NAV-05",
+   "jira": "D3-234 blocks D3-378",
+   "soft": false
+  },
+  {
+   "blocker": "NAV-01",
+   "blocked": "NAV-06",
+   "jira": "D3-234 blocks D3-379",
+   "soft": false
+  },
+  {
+   "blocker": "NAV-01",
+   "blocked": "NAV-07",
+   "jira": "D3-234 blocks D3-380",
+   "soft": false
+  },
+  {
+   "blocker": "NAV-01",
+   "blocked": "NAV-08",
+   "jira": "D3-234 blocks D3-381",
+   "soft": false
+  },
+  {
+   "blocker": "NAV-02",
+   "blocked": "NAV-10",
+   "jira": "D3-375 blocks D3-382",
+   "soft": false
+  },
+  {
+   "blocker": "NAV-03",
+   "blocked": "NAV-10",
+   "jira": "D3-376 blocks D3-382",
+   "soft": false
+  },
+  {
+   "blocker": "NAV-04",
+   "blocked": "NAV-10",
+   "jira": "D3-377 blocks D3-382",
+   "soft": false
+  },
+  {
+   "blocker": "NAV-05",
+   "blocked": "NAV-10",
+   "jira": "D3-378 blocks D3-382",
+   "soft": false
+  },
+  {
+   "blocker": "NAV-06",
+   "blocked": "NAV-10",
+   "jira": "D3-379 blocks D3-382",
+   "soft": false
+  },
+  {
+   "blocker": "NAV-07",
+   "blocked": "NAV-10",
+   "jira": "D3-380 blocks D3-382",
+   "soft": false
+  },
+  {
+   "blocker": "NAV-08",
+   "blocked": "NAV-10",
+   "jira": "D3-381 blocks D3-382",
+   "soft": false
+  },
+  {
+   "blocker": "NAV-01",
+   "blocked": "NAV-11",
+   "jira": "D3-234 blocks D3-383",
+   "soft": false
+  },
+  {
+   "blocker": "NAV-01",
+   "blocked": "PAGE-01",
+   "jira": "D3-234 blocks D3-385",
+   "soft": false
+  },
+  {
+   "blocker": "PAGE-02",
+   "blocked": "PAGE-03",
+   "jira": "D3-239 blocks D3-386",
+   "soft": false
+  },
+  {
+   "blocker": "UX-20",
+   "blocked": "PAGE-04",
+   "jira": "D3-344 blocks D3-387",
+   "soft": false
+  },
+  {
+   "blocker": "NAV-01",
+   "blocked": "PAGE-05",
+   "jira": "D3-234 blocks D3-388",
+   "soft": false
+  },
+  {
+   "blocker": "ARCH-18",
+   "blocked": "PAGE-07",
+   "jira": "D3-319 blocks D3-390",
+   "soft": false
+  },
+  {
+   "blocker": "NAV-01",
+   "blocked": "PAGE-07",
+   "jira": "D3-234 blocks D3-390",
+   "soft": false
+  },
+  {
+   "blocker": "DRY-12",
+   "blocked": "PAGE-08",
+   "jira": "D3-243 blocks D3-391",
+   "soft": false
+  },
+  {
+   "blocker": "ARCH-18",
+   "blocked": "PAGE-08",
+   "jira": "D3-319 blocks D3-391",
+   "soft": false
+  },
+  {
+   "blocker": "GOD-24",
+   "blocked": "PAGE-08",
+   "jira": "D3-285 blocks D3-391",
+   "soft": false
+  },
+  {
+   "blocker": "NAV-01",
+   "blocked": "PAGE-08",
+   "jira": "D3-234 blocks D3-391",
+   "soft": false
+  },
+  {
+   "blocker": "GOD-19",
+   "blocked": "PAGE-09",
+   "jira": "D3-280 blocks D3-392",
+   "soft": false
+  },
+  {
+   "blocker": "GOD-20",
+   "blocked": "PAGE-09",
+   "jira": "D3-281 blocks D3-392",
+   "soft": false
+  },
+  {
+   "blocker": "GOD-21",
+   "blocked": "PAGE-09",
+   "jira": "D3-282 blocks D3-392",
+   "soft": false
+  },
+  {
+   "blocker": "GOD-22",
+   "blocked": "PAGE-09",
+   "jira": "D3-283 blocks D3-392",
+   "soft": false
+  },
+  {
+   "blocker": "GOD-23",
+   "blocked": "PAGE-09",
+   "jira": "D3-284 blocks D3-392",
+   "soft": false
+  },
+  {
+   "blocker": "ARCH-18",
+   "blocked": "PAGE-09",
+   "jira": "D3-319 blocks D3-392",
+   "soft": false
+  },
+  {
+   "blocker": "NAV-04",
+   "blocked": "PAGE-10",
+   "jira": "D3-377 blocks D3-393",
+   "soft": false
+  },
+  {
+   "blocker": "PAG-03",
+   "blocked": "PAGE-10",
+   "jira": "D3-287 blocks D3-393",
+   "soft": false
+  },
+  {
+   "blocker": "ARCH-18",
+   "blocked": "PAGE-10",
+   "jira": "D3-319 blocks D3-393",
+   "soft": false
+  },
+  {
+   "blocker": "PAGE-04",
+   "blocked": "PAGE-11",
+   "jira": "D3-387 blocks D3-394",
+   "soft": false
+  },
+  {
+   "blocker": "ARCH-18",
+   "blocked": "PAGE-11",
+   "jira": "D3-319 blocks D3-394",
+   "soft": false
+  },
+  {
+   "blocker": "SUBMIT-01",
+   "blocked": "PAGE-11",
+   "jira": "D3-236 blocks D3-394",
+   "soft": false
+  },
+  {
+   "blocker": "NAV-03",
+   "blocked": "PAGE-13",
+   "jira": "D3-376 blocks D3-396",
+   "soft": false
+  },
+  {
+   "blocker": "UX-11",
+   "blocked": "PAGE-13",
+   "jira": "D3-335 blocks D3-396",
+   "soft": false
+  },
+  {
+   "blocker": "NAV-05",
+   "blocked": "PAGE-14",
+   "jira": "D3-378 blocks D3-397",
+   "soft": false
+  },
+  {
+   "blocker": "PAGE-01",
+   "blocked": "PAGE-15",
+   "jira": "D3-385 blocks D3-398",
+   "soft": false
+  },
+  {
+   "blocker": "ARCH-18",
+   "blocked": "PAGE-15",
+   "jira": "D3-319 blocks D3-398",
+   "soft": false
+  },
+  {
+   "blocker": "PAGE-02",
+   "blocked": "PAGE-16",
+   "jira": "D3-239 blocks D3-399",
+   "soft": false
+  },
+  {
+   "blocker": "SUBMIT-05",
+   "blocked": "PAGE-16",
+   "jira": "D3-240 blocks D3-399",
+   "soft": false
+  }
+ ],
+ "droppedLinks": "PAG-03>PAG-02, PAG-05>PAG-04 (reverse of the kept pair), UX-04>GOD-23 (reverse), DEAD-08>ARCH-14 and NAV-03>NAV-12 (not real blockers)"
+}
