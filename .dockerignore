@@ -13,11 +13,21 @@ apps/backend/src/generated
 apps/frontend/.next
 packages/shared-schemas/dist
 
-# Never let a secret ride along in a build context/layer.
-.env
-.env.local
-.env.*.local
-!.env.example
+# Never let a secret ride along in a build context/layer (audit SEC-08).
+# `**/` because `COPY . .` in the backend's build stage takes the whole tree:
+# the root-only `.env` pattern let `apps/backend/.env` and the `.env.staging`
+# / `.env.production` files into the context. Same list as .gitignore.
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.*.example
+
+# Keys and database dumps: citizens' names, phones and document numbers.
+**/backup-key.txt
+**/age-key*.txt
+**/backups/
+**/*.dump
+**/*.dump.age
 
 *.log
 .vscode
