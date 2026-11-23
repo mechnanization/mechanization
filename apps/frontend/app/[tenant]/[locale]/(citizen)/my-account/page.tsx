@@ -16,9 +16,9 @@ import {
   Trees,
 } from 'lucide-react';
 import { getLabels } from '@mechanization/shared-schemas';
-import { ApiRequestError, getMySummary, logApiError } from '@/lib/api-client';
+import { getMySummary, logApiError } from '@/lib/api-client';
 import type { MyCitizenSummary } from '@/lib/api-client';
-import { clearSession, loadSession } from '@/lib/session';
+import { useCitizenSession } from '@/lib/use-citizen-session';
 import { billFigure, citizenPaymentTotals, isUnderReview } from '@/lib/citizen-payments';
 import { formatLbp } from '@/lib/currency';
 import { Alert } from '@/components/ui/alert';
@@ -45,29 +45,25 @@ export default function MyAccount({
   const { tenant, locale } = use(params);
   const router = useRouter();
   const labels = getLabels(locale);
+  const base = `/${tenant}/${locale}`;
+  // The front door, not `/login` (the phone-code sign-in): production has no
+  // phone-code sign-in offered there while no SMS provider is live, so a
+  // citizen whose session ended on this page was stuck (PAGE-02).
+  const { token, endIfSignedOut } = useCitizenSession(tenant, base);
 
   const [summary, setSummary] = useState<MyCitizenSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const session = loadSession(tenant);
-    if (!session) {
-      router.replace(`/${tenant}/${locale}/login`);
-      return;
-    }
-
-    getMySummary(tenant, session.accessToken)
+    if (!token) return;
+    getMySummary(tenant, token)
       .then(setSummary)
       .catch((caught: unknown) => {
         logApiError(caught);
-        if (caught instanceof ApiRequestError && caught.status === 401) {
-          clearSession(tenant);
-          router.replace(`/${tenant}/${locale}/login`);
-          return;
-        }
+        if (endIfSignedOut(caught)) return;
         setError(locale === 'en' ? 'Failed to load your file data. Please try again.' : 'تعذّر تحميل بياناتك. حاول مرة أخرى.');
       });
-  }, [tenant, locale, router]);
+  }, [tenant, locale, token, endIfSignedOut]);
 
   // A bill the municipality cancelled or wrote off owes nothing, and is not listed as unpaid.
   const unpaid =
@@ -98,7 +94,7 @@ export default function MyAccount({
           onClick={async () => {
             // Ended on the server too, not only forgotten here (S14).
             await signOutCitizen(tenant);
-            router.push(`/${tenant}/${locale}`);
+            router.push(base);
           }}
         >
           {locale === 'en' ? 'Sign Out' : 'خروج'}

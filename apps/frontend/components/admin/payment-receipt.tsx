@@ -7,6 +7,7 @@ import type { CitizenProfile, CitizenProfilePayment, CitizenProfileProperty } fr
 import { arrearsFeeName, isArrearsPenalty } from '@/lib/arrears-bill';
 import { formatForeign, formatLbp } from '@/lib/currency';
 import { formatDate } from '@/lib/dates';
+import { paymentReceiptMessage } from '@/lib/payment-receipt-message';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { downloadFile, renderReceiptPdf, shareFile } from '@/lib/receipt-pdf';
@@ -178,10 +179,12 @@ export function PaymentReceipt({
 }: {
   open: boolean;
   /**
-   * Whether «إرسال عبر واتساب» is offered. The message carries the citizen's
-   * رقم مرجعي, which «مشاهد فقط» is never given (`REFERENCE_SEND_ROLES`): that
-   * account reads and prints a receipt, and sends nothing. Required, so a new
-   * caller decides rather than inheriting a default that fails open.
+   * Whether «إرسال عبر واتساب» is offered. «مشاهد فقط» is never given it
+   * (`REFERENCE_SEND_ROLES`): that account reads and prints a receipt, and
+   * sends nothing. Required, so a new caller decides rather than inheriting
+   * a default that fails open. The message itself never carries the
+   * citizen's رقم مرجعي (SEC-01), so this is a role boundary kept for its own
+   * sake, not because the text would otherwise leak it.
    */
   canSend: boolean;
   onOpenChange: (open: boolean) => void;
@@ -282,25 +285,18 @@ export function PaymentReceipt({
 
   const wa = whatsappNumber(citizen.whatsapp ?? citizen.phone);
 
-  const message = [
-    `بلدية ${municipalityName}`,
-    `وصل قبض رقم ${number}`,
-    '',
-    `المكلّف: ${citizen.fullName}`,
-    citizen.referenceNumber ? `الرقم المرجعي: ${citizen.referenceNumber}` : null,
-    `البند: ${payment.title}`,
-    `المبلغ المقبوض: ${formatLbp(amount)}`,
-    tenderLine ? `نقداً: ${tenderLine}` : null,
-    payment.remaining > 0
-      ? `الرصيد المتبقي: ${formatLbp(payment.remaining)}`
-      : 'تم تسديد كامل المبلغ. شكراً لكم.',
-    '',
-    `التاريخ: ${receivedOn}`,
-    contactPhone ? `للاستفسار: ${contactPhone}` : null,
-    officeWhatsapp ? `واتساب البلدية: ${officeWhatsapp}` : null,
-  ]
-    .filter(Boolean)
-    .join('\n');
+  const message = paymentReceiptMessage({
+    municipalityName,
+    number,
+    payerName: citizen.fullName,
+    title: payment.title,
+    amount,
+    tenderLine,
+    remaining: payment.remaining,
+    receivedOn,
+    contactPhone,
+    officeWhatsapp,
+  });
 
   const waHref = wa ? `https://wa.me/${wa}?text=${encodeURIComponent(message)}` : null;
   const useImageTemplate = tenant === IMAGE_TEMPLATE_TENANT;
