@@ -39,7 +39,7 @@ import { PayDialog } from '@/components/citizen/pay-dialog';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/dates';
 import { signOutCitizen } from '@/lib/citizen-sign-out';
-import { groupArrearsByYear, splitArrears } from '@/lib/arrears-bill';
+import { arrearsGroupKey, groupArrearsByYear, isArrearsLumpBill, splitArrears } from '@/lib/arrears-bill';
 import { ArrearsBillMark } from '@/components/arrears-bill-mark';
 
 /*
@@ -272,10 +272,12 @@ export default function CitizenPayments({
             // Cancelled, or written off («شطب»): it owes nothing; shown as it was, struck through.
             const cancelled = billOwesNothing(item.paymentStatus);
             const writtenOff = item.paymentStatus === 'WRITTEN_OFF';
-            // The old debts follow the current bills under one heading, and each year under its own.
+            // The old debts follow the current bills under one heading, each year under its own,
+            // and the «رصيد إجمالي» bills last under theirs.
             const before = ordered[index - 1];
             const startsArrears = Boolean(item.arrears) && !before?.arrears;
-            const startsYear = Boolean(item.arrears) && before?.arrears?.year !== item.arrears?.year;
+            const startsYear =
+              Boolean(item.arrears) && (!before?.arrears || arrearsGroupKey(before.arrears) !== arrearsGroupKey(item.arrears!));
 
             return (
               <Fragment key={item.id}>
@@ -287,7 +289,9 @@ export default function CitizenPayments({
                 ) : null}
                 {startsYear && item.arrears ? (
                   <h4 className="pt-1 text-sm font-medium text-muted-foreground">
-                    {tArrears('groupYear', { year: String(item.arrears.year) })}
+                    {isArrearsLumpBill(item.arrears)
+                      ? tArrears('groupLump')
+                      : tArrears('groupYear', { year: String(item.arrears.year) })}
                   </h4>
                 ) : null}
               <Card>

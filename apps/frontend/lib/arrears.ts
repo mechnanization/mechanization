@@ -1,10 +1,25 @@
 import {
+  ARREARS_LINE_ISSUE,
   sameMoney,
   type ArrearsComponent,
   type ArrearsImportResult,
   type ArrearsLineDrop,
+  type ArrearsLineIssue,
   type ArrearsLineVerdict,
 } from '@mechanization/shared-schemas';
+
+/**
+ * Why «سطر منفرد» was refused (`ARREARS_LINE_REFUSED`): the issue codes the server
+ * sends in `details.issues`, the ones this build can word (`arrears.issue.*`), in
+ * order and once each. Empty for any other refusal or shape.
+ */
+export function refusedLineIssues(payload: { code?: unknown; details?: unknown } | null | undefined): ArrearsLineIssue[] {
+  if (!payload || payload.code !== 'ARREARS_LINE_REFUSED') return [];
+  const issues = (payload.details as { issues?: unknown } | null | undefined)?.issues;
+  if (!Array.isArray(issues)) return [];
+  const known = new Set<string>(ARREARS_LINE_ISSUE);
+  return [...new Set(issues.filter((issue): issue is ArrearsLineIssue => typeof issue === 'string' && known.has(issue)))];
+}
 
 /**
  * Old debts' import screen (task 7, docs/old-debts-plan.md §4–§6): the rules the

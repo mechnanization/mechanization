@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { getLabels, type BillArrearsView } from '@mechanization/shared-schemas';
-import { arrearsFeeName, groupArrearsByYear, isArrearsBill, isArrearsPenalty, splitArrears } from './arrears-bill';
+import { arrearsFeeName, arrearsGroupKey, groupArrearsByYear, isArrearsBill, isArrearsLumpBill, isArrearsPenalty, splitArrears } from './arrears-bill';
 
 const line = (over: Partial<BillArrearsView> = {}): BillArrearsView => ({
   year: 2023,
@@ -80,5 +80,32 @@ describe('groupArrearsByYear', () => {
 
   it('leaves out a bill that is not an old debt', () => {
     expect(groupArrearsByYear([{ id: 'a', arrears: null }, { id: 'b' }])).toEqual([]);
+  });
+
+  it('lists the «رصيد إجمالي» bills last, under no year, even when dated like an itemised year', () => {
+    const groups = groupArrearsByYear([
+      { id: 'lump', arrears: line({ year: 2025, feeType: 'LUMP_SUM' }) },
+      { id: 'a', arrears: line({ year: 2025 }) },
+      { id: 'b', arrears: line({ year: 2022 }) },
+    ]);
+    expect(groups.map((group) => [group.year, group.bills.map((bill) => bill.id)])).toEqual([
+      [2022, ['b']],
+      [2025, ['a']],
+      [null, ['lump']],
+    ]);
+  });
+});
+
+describe('the «رصيد إجمالي» heading', () => {
+  it('names a lump by its own key and an itemised line by its year', () => {
+    expect(isArrearsLumpBill(line({ feeType: 'LUMP_SUM' }))).toBe(true);
+    expect(isArrearsLumpBill(line())).toBe(false);
+    expect(arrearsGroupKey(line({ year: 2025, feeType: 'LUMP_SUM' }))).toBe('LUMP');
+    expect(arrearsGroupKey(line({ year: 2025 }))).toBe('2025');
+  });
+
+  it('words the lump in the page’s language', () => {
+    expect(arrearsFeeName(line({ feeType: 'LUMP_SUM' }), getLabels('ar'))).toBe('رصيد إجمالي');
+    expect(arrearsFeeName(line({ feeType: 'LUMP_SUM' }), getLabels('en'))).toBe('Lump sum');
   });
 });

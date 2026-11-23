@@ -2,7 +2,7 @@
 
 import { useLocale, useTranslations } from "next-intl";
 import { getLabels, type BillArrearsView } from "@mechanization/shared-schemas";
-import { arrearsFeeName, isArrearsPenalty } from "@/lib/arrears-bill";
+import { arrearsFeeName, isArrearsLumpBill, isArrearsPenalty } from "@/lib/arrears-bill";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 
@@ -42,7 +42,10 @@ export function ArrearsBillMark({
       <Badge variant="soft-info">{t("tag")}</Badge>
       {isArrearsPenalty(arrears) ? <Badge variant="soft-destructive">{t("penalty")}</Badge> : null}
       <span className="text-xs text-muted-foreground">
-        {t("summary", { year: String(arrears.year), fee: arrearsFeeName(arrears, labels) })}
+        {/* A «رصيد إجمالي»'s year only dates it before the cutoff: it is named without one. */}
+        {isArrearsLumpBill(arrears)
+          ? arrearsFeeName(arrears, labels)
+          : t("summary", { year: String(arrears.year), fee: arrearsFeeName(arrears, labels) })}
       </span>
       {invoiceNumber ? (
         <bdi dir="ltr" className="font-mono text-xs text-muted-foreground">

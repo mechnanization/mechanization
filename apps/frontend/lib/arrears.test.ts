@@ -1,6 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import type { ArrearsImportResult, ArrearsLineVerdict } from '@mechanization/shared-schemas';
-import { dropsOf, lineKey, needsDecision, reconciles, undecidedLines, writeBlocker, type LineDecision } from './arrears';
+import { dropsOf, lineKey, needsDecision, reconciles, refusedLineIssues, undecidedLines, writeBlocker, type LineDecision } from './arrears';
+
+describe('refusedLineIssues', () => {
+  it('reads the codes a refused single line carries, once each, and only the ones this build words', () => {
+    expect(
+      refusedLineIssues({ code: 'ARREARS_LINE_REFUSED', details: { issues: ['MIXED_WITH_LUMP_SUM', 'CUTOFF_NOT_SET', 'MIXED_WITH_LUMP_SUM', 'SOMETHING_NEW', 7] } }),
+    ).toEqual(['MIXED_WITH_LUMP_SUM', 'CUTOFF_NOT_SET']);
+  });
+
+  it('is empty for any other refusal or shape', () => {
+    expect(refusedLineIssues({ code: 'ARREARS_LINE_PRESCRIBED', details: { issues: ['CUTOFF_NOT_SET'] } })).toEqual([]);
+    expect(refusedLineIssues({ code: 'ARREARS_LINE_REFUSED', details: null })).toEqual([]);
+    expect(refusedLineIssues({ code: 'ARREARS_LINE_REFUSED', details: { issues: 'CUTOFF_NOT_SET' } })).toEqual([]);
+    expect(refusedLineIssues(null)).toEqual([]);
+  });
+});
 import { buildArrearsTemplate, parseArrearsCsv } from './csv';
 
 const line = (over: Partial<ArrearsLineVerdict> = {}): ArrearsLineVerdict => ({

@@ -104,6 +104,36 @@ describe('parseArrearsRow', () => {
     expect(parseArrearsRow(row({ feeType: 'OTHER', feeTypeNote: 'رسم ترخيص' }))).toMatchObject({ kind: 'LINES', feeType: 'OTHER', feeTypeNote: 'رسم ترخيص' });
     expect(parseArrearsRow(row({ rowKey: '' }))).toMatchObject({ kind: 'LINES', rowKey: null, fullName: 'أحمد علي حسن' });
   });
+
+  describe('«رصيد إجمالي»', () => {
+    const lump = (cells: ArrearsTemplateCells = {}) => row({ year: '', feeType: 'رصيد إجمالي', ...cells });
+
+    it('reads one amount with no year, leaving the year to the server', () => {
+      expect(parseArrearsRow(lump())).toMatchObject({
+        kind: 'LINES',
+        year: null,
+        feeType: 'LUMP_SUM',
+        lines: [{ component: 'PRINCIPAL', amount: 1_500_000 }],
+      });
+    });
+
+    it('refuses a year typed on it, and a penalty beside it, naming the cell', () => {
+      expect(parseArrearsRow(lump({ year: '2023' }))).toEqual({
+        kind: 'INVALID',
+        rowKey: 3,
+        fullName: 'أحمد علي حسن',
+        issues: [{ column: 'year', issue: 'LUMP_SUM_YEAR_GIVEN' }],
+      });
+      expect(parseArrearsRow(lump({ penalty: '5000' }))).toMatchObject({
+        kind: 'INVALID',
+        issues: [{ column: 'penalty', issue: 'LUMP_SUM_PENALTY' }],
+      });
+    });
+
+    it('still reads a lump row with nothing in it as checked, nothing owed', () => {
+      expect(parseArrearsRow(lump({ principal: '' }))).toEqual({ kind: 'BLANK', rowKey: 3 });
+    });
+  });
 });
 
 describe('the cell readers', () => {
@@ -154,6 +184,18 @@ describe('the request schemas', () => {
     expect(arrearsSingleLineSchema.safeParse({ ...line, citizenId: OTHER_KEY, currency: 'USD' }).success).toBe(false);
     expect(arrearsSingleLineSchema.safeParse({ ...line, citizenId: OTHER_KEY, feeType: 'OTHER' }).success).toBe(false);
     expect(arrearsSingleLineSchema.safeParse({ ...line, citizenId: OTHER_KEY, amount: 0 }).success).toBe(false);
+  });
+
+  it('asks a year of an itemised line, and none of a «رصيد إجمالي», which is one amount', () => {
+    const base = { citizenId: OTHER_KEY, propertyNumber: '420', component: 'PRINCIPAL', amount: 50_000, clientRequestId: KEY };
+    const issueOn = (body: object) => {
+      const result = arrearsSingleLineSchema.safeParse(body);
+      return result.success ? null : result.error.issues.map((issue) => String(issue.path[0]));
+    };
+    expect(issueOn({ ...base, feeType: 'CLEANING' })).toEqual(['year']);
+    expect(issueOn({ ...base, feeType: 'LUMP_SUM' })).toBeNull();
+    expect(issueOn({ ...base, feeType: 'LUMP_SUM', year: 2023 })).toEqual(['year']);
+    expect(issueOn({ ...base, feeType: 'LUMP_SUM', component: 'PENALTY' })).toEqual(['component']);
   });
 
   it('holds the control total and the write-off to what the database takes', () => {
