@@ -1458,7 +1458,7 @@ export function CitizenEditor({
         } catch (caught) {
           logApiError(caught);
           if (caught instanceof ApiRequestError && caught.status === 400) {
-            setError(caught.payload.message);
+            setError(caught.message);
             setSubmitting(false);
             return;
           }
@@ -1506,7 +1506,7 @@ export function CitizenEditor({
           logApiError(caught);
           setError(
             caught instanceof ApiRequestError
-              ? caught.payload.message
+              ? caught.message
               : locale === 'en'
                 ? 'Could not create the new structure. The registration was not saved.'
                 : 'تعذّر إنشاء المنشأة الجديدة. لم يُحفظ السجل.',

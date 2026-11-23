@@ -354,7 +354,7 @@ export default function BuildingsPage({
         logApiError(caught);
         const message =
           caught instanceof ApiRequestError
-            ? caught.payload.message
+            ? caught.message
             : en
               ? 'Could not delete the building.'
               : 'تعذّر حذف المبنى.';
@@ -491,7 +491,7 @@ export default function BuildingsPage({
       logApiError(caught);
       toast.error(en ? 'Could not export the census' : 'تعذّر تصدير سجل المباني', {
         description:
-          caught instanceof ApiRequestError ? caught.payload.message : undefined,
+          caught instanceof ApiRequestError ? caught.message : undefined,
       });
     } finally {
       setExporting(false);

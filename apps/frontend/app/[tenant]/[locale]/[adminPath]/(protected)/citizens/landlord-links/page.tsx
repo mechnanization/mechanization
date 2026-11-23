@@ -143,7 +143,7 @@ export default function LandlordLinksPage({
       } catch (caught) {
         throw new Error(
           caught instanceof ApiRequestError
-            ? caught.payload.message
+            ? caught.message
             : en
               ? 'The owner was not linked. Check the connection and try again.'
               : 'لم يتم ربط المالك. تحقّق من الاتصال وحاول مرة أخرى.',

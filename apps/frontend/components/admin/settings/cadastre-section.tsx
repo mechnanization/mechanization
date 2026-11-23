@@ -65,7 +65,7 @@ export function CadastreSection({
       } catch (caught) {
         logApiError(caught);
         const message =
-          caught instanceof ApiRequestError ? caught.payload.message : copy.cadastre.failed;
+          caught instanceof ApiRequestError ? caught.message : copy.cadastre.failed;
         setError(message);
         toast.error(message);
       } finally {

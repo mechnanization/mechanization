@@ -132,7 +132,7 @@ export function EndTenancyDialog({
         if (!controller.signal.aborted) {
           setLoadError(
             caught instanceof ApiRequestError
-              ? caught.payload.message
+              ? caught.message
               : en
                 ? 'Could not read this tenancy.'
                 : 'تعذّر قراءة هذا الإيجار.',
@@ -190,7 +190,7 @@ export function EndTenancyDialog({
       logApiError(caught);
       setFailure(
         caught instanceof ApiRequestError
-          ? caught.payload.message
+          ? caught.message
           : en
             ? 'Could not end the tenancy.'
             : 'تعذّر إنهاء الإيجار.',

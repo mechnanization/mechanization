@@ -161,7 +161,7 @@ export function EndOwnershipDialog({
         if (!controller.signal.aborted) {
           setLoadError(
             caught instanceof ApiRequestError
-              ? caught.payload.message
+              ? caught.message
               : en
                 ? 'Could not read this ownership.'
                 : 'تعذّر قراءة هذه الملكية.',
@@ -269,7 +269,7 @@ export function EndOwnershipDialog({
       logApiError(caught);
       setFailure(
         caught instanceof ApiRequestError
-          ? caught.payload.message
+          ? caught.message
           : caught instanceof Error && caught.message
             ? caught.message
             : en

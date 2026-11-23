@@ -134,7 +134,7 @@ export function ParcelCorrectionDialog({
           logApiError(caught);
           setPreviewError(
             caught instanceof ApiRequestError
-              ? caught.payload.message
+              ? caught.message
               : en
                 ? 'Could not check this parcel number.'
                 : 'تعذّر التحقق من رقم العقار.',
@@ -189,7 +189,7 @@ export function ParcelCorrectionDialog({
       }
       setFailure(
         caught instanceof ApiRequestError
-          ? caught.payload.message
+          ? caught.message
           : en
             ? 'Could not correct the parcel number.'
             : 'تعذّر تصحيح رقم العقار.',

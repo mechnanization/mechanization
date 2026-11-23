@@ -183,7 +183,7 @@ export function LandlordProposalCard({
       toast.error(en ? 'The owner was not linked' : 'لم يتم ربط المالك', {
         description:
           caught instanceof ApiRequestError
-            ? caught.payload.message
+            ? caught.message
             : en
               ? 'Check the connection and try again.'
               : 'تحقّق من الاتصال وحاول مرة أخرى.',
@@ -210,7 +210,7 @@ export function LandlordProposalCard({
     } catch (caught) {
       logApiError(caught);
       toast.error(en ? 'Could not record the answer.' : 'تعذّر تسجيل الإجابة.', {
-        description: caught instanceof ApiRequestError ? caught.payload.message : undefined,
+        description: caught instanceof ApiRequestError ? caught.message : undefined,
       });
     } finally {
       inFlight.current = false;
@@ -992,7 +992,7 @@ export function useLandlordResolutions({
       } catch (caught) {
         logApiError(caught);
         toast.error(en ? 'Could not undo it.' : 'تعذّر التراجع.', {
-          description: caught instanceof ApiRequestError ? caught.payload.message : undefined,
+          description: caught instanceof ApiRequestError ? caught.message : undefined,
         });
       } finally {
         undoInFlight.current.delete(id);

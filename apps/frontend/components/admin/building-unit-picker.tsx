@@ -911,7 +911,7 @@ export function BuildingUnitPicker({
       */
       setAddError(
         caught instanceof ApiRequestError
-          ? caught.payload.message
+          ? caught.message
           : en
             ? 'Could not add the unit.'
             : 'تعذّرت إضافة الوحدة.',

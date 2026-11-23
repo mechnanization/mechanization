@@ -943,7 +943,7 @@ export function BuildingEditor({
       }
       setLoadError(
         caught instanceof ApiRequestError
-          ? caught.payload.message
+          ? caught.message
           : en
             ? 'Could not load the building.'
             : 'تعذّر تحميل المبنى.',
@@ -2010,7 +2010,7 @@ export function BuildingEditor({
       if (candidates) {
         setDuplicates(candidates);
         setAcknowledgedDuplicates(false);
-        setError((caught as ApiRequestError).payload.message);
+        setError((caught as ApiRequestError).message);
         goToStep(1);
         return;
       }
@@ -2022,7 +2022,7 @@ export function BuildingEditor({
           return;
         }
         setFieldErrors(caught.fieldErrors);
-        setError(caught.payload.message);
+        setError(caught.message);
       } else {
         setError(en ? 'Could not save the building.' : 'تعذّر حفظ المبنى.');
       }
