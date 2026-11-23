@@ -521,6 +521,7 @@
     "CITIZEN_IDENTITY_DOC_TAKEN": "This document number is already recorded for someone else in the register. Check the number.",
     "CITIZEN_FILE_ARCHIVED": "This person's file is archived, so nothing new is filed on it — no card, no flat, no sale. Restore it first («Restore from the archive» on the citizens register), then try again.",
     "STAFF_CURRENT_PASSWORD_INCORRECT": "The current password is incorrect.",
+    "STAFF_NOT_FOUND": "This staff account was not found. Refresh the page and try again.",
     "TOTP_CODE_INVALID": "The verification code is incorrect. Check the code in your authenticator app.",
     "TOTP_CODE_REUSED": "This code has already been used. Wait for your authenticator app to show a new one, then enter it.",
     "TOTP_LOCKED": "Too many wrong verification codes, so codes are not being checked for this account. {minutes, plural, one {Try again in a minute.} other {Try again in {minutes} minutes.}}",

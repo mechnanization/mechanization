@@ -2,7 +2,7 @@ import { citizenDisplayName } from '@mechanization/shared-schemas';
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '../../generated/tenant-client';
 import { StaffRole, User } from '../../domain/entities/user.entity';
-import { ConflictError } from '../../domain/errors/domain-error';
+import { ConflictError, NotFoundError } from '../../domain/errors/domain-error';
 import {
   CitizenChoice,
   DeletedStaffSummary,
@@ -440,16 +440,13 @@ export class PrismaUserRepository implements UserRepository {
      */
     const revokes = Boolean(patch.role || patch.passwordHash);
 
-    await this.db.user.update({
-      where: { id },
-      data: {
-        ...(patch.email ? { email: patch.email.toLowerCase() } : {}),
-        ...(patch.passwordHash ? { passwordHash: patch.passwordHash } : {}),
-        ...(patch.firstName ? { firstName: patch.firstName } : {}),
-        ...(patch.lastName ? { lastName: patch.lastName } : {}),
-        ...(patch.role ? { role: patch.role as never } : {}),
-        ...(revokes ? { tokenVersion: { increment: 1 } } : {}),
-      },
+    await this.updateStaffRow(id, {
+      ...(patch.email ? { email: patch.email.toLowerCase() } : {}),
+      ...(patch.passwordHash ? { passwordHash: patch.passwordHash } : {}),
+      ...(patch.firstName ? { firstName: patch.firstName } : {}),
+      ...(patch.lastName ? { lastName: patch.lastName } : {}),
+      ...(patch.role ? { role: patch.role as never } : {}),
+      ...(revokes ? { tokenVersion: { increment: 1 } } : {}),
     });
   }
 
@@ -467,15 +464,12 @@ export class PrismaUserRepository implements UserRepository {
      * because something was wrong with it, and any session still outstanding
      * from before that decision should not come back with it.
      */
-    await this.db.user.update({
-      where: { id },
-      data: { isActive, tokenVersion: { increment: 1 } },
-    });
+    await this.updateStaffRow(id, { isActive, tokenVersion: { increment: 1 } });
   }
 
   /** Back on the staff list, still disabled: re-enabling is its own, separate decision. */
   async restoreStaff(id: string): Promise<void> {
-    await this.db.user.update({ where: { id }, data: { deletedAt: null } });
+    await this.updateStaffRow(id, { deletedAt: null });
   }
 
   async listDeletedStaff(): Promise<DeletedStaffSummary[]> {
@@ -508,10 +502,21 @@ export class PrismaUserRepository implements UserRepository {
    * `tokenVersion` is bumped so a session still open on it dies now.
    */
   async hideStaff(id: string): Promise<void> {
-    await this.db.user.update({
-      where: { id },
-      data: { deletedAt: new Date(), isActive: false, tokenVersion: { increment: 1 } },
-    });
+    await this.updateStaffRow(id, { deletedAt: new Date(), isActive: false, tokenVersion: { increment: 1 } });
+  }
+
+  /**
+   * The one way the staff writes above touch a row: `kind = 'STAFF'` is in the
+   * WHERE, not only in `StaffService`'s read before the call (audit SEC-11).
+   * `users` holds citizens too, so a caller that skipped or raced that read
+   * could otherwise rename, disable or hide a citizen. A row that is not a
+   * staff account is refused with `STAFF_NOT_FOUND` and nothing is written.
+   */
+  private async updateStaffRow(id: string, data: Prisma.UserUpdateManyMutationInput): Promise<void> {
+    const { count } = await this.db.user.updateMany({ where: { id, kind: 'STAFF' }, data });
+    if (count === 0) {
+      throw new NotFoundError({ code: 'STAFF_NOT_FOUND', message: `Staff user '${id}' was not found` });
+    }
   }
 
   /** Prisma error codes stop here — no layer above this one sees them. */
