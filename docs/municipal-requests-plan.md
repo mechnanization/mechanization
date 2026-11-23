@@ -12,6 +12,16 @@
 > left: [§7](#7-what-was-built-2026-10-13). §1–§6 are the plan as reviewed against
 > `develop@5e8f5c3` on 2026-10-12; where a **Proposal** name differs from §7, §7 and the
 > code win.
+>
+> **Request forms (built on an unmerged branch, `feat/request-forms-no-builtins@58f1c199`):**
+> a request may now be filled on a form the manager defined (migrations 0112 and 0113):
+> `submit` takes `formId` + `answers` beside the old body, the fee is the form's, `raiseBill`
+> and `approve` ask for a paper on every file question, and the one-open rule is per citizen
+> and form. **The built-in request types were removed on that same branch (F1):** every
+> request is filed on a form, `request_type_settings` is no longer read, the types routes and
+> screen are gone, and the dues check (براءة ذمة) is a setting of a form (F13, `0115`). What
+> this plan says of types is history once that branch merges. The plan and the decisions:
+> [request-forms-plan.md](request-forms-plan.md), [open-decisions.md §24](open-decisions.md#24-request-form-builder).
 
 A citizen asks the municipality for a paper — a براءة ذمة, a إفادة سكن, a lease
 registered — pays its fee, and collects the stamped paper at the counter. Staff

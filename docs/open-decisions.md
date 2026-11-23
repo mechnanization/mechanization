@@ -1092,3 +1092,118 @@ the request waiting on the bill goes on to «قيد المعالجة», as one w
 (`REQUEST_FEE_WAIVED`), and the audit row is `REQUEST_FEE_WRITTEN_OFF`. Its `paidAt` is the moment the fee
 stopped being owed, because a database CHECK wants a stamp on a billed request in review; if a screen must tell
 "paid" from "forgiven", read the audit row, or give the request its own column in a later migration.
+
+---
+
+## 24. Request form builder
+
+🟡 **Recorded, not ratified.** D3-140 required this section before any code
+was written ("No code is written until this story is done"). In practice the
+epic (migrations 0112/0113/0115, the shared schema, the backend service and
+controller, the builder and portal/counter screens) was already built —
+stacked commits on `feat/request-forms-no-builtins`, tip `58f1c199`, based on
+`develop@90cebdc` — before this section existed. What follows is each
+question from D3-140's table, answered from what the shipped code actually
+does, not from a meeting. **Hashem still has to read and ratify each one** (or
+say which must change before the branch is rebased onto current `develop` and
+opened as a PR — see [request-forms-plan.md](request-forms-plan.md) §0 for
+why it cannot be opened as one yet). Until ratified, treat every "decided"
+below as "this is what was built," not "this is approved."
+
+- **F1 — the 8 built-in types.** Went further than the table's recommendation.
+  Rather than built-in types staying as forms *beside* custom ones, they were
+  **removed outright** (`feat(request-forms): remove the built-in request
+  types`, 2026-11-22): every request is on a form, no exceptions. A form that
+  stands for a former built-in type carries `systemType` (unique, nullable),
+  which keys its special behaviour — today only F13's dues check — never the
+  form's name or id. `GET requests/types`, `PUT requests/types/:type` and
+  `GET requests/mine/types` are gone; `CitizenRequestsService` and
+  `citizen-requests.integration.spec.ts` were rewritten to file everything on
+  a form. **Needs ratification**: this is a bigger step than D3-140 asked for
+  — confirm the municipality agrees no request type may ever again exist
+  without a form, including whatever the eight built-ins covered that no one
+  has re-created as a form yet.
+- **F2 — editing a published form.** Decided as recommended: versioned.
+  `request_form_versions` is DRAFT then PUBLISHED and frozen; a request keeps
+  `formVersionId`, so old answers still show the questions they were given
+  against. The one exception, also decided: a form's **settings** (name, fee,
+  property mode, the dues check, the statement template) are *not*
+  versioned — `request_forms` columns change in place, read fresh at
+  approval and billing time (`request-form.schema.ts`: "the fee is the one in
+  force when the bill is raised," mirroring D1 of §20).
+- **F3 — field types and validation.** Decided as recommended: a fixed
+  catalogue of 11 (`REQUEST_FIELD_TYPE` in `enums.ts`: short/long text,
+  integer, decimal, date, phone, document number, single/multi choice,
+  yes/no, file), each with its own safe, bounded options object and no
+  free-form pattern the manager can type (`request-form.schema.ts`'s
+  discriminated union, one `*Config` schema per type, every one `.strict()`).
+- **F4 — fields already on the citizen's file.** Decided as recommended, with
+  one sharpened edge: linked fields exist (`REQUEST_LINKED_SOURCE`: first,
+  father's, last and mother's name, phone, identity number, civil record
+  number — **never** the رقم مرجعي, which a form can never read,
+  non-negotiable 7), read-only and copied onto the request on submit. Where
+  the table asked "what does a required linked field do when the file has no
+  value," the answer was not "the citizen types it" — it is **refused**:
+  `REQUEST_FORM_LINKED_FIELD_EMPTY` names the empty field keys, and the
+  request cannot be filed until a clerk completes the citizen's file first.
+  Also decided, beyond the table: every field on a form is required, full
+  stop — there is no optional question (`request-form-answers.ts`: "there is
+  no 'optional' branch").
+- **F5 — who builds and enables forms.** Decided as recommended:
+  `REQUEST_SETTINGS_ROLES` (the manager alone), per tenant schema, pinned in
+  `route-inventory.spec.ts`. No shared template library.
+- **F6 — property card and applicant capacity.** Decided as recommended, with
+  one addition: `propertyMode` (`NONE`/`OPTIONAL`/`REQUIRED`) and
+  `askCapacity`, plus an `askPurpose` boolean the table did not ask about (a
+  form may also ask the applicant to state why, free text, 500 characters).
+- **F7 — disabling and deleting.** Decided as recommended: disabling
+  (`enabled: false`) hides a form from new requests without touching open
+  ones; deleting is refused the moment any request names the form
+  (`REQUEST_FORM_HAS_REQUESTS`) or the form is a system one
+  (`REQUEST_FORM_SYSTEM`) — archiving is the only way to retire either.
+- **F8 — who sees the answers, and masking.** Decided as recommended for
+  readership (request readers only, never «مشاهد فقط», never back to the
+  portal as a file), and one more protection the table did not specify: a
+  citizen's own read of their answers (`GET requests/mine/:id`) masks a
+  document-number answer to its last three characters
+  (`answerValueForCitizen`), matching how a رقم مرجعي is masked elsewhere.
+  Retention still waits on [§1](#1-legal-basis-and-retention-policy-for-the-data-collected) (still 🔴 open).
+- **F9 — the printed paper's statement template.** Decided as recommended:
+  optional `statementTemplate` text (5,000 characters) the clerk starts the
+  final statement from; the clerk still writes and the manager's words are
+  never printed verbatim without a human reading them first.
+- **F10 — languages.** Decided as recommended: Arabic (`nameAr`, `labelAr`)
+  required, English (`nameEn`, `labelEn`) optional, the screen falling back
+  to Arabic when English is absent (`form-renderer.tsx`).
+- **F11 — one open request per citizen and form.** Decided as recommended:
+  the same rule as the built-in types' `(citizen, type, card)` index, mirrored
+  for a form as `(citizen, formId, card)` (`citizen_requests_one_open_form_key`).
+- **F12 — the identity copy every online request carries** (open decisions
+  §20 D2; added during implementation, not in D3-140's original table). A
+  form's own file question can stand in for the portal's standard
+  identity-copy step: if a form already asks for a file whose
+  `attachmentType` is `IDENTITY`, the portal does not add a second, redundant
+  upload step for the same document (`formAsksForIdentityCopy`,
+  `request-form-fill.ts`). **Needs ratification**: this is a new rule, not
+  foreseen when D2 was decided.
+- **F13 — the براءة ذمة dues check as a form setting** (migration
+  `0115_request_form_dues_check`, 2026-11-22; added during implementation,
+  not in D3-140's original table). Any form, not only the built-in clearance
+  type, may set `requiresNoDues`; `CitizenRequestsService.approve` then
+  refuses while the property named on the request owes
+  (`REQUEST_CLEARANCE_DUES_OUTSTANDING`), the same check the built-in
+  براءة ذمة always ran. The setting needs `propertyMode` `REQUIRED` (CHECK
+  `request_forms_dues_needs_property`): a form that does not name a property
+  cannot ask whether that property owes. **Needs ratification**: whether a
+  manager should be free to put a financial gate on *any* form this easily,
+  with no second approval.
+
+**Still open, not answered by the code because nothing in it had to:**
+- Whether the eight retired built-in request types need their *names* kept
+  somewhere (a municipality's own historical reports that group by the old
+  type) — F1's removal deleted the behaviour; whether it should have kept a
+  read-only label is unasked.
+- A shared template library across municipalities (ruled out by F5's answer,
+  "out of scope for v1" — confirm that still holds).
+- Whether `askPurpose`'s free-text purpose is kept or shown anywhere a
+  decision is made from, or is display-only.
