@@ -14,6 +14,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { loadSession } from '@/lib/session';
+import { hasRole, SETTINGS_ROLES } from '@/lib/staff-roles';
 import { param, useUrlState } from '@/lib/use-url-state';
 import { settingsCopy, type SettingsCopy } from '@/lib/settings-i18n';
 import { PageHeader } from '@/components/ui/page-header';
@@ -83,7 +84,7 @@ export default function SettingsPage({
       router.replace(`${base}/login`);
       return;
     }
-    if (session.user.role !== 'SUPER_ADMIN') {
+    if (!hasRole(SETTINGS_ROLES, session.user.role)) {
       router.replace(`${base}/dashboard`);
       return;
     }

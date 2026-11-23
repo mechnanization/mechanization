@@ -9,6 +9,7 @@ import { auditEntityLabel } from '@/lib/audit-labels';
 import { AUDIT_FAMILIES, auditFamilyOf } from '@/lib/audit-describe';
 import { formatMonth } from '@/lib/dates';
 import { loadSession } from '@/lib/session';
+import { AUDIT_READ_ROLES, hasRole } from '@/lib/staff-roles';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { param, useUrlState } from '@/lib/use-url-state';
 import { AuditDaily } from '@/components/admin/audit-daily';
@@ -89,7 +90,7 @@ export default function AuditTrailPage({
       router.replace(`${base}/login`);
       return;
     }
-    if (existing.user.role !== 'SUPER_ADMIN' && existing.user.role !== 'AUDITOR') {
+    if (!hasRole(AUDIT_READ_ROLES, existing.user.role)) {
       router.replace(`${base}/dashboard`);
       return;
     }

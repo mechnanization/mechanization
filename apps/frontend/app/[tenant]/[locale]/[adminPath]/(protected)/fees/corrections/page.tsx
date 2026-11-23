@@ -12,6 +12,7 @@ import {
   type CorrectionAffectedBill,
 } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
+import { FEE_ADMIN_ROLES, hasRole } from '@/lib/staff-roles';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { param, useUrlState } from '@/lib/use-url-state';
 import { formatLbp } from '@/lib/currency';
@@ -79,7 +80,7 @@ export default function CorrectionBillsPage({
   }, [tenant, base, router]);
 
   // AUDITOR reads the list; recording a decision is the accountant's.
-  const canReview = role === 'SUPER_ADMIN' || role === 'ACCOUNTANT';
+  const canReview = hasRole(FEE_ADMIN_ROLES, role);
 
   const listQuery = useStaffQuery({
     queryKey: ['correction-affected-bills', tenant, show, page],

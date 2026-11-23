@@ -35,7 +35,7 @@ import {
   setCitizenActive,
 } from '@/lib/api-client';
 import { CitizenArchiveDialog } from '@/components/admin/citizen-archive-dialog';
-import { CITIZEN_RECORD_EDIT_ROLES, REFERENCE_SEND_ROLES, hasRole } from '@/lib/staff-roles';
+import { CITIZEN_EDITOR_ROLES, CITIZEN_RECORD_EDIT_ROLES, REFERENCE_SEND_ROLES, hasRole } from '@/lib/staff-roles';
 import { ImportCitizensDialog } from '@/components/admin/import-citizens-dialog';
 import { ShellLink } from '@/components/admin/shell-nav';
 import { OfflineQueuePanel } from '@/components/admin/offline-queue';
@@ -62,8 +62,6 @@ import { useTableLabels } from '@/lib/use-table-labels';
 import { buildCitizenWelcomeMessage, buildWhatsappHref } from '@/lib/whatsapp';
 import { getLabels } from '@mechanization/shared-schemas';
 
-/** Roles allowed to write. Mirrors the server; the server is the enforcement. */
-const CAN_WRITE = ['SUPER_ADMIN', 'FIELD_INSPECTOR', 'ADMINISTRATIVE_OFFICER'];
 
 /**
  * The citizen registry — the municipality's own record of who is registered,
@@ -145,7 +143,11 @@ export default function CitizensPage({
   /** Prefixed with «بلدية» in the WhatsApp reference-number message below. */
   const [municipalityName, setMunicipalityName] = useState('');
 
-  const canWrite = role ? CAN_WRITE.includes(role) : false;
+  // Archive/restore and import are REGISTER_WRITE_ROLES, the collector
+  // included; opening CitizenEditor (edit, or «تسجيل مواطن جديد») is the
+  // narrower CITIZEN_EDITOR_ROLES — see its own comment (DRY-12, SEC-13).
+  const canWrite = hasRole(CITIZEN_RECORD_EDIT_ROLES, role);
+  const canOpenEditor = hasRole(CITIZEN_EDITOR_ROLES, role);
   /** The WhatsApp welcome carries the رقم مرجعي, which «مشاهد فقط» is never given. */
   const canSendReference = hasRole(REFERENCE_SEND_ROLES, role);
 
@@ -675,7 +677,7 @@ export default function CitizensPage({
                 </ActionTooltip>
               ) : null}
 
-              {canWrite && !citizen.mergedIntoId ? (
+              {canOpenEditor && !citizen.mergedIntoId ? (
                 <ActionTooltip label={locale === 'en' ? 'Edit information' : 'تعديل البيانات'}>
                   <Link
                     href={`${base}/citizens/${citizen.id}/edit`}
@@ -713,7 +715,7 @@ export default function CitizensPage({
         },
       },
     ],
-    [base, busyId, canWrite, canSendReference, restore, locale, labels, municipalityName, t],
+    [base, busyId, canWrite, canOpenEditor, canSendReference, restore, locale, labels, municipalityName, t],
   );
 
   if (!token) return null;
@@ -728,16 +730,20 @@ export default function CitizensPage({
         title={locale === 'en' ? 'Citizen register' : 'سجل المواطنين'}
 
         actions={
-          canWrite ? (
+          canWrite || canOpenEditor ? (
             <>
-              <Button variant="outline" onClick={() => setImportOpen(true)}>
-                <FileSpreadsheet className="size-4" aria-hidden />
-                {locale === 'en' ? 'Import from file' : 'استيراد من ملف'}
-              </Button>
-              <ShellLink href={`${base}/citizens/new`} className={buttonVariants()}>
-                <UserPlus className="size-4" aria-hidden />
-                {locale === 'en' ? 'Register new citizen' : 'تسجيل مواطن جديد'}
-              </ShellLink>
+              {canWrite ? (
+                <Button variant="outline" onClick={() => setImportOpen(true)}>
+                  <FileSpreadsheet className="size-4" aria-hidden />
+                  {locale === 'en' ? 'Import from file' : 'استيراد من ملف'}
+                </Button>
+              ) : null}
+              {canOpenEditor ? (
+                <ShellLink href={`${base}/citizens/new`} className={buttonVariants()}>
+                  <UserPlus className="size-4" aria-hidden />
+                  {locale === 'en' ? 'Register new citizen' : 'تسجيل مواطن جديد'}
+                </ShellLink>
+              ) : null}
             </>
           ) : null
         }

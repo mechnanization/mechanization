@@ -5,6 +5,7 @@ import { History, Loader2 } from 'lucide-react';
 
 import { getAuditLog, getRecordHistory, type AuditEntry } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
+import { AUDIT_READ_ROLES, hasRole } from '@/lib/staff-roles';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { AuditEntryItem } from '@/components/admin/audit-entry';
 import { CollapsibleSection } from '@/components/ui/collapsible-section';
@@ -69,7 +70,7 @@ export function ActivityTrail({
     only, which the server narrows and strips (`AuditService.history`). Other
     record types keep the old rule: the full trail or nothing.
   */
-  const fullTrail = role === 'SUPER_ADMIN' || role === 'AUDITOR';
+  const fullTrail = hasRole(AUDIT_READ_ROLES, role);
   const historyKind =
     entityType === 'User' ? 'citizen' : entityType === 'Building' ? 'building' : null;
   const mayRead = fullTrail || (Boolean(role) && historyKind !== null);

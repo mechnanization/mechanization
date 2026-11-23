@@ -49,7 +49,13 @@ import {
   TREASURY_WORK_ROLES,
   WORKING_STAFF_ROLES,
 } from '@mechanization/shared-schemas';
-import { QUALITY_REVIEWER_ROLES, WORKLIST_ROLES } from '@/lib/staff-roles';
+import {
+  CITIZEN_EDITOR_ROLES,
+  QUALITY_REVIEWER_ROLES,
+  SETTINGS_ROLES,
+  STAFF_READ_ROLES,
+  WORKLIST_ROLES,
+} from '@/lib/staff-roles';
 
 /*
  * Every row's roles come from the shared role sets the API's `@Roles` are
@@ -257,17 +263,19 @@ export const NAV_GROUPS: NavGroup[] = [
         discards what has been typed (see `citizen-draft.ts`), and that promise
         only makes sense if there is a page to come back *to*.
 
-        Narrower than the register deliberately — these are the roles
-        `CitizenEditor` admits and `CitizenController.create` accepts. An
-        `AUDITOR` reads the register and does not add to it, so offering them
-        the form would be offering a save the server refuses.
+        Narrower than the register deliberately — `CITIZEN_EDITOR_ROLES` is
+        `CitizenEditor`'s own gate (narrower than `CitizenController.create`
+        accepts: the editor also carries «إلغاء الربط», not yet role-checked
+        of itself, SEC-13). An `AUDITOR` reads the register and does not add
+        to it, so offering them the form would be offering a save the server
+        refuses regardless.
       */
       {
         path: '/citizens/new',
         label: 'تسجيل مواطن جديد',
         labelEn: 'Register a citizen',
         icon: UserPlus,
-        roles: ['SUPER_ADMIN', 'FIELD_INSPECTOR', 'ADMINISTRATIVE_OFFICER'],
+        roles: CITIZEN_EDITOR_ROLES,
         keywords: ['تسجيل', 'مواطن', 'جديد', 'إضافة', 'أسرة', 'نموذج', 'register', 'new', 'add'],
       },
       /*
@@ -440,13 +448,15 @@ export const NAV_GROUPS: NavGroup[] = [
         keywords: ['رسم', 'مطالبة', 'فاتورة', 'دفع', 'fees', 'billing'],
       },
       // Read-only: the ledger above answers "who owes what", this answers
-      // "what has been paid". An auditor lives here.
+      // "what has been paid". FEE_READ_ROLES, as GET fees/payments: an
+      // auditor and the administrative officer live here too (NAV-09/DRY-12
+      // — the row used to leave the office out).
       {
         path: '/payments',
         label: 'سجل العمليات',
         labelEn: 'Payment operations',
         icon: ArrowLeftRight,
-        roles: ['SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'VIEWER'],
+        roles: FEE_READ_ROLES,
         keywords: ['قبض', 'إيصال', 'محصّل', 'نقد', 'payments', 'transactions'],
       },
       /*
@@ -738,7 +748,7 @@ export const NAV_GROUPS: NavGroup[] = [
         label: 'إعدادات البلدية',
         labelEn: 'Settings',
         icon: Settings,
-        roles: ['SUPER_ADMIN'],
+        roles: SETTINGS_ROLES,
         keywords: ['ويش', 'واتساب', 'عنوان', 'دوام', 'settings', 'config'],
       },
       {
@@ -746,7 +756,7 @@ export const NAV_GROUPS: NavGroup[] = [
         label: 'الموظفون',
         labelEn: 'Staff management',
         icon: UsersRound,
-        roles: ['SUPER_ADMIN'],
+        roles: STAFF_READ_ROLES,
         keywords: ['موظف', 'صلاحيات', 'حساب', 'staff', 'users'],
       },
       // Everyone has a password to change and a second factor to enrol, and it

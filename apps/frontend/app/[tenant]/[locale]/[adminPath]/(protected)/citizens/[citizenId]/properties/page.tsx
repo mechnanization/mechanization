@@ -26,6 +26,7 @@ import {
 } from '@/lib/api-client';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { CITIZEN_RECORD_EDIT_ROLES, LANDLORD_LINK_ANSWER_ROLES, hasRole } from '@/lib/staff-roles';
 import { param, useUrlState } from '@/lib/use-url-state';
 import { formatDate, formatDay, formatMonthList } from '@/lib/dates';
 import { mapHref } from '@/lib/map-link';
@@ -121,8 +122,17 @@ export default function CitizenPropertiesPage({
 
   const { token, user } = useStaffSession(tenant, base);
   const [{ filter: chosen }, setUrl] = useUrlState(URL_STATE);
-  // The roles that edit a citizen's file — the same three the file itself offers these actions to.
-  const auth = token && user ? { token, canEdit: EDIT_ROLES.includes(user.role) } : null;
+  /*
+   * Ending an ownership or a tenancy is `REGISTER_WRITE_ROLES`
+   * (`CITIZEN_RECORD_EDIT_ROLES`), the collector included; unlinking a
+   * landlord is the narrower `LANDLORD_LINK_ANSWER_ROLES`, which does not
+   * admit the collector — one gate used to cover both and over-offered the
+   * second to a role the server refuses (DRY-12).
+   */
+  const auth =
+    token && user
+      ? { token, canEdit: hasRole(CITIZEN_RECORD_EDIT_ROLES, user.role), canUnlink: hasRole(LANDLORD_LINK_ANSWER_ROLES, user.role) }
+      : null;
 
   const profile = useStaffQuery({
     queryKey: ['citizen-profile', tenant, citizenId],
@@ -305,7 +315,7 @@ function PropertyBlock({
   base: string;
   tenant: string;
   locale: string;
-  auth: { token: string; canEdit: boolean } | null;
+  auth: { token: string; canEdit: boolean; canUnlink: boolean } | null;
   onChanged: () => void;
 }) {
   /*
@@ -316,27 +326,28 @@ function PropertyBlock({
   */
   const [dialog, setDialog] = useState<'ownership' | 'tenancy' | 'unlink' | null>(null);
   const editable = Boolean(auth?.canEdit) && !property.endedAt;
+  const unlinkable = Boolean(auth?.canUnlink) && !property.endedAt;
   const owner = property.occupancyType === 'OWNER';
   // Shares are a share *of ownership*: legacy tenant cards still carry a number that means nothing here.
   const shares = owner ? property.shares : null;
   /*
-    The same three actions, gated as the citizen file gated them: an owner's
-    card ends an ownership; a tenant's ends a tenancy and a free occupant's an
-    occupancy (the law's words differ, so the label does); and only a
-    non-owner's card has a landlord to unlink.
+    Gated as the citizen file gates them: an owner's card ends an ownership;
+    a tenant's ends a tenancy and a free occupant's an occupancy (the law's
+    words differ, so the label does); and only a non-owner's card has a
+    landlord to unlink — by its own, narrower role check (DRY-12).
   */
-  const actions = editable
-    ? [
-        ...(owner
-          ? [{ key: 'ownership' as const, label: en ? 'End ownership' : 'إنهاء الملكية', icon: KeyRound }]
-          : property.occupancyType === 'FREE_OCCUPANT'
-            ? [{ key: 'tenancy' as const, label: en ? 'End occupancy' : 'إنهاء الإشغال', icon: DoorOpen }]
-            : [{ key: 'tenancy' as const, label: en ? 'End tenancy' : 'إنهاء الإيجار', icon: DoorOpen }]),
-        ...(!owner && property.landlordCitizenId
-          ? [{ key: 'unlink' as const, label: en ? 'Unlink landlord' : 'فك الربط بالمالك', icon: Unlink }]
-          : []),
-      ]
-    : [];
+  const actions = [
+    ...(editable
+      ? owner
+        ? [{ key: 'ownership' as const, label: en ? 'End ownership' : 'إنهاء الملكية', icon: KeyRound }]
+        : property.occupancyType === 'FREE_OCCUPANT'
+          ? [{ key: 'tenancy' as const, label: en ? 'End occupancy' : 'إنهاء الإشغال', icon: DoorOpen }]
+          : [{ key: 'tenancy' as const, label: en ? 'End tenancy' : 'إنهاء الإيجار', icon: DoorOpen }]
+      : []),
+    ...(unlinkable && !owner && property.landlordCitizenId
+      ? [{ key: 'unlink' as const, label: en ? 'Unlink landlord' : 'فك الربط بالمالك', icon: Unlink }]
+      : []),
+  ];
 
   const tone: PropertyTone = owner ? 'owner' : 'occupant';
   const ended = Boolean(property.endedAt);
@@ -1053,10 +1064,3 @@ function floorText(floor: string, en: boolean): string {
   if (floor.trim() === '0') return en ? 'Ground' : 'الأرضي';
   return floor;
 }
-
-/**
- * The roles that edit a citizen's file, and so may end a card or unlink its
- * landlord. Mirrors `@Roles` on the tenancy, ownership and unlink routes in
- * citizen.controller and the file's own `canEdit`; the server is the enforcement.
- */
-const EDIT_ROLES = ['SUPER_ADMIN', 'FIELD_INSPECTOR', 'ADMINISTRATIVE_OFFICER'];

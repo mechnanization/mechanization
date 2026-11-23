@@ -44,7 +44,7 @@ import { getOpenReturn, type OpenReturn } from '@/lib/quality-api';
 import { clearSession, loadSession } from '@/lib/session';
 import { formatRelative } from '@/lib/dates';
 import { namesAnotherRelative } from '@/lib/citizen-contact';
-import { LANDLORD_LINK_ANSWER_ROLES, hasRole } from '@/lib/staff-roles';
+import { CITIZEN_EDITOR_ROLES, LANDLORD_LINK_ANSWER_ROLES, hasRole } from '@/lib/staff-roles';
 import {
   clearCitizenDraft,
   draftWorthKeeping,
@@ -1017,14 +1017,12 @@ export function CitizenEditor({
     }
     // Read-only roles are bounced rather than shown a form every save would
     // refuse. The server is the enforcement; this keeps it out of their way.
-    // Collectors stay out too, though the save routes admit them: the form's
-    // owner-link controls («نعم، هو», «إلغاء الربط») are not theirs
-    // (`LANDLORD_LINK_ANSWER_ROLES`) — see docs/security.md, Known gaps.
-    if (
-      session.user.role !== 'SUPER_ADMIN' &&
-      session.user.role !== 'FIELD_INSPECTOR' &&
-      session.user.role !== 'ADMINISTRATIVE_OFFICER'
-    ) {
+    // Collectors stay out too, though the save routes admit them: «إلغاء
+    // الربط» on the owner-link controls checks only a token and a card id,
+    // not a role (docs/security.md Known gaps, SEC-13) — until it checks
+    // `canAnswerLandlord` itself, this gate (CITIZEN_EDITOR_ROLES) is where a
+    // collector is kept from reaching a button the server would refuse.
+    if (!hasRole(CITIZEN_EDITOR_ROLES, session.user.role)) {
       router.replace(`${base}/citizens`);
       return;
     }
