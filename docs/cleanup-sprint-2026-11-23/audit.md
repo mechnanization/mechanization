@@ -1540,7 +1540,7 @@ Filled in by whoever executes a task (section 0, step 4). One row per finding; t
 
 | ID | Found during | File and symbol | Problem | Fixed in that PR? | Debt doc row added |
 |---|---|---|---|---|---|
-| | | | | | |
+| SUBMIT-09 | SUBMIT-02 | `building-unit-matrix-view.tsx`'s own `run()` | The full-page matrix has its own copy of the drawer's `run()`, with the same state-only `busy` guard SUBMIT-02 fixed in the drawer (a double-click could pass the stale read before React re-renders). A different file from SUBMIT-02's three, so left for its own PR per step 4 of section 0. | No | No (new, not yet in code-quality.md) |
 
 ---
 

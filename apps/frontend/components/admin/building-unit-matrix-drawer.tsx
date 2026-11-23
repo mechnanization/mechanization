@@ -379,9 +379,23 @@ export function BuildingUnitMatrixDrawer({
   } | null>(null);
   const tLevels = useTranslations('unitLevels');
 
+  /*
+    `busy` is React state, set asynchronously: a double-click or a stuck
+    re-render could pass its stale read before either of the paths below
+    commits (SUBMIT-02). Each write path below is guarded by its own ref,
+    checked and set synchronously, mirroring the `busy` state it already sets.
+  */
+  const runRef = useRef(false);
+  const addingRef = useRef(false);
+  const endingVacancyRef = useRef(false);
+  const closingSpellRef = useRef(false);
+  const linkingOwnerRef = useRef(false);
+
   /** Every write funnels through here so the reload and the toast are never forgotten. */
   const run = useCallback(
     async (task: () => Promise<string>, failure: string) => {
+      if (runRef.current) return;
+      runRef.current = true;
       setBusy(true);
       setActionError(null);
       try {
@@ -397,6 +411,7 @@ export function BuildingUnitMatrixDrawer({
         toast.error(failure, { description: message });
       } finally {
         setBusy(false);
+        runRef.current = false;
       }
     },
     [load, onChanged, toast],
@@ -420,8 +435,9 @@ export function BuildingUnitMatrixDrawer({
   const addOnFloor = async (floor: number, unitType: string, acknowledged = false, houseGrowth?: HouseGrowth) => {
     // `unitType` here is the select's value (see `addingType`); what is sent is what it stands for.
     const chosen = chosenType(unitType, addTypeOptions);
-    if (!building || !chosen) return;
+    if (!building || !chosen || addingRef.current) return;
 
+    addingRef.current = true;
     setBusy(true);
     setActionError(null);
     try {
@@ -487,6 +503,7 @@ export function BuildingUnitMatrixDrawer({
       toast.error(failure, { description: message });
     } finally {
       setBusy(false);
+      addingRef.current = false;
     }
   };
 
@@ -549,6 +566,10 @@ export function BuildingUnitMatrixDrawer({
     unit: UnitWithOccupants,
     input: { reason: VacancyEndReason; endedAt?: string; notes: string },
   ) => {
+    // No busy state at this level to race (the dialog keeps its own), but a
+    // double submit still reached the server twice, so the ref alone guards it.
+    if (endingVacancyRef.current) return;
+    endingVacancyRef.current = true;
     try {
       await endVacancy(tenant, token, unit.id, {
         reason: input.reason,
@@ -564,6 +585,8 @@ export function BuildingUnitMatrixDrawer({
             ? 'Could not lift the vacancy.'
             : 'تعذّر إلغاء تأكيد الشغور.',
       );
+    } finally {
+      endingVacancyRef.current = false;
     }
     await load();
     onChanged?.();
@@ -592,6 +615,10 @@ export function BuildingUnitMatrixDrawer({
   const closeSpell = async (occupant: UnitOccupant, input: EndOccupancyAnswer) => {
     // Not through `run`: a refusal belongs in the dialog the officer is
     // looking at, so it is rethrown for `EndOccupancyDialog` to show.
+    // No busy state at this level to race (the dialog keeps its own), but a
+    // double submit still reached the server twice, so the ref alone guards it.
+    if (closingSpellRef.current) return;
+    closingSpellRef.current = true;
     let result: Awaited<ReturnType<typeof endOccupancy>>;
     try {
       result = await endOccupancy(tenant, token, occupant.id, input);
@@ -604,6 +631,8 @@ export function BuildingUnitMatrixDrawer({
             ? 'Could not end the occupancy.'
             : 'تعذّر إنهاء الإشغال.',
       );
+    } finally {
+      closingSpellRef.current = false;
     }
     await load();
     onChanged?.();
@@ -612,6 +641,10 @@ export function BuildingUnitMatrixDrawer({
 
   /** «ربط بالمالك» — a refusal is rethrown for the dialog to show, as `closeSpell`'s is. */
   const linkOwner = async (occupant: UnitOccupant, ownerId: string, confirmRecordedAfter: boolean) => {
+    // No busy state at this level to race (the dialog keeps its own), but a
+    // double submit still reached the server twice, so the ref alone guards it.
+    if (linkingOwnerRef.current) return;
+    linkingOwnerRef.current = true;
     let result: Awaited<ReturnType<typeof linkOccupancyOwner>>;
     try {
       result = await linkOccupancyOwner(tenant, token, occupant.id, ownerId, confirmRecordedAfter);
@@ -624,6 +657,8 @@ export function BuildingUnitMatrixDrawer({
             ? 'Could not link the owner.'
             : 'تعذّر الربط بالمالك.',
       );
+    } finally {
+      linkingOwnerRef.current = false;
     }
     await load();
     onChanged?.();
