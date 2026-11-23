@@ -84,7 +84,9 @@ import { buildCitizenWelcomeMessage, buildWhatsappHref } from '@/lib/whatsapp';
 import {
   BULK_SETTLE_ROLES,
   CASH_COUNTER_ROLES,
+  CITIZEN_EDITOR_ROLES,
   DOCUMENT_VIEW_ROLES,
+  PAYMENT_SETTLE_ROLES,
   REFERENCE_SEND_ROLES,
   hasRole,
 } from '@/lib/staff-roles';
@@ -464,13 +466,12 @@ export default function CitizenProfilePage({
   /** Office numbers printed on a receipt — see إعدادات البلدية. */
   const [settings, setSettings] = useState<MunicipalitySettings | null>(null);
 
-  /** Mirrors the server's write roles; the server is the enforcement. */
-  const canEdit =
-    role === 'SUPER_ADMIN' || role === 'FIELD_INSPECTOR' || role === 'ADMINISTRATIVE_OFFICER';
-  /** Settling a payment belongs to the money roles server-side (`@Roles` on the
-   *  fees controller), so offering it to an inspector would only earn a 403. */
-  const canManage =
-    role === 'SUPER_ADMIN' || role === 'COLLECTOR' || role === 'ACCOUNTANT';
+  /** Same gate as CitizenEditor's own, and for the same reason (DRY-12, SEC-13): this
+   *  page's cards carry the same «إلغاء الربط» control, not yet role-checked of itself. */
+  const canEdit = hasRole(CITIZEN_EDITOR_ROLES, role);
+  /** Settling a payment belongs to the money roles server-side (`FEE_SETTLE_ROLES`),
+   *  so offering it to an inspector would only earn a 403. */
+  const canManage = hasRole(PAYMENT_SETTLE_ROLES, role);
   /** Cash into the safe (`CASH_COUNTER_ROLES`); a collector records his own collection instead (D13). */
   const canTakeCash = hasRole(CASH_COUNTER_ROLES, role);
 

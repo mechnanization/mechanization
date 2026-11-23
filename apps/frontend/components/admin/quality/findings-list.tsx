@@ -19,6 +19,7 @@ import {
   type QualityFinding,
 } from '@/lib/quality-api';
 import { formatRelative } from '@/lib/dates';
+import { CITIZEN_EDIT_IN_QUALITY_ROLES, hasRole } from '@/lib/staff-roles';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -109,16 +110,6 @@ const QUEUE = {
   finding: FINDING,
 };
 
-/**
- * The roles that may write to a citizen's file at all.
- *
- * The intersection of two lists that are not the same: `QUALITY_REVIEWER_ROLES`
- * opens this screen (and includes an auditor), while `PATCH /citizens/:id` is
- * for the roles that register households. An auditor comparing two files is
- * doing their job; offering them an «تعديل» button that the endpoint answers
- * with 403 is the portal handing somebody a control it knows will fail.
- */
-const CITIZEN_EDIT_ROLES: readonly string[] = ['SUPER_ADMIN', 'ADMINISTRATIVE_OFFICER'];
 
 function tableLabels(locale: string): DataTableLabels {
   if (locale === 'en') {
@@ -612,7 +603,7 @@ export function FindingsList({
           base={base}
           locale={locale}
           token={token}
-          canEdit={CITIZEN_EDIT_ROLES.includes(role ?? '')}
+          canEdit={hasRole(CITIZEN_EDIT_IN_QUALITY_ROLES, role)}
           canMerge={role === 'SUPER_ADMIN'}
           onBack={() => setView({ mode: 'list' })}
           onChanged={() => query.refetch()}

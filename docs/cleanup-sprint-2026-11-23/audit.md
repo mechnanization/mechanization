@@ -1540,7 +1540,7 @@ Filled in by whoever executes a task (section 0, step 4). One row per finding; t
 
 | ID | Found during | File and symbol | Problem | Fixed in that PR? | Debt doc row added |
 |---|---|---|---|---|---|
-| | | | | | |
+| SEC-13 | DRY-12 | `property-card.tsx`'s «إلغاء الربط» `Button` (gated on `token && draft.id` alone, not a role) | Any role that reaches `CitizenEditor` sees the unlink button, though the server refuses a collector (`LANDLORD_LINK_ANSWER_ROLES`). Mitigated: `CitizenEditor`'s own gate keeps a collector out of the editor entirely, so the button is never reached by a role it would fail for — which is also why `CITIZEN_EDITOR_ROLES` stays narrower than `CITIZEN_RECORD_EDIT_ROLES` and could not simply be widened as part of DRY-12. | No | Yes (docs/security.md Known gaps, Low) |
 
 ---
 

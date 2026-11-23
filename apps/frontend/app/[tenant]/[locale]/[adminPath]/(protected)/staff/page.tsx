@@ -38,7 +38,7 @@ import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { param, useTabSearch, useUrlPagination, useUrlState } from '@/lib/use-url-state';
 import { formatDate } from '@/lib/dates';
-import { hasRole } from '@/lib/staff-roles';
+import { hasRole, STAFF_READ_ROLES } from '@/lib/staff-roles';
 import { useTableLabels } from '@/lib/use-table-labels';
 import { Alert } from '@/components/ui/alert';
 import { CellTag } from '@/components/ui/cell-tag';
@@ -128,7 +128,7 @@ export default function StaffPage({
       router.replace(`${base}/login`);
       return;
     }
-    if (session.user.role !== 'SUPER_ADMIN') {
+    if (!hasRole(STAFF_READ_ROLES, session.user.role)) {
       router.replace(`${base}/dashboard`);
       return;
     }

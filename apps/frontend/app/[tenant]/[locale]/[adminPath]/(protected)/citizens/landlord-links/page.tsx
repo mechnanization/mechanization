@@ -29,7 +29,7 @@ import {
   phoneLinkable,
 } from '@/lib/landlord-status';
 import { formatPhone } from '@/lib/phone';
-import { hasRole, LANDLORD_LINK_ANSWER_ROLES } from '@/lib/staff-roles';
+import { hasRole, LANDLORD_LINK_ANSWER_ROLES, LANDLORD_SUMMARY_READ_ROLES } from '@/lib/staff-roles';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { useTableLabels } from '@/lib/use-table-labels';
@@ -68,8 +68,6 @@ function quickLinkRefusal(proposal: LandlordProposal, en: boolean): string | nul
   }
 }
 
-/** The roles `GET landlord-links/summary` answers — asking as anyone else is a 403. */
-const SUMMARY_ROLES = new Set(['SUPER_ADMIN', 'AUDITOR', 'ACCOUNTANT', 'ADMINISTRATIVE_OFFICER', 'VIEWER']);
 
 /**
  * «روابط المالكين» — tenancy cards whose named owner is a registered citizen,
@@ -182,7 +180,7 @@ export default function LandlordLinksPage({
     errorMessage: en ? 'Failed to load owner links.' : 'تعذّر تحميل روابط المالكين.',
   });
 
-  const canSeeSummary = Boolean(user?.role && SUMMARY_ROLES.has(user.role));
+  const canSeeSummary = hasRole(LANDLORD_SUMMARY_READ_ROLES, user?.role);
   const summary = useStaffQuery({
     queryKey: ['landlord-links-summary', tenant],
     queryFn: (accessToken) => getLandlordLinkSummary(tenant, accessToken),

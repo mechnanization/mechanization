@@ -8,6 +8,7 @@ import {
   CENSUS_WORKLIST_ROLES,
   FEE_SETTLE_ROLES,
   LANDLORD_LINK_ANSWER_ROLES as SHARED_LANDLORD_LINK_ANSWER_ROLES,
+  LANDLORD_SUMMARY_READ_ROLES as SHARED_LANDLORD_SUMMARY_READ_ROLES,
   PAYMENT_REVERSE_ROLES as SHARED_PAYMENT_REVERSE_ROLES,
   PAYMENT_REVIEW_MARK_ROLES,
   QUALITY_REVIEWER_ROLES as SHARED_QUALITY_REVIEWER_ROLES,
@@ -25,6 +26,9 @@ import {
   FEE_EXEMPTION_READ_ROLES as SHARED_FEE_EXEMPTION_READ_ROLES,
   REQUEST_READ_ROLES as SHARED_REQUEST_READ_ROLES,
   REQUEST_SETTINGS_ROLES as SHARED_REQUEST_SETTINGS_ROLES,
+  AUDIT_READ_ROLES as SHARED_AUDIT_READ_ROLES,
+  FEE_READ_ROLES as SHARED_FEE_READ_ROLES,
+  FEE_ADMIN_ROLES as SHARED_FEE_ADMIN_ROLES,
 } from '@mechanization/shared-schemas';
 
 /**
@@ -47,11 +51,30 @@ import {
 /** Answer a landlord-link proposal: «ربط», «ليس هو», undo, unlink. */
 export const LANDLORD_LINK_ANSWER_ROLES: readonly string[] = SHARED_LANDLORD_LINK_ANSWER_ROLES;
 
+/** The landlord-link totals on the register's summary (`CitizensController.list`). */
+export const LANDLORD_SUMMARY_READ_ROLES: readonly string[] = SHARED_LANDLORD_SUMMARY_READ_ROLES;
+
 /**
  * Open a citizen's record for completion — «فحص الملف», «استكمال البيانات
  * الناقصة» — and write it: create, correct, import. `REGISTER_WRITE_ROLES`.
  */
 export const CITIZEN_RECORD_EDIT_ROLES: readonly string[] = REGISTER_WRITE_ROLES;
+
+/**
+ * Open `CitizenEditor` itself — «تسجيل مواطن جديد» and «تعديل البيانات» —
+ * narrower than `CITIZEN_RECORD_EDIT_ROLES` by the collector. The save routes
+ * (`POST`/`PATCH citizens`) admit a collector, but the editor's own «إلغاء
+ * الربط» control is gated only on a token and an id, not a role (see
+ * `property-card.tsx`): a collector who reached the editor would see a button
+ * the server refuses (`LANDLORD_LINK_ANSWER_ROLES` does not admit one). Kept
+ * out at the editor's door until that control checks `canAnswerLandlord`
+ * itself (found 2026-11-23, docs/security.md Known gaps, SEC-13).
+ */
+export const CITIZEN_EDITOR_ROLES = [
+  'SUPER_ADMIN',
+  'FIELD_INSPECTOR',
+  'ADMINISTRATIVE_OFFICER',
+] as const satisfies readonly StaffRole[];
 
 /** Write the census — buildings, units, occupancies, damage, visits. `REGISTER_WRITE_ROLES`. */
 export const CENSUS_WRITE_ROLES: readonly string[] = REGISTER_WRITE_ROLES;
@@ -151,6 +174,20 @@ export const PAYMENT_REVIEW_ROLES: readonly string[] = PAYMENT_REVIEW_MARK_ROLES
 /** The quality screens — decide a review. `QualityController` enforces the same list. */
 export const QUALITY_REVIEWER_ROLES: readonly string[] = SHARED_QUALITY_REVIEWER_ROLES;
 
+/**
+ * May edit a citizen's record from a quality screen's duplicate or finding
+ * comparison — `PATCH citizens/:id`, `REGISTER_WRITE_ROLES`.
+ *
+ * Deliberately the *intersection* with `QUALITY_REVIEWER_ROLES`, not either
+ * list alone: that screen opens for an auditor too (who may not write the
+ * register), and the write roles include a field inspector and a collector
+ * (who never reach this screen). Computed, not re-typed, so the two lists
+ * drifting apart changes this one too, rather than silently going stale.
+ */
+export const CITIZEN_EDIT_IN_QUALITY_ROLES: readonly string[] = QUALITY_REVIEWER_ROLES.filter((role) =>
+  CITIZEN_RECORD_EDIT_ROLES.includes(role),
+);
+
 export function hasRole(roles: readonly string[], role: string | null | undefined): boolean {
   return hasStaffRole(roles, role);
 }
@@ -185,3 +222,24 @@ export const ARREARS_REPORT_ROLES: readonly string[] = SHARED_ARREARS_REPORT_ROL
 export const BILL_WRITE_OFF_ROLES: readonly string[] = SHARED_BILL_WRITE_OFF_ROLES;
 /** «الأخبار»: the staff who manage News on Day3ati — the administrator and the administrative officer. */
 export const NEWS_EDITOR_ROLES: readonly string[] = SHARED_NEWS_EDITOR_ROLES;
+
+/** The audit trail — `AuditController`. */
+export const AUDIT_READ_ROLES: readonly string[] = SHARED_AUDIT_READ_ROLES;
+
+/** The fee ledger — notices, payments, transactions, the summary — `GET fees/payments` and the rest of `FeesController`'s reads. */
+export const FEE_READ_ROLES: readonly string[] = SHARED_FEE_READ_ROLES;
+
+/** The fee settings, notices' active flag, the recurring run, and «فواتير تأثّرت بتصحيحات»'s review (`POST fees/payments/:id/basis-review`). */
+export const FEE_ADMIN_ROLES: readonly string[] = SHARED_FEE_ADMIN_ROLES;
+
+/**
+ * «إعدادات البلدية» — the settings page as a whole, nav row included. Not a
+ * server mirror (the page bundles sections several different `@Roles` gate on
+ * their own, down to `TREASURY_ADMIN_ROLES` and `FEE_ADMIN_ROLES`); a named
+ * set purely so the nav row and the page's own gate cannot drift apart from
+ * each other.
+ */
+export const SETTINGS_ROLES: readonly string[] = ['SUPER_ADMIN'] as const satisfies readonly StaffRole[];
+
+/** The staff roster — `GET staff`, the administrator's alone, every other role refused. */
+export const STAFF_READ_ROLES: readonly string[] = ['SUPER_ADMIN'] as const satisfies readonly StaffRole[];
