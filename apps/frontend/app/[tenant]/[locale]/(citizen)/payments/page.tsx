@@ -1,7 +1,7 @@
 'use client';
 
 import { billOwesNothing } from '@mechanization/shared-schemas';
-import { Fragment, use, useCallback, useEffect, useState } from 'react';
+import { Fragment, use, useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import {
@@ -88,6 +88,11 @@ export default function CitizenPayments({
   const [payingOnlineId, setPayingOnlineId] = useState<string | null>(null);
   const [declaring, setDeclaring] = useState(false);
   const [declareError, setDeclareError] = useState<string | null>(null);
+  // React state is set asynchronously; a double-click or a stuck re-render
+  // could pass `payingOnlineId`/`declaring`'s stale read before either
+  // commits. These refs are checked and set synchronously (SUBMIT-05).
+  const payingOnlineRef = useRef<string | null>(null);
+  const decliningRef = useRef(false);
 
   useEffect(() => {
     const session = loadSession(tenant);
@@ -128,7 +133,8 @@ export default function CitizenPayments({
 
   const submitDeclaration = useCallback(
     async (input: DeclarePayment) => {
-      if (!token || !paying) return;
+      if (!token || !paying || decliningRef.current) return;
+      decliningRef.current = true;
       setDeclaring(true);
       setDeclareError(null);
       try {
@@ -144,6 +150,7 @@ export default function CitizenPayments({
         );
       } finally {
         setDeclaring(false);
+        decliningRef.current = false;
       }
     },
     [tenant, token, paying, load, locale],
@@ -151,11 +158,14 @@ export default function CitizenPayments({
 
   const payWithWhish = useCallback(
     async (paymentId: string) => {
-      if (!token) return;
+      if (!token || payingOnlineRef.current) return;
+      payingOnlineRef.current = paymentId;
       setPayingOnlineId(paymentId);
       setError(null);
       try {
         const { redirectUrl } = await startWhishCheckout(tenant, token, paymentId);
+        // Navigating away: the ref is left set so the button cannot be
+        // pressed again while the browser is still on this page.
         window.location.href = redirectUrl;
       } catch (caught) {
         logApiError(caught);
@@ -165,6 +175,7 @@ export default function CitizenPayments({
             : (locale === 'en' ? 'Failed to start Whish checkout.' : 'تعذّر بدء الدفع عبر Whish.'),
         );
         setPayingOnlineId(null);
+        payingOnlineRef.current = null;
       }
     },
     [tenant, token, locale],
