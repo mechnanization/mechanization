@@ -490,6 +490,9 @@ export const ERROR_CODES = [
   'ORIGIN_NOT_ALLOWED',
   // A staff member's own account («أمان الحساب»): the password typed to confirm a change is wrong.
   'STAFF_CURRENT_PASSWORD_INCORRECT',
+  // A staff write named an id that is not a staff account (a citizen's, or none): `users` holds both kinds,
+  // so the repository's staff writes match `kind = 'STAFF'` in the WHERE and refuse anything else (audit SEC-11).
+  'STAFF_NOT_FOUND',
   // A staff second factor (TOTP): a wrong code (401), a right one already used (409), and wrong
   // codes having locked the account; `params.minutes` is how long is left, rounded up (403).
   'TOTP_CODE_INVALID',
