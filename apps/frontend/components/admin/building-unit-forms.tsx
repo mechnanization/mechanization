@@ -1782,6 +1782,19 @@ const UNIT_CASE_TYPES = CASE_TYPE.filter(
 );
 
 /**
+ * Guards `logVisitWithFollowUp` against a double submit.
+ *
+ * A plain module-level flag, not a `useRef`: the function below is shared by
+ * two different components (the drawer and the full-page matrix, each with
+ * its own React state) and is not itself a hook, so there is no single
+ * component to hold a ref. Checked and set synchronously, same as a ref, and
+ * for the same reason — a `busy` prop the caller passes in is React state,
+ * read asynchronously, and a double-click could pass its stale value before
+ * either caller's re-render (SUBMIT-02).
+ */
+let visitInFlight = false;
+
+/**
  * Logs a visit and, where it was given a return date, opens its follow-up.
  *
  * Shared by the drawer and the full-page matrix so the two cannot disagree
@@ -1791,6 +1804,22 @@ const UNIT_CASE_TYPES = CASE_TYPE.filter(
  * retry — and log a second visit for.
  */
 export async function logVisitWithFollowUp(
+  tenant: string,
+  token: string,
+  target: { unitId: string; buildingId: string; parcelNumber: string; buildingName: string | null },
+  values: VisitValues,
+  en: boolean,
+): Promise<string> {
+  if (visitInFlight) throw new Error(en ? 'A visit is already being logged.' : 'جارٍ تسجيل زيارة بالفعل.');
+  visitInFlight = true;
+  try {
+    return await logVisitWithFollowUpUnguarded(tenant, token, target, values, en);
+  } finally {
+    visitInFlight = false;
+  }
+}
+
+async function logVisitWithFollowUpUnguarded(
   tenant: string,
   token: string,
   target: { unitId: string; buildingId: string; parcelNumber: string; buildingName: string | null },

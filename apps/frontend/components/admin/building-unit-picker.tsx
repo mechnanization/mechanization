@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Building2, Check, Link2, Loader2, Lock, Plus, TriangleAlert, Unlink } from 'lucide-react';
 import {
   getLabels,
@@ -273,6 +273,10 @@ export function BuildingUnitPicker({
    */
   const [addingAnchor, setAddingAnchor] = useState<number | 'bottom' | null>(null);
   const [addingBusy, setAddingBusy] = useState(false);
+  // `addingBusy` is React state, set asynchronously: a double-click could
+  // pass its stale read before a re-render commits (SUBMIT-02). Checked and
+  // set synchronously before the state, as `addingBusy` already is.
+  const addingRef = useRef(false);
   const [addError, setAddError] = useState<string | null>(null);
   /**
    * The units the server held out when «إضافة وحدة» hit its duplicate guard.
@@ -840,7 +844,7 @@ export function BuildingUnitPicker({
   };
 
   const submitNewUnit = async (acknowledgedDuplicates = false) => {
-    if (!adding || !buildingId || addingBusy) return;
+    if (!adding || !buildingId || addingRef.current) return;
 
     const floor = Number(adding.floor);
     if (!Number.isInteger(floor)) {
@@ -852,6 +856,7 @@ export function BuildingUnitPicker({
       return;
     }
 
+    addingRef.current = true;
     setAddingBusy(true);
     setAddError(null);
     try {
@@ -918,6 +923,7 @@ export function BuildingUnitPicker({
       );
     } finally {
       setAddingBusy(false);
+      addingRef.current = false;
     }
   };
 
