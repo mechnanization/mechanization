@@ -31,6 +31,7 @@ import {
   isUnoccupied,
   layoutBuildingFloors,
   layoutFloorSpans,
+  municipalToday,
   spanLimits,
   NON_PERSON_RESIDENCE,
   OCCUPANCY_ROLE,
@@ -1666,7 +1667,7 @@ export function VisitForm({
           <Input
             id="visit-date"
             type="date"
-            max={new Date().toISOString().slice(0, 10)}
+            max={municipalToday()}
             value={visitedAt}
             onChange={(event) => setVisitedAt(event.target.value)}
             dir="ltr"
@@ -1998,7 +1999,7 @@ function reasonsFor(role: OccupancyRole): OccupancyEndReason[] {
     : ['MOVED_OUT', 'RECORDED_IN_ERROR'];
 }
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => municipalToday();
 
 /** What «إنهاء الإشغال» sends — the reason, the date, and for a tenancy what the flat is now. */
 export type EndOccupancyAnswer = { reason: OccupancyEndReason; toDate?: string } & AfterTenancyAnswer;

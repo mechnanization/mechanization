@@ -36,6 +36,17 @@ export function municipalToday(now: Date = new Date()): string {
 }
 
 /**
+ * `days` days before today on the municipality's calendar, as `YYYY-MM-DD`.
+ *
+ * Built on the same instant `municipalToday` reads, never on a UTC subtraction:
+ * between 00:00 and the zone's offset in Beirut, `Date.now() - days * 86_400_000`
+ * then sliced as UTC is already a day behind the municipality's own "today".
+ */
+export function municipalDaysAgo(days: number, now: Date = new Date()): string {
+  return municipalToday(new Date(now.getTime() - days * 86_400_000));
+}
+
+/**
  * The instant a municipal day (`YYYY-MM-DD`) begins on the municipality's clock.
  *
  * Beirut is UTC+2 in winter and UTC+3 in summer, so the offset is read for the

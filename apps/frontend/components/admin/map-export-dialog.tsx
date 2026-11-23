@@ -2,6 +2,7 @@
 
 import { useRef } from 'react';
 import { Download, MapPin, Printer } from 'lucide-react';
+import { municipalToday } from '@mechanization/shared-schemas';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -30,7 +31,7 @@ export function MapExportDialog({
     if (!mapDataUrl) return;
     const a = document.createElement('a');
     a.href = mapDataUrl;
-    a.download = `municipal-map-${tenant}-${new Date().toISOString().slice(0, 10)}.png`;
+    a.download = `municipal-map-${tenant}-${municipalToday()}.png`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

@@ -26,6 +26,7 @@ import {
   buildingTypeName,
   DAMAGE_LEVEL,
   getLabels,
+  municipalToday,
   STRUCTURE_TYPE,
   SURVEY_STATUS,
   isImpairedDamage,
@@ -476,7 +477,7 @@ export default function BuildingsPage({
         row.notes ?? '',
       ]);
 
-      const stamp = new Date().toISOString().slice(0, 10);
+      const stamp = municipalToday();
       downloadCsv(`building-census-${tenant}-${stamp}.csv`, buildCsv(header, rows));
 
       toast.success(

@@ -3,7 +3,13 @@
 import { useEffect, useId, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Home, Info, Loader2, MoveRight, UserX } from 'lucide-react';
-import { getLabels, isOwnerRecord, type CitizenResidence, type UnitStatus } from '@mechanization/shared-schemas';
+import {
+  getLabels,
+  isOwnerRecord,
+  municipalToday,
+  type CitizenResidence,
+  type UnitStatus,
+} from '@mechanization/shared-schemas';
 import type { CitizenFormValues } from '@/components/admin/citizen-form';
 import { EndTenancyDialog } from '@/components/admin/end-tenancy-dialog';
 import { ApiRequestError, logApiError, setCitizenActive, type EndTenancyResult } from '@/lib/api-client';
@@ -29,7 +35,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => municipalToday();
 const ELSEWHERE = 'elsewhere';
 
 /**

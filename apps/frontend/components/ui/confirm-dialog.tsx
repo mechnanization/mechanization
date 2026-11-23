@@ -71,14 +71,20 @@ export function ConfirmDialog({
   const [busy, setBusy] = React.useState(false);
   const [typed, setTyped] = React.useState('');
   const [failure, setFailure] = React.useState<string | null>(null);
+  // `busy` is React state: two clicks arriving before the first re-render
+  // both read it as false. The ref is checked and set synchronously, so the
+  // second click of a double-click sees it true even though no render has
+  // happened yet.
+  const inFlightRef = React.useRef(false);
 
   // Reset on close so re-opening never starts with the previous attempt's
-  // typed text or error still showing.
+  // typed text, error or in-flight flag still set.
   React.useEffect(() => {
     if (!open) {
       setTyped('');
       setFailure(null);
       setBusy(false);
+      inFlightRef.current = false;
     }
   }, [open]);
 
@@ -89,7 +95,8 @@ export function ConfirmDialog({
   const mismatch = Boolean(requireText) && entered.length > 0 && entered !== requireText;
 
   const run = async (): Promise<void> => {
-    if (busy || blocked) return;
+    if (inFlightRef.current || blocked) return;
+    inFlightRef.current = true;
     setBusy(true);
     setFailure(null);
     try {
@@ -106,6 +113,8 @@ export function ConfirmDialog({
        */
       setFailure(error instanceof Error ? error.message : 'تعذّر إتمام العملية.');
       setBusy(false);
+    } finally {
+      inFlightRef.current = false;
     }
   };
 

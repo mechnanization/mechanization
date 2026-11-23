@@ -3,7 +3,14 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { ClipboardList, Loader2, Shuffle } from 'lucide-react';
-import { CHECK_DIFFERENCE, getLabels, qualityLabels, type CheckDifference } from '@mechanization/shared-schemas';
+import {
+  CHECK_DIFFERENCE,
+  getLabels,
+  municipalDaysAgo,
+  municipalToday,
+  qualityLabels,
+  type CheckDifference,
+} from '@mechanization/shared-schemas';
 import { ApiRequestError, logApiError } from '@/lib/api-client';
 import {
   assignQualityCheck,
@@ -39,8 +46,6 @@ const CHECK_STATUSES = ['OPEN', 'DONE'] as const satisfies readonly QualityCheck
  */
 const LIST = { status: param.oneOf(CHECK_STATUSES, 'OPEN') };
 
-const isoDaysAgo = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
-
 /**
  * «عيّنة التحقق» — a share of each officer's records, re-checked on the ground
  * by somebody else.
@@ -73,8 +78,8 @@ export function ChecksPanel({
   const toast = useToast();
 
   const [{ status }, setList] = useUrlState(LIST);
-  const [from, setFrom] = useState(isoDaysAgo(7));
-  const [to, setTo] = useState(isoDaysAgo(0));
+  const [from, setFrom] = useState(municipalDaysAgo(7));
+  const [to, setTo] = useState(municipalToday());
   const [percent, setPercent] = useState('5');
   const [drawing, setDrawing] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -143,7 +148,7 @@ export function ChecksPanel({
             <Label htmlFor="sample-to" className="text-xs text-muted-foreground">
               {en ? 'to' : 'إلى'}
             </Label>
-            <DatePicker id="sample-to" value={to} onChange={setTo} max={isoDaysAgo(0)} locale={en ? 'en' : 'ar'} />
+            <DatePicker id="sample-to" value={to} onChange={setTo} max={municipalToday()} locale={en ? 'en' : 'ar'} />
           </div>
           <div className="space-y-1">
             <Label htmlFor="sample-percent" className="text-xs text-muted-foreground">

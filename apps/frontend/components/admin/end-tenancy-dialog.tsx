@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useMemo, useState } from 'react';
 import { DoorOpen, Loader2 } from 'lucide-react';
-import { getLabels } from '@mechanization/shared-schemas';
+import { getLabels, municipalToday } from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
   endTenancy,
@@ -38,7 +38,7 @@ import {
 
 type Reason = 'MOVED_OUT' | 'RECORDED_IN_ERROR';
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => municipalToday();
 
 /**
  * «إنهاء الإيجار» — a tenant or free occupant has left.

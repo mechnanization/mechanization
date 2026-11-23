@@ -4,7 +4,7 @@ import { useEffect, useId, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { AlertTriangle, CheckCircle2, ExternalLink, KeyRound, Loader2, UserRound } from 'lucide-react';
-import { getLabels } from '@mechanization/shared-schemas';
+import { getLabels, municipalToday } from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
   endOccupancy,
@@ -47,7 +47,7 @@ type Reason = 'OWNERSHIP_TRANSFERRED' | 'RECORDED_IN_ERROR';
 /** Who the new owner is: a registered citizen, or «not registered yet». */
 type Buyer = { kind: 'citizen'; id: string; name: string; citizen: PickedCitizen } | { kind: 'unregistered' };
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => municipalToday();
 /**
  * «إنهاء الملكية» — an owner sold, or a property passed on, or it was never theirs.
  *
