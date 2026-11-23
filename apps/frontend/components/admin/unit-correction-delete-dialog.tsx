@@ -112,7 +112,7 @@ export function UnitCorrectionDeleteDialog({
         setPreview(null);
         setLoadError(
           caught instanceof ApiRequestError
-            ? caught.payload.message
+            ? caught.message
             : en
               ? 'Could not load the preview.'
               : 'تعذّر تحميل المعاينة.',
@@ -169,7 +169,7 @@ export function UnitCorrectionDeleteDialog({
       onDeleted(result);
     } catch (caught) {
       const refusal = unitCorrectionRefusal(caught);
-      const message = caught instanceof ApiRequestError ? caught.payload.message : null;
+      const message = caught instanceof ApiRequestError ? caught.message : null;
       if (refusal === 'PREVIEW_STALE' || refusal === 'BLOCKED') {
         /*
           The record moved under the admin. Back to the preview, freshly read,

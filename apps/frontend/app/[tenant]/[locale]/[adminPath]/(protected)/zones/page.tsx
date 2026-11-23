@@ -96,7 +96,7 @@ export default function ZonesPage({
         router.replace(`${base}/login`);
         return fallback;
       }
-      return caught instanceof ApiRequestError ? caught.payload.message : fallback;
+      return caught instanceof ApiRequestError ? caught.message : fallback;
     },
     [tenant, base, router],
   );
@@ -246,7 +246,7 @@ export default function ZonesPage({
       logApiError(caught);
       if (caught instanceof ApiRequestError) {
         setFieldErrors(caught.fieldErrors);
-        setSaveError(caught.payload.message);
+        setSaveError(caught.message);
       } else {
         setSaveError('تعذّر حفظ القطاع.');
       }

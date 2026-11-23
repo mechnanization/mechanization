@@ -113,7 +113,7 @@ export function LandlordUnlinkDialog({
       logApiError(caught);
       setFailure(
         caught instanceof ApiRequestError
-          ? caught.payload.message
+          ? caught.message
           : en
             ? 'Could not undo the link.'
             : 'تعذّر إلغاء الربط.',
