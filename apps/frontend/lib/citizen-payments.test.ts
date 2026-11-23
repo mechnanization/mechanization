@@ -177,4 +177,20 @@ describe('the portal screens read the per-bill rule from here', () => {
     expect(myAccount).not.toMatch(/amount=\{payment\.amount\}/);
     expect(myAccount).toMatch(/isUnderReview\(payment\) \?/);
   });
+
+  /*
+    SUBMIT-05 (cleanup sprint, 2026-11-23): the citizen's payment report and
+    the Whish checkout button had no guard at all — React's `busy` state is
+    set asynchronously, so a double-click or a stuck re-render could pass its
+    stale read before either commits. Each write is now guarded by a ref,
+    checked and set synchronously before the state that disables the button.
+  */
+  it('the payments page guards declarePayment and startWhishCheckout with a ref, checked before the state it also sets', () => {
+    expect(paymentsPage).toMatch(/decliningRef\.current\)\s*return;\s*\n\s*decliningRef\.current = true;\s*\n\s*setDeclaring\(true\)/);
+    expect(paymentsPage).toMatch(/payingOnlineRef\.current\)\s*return;\s*\n\s*payingOnlineRef\.current = paymentId;\s*\n\s*setPayingOnlineId\(paymentId\)/);
+  });
+
+  it('«ملفّي»’s own Whish checkout button is guarded the same way', () => {
+    expect(myFile).toMatch(/payingRef\.current\)\s*return;\s*\n\s*payingRef\.current = paymentId;\s*\n\s*setPayingId\(paymentId\)/);
+  });
 });

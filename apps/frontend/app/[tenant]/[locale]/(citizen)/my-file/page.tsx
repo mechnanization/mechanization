@@ -1,7 +1,7 @@
 'use client';
 
 import { billOwesNothing } from '@mechanization/shared-schemas';
-import { Fragment, use, useCallback, useEffect, useState } from 'react';
+import { Fragment, use, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
@@ -179,6 +179,9 @@ export default function MyFilePage({
   const [error, setError] = useState<string | null>(null);
   const [payingId, setPayingId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  // Checked and set synchronously, so a double-click cannot both pass
+  // `payingId`'s stale read before React re-renders (SUBMIT-05).
+  const payingRef = useRef<string | null>(null);
 
   /** Copies the رقم مرجعي — the one thing a citizen is asked to quote. */
   const copyReference = useCallback((value: string) => {
@@ -253,11 +256,14 @@ export default function MyFilePage({
 
   const payWithWhish = useCallback(
     async (paymentId: string) => {
-      if (!token) return;
+      if (!token || payingRef.current) return;
+      payingRef.current = paymentId;
       setPayingId(paymentId);
       setError(null);
       try {
         const { redirectUrl } = await startWhishCheckout(tenant, token, paymentId);
+        // Navigating away: the ref is left set so the button cannot be
+        // pressed again while the browser is still on this page.
         window.location.href = redirectUrl;
       } catch (caught) {
         logApiError(caught);
@@ -267,6 +273,7 @@ export default function MyFilePage({
             : (locale === 'en' ? 'Failed to start Whish checkout.' : 'تعذّر بدء الدفع عبر Whish.'),
         );
         setPayingId(null);
+        payingRef.current = null;
       }
     },
     [tenant, token, locale],
