@@ -3,7 +3,8 @@ import { Client } from 'pg';
 import { PrismaClient as TenantPrismaClient } from '../../../generated/tenant-client';
 import { migrateTenantSchema } from '../../../infrastructure/prisma/tenant-migrator';
 import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-client';
-import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
+import { TenantContextService, type TenantScope } from '../../../infrastructure/context/tenant-context.service';
+import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
 import { ConflictError } from '../../common/exceptions';
 import { PaymentLedgerService, type LedgerAudit } from './payment-ledger.service';
 import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
@@ -62,6 +63,10 @@ describeIfDb('PaymentLedgerService', () => {
   let ddl: Client;
   let db: TenantPrismaClient;
   let ledger: PaymentLedgerService;
+  /** The ledger itself, for calls made inside a scope the test opens. */
+  let service: PaymentLedgerService;
+  let context: TenantContextService;
+  let scope: TenantScope;
 
   /**
    * Fresh ids per test rather than a shared fixture cleared between them.
@@ -83,24 +88,30 @@ describeIfDb('PaymentLedgerService', () => {
 
     db = tenantTestClient(TEST_DATABASE_URL!, SCHEMA);
 
-    const context = {
-      get prisma() {
-        return db;
-      },
-      tenantSlug: 'ledger',
-      /*
-        Raw queries now write this into their SQL rather than leaning on
-        `search_path` — see `tenant-schema-ref.ts`. Supplying it here is what
-        makes these suites exercise the qualified form rather than a shape
-        that only works because the test client pins one schema per connection.
-      */
-      schemaName: SCHEMA,
-    } as unknown as TenantContextService;
-    ledger = new PaymentLedgerService(
+    /*
+      A real context and a real scope, as a request has (audit ARCH-02): the
+      ledger now opens its transaction through `runInTenantTransaction`, which
+      reads the scope, joins one already open and swaps the scope's `prisma`
+      for the transaction client. The schema name is in the scope so raw
+      queries write it into their SQL rather than leaning on `search_path`
+      (`tenant-schema-ref.ts`).
+    */
+    context = new TenantContextService();
+    scope = { tenantId: 'tenant-ledger', tenantSlug: 'ledger', schemaName: SCHEMA, prisma: db };
+    service = new PaymentLedgerService(
       context,
       new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
       new TreasuryLedgerService(context),
     );
+    // Every call runs inside the municipality's scope, as TenantMiddleware runs a request.
+    ledger = new Proxy(service, {
+      get(target, property, receiver) {
+        const value = Reflect.get(target, property, receiver);
+        return typeof value === 'function'
+          ? (...args: unknown[]) => context.run(scope, () => value.apply(target, args))
+          : value;
+      },
+    });
   }, SETUP_TIMEOUT_MS);
 
   afterAll(async () => {
@@ -223,6 +234,23 @@ describeIfDb('PaymentLedgerService', () => {
 
       const rows = (await auditRows('PAYMENT_REVERSED')).filter((row) => row.entityId === reversal.transactionId);
       expect(rows).toHaveLength(1);
+    });
+  });
+
+  describe('inside the caller’s transaction (ARCH-02)', () => {
+    it('joins it, so a failure after the payment takes the payment back', async () => {
+      const before = await db.paymentTransaction.count({ where: { paymentId } });
+
+      await expect(
+        context.run(scope, () =>
+          runInTenantTransaction(context, async () => {
+            await service.record({ audit, paymentId, amount: 10_000, method: 'CASH', recordedById: clerkId });
+            throw new Error('the act after the payment failed');
+          }),
+        ),
+      ).rejects.toThrow('the act after the payment failed');
+
+      expect(await db.paymentTransaction.count({ where: { paymentId } })).toBe(before);
     });
   });
 
