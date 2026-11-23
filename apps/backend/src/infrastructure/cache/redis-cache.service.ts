@@ -8,6 +8,14 @@ interface MemoryCacheEntry {
 }
 
 /**
+ * The longest an L2 hit is kept in L1. Never longer than the key has left in
+ * Redis (audit CACHE-01): a 20 s audit key read from Redis used to sit in L1
+ * for a flat 30 s, so a read could be served up to 30 s after Redis had
+ * expired it, and any future key under 30 s inherited that.
+ */
+const L1_REFILL_MAX_MS = 30_000;
+
+/**
  * What actually went wrong, for the case where ioredis hands over an error that
  * does not say.
  *
@@ -140,11 +148,24 @@ export class RedisCacheService implements OnModuleDestroy {
 
     if (!this.client || this.offline) return null;
     try {
-      const raw = await this.client.get(key);
+      // The value and its remaining life in one round trip.
+      const replies = await this.client.pipeline().get(key).pttl(key).exec();
+      const [getError, raw] = replies?.[0] ?? [null, null];
+      if (getError) throw getError;
       if (!raw) return null;
-      const parsed = JSON.parse(raw) as T;
-      // Populate L1 memory with remaining TTL (default 30s)
-      this.memoryCache.set(key, { value: parsed, expiresAt: now + 30_000 });
+      const parsed = JSON.parse(raw as string) as T;
+      const [, pttl] = replies?.[1] ?? [null, null];
+      const remaining = typeof pttl === 'number' ? pttl : -2;
+      /*
+        PTTL: -1 is a key with no expiry (kept the usual 30 s), -2 a key that
+        expired between the two commands (served once, not kept), and anything
+        else the milliseconds it has left, which caps L1.
+      */
+      if (remaining === -1) {
+        this.memoryCache.set(key, { value: parsed, expiresAt: now + L1_REFILL_MAX_MS });
+      } else if (remaining > 0) {
+        this.memoryCache.set(key, { value: parsed, expiresAt: now + Math.min(L1_REFILL_MAX_MS, remaining) });
+      }
       return parsed;
     } catch (error) {
       this.logger.warn(`GET ${key} failed: ${describeRedisError(error as Error)}`);
