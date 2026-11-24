@@ -15,6 +15,7 @@ import {
   type BasemapId,
   DEFAULT_BASEMAP,
 } from './map-styles';
+import { HUE, boundaryFill, boundaryLine, labelHalo, labelText } from '@/components/admin/map/map-palette';
 
 mapboxgl.accessToken = MAPBOX_ACCESS_TOKEN;
 
@@ -23,7 +24,7 @@ const FALLBACK_ZOOM = 13.5;
 const PARCEL_LABEL_MIN_ZOOM = 16;
 
 /** Amber, reserved exclusively for "selected" so nothing else competes with it. */
-const SELECTED_COLOR = '#F59E0B';
+const SELECTED_COLOR = HUE.amber500;
 
 const SOURCE = {
   parcels: 'zone-editor-parcels',
@@ -159,7 +160,7 @@ export function ZoneEditorMap({
               SELECTED_COLOR,
               ['to-boolean', ['feature-state', 'zoneColor']],
               ['to-color', ['feature-state', 'zoneColor']],
-              dark ? '#38bdf8' : '#0f766e',
+              boundaryFill(dark),
             ],
             'fill-opacity': [
               'case',
@@ -183,7 +184,7 @@ export function ZoneEditorMap({
               'case',
               ['boolean', ['feature-state', 'selected'], false],
               SELECTED_COLOR,
-              dark ? '#7dd3fc' : '#0f766e',
+              boundaryLine(dark),
             ],
             // `interpolate` has to be the outermost expression — Mapbox rejects a
             // `zoom` interpolation nested inside a `case`, and rejecting it fails
@@ -216,8 +217,8 @@ export function ZoneEditorMap({
             'text-allow-overlap': false,
           },
           paint: {
-            'text-color': dark ? '#ffffff' : '#0f172a',
-            'text-halo-color': dark ? 'rgba(0,0,0,0.85)' : '#ffffff',
+            'text-color': labelText(dark),
+            'text-halo-color': labelHalo(dark),
             'text-halo-width': 1.6,
           },
         });

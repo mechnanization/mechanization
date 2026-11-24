@@ -25,6 +25,7 @@ import { Button } from '@/components/ui/button';
 import { FactCell, FactRow } from '@/components/ui/facts';
 import { Label } from '@/components/ui/label';
 import { Pager } from '@/components/ui/pager';
+import { Tabs, TabsContent, TabsCount, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/states';
@@ -167,29 +168,22 @@ export function ReviewQueue({
   };
 
   return (
-    <div ref={listTop} className="space-y-4">
+    <Tabs
+      ref={listTop}
+      value={tab}
+      onValueChange={(next) => setFilters({ tab: next as ReviewTab }, { clear: ['page'] })}
+      dir={en ? 'ltr' : 'rtl'}
+      className="space-y-4"
+    >
       <div className="flex flex-wrap items-end gap-3">
-        <div role="tablist" aria-label={en ? 'Review state' : 'حالة المراجعة'} className="flex rounded-lg border p-0.5">
+        <TabsList variant="pill" aria-label={en ? 'Review state' : 'حالة المراجعة'}>
           {tabs.map((option) => (
-            <button
-              key={option.key}
-              role="tab"
-              aria-selected={tab === option.key}
-              onClick={() => setFilters({ tab: option.key }, { clear: ['page'] })}
-              className={cn(
-                'flex min-h-9 items-center gap-1.5 rounded-md px-3 text-sm font-medium transition-colors',
-                tab === option.key ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent',
-              )}
-            >
+            <TabsTrigger key={option.key} value={option.key}>
               {option.label}
-              {option.count !== undefined ? (
-                <span className={cn('tabular-nums', tab === option.key ? 'opacity-90' : 'text-muted-foreground')}>
-                  {option.count}
-                </span>
-              ) : null}
-            </button>
+              {option.count !== undefined ? <TabsCount>{option.count}</TabsCount> : null}
+            </TabsTrigger>
           ))}
-        </div>
+        </TabsList>
 
         <div className="min-w-[12rem] space-y-1">
           <Label htmlFor="review-officer" className="text-xs text-muted-foreground">
@@ -222,359 +216,361 @@ export function ReviewQueue({
         </Button>
       </div>
 
-      {query.error ? (
-        <ErrorState description={query.error} offline={query.offline} onRetry={query.refetch} />
-      ) : query.loading ? (
-        <LoadingState label={en ? 'Loading records…' : 'جارٍ تحميل السجلات…'} />
-      ) : (query.data?.items.length ?? 0) === 0 && total === 0 ? (
-        <EmptyState
-          icon={ClipboardCheck}
-          title={
-            tab === 'TO_REVIEW'
-              ? en
-                ? 'Nothing waiting for review'
-                : 'لا سجلات تنتظر المراجعة'
-              : tab === 'RETURNED'
+      <TabsContent value={tab} className="space-y-4">
+        {query.error ? (
+          <ErrorState description={query.error} offline={query.offline} onRetry={query.refetch} />
+        ) : query.loading ? (
+          <LoadingState label={en ? 'Loading records…' : 'جارٍ تحميل السجلات…'} />
+        ) : (query.data?.items.length ?? 0) === 0 && total === 0 ? (
+          <EmptyState
+            icon={ClipboardCheck}
+            title={
+              tab === 'TO_REVIEW'
                 ? en
-                  ? 'No record is with an officer'
-                  : 'لا سجلات عند الموظفين'
-                : en
-                  ? 'No approved records yet'
-                  : 'لا سجلات معتمدة بعد'
-          }
-          description={
-            tab === 'TO_REVIEW'
-              ? en
-                ? 'Every filed record has been looked at.'
-                : 'كل سجل مُقدَّم جرت مراجعته.'
-              : undefined
-          }
-        />
-      ) : (
-        <ol className="space-y-3">
-          {query.data!.items.map((item) => {
-            const badge = STATE_BADGE[item.state];
-            const openReturn = item.history.find((entry) => entry.outcome === 'RETURNED' && !entry.resolvedAt);
-            return (
-              /*
-                Bands, not one run of stacked blocks.
+                  ? 'Nothing waiting for review'
+                  : 'لا سجلات تنتظر المراجعة'
+                : tab === 'RETURNED'
+                  ? en
+                    ? 'No record is with an officer'
+                    : 'لا سجلات عند الموظفين'
+                  : en
+                    ? 'No approved records yet'
+                    : 'لا سجلات معتمدة بعد'
+            }
+            description={
+              tab === 'TO_REVIEW'
+                ? en
+                  ? 'Every filed record has been looked at.'
+                  : 'كل سجل مُقدَّم جرت مراجعته.'
+                : undefined
+            }
+          />
+        ) : (
+          <ol className="space-y-3">
+            {query.data!.items.map((item) => {
+              const badge = STATE_BADGE[item.state];
+              const openReturn = item.history.find((entry) => entry.outcome === 'RETURNED' && !entry.resolvedAt);
+              return (
+                /*
+                  Bands, not one run of stacked blocks.
 
-                A record card carries four different kinds of thing — who and
-                when, the property claimed, the fields left unconfirmed, the
-                review history — and run together with `space-y` they read as
-                one wall of small text a reviewer has to parse before they can
-                decide anything. A coloured rule between them says where each
-                answer stops — heavier than the grey hairline between one fact
-                and the next inside a band, so the two cannot be confused — and
-                every band lays its facts as rows, values on the far edge.
-              */
-              <li key={item.registrationId} className="overflow-hidden rounded-xl border bg-card">
-                <div className="divide-y-2 divide-primary/30 [&>*]:px-4 [&>*]:py-3">
-                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                    <Link
-                      href={`${base}/citizens/${encodeURIComponent(item.citizen.id)}`}
-                      className="text-base font-semibold text-primary underline-offset-4 hover:underline"
-                    >
-                      {item.citizen.name}
-                    </Link>
-                    {item.citizen.referenceNumber ? (
-                      <span dir="ltr" className="font-mono text-xs text-muted-foreground">
-                        {item.citizen.referenceNumber}
+                  A record card carries four different kinds of thing — who and
+                  when, the property claimed, the fields left unconfirmed, the
+                  review history — and run together with `space-y` they read as
+                  one wall of small text a reviewer has to parse before they can
+                  decide anything. A coloured rule between them says where each
+                  answer stops — heavier than the grey hairline between one fact
+                  and the next inside a band, so the two cannot be confused — and
+                  every band lays its facts as rows, values on the far edge.
+                */
+                <li key={item.registrationId} className="overflow-hidden rounded-xl border bg-card">
+                  <div className="divide-y-2 divide-primary/30 [&>*]:px-4 [&>*]:py-3">
+                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                      <Link
+                        href={`${base}/citizens/${encodeURIComponent(item.citizen.id)}`}
+                        className="text-base font-semibold text-primary underline-offset-4 hover:underline"
+                      >
+                        {item.citizen.name}
+                      </Link>
+                      {item.citizen.referenceNumber ? (
+                        <span dir="ltr" className="font-mono text-xs text-muted-foreground">
+                          {item.citizen.referenceNumber}
+                        </span>
+                      ) : null}
+                      <Badge variant={badge.variant}>{en ? badge.en : badge.ar}</Badge>
+                      <span className="ms-auto text-xs text-muted-foreground" title={formatDateTime(item.submittedAt)}>
+                        {formatRelative(item.submittedAt, locale)}
                       </span>
-                    ) : null}
-                    <Badge variant={badge.variant}>{en ? badge.en : badge.ar}</Badge>
-                    <span className="ms-auto text-xs text-muted-foreground" title={formatDateTime(item.submittedAt)}>
-                      {formatRelative(item.submittedAt, locale)}
-                    </span>
-                  </div>
+                    </div>
 
-                  {/*
-                    The record itself, on the card's column rhythm.
+                    {/*
+                      The record itself, on the card's column rhythm.
 
-                    This was a run-on line — «سجَّله فلان  والدته فلانة  ٤ أفراد
-                    مقيم» — readable once and unscannable down a queue of
-                    twenty. The fields a decision actually turns on (who filed
-                    it, when it last moved, how many doors it claims) are
-                    stated rather than left for whoever thinks to open the file.
-                  */}
-                  <FactRow>
-                    <FactCell
-                      label={en ? 'Filed by' : 'سجَّله'}
-                      value={item.officer?.name ?? (en ? 'unknown' : 'غير معروف')}
-                    />
-                    <FactCell label={en ? 'Filed on' : 'تاريخ التقديم'} value={formatDateTime(item.submittedAt)} />
-                    {item.updatedAt !== item.submittedAt ? (
-                      <FactCell label={en ? 'Last edited' : 'آخر تعديل'} value={formatDateTime(item.updatedAt)} />
-                    ) : null}
-                    <FactCell
-                      label={en ? 'Record ref.' : 'مرجع السجل'}
-                      className="font-mono"
-                      value={item.referenceNumber}
-                    />
-                    {item.citizen.motherName ? (
-                      <FactCell label={en ? 'Mother' : 'اسم الأم'} value={item.citizen.motherName} />
-                    ) : null}
-                    {item.citizen.householdMembers != null ? (
+                      This was a run-on line — «سجَّله فلان  والدته فلانة  ٤ أفراد
+                      مقيم» — readable once and unscannable down a queue of
+                      twenty. The fields a decision actually turns on (who filed
+                      it, when it last moved, how many doors it claims) are
+                      stated rather than left for whoever thinks to open the file.
+                    */}
+                    <FactRow>
                       <FactCell
-                        label={en ? 'Household' : 'أفراد الأسرة'}
+                        label={en ? 'Filed by' : 'سجَّله'}
+                        value={item.officer?.name ?? (en ? 'unknown' : 'غير معروف')}
+                      />
+                      <FactCell label={en ? 'Filed on' : 'تاريخ التقديم'} value={formatDateTime(item.submittedAt)} />
+                      {item.updatedAt !== item.submittedAt ? (
+                        <FactCell label={en ? 'Last edited' : 'آخر تعديل'} value={formatDateTime(item.updatedAt)} />
+                      ) : null}
+                      <FactCell
+                        label={en ? 'Record ref.' : 'مرجع السجل'}
+                        className="font-mono"
+                        value={item.referenceNumber}
+                      />
+                      {item.citizen.motherName ? (
+                        <FactCell label={en ? 'Mother' : 'اسم الأم'} value={item.citizen.motherName} />
+                      ) : null}
+                      {item.citizen.householdMembers != null ? (
+                        <FactCell
+                          label={en ? 'Household' : 'أفراد الأسرة'}
+                          value={
+                            en
+                              ? `${item.citizen.householdMembers}`
+                              : `${item.citizen.householdMembers} أفراد`
+                          }
+                        />
+                      ) : null}
+                      <FactCell
+                        label={en ? 'Residence' : 'مكان الإقامة'}
+                        value={labels.citizenResidence[item.citizen.residence as never] ?? item.citizen.residence}
+                      />
+                      <FactCell
+                        label={en ? 'Properties' : 'العقارات'}
                         value={
-                          en
-                            ? `${item.citizen.householdMembers}`
-                            : `${item.citizen.householdMembers} أفراد`
+                          item.properties.length === 0
+                            ? en
+                              ? 'none on this record'
+                              : 'لا عقار على هذا السجل'
+                            : en
+                              ? `${item.properties.length}`
+                              : `${item.properties.length}`
                         }
                       />
-                    ) : null}
-                    <FactCell
-                      label={en ? 'Residence' : 'مكان الإقامة'}
-                      value={labels.citizenResidence[item.citizen.residence as never] ?? item.citizen.residence}
-                    />
-                    <FactCell
-                      label={en ? 'Properties' : 'العقارات'}
-                      value={
-                        item.properties.length === 0
-                          ? en
-                            ? 'none on this record'
-                            : 'لا عقار على هذا السجل'
-                          : en
-                            ? `${item.properties.length}`
-                            : `${item.properties.length}`
-                      }
-                    />
-                  </FactRow>
+                    </FactRow>
 
-                  {/*
-                    Each property spelled out rather than squeezed into a pill.
-                    A «شقة · مالك · عقار 498 · X-498-A · 3 وحدة» chip hides which
-                    dot is which the moment one of the parts is missing.
-                  */}
-                  {item.properties.map((card, index) => (
-                    <div key={`${item.registrationId}-${index}`} className="space-y-2">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                        {item.properties.length > 1
-                          ? `${en ? 'Property' : 'العقار'} ${index + 1}`
-                          : en
-                            ? 'Property'
-                            : 'العقار'}
-                      </p>
-                      <FactRow>
-                        <FactCell
-                          label={en ? 'Type' : 'النوع'}
-                          value={labels.propertyType[card.propertyType as never] ?? card.propertyType}
-                        />
-                        {card.occupancyType ? (
-                          <FactCell
-                            label={en ? 'Occupancy' : 'صفة الإشغال'}
-                            value={labels.occupancyType[card.occupancyType as never] ?? card.occupancyType}
-                          />
-                        ) : null}
-                        {card.propertyNumber ? (
-                          <FactCell label={en ? 'Parcel' : 'رقم العقار'} value={card.propertyNumber} />
-                        ) : null}
-                        {card.buildingCode || card.buildingName ? (
-                          <FactCell
-                            label={en ? 'Building' : 'المبنى'}
-                            value={[card.buildingCode, card.buildingName].filter(Boolean).join(' — ')}
-                          />
-                        ) : null}
-                        {card.unitCount > 0 ? (
-                          <FactCell
-                            label={en ? 'Units' : 'عدد الوحدات'}
-                            value={en ? `${card.unitCount}` : `${card.unitCount} وحدة`}
-                          />
-                        ) : null}
-                        {card.unitArea != null ? (
-                          <FactCell
-                            label={en ? 'Area' : 'المساحة'}
-                            value={`${card.unitArea} ${en ? 'm²' : 'م²'}`}
-                          />
-                        ) : null}
-                      </FactRow>
-                    </div>
-                  ))}
-
-                  {item.flags.length > 0 ? (
-                    <div className="space-y-2">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-warning">
-                        {en ? 'Fields left unconfirmed' : 'حقول غير مؤكَّدة'}
-                      </p>
-                      <FactRow>
-                        {item.flags.map((flag) => (
-                          <FactCell
-                            key={flag.path}
-                            label={
-                              <span className="text-warning">{flagFieldLabel(flag.path, locale)}</span>
-                            }
-                            className="max-w-sm text-muted-foreground"
-                            value={flag.reason}
-                          />
-                        ))}
-                      </FactRow>
-                    </div>
-                  ) : null}
-
-                  {/* Already its own band — no inner box needed on top of it. */}
-                  {item.notes ? (
-                    <div className="space-y-1">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                        {en ? 'Officer’s note' : 'ملاحظة الموظف'}
-                      </p>
-                      <p className="text-xs leading-relaxed">{item.notes}</p>
-                    </div>
-                  ) : null}
-
-                  {item.history.length > 0 ? (
-                    <details className="text-xs">
-                      <summary className="w-fit cursor-pointer text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
-                        {en ? `Review history (${item.history.length})` : `سجل المراجعات (${item.history.length})`}
-                      </summary>
-                      {/* Divided, not boxed — a rule separates these entries
-                          without drawing a frame round every value in them. */}
-                      <ol className="mt-2 divide-y">
-                        {item.history.map((entry) => (
-                          <li key={entry.id} className="py-1.5 first:pt-0 last:pb-0">
-                            <span className="font-medium">
-                              {entry.outcome === 'APPROVED'
-                                ? en
-                                  ? 'Approved'
-                                  : 'اعتماد'
-                                : en
-                                  ? 'Returned'
-                                  : 'إعادة للموظف'}
-                            </span>{' '}
-                            <span className="text-muted-foreground">
-                              — {entry.by ?? (en ? 'unknown' : 'غير معروف')} · {formatDateTime(entry.at)}
-                            </span>
-                            {entry.reason ? <p className="mt-0.5 text-muted-foreground">{entry.reason}</p> : null}
-                            {entry.fields.length > 0 ? (
-                              <p className="mt-0.5 text-muted-foreground">
-                                {entry.fields.map((field) => quality.reviewField[field] ?? field).join('، ')}
-                              </p>
-                            ) : null}
-                            {entry.resolvedAt ? (
-                              <p className="mt-0.5 text-success">
-                                {en ? 'Corrected' : 'صُحِّح'} — {entry.resolvedBy ?? ''} · {formatDateTime(entry.resolvedAt)}
-                              </p>
-                            ) : null}
-                          </li>
-                        ))}
-                      </ol>
-                    </details>
-                  ) : null}
-
-                  {openReturn ? (
-                    <div className="space-y-1 bg-warning/5">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-warning">
-                        {en ? 'Waiting on the officer' : 'بانتظار الموظف'}
-                      </p>
-                      <p className="text-xs leading-relaxed text-warning">{openReturn.reason}</p>
-                    </div>
-                  ) : null}
-                </div>
-
-                {returning === item.registrationId ? (
-                  <ReturnForm
-                    locale={locale}
-                    busy={busy === item.registrationId}
-                    onCancel={() => setReturning(null)}
-                    onSubmit={(input) =>
-                      act(
-                        item.registrationId,
-                        () => returnRecord(tenant, token!, item.registrationId, input),
-                        en ? 'Returned to the officer' : 'أُعيد السجل إلى الموظف',
-                      )
-                    }
-                  />
-                ) : (
-                  <div className="flex flex-wrap items-center justify-end gap-2 border-t bg-muted/20 px-4 py-3">
                     {/*
-                      «استكمال» sits with the two decisions rather than in the
-                      flag list above it, because it is the third answer a
-                      reviewer has and the queue never offered it.
-
-                      «اعتماد» and «إعادة إلى الموظف» both assume the gap stays
-                      a gap: approve it as it is, or send the officer back out.
-                      A reviewer who can simply *fill it in* — they have the
-                      deed on the desk, they know the family — had to leave the
-                      queue, find the citizen, and open a four-step form, and
-                      the queue they left does not remember where they were. So
-                      the commonest resolution was the one that cost least to
-                      click, which is «اعتماد» on a record still missing
-                      something.
-
-                      Safe on every row here without checking which
-                      registration it is: `RecordReviewService.queue` is
-                      `DISTINCT ON (citizenId) … ORDER BY submittedAt DESC`, so
-                      a queue row *is* the citizen's latest registration — the
-                      one `/citizens/:id/form` returns and this dialog writes.
-
-                      Shown with flags only. A record at «عُدِّل بعد الاعتماد»
-                      with nothing open has no questions to put, and a dialog
-                      that opens to say «لا توجد معلومات ناقصة» is a button that
-                      wasted the click.
+                      Each property spelled out rather than squeezed into a pill.
+                      A «شقة · مالك · عقار 498 · X-498-A · 3 وحدة» chip hides which
+                      dot is which the moment one of the parts is missing.
                     */}
+                    {item.properties.map((card, index) => (
+                      <div key={`${item.registrationId}-${index}`} className="space-y-2">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          {item.properties.length > 1
+                            ? `${en ? 'Property' : 'العقار'} ${index + 1}`
+                            : en
+                              ? 'Property'
+                              : 'العقار'}
+                        </p>
+                        <FactRow>
+                          <FactCell
+                            label={en ? 'Type' : 'النوع'}
+                            value={labels.propertyType[card.propertyType as never] ?? card.propertyType}
+                          />
+                          {card.occupancyType ? (
+                            <FactCell
+                              label={en ? 'Occupancy' : 'صفة الإشغال'}
+                              value={labels.occupancyType[card.occupancyType as never] ?? card.occupancyType}
+                            />
+                          ) : null}
+                          {card.propertyNumber ? (
+                            <FactCell label={en ? 'Parcel' : 'رقم العقار'} value={card.propertyNumber} />
+                          ) : null}
+                          {card.buildingCode || card.buildingName ? (
+                            <FactCell
+                              label={en ? 'Building' : 'المبنى'}
+                              value={[card.buildingCode, card.buildingName].filter(Boolean).join(' — ')}
+                            />
+                          ) : null}
+                          {card.unitCount > 0 ? (
+                            <FactCell
+                              label={en ? 'Units' : 'عدد الوحدات'}
+                              value={en ? `${card.unitCount}` : `${card.unitCount} وحدة`}
+                            />
+                          ) : null}
+                          {card.unitArea != null ? (
+                            <FactCell
+                              label={en ? 'Area' : 'المساحة'}
+                              value={`${card.unitArea} ${en ? 'm²' : 'م²'}`}
+                            />
+                          ) : null}
+                        </FactRow>
+                      </div>
+                    ))}
+
                     {item.flags.length > 0 ? (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="gap-1.5"
-                        disabled={busy === item.registrationId}
-                        onClick={() => setCompleting(item)}
-                      >
-                        <FileQuestion className="size-4" aria-hidden />
-                        {en ? 'Fill in the gaps' : 'استكمال الناقص'}
-                      </Button>
+                      <div className="space-y-2">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-warning">
+                          {en ? 'Fields left unconfirmed' : 'حقول غير مؤكَّدة'}
+                        </p>
+                        <FactRow>
+                          {item.flags.map((flag) => (
+                            <FactCell
+                              key={flag.path}
+                              label={
+                                <span className="text-warning">{flagFieldLabel(flag.path, locale)}</span>
+                              }
+                              className="max-w-sm text-muted-foreground"
+                              value={flag.reason}
+                            />
+                          ))}
+                        </FactRow>
+                      </div>
                     ) : null}
-                    {item.state !== 'RETURNED' ? (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="gap-1.5"
-                        disabled={busy === item.registrationId}
-                        onClick={() => setReturning(item.registrationId)}
-                      >
-                        <Undo2 className="size-4" aria-hidden />
-                        {en ? 'Return to the officer' : 'إعادة إلى الموظف'}
-                      </Button>
+
+                    {/* Already its own band — no inner box needed on top of it. */}
+                    {item.notes ? (
+                      <div className="space-y-1">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          {en ? 'Officer’s note' : 'ملاحظة الموظف'}
+                        </p>
+                        <p className="text-xs leading-relaxed">{item.notes}</p>
+                      </div>
                     ) : null}
-                    <Button
-                      size="sm"
-                      className="gap-1.5"
-                      disabled={busy === item.registrationId}
-                      onClick={() =>
+
+                    {item.history.length > 0 ? (
+                      <details className="text-xs">
+                        <summary className="w-fit cursor-pointer text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
+                          {en ? `Review history (${item.history.length})` : `سجل المراجعات (${item.history.length})`}
+                        </summary>
+                        {/* Divided, not boxed — a rule separates these entries
+                            without drawing a frame round every value in them. */}
+                        <ol className="mt-2 divide-y">
+                          {item.history.map((entry) => (
+                            <li key={entry.id} className="py-1.5 first:pt-0 last:pb-0">
+                              <span className="font-medium">
+                                {entry.outcome === 'APPROVED'
+                                  ? en
+                                    ? 'Approved'
+                                    : 'اعتماد'
+                                  : en
+                                    ? 'Returned'
+                                    : 'إعادة للموظف'}
+                              </span>{' '}
+                              <span className="text-muted-foreground">
+                                — {entry.by ?? (en ? 'unknown' : 'غير معروف')} · {formatDateTime(entry.at)}
+                              </span>
+                              {entry.reason ? <p className="mt-0.5 text-muted-foreground">{entry.reason}</p> : null}
+                              {entry.fields.length > 0 ? (
+                                <p className="mt-0.5 text-muted-foreground">
+                                  {entry.fields.map((field) => quality.reviewField[field] ?? field).join('، ')}
+                                </p>
+                              ) : null}
+                              {entry.resolvedAt ? (
+                                <p className="mt-0.5 text-success">
+                                  {en ? 'Corrected' : 'صُحِّح'} — {entry.resolvedBy ?? ''} · {formatDateTime(entry.resolvedAt)}
+                                </p>
+                              ) : null}
+                            </li>
+                          ))}
+                        </ol>
+                      </details>
+                    ) : null}
+
+                    {openReturn ? (
+                      <div className="space-y-1 bg-warning/5">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-warning">
+                          {en ? 'Waiting on the officer' : 'بانتظار الموظف'}
+                        </p>
+                        <p className="text-xs leading-relaxed text-warning">{openReturn.reason}</p>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  {returning === item.registrationId ? (
+                    <ReturnForm
+                      locale={locale}
+                      busy={busy === item.registrationId}
+                      onCancel={() => setReturning(null)}
+                      onSubmit={(input) =>
                         act(
                           item.registrationId,
-                          () => approveRecord(tenant, token!, item.registrationId),
-                          en ? 'Record approved' : 'تم اعتماد السجل',
+                          () => returnRecord(tenant, token!, item.registrationId, input),
+                          en ? 'Returned to the officer' : 'أُعيد السجل إلى الموظف',
                         )
                       }
-                    >
-                      {busy === item.registrationId ? (
-                        <Loader2 className="size-4 animate-spin" aria-hidden />
-                      ) : (
-                        <Check className="size-4" aria-hidden />
-                      )}
-                      {item.state === 'APPROVED' ? (en ? 'Approve again' : 'إعادة الاعتماد') : en ? 'Approve' : 'اعتماد'}
-                    </Button>
-                  </div>
-                )}
-              </li>
-            );
-          })}
-        </ol>
-      )}
+                    />
+                  ) : (
+                    <div className="flex flex-wrap items-center justify-end gap-2 border-t bg-muted/20 px-4 py-3">
+                      {/*
+                        «استكمال» sits with the two decisions rather than in the
+                        flag list above it, because it is the third answer a
+                        reviewer has and the queue never offered it.
 
-      {!query.error && !query.loading ? (
-        <Pager
-          page={pagination.pageIndex}
-          pageSize={pagination.pageSize}
-          total={total}
-          onPageChange={(page) => setPagination((current) => ({ ...current, pageIndex: page }))}
-          labels={pagerLabels}
-          disabled={query.fetching}
-          label={t('pages')}
-          scrollTarget={listTop}
-        />
-      ) : null}
+                        «اعتماد» and «إعادة إلى الموظف» both assume the gap stays
+                        a gap: approve it as it is, or send the officer back out.
+                        A reviewer who can simply *fill it in* — they have the
+                        deed on the desk, they know the family — had to leave the
+                        queue, find the citizen, and open a four-step form, and
+                        the queue they left does not remember where they were. So
+                        the commonest resolution was the one that cost least to
+                        click, which is «اعتماد» on a record still missing
+                        something.
+
+                        Safe on every row here without checking which
+                        registration it is: `RecordReviewService.queue` is
+                        `DISTINCT ON (citizenId) … ORDER BY submittedAt DESC`, so
+                        a queue row *is* the citizen's latest registration — the
+                        one `/citizens/:id/form` returns and this dialog writes.
+
+                        Shown with flags only. A record at «عُدِّل بعد الاعتماد»
+                        with nothing open has no questions to put, and a dialog
+                        that opens to say «لا توجد معلومات ناقصة» is a button that
+                        wasted the click.
+                      */}
+                      {item.flags.length > 0 ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-1.5"
+                          disabled={busy === item.registrationId}
+                          onClick={() => setCompleting(item)}
+                        >
+                          <FileQuestion className="size-4" aria-hidden />
+                          {en ? 'Fill in the gaps' : 'استكمال الناقص'}
+                        </Button>
+                      ) : null}
+                      {item.state !== 'RETURNED' ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-1.5"
+                          disabled={busy === item.registrationId}
+                          onClick={() => setReturning(item.registrationId)}
+                        >
+                          <Undo2 className="size-4" aria-hidden />
+                          {en ? 'Return to the officer' : 'إعادة إلى الموظف'}
+                        </Button>
+                      ) : null}
+                      <Button
+                        size="sm"
+                        className="gap-1.5"
+                        disabled={busy === item.registrationId}
+                        onClick={() =>
+                          act(
+                            item.registrationId,
+                            () => approveRecord(tenant, token!, item.registrationId),
+                            en ? 'Record approved' : 'تم اعتماد السجل',
+                          )
+                        }
+                      >
+                        {busy === item.registrationId ? (
+                          <Loader2 className="size-4 animate-spin" aria-hidden />
+                        ) : (
+                          <Check className="size-4" aria-hidden />
+                        )}
+                        {item.state === 'APPROVED' ? (en ? 'Approve again' : 'إعادة الاعتماد') : en ? 'Approve' : 'اعتماد'}
+                      </Button>
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ol>
+        )}
+
+        {!query.error && !query.loading ? (
+          <Pager
+            page={pagination.pageIndex}
+            pageSize={pagination.pageSize}
+            total={total}
+            onPageChange={(page) => setPagination((current) => ({ ...current, pageIndex: page }))}
+            labels={pagerLabels}
+            disabled={query.fetching}
+            label={t('pages')}
+            scrollTarget={listTop}
+          />
+        ) : null}
+      </TabsContent>
 
       {/*
         One dialog for the whole list, keyed by the row it was opened from, so
@@ -601,7 +597,7 @@ export function ReviewQueue({
           }}
         />
       ) : null}
-    </div>
+    </Tabs>
   );
 }
 

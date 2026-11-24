@@ -2,6 +2,7 @@ import type mapboxgl from 'mapbox-gl';
 import type { FeatureCollection, Feature, Point } from 'geojson';
 import type { BuildingMapPin } from '@/lib/api-client';
 import { DAMAGE_SEVERITY, type DamageLevel } from '@mechanization/shared-schemas';
+import { HUE } from '@/components/admin/map/map-palette';
 
 /**
  * The census as three visual channels on one dot (P3-T5).
@@ -60,14 +61,14 @@ export const BUILDING_ZOOM = 16.5;
  * at a glance.
  */
 const SURVEY_COLORS: Record<string, string> = {
-  NOT_SURVEYED: '#94a3b8',
-  VISITED_NO_ANSWER: '#f59e0b',
-  REFUSED: '#ef4444',
-  INACCESSIBLE: '#a855f7',
-  PARTIAL: '#eab308',
-  COMPLETE: '#10b981',
-  VACANT_CONFIRMED: '#0ea5e9',
-  DEMOLISHED: '#78716c',
+  NOT_SURVEYED: HUE.slate400,
+  VISITED_NO_ANSWER: HUE.amber500,
+  REFUSED: HUE.red500,
+  INACCESSIBLE: HUE.purple500,
+  PARTIAL: HUE.yellow500,
+  COMPLETE: HUE.emerald500,
+  VACANT_CONFIRMED: HUE.sky500,
+  DEMOLISHED: HUE.stone500,
 };
 
 /**
@@ -80,12 +81,12 @@ const SURVEY_COLORS: Record<string, string> = {
  * which is a finding.
  */
 const DAMAGE_COLORS = {
-  NOT_AFFECTED: '#22c55e',
-  SAFE_MINOR_DAMAGE: '#84cc16',
-  RESTRICTED_USE: '#f59e0b',
-  UNSAFE_EVACUATE: '#ef4444',
-  TOTAL_COLLAPSE: '#7f1d1d',
-  UNCLASSIFIED: '#64748b',
+  NOT_AFFECTED: HUE.green500,
+  SAFE_MINOR_DAMAGE: HUE.lime500,
+  RESTRICTED_USE: HUE.amber500,
+  UNSAFE_EVACUATE: HUE.red500,
+  TOTAL_COLLAPSE: HUE.red900,
+  UNCLASSIFIED: HUE.slate500,
   // Every level must have a ring: a level added to the scale and not here fails the typecheck
   // instead of drawing an assessed building with no ring, which on this map means "nobody looked".
 } as const satisfies Record<DamageLevel, string>;
@@ -135,7 +136,7 @@ export const surveyFillExpression = (): mapboxgl.ExpressionSpecification =>
     'match',
     ['get', 'surveyRollup'],
     ...Object.entries(SURVEY_COLORS).flatMap(([key, color]) => [key, color]),
-    '#94a3b8',
+    HUE.slate400,
   ] as unknown as mapboxgl.ExpressionSpecification;
 
 export const damageRingExpression = (): mapboxgl.ExpressionSpecification =>
@@ -159,12 +160,12 @@ export function buildingLegend(
   return {
     survey: SURVEY_SEVERITY.map((key) => ({
       key,
-      color: SURVEY_COLORS[key] ?? '#94a3b8',
+      color: SURVEY_COLORS[key] ?? HUE.slate400,
       label: labels.surveyStatus[key] ?? key,
     })),
     damage: DAMAGE_SEVERITY.map((key) => ({
       key,
-      color: DAMAGE_COLORS[key] ?? '#64748b',
+      color: DAMAGE_COLORS[key] ?? HUE.slate500,
       label: labels.damageLevel[key] ?? key,
     })),
   };
@@ -318,8 +319,8 @@ export function ensureStructureIcons(map: mapboxgl.Map): void {
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
 
-    ctx.strokeStyle = '#ffffff';
-    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = HUE.white;
+    ctx.fillStyle = HUE.white;
     ctx.lineWidth = 2;
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';

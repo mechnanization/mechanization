@@ -76,6 +76,8 @@ import {
   type BasemapId,
   DEFAULT_BASEMAP,
 } from './map-styles';
+import { DOT, HUE, MEASURE, MODE_DOT, PAYMENT_STATUS_COLOR, PROPERTY_USAGE_COLOR, boundaryFill, boundaryLine, labelHalo, labelText } from '@/components/admin/map/map-palette';
+import { LAYER, SOURCE, DOT_LIFT, ZONE_FILL_OPACITY, ZONE_LINE_OPACITY, applyZoneOpacity } from '@/components/admin/map/map-layers';
 
 // Never a real project token here, since this file is committed: set
 // NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN in `.env`/`.env.local` (both gitignored), read in
@@ -157,94 +159,6 @@ function rememberViewport(map: mapboxgl.Map, tenant: string): void {
   }
 }
 
-const SOURCE = {
-  cadastre: 'cadastre-source',
-  parcels: 'parcels-source',
-  zones: 'zones-source',
-  registered: 'registered-source',
-  measure: 'measure-source',
-} as const;
-
-const LAYER = {
-  cadastreLines: 'cadastre-lines',
-  parcelLabels: 'parcel-labels',
-  zoneFills: 'zone-fills',
-  zoneLines: 'zone-lines',
-  zoneLabels: 'zone-labels',
-  registeredHalo: 'registered-halo',
-  registeredDots: 'registered-dots',
-  registeredCount: 'registered-count',
-  measureFill: 'measure-fill',
-  measureLine: 'measure-line',
-  measurePoints: 'measure-points',
-} as const;
-
-const DOT = {
-  fill: '#2563eb',
-  fillDark: '#60a5fa',
-  stroke: '#ffffff',
-  focus: '#f59e0b',
-  focusDark: '#fbbf24',
-} as const;
-
-/**
- * Lifts the GPU dots straight up so their anchor matches the historic DOM
- * markers: on a point-pin the *tip* touches the coordinate, but a circle's
- * centre sits right on top of it. Pulling it up lets the parcel number behind
- * it stay readable instead of being covered by the dot.
- *
- * A zoom ramp rather than a flat 12px, because 12px stopped doing that job once
- * the numbers appear (`PARCEL_LABEL_MIN_ZOOM`). The dot and the number both
- * grow as the map zooms in, and at 18 a dot's lower edge reached the middle of
- * the number, and a several-registrant dot hid it entirely. Each stop clears
- * the larger dot — radius plus stroke, half the number's height, and a 2px gap
- * — since `circle-translate` cannot differ per feature. Below 15 there are no
- * numbers to clear, so the dots stay where they always were.
- */
-const DOT_LIFT: mapboxgl.ExpressionSpecification = [
-  'interpolate',
-  ['linear'],
-  ['zoom'],
-  15,
-  ['literal', [0, -12]],
-  16,
-  ['literal', [0, -22]],
-  18,
-  ['literal', [0, -26]],
-  19,
-  ['literal', [0, -27]],
-];
-
-/** Fill strength of a drawn sector — the same whether or not one is picked. */
-const ZONE_FILL_OPACITY = 0.25;
-const ZONE_LINE_OPACITY = 0.9;
-
-/**
- * Shows every sector at `opacity`, or — once one is picked — only that one,
- * with the rest fully transparent so their colours cannot be mistaken for it.
- *
- * Keyed on `zoneId`, the property `ZonesService.buildGeoJson` writes; the
- * features carry no `id`, and matching on one silently faded every sector.
- */
-function zoneOpacity(
-  activeZoneId: string | null | undefined,
-  opacity: number,
-): number | mapboxgl.ExpressionSpecification {
-  if (!activeZoneId) return opacity;
-  return ['case', ['==', ['get', 'zoneId'], activeZoneId], opacity, 0];
-}
-
-function applyZoneOpacity(map: mapboxgl.Map, activeZoneId: string | null | undefined): void {
-  if (map.getLayer(LAYER.zoneFills)) {
-    map.setPaintProperty(LAYER.zoneFills, 'fill-opacity', zoneOpacity(activeZoneId, ZONE_FILL_OPACITY));
-  }
-  if (map.getLayer(LAYER.zoneLines)) {
-    map.setPaintProperty(LAYER.zoneLines, 'line-opacity', zoneOpacity(activeZoneId, ZONE_LINE_OPACITY));
-  }
-  if (map.getLayer(LAYER.zoneLabels)) {
-    map.setPaintProperty(LAYER.zoneLabels, 'text-opacity', zoneOpacity(activeZoneId, 1));
-  }
-}
 
 /**
  * Classifies a parcel's primary property usage category.
@@ -365,7 +279,7 @@ function attachMeasureLayers(map: mapboxgl.Map): void {
       source: SOURCE.measure,
       filter: ['==', '$type', 'Polygon'],
       paint: {
-        'fill-color': '#3b82f6',
+        'fill-color': MEASURE.fill,
         'fill-opacity': 0.22,
       },
     });
@@ -378,7 +292,7 @@ function attachMeasureLayers(map: mapboxgl.Map): void {
       source: SOURCE.measure,
       filter: ['==', '$type', 'LineString'],
       paint: {
-        'line-color': '#2563eb',
+        'line-color': MEASURE.line,
         'line-width': 3,
         'line-dasharray': [2, 2],
       },
@@ -393,9 +307,9 @@ function attachMeasureLayers(map: mapboxgl.Map): void {
       filter: ['==', '$type', 'Point'],
       paint: {
         'circle-radius': 5.5,
-        'circle-color': '#ffffff',
+        'circle-color': MEASURE.point,
         'circle-stroke-width': 2.5,
-        'circle-stroke-color': '#2563eb',
+        'circle-stroke-color': MEASURE.pointStroke,
       },
     });
   }
@@ -549,7 +463,7 @@ export function FullscreenMap({
           type: 'line',
           source: SOURCE.cadastre,
           paint: {
-            'line-color': dark ? '#7dd3fc' : '#0f766e',
+            'line-color': boundaryLine(dark),
             'line-width': ['interpolate', ['linear'], ['zoom'], 13, 0.4, 18, 1.6],
             'line-opacity': ['interpolate', ['linear'], ['zoom'], 13, 0.35, 16, 0.85],
           },
@@ -570,8 +484,8 @@ export function FullscreenMap({
             'text-allow-overlap': false,
           },
           paint: {
-            'text-color': dark ? '#ffffff' : '#0f172a',
-            'text-halo-color': dark ? 'rgba(0,0,0,0.85)' : '#ffffff',
+            'text-color': labelText(dark),
+            'text-halo-color': labelHalo(dark),
             'text-halo-width': 1.6,
           },
         });
@@ -640,8 +554,8 @@ export function FullscreenMap({
           'text-allow-overlap': false,
         },
         paint: {
-          'text-color': dark ? '#ffffff' : '#0f172a',
-          'text-halo-color': dark ? 'rgba(0,0,0,0.85)' : '#ffffff',
+          'text-color': labelText(dark),
+          'text-halo-color': labelHalo(dark),
           'text-halo-width': 1.8,
         },
       });
@@ -739,7 +653,7 @@ export function FullscreenMap({
         type: 'fill',
         source: BUILDING_SOURCE.polygons,
         paint: {
-          'fill-color': dark ? '#38bdf8' : '#0f766e',
+          'fill-color': boundaryFill(dark),
           'fill-opacity': ['interpolate', ['linear'], ['zoom'], 14, 0.04, 18, 0.12],
         },
       });
@@ -749,7 +663,7 @@ export function FullscreenMap({
         type: 'line',
         source: BUILDING_SOURCE.polygons,
         paint: {
-          'line-color': dark ? '#7dd3fc' : '#0f766e',
+          'line-color': boundaryLine(dark),
           'line-width': ['interpolate', ['linear'], ['zoom'], 14, 0.3, 18, 1.1],
           'line-opacity': ['interpolate', ['linear'], ['zoom'], 14, 0.25, 17, 0.6],
         },
@@ -820,7 +734,7 @@ export function FullscreenMap({
           'text-allow-overlap': true,
           'text-ignore-placement': true,
         },
-        paint: { 'text-color': '#ffffff' },
+        paint: { 'text-color': HUE.white },
       });
 
       // ── At building zoom: one pin per structure, three channels ──
@@ -853,7 +767,7 @@ export function FullscreenMap({
             on this dot, and a permitted plot must not read as urgent work.
           */
           'circle-opacity': lifecycleOpacityExpression(),
-          'circle-stroke-color': '#ffffff',
+          'circle-stroke-color': HUE.white,
           'circle-stroke-width': 1,
           'circle-radius': ['interpolate', ['linear'], ['zoom'], 16, 9, 19, 15],
         },
@@ -1180,28 +1094,28 @@ export function FullscreenMap({
       return [
         'case',
         ['==', ['get', 'focused'], 1],
-        '#3b82f6',
+        PAYMENT_STATUS_COLOR.focused,
         ['==', ['get', 'paymentStatus'], 'PAID'],
-        '#10b981',
+        PAYMENT_STATUS_COLOR.PAID,
         ['==', ['get', 'paymentStatus'], 'PARTIALLY_PAID'],
-        '#f59e0b',
+        PAYMENT_STATUS_COLOR.PARTIALLY_PAID,
         ['==', ['get', 'paymentStatus'], 'UNPAID'],
-        '#ef4444',
-        '#94a3b8',
+        PAYMENT_STATUS_COLOR.UNPAID,
+        PAYMENT_STATUS_COLOR.none,
       ];
     }
     if (colorMode === 'propertyType') {
       return [
         'case',
         ['==', ['get', 'focused'], 1],
-        '#f59e0b',
+        PROPERTY_USAGE_COLOR.focused,
         ['==', ['get', 'propertyType'], 'RESIDENTIAL'],
-        '#3b82f6',
+        PROPERTY_USAGE_COLOR.RESIDENTIAL,
         ['==', ['get', 'propertyType'], 'COMMERCIAL'],
-        '#8b5cf6',
+        PROPERTY_USAGE_COLOR.COMMERCIAL,
         ['==', ['get', 'propertyType'], 'INDUSTRIAL'],
-        '#f97316',
-        '#64748b',
+        PROPERTY_USAGE_COLOR.INDUSTRIAL,
+        PROPERTY_USAGE_COLOR.other,
       ];
     }
     return [
@@ -1858,7 +1772,7 @@ export function FullscreenMap({
               className={cn(
                 'h-9 shrink-0 gap-1.5 px-2.5 text-xs font-semibold cursor-pointer rounded-xl transition-colors sm:h-8 sm:rounded-lg',
                 colorMode !== 'default'
-                  ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 hover:bg-amber-500/25 border border-amber-500/30'
+                  ? 'bg-warning/15 text-foreground hover:bg-warning/25 border border-warning/30'
                   : 'text-muted-foreground hover:bg-accent hover:text-foreground',
               )}
             >
@@ -1866,10 +1780,8 @@ export function FullscreenMap({
               <span>{locale === 'en' ? 'Color' : 'تلوين'}</span>
               {colorMode !== 'default' ? (
                 <span
-                  className={cn(
-                    'size-2 rounded-full inline-block shrink-0',
-                    colorMode === 'paymentStatus' ? 'bg-emerald-500' : 'bg-purple-500',
-                  )}
+                  className="size-2 rounded-full inline-block shrink-0"
+                  style={{ backgroundColor: MODE_DOT[colorMode] }}
                 />
               ) : null}
               <ChevronDown className="size-3 opacity-60" />
@@ -1895,7 +1807,7 @@ export function FullscreenMap({
                   )}
                 >
                   <span className="flex items-center gap-2">
-                    <span className="size-2.5 rounded-full bg-blue-600 inline-block" />
+                    <span className="size-2.5 rounded-full inline-block" style={{ backgroundColor: MODE_DOT.default }} />
                     {locale === 'en' ? 'Default (Blue)' : 'الافتراضي (أزرق)'}
                   </span>
                   {colorMode === 'default' ? <Check className="size-3.5" /> : null}
@@ -1913,7 +1825,7 @@ export function FullscreenMap({
                   )}
                 >
                   <span className="flex items-center gap-2">
-                    <span className="size-2.5 rounded-full bg-emerald-500 inline-block" />
+                    <span className="size-2.5 rounded-full inline-block" style={{ backgroundColor: MODE_DOT.paymentStatus }} />
                     {locale === 'en' ? 'By Payment Status' : 'حسب تسديد الرسوم'}
                   </span>
                   {colorMode === 'paymentStatus' ? <Check className="size-3.5" /> : null}
@@ -1931,7 +1843,7 @@ export function FullscreenMap({
                   )}
                 >
                   <span className="flex items-center gap-2">
-                    <span className="size-2.5 rounded-full bg-purple-500 inline-block" />
+                    <span className="size-2.5 rounded-full inline-block" style={{ backgroundColor: MODE_DOT.propertyType }} />
                     {locale === 'en' ? 'By Property Usage' : 'حسب نوع الإشغال'}
                   </span>
                   {colorMode === 'propertyType' ? <Check className="size-3.5" /> : null}
@@ -2187,7 +2099,7 @@ export function FullscreenMap({
           border-radius: 50% 50% 50% 0;
           transform: rotate(-45deg);
           background: hsl(var(--warning));
-          border: 3px solid #fff;
+          border: 3px solid ${HUE.white};
           box-shadow: 0 2px 10px rgba(15, 23, 42, 0.55);
         }
         .map-selected-pin::before {
@@ -2195,7 +2107,7 @@ export function FullscreenMap({
           position: absolute;
           inset: 6px;
           border-radius: 9999px;
-          background: #fff;
+          background: ${HUE.white};
         }
         .map-selected-pin::after {
           content: '';
@@ -2211,7 +2123,7 @@ export function FullscreenMap({
           width: 20px; height: 20px;
           border-radius: 9999px;
           background: hsl(var(--warning));
-          border: 3px solid #fff;
+          border: 3px solid ${HUE.white};
           box-shadow: 0 2px 8px rgba(15, 23, 42, 0.45);
           animation: map-search-pulse 1.6s ease-out infinite;
         }
@@ -2347,19 +2259,19 @@ export function FullscreenMap({
             </div>
             <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-xs">
               <span className="flex items-center gap-1">
-                <span className="size-2 rounded-full bg-emerald-500" />
+                <span className="size-2 rounded-full" style={{ backgroundColor: PAYMENT_STATUS_COLOR.PAID }} />
                 <span>{locale === 'en' ? 'Paid' : 'مسدد'}</span>
               </span>
               <span className="flex items-center gap-1">
-                <span className="size-2 rounded-full bg-amber-500" />
+                <span className="size-2 rounded-full" style={{ backgroundColor: PAYMENT_STATUS_COLOR.PARTIALLY_PAID }} />
                 <span>{locale === 'en' ? 'Partial' : 'جزئي'}</span>
               </span>
               <span className="flex items-center gap-1">
-                <span className="size-2 rounded-full bg-rose-500" />
+                <span className="size-2 rounded-full" style={{ backgroundColor: PAYMENT_STATUS_COLOR.UNPAID }} />
                 <span>{locale === 'en' ? 'Unpaid' : 'غير مسدد'}</span>
               </span>
               <span className="flex items-center gap-1">
-                <span className="size-2 rounded-full bg-slate-400" />
+                <span className="size-2 rounded-full" style={{ backgroundColor: PAYMENT_STATUS_COLOR.none }} />
                 <span>{locale === 'en' ? 'No Bills' : 'بدون رسوم'}</span>
               </span>
             </div>
@@ -2375,19 +2287,19 @@ export function FullscreenMap({
             </div>
             <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-xs">
               <span className="flex items-center gap-1">
-                <span className="size-2 rounded-full bg-blue-500" />
+                <span className="size-2 rounded-full" style={{ backgroundColor: PROPERTY_USAGE_COLOR.RESIDENTIAL }} />
                 <span>{locale === 'en' ? 'Residential' : 'سكني'}</span>
               </span>
               <span className="flex items-center gap-1">
-                <span className="size-2 rounded-full bg-purple-500" />
+                <span className="size-2 rounded-full" style={{ backgroundColor: PROPERTY_USAGE_COLOR.COMMERCIAL }} />
                 <span>{locale === 'en' ? 'Commercial' : 'تجاري'}</span>
               </span>
               <span className="flex items-center gap-1">
-                <span className="size-2 rounded-full bg-orange-500" />
+                <span className="size-2 rounded-full" style={{ backgroundColor: PROPERTY_USAGE_COLOR.INDUSTRIAL }} />
                 <span>{locale === 'en' ? 'Industrial' : 'صناعي'}</span>
               </span>
               <span className="flex items-center gap-1">
-                <span className="size-2 rounded-full bg-slate-400" />
+                <span className="size-2 rounded-full" style={{ backgroundColor: PROPERTY_USAGE_COLOR.other }} />
                 <span>{locale === 'en' ? 'Other' : 'أخرى'}</span>
               </span>
             </div>
