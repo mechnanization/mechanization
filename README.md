@@ -1,6 +1,6 @@
 # Mechanization (منظومة المكننة البلدية)
 
-Last verified against the code: `fix/review-follow-ups` (on `develop@e8bb71f`): `--reset-totp` clears the TOTP lockout, 2026-11-20; `feat/day3ati-staff-sync` (on `feat/day3ati-token-service@c10c166`): the `day3ati:backfill-staff` script and the News accounts it creates, 2026-11-20; `fix/pr88-review` (on `develop@be4f053`), 2026-10-06; the frontend dev server on Turbopack, `develop@4634bdb`, 2026-10-15.
+Last verified against the code: `fix/cleanup-sec-10-dead-18-dry-01` (on `develop@5bf5856`): `pnpm lint:unused` under Test (DEAD-18), 2026-11-24; `fix/review-follow-ups` (on `develop@e8bb71f`): `--reset-totp` clears the TOTP lockout, 2026-11-20; `feat/day3ati-staff-sync` (on `feat/day3ati-token-service@c10c166`): the `day3ati:backfill-staff` script and the News accounts it creates, 2026-11-20; `fix/pr88-review` (on `develop@be4f053`), 2026-10-06; the frontend dev server on Turbopack, `develop@4634bdb`, 2026-10-15.
 
 A registration system for Lebanese municipalities: the citizen register, the
 building and unit census, the cadastre map, fees and payments. Each
@@ -64,6 +64,7 @@ pnpm dev      # runs both apps; the database must already be up
 
 ```bash
 pnpm lint
+pnpm lint:unused                              # unused files, exports, dependencies (knip); fails on new ones
 pnpm typecheck
 pnpm --filter @mechanization/backend test     # integration suites skip without TEST_DATABASE_URL
 pnpm --filter @mechanization/frontend test
