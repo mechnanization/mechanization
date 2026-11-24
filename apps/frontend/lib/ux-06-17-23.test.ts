@@ -79,10 +79,24 @@ describe('nothing animates with transition-all (UX-17, MOT-4)', () => {
 
 describe('step numbers and counts are Latin digits (UX-23, TYP-4)', () => {
   it("the citizen wizard's step numbers are not typed as Arabic-Indic digits", () => {
-    const source = read('components/admin/citizen-form.tsx');
-    expect(source).not.toMatch(/\bstep[:=][^\n]*[٠-٩۰-۹]/);
-    expect(source).toMatch(/step: '1'/);
-    expect(source).toMatch(/step="3"/);
+    // The form's `sections` list is in `citizen-form.tsx`; each page's own number moved with its section (GOD-22, phase 2b).
+    const form = read('components/admin/citizen-form.tsx');
+    expect(form).toMatch(/step: '1'/);
+    for (const [file, step] of [
+      ['personal-section.tsx', '1'],
+      ['contact-section.tsx', '2'],
+      ['properties-section.tsx', '3'],
+    ] as const) {
+      expect(read(`components/admin/citizen-form/${file}`), file).toContain(`step="${step}"`);
+    }
+    for (const file of [
+      'components/admin/citizen-form.tsx',
+      'components/admin/citizen-form/personal-section.tsx',
+      'components/admin/citizen-form/contact-section.tsx',
+      'components/admin/citizen-form/properties-section.tsx',
+    ]) {
+      expect(read(file), file).not.toMatch(/\bstep[:=][^\n]*[٠-٩۰-۹]/);
+    }
   });
 
   it("nor are the citizens import's", () => {

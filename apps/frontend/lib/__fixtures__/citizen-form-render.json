@@ -3,6 +3,10 @@
     "length": 29566,
     "sha256": "8cdbf435149a8dcd662b122e17fe1e399f5c41b3291630d869b62916279bb41c"
   },
+  "estate-death-edit-ar": {
+    "length": 30298,
+    "sha256": "4370f8a4526af3ba989107f310fcf4a7ac9a567d1fbaae28d5d0c932a473852f"
+  },
   "household-create-ar": {
     "length": 48326,
     "sha256": "f3591401d0ce1447f291c4724c61ae75c16ed0ec8b7872f8fa2d6698d30fe0cc"
@@ -10,6 +14,10 @@
   "household-create-en": {
     "length": 48588,
     "sha256": "71eab24249835428c46fb1fa6f11219cbf277db059a52de52243d89e4aa33f69"
+  },
+  "household-no-phone-edit-ar": {
+    "length": 48384,
+    "sha256": "19f67dfefc88de03aebd96f19684506a315a192164a8d282387d239ac0554879"
   },
   "household-offline-saving-ar": {
     "length": 48952,
@@ -22,6 +30,10 @@
   "institution-ar": {
     "length": 26994,
     "sha256": "045eb665b0eeeeea43c91654853fc485e6921b0a84a737071e865316cd03a98e"
+  },
+  "non-resident-moved-edit-ar": {
+    "length": 33488,
+    "sha256": "005014d211d59b135aa4e333af650eee4f133a4390035a62e57526cedf9fdff6"
   },
   "non-resident-owner-ar": {
     "length": 32846,

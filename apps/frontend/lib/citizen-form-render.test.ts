@@ -23,7 +23,7 @@ import { emptyCitizen, type CitizenFormValues, type PropertyDraft } from '@/lib/
   helpers have their own tests (`citizen-form-logic.test.ts`) and the rest is read
   in review and tried on staging.
 
-  The expected HTML is not committed — seven pages of it would be half a megabyte.
+  The expected HTML is not committed — ten pages of it would be most of a megabyte.
   What is committed is each page's length and SHA-256, in
   `lib/__fixtures__/citizen-form-render.json`. When one differs:
 
@@ -91,6 +91,37 @@ const SCENARIOS: Record<string, Scenario> = {
       ]),
     }),
     props: { citizenId: 'citizen-1', token: 'tok', canMerge: true, canOverrideDuplicates: true, canAnswerLandlord: true },
+  },
+  // A move the officer applied on this form: the line saying so, with «تراجع».
+  'non-resident-moved-edit-ar': {
+    locale: 'ar',
+    mode: 'edit',
+    values: record({
+      residence: 'NON_RESIDENT_OWNER',
+      personal: { firstName: 'Amal', lastName: 'Haddad', residencePlace: 'Beirut' },
+      residenceMove: { movedOn: '2026-11-01', reason: 'moved out of town' },
+    }),
+    props: { citizenId: 'citizen-2' },
+  },
+  'estate-death-edit-ar': {
+    locale: 'ar',
+    mode: 'edit',
+    values: record({
+      residence: 'ESTATE',
+      personal: { firstName: 'Amal', middleName: 'K', lastName: 'Haddad' },
+      residenceMove: { movedOn: '2026-10-20', reason: 'died' },
+    }),
+    props: { citizenId: 'citizen-3' },
+  },
+  // «لا يملك رقم هاتف» on a file that had a number: the note under the phone box.
+  'household-no-phone-edit-ar': {
+    locale: 'ar',
+    mode: 'edit',
+    values: record({
+      personal: { isLebanese: true, firstName: 'Amal', lastName: 'Haddad' },
+      contact: { phone: '71123456', hasNoPhone: true, whatsappSameAsPhone: true },
+    }),
+    props: { citizenId: 'citizen-4' },
   },
   'household-offline-saving-ar': {
     locale: 'ar',

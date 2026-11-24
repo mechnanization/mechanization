@@ -8,7 +8,6 @@ import {
   FileQuestion,
   IdCard,
   Plus,
-  StickyNote,
   TriangleAlert,
   UsersRound,
 } from 'lucide-react';
@@ -21,17 +20,7 @@ import {
   type PossibleDuplicateMatch,
 } from '@mechanization/shared-schemas';
 import type { PublicTenantConfig } from '@/lib/api-client';
-import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/states';
-import { Textarea } from '@/components/ui/textarea';
-import {
-  ContactStep,
-  NonPersonContactStep,
-  NonPersonPersonalStep,
-  OwnerContactStep,
-  OwnerPersonalStep,
-  PersonalStep,
-} from '@/components/citizen/steps';
 import { DuplicateAlert, usePossibleDuplicates } from './possible-duplicates';
 import { MergeCitizensDialog } from './merge-citizens-dialog';
 import {
@@ -39,7 +28,7 @@ import {
   type CardRemovalAnswer,
   type PropertyDraft,
 } from '@/components/citizen/property-card';
-import { Field, FieldFlagProvider, FieldFocusProvider } from '@/components/ui/field';
+import { FieldFlagProvider, FieldFocusProvider } from '@/components/ui/field';
 import { UnverifiedFieldsDialog } from './unverified-fields-dialog';
 import { QuickSaveDialog } from './quick-save-dialog';
 import type { LockedCensusTarget } from './building-unit-picker';
@@ -54,10 +43,12 @@ import { cn, scopeErrors } from '@/lib/utils';
 import type { CitizenFormValues } from '@/lib/citizen-form-values';
 import { askableFields, askablePaths, isBlank, reindexFlags, reindexRowFlags, valueAtPath } from '@/lib/citizen-form-askable';
 import { validate } from '@/lib/citizen-form-validation';
-import { ResidenceChooser } from './citizen-form/residence-chooser';
 import { StepNotesField } from './citizen-form/step-notes-field';
-import { FormSection } from './citizen-form/form-section';
 import { StepBar } from './citizen-form/step-bar';
+import { PersonalSection } from './citizen-form/personal-section';
+import { ContactSection } from './citizen-form/contact-section';
+import { PropertiesSection } from './citizen-form/properties-section';
+import { NotesSection } from './citizen-form/notes-section';
 import { DesktopActionBar, MobileActionBar } from './citizen-form/action-bars';
 
 export type { CitizenFormValues } from '@/lib/citizen-form-values';
@@ -1121,170 +1112,55 @@ export function CitizenForm({
       >
       {/* ── Page 1 — البيانات الشخصية ── */}
       <div className={cn(!reviewing && step !== 'personal' && 'hidden')}>
-          <FormSection
-            id="personal"
-            step="1"
-            icon={IdCard}
+          <PersonalSection
             title={sections[0].title}
             invalid={sectionInvalid('personal')}
-          >
-            <ResidenceChooser value={values.residence ?? 'RESIDENT'} onChange={chooseResidence} locale={locale} />
-            {values.residenceMove ? (
-              <p className="-mt-2 mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md bg-primary/5 px-3 py-2 text-sm">
-                <span>
-                  {tKind(values.residence === 'ESTATE' ? 'deathApplied' : 'moveApplied', {
-                    date: values.residenceMove.movedOn,
-                  })}
-                </span>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="link"
-                  className="h-auto p-0"
-                  onClick={undoMove}
-                >
-                  {locale === 'en' ? 'Undo' : 'تراجع'}
-                </Button>
-              </p>
-            ) : null}
-            {nonPerson ? (
-              <NonPersonPersonalStep
-                kind={nonPerson}
-                value={values.personal}
-                errors={shown}
-                onChange={(personal) => update({ personal })}
-                locale={locale}
-              />
-            ) : isNonResident ? (
-              <OwnerPersonalStep value={values.personal} errors={shown} onChange={(personal) => update({ personal })} locale={locale} />
-            ) : (
-              <PersonalStep value={values.personal} errors={shown} onChange={(personal) => update({ personal })} locale={locale} />
-            )}
-          </FormSection>
+            locale={locale}
+            residence={values.residence}
+            residenceMove={values.residenceMove}
+            personal={values.personal}
+            errors={shown}
+            nonPerson={nonPerson}
+            isNonResident={isNonResident}
+            onChooseResidence={chooseResidence}
+            onUndoMove={undoMove}
+            onChange={update}
+          />
       </div>
 
       {/* ── Page 2 — التواصل والأسرة ── */}
       <div className={cn(!reviewing && step !== 'contact' && 'hidden')}>
-          <FormSection
-            id="contact"
-            step="2"
-            icon={UsersRound}
+          <ContactSection
             title={sections[1].title}
             invalid={sectionInvalid('contact')}
-          >
-            {nonPerson ? (
-              <NonPersonContactStep
-                kind={nonPerson}
-                value={values.contact}
-                errors={shown}
-                onChange={(contact) => update({ contact })}
-                afterPhone={phoneNote}
-              />
-            ) : isNonResident ? (
-              <OwnerContactStep value={values.contact} errors={shown} onChange={(contact) => update({ contact })} locale={locale} afterPhone={phoneNote} />
-            ) : (
-              <ContactStep value={values.contact} errors={shown} onChange={updateContact} locale={locale} afterPhone={phoneNote} />
-            )}
-          </FormSection>
+            locale={locale}
+            contact={values.contact}
+            errors={shown}
+            nonPerson={nonPerson}
+            isNonResident={isNonResident}
+            phoneNote={phoneNote}
+            onChange={update}
+            onChangeHousehold={updateContact}
+          />
       </div>
 
       {/* ── Page 3 — العقارات, then ملاحظات ── */}
       <div className={cn('space-y-4 sm:space-y-5', !reviewing && step !== 'properties' && 'hidden')}>
-          <FormSection
-            id="properties"
-            step="3"
-            icon={Building2}
-            title={
-              locale === 'en'
-                ? `Properties (${values.properties.length})`
-                : `العقارات (${values.properties.length})`
-            }
-
+          <PropertiesSection
+            count={values.properties.length}
             invalid={sectionInvalid('properties')}
+            locale={locale}
+            onAdd={() => addProperty()}
           >
-            <div className="review-body space-y-4">
-              {values.properties.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  {locale === 'en'
-                    ? 'No property to add? Leave this empty for a citizen who owns nothing and only rents.'
-                    : 'لا يملك المواطن أي عقار؟ يمكن ترك هذا القسم فارغاً إذا كان يستأجر فقط.'}
-                </p>
-              ) : null}
+            {renderPropertyGroups()}
+          </PropertiesSection>
 
-              {renderPropertyGroups()}
-
-
-
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => addProperty()}
-                className="w-full border-dashed border-primary/60 text-primary hover:bg-primary/5 h-9 text-xs sm:text-sm font-medium"
-              >
-                <Plus className="size-4" aria-hidden />
-                {locale === 'en'
-                  ? values.properties.length === 0
-                    ? 'Add Property'
-                    : 'Add Another Property'
-                  : values.properties.length === 0
-                    ? 'إضافة عقار'
-                    : 'إضافة عقار آخر'}
-              </Button>
-            </div>
-          </FormSection>
-
-        {/* On a phone, «ملاحظات» is the box under every page instead — see `StepNotesField`. */}
-        <div className="hidden sm:block">
-            {/*
-              «ملاحظات» — the back of the paper form.
-
-              Deliberately *not* a fourth entry in `SECTIONS`. That array drives the
-              wizard's step nav, its «الخطوة ٣ من ٣» counter and the next/back
-              buttons, and a field nobody is required to fill in must not become a
-              step somebody has to pass through. It sits after the last step, says
-              «اختياري» where the others carry a number, and gates nothing.
-
-              Not `blanketFlagReason`, which is the box officers were using for this
-              because it was the only free text on the form. That one is a *reason
-              data is missing*: it is copied onto every gap in the record and its
-              presence is part of what lands a registration at «يتطلب مراجعة», so
-              writing «الأسرة تنتقل نهاية الشهر» into it flags a clean record for
-              review and attaches that sentence to fields it does not describe.
-            */}
-            <FormSection
-              id="notes"
-              step={locale === 'en' ? 'Optional' : 'اختياري'}
-              icon={StickyNote}
-              title={locale === 'en' ? 'Notes' : 'ملاحظات'}
-
-              invalid={Boolean(shown['notes'])}
-            >
-              <Field
-                label={locale === 'en' ? 'Notes' : 'ملاحظات'}
-                /*
-                  `notes-input`, not `notes`. The `FormSection` card above already
-                  carries `id="notes"` as the page's scroll anchor, so the textarea
-                  was a second element with the same id and `htmlFor="notes"`
-                  resolved to the card — meaning tapping the label focused nothing.
-                */
-                htmlFor="notes-input"
-                error={shown['notes']}
-              >
-                <Textarea
-                  id="notes-input"
-                  rows={3}
-                  maxLength={2000}
-                  placeholder={
-                    locale === 'en'
-                      ? 'e.g. the family is moving at the end of the month; the stairs are broken, use the back entrance.'
-                      : 'مثال: الأسرة تنتقل نهاية الشهر · الدرج مكسور، الزيارة القادمة من الخلف.'
-                  }
-                  value={values.notes ?? ''}
-                  onChange={(event) => update({ notes: event.target.value })}
-                />
-              </Field>
-            </FormSection>
-        </div>
+        <NotesSection
+          locale={locale}
+          value={values.notes ?? ''}
+          error={shown['notes']}
+          onChange={(notes) => update({ notes })}
+        />
       </div>
 
       </div>
