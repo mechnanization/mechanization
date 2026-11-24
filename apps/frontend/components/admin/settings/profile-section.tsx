@@ -1,8 +1,8 @@
 'use client';
 
 import { useLocale } from 'next-intl';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Building2, Clock, MapPin, Phone, Trash2, Upload, UploadCloud } from 'lucide-react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { Building2, Clock, MapPin, Phone, Trash2, UploadCloud } from 'lucide-react';
 import {
   ApiRequestError,
   getMunicipalitySettings,
@@ -13,11 +13,11 @@ import type { MunicipalitySettings } from '@/lib/api-client';
 import type { SettingsCopy } from '@/lib/settings-i18n';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { FileInput } from '@/components/ui/file-input';
 
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/components/ui/toast';
-import { cn } from '@/lib/utils';
 import {
   AlignedFieldGrid,
   SectionSaveRow,
@@ -112,7 +112,7 @@ export function ProfileSection({
 }) {
   const toast = useToast();
   const locale = useLocale();
-  const fileInput = useRef<HTMLInputElement>(null);
+  const logoInputId = useId();
 
   const [saved, setSaved] = useState<Profile | null>(null);
   const [draft, setDraft] = useState<Profile>(EMPTY);
@@ -122,7 +122,6 @@ export function ProfileSection({
   // its stale read. The ref is checked and set first, and released when the write settles.
   const savingRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
-  const [dragging, setDragging] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -410,19 +409,6 @@ export function ProfileSection({
               </span>
             </div>
 
-            <input
-              ref={fileInput}
-              type="file"
-              accept="image/png,image/jpeg,image/svg+xml"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) readLogo(file);
-                // Cleared so choosing the same file twice still fires a change.
-                e.target.value = '';
-              }}
-            />
-
             {draft.logoDataUri ? (
               <div className="flex flex-col items-start gap-4 rounded-xl border bg-card p-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-center gap-4">
@@ -455,10 +441,6 @@ export function ProfileSection({
                   </div>
                 </div>
                 <div className="flex w-full items-center justify-end gap-2 sm:w-auto">
-                  <Button variant="outline" size="sm" onClick={() => fileInput.current?.click()}>
-                    <Upload className="size-4" aria-hidden />
-                    {copy.profile.logoReplace}
-                  </Button>
                   <Button
                     variant="outline"
                     size="sm"
@@ -470,50 +452,18 @@ export function ProfileSection({
                   </Button>
                 </div>
               </div>
-            ) : (
-              <div
-                role="button"
-                tabIndex={0}
-                onClick={() => fileInput.current?.click()}
-                onKeyDown={(e) => {
-                  // A div carrying a click handler is invisible to the keyboard
-                  // without this, and the file dialog would be unreachable
-                  // without a mouse.
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    fileInput.current?.click();
-                  }
-                }}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  setDragging(true);
-                }}
-                onDragLeave={() => setDragging(false)}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  setDragging(false);
-                  const file = e.dataTransfer.files?.[0];
-                  if (file) readLogo(file);
-                }}
-                className={cn(
-                  'group flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed p-6 text-center transition-colors',
-                  dragging
-                    ? 'border-primary/60 bg-muted/30'
-                    : 'border-muted-foreground/25 bg-muted/10 hover:border-primary/60 hover:bg-muted/30',
-                )}
-              >
-                <div className="flex size-12 items-center justify-center rounded-full bg-primary/10 text-primary transition-transform group-hover:scale-110">
-                  <UploadCloud className="size-6" aria-hidden />
-                </div>
-                <p className="text-sm">
-                  <span className="font-semibold group-hover:text-primary">
-                    {copy.profile.logoUpload}
-                  </span>{' '}
-                  <span className="text-muted-foreground">{copy.profile.logoDropHint}</span>
-                </p>
-                <p className="text-xs text-muted-foreground">{copy.profile.logoConstraints}</p>
-              </div>
-            )}
+            ) : null}
+
+            <FileInput
+              id={logoInputId}
+              accept="image/png,image/jpeg,image/svg+xml"
+              onSelect={(files) => {
+                const file = files[0];
+                if (file) readLogo(file);
+              }}
+              label={`${draft.logoDataUri ? copy.profile.logoReplace : copy.profile.logoUpload} ${copy.profile.logoDropHint}`}
+              hint={copy.profile.logoConstraints}
+            />
           </div>
         </div>
 

@@ -2638,21 +2638,17 @@ export function BuildingEditor({
                   two is wrong.
                 */}
                 {zoneMismatch ? (
-                  <div className="mt-2 flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-2.5 text-xs leading-relaxed text-warning">
-                    <AlertTriangle className="size-3.5 shrink-0 mt-0.5" aria-hidden />
-                    <p>
-                      {en
-                        ? `Parcel ${trimmedParcel} is in sector ${parcelZone!.code} — ${parcelZone!.name}, not the one selected above. The code will carry ${parcelZone!.code}.`
-                        : `العقار ${trimmedParcel} يقع في القطاع ${parcelZone!.code} — ${parcelZone!.name}، لا القطاع المختار أعلاه. سيحمل الرمز ${parcelZone!.code}.`}
-                    </p>
-                  </div>
+                  <Alert variant="warning" className="mt-2">
+                    {en
+                      ? `Parcel ${trimmedParcel} is in sector ${parcelZone!.code} — ${parcelZone!.name}, not the one selected above. The code will carry ${parcelZone!.code}.`
+                      : `العقار ${trimmedParcel} يقع في القطاع ${parcelZone!.code} — ${parcelZone!.name}، لا القطاع المختار أعلاه. سيحمل الرمز ${parcelZone!.code}.`}
+                  </Alert>
                 ) : null}
 
                 {cadastreHint ? (
-                  <div className="mt-2 flex items-start gap-2.5 rounded-lg border border-warning/40 bg-warning/10 p-3 text-xs leading-relaxed text-warning">
-                    <AlertTriangle className="size-4 shrink-0 mt-0.5" aria-hidden />
-                    <p>{cadastreHint}</p>
-                  </div>
+                  <Alert variant="warning" className="mt-2">
+                    {cadastreHint}
+                  </Alert>
                 ) : null}
 
                 <div className="mt-3 border-s-2 border-border ps-3 py-1">
@@ -2994,11 +2990,9 @@ export function BuildingEditor({
                 الجودة» lists the building until the reading is recorded.
               */}
               {isUninhabitableLifecycle(lifecycleStatus) ? (
-                <div role="note" className="flex items-start gap-2 rounded-lg border border-info/30 bg-info/5 p-3.5 text-xs leading-relaxed text-foreground">
-                  {/* The icon carries the tone; the text stays foreground (COL-4: text-info on a tint is 4.11:1). */}
-                  <Info className="mt-0.5 size-4 shrink-0 text-info" aria-hidden />
-                  <p>{tFeeExemption('lifecycleNote')}</p>
-                </div>
+                <Alert variant="info" role="note">
+                  {tFeeExemption('lifecycleNote')}
+                </Alert>
               ) : null}
 
               {/*
@@ -3016,17 +3010,11 @@ export function BuildingEditor({
               loadedLifecycle !== null &&
               isOccupiableLifecycle(loadedLifecycle) &&
               !isOccupiableLifecycle(lifecycleStatus) ? (
-                <div
-                  role="note"
-                  className="flex items-start gap-2 rounded-xl border border-warning/40 bg-warning/10 p-3.5 text-xs leading-relaxed text-warning"
-                >
-                  <AlertTriangle className="size-4 shrink-0 mt-0.5" aria-hidden />
-                  <p>
-                    {en
-                      ? `${liveOccupants} occupancy record(s) are still current in this building's units, and they keep being billed. Changing the building's status does not end them — after saving, end each one from the unit matrix («End tenancy» for a tenant; a new status for an owner's unit).`
-                      : `ما زال ${liveOccupants} إشغال قائماً على وحدات هذا المبنى، ويُحصَّل الرسم منه. تغيير حالة المبنى لا يُنهيه — بعد الحفظ أنهِ كل إشغال من مصفوفة الوحدات («إنهاء الإيجار» للمستأجر، وحالة جديدة لوحدة المالك).`}
-                  </p>
-                </div>
+                <Alert variant="warning" role="note">
+                  {en
+                    ? `${liveOccupants} occupancy record(s) are still current in this building's units, and they keep being billed. Changing the building's status does not end them — after saving, end each one from the unit matrix («End tenancy» for a tenant; a new status for an owner's unit).`
+                    : `ما زال ${liveOccupants} إشغال قائماً على وحدات هذا المبنى، ويُحصَّل الرسم منه. تغيير حالة المبنى لا يُنهيه — بعد الحفظ أنهِ كل إشغال من مصفوفة الوحدات («إنهاء الإيجار» للمستأجر، وحالة جديدة لوحدة المالك).`}
+                </Alert>
               ) : null}
 
               {/*
@@ -3037,137 +3025,127 @@ export function BuildingEditor({
                 that already has flats keeps its matrix while this one loses it.
               */}
               {isUnsurveyableShell(lifecycleStatus) ? (
-                <div className="flex items-start gap-2 rounded-xl border border-info/40 bg-info/10 p-3.5 text-xs text-info">
-                  <Info className="size-4 shrink-0 mt-0.5" aria-hidden />
-                  <div className="space-y-1">
-                    <p className="font-semibold">
-                      {en
-                        ? 'Structure classified as demolished — there are no storeys left to count, so the floor fields and the unit matrix are skipped automatically.'
-                        : 'المنشأة مصنَّفة مهدومة — لم يبقَ طوابق تُعدّ، لذا يُتخطّى عدد الطوابق ومصفوفة الوحدات تلقائياً.'}
-                    </p>
-                    {hasRecordedUnits ? (
-                      <p className="opacity-80">
-                        {en
-                          ? 'This building already has units on file, so the matrix stays available — record what became of each one there.'
-                          : 'لهذا المبنى وحدات مسجَّلة مسبقاً، لذا تبقى المصفوفة متاحة — سجِّل مصير كل وحدة فيها.'}
-                      </p>
-                    ) : (
-                      <p className="opacity-80">
-                        {en
-                          ? 'Describe what was observed in the field notes below.'
-                          : 'دوِّن ما شوهد ميدانياً في الملاحظات أدناه.'}
-                      </p>
-                    )}
-                  </div>
-                </div>
+                <Alert
+                  variant="info"
+                  title={en
+                    ? 'Structure classified as demolished — there are no storeys left to count, so the floor fields and the unit matrix are skipped automatically.'
+                    : 'المنشأة مصنَّفة مهدومة — لم يبقَ طوابق تُعدّ، لذا يُتخطّى عدد الطوابق ومصفوفة الوحدات تلقائياً.'}
+                >
+                  {hasRecordedUnits
+                    ? en
+                      ? 'This building already has units on file, so the matrix stays available — record what became of each one there.'
+                      : 'لهذا المبنى وحدات مسجَّلة مسبقاً، لذا تبقى المصفوفة متاحة — سجِّل مصير كل وحدة فيها.'
+                    : en
+                      ? 'Describe what was observed in the field notes below.'
+                      : 'دوِّن ما شوهد ميدانياً في الملاحظات أدناه.'}
+                </Alert>
               ) : null}
 
               {duplicates && duplicates.length > 0 ? (
-                <div className="space-y-3 rounded-xl border border-warning/50 bg-warning/10 p-3.5">
-                  <div className="flex items-start gap-2 text-xs font-semibold text-warning">
-                    <AlertTriangle className="size-4 shrink-0 mt-0.5" aria-hidden />
-                    <span>
+                <Alert
+                  variant="warning"
+                  title={en
+                    ? `${duplicates.length === 1 ? 'A structure is' : `${duplicates.length} structures are`} already recorded on parcel ${trimmedParcel}.`
+                    : `${duplicates.length === 1 ? 'توجد منشأة مسجَّلة مسبقاً' : `توجد ${duplicates.length} منشآت مسجَّلة مسبقاً`} على العقار ${trimmedParcel}.`}
+                >
+                  <div className="space-y-3">
+
+                    <p className="text-xs leading-relaxed text-muted-foreground">
                       {en
-                        ? `${duplicates.length === 1 ? 'A structure is' : `${duplicates.length} structures are`} already recorded on parcel ${trimmedParcel}.`
-                        : `${duplicates.length === 1 ? 'توجد منشأة مسجَّلة مسبقاً' : `توجد ${duplicates.length} منشآت مسجَّلة مسبقاً`} على العقار ${trimmedParcel}.`}
-                    </span>
-                  </div>
+                        ? 'If the building you are standing at is one of these, open it and record there — do not create it again.'
+                        : 'إن كان المبنى الذي تقف أمامه أحد هذه المنشآت فافتحه وسجِّل فيه — لا تُنشئه مرة ثانية.'}
+                    </p>
 
-                  <p className="text-xs leading-relaxed text-muted-foreground">
-                    {en
-                      ? 'If the building you are standing at is one of these, open it and record there — do not create it again.'
-                      : 'إن كان المبنى الذي تقف أمامه أحد هذه المنشآت فافتحه وسجِّل فيه — لا تُنشئه مرة ثانية.'}
-                  </p>
+                    <ul className="divide-y divide-border/30 rounded-lg border border-border/40 bg-background/50 text-xs">
+                      {rankedDuplicates.map(({ row, distance }) => (
+                        <li key={row.id} className="p-2.5 flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <DistanceBadge metres={distance} hasPin={Boolean(pin)} en={en} />
+                            <span dir="ltr" className="font-mono font-bold text-primary">
+                              {row.code}
+                            </span>
+                            {row.name ? <span className="font-medium text-foreground">{row.name}</span> : null}
+                            <span className="text-muted-foreground text-xs">
+                              ({labels.structureType[row.structureType]})
+                            </span>
+                            {row.sharesParcel && row.ownParcelNumber ? (
+                              <Badge variant="soft-info" className="text-xs">
+                                {en
+                                  ? `Also stands on this parcel — filed under ${row.ownParcelNumber}`
+                                  : `يمتد على هذا العقار — عقاره الأساسي ${row.ownParcelNumber}`}
+                              </Badge>
+                            ) : null}
+                          </div>
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                            {row.postedNumber ? (
+                              <span>{en ? 'Posted:' : 'مكتوب:'} <span dir="ltr" className="font-mono">{row.postedNumber}</span></span>
+                            ) : null}
+                            <span>{en ? `${row.unitsTotal} units` : `${row.unitsTotal} وحدة`}</span>
+                            {/*
+                              «هذه هي» — the answer the dialog had no button for.
+                              Ticking «منفصلة» used to be the only way forward, so
+                              an officer who recognised the building still had to
+                              create it again or abandon the form. Opening it
+                              clears the draft: the structure they meant exists.
+                            */}
+                            <Link
+                              href={`${base}/buildings/${encodeURIComponent(row.id)}/matrix`}
+                              onClick={cancelDraft}
+                              className={buttonVariants({ variant: 'outline', size: 'sm', className: 'h-8 px-2.5 text-xs' })}
+                            >
+                              {en ? 'This is the one — open it' : 'هذه هي المنشأة — افتحها'}
+                            </Link>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
 
-                  <ul className="divide-y divide-border/30 rounded-lg border border-border/40 bg-background/50 text-xs">
-                    {rankedDuplicates.map(({ row, distance }) => (
-                      <li key={row.id} className="p-2.5 flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <DistanceBadge metres={distance} hasPin={Boolean(pin)} en={en} />
-                          <span dir="ltr" className="font-mono font-bold text-primary">
-                            {row.code}
-                          </span>
-                          {row.name ? <span className="font-medium text-foreground">{row.name}</span> : null}
-                          <span className="text-muted-foreground text-xs">
-                            ({labels.structureType[row.structureType]})
-                          </span>
-                          {row.sharesParcel && row.ownParcelNumber ? (
-                            <Badge variant="soft-info" className="text-xs">
-                              {en
-                                ? `Also stands on this parcel — filed under ${row.ownParcelNumber}`
-                                : `يمتد على هذا العقار — عقاره الأساسي ${row.ownParcelNumber}`}
-                            </Badge>
-                          ) : null}
-                        </div>
-                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                          {row.postedNumber ? (
-                            <span>{en ? 'Posted:' : 'مكتوب:'} <span dir="ltr" className="font-mono">{row.postedNumber}</span></span>
-                          ) : null}
-                          <span>{en ? `${row.unitsTotal} units` : `${row.unitsTotal} وحدة`}</span>
-                          {/*
-                            «هذه هي» — the answer the dialog had no button for.
-                            Ticking «منفصلة» used to be the only way forward, so
-                            an officer who recognised the building still had to
-                            create it again or abandon the form. Opening it
-                            clears the draft: the structure they meant exists.
-                          */}
-                          <Link
-                            href={`${base}/buildings/${encodeURIComponent(row.id)}/matrix`}
-                            onClick={cancelDraft}
-                            className={buttonVariants({ variant: 'outline', size: 'sm', className: 'h-8 px-2.5 text-xs' })}
-                          >
-                            {en ? 'This is the one — open it' : 'هذه هي المنشأة — افتحها'}
-                          </Link>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-
-                  <div className="space-y-2 rounded-lg border border-warning/30 bg-background/60 p-2.5 text-xs text-foreground">
-                    <label className="flex cursor-pointer items-start gap-2.5">
-                      <Checkbox
-                        checked={acknowledgedDuplicates}
-                        onCheckedChange={(checked) => setAcknowledgedDuplicates(checked === true)}
-                        className="mt-0.5"
-                      />
-                      <span className="font-medium leading-relaxed">
-                        {en
-                          ? 'I have verified in the field: this is a different structure from the existing ones above.'
-                          : 'تحقَّقت ميدانياً: هذه منشأة منفصلة ومختلفة عن المنشآت المذكورة أعلاه.'}
-                      </span>
-                    </label>
-                    {/*
-                      The tick alone is not an answer any more. A sentence about
-                      what makes it separate is what a reviewer can check on the
-                      street, and it goes into the audit row with the distances.
-                    */}
-                    {acknowledgedDuplicates ? (
-                      <div className="space-y-1">
-                        <Label htmlFor="duplicate-reason" className="text-xs">
-                          {en ? 'What makes it a separate structure?' : 'ما الذي يجعلها منشأة منفصلة؟'}{' '}
-                          <span
-                            className="font-bold text-destructive"
-                            aria-label={en ? 'Required field' : 'حقل إلزامي'}
-                          >
-                            *
-                          </span>
-                        </Label>
-                        <Textarea
-                          id="duplicate-reason"
-                          value={duplicateReason}
-                          onChange={(event) => setDuplicateReason(event.target.value)}
-                          maxLength={300}
-                          className="min-h-[64px] text-sm"
-                          placeholder={
-                            en
-                              ? 'e.g. a separate house behind the building, with its own entrance'
-                              : 'مثال: بيت مستقل خلف المبنى بمدخل منفصل'
-                          }
+                    <div className="space-y-2 rounded-lg border border-warning/30 bg-background/60 p-2.5 text-xs text-foreground">
+                      <label className="flex cursor-pointer items-start gap-2.5">
+                        <Checkbox
+                          checked={acknowledgedDuplicates}
+                          onCheckedChange={(checked) => setAcknowledgedDuplicates(checked === true)}
+                          className="mt-0.5"
                         />
-                      </div>
-                    ) : null}
+                        <span className="font-medium leading-relaxed">
+                          {en
+                            ? 'I have verified in the field: this is a different structure from the existing ones above.'
+                            : 'تحقَّقت ميدانياً: هذه منشأة منفصلة ومختلفة عن المنشآت المذكورة أعلاه.'}
+                        </span>
+                      </label>
+                      {/*
+                        The tick alone is not an answer any more. A sentence about
+                        what makes it separate is what a reviewer can check on the
+                        street, and it goes into the audit row with the distances.
+                      */}
+                      {acknowledgedDuplicates ? (
+                        <div className="space-y-1">
+                          <Label htmlFor="duplicate-reason" className="text-xs">
+                            {en ? 'What makes it a separate structure?' : 'ما الذي يجعلها منشأة منفصلة؟'}{' '}
+                            <span
+                              className="font-bold text-destructive"
+                              aria-label={en ? 'Required field' : 'حقل إلزامي'}
+                            >
+                              *
+                            </span>
+                          </Label>
+                          <Textarea
+                            id="duplicate-reason"
+                            value={duplicateReason}
+                            onChange={(event) => setDuplicateReason(event.target.value)}
+                            maxLength={300}
+                            className="min-h-[64px] text-sm"
+                            placeholder={
+                              en
+                                ? 'e.g. a separate house behind the building, with its own entrance'
+                                : 'مثال: بيت مستقل خلف المبنى بمدخل منفصل'
+                            }
+                          />
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
-                </div>
+                </Alert>
               ) : null}
 
               {/*
@@ -3297,24 +3275,20 @@ export function BuildingEditor({
               />
 
               {topGap ? (
-                <div
-                  role="status"
-                  className="flex flex-col gap-2 rounded-lg border border-warning/40 bg-warning/5 p-2.5 text-xs leading-relaxed sm:flex-row sm:items-start sm:justify-between"
-                >
-                  <p className="flex items-start gap-2">
-                    <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />
-                    <span>{tFloors('emptyTop', { count: topGap.empty })}</span>
-                  </p>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="shrink-0"
-                    onClick={() => setFloorsCount(String(topGap.suggested))}
-                  >
-                    {tFloors('trimTo', { count: topGap.suggested })}
-                  </Button>
-                </div>
+                <Alert variant="warning" role="status">
+                  {tFloors('emptyTop', { count: topGap.empty })}
+                  <div className="mt-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="shrink-0"
+                      onClick={() => setFloorsCount(String(topGap.suggested))}
+                    >
+                      {tFloors('trimTo', { count: topGap.suggested })}
+                    </Button>
+                  </div>
+                </Alert>
               ) : null}
 
               {/*

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Loader2, TriangleAlert, Unlink } from 'lucide-react';
+import { Loader2, Unlink } from 'lucide-react';
 import {
   ApiRequestError,
   getLandlordUnlinkPreview,
@@ -221,18 +221,15 @@ export function LandlordUnlinkDialog({
             </ul>
 
             {preview.invoicesSinceLink > 0 ? (
-              <p className="flex items-start gap-2 rounded-md bg-warning/10 p-2.5 text-warning">
-                <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
-                <span>
-                  {en
-                    ? `${preview.invoicesSinceLink} bill(s) were issued to the owner since ${
-                        preview.linkedAt ? formatDate(preview.linkedAt) : 'the link'
-                      }. They are not changed — review them on the owner’s file.`
-                    : `صدرت ${preview.invoicesSinceLink} فاتورة للمالك منذ ${
-                        preview.linkedAt ? formatDate(preview.linkedAt) : 'الربط'
-                      }. لن تتغيّر — راجعها في ملف المالك.`}
-                </span>
-              </p>
+              <Alert variant="warning">
+                {en
+                  ? `${preview.invoicesSinceLink} bill(s) were issued to the owner since ${
+                      preview.linkedAt ? formatDate(preview.linkedAt) : 'the link'
+                    }. They are not changed — review them on the owner’s file.`
+                  : `صدرت ${preview.invoicesSinceLink} فاتورة للمالك منذ ${
+                      preview.linkedAt ? formatDate(preview.linkedAt) : 'الربط'
+                    }. لن تتغيّر — راجعها في ملف المالك.`}
+              </Alert>
             ) : null}
           </div>
         )}

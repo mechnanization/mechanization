@@ -14,7 +14,6 @@ import {
   Loader2,
   Lock,
   MapPin,
-  TriangleAlert,
   Users,
 } from 'lucide-react';
 import {
@@ -55,6 +54,7 @@ import {
   type OwnershipLinkedTenant,
   type PropertyNumberCheck,
 } from '@/lib/api-client';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -1199,12 +1199,11 @@ export function PropertyCard({
                 </div>
 
                 {agreementBlocked ? (
-                  <p className="flex items-start gap-2 rounded-md bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning">
-                    <TriangleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
+                  <Alert variant="warning">
                     {locale === 'en'
                       ? 'The owner can only be linked once this card is on its building and names the tenant’s unit. Choose them below, or the answer waits on «Owner links».'
                       : 'لا يمكن ربط المالك قبل ربط هذه البطاقة بمبناها وتحديد وحدة المستأجر. اخترهما أدناه، وإلا تبقى الإجابة بانتظارها في «روابط المالكين».'}
-                  </p>
+                  </Alert>
                 ) : null}
 
                 {token && draft.id && draft.landlordLink ? (
@@ -1517,11 +1516,11 @@ export function PropertyCard({
           </p>
         ) : null}
         {askWhy && isOwnerCard && linkedTenants && linkedTenants.length > 0 ? (
-          <div role="alert" className="space-y-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">
-            <p className="flex items-start gap-2 font-medium text-warning">
-              <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
-              {locale === 'en' ? 'Undo the tenant’s link first' : 'ألغِ ربط المستأجر أولاً'}
-            </p>
+          <Alert
+            variant="warning"
+            live="alert"
+            title={locale === 'en' ? 'Undo the tenant’s link first' : 'ألغِ ربط المستأجر أولاً'}
+          >
             <p className="text-xs leading-relaxed text-foreground">
               {locale === 'en'
                 ? 'This person is recorded as the landlord on a tenant’s card. If the ownership was a mistake, undo that link from the tenant’s card («Unlink») first. If they sold it, end the ownership instead of deleting.'
@@ -1544,7 +1543,7 @@ export function PropertyCard({
                 ))}
               </ul>
             ) : null}
-          </div>
+          </Alert>
         ) : null}
         {askWhy && ownerEndable ? (
           <Button
@@ -1952,19 +1951,18 @@ function PropertyNumberField({
       ) : null}
 
       {unknown ? (
-        <div className="rounded-md border border-warning/30 bg-warning/5 p-2 text-xs text-warning space-y-1">
-          <p className="font-medium flex items-center gap-1.5">
-            <TriangleAlert className="size-3.5 shrink-0" aria-hidden />
-            {locale === 'en'
-              ? 'This parcel number is not currently in the municipality cadastre.'
-              : 'هذا الرقم غير مدرج في السجل العقاري للبلدية حالياً.'}
-          </p>
+        <Alert
+          variant="warning"
+          title={locale === 'en'
+            ? 'This parcel number is not currently in the municipality cadastre.'
+            : 'هذا الرقم غير مدرج في السجل العقاري للبلدية حالياً.'}
+        >
           <p className="text-xs text-muted-foreground leading-normal">
             {locale === 'en'
               ? 'You can save this record now and verify or edit the number during review after syncing.'
               : 'يمكنك حفظ السجل الآن وتصحيح الرقم لاحقاً عند مراجعة الطلب بعد المزامنة.'}
           </p>
-        </div>
+        </Alert>
       ) : null}
 
       {confirmed ? (

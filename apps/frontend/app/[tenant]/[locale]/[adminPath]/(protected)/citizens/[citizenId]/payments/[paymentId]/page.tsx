@@ -6,7 +6,6 @@ import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { useQueryClient } from '@tanstack/react-query';
 import {
-  AlertTriangle,
   Ban,
   Banknote,
   CalendarDays,
@@ -827,14 +826,11 @@ export default function SettleCashPage({
                   </div>
                 ) : !finance ? (
                   settingsQuery.loading ? null : (
-                    <p role="alert" className="flex items-start gap-2 rounded-lg bg-warning/10 px-3 py-2.5 text-sm text-warning">
-                      <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
-                      <span>
-                        {en
-                          ? `No official ${foreignCurrency} rate is set, so this counter cannot take ${foreignCurrency}. Only the system administrator sets it, in Settings.`
-                          : 'لا يوجد سعر صرف معتمد، فلا يمكن قبض العملة الأجنبية هنا. يحدّده مدير النظام وحده من الإعدادات.'}
-                      </span>
-                    </p>
+                    <Alert variant="warning" live="alert">
+                      {en
+                        ? `No official ${foreignCurrency} rate is set, so this counter cannot take ${foreignCurrency}. Only the system administrator sets it, in Settings.`
+                        : 'لا يوجد سعر صرف معتمد، فلا يمكن قبض العملة الأجنبية هنا. يحدّده مدير النظام وحده من الإعدادات.'}
+                    </Alert>
                   )
                 ) : (
                   <Field

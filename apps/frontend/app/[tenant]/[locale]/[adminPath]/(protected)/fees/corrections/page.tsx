@@ -137,7 +137,7 @@ export default function CorrectionBillsPage({
         title={en ? 'Bills affected by corrections' : 'فواتير تأثّرت بتصحيحات'}
         actions={
           <Button variant="outline" size="sm" onClick={() => listQuery.refetch()} disabled={listQuery.fetching}>
-            <RefreshCw className={cn('size-4 rtl:ml-1.5 ltr:mr-1.5', listQuery.fetching && 'animate-spin')} aria-hidden />
+            <RefreshCw className={cn('size-4', listQuery.fetching && 'animate-spin')} aria-hidden />
             {en ? 'Refresh' : 'تحديث'}
           </Button>
         }

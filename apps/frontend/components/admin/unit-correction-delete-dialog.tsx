@@ -12,7 +12,6 @@ import {
   RefreshCw,
   ShieldAlert,
   Trash2,
-  type LucideIcon,
 } from 'lucide-react';
 import {
   getLabels,
@@ -399,9 +398,9 @@ function PreviewBody({
       </p>
       <div className="space-y-5">
         {notice ? (
-          <Callout tone="info" icon={RefreshCw}>
+          <Alert variant="info" icon={RefreshCw}>
             {notice}
-          </Callout>
+          </Alert>
         ) : null}
 
         {loading && !preview ? <SkeletonText lines={6} /> : null}
@@ -434,18 +433,18 @@ function PreviewBody({
                 </ul>
               </Alert>
             ) : (
-              <Callout tone="warning" icon={ShieldAlert}>
+              <Alert variant="warning" icon={ShieldAlert}>
                 {en
                   ? 'The ordinary delete refuses this unit because records hang off it. This removes it anyway, all at once: either everything below happens, or nothing does. Every row removed is copied into the audit trail.'
                   : 'الحذف العادي يرفض هذه الوحدة لأن عليها سجلات. هذا الإجراء يحذفها رغم ذلك دفعة واحدة: إمّا أن يتم كل ما يلي أو لا يتم شيء، وتُحفظ نسخة كاملة من كل ما يُحذف في سجل التعديلات.'}
-              </Callout>
+              </Alert>
             )}
 
             <Stats preview={preview} en={en} />
 
             {preview.mergesEnded.length > 0 ? (
-              <Callout
-                tone="warning"
+              <Alert
+                variant="warning"
                 icon={GitMerge}
                 title={en ? 'A merge can no longer be undone' : 'لن يعود التراجع عن الدمج ممكناً'}
               >
@@ -463,15 +462,15 @@ function PreviewBody({
                     ? 'This delete changes that file, and a merge is undone only while neither file has changed since. If the merge was wrong, undo it first.'
                     : 'هذا الحذف يغيّر ذلك الملف، والتراجع عن الدمج لا يُقبل بعد أي تغيير على أحد الملفين. إن كان الدمج خطأً فتراجع عنه أولاً.'}
                 </p>
-              </Callout>
+              </Alert>
             ) : null}
 
             {preview.nothingRecorded ? (
-              <Callout tone="success" icon={CheckCircle2}>
+              <Alert variant="success" icon={CheckCircle2}>
                 {en
                   ? 'Nothing is recorded against this unit. Only the unit itself is removed.'
                   : 'لا شيء مسجَّل على هذه الوحدة، فتُحذف الوحدة وحدها.'}
-              </Callout>
+              </Alert>
             ) : null}
 
             {preview.removed.occupancies.length +
@@ -862,34 +861,6 @@ function Effect({ children }: { children: React.ReactNode }): React.JSX.Element 
       <Info className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
       <span>{children}</span>
     </li>
-  );
-}
-
-const CALLOUT_TONES = {
-  info: 'border-info/30 bg-info/10 text-foreground [&_svg]:text-info',
-  warning: 'border-warning/40 bg-warning/10 text-foreground [&_svg]:text-warning',
-  success: 'border-success/30 bg-success/10 text-foreground [&_svg]:text-success',
-} as const;
-
-function Callout({
-  tone,
-  icon: Icon,
-  title,
-  children,
-}: {
-  tone: keyof typeof CALLOUT_TONES;
-  icon: LucideIcon;
-  title?: string;
-  children: React.ReactNode;
-}): React.JSX.Element {
-  return (
-    <div className={cn('flex gap-2.5 rounded-lg border p-3 text-sm', CALLOUT_TONES[tone])}>
-      <Icon className="mt-0.5 size-4 shrink-0" aria-hidden />
-      <div className="min-w-0 space-y-1">
-        {title ? <p className="font-semibold">{title}</p> : null}
-        <div>{children}</div>
-      </div>
-    </div>
   );
 }
 
