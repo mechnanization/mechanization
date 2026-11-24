@@ -26,6 +26,7 @@ import {
 } from '@/lib/treasury-movements';
 import { applyUrlPatch, toSearch, type UrlValues } from '@/lib/url-state';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { usePagerLabels } from '@/lib/use-pager-labels';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { param, useTabSearch, useUrlPagination, useUrlState } from '@/lib/use-url-state';
 import { ExpenseQueue } from '@/components/admin/finance/expense-queue';
@@ -174,6 +175,7 @@ export default function TransactionsPage({
     errorMessage: t('loadError'),
   });
 
+  const pagerLabels = usePagerLabels();
   const list = useStaffQuery({
     queryKey: [
       'treasury',
@@ -496,7 +498,8 @@ export default function TransactionsPage({
                     pageSize={pagination.pageSize}
                     total={list.data.total}
                     onPageChange={(page) => setPagination({ ...pagination, pageIndex: page })}
-                    locale={locale}
+                    labels={pagerLabels}
+                    disabled={list.fetching}
                     label={t('list.pages')}
                     scrollTarget={frameRef}
                   />

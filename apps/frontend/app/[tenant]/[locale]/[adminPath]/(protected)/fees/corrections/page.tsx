@@ -1,7 +1,6 @@
 'use client';
 
 import { use, useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { FileWarning, RefreshCw } from 'lucide-react';
 import {
   ApiRequestError,
@@ -11,8 +10,9 @@ import {
   reviewBillBasis,
   type CorrectionAffectedBill,
 } from '@/lib/api-client';
-import { loadSession } from '@/lib/session';
+import { useStaffSession } from '@/lib/use-staff-session';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { usePagerLabels } from '@/lib/use-pager-labels';
 import { param, useUrlState } from '@/lib/use-url-state';
 import { formatLbp } from '@/lib/currency';
 import { BillReviewDialog, CorrectionBillCard } from '@/components/admin/correction-bills';
@@ -55,12 +55,11 @@ export default function CorrectionBillsPage({
 }) {
   const { tenant, locale, adminPath } = use(params);
   const en = locale === 'en';
-  const router = useRouter();
   const base = `/${tenant}/${locale}/${adminPath}`;
   const toast = useToast();
 
-  const [token, setToken] = useState<string | null>(null);
-  const [role, setRole] = useState<string | undefined>();
+  const { token, user: staffUser } = useStaffSession(tenant, base);
+  const role = staffUser?.role || undefined;
   const [{ status: show, page }, setUrlState] = useUrlState(CORRECTIONS_URL_STATE);
   const [reviewing, setReviewing] = useState<CorrectionAffectedBill | null>(null);
   const [saving, setSaving] = useState(false);
@@ -70,19 +69,10 @@ export default function CorrectionBillsPage({
   /** The top of the list, brought back into view when the page changes. */
   const listTop = useRef<HTMLUListElement>(null);
 
-  useEffect(() => {
-    const session = loadSession(tenant);
-    if (!session || session.user.kind !== 'STAFF') {
-      router.replace(`${base}/login`);
-      return;
-    }
-    setToken(session.accessToken);
-    setRole(session.user.role);
-  }, [tenant, base, router]);
-
   // AUDITOR reads the list; recording a decision is the accountant's.
   const canReview = role === 'SUPER_ADMIN' || role === 'ACCOUNTANT';
 
+  const pagerLabels = usePagerLabels();
   const listQuery = useStaffQuery({
     queryKey: ['correction-affected-bills', tenant, show, page],
     queryFn: (accessToken, signal) =>
@@ -232,7 +222,8 @@ export default function CorrectionBillsPage({
             // A step off the live URL, not the render's value, which can trail a
             // quick second click by one write.
             onPageChange={(target) => setUrlState((current) => ({ page: current.page + (target - page) }))}
-            locale={locale}
+            labels={pagerLabels}
+            disabled={listQuery.fetching}
             scrollTarget={listTop}
           />
         </>

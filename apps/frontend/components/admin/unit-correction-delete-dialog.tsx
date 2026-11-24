@@ -37,7 +37,7 @@ import {
   unitCorrectionRefusal,
 } from '@/lib/api-client';
 import { formatDate } from '@/lib/dates';
-import { loadSession } from '@/lib/session';
+import { useStaffRole } from '@/lib/use-staff-session';
 import { cn } from '@/lib/utils';
 
 /**
@@ -944,16 +944,6 @@ function resultSummary(result: UnitCorrectionResult, en: boolean): string {
 }
 
 // ───────────────────────────────  Trigger  ───────────────────────────────
-
-/** The signed-in staff member's role, read from the session on the client. */
-export function useStaffRole(tenant: string): string | null {
-  const [role, setRole] = React.useState<string | null>(null);
-  React.useEffect(() => {
-    const session = loadSession(tenant);
-    setRole(session?.user.kind === 'STAFF' ? (session.user.role ?? null) : null);
-  }, [tenant]);
-  return role;
-}
 
 /**
  * «حذف تصحيحي…» beside a unit, and the dialog behind it. Renders nothing

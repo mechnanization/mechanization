@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useEffect, useState } from 'react';
+import { use, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -13,7 +13,7 @@ import {
   UsersRound,
   type LucideIcon,
 } from 'lucide-react';
-import { loadSession } from '@/lib/session';
+import { useStaffSession } from '@/lib/use-staff-session';
 import { param, useUrlState } from '@/lib/use-url-state';
 import { settingsCopy, type SettingsCopy } from '@/lib/settings-i18n';
 import { PageHeader } from '@/components/ui/page-header';
@@ -74,21 +74,15 @@ export default function SettingsPage({
   const base = `/${tenant}/${locale}/${adminPath}`;
   const copy = settingsCopy(locale);
 
-  const [token, setToken] = useState<string | null>(null);
+  const staff = useStaffSession(tenant, base);
+  // SUPER_ADMIN's alone: anyone else is sent to the dashboard and given no token meanwhile.
+  const isAdmin = staff.user === null ? null : staff.user.role === 'SUPER_ADMIN';
+  const token = isAdmin ? staff.token : null;
   const [{ tab: active }, setUrl] = useUrlState(URL_STATE);
 
   useEffect(() => {
-    const session = loadSession(tenant);
-    if (!session || session.user.kind !== 'STAFF') {
-      router.replace(`${base}/login`);
-      return;
-    }
-    if (session.user.role !== 'SUPER_ADMIN') {
-      router.replace(`${base}/dashboard`);
-      return;
-    }
-    setToken(session.accessToken);
-  }, [tenant, base, router]);
+    if (isAdmin === false) router.replace(`${base}/dashboard`);
+  }, [isAdmin, base, router]);
 
   if (!token) {
     return (

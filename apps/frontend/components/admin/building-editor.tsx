@@ -80,7 +80,8 @@ import { scrollElementToTop } from '@/lib/scroll-to-top';
 import { offlineStorageAvailable } from '@/lib/offline-db';
 import { queueBuilding } from '@/lib/offline-sync';
 import { heldInDoubt, heldKey, keyIsSpent, markInDoubt, outcomeInDoubt, spendKey } from '@/lib/request-id';
-import { loadSession, clearSession } from '@/lib/session';
+import { clearSession } from '@/lib/session';
+import { useStaffSession } from '@/lib/use-staff-session';
 import { CENSUS_WRITE_ROLES, hasRole } from '@/lib/staff-roles';
 import { systemTypeOf, typesToOffer, useBuildingTypes } from '@/lib/building-types';
 import { useUnitTypes } from '@/lib/unit-types';
@@ -405,8 +406,8 @@ export function BuildingEditor({
   const tUnitTypes = useTranslations('unitTypes');
   const editing = Boolean(buildingId);
 
-  const session = useMemo(() => loadSession(tenant), [tenant]);
-  const token = session?.accessToken;
+  const { token: sessionToken, user: staffUser } = useStaffSession(tenant, base);
+  const token = sessionToken ?? undefined;
 
   /*
     «أنواع المباني» (0106): the active list, kept on the device for a phone with no
@@ -435,10 +436,10 @@ export function BuildingEditor({
     The server is the enforcement (`CENSUS_WRITE_ROLES` on every write).
   */
   useEffect(() => {
-    if (session?.user.kind === 'STAFF' && !hasRole(CENSUS_WRITE_ROLES, session.user.role)) {
+    if (staffUser && !hasRole(CENSUS_WRITE_ROLES, staffUser.role)) {
       router.replace(`${base}/buildings`);
     }
-  }, [session, base, router]);
+  }, [staffUser, base, router]);
 
   // Wizard state
   const [step, setStep] = useState<0 | 1 | 2>(initialStep);
@@ -1292,7 +1293,7 @@ export function BuildingEditor({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [trimmedParcel, tenant, token, en, editing]);
+  }, [trimmedParcel, tenant, token, en, editing, tEditor]);
 
   // Code preview derivation
   const codePreview = useMemo(

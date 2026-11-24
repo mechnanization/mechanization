@@ -139,6 +139,13 @@
     "invoicesSummary": "الفواتير والمطالبات",
     "askAtMunicipality": "راجع البلدية مع بطاقة هويتك، وسيستخرجه لك الموظف."
   },
+  "pager": {
+    "pages": "الصفحات",
+    "previous": "الصفحة السابقة",
+    "next": "الصفحة التالية",
+    "position": "صفحة {current} من {total}",
+    "range": "{first}–{last} من {total}"
+  },
   "table": {
     "search": "بحث…",
     "clearSearch": "مسح البحث",

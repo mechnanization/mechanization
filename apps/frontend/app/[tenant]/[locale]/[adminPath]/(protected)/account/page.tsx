@@ -1,9 +1,8 @@
 'use client';
 
-import { use, useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { use } from 'react';
 import { ShieldCheck, User } from 'lucide-react';
-import { loadSession, type Session } from '@/lib/session';
+import { useStaffSession } from '@/lib/use-staff-session';
 import { settingsCopy } from '@/lib/settings-i18n';
 import { PageHeader } from '@/components/ui/page-header';
 import { SecuritySection } from '@/components/admin/settings/security-section';
@@ -23,23 +22,13 @@ export default function AccountSecurityPage({
   params: Promise<{ tenant: string; locale: string; adminPath: string }>;
 }) {
   const { tenant, locale, adminPath } = use(params);
-  const router = useRouter();
   const base = `/${tenant}/${locale}/${adminPath}`;
   const copy = settingsCopy(locale);
   const labels = getLabels(locale);
 
-  const [session, setSession] = useState<Session | null>(null);
+  const { token, user } = useStaffSession(tenant, base);
 
-  useEffect(() => {
-    const loaded = loadSession(tenant);
-    if (!loaded || loaded.user.kind !== 'STAFF') {
-      router.replace(`${base}/login`);
-      return;
-    }
-    setSession(loaded);
-  }, [tenant, base, router]);
-
-  if (!session) {
+  if (!user || !token) {
     return (
       <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
         <div className="flex items-center gap-3">
@@ -57,7 +46,7 @@ export default function AccountSecurityPage({
     );
   }
 
-  const role = session.user.role;
+  const role = user.role;
   const roleLabel = role ? labels.staffRole?.[role as never] ?? role : '';
 
   return (
@@ -76,7 +65,7 @@ export default function AccountSecurityPage({
           <div className="min-w-0 space-y-1">
             <div className="flex items-center gap-2">
               <h2 className="truncate text-base font-semibold text-foreground">
-                {session.user.name || (locale === 'en' ? 'Staff Member' : 'موظف البلدية')}
+                {user.name || (locale === 'en' ? 'Staff Member' : 'موظف البلدية')}
               </h2>
               {role ? (
                 <Badge variant="secondary" className="rounded-md font-medium text-xs">
@@ -86,7 +75,7 @@ export default function AccountSecurityPage({
             </div>
             <p className="text-xs text-muted-foreground">
               {locale === 'en' ? 'Signed in as' : 'مسجّل الدخول كـ'}{' '}
-              <span className="font-mono font-medium text-foreground">{session.user.id}</span>
+              <span className="font-mono font-medium text-foreground">{user.id}</span>
             </p>
           </div>
         </div>
@@ -95,7 +84,7 @@ export default function AccountSecurityPage({
       <div className="min-w-0">
         <SecuritySection
           tenant={tenant}
-          token={session.accessToken}
+          token={token}
           locale={locale}
           copy={copy}
           base={base}

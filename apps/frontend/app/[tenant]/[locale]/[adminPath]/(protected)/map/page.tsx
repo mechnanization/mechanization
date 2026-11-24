@@ -11,8 +11,9 @@ import {
   logApiError,
 
 } from '@/lib/api-client';
-import type { RegisteredParcel, Session } from '@/lib/api-client';
-import { clearSession, loadSession } from '@/lib/session';
+import type { RegisteredParcel } from '@/lib/api-client';
+import { clearSession } from '@/lib/session';
+import { useStaffSession } from '@/lib/use-staff-session';
 import { Button } from '@/components/ui/button';
 
 /**
@@ -49,7 +50,7 @@ export default function FullscreenMapPage({
   const router = useRouter();
   const base = `/${tenant}/${locale}/${adminPath}`;
 
-  const [session, setSession] = useState<Session | null>(null);
+  const { token } = useStaffSession(tenant, base);
   const [parcels, setParcels] = useState<RegisteredParcel[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -82,17 +83,6 @@ export default function FullscreenMapPage({
 
   /** Bumped after a cadastre import in settings would change the layers. */
   const [refreshToken] = useState(0);
-
-  const token = session?.accessToken ?? null;
-
-  useEffect(() => {
-    const existing = loadSession(tenant);
-    if (!existing || existing.user.kind !== 'STAFF') {
-      router.replace(`${base}/login`);
-      return;
-    }
-    setSession(existing);
-  }, [tenant, base, router]);
 
   useEffect(() => {
     if (!token) return;

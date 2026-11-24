@@ -4,7 +4,6 @@ import { use, useCallback, useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTranslations } from 'next-intl';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import type { ColumnDef } from '@tanstack/react-table';
 import {
   Archive,
@@ -41,7 +40,7 @@ import { ShellLink } from '@/components/admin/shell-nav';
 import { OfflineQueuePanel } from '@/components/admin/offline-queue';
 import { PageHeader } from '@/components/ui/page-header';
 import type { CitizenListItem } from '@/lib/api-client';
-import { loadSession } from '@/lib/session';
+import { useStaffSession } from '@/lib/use-staff-session';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useTabSearch, useUrlPagination } from '@/lib/use-url-state';
 import { CellTag } from '@/components/ui/cell-tag';
@@ -83,11 +82,10 @@ export default function CitizensPage({
   params: Promise<{ tenant: string; locale: string; adminPath: string }>;
 }) {
   const { tenant, locale, adminPath } = use(params);
-  const router = useRouter();
   const base = `/${tenant}/${locale}/${adminPath}`;
 
-  const [token, setToken] = useState<string | null>(null);
-  const [role, setRole] = useState<string | undefined>();
+  const { token, user: staffUser } = useStaffSession(tenant, base);
+  const role = staffUser?.role || undefined;
   /**
    * The page and the search are request parameters now.
    *
@@ -150,20 +148,12 @@ export default function CitizensPage({
   const canSendReference = hasRole(REFERENCE_SEND_ROLES, role);
 
   useEffect(() => {
-    const session = loadSession(tenant);
-    if (!session || session.user.kind !== 'STAFF') {
-      router.replace(`${base}/login`);
-      return;
-    }
-    setToken(session.accessToken);
-    setRole(session.user.role);
-
     // Public endpoint, and non-blocking: the registry renders fine without it,
     // the WhatsApp message just falls back to a generic «البلدية».
     getTenantConfig(tenant)
       .then((config) => setMunicipalityName(config.nameAr || config.name))
       .catch(() => setMunicipalityName(tenant));
-  }, [tenant, base, router]);
+  }, [tenant]);
 
   /*
     Every parameter that changes the answer is in the key, and nothing else is.

@@ -13,11 +13,11 @@ import {
   getZones,
   logApiError,
   updateZone,
-  type Session,
   type ZoneDetail,
   type ZoneSummary,
 } from '@/lib/api-client';
-import { clearSession, loadSession } from '@/lib/session';
+import { clearSession } from '@/lib/session';
+import { useStaffSession } from '@/lib/use-staff-session';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { ZoneModal, type ZoneFormValues } from '@/components/admin/zone-modal';
@@ -56,7 +56,7 @@ export default function ZonesPage({
   const router = useRouter();
   const base = `/${tenant}/${locale}/${adminPath}`;
 
-  const [session, setSession] = useState<Session | null>(null);
+  const { token, user: staffUser } = useStaffSession(tenant, base);
   const [zones, setZones] = useState<ZoneSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -75,18 +75,8 @@ export default function ZonesPage({
   const [pendingDelete, setPendingDelete] = useState<ZoneSummary | null>(null);
   const toast = useToast();
 
-  const token = session?.accessToken ?? null;
-  const canEdit = session?.user.role === 'SUPER_ADMIN';
+  const canEdit = staffUser?.role === 'SUPER_ADMIN';
   const editorOpen = drafting || editing !== null;
-
-  useEffect(() => {
-    const existing = loadSession(tenant);
-    if (!existing || existing.user.kind !== 'STAFF') {
-      router.replace(`${base}/login`);
-      return;
-    }
-    setSession(existing);
-  }, [tenant, base, router]);
 
   const handleApiError = useCallback(
     (caught: unknown, fallback: string): string => {

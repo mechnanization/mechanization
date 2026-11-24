@@ -46,7 +46,8 @@ import type {
   CitizenProfilePayment,
   MunicipalitySettings,
 } from '@/lib/api-client';
-import { clearSession, loadSession } from '@/lib/session';
+import { clearSession } from '@/lib/session';
+import { useStaffSession } from '@/lib/use-staff-session';
 import { useToast } from '@/components/ui/toast';
 import { flagFieldLabel } from '@/lib/field-flags';
 import { findLocatedProperty, mapHref } from '@/lib/map-link';
@@ -447,8 +448,8 @@ export default function CitizenProfilePage({
 
   const [citizen, setCitizen] = useState<CitizenProfile | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [token, setToken] = useState<string | null>(null);
-  const [role, setRole] = useState<string | undefined>();
+  const { token, user: staffUser } = useStaffSession(tenant, base);
+  const role = staffUser?.role || undefined;
   /** «استكمال البيانات الناقصة» — always on the newest registration. */
   const [completing, setCompleting] = useState(false);
   const toast = useToast();
@@ -498,13 +499,7 @@ export default function CitizenProfilePage({
   }, [citizen, reconcileBulk]);
 
   useEffect(() => {
-    const session = loadSession(tenant);
-    if (!session || session.user.kind !== 'STAFF') {
-      router.replace(`${base}/login`);
-      return;
-    }
-    setToken(session.accessToken);
-    setRole(session.user.role);
+    if (!token) return;
 
     // Public endpoint, and non-blocking: a failed config fetch must not stop
     // the profile rendering. It only supplies the name printed on a receipt,
@@ -515,11 +510,11 @@ export default function CitizenProfilePage({
 
     // Same non-blocking treatment as the config: a receipt without the office
     // numbers is still a valid receipt.
-    getMunicipalitySettings(tenant, session.accessToken)
+    getMunicipalitySettings(tenant, token)
       .then(setSettings)
       .catch(() => setSettings(null));
 
-    getCitizenProfile(tenant, session.accessToken, citizenId)
+    getCitizenProfile(tenant, token, citizenId)
       .then(setCitizen)
       .catch((caught: unknown) => {
         logApiError(caught);
@@ -534,7 +529,7 @@ export default function CitizenProfilePage({
             : (locale === 'en' ? 'Failed to load citizen profile.' : 'تعذّر تحميل ملف المواطن.'),
         );
       });
-  }, [tenant, base, citizenId, router, locale]);
+  }, [token, tenant, base, citizenId, router, locale]);
 
   if (error) {
     return (

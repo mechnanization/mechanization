@@ -42,7 +42,8 @@ import {
 import { buildingTypeName, type InspectorProfileResponse } from '@mechanization/shared-schemas';
 import { useBuildingTypes } from '@/lib/building-types';
 import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
-import { clearSession, loadSession } from '@/lib/session';
+import { clearSession } from '@/lib/session';
+import { useStaffSession } from '@/lib/use-staff-session';
 import { formatLbp } from '@/lib/currency';
 import { formatMonth } from '@/lib/dates';
 import { Alert } from '@/components/ui/alert';
@@ -202,8 +203,8 @@ export default function StaffDashboard({
   const tDashboard = useTranslations('dashboard');
   const tCommon = useTranslations('common');
 
-  const [token, setToken] = useState<string | null>(null);
-  const [role, setRole] = useState<string | undefined>();
+  const { token, user: staffUser } = useStaffSession(tenant, base);
+  const role = staffUser?.role || undefined;
   const [data, setData] = useState<DashboardAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -214,16 +215,6 @@ export default function StaffDashboard({
 
   const [inspectorData, setInspectorData] = useState<InspectorProfileResponse | null>(null);
   const [loadingInspector, setLoadingInspector] = useState(false);
-
-  useEffect(() => {
-    const session = loadSession(tenant);
-    if (!session || session.user.kind !== 'STAFF') {
-      router.replace(`${base}/login`);
-      return;
-    }
-    setToken(session.accessToken);
-    setRole(session.user.role);
-  }, [tenant, base, router]);
 
   useEffect(() => {
     if (role === 'FIELD_INSPECTOR' && token) {
