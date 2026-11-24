@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { TriangleAlert } from 'lucide-react';
+import { normalizeArabic } from '@mechanization/shared-schemas';
 import {
   Dialog,
   DialogContent,
@@ -52,7 +53,11 @@ export function ConfirmDialog({
   busyLabel?: string;
   /** Red confirm button and red icon. Off for a merely irreversible action. */
   destructive?: boolean;
-  /** When set, Confirm stays disabled until this exact text is typed. */
+  /**
+   * When set, Confirm stays disabled until this text is typed. Compared through
+   * `normalizeArabic` on both sides (DES-3), so أ/إ/آ, ة/ه, ى/ي, the marks, the
+   * case and the spaces around it do not make a right answer wrong.
+   */
   requireText?: string;
   requireTextHint?: string;
   /**
@@ -83,10 +88,11 @@ export function ConfirmDialog({
   }, [open]);
 
   const entered = typed.trim();
-  const blocked = confirmDisabled || (Boolean(requireText) && entered !== requireText);
+  const typedRight = !requireText || normalizeArabic(entered) === normalizeArabic(requireText);
+  const blocked = confirmDisabled || !typedRight;
   // Only a *wrong* entry is an error. An empty box is someone who has not
   // typed yet, and colouring it red reads as a rejection of nothing.
-  const mismatch = Boolean(requireText) && entered.length > 0 && entered !== requireText;
+  const mismatch = Boolean(requireText) && entered.length > 0 && !typedRight;
 
   const run = async (): Promise<void> => {
     if (busy || blocked) return;

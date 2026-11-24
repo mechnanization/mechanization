@@ -1,3 +1,4 @@
+import { PROPERTY_TYPE } from '@mechanization/shared-schemas';
 import {
   cachedRequest,
 } from './request-cache';
@@ -330,7 +331,7 @@ export function getTenantConfig(tenant: string): Promise<PublicTenantConfig> {
           slug: tenant,
           name: tenant,
           nameAr: tenant,
-          enabledPropertyTypes: ['BUILDING', 'HOUSE', 'LAND', 'TENT'],
+          enabledPropertyTypes: [...PROPERTY_TYPE],
           requiredDocuments: [],
           branding: {},
         };

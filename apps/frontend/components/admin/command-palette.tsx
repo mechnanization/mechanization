@@ -3,7 +3,8 @@
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { CornerDownLeft, Loader2, Search, User, X } from 'lucide-react';
-import { listCitizens, type CitizenListItem } from '@/lib/api-client';
+import type { CitizenListItem } from '@/lib/api-client';
+import { useCitizenSearch } from '@/lib/use-citizen-search';
 import { localizedLabel, visibleGroups, type NavItem } from '@/components/admin/nav';
 import { cn } from '@/lib/utils';
 
@@ -29,8 +30,6 @@ export function CommandPalette({
 }): React.JSX.Element | null {
   const router = useRouter();
   const [query, setQuery] = React.useState('');
-  const [citizens, setCitizens] = React.useState<CitizenListItem[]>([]);
-  const [searching, setSearching] = React.useState(false);
   const [highlight, setHighlight] = React.useState(0);
   const inputRef = React.useRef<HTMLInputElement>(null);
 
@@ -50,50 +49,27 @@ export function CommandPalette({
   React.useEffect(() => {
     if (open) {
       setQuery('');
-      setCitizens([]);
       setHighlight(0);
     }
   }, [open]);
 
   /*
    * Citizen lookup is debounced, unlike the register's table search, which
-   * commits on Enter.
-   *
-   * The table's rule is right there: it replaces a full page of results under
-   * a reader who is mid-scan. Here there is nothing to disturb — the list is
-   * empty until the query returns — and requiring Enter would mean the palette
-   * shows only section matches until asked twice, which reads as it not
+   * commits on Enter: it replaces a full page of results under a reader who is
+   * mid-scan, and here there is nothing to disturb — the list is empty until
+   * the query returns, and requiring Enter would read as the palette not
    * finding people at all.
+   *
+   * It is the register's one search (`useCitizenSearch`), asked for the files
+   * a navigation may open and a picker may not: archived ones, and ones
+   * «دمج ملفين» folded into another. A failed lookup is left unsaid — the
+   * section matches are a usable palette, and a toast would fire on every
+   * dropped keystroke of a bad connection.
    */
-  React.useEffect(() => {
-    const term = query.trim();
-    if (!token || term.length < 2) {
-      setCitizens([]);
-      setSearching(false);
-      return;
-    }
-    setSearching(true);
-    let cancelled = false;
-    const timer = setTimeout(() => {
-      listCitizens(tenant, token, { search: term, limit: 6 })
-        .then((result) => {
-          if (!cancelled) setCitizens(result.items);
-        })
-        // Silent: a failed lookup leaves the section matches, which is a
-        // usable palette. A toast here would fire on every dropped keystroke
-        // of a bad connection.
-        .catch(() => {
-          if (!cancelled) setCitizens([]);
-        })
-        .finally(() => {
-          if (!cancelled) setSearching(false);
-        });
-    }, 250);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [query, tenant, token]);
+  const { results: citizens, searching } = useCitizenSearch(tenant, token ?? null, query, open, {
+    includeArchived: true,
+    includeMerged: true,
+  });
 
   type Result =
     | { kind: 'section'; item: NavItem }

@@ -70,7 +70,12 @@ export function scheduleCitizenSearch(
   term: string,
   search: CitizenSearchFetch,
   update: (patch: Partial<CitizenSearchState>) => void,
-  options: { delayMs?: number; onError?: (caught: unknown) => void; includeArchived?: boolean } = {},
+  options: {
+    delayMs?: number;
+    onError?: (caught: unknown) => void;
+    includeArchived?: boolean;
+    includeMerged?: boolean;
+  } = {},
 ): () => void {
   const trimmed = term.trim();
   if (trimmed.length < CITIZEN_SEARCH_MIN_LENGTH) {
@@ -88,10 +93,12 @@ export function scheduleCitizenSearch(
           /*
             A file «دمج ملفين» folded into another is charged on the file that
             stays, and an archived one is charged on nothing: both are left out,
-            the archived one unless asked for. The server has no filter for
-            either, so a page can come back short.
+            each unless asked for (a navigation search asks for both). The
+            server has no filter for either, so a page can come back short.
           */
-          results: page.items.filter((row) => (options.includeArchived || row.isActive) && !row.mergedIntoId),
+          results: page.items.filter(
+            (row) => (options.includeArchived || row.isActive) && (options.includeMerged || !row.mergedIntoId),
+          ),
           searching: false,
           failed: false,
           error: null,
@@ -142,6 +149,12 @@ export interface CitizenSearchOptions {
    * the answer is to restore it, not to file them twice.
    */
   includeArchived?: boolean;
+  /**
+   * Offer the files «دمج ملفين» folded into another too. Never for an act that
+   * names a person; for a navigation search (the command palette), where the
+   * merged file is still a page worth opening.
+   */
+  includeMerged?: boolean;
   /** Files this screen may not offer: the seller of a sale, the file being merged into. */
   exclude?: readonly string[];
 }
@@ -165,7 +178,7 @@ export function useCitizenSearch(
   const [state, setState] = useState<CitizenSearchState>(IDLE_CITIZEN_SEARCH);
   /** Bumped by `retry`, so the effect below schedules the same term again. */
   const [attempt, setAttempt] = useState(0);
-  const { includeArchived = false, exclude } = options;
+  const { includeArchived = false, includeMerged = false, exclude } = options;
 
   useEffect(() => {
     if (!enabled || !token) {
@@ -176,9 +189,9 @@ export function useCitizenSearch(
       term,
       (search, signal) => listCitizens(tenant, token, { search, limit: CITIZEN_PICKER_LIMIT }, signal),
       (patch) => setState((current) => ({ ...current, ...patch })),
-      { onError: logApiError, includeArchived },
+      { onError: logApiError, includeArchived, includeMerged },
     );
-  }, [enabled, tenant, token, term, attempt, includeArchived]);
+  }, [enabled, tenant, token, term, attempt, includeArchived, includeMerged]);
 
   const retry = useCallback(() => setAttempt((current) => current + 1), []);
   // Applied to the answer, not the request, so a caller passing a fresh array each render asks nothing again.
