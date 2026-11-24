@@ -11,7 +11,7 @@ import {
   Undo2,
   type LucideIcon,
 } from 'lucide-react';
-import { getLabels, type QualityFindingKind } from '@mechanization/shared-schemas';
+import { getLabels } from '@mechanization/shared-schemas';
 import type { FindingSubject, QualityFinding } from '@/lib/quality-api';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -606,6 +606,3 @@ export function ResolveDialog({
     </Dialog>
   );
 }
-
-/** The kinds whose findings name no record at all — the roll-ups. */
-export const ROLLUP_KINDS: readonly QualityFindingKind[] = ['UNLINKED_LANDLORDS'];

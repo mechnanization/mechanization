@@ -262,21 +262,3 @@ export function geometryBounds(
 
   return Number.isFinite(west) ? [west, south, east, north] : null;
 }
-
-/**
- * The centre of a geometry's bounding box.
- *
- * Not the centroid, and the difference matters for one reason only: on an
- * L-shaped or crescent parcel a true area centroid can fall *outside* the
- * outline, which would have the editor auto-fill a pin its own boundary check
- * then rejects. The caller tests the result and only accepts it when it lands
- * inside — see `building-editor.tsx`.
- */
-export function geometryCenter(
-  geometry: GeoJSON.Geometry | null | undefined,
-): [number, number] | null {
-  const bounds = geometryBounds(geometry);
-  if (!bounds) return null;
-  const [west, south, east, north] = bounds;
-  return [(west + east) / 2, (south + north) / 2];
-}

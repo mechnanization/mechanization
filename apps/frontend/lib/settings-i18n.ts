@@ -1146,8 +1146,3 @@ const EN: SettingsCopy = {
 export function settingsCopy(locale: string): SettingsCopy {
   return locale === 'en' ? EN : AR;
 }
-
-/** True when the given route locale reads right-to-left. */
-export function isRtlLocale(locale: string): boolean {
-  return locale !== 'en';
-}
