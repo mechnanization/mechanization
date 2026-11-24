@@ -1965,7 +1965,7 @@ out.
 
 - **Income vouchers** (§4): the retry key is bound to its act and a cancelled voucher's key
   is `INCOME_ALREADY_VOID`; a unique violation on the key is answered as a replay
-  (`retry-key.ts`); the lock order is the advisory lock, `config` (`FOR SHARE`),
+  (`isUniqueViolationOn`, `infrastructure/prisma/prisma-errors.ts`); the lock order is the advisory lock, `config` (`FOR SHARE`),
   `lockAccounts`, then the RV number; the go-live day is dated by `documentOccurredAt`
   with the go-live stamp (D5); a void takes the wallet's lock through `lockAccounts`; and
   0083's write-once trigger covers `income_vouchers`.

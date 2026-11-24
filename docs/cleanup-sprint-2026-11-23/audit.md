@@ -1540,7 +1540,10 @@ Filled in by whoever executes a task (section 0, step 4). One row per finding; t
 
 | ID | Found during | File and symbol | Problem | Fixed in that PR? | Debt doc row added |
 |---|---|---|---|---|---|
-| | | | | | |
+| — | DRY-02 | `registration.repository.ts` `translate`, the `P2003` branch | Matched `P2003` inline with `instanceof` the tenant client's class, beside the `P2002` branch the task moved | Yes: `foreignKeyViolated` in `prisma-errors.ts` | — |
+| DRY-21 | DRY-02 | `corrections/unit-correction.service.ts` `busyOr` | Lock conflicts matched on their own: SQLSTATE `55P03` / `40P01` read off `meta.code` behind `instanceof Prisma.PrismaClientKnownRequestError`, then a message regex. Its `P2034` now asks `isSerializationFailure` | No | docs/code-quality.md, Backend |
+| ARCH-25 | DRY-02 | `staff/staff.service.ts` `getInspectorProfile` (`role: inspector.role as any`) | The backend's one `no-explicit-any` lint warning: a cast past the role's type, the `as never` pattern under another name | No | docs/code-quality.md, the `as never` row |
+| — | DRY-03 | `buildings/buildings.service.ts` `addUnit`, the `<schema>:unit-sequence:<building>` lock | `$executeRawUnsafe` for a lock that needs no dynamic SQL, beside the two the task named | Yes: tagged `$executeRaw` | — |
 
 ---
 

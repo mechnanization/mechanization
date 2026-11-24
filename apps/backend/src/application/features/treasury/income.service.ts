@@ -21,7 +21,7 @@ import { allocateDocumentNumber } from '../../common/document-number';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { AuditService } from '../audit/audit.service';
 import { incomePeriod, planIncomeDate } from './income.plan';
-import { isUniqueViolationOn } from './retry-key';
+import { isUniqueViolation, isUniqueViolationOn } from '../../../infrastructure/prisma/prisma-errors';
 import { TreasuryLedgerService } from './treasury-ledger.service';
 import { documentOccurredAt } from './treasury.plan';
 
@@ -684,7 +684,7 @@ export class IncomeService {
         : await tx.incomeCategory.create({ data: { ...data, sortOrder: 1_000 }, select: CATEGORY_SELECT });
       return { ...row, key: (row.key as IncomeCategoryKey | null) ?? null };
     } catch (error) {
-      if (typeof error === 'object' && error !== null && (error as { code?: string }).code === 'P2002') {
+      if (isUniqueViolation(error)) {
         throw new ConflictError({
           code: 'INCOME_CATEGORY_CODE_TAKEN',
           message: 'Another income category already carries that budget chapter and article.',

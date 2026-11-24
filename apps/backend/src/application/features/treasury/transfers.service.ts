@@ -29,7 +29,7 @@ import { runInTenantTransaction } from '../../../infrastructure/context/tenant-t
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { AuditService } from '../audit/audit.service';
-import { isUniqueViolationOn } from './retry-key';
+import { isUniqueViolationOn } from '../../../infrastructure/prisma/prisma-errors';
 import { ExpensesService } from './expenses.service';
 import { incomePeriod } from './income.plan';
 import { TreasuryLedgerService } from './treasury-ledger.service';

@@ -26,6 +26,7 @@ import { Prisma } from '../../../generated/tenant-client';
 import { ConflictError, ForbiddenError, NotFoundError } from '../../../domain/errors/domain-error';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
+import { isUniqueViolation } from '../../../infrastructure/prisma/prisma-errors';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { APP_CONFIG } from '../../../presentation/config/app.config';
 import { AuditService } from '../audit/audit.service';
@@ -558,7 +559,7 @@ export class ArrearsBatchService {
           data: { citizenId: citizen.id, linkedAt: new Date(), linkedById: actor.id },
         });
       } catch (error) {
-        if ((error as { code?: unknown }).code === 'P2002') {
+        if (isUniqueViolation(error)) {
           throw new ConflictError({ code: 'ARREARS_LINE_DUPLICATE', message: 'This file already holds this debt' });
         }
         throw error;

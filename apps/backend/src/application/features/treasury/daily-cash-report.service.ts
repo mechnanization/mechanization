@@ -8,12 +8,12 @@ import type {
   TreasuryDayEvent,
   TreasuryEntrySource,
 } from '@mechanization/shared-schemas';
+import { municipalDayStart } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { addDays, isCountedWallet, summariseDay } from './day-closing.plan';
 import { countView } from './daily-count.service';
 import { compareWallets, DayClosureService } from './day-closure.service';
-import { municipalDayStart } from './income.plan';
 import { dateColumn, TreasuryLedgerService } from './treasury-ledger.service';
 
 const DAY_ACTIONS = new Set<TreasuryDayEvent['action']>([

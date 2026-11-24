@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { typeError } from './type-error';
+import { positiveMoneyAmount } from './money-amount';
 import { businessDay, MAX_LIST_PAGE } from './primitives';
 import {
   BUDGET_CODES_INCOMPLETE,
@@ -62,13 +63,12 @@ export function canReceiveIncome(type: TreasuryAccountType): boolean {
   return (INCOME_RECEIVING_ACCOUNT_TYPES as readonly string[]).includes(type);
 }
 
-/** A received amount: greater than zero, at most two decimals, inside what the ledger holds. */
-const receivedAmount = z
-  .number(typeError({ required: 'اكتب المبلغ', invalid: 'المبلغ رقم' }))
-  .finite('المبلغ رقم')
-  .positive('المبلغ أكبر من صفر')
-  .max(999_999_999_999, 'المبلغ كبير جداً')
-  .refine((value) => Math.abs(value * 100 - Math.round(value * 100)) < 1e-6, 'خانتان عشريتان على الأكثر');
+/**
+ * A received amount: greater than zero, at most two decimals, inside what the
+ * ledger holds (`DECIMAL(14,2)`). The money rule every paid-out amount shares,
+ * so the two-decimal check is the decimal-form one, never `value * 100`.
+ */
+const receivedAmount = positiveMoneyAmount(999_999_999_999);
 
 /**
  * «سجّل الإيراد» — the whole act, in one request.
