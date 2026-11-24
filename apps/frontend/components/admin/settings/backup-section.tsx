@@ -247,6 +247,11 @@ export function BackupSection({
   const [snapshotDragging, setSnapshotDragging] = useState(false);
   const [snapshotBusy, setSnapshotBusy] = useState(false);
   const [restoreBusy, setRestoreBusy] = useState(false);
+  // SUBMIT-04: the three busy flags is React state, set asynchronously, so a double-click can pass
+  // its stale read. The ref is checked and set first, and released when the write settles.
+  const backupRef = useRef(false);
+  const snapshotRef = useRef(false);
+  const restoreRef = useRef(false);
   /** Which of the two restore buttons is spinning. */
   const [dryRunPending, setDryRunPending] = useState(false);
   const [report, setReport] = useState<RestoreReport | null>(null);
@@ -360,6 +365,8 @@ export function BackupSection({
   );
 
   const runBackup = useCallback(async () => {
+    if (backupRef.current) return;
+    backupRef.current = true;
     setBusy(true);
     const stamp = new Date();
     const failures: string[] = [];
@@ -383,6 +390,7 @@ export function BackupSection({
 
     if (entries.length === 0) {
       setBusy(false);
+      backupRef.current = false;
       record({ at: stamp.toISOString(), action: 'backup', scope: '—', bytes: 0, ok: false });
       toast.error(copy.backup.backupFailed);
       return;
@@ -424,6 +432,7 @@ export function BackupSection({
     });
 
     setBusy(false);
+    backupRef.current = false;
     if (failures.length > 0) {
       toast.warning(copy.backup.partial, { description: failures.join(', ') });
     } else {
@@ -444,6 +453,8 @@ export function BackupSection({
 
   /** Downloads the restorable snapshot — real table rows, built server-side. */
   const downloadSnapshot = useCallback(async () => {
+    if (snapshotRef.current) return;
+    snapshotRef.current = true;
     setSnapshotBusy(true);
     const stamp = new Date();
     try {
@@ -472,6 +483,7 @@ export function BackupSection({
       );
     } finally {
       setSnapshotBusy(false);
+      snapshotRef.current = false;
     }
   }, [tenant, token, record, toast, copy.backup]);
 
@@ -500,7 +512,8 @@ export function BackupSection({
 
   const runRestore = useCallback(
     async (dryRun: boolean) => {
-      if (!snapshot) return;
+      if (!snapshot || restoreRef.current) return;
+      restoreRef.current = true;
       setRestoreBusy(true);
       setDryRunPending(dryRun);
       const stamp = new Date();
@@ -543,6 +556,7 @@ export function BackupSection({
         );
       } finally {
         setRestoreBusy(false);
+        restoreRef.current = false;
       }
     },
     [tenant, token, snapshot, confirmSlug, record, toast, copy.backup],

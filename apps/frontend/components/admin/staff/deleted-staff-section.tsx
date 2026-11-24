@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { ArchiveRestore, Loader2, Trash2 } from 'lucide-react';
 import { getLabels } from '@mechanization/shared-schemas';
@@ -53,6 +53,9 @@ export function DeletedStaffSection({
   const toast = useToast();
   const roles = getLabels(locale).staffRole as Record<string, string> | undefined;
   const [restoringId, setRestoringId] = useState<string | null>(null);
+  // SUBMIT-04: `restoringId` is React state, set asynchronously, so a double-click can pass
+  // its stale read. The ref is checked and set first, and released when the write settles.
+  const restoringRef = useRef(false);
 
   const query = useStaffQuery({
     queryKey: ['staff', tenant, 'deleted'],
@@ -65,7 +68,8 @@ export function DeletedStaffSection({
   const deleted: DeletedStaffSummary[] = query.data?.items ?? [];
 
   const restore = async (staff: DeletedStaffSummary) => {
-    if (!token || restoringId) return;
+    if (!token || restoringId || restoringRef.current) return;
+    restoringRef.current = true;
     setRestoringId(staff.id);
     try {
       await restoreStaff(tenant, token, staff.id);
@@ -78,6 +82,7 @@ export function DeletedStaffSection({
       toast.error(tToast('restoreFailed'), { description: message });
     } finally {
       setRestoringId(null);
+      restoringRef.current = false;
     }
   };
 

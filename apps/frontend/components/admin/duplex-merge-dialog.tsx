@@ -78,6 +78,9 @@ function DuplexMergeDialog({
   const [reason, setReason] = React.useState('');
   const [code, setCode] = React.useState('');
   const [submitting, setSubmitting] = React.useState(false);
+  // `submitting` is React state, set asynchronously: a double-click can pass its stale read
+  // before a re-render commits (SUBMIT-03). The ref is checked and set first.
+  const submittingRef = React.useRef(false);
   const [error, setError] = React.useState<string | null>(null);
 
   const load = React.useCallback(
@@ -121,7 +124,8 @@ function DuplexMergeDialog({
   const name = preview ? (unitLevelsLabel(preview.levelsAfter, locale) ?? '') : '';
 
   const submit = async () => {
-    if (!preview || !canSubmit) return;
+    if (!preview || !canSubmit || submittingRef.current) return;
+    submittingRef.current = true;
     setSubmitting(true);
     setError(null);
     try {
@@ -149,6 +153,7 @@ function DuplexMergeDialog({
       if (unitCorrectionRefusal(caught) === 'PREVIEW_STALE') void load();
     } finally {
       setSubmitting(false);
+      submittingRef.current = false;
     }
   };
 

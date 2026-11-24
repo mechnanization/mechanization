@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { DoorOpen, Loader2 } from 'lucide-react';
 import { getLabels } from '@mechanization/shared-schemas';
 import {
@@ -100,6 +100,9 @@ export function EndTenancyDialog({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [after, setAfter] = useState<AfterTenancyAnswer>({});
   const [busy, setBusy] = useState(false);
+  // `busy` is React state, set asynchronously: a double-click can pass its stale read
+  // before a re-render commits (SUBMIT-03). The ref is checked and set first.
+  const runningRef = useRef(false);
   const [failure, setFailure] = useState<string | null>(null);
   const defaultReason = defaults?.reason;
   const defaultEndedAt = defaults?.endedAt;
@@ -114,6 +117,7 @@ export function EndTenancyDialog({
       setAfter({});
       setFailure(null);
       setBusy(false);
+      runningRef.current = false;
       return;
     }
     if (defaultReason) setReason(defaultReason);
@@ -172,7 +176,8 @@ export function EndTenancyDialog({
     });
 
   const run = async () => {
-    if (!reason || !ready || busy) return;
+    if (!reason || !ready || busy || runningRef.current) return;
+    runningRef.current = true;
     setBusy(true);
     setFailure(null);
     try {
@@ -196,6 +201,7 @@ export function EndTenancyDialog({
             : 'تعذّر إنهاء الإيجار.',
       );
       setBusy(false);
+      runningRef.current = false;
     }
   };
 

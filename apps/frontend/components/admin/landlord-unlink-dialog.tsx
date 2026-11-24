@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Loader2, TriangleAlert, Unlink } from 'lucide-react';
 import {
   ApiRequestError,
@@ -55,6 +55,9 @@ export function LandlordUnlinkDialog({
   const [preview, setPreview] = useState<UnlinkPreview | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // `busy` is React state, set asynchronously: a double-click can pass its stale read
+  // before a re-render commits (SUBMIT-03). The ref is checked and set first.
+  const runningRef = useRef(false);
   const [failure, setFailure] = useState<string | null>(null);
 
   useEffect(() => {
@@ -63,6 +66,7 @@ export function LandlordUnlinkDialog({
       setLoadError(null);
       setFailure(null);
       setBusy(false);
+      runningRef.current = false;
       return;
     }
     const controller = new AbortController();
@@ -80,7 +84,8 @@ export function LandlordUnlinkDialog({
   }, [open, tenant, token, propertyEntryId, en]);
 
   const run = async () => {
-    if (busy) return;
+    if (busy || runningRef.current) return;
+    runningRef.current = true;
     setBusy(true);
     setFailure(null);
     try {
@@ -119,6 +124,7 @@ export function LandlordUnlinkDialog({
             : 'تعذّر إلغاء الربط.',
       );
       setBusy(false);
+      runningRef.current = false;
     }
   };
 

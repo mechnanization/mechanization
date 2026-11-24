@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import type { ColumnDef } from '@tanstack/react-table';
 import { CircleCheck, ShieldQuestion } from 'lucide-react';
@@ -204,6 +204,10 @@ export function FindingsList({
   const [pagination, setPagination] = useUrlPagination({ defaultSize: 10 });
   const [search, setSearch] = useTabSearch(tenant, 'quality-findings');
   const [busy, setBusy] = useState<string | null>(null);
+  // SUBMIT-04: `busy` is React state, set asynchronously, so a double-click can pass
+  // its stale read. The ref is checked and set first, and released when the write settles.
+  const workRef = useRef(false);
+  const settleAllRef = useRef(false);
   const [resolving, setResolving] = useState<QualityFinding | null>(null);
   /**
    * A view the address must not hold: the comparison, or a detail view whose
@@ -282,7 +286,8 @@ export function FindingsList({
     done: string,
     quiet = false,
   ) => {
-    if (!token) return;
+    if (!token || workRef.current) return;
+    workRef.current = true;
     setBusy(key);
     try {
       await work();
@@ -298,6 +303,7 @@ export function FindingsList({
       throw caught;
     } finally {
       setBusy(null);
+      workRef.current = false;
     }
   };
 
@@ -651,7 +657,8 @@ export function FindingsList({
     until then billing already holds their occupancy fee.
   */
   const settleAll = async () => {
-    if (!token) return;
+    if (!token || settleAllRef.current) return;
+    settleAllRef.current = true;
     setBusy('settle-all');
     try {
       const res = await settleAllUnitStatuses(tenant, token);
@@ -672,6 +679,7 @@ export function FindingsList({
       );
     } finally {
       setBusy(null);
+      settleAllRef.current = false;
     }
   };
 
