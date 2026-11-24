@@ -1,6 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useTranslations } from 'next-intl';
 import {
   Building2,
@@ -11,7 +16,6 @@ import {
   UsersRound,
 } from 'lucide-react';
 import {
-  allowedPropertyTypesFor,
   isNonPersonRecord,
   isOwnerRecord,
   type CitizenMergeResult,
@@ -22,10 +26,6 @@ import type { PublicTenantConfig } from '@/lib/api-client';
 import { EmptyState } from '@/components/ui/states';
 import { DuplicateAlert, usePossibleDuplicates } from './possible-duplicates';
 import { MergeCitizensDialog } from './merge-citizens-dialog';
-import {
-  type CardRemovalAnswer,
-  type PropertyDraft,
-} from '@/components/citizen/property-card';
 import { FieldFlagProvider, FieldFocusProvider } from '@/components/ui/field';
 import { UnverifiedFieldsDialog } from './unverified-fields-dialog';
 import { QuickSaveDialog } from './quick-save-dialog';
@@ -34,29 +34,15 @@ import { ParcelRosterDialog } from './parcel-roster-dialog';
 import { ResidenceChangeDialog } from './residence-change-dialog';
 import { applyResidenceMove, planResidenceMove } from '@/lib/residence-move';
 import { withResidence } from '@/lib/citizen-seed';
-import { carryHeldPhone } from '@/lib/citizen-contact';
 import { scrollElementToTop } from '@/lib/scroll-to-top';
 import { cn } from '@/lib/utils';
 
 import type { CitizenFormValues } from '@/lib/citizen-form-values';
-import { askableFields, askablePaths, isBlank, valueAtPath } from '@/lib/citizen-form-askable';
+import { askableFields, isBlank, valueAtPath } from '@/lib/citizen-form-askable';
 import { validate } from '@/lib/citizen-form-validation';
 import {
-  collapsedAfterAdd,
-  collapsedAfterRemoval,
-  groupProperties,
-  holdsDisallowedType,
-  holdsUnaskableFlag,
   phoneNoteOf,
-  withAddedProperty,
-  withDisallowedTypesCleared,
-  withEndedRowsRemoved,
-  withFlag,
   withFlagsApplied,
-  withoutFlag,
-  withProperty,
-  withRemovedProperty,
-  withUnaskableFlagsDropped,
 } from '@/lib/citizen-form-state';
 import { StepNotesField } from './citizen-form/step-notes-field';
 import { StepBar } from './citizen-form/step-bar';
@@ -65,6 +51,7 @@ import { ContactSection } from './citizen-form/contact-section';
 import { PropertiesSection } from './citizen-form/properties-section';
 import { NotesSection } from './citizen-form/notes-section';
 import { PropertyCards } from './citizen-form/property-cards';
+import { useCitizenFormRecord } from './citizen-form/use-citizen-form-record';
 import { DesktopActionBar, MobileActionBar } from './citizen-form/action-bars';
 
 export type { CitizenFormValues } from '@/lib/citizen-form-values';
@@ -204,161 +191,28 @@ export function CitizenForm({
   /** The merge went through — the form's file may no longer be the one that stays. */
   onMerged?: (result: CitizenMergeResult) => void;
 }) {
-  const [values, setValues] = useState<CitizenFormValues>(initial);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [showErrors, setShowErrors] = useState(false);
   const [unverifiedDialogOpen, setUnverifiedDialogOpen] = useState(false);
   const [quickSaveOpen, setQuickSaveOpen] = useState(false);
   /** Which رقم العقار's roster is open, if any. */
   const [rosterParcel, setRosterParcel] = useState<string | null>(null);
-  /** Which property cards are folded shut. */
-  const [collapsed, setCollapsed] = useState<ReadonlySet<number>>(new Set());
-
-  // Re-seeds when the record finishes loading. Keyed on the object identity,
-  // so a parent that fetches once does not clobber what has been typed since.
-  useEffect(() => {
-    setValues(initial);
-    /*
-      Saved properties open folded; a card not yet saved opens expanded.
-
-      On the wizard's own «العقارات» page, each property is a heading the
-      officer opens — and opened, it leads with its building's matrix, their
-      flats lit. The earlier worry about folding («a field an officer cannot
-      see is a field they do not check») is met elsewhere now: a folded card
-      opens on its own on «خانات غير مؤكَّدة» when a field inside it is still
-      open, and an error lands the officer on the page that holds it.
-
-      A card with no id is the blank one a new filing starts with, or one just
-      added — folding that would hide the very thing the page is for.
-    */
-    setCollapsed(
-      new Set(
-        initial.properties.flatMap((property, index) => (property.id ? [index] : [])),
-      ),
-    );
-  }, [initial]);
-
-  /*
-    Tell the parent what the form now holds, so it can keep a draft.
-
-    Depends on `values` alone. Including `onValuesChange` would re-fire this on
-    every render of a parent that passes an inline arrow — which is every
-    parent — and the handler writes to localStorage, so that is a synchronous
-    disk write per render rather than per edit. The callback is invoked through
-    a ref so the one that runs is always the latest, without being a dependency.
-  */
-  const notifyChange = useRef(onValuesChange);
-  notifyChange.current = onValuesChange;
-  useEffect(() => {
-    notifyChange.current?.(values);
-  }, [values]);
-
-  const update = useCallback((patch: Partial<CitizenFormValues>) => {
-    setValues((current) => ({ ...current, ...patch }));
-  }, []);
-
-  /**
-   * The contact section, with one correction made on the officer's behalf:
-   * «لا يملك رقم هاتف» carries the number already on the file into «رقم
-   * للتواصل» instead of throwing it away (`carryHeldPhone`, which says when).
-   *
-   * Called here rather than in `ContactStep` because it is a correction rule
-   * rather than a rendering one — the same place the «غير مؤكَّد» flags and
-   * the نوع الملف switch are decided — and because it needs the file as it
-   * stood, which the step does not own.
-   */
-  const updateContact = useCallback((next: CitizenFormValues['contact']) => {
-    setValues((current) => ({ ...current, contact: carryHeldPhone(current.contact, next) }));
-  }, []);
-
-  /** Raise or amend a «غير مؤكَّد» flag and empty the field it covers (`withFlag`). */
-  const setFlag = useCallback((path: string, reason: string) => {
-    setValues((current) => withFlag(current, path, reason));
-  }, []);
-
-  /** Withdraws a flag. The field comes back empty, which is where it was. */
-  const clearFlag = useCallback((path: string) => {
-    setValues((current) => withoutFlag(current, path));
-  }, []);
-
-  const flagging = useMemo(
-    () => ({
-      flags: values.flags,
-      unverified: values.unverified,
-      set: setFlag,
-      clear: clearFlag,
-      locale,
-    }),
-    [values.flags, values.unverified, setFlag, clearFlag, locale],
-  );
-
-  /** One card, updated from whatever it currently is (`withProperty`: an updater, so two writes compose). */
-  const setProperty = useCallback(
-    (index: number, update: (current: PropertyDraft) => PropertyDraft) => {
-      setValues((current) => withProperty(current, index, update));
-    },
-    [],
-  );
-
-  /** A new card; `sameParcelAs` carries the parcel's number and الحي across (`withAddedProperty`). */
-  const addProperty = useCallback((sameParcelAs?: number) => {
-    setValues((current) => {
-      const next = withAddedProperty(current, sameParcelAs);
-      setCollapsed(collapsedAfterAdd(next.properties));
-      return next;
-    });
-  }, []);
-
-  /** Property cards grouped by shared رقم العقار (`groupProperties`). */
-  const propertyGroups = useMemo(() => groupProperties(values.properties), [values.properties]);
-
-  const removeProperty = useCallback((index: number, answer?: CardRemovalAnswer) => {
-    setValues((current) => withRemovedProperty(current, index, answer));
-    setCollapsed((current) => collapsedAfterRemoval(current, index));
-  }, []);
-
-  /** Rows of card `index` that «إنهاء الإيجار» just ended while the card goes on (`withEndedRowsRemoved`). */
-  const removeEndedRows = useCallback((index: number, rowIds: readonly string[]) => {
-    if (rowIds.length === 0) return;
-    setValues((current) => withEndedRowsRemoved(current, index, rowIds));
-  }, []);
-
-  const toggleCollapsed = useCallback((index: number) => {
-    setCollapsed((current) => {
-      const next = new Set(current);
-      if (next.has(index)) next.delete(index);
-      else next.add(index);
-      return next;
-    });
-  }, []);
-
-  /**
-   * Which نوع العقار is offered: the municipality's enabled types, minus خيمة
-   * for anyone who is not a لاجئ. Re-checked on the server, where صفة الإقامة
-   * and the property list are both in hand.
-   */
-  const allowedTypes = useMemo(() => {
-    const enabled = new Set(config.enabledPropertyTypes);
-    return allowedPropertyTypesFor(values.personal.residentStatus as string | undefined).filter(
-      (type) => enabled.has(type),
-    );
-  }, [config.enabledPropertyTypes, values.personal.residentStatus]);
-
-  /** A card holding a type the current صفة الإقامة no longer permits has it cleared (`withDisallowedTypesCleared`). */
-  useEffect(() => {
-    const permitted = new Set<string>(allowedTypes);
-    if (!holdsDisallowedType(values.properties, permitted)) return;
-
-    setValues((current) => withDisallowedTypesCleared(current, permitted));
-  }, [allowedTypes, values.properties]);
-
-  /** A flag whose field the form has stopped asking about is withdrawn (`withUnaskableFlagsDropped`). */
-  useEffect(() => {
-    const askable = askablePaths(values);
-    if (!holdsUnaskableFlag(values.flags, askable)) return;
-
-    setValues((current) => withUnaskableFlagsDropped(current, askable));
-  }, [values]);
+  const {
+    values,
+    setValues,
+    collapsed,
+    setCollapsed,
+    update,
+    updateContact,
+    flagging,
+    setProperty,
+    addProperty,
+    propertyGroups,
+    removeProperty,
+    removeEndedRows,
+    toggleCollapsed,
+    allowedTypes,
+  } = useCitizenFormRecord({ initial, onValuesChange, config, locale });
 
   const shown = useMemo(() => (showErrors ? fieldErrors : {}), [showErrors, fieldErrors]);
 
@@ -378,7 +232,7 @@ export function CitizenForm({
   /** Switching نوع الملف. See `withResidence`. */
   const setResidence = useCallback((residence: CitizenResidence) => {
     setValues((current) => withResidence(current, residence));
-  }, []);
+  }, [setValues]);
 
   /**
    * «تغيير الإقامة» on a saved file.
@@ -420,7 +274,7 @@ export function CitizenForm({
       }
       setResidence(next);
     },
-    [values, mode, citizenId, setResidence],
+    [values, setValues, mode, citizenId, setResidence],
   );
 
   /** Undoes the move or death applied on this form — the form as it was before it. */
@@ -429,7 +283,7 @@ export function CitizenForm({
     beforeMove.current = null;
     if (snapshot) setValues(snapshot);
     else setValues((current) => ({ ...current, residenceMove: undefined }));
-  }, []);
+  }, [setValues]);
 
   /**
    * «قد يكون مسجَّلاً مسبقاً» — looked up once, shown in one of two places.
