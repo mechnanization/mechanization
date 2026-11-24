@@ -5,7 +5,7 @@ import { monthNames } from '@/lib/dates';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
-import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { today } from '../../building-unit-forms';
 
 // ─────────────────────────────  «مسكن موسمي»  ─────────────────────────────
@@ -91,30 +91,28 @@ export function SeasonalHomePanel({
 
       <div className="grid gap-3">
         <Field label={en ? 'Last stayed' : 'آخر إقامة لأصحابه'} htmlFor="seasonal-last-stay">
-          <Input
+          <DatePicker
             id="seasonal-last-stay"
-            type="date"
+            value={lastStay}
+            onChange={setLastStay}
             max={today()}
             disabled={!canWrite}
-            value={lastStay}
-            onChange={(event) => setLastStay(event.target.value)}
-            dir="ltr"
-            className="text-start"
+            locale={en ? 'en' : 'ar'}
+            clearable
           />
         </Field>
         <Field
           label={en ? 'Vacancy declaration filed on' : 'تاريخ تقديم تصريح بالشغور'}
           htmlFor="seasonal-declared"
         >
-          <Input
+          <DatePicker
             id="seasonal-declared"
-            type="date"
+            value={declared}
+            onChange={setDeclared}
             max={today()}
             disabled={!canWrite}
-            value={declared}
-            onChange={(event) => setDeclared(event.target.value)}
-            dir="ltr"
-            className="text-start"
+            locale={en ? 'en' : 'ar'}
+            clearable
           />
         </Field>
       </div>

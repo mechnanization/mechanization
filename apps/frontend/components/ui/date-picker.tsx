@@ -1,12 +1,12 @@
 'use client';
 
 import * as React from 'react';
-import { Calendar as CalendarIcon, Check, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Calendar as CalendarIcon, Check, ChevronDown, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { Button } from './button';
 import { cn } from '@/lib/utils';
 
 /**
- * Shadcn-styled date picker replacing native `<input type="date">`:
+ * Shadcn-styled date picker replacing the native date input:
  * an outline-button trigger opening an anchored calendar panel. Fully
  * localized (month/weekday names via Intl, RTL-aware navigation) and
  * dependency-free — the panel is a hand-rolled month grid, closed on
@@ -137,6 +137,14 @@ interface DatePickerProps {
   placeholder?: string;
   disabled?: boolean;
   locale: 'ar' | 'en';
+  /**
+   * Shows a clear button while a day is chosen, for a date that may be left
+   * blank. It calls `onChange('')`, which is what an emptied native date input
+   * sent too.
+   */
+  clearable?: boolean;
+  /** The id of the element that describes this field (a hint or an error), read out with it. */
+  'aria-describedby'?: string;
 }
 
 /** Formats a local calendar date as "YYYY-MM-DD" without UTC drift. */
@@ -165,6 +173,8 @@ export function DatePicker({
   placeholder,
   disabled = false,
   locale,
+  clearable = false,
+  'aria-describedby': describedBy,
 }: DatePickerProps): React.JSX.Element {
   const [open, setOpen] = React.useState(false);
   const rootRef = React.useRef<HTMLDivElement>(null);
@@ -298,6 +308,8 @@ export function DatePicker({
     setOpen(false);
   };
 
+  const showClear = clearable && Boolean(value) && !disabled;
+
   return (
     <div ref={rootRef} className="relative">
       <Button
@@ -307,10 +319,12 @@ export function DatePicker({
         disabled={disabled}
         aria-expanded={open}
         aria-haspopup="dialog"
+        aria-describedby={describedBy}
         onClick={() => setOpen((previous) => !previous)}
         className={cn(
           'w-full justify-start text-start font-normal',
           !value && 'text-muted-foreground',
+          showClear && 'pe-9',
         )}
       >
         <CalendarIcon className="h-4 w-4" />
@@ -320,6 +334,20 @@ export function DatePicker({
             )
           : (placeholder ?? '')}
       </Button>
+
+      {showClear ? (
+        <button
+          type="button"
+          aria-label={locale === 'ar' ? 'مسح التاريخ' : 'Clear date'}
+          onClick={() => {
+            onChange('');
+            setOpen(false);
+          }}
+          className="absolute end-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+        >
+          <X className="h-3.5 w-3.5" aria-hidden />
+        </button>
+      ) : null}
 
       {open ? (
         <div

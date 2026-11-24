@@ -30,7 +30,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Field } from '@/components/ui/field';
-import { Input } from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { CitizenPicker, type PickedCitizen } from '@/components/admin/citizen-picker';
 import { useToast } from '@/components/ui/toast';
 import { formatDate } from '@/lib/dates';
@@ -551,17 +551,15 @@ export function EndOwnershipDialog({
             {sale ? (
               <>
                 <Field label={en ? 'Date of sale or transfer' : 'تاريخ انتقال الملكية'} htmlFor={dateId}>
-                  <Input
-                    id={dateId}
-                    type="date"
-                    min={preview.startedAt?.slice(0, 10)}
+                  <DatePicker
+            id={dateId}
+            value={endedAt}
+            onChange={setEndedAt}
+            min={preview.startedAt?.slice(0, 10)}
                     max={today()}
-                    value={endedAt}
-                    onChange={(event) => setEndedAt(event.target.value)}
-                    dir="ltr"
-                    className="text-start"
-                    aria-describedby={`${dateId}-help`}
-                  />
+            locale={en ? 'en' : 'ar'}
+            aria-describedby={`${dateId}-help`}
+          />
                   <p id={`${dateId}-help`} className="mt-1 text-xs text-muted-foreground">
                     {en
                       ? 'From this date they are no longer charged owner fees for these units.'

@@ -59,9 +59,7 @@ import {
 import {
   Field,
 } from '@/components/ui/field';
-import {
-  Input,
-} from '@/components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import {
   Select,
   SelectContent,
@@ -810,14 +808,13 @@ export function VisitForm({
           label={en ? 'Visited on' : 'تاريخ الزيارة'}
           htmlFor="visit-date"
         >
-          <Input
+          <DatePicker
             id="visit-date"
-            type="date"
-            max={new Date().toISOString().slice(0, 10)}
             value={visitedAt}
-            onChange={(event) => setVisitedAt(event.target.value)}
-            dir="ltr"
-            className="text-start"
+            onChange={setVisitedAt}
+            max={today()}
+            locale={en ? 'en' : 'ar'}
+            clearable
           />
         </Field>
       </div>
@@ -841,14 +838,13 @@ export function VisitForm({
           label={en ? 'Come back on' : 'موعد إعادة الزيارة'}
           htmlFor="visit-revisit"
         >
-          <Input
+          <DatePicker
             id="visit-revisit"
-            type="date"
-            min={today()}
             value={revisitAt}
-            onChange={(event) => setRevisitAt(event.target.value)}
-            dir="ltr"
-            className="text-start"
+            onChange={setRevisitAt}
+            min={today()}
+            locale={en ? 'en' : 'ar'}
+            clearable
           />
         </Field>
       ) : null}
@@ -1083,13 +1079,12 @@ export function CaseForm({
           htmlFor="case-revisit"
 
         >
-          <Input
+          <DatePicker
             id="case-revisit"
-            type="date"
             value={revisitAt}
-            onChange={(event) => setRevisitAt(event.target.value)}
-            dir="ltr"
-            className="text-start"
+            onChange={setRevisitAt}
+            locale={en ? 'en' : 'ar'}
+            clearable
           />
         </Field>
       </div>
