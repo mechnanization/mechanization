@@ -7,6 +7,7 @@ import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
 import { isUniqueViolation } from '../../../infrastructure/prisma/prisma-errors';
+import { buildingSuffixLockKey } from './suffix-lock-key';
 import { AuditService, type BuildingChange, type CitizenChange } from '../audit/audit.service';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { BuildingsService, sharedParcelsExcluding } from './buildings.service';
@@ -198,14 +199,11 @@ export class ParcelCorrectionService {
       /*
         Both parcels' suffix locks, in a fixed order so two corrections crossing
         between the same two parcels cannot deadlock. The key is
-        `BuildingsService.create`'s, character for character: a creation on
+        `BuildingsService.create`'s (`buildingSuffixLockKey`): a creation on
         either parcel waits for this correction and then sees its result.
       */
       for (const parcel of [before.parcelNumber, next].sort()) {
-        await this.db.$executeRawUnsafe(
-          'SELECT pg_advisory_xact_lock(hashtext($1))',
-          `${this.tenantContext.schemaName}:building-suffix:${parcel}`,
-        );
+        await this.db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${buildingSuffixLockKey(this.tenantContext.schemaName, parcel)}))`;
       }
 
       // Read again under the locks: another correction may have landed since.
