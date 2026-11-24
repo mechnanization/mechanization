@@ -299,8 +299,8 @@ export default function LandlordLinkPage({
                   setAnswered(proposal);
                   resolve(next);
                   // The queue and its count no longer hold this claim.
-                  void queryClient.invalidateQueries({ queryKey: ['landlord-links'] });
-                  void queryClient.invalidateQueries({ queryKey: ['landlord-links-summary'] });
+                  void queryClient.invalidateQueries({ queryKey: ['landlord-links', tenant] });
+                  void queryClient.invalidateQueries({ queryKey: ['landlord-links-summary', tenant] });
                 }}
                 locale={locale}
                 variant="panel"

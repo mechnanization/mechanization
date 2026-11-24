@@ -26,24 +26,13 @@ import {
   STRUCTURE_TYPE_MAP,
 } from '@mechanization/shared-schemas';
 import type {
-  CardRemovalReason,
   CitizenResidence,
   LandType,
   OccupancyType,
   PropertyType,
-  StructureType,
-  UnitStatus,
   UnitType,
 } from '@mechanization/shared-schemas';
 
-/**
- * What the officer said when removing a saved card — see `cardRemovalSchema`.
- * `endedAt` is a `YYYY-MM-DD` from the date box, only for a sale.
- */
-export interface CardRemovalAnswer {
-  reason: CardRemovalReason;
-  endedAt?: string;
-}
 import {
   checkPropertyNumber,
   getOwnershipEndPreview,
@@ -90,110 +79,9 @@ import {
   UnitStatusChoice,
 } from '@/components/citizen/unit-fields';
 
-export interface UnitDraft {
-  /** The stored row this line was loaded from, on an edit. Never typed. */
-  id?: string;
-  /**
-   * The canonical `Unit` this line describes, when the officer linked one.
-   *
-   * Set by `BuildingUnitPicker` and never typed. Where it is present the
-   * census record outranks this row field by field (P2-T8); where it is absent
-   * — a card filed before the building was surveyed — this row is all there is,
-   * and that is permanent rather than transitional.
-   */
-  unitId?: string;
-  unitType?: UnitType;
-  floor?: string;
-  side?: string;
-  unitArea?: string;
-  sharedRights?: string[];
-  /** حالة الوحدة. Undefined is "not recorded", which is not «مشغولة». */
-  unitStatus?: UnitStatus;
-}
+import type { CardRemovalAnswer, PropertyDraft } from '@/lib/citizen-form-values';
 
-export interface PropertyDraft {
-  id?: string;
-  /** The censused structure this card is about, when one was linked (§3.7). */
-  buildingId?: string;
-  /**
-   * Set when the officer chose «منشأة جديدة على هذا العقار» and the building
-   * does not exist yet.
-   *
-   * `buildingId` is filled in at the same moment, with the id carried here —
-   * the browser mints it, and `clientSubmissionId` makes it the row's primary
-   * key, so every other part of the form can reference the structure before it
-   * has been sent. The creation itself is issued at submit time, before the
-   * registration, because a card must never name a building that failed to be
-   * made.
-   *
-   * Stripped by `toPayloadProperty`: this describes work still to be done, not
-   * a field of the card.
-   */
-  pendingBuilding?: {
-    /** Minted in the picker; becomes `Building.id` via `clientSubmissionId`. */
-    id: string;
-    parcelNumber: string;
-    structureType: StructureType;
-    /**
-     * «تحقَّقت، وهذه منشأة مختلفة» (D18), or "the census could not be reached
-     * and a person said to create one anyway". Both are a human answering the
-     * question, which is the only thing the server's guard is asking for.
-     */
-    acknowledgedDuplicates: boolean;
-  };
-  occupancyType?: OccupancyType;
-  landlordName?: string;
-  landlordPhone?: string;
-  /**
-   * «نعم، هو المالك» — the registered citizen the officer agreed this card names.
-   *
-   * Set by `LandlordMatchHint` when a lookup on `landlordPhone` turns up exactly
-   * one citizen and the officer confirms it; cleared whenever the number
-   * changes, because the agreement was about that number. It rides with the
-   * submission so the link is made by the save — a browser doing it afterwards
-   * never runs on the offline queue this form files most of its records through.
-   *
-   * The server does not believe it: `LandlordLinkService.confirm` re-derives the
-   * match from the committed card and refuses any citizen whose numbers differ
-   * from it. See `landlordCitizenIdField` in the property schema.
-   */
-  landlordCitizenId?: string;
-  /**
-   * The owner link the server already holds for this card, as loaded for edit.
-   *
-   * Different from `landlordCitizenId`, which is an answer this form is about to
-   * send. A standing link locks the owner's number *and* name — the number is
-   * what it was confirmed about, and the name shown is the owner's registered
-   * one — and «إلغاء الربط» is the only way out, because undoing it also
-   * removes what it added to the owner's file. Never sent (`toPayloadProperty`).
-   */
-  /**
-   * `name` is the owner's name as a row stores it (sent when the tenant's own
-   * is blank); `displayName` is what the locked field shows — an estate as
-   * «ورثة المرحوم …».
-   */
-  landlordLink?: { citizenId: string; name: string; displayName: string; referenceNumber: string | null };
-  /**
-   * The registered name of the citizen agreed to on this form, shown in the
-   * locked name field. The tenant's own words stay in `landlordName`, so
-   * withdrawing the agreement gives them back. Never sent.
-   */
-  landlordAgreedName?: string;
-  propertyType?: PropertyType;
-  neighborhood?: string;
-  propertyNumber?: string;
-  landType?: LandType;
-  buildingName?: string;
-  side?: string;
-  tentLocation?: string;
-  unitArea?: string;
-  /** أرض only — أسهم out of the cadastre's standard 2400-share parcel. */
-  shares?: string;
-  sharedRights?: string[];
-  /** منزل only — a مبنى states this per unit inside `units`. */
-  unitStatus?: UnitStatus;
-  units?: UnitDraft[];
-}
+export type { CardRemovalAnswer, PropertyDraft, UnitDraft } from '@/lib/citizen-form-values';
 
 const CHECK_DEBOUNCE_MS = 500;
 

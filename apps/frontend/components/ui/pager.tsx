@@ -4,6 +4,9 @@ import * as React from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import type { PagerLabels } from '@/lib/ui-labels';
+
+export type { PagerLabels } from '@/lib/ui-labels';
 
 /**
  * «1–10 من 23 · ‹ ›» — previous and next through a list held in memory.
@@ -22,18 +25,6 @@ import { cn } from '@/lib/utils';
  * into view, as DataTable does — otherwise the reader is left looking at the
  * bottom of a list that has just changed under them.
  */
-/** The words a `Pager` says — resolved by the caller from the messages (`usePagerLabels`). */
-export interface PagerLabels {
-  /** The landmark's name, e.g. «صفحات الرسوم». */
-  nav: string;
-  previous: string;
-  next: string;
-  /** «صفحة 2 من 3», announced when the page changes. */
-  position: (current: number, total: number) => string;
-  /** «1–10 من 23». */
-  range: (first: number, last: number, total: number) => string;
-}
-
 export function Pager({
   page,
   pageSize,

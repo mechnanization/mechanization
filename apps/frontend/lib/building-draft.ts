@@ -1,9 +1,53 @@
 'use client';
 
-import type { BuildingLifecycle, StructureType } from '@mechanization/shared-schemas';
-// Type-only, so this erases at compile time and adds no runtime edge from
-// `lib` back into `components`.
-import type { GridUnitDraft } from '@/components/admin/unit-grid-picker';
+import type { BuildingLifecycle, StructureType, UnitStatus, UnitType } from '@mechanization/shared-schemas';
+
+export interface GridUnitDraft {
+  /** Minted on confirm; carried as the created unit's id, same as the
+   *  registration form's inline units — an offline save can name the row
+   *  before it exists. */
+  clientId: string;
+  /** 0-indexed real floor — row 1 (bottom) is floor 0. */
+  floor: number;
+  /** 1-based column, inclusive. */
+  startCol: number;
+  endCol: number;
+  unitType: UnitType;
+  /**
+   * «نوع الوحدة» (0109): the municipality's type this block was filed as, when
+   * one was chosen from the list. `unitType` is always its base. Absent means
+   * the base alone — the list was not loaded, or nothing was chosen — and the
+   * server files the unit under that base's system type.
+   */
+  unitTypeId?: string;
+  colorIndex: number;
+  /**
+   * The id of the `Unit` this cell already is, when the grid is editing a
+   * building rather than painting a new one. Absent means "created on save".
+   */
+  existingId?: string;
+  /** Its server-derived code, so an existing cell names itself on the grid. */
+  unitCode?: string;
+  /**
+   * Why the census will not let this unit be removed — an occupancy, a visit,
+   * a damage assessment or a citizen's card naming it. Set only for units the
+   * grid already holds, and the reason is shown rather than the delete button.
+   */
+  undeletableReason?: string;
+  /**
+   * What the census says about who is in it — the recorded status, or the
+   * owner's declaration where nothing is recorded (`effectiveUnitStatus`).
+   * Drives the dot in the corner of an existing unit; a freshly painted block
+   * has none, because nobody has been asked yet.
+   */
+  unitStatus?: UnitStatus | null;
+  /**
+   * How many levels an existing home spans upward from `floor` — a «دوبلكس»
+   * is 2 (0095). Its upper rows are drawn as the same block and cannot be
+   * painted over; it is set on the unit, never by painting.
+   */
+  levels?: number;
+}
 
 /**
  * Keeps «سجل المباني»'s wizard alive across a locale switch.

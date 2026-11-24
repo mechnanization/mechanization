@@ -1,5 +1,5 @@
 import { normalizeDigits, type CitizenResidence } from '@mechanization/shared-schemas';
-import type { CitizenFormValues } from '@/components/admin/citizen-form';
+import type { CitizenFormValues } from '@/lib/citizen-form-values';
 import { namesForKind } from './residence-move';
 
 /**

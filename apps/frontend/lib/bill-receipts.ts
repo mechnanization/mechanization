@@ -1,7 +1,7 @@
 import { billOwesNothing } from '@mechanization/shared-schemas';
 import type { QueryState } from '@tanstack/react-query';
 import { reverseTransactionSchema } from '@mechanization/shared-schemas';
-import type { RecordedMovement } from '@/components/admin/payment-receipt';
+import type { RecordedMovement } from './recorded-movement';
 import { ApiRequestError, type PaymentLedgerEntry } from './api-client';
 import { outcomeInDoubt } from './request-id';
 import { hasRole, PAYMENT_REVERSE_ROLES } from './staff-roles';

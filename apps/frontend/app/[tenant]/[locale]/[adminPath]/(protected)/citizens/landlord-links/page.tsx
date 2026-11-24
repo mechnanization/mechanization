@@ -155,8 +155,8 @@ export default function LandlordLinksPage({
         ownerName: candidate.name,
         candidateIds: [candidate.id],
       });
-      void queryClient.invalidateQueries({ queryKey: ['landlord-links'] });
-      void queryClient.invalidateQueries({ queryKey: ['landlord-links-summary'] });
+      void queryClient.invalidateQueries({ queryKey: ['landlord-links', tenant] });
+      void queryClient.invalidateQueries({ queryKey: ['landlord-links-summary', tenant] });
       void queryClient.invalidateQueries({ queryKey: ['landlord-link', tenant, proposal.propertyEntryId] });
     };
     const pending = run().finally(() => {

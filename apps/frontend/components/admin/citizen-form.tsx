@@ -60,81 +60,16 @@ import { QuickSaveDialog } from './quick-save-dialog';
 import type { LockedCensusTarget } from './building-unit-picker';
 import { ParcelRosterDialog } from './parcel-roster-dialog';
 import { ResidenceChangeDialog } from './residence-change-dialog';
-import { applyResidenceMove, planResidenceMove, type NamesBefore } from '@/lib/residence-move';
+import { applyResidenceMove, planResidenceMove } from '@/lib/residence-move';
 import { withResidence } from '@/lib/citizen-seed';
 import { carryHeldPhone, withoutUnusedWhatsapp } from '@/lib/citizen-contact';
 import { landlordNameToSend } from '@/lib/citizen-field-edit';
 import { scrollElementToTop } from '@/lib/scroll-to-top';
 import { cn, scopeErrors } from '@/lib/utils';
 
-export interface CitizenFormValues {
-  /**
-   * نوع الملف — a household living in the town, or «غير مقيم في البلدة». Decides
-   * which questions the first two sections ask. Absent reads as a household,
-   * which is what every draft and queued record from before it meant.
-   */
-  residence?: CitizenResidence;
-  personal: Record<string, unknown>;
-  contact: Record<string, unknown>;
-  properties: PropertyDraft[];
-  /**
-   * Why each saved card removed on this edit is going — the officer's answer
-   * in the delete dialog. The census closes the flats a removed card claimed
-   * with it: «سُجِّلت بالخطأ» drops them from the unit's history, «بيع أو نقل
-   * ملكية» keeps the ownership, ending on its date. Only saved cards; a card
-   * added and removed in the same sitting never reached the server.
-   */
-  removals?: Array<CardRemovalAnswer & { propertyId: string }>;
-  /**
-   * Fields the officer recorded as «غير مؤكَّد», keyed by dot-path.
-   *
-   * A Map rather than the array the wire uses, because every operation this
-   * form performs on them is by path: is this field flagged, flag it, drop it
-   * when its card is deleted. `flagsToArray` converts at the edge.
-   */
-  flags: Map<string, string>;
-  /**
-   * The server's «بانتظار التحقق» notes on this record, keyed by dot-path.
-   *
-   * Not part of what the form edits and never sent back — the server derives
-   * these from its own cadastre on every write. They are carried in the form's
-   * values only so the fields they name can say so while the officer is
-   * looking at them.
-   */
-  unverified: Map<string, string>;
-  /**
-   * «سبب عام لنقص البيانات» — one reason for the whole visit (D12).
-   *
-   * Not a flag and not a replacement for them: the server copies it onto every
-   * remaining gap as an overridable default, so a reviewer still gets a list of
-   * named fields rather than one sentence attached to nothing. Undefined on an
-   * ordinary save, which is the overwhelming majority of them.
-   */
-  blanketFlagReason?: string;
-  /**
-   * «ملاحظات» — free text the officer adds, asked for by no field.
-   *
-   * Deliberately *not* `blanketFlagReason`, which is the only free-text box
-   * this form used to have and which officers were therefore using for this.
-   * That one is a reason data is missing: it propagates onto every gap in the
-   * record and its presence is part of what lands a registration at
-   * «يتطلب مراجعة». Writing «الأسرة تنتقل نهاية الشهر» into it flags a clean
-   * record for review. A note flags nothing.
-   */
-  notes?: string;
-  /**
-   * «تغيير الإقامة» — a real move applied on this form, not yet saved: the day
-   * it took effect, sent as `movedOn`, and the reason the save's review starts
-   * from. Absent on a correction, where only the answer changes.
-   */
-  residenceMove?: { movedOn: string; reason: string };
-  /**
-   * A person's name parts as they were when the file was switched to «جهة أو
-   * وقف», so switching back restores them rather than re-splitting the joined
-   * line (`namesForKind`). Never sent.
-   */
-  namesBefore?: NamesBefore;
-}
+import type { CitizenFormValues } from '@/lib/citizen-form-values';
+
+export type { CitizenFormValues } from '@/lib/citizen-form-values';
 
 /**
  * The wizard's three pages.

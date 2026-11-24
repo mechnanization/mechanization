@@ -18,3 +18,10 @@ export const API_URL: string = process.env.NEXT_PUBLIC_API_URL ?? 'http://localh
  * `NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN` in `.env.local`.
  */
 export const MAPBOX_ACCESS_TOKEN: string | undefined = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
+
+/**
+ * The commit this build was made from, or undefined (a local build). Vercel's
+ * `NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA`, the same value Sentry tags its events with
+ * as `release`; the service worker takes its version from it (ARCH-23).
+ */
+export const COMMIT_SHA: string | undefined = process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA;
