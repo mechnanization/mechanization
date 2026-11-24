@@ -1,5 +1,5 @@
 import * as Sentry from '@sentry/node';
-import { scrubEvent } from './sentry-redaction';
+import { scrubEvent } from '@mechanization/shared-schemas';
 
 /**
  * Error reporting for the API.
