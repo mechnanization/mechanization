@@ -900,6 +900,7 @@ export function CitizenEditor({
    */
   const [deliveredAs, setDeliveredAs] = useState<string | null>(null);
   const tQueue = useTranslations('offlineQueue');
+  const tPrefill = useTranslations('citizenForm.prefillFailed');
   const [submitting, setSubmitting] = useState(false);
   /**
    * One save at a time, decided synchronously.
@@ -996,6 +997,8 @@ export function CitizenEditor({
    * pre-filled is indistinguishable from one showing somebody else's record.
    */
   const [restoredAt, setRestoredAt] = useState<Date | null>(null);
+  /** The case or building this registration was opened from could not be read, so the form opened blank (ERR-02). */
+  const [unreadSources, setUnreadSources] = useState<Array<'case' | 'building'>>([]);
 
   /**
    * Whether this screen keeps a draft at all.
@@ -1043,11 +1046,18 @@ export function CitizenEditor({
         // accepts, so the form cannot offer one that would be refused on save.
         // `getQueuedSubmission` touches only IndexedDB, not the network — it
         // runs alongside the other two rather than blocking on them.
+        const unread: Array<'case' | 'building'> = [];
         const [tenantConfig, form, queued, fromCase, censusBuilding] = await Promise.all([
           getTenantConfig(tenant),
           citizenId ? getCitizenForm(tenant, token, citizenId) : Promise.resolve(null),
           queueId ? getQueuedSubmission(tenant, queueId) : Promise.resolve(null),
-          fromCaseId ? getCase(tenant, token, fromCaseId).catch(() => null) : Promise.resolve(null),
+          fromCaseId
+            ? getCase(tenant, token, fromCaseId).catch((caught) => {
+                logApiError(caught);
+                unread.push('case');
+                return null;
+              })
+            : Promise.resolve(null),
           /*
             The structure behind `?buildingId=`, fetched so the first card can
             be seeded from it.
@@ -1059,12 +1069,17 @@ export function CitizenEditor({
             better than a page that will not open.
           */
           lockedCensusTarget
-            ? getBuilding(tenant, token, lockedCensusTarget.buildingId).catch(() => null)
+            ? getBuilding(tenant, token, lockedCensusTarget.buildingId).catch((caught) => {
+                logApiError(caught);
+                unread.push('building');
+                return null;
+              })
             : Promise.resolve(null),
         ]);
         if (cancelled) return;
 
         setConfig(tenantConfig);
+        setUnreadSources(unread);
 
         if (queueId) {
           if (!queued) {
@@ -2039,6 +2054,14 @@ export function CitizenEditor({
         «إلغاء» because the two are different intentions: cancel leaves the
         screen, this stays on it and starts over.
       */}
+      {unreadSources.length > 0 ? (
+        <Alert variant="warning" live="status">
+          {unreadSources.map((source) => (
+            <p key={source}>{tPrefill(source)}</p>
+          ))}
+        </Alert>
+      ) : null}
+
       {restoredAt ? (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-dashed border-primary/40 bg-primary/5 px-4 py-3">
           <p className="text-xs text-foreground/80">

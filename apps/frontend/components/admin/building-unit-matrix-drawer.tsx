@@ -105,6 +105,7 @@ import { HouseGrowthPrompt, UnitLevelsPanel, upperFlatOf } from './unit-levels';
 import { showsOwnerBilling } from '@/lib/owner-billing';
 import { DamageForm } from './damage/damage-form';
 import { DamageHistory } from './damage/damage-history';
+import { DamageReadFailed } from './damage/damage-read-failed';
 import { ReinspectNotice } from './damage/reinspect-notice';
 import { damageInput, isUninhabitableNow } from '@/lib/damage-reading';
 import { FEE_EXEMPTION_GRANT_ROLES, hasRole } from '@/lib/staff-roles';
@@ -210,6 +211,8 @@ export function BuildingUnitMatrixDrawer({
   } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** The damage read failed: the building must not read as undamaged (ERR-02). */
+  const [damageFailed, setDamageFailed] = useState(false);
 
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null);
   const [action, setAction] = useState<ActionKind>(null);
@@ -227,10 +230,16 @@ export function BuildingUnitMatrixDrawer({
         getBuilding(tenant, token, buildingId),
         // A failed damage read must not take the matrix down with it: the units
         // are the reason the drawer was opened, the condition log is context.
-        getBuildingDamage(tenant, token, buildingId).catch(() => null),
+        // It is said, though, beside the history (ERR-02), never shown as «undamaged».
+        getBuildingDamage(tenant, token, buildingId).catch((caught) => {
+          logApiError(caught);
+          return 'FAILED' as const;
+        }),
       ]);
       setBuilding(detail);
-      setDamage(condition);
+      // A failed damage read is not an undamaged building (ERR-02): say so, beside the history.
+      setDamage(condition === 'FAILED' ? null : condition);
+      setDamageFailed(condition === 'FAILED');
     } catch (caught) {
       logApiError(caught);
       setError(
@@ -245,10 +254,22 @@ export function BuildingUnitMatrixDrawer({
     }
   }, [tenant, token, buildingId, en]);
 
+  /** Reads the damage history alone, so a retry does not reload the matrix under an open form. */
+  const retryDamage = useCallback(async () => {
+    if (!buildingId) return;
+    try {
+      setDamage(await getBuildingDamage(tenant, token, buildingId));
+      setDamageFailed(false);
+    } catch (caught) {
+      logApiError(caught);
+    }
+  }, [tenant, token, buildingId]);
+
   useEffect(() => {
     if (!open || !buildingId) {
       setBuilding(null);
       setDamage(null);
+      setDamageFailed(false);
       setSelectedUnitId(null);
       setAction(null);
       setActionError(null);
@@ -1528,6 +1549,7 @@ export function BuildingUnitMatrixDrawer({
 
           {/* ── The damage history panel (P4-T2) ──────────────────── */}
           {/* The structure's own «غير صالحة للسكن», from a whole-building reading. */}
+          {damageFailed ? <DamageReadFailed onRetry={() => void retryDamage()} /> : null}
           <ReinspectNotice history={damage?.history ?? []} target={{ buildingId: building.id }} />
 
           {damage ? (
