@@ -40,9 +40,9 @@ function rowError(result: CitizenImportRowResult): string | undefined {
 }
 
 const STEPS = [
-  { id: 'file', step: '١', title: 'الملف', icon: Upload },
-  { id: 'review', step: '٢', title: 'المراجعة', icon: ClipboardList },
-  { id: 'result', step: '٣', title: 'النتيجة', icon: CheckCircle2 },
+  { id: 'file', step: '1', title: 'الملف', icon: Upload },
+  { id: 'review', step: '2', title: 'المراجعة', icon: ClipboardList },
+  { id: 'result', step: '3', title: 'النتيجة', icon: CheckCircle2 },
 ] as const;
 
 /**

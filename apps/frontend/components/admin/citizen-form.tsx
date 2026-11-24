@@ -1493,7 +1493,7 @@ export function CitizenForm({
     () => [
       {
         id: 'personal',
-        step: locale === 'en' ? '1' : '١',
+        step: '1',
         icon: IdCard,
         title: nonPerson
           ? tKind(nonPerson === 'ESTATE' ? 'sectionPersonalEstate' : 'sectionPersonalInstitution')
@@ -1507,7 +1507,7 @@ export function CitizenForm({
       },
       {
         id: 'contact',
-        step: locale === 'en' ? '2' : '٢',
+        step: '2',
         icon: UsersRound,
         title: nonPerson
           ? tKind(nonPerson === 'ESTATE' ? 'sectionContactEstate' : 'sectionContactInstitution')
@@ -1521,7 +1521,7 @@ export function CitizenForm({
       },
       {
         id: 'properties',
-        step: locale === 'en' ? '3' : '٣',
+        step: '3',
         icon: Building2,
         title: locale === 'en' ? 'Properties' : 'العقارات',
       },
@@ -1840,7 +1840,7 @@ export function CitizenForm({
       <div className={cn(!reviewing && step !== 'personal' && 'hidden')}>
           <FormSection
             id="personal"
-            step={locale === 'en' ? '1' : '١'}
+            step="1"
             icon={IdCard}
             title={sections[0].title}
             invalid={sectionInvalid('personal')}
@@ -1884,7 +1884,7 @@ export function CitizenForm({
       <div className={cn(!reviewing && step !== 'contact' && 'hidden')}>
           <FormSection
             id="contact"
-            step={locale === 'en' ? '2' : '٢'}
+            step="2"
             icon={UsersRound}
             title={sections[1].title}
             invalid={sectionInvalid('contact')}
@@ -1909,7 +1909,7 @@ export function CitizenForm({
       <div className={cn('space-y-4 sm:space-y-5', !reviewing && step !== 'properties' && 'hidden')}>
           <FormSection
             id="properties"
-            step={locale === 'en' ? '3' : '٣'}
+            step="3"
             icon={Building2}
             title={
               locale === 'en'

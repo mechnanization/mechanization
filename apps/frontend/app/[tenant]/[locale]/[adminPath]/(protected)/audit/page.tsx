@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { CalendarDays, History, ListTree, ShieldCheck, X } from 'lucide-react';
 import { getLabels } from '@mechanization/shared-schemas';
 import { getAuditFacets, getAuditLog, type AuditEntry } from '@/lib/api-client';
+import { FORMAT_LOCALE } from '@/lib/api-errors';
 import { auditEntityLabel } from '@/lib/audit-labels';
 import { AUDIT_FAMILIES, auditFamilyOf } from '@/lib/audit-describe';
 import { formatMonth } from '@/lib/dates';
@@ -295,7 +296,7 @@ export default function AuditTrailPage({
           {query.data
             ? en
               ? `${total.toLocaleString('en')} ${total === 1 ? 'entry' : 'entries'}`
-              : `${total.toLocaleString('ar')} نشاط`
+              : `${total.toLocaleString(FORMAT_LOCALE.ar)} نشاط`
             : null}
         </span>
         {pages > 1 ? (

@@ -76,10 +76,10 @@ const TONE_STYLES: Record<
   ToastTone,
   { icon: React.ComponentType<{ className?: string }>; accent: string; iconColor: string }
 > = {
-  success: { icon: CheckCircle2, accent: 'border-s-success', iconColor: 'text-success' },
-  error: { icon: XCircle, accent: 'border-s-destructive', iconColor: 'text-destructive' },
-  warning: { icon: TriangleAlert, accent: 'border-s-warning', iconColor: 'text-warning' },
-  info: { icon: Info, accent: 'border-s-primary', iconColor: 'text-primary' },
+  success: { icon: CheckCircle2, accent: 'border-success/40', iconColor: 'text-success' },
+  error: { icon: XCircle, accent: 'border-destructive/40', iconColor: 'text-destructive' },
+  warning: { icon: TriangleAlert, accent: 'border-warning/40', iconColor: 'text-warning' },
+  info: { icon: Info, accent: 'border-primary/40', iconColor: 'text-primary' },
 };
 
 let nextId = 1;
@@ -205,7 +205,8 @@ function ToastCard({
       onFocusCapture={() => onPause(toast.id)}
       onBlurCapture={() => onPause(null)}
       className={cn(
-        'pointer-events-auto flex items-start gap-3 rounded-lg border border-s-4 bg-card p-3.5 shadow-lg',
+        // The tone is the icon and a 1px border of its colour: a thicker stripe on one side is BAN-3.
+        'pointer-events-auto flex items-start gap-3 rounded-lg border bg-card p-3.5 shadow-lg',
         // Slides up from the edge it is pinned to. `animate-in` is the
         // tailwindcss-animate plugin the design system already depends on, and
         // the global `prefers-reduced-motion` rule in globals.css collapses its
