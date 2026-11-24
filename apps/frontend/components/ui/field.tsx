@@ -101,15 +101,6 @@ export function useFieldFocus(): FieldFocus | null {
   return useContext(FieldFocusContext);
 }
 
-/** The flags as the wire wants them: an array, in the order fields appear. */
-export function flagsToArray(flags: ReadonlyMap<string, string>): FieldFlag[] {
-  return [...flags].map(([path, reason]) => ({
-    path,
-    reason,
-    kind: 'UNESTABLISHED' as const,
-  }));
-}
-
 /**
  * The officer-editable flags out of what the server (or the offline queue)
  * stored — `UNESTABLISHED` only.

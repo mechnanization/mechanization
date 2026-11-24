@@ -210,3 +210,28 @@ export interface CitizenFormValues {
    */
   namesBefore?: NamesBefore;
 }
+
+/**
+ * A brand new record — one blank property card, Lebanese by default.
+ *
+ * A factory rather than a shared constant. The old constant handed every form
+ * that opened it the *same* `Map` and the same property array; nothing mutates
+ * them today, because every update in this file copies before it writes, but
+ * one `flags.set(...)` written in the ordinary imperative style would have
+ * leaked one officer's «غير مؤكَّد» flags into the next blank form on that
+ * device — and it would have looked completely reasonable in review.
+ */
+export function emptyCitizen(): CitizenFormValues {
+  return {
+    residence: 'RESIDENT',
+    personal: { isLebanese: true },
+    contact: { whatsappSameAsPhone: true, hasNoPhone: false },
+    // Empty, not one blank card — a citizen who owns nothing and only rents
+    // has no property to file, and that is the common case this form should
+    // not stand in the way of. Staff add a card only for someone who owns.
+    properties: [],
+    flags: new Map(),
+    unverified: new Map(),
+  };
+}
+

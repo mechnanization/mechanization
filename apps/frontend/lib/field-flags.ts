@@ -1,4 +1,4 @@
-import { getLabels } from '@mechanization/shared-schemas';
+import { getLabels, type FieldFlag } from '@mechanization/shared-schemas';
 
 /**
  * `properties.1.propertyNumber` → «رقم العقار — العقار ٢».
@@ -39,4 +39,13 @@ export function flagFieldLabel(path: string, locale: string): string {
       : `${field} — العقار ${card}، الوحدة ${unit + 1}`;
   }
   return locale === 'en' ? `${field} — property ${card}` : `${field} — العقار ${card}`;
+}
+
+/** The flags as the wire wants them: an array, in the order fields appear. */
+export function flagsToArray(flags: ReadonlyMap<string, string>): FieldFlag[] {
+  return [...flags].map(([path, reason]) => ({
+    path,
+    reason,
+    kind: 'UNESTABLISHED' as const,
+  }));
 }
