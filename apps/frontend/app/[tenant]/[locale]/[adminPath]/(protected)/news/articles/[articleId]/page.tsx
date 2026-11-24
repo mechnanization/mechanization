@@ -32,7 +32,7 @@ export default function NewsArticlePage({
       return (
         <ErrorState
           title={tNews('loadFailedTitle')}
-          description={query.refusal ?? query.error}
+          description={query.refusal ?? query.error} offline={query.offline}
           retryLabel={tNews('retry')}
           onRetry={query.refetch}
         />

@@ -190,7 +190,7 @@ export default function NewsArticlesPage({
         // off for the municipality and Day3ati being down each need a different next step, so it is said.
         <ErrorState
           title={tNews('loadFailedTitle')}
-          description={first.refusal ?? first.error}
+          description={first.refusal ?? first.error} offline={first.offline}
           retryLabel={tNews('retry')}
           onRetry={first.refetch}
         />

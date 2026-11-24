@@ -75,6 +75,17 @@ const config: Config = {
           DEFAULT: 'hsl(var(--info))',
           foreground: 'hsl(var(--info-foreground))',
         },
+        // Ten identity colours for telling neighbours apart (the unit grid), measured in globals.css.
+        'identity-1': 'hsl(var(--identity-1))',
+        'identity-2': 'hsl(var(--identity-2))',
+        'identity-3': 'hsl(var(--identity-3))',
+        'identity-4': 'hsl(var(--identity-4))',
+        'identity-5': 'hsl(var(--identity-5))',
+        'identity-6': 'hsl(var(--identity-6))',
+        'identity-7': 'hsl(var(--identity-7))',
+        'identity-8': 'hsl(var(--identity-8))',
+        'identity-9': 'hsl(var(--identity-9))',
+        'identity-10': 'hsl(var(--identity-10))',
       },
       borderRadius: {
         lg: 'var(--radius)',

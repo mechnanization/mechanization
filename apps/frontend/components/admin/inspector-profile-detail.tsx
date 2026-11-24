@@ -395,14 +395,14 @@ export function InspectorProfileDetail({
             />
             <BreakdownTile
               icon={Store}
-              tone="text-purple-600 bg-purple-500/10 dark:bg-purple-500/20"
+              tone="text-identity-2 bg-identity-2/10"
               value={data.breakdown.commercial}
               label={isAr ? 'محلات وعيادات ومكاتب' : 'Commercial units'}
               locale={locale}
             />
             <BreakdownTile
               icon={Building}
-              tone="text-indigo-600 bg-indigo-500/10 dark:bg-indigo-500/20"
+              tone="text-identity-10 bg-identity-10/10"
               value={data.breakdown.buildings}
               label={isAr ? 'مبانٍ كاملة' : 'Buildings'}
               locale={locale}

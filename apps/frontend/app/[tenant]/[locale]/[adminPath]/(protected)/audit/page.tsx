@@ -306,7 +306,7 @@ export default function AuditTrailPage({
       </div>
 
       {query.error ? (
-        <ErrorState description={query.error} onRetry={query.refetch} retryLabel={en ? 'Retry' : 'إعادة المحاولة'} />
+        <ErrorState description={query.error} offline={query.offline} onRetry={query.refetch} retryLabel={en ? 'Retry' : 'إعادة المحاولة'} />
       ) : query.loading && !query.data ? (
         <div className="space-y-3" aria-busy>
           {[0, 1, 2].map((index) => (

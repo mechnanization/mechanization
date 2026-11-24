@@ -133,7 +133,7 @@ export default function ArrearsMatchPage({
         <>
           <p className="max-w-3xl text-sm text-muted-foreground">{t('intro')}</p>
           {lines.error && !lines.data ? (
-            <ErrorState title={t('loadFailed')} description={lines.refusal ?? lines.error} onRetry={lines.refetch} />
+            <ErrorState title={t('loadFailed')} description={lines.refusal ?? lines.error} offline={lines.offline} onRetry={lines.refetch} />
           ) : (
             <DataTable
               columns={columns}

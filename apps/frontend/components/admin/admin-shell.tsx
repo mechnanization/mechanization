@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import * as React from 'react';
 import { usePathname } from 'next/navigation';
 import { X } from 'lucide-react';
@@ -44,6 +45,7 @@ export function AdminShell({
 }): React.JSX.Element {
   const pathname = usePathname();
   const base = `/${tenant}/${locale}/${adminPath}`;
+  const tCommon = useTranslations('common');
 
   /*
    * Installs the app shell on this device.
@@ -129,14 +131,14 @@ export function AdminShell({
         <div className="fixed inset-0 z-50 lg:hidden">
           <button
             type="button"
-            aria-label="إغلاق القائمة"
+            aria-label={tCommon('closeMenu')}
             className="absolute inset-0 cursor-default bg-black/60 animate-in fade-in"
             onClick={() => setDrawerOpen(false)}
           />
           <aside
             role="dialog"
             aria-modal="true"
-            aria-label="القائمة"
+            aria-label={tCommon('menu')}
             className={cn(
               // Pinned to the inline-start edge, so it slides from the right
               // in this RTL portal and the left in an LTR one — the side the
@@ -160,7 +162,7 @@ export function AdminShell({
               <button
                 type="button"
                 onClick={() => setDrawerOpen(false)}
-                aria-label="إغلاق القائمة"
+                aria-label={tCommon('closeMenu')}
                 className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
               >
                 <X className="size-5" />

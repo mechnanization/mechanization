@@ -183,7 +183,7 @@ export function ChecksPanel({
       </div>
 
       {query.error ? (
-        <ErrorState description={query.error} onRetry={query.refetch} />
+        <ErrorState description={query.error} offline={query.offline} onRetry={query.refetch} />
       ) : query.loading ? (
         <LoadingState label={en ? 'Loading…' : 'جارٍ التحميل…'} />
       ) : (query.data?.items.length ?? 0) === 0 ? (

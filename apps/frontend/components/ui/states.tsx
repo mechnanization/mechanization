@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { useTranslations } from 'next-intl';
 import { Inbox, Loader2, RefreshCw, TriangleAlert, WifiOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -117,29 +118,36 @@ export function EmptyState({
 }
 
 export function ErrorState({
-  title = 'تعذّر تحميل البيانات',
+  title,
   description,
+  offline = false,
   onRetry,
-  retryLabel = 'إعادة المحاولة',
+  retryLabel,
   className,
   compact = false,
 }: {
+  /** Defaults to the messages' «could not load», or «no connection» when `offline`. */
   title?: string;
   /** The server's own message, when there is one worth showing. */
   description?: string;
+  /**
+   * The read never reached the server (`ApiRequestError` with `status === 0`; `useStaffQuery`'s
+   * `offline`). Its remedy is the reader's own connection, so it gets its own icon and title.
+   */
+  offline?: boolean;
   onRetry?: () => void;
+  /** Defaults to the messages' «try again». */
   retryLabel?: string;
   className?: string;
   compact?: boolean;
 }): React.JSX.Element {
+  const t = useTranslations('errorState');
   /*
    * A dropped connection is told apart from a server fault, because the two
-   * have different remedies and only one of them is the reader's to apply.
-   * `api-client.ts` already raises `NETWORK_ERROR` for a fetch that never
-   * reached the server; matching its Arabic message here keeps the two in step
-   * without this component importing the client.
+   * have different remedies and only one of them is the reader's to apply. The
+   * caller says which (`offline`, from the status): matching the Arabic text of
+   * the client's message here never worked on an English page (ERR-06).
    */
-  const offline = description?.includes('تعذّر الاتصال') ?? false;
   const Icon = offline ? WifiOff : TriangleAlert;
 
   return (
@@ -160,7 +168,7 @@ export function ErrorState({
       >
         <Icon className="size-6" />
       </span>
-      <p className="text-sm font-semibold text-foreground">{title}</p>
+      <p className="text-sm font-semibold text-foreground">{title ?? (offline ? t('offlineTitle') : t('title'))}</p>
       {description ? (
         <p className="mt-1.5 max-w-sm break-words text-sm leading-relaxed text-muted-foreground">
           {description}
@@ -169,7 +177,7 @@ export function ErrorState({
       {onRetry ? (
         <Button variant="outline" size="sm" className="mt-4 gap-2" onClick={onRetry}>
           <RefreshCw className="size-4" />
-          {retryLabel}
+          {retryLabel ?? t('retry')}
         </Button>
       ) : null}
     </div>

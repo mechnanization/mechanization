@@ -109,7 +109,7 @@ export function AuditDaily({
   if (query.error) {
     return (
       <ErrorState
-        description={query.error}
+        description={query.error} offline={query.offline}
         onRetry={query.refetch}
         retryLabel={tCommon('retry')}
       />
@@ -417,7 +417,7 @@ function DayDetail({
   if (query.error) {
     return (
       <div className="p-4">
-        <ErrorState compact description={query.error} onRetry={query.refetch} />
+        <ErrorState compact description={query.error} offline={query.offline} onRetry={query.refetch} />
       </div>
     );
   }

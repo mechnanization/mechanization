@@ -270,7 +270,7 @@ export function Field({
         >
           <span>{label}</span>
           {required ? (
-            <span className="text-xs font-bold text-destructive" aria-label="حقل إلزامي">
+            <span className="text-xs font-bold text-destructive" aria-label={locale === 'en' ? 'Required field' : 'حقل إلزامي'}>
               *
             </span>
           ) : (

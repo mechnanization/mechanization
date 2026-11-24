@@ -498,7 +498,7 @@ export default function SettleCashPage({
       <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
         <HeaderBackLink fallbackHref={citizenHref} label={en ? 'Back' : 'رجوع'} />
         <ErrorState
-          description={profile.error}
+          description={profile.error} offline={profile.offline}
           onRetry={() => void profile.refetch()}
           retryLabel={en ? 'Try again' : 'إعادة المحاولة'}
         />

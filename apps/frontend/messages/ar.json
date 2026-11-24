@@ -1,5 +1,10 @@
 {
   "common": {
+    "closeMenu": "إغلاق القائمة",
+    "menu": "القائمة",
+    "openInWhatsapp": "فتح في واتساب",
+    "parcelsMap": "خريطة العقارات",
+    "republic": "الجمهورية اللبنانية",
     "sharedUnitBill": "وحدة مشتركة {building} / {unit} — عدد المسجّلين: {count}",
     "sharedBillReceipts": "وصولات الفاتورة",
     "appName": "السجل البلدي",
@@ -138,6 +143,27 @@
     "propertiesSummary": "العقارات والوحدات المسجّلة",
     "invoicesSummary": "الفواتير والمطالبات",
     "askAtMunicipality": "راجع البلدية مع بطاقة هويتك، وسيستخرجه لك الموظف."
+  },
+  "zones": {
+    "deleted": {
+      "title": "تم حذف القطاع",
+      "description": "{name} — أصبح {count} عقار بلا قطاع."
+    }
+  },
+  "themeToggle": {
+    "group": "مظهر الواجهة",
+    "theme": "المظهر",
+    "light": "فاتح",
+    "dark": "داكن",
+    "system": "النظام",
+    "cycle": "المظهر: {mode}. اضغط للتبديل.",
+    "cycleTitle": "المظهر: {mode} — اضغط للتبديل",
+    "systemResolved": "النظام ({mode})"
+  },
+  "errorState": {
+    "title": "تعذّر تحميل البيانات",
+    "offlineTitle": "لا يوجد اتصال",
+    "retry": "إعادة المحاولة"
   },
   "pager": {
     "pages": "الصفحات",
@@ -3940,6 +3966,8 @@
     }
   },
   "billReceipts": {
+    "recordNotFound": "تعذّر العثور على سجل الدفعة.",
+    "openFailed": "تعذّر فتح الوصل — يمكنك إصداره من ملف المواطن.",
     "title": "وصولات الفاتورة",
     "open": "وصولات الفاتورة",
     "loading": "جارٍ تحميل الوصولات…",
@@ -4179,6 +4207,7 @@
     }
   },
   "citizenImport": {
+    "steps": "خطوات الاستيراد",
     "possibleDuplicatesHeading": "صفوف تشبه أشخاصاً مسجّلين",
     "possibleDuplicatesNote": "ستُستورد وتبقى في «{status}» مع ملاحظة «{flag}»، ليتحقّق أحدٌ هل هو الشخص نفسه.",
     "resembles": "يشبه: {names}",

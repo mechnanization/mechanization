@@ -123,7 +123,7 @@ export default function ArrearsReviewPage({
             </section>
           ) : null}
           {batches.error && !batches.data ? (
-            <ErrorState title={t('listFailed')} description={batches.refusal ?? batches.error} onRetry={batches.refetch} />
+            <ErrorState title={t('listFailed')} description={batches.refusal ?? batches.error} offline={batches.offline} onRetry={batches.refetch} />
           ) : (
             <DataTable
               columns={columns}

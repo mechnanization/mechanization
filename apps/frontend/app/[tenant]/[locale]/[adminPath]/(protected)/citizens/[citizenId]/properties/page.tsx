@@ -199,7 +199,7 @@ export default function CitizenPropertiesPage({
       <HeaderBackLink fallbackHref={`${base}/citizens`} label={en ? 'Back' : 'رجوع'} />
 
       {profile.error ? (
-        <ErrorState description={profile.error} onRetry={() => void profile.refetch()} retryLabel={en ? 'Try again' : 'إعادة المحاولة'} />
+        <ErrorState description={profile.error} offline={profile.offline} onRetry={() => void profile.refetch()} retryLabel={en ? 'Try again' : 'إعادة المحاولة'} />
       ) : !citizen ? (
         <LoadingState fullHeight label={en ? 'Loading properties…' : 'جارٍ تحميل العقارات…'} />
       ) : (

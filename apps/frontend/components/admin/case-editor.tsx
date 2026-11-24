@@ -35,7 +35,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Field } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { LoadingState } from '@/components/ui/states';
+import { ErrorState, LoadingState } from '@/components/ui/states';
 import {
   Select,
   SelectContent,
@@ -88,6 +88,9 @@ export function CaseEditor({
   const [values, setValues] = useState<CaseFormValues>(EMPTY);
   const [loading, setLoading] = useState(editing);
   const [loadError, setLoadError] = useState<string | null>(null);
+  /** The case read never reached the server (ERR-06), and the bump that reads it again. */
+  const [loadOffline, setLoadOffline] = useState(false);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [touched, setTouched] = useState(false);
@@ -136,6 +139,7 @@ export function CaseEditor({
       })
       .catch((caught) => {
         if (cancelled) return;
+        setLoadOffline(caught instanceof ApiRequestError && caught.status === 0);
         setLoadError(handleApiError(caught, t('loadFailed')));
       })
       .finally(() => {
@@ -144,7 +148,7 @@ export function CaseEditor({
     return () => {
       cancelled = true;
     };
-  }, [tenant, token, caseId, handleApiError, t]);
+  }, [tenant, token, caseId, handleApiError, t, loadAttempt]);
 
   const set = (patch: Partial<CaseFormValues>) =>
     setValues((previous) => ({ ...previous, ...patch }));
@@ -209,9 +213,15 @@ export function CaseEditor({
     return (
       <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
         <HeaderBackLink fallbackHref={cancelHref} label={t('back')} />
-        <Alert variant="destructive" live="alert">
-          {loadError}
-        </Alert>
+        <ErrorState
+          compact
+          description={loadError}
+          offline={loadOffline}
+          onRetry={() => {
+            setLoadError(null);
+            setLoadAttempt((n) => n + 1);
+          }}
+        />
         <Link href={cancelHref} className={buttonVariants({ variant: 'outline' })}>
           {t('back')}
         </Link>

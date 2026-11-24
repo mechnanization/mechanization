@@ -1778,6 +1778,7 @@ function PhoneLink({ phone, locale }: { phone: string; locale: string }) {
 
 /** Click-to-chat WhatsApp link, kept LTR with emerald accent. */
 function WhatsAppPhoneLink({ phone, message }: { phone: string; message?: string }) {
+  const tCommon = useTranslations('common');
   const href = buildWhatsappHref(phone, message ?? '') ?? `https://wa.me/${phone.replace(/\D/g, '')}`;
   return (
     <a
@@ -1786,7 +1787,7 @@ function WhatsAppPhoneLink({ phone, message }: { phone: string; message?: string
       rel="noopener noreferrer"
       dir="ltr"
       className="inline-flex items-center gap-1.5 font-medium text-success hover:text-success hover:underline"
-      title="فتح في واتساب"
+      title={tCommon('openInWhatsapp')}
     >
       <MessageCircle className="size-3.5 text-success" aria-hidden />
       <span>{formatPhone(phone)}</span>

@@ -3,6 +3,7 @@
 import { use, useCallback, useEffect, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { useQueryClient } from '@tanstack/react-query';
 import { Loader2, Plus, Trash2, X } from 'lucide-react';
 import {
@@ -74,6 +75,7 @@ export default function ZonesPage({
   /** The sector whose deletion is being confirmed, or null. */
   const [pendingDelete, setPendingDelete] = useState<ZoneSummary | null>(null);
   const toast = useToast();
+  const tZones = useTranslations('zones');
 
   const canEdit = staffUser?.role === 'SUPER_ADMIN';
   const editorOpen = drafting || editing !== null;
@@ -257,8 +259,8 @@ export default function ZonesPage({
       await deleteZone(tenant, token, zone.id);
       if (editing?.id === zone.id) closeEditor();
       await reload();
-      toast.success('تم حذف القطاع', {
-        description: `${zone.name} — أصبح ${zone.parcelCount} عقار بلا قطاع.`,
+      toast.success(tZones('deleted.title'), {
+        description: tZones('deleted.description', { name: zone.name, count: zone.parcelCount }),
       });
     } catch (caught) {
       const message = handleApiError(caught, 'تعذّر حذف القطاع.');

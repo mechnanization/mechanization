@@ -1,5 +1,6 @@
 'use client';
 
+import { useLocale } from 'next-intl';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Building2, Clock, MapPin, Phone, Trash2, Upload, UploadCloud } from 'lucide-react';
 import {
@@ -110,6 +111,7 @@ export function ProfileSection({
   copy: SettingsCopy;
 }) {
   const toast = useToast();
+  const locale = useLocale();
   const fileInput = useRef<HTMLInputElement>(null);
 
   const [saved, setSaved] = useState<Profile | null>(null);
@@ -361,7 +363,7 @@ export function ProfileSection({
               >
                 <Input
                   id="council-decision-ref"
-                  placeholder="قرار رقم ١٢ تاريخ ٢٠٢٦/٠٣/١٤"
+                  placeholder={locale === 'en' ? 'Decision no. 12 dated 14/03/2026' : 'قرار رقم ١٢ تاريخ ٢٠٢٦/٠٣/١٤'}
                   value={draft.councilDecisionRef}
                   onChange={(e) => setDraft({ ...draft, councilDecisionRef: e.target.value })}
                 />

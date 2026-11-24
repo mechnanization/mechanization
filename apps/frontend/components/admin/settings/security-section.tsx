@@ -803,7 +803,7 @@ export function SecuritySection({
                       />
                     )}
                   </div>
-                  <span className="text-xs font-semibold text-slate-700">
+                  <span className="text-xs font-semibold text-foreground">
                     {locale === 'en' ? 'Scan with Authenticator' : 'امسح بتطبيق المصادقة'}
                   </span>
                 </div>

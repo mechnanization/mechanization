@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useTheme } from 'next-themes';
+import { useTranslations } from 'next-intl';
 import { Monitor, Moon, Sun } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -13,9 +14,9 @@ import { cn } from '@/lib/utils';
  * "follow the device" reads as the escape hatch back to not having decided.
  */
 const OPTIONS = [
-  { value: 'light', label: 'فاتح', icon: Sun },
-  { value: 'dark', label: 'داكن', icon: Moon },
-  { value: 'system', label: 'النظام', icon: Monitor },
+  { value: 'light', icon: Sun },
+  { value: 'dark', icon: Moon },
+  { value: 'system', icon: Monitor },
 ] as const;
 
 type ThemeValue = (typeof OPTIONS)[number]['value'];
@@ -41,6 +42,9 @@ export function ThemeToggle({
   className?: string;
 }) {
   const { theme, setTheme, resolvedTheme } = useTheme();
+  const t = useTranslations('themeToggle');
+  /** A setting's name in the page's language: «Light», «فاتح». */
+  const nameOf = (value: ThemeValue): string => t(value);
 
   /**
    * Nothing theme-dependent renders until after hydration.
@@ -69,7 +73,7 @@ export function ThemeToggle({
         type="button"
         onClick={() => setTheme(next)}
         disabled={!mounted}
-        title={mounted ? `المظهر: ${active.label} — اضغط للتبديل` : 'المظهر'}
+        title={mounted ? t('cycleTitle', { mode: nameOf(active.value) }) : t('theme')}
         className={cn(
           'flex w-full items-center justify-center rounded-lg px-0 py-2.5 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground',
           className,
@@ -77,7 +81,7 @@ export function ThemeToggle({
       >
         {mounted ? <Icon className="size-5 shrink-0" aria-hidden /> : <span className="size-5" />}
         <span className="sr-only">
-          {mounted ? `المظهر: ${active.label}. اضغط للتبديل.` : 'المظهر'}
+          {mounted ? t('cycle', { mode: nameOf(active.value) }) : t('theme')}
         </span>
       </button>
     );
@@ -86,7 +90,7 @@ export function ThemeToggle({
   return (
     <div
       role="group"
-      aria-label="مظهر الواجهة"
+      aria-label={t('group')}
       className={cn(
         'inline-flex items-center gap-0.5 rounded-lg border bg-muted/60 p-0.5',
         className,
@@ -108,8 +112,8 @@ export function ThemeToggle({
             // cannot infer from a sun glyph at all.
             title={
               option.value === 'system' && mounted && resolvedTheme
-                ? `النظام (${resolvedTheme === 'dark' ? 'داكن' : 'فاتح'})`
-                : option.label
+                ? t('systemResolved', { mode: nameOf(resolvedTheme === 'dark' ? 'dark' : 'light') })
+                : nameOf(option.value)
             }
             className={cn(
               'flex flex-1 items-center justify-center rounded-md px-2.5 py-1.5 transition-colors',
@@ -119,7 +123,7 @@ export function ThemeToggle({
             )}
           >
             <Icon className="size-4 shrink-0" aria-hidden />
-            <span className="sr-only">{option.label}</span>
+            <span className="sr-only">{nameOf(option.value)}</span>
           </button>
         );
       })}

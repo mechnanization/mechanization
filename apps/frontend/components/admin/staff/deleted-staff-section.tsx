@@ -101,7 +101,7 @@ export function DeletedStaffSection({
         <ErrorState
           compact
           title={tCommon('error')}
-          description={query.error}
+          description={query.error} offline={query.offline}
           onRetry={() => void query.refetch()}
           retryLabel={tCommon('retry')}
         />
