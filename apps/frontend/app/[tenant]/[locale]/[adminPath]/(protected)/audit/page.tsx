@@ -1,14 +1,14 @@
 'use client';
 
-import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { use, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { CalendarDays, History, ListTree, ShieldCheck, X } from 'lucide-react';
 import { getLabels } from '@mechanization/shared-schemas';
-import { getAuditFacets, getAuditLog, type AuditEntry, type Session } from '@/lib/api-client';
+import { getAuditFacets, getAuditLog, type AuditEntry } from '@/lib/api-client';
 import { auditEntityLabel } from '@/lib/audit-labels';
 import { AUDIT_FAMILIES, auditFamilyOf } from '@/lib/audit-describe';
 import { formatMonth } from '@/lib/dates';
-import { loadSession } from '@/lib/session';
+import { useStaffSession } from '@/lib/use-staff-session';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { usePagerLabels } from '@/lib/use-pager-labels';
 import { param, useUrlState } from '@/lib/use-url-state';
@@ -80,22 +80,16 @@ export default function AuditTrailPage({
   const base = `/${tenant}/${locale}/${adminPath}`;
   const labels = getLabels(locale);
 
-  const [session, setSession] = useState<Session | null>(null);
+  const staff = useStaffSession(tenant, base);
+  // The trail is SUPER_ADMIN's and the auditor's: anyone else is sent to the dashboard and given no token.
+  const mayRead = staff.user === null ? null : staff.user.role === 'SUPER_ADMIN' || staff.user.role === 'AUDITOR';
+  const session = mayRead && staff.token && staff.user ? { accessToken: staff.token, user: staff.user } : null;
   const [filters, setFilters] = useUrlState(AUDIT_FILTERS);
   const { view, actor: actorId, family, entity: entityType, from, to, page } = filters;
 
   useEffect(() => {
-    const existing = loadSession(tenant);
-    if (!existing || existing.user.kind !== 'STAFF') {
-      router.replace(`${base}/login`);
-      return;
-    }
-    if (existing.user.role !== 'SUPER_ADMIN' && existing.user.role !== 'AUDITOR') {
-      router.replace(`${base}/dashboard`);
-      return;
-    }
-    setSession(existing);
-  }, [tenant, base, router]);
+    if (mayRead === false) router.replace(`${base}/dashboard`);
+  }, [mayRead, base, router]);
 
   const facets = useStaffQuery({
     queryKey: ['audit-facets', tenant],

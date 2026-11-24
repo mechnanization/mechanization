@@ -33,7 +33,8 @@ import type {
   MunicipalitySettings,
   StaffSummary,
 } from '@/lib/api-client';
-import { clearSession, loadSession } from '@/lib/session';
+import { clearSession } from '@/lib/session';
+import { useStaffSession } from '@/lib/use-staff-session';
 import { PAYMENT_SETTLE_ROLES, hasRole } from '@/lib/staff-roles';
 import { formatLbp, formatTypedAmount } from '@/lib/currency';
 import { CurrencyInput } from '@/components/ui/currency-input';
@@ -154,7 +155,13 @@ export default function SettlePaymentPage({
   const labels = getLabels(locale);
   const base = `/${tenant}/${locale}/${adminPath}`;
 
-  const [token, setToken] = useState<string | null>(null);
+  const staff = useStaffSession(tenant, base);
+  // Settling is the money roles' (`PAYMENT_SETTLE_ROLES`, as the route): anyone else reaching this
+  // address — «مشاهد فقط» typing it in — is sent back to the fees screen rather than shown a form the
+  // server refuses, and given no token meanwhile.
+  const staffUser = staff.user;
+  const maySettle = staffUser === null ? null : hasRole(PAYMENT_SETTLE_ROLES, staffUser.role);
+  const token = maySettle ? staff.token : null;
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [payment, setPayment] = useState<Awaited<ReturnType<typeof getPaymentById>> | null>(null);
@@ -204,26 +211,12 @@ export default function SettlePaymentPage({
   const keyScope = `settle:${paymentId}` as const;
 
   const load = useCallback(async () => {
-    const session = loadSession(tenant);
-    if (!session || session.user.kind !== 'STAFF') {
-      router.replace(`${base}/login`);
-      return;
-    }
-    /*
-      Settling is the money roles' (`PAYMENT_SETTLE_ROLES`, as the route):
-      anyone else reaching this address — «مشاهد فقط» typing it in — is sent
-      back to the fees screen rather than shown a form the server refuses.
-    */
-    if (!hasRole(PAYMENT_SETTLE_ROLES, session.user.role)) {
-      router.replace(`${base}/fees`);
-      return;
-    }
-    const accessToken = session.accessToken;
-    setToken(accessToken);
-    if (session.user.role === 'COLLECTOR') {
+    if (!staffUser || !token) return;
+    const accessToken = token;
+    if (staffUser.role === 'COLLECTOR') {
       setSelfCollector(true);
       setMethod('COLLECTOR');
-      setCollectedById(session.user.id);
+      setCollectedById(staffUser.id);
     }
     setLoading(true);
     setLoadError(null);
@@ -248,7 +241,7 @@ export default function SettlePaymentPage({
     }
 
     // Only for a role that picks the collector: a collector is himself, and his role cannot read the list.
-    if (session.user.role !== 'COLLECTOR') {
+    if (staffUser.role !== 'COLLECTOR') {
       getStaff(tenant, accessToken)
         .then(({ items }) => {
           setCollectors(items);
@@ -266,7 +259,11 @@ export default function SettlePaymentPage({
     getMunicipalitySettings(tenant, accessToken)
       .then(setSettings)
       .catch(() => setSettings(null));
-  }, [tenant, base, paymentId, router, locale, t]);
+  }, [staffUser, token, tenant, base, paymentId, router, locale, t]);
+
+  useEffect(() => {
+    if (maySettle === false) router.replace(`${base}/fees`);
+  }, [maySettle, base, router]);
 
   useEffect(() => {
     void load();

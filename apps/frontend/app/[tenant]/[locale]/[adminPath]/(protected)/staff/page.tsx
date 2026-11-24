@@ -34,7 +34,7 @@ import {
   updateStaff,
 } from '@/lib/api-client';
 import type { StaffSummary } from '@/lib/api-client';
-import { loadSession } from '@/lib/session';
+import { useStaffSession } from '@/lib/use-staff-session';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { param, useTabSearch, useUrlPagination, useUrlState } from '@/lib/use-url-state';
 import { formatDate } from '@/lib/dates';
@@ -103,9 +103,12 @@ export default function StaffPage({
   const router = useRouter();
   const base = `/${tenant}/${locale}/${adminPath}`;
 
-  const [token, setToken] = useState<string | null>(null);
-  const [selfId, setSelfId] = useState<string | null>(null);
-  const [role, setRole] = useState<string | null>(null);
+  const staff = useStaffSession(tenant, base);
+  // SUPER_ADMIN's alone: anyone else is sent to the dashboard and given no token meanwhile.
+  const isAdmin = staff.user === null ? null : staff.user.role === 'SUPER_ADMIN';
+  const token = isAdmin ? staff.token : null;
+  const selfId = isAdmin ? (staff.user?.id ?? null) : null;
+  const role = isAdmin ? (staff.user?.role ?? null) : null;
   /** A failed *write*. The read reports its own failure through the query. */
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -123,19 +126,8 @@ export default function StaffPage({
   const toast = useToast();
 
   useEffect(() => {
-    const session = loadSession(tenant);
-    if (!session || session.user.kind !== 'STAFF') {
-      router.replace(`${base}/login`);
-      return;
-    }
-    if (session.user.role !== 'SUPER_ADMIN') {
-      router.replace(`${base}/dashboard`);
-      return;
-    }
-    setToken(session.accessToken);
-    setSelfId(session.user.id);
-    setRole(session.user.role ?? null);
-  }, [tenant, base, router]);
+    if (isAdmin === false) router.replace(`${base}/dashboard`);
+  }, [isAdmin, base, router]);
 
   /*
     Unparameterised: the whole staff list, filtered and paged in the browser.

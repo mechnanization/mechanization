@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useCallback, useEffect, useMemo, useState } from 'react';
+import { use, useCallback, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import type { ColumnDef } from '@tanstack/react-table';
@@ -29,7 +29,7 @@ import type {
   CitizenProfile,
   CitizenProfilePayment,
 } from '@/lib/api-client';
-import { loadSession } from '@/lib/session';
+import { useStaffSession } from '@/lib/use-staff-session';
 import { REFERENCE_SEND_ROLES, hasRole } from '@/lib/staff-roles';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useTableLabels } from '@/lib/use-table-labels';
@@ -179,8 +179,8 @@ export default function PaymentsPage({
    */
   const labels = getLabels(locale);
 
-  const [token, setToken] = useState<string | null>(null);
-  const [role, setRole] = useState<string | undefined>();
+  const { token, user: staffUser } = useStaffSession(tenant, base);
+  const role = staffUser?.role || undefined;
   const [{ method }, setUrlState] = useUrlState(PAYMENTS_URL_STATE);
   /**
    * The committed term — set when the clerk presses Enter, not as they type.
@@ -206,16 +206,6 @@ export default function PaymentsPage({
     payment: CitizenProfilePayment;
     received: number;
   } | null>(null);
-
-  useEffect(() => {
-    const session = loadSession(tenant);
-    if (!session || session.user.kind !== 'STAFF') {
-      router.replace(`${base}/login`);
-      return;
-    }
-    setToken(session.accessToken);
-    setRole(session.user.role);
-  }, [tenant, base, router]);
 
   /*
     The ledger slice being looked at, and nothing else.
@@ -323,7 +313,6 @@ export default function PaymentsPage({
     rows are fine, an action was refused — so that is what the banner is for.
   */
   const error = actionError ?? receiptContextQuery.error;
-
 
   /** Reprints the وصل for one transaction, exactly as إدارة الرسوم does. */
   const openReceipt = useCallback(

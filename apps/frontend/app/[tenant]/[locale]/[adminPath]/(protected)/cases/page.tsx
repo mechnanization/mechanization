@@ -14,7 +14,7 @@ import {
   updateCase,
 } from '@/lib/api-client';
 import type { CaseSummary } from '@/lib/api-client';
-import { loadSession } from '@/lib/session';
+import { useStaffSession } from '@/lib/use-staff-session';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useTabSearch, useUrlPagination, useUrlState } from '@/lib/use-url-state';
 import { useTableLabels } from '@/lib/use-table-labels';
@@ -61,18 +61,8 @@ export default function CasesPage({
   const t = useTranslations('cases.page');
   const tCommon = useTranslations('common');
 
-  const [token, setToken] = useState<string | null>(null);
-  const [role, setRole] = useState<string | null>(null);
-
-  useEffect(() => {
-    const session = loadSession(tenant);
-    if (!session || session.user.kind !== 'STAFF') {
-      router.replace(`${base}/login`);
-      return;
-    }
-    setToken(session.accessToken);
-    setRole(session.user.role ?? null);
-  }, [tenant, base, router]);
+  const { token, user: staffUser } = useStaffSession(tenant, base);
+  const role = staffUser?.role || null;
 
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);

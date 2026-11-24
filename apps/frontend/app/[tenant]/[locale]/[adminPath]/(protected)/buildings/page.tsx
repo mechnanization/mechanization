@@ -40,7 +40,7 @@ import {
   type BuildingLedgerRow,
   type ZoneSummary,
 } from '@/lib/api-client';
-import { loadSession } from '@/lib/session';
+import { useStaffSession } from '@/lib/use-staff-session';
 import { param, useTabSearch, useUrlPagination, useUrlState } from '@/lib/use-url-state';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useTableLabels } from '@/lib/use-table-labels';
@@ -131,22 +131,12 @@ export default function BuildingsPage({
   const queryClient = useQueryClient();
   const tTypes = useTranslations('buildingTypes');
 
-  const [token, setToken] = useState<string | null>(null);
-  const [role, setRole] = useState<string | null>(null);
+  const { token, user: staffUser } = useStaffSession(tenant, base);
+  const role = staffUser?.role || null;
 
   // «أنواع المباني» (0106): every type, so a building whose type was switched off is still named.
   const typesQuery = useBuildingTypes(tenant, base, token, { includeInactive: true, errorMessage: tTypes('loadError') });
   const types = useMemo(() => typesQuery.data ?? [], [typesQuery.data]);
-
-  useEffect(() => {
-    const session = loadSession(tenant);
-    if (!session || session.user.kind !== 'STAFF') {
-      router.replace(`${base}/login`);
-      return;
-    }
-    setToken(session.accessToken);
-    setRole(session.user.role ?? null);
-  }, [tenant, base, router]);
 
   // An allow-list (`CENSUS_WRITE_ROLES`): every other role sees the census and does not edit it.
   const canWrite = hasRole(CENSUS_WRITE_ROLES, role);
