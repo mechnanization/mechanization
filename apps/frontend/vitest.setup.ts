@@ -16,6 +16,12 @@
  * Defined with `configurable: true` so individual tests can flip it to exercise
  * the offline path, which `offline-sync.test.ts` does.
  */
+/*
+  Both stubs are for the node environment only. A test that opts into jsdom
+  (`// @vitest-environment jsdom`, `lib/*-dom.test.ts`) has a real `window` and
+  `navigator`, and replacing them here would take the DOM away from it.
+*/
+if (typeof document === 'undefined') {
 Object.defineProperty(globalThis, 'navigator', {
   value: { onLine: true },
   writable: true,
@@ -40,3 +46,4 @@ Object.defineProperty(globalThis, 'window', {
   writable: true,
   configurable: true,
 });
+}

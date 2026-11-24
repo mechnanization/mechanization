@@ -7,9 +7,10 @@ import { defineConfig } from 'vitest/config';
  * Scoped to `lib/**` deliberately. The modules there are the ones that decide
  * things — what a receipt says in words, whether a failed delivery is retried
  * or parked, what is redacted before an error leaves the browser — and they are
- * decidable without a DOM. Component rendering is a different kind of test with
- * a different dependency (`jsdom`, Testing Library) and is not what this config
- * is for; adding it later means adding an environment, not rewriting this.
+ * decidable without a DOM. What a component does once it runs (an effect, a
+ * click) is a different kind of test with a different dependency, so it opts in
+ * file by file with `// @vitest-environment jsdom` (`lib/*-dom.test.ts`,
+ * 2026-11-24) and every other file stays on `node`.
  */
 export default defineConfig({
   oxc: { jsx: { runtime: 'automatic' } },

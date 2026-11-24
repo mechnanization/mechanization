@@ -11,8 +11,8 @@ import { emptyCitizen, type CitizenFormValues, type PropertyDraft } from '@/lib/
 /*
   The citizen form, rendered on the server, for each kind of file (GOD-22, phase 2).
 
-  There is no jsdom and no Testing Library here, and no browser to open the form
-  in. What a server render does give is the HTML of the first paint, and the form
+  This file has no DOM (`citizen-form-dom.test.ts` mounts the form in jsdom and
+  checks what it does; this one checks what it draws). What a server render does give is the HTML of the first paint, and the form
   keeps every step's page in it (the ones not shown are `hidden`), together with
   the step bar and both action bars. So a refactor that only moves markup into
   other files can be checked byte for byte: render before, render after, compare.

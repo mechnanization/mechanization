@@ -4,11 +4,12 @@ import { describe, expect, it } from 'vitest';
 
 /*
   GOD-22, phase 2c (cleanup sprint, 2026-11-24): the citizen form's state and
-  effects live in three hooks and its dialogs in one component. There is no
-  jsdom here, so an effect cannot be run; what can be pinned is what a move
-  could silently change: the order effects run in, what the draft write
-  depends on, the order the hooks are called in, and the order of the dialogs.
-  This reads the sources, like the rest of this suite.
+  effects live in three hooks and its dialogs in one component. This file reads
+  the sources for what a move could silently change: the order effects run in,
+  what the draft write depends on, the order the hooks are called in, and the
+  order of the dialogs. `citizen-form-dom.test.ts` runs the form in jsdom and
+  checks the behaviour; this stays because it names the order, which a
+  behaviour test can only notice when it happens to matter.
 */
 const FRONTEND = join(__dirname, '..');
 const read = (path: string): string => readFileSync(join(FRONTEND, path), 'utf8').replace(/\r\n/g, '\n');
