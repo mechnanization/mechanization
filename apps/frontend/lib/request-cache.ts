@@ -21,6 +21,15 @@
  * background refresh and no cross-tab coordination; anything needing those
  * wants React Query rather than this. It is memory-only and dies with the page,
  * which is also why it is safe to hold tenant-scoped data in it.
+ *
+ * Kept on purpose (decision U-3, 2026-11-24, CACHE-02). Its callers are the
+ * api-client functions that read: the tenant's public config and the dashboard
+ * counters (`api-client.ts`), the fee settings and the fee summary
+ * (`api/fees.ts`), the zones and the zone parcels (`api/zones.ts`,
+ * `api/buildings.ts`), the census by parcel and by building
+ * (`api/buildings.ts`) and the parcel-number check (`api/citizens.ts`). A read
+ * a screen makes through `useStaffQuery` uses TanStack's cache; nothing new is
+ * added here.
  */
 
 interface Entry<T> {

@@ -342,49 +342,6 @@ export function getTenantConfig(tenant: string): Promise<PublicTenantConfig> {
 }
 
 
-export interface CitizenChoice {
-  id: string;
-  displayName: string;
-  identityDocLastDigits: string;
-}
-
-export type VerifyOtpResponse =
-  | Session
-  | { status: 'CHOOSE_PROFILE'; phone: string; choices: CitizenChoice[] };
-
-/**
- * Issues a login code. `attempt` is the resend counter: from the second
- * the server switches SMS route rather than retrying the one that failed.
- */
-export function requestOtp(tenant: string, phone: string, attempt: number) {
-  return apiFetch<{
-    sent: boolean;
-    /** False when the server has OTP switched off — skip straight to sign-in. */
-    otpRequired: boolean;
-    channel: string;
-    expiresAt: string;
-    resendAvailableAt: string;
-    devCode?: string;
-  }>(tenant, '/auth/citizen/otp/request', {
-    method: 'POST',
-    body: JSON.stringify({ phone, attempt }),
-  });
-}
-
-/**
- * Exchanges the code for a session, or for a profile choice when one
- * phone belongs to several household members.
- */
-export function verifyOtp(
-  tenant: string,
-  input: { phone: string; code?: string; citizenId?: string },
-) {
-  return apiFetch<VerifyOtpResponse>(tenant, '/auth/citizen/otp/verify', {
-    method: 'POST',
-    body: JSON.stringify(input),
-  });
-}
-
 /**
  * A session, or the second factor still owed.
  *

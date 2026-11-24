@@ -125,7 +125,6 @@ describe('the portal screens read the per-bill rule from here', () => {
   const payDialog = read('components', 'citizen', 'pay-dialog.tsx');
   const myFile = read('app', '[tenant]', '[locale]', '(citizen)', 'my-file', 'page.tsx');
   const paymentsPage = read('app', '[tenant]', '[locale]', '(citizen)', 'payments', 'page.tsx');
-  const myAccount = read('app', '[tenant]', '[locale]', '(citizen)', 'my-account', 'page.tsx');
 
   it('the pay dialog asks for what is left, written in the page’s language', () => {
     expect(payDialog).toMatch(/<Money amount=\{payment\.remaining\}/);
@@ -154,12 +153,10 @@ describe('the portal screens read the per-bill rule from here', () => {
     counts a bill whose transfer waits for a clerk, while the payments page
     left that bill out — two totals for one citizen.
   */
-  it('«ملفّي» and «حسابي» sum what is owed with `citizenPaymentTotals`, as the payments page does', () => {
+  it('«ملفّي» sums what is owed with `citizenPaymentTotals`, as the payments page does («حسابي» is retired, PAGE-03)', () => {
     expect(myFile).toMatch(/citizenPaymentTotals\(payments\)/);
     expect(myFile).toMatch(/formatLbp\(totals\.outstanding, locale\)/);
     expect(myFile).toMatch(/formatLbp\(totals\.paid, locale\)/);
-    expect(myAccount).toMatch(/citizenPaymentTotals\(summary\?\.payments \?\? \[\]\)\.outstanding/);
-    expect(myAccount).toMatch(/amount=\{owed\}/);
   });
 
   it('no portal page reads the summary’s own owed or paid total', () => {
@@ -170,11 +167,5 @@ describe('the portal screens read the per-bill rule from here', () => {
     expect(pages.length).toBeGreaterThanOrEqual(4);
     const readers = pages.filter((file) => /\.(outstandingTotal|paidTotal)\b/.test(readFileSync(join(portal, file), 'utf8')));
     expect(readers).toEqual([]);
-  });
-
-  it('«حسابي» shows what is left on a bill, and marks one whose transfer waits for a clerk', () => {
-    expect(myAccount).toMatch(/<Money amount=\{billFigure\(payment\)\}/);
-    expect(myAccount).not.toMatch(/amount=\{payment\.amount\}/);
-    expect(myAccount).toMatch(/isUnderReview\(payment\) \?/);
   });
 });

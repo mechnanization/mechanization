@@ -9,8 +9,9 @@ import { describe, expect, it } from 'vitest';
   `lib/**` only and has no DOM).
 
   Not here, on purpose: `backup-section.tsx` (kept unrendered until DEAD-10's
-  decision, U-11), `useAccent` and `isAccent` (DEAD-13, U-15), and the four
-  unused client functions (DEAD-17).
+  decision, U-11) and the four unused client functions (DEAD-17). `useAccent`
+  and `isAccent` were kept for DEAD-13's decision (U-15) and went with the whole
+  accent system on 2026-11-24 (`lib/dead-13-page-03-cache-02.test.ts`).
 */
 const FRONTEND = join(__dirname, '..');
 const read = (path: string): string => readFileSync(join(FRONTEND, path), 'utf8');

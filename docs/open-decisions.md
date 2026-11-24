@@ -45,7 +45,7 @@ copy of the sensitive fields, but the primary tables hold everything.
 **Status:** decided by the product owner on 2026-10-13 ([§21](#21-online-payment-citizen-sign-in-and-notifications-decided-2026-10-13)): no SMS or WhatsApp
 provider for now, and citizens sign in with their رقم مرجعي alone, with no code and no second
 factor. What is built below stays in the code for the day a provider is chosen; the portal's
-front door no longer links to it (`/login`, the phone-code sign-in, answers only by address).
+front door no longer links to it. The phone-code sign-in (`/login`) and «حسابي» (`/my-account`) were retired on 2026-11-24 (§24): both addresses redirect to «ملفّي», and the API's OTP routes stay.
 
 SMS delivery to Lebanese networks fails or stalls often enough that a single
 provider makes citizen login a coin flip — and a citizen who never receives a
@@ -1092,3 +1092,18 @@ the request waiting on the bill goes on to «قيد المعالجة», as one w
 (`REQUEST_FEE_WAIVED`), and the audit row is `REQUEST_FEE_WRITTEN_OFF`. Its `paidAt` is the moment the fee
 stopped being owed, because a database CHECK wants a stamp on a billed request in review; if a screen must tell
 "paid" from "forgiven", read the audit row, or give the request its own column in a later migration.
+
+## 24. The cleanup sprint's decisions (decided 2026-11-24)
+
+Decided by Abed on 2026-11-24, from the audit's list (`docs/cleanup-sprint-2026-11-23/audit.md`, the «Undecided» table). Each took the audit's
+recommendation.
+
+| Audit | Decision | Task | Where it lives |
+|---|---|---|---|
+| U-2 | The collector custody panel, the payouts page, the users section and the daily audit move to `DataTable`; `DataTable` grows what they need. `ui/table` is not allowed for them. | UX-09, UX-10 | [ui-ux-standards.md](ui-ux-standards.md) §17.1 (not built yet) |
+| U-3 | `lib/request-cache.ts` is kept: its callers are listed in its header, a read made through `useStaffQuery` uses TanStack's cache, and nothing new goes into it. | CACHE-02 | [code-quality.md](code-quality.md), the frontend guide's data-fetching rules |
+| U-15 | The accent system is removed (`AccentProvider`, `useAccent`, `isAccent`, `lib/accents.ts`, the pre-paint script). The colour is the municipality's brand colour, else the default blue. | DEAD-13 | [DESIGN.md](../DESIGN.md) |
+| U-21 | The portal's phone-code sign-in (`/login`) and «حسابي» (`/my-account`) are retired. Both addresses redirect to «ملفّي». The API's OTP routes stay until the backend owner decides. | PAGE-03 | [PRODUCT.md](../PRODUCT.md), §2 above |
+| U-22 | «سجل العمليات» (`/payments` under staff) stays its own page beside the fees page: its roles are wider (collector, viewer, auditor, accountant), and merging would risk showing or hiding the wrong thing. | PAGE-05 | the sidebar row in `components/admin/nav.ts` is unchanged |
+| U-23 | The portal's «مدفوعاتي» stays, as the deliberate pay-only door with its own reference sign-in, beside «ملفّي» and the front door. | PAGE-06 | [PRODUCT.md](../PRODUCT.md) |
+| U-24 (part) | «المستحق على عقار» becomes a header action on the fees page and loses its sidebar row (26 rows become 25), keeping its `FEE_READ_ROLES` check. | NAV-08 | **Not built:** it waits on NAV-01, the sidebar approval |

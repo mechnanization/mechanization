@@ -18,11 +18,9 @@
  * lets `bg-primary/90` and `border-input` work — Tailwind composes the alpha
  * into `hsl(var(--primary) / <alpha>)`.
  *
- * `--primary` and `--ring` resolve through `--brand-primary` so three sources
- * can set the accent without fighting: an explicit accent choice wins (the
- * `[data-accent]` blocks below), then the municipality's own brand colour if it
- * configured one, then the default cedar blue. See `TenantLayout`, which writes
- * `--brand-primary` onto `:root`.
+ * `--primary` and `--ring` resolve through `--brand-primary`, so the municipality's
+ * own brand colour wins if it configured one, and the default cedar blue is what
+ * is left. See `TenantLayout`, which writes `--brand-primary` onto `:root`.
  */
 @layer base {
   :root {
@@ -278,26 +276,6 @@
     --illustration-shade: 0 0% 0%;
   }
 }
-
-/**
- * Accent palettes.
- *
- * Only `--primary` and `--ring` change: every button, active nav row, badge and
- * focus ring already resolves through those two, so swapping an accent repaints
- * the whole portal without touching a component.
- *
- * These blocks come after `.dark` deliberately. `[data-accent]` and `.dark` are
- * both one selector of the same weight, so source order decides the light case;
- * the paired `.dark[data-accent]` selector is heavier and wins in dark mode.
- *
- * They also set `--primary` *directly* rather than through `--brand-primary`,
- * which is what makes an explicit choice outrank a municipality's configured
- * brand colour — a staff member who picks a palette gets it.
- *
- * «الأزرق البلدي» is the default and deliberately has no block: it is the base
- * `:root` / `.dark` values, so an unset attribute renders correctly before the
- * pre-paint script runs.
- */
 
 @layer base {
   * {

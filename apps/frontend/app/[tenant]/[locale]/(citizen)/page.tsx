@@ -29,8 +29,8 @@ import {
  *
  * Signing in with the reference alone is a decision the municipality took
  * knowingly; `referenceOnlyLoginSchema` records what it rests on and what it
- * gives up. The SMS route still exists at `/login` for anyone who would rather
- * use it, and the payments portal still asks for a phone alongside the number.
+ * gives up. The phone-code sign-in at `/login` is retired (PAGE-03) and the
+ * payments portal still asks for a phone alongside the number.
  */
 export default function TenantHome({
   params,
@@ -145,7 +145,7 @@ export default function TenantHome({
           </Button>
 
           {/*
-            No link to the phone-code sign-in (`/login`): there is no SMS provider, so the code never
+            No link to the retired phone-code sign-in (`/login`, PAGE-03): there is no SMS provider, so the code never
             arrives (open-decisions §21). The reference is the way in; whoever does not have it asks
             the municipality, as `/payments/login` already says.
           */}

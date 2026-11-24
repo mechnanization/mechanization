@@ -7,8 +7,8 @@ import { LanguageSwitcher } from '@/components/language-switcher';
  * The citizen portal's chrome: municipality header, a `max-w-3xl` reading
  * column, and a support-phone footer.
  *
- * Scoped to this route group on purpose — `/login`, `/my-account`,
- * `/payments` and the landing page all want a citizen reading their own phone
+ * Scoped to this route group on purpose — `/my-file`, `/payments`
+ * and the landing page all want a citizen reading their own phone
  * at arm's length. The staff portal under `[adminPath]/**` sits outside this
  * group entirely and provides its own full-width shell.
  */

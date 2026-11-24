@@ -1,8 +1,6 @@
 import '@/app/globals.css';
 import { headers } from 'next/headers';
 import { notFound } from 'next/navigation';
-import { ACCENT_INIT_SCRIPT } from '@/lib/accents';
-import { AccentProvider } from '@/components/accent-provider';
 import { ThemeProvider } from '@/components/theme-provider';
 import { NextIntlClientProvider } from 'next-intl';
 import { getMessages, setRequestLocale } from 'next-intl/server';
@@ -107,17 +105,7 @@ export default async function TenantLayout({
           storage key — with the loser's answer silently winning whenever the
           third setting («النظام») disagreed with the two the old script knew
           about. Its storage key survives as `ThemeProvider`'s `storageKey`.
-
-          The accent script below is a different matter: it owns `data-accent`
-          and its own key, touches nothing `next-themes` touches, and exists for
-          the same reason — without it the portal paints in the default palette
-          and snaps to the chosen one a frame later.
         */}
-        <script
-          suppressHydrationWarning
-          nonce={nonce}
-          dangerouslySetInnerHTML={{ __html: ACCENT_INIT_SCRIPT }}
-        />
 
         {/*
           The municipality's own brand colour, when it configured one.
@@ -129,11 +117,6 @@ export default async function TenantLayout({
           `var()` that reads it. And keeping it off the inline style attribute
           leaves that attribute to `next-themes`, which writes `color-scheme`
           there.
-
-          Precedence falls out of this: an explicit accent (`[data-accent]`,
-          also on the root) overrides `--primary` outright, so a staff member's
-          choice beats the municipality's default rather than being silently
-          ignored.
         */}
         {brandPrimary ? (
           <style
@@ -151,9 +134,7 @@ export default async function TenantLayout({
       */}
       <body className="min-h-screen bg-muted/30 font-sans antialiased supports-[height:100dvh]:min-h-[100dvh]">
         <NextIntlClientProvider locale={locale} messages={messages}>
-          <ThemeProvider>
-            <AccentProvider>{children}</AccentProvider>
-          </ThemeProvider>
+          <ThemeProvider>{children}</ThemeProvider>
         </NextIntlClientProvider>
       </body>
     </html>
