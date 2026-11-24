@@ -6,6 +6,7 @@ import { ValidationError } from '../../application/common/exceptions';
 import { CADASTRE_STORAGE_SERVICE } from '../../domain/interfaces/base-repository.interface';
 import type { CadastreStorage } from '../../domain/interfaces/cadastre-storage.interface';
 import { CurrentTenant, CurrentUser } from '../decorators/current-user.decorator';
+import { SelfService } from '../decorators/self-service.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
 import { APP_CONFIG } from '../config/app.config';
@@ -30,6 +31,7 @@ export class CadastreController {
    * `connect-src` does not allow — the bucket being public-read is what makes
    * a redirect conceivable, not permitted.
    */
+  @SelfService('the parcel map every signed-in screen draws')
   @Get('assets/:assetName')
   async getAsset(
     @CurrentTenant('slug') tenantSlug: string,

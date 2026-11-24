@@ -31,6 +31,7 @@ import { CitizenRequestsService } from '../../application/features/citizen-reque
 import type { SessionClaims } from '../../application/features/identity/identity.service';
 import { APP_CONFIG } from '../config/app.config';
 import { CurrentUser } from '../decorators/current-user.decorator';
+import { SelfService } from '../decorators/self-service.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import { UuidPipe } from '../pipes/uuid.pipe';
 
@@ -93,18 +94,21 @@ export class CitizenRequestsController {
 
   // ─────────────────────────────  The citizen's own  ─────────────────────────────
 
+  @SelfService("a citizen's own municipal requests; refuses staff")
   @Get('mine')
   mine(@CurrentUser() user: SessionClaims) {
     return this.requests.mine(asCitizen(user));
   }
 
   /** The types a citizen may file now, with their fees. */
+  @SelfService('the request types a citizen may file; refuses staff')
   @Get('mine/types')
   mineTypes(@CurrentUser() user: SessionClaims) {
     asCitizen(user);
     return this.requests.offeredTypes();
   }
 
+  @SelfService('a citizen filing their own request; refuses staff')
   @Throttle(CITIZEN_SUBMISSION_THROTTLE)
   @Post('mine')
   submitMine(
@@ -115,11 +119,13 @@ export class CitizenRequestsController {
     return this.requests.submit({ ...body, citizenId }, { kind: 'CITIZEN', id: citizenId });
   }
 
+  @SelfService("one of a citizen's own requests; refuses staff")
   @Get('mine/:id')
   mineOne(@Param('id', new UuidPipe()) id: string, @CurrentUser() user: SessionClaims) {
     return this.requests.mineOne(asCitizen(user), id);
   }
 
+  @SelfService("a paper on a citizen's own request; refuses staff")
   @Throttle(CITIZEN_SUBMISSION_THROTTLE)
   @Post('mine/:id/attachments')
   @UseInterceptors(ATTACHMENT_UPLOAD)
@@ -134,6 +140,7 @@ export class CitizenRequestsController {
   }
 
   /** «ادفع الآن»: the fee's bill, raised now or answered if it already is. */
+  @SelfService("a citizen raising their own request's fee to pay it; refuses staff")
   @Throttle(CITIZEN_SUBMISSION_THROTTLE)
   @Post('mine/:id/bill')
   billMine(@Param('id', new UuidPipe()) id: string, @CurrentUser() user: SessionClaims) {
@@ -141,6 +148,7 @@ export class CitizenRequestsController {
     return this.requests.raiseBill(id, { kind: 'CITIZEN', id: citizenId }, { citizenId });
   }
 
+  @SelfService('a citizen cancelling their own unbilled request; refuses staff')
   @Post('mine/:id/cancel')
   async cancelMine(@Param('id', new UuidPipe()) id: string, @CurrentUser() user: SessionClaims) {
     const citizenId = asCitizen(user);

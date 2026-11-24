@@ -48,9 +48,11 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   secret compared in constant time as in `MetricsController`, a signed token) or be deliberately
   anonymous with a comment saying why. Its throttle rule is under
   [Transport, headers and rate limits](#transport-headers-and-rate-limits).
-- Deny by default. Every non-public handler MUST declare who may call it with `@Roles(...)`. A route
-  without `@Roles` is reachable by citizen tokens today (gap below). Until the guard denies by default, a
-  self-service route without `@Roles` MUST check `user.kind` itself and scope every query by `user.sub`.
+- Deny by default. Every non-public handler MUST declare who may call it with `@Roles(...)`, or, for
+  the caller acting on their own record, `@SelfService('<reason>')`. `RolesGuard` refuses a route that
+  declares neither (403, SEC-10). A `@SelfService` route admits any authenticated token, staff or
+  citizen, so it MUST check `user.kind` itself and scope every query by `user.sub`, and it is added to
+  the reviewed `SELF_SERVICE` list in `route-inventory.spec.ts`.
 - A handler's `@Roles` replaces the class's (`getAllAndOverride`). Read the method decorators before
   assuming the class-level role applies.
 - `JwtAuthGuard` MUST NOT be given work that can refuse a request for a reason unrelated to
@@ -84,7 +86,7 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   documents routes), or read the audit log (`AuditController`, `AUDIT_READ_ROLES`); it does read a
   record's own «سجل التعديلات» (`GET citizens/:id/history`, `GET buildings/:id/history`), which shows
   changes and never who viewed what. `route-inventory.spec.ts` pins all of this over every
-  controller on disk: every non-public route has `@Roles` or is on its reviewed self-service list, no
+  controller on disk: every non-public route has `@Roles` or a reviewed `@SelfService`, none has both, no
   write and no side-effecting GET (`SIDE_EFFECT_GETS`) admits VIEWER, and no route deletes a citizen.
 - «قائمة الإعفاء من الرسوم» (`t/:tenantSlug/fee-exemptions`, 0104): every read names the people on the units,
   so it is `FEE_EXEMPTION_READ_ROLES` — the manager, the administrative officer, the accountant, the auditor —
@@ -641,7 +643,7 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
     paper on `REQUEST_HANDLE_ROLES`; raising the fee's bill on `REQUEST_BILL_ROLES` (the amount is the
     manager's list's, never typed by whoever raises it); the types and fees on
     `REQUEST_SETTINGS_ROLES` (the manager).
-  - **The citizen's routes**, `requests/mine/…`, are role-less and on `SELF_SERVICE`: each refuses a
+  - **The citizen's routes**, `requests/mine/…`, are `@SelfService` (on the reviewed `SELF_SERVICE` list): each refuses a
     staff token (`CITIZENS_ONLY`) and reads only the token's subject — the citizen id is never taken
     from a body or a path, and a request id that is not the caller's answers `REQUEST_NOT_FOUND`.
     Filing, uploading and raising the fee are throttled per session (`APP_CONFIG.throttle.submission`
@@ -797,7 +799,7 @@ the rules are in [docs/database.md](database.md#moving-data-between-environments
   in a URL. The staff refresh credential is the httpOnly cookie above, which page script cannot read.
 - An API read goes through `apiFetch`, never a bare `fetch`, so it carries the token and is renewed
   like the rest. The cadastre map layers (`GET cadastre/assets/:assetName`, not public: any signed-in
-  token, `SELF_SERVICE` in `route-inventory.spec.ts`) are read through `fetchCadastreAsset` →
+  token, `@SelfService`) are read through `fetchCadastreAsset` →
   `getCadastreAsset`, and the API answers them `Cache-Control: private`, so no shared cache keeps a
   signed-in response.
 - `dangerouslySetInnerHTML` only with constants or sanitised values (`ACCENT_INIT_SCRIPT`, `safeHslTriple`).
@@ -851,8 +853,9 @@ neither can any test.
 **New endpoint**
 1. `@Controller('t/:tenantSlug/<area>')`, so tenant resolution and the token-tenant check apply.
    Copy `CorrectionsController`.
-2. `@Roles(...)` on every handler. A role-less self-service route checks `user.kind` and scopes by
-   `user.sub` in the query. A `@Public()` route has a comment, its own credential check and a `@Throttle`.
+2. `@Roles(...)` on every handler, or `@SelfService('<reason>')` for the caller's own record: that
+   route checks `user.kind` and scopes by `user.sub` in the query, and goes on `SELF_SERVICE` in
+   `route-inventory.spec.ts`. With neither, `RolesGuard` answers 403. A `@Public()` route has a comment, its own credential check and a `@Throttle`.
 3. Body through `ZodValidationPipe` with a shared schema; ids through `ParseUUIDPipe`; query values
    parsed and clamped.
 4. `@Throttle` if it checks or mints a credential, sends SMS or mail, or is public.
@@ -897,7 +900,6 @@ add a row. Severity is the harm if exploited today.
 | High | The CSV export carries `reference_number` (a login credential) with `phone`, the relative's `contact_phone_relative` and `resident_status` for every citizen. Narrowed to `SUPER_ADMIN` and `AUDITOR` (`REGISTER_EXPORT_ROLES`; «مشاهد فقط» was admitted until 2026-10-06) | `ReportingService.exportCsv`; `DashboardController.exportCsv` | Drop the column, or gate it behind its own permission and audit |
 | Medium | Audit rows written before the masking change still hold citizens' رقم مرجعي in plaintext (`CITIZEN_MERGED` / `CITIZEN_MERGED_INTO` `after.other.referenceNumber`, `CITIZEN_DELETED` `before.referenceNumber`). The table is append-only, so they cannot be edited, and anyone who can read the audit log can sign in as those citizens | `audit_log_entries`, rows with those actions; the append-only trigger from `0001_init` | **Undecided:** reissue the affected citizens' references (the leaked ones then sign nobody in), and whether a documented data correction may redact the old rows |
 | High | A gitignored age secret-key file sits in a developer machine's working tree | `.gitignore` age-key entries; confirmed with `git check-ignore`, not opened | Move it offline (password manager) and delete the file. Never open it |
-| Medium | Authorisation defaults to allow: a non-public route without `@Roles` admits any authenticated token, citizens included. Each such route self-checks today. `route-inventory.spec.ts` now fails on a new role-less route that is not on its reviewed self-service list, so forgetting is caught in CI, but the guard itself still fails open | `RolesGuard.canActivate`; `tenant-isolation.spec.ts` "admits requests to routes without role restrictions"; `route-inventory.spec.ts` `SELF_SERVICE` (the role-less routes in `AuthController`, `CadastreController`, `CitizenController.mySummary`, `FeesController`, `CitizenRequestsController` `mine…`) | Refuse when no metadata is present unless an explicit self-service marker is declared |
 | Medium | Reference-only citizen sign-in (the sign-in decided on 2026-10-13, open-decisions §21) lets whoever holds a citizen's رقم مرجعي act as that citizen on the municipal requests: file a request, upload papers to it, cancel an unbilled one (and raise its fee, once online payment reopens); and, on `/payments`, which «ملفّي» links, report a Whish transfer on any of the citizen's open bills, sending it to review until a clerk answers (the report §21 keeps). Mitigated, not closed: papers are never served back to the portal, an online request carries an identity copy before its fee can be paid, a paper is collected only against the original identity card, and filing is throttled per session | `CitizenRequestsController` `requests/mine/…`; `AuthController` `citizen/reference/open` | **Accepted** with the sign-in decision ([open-decisions.md §21](open-decisions.md#21-online-payment-citizen-sign-in-and-notifications-decided-2026-10-13), 2026-10-13): the mitigations above stay, and no second factor is planned |
 | Medium | PII in stdout: a 5xx logs the raw exception message, mail failures log the recipient, and dev SMS logs phone and body. (The request line is logged as `redactUrl` gives it — ids masked, the query string dropped — since PR #122's review: a search term may be a name, a phone or a رقم مرجعي.) | `DomainExceptionFilter.catch` (the 5xx `detail`); `AppLogger` (no redaction); `SmtpEmailSender`; `SmsProviderService.send` | `redactText` on the 5xx detail, or redact in `AppLogger.formatMessage`; mask recipients |
 | Medium | The reverse proxy's access log records every request line with its query string, so a register or request-queue search for a name, a phone or a رقم مرجعي is written there. **Unverified:** the nginx `log_format` on the host (configured outside this repository) | nginx on the Lightsail box (outside the repo); `GET …?search=` on the register, the payments list, the treasury registers and `GET requests` | Log `$uri` rather than `$request` in the access log, or move searches to a POST body |
@@ -946,7 +948,8 @@ add a row. Severity is the harm if exploited today.
   on writes, and a `document.viewed` audit event.
 - CSV formula-injection guard (`csvCell`) in both apps, and the export is audited (`report.exported`).
 - Who may reach every route is a test, not a convention: `route-inventory.spec.ts` discovers the
-  controllers on disk and checks `@Roles`, the self-service list and the «مشاهد فقط» boundary.
+  controllers on disk and checks `@Roles`, the reviewed `@SelfService` routes and the «مشاهد فقط»
+  boundary; `RolesGuard` refuses a route that declares neither (SEC-10).
 - Portal: nonce CSP with `strict-dynamic`, an enumerated `connect-src`, `frame-ancestors 'none'`, HSTS,
   sessions in `sessionStorage` by default, and a service worker that never caches the API.
 - Environment safety: `scripts/db/targets.mjs` pins database and role per target, the seed refuses

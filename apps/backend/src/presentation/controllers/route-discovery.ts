@@ -5,6 +5,7 @@ import { RequestMethod } from '@nestjs/common';
 import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { ROLES_KEY } from '../decorators/roles.decorator';
+import { SELF_SERVICE_KEY } from '../decorators/self-service.decorator';
 
 /**
  * Every route the API serves, read off the controllers on disk.
@@ -27,6 +28,8 @@ export type DiscoveredRoute = {
   path: string;
   isPublic: boolean;
   roles: readonly string[] | undefined;
+  /** The reason given to `@SelfService(...)`, when the route carries it. */
+  selfService: string | undefined;
   /** The handler function, for any further metadata a spec reads. */
   handler: (...args: unknown[]) => unknown;
 };
@@ -43,6 +46,7 @@ export function discoverRoutes(): DiscoveredRoute[] {
       if (typeof exported !== 'function' || Reflect.getMetadata(PATH_METADATA, exported) === undefined) continue;
       const classRoles = Reflect.getMetadata(ROLES_KEY, exported) as string[] | undefined;
       const classPublic = Reflect.getMetadata(IS_PUBLIC_KEY, exported) as boolean | undefined;
+      const classSelfService = Reflect.getMetadata(SELF_SERVICE_KEY, exported) as string | undefined;
       const controllerPath = String(Reflect.getMetadata(PATH_METADATA, exported));
       const prototype = (exported as { prototype: Record<string, unknown> }).prototype;
       for (const key of Object.getOwnPropertyNames(prototype)) {
@@ -58,6 +62,7 @@ export function discoverRoutes(): DiscoveredRoute[] {
           path: String(Reflect.getMetadata(PATH_METADATA, handler)),
           isPublic: Boolean((Reflect.getMetadata(IS_PUBLIC_KEY, handler) as boolean | undefined) ?? classPublic),
           roles: (Reflect.getMetadata(ROLES_KEY, handler) as string[] | undefined) ?? classRoles,
+          selfService: (Reflect.getMetadata(SELF_SERVICE_KEY, handler) as string | undefined) ?? classSelfService,
           handler: handler as (...args: unknown[]) => unknown,
         });
       }

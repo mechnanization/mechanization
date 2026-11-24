@@ -40,6 +40,7 @@ import { ZodValidationPipe } from '../../application/common/pipes/zod-validation
 import { NotFoundError } from '../../application/common/exceptions';
 import { citizenArrears } from '../../application/features/fees/bill-arrears';
 import { CurrentTenant, CurrentUser } from '../decorators/current-user.decorator';
+import { SelfService } from '../decorators/self-service.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
 import { UuidPipe } from '../pipes/uuid.pipe';
@@ -173,6 +174,7 @@ export class CitizenController {
    * طلب. What is left that a citizen can act on is what they own and what they
    * owe.
    */
+  @SelfService("a citizen's own summary; refuses staff")
   @Get('me/summary')
   async mySummary(@CurrentUser() user: SessionClaims) {
     const citizen = await this.reporting.getCitizenProfile(user.sub);

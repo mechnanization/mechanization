@@ -50,6 +50,7 @@ import { ParcelDuesService } from '../../application/features/fees/parcel-dues.s
 import { PaymentSettlementService } from '../../application/features/fees/payment-settlement.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { CurrentTenant, CurrentUser } from '../decorators/current-user.decorator';
+import { SelfService } from '../decorators/self-service.decorator';
 import { Public } from '../decorators/public.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import { APP_CONFIG } from '../config/app.config';
@@ -97,6 +98,7 @@ export class FeesController {
    * hours. All three were downloading the logo on every load and using none of
    * it. Only the settings form asks for it now.
    */
+  @SelfService("the municipality's payment instructions")
   @Get('settings')
   async getSettings(
     @CurrentUser() user: SessionClaims,
@@ -544,6 +546,7 @@ export class FeesController {
    * asking for "my payments" is a bug, and answering it with an empty list
    * would hide that rather than surface it.
    */
+  @SelfService("a citizen's own bills; refuses staff")
   @Get('payments/mine')
   async mine(@CurrentUser() user: SessionClaims) {
     if (user.kind !== 'CITIZEN') {
@@ -583,6 +586,7 @@ export class FeesController {
    * and a client-supplied `callbackUrl` would let anyone point the provider's
    * confirmation at a server they control.
    */
+  @SelfService('a citizen paying their own bill; refuses staff')
   @Post('payments/mine/:id/whish/checkout')
   async whishCheckout(
     @CurrentTenant('slug') tenantSlug: string,
@@ -636,6 +640,7 @@ export class FeesController {
   }
 
   /** The citizen declaring they have paid — moves to PENDING_REVIEW only. */
+  @SelfService('a citizen declaring their own payment; refuses staff')
   @Post('payments/mine/:id/declare')
   async declare(
     @Param('id', new UuidPipe()) id: string,

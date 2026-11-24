@@ -76,10 +76,12 @@ Data access for new code (decided):
 - **Routes.** Tenant data lives under `@Controller('t/:tenantSlug/<area>')`. MUST NOT take a tenant, slug
   or schema from a body or query string.
 - **Auth.** Every route is authenticated unless it carries `@Public()`, and every non-public handler
-  MUST carry `@Roles(...)`. Today `RolesGuard` admits any authenticated token, citizens included, when
-  `@Roles` is absent (gap in [docs/security.md](../../docs/security.md#known-gaps)). Until that is fixed, a
-  self-service route without `@Roles` MUST check `user.kind` and scope every query by `user.sub`. A
-  handler's `@Roles` replaces the class's.
+  MUST carry `@Roles(...)` or, for the caller acting on their own record, `@SelfService('<reason>')`
+  (`presentation/decorators/self-service.decorator.ts`). `RolesGuard` fails closed (SEC-10): public
+  admits, `@Roles` admits staff holding a listed role, `@SelfService` admits any authenticated token, and
+  a route with none of them is a 403. A `@SelfService` route MUST check `user.kind` and scope every query
+  by `user.sub`, and goes on `SELF_SERVICE` in `route-inventory.spec.ts`. A handler's `@Roles` replaces the
+  class's.
 - **Role lists.** `@Roles(...)` takes a named set from `@mechanization/shared-schemas` — `role-sets.ts`
   (`EVERY_STAFF_ROLE`, `WORKING_STAFF_ROLES`, `REGISTER_WRITE_ROLES`, `CENSUS_WORKLIST_ROLES`,
   `FEE_ISSUE_ROLES`, `REGISTER_EXPORT_ROLES` and the rest), except the treasury's `TREASURY_*_ROLES`
@@ -89,7 +91,7 @@ Data access for new code (decided):
   new named set there, and so is a single role a screen gates on (`PAYMENT_REVERSE_ROLES` for
   `POST fees/transactions/:transactionId/reverse`, «عكس الوصل»).
   `route-inventory.spec.ts` checks every controller on disk: `@Roles` on every
-  non-public route (or a reviewed entry in its `SELF_SERVICE` list), «مشاهد فقط» on no write and no
+  non-public route or a `@SelfService` that is on its reviewed `SELF_SERVICE` list (never both), «مشاهد فقط» on no write and no
   side-effecting GET, and no route that deletes a citizen. It also pins, route by route, every treasury
   handler and every handler elsewhere that moves treasury money (`MONEY_HANDLERS_ELSEWHERE`: the
   commission payout, and the fee routes that post wallet entries — `settle`, `review`,
@@ -113,7 +115,7 @@ Data access for new code (decided):
   `staff/change-email`, `staff/totp/disable`) refuse a wrong current password with
   `STAFF_CURRENT_PASSWORD_INCORRECT`.
 - **A citizen's sign-out** (task S14). `POST auth/citizen/logout` (`AuthController.logoutCitizen`,
-  a reviewed self-service route that refuses staff with `CITIZENS_ONLY`) ends every session the citizen
+  a reviewed `@SelfService` route that refuses staff with `CITIZENS_ONLY`) ends every session the citizen
   holds: `UserRepository.endCitizenSessions` bumps `tokenVersion`, scoped to `kind = 'CITIZEN'` in the
   write, and `SessionRevocationService.forget` clears the guard's cache. The staff password-reset link
   carries its token in the fragment (`resetTokenFragment`), never `?token=`.
@@ -1132,7 +1134,7 @@ points at does not exist. `src/scripts/reset-2fa.ts` has no script entry and MUS
   [docs/database.md](../../docs/database.md#test-a-migration-on-a-throwaway-postgres-17).
 - Convention specs: `raw-sql-is-schema-qualified.spec.ts`, `migration-guards-are-schema-scoped.spec.ts`,
   `domain-enum-drift.spec.ts` (the domain's enums, `StaffRole` among them, against the shared ones),
-  `tenant-isolation.spec.ts`, `env.schema.spec.ts`, `route-inventory.spec.ts` (`@Public` / `@Roles` over
+  `tenant-isolation.spec.ts`, `env.schema.spec.ts`, `route-inventory.spec.ts` (`@Public` / `@Roles` / `@SelfService` over
   every controller, and the «مشاهد فقط» boundary), and `cross-tenant-routes.spec.ts` (another
   municipality's token, staff and citizen, refused 403 `TENANT_MISMATCH` on every mounted non-public
   route). The last two share `presentation/controllers/route-discovery.ts` (`discoverRoutes`), which
