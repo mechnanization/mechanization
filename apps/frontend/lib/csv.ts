@@ -1,5 +1,6 @@
 import {
   ARREARS_TEMPLATE_COLUMNS,
+  csvCell,
   IMPORT_COLUMNS,
   IMPORT_HEADER_TO_KEY,
   normalizeArabic,
@@ -167,29 +168,6 @@ export function parseCitizenCsv(text: string): ParsedCsv {
 /** Quotes a cell only when it has to be — a fully quoted file is unreadable in a text editor. */
 function escapeCell(value: string): string {
   return /[",\n\r]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
-}
-
-/**
- * Quotes a cell, and neutralises formula injection.
- *
- * Arabic names are fine; a value starting with `=`, `+`, `-` or `@` is executed
- * by Excel the moment a clerk opens the file. Every column of a census export
- * is text somebody typed into this system — a building name, an officer's note
- * — so a field a resident can influence must not be able to run a formula on a
- * municipality's machine.
- *
- * Deliberately identical to `csvCell` in `reporting.service.ts`, which does the
- * same job for the server-side citizen export. Two copies rather than a shared
- * module because the two live in different packages with no dependency between
- * them; a third would be the moment to move it into shared-schemas.
- *
- * Unlike `escapeCell` this always quotes, and the two halves are not separable:
- * a leading `'` only means "treat the rest as text" inside a quoted field.
- */
-export function csvCell(value: unknown): string {
-  const text = String(value ?? '');
-  const safe = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
-  return `"${safe.replace(/"/g, '""')}"`;
 }
 
 /**
