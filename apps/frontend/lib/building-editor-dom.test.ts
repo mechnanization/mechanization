@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextIntlClientProvider } from 'next-intl';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ApiRequestError, createBuilding } from '@/lib/api-client';
+import { ApiRequestError, createBuilding, getBuilding, getBuildings, getZoneParcelIndex, getZones, saveBuildingMatrix } from '@/lib/api-client';
 import { queueBuilding } from '@/lib/offline-sync';
 import { heldInDoubt, heldKey } from '@/lib/request-id';
 import { BuildingEditor } from '@/components/admin/building-editor';
@@ -31,17 +31,22 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 Element.prototype.scrollTo = () => {};
 Element.prototype.scrollIntoView = () => {};
 
-const nav = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
+// Stable on purpose: the real `useRouter` returns one object, and `loadDetail` depends on it.
+const nav = vi.hoisted(() => {
+  const push = vi.fn();
+  const replace = vi.fn();
+  return { push, replace, router: { push, replace, prefetch() {} }, session: { token: 'tok', user: { id: 'u1', role: 'SUPER_ADMIN' } } };
+});
 
 vi.mock('next/navigation', () => ({
   useParams: () => ({ tenant: 't', locale: 'en', adminPath: 'a' }),
-  useRouter: () => ({ push: nav.push, replace: nav.replace, prefetch() {} }),
+  useRouter: () => nav.router,
   usePathname: () => '/t/en/a/buildings/new',
   useSearchParams: () => new URLSearchParams(),
 }));
 
 vi.mock('@/lib/use-staff-session', () => ({
-  useStaffSession: () => ({ token: 'tok', user: { id: 'u1', role: 'SUPER_ADMIN' } }),
+  useStaffSession: () => nav.session,
 }));
 
 vi.mock('@/lib/api-client', async (importOriginal) => {
@@ -49,6 +54,8 @@ vi.mock('@/lib/api-client', async (importOriginal) => {
   return {
     ...actual,
     createBuilding: vi.fn(),
+    getBuilding: vi.fn(),
+    saveBuildingMatrix: vi.fn(),
     getBuildings: vi.fn(async () => ({ buildings: [], total: 0 })),
     getZones: vi.fn(async () => ({ zones: [] })),
     getZoneParcelIndex: vi.fn(async () => ({})),
@@ -86,7 +93,7 @@ interface Mounted {
   unmount: () => Promise<void>;
 }
 
-async function mount(): Promise<Mounted> {
+async function mount(props: Record<string, unknown> = {}): Promise<Mounted> {
   const container = document.createElement('div');
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -101,7 +108,7 @@ async function mount(): Promise<Mounted> {
           client,
           children: createElement(TooltipProvider, {
             children: createElement(ToastProvider, {
-              children: createElement(BuildingEditor, { tenant: 't', locale: 'en', adminPath: 'a' }),
+              children: createElement(BuildingEditor, { tenant: 't', locale: 'en', adminPath: 'a', ...props }),
             }),
           }),
         }),
@@ -310,5 +317,169 @@ describe('with no connection the building goes to the queue under the held key',
     expect(queueBuildingMock.mock.calls[0][0].parcelNumber).toBe('90020');
     // handed to the queue: the next building on this parcel is a new act
     expect(heldKey('t', 'building:90020')).not.toBe(id);
+  });
+});
+
+const waitMs = (ms: number): Promise<void> =>
+  act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  });
+
+describe('the sector and the parcel lookup', () => {
+  it('offers the sectors the register holds, and looks the parcel up once the officer stops typing', async () => {
+    vi.mocked(getZones).mockResolvedValue({ zones: [{ id: 'z1', code: 'Z1', name: 'North', color: '#336699' }] } as never);
+    vi.mocked(getZoneParcelIndex).mockResolvedValue({ '90300': { code: 'Z1', name: 'North' } } as never);
+    vi.mocked(getBuildings).mockClear();
+    const form = await mount();
+    await waitMs(0);
+    expect(form.container.querySelector('#building-zone'), 'the sector select').toBeTruthy();
+
+    await typeInto(form.container.querySelector('#building-parcel') as HTMLInputElement, '90300');
+    expect(getBuildings, 'not before the debounce').not.toHaveBeenCalledWith('t', 'tok', expect.objectContaining({ parcelNumber: '90300' }));
+    await waitMs(450);
+    expect(getBuildings).toHaveBeenCalledWith('t', 'tok', { parcelNumber: '90300', limit: 100 });
+    // the parcel's sector is read off the register, and the code shows it
+    expect(form.container.textContent).toContain('Z1');
+    expect(form.container.textContent).toContain('90300');
+  });
+});
+
+describe('a structure already on the parcel', () => {
+  const existing = {
+    id: 'b9',
+    code: 'Z1-90301-A',
+    parcelNumber: '90301',
+    codeSuffix: 'A',
+    name: 'Old block',
+    postedNumber: null,
+    structureType: 'RESIDENTIAL_BUILDING',
+    lifecycleStatus: 'IN_USE',
+    unitsTotal: 4,
+    latitude: null,
+    longitude: null,
+  };
+
+  it('holds the officer on the facility step until they say it is a different structure and why, and the next letter is predicted', async () => {
+    vi.mocked(getBuildings).mockResolvedValue({ buildings: [existing], retiredSuffixes: [] } as never);
+    createBuildingMock.mockResolvedValue(created);
+    const form = await mount();
+    await fillFirstStep(form, '90301');
+    await waitMs(450);
+    await click(buttons(form.container, 'Next')[0]);
+
+    expect(form.container.textContent).toContain('already recorded on parcel');
+    expect(buttons(form.container, 'Next')[0].disabled, 'held until answered').toBe(true);
+
+    await click(form.container.querySelector('button[role="checkbox"]')!);
+    expect(buttons(form.container, 'Next')[0].disabled, 'a tick alone is not an answer').toBe(true);
+    const why = [...form.container.querySelectorAll('textarea')].find((t) => t.placeholder.startsWith('e.g. a separate house')) as HTMLTextAreaElement;
+    await typeInto(why, 'a separate house at the back');
+    expect(buttons(form.container, 'Next')[0].disabled).toBe(false);
+
+    await click(buttons(form.container, 'Next')[0]);
+    await click(buttons(form.container, 'Create Building')[0]);
+    expect(createBuildingMock).toHaveBeenCalledTimes(1);
+    expect(createBuildingMock.mock.calls[0][2]).toMatchObject({
+      parcelNumber: '90301',
+      acknowledgedDuplicates: true,
+      duplicateReason: 'a separate house at the back',
+      provisionalSuffix: 'B',
+    });
+  });
+});
+
+describe('correcting a building on file', () => {
+  const DETAIL = {
+    id: 'b-200',
+    code: 'Z1-90200-A',
+    codeSuffix: 'A',
+    parcelNumber: '90200',
+    name: 'Cedar Block',
+    postedNumber: null,
+    structureType: 'RESIDENTIAL_BUILDING',
+    buildingTypeId: null,
+    lifecycleStatus: 'IN_USE',
+    isPartitioned: false,
+    partitionNumbers: [],
+    sharedParcelNumbers: [],
+    notes: null,
+    latitude: null,
+    longitude: null,
+    floorsCount: 3,
+    basementsCount: 0,
+    updatedAt: '2026-11-01T10:00:00.000Z',
+    previousCodes: [],
+    units: [
+      {
+        id: 'u1',
+        unitCode: 'Z1-90200-A-001',
+        floor: 0,
+        sequence: 1,
+        unitType: 'APARTMENT',
+        occupants: [],
+        visitCount: 0,
+        levels: 1,
+        startCol: 1,
+        endCol: 1,
+        unitStatus: null,
+        ownerDeclaredStatus: null,
+      },
+    ],
+  };
+  const dryRunResult = { dryRun: true, building: {}, removed: [], updated: [], added: [] } as never;
+
+  it('loads it into the form, rehearses the save first, and only a confirmed save is written', async () => {
+    vi.mocked(getBuilding).mockResolvedValue(DETAIL as never);
+    vi.mocked(saveBuildingMatrix).mockResolvedValue(dryRunResult);
+    const form = await mount({ buildingId: 'b-200', initialStep: 1 });
+    await waitMs(0);
+
+    expect(getBuilding).toHaveBeenCalledWith('t', 'tok', 'b-200');
+    expect((form.container.querySelector('#building-name') as HTMLInputElement).value).toBe('Cedar Block');
+
+    await click(buttons(form.container, 'Next')[0]);
+    await click(buttons(form.container, 'Save Changes')[0]);
+    expect(saveBuildingMatrix).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(saveBuildingMatrix).mock.calls[0][3]).toMatchObject({ dryRun: true, expectedUpdatedAt: DETAIL.updatedAt });
+    expect(createBuildingMock, 'a correction never creates').not.toHaveBeenCalled();
+    expect(nav.push, 'nothing is written until it is confirmed').not.toHaveBeenCalled();
+
+    const confirm = [...document.body.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Confirm and save');
+    expect(confirm, 'the review').toBeTruthy();
+    await click(confirm!);
+    expect(saveBuildingMatrix).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(saveBuildingMatrix).mock.calls[1][3].dryRun).toBeUndefined();
+    expect(String(nav.push.mock.calls[0][0])).toContain('/buildings/b-200/matrix');
+  });
+
+  it('keeps what was typed across a remount (a language switch), and asks nothing when nobody else has saved', async () => {
+    vi.mocked(getBuilding).mockResolvedValue(DETAIL as never);
+    const first = await mount({ buildingId: 'b-200', initialStep: 1 });
+    await waitMs(0);
+    await typeInto(first.container.querySelector('#building-name') as HTMLInputElement, 'Cedar Block II');
+    await first.unmount();
+
+    const second = await mount({ buildingId: 'b-200', initialStep: 1 });
+    await waitMs(0);
+    expect((second.container.querySelector('#building-name') as HTMLInputElement).value).toBe('Cedar Block II');
+    expect(second.container.querySelector('#building-stale-draft'), 'no stale-draft question').toBeNull();
+  });
+
+  it('asks which to keep when a colleague has saved since the draft was made, and saves nothing meanwhile', async () => {
+    vi.mocked(getBuilding).mockResolvedValueOnce(DETAIL as never);
+    const first = await mount({ buildingId: 'b-200', initialStep: 1 });
+    await waitMs(0);
+    await typeInto(first.container.querySelector('#building-name') as HTMLInputElement, 'My edit');
+    await first.unmount();
+
+    // somebody saved in between: the server's copy is newer than the one the draft was made against
+    vi.mocked(getBuilding).mockResolvedValue({ ...DETAIL, name: 'Colleague edit', updatedAt: '2026-11-02T09:00:00.000Z' } as never);
+    const second = await mount({ buildingId: 'b-200', initialStep: 1 });
+    await waitMs(0);
+    expect(second.container.querySelector('#building-stale-draft'), 'the question').toBeTruthy();
+    expect((second.container.querySelector('#building-name') as HTMLInputElement).value, 'the draft stays on screen').toBe('My edit');
+    await click(buttons(second.container, 'Next')[0]);
+    const save = buttons(second.container, 'Save Changes')[0];
+    expect(save.disabled, 'no save while the question is open').toBe(true);
   });
 });
