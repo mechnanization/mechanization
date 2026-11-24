@@ -21,6 +21,7 @@ import {
 } from '@/lib/settings-i18n';
 import { Badge } from '@/components/ui/badge';
 import { CellTag } from '@/components/ui/cell-tag';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -537,9 +538,9 @@ export function UsersSection({
               </div>
             </div>
 
-            <div className="rounded-lg bg-warning/5 p-3 border border-warning/20 text-xs text-warning leading-relaxed">
-              ⚠️ <strong>تنبيه:</strong> هذا المفتاح يُعرض <strong>لمرة واحدة فقط</strong> الآن ولن يمكن استرجاعه لاحقاً من الموقع. في حال فقدانه يمكن إعادة تعيينه عبر موجه الأوامر (CLI).
-            </div>
+            <Alert variant="warning">
+              <strong>تنبيه:</strong> هذا المفتاح يُعرض <strong>لمرة واحدة فقط</strong> الآن ولن يمكن استرجاعه لاحقاً من الموقع. في حال فقدانه يمكن إعادة تعيينه عبر موجه الأوامر (CLI).
+            </Alert>
           </div>
 
           <DialogFooter>

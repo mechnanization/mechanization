@@ -1,7 +1,7 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
-import { CheckCircle2, Loader2, Map as MapIcon, UploadCloud } from 'lucide-react';
+import { useCallback, useId, useRef, useState } from 'react';
+import { CheckCircle2, Map as MapIcon } from 'lucide-react';
 import {
   ApiRequestError,
   importCadastre,
@@ -11,6 +11,7 @@ import {
 import type { SettingsCopy } from '@/lib/settings-i18n';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
+import { FileInput } from '@/components/ui/file-input';
 import { useToast } from '@/components/ui/toast';
 import { Notice, SettingsCard, StatusTile } from './settings-ui';
 import { cn } from '@/lib/utils';
@@ -38,13 +39,12 @@ export function CadastreSection({
   copy: SettingsCopy;
 }) {
   const toast = useToast();
-  const fileInput = useRef<HTMLInputElement>(null);
+  const fileInputId = useId();
 
   const [uploading, setUploading] = useState(false);
   // SUBMIT-04: `uploading` is React state, set asynchronously, so a double-click can pass
   // its stale read. The ref is checked and set first, and released when the write settles.
   const uploadingRef = useRef(false);
-  const [dragging, setDragging] = useState(false);
   const [result, setResult] = useState<CadastreImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -76,7 +76,6 @@ export function CadastreSection({
       } finally {
         setUploading(false);
         uploadingRef.current = false;
-        if (fileInput.current) fileInput.current.value = '';
       }
     },
     [tenant, token, toast, copy.cadastre],
@@ -98,63 +97,17 @@ export function CadastreSection({
             </Alert>
           ) : null}
 
-          <input
-            ref={fileInput}
-            type="file"
+          <FileInput
+            id={fileInputId}
             accept=".geojson,application/geo+json,application/json"
-            className="sr-only"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
+            disabled={uploading}
+            onSelect={(files) => {
+              const file = files[0];
               if (file) void upload(file);
             }}
+            label={uploading ? copy.cadastre.uploading : `${copy.cadastre.upload} ${copy.cadastre.dropHint}`}
+            hint={copy.cadastre.constraints}
           />
-
-          <div
-            role="button"
-            tabIndex={0}
-            onClick={() => !uploading && fileInput.current?.click()}
-            onKeyDown={(e) => {
-              if ((e.key === 'Enter' || e.key === ' ') && !uploading) {
-                e.preventDefault();
-                fileInput.current?.click();
-              }
-            }}
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDragging(true);
-            }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={(e) => {
-              e.preventDefault();
-              setDragging(false);
-              const file = e.dataTransfer.files?.[0];
-              if (file && !uploading) void upload(file);
-            }}
-            className={cn(
-              'group flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed p-6 text-center transition',
-              dragging
-                ? 'border-primary/60 bg-muted/30'
-                : 'border-muted-foreground/25 bg-muted/10 hover:border-primary/60 hover:bg-muted/30',
-              uploading && 'pointer-events-none opacity-60',
-            )}
-          >
-            <div className="flex size-12 items-center justify-center rounded-full bg-primary/10 text-primary transition-transform group-hover:scale-110">
-              {uploading ? (
-                <Loader2 className="size-6 animate-spin" aria-hidden />
-              ) : (
-                <UploadCloud className="size-6" aria-hidden />
-              )}
-            </div>
-            <p className="text-sm">
-              <span className="font-semibold group-hover:text-primary">
-                {uploading ? copy.cadastre.uploading : copy.cadastre.upload}
-              </span>{' '}
-              {!uploading ? (
-                <span className="text-muted-foreground">{copy.cadastre.dropHint}</span>
-              ) : null}
-            </p>
-            <p className="text-xs text-muted-foreground">{copy.cadastre.constraints}</p>
-          </div>
 
           {result ? (
             <div className="grid gap-3 sm:grid-cols-3">

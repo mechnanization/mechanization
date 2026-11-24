@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useLocale, useTranslations } from 'next-intl';
 import {
   ArrowLeft,
@@ -22,6 +22,7 @@ import { buildCitizenTemplate, downloadCsv, parseCitizenCsv } from '@/lib/csv';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { FileInput } from '@/components/ui/file-input';
 import {
   Dialog,
   DialogContent,
@@ -89,7 +90,7 @@ export function ImportCitizensDialog({
   const [preview, setPreview] = useState<CitizenImportResult | null>(null);
   const [outcome, setOutcome] = useState<CitizenImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const fileInput = useRef<HTMLInputElement>(null);
+  const fileInputId = useId();
   const t = useTranslations('citizenImport');
   const tCommon = useTranslations('common');
   const locale = useLocale();
@@ -312,37 +313,16 @@ export function ImportCitizensDialog({
                 </Button>
               </div>
 
-              <input
-                ref={fileInput}
-                type="file"
+              <FileInput
+                id={fileInputId}
                 accept=".csv,text/csv"
-                className="sr-only"
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
+                onSelect={(files) => {
+                  const file = files[0];
                   if (file) void readFile(file);
-                  // Cleared so re-picking the *same* file after a fix still
-                  // fires `change` — the value is unchanged otherwise.
-                  event.target.value = '';
                 }}
+                label={fileName ? 'اختر ملفاً آخر' : 'اختر ملف CSV'}
+                hint={fileName ? `${fileName} — ${rows.length} صف` : 'أو اسحب الملف إلى هنا'}
               />
-
-              <button
-                type="button"
-                onClick={() => fileInput.current?.click()}
-                className="flex w-full flex-col items-center gap-2 rounded-lg border-2 border-dashed p-8 text-center transition-colors hover:border-primary hover:bg-accent/40"
-              >
-                <Upload className="size-8 text-muted-foreground" aria-hidden />
-                <span className="font-medium">
-                  {fileName ? 'اختر ملفاً آخر' : 'اختر ملف CSV'}
-                </span>
-                {fileName ? (
-                  <span className="text-sm text-muted-foreground">
-                    {fileName} — {rows.length} صف
-                  </span>
-                ) : (
-                  <span className="text-sm text-muted-foreground">أو اسحب الملف إلى هنا</span>
-                )}
-              </button>
 
               {parseError ? (
                 <Alert variant="destructive" live="alert">
@@ -358,13 +338,10 @@ export function ImportCitizensDialog({
               ) : null}
 
               {unknownHeaders.length > 0 ? (
-                <p className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm">
-                  <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
-                  <span>
-                    أعمدة غير معروفة سيتم تجاهلها:{' '}
-                    <span className="font-semibold">{unknownHeaders.join('، ')}</span>
-                  </span>
-                </p>
+                <Alert variant="warning">
+                  أعمدة غير معروفة سيتم تجاهلها:{' '}
+                  <span className="font-semibold">{unknownHeaders.join('، ')}</span>
+                </Alert>
               ) : null}
 
               <details className="rounded-lg border">
@@ -452,10 +429,9 @@ export function ImportCitizensDialog({
                   </p>
                 </div>
               ) : (
-                <p className="flex items-start gap-2 rounded-lg border border-success/40 bg-success/5 p-3 text-sm">
-                  <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" aria-hidden />
+                <Alert variant="success">
                   كل الصفوف صالحة.
-                </p>
+                </Alert>
               )}
 
               {resemblingRows.length > 0 ? (
@@ -500,13 +476,10 @@ export function ImportCitizensDialog({
 
               {outcome.failed > 0 ? (
                 <div className="space-y-2">
-                  <p className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm">
-                    <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
-                    <span>
-                      {outcome.failed} صف لم يُستورد رغم اجتيازه الفحص — غالباً لتكرار رقم وثيقة
-                      موجود مسبقاً.
-                    </span>
-                  </p>
+                  <Alert variant="warning">
+                    {outcome.failed} صف لم يُستورد رغم اجتيازه الفحص — غالباً لتكرار رقم وثيقة
+                    موجود مسبقاً.
+                  </Alert>
                   <ul className="divide-y overflow-hidden rounded-lg border">
                     {outcome.results
                       .filter((result) => !result.ok)

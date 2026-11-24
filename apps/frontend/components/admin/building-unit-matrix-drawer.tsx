@@ -5,7 +5,6 @@ import { useParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import type { SetOwnerBillingInput, SetUnitFeeExemptionInput } from '@mechanization/shared-schemas';
 import {
-  AlertTriangle,
   Building2,
   ClipboardList,
   DoorClosed,
@@ -942,13 +941,12 @@ export function BuildingUnitMatrixDrawer({
                       ) : null}
 
                       {duplicateUnits && duplicateUnits.floor === floor ? (
-                        <div className="space-y-2 rounded-md border border-warning/40 bg-warning/10 p-2.5">
-                          <p className="flex items-start gap-1.5 text-xs font-medium leading-relaxed">
-                            <AlertTriangle className="mt-px size-3.5 shrink-0" aria-hidden />
-                            {en
-                              ? 'This floor already has a unit of the same type. Is the one you are adding different?'
-                              : 'يوجد على هذا الطابق وحدة من النوع نفسه. هل الوحدة التي تضيفها مختلفة عنها؟'}
-                          </p>
+                        <Alert
+                          variant="warning"
+                          title={en
+                            ? 'This floor already has a unit of the same type. Is the one you are adding different?'
+                            : 'يوجد على هذا الطابق وحدة من النوع نفسه. هل الوحدة التي تضيفها مختلفة عنها؟'}
+                        >
 
                           <ul className="space-y-1">
                             {duplicateUnits.candidates.map((row) => (
@@ -1002,7 +1000,7 @@ export function BuildingUnitMatrixDrawer({
                             ))}
                           </ul>
 
-                          <div className="flex flex-wrap items-center gap-2">
+                          <div className="mt-1 flex flex-wrap items-center gap-2">
                             <Button
                               size="sm"
                               disabled={busy}
@@ -1033,7 +1031,7 @@ export function BuildingUnitMatrixDrawer({
                               {en ? 'No, it is one of these' : 'لا، إنها إحداها'}
                             </Button>
                           </div>
-                        </div>
+                        </Alert>
                       ) : null}
                     </div>
                   ) : null}
