@@ -1,6 +1,6 @@
 # Deploying to Vercel
 
-Last verified against the code: `feat/shorter-staff-sessions` (on `develop@9ec12ec`), 2026-10-04.
+Last verified against the code: `fix/cleanup-dry-02-06` (on `develop@5bf5856a`): the Sentry redaction rules live once, in shared-schemas (DRY-05), 2026-11-24; `feat/shorter-staff-sessions` (on `develop@9ec12ec`), 2026-10-04.
 
 > **This doc now covers the frontend (the portal) only.** The API runs on AWS
 > Lightsail under pm2, deployed by `.github/workflows/deploy-backend.yml` on
@@ -396,8 +396,9 @@ So both SDKs are configured to drop, before anything leaves:
 Everything that does go out is passed through a redaction pass that strips
 UUIDs, رقم مرجعي values (which are login credentials), runs of six or more
 digits, JWTs, email addresses and the `Key (col)=(value)` detail Postgres
-appends to a unique violation. The rules live in `sentry-redaction.ts` in each
-app and are covered by `sentry-redaction.spec.ts` on the API side.
+appends to a unique violation. The rules live once, in `sentry-redaction.ts` in
+`@mechanization/shared-schemas`, and are covered by the API's `sentry-redaction.spec.ts`
+for both apps' calls.
 
 What is kept is the municipality slug, the route shape and the correlation id —
 enough to triage, and enough to match a citizen quoting an error reference at a
