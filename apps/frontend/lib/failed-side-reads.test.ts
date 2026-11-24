@@ -32,7 +32,7 @@ describe('a failed side read is said, not shown as «nothing there»', () => {
   });
 
   it('building-editor: a failed property-number check is a hint, not a clean result', () => {
-    const source = read('building-editor.tsx');
+    const source = read('building-editor/use-parcel-lookup.ts');
     expect(source).not.toMatch(/checkPropertyNumber\([^)]*\)\.catch\(\(\) => null\)/);
     expect(source).toMatch(/check === null\s*\n\s*\? tEditor\('cadastreUnchecked'\)/);
   });
