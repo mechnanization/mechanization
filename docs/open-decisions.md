@@ -1100,7 +1100,7 @@ recommendation.
 
 | Audit | Decision | Task | Where it lives |
 |---|---|---|---|
-| U-2 | The collector custody panel, the payouts page, the users section and the daily audit move to `DataTable`; `DataTable` grows what they need. `ui/table` is not allowed for them. | UX-09, UX-10 | [ui-ux-standards.md](ui-ux-standards.md) §17.1 (not built yet) |
+| U-2 | The collector custody panel, the payouts page, the users section and the daily audit move to `DataTable`; `DataTable` grows what they need. `ui/table` is not allowed for them. | UX-09, UX-10 | [ui-ux-standards.md](ui-ux-standards.md) §17.1 (built 2026-11-24 for the four registers) |
 | U-3 | `lib/request-cache.ts` is kept: its callers are listed in its header, a read made through `useStaffQuery` uses TanStack's cache, and nothing new goes into it. | CACHE-02 | [code-quality.md](code-quality.md), the frontend guide's data-fetching rules |
 | U-15 | The accent system is removed (`AccentProvider`, `useAccent`, `isAccent`, `lib/accents.ts`, the pre-paint script). The colour is the municipality's brand colour, else the default blue. | DEAD-13 | [DESIGN.md](../DESIGN.md) |
 | U-21 | The portal's phone-code sign-in (`/login`) and «حسابي» (`/my-account`) are retired. Both addresses redirect to «ملفّي». The API's OTP routes stay until the backend owner decides. | PAGE-03 | [PRODUCT.md](../PRODUCT.md), §2 above |

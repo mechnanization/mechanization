@@ -3,6 +3,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { ChevronDown, History, User } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import type { ColumnDef } from '@tanstack/react-table';
 import { AUDIT_SYSTEM_ACTOR, getLabels } from '@mechanization/shared-schemas';
 import { getAuditDaily, getAuditLog, type AuditDaySummary, type AuditEntry } from '@/lib/api-client';
 import { auditActionLabel, auditEntityLabel } from '@/lib/audit-labels';
@@ -10,19 +11,13 @@ import { describeAudit } from '@/lib/audit-describe';
 import { formatMonth } from '@/lib/dates';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { usePagerLabels } from '@/lib/use-pager-labels';
+import { useTableLabels } from '@/lib/use-table-labels';
 import { FactCell, FactRow } from '@/components/ui/facts';
 import { Button } from '@/components/ui/button';
+import { DataTable } from '@/components/ui/data-table';
 import { Pager } from '@/components/ui/pager';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState, ErrorState } from '@/components/ui/states';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 
 const PAGE_SIZE = 50;
 
@@ -68,13 +63,13 @@ export function AuditDaily({
   const t = useTranslations('audit.daily');
   const tCommon = useTranslations('common');
   const [page, setPage] = useState(0);
-  const [openKey, setOpenKey] = useState<string | null>(null);
   /** The top of the table, which the pager brings back into view after a page change. */
   const tableTop = useRef<HTMLDivElement>(null);
 
   const actionsKey = filter.actions?.join(',') ?? '';
 
   const pagerLabels = usePagerLabels();
+  const tableLabels = useTableLabels();
   const query = useStaffQuery<{ items: AuditDaySummary[]; total: number }>({
     queryKey: [
       'audit-daily',
@@ -105,6 +100,150 @@ export function AuditDaily({
 
   const todayKey = isoDay(new Date());
   const yesterdayKey = isoDay(new Date(Date.now() - 86_400_000));
+
+  const columns = useMemo<ColumnDef<AuditDaySummary>[]>(() => {
+    const en = locale === 'en';
+    const labels = getLabels(locale);
+    return [
+      {
+        id: 'day',
+        header: t('colDay'),
+        meta: { mobile: 'primary', cellClassName: 'align-top' },
+        cell: ({ row }) => {
+          const when = row.original.day === todayKey ? t('today') : row.original.day === yesterdayKey ? t('yesterday') : null;
+          return (
+            <>
+              <div className="font-medium">
+                {when ?? formatMonth(new Date(`${row.original.day}T12:00:00`), { day: 'numeric', month: 'long' }, locale)}
+              </div>
+              <div className="text-xs text-muted-foreground tabular-nums" dir="ltr">
+                {row.original.day}
+              </div>
+            </>
+          );
+        },
+      },
+      {
+        id: 'staff',
+        header: t('colStaff'),
+        meta: { cellClassName: 'align-top' },
+        cell: ({ row }) => {
+          const { actor } = row.original;
+          const actorName = actor.name ?? (actor.kind === 'SYSTEM' ? t('system') : t('unknown'));
+          return (
+            <div className="flex items-start gap-2">
+              <span
+                aria-hidden
+                className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"
+              >
+                <User className="size-3.5" />
+              </span>
+              <div className="min-w-0">
+                <div className="truncate font-medium">{actorName}</div>
+                {actor.role ? (
+                  <div className="truncate text-xs text-muted-foreground">
+                    {(labels.staffRole as Record<string, string>)[actor.role] ?? actor.role}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          );
+        },
+      },
+      {
+        /*
+          Plain text, not pills.
+
+          These were filled badges, which put three rounded blocks on every row
+          of a table whose other columns are bare text — the eye landed on the
+          shapes instead of the words inside them. A count is data; it needs a
+          number beside it, not a container around it.
+        */
+        id: 'what',
+        header: t('colWhat'),
+        meta: { cellClassName: 'max-w-md whitespace-normal align-top' },
+        cell: ({ row }) => {
+          /*
+            The headline: the three commonest acts of the day with their counts,
+            which is what «Staff X created a building» means once a day holds
+            more than one thing. The remainder is a count, not an ellipsis —
+            «و٤ أخرى» tells the reader whether opening the row is worth it.
+          */
+          const headline = row.original.actions.slice(0, 3);
+          const rest = row.original.actions.length - headline.length;
+          return (
+            <span className="text-foreground">
+              {headline.map((item, index) => (
+                <span key={item.action}>
+                  {index > 0 ? <span className="text-muted-foreground"> · </span> : null}
+                  {auditActionLabel(item.action, locale)}
+                  {item.count > 1 ? (
+                    <span className="ms-1 tabular-nums text-muted-foreground">×{item.count}</span>
+                  ) : null}
+                </span>
+              ))}
+              {rest > 0 ? (
+                <span className="text-muted-foreground">
+                  {' · '}
+                  {t('more', { count: rest })}
+                </span>
+              ) : null}
+            </span>
+          );
+        },
+      },
+      {
+        id: 'count',
+        header: t('colCount'),
+        meta: { align: 'center', cellClassName: 'align-top font-semibold tabular-nums' },
+        cell: ({ row }) => row.original.total,
+      },
+      {
+        id: 'last',
+        header: t('colLast'),
+        meta: { align: 'center', cellClassName: 'align-top text-xs tabular-nums text-muted-foreground' },
+        cell: ({ row }) => (
+          <span dir="ltr">
+            {new Date(row.original.lastAt).toLocaleTimeString(en ? 'en-GB' : 'ar-LB-u-nu-latn', {
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: false,
+            })}
+          </span>
+        ),
+      },
+      {
+        /*
+          «عرض التفاصيل». One day is open at a time, as before: opening another
+          closes the first, so a long page does not become fifty open trails.
+          `DataTable` draws the open row's `renderSubRow` under the row, and at
+          the foot of its card on a phone.
+        */
+        id: 'details',
+        header: '',
+        enableSorting: false,
+        meta: { align: 'end', mobile: 'actions', cellClassName: 'align-top' },
+        cell: ({ row, table }) => {
+          const open = row.getIsExpanded();
+          return (
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              aria-expanded={open}
+              onClick={() => {
+                table.resetExpanded(true);
+                if (!open) row.toggleExpanded(true);
+              }}
+            >
+              {t('viewDetails')}
+              <ChevronDown className={`size-4 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden />
+            </Button>
+          );
+        },
+      },
+    ];
+  }, [t, locale, todayKey, yesterdayKey]);
 
   if (query.error) {
     return (
@@ -142,41 +281,32 @@ export function AuditDaily({
         A real table, and every column aligned to the same edge down the page:
         these rows are read by scanning one column at a time — whose day, how
         many — and a stack of cards makes that a search rather than a glance.
+        Below `sm` it is cards, as every table is. The page is the server's
+        (`Pager` below), so the table neither pages nor sorts what it holds.
       */}
-      <div ref={tableTop} className="overflow-x-auto rounded-xl border bg-card">
-        <Table>
-          <TableHeader>
-            <TableRow className="hover:bg-transparent">
-              <TableHead>{t('colDay')}</TableHead>
-              <TableHead>{t('colStaff')}</TableHead>
-              <TableHead>{t('colWhat')}</TableHead>
-              <TableHead className="text-center">{t('colCount')}</TableHead>
-              <TableHead className="text-center">{t('colLast')}</TableHead>
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map((row) => {
-              const key = `${row.day}|${row.actor.id ?? 'system'}`;
-              const open = openKey === key;
-              return (
-                <RowPair
-                  key={key}
-                  row={row}
-                  open={open}
-                  onToggle={() => setOpenKey(open ? null : key)}
-                  tenant={tenant}
-                  base={base}
-                  locale={locale}
-                  token={token}
-                  filter={filter}
-                  todayKey={todayKey}
-                  yesterdayKey={yesterdayKey}
-                />
-              );
-            })}
-          </TableBody>
-        </Table>
+      <div ref={tableTop}>
+        <DataTable
+          columns={columns}
+          data={rows}
+          labels={tableLabels}
+          getRowId={(row) => `${row.day}|${row.actor.id ?? 'system'}`}
+          searchable={false}
+          sortable={false}
+          paginated={false}
+          getRowCanExpand={() => true}
+          renderSubRow={(row) => (
+            <DayDetail
+              tenant={tenant}
+              base={base}
+              locale={locale}
+              token={token}
+              filter={filter}
+              day={row.original.day}
+              actorId={row.original.actor.id}
+              expected={row.original.total}
+            />
+          )}
+        />
       </div>
 
       {/* Newest first: the previous page is the newer one. Renders nothing on a single page. */}
@@ -184,162 +314,12 @@ export function AuditDaily({
         page={page}
         pageSize={PAGE_SIZE}
         total={total}
-        onPageChange={(next) => {
-          setOpenKey(null);
-          setPage(next);
-        }}
+        onPageChange={setPage}
         labels={pagerLabels}
         disabled={query.fetching}
         scrollTarget={tableTop}
       />
     </div>
-  );
-}
-
-/**
- * The summary row, and the drill-down row that follows it.
- *
- * Two `<tr>`s rather than a nested table: the detail belongs to the day above
- * it, and a table inside a cell loses the alignment that made the summary
- * readable in the first place.
- */
-function RowPair({
-  row,
-  open,
-  onToggle,
-  tenant,
-  base,
-  locale,
-  token,
-  filter,
-  todayKey,
-  yesterdayKey,
-}: {
-  row: AuditDaySummary;
-  open: boolean;
-  onToggle: () => void;
-  tenant: string;
-  base: string;
-  locale: string;
-  token: string | null;
-  filter: AuditFilter;
-  todayKey: string;
-  yesterdayKey: string;
-}): React.JSX.Element {
-  const t = useTranslations('audit.daily');
-  const en = locale === 'en';
-  const labels = getLabels(locale);
-
-  const when = row.day === todayKey ? t('today') : row.day === yesterdayKey ? t('yesterday') : null;
-
-  const actorName = row.actor.name ?? (row.actor.kind === 'SYSTEM' ? t('system') : t('unknown'));
-
-  /*
-    The headline: the three commonest acts of the day with their counts, which
-    is what «Staff X created a building» means once a day holds more than one
-    thing. The remainder is a count, not an ellipsis — «و٤ أخرى» tells the
-    reader whether opening the row is worth it.
-  */
-  const headline = row.actions.slice(0, 3);
-  const rest = row.actions.length - headline.length;
-
-  return (
-    <>
-      <TableRow className={open ? 'bg-muted/40' : undefined}>
-        <TableCell className="align-top">
-          <div className="font-medium">
-            {when ?? formatMonth(new Date(`${row.day}T12:00:00`), { day: 'numeric', month: 'long' }, locale)}
-          </div>
-          <div className="text-xs text-muted-foreground tabular-nums" dir="ltr">
-            {row.day}
-          </div>
-        </TableCell>
-
-        <TableCell className="align-top">
-          <div className="flex items-start gap-2">
-            <span
-              aria-hidden
-              className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"
-            >
-              <User className="size-3.5" />
-            </span>
-            <div className="min-w-0">
-              <div className="truncate font-medium">{actorName}</div>
-              {row.actor.role ? (
-                <div className="truncate text-xs text-muted-foreground">
-                  {(labels.staffRole as Record<string, string>)[row.actor.role] ?? row.actor.role}
-                </div>
-              ) : null}
-            </div>
-          </div>
-        </TableCell>
-
-        {/*
-          Plain text, not pills.
-
-          These were filled badges, which put three rounded blocks on every row
-          of a table whose other columns are bare text — the eye landed on the
-          shapes instead of the words inside them. A count is data; it needs a
-          number beside it, not a container around it.
-        */}
-        <TableCell className="max-w-md whitespace-normal align-top">
-          <span className="text-foreground">
-            {headline.map((item, index) => (
-              <span key={item.action}>
-                {index > 0 ? <span className="text-muted-foreground"> · </span> : null}
-                {auditActionLabel(item.action, locale)}
-                {item.count > 1 ? (
-                  <span className="ms-1 tabular-nums text-muted-foreground">×{item.count}</span>
-                ) : null}
-              </span>
-            ))}
-            {rest > 0 ? (
-              <span className="text-muted-foreground">
-                {' · '}
-                {t('more', { count: rest })}
-              </span>
-            ) : null}
-          </span>
-        </TableCell>
-
-        <TableCell className="text-center align-top font-semibold tabular-nums">{row.total}</TableCell>
-
-        <TableCell className="text-center align-top text-xs tabular-nums text-muted-foreground" dir="ltr">
-          {new Date(row.lastAt).toLocaleTimeString(en ? 'en-GB' : 'ar-LB-u-nu-latn', {
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12: false,
-          })}
-        </TableCell>
-
-        <TableCell className="align-top text-end">
-          <Button variant="outline" size="sm" className="gap-1.5" onClick={onToggle} aria-expanded={open}>
-            {t('viewDetails')}
-            <ChevronDown
-              className={`size-4 transition-transform ${open ? 'rotate-180' : ''}`}
-              aria-hidden
-            />
-          </Button>
-        </TableCell>
-      </TableRow>
-
-      {open ? (
-        <TableRow className="hover:bg-transparent">
-          <TableCell colSpan={6} className="whitespace-normal bg-muted/20 p-0">
-            <DayDetail
-              tenant={tenant}
-              base={base}
-              locale={locale}
-              token={token}
-              filter={filter}
-              day={row.day}
-              actorId={row.actor.id}
-              expected={row.total}
-            />
-          </TableCell>
-        </TableRow>
-      ) : null}
-    </>
   );
 }
 
@@ -370,6 +350,7 @@ function DayDetail({
   expected: number;
 }): React.JSX.Element {
   const t = useTranslations('audit.daily');
+  const tableLabels = useTableLabels();
 
   /*
     The day's own bounds, in the reader's zone — `new Date('2026-09-20T00:00:00')`
@@ -414,6 +395,94 @@ function DayDetail({
     errorMessage: t('dayLoadFailed'),
   });
 
+  const columns = useMemo<ColumnDef<AuditEntry>[]>(() => {
+    const en = locale === 'en';
+    return [
+      {
+        id: 'time',
+        header: t('colTime'),
+        meta: { headerClassName: 'w-20', cellClassName: 'align-top text-xs tabular-nums text-muted-foreground' },
+        cell: ({ row }) => (
+          <bdi dir="ltr">
+            {new Date(row.original.createdAt).toLocaleTimeString(en ? 'en-GB' : 'ar-LB-u-nu-latn', {
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: false,
+            })}
+          </bdi>
+        ),
+      },
+      {
+        id: 'action',
+        header: t('colAction'),
+        meta: { mobile: 'primary', headerClassName: 'w-48', cellClassName: 'align-top' },
+        cell: ({ row }) => (
+          <>
+            <span className="font-medium">{auditActionLabel(row.original.action, locale)}</span>
+            <div className="text-xs text-muted-foreground">
+              {auditEntityLabel(row.original.target?.type ?? row.original.entityType, locale)}
+            </div>
+          </>
+        ),
+      },
+      {
+        id: 'record',
+        header: t('colRecord'),
+        meta: { headerClassName: 'w-56', cellClassName: 'max-w-56 align-top' },
+        cell: ({ row }) =>
+          row.original.target?.label ? (
+            <>
+              <div className="truncate" title={row.original.target.label}>
+                {row.original.target.label}
+              </div>
+              {row.original.target.secondary ? (
+                <div className="truncate text-xs text-muted-foreground">{row.original.target.secondary}</div>
+              ) : null}
+            </>
+          ) : (
+            <span className="text-muted-foreground">—</span>
+          ),
+      },
+      {
+        /*
+          Label on top, value directly under it, pairs beside each other — the
+          same reading as the column headings above this table.
+
+          Stacked as rows they were aligned but tall: an entry with four changed
+          fields made a four-line cell in a table whose other three columns are
+          one or two, so a day's ten actions scrolled like thirty.
+
+          Changes first, then the facts an action recorded instead of a diff — a
+          login and an export have no before/after and would otherwise be a blank
+          cell in a table whose every other row says something.
+        */
+        id: 'changes',
+        header: t('colChanges'),
+        meta: { cellClassName: 'whitespace-normal align-top text-xs' },
+        cell: ({ row }) => {
+          const description = describeAudit(row.original, locale);
+          const lines = [
+            ...description.changes.map((change) => ({
+              label: change.label,
+              value: `${change.before} ${en ? '→' : '←'} ${change.after}`,
+            })),
+            ...description.facts,
+            ...description.quotes,
+          ].slice(0, 4);
+          return lines.length === 0 ? (
+            <span className="text-muted-foreground">—</span>
+          ) : (
+            <FactRow>
+              {lines.map((line, index) => (
+                <FactCell key={`${line.label}-${index}`} label={line.label} value={line.value} />
+              ))}
+            </FactRow>
+          );
+        },
+      },
+    ];
+  }, [t, locale]);
+
   if (query.error) {
     return (
       <div className="p-4">
@@ -435,22 +504,17 @@ function DayDetail({
   const entries = query.data?.items ?? [];
 
   return (
-    <div className="overflow-x-auto border-t">
-      <Table>
-        <TableHeader>
-          <TableRow className="hover:bg-transparent">
-            <TableHead className="w-20">{t('colTime')}</TableHead>
-            <TableHead className="w-48">{t('colAction')}</TableHead>
-            <TableHead className="w-56">{t('colRecord')}</TableHead>
-            <TableHead>{t('colChanges')}</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {entries.map((entry) => (
-            <DetailRow key={entry.id} entry={entry} locale={locale} />
-          ))}
-        </TableBody>
-      </Table>
+    <div>
+      <DataTable
+        className="rounded-none border-0 shadow-none"
+        columns={columns}
+        data={entries}
+        labels={tableLabels}
+        getRowId={(entry) => entry.id}
+        searchable={false}
+        sortable={false}
+        paginated={false}
+      />
 
       {/*
         Said plainly rather than paged. A single person's single day past two
@@ -463,81 +527,6 @@ function DayDetail({
         </p>
       ) : null}
     </div>
-  );
-}
-
-function DetailRow({ entry, locale }: { entry: AuditEntry; locale: string }): React.JSX.Element {
-  const en = locale === 'en';
-  const description = describeAudit(entry, locale);
-
-  /*
-    Changes first, then the facts an action recorded instead of a diff — a
-    login and an export have no before/after and would otherwise be a blank
-    cell in a table whose every other row says something.
-  */
-  const lines = [
-    ...description.changes.map((change) => ({
-      label: change.label,
-      value: `${change.before} ${en ? '→' : '←'} ${change.after}`,
-    })),
-    ...description.facts,
-    ...description.quotes,
-  ].slice(0, 4);
-
-  return (
-    <TableRow>
-      <TableCell className="align-top text-xs tabular-nums text-muted-foreground">
-        <bdi dir="ltr">
-          {new Date(entry.createdAt).toLocaleTimeString(en ? 'en-GB' : 'ar-LB-u-nu-latn', {
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12: false,
-          })}
-        </bdi>
-      </TableCell>
-
-      <TableCell className="align-top">
-        <span className="font-medium">{auditActionLabel(entry.action, locale)}</span>
-        <div className="text-xs text-muted-foreground">
-          {auditEntityLabel(entry.target?.type ?? entry.entityType, locale)}
-        </div>
-      </TableCell>
-
-      <TableCell className="max-w-56 align-top">
-        {entry.target?.label ? (
-          <>
-            <div className="truncate" title={entry.target.label}>
-              {entry.target.label}
-            </div>
-            {entry.target.secondary ? (
-              <div className="truncate text-xs text-muted-foreground">{entry.target.secondary}</div>
-            ) : null}
-          </>
-        ) : (
-          <span className="text-muted-foreground">—</span>
-        )}
-      </TableCell>
-
-      {/*
-        Label on top, value directly under it, pairs beside each other — the
-        same reading as the column headings above this table.
-
-        Stacked as rows they were aligned but tall: an entry with four changed
-        fields made a four-line cell in a table whose other three columns are
-        one or two, so a day's ten actions scrolled like thirty.
-      */}
-      <TableCell className="whitespace-normal align-top text-xs">
-        {lines.length === 0 ? (
-          <span className="text-muted-foreground">—</span>
-        ) : (
-          <FactRow>
-            {lines.map((line, index) => (
-              <FactCell key={`${line.label}-${index}`} label={line.label} value={line.value} />
-            ))}
-          </FactRow>
-        )}
-      </TableCell>
-    </TableRow>
   );
 }
 

@@ -4,6 +4,7 @@ import { useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useQueryClient } from '@tanstack/react-query';
+import type { ColumnDef } from '@tanstack/react-table';
 import { HandCoins, UserRound, Users } from 'lucide-react';
 import { receiveCustodySchema, TREASURY_WORK_ROLES } from '@mechanization/shared-schemas';
 import {
@@ -18,11 +19,13 @@ import { formatDateTime } from '@/lib/dates';
 import { heldKey, keyIsSpent, outcomeInDoubt, spendKey } from '@/lib/request-id';
 import { hasRole } from '@/lib/staff-roles';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { useTableLabels } from '@/lib/use-table-labels';
 import { cn } from '@/lib/utils';
 import { Alert } from '@/components/ui/alert';
 import { Badge, type BadgeProps } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { DataTable } from '@/components/ui/data-table';
 import { CurrencyInput } from '@/components/ui/currency-input';
 import {
   Dialog,
@@ -36,7 +39,6 @@ import { Field } from '@/components/ui/field';
 import { StatItem, StatStrip } from '@/components/ui/stat-strip';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/states';
 import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
 import { TreasuryAmount } from './treasury-amount';
@@ -145,6 +147,123 @@ export function CollectorCustodyPanel({
         ? t('stats.heldInUSD')
         : t('stats.heldInOther', { currency });
 
+  const tableLabels = useTableLabels();
+
+  const columns = useMemo<ColumnDef<CollectorCustodyView>[]>(
+    () => [
+      {
+        id: 'collector',
+        header: t('columns.collector'),
+        meta: { mobile: 'primary' },
+        cell: ({ row }) => (
+          <div className="flex items-center gap-3">
+            {/*
+              The first letter of his name, not a photograph: the
+              register holds none for staff, and a generic
+              silhouette on every row would tell the rows apart by
+              nothing.
+            */}
+            <span
+              aria-hidden
+              className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary"
+            >
+              {row.original.collectorName?.trim().charAt(0) || <UserRound className="size-4" />}
+            </span>
+            <span className="font-medium">{row.original.collectorName ?? t('unknownCollector')}</span>
+          </div>
+        ),
+      },
+      {
+        id: 'status',
+        header: t('columns.status'),
+        /*
+          An inference, not a report from the field — nothing
+          records whether a man is out on a round. «لم يخرج
+          اليوم» with cash still on him and «سلّم كل شيء» are
+          different answers to «أين علي؟», so each has its own
+          badge, and the word carries the meaning with the
+          colour only repeating it (COL-3).
+        */
+        cell: ({ row }) => <Badge variant={STATUS_BADGE[row.original.status]}>{t(`status.${row.original.status}`)}</Badge>,
+      },
+      {
+        id: 'today',
+        header: t('columns.today'),
+        cell: ({ row }) =>
+          row.original.receiptsToday > 0 ? (
+            <div className="space-y-0.5">
+              <p className="tabular-nums">{t('receiptsToday', { count: row.original.receiptsToday })}</p>
+              <TreasuryAmount
+                amount={row.original.collectedToday}
+                currency={row.original.currency}
+                locale={locale}
+                className="text-xs text-muted-foreground"
+              />
+            </div>
+          ) : (
+            <span className="text-muted-foreground">{t('noneToday')}</span>
+          ),
+      },
+      {
+        /*
+          What he carries now: the figure the accountant counts the
+          notes against. Nothing held is muted, so the eye goes to
+          the rows that still have cash out; the «0» and the badge
+          still say it.
+        */
+        id: 'held',
+        header: t('columns.held'),
+        meta: { align: 'end' },
+        cell: ({ row }) => (
+          <TreasuryAmount
+            amount={row.original.held}
+            currency={row.original.currency}
+            locale={locale}
+            className={cn('text-base font-semibold', row.original.held === 0 && 'text-muted-foreground')}
+          />
+        ),
+      },
+      {
+        /* Null once his wallet is empty: the server only dates cash still held. */
+        id: 'lastActivity',
+        header: t('columns.lastActivity'),
+        meta: { cellClassName: 'tabular-nums text-muted-foreground' },
+        cell: ({ row }) => (row.original.lastCollectedAt ? formatDateTime(row.original.lastCollectedAt) : '—'),
+      },
+      {
+        id: 'actions',
+        header: t('columns.actions'),
+        enableSorting: false,
+        meta: { align: 'end', mobile: 'actions' },
+        cell: ({ row }) => (
+          <div className="flex items-center justify-end gap-2">
+            {canReceive && row.original.held > 0 && row.original.collectorId !== actorId ? (
+              <Button size="sm" variant="outline" onClick={() => setReceiving(row.original)}>
+                {t('receive')}
+              </Button>
+            ) : null}
+            {/*
+              «من حصّل» — the receipts behind the figure. Offered
+              whether or not he is still carrying anything: a
+              collector who has settled is exactly the one whose
+              round someone asks about afterwards. Ghost beside the
+              outline, so «استلام» stays the thing the eye lands on.
+            */}
+            {row.original.collectorId ? (
+              <Button asChild size="sm" variant="ghost">
+                <Link href={`${base}/finance/collectors/${row.original.collectorId}`}>
+                  <Users className="size-4" aria-hidden />
+                  {t('viewCollections')}
+                </Link>
+              </Button>
+            ) : null}
+          </div>
+        ),
+      },
+    ],
+    [t, locale, base, canReceive, actorId],
+  );
+
   return (
     <>
       {/*
@@ -198,122 +317,22 @@ export function CollectorCustodyPanel({
               ) : null}
 
               {/*
-                `Table` is a bare `<table>` by design and leaves the scroll to its
-                container, so a phone scrolls the six columns sideways inside the
-                card rather than pushing the page wider than the screen (LAY-5).
-                One row per custody wallet: a collector carrying both ليرة and
-                dollars has two rows, one per pocket, as the server returns them.
+                One frame: the card's, around a borderless table (BAN-4). One row per
+                custody wallet: a collector carrying both ليرة and dollars has two
+                rows, one per pocket, as the server returns them. The card keeps the
+                four states above, so a failed re-read leaves these rows on screen
+                and the handover dialog (and its held key) mounted below.
               */}
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="hover:bg-transparent">
-                      <TableHead className="ps-4 sm:ps-5">{t('columns.collector')}</TableHead>
-                      <TableHead>{t('columns.status')}</TableHead>
-                      <TableHead>{t('columns.today')}</TableHead>
-                      <TableHead className="text-end">{t('columns.held')}</TableHead>
-                      <TableHead>{t('columns.lastActivity')}</TableHead>
-                      <TableHead className="pe-4 text-end sm:pe-5">{t('columns.actions')}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {rows.map((row) => (
-                      <TableRow key={row.accountId}>
-                        <TableCell className="ps-4 sm:ps-5">
-                          <div className="flex items-center gap-3">
-                            {/*
-                              The first letter of his name, not a photograph: the
-                              register holds none for staff, and a generic
-                              silhouette on every row would tell the rows apart by
-                              nothing.
-                            */}
-                            <span
-                              aria-hidden
-                              className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary"
-                            >
-                              {row.collectorName?.trim().charAt(0) || <UserRound className="size-4" />}
-                            </span>
-                            <span className="font-medium">{row.collectorName ?? t('unknownCollector')}</span>
-                          </div>
-                        </TableCell>
-
-                        <TableCell>
-                          {/*
-                            An inference, not a report from the field — nothing
-                            records whether a man is out on a round. «لم يخرج
-                            اليوم» with cash still on him and «سلّم كل شيء» are
-                            different answers to «أين علي؟», so each has its own
-                            badge, and the word carries the meaning with the
-                            colour only repeating it (COL-3).
-                          */}
-                          <Badge variant={STATUS_BADGE[row.status]}>{t(`status.${row.status}`)}</Badge>
-                        </TableCell>
-
-                        <TableCell>
-                          {row.receiptsToday > 0 ? (
-                            <div className="space-y-0.5">
-                              <p className="tabular-nums">{t('receiptsToday', { count: row.receiptsToday })}</p>
-                              <TreasuryAmount
-                                amount={row.collectedToday}
-                                currency={row.currency}
-                                locale={locale}
-                                className="text-xs text-muted-foreground"
-                              />
-                            </div>
-                          ) : (
-                            <span className="text-muted-foreground">{t('noneToday')}</span>
-                          )}
-                        </TableCell>
-
-                        {/*
-                          What he carries now: the figure the accountant counts the
-                          notes against. Nothing held is muted, so the eye goes to
-                          the rows that still have cash out; the «0» and the badge
-                          still say it.
-                        */}
-                        <TableCell className="text-end">
-                          <TreasuryAmount
-                            amount={row.held}
-                            currency={row.currency}
-                            locale={locale}
-                            className={cn('text-base font-semibold', row.held === 0 && 'text-muted-foreground')}
-                          />
-                        </TableCell>
-
-                        {/* Null once his wallet is empty: the server only dates cash still held. */}
-                        <TableCell className="tabular-nums text-muted-foreground">
-                          {row.lastCollectedAt ? formatDateTime(row.lastCollectedAt) : '—'}
-                        </TableCell>
-
-                        <TableCell className="pe-4 sm:pe-5">
-                          <div className="flex items-center justify-end gap-2">
-                            {canReceive && row.held > 0 && row.collectorId !== actorId ? (
-                              <Button size="sm" variant="outline" onClick={() => setReceiving(row)}>
-                                {t('receive')}
-                              </Button>
-                            ) : null}
-                            {/*
-                              «من حصّل» — the receipts behind the figure. Offered
-                              whether or not he is still carrying anything: a
-                              collector who has settled is exactly the one whose
-                              round someone asks about afterwards. Ghost beside the
-                              outline, so «استلام» stays the thing the eye lands on.
-                            */}
-                            {row.collectorId ? (
-                              <Button asChild size="sm" variant="ghost">
-                                <Link href={`${base}/finance/collectors/${row.collectorId}`}>
-                                  <Users className="size-4" aria-hidden />
-                                  {t('viewCollections')}
-                                </Link>
-                              </Button>
-                            ) : null}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+              <DataTable
+                className="rounded-none border-0 shadow-none"
+                columns={columns}
+                data={rows}
+                labels={tableLabels}
+                getRowId={(row) => row.accountId}
+                searchable={false}
+                sortable={false}
+                paginated={false}
+              />
             </>
           )}
         </CardContent>

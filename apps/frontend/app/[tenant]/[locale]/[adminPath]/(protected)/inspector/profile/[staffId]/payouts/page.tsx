@@ -4,14 +4,16 @@ import { use, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
 import { useQueryClient } from '@tanstack/react-query';
+import type { ColumnDef } from '@tanstack/react-table';
 import { BadgeDollarSign, HandCoins, Printer, Receipt, RefreshCw } from 'lucide-react';
 import { TREASURY_READ_ROLES, type InspectorProfileResponse } from '@mechanization/shared-schemas';
 import { getInspectorProfile, getMyInspectorProfile } from '@/lib/api-client';
 import { formatMoney } from '@/lib/currency';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { useTableLabels } from '@/lib/use-table-labels';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { formatDate, formatDateTime } from '@/lib/dates';
-import { payoutHistory } from '@/lib/inspector-payouts';
+import { payoutHistory, type PayoutHistoryRow } from '@/lib/inspector-payouts';
 import { readView } from '@/lib/read-view';
 import { hasRole } from '@/lib/staff-roles';
 import { cn } from '@/lib/utils';
@@ -21,20 +23,16 @@ import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { DataTable } from '@/components/ui/data-table';
 import { Money } from '@/components/ui/money';
 import { PageHeader } from '@/components/ui/page-header';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StatItem, StatStrip } from '@/components/ui/stat-strip';
 import { EmptyState, ErrorState } from '@/components/ui/states';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import { ActionTooltip } from '@/components/ui/tooltip';
+
+/** One row of the history: the payout and the balance as it stood once it was made. */
+type PayoutRow = PayoutHistoryRow<InspectorProfileResponse['payouts'][number]>;
 
 /**
  * Every payout handed to one staff member, oldest question first: «what has
@@ -118,6 +116,113 @@ export default function InspectorPayoutHistoryPage({
   const latestPayout = data?.payouts[0];
 
   const title = data ? t('title', { name: data.inspector.name }) : t('titleLoading');
+
+  const tableLabels = useTableLabels();
+
+  const columns = useMemo<ColumnDef<PayoutRow>[]>(
+    () => [
+      {
+        id: 'paidOn',
+        header: t('paidOn'),
+        meta: { mobile: 'primary', cellClassName: 'whitespace-nowrap' },
+        cell: ({ row }) => formatDateTime(row.original.payout.paidAt),
+      },
+      {
+        /*
+          `Money` isolates each figure left to right and leaves its unit in
+          the page's direction, so each one sits under the heading that names
+          it. The receipt number is plain text for the same reason a payout
+          amount is: it is a value being read off a paper slip, not a control.
+        */
+        id: 'amount',
+        header: t('amount'),
+        meta: { cellClassName: 'whitespace-nowrap font-bold tabular-nums' },
+        cell: ({ row }) => (
+          <span className={cn('text-success', row.original.payout.voucher?.voided && 'text-muted-foreground line-through')}>
+            <Money amount={row.original.payout.amount} currency={row.original.payout.currency} locale={locale} />
+          </span>
+        ),
+      },
+      {
+        /*
+          The «PV-» voucher that paid it, once the treasury is live; a payout
+          from before has none. A cancelled one is struck through on the amount
+          and badged here, and stays listed: it happened, and so did its
+          cancellation.
+        */
+        id: 'order',
+        header: t('order'),
+        meta: { cellClassName: 'whitespace-nowrap' },
+        cell: ({ row }) => {
+          const { voucher } = row.original.payout;
+          if (!voucher) return <span className="text-muted-foreground">—</span>;
+          return (
+            <div className="flex items-center gap-2">
+              <span dir="ltr" className="font-mono text-xs">
+                {voucher.voucherNumber}
+              </span>
+              {voucher.voided ? <Badge variant="soft-warning">{t('cancelled')}</Badge> : null}
+              {canPrintOrders ? (
+                <ActionTooltip label={t('print')}>
+                  <Button asChild variant="ghost" size="icon-sm">
+                    <Link
+                      href={`${base}/finance/expenses/${voucher.id}/print?print=1`}
+                      aria-label={t('printFor', { number: voucher.voucherNumber })}
+                    >
+                      <Printer className="size-4" aria-hidden />
+                    </Link>
+                  </Button>
+                </ActionTooltip>
+              ) : null}
+            </div>
+          );
+        },
+      },
+      {
+        id: 'receipt',
+        header: t('receipt'),
+        meta: { cellClassName: 'whitespace-nowrap font-mono text-xs' },
+        cell: ({ row }) =>
+          row.original.payout.reference ? (
+            <bdi>{row.original.payout.reference}</bdi>
+          ) : (
+            <span className="text-muted-foreground">—</span>
+          ),
+      },
+      {
+        id: 'recordedBy',
+        header: t('recordedBy'),
+        meta: { cellClassName: 'text-muted-foreground' },
+        cell: ({ row }) => row.original.payout.recordedByName ?? '—',
+      },
+      {
+        id: 'owedAfter',
+        header: t('owedAfter'),
+        meta: { cellClassName: 'whitespace-nowrap tabular-nums' },
+        cell: ({ row }) =>
+          row.original.overpaidAfter > 0 ? (
+            <span className="text-warning">
+              {t('overpaidAfter', { amount: formatMoney(row.original.overpaidAfter, 'USD', locale) })}
+            </span>
+          ) : (
+            <Money amount={row.original.owedAfter} currency="USD" locale={locale} />
+          ),
+      },
+      {
+        /*
+          The one cell here that is prose rather than a figure, so it opts out
+          of the table's `whitespace-nowrap` — a note is written to be read, and
+          nowrap would push «دفعة نقدية عن مسح حي الزهور» off the side instead
+          of wrapping it.
+        */
+        id: 'notes',
+        header: t('notes'),
+        meta: { cellClassName: 'max-w-xs whitespace-normal text-muted-foreground' },
+        cell: ({ row }) => row.original.payout.note ?? '—',
+      },
+    ],
+    [t, locale, base, canPrintOrders],
+  );
 
   if (loading || !token) {
     return (
@@ -246,113 +351,20 @@ export default function InspectorPayoutHistoryPage({
                 />
               ) : (
                 /*
-                  `Table` is a bare `<table>` by design — it leaves the scroll
-                  container to whoever knows how wide the screen is. Seven
-                  columns do not fit a phone, and without this the card's
-                  `overflow-hidden` would clip the notes rather than let them
-                  be reached.
+                  One frame: the card's, around a borderless table (BAN-4). Seven
+                  columns do not fit a phone, so below `sm` each payout is a card
+                  (`meta.mobile`) and no column is clipped or scrolled sideways.
                 */
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>{t('paidOn')}</TableHead>
-                        <TableHead>{t('amount')}</TableHead>
-                        <TableHead>{t('order')}</TableHead>
-                        <TableHead>{t('receipt')}</TableHead>
-                        <TableHead>{t('recordedBy')}</TableHead>
-                        <TableHead>{t('owedAfter')}</TableHead>
-                        <TableHead>{t('notes')}</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {rows.map(({ payout, owedAfter, overpaidAfter }) => (
-                        <TableRow key={payout.id}>
-                          <TableCell className="whitespace-nowrap">
-                            {formatDateTime(payout.paidAt)}
-                          </TableCell>
-                          {/*
-                            `Money` isolates each figure left to right and
-                            leaves its unit in the page's direction, so each
-                            one sits under the heading that names it. The
-                            receipt number is plain text for the same reason
-                            a payout amount is: it is a value being read off a
-                            paper slip, not a control.
-                          */}
-                          <TableCell
-                            className={cn(
-                              'whitespace-nowrap font-bold tabular-nums text-success',
-                              payout.voucher?.voided && 'text-muted-foreground line-through',
-                            )}
-                          >
-                            <Money amount={payout.amount} currency={payout.currency} locale={locale} />
-                          </TableCell>
-                          {/*
-                            The «PV-» voucher that paid it, once the treasury
-                            is live; a payout from before has none. A cancelled
-                            one is struck through on the amount and badged
-                            here, and stays listed: it happened, and so did
-                            its cancellation.
-                          */}
-                          <TableCell className="whitespace-nowrap">
-                            {payout.voucher ? (
-                              <div className="flex items-center gap-2">
-                                <span dir="ltr" className="font-mono text-xs">
-                                  {payout.voucher.voucherNumber}
-                                </span>
-                                {payout.voucher.voided ? (
-                                  <Badge variant="soft-warning">{t('cancelled')}</Badge>
-                                ) : null}
-                                {canPrintOrders ? (
-                                  <ActionTooltip label={t('print')}>
-                                    <Button asChild variant="ghost" size="icon-sm">
-                                      <Link
-                                        href={`${base}/finance/expenses/${payout.voucher.id}/print?print=1`}
-                                        aria-label={t('printFor', { number: payout.voucher.voucherNumber })}
-                                      >
-                                        <Printer className="size-4" aria-hidden />
-                                      </Link>
-                                    </Button>
-                                  </ActionTooltip>
-                                ) : null}
-                              </div>
-                            ) : (
-                              <span className="text-muted-foreground">—</span>
-                            )}
-                          </TableCell>
-                          <TableCell className="whitespace-nowrap font-mono text-xs">
-                            {payout.reference ? (
-                              <bdi>{payout.reference}</bdi>
-                            ) : (
-                              <span className="text-muted-foreground">—</span>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-muted-foreground">
-                            {payout.recordedByName ?? '—'}
-                          </TableCell>
-                          <TableCell className="whitespace-nowrap tabular-nums">
-                            {overpaidAfter > 0 ? (
-                              <span className="text-warning">{t('overpaidAfter', { amount: dollars(overpaidAfter) })}</span>
-                            ) : (
-                              <Money amount={owedAfter} currency="USD" locale={locale} />
-                            )}
-                          </TableCell>
-                          {/*
-                            The one cell here that is prose rather than a
-                            figure, so it opts out of the table's
-                            `whitespace-nowrap` — a note is written to be read,
-                            and nowrap would push «دفعة نقدية عن مسح حي الزهور»
-                            off the side of the scroll container instead of
-                            wrapping it.
-                          */}
-                          <TableCell className="max-w-xs whitespace-normal text-muted-foreground">
-                            {payout.note ?? '—'}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
+                <DataTable
+                  className="rounded-none border-0 shadow-none"
+                  columns={columns}
+                  data={rows}
+                  labels={tableLabels}
+                  getRowId={(row) => row.payout.id}
+                  searchable={false}
+                  sortable={false}
+                  paginated={false}
+                />
               )}
             </CardContent>
           </Card>
