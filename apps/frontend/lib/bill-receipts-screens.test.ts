@@ -86,7 +86,8 @@ function earlyReturns(source: string): string[] {
 }
 
 describe('the citizen file’s bill rows', () => {
-  const source = read('app', '[tenant]', '[locale]', '[adminPath]', '(protected)', 'citizens', '[citizenId]', 'page.tsx');
+  // The rows moved out of the page into the bills panel (GOD-24).
+  const source = read('components', 'admin', 'citizen-file', 'bills-panel.tsx');
   const links = drawn(source, 'Link', 'settleHref(payment.id)');
 
   it('link every bill to its own page, paid in full or not: a paid bill’s receipts are reversed there', () => {
