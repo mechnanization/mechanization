@@ -575,11 +575,6 @@ const UNIT_FIGURE_ART: Record<UnitFigure, Art> = {
   ),
 };
 
-/** Whether a drawing exists for `figure` — every `UNIT_FIGURE` key has one; a stored key from a newer build does not. */
-export function hasUnitFigure(figure: string | null | undefined): figure is UnitFigure {
-  return figure != null && Object.prototype.hasOwnProperty.call(UNIT_FIGURE_ART, figure);
-}
-
 /** The front of one unit, drawn as its type's figure. Fills the unit's box. */
 export function UnitFigureFront({ figure, columns, lit }: { figure: UnitFigure; columns: number; lit: boolean }) {
   return <>{UNIT_FIGURE_ART[figure]({ columns, lit })}</>;

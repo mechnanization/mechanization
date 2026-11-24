@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useContext } from 'react';
-import { HardDrive, Info, Loader2, Save, TriangleAlert } from 'lucide-react';
+import { Info, Loader2, Save, TriangleAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
@@ -338,23 +338,6 @@ export function Notice({
         {children ? <div className="mt-0.5 text-muted-foreground">{children}</div> : null}
       </div>
     </div>
-  );
-}
-
-/**
- * Marks the one thing on this screen still held in the browser: the backup
- * history, which records what *this* machine downloaded. The archive is on this
- * disk and nowhere else, so a shared server-side log would list files another
- * administrator cannot open.
- */
-export function LocalOnlyNotice({ copy }: { copy: SettingsCopy }) {
-  return (
-    <Notice tone="info" title={copy.common.notConnected}>
-      <p className="flex items-start gap-2">
-        <HardDrive className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-        {copy.common.notConnectedHint}
-      </p>
-    </Notice>
   );
 }
 

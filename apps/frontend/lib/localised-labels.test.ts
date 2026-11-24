@@ -51,8 +51,8 @@ describe('UX-14: no accessibility attribute is Arabic alone', () => {
     const found = lines()
       .filter(([, text]) => new RegExp(`\\b(aria-label|title|alt|closeLabel)="[^"]*${ARABIC.source}`).test(text))
       .map(([where]) => where.split(':')[0]);
-    // The one left is `confirm-cash-payment-dialog.tsx`, which nothing imports (DEAD-xx).
-    expect([...new Set(found)]).toEqual(['components/admin/confirm-cash-payment-dialog.tsx']);
+    // `confirm-cash-payment-dialog.tsx` was the one exception; it was deleted with DEAD-06.
+    expect([...new Set(found)]).toEqual([]);
   });
 
   it('no toast is raised with an Arabic literal as its title', () => {

@@ -107,9 +107,7 @@ export const MIN_BASEMENT_BLOCKS = 0;
 /** `floorField`'s own lower bound — a deeper basement could hold no unit. */
 export const MAX_BASEMENT_BLOCKS = 10;
 
-// Backward-compatible aliases
-export const MIN_GRID_SIZE = MIN_HORIZONTAL_BLOCKS;
-export const MAX_GRID_SIZE = MAX_HORIZONTAL_BLOCKS;
+// Backward-compatible alias
 export const DEFAULT_GRID_SIZE = DEFAULT_HORIZONTAL_BLOCKS;
 
 /**
