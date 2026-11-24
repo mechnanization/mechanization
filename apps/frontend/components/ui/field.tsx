@@ -1,6 +1,7 @@
 'use client';
 
 import { createContext, useContext, useId } from 'react';
+import { useLocale } from 'next-intl';
 import { FileQuestion, PencilLine, ShieldQuestion, X } from 'lucide-react';
 import { isFlaggablePath, isUnestablished, type FieldFlag } from '@mechanization/shared-schemas';
 import { Label } from '@/components/ui/label';
@@ -238,7 +239,10 @@ export function Field({
     deed in their hand, and correct it if it is wrong.
   */
   const unverifiedNote = path ? flagging?.unverified.get(path) : undefined;
-  const locale = flagging?.locale ?? 'ar';
+  // The citizen form's flagging context names its locale; every other form's `Field` reads the page's own,
+  // so an English screen says «(optional)» rather than falling back to Arabic (UX-15).
+  const pageLocale = useLocale();
+  const locale = flagging?.locale ?? pageLocale;
   const focus = useContext(FieldFocusContext);
   const outOfFocus = focus !== null && !(path && focus.paths.has(path));
 

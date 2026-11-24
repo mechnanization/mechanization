@@ -33,7 +33,7 @@ import { Field } from '@/components/ui/field';
 import { DatePicker } from '@/components/ui/date-picker';
 import { CitizenPicker, type PickedCitizen } from '@/components/admin/citizen-picker';
 import { useToast } from '@/components/ui/toast';
-import { formatDate } from '@/lib/dates';
+import { formatDate, formatDay } from '@/lib/dates';
 import { cn } from '@/lib/utils';
 import {
   AfterTenancyQuestion,
@@ -644,8 +644,8 @@ export function EndOwnershipDialog({
                     <>
                       <li>
                         {en
-                          ? `${ownerName} stops being charged owner fees for ${endingUnits.length === 1 ? 'this unit' : endingUnits.length ? 'these units' : 'this property'} from ${formatDate(endedAt || today())}.`
-                          : `يتوقف تحصيل رسوم المالك من ${ownerName} عن ${endingUnits.length === 1 ? 'هذه الوحدة' : endingUnits.length ? 'هذه الوحدات' : 'هذا العقار'} من ${formatDate(endedAt || today())}.`}
+                          ? `${ownerName} stops being charged owner fees for ${endingUnits.length === 1 ? 'this unit' : endingUnits.length ? 'these units' : 'this property'} from ${formatDay(endedAt || today())}.`
+                          : `يتوقف تحصيل رسوم المالك من ${ownerName} عن ${endingUnits.length === 1 ? 'هذه الوحدة' : endingUnits.length ? 'هذه الوحدات' : 'هذا العقار'} من ${formatDay(endedAt || today())}.`}
                       </li>
                       <li>
                         {everyRow

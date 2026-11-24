@@ -47,7 +47,7 @@ import { SharedBillPayerField } from '@/components/admin/fees/shared-bill-payer'
 import { receiptOfEntry } from '@/lib/bill-receipts';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { useStaffQuery } from '@/lib/use-staff-query';
-import { formatDate } from '@/lib/dates';
+import { formatDate, formatDay } from '@/lib/dates';
 import { formatForeign, formatLbp, formatTypedAmount, parseAmount } from '@/lib/currency';
 import { heldKey, keyIsSpent, spendKey } from '@/lib/request-id';
 import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
@@ -1079,7 +1079,7 @@ export default function SettleCashPage({
                   <SummaryRow label={en ? 'Paid on' : 'تاريخ الدفع'}>
                     <span className="inline-flex items-center gap-1.5">
                       <CalendarDays className="size-3.5 text-muted-foreground" aria-hidden />
-                      {paidOn ? formatDate(paidOn) : '—'}
+                      {paidOn ? formatDay(paidOn) : '—'}
                     </span>
                   </SummaryRow>
                 </SummaryList>
