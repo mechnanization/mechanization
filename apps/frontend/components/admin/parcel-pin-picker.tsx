@@ -10,10 +10,11 @@ import type { CadastreAssetName } from '@/lib/api-client';
 import { fetchCadastreAsset } from '@/lib/cadastre-assets';
 import { geometryBounds, pointInGeometry } from '@/lib/map-geometry';
 import { MAPBOX_ACCESS_TOKEN } from '@/lib/public-config';
+import { HUE } from '@/components/admin/map/map-palette';
 
 export const FALLBACK_CENTER: [number, number] = [35.2654, 33.2539];
 export const SATELLITE_STYLE = 'mapbox://styles/mapbox/satellite-v9';
-export const PIN_COLOR = '#F59E0B';
+export const PIN_COLOR = HUE.amber500;
 export const MAP_LOAD_TIMEOUT_MS = 12_000;
 
 /**
@@ -448,7 +449,7 @@ export function ParcelPinPicker({
       if (map.getSource(id)) map.removeSource(id);
     }
 
-    const colour = zoneColor || '#a78bfa';
+    const colour = zoneColor || HUE.violet400;
 
     if (zoneOutline) {
       map.addSource('zone-outline', {
@@ -501,13 +502,13 @@ export function ParcelPinPicker({
         id: 'parcel-outline-fill',
         type: 'fill',
         source: 'parcel-outline',
-        paint: { 'fill-color': '#38bdf8', 'fill-opacity': 0.18 },
+        paint: { 'fill-color': HUE.sky400, 'fill-opacity': 0.18 },
       });
       addLayerInOrder(map, {
         id: 'parcel-outline-line',
         type: 'line',
         source: 'parcel-outline',
-        paint: { 'line-color': '#38bdf8', 'line-width': 2.5 },
+        paint: { 'line-color': HUE.sky400, 'line-width': 2.5 },
       });
     }
 
@@ -578,7 +579,7 @@ export function ParcelPinPicker({
           'text-padding': 1,
         },
         paint: {
-          'text-color': '#ffffff',
+          'text-color': HUE.white,
           'text-halo-color': 'rgba(0, 0, 0, 0.8)',
           'text-halo-width': 1.5,
         },
@@ -594,8 +595,8 @@ export function ParcelPinPicker({
           'text-allow-overlap': true,
         },
         paint: {
-          'text-color': '#ffffff',
-          'text-halo-color': '#0369a1',
+          'text-color': HUE.white,
+          'text-halo-color': HUE.sky700,
           'text-halo-width': 2,
         },
       });

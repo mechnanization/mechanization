@@ -10,6 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { HUE } from '@/components/admin/map/map-palette';
 
 export function MapExportDialog({
   open,
@@ -62,20 +63,20 @@ export function MapExportDialog({
             body {
               font-family: system-ui, -apple-system, sans-serif;
               margin: 20px;
-              color: #0f172a;
+              color: ${HUE.slate900};
             }
             .header {
               display: flex;
               align-items: center;
               justify-content: space-between;
-              border-bottom: 2px solid #0f172a;
+              border-bottom: 2px solid ${HUE.slate900};
               padding-bottom: 12px;
               margin-bottom: 16px;
             }
             .title { font-size: 20px; font-weight: bold; }
-            .subtitle { font-size: 13px; color: #475569; margin-top: 4px; }
+            .subtitle { font-size: 13px; color: ${HUE.slate600}; margin-top: 4px; }
             .map-container {
-              border: 1px solid #cbd5e1;
+              border: 1px solid ${HUE.slate300};
               border-radius: 8px;
               overflow: hidden;
               margin-bottom: 16px;
@@ -90,8 +91,8 @@ export function MapExportDialog({
               display: flex;
               justify-content: space-between;
               font-size: 11px;
-              color: #64748b;
-              border-top: 1px dashed #cbd5e1;
+              color: ${HUE.slate500};
+              border-top: 1px dashed ${HUE.slate300};
               padding-top: 8px;
             }
             @media print {
@@ -106,7 +107,7 @@ export function MapExportDialog({
               <div class="title">${tenantName}</div>
               <div class="subtitle">${isEnglish ? 'Official Cadastral & Geographic Map' : 'المخطط الجغرافي والعقاري الرسمي'}</div>
             </div>
-            <div style="text-align: end; font-size: 12px; color: #475569;">
+            <div style="text-align: end; font-size: 12px; color: ${HUE.slate600};">
               <div>${isEnglish ? 'Date of Issue:' : 'تاريخ الإصدار:'} ${formattedDate}</div>
               <div>${isEnglish ? 'Geographic System (GIS)' : 'نظام المعلومات الجغرافية'}</div>
             </div>

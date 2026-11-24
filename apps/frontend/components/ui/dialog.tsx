@@ -86,7 +86,15 @@ const DialogHeader = ({
   ...props
 }: React.HTMLAttributes<HTMLDivElement>): React.JSX.Element => (
   <div
-    className={cn('flex flex-col space-y-1.5 text-start', className)}
+    /*
+     * `pe-*` keeps a title clear of the close button (UX-24). The X sits
+     * `end-4` and draws 16px wide, so it covers the band 16–32px from the
+     * panel's edge; the panel's own padding is 16px on a phone and 24px from
+     * `sm`, which leaves a full-width title running under it on a phone and 8px
+     * short of it above. The extra end padding takes the header's text to 8px
+     * past the X in both cases, logically, so it follows the page's direction.
+     */
+    className={cn('flex flex-col space-y-1.5 text-start pe-6 sm:pe-4', className)}
     {...props}
   />
 );

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import {
@@ -11,7 +11,6 @@ import {
   Lock,
   Mail,
   QrCode,
-  ScrollText,
   Send,
   ShieldAlert,
   ShieldCheck,
@@ -39,7 +38,6 @@ import { QRCodeSVG } from 'qrcode.react';
 import type { SettingsCopy } from '@/lib/settings-i18n';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { CellTag } from '@/components/ui/cell-tag';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -54,37 +52,11 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { ErrorState } from '@/components/ui/states';
 import { useToast } from '@/components/ui/toast';
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import {
   AlignedFieldGrid,
-  ScrollableTable,
   SettingsCard,
   SettingsField,
 } from './settings-ui';
 import { cn } from '@/lib/utils';
-
-/**
- * Illustrative login rows.
- *
- * Deliberately flagged as a sample in the interface above them, and
- * deliberately not plausible-looking as *this* municipality's data — a fake
- * security log that reads as real is worse than no log, because the one thing
- * an administrator does with this table is decide whether someone else has
- * been in the account. Timestamps are relative to render so the table never
- * shows a frozen date that suggests the log stopped updating.
- */
-const SAMPLE_ROWS = [
-  { minutesAgo: 12, ip: '192.0.2.14', device: 'Chrome · Windows', location: 'Tyre, LB', ok: true },
-  { minutesAgo: 320, ip: '192.0.2.14', device: 'Safari · iPhone', location: 'Tyre, LB', ok: true },
-  { minutesAgo: 1450, ip: '198.51.100.7', device: 'Firefox · Linux', location: 'Beirut, LB', ok: false },
-  { minutesAgo: 2880, ip: '192.0.2.14', device: 'Chrome · Windows', location: 'Tyre, LB', ok: true },
-] as const;
 
 export function SecuritySection({
   tenant,
@@ -203,15 +175,6 @@ export function SecuritySection({
     else if (passwordFormWasOpen.current) openPasswordButton.current?.focus();
     passwordFormWasOpen.current = showPasswordForm;
   }, [showPasswordForm]);
-
-  const dateFormat = useMemo(
-    () =>
-      new Intl.DateTimeFormat(locale === 'en' ? 'en-GB' : 'ar-LB-u-nu-latn', {
-        dateStyle: 'medium',
-        timeStyle: 'short',
-      }),
-    [locale],
-  );
 
   const handleSendEmailChange = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -959,55 +922,6 @@ export function SecuritySection({
             </div>
           )}
         </div>
-      </SettingsCard>
-
-      {/* Login History */}
-      <SettingsCard
-        icon={ScrollText}
-        title={copy.security.historyHeading}
-        hint={copy.security.historyHint}
-        actions={<Badge variant="soft-warning">{copy.security.historySample}</Badge>}
-      >
-        <p className="mb-4 text-xs leading-relaxed text-muted-foreground">
-          {copy.security.historySampleHint}
-        </p>
-
-        <ScrollableTable minWidth="46rem">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{copy.security.colWhen}</TableHead>
-                <TableHead>{copy.security.colIp}</TableHead>
-                <TableHead>{copy.security.colDevice}</TableHead>
-                <TableHead>{copy.security.colLocation}</TableHead>
-                <TableHead>{copy.security.colResult}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {SAMPLE_ROWS.map((row) => (
-                <TableRow key={`${row.ip}-${row.minutesAgo}`}>
-                  <TableCell className="whitespace-nowrap">
-                    {dateFormat.format(new Date(Date.now() - row.minutesAgo * 60_000))}
-                  </TableCell>
-                  <TableCell className="font-mono text-xs">
-                    <bdi dir="ltr">{row.ip}</bdi>
-                  </TableCell>
-                  <TableCell className="whitespace-nowrap">
-                    <bdi dir="ltr">{row.device}</bdi>
-                  </TableCell>
-                  <TableCell className="whitespace-nowrap">
-                    <bdi dir="ltr">{row.location}</bdi>
-                  </TableCell>
-                  <TableCell>
-                    <CellTag tone={row.ok ? 'success' : 'destructive'}>
-                      {row.ok ? copy.security.resultSuccess : copy.security.resultFailed}
-                    </CellTag>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </ScrollableTable>
       </SettingsCard>
 
       {/* Security Confirmation: Disable 2FA Modal */}

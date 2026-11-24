@@ -407,7 +407,7 @@ export default function CasesPage({
           ) : null}
         </CardHeader>
 
-        <CaseQueueTabs locale={locale} tab={tab} counts={tabCounts} onSelect={setTab} />
+        <CaseQueueTabs locale={locale} tab={tab} counts={tabCounts} onSelect={setTab}>
 
         <CardContent className="p-0">
           {/* One frame: the card's (BAN-4). */}
@@ -490,6 +490,7 @@ export default function CasesPage({
             }
           />
         </CardContent>
+        </CaseQueueTabs>
       </Card>
 
       <ConfirmDialog

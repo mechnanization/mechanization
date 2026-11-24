@@ -197,17 +197,6 @@ export interface SettingsCopy {
     twoFactorApp: string;
     twoFactorAppHint: string;
     twoFactorCode: string;
-    historyHeading: string;
-    historyHint: string;
-    historySample: string;
-    historySampleHint: string;
-    colWhen: string;
-    colIp: string;
-    colDevice: string;
-    colLocation: string;
-    colResult: string;
-    resultSuccess: string;
-    resultFailed: string;
   };
   backup: {
     title: string;
@@ -591,18 +580,6 @@ const AR: SettingsCopy = {
     twoFactorApp: 'تطبيق المصادقة',
     twoFactorAppHint: 'Google Authenticator أو Authy أو ما يماثلهما.',
     twoFactorCode: 'الرمز المكوّن من ٦ أرقام',
-    historyHeading: 'سجل الدخول',
-    historyHint: 'آخر محاولات الدخول إلى هذا الحساب.',
-    historySample: 'بيانات عيّنة',
-    historySampleHint:
-      'الصفوف أدناه توضيحية لعرض شكل الجدول — لا تُقرأ كسجل دخول فعلي إلى أن يوصل القسم بالخادم.',
-    colWhen: 'التاريخ والوقت',
-    colIp: 'عنوان IP',
-    colDevice: 'الجهاز',
-    colLocation: 'الموقع',
-    colResult: 'النتيجة',
-    resultSuccess: 'ناجحة',
-    resultFailed: 'فاشلة',
   },
   backup: {
     title: 'النسخ الاحتياطي والاستعادة',
@@ -957,18 +934,6 @@ const EN: SettingsCopy = {
     twoFactorApp: 'Authenticator app',
     twoFactorAppHint: 'Google Authenticator, Authy, or similar.',
     twoFactorCode: 'Six-digit code',
-    historyHeading: 'Login history',
-    historyHint: 'Recent sign-in attempts on this account.',
-    historySample: 'Sample data',
-    historySampleHint:
-      'The rows below are illustrative, to show the shape of the table — do not read them as a real login log until this section is wired to the server.',
-    colWhen: 'Date and time',
-    colIp: 'IP address',
-    colDevice: 'Device',
-    colLocation: 'Location',
-    colResult: 'Result',
-    resultSuccess: 'Successful',
-    resultFailed: 'Failed',
   },
   backup: {
     title: 'Backup & restore',

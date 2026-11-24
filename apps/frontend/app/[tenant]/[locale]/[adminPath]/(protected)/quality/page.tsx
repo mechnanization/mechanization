@@ -1,43 +1,26 @@
-'use client';
-
-import { use, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import { Skeleton } from '@/components/ui/skeleton';
+import { redirect } from 'next/navigation';
 
 /**
  * «مراجعة الجودة» was one page with four tabs; it is four pages now.
  *
  * This address stays as a forward rather than a 404. It is what the sidebar
- * pointed at until this change, so it is in browser histories and in at least
+ * pointed at until that change, so it is in browser histories and in at least
  * one bookmark, and a link that silently became nothing is worse than one that
  * still lands somewhere sensible.
  *
  * «السجلات» is the destination because it is the one with a queue: the other
  * three are things you go and look at, that one is work waiting to be done.
+ *
+ * A server redirect (NAV-12), as the treasury's old addresses are
+ * (`finance/income`): nothing renders here, so there is no skeleton to flash
+ * before a client effect runs, and nothing for the route guard to check — the
+ * page it lands on is guarded by its own nav row.
  */
-export default function QualityIndexPage({
+export default async function QualityIndexPage({
   params,
 }: {
   params: Promise<{ tenant: string; locale: string; adminPath: string }>;
-}): React.JSX.Element {
-  const { tenant, locale, adminPath } = use(params);
-  const router = useRouter();
-
-  useEffect(() => {
-    // `replace`, so Back does not land on the address that just forwarded.
-    router.replace(`/${tenant}/${locale}/${adminPath}/quality/reviews`);
-  }, [tenant, locale, adminPath, router]);
-
-  return (
-    <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <div className="flex items-center gap-3">
-        <Skeleton className="size-11 rounded-xl" />
-        <div className="space-y-2">
-          <Skeleton className="h-7 w-56" />
-          <Skeleton className="h-4 w-80" />
-        </div>
-      </div>
-      <Skeleton className="h-64 rounded-xl" />
-    </div>
-  );
+}): Promise<never> {
+  const { tenant, locale, adminPath } = await params;
+  redirect(`/${tenant}/${locale}/${adminPath}/quality/reviews`);
 }
