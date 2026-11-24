@@ -95,7 +95,6 @@ import {
   AddPersonForm,
   CaseForm,
   cellBadge,
-  ConfirmVacancyForm,
   effectiveUnitStatus,
   floorLabel,
   layoutBuilding,
@@ -103,14 +102,15 @@ import {
   occupancyMessage,
   OccupantList,
   ownerLinkMessage,
-  SeasonalHomePanel,
   spanLimitsAcross,
   UnitStateLegend,
   unitOwners,
   vacancyBlocker,
-  VacancyPanel,
   VisitForm,
 } from './building-unit-forms';
+import { ConfirmVacancyForm } from './units/vacancy/confirm-vacancy-form';
+import { SeasonalHomePanel } from './units/vacancy/seasonal-home-panel';
+import { VacancyPanel } from './units/vacancy/vacancy-panel';
 import { HouseGrowthPrompt, UnitContinuationTile, UnitLevelsPanel, upperFlatOf } from './unit-levels';
 import { OwnerBillingPanel } from './owner-billing-panel';
 import { UnitAreaPanel } from './unit-area-panel';
