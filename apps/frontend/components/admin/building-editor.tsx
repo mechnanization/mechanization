@@ -6,34 +6,16 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { FeatureCollection, Geometry } from 'geojson';
 import {
-  AlertTriangle,
-  ArrowLeft,
-  ArrowRight,
   Building2,
-  Check,
-  CheckCircle2,
   ChevronRight,
-  ClipboardCheck,
-  Hash,
-  Info,
   Loader2,
   MapPin,
-  Plus,
-  Save,
-  X,
 } from 'lucide-react';
 import {
-  BUILDING_LIFECYCLE,
-  defaultUnitTypeFor,
   formatBuildingCode,
   getLabels,
-  isOccupiableLifecycle,
-  isUninhabitableLifecycle,
   isUnsurveyableShell,
   nextBuildingSuffix,
-  STRUCTURE_TYPE,
-  UNZONED_CODE,
-  buildingTypeName,
   type BuildingLifecycle,
   type HouseGrowth,
   type StructureType,
@@ -59,10 +41,7 @@ import {
   type UnitWithOccupants,
   type ZoneSummary,
 } from '@/lib/api-client';
-import { ParcelCorrectionDialog } from '@/components/admin/parcel-correction-dialog';
 import { BuildingReviewDialog } from '@/components/admin/building-review-dialog';
-import { HouseGrowthPrompt } from '@/components/admin/unit-levels';
-import { floorLabel } from '@/components/admin/building-unit-forms';
 import {
   clearBuildingDraft,
   draftIsCurrent,
@@ -83,27 +62,10 @@ import { useStaffSession } from '@/lib/use-staff-session';
 import { CENSUS_WRITE_ROLES, hasRole } from '@/lib/staff-roles';
 import { systemTypeOf, typesToOffer, useBuildingTypes } from '@/lib/building-types';
 import { useUnitTypes } from '@/lib/unit-types';
-import { Alert } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Checkbox } from '@/components/ui/checkbox';
-import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import { Field } from '@/components/ui/field';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
-import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
 import { BackLink } from '@/components/ui/back-link';
-import { cn } from '@/lib/utils';
 import {
   footprintOf,
   loadParcelLabelPoints,
@@ -111,20 +73,16 @@ import {
   outlineOf,
   parcelAt,
   parcelsOf,
-  ParcelPinPicker,
 } from './parcel-pin-picker';
 import {
   DEFAULT_GRID_SIZE,
-  DEFAULT_VERTICAL_BLOCKS,
   flattenGridUnits,
-  UnitGridPicker,
   type GridUnitDraft,
 } from './unit-grid-picker';
 import {
   LOOKUP_DEBOUNCE_MS,
   MAX_GRID_UNITS,
   MIN_DUPLICATE_REASON,
-  PROMOTED_STRUCTURE_TYPE,
   STEPS,
 } from './building-editor/constants';
 import {
@@ -137,10 +95,23 @@ import {
   topFloorFor,
   topGapOf,
 } from '@/lib/building-editor-rules';
-import { DistanceBadge } from './building-editor/distance-badge';
 import { gridFromUnits, type UnitBaseline } from './building-editor/grid-units';
 import { offlineNow } from './building-editor/offline-now';
-import { StepField } from './building-editor/step-field';
+import { EditorHeader } from './building-editor/editor-header';
+import { StepRail } from './building-editor/step-rail';
+import { EditorNotices } from './building-editor/editor-notices';
+import { SectorSection } from './building-editor/sector-section';
+import { MapSection } from './building-editor/map-section';
+import { ParcelSection } from './building-editor/parcel-section';
+import { PartitionSection } from './building-editor/partition-section';
+import { SharedParcelsSection } from './building-editor/shared-parcels-section';
+import { FacilityFields } from './building-editor/facility-fields';
+import { DuplicatesPrompt } from './building-editor/duplicates-prompt';
+import { FacilityNotes } from './building-editor/facility-notes';
+import { MatrixCard } from './building-editor/matrix-card';
+import { SummaryCard } from './building-editor/summary-card';
+import { HouseConfirm } from './building-editor/house-confirm';
+import { DesktopFooter, MobileBar } from './building-editor/action-footers';
 
 export function BuildingEditor({
   tenant,
@@ -1916,199 +1887,49 @@ export function BuildingEditor({
       </div>
 
       {/* ── Page Header ── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border/80 pb-5">
-        <div className="flex items-center gap-3.5 min-w-0">
-          <div className="flex size-11 sm:size-12 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary ring-1 ring-primary/20 shadow-xs">
-            <Building2 className="size-6" />
-          </div>
-          <div className="space-y-0.5 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h1
-                ref={headingRef}
-                tabIndex={-1}
-                className="text-xl sm:text-2xl font-bold tracking-tight text-foreground outline-none"
-              >
-                {editing
-                  ? en
-                    ? 'Edit Building'
-                    : 'تعديل المبنى'
-                  : en
-                    ? 'New Building'
-                    : 'إضافة مبنى جديد'}
-              </h1>
-              {displayCode ? (
-                <Badge variant="outline" className="font-mono text-xs px-2 py-0.5 border-primary/40 bg-primary/5 text-primary">
-                  {displayCode}
-                </Badge>
-              ) : null}
-            </div>
-            <p className="text-xs sm:text-sm text-muted-foreground">
-              {editing
-                ? en
-                  ? 'Correct the structure and its matrix — floors and units can be added here at any time.'
-                  : 'صحّح بيانات المنشأة ومصفوفتها — يمكن إضافة الطوابق والوحدات من هنا في أي وقت.'
-                : en
-                  ? 'Record the structure first — the units inside it are surveyed afterwards.'
-                  : ''}
-            </p>
-          </div>
-        </div>
+      <EditorHeader
+        headingRef={headingRef}
+        editing={editing}
+        en={en}
+        displayCode={displayCode}
+        cancelHref={cancelHref}
+        cancelDraft={cancelDraft}
+        step={step}
+        goBack={goBack}
+        lastStep={lastStep}
+        goNext={goNext}
+        canGoNext={canGoNext}
+        handleSave={handleSave}
+        saving={saving}
+        staleDraft={staleDraft}
+        saveLabel={saveLabel}
+      />
 
-        {/* Desktop Action Buttons */}
-        <div className="hidden sm:flex items-center gap-2.5 shrink-0">
-          <Link href={cancelHref} onClick={cancelDraft} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
-            {en ? 'Cancel' : 'إلغاء'}
-          </Link>
-          {step > 0 ? (
-            <Button variant="outline" size="sm" onClick={goBack} className="gap-1.5">
-              <ArrowLeft className="size-4 rtl:rotate-180" aria-hidden />
-              {en ? 'Back' : 'السابق'}
-            </Button>
-          ) : null}
-          {step < lastStep ? (
-            <Button
-              size="sm"
-              onClick={goNext}
-              disabled={!canGoNext}
-              className="gap-1.5 min-w-28 shadow-xs"
-            >
-              {en ? 'Next' : 'التالي'}
-              <ArrowRight className="size-4 rtl:rotate-180" aria-hidden />
-            </Button>
-          ) : (
-            <Button
-              onClick={() => void handleSave()}
-              disabled={saving || !canGoNext || staleDraft !== null}
-              aria-describedby={staleDraft ? 'building-stale-draft' : undefined}
-              size="sm"
-              className="gap-1.5 min-w-32 shadow-xs"
-            >
-              {saving ? (
-                <Loader2 className="size-4 animate-spin" aria-hidden />
-              ) : (
-                <Save className="size-4" aria-hidden />
-              )}
-              <span>{saveLabel}</span>
-            </Button>
-          )}
-        </div>
-      </div>
+      <StepRail
+        visibleSteps={visibleSteps}
+        step={step}
+        editing={editing}
+        goToStep={goToStep}
+        en={en}
+      />
 
-      {/* ── Step Indicator ── */}
-      <ol className="flex items-center justify-center gap-2 sm:gap-4 max-w-sm sm:max-w-none mx-auto w-full px-1 sm:px-0">
-        {visibleSteps.map((item, index) => {
-          const Icon = item.icon;
-          const state = index < step ? 'done' : index === step ? 'current' : 'upcoming';
-          /*
-            A creation unlocks its steps in order — there is nothing to see on
-            the matrix of a building whose parcel has not been typed yet. A
-            correction has every answer already, so all three are reachable and
-            an officer opening «تعديل» to fix the floor count is one tap away
-            from it rather than three.
-          */
-          const reachable = editing || index < step;
-          return (
-            <li
-              key={item.en}
-              className={cn(
-                'flex items-center gap-2 sm:gap-3',
-                index < visibleSteps.length - 1 ? 'flex-1' : 'flex-none',
-              )}
-            >
-              <button
-                type="button"
-                onClick={() => reachable && goToStep(index as 0 | 1 | 2)}
-                disabled={!reachable}
-                className={cn(
-                  'flex size-8 shrink-0 items-center justify-center rounded-full border text-xs font-semibold transition-colors sm:size-9',
-                  state === 'done' && 'border-primary bg-primary text-primary-foreground cursor-pointer',
-                  state === 'current' && 'border-primary bg-primary/10 text-primary ring-2 ring-primary/30',
-                  state === 'upcoming' && 'border-border bg-muted/40 text-muted-foreground',
-                  state === 'upcoming' && reachable && 'cursor-pointer hover:bg-muted',
-                )}
-              >
-                {state === 'done' ? <Check className="size-4" /> : <Icon className="size-4" />}
-              </button>
-              <span
-                className={cn(
-                  'hidden text-xs font-medium sm:inline',
-                  state === 'upcoming' ? 'text-muted-foreground' : 'text-foreground',
-                )}
-              >
-                {en ? item.en : item.ar}
-              </span>
-              {index < visibleSteps.length - 1 ? (
-                <div className={cn('h-px flex-1', index < step ? 'bg-primary' : 'bg-border')} />
-              ) : null}
-            </li>
-          );
-        })}
-      </ol>
-
-      {/* Mobile Current Step Bar */}
-      <div className="sm:hidden flex items-center justify-between text-xs px-2 text-muted-foreground max-w-sm mx-auto w-full">
-        <span className="font-semibold text-foreground">
-          {en ? `Step ${step + 1}: ${visibleSteps[step]?.en}` : `الخطوة ${step + 1}: ${visibleSteps[step]?.ar}`}
-        </span>
-        <span className="font-mono text-muted-foreground">
-          {step + 1} / {visibleSteps.length}
-        </span>
-      </div>
-
-      {staleDraft ? (
-        <Alert
-          ref={staleDraftRef}
-          id="building-stale-draft"
-          tabIndex={-1}
-          variant="warning"
-          live="status"
-          title={tEditor('staleDraft.title')}
-        >
-          <div className="space-y-3">
-            <p>{tEditor('staleDraft.body')}</p>
-            <div className="flex flex-wrap gap-2">
-              <Button type="button" size="sm" onClick={loadLatestVersion}>
-                {tEditor('staleDraft.loadLatest')}
-              </Button>
-              <Button type="button" size="sm" variant="outline" onClick={keepDraftOverLatest}>
-                {tEditor('staleDraft.keepDraft')}
-              </Button>
-            </div>
-          </div>
-        </Alert>
-      ) : null}
-
-      {growthQuestion ? (
-        <HouseGrowthPrompt
-          question={growthQuestion}
-          // The lowest floor this save paints on — where a level of the house would go.
-          floor={Math.min(
-            ...gridUnits.filter((unit) => !unit.existingId).map((unit) => unit.floor),
-            growthQuestion.nextLevelFloor,
-          )}
-          floorText={(floor) => floorLabel(floor, en)}
-          structureIsHouse={structureType === 'INDEPENDENT_HOUSE'}
-          busy={saving}
-          locale={locale}
-          onAnswer={(growth) => {
-            rehearseAfterAnswer.current = true;
-            setHouseGrowth(growth);
-            setGrowthQuestion(null);
-          }}
-          onCancel={() => setGrowthQuestion(null)}
-        />
-      ) : null}
-
-      {/* Global Error Banner */}
-      {error ? (
-        <Alert
-          variant="destructive"
-          live="alert"
-          title={en ? 'Unable to save building' : 'تعذّر حفظ المبنى'}
-        >
-          {error}
-        </Alert>
-      ) : null}
+      <EditorNotices
+        staleDraft={staleDraft}
+        staleDraftRef={staleDraftRef}
+        tEditor={tEditor}
+        loadLatestVersion={loadLatestVersion}
+        keepDraftOverLatest={keepDraftOverLatest}
+        growthQuestion={growthQuestion}
+        gridUnits={gridUnits}
+        en={en}
+        structureType={structureType}
+        saving={saving}
+        locale={locale}
+        rehearseAfterAnswer={rehearseAfterAnswer}
+        setHouseGrowth={setHouseGrowth}
+        setGrowthQuestion={setGrowthQuestion}
+        error={error}
+      />
 
       {/* ── Active Wizard Step Content ── */}
       <div className="space-y-6">
@@ -2145,502 +1966,79 @@ export function BuildingEditor({
               </div>
             </CardHeader>
             <CardContent className="space-y-5 pt-5">
-              {/*
-                ── 1. القطاع ──────────────────────────────────────────────
-
-                First, and not stored anywhere.
-
-                A building's sector is derived from its parcel's membership at
-                read time (D13) — `Zone.parcelNumbers` is the one statement of
-                which عقار belongs where — so this control cannot and must not
-                write it. What it does is narrow the map from the whole
-                municipality to a few hundred parcels somebody can actually aim
-                at, which is what makes the rest of this step possible.
-
-                Offered only while creating, and only when the register has
-                sectors to offer. A correction already knows its parcel, so it
-                knows its sector, and asking would be a question whose answer is
-                printed two fields down.
-              */}
-              {!editing && zones.length > 0 ? (
-                <StepField
-                  en={en}
-                  ordinal={1}
-                  title={en ? 'Sector (القطاع)' : 'القطاع'}
-
-                  htmlFor="building-zone"
-                >
-                  <Select value={zoneId} onValueChange={setZoneId}>
-                    <SelectTrigger id="building-zone" className="h-10">
-                      <SelectValue placeholder={en ? 'Select a sector…' : 'اختر القطاع…'} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {zones.map((zone) => (
-                        <SelectItem key={zone.id} value={zone.id}>
-                          <span className="inline-flex items-center gap-2">
-                            <span
-                              aria-hidden
-                              className="size-2.5 shrink-0 rounded-full"
-                              style={{ backgroundColor: zone.color }}
-                            />
-                            <span dir="ltr" className="font-mono text-xs">
-                              {zone.code}
-                            </span>
-                            <span>{zone.name}</span>
-                          </span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </StepField>
-              ) : null}
-
-              {/*
-                ── 2. The map ─────────────────────────────────────────────
-
-                Before رقم العقار rather than after it, which is the whole point
-                of this reordering: an officer standing at a door knows where
-                they are and not the cadastral number of the ground under them.
-                The number is a fact about the map, and asking for it first was
-                asking them to index the cadastre from memory.
-
-                The pin does double duty — it is still the entrance (D19), and
-                it is now also what `parcelAt` reads the parcel off. See
-                `applyPin`.
-              */}
-              <StepField
+              <SectorSection
+                editing={editing}
+                zones={zones}
                 en={en}
-                ordinal={!editing && zones.length > 0 ? 2 : 1}
-                title={en ? 'Building location on the map' : 'موقع المبنى على الخريطة'}
+                zoneId={zoneId}
+                setZoneId={setZoneId}
+              />
 
-              >
-                <ParcelPinPicker
-                  outline={outline}
-                  outlineChecked={outlineChecked}
-                  fallbackCentre={fallbackCentre}
-                  zoneOutline={zoneFootprint}
-                  zoneParcels={zoneParcelFeatures}
-                  zoneColor={selectedZone?.color}
-                  parcelLabels={mapParcelLabels}
-                  parcelNumber={resolvedParcel}
-                  pin={pin}
-                  onPick={applyPin}
-                  locale={locale}
-                  className="relative h-64 sm:h-72 lg:h-80 overflow-hidden rounded-xl border border-border"
-                />
-
-                {pinError ? (
-                  <Alert variant="destructive" live="alert" className="mt-2">
-                    {pinError}
-                  </Alert>
-                ) : null}
-
-                {pin ? (
-                  <div className="mt-2 flex items-center justify-between gap-2 rounded-lg bg-muted/40 p-2.5 text-xs">
-                    <span className="flex items-center gap-1.5 text-muted-foreground">
-                      <CheckCircle2 className="size-3.5 text-success" />
-                      {en ? 'Entrance pinned:' : 'تم تثبيت المدخل:'}
-                    </span>
-                    <span dir="ltr" className="font-mono font-medium text-foreground">
-                      {pin[1].toFixed(6)}, {pin[0].toFixed(6)}
-                    </span>
-                  </div>
-                ) : editing ? (
-                  <div className="mt-2 flex items-start gap-2 rounded-lg border bg-muted/20 p-2.5 text-xs leading-relaxed text-muted-foreground">
-                    <Info className="size-3.5 shrink-0 mt-0.5 text-muted-foreground" />
-                    <p>
-                      {en
-                        ? 'No entrance pinned yet. Saving without a pin is permitted (residents will be represented at the parcel level).'
-                        : 'لم يُحدَّد مدخل بعد. يمكن الحفظ دون دبوس (سيُعرض سكان المبنى على موقع العقار).'}
-                    </p>
-                  </div>
-                ) : (
-                  <div className="mt-2 space-y-2 rounded-lg border border-warning/40 bg-warning/5 p-2.5 text-xs">
-                    <label className="flex cursor-pointer items-start gap-2">
-                      <Checkbox
-                        checked={noPinReason !== null}
-                        onCheckedChange={(checked) => setNoPinReason(checked === true ? '' : null)}
-                        className="mt-0.5"
-                      />
-                      <span className="font-medium">
-                        {en ? 'The entrance could not be pinned now' : 'تعذّر تثبيت المدخل الآن'}
-                      </span>
-                    </label>
-                    {noPinReason !== null ? (
-                      <Textarea
-                        value={noPinReason}
-                        onChange={(event) => setNoPinReason(event.target.value)}
-                        maxLength={300}
-                        className="min-h-[56px] text-sm"
-                        placeholder={
-                          en
-                            ? 'e.g. no GPS signal; map does not load here'
-                            : 'مثال: لا توجد إشارة GPS؛ الخريطة لا تُحمَّل هنا'
-                        }
-                      />
-                    ) : null}
-                  </div>
-                )}
-              </StepField>
-
-              {/*
-                ── 3. رقم العقار ──────────────────────────────────────────
-
-                Not a field on an existing building: the suffix was allocated
-                against the parcel and the whole code derives from it, so a
-                wrong number is corrected by its own action — «تصحيح رقم العقار»
-                — which reallocates the code, retires the old one and carries
-                every card and case that copies the parcel along with it.
-                `updateBuildingSchema` does not accept the field at all.
-              */}
-              <StepField
+              <MapSection
                 en={en}
-                ordinal={!editing && zones.length > 0 ? 3 : 2}
-                title={en ? 'Parcel Number (رقم العقار)' : 'رقم العقار'}
-                htmlFor="building-parcel"
-                required={!editing}
-                error={fieldErrors.parcelNumber}
-              >
-                {editing ? (
-                  <>
-                    <div className="flex items-stretch gap-2">
-                      <p
-                        id="building-parcel"
-                        dir="ltr"
-                        className="flex h-10 min-w-0 flex-1 items-center rounded-md border bg-muted/40 px-3 text-start font-mono text-base font-medium text-foreground"
-                      >
-                        {trimmedParcel || '—'}
-                      </p>
-                      {token && buildingId && savedCode ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="h-10 shrink-0 gap-1.5"
-                          onClick={() => setCorrectingParcel(true)}
-                        >
-                          <Hash className="size-4" aria-hidden />
-                          {en ? 'Correct the number' : 'تصحيح رقم العقار'}
-                        </Button>
-                      ) : null}
-                    </div>
-                    {token && buildingId && savedCode ? (
-                      <ParcelCorrectionDialog
-                        tenant={tenant}
-                        token={token}
-                        building={{
-                          id: buildingId,
-                          code: savedCode,
-                          parcelNumber: trimmedParcel,
-                          updatedAt: loadedUpdatedAtRef.current,
-                        }}
-                        open={correctingParcel}
-                        onOpenChange={setCorrectingParcel}
-                        onCorrected={(result) => applyParcelCorrection(result, trimmedParcel)}
-                        locale={locale}
-                      />
-                    ) : null}
-                  </>
-                ) : (
-                  <div className="relative" dir="ltr">
-                    <Input
-                      id="building-parcel"
-                      value={parcelNumber}
-                      onChange={(event) => {
-                        setParcelNumber(event.target.value);
-                        // Typed over: the note must stop claiming the cadastre
-                        // supplied this, or a wrong number would read as the
-                        // survey's answer rather than as somebody's correction.
-                        setParcelFromMap(false);
-                      }}
-                      dir="ltr"
-                      className="text-start font-mono text-base font-medium pe-9"
-                      placeholder="1042"
-                      inputMode="numeric"
-                    />
-                    {trimmedParcel ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setParcelNumber('');
-                          setParcelFromMap(false);
-                        }}
-                        className="absolute end-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground rounded-full"
-                        aria-label={en ? 'Clear parcel number' : 'مسح رقم العقار'}
-                      >
-                        <X className="size-3.5" />
-                      </button>
-                    ) : null}
-                  </div>
-                )}
+                editing={editing}
+                zones={zones}
+                outline={outline}
+                outlineChecked={outlineChecked}
+                fallbackCentre={fallbackCentre}
+                zoneFootprint={zoneFootprint}
+                zoneParcelFeatures={zoneParcelFeatures}
+                selectedZone={selectedZone}
+                mapParcelLabels={mapParcelLabels}
+                resolvedParcel={resolvedParcel}
+                pin={pin}
+                applyPin={applyPin}
+                locale={locale}
+                pinError={pinError}
+                noPinReason={noPinReason}
+                setNoPinReason={setNoPinReason}
+              />
 
-                {parcelFromMap ? (
-                  <p className="mt-1.5 inline-flex items-center gap-1.5 text-xs font-medium text-success">
-                    <CheckCircle2 className="size-3.5 shrink-0" aria-hidden />
-                    {en ? 'Read from the cadastre' : 'مأخوذ من المسح العقاري'}
-                  </p>
-                ) : null}
-
-                {/*
-                  The parcel belongs to a different sector from the one being
-                  looked in. Said, never settled: the code's sector half comes
-                  from the parcel (D13), so this reports which one the code will
-                  actually carry and leaves the officer to decide which of the
-                  two is wrong.
-                */}
-                {zoneMismatch ? (
-                  <Alert variant="warning" className="mt-2">
-                    {en
-                      ? `Parcel ${trimmedParcel} is in sector ${parcelZone!.code} — ${parcelZone!.name}, not the one selected above. The code will carry ${parcelZone!.code}.`
-                      : `العقار ${trimmedParcel} يقع في القطاع ${parcelZone!.code} — ${parcelZone!.name}، لا القطاع المختار أعلاه. سيحمل الرمز ${parcelZone!.code}.`}
-                  </Alert>
-                ) : null}
-
-                {cadastreHint ? (
-                  <Alert variant="warning" className="mt-2">
-                    {cadastreHint}
-                  </Alert>
-                ) : null}
-
-                <div className="mt-3 border-s-2 border-border ps-3 py-1">
-                  <div className="flex items-center gap-2.5 sm:gap-3 flex-wrap">
-                    <span className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-                      <Hash className="size-3.5" />
-                      {en ? 'Derived Census Code:' : 'رمز المبنى المشتق:'}
-                    </span>
-                    <span className="font-mono text-lg sm:text-xl font-bold tracking-tight text-foreground" dir="ltr">
-                      {displayCode ?? '—'}
-                    </span>
-                    {resolving && !editing ? (
-                      <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                        <Loader2 className="size-3 animate-spin" />
-                        {en ? 'Resolving…' : 'جاري التحقق…'}
-                      </span>
-                    ) : editing ? (
-                      <Badge variant="soft-success" className="text-xs px-2 py-0.5">
-                        {en ? 'Allocated' : 'معتمد'}
-                      </Badge>
-                    ) : (
-                      <Badge variant="soft-warning" className="text-xs px-2 py-0.5">
-                        {en ? 'Provisional' : 'مؤقت'}
-                      </Badge>
-                    )}
-                  </div>
-                  {/* Retired by a correction — still what old forms and receipts quote. */}
-                  {editing && previousCodes.length > 0 ? (
-                    <p className="mt-1.5 text-xs text-muted-foreground">
-                      {en ? 'Previously: ' : 'رموزه السابقة: '}
-                      {previousCodes.map((row, index) => (
-                        <span key={row.code}>
-                          {index > 0 ? '، ' : null}
-                          <bdi dir="ltr" className="font-mono">
-                            {row.code}
-                          </bdi>
-                        </span>
-                      ))}
-                      {en ? ' — still found by search.' : ' — ما زالت تدلّ عليه في البحث.'}
-                    </p>
-                  ) : null}
-                </div>
-              </StepField>
-
-              {/*
-                ── 4. الفرز ───────────────────────────────────────────────
-
-                One checkbox, and the أقسام only once it is ticked.
-
-                It was a three-way choice — «غير محدد / مفروزة / غير مفروزة» —
-                and two of those three answers earned nothing. What a transfer,
-                a deed search or a resident at the counter is actually asking is
-                «which قسم?», and a form that could only say "yes, partitioned"
-                sent them to the survey office anyway. So the yes now opens the
-                field that answers the real question.
-
-                The asymmetry in what the box means is deliberate. Ticked is an
-                officer asserting a فرز; unticked is «لم يُسأل», not «غير
-                مفروزة» — so the save sends `true` or `null` and never `false`.
-                An unticked box on every building ever created is not a finding
-                about title that anybody made, and فرز decides whether a flat
-                inside can carry a deed of its own.
-
-                An empty list under a ticked box is allowed, and is ordinary: a
-                block surveyed from the street is visibly مفروزة long before
-                anyone has the قسم numbers off the صحيفة.
-              */}
-              <StepField
+              <ParcelSection
                 en={en}
-                ordinal={!editing && zones.length > 0 ? 4 : 3}
-                title={en ? 'Partitioned on a parcel?' : 'هل الوحدة مفروزة على عقار؟'}
-              >
-                <div className="space-y-3">
-                  <label className="-mx-2 flex min-h-10 cursor-pointer items-center gap-2.5 rounded-lg px-2 py-2 text-sm font-medium transition-colors hover:bg-accent/40">
-                    <Checkbox
-                      checked={isPartitioned}
-                      onCheckedChange={(checked) => {
-                        const next = checked === true;
-                        setIsPartitioned(next);
-                        /*
-                          Un-ticking clears the أقسام rather than parking them.
+                editing={editing}
+                zones={zones}
+                fieldErrors={fieldErrors}
+                trimmedParcel={trimmedParcel}
+                token={token}
+                buildingId={buildingId}
+                savedCode={savedCode}
+                setCorrectingParcel={setCorrectingParcel}
+                tenant={tenant}
+                loadedUpdatedAtRef={loadedUpdatedAtRef}
+                correctingParcel={correctingParcel}
+                applyParcelCorrection={applyParcelCorrection}
+                locale={locale}
+                parcelNumber={parcelNumber}
+                setParcelNumber={setParcelNumber}
+                setParcelFromMap={setParcelFromMap}
+                parcelFromMap={parcelFromMap}
+                zoneMismatch={zoneMismatch}
+                parcelZone={parcelZone}
+                cadastreHint={cadastreHint}
+                displayCode={displayCode}
+                resolving={resolving}
+                previousCodes={previousCodes}
+              />
 
-                          The server discards them for an untick anyway, so
-                          leaving the rows on screen would show the officer
-                          numbers that are not going to be saved — and a field
-                          that silently disagrees with what it will store is
-                          worse than one that is simply empty. Re-ticking starts
-                          from one blank row, which is where they were anyway.
-                        */
-                        if (!next) setPartitionNumbers([]);
-                      }}
-                    />
-                    <span>{en ? 'Partitioned (مفروزة)' : 'مفروزة'}</span>
-                  </label>
-
-                  {isPartitioned ? (
-                    <div className="space-y-2 border-s-2 border-primary/30 ps-3">
-                      <p className="text-xs font-medium text-foreground/80">
-                        {en ? 'Partition numbers (أرقام الأقسام)' : 'أرقام الأقسام'}
-                      </p>
-
-                      {partitionNumbers.map((value, index) => (
-                        <div key={index} className="flex items-center gap-2">
-                          <Input
-                            value={value}
-                            onChange={(event) =>
-                              setPartitionNumbers((current) =>
-                                current.map((row, position) =>
-                                  position === index ? event.target.value : row,
-                                ),
-                              )
-                            }
-                            dir="ltr"
-                            inputMode="numeric"
-                            placeholder="12"
-                            aria-label={
-                              en ? `Partition number ${index + 1}` : `رقم القسم ${index + 1}`
-                            }
-                            className="h-10 flex-1 text-start font-mono"
-                          />
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            onClick={() =>
-                              setPartitionNumbers((current) =>
-                                current.filter((_row, position) => position !== index),
-                              )
-                            }
-                            aria-label={en ? 'Remove this partition' : 'حذف هذا القسم'}
-                            className="size-10 shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                          >
-                            <X className="size-4" />
-                          </Button>
-                        </div>
-                      ))}
-
-                      <button
-                        type="button"
-                        onClick={() => setPartitionNumbers((current) => [...current, ''])}
-                        className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-dashed border-primary/50 px-3 py-2 text-xs font-medium text-primary transition-colors hover:bg-primary/5"
-                      >
-                        <Plus className="size-3.5 shrink-0" aria-hidden />
-                        {partitionNumbers.length === 0
-                          ? en
-                            ? 'Add a partition number'
-                            : 'إضافة رقم قسم'
-                          : en
-                            ? 'Add another'
-                            : 'إضافة رقم آخر'}
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-              </StepField>
-
-              {/*
-                ── 5. العقارات المشتركة ───────────────────────────────────
-
-                A building standing on two or three adjacent عقارات is ordinary
-                here, and `parcelNumber` can name only one of them: the code and
-                the per-parcel suffix are derived from it (D9). Recorded here
-                rather than entered as a *second building*, which is the
-                duplicate §4.4's acknowledgement guard exists to catch.
-              */}
-              <StepField
+              <PartitionSection
                 en={en}
-                ordinal={!editing && zones.length > 0 ? 5 : 4}
-                title={
-                  en
-                    ? 'Shared across more than one parcel'
-                    : 'إن كانت الوحدة مشتركة على أكثر من عقار'
-                }
+                editing={editing}
+                zones={zones}
+                isPartitioned={isPartitioned}
+                setIsPartitioned={setIsPartitioned}
+                setPartitionNumbers={setPartitionNumbers}
+                partitionNumbers={partitionNumbers}
+              />
 
-              >
-                <div className="space-y-2">
-                  {sharedParcels.map((value, index) => (
-                    <div key={index} className="flex items-center gap-2">
-                      <Input
-                        value={value}
-                        onChange={(event) =>
-                          setSharedParcels((current) =>
-                            current.map((row, position) =>
-                              position === index ? event.target.value : row,
-                            ),
-                          )
-                        }
-                        dir="ltr"
-                        inputMode="numeric"
-                        placeholder="1043"
-                        aria-label={en ? `Shared parcel ${index + 1}` : `عقار مشترك ${index + 1}`}
-                        className="h-10 flex-1 text-start font-mono"
-                        invalid={Boolean(value.trim()) && value.trim() === trimmedParcel}
-                      />
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        onClick={() =>
-                          setSharedParcels((current) =>
-                            current.filter((_row, position) => position !== index),
-                          )
-                        }
-                        aria-label={en ? 'Remove this parcel' : 'حذف هذا العقار'}
-                        className="size-10 shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                      >
-                        <X className="size-4" />
-                      </Button>
-                    </div>
-                  ))}
-
-                  {/*
-                    Flagged rather than silently dropped. Both this form and the
-                    server remove the building's own عقار from the list, and an
-                    officer who typed it there believes they have recorded
-                    something — telling them why the row will vanish is cheaper
-                    than letting them find out it did.
-                  */}
-                  {sharedParcels.some((value) => value.trim() && value.trim() === trimmedParcel) ? (
-                    <p role="alert" className="text-xs leading-relaxed text-destructive">
-                      {en
-                        ? 'The building’s own parcel is already recorded above — that row will not be saved.'
-                        : 'عقار المبنى الأساسي مسجَّل أعلاه — لن يُحفظ هذا السطر.'}
-                    </p>
-                  ) : null}
-
-                  <button
-                    type="button"
-                    onClick={() => setSharedParcels((current) => [...current, ''])}
-                    className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-dashed border-primary/50 px-3 py-2 text-xs font-medium text-primary transition-colors hover:bg-primary/5"
-                  >
-                    <Plus className="size-3.5 shrink-0" aria-hidden />
-                    {sharedParcels.length === 0
-                      ? en
-                        ? 'Add a shared parcel'
-                        : 'إضافة عقار مشترك'
-                      : en
-                        ? 'Add another'
-                        : 'إضافة عقار آخر'}
-                  </button>
-                </div>
-              </StepField>
+              <SharedParcelsSection
+                en={en}
+                editing={editing}
+                zones={zones}
+                sharedParcels={sharedParcels}
+                setSharedParcels={setSharedParcels}
+                trimmedParcel={trimmedParcel}
+              />
             </CardContent>
           </Card>
         ) : null}
@@ -2666,653 +2064,142 @@ export function BuildingEditor({
               </div>
             </CardHeader>
             <CardContent className="space-y-4 pt-5">
-              <div className="grid gap-4">
-                <Field
-                  label={tTypes('picker')}
-                  htmlFor="building-structure-type"
-                  required
-                  error={fieldErrors.structureType}
-                >
-                  {offeredTypes.length > 0 ? (
-                    <Select value={chosenTypeId} onValueChange={chooseType}>
-                      <SelectTrigger id="building-structure-type" className="h-10">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {offeredTypes.map((type) => (
-                          <SelectItem key={type.id} value={type.id}>
-                            {buildingTypeName(type, locale)}
-                            {type.isActive ? '' : ` — ${tTypes('inactive')}`}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  ) : (
-                    // No list on this device yet and no network: the structures, as before types existed.
-                    <Select
-                      value={structureType}
-                      onValueChange={(value) => setStructureType(value as StructureType)}
-                    >
-                      <SelectTrigger id="building-structure-type" className="h-10">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {STRUCTURE_TYPE.map((type) => (
-                          <SelectItem key={type} value={type}>
-                            {labels.structureType[type]}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  )}
-                </Field>
+              <FacilityFields
+                tTypes={tTypes}
+                fieldErrors={fieldErrors}
+                offeredTypes={offeredTypes}
+                chosenTypeId={chosenTypeId}
+                chooseType={chooseType}
+                locale={locale}
+                structureType={structureType}
+                setStructureType={setStructureType}
+                labels={labels}
+                en={en}
+                lifecycleStatus={lifecycleStatus}
+                setLifecycleStatus={setLifecycleStatus}
+                tFeeExemption={tFeeExemption}
+                editing={editing}
+                liveOccupants={liveOccupants}
+                loadedLifecycle={loadedLifecycle}
+                hasRecordedUnits={hasRecordedUnits}
+              />
+              <DuplicatesPrompt
+                duplicates={duplicates}
+                en={en}
+                trimmedParcel={trimmedParcel}
+                rankedDuplicates={rankedDuplicates}
+                pin={pin}
+                labels={labels}
+                base={base}
+                cancelDraft={cancelDraft}
+                acknowledgedDuplicates={acknowledgedDuplicates}
+                setAcknowledgedDuplicates={setAcknowledgedDuplicates}
+                duplicateReason={duplicateReason}
+                setDuplicateReason={setDuplicateReason}
+              />
 
-                <Field
-                  label={en ? 'Construction Status' : 'الحالة الإنشائية'}
-                  htmlFor="building-lifecycle"
-                  required
-                  error={fieldErrors.lifecycleStatus}
-
-                >
-                  <Select
-                    value={lifecycleStatus}
-                    onValueChange={(value) => setLifecycleStatus(value as BuildingLifecycle)}
-                  >
-                    <SelectTrigger id="building-lifecycle" className="h-10">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {BUILDING_LIFECYCLE.map((status) => (
-                        <SelectItem key={status} value={status}>
-                          {labels.buildingLifecycle[status]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </Field>
-              </div>
-
-              {/*
-                «متضررة من الحرب وغير مسكونة» or «مهدوم» exempts nothing by itself
-                (decision of 2026-10-07): a damage reading «غير صالحة للسكن» does,
-                because it records who judged it, when and on what, and a later
-                reading ends it. Said here, where the label is chosen; «مراجعة
-                الجودة» lists the building until the reading is recorded.
-              */}
-              {isUninhabitableLifecycle(lifecycleStatus) ? (
-                <Alert variant="info" role="note">
-                  {tFeeExemption('lifecycleNote')}
-                </Alert>
-              ) : null}
-
-              {/*
-                A building leaving «قائم ومستعمل» with people still recorded in it.
-
-                The lifecycle is a statement about the structure; nothing reads
-                it when deciding who is billed. So «مهدوم» on a building whose
-                flats still hold a tenant leaves that tenant housed and charged
-                in a building that is gone — until somebody ends each occupancy.
-                Said before saving, with where to do it, rather than left to a
-                resident disputing the bill.
-              */}
-              {editing &&
-              liveOccupants > 0 &&
-              loadedLifecycle !== null &&
-              isOccupiableLifecycle(loadedLifecycle) &&
-              !isOccupiableLifecycle(lifecycleStatus) ? (
-                <Alert variant="warning" role="note">
-                  {en
-                    ? `${liveOccupants} occupancy record(s) are still current in this building's units, and they keep being billed. Changing the building's status does not end them — after saving, end each one from the unit matrix («End tenancy» for a tenant; a new status for an owner's unit).`
-                    : `ما زال ${liveOccupants} إشغال قائماً على وحدات هذا المبنى، ويُحصَّل الرسم منه. تغيير حالة المبنى لا يُنهيه — بعد الحفظ أنهِ كل إشغال من مصفوفة الوحدات («إنهاء الإيجار» للمستأجر، وحالة جديدة لوحدة المالك).`}
-                </Alert>
-              ) : null}
-
-              {/*
-                Said out loud, because two things vanish at once — the floor
-                fields above and the matrix step in the rail — and a form that
-                quietly drops half of itself reads as a bug. The second line is
-                the one that matters on an edit: it explains why a building
-                that already has flats keeps its matrix while this one loses it.
-              */}
-              {isUnsurveyableShell(lifecycleStatus) ? (
-                <Alert
-                  variant="info"
-                  title={en
-                    ? 'Structure classified as demolished — there are no storeys left to count, so the floor fields and the unit matrix are skipped automatically.'
-                    : 'المنشأة مصنَّفة مهدومة — لم يبقَ طوابق تُعدّ، لذا يُتخطّى عدد الطوابق ومصفوفة الوحدات تلقائياً.'}
-                >
-                  {hasRecordedUnits
-                    ? en
-                      ? 'This building already has units on file, so the matrix stays available — record what became of each one there.'
-                      : 'لهذا المبنى وحدات مسجَّلة مسبقاً، لذا تبقى المصفوفة متاحة — سجِّل مصير كل وحدة فيها.'
-                    : en
-                      ? 'Describe what was observed in the field notes below.'
-                      : 'دوِّن ما شوهد ميدانياً في الملاحظات أدناه.'}
-                </Alert>
-              ) : null}
-
-              {duplicates && duplicates.length > 0 ? (
-                <Alert
-                  variant="warning"
-                  title={en
-                    ? `${duplicates.length === 1 ? 'A structure is' : `${duplicates.length} structures are`} already recorded on parcel ${trimmedParcel}.`
-                    : `${duplicates.length === 1 ? 'توجد منشأة مسجَّلة مسبقاً' : `توجد ${duplicates.length} منشآت مسجَّلة مسبقاً`} على العقار ${trimmedParcel}.`}
-                >
-                  <div className="space-y-3">
-
-                    <p className="text-xs leading-relaxed text-muted-foreground">
-                      {en
-                        ? 'If the building you are standing at is one of these, open it and record there — do not create it again.'
-                        : 'إن كان المبنى الذي تقف أمامه أحد هذه المنشآت فافتحه وسجِّل فيه — لا تُنشئه مرة ثانية.'}
-                    </p>
-
-                    <ul className="divide-y divide-border/30 rounded-lg border border-border/40 bg-background/50 text-xs">
-                      {rankedDuplicates.map(({ row, distance }) => (
-                        <li key={row.id} className="p-2.5 flex flex-wrap items-center justify-between gap-2">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <DistanceBadge metres={distance} hasPin={Boolean(pin)} en={en} />
-                            <span dir="ltr" className="font-mono font-bold text-primary">
-                              {row.code}
-                            </span>
-                            {row.name ? <span className="font-medium text-foreground">{row.name}</span> : null}
-                            <span className="text-muted-foreground text-xs">
-                              ({labels.structureType[row.structureType]})
-                            </span>
-                            {row.sharesParcel && row.ownParcelNumber ? (
-                              <Badge variant="soft-info" className="text-xs">
-                                {en
-                                  ? `Also stands on this parcel — filed under ${row.ownParcelNumber}`
-                                  : `يمتد على هذا العقار — عقاره الأساسي ${row.ownParcelNumber}`}
-                              </Badge>
-                            ) : null}
-                          </div>
-                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                            {row.postedNumber ? (
-                              <span>{en ? 'Posted:' : 'مكتوب:'} <span dir="ltr" className="font-mono">{row.postedNumber}</span></span>
-                            ) : null}
-                            <span>{en ? `${row.unitsTotal} units` : `${row.unitsTotal} وحدة`}</span>
-                            {/*
-                              «هذه هي» — the answer the dialog had no button for.
-                              Ticking «منفصلة» used to be the only way forward, so
-                              an officer who recognised the building still had to
-                              create it again or abandon the form. Opening it
-                              clears the draft: the structure they meant exists.
-                            */}
-                            <Link
-                              href={`${base}/buildings/${encodeURIComponent(row.id)}/matrix`}
-                              onClick={cancelDraft}
-                              className={buttonVariants({ variant: 'outline', size: 'sm', className: 'h-8 px-2.5 text-xs' })}
-                            >
-                              {en ? 'This is the one — open it' : 'هذه هي المنشأة — افتحها'}
-                            </Link>
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-
-                    <div className="space-y-2 rounded-lg border border-warning/30 bg-background/60 p-2.5 text-xs text-foreground">
-                      <label className="flex cursor-pointer items-start gap-2.5">
-                        <Checkbox
-                          checked={acknowledgedDuplicates}
-                          onCheckedChange={(checked) => setAcknowledgedDuplicates(checked === true)}
-                          className="mt-0.5"
-                        />
-                        <span className="font-medium leading-relaxed">
-                          {en
-                            ? 'I have verified in the field: this is a different structure from the existing ones above.'
-                            : 'تحقَّقت ميدانياً: هذه منشأة منفصلة ومختلفة عن المنشآت المذكورة أعلاه.'}
-                        </span>
-                      </label>
-                      {/*
-                        The tick alone is not an answer any more. A sentence about
-                        what makes it separate is what a reviewer can check on the
-                        street, and it goes into the audit row with the distances.
-                      */}
-                      {acknowledgedDuplicates ? (
-                        <div className="space-y-1">
-                          <Label htmlFor="duplicate-reason" className="text-xs">
-                            {en ? 'What makes it a separate structure?' : 'ما الذي يجعلها منشأة منفصلة؟'}{' '}
-                            <span
-                              className="font-bold text-destructive"
-                              aria-label={en ? 'Required field' : 'حقل إلزامي'}
-                            >
-                              *
-                            </span>
-                          </Label>
-                          <Textarea
-                            id="duplicate-reason"
-                            value={duplicateReason}
-                            onChange={(event) => setDuplicateReason(event.target.value)}
-                            maxLength={300}
-                            className="min-h-[64px] text-sm"
-                            placeholder={
-                              en
-                                ? 'e.g. a separate house behind the building, with its own entrance'
-                                : 'مثال: بيت مستقل خلف المبنى بمدخل منفصل'
-                            }
-                          />
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                </Alert>
-              ) : null}
-
-              {/*
-                «الرقم المكتوب على المبنى» is no longer asked for here.
-
-                The value itself is not abandoned: `postedNumber` stays on the
-                building, stays on the wire, and is still printed beside the
-                allocated code wherever the two disagree — a collector in the
-                street trusts the door. What is gone is the *input*, so this
-                step stops asking an officer at a desk for a number that can
-                only be read off the wall.
-
-                Deliberately still sent on save, carrying whatever was loaded.
-                Dropping it from the payload would have every edit of a
-                building quietly blank a plaque number somebody had recorded.
-              */}
-              <Field
-                label={en ? 'Building Name (Optional)' : 'اسم المبنى (اختياري)'}
-                htmlFor="building-name"
-                error={fieldErrors.name}
-              >
-                <Input
-                  id="building-name"
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  placeholder={en ? 'Al-Nour Building' : 'بناية النور'}
-                  className="h-10"
-                />
-              </Field>
-
-              {orphanedUnits.length > 0 ? (
-                <p role="alert" className="flex items-center gap-1.5 text-xs text-destructive">
-                  <AlertTriangle className="size-3.5 shrink-0" />
-                  {en
-                    ? `${orphanedUnits.length} unit(s) sit outside the current height of the matrix. Open the unit matrix to raise it or remove them.`
-                    : `${orphanedUnits.length} وحدة خارج ارتفاع المصفوفة الحالي. افتح مصفوفة الوحدات لرفع الارتفاع أو حذفها.`}
-                </p>
-              ) : null}
-
-              {/*
-                «عدد الطوابق» and «عدد الطوابق تحت الأرض» are not asked here.
-
-                They were two number inputs on this step *and* two steppers on
-                the matrix, and the duplication was the defect rather than the
-                clutter: an officer typed «٦» here and then painted five floors
-                there, and the two disagreed with nothing on either screen to
-                say which one the save would believe. (It believed neither
-                outright — `create` reconciles the count upward from the units,
-                so the typed number only ever mattered when it was *larger*,
-                which is the case nobody could see.)
-
-                A floor count is a fact about the matrix. It is now asked where
-                the matrix is, by the control that moves the grid — so what the
-                officer is looking at is what gets saved, and there is no second
-                number to contradict it.
-              */}
-
-              <Field
-                label={en ? 'Field Notes (Optional)' : 'ملاحظات ميدانية (اختياري)'}
-                htmlFor="building-notes"
-                error={fieldErrors.notes}
-
-              >
-                <Textarea
-                  id="building-notes"
-                  rows={shellShortcut || warDamaged ? 3 : 2}
-                  value={notes}
-                  onChange={(event) => setNotes(event.target.value)}
-                  placeholder={
-                    shellShortcut
-                      ? en
-                        ? 'e.g. Structure cleared after shelling; plot empty at the time of the visit…'
-                        : 'مثال: أُزيلت المنشأة بعد القصف؛ العقار خالٍ وقت الزيارة…'
-                      : warDamaged
-                        ? en
-                          ? 'e.g. Severe structural damage from shelling, uninhabitable, residents displaced; storeys counted from the street…'
-                          : 'مثال: أضرار إنشائية بالغة من القصف، غير صالحة للسكن، السكان نازحون؛ عُدّت الطوابق من الخارج…'
-                        : en
-                          ? 'e.g. Side entrance via garden stairs…'
-                          : 'مثال: المدخل من الدرج الجانبي عبر الحديقة…'
-                  }
-                  className="resize-none"
-                />
-              </Field>
+              <FacilityNotes
+                en={en}
+                fieldErrors={fieldErrors}
+                name={name}
+                setName={setName}
+                orphanedUnits={orphanedUnits}
+                shellShortcut={shellShortcut}
+                warDamaged={warDamaged}
+                notes={notes}
+                setNotes={setNotes}
+              />
             </CardContent>
           </Card>
         ) : null}
 
         {step === 2 ? (
-          <Card className="shadow-xs border-border/80">
-            <CardHeader className="border-b bg-muted/15 pb-4">
-              <div className="flex items-center gap-2.5">
-                <div className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                  <ClipboardCheck className="size-4" />
-                </div>
-                <div>
-                  <CardTitle className="text-base font-semibold">
-                    {en ? 'Unit Matrix' : 'مصفوفة الوحدات'}
-                  </CardTitle>
-
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-3 pt-5">
-              <UnitGridPicker
-                locale={locale}
-                structureType={structureType}
-                defaultUnitType={chosenType?.defaultUnitType}
-                onStructureTypeChange={(next) => {
-                  // The grid re-typed the structure (a lone house): its system type follows (0106).
-                  setStructureType(next);
-                  setBuildingTypeId(systemTypeOf(buildingTypes.data ?? [], next)?.id ?? '');
-                }}
-                floorsCount={Number(floorsCount) || 1}
-                onFloorsCountChange={(newFloors) => setFloorsCount(String(newFloors))}
-                basementsCount={Number(basementsCount) || 0}
-                onBasementsCountChange={(next) => setBasementsCount(String(next))}
-                gridSize={gridSize}
-                onGridSizeChange={setGridSize}
-                units={gridUnits}
-                unitTypes={unitTypes.data ?? undefined}
-                // Not `setGridUnits` — a house gaining a second block is a
-                // question before it is a change. See `requestUnits`.
-                onUnitsChange={requestUnits}
-                unfinished={lifecycleStatus === 'PERMITTED' || lifecycleStatus === 'UNDER_CONSTRUCTION'}
-              />
-
-              {topGap ? (
-                <Alert variant="warning" role="status">
-                  {tFloors('emptyTop', { count: topGap.empty })}
-                  <div className="mt-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="shrink-0"
-                      onClick={() => setFloorsCount(String(topGap.suggested))}
-                    >
-                      {tFloors('trimTo', { count: topGap.suggested })}
-                    </Button>
-                  </div>
-                </Alert>
-              ) : null}
-
-              {/*
-                Units the grid has no row for — basements, which it does not
-                draw, and anything past its width. Named rather than omitted:
-                an officer who cannot see a flat here must still know it is on
-                file, and the save leaves every one of them untouched.
-              */}
-              {hiddenUnits.length > 0 ? (
-                <p className="flex items-start gap-2 rounded-lg border bg-muted/20 p-2.5 text-xs leading-relaxed text-muted-foreground">
-                  <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-                  <span>
-                    {en
-                      ? `${hiddenUnits.length} unit(s) are not drawn on this grid (${hiddenUnits
-                          .map((unit) => unit.unitCode)
-                          .join(', ')}) — they are left exactly as they are. Correct them from the unit matrix.`
-                      : `${hiddenUnits.length} وحدة غير معروضة على هذه المصفوفة (${hiddenUnits
-                          .map((unit) => unit.unitCode)
-                          .join('، ')}) — تبقى كما هي دون تغيير. صحّحها من صفحة مصفوفة الوحدات.`}
-                  </span>
-                </p>
-              ) : null}
-            </CardContent>
-          </Card>
+          <MatrixCard
+            en={en}
+            locale={locale}
+            structureType={structureType}
+            chosenType={chosenType}
+            setStructureType={setStructureType}
+            setBuildingTypeId={setBuildingTypeId}
+            buildingTypes={buildingTypes}
+            floorsCount={floorsCount}
+            setFloorsCount={setFloorsCount}
+            basementsCount={basementsCount}
+            setBasementsCount={setBasementsCount}
+            gridSize={gridSize}
+            setGridSize={setGridSize}
+            gridUnits={gridUnits}
+            unitTypes={unitTypes}
+            requestUnits={requestUnits}
+            lifecycleStatus={lifecycleStatus}
+            topGap={topGap}
+            tFloors={tFloors}
+            hiddenUnits={hiddenUnits}
+          />
         ) : null}
 
-        {/*
-          ── Structure Summary (ملخص المنشأة) ──
+        <SummaryCard
+          step={step}
+          lastStep={lastStep}
+          en={en}
+          codePreview={codePreview}
+          trimmedParcel={trimmedParcel}
+          zoneCode={zoneCode}
+          zoneName={zoneName}
+          tTypes={tTypes}
+          chosenType={chosenType}
+          locale={locale}
+          labels={labels}
+          structureType={structureType}
+          floorsCount={floorsCount}
+          basementsCount={basementsCount}
+          gridUnits={gridUnits}
+          hiddenUnits={hiddenUnits}
+          pin={pin}
+          name={name}
+        />
 
-          The last step only. This is a read-back of what is about to be saved
-          — «راجع قبل الحفظ» — and on step 1 there is nothing to read back yet:
-          it sat under a half-filled form reciting «رقم العقار —», «القطاع —»,
-          «٠ وحدة», which says nothing the fields six inches above it were not
-          already saying, and says it in the tone of a result. Worse, it stood
-          between the form and «التالي», so every officer scrolled past a table
-          of dashes to reach the button.
-
-          On the final step it is doing its actual job: the floors and units
-          come from a matrix on another screen, the sector is derived from the
-          parcel rather than typed, and the entrance is a pin on a map — none
-          of which is visible from here without it.
-        */}
-        {step === lastStep ? (
-          <Card className="shadow-xs border-border/80 bg-muted/15">
-            <CardHeader className="pb-3 border-b bg-muted/30">
-              <div className="flex items-center justify-between gap-2">
-                <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                  <ClipboardCheck className="size-4 text-primary" />
-                  <span>{en ? 'Structure Summary' : 'ملخص المنشأة'}</span>
-                </CardTitle>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground hidden sm:inline">
-                    {en ? 'Review before saving' : 'راجع قبل الحفظ'}
-                  </span>
-                  <span dir="ltr" className="font-mono text-xs font-semibold text-primary">
-                    {codePreview ?? '—'}
-                  </span>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="py-1">
-              <SummaryList>
-                <SummaryRow label={en ? 'Parcel Number' : 'رقم العقار'} className="font-mono font-bold">
-                  {trimmedParcel || '—'}
-                </SummaryRow>
-
-                <SummaryRow label={en ? 'Building Code' : 'رمز المبنى'} className="font-mono font-bold text-primary">
-                  {codePreview || '—'}
-                </SummaryRow>
-
-                <SummaryRow label={en ? 'Sector' : 'القطاع'}>
-                  {zoneCode ? `${zoneCode} · ${zoneName ?? ''}` : trimmedParcel ? UNZONED_CODE : '—'}
-                </SummaryRow>
-
-                <SummaryRow label={tTypes('picker')}>
-                  {chosenType ? buildingTypeName(chosenType, locale) : labels.structureType[structureType]}
-                </SummaryRow>
-
-                <SummaryRow label={en ? 'Floors & Units' : 'الطوابق والوحدات'}>
-                  {`${floorsCount} ${en ? 'floors' : 'طوابق'}`}
-                  {Number(basementsCount) > 0 ? ` + B${Number(basementsCount)}` : ''}{' '}
-                  · {gridUnits.length + hiddenUnits.length} {en ? 'units' : 'وحدة'}
-                </SummaryRow>
-
-                <SummaryRow
-                  label={en ? 'Entrance Location' : 'موقع المدخل'}
-                  className={pin ? 'text-success' : 'text-muted-foreground'}
-                >
-                  {pin ? (en ? 'Pinned' : 'مُثبت') : en ? 'Desk entry' : 'غير مُثبت'}
-                  {name ? (
-                    <span className="text-xs font-normal text-muted-foreground hidden lg:inline">
-                      {' '}· {name}
-                    </span>
-                  ) : null}
-                </SummaryRow>
-              </SummaryList>
-            </CardContent>
-          </Card>
-        ) : null}
-
-        {/*
-        «هل تريد تحويلها من منزل إلى بناية؟»
-
-        Not destructive — nothing is lost and the answer is very often yes, so
-        it gets the neutral treatment rather than the red one. What it is, is
-        *consequential*: نوع المنشأة decides which property card the citizen's
-        file gets (`STRUCTURE_TYPE_MAP`), whether a card can itemise flats at
-        all, and — through `assertUnitFits` — whether this save is accepted.
-
-        Declining keeps the house and drops the paint stroke, which is the
-        honest outcome: the grid cannot show two units under a type that
-        permits one, so there is no half-state to leave the officer in.
-      */}
-      <ConfirmDialog
-        open={pendingUnits !== null}
-        onOpenChange={(open) => {
-          if (!open) setPendingUnits(null);
-        }}
-        destructive={false}
-        title={
-          en
-            ? 'Change this from a house to a building?'
-            : 'هل تريد تحويلها من منزل مستقل إلى بناية؟'
-        }
-        description={
-          en ? (
-            <>
-              A standalone house is a single dwelling, so it can hold only one unit. You have
-              painted {pendingUnits?.length ?? 0}. Confirming changes نوع المنشأة to
-              «بناية سكنية» and keeps what you drew.
-            </>
-          ) : (
-            <>
-              المنزل المستقل مسكن واحد ولا يقبل أكثر من وحدة، وقد رسمت{' '}
-              {pendingUnits?.length ?? 0} وحدات. التأكيد يغيّر «نوع المنشأة» إلى «بناية سكنية»
-              ويُبقي ما رسمته.
-            </>
-          )
-        }
-        confirmLabel={en ? 'Yes, it is a building' : 'نعم، هي بناية'}
-        cancelLabel={en ? 'No, keep it a house' : 'لا، أبقِها منزلاً'}
-        busyLabel={en ? 'Working…' : 'جارٍ التنفيذ…'}
-        onConfirm={() => {
-          const next = pendingUnits;
-          setPendingUnits(null);
-          if (!next) return;
-          /*
-            Flagged before the type changes, because changing it is what runs
-            the reset that would otherwise throw this grid away — see
-            `promotedFromHouse`.
-          */
-          promotedFromHouse.current = true;
-          setStructureType(PROMOTED_STRUCTURE_TYPE);
-          /*
-            The units are re-typed, not just carried across.
-
-            The block this house was seeded with — and the one the officer
-            painted beside it, since the picker defaults from the *current*
-            structure type — are both «منزل مستقل». That is not a unit a
-            building can contain: `BUILDING_UNIT_TYPES` excludes it precisely
-            because a منزل مستقل is what a whole منزل card *is*, and
-            `PropertyEntry` refuses it on a مبنى. Left alone, the promotion
-            would produce a residential block whose flats are each a standalone
-            house — rejected by the card the moment anyone registered a
-            household in one, and unselectable in the grid's own edit sheet, so
-            the officer could not even correct it by hand.
-
-            Only the ones that say «منزل مستقل» are touched. A محل or a مستودع
-            the officer deliberately chose is their answer, and re-typing it
-            would be this dialog overruling a decision it was not asked about.
-
-            `defaultUnitTypeFor` rather than a literal «شقة», so a basement
-            block comes out as مستودع — the same suggestion the picker would
-            have made had the type been right from the start.
-          */
-          setGridUnits(
-            next.map((unit) =>
-              unit.unitType === 'INDEPENDENT_HOUSE'
-                ? { ...unit, unitType: defaultUnitTypeFor(PROMOTED_STRUCTURE_TYPE, unit.floor) }
-                : unit,
-            ),
-          );
-          // The grid has to be at least as wide as what was painted on it: the
-          // house seeded a single column, and the second block the officer drew
-          // is in the second one.
-          setGridSize((current) =>
-            Math.max(current, DEFAULT_GRID_SIZE, ...next.map((unit) => unit.endCol)),
-          );
-          setFloorsCount((current) => (current === '1' ? String(DEFAULT_VERTICAL_BLOCKS) : current));
-        }}
-      />
-
+        <HouseConfirm
+          pendingUnits={pendingUnits}
+          setPendingUnits={setPendingUnits}
+          en={en}
+          promotedFromHouse={promotedFromHouse}
+          setStructureType={setStructureType}
+          setGridUnits={setGridUnits}
+          setGridSize={setGridSize}
+          setFloorsCount={setFloorsCount}
+        />
       {/* Desktop Bottom Step Navigation */}
-        <div className="hidden sm:flex items-center justify-between pt-2">
-          <Link
-            href={cancelHref}
-            onClick={cancelDraft}
-            className={buttonVariants({ variant: 'outline', size: 'sm' })}
-          >
-            {en ? 'Cancel' : 'إلغاء'}
-          </Link>
-          <div className="flex items-center gap-3">
-            {step > 0 ? (
-              <Button variant="outline" size="sm" onClick={goBack} className="gap-1.5 min-w-24">
-                <ArrowLeft className="size-4 rtl:rotate-180" aria-hidden />
-                {en ? 'Back' : 'السابق'}
-              </Button>
-            ) : null}
-            {step < lastStep ? (
-              <Button
-                size="sm"
-                onClick={goNext}
-                disabled={!canGoNext}
-                className="gap-1.5 min-w-28 shadow-xs"
-              >
-                {en ? 'Next' : 'التالي'}
-                <ArrowRight className="size-4 rtl:rotate-180" aria-hidden />
-              </Button>
-            ) : (
-              <Button
-                onClick={() => void handleSave()}
-                disabled={saving || !canGoNext || staleDraft !== null}
-                aria-describedby={staleDraft ? 'building-stale-draft' : undefined}
-                size="sm"
-                className="gap-1.5 min-w-36 shadow-xs"
-              >
-                {saving ? (
-                  <Loader2 className="size-4 animate-spin" aria-hidden />
-                ) : (
-                  <Save className="size-4" aria-hidden />
-                )}
-                <span>{saveLabel}</span>
-              </Button>
-            )}
-          </div>
-        </div>
+        <DesktopFooter
+          cancelHref={cancelHref}
+          cancelDraft={cancelDraft}
+          en={en}
+          step={step}
+          goBack={goBack}
+          lastStep={lastStep}
+          goNext={goNext}
+          canGoNext={canGoNext}
+          handleSave={handleSave}
+          saving={saving}
+          staleDraft={staleDraft}
+          saveLabel={saveLabel}
+        />
       </div>
 
-      {/* ── Sticky Mobile Action Bar ── */}
-      <div className="sm:hidden fixed bottom-0 inset-x-0 bg-background/95 backdrop-blur-md border-t p-3.5 pb-[max(0.875rem,env(safe-area-inset-bottom))] z-40 flex items-center gap-3 shadow-lg">
-        {step > 0 ? (
-          <Button variant="outline" onClick={goBack} className="h-11 px-4 text-xs gap-1.5">
-            <ArrowLeft className="size-4 rtl:rotate-180" aria-hidden />
-            {en ? 'Back' : 'السابق'}
-          </Button>
-        ) : (
-          <Link
-            href={cancelHref}
-            onClick={cancelDraft}
-            className={cn(buttonVariants({ variant: 'outline' }), 'flex-1 h-11 text-xs')}
-          >
-            {en ? 'Cancel' : 'إلغاء'}
-          </Link>
-        )}
-        {step < lastStep ? (
-          <Button onClick={goNext} disabled={!canGoNext} className="flex-1 h-11 text-xs gap-1.5 shadow-xs">
-            {en ? 'Next' : 'التالي'}
-            <ArrowRight className="size-4 rtl:rotate-180" aria-hidden />
-          </Button>
-        ) : (
-          <Button
-            onClick={() => void handleSave()}
-            disabled={saving || !canGoNext || staleDraft !== null}
-            aria-describedby={staleDraft ? 'building-stale-draft' : undefined}
-            className="flex-1 h-11 text-xs gap-1.5 shadow-xs"
-          >
-            {saving ? (
-              <Loader2 className="size-4 animate-spin" aria-hidden />
-            ) : (
-              <Save className="size-4" aria-hidden />
-            )}
-            <span>{saveLabel}</span>
-          </Button>
-        )}
-      </div>
+      <MobileBar
+        step={step}
+        goBack={goBack}
+        en={en}
+        cancelHref={cancelHref}
+        cancelDraft={cancelDraft}
+        lastStep={lastStep}
+        goNext={goNext}
+        canGoNext={canGoNext}
+        handleSave={handleSave}
+        saving={saving}
+        staleDraft={staleDraft}
+        saveLabel={saveLabel}
+      />
     </div>
   );
 }
