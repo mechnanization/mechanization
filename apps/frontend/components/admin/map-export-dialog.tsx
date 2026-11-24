@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { useRef } from 'react';
 import { Download, MapPin, Printer } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -23,6 +24,7 @@ export function MapExportDialog({
   tenant: string;
   locale?: string;
 }) {
+  const tCommon = useTranslations('common');
   const isEnglish = locale === 'en';
   const printRef = useRef<HTMLDivElement>(null);
 
@@ -130,7 +132,7 @@ export function MapExportDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl overflow-hidden p-0">
+      <DialogContent closeLabel={tCommon('close')} className="max-w-3xl overflow-hidden p-0">
         <DialogHeader className="border-b p-4 pb-3">
           <DialogTitle className="flex items-center gap-2 text-base font-bold">
             <MapPin className="size-5 text-primary" />

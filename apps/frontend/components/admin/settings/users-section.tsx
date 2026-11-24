@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Ban, Check, Copy, KeyRound, Loader2, Lock, RotateCcw, Search, ShieldCheck, UserPlus, UsersRound } from 'lucide-react';
 import { EmptyState } from '@/components/ui/states';
@@ -101,6 +102,7 @@ export function UsersSection({
   token: string;
   copy: SettingsCopy;
 }) {
+  const tCommon = useTranslations('common');
   const toast = useToast();
 
   const [rows, setRows] = useState<StaffSummary[]>([]);
@@ -482,7 +484,7 @@ export function UsersSection({
           }
         }}
       >
-        <DialogContent className="max-w-md">
+        <DialogContent closeLabel={tCommon('close')} className="max-w-md">
           <DialogHeader>
             <div className="mx-auto mb-2 flex size-12 items-center justify-center rounded-xl bg-warning/10 text-warning ring-1 ring-warning/20">
               <KeyRound className="size-6" />

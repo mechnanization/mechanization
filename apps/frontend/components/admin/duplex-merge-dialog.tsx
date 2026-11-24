@@ -70,6 +70,7 @@ function DuplexMergeDialog({
   onMerged: (result: DuplexMergeResult) => void;
 }) {
   const t = useTranslations('unitLevels.merge');
+  const tCommon = useTranslations('common');
   const blockerText = useBlockerText();
   const toast = useToast();
   const [preview, setPreview] = React.useState<DuplexMergePreview | null>(null);
@@ -159,7 +160,7 @@ function DuplexMergeDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => !submitting && onOpenChange(next)}>
-      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
+      <DialogContent closeLabel={tCommon('close')} className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>
             {preview ? t('title', { lower: preview.lower.unitCode, upper: preview.upper.unitCode }) : t('button')}

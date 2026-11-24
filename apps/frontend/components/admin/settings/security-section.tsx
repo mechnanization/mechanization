@@ -100,6 +100,7 @@ export function SecuritySection({
   /** `/{tenant}/{locale}/{adminPath}` — where the reset-password link lands. */
   base: string;
 }) {
+  const tCommon = useTranslations('common');
   const toast = useToast();
   const router = useRouter();
   const tAuth = useTranslations('auth');
@@ -1011,7 +1012,7 @@ export function SecuritySection({
 
       {/* Security Confirmation: Disable 2FA Modal */}
       <Dialog open={disableModalOpen} onOpenChange={setDisableModalOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent closeLabel={tCommon('close')} className="sm:max-w-md">
           <form
             onSubmit={async (e) => {
               e.preventDefault();
@@ -1126,7 +1127,7 @@ export function SecuritySection({
 
       {/* Security Confirmation: Reconfigure 2FA Modal */}
       <Dialog open={reconfigureModalOpen} onOpenChange={setReconfigureModalOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent closeLabel={tCommon('close')} className="sm:max-w-md">
           <form
             onSubmit={async (e) => {
               e.preventDefault();

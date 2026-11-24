@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { useMemo } from 'react';
 import {
   Building2,
@@ -35,6 +36,7 @@ export function ZoneInfoDialog({
   tenant: string;
   locale?: string;
 }) {
+  const tCommon = useTranslations('common');
   const isEnglish = locale === 'en';
 
   const zoneFeature = useMemo(() => {
@@ -51,7 +53,7 @@ export function ZoneInfoDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md overflow-hidden p-0">
+      <DialogContent closeLabel={tCommon('close')} className="max-w-md overflow-hidden p-0">
         <DialogHeader className="border-b p-4 pb-3 bg-muted/20">
           <div className="flex items-center gap-3">
             <span
