@@ -37,7 +37,6 @@ import {
   type BuildingLifecycle,
   type HouseGrowth,
   type StructureType,
-  type UnitType,
 } from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
@@ -74,8 +73,7 @@ import {
   type BuildingDraft,
   type EditDraftFields,
 } from '@/lib/building-draft';
-import { emptyTopFloors } from '@/lib/floor-count';
-import { haversineDistance, pointInGeometry } from '@/lib/map-geometry';
+import { pointInGeometry } from '@/lib/map-geometry';
 import { scrollElementToTop } from '@/lib/scroll-to-top';
 import { offlineStorageAvailable } from '@/lib/offline-db';
 import { queueBuilding } from '@/lib/offline-sync';
@@ -119,241 +117,30 @@ import {
   DEFAULT_GRID_SIZE,
   DEFAULT_VERTICAL_BLOCKS,
   flattenGridUnits,
-  MAX_HORIZONTAL_BLOCKS,
   UnitGridPicker,
   type GridUnitDraft,
 } from './unit-grid-picker';
-import { effectiveUnitStatus } from './building-unit-forms';
-
-const LOOKUP_DEBOUNCE_MS = 350;
-
-/**
- * What a منزل becomes when the officer says it is a building.
- *
- * Named rather than inlined because two things have to agree about it — the
- * structure type written to the shell, and the unit type
- * `defaultUnitTypeFor` derives for every block being re-typed — and they are
- * several lines apart.
- *
- * «بناية سكنية» and not «متعدد الاستعمالات»: the officer has told us there is
- * more than one dwelling and nothing more, and a residential block is what
- * that is nineteen times out of twenty. Every other type is one tap away on
- * the step they were just on.
- */
-const PROMOTED_STRUCTURE_TYPE = 'RESIDENTIAL_BUILDING' as const;
-/** The grid's own physical ceiling (20×20) — a defensive assertion, not a
- *  real user-facing limit, since the grid itself can never produce more. */
-const MAX_GRID_UNITS = 400;
-
-/**
- * Metres under which an existing structure is shown as «قريبة جداً».
- *
- * Neighbouring buildings in this town genuinely stand 2–7 m apart (parcel 45
- * has four real structures that close), so this is not a line past which a
- * second record is refused — it is where the distance stops being a detail and
- * becomes the first thing on the row. Parcel 56's duplicates were 3.6 m and
- * 4.1 m from the original.
- */
-const NEAR_DUPLICATE_METRES = 15;
-
-/** The same four-character floor every other reason in the app has. */
-const MIN_DUPLICATE_REASON = 4;
-
-/**
- * «على بُعد ٤ م» beside a structure already on the parcel.
- *
- * Three honest states: measured and close, measured and not, and not
- * measurable — which says what would make it measurable, because the one fix
- * available to the officer is dropping their own pin.
- */
-function DistanceBadge({
-  metres,
-  hasPin,
-  en,
-}: {
-  metres: number | null;
-  hasPin: boolean;
-  en: boolean;
-}) {
-  if (metres == null) {
-    return (
-      <Badge variant="soft-muted" className="text-xs">
-        {hasPin
-          ? en
-            ? 'distance unknown — it has no pin'
-            : 'المسافة غير معروفة — لا مدخل مثبت لها'
-          : en
-            ? 'drop the entrance pin to see the distance'
-            : 'ثبِّت دبوس المدخل لمعرفة المسافة'}
-      </Badge>
-    );
-  }
-  const near = metres < NEAR_DUPLICATE_METRES;
-  const formatted = metres.toLocaleString(en ? 'en' : 'ar');
-  return (
-    <Badge variant={near ? 'soft-destructive' : 'soft-warning'} className="text-xs font-semibold">
-      {en
-        ? `${formatted} m away${near ? ' — very close' : ''}`
-        : `على بُعد ${formatted} م${near ? ' — قريبة جداً' : ''}`}
-    </Badge>
-  );
-}
-
-const STEPS = [
-  /*
-    Renamed from «موقع المدخل», because the step no longer only asks for a pin.
-
-    It now runs sector → map → رقم العقار → فرز → shared parcels, which is the
-    order an officer actually has the answers in: they know where they are
-    standing long before they know the cadastral number of the ground under
-    them. The old order asked for the number first and then offered the map,
-    which is the one sequence in which the map cannot help.
-  */
-  { en: 'Location & Parcel', ar: 'الموقع والعقار', icon: MapPin },
-  { en: 'Facility Information', ar: 'معلومات المنشأة', icon: Building2 },
-  { en: 'Unit Matrix', ar: 'مصفوفة الوحدات', icon: ClipboardCheck },
-] as const;
-
-function offlineNow(): boolean {
-  return typeof navigator !== 'undefined' && navigator.onLine === false;
-}
-
-/** What the grid holds about a unit that already exists, as it was loaded —
- *  the baseline a save diffs against so an untouched cell writes nothing. */
-interface UnitBaseline {
-  unitCode: string;
-  floor: number;
-  startCol: number;
-  endCol: number;
-  unitType: UnitType;
-  /** «نوع الوحدة» (0109), as loaded: a change of type alone is a change even when the base stays. */
-  unitTypeId?: string | null;
-}
-
-/**
- * Why the census will refuse to delete this unit, in the officer's words.
- *
- * The same two facts `deleteUnit` guards on that the matrix carries: an
- * occupancy current *or* ended (D2 keeps the history precisely so the
- * municipality outlives the card) and a logged visit. The server also refuses
- * on a damage assessment or a citizen's card, which this payload cannot see —
- * so this hides the button where it is certainly futile, and the server's own
- * refusal is surfaced verbatim for the rest.
- */
-function undeletableReason(unit: UnitWithOccupants, en: boolean): string | undefined {
-  if (unit.occupants.length > 0) {
-    return en
-      ? `Unit ${unit.unitCode} has occupancy on record and cannot be removed. Correct it from the unit matrix instead.`
-      : `الوحدة ${unit.unitCode} مسجَّل عليها إشغال ولا يمكن حذفها. صحّحها من مصفوفة الوحدات.`;
-  }
-  if (unit.visitCount > 0) {
-    return en
-      ? `Unit ${unit.unitCode} has field visits on record and cannot be removed.`
-      : `الوحدة ${unit.unitCode} مسجَّلة عليها زيارات ميدانية ولا يمكن حذفها.`;
-  }
-  return undefined;
-}
-
-/**
- * The census matrix, redrawn on the wizard's grid.
- *
- * Units painted through the grid carry their exact span and keep it. Ones
- * created any other way — the hand-added unit on the matrix page, a card's
- * inline flat — have no span at all, and are laid out one column each in
- * `sequence` order beside whatever is already positioned. That is the same
- * honest default `building-unit-matrix-view.tsx` draws them with, rather than a
- * guess at a layout nobody ever drew.
- *
- * Basements are drawn like any other floor — the grid extends below ground by
- * `basementsCount` — and the depth they imply comes back beside the height.
- * Only what will not fit the grid's *width* comes back as `hidden`, because a
- * unit the grid cannot draw must never be one the save then treats as deleted.
- */
-function gridFromUnits(
-  units: UnitWithOccupants[],
-  en: boolean,
-): {
-  drafts: GridUnitDraft[];
-  hidden: UnitWithOccupants[];
-  columns: number;
-  floors: number;
-  basements: number;
-} {
-  const drafts: GridUnitDraft[] = [];
-  const hidden: UnitWithOccupants[] = [];
-
-  const byFloor = new Map<number, UnitWithOccupants[]>();
-  for (const unit of units) {
-    byFloor.set(unit.floor, [...(byFloor.get(unit.floor) ?? []), unit]);
-  }
-
-  let colorIndex = 0;
-  /** Columns a home's upper levels take on the floors above its entrance (0095). */
-  const rising = new Map<number, Set<number>>();
-  let columns = 0;
-  let floors = 0;
-  let basements = 0;
-
-  for (const [floor, floorUnits] of [...byFloor.entries()].sort((a, b) => a[0] - b[0])) {
-    const taken = new Set<number>(rising.get(floor) ?? []);
-    const ordered = [...floorUnits].sort((a, b) => a.sequence - b.sequence);
-    const positioned = ordered.filter((unit) => unit.startCol != null && unit.endCol != null);
-    const loose = ordered.filter((unit) => unit.startCol == null || unit.endCol == null);
-
-    const place = (unit: UnitWithOccupants, startCol: number, endCol: number) => {
-      for (let col = startCol; col <= endCol; col += 1) taken.add(col);
-      drafts.push({
-        clientId: crypto.randomUUID(),
-        floor,
-        startCol,
-        endCol,
-        unitType: unit.unitType,
-        unitTypeId: unit.unitTypeId ?? undefined,
-        colorIndex: colorIndex++,
-        existingId: unit.id,
-        unitCode: unit.unitCode,
-        undeletableReason: undeletableReason(unit, en),
-        unitStatus: effectiveUnitStatus(unit),
-        levels: unit.levels ?? 1,
-      });
-      const levels = unit.levels ?? 1;
-      for (let level = 1; level < levels; level += 1) {
-        const above = rising.get(floor + level) ?? new Set<number>();
-        for (let col = startCol; col <= endCol; col += 1) above.add(col);
-        rising.set(floor + level, above);
-      }
-      columns = Math.max(columns, endCol);
-      if (floor < 0) basements = Math.max(basements, -floor);
-      else floors = Math.max(floors, floor + levels);
-    };
-
-    for (const unit of positioned) {
-      const startCol = Math.min(Math.max(1, unit.startCol as number), MAX_HORIZONTAL_BLOCKS);
-      const endCol = Math.min(Math.max(startCol, unit.endCol as number), MAX_HORIZONTAL_BLOCKS);
-      let clashes = false;
-      for (let col = startCol; col <= endCol; col += 1) if (taken.has(col)) clashes = true;
-      // Two units drawn over one cell is not a layout. The later one falls back
-      // to being placed beside the rest rather than on top of them.
-      if (clashes) loose.push(unit);
-      else place(unit, startCol, endCol);
-    }
-
-    for (const unit of loose) {
-      let col = 1;
-      while (col <= MAX_HORIZONTAL_BLOCKS && taken.has(col)) col += 1;
-      if (col > MAX_HORIZONTAL_BLOCKS) hidden.push(unit);
-      else place(unit, col, col);
-    }
-  }
-
-  return {
-    drafts,
-    hidden,
-    columns: Math.max(DEFAULT_GRID_SIZE, columns),
-    floors: Math.max(1, floors),
-    basements,
-  };
-}
+import {
+  LOOKUP_DEBOUNCE_MS,
+  MAX_GRID_UNITS,
+  MIN_DUPLICATE_REASON,
+  PROMOTED_STRUCTURE_TYPE,
+  STEPS,
+} from './building-editor/constants';
+import {
+  bottomFloorFor,
+  cleanPartitionNumbers,
+  cleanSharedParcels,
+  orphanedUnitsOf,
+  pinIsAnswered,
+  rankDuplicates,
+  topFloorFor,
+  topGapOf,
+} from '@/lib/building-editor-rules';
+import { DistanceBadge } from './building-editor/distance-badge';
+import { gridFromUnits, type UnitBaseline } from './building-editor/grid-units';
+import { offlineNow } from './building-editor/offline-now';
+import { StepField } from './building-editor/step-field';
 
 export function BuildingEditor({
   tenant,
@@ -1140,30 +927,15 @@ export function BuildingEditor({
    * offline payload and a direct API call reach it without passing through
    * here. This is what the officer sees, not a second authority.
    */
-  const cleanedPartitionNumbers = useMemo(() => {
-    if (!isPartitioned) return [];
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const raw of partitionNumbers) {
-      const value = raw.trim();
-      if (!value || seen.has(value)) continue;
-      seen.add(value);
-      out.push(value);
-    }
-    return out;
-  }, [partitionNumbers, isPartitioned]);
+  const cleanedPartitionNumbers = useMemo(
+    () => cleanPartitionNumbers(partitionNumbers, isPartitioned),
+    [partitionNumbers, isPartitioned],
+  );
 
-  const cleanedSharedParcels = useMemo(() => {
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const raw of sharedParcels) {
-      const value = raw.trim();
-      if (!value || value === trimmedParcel || seen.has(value)) continue;
-      seen.add(value);
-      out.push(value);
-    }
-    return out;
-  }, [sharedParcels, trimmedParcel]);
+  const cleanedSharedParcels = useMemo(
+    () => cleanSharedParcels(sharedParcels, trimmedParcel),
+    [sharedParcels, trimmedParcel],
+  );
 
   // Debounced lookup on parcel change
   useEffect(() => {
@@ -1563,7 +1335,7 @@ export function BuildingEditor({
     [isHouse],
   );
 
-  const topFloorAllowed = Math.max(0, (Number(floorsCount) || 1) - 1);
+  const topFloorAllowed = topFloorFor(floorsCount);
 
   /*
     Top rows with nothing in them — the roof counted as a floor, most often
@@ -1571,22 +1343,16 @@ export function BuildingEditor({
     are expected to be empty.
   */
   const topGap = useMemo(
-    () =>
-      lifecycleStatus === 'PERMITTED' || lifecycleStatus === 'UNDER_CONSTRUCTION'
-        ? null
-        : emptyTopFloors([...gridUnits, ...hiddenUnits], Number(floorsCount) || 1),
+    () => topGapOf(gridUnits, hiddenUnits, floorsCount, lifecycleStatus),
     [gridUnits, hiddenUnits, floorsCount, lifecycleStatus],
   );
-  const bottomFloorAllowed = -Math.max(0, Number(basementsCount) || 0);
+  const bottomFloorAllowed = bottomFloorFor(basementsCount);
 
   /** Confirmed grid units left stranded if the officer narrows the building
    *  past where they were painted — above the top floor or below the deepest
    *  basement. Never silently dropped. */
   const orphanedUnits = useMemo(
-    () =>
-      gridUnits.filter(
-        (unit) => unit.floor > topFloorAllowed || unit.floor < bottomFloorAllowed,
-      ),
+    () => orphanedUnitsOf(gridUnits, topFloorAllowed, bottomFloorAllowed),
     [gridUnits, topFloorAllowed, bottomFloorAllowed],
   );
 
@@ -1599,8 +1365,7 @@ export function BuildingEditor({
     Eight buildings went on file with no pin and no word about it. A correction
     is not held to this — the building is already on file, pinned or not.
   */
-  const pinAnswered =
-    editing || Boolean(pin) || (noPinReason !== null && noPinReason.trim().length >= MIN_DUPLICATE_REASON);
+  const pinAnswered = pinIsAnswered(editing, pin, noPinReason);
   const step1Valid = Boolean(trimmedParcel) && !(pin && pinVerdict === false) && pinAnswered;
   /*
     What stops «التالي» on the facility step.
@@ -1634,22 +1399,7 @@ export function BuildingEditor({
    * it. Parcel 56's second and third records were made 3.6 m and 4.1 m from
    * the first by officers shown a list with no distance on it.
    */
-  const rankedDuplicates = useMemo(() => {
-    if (!duplicates?.length) return [];
-    const measured = duplicates.map((row, index) => {
-      const distance =
-        pin && row.latitude != null && row.longitude != null
-          ? Math.round(haversineDistance(pin, [row.longitude, row.latitude]))
-          : row.distanceMetres;
-      return { row, distance, index };
-    });
-    return measured.sort((a, b) => {
-      if (a.distance != null && b.distance != null) return a.distance - b.distance || a.index - b.index;
-      if (a.distance != null) return -1;
-      if (b.distance != null) return 1;
-      return a.index - b.index;
-    });
-  }, [duplicates, pin]);
+  const rankedDuplicates = useMemo(() => rankDuplicates(duplicates, pin), [duplicates, pin]);
 
   /**
    * Moving between steps puts the top of the new step back on screen.
@@ -3176,7 +2926,6 @@ export function BuildingEditor({
                 />
               </Field>
 
-
               {orphanedUnits.length > 0 ? (
                 <p role="alert" className="flex items-center gap-1.5 text-xs text-destructive">
                   <AlertTriangle className="size-3.5 shrink-0" />
@@ -3568,115 +3317,3 @@ export function BuildingEditor({
   );
 }
 
-/**
- * One numbered question in the wizard's first step.
- *
- * ## Why a number rather than just a label
- *
- * This step now asks five things in a fixed order, and the order is the
- * instruction: pick a sector, place the building, confirm what parcel that
- * turned out to be, say whether it is partitioned, list any other parcels it
- * stands on. Each answer narrows the next. A flat stack of labelled fields
- * would present them as five independent questions an officer may answer in
- * any order — and answering the third first is precisely the sequence the old
- * form imposed and this one exists to undo.
- *
- * The ordinals are computed by the caller rather than by a counter here,
- * because the first one disappears on a correction: a building being edited
- * already has a parcel, so it already has a sector, and «اختر القطاع» would be
- * a question whose answer is printed below it.
- *
- * ## Why it does not wrap `Field`
- *
- * `Field` requires an `htmlFor`, which three of these five have no single
- * input to point at — the map, the partition choice and the repeatable parcel
- * list are all sections rather than controls. A `<label>` aimed at an id that
- * does not exist is worse than a heading: it announces to a screen reader that
- * activating it will focus something, and nothing is focused.
- */
-function StepField({
-  ordinal,
-  title,
-  error,
-  required,
-  htmlFor,
-  en,
-  children,
-}: {
-  ordinal: number;
-  title: string;
-  error?: string;
-  required?: boolean;
-  /** Present only where the section really is one control. */
-  htmlFor?: string;
-  /**
-   * Passed rather than read from a context, unlike `Field`'s own copy of this.
-   *
-   * `Field` falls back to Arabic when it is rendered outside a
-   * `FieldFlagProvider`, which is correct for a form that is Arabic by default
-   * — but this wizard is rendered at `/en/` too and provides no flag context at
-   * all, so an inherited default would print «(اختياري)» in the middle of an
-   * English form.
-   */
-  en: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    /*
-      The step number sits in a gutter on a desktop, and inline on a phone.
-
-      A 36px `ps-9` gutter is cheap on a 1280px page and expensive on a 390px
-      one: stacked with the page and card padding it was taking roughly a fifth
-      of the screen away from the controls themselves, which is why the map
-      inside step 2 rendered as a narrow strip with dead space beside it. On a
-      phone the number joins the title row instead, and the section reclaims the
-      full width. One element either way — `sm:absolute` lifts the same badge
-      out of the flow once there is room for a gutter.
-    */
-    <section className="relative sm:ps-10">
-      <div className="space-y-1.5">
-        <div className="flex flex-wrap items-center gap-1.5">
-          {/*
-            `aria-hidden`, because the number is the visual account of an order a
-            screen reader already gets from the document: the sections are in the
-            DOM in the order they are asked. Announcing "1" before every label would
-            add a digit to each heading and no information to any of them.
-          */}
-          <span
-            aria-hidden
-            className="flex size-6 shrink-0 items-center justify-center rounded-full border border-primary/25 bg-primary/10 text-xs font-bold tabular-nums text-primary sm:absolute sm:start-0 sm:top-0 sm:size-7"
-          >
-            {ordinal}
-          </span>
-          {htmlFor ? (
-            <Label htmlFor={htmlFor} className="text-xs font-medium text-foreground/90">
-              {title}
-            </Label>
-          ) : (
-            <p className="text-xs font-medium text-foreground/90">{title}</p>
-          )}
-          {required ? (
-            <span
-              className="text-xs font-bold text-destructive"
-              aria-label={en ? 'Required field' : 'حقل إلزامي'}
-            >
-              *
-            </span>
-          ) : (
-            <span className="text-xs font-normal text-muted-foreground">
-              {en ? '(optional)' : '(اختياري)'}
-            </span>
-          )}
-        </div>
-
-        {children}
-
-        {error ? (
-          <p role="alert" className="text-xs font-medium text-destructive">
-            {error}
-          </p>
-        ) : null}
-      </div>
-    </section>
-  );
-}

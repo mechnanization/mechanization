@@ -18,7 +18,7 @@ import type { AuditDaySummary } from '@/lib/api-client';
   The two that can be rendered here (their read is a query, which a seeded cache
   answers on the server) are checked on what a reader needs from the first
   paint; the other two are read as source, like the rest of this suite. This file
-  has no DOM (only the citizen form is mounted in jsdom so far), so what it cannot
+  has no DOM (only the citizen form and the building editor are mounted in jsdom so far), so what it cannot
   see is a click: opening a day,
   receiving a handover, suspending an account.
 */

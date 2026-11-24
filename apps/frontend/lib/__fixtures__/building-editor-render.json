@@ -1,0 +1,26 @@
+{
+  "create-from-a-parcel-ar": {
+    "length": 17357,
+    "sha256": "fceee3dde945bd778004907d09301eb5399e624e07cb414962adef7bb09c18c2"
+  },
+  "create-step0-ar": {
+    "length": 16626,
+    "sha256": "20c22483c1cdf0b611aad14f366e20326d9ece40494731854ca2f084fc160f19"
+  },
+  "create-step0-en": {
+    "length": 16782,
+    "sha256": "08e421d7cfdf090993fd73a934f0eedf666e48318bc8572984f439bf0922558a"
+  },
+  "create-step1-ar": {
+    "length": 17083,
+    "sha256": "db8590d55e90b21e2b557f7d0425ccb0a33245b88b1522fe7a3e15241d3a8b73"
+  },
+  "create-step2-ar": {
+    "length": 31465,
+    "sha256": "30f32942d9674cdf1f0f58cc7505f2815fdb3b3a0a42fc67fe31897a4cede908"
+  },
+  "create-step2-en": {
+    "length": 31661,
+    "sha256": "1db717d4759734acc45a13e8272633e8cbc252a05b3681d6366affe873b6ad9c"
+  }
+}
