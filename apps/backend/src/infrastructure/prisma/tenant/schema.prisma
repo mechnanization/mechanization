@@ -106,6 +106,10 @@ model User {
   /// Base32 TOTP secret. Mandatory for SUPER_ADMIN before any session is issued.
   totpSecret      String?
   totpConfirmedAt DateTime?
+  /// A secret an enrolment issued that no code has confirmed yet (migration
+  /// 0116). Confirming moves it into `totpSecret`; until then the confirmed
+  /// factor above keeps signing in. Sign-in never reads it.
+  totpPendingSecret String?
 
   // ── Citizen-only ──
   /// NOT NULL with a default rather than nullable, so a filter excluding owner
