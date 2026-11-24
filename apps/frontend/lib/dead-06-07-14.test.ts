@@ -89,7 +89,8 @@ describe('the exports nothing read are gone (DEAD-14)', () => {
 
   it('DEFAULT_GRID_SIZE, its neighbour in the same alias block, stays: the building editor reads it', () => {
     expect(read('components/admin/unit-grid-picker.tsx')).toMatch(/export const DEFAULT_GRID_SIZE = DEFAULT_HORIZONTAL_BLOCKS;/);
-    expect(read('components/admin/building-editor.tsx')).toMatch(/\bDEFAULT_GRID_SIZE\b/);
+    // the editor's state (its `gridSize`) moved to a hook with GOD-21 phase 3
+    expect(read('components/admin/building-editor/use-building-fields.ts')).toMatch(/\bDEFAULT_GRID_SIZE\b/);
   });
 
   it('SHARED_SENTRY_OPTIONS stays: the audit listed it, and all three Sentry configs spread it', () => {

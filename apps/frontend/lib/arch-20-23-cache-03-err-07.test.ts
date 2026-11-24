@@ -22,6 +22,17 @@ function withoutComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/[^\n]*/g, '$1');
 }
 
+/** Each file's code, read and stripped once: seven of the tests below scan the whole app, and the editor alone is thirty files now. */
+const codeCache = new Map<string, string>();
+function codeOf(file: string): string {
+  let code = codeCache.get(file);
+  if (code === undefined) {
+    code = withoutComments(readFileSync(file, 'utf8'));
+    codeCache.set(file, code);
+  }
+  return code;
+}
+
 function sourcesUnder(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
@@ -37,7 +48,7 @@ function filesMatching(pattern: RegExp, dirs = ['app', 'components', 'lib']): st
   return dirs
     .flatMap((dir) => sourcesUnder(join(FRONTEND, dir)))
     .filter((file) => !/\.test\.ts$/.test(file))
-    .filter((file) => pattern.test(withoutComments(readFileSync(file, 'utf8'))))
+    .filter((file) => pattern.test(codeOf(file)))
     .map((file) => relative(FRONTEND, file).replace(/\\/g, '/'))
     .sort();
 }

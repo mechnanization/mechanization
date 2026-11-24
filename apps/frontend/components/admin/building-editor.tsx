@@ -1,10 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect } from 'react';
 import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import type { FeatureCollection, Geometry } from 'geojson';
 import {
   Building2,
   ChevronRight,
@@ -12,91 +11,20 @@ import {
   MapPin,
 } from 'lucide-react';
 import {
-  formatBuildingCode,
   getLabels,
-  isUnsurveyableShell,
-  nextBuildingSuffix,
-  type BuildingLifecycle,
-  type HouseGrowth,
-  type StructureType,
 } from '@mechanization/shared-schemas';
-import {
-  ApiRequestError,
-  checkPropertyNumber,
-  createBuilding,
-  duplicateBuildingsOf,
-  getBuilding,
-  getBuildings,
-  getZoneParcelIndex,
-  getZones,
-  houseGrowthQuestionOf,
-  logApiError,
-  saveBuildingMatrix,
-  type BuildingDetail,
-  type BuildingMatrixSave,
-  type BuildingMatrixSaveResult,
-  type DuplicateBuildingCandidate,
-  type HouseGrowthQuestion,
-  type ParcelCorrectionResult,
-  type UnitWithOccupants,
-  type ZoneSummary,
-} from '@/lib/api-client';
 import { BuildingReviewDialog } from '@/components/admin/building-review-dialog';
 import {
   clearBuildingDraft,
-  draftIsCurrent,
-  editDraftFingerprint,
-  loadBuildingDraft,
-  redrawRemovedFlats,
-  saveBuildingDraft,
-  type BuildingDraft,
-  type EditDraftFields,
 } from '@/lib/building-draft';
-import { pointInGeometry } from '@/lib/map-geometry';
-import { scrollElementToTop } from '@/lib/scroll-to-top';
-import { offlineStorageAvailable } from '@/lib/offline-db';
-import { queueBuilding } from '@/lib/offline-sync';
-import { heldInDoubt, heldKey, keyIsSpent, markInDoubt, outcomeInDoubt, spendKey } from '@/lib/request-id';
-import { clearSession } from '@/lib/session';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { CENSUS_WRITE_ROLES, hasRole } from '@/lib/staff-roles';
-import { systemTypeOf, typesToOffer, useBuildingTypes } from '@/lib/building-types';
+import { useBuildingTypes } from '@/lib/building-types';
 import { useUnitTypes } from '@/lib/unit-types';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/components/ui/toast';
 import { BackLink } from '@/components/ui/back-link';
-import {
-  footprintOf,
-  loadParcelLabelPoints,
-  loadParcelOutlines,
-  outlineOf,
-  parcelAt,
-  parcelsOf,
-} from './parcel-pin-picker';
-import {
-  DEFAULT_GRID_SIZE,
-  flattenGridUnits,
-  type GridUnitDraft,
-} from './unit-grid-picker';
-import {
-  LOOKUP_DEBOUNCE_MS,
-  MAX_GRID_UNITS,
-  MIN_DUPLICATE_REASON,
-  STEPS,
-} from './building-editor/constants';
-import {
-  bottomFloorFor,
-  cleanPartitionNumbers,
-  cleanSharedParcels,
-  orphanedUnitsOf,
-  pinIsAnswered,
-  rankDuplicates,
-  topFloorFor,
-  topGapOf,
-} from '@/lib/building-editor-rules';
-import { gridFromUnits, type UnitBaseline } from './building-editor/grid-units';
-import { offlineNow } from './building-editor/offline-now';
 import { EditorHeader } from './building-editor/editor-header';
 import { StepRail } from './building-editor/step-rail';
 import { EditorNotices } from './building-editor/editor-notices';
@@ -112,6 +40,13 @@ import { MatrixCard } from './building-editor/matrix-card';
 import { SummaryCard } from './building-editor/summary-card';
 import { HouseConfirm } from './building-editor/house-confirm';
 import { DesktopFooter, MobileBar } from './building-editor/action-footers';
+import { useBuildingFields } from './building-editor/use-building-fields';
+import { useEditorDraft } from './building-editor/use-editor-draft';
+import { useBuildingLoad } from './building-editor/use-building-load';
+import { useParcelLookup } from './building-editor/use-parcel-lookup';
+import { useStructureRules } from './building-editor/use-structure-rules';
+import { useStepGates } from './building-editor/use-step-gates';
+import { useBuildingSave } from './building-editor/use-building-save';
 
 export function BuildingEditor({
   tenant,
@@ -198,296 +133,40 @@ export function BuildingEditor({
       router.replace(`${base}/buildings`);
     }
   }, [staffUser, base, router]);
+  const { step, setStep, parcelNumber, setParcelNumber, zoneId, setZoneId, zones, setZones, parcelOutlines, setParcelOutlines, parcelLabelPoints, setParcelLabelPoints, zoneIndex, setZoneIndex, parcelFromMap, setParcelFromMap, isPartitioned, setIsPartitioned, partitionNumbers, setPartitionNumbers, sharedParcels, setSharedParcels, name, setName, postedNumber, setPostedNumber, structureType, setStructureType, buildingTypeId, setBuildingTypeId, offeredTypes, chosenTypeId, chosenType, chooseType, floorsCount, setFloorsCount, basementsCount, setBasementsCount, notes, setNotes, pin, setPin, pinParcelRef, gridSize, setGridSize, gridUnits, setGridUnits, baselineRef, hiddenUnits, setHiddenUnits, loadingDetail, setLoadingDetail, loadError, setLoadError, savedCode, setSavedCode, zoneCode, setZoneCode, zoneName, setZoneName, suffix, setSuffix, lifecycleStatus, setLifecycleStatus, duplicates, setDuplicates, acknowledgedDuplicates, setAcknowledgedDuplicates, duplicateReason, setDuplicateReason, noPinReason, setNoPinReason, outline, setOutline, resolvedParcel, setResolvedParcel, fallbackCentre, setFallbackCentre, outlineChecked, setOutlineChecked, cadastreHint, setCadastreHint, resolving, setResolving, saving, setSaving, inFlight, creationScope, error, setError, fieldErrors, setFieldErrors, pinError, setPinError, trimmedParcel, rootRef, headingRef, restoredRef, draftRestoredRef, draftBase, draftBaseRef, markDraftBase, staleDraft, setStaleDraft, staleDraftRef, pristineRef } = useBuildingFields({
+    initialStep,
+    initialParcelNumber,
+    buildingTypes,
+    editing,
+  });
 
-  // Wizard state
-  const [step, setStep] = useState<0 | 1 | 2>(initialStep);
-
-  // Form State
-  const [parcelNumber, setParcelNumber] = useState(initialParcelNumber ?? '');
-  /**
-   * The قطاع the officer chose to look in — a way into the map, never a stored
-   * field.
-   *
-   * A building's sector is *derived* from its parcel's membership at read time
-   * (D13) and must stay that way: `Zone.parcelNumbers` is the single statement
-   * of which عقار belongs where, and a second copy on the building would be a
-   * second answer that could disagree with it. So this narrows the map and
-   * nothing else, and the code preview goes on reading the zone off the parcel
-   * — which is why a mismatch between the two is reported rather than silently
-   * preferred either way.
-   */
-  const [zoneId, setZoneId] = useState<string>('');
-  const [zones, setZones] = useState<ZoneSummary[]>([]);
-  /** Every traced parcel, held so a dropped pin can be resolved to one. */
-  const [parcelOutlines, setParcelOutlines] = useState<FeatureCollection | null>(null);
-  /** Where the cadastre prints each parcel's number — what the map labels. */
-  const [parcelLabelPoints, setParcelLabelPoints] = useState<FeatureCollection | null>(null);
-  /** parcel number → its sector, from the same five-minute cache the code preview uses. */
-  const [zoneIndex, setZoneIndex] = useState<
-    Record<string, { id: string; code: string; name: string; color: string }>
-  >({});
-  /** Whether رقم العقار was read off the map rather than typed — see `applyPin`. */
-  const [parcelFromMap, setParcelFromMap] = useState(false);
-  /**
-   * «مفروزة» — ticked, or silent.
-   *
-   * A checkbox, and the asymmetry is deliberate: a tick is an officer asserting
-   * a فرز, and an untouched box is «لم يُسأل» rather than «غير مفروزة». That is
-   * why the save sends `true` or `null` and never `false` — فرز decides whether
-   * a flat inside can carry a deed of its own, and an unticked box on every
-   * building ever created is not a finding about title anybody made.
-   *
-   * The column keeps room for `false` (see `Building.isPartitioned`) so a form
-   * that one day records «we read the صحيفة and there is no فرز» has somewhere
-   * to put it. This control is not that form.
-   */
-  const [isPartitioned, setIsPartitioned] = useState(false);
-  /**
-   * أرقام الأقسام — asked only once the box is ticked.
-   *
-   * Kept as a list including blanks so a half-typed row survives a re-render;
-   * blanks are dropped on save. A فرز with no numbers recorded is still a فرز,
-   * so an empty list is allowed — «مفروزة، والأرقام لم تُجمع بعد» is an ordinary
-   * state for a building surveyed from the street.
-   */
-  const [partitionNumbers, setPartitionNumbers] = useState<string[]>([]);
-  /**
-   * «إن كانت الوحدة مشتركة على أكثر من عقار» — the other عقارات it stands on.
-   *
-   * Kept as a list including blanks so a half-typed row survives a re-render;
-   * blanks are dropped on save. `parcelNumber` itself is never one of these —
-   * the server filters it out too, since a building that straddles itself is a
-   * figure that would then be counted.
-   */
-  const [sharedParcels, setSharedParcels] = useState<string[]>([]);
-  const [name, setName] = useState('');
-  const [postedNumber, setPostedNumber] = useState('');
-  const [structureType, setStructureType] = useState<StructureType>('RESIDENTIAL_BUILDING');
-  /** «نوع المبنى» (0106): '' until chosen; the structure follows it, and the server takes the type's. */
-  const [buildingTypeId, setBuildingTypeId] = useState('');
-  const offeredTypes = useMemo(
-    () => typesToOffer(buildingTypes.data ?? [], buildingTypeId),
-    [buildingTypes.data, buildingTypeId],
-  );
-  const chosenTypeId = buildingTypeId || systemTypeOf(buildingTypes.data ?? [], structureType)?.id || '';
-  const chosenType = offeredTypes.find((type) => type.id === chosenTypeId);
-  const chooseType = (id: string) => {
-    const type = offeredTypes.find((candidate) => candidate.id === id);
-    setBuildingTypeId(id);
-    if (type) setStructureType(type.structureType);
-  };
-  const [floorsCount, setFloorsCount] = useState('3');
-  /** How far the structure goes down, as a depth: '2' means B1 and B2. */
-  const [basementsCount, setBasementsCount] = useState('0');
-  const [notes, setNotes] = useState('');
-  const [pin, setPin] = useState<[number, number] | null>(null);
-  const pinParcelRef = useRef<string | null>(initialParcelNumber ?? null);
-
-  // Unit matrix grid state
-  const [gridSize, setGridSize] = useState(DEFAULT_GRID_SIZE);
-  const [gridUnits, setGridUnits] = useState<GridUnitDraft[]>([]);
-  /**
-   * The matrix as it was loaded, keyed by unit id — what the save diffs
-   * against. An untouched cell is in here unchanged and writes nothing; one
-   * that is here and no longer on the grid is a deletion; one on the grid and
-   * not here is a new flat.
-   */
-  const baselineRef = useRef<Map<string, UnitBaseline>>(new Map());
-  /** Units the grid cannot draw — basements, or a floor already full. Listed
-   *  rather than silently dropped, and never touched by the save. */
-  const [hiddenUnits, setHiddenUnits] = useState<UnitWithOccupants[]>([]);
-
-  // Edit-mode load state
-  const [loadingDetail, setLoadingDetail] = useState(editing);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  /** The code the server allocated — shown instead of a provisional preview. */
-  const [savedCode, setSavedCode] = useState<string | null>(null);
-
-  // Resolution State
-  const [zoneCode, setZoneCode] = useState<string | null>(null);
-  const [zoneName, setZoneName] = useState<string | null>(null);
-  const [suffix, setSuffix] = useState('A');
-  const [lifecycleStatus, setLifecycleStatus] = useState<BuildingLifecycle>('IN_USE');
-  const [duplicates, setDuplicates] = useState<DuplicateBuildingCandidate[] | null>(null);
-  const [acknowledgedDuplicates, setAcknowledgedDuplicates] = useState(false);
-  /** «لماذا هي منشأة منفصلة؟» — required beside the tick. See `duplicateReason` in the schema. */
-  const [duplicateReason, setDuplicateReason] = useState('');
-  /**
-   * «تعذّر تثبيت المدخل» — ticked, with a reason, when a new building is saved
-   * without a pin. Null while unticked. See `noPinReason` in the schema.
-   */
-  const [noPinReason, setNoPinReason] = useState<string | null>(null);
-  const [outline, setOutline] = useState<Geometry | null>(null);
-  /**
-   * The parcel `outline` was looked up for.
-   *
-   * Not `trimmedParcel`: that changes on every keystroke, and the lookup runs
-   * after a debounce. Numbering the map from the field would move the
-   * highlighted number through «1», «12», «125» while the outline still showed
-   * the parcel before — this changes in the same render as the outline does.
-   */
-  const [resolvedParcel, setResolvedParcel] = useState<string | null>(null);
-  const [fallbackCentre, setFallbackCentre] = useState<[number, number] | null>(null);
-  const [outlineChecked, setOutlineChecked] = useState(false);
-  const [cadastreHint, setCadastreHint] = useState<string | null>(null);
-  const [resolving, setResolving] = useState(false);
-
-  // Submission State
-  const [saving, setSaving] = useState(false);
-  /*
-    Synchronous, unlike `saving`, which lands a render after a fast second
-    press — and a second press on «حفظ» created a second building (STA-4).
-    Never released after a save that landed: the page stays mounted until the
-    next route is ready, and the button must not come back on meanwhile.
-  */
-  const inFlight = useRef(false);
-  /*
-    The creation's `clientSubmissionId`, which the server makes the building's
-    id, is a held key (`heldKey`, lib/request-id.ts), one per parcel
-    (`building:<parcel>`): a retry after an answer that never arrived goes
-    under the same id and is answered with the building the lost attempt made
-    (`deduplicated`), not a second one on the parcel — queued offline too.
-
-    Held there, not in this form: a key in a ref died with the form, and the
-    draft did not — a locale switch or a look at «سجل المباني» brought back the
-    ticked «مبنى منفصل» with a new id, and the server, seeing the tick, made a
-    second building. Per parcel, because the server refuses an id it knows on
-    another parcel. Kept across every failure, as every retry key is
-    (`keyIsSpent`): a 400 proves only that this attempt wrote nothing. Spent
-    once the building is on file or handed to the queue.
-  */
-  const creationScope = `building:${parcelNumber.trim()}` as const;
-  const [error, setError] = useState<string | null>(null);
-  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
-  const [pinError, setPinError] = useState<string | null>(null);
-
-  const trimmedParcel = parcelNumber.trim();
-
-  /** The wizard's outermost element — what a step change scrolls back to. */
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  /** The page heading: where the focus goes once the stale-draft question, which held it, is answered (A11Y-6). */
-  const headingRef = useRef<HTMLHeadingElement | null>(null);
-
-  /**
-   * Restoring across a locale switch.
-   *
-   * The locale is a route segment, so switching language is a navigation to a
-   * different route: this component unmounts and a fresh one mounts with every
-   * `useState` back at its initial value. Without this, changing language four
-   * fields into a building — pin dropped, matrix painted — empties the form.
-   *
-   * Runs once, before the edit-mode fetch resolves, and `restoredRef` stops the
-   * autosave below from writing the blank initial state over a good draft in
-   * the same tick. See `lib/building-draft.ts` for why this is session-scoped,
-   * and `loadDetail` for the draft of an edit the server has moved past.
-   */
-  const restoredRef = useRef(false);
-  /** Whether the values on screen came from a draft rather than the server —
-   *  read by `loadDetail` so the refetch does not overwrite them. A ref, not
-   *  state: `loadDetail` must not be rebuilt when it flips. */
-  const draftRestoredRef = useRef(false);
-  /**
-   * On an edit, the building's `updatedAt` the values on screen were made
-   * against — stored with the draft (`baseUpdatedAt`) so a restore can tell
-   * whether a colleague has saved since. State for the autosave, mirrored in a
-   * ref for `loadDetail`, which must not be rebuilt when it changes.
-   */
-  const [draftBase, setDraftBase] = useState<string | null>(null);
-  const draftBaseRef = useRef<string | null>(null);
-  const markDraftBase = useCallback((updatedAt: string | null) => {
-    draftBaseRef.current = updatedAt;
-    setDraftBase(updatedAt);
-  }, []);
-  /**
-   * The server's copy, while a restored draft was made against an older
-   * version of it and the officer has not yet said which one to keep. Nothing
-   * is saved meanwhile (`handleSave`).
-   */
-  const [staleDraft, setStaleDraft] = useState<BuildingDetail | null>(null);
-  const staleDraftRef = useRef<HTMLDivElement | null>(null);
-  /**
-   * The edit as loaded, as `editDraftFingerprint` writes it — taken by
-   * `hydrate` from the very values it puts on screen. The autosave writes no
-   * draft of an edit that still matches it.
-   */
-  const pristineRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (restoredRef.current) return;
-    restoredRef.current = true;
-
-    const draft = loadBuildingDraft(tenant, buildingId);
-    if (!draft) return;
-
-    markDraftBase(draft.baseUpdatedAt ?? null);
-    setStep(draft.step);
-    setParcelNumber(draft.parcelNumber);
-    pinParcelRef.current = draft.parcelNumber.trim() || null;
-    setName(draft.name);
-    setPostedNumber(draft.postedNumber);
-    setZoneId(draft.zoneId);
-    setIsPartitioned(draft.isPartitioned);
-    setPartitionNumbers(draft.partitionNumbers);
-    setSharedParcels(draft.sharedParcels);
-    setStructureType(draft.structureType);
-    setBuildingTypeId(draft.buildingTypeId ?? '');
-    setLifecycleStatus(draft.lifecycleStatus);
-    setFloorsCount(draft.floorsCount);
-    setBasementsCount(draft.basementsCount);
-    setNotes(draft.notes);
-    setPin(draft.pin);
-    setGridSize(draft.gridSize);
-    setGridUnits(draft.gridUnits);
-    setAcknowledgedDuplicates(draft.acknowledgedDuplicates);
-    setDuplicateReason(draft.duplicateReason ?? '');
-    setNoPinReason(draft.noPinReason ?? null);
-    draftRestoredRef.current = true;
-  }, [tenant, buildingId, markDraftBase]);
-
-  /**
-   * Autosave, on every change to anything the officer typed, dropped or
-   * painted. Cheap: one `JSON.stringify` of a few fields into sessionStorage.
-   */
-  useEffect(() => {
-    if (!restoredRef.current) return;
-    const draft: BuildingDraft = {
-      step,
-      parcelNumber,
-      name,
-      postedNumber,
-      zoneId,
-      isPartitioned,
-      partitionNumbers,
-      sharedParcels,
-      structureType,
-      buildingTypeId,
-      lifecycleStatus,
-      floorsCount,
-      basementsCount,
-      notes,
-      pin,
-      gridSize,
-      gridUnits,
-      acknowledgedDuplicates,
-      duplicateReason,
-      ...(noPinReason !== null ? { noPinReason } : {}),
-      baseUpdatedAt: draftBase,
-    };
-    /*
-      An edit is kept only once it differs from the building as loaded. The
-      form holds the building from the moment it loads, so every visit used to
-      leave a draft — and the next visit within the hour, after any save to
-      the building (a colleague's, or the officer's own on the matrix), asked
-      which version to keep about edits nobody had made.
-    */
-    if (buildingId && editDraftFingerprint(draft) === pristineRef.current) {
-      clearBuildingDraft(tenant, buildingId);
-      return;
-    }
-    saveBuildingDraft(tenant, buildingId, draft);
-  }, [
+  useEditorDraft({
+    restoredRef,
     tenant,
     buildingId,
-    draftBase,
+    markDraftBase,
+    setStep,
+    setParcelNumber,
+    pinParcelRef,
+    setName,
+    setPostedNumber,
+    setZoneId,
+    setIsPartitioned,
+    setPartitionNumbers,
+    setSharedParcels,
+    setStructureType,
+    setBuildingTypeId,
+    setLifecycleStatus,
+    setFloorsCount,
+    setBasementsCount,
+    setNotes,
+    setPin,
+    setGridSize,
+    setGridUnits,
+    setAcknowledgedDuplicates,
+    setDuplicateReason,
+    setNoPinReason,
+    draftRestoredRef,
     step,
     parcelNumber,
     name,
@@ -508,1275 +187,183 @@ export function BuildingEditor({
     acknowledgedDuplicates,
     duplicateReason,
     noPinReason,
-  ]);
+    draftBase,
+    pristineRef,
+  });
+
+  const { loadedUpdatedAtRef, loadedDetailRef, buildingReview, setBuildingReview, growthQuestion, setGrowthQuestion, houseGrowth, setHouseGrowth, loadedLifecycle, liveOccupants, previousCodes, correctingParcel, setCorrectingParcel, applyParcelCorrection, loadDetail, loadLatestVersion, keepDraftOverLatest } = useBuildingLoad({
+    pinParcelRef,
+    setParcelNumber,
+    setSharedParcels,
+    setSuffix,
+    setSavedCode,
+    markDraftBase,
+    en,
+    setHiddenUnits,
+    setName,
+    setPostedNumber,
+    setIsPartitioned,
+    setPartitionNumbers,
+    setStructureType,
+    setBuildingTypeId,
+    setLifecycleStatus,
+    setNotes,
+    setPin,
+    setGridUnits,
+    setGridSize,
+    setFloorsCount,
+    setBasementsCount,
+    pristineRef,
+    baselineRef,
+    buildingId,
+    token,
+    setLoadingDetail,
+    setLoadError,
+    tenant,
+    draftRestoredRef,
+    draftBaseRef,
+    setStaleDraft,
+    router,
+    base,
+    staleDraft,
+    setAcknowledgedDuplicates,
+    setDuplicateReason,
+    setNoPinReason,
+    setStep,
+    initialStep,
+    headingRef,
+    setParcelOutlines,
+    setParcelLabelPoints,
+    setZones,
+    setZoneIndex,
+  });
+
+  const { zoneParcelFeatures, zoneFootprint, mapParcelLabels, selectedZone, parcelZone, zoneMismatch, cleanedPartitionNumbers, cleanedSharedParcels, codePreview, applyPin, pinVerdict } = useParcelLookup({
+    zoneId,
+    zoneIndex,
+    parcelOutlines,
+    parcelLabelPoints,
+    resolvedParcel,
+    zones,
+    trimmedParcel,
+    initialParcelNumber,
+    setZoneId,
+    partitionNumbers,
+    isPartitioned,
+    sharedParcels,
+    setOutline,
+    setResolvedParcel,
+    setFallbackCentre,
+    setOutlineChecked,
+    setZoneCode,
+    setZoneName,
+    setCadastreHint,
+    setDuplicates,
+    setAcknowledgedDuplicates,
+    setParcelFromMap,
+    setSuffix,
+    setResolving,
+    tenant,
+    token,
+    editing,
+    tEditor,
+    en,
+    setPin,
+    pinParcelRef,
+    setPinError,
+    zoneCode,
+    suffix,
+    outline,
+    setParcelNumber,
+    pin,
+  });
+
+  const { hasRecordedUnits, shellShortcut, warDamaged, infoOnly, skipsMatrix, lastStep, visibleSteps, promotedFromHouse, pendingUnits, setPendingUnits, requestUnits } = useStructureRules({
+    structureType,
+    editing,
+    gridUnits,
+    lifecycleStatus,
+    scope,
+    setStep,
+    setFloorsCount,
+    setBasementsCount,
+    setGridSize,
+    setGridUnits,
+  });
+
+  const { topGap, orphanedUnits, pinAnswered, step1Valid, step2Valid, rankedDuplicates, goToStep, goNext, goBack } = useStepGates({
+    floorsCount,
+    gridUnits,
+    hiddenUnits,
+    lifecycleStatus,
+    basementsCount,
+    editing,
+    pin,
+    noPinReason,
+    trimmedParcel,
+    pinVerdict,
+    acknowledgedDuplicates,
+    duplicateReason,
+    duplicates,
+    setStep,
+    rootRef,
+    step,
+    lastStep,
+  });
+
+  const { handleSave, rehearseAfterAnswer } = useBuildingSave({
+    baselineRef,
+    loadedUpdatedAtRef,
+    name,
+    postedNumber,
+    isPartitioned,
+    cleanedPartitionNumbers,
+    cleanedSharedParcels,
+    structureType,
+    chosenTypeId,
+    lifecycleStatus,
+    pin,
+    floorsCount,
+    basementsCount,
+    notes,
+    infoOnly,
+    gridUnits,
+    houseGrowth,
+    tenant,
+    inFlight,
+    staleDraft,
+    staleDraftRef,
+    trimmedParcel,
+    setFieldErrors,
+    en,
+    goToStep,
+    pinAnswered,
+    setPinError,
+    pinVerdict,
+    orphanedUnits,
+    setError,
+    skipsMatrix,
+    setSaving,
+    editing,
+    buildingId,
+    token,
+    setBuildingReview,
+    toast,
+    savedCode,
+    router,
+    base,
+    creationScope,
+    codePreview,
+    suffix,
+    duplicateReason,
+    noPinReason,
+    acknowledgedDuplicates,
+    tEditor,
+    setGrowthQuestion,
+    setDuplicates,
+    setAcknowledgedDuplicates,
+  });
 
-  /**
-   * The building's `updatedAt` as last loaded, sent with the save so a colleague's
-   * change made since is not silently replaced. Refreshed on every load — except
-   * under a restored draft made against an older version, where it stays that
-   * version until the officer chooses (`loadDetail`, `staleDraft`).
-   */
-  const loadedUpdatedAtRef = useRef<string | null>(null);
-  /** The building as loaded — what «مراجعة التعديلات» compares the save with. */
-  const loadedDetailRef = useRef<BuildingDetail | null>(null);
-  /** A rehearsed save waiting for the officer to confirm — see `handleSave`. */
-  const [buildingReview, setBuildingReview] = useState<{
-    save: BuildingMatrixSave;
-    result: BuildingMatrixSaveResult;
-  } | null>(null);
-  /**
-   * «هذا المنزل يصبح مبنى» (D28): asked by the server's rehearsal when this save
-   * would give a house on somebody's file a second unit, and the answer sent
-   * with every rehearsal and save after it.
-   */
-  const [growthQuestion, setGrowthQuestion] = useState<HouseGrowthQuestion | null>(null);
-  const [houseGrowth, setHouseGrowth] = useState<HouseGrowth | null>(null);
-  /**
-   * The lifecycle as loaded, and how many people are recorded in the units
-   * right now — so moving a lived-in building to «مهدوم» says what it leaves
-   * behind. See the notice under «الحالة الإنشائية».
-   */
-  const [loadedLifecycle, setLoadedLifecycle] = useState<BuildingLifecycle | null>(null);
-  const [liveOccupants, setLiveOccupants] = useState(0);
-  /** Codes retired by «تصحيح رقم العقار», newest first — shown under the code. */
-  const [previousCodes, setPreviousCodes] = useState<NonNullable<BuildingDetail['previousCodes']>>([]);
-  const [correctingParcel, setCorrectingParcel] = useState(false);
-
-  /*
-    A correction landed. Only what the server changed is applied — the parcel,
-    the code, the shared parcels and the version — so anything else the officer
-    has typed in the form stays theirs to save. The pin is claimed for the new
-    parcel *before* the parcel changes, or the parcel lookup below would drop it
-    as a pin left on another parcel.
-  */
-  const applyParcelCorrection = useCallback(
-    (result: ParcelCorrectionResult, oldParcel: string) => {
-      pinParcelRef.current = result.building.parcelNumber;
-      setParcelNumber(result.building.parcelNumber);
-      setSharedParcels(result.building.sharedParcelNumbers);
-      setSuffix(result.building.codeSuffix);
-      setSavedCode(result.building.code);
-      loadedUpdatedAtRef.current = result.building.updatedAt;
-      // The officer made this version, on top of what is on screen.
-      markDraftBase(result.building.updatedAt);
-      setPreviousCodes((current) => [
-        { code: result.previousCode, parcelNumber: oldParcel, reason: '', retiredAt: new Date().toISOString() },
-        ...current.filter((row) => row.code !== result.building.code),
-      ]);
-    },
-    [markDraftBase],
-  );
-
-  /**
-   * Fills the whole wizard from the building on file.
-   *
-   * `keepEdits` is the locale-switch case. The remount refetches the building,
-   * and this would then write the server's copy over the corrections the
-   * officer had already typed — so when a draft was restored, only the parts
-   * the server owns are applied: the allocated code, the suffix, the baseline
-   * the save diffs against, and the units the grid cannot draw. What the
-   * officer typed stays theirs. Whether the draft may be kept without asking
-   * is `loadDetail`'s question (`draftIsCurrent`), not this one's.
-   */
-  const hydrate = useCallback(
-    (detail: BuildingDetail, keepEdits = false) => {
-      loadedUpdatedAtRef.current = detail.updatedAt ?? null;
-      if (!keepEdits) markDraftBase(detail.updatedAt ?? null);
-      loadedDetailRef.current = detail;
-      setLoadedLifecycle(detail.lifecycleStatus);
-      setLiveOccupants(
-        detail.units.reduce(
-          (count, unit) => count + unit.occupants.filter((occupant) => !occupant.toDate).length,
-          0,
-        ),
-      );
-      /*
-        The parcel is the server's, even when a draft is kept: this form cannot
-        edit it, and a draft saved before «تصحيح رقم العقار» would otherwise put
-        the old number back on screen and centre the map on the wrong parcel.
-      */
-      setParcelNumber(detail.parcelNumber);
-      pinParcelRef.current = detail.parcelNumber;
-      setPreviousCodes(detail.previousCodes ?? []);
-      setSuffix(detail.codeSuffix);
-      setSavedCode(detail.code);
-
-      const { drafts, hidden, columns, floors, basements } = gridFromUnits(detail.units, en);
-      setHiddenUnits(hidden);
-      if (!keepEdits) {
-        const loaded: EditDraftFields = {
-          name: detail.name ?? '',
-          postedNumber: detail.postedNumber ?? '',
-          isPartitioned: detail.isPartitioned === true,
-          partitionNumbers: detail.partitionNumbers ?? [],
-          sharedParcels: detail.sharedParcelNumbers ?? [],
-          structureType: detail.structureType,
-          buildingTypeId: detail.buildingTypeId ?? '',
-          lifecycleStatus: detail.lifecycleStatus,
-          notes: detail.notes ?? '',
-          pin: detail.latitude != null && detail.longitude != null ? [detail.longitude, detail.latitude] : null,
-          gridUnits: drafts,
-          gridSize: columns,
-          /*
-            The taller of the two answers wins. A matrix carrying a unit on floor 5
-            of a building recorded as three storeys is a building whose floor count
-            is behind its own units, and a grid that only drew three rows would
-            strand the other two outside it.
-
-            The same reconciliation downward: a building declaring no basement but
-            holding a unit on B2 has two levels the register has not caught up with.
-            This is the case that made the column worth adding — those units existed
-            long before anywhere could say the basement did.
-          */
-          floorsCount: String(Math.max(detail.floorsCount, floors)),
-          basementsCount: String(Math.max(detail.basementsCount ?? 0, basements)),
-        };
-        setName(loaded.name);
-        setPostedNumber(loaded.postedNumber);
-        setIsPartitioned(loaded.isPartitioned);
-        setPartitionNumbers(loaded.partitionNumbers);
-        setSharedParcels(loaded.sharedParcels);
-        setStructureType(loaded.structureType);
-        setBuildingTypeId(loaded.buildingTypeId ?? '');
-        setLifecycleStatus(loaded.lifecycleStatus);
-        setNotes(loaded.notes);
-        setPin(loaded.pin);
-        setGridUnits(loaded.gridUnits);
-        setGridSize(loaded.gridSize);
-        setFloorsCount(loaded.floorsCount);
-        setBasementsCount(loaded.basementsCount);
-        // The building as it is on file: what «nothing typed» means to the autosave.
-        pristineRef.current = editDraftFingerprint(loaded);
-      }
-
-      baselineRef.current = new Map(
-        drafts
-          .filter((draft) => draft.existingId)
-          .map((draft) => [
-            draft.existingId as string,
-            {
-              unitCode: draft.unitCode ?? '',
-              floor: draft.floor,
-              startCol: draft.startCol,
-              endCol: draft.endCol,
-              unitType: draft.unitType,
-              unitTypeId: draft.unitTypeId,
-            },
-          ]),
-      );
-    },
-    [en, markDraftBase],
-  );
-
-  const loadDetail = useCallback(async () => {
-    if (!buildingId || !token) return;
-    setLoadingDetail(true);
-    setLoadError(null);
-    try {
-      const detail = await getBuilding(tenant, token, buildingId);
-      const keepEdits = draftRestoredRef.current;
-      hydrate(detail, keepEdits);
-      /*
-        A restored draft made against an older version than the server holds:
-        a colleague has saved this building since. Keeping it silently, with
-        the fresh `updatedAt` as the save's `expectedUpdatedAt`, overwrote their
-        change without a word. The draft stays on screen, the save still names
-        the version the draft was made against (so it is refused as stale), and
-        the officer is asked which to keep (`staleDraft`).
-      */
-      if (keepEdits && !draftIsCurrent({ baseUpdatedAt: draftBaseRef.current }, detail.updatedAt)) {
-        /*
-          A draft from before `baseUpdatedAt` existed names no version: the
-          fresh one stays, so «تصحيح رقم العقار» still sends a version to be
-          checked against. The save waits for the answer either way.
-        */
-        loadedUpdatedAtRef.current = draftBaseRef.current ?? detail.updatedAt;
-        setStaleDraft(detail);
-      }
-    } catch (caught) {
-      logApiError(caught);
-      if (caught instanceof ApiRequestError && caught.status === 401) {
-        clearSession(tenant);
-        router.replace(`${base}/login`);
-        return;
-      }
-      setLoadError(
-        caught instanceof ApiRequestError
-          ? caught.payload.message
-          : en
-            ? 'Could not load the building.'
-            : 'تعذّر تحميل المبنى.',
-      );
-    } finally {
-      setLoadingDetail(false);
-    }
-  }, [buildingId, token, tenant, hydrate, en, router, base]);
-
-  useEffect(() => {
-    void loadDetail();
-  }, [loadDetail]);
-
-  /**
-   * «حمّل النسخة الأحدث»: the draft is dropped and the building read again, as
-   * on a fresh open — read, not taken from the copy the question was asked
-   * about, which a third save may have passed since.
-   */
-  const loadLatestVersion = () => {
-    if (!staleDraft) return;
-    clearBuildingDraft(tenant, buildingId);
-    draftRestoredRef.current = false;
-    setAcknowledgedDuplicates(false);
-    setDuplicateReason('');
-    setNoPinReason(null);
-    setStep(initialStep);
-    setStaleDraft(null);
-    void loadDetail();
-    headingRef.current?.focus();
-  };
-
-  /**
-   * «أبقِ مسودتي»: an informed choice — the draft stays, and its save makes the
-   * building what is on screen. `hydrate` rebuilt the baseline from the newer
-   * version, so a flat removed since is drawn again as new (`redrawRemovedFlats`).
-   */
-  const keepDraftOverLatest = () => {
-    if (!staleDraft) return;
-    loadedUpdatedAtRef.current = staleDraft.updatedAt;
-    markDraftBase(staleDraft.updatedAt);
-    const baseline = baselineRef.current;
-    setGridUnits((current) => redrawRemovedFlats(current, baseline));
-    setStaleDraft(null);
-    headingRef.current?.focus();
-  };
-
-  /*
-    The two things the sector step needs, fetched once per mount.
-
-    Both are already cached at the module level — `loadParcelOutlines` keeps one
-    promise per tenant for the life of the tab once it has found the outlines
-    (a miss is asked again, with the token once there is one), and `getZoneParcelIndex` a
-    five-minute one — so this is not a second copy of anything. What it adds is
-    holding them in state, because the pin→parcel lookup has to be able to
-    answer synchronously the moment somebody taps the map.
-
-    A failure here is deliberately silent and non-blocking. Without the outlines
-    the officer types رقم العقار exactly as they always have; without the zone
-    list the sector select is simply not offered. Neither is a reason to stop
-    somebody recording a building.
-  */
-  useEffect(() => {
-    let cancelled = false;
-
-    void loadParcelOutlines(tenant, token).then((collection) => {
-      if (!cancelled) setParcelOutlines(collection);
-    });
-
-    void loadParcelLabelPoints(tenant, token).then((collection) => {
-      if (!cancelled) setParcelLabelPoints(collection);
-    });
-
-    if (!token) return () => { cancelled = true; };
-
-    void getZones(tenant, token)
-      .then(({ zones: rows }) => {
-        if (!cancelled) setZones(rows);
-      })
-      .catch(logApiError);
-
-    void getZoneParcelIndex(tenant, token)
-      .then((index) => {
-        if (!cancelled) setZoneIndex(index);
-      })
-      .catch(logApiError);
-
-    return () => {
-      cancelled = true;
-    };
-  }, [tenant, token]);
-
-  /**
-   * The parcels the chosen sector owns — the map's «where to look» layer.
-   *
-   * Inverted out of `getZoneParcelIndex` rather than read from `getZone`, so
-   * the sector layer and the code preview are computed from one answer: two
-   * requests would be two caches, and a parcel drawn as belonging to the sector
-   * while the code beside it named a different one is worse than either.
-   *
-   * It inherits that index's one rule — the *first* sector claiming a parcel
-   * wins, matching the server's own `findFirst`. A parcel listed in two zones
-   * is therefore drawn under only one of them. That is a defect in the zones,
-   * not here, and it is the same parcel the derived code would name anyway.
-   */
-  const zoneParcelNumbers = useMemo(() => {
-    if (!zoneId) return [];
-    return Object.entries(zoneIndex)
-      .filter(([, zone]) => zone.id === zoneId)
-      .map(([parcel]) => parcel);
-  }, [zoneIndex, zoneId]);
-
-  const zoneParcelFeatures = useMemo(
-    () => parcelsOf(parcelOutlines, zoneParcelNumbers),
-    [parcelOutlines, zoneParcelNumbers],
-  );
-
-  const zoneFootprint = useMemo(() => footprintOf(zoneParcelFeatures), [zoneParcelFeatures]);
-
-  /**
-   * The numbers the map prints: the sector's parcels, and the resolved one
-   * wherever it is.
-   *
-   * From the sector's membership rather than from its drawn outlines, so the
-   * few parcels the tracer could not close still show their number where the
-   * cadastre printed it — with no outline to tap, that number is what the
-   * officer types instead. The resolved parcel is added because it is numbered
-   * even when it lies outside the sector, or when there is no sector at all.
-   */
-  const mapParcelLabels = useMemo(
-    () =>
-      parcelsOf(
-        parcelLabelPoints,
-        resolvedParcel ? [...zoneParcelNumbers, resolvedParcel] : zoneParcelNumbers,
-      ),
-    [parcelLabelPoints, zoneParcelNumbers, resolvedParcel],
-  );
-
-  const selectedZone = useMemo(
-    () => zones.find((zone) => zone.id === zoneId) ?? null,
-    [zones, zoneId],
-  );
-
-  /** The sector this parcel actually belongs to — the authority, whatever is selected. */
-  const parcelZone = trimmedParcel ? (zoneIndex[trimmedParcel] ?? null) : null;
-
-  /*
-    A building being corrected, or one reached from «إضافة مبنى على هذا العقار»,
-    arrives with its parcel already known — so the sector is known too, and
-    making somebody select the one their building is already in would be asking
-    a question whose answer is on the screen.
-
-    Only that parcel, though — the one the editor opened with. A parcel the
-    officer *types*, or reads off the map, no longer fills the select: doing so
-    moved the map out from under somebody in the middle of entering a building,
-    which is a worse answer than leaving the sector blank. Nothing is lost by
-    staying quiet, because the select only narrows the map (see `zoneId`) and
-    the code's sector half is read off the parcel itself either way — so the
-    sector that ends up on the record is identical whether this fires or not.
-
-    Still only ever fills an empty selection. An officer who has chosen a sector
-    and is typing a parcel from a different one gets the mismatch note below,
-    not a silently switched map.
-  */
-  useEffect(() => {
-    if (!parcelZone) return;
-    if (trimmedParcel !== (initialParcelNumber ?? '').trim()) return;
-    setZoneId((current) => current || parcelZone.id);
-  }, [parcelZone, trimmedParcel, initialParcelNumber]);
-
-  /**
-   * The selected sector and the parcel's own sector disagree.
-   *
-   * Reported, never resolved. The code's zone half is derived from the parcel's
-   * membership (D13) and this control cannot change that — so the officer is
-   * told which sector the code will actually carry, and left to decide whether
-   * the parcel is wrong or the sector was just where they started looking.
-   */
-  const zoneMismatch = Boolean(zoneId && parcelZone && parcelZone.id !== zoneId);
-
-  /**
-   * The shared parcels as they go on the wire: trimmed, de-duplicated, and
-   * never containing the building's own عقار.
-   *
-   * The server applies the identical rules — it has to, since an offline
-   * payload and a direct API call reach it without passing through here — so
-   * this is what the officer sees rather than a second authority.
-   */
-  /**
-   * أرقام الأقسام as they go on the wire: trimmed, de-duplicated, blanks gone —
-   * and empty whenever the box is not ticked.
-   *
-   * The server resolves the same pairing (`partitionNumbersFor`), because an
-   * offline payload and a direct API call reach it without passing through
-   * here. This is what the officer sees, not a second authority.
-   */
-  const cleanedPartitionNumbers = useMemo(
-    () => cleanPartitionNumbers(partitionNumbers, isPartitioned),
-    [partitionNumbers, isPartitioned],
-  );
-
-  const cleanedSharedParcels = useMemo(
-    () => cleanSharedParcels(sharedParcels, trimmedParcel),
-    [sharedParcels, trimmedParcel],
-  );
-
-  // Debounced lookup on parcel change
-  useEffect(() => {
-    if (!trimmedParcel) {
-      setOutline(null);
-      setResolvedParcel(null);
-      setFallbackCentre(null);
-      setOutlineChecked(false);
-      setZoneCode(null);
-      setZoneName(null);
-      setCadastreHint(null);
-      setDuplicates(null);
-      setAcknowledgedDuplicates(false);
-      setParcelFromMap(false);
-      setSuffix('A');
-      return;
-    }
-
-    let cancelled = false;
-    setResolving(true);
-
-    const timer = setTimeout(() => {
-      void Promise.all([
-        loadParcelOutlines(tenant, token),
-        token
-          ? getZoneParcelIndex(tenant, token).catch(
-              () => ({}) as Record<string, { code: string; name: string }>,
-            )
-          : Promise.resolve({} as Record<string, { code: string; name: string }>),
-        /*
-          Only a creation asks what else stands here. Editing a building that
-          is *already* one of the structures on this parcel, the duplicate
-          guard would hold the building up against itself — and the suffix it
-          derives is the one this row was allocated years ago.
-        */
-        token && !editing
-          ? getBuildings(tenant, token, { parcelNumber: trimmedParcel, limit: 100 }).catch(
-              () => null,
-            )
-          : Promise.resolve(null),
-        checkPropertyNumber(tenant, trimmedParcel).catch((caught) => {
-          logApiError(caught);
-          return null;
-        }),
-      ])
-        .then(([outlines, zoneIndex, existing, check]) => {
-          if (cancelled) return;
-
-          const geometry = outlineOf(outlines, trimmedParcel);
-          setOutline(geometry);
-          setResolvedParcel(trimmedParcel);
-          setOutlineChecked(true);
-
-          const zone = zoneIndex[trimmedParcel];
-          setZoneCode(zone?.code ?? null);
-          setZoneName(zone?.name ?? null);
-
-          if (existing) {
-            /*
-              The suffix comes from the buildings *filed* on this parcel only.
-              The list also carries structures filed under a neighbouring parcel
-              that cover this one (`sharedParcelNumbers`), and their letters
-              belong to their own parcel's sequence, not this one's (D9) — the
-              server allocates the same way.
-            */
-            setSuffix(
-              nextBuildingSuffix([
-                ...existing.buildings
-                  .filter((row) => row.parcelNumber === trimmedParcel)
-                  .map((row) => row.codeSuffix),
-                // Retired by «تصحيح رقم العقار»: never given out again, so never predicted.
-                ...(existing.retiredSuffixes ?? []),
-              ]),
-            );
-            setDuplicates(
-              existing.buildings.length > 0
-                ? existing.buildings.map((row) => ({
-                    id: row.id,
-                    code: row.code,
-                    name: row.name,
-                    postedNumber: row.postedNumber,
-                    structureType: row.structureType,
-                    lifecycleStatus: row.lifecycleStatus,
-                    unitsTotal: row.unitsTotal,
-                    latitude: row.latitude,
-                    longitude: row.longitude,
-                    distanceMetres: null,
-                    ownParcelNumber: row.parcelNumber,
-                    sharesParcel: row.parcelNumber !== trimmedParcel,
-                  }))
-                : null,
-            );
-            if (existing.buildings.length === 0) setAcknowledgedDuplicates(false);
-          }
-
-          // `null` is a check that failed (a success is always an object): say so rather than
-          // read it as «not taken, in the cadastre» (ERR-02).
-          setCadastreHint(
-            check === null
-              ? tEditor('cadastreUnchecked')
-              : check.inCadastre === false
-              ? en
-                ? 'This parcel number is not in the cadastre. It can still be saved — verify deed records first.'
-                : 'رقم العقار غير موجود في المسح العقاري. يمكن الحفظ رغم ذلك — راجع سند الملكية أولاً.'
-              : null,
-          );
-
-          setPin((current) => {
-            if (current && pinParcelRef.current === trimmedParcel) return current;
-            pinParcelRef.current = null;
-            return null;
-          });
-
-          setFallbackCentre(
-            geometry || !check?.location
-              ? null
-              : [check.location.longitude, check.location.latitude],
-          );
-          setPinError(null);
-        })
-        .finally(() => {
-          if (!cancelled) setResolving(false);
-        });
-    }, LOOKUP_DEBOUNCE_MS);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [trimmedParcel, tenant, token, en, editing, tEditor]);
-
-  // Code preview derivation
-  const codePreview = useMemo(
-    () =>
-      trimmedParcel
-        ? formatBuildingCode({ zoneCode, parcelNumber: trimmedParcel, codeSuffix: suffix })
-        : null,
-    [trimmedParcel, zoneCode, suffix],
-  );
-
-  // Pin validation
-  const validatePin = useCallback(
-    (candidate: [number, number]): boolean | null => {
-      if (!outline) return null;
-      return pointInGeometry(candidate, outline);
-    },
-    [outline],
-  );
-
-  const applyPin = useCallback(
-    (candidate: [number, number]) => {
-      const verdict = validatePin(candidate);
-      if (verdict === false) {
-        setPinError(
-          en
-            ? 'That entrance point is outside this parcel. Place the entrance inside the boundary outline.'
-            : 'هذه النقطة خارج حدود العقار. ضع دبوس المدخل داخل المخطط.',
-        );
-        return false;
-      }
-      setPinError(null);
-      setPin(candidate);
-
-      /*
-        The parcel, read off the map — the half that makes location-first work.
-
-        Only when the field is empty. An officer who has *named* a parcel is
-        pinning a door inside it, and `validatePin` above has already refused
-        anything outside its boundary; re-deriving the number there could only
-        ever either agree or contradict a check that has just passed.
-
-        A point that resolves to nothing leaves the field alone rather than
-        guessing at the nearest — see `parcelAt`. About 1.4% of this cadastre
-        could not be traced, and the gaps between parcels are real ground.
-
-        `pinParcelRef` is set to whichever number now applies, and that matters:
-        the debounced lookup below clears the pin whenever the parcel changes
-        *unless* the ref already names the new one. Without this line, auto-filling
-        the parcel would immediately delete the pin that produced it.
-      */
-      const resolved = trimmedParcel ? null : parcelAt(parcelOutlines, candidate);
-      if (resolved) {
-        pinParcelRef.current = resolved;
-        setParcelNumber(resolved);
-        setParcelFromMap(true);
-      } else {
-        pinParcelRef.current = trimmedParcel;
-      }
-      return true;
-    },
-    [validatePin, en, trimmedParcel, parcelOutlines],
-  );
-
-  const pinVerdict = pin ? validatePin(pin) : null;
-
-  const isHouse = structureType === 'INDEPENDENT_HOUSE';
-  /**
-   * A house being *created* is seeded as a single painted block.
-   *
-   * It used to be seeded and then *hidden*: the matrix step did not exist for a
-   * new منزل, on the reasoning that its one unit is «منزل مستقل» by definition
-   * and there is nothing left to choose. That reasoning held for the unit and
-   * not for the officer. A house has a floor count, it may have a basement, and
-   * — far more often than the shortcut allowed for — the thing in front of them
-   * turns out not to be a house at all once they have walked round it.
-   *
-   * So the block is still painted for them, and the step is still shown. One
-   * block *is* the house; painting a second one is the officer discovering it
-   * is a building, and `requestUnits` below turns that into a question rather
-   * than into a save the server refuses.
-   */
-  const houseShortcut = isHouse && !editing;
-
-  /** Units the census already holds for this building, as loaded. */
-  const hasRecordedUnits = useMemo(
-    () => gridUnits.some((unit) => unit.existingId),
-    [gridUnits],
-  );
-
-  /**
-   * A structure whose interior cannot be surveyed — «مهدوم» or «متضررة من
-   * الحرب و غير مسكونة». There are no storeys to count and no flats to paint,
-   * so the wizard stops asking for both.
-   *
-   * Withheld from a building that already has units on file, and that
-   * exception is the important half. Marking a standing block war-damaged is
-   * a correction about the shell; its twelve recorded flats still carry
-   * occupancies, visits and codes, and hiding the only screen that can reach
-   * them would strand them — findable by nobody, fixable from nowhere. The
-   * officer gets the matrix, and decides unit by unit what became of each.
-   */
-  const shellShortcut = isUnsurveyableShell(lifecycleStatus) && !hasRecordedUnits;
-
-  /**
-   * Standing, damaged, empty — the full wizard, deliberately. The storeys are
-   * countable from the pavement and the flats are what reconstruction is
-   * costed on, so this building gets its floor fields and its matrix like any
-   * other. Only the notes prompt changes, to ask for what was seen.
-   */
-  const warDamaged = lifecycleStatus === 'WAR_DAMAGED_UNINHABITED';
-
-  /** An info-only pass never reaches the matrix either — by request rather
-   *  than because the structure has none. */
-  const infoOnly = scope === 'info';
-  /**
-   * Only an unsurveyable shell and an info-only pass skip the matrix.
-   *
-   * A new منزل no longer does — see `houseShortcut`: its one block is painted
-   * for the officer and the step stays, so a house that turns out to be a
-   * building can be drawn as one («هل تريد تحويلها من منزل إلى بناية؟»).
-   */
-  const skipsMatrix = shellShortcut || infoOnly;
-  /** The last real step — the matrix step doesn't exist for either of them. */
-  const lastStep: 0 | 1 | 2 = skipsMatrix ? 1 : 2;
-  const visibleSteps = skipsMatrix ? STEPS.slice(0, 2) : STEPS;
-
-  /**
-   * The wizard shrinking under the officer's feet must not leave them standing
-   * on a step that no longer exists — on an edit every step is clickable, so
-   * they can be on the matrix when they set the status to «مهدوم».
-   */
-  useEffect(() => {
-    setStep((current) => (current > lastStep ? lastStep : current));
-  }, [lastStep]);
-
-  /**
-   * The fields are hidden, so the values behind them have to be ones the
-   * schema accepts rather than whatever was typed before: `floorsCount` is
-   * `.min(1)` and would refuse a save with an empty box, and a 4 left over
-   * from a guess at a collapsed building is a fabricated observation.
-   *
-   * 1 and 0 are not claims about the rubble. They are the schema's floor,
-   * recorded because something must be, and the notes field below is where
-   * what was actually seen goes.
-   */
-  useEffect(() => {
-    if (!shellShortcut) return;
-    setFloorsCount('1');
-    setBasementsCount('0');
-    setGridSize(DEFAULT_GRID_SIZE);
-    setGridUnits((current) => current.filter((unit) => unit.existingId));
-  }, [shellShortcut]);
-
-  /** The reverse: a status corrected back to a standing building gets its
-   *  floor count back rather than silently keeping the 1 this shortcut wrote.
-   *  Skipped for a house, whose 1 is the truth and whose own effect owns it. */
-  const wasShell = useRef(shellShortcut);
-  useEffect(() => {
-    if (wasShell.current && !shellShortcut && !houseShortcut) {
-      setFloorsCount((current) => (current === '1' ? '3' : current));
-    }
-    wasShell.current = shellShortcut;
-  }, [shellShortcut, houseShortcut]);
-
-  useEffect(() => {
-    if (!houseShortcut || shellShortcut) return;
-    setFloorsCount('1');
-    /*
-      One painted block on a grid with room beside it — not a 1×1 grid.
-
-      What makes it a house is the single *unit*, not a canvas with nowhere to
-      draw. Seeded at 1×1 the promotion was unreachable: every cell was already
-      taken, so an officer who walked round the back and found a second door had
-      to work out that the «أفقي (الأعمدة)» stepper was what stood between them
-      and recording it. The question this editor now asks — «هل تريد تحويلها من
-      منزل إلى بناية؟» — can only be asked if there is somewhere to paint the
-      block that triggers it.
-
-      The height stays at one storey, which is the honest default for a منزل and
-      is a stepper away from anything else.
-    */
-    setGridSize(DEFAULT_GRID_SIZE);
-    setGridUnits([
-      {
-        clientId: crypto.randomUUID(),
-        floor: 0,
-        startCol: 1,
-        endCol: 1,
-        unitType: 'INDEPENDENT_HOUSE',
-        colorIndex: 0,
-      },
-    ]);
-    /* `shellShortcut` is a dependency, not just a guard: a house marked
-       «مهدوم» and then corrected back has had its one unit cleared, and
-       without this the effect would not re-run to paint it again. */
-  }, [houseShortcut, shellShortcut]);
-
-  /**
-   * The officer answered «نعم، هي بناية», so the reset below must not fire.
-   *
-   * The promotion changes نوع المنشأة, which flips `houseShortcut`, which is
-   * exactly the transition the reset watches for — and the reset drops every
-   * unpainted unit, which on that commit is the whole floor plan they just
-   * confirmed. They would tap «نعم» and watch their matrix collapse to one
-   * square, with the structure type silently changed underneath it.
-   *
-   * A ref rather than state because it must be readable by the effect on the
-   * *same* commit that sets it, and it is not something anything renders.
-   */
-  const promotedFromHouse = useRef(false);
-
-  /** The reverse transition — leaving a structure type of "house" un-paints
-   *  the auto-created unit rather than leaving it stranded as a stale 1×1
-   *  grid the officer never drew. Units the census already holds survive it:
-   *  a structure type is a correction about the shell, not about its flats. */
-  const wasHouse = useRef(houseShortcut);
-  useEffect(() => {
-    if (wasHouse.current && !houseShortcut) {
-      if (promotedFromHouse.current) {
-        // The grid *is* the reason the type changed. Keep it exactly as drawn.
-        promotedFromHouse.current = false;
-      } else {
-        setGridSize(DEFAULT_GRID_SIZE);
-        setGridUnits((current) => current.filter((unit) => unit.existingId));
-        setFloorsCount((current) => (current === '1' ? '3' : current));
-      }
-    }
-    wasHouse.current = houseShortcut;
-  }, [houseShortcut]);
-
-  /**
-   * The grid the officer has painted but not yet been allowed to keep.
-   *
-   * Held while «هل تريد تحويلها من منزل إلى بناية؟» is on screen — see
-   * `requestUnits`.
-   */
-  const [pendingUnits, setPendingUnits] = useState<GridUnitDraft[] | null>(null);
-
-  /**
-   * Every change the matrix makes passes through here, so that one of them can
-   * be turned into a question.
-   *
-   * A منزل مستقل is one dwelling — `assertUnitFits` refuses a second unit on
-   * one server-side, and refuses it at *save* time, which is the worst possible
-   * moment: the officer has painted a floor plan, walked to the end of the
-   * wizard and pressed «إنشاء المبنى», and is told the structure type they
-   * chose three screens ago contradicts it.
-   *
-   * Painting a second block is not a mistake, though. It is the commonest
-   * correction there is — the officer walked round the back and found a second
-   * door — and the only thing wrong with it is that نوع المنشأة still says
-   * «منزل مستقل». So it is asked, here, at the moment it becomes true, and a
-   * yes changes the type along with the grid.
-   *
-   * Only ever intercepts the 1 → 2 crossing. Every other edit — moving a block,
-   * widening one, deleting back down — goes straight through, because a
-   * question asked on every paint stroke is a question people learn to dismiss.
-   */
-  const requestUnits = useCallback(
-    (next: GridUnitDraft[]) => {
-      if (isHouse && next.length > 1) {
-        setPendingUnits(next);
-        return;
-      }
-      setGridUnits(next);
-    },
-    [isHouse],
-  );
-
-  const topFloorAllowed = topFloorFor(floorsCount);
-
-  /*
-    Top rows with nothing in them — the roof counted as a floor, most often
-    (`emptyTopFloors`). Not asked of a building still going up: its top floors
-    are expected to be empty.
-  */
-  const topGap = useMemo(
-    () => topGapOf(gridUnits, hiddenUnits, floorsCount, lifecycleStatus),
-    [gridUnits, hiddenUnits, floorsCount, lifecycleStatus],
-  );
-  const bottomFloorAllowed = bottomFloorFor(basementsCount);
-
-  /** Confirmed grid units left stranded if the officer narrows the building
-   *  past where they were painted — above the top floor or below the deepest
-   *  basement. Never silently dropped. */
-  const orphanedUnits = useMemo(
-    () => orphanedUnitsOf(gridUnits, topFloorAllowed, bottomFloorAllowed),
-    [gridUnits, topFloorAllowed, bottomFloorAllowed],
-  );
-
-  // ── Per-step validation gates ──
-  /*
-    A new building either has its entrance pinned, or says why not.
-
-    The pin is what the duplicate prompt measures from: without it an officer
-    on a parcel that already holds a structure is shown codes, not «على بُعد ٤ م».
-    Eight buildings went on file with no pin and no word about it. A correction
-    is not held to this — the building is already on file, pinned or not.
-  */
-  const pinAnswered = pinIsAnswered(editing, pin, noPinReason);
-  const step1Valid = Boolean(trimmedParcel) && !(pin && pinVerdict === false) && pinAnswered;
-  /*
-    What stops «التالي» on the facility step.
-
-    `orphanedUnits` used to be part of this and no longer is, because the two
-    things that resolve it — the floor count and the matrix — are both on the
-    step this gate guards the way *to*. Holding an officer on the previous
-    screen until they fix something they can only reach by leaving it is a dead
-    end, and the save still refuses the same condition with a message that now
-    sends them to the right place.
-
-    The height and depth checks stay as assertions rather than as live gates:
-    nothing on this step can set them any more, so they can only fail if some
-    other path has put nonsense in the state.
-  */
-  const duplicateAnswered =
-    acknowledgedDuplicates && duplicateReason.trim().length >= MIN_DUPLICATE_REASON;
-  const step2Valid =
-    !(duplicates?.length && !duplicateAnswered) &&
-    Number(floorsCount) >= 1 &&
-    Number(basementsCount) >= 0;
-
-  /**
-   * The structures already on this parcel, nearest first, measured from the pin
-   * as it stands now.
-   *
-   * The server measures too, but only on a refused save; the list shown while
-   * the officer is still on the step comes from the parcel lookup, before any
-   * pin existed, and carried `distanceMetres: null`. So the distance is worked
-   * out here from the two pins and follows the officer's own pin as they move
-   * it. Parcel 56's second and third records were made 3.6 m and 4.1 m from
-   * the first by officers shown a list with no distance on it.
-   */
-  const rankedDuplicates = useMemo(() => rankDuplicates(duplicates, pin), [duplicates, pin]);
-
-  /**
-   * Moving between steps puts the top of the new step back on screen.
-   *
-   * «التالي» lives at the *bottom* of the wizard and the step it opens starts
-   * at the top. Without this, pressing it from the foot of a long step — the
-   * summary card at the end of «معلومات المنشأة», say — leaves the reader
-   * looking at the footer of a step they have never seen, with the first
-   * question a screen and a half above them. On a phone that reads as the
-   * button having done nothing.
-   *
-   * Both directions, and the step rail too: every one of them replaces the
-   * whole body of the card.
-   */
-  const goToStep = (next: 0 | 1 | 2) => {
-    setStep(next);
-    scrollElementToTop(rootRef.current);
-  };
-
-  const goNext = () => goToStep((step < lastStep ? step + 1 : step) as 0 | 1 | 2);
-  const goBack = () => goToStep((step > 0 ? step - 1 : step) as 0 | 1 | 2);
-
-  /**
-   * A correction, as one request: the shell and the difference between the
-   * matrix that was loaded and the one now on the grid (`saveMatrix`).
-   *
-   * A diff rather than a re-send, because the units on a standing building are
-   * not the wizard's to recreate — they carry occupancies, visits and codes
-   * the server derived, and deleting and re-adding one would take a flat's
-   * whole history down with it.
-   *
-   * All or nothing. It used to be one PATCH and then one request per unit,
-   * each refusal collected while the rest went through — so a flat somebody
-   * lived in could refuse its removal while the four beside it were removed,
-   * and the officer was left with «حُفظ المبنى، لكن رُفض…»: a building half in
-   * the state they meant. Now the first refusal names its unit and nothing is
-   * written; the grid on screen is still the officer's, to fix and save again.
-   * The server runs the removals before the shell, so lowering the floor count
-   * with the top floor's units no longer needs a second request.
-   *
-   * On «تعديل معلومات المبنى» the matrix was never shown, so no unit is sent:
-   * a diff of a grid nobody saw could only compare the building to itself.
-   */
-  const matrixSave = (): BuildingMatrixSave => {
-    const baseline = baselineRef.current;
-    const changed = (unit: GridUnitDraft) => {
-      const was = unit.existingId ? baseline.get(unit.existingId) : undefined;
-      return (
-        was !== undefined &&
-        (was.floor !== unit.floor ||
-          was.startCol !== unit.startCol ||
-          was.endCol !== unit.endCol ||
-          was.unitType !== unit.unitType ||
-          (was.unitTypeId ?? undefined) !== (unit.unitTypeId ?? undefined))
-      );
-    };
-    return {
-      ...(loadedUpdatedAtRef.current ? { expectedUpdatedAt: loadedUpdatedAtRef.current } : {}),
-      building: {
-        name: name.trim() || null,
-        postedNumber: postedNumber.trim() || null,
-        /*
-          `null` and not `false` for an unticked box — «لم يُسأل», not a denial.
-          Sent rather than omitted, so a فرز ticked by mistake can be withdrawn;
-          the server clears the numbers whenever the flag is not true.
-        */
-        isPartitioned: isPartitioned ? true : null,
-        partitionNumbers: cleanedPartitionNumbers,
-        sharedParcelNumbers: cleanedSharedParcels,
-        structureType,
-        ...(chosenTypeId ? { buildingTypeId: chosenTypeId } : {}),
-        lifecycleStatus,
-        latitude: pin ? pin[1] : null,
-        longitude: pin ? pin[0] : null,
-        floorsCount: Number(floorsCount) || 1,
-        basementsCount: Number(basementsCount) || 0,
-        notes: notes.trim() || null,
-      },
-      remove: infoOnly
-        ? []
-        : [...baseline.keys()].filter((unitId) => !gridUnits.some((unit) => unit.existingId === unitId)),
-      update: infoOnly
-        ? []
-        : gridUnits.filter(changed).map((unit) => ({
-            id: unit.existingId as string,
-            floor: unit.floor,
-            startCol: unit.startCol,
-            endCol: unit.endCol,
-            unitType: unit.unitType,
-            ...(unit.unitTypeId ? { unitTypeId: unit.unitTypeId } : {}),
-          })),
-      add: infoOnly
-        ? []
-        : gridUnits
-            .filter((unit) => !unit.existingId)
-            .map((unit) => ({
-              floor: unit.floor,
-              startCol: unit.startCol,
-              endCol: unit.endCol,
-              unitType: unit.unitType,
-              ...(unit.unitTypeId ? { unitTypeId: unit.unitTypeId } : {}),
-            })),
-      ...(houseGrowth ? { houseGrowth } : {}),
-    };
-  };
-
-  const saveEdit = async (id: string, activeToken: string): Promise<void> => {
-    await saveBuildingMatrix(tenant, activeToken, id, matrixSave());
-  };
-
-  // Save handler
-  const handleSave = async (confirmed = false) => {
-    if (inFlight.current) return;
-    // Which version to keep is asked first (`staleDraft`); the question is where the answer is.
-    if (staleDraft) {
-      staleDraftRef.current?.focus();
-      return;
-    }
-    if (!trimmedParcel) {
-      setFieldErrors({ parcelNumber: en ? 'Parcel number is required' : 'رقم العقار مطلوب' });
-      goToStep(0);
-      return;
-    }
-    if (!pinAnswered) {
-      setPinError(
-        en
-          ? 'Pin the entrance on the map, or tick that it could not be pinned and say why.'
-          : 'ثبِّت المدخل على الخريطة، أو أشِر إلى تعذّر ذلك واذكر السبب.',
-      );
-      goToStep(0);
-      return;
-    }
-    if (pin && pinVerdict === false) {
-      setPinError(
-        en
-          ? 'The entrance pin is outside the parcel boundary. Relocate it or clear it before saving.'
-          : 'دبوس المدخل خارج حدود العقار. حرّكه أو احذفه قبل الحفظ.',
-      );
-      goToStep(0);
-      return;
-    }
-    if (orphanedUnits.length > 0) {
-      setError(
-        en
-          ? `${orphanedUnits.length} unit(s) are on floors above the current floor count (${floorsCount}). Raise the floor count or remove them from the matrix.`
-          : `${orphanedUnits.length} وحدة موضوعة على طوابق أعلى من عدد الطوابق الحالي (${floorsCount}). ارفع عدد الطوابق أو احذف هذه الوحدات من المصفوفة.`,
-      );
-      // The matrix step, because that is where the floor count now lives —
-      // both halves of the fix this message asks for are on the same screen.
-      // A pass with no matrix step (a shell, «تعديل معلومات المبنى») stays put.
-      goToStep(skipsMatrix ? 1 : 2);
-      return;
-    }
-
-    /** Only the flats this save has to create — an edit's existing units are
-     *  already rows and are diffed, not re-sent. */
-    const units = flattenGridUnits(gridUnits.filter((unit) => !unit.existingId));
-    if (units.length > MAX_GRID_UNITS) {
-      setError(
-        en
-          ? `${units.length} units is more than the maximum of ${MAX_GRID_UNITS} allowed at once.`
-          : `عدد الوحدات (${units.length}) يتجاوز الحد الأقصى ${MAX_GRID_UNITS} في العملية الواحدة.`,
-      );
-      return;
-    }
-
-    inFlight.current = true;
-    setSaving(true);
-    setError(null);
-    setFieldErrors({});
-    /** Set once a save has landed: the form then stays locked while the page moves on. */
-    let landed = false;
-
-    try {
-      if (editing && buildingId) {
-        if (!token) {
-          throw new Error(
-            en ? 'Session expired. Please sign in again.' : 'انتهت الجلسة. يرجى تسجيل الدخول مجدداً.',
-          );
-        }
-
-        /*
-          «مراجعة التعديلات» first: the save rehearsed on the server and rolled
-          back (`dryRun`), so the review shows what the server would actually
-          do — which units go, move and arrive — or the refusal it would give,
-          before the officer confirms anything.
-
-          All or nothing either way: a refusal throws before anything is
-          written and lands in the catch below with the unit it names, and the
-          grid on screen is still exactly what the officer drew.
-        */
-        if (!confirmed) {
-          const save = matrixSave();
-          const result = await saveBuildingMatrix(tenant, token, buildingId, { ...save, dryRun: true });
-          setBuildingReview({ save, result });
-          setSaving(false);
-          return;
-        }
-        await saveEdit(buildingId, token);
-        landed = true;
-
-        clearBuildingDraft(tenant, buildingId);
-        toast.success(
-          en ? `Building ${savedCode ?? ''} updated` : `تم تحديث المبنى ${savedCode ?? ''}`,
-        );
-        router.push(`${base}/buildings/${encodeURIComponent(buildingId)}/matrix`);
-        return;
-      }
-
-      // 1. Offline branch
-      if (offlineNow() && offlineStorageAvailable()) {
-        await queueBuilding({
-          /*
-            The id an online attempt at this same building may already have
-            sent: an answer that never arrived often means a request that did,
-            and under the same id the drain is answered with that building —
-            as that press sent it, so the queue says so (`afterLostAnswer`).
-          */
-          id: heldKey(tenant, creationScope),
-          ...(heldInDoubt(tenant, creationScope) ? { afterLostAnswer: true } : {}),
-          tenant,
-          parcelNumber: trimmedParcel,
-          provisionalCode: codePreview ?? trimmedParcel,
-          provisionalSuffix: suffix,
-          payload: {
-            parcelNumber: trimmedParcel,
-            name: name.trim() || undefined,
-            postedNumber: postedNumber.trim() || undefined,
-            // Omitted when the box was not ticked, matching the create schema:
-            // an absent key and a null mean the same thing on a *creation*, and
-            // the queue's payload is replayed through `createBuilding`.
-            ...(isPartitioned
-              ? { isPartitioned: true, partitionNumbers: cleanedPartitionNumbers }
-              : {}),
-            ...(cleanedSharedParcels.length > 0
-              ? { sharedParcelNumbers: cleanedSharedParcels }
-              : {}),
-            structureType,
-            ...(chosenTypeId ? { buildingTypeId: chosenTypeId } : {}),
-            lifecycleStatus,
-            latitude: pin ? pin[1] : undefined,
-            longitude: pin ? pin[0] : undefined,
-            floorsCount: Number(floorsCount) || 1,
-            basementsCount: Number(basementsCount) || 0,
-            notes: notes.trim() || undefined,
-            acknowledgedDuplicates: true,
-            ...(duplicateReason.trim() ? { duplicateReason: duplicateReason.trim() } : {}),
-            ...(!pin && noPinReason?.trim() ? { noPinReason: noPinReason.trim() } : {}),
-            units,
-          },
-          blueprint: null,
-        });
-        landed = true;
-        // The queue holds the id now; the next building on this parcel is another act.
-        spendKey(tenant, creationScope);
-
-        clearBuildingDraft(tenant, buildingId);
-        toast.info(en ? 'Saved on this device' : 'حُفظ على هذا الجهاز', {
-          description: en
-            ? `${codePreview ?? trimmedParcel} is provisional until network sync restores.`
-            : `الرمز ${codePreview ?? trimmedParcel} مؤقت وسيُرسل للخادم فور توفّر الاتصال.`,
-        });
-
-        router.push(`${base}/buildings`);
-        return;
-      }
-
-      if (!token) {
-        throw new Error(en ? 'Session expired. Please sign in again.' : 'انتهت الجلسة. يرجى تسجيل الدخول مجدداً.');
-      }
-
-      // 2. Online: create the building shell and its units in one transactional call
-      const response = await createBuilding(tenant, token, {
-        parcelNumber: trimmedParcel,
-        name: name.trim() || undefined,
-        postedNumber: postedNumber.trim() || undefined,
-        ...(isPartitioned
-          ? { isPartitioned: true, partitionNumbers: cleanedPartitionNumbers }
-          : {}),
-        ...(cleanedSharedParcels.length > 0
-          ? { sharedParcelNumbers: cleanedSharedParcels }
-          : {}),
-        structureType,
-        ...(chosenTypeId ? { buildingTypeId: chosenTypeId } : {}),
-        lifecycleStatus,
-        latitude: pin ? pin[1] : undefined,
-        longitude: pin ? pin[0] : undefined,
-        floorsCount: Number(floorsCount) || 1,
-        basementsCount: Number(basementsCount) || 0,
-        notes: notes.trim() || undefined,
-        provisionalSuffix: suffix,
-        acknowledgedDuplicates: acknowledgedDuplicates || undefined,
-        ...(acknowledgedDuplicates && duplicateReason.trim()
-          ? { duplicateReason: duplicateReason.trim() }
-          : {}),
-        ...(!pin && noPinReason?.trim() ? { noPinReason: noPinReason.trim() } : {}),
-        units,
-        clientSubmissionId: heldKey(tenant, creationScope),
-      });
-      landed = true;
-      spendKey(tenant, creationScope);
-
-      const saved = response.building;
-      const reconciled = response.reconciled;
-
-      /* On file now, so the draft has done its job. Cleared before the toasts
-         rather than after the redirect: the officer may press «مبنى جديد»
-         straight from the list, and restoring the building they just created
-         into a form headed «مبنى جديد» is worse than no restore at all. */
-      clearBuildingDraft(tenant, buildingId);
-
-      /*
-        An earlier press reached the server and its answer was lost: this is
-        that building, not a new one, and what it holds is what that press
-        sent — so the officer is told, and checks it on the matrix.
-      */
-      if (response.deduplicated) {
-        toast.warning(tEditor('deduplicated.title'), {
-          description: tEditor('deduplicated.description', { code: saved.code }),
-        });
-      }
-
-      if (reconciled) {
-        toast.warning(en ? 'Building code allocated' : 'تغيّر رمز المبنى عند الحفظ', {
-          description: en
-            ? `Another building already claimed that letter. Allocated code: ${saved.code}.`
-            : `تم اعتماد الرمز النهائي المخصّص من الخادم: ${saved.code}.`,
-        });
-      } else if (!response.deduplicated) {
-        toast.success(
-          en ? `Building ${saved.code} created` : `تم إنشاء المبنى ${saved.code}`,
-          {
-            description:
-              units.length > 0
-                ? en
-                  ? `${units.length} units created at «not surveyed».`
-                  : `تم إنشاء ${units.length} وحدة بحالة «غير ممسوحة».`
-                : undefined,
-          },
-        );
-      }
-
-      // Land on the full-page unit matrix — the tool for filling in any
-      // floors the chosen grid size didn't cover.
-      router.push(`${base}/buildings/${encodeURIComponent(saved.id)}/matrix`);
-    } catch (caught) {
-      logApiError(caught);
-      /*
-        A creation's key is kept across every failure (`keyIsSpent` names none
-        a building can meet), and marked when the answer was lost: the building
-        may exist, and a fall-back to the queue says so (`afterLostAnswer`).
-      */
-      if (!editing) {
-        if (keyIsSpent(caught)) spendKey(tenant, creationScope);
-        else if (outcomeInDoubt(caught)) markInDoubt(tenant, creationScope);
-      }
-
-      // A house on somebody's file would grow: ask, then rehearse again with the answer (D28).
-      const question = houseGrowthQuestionOf(caught);
-      if (question) {
-        setGrowthQuestion(question);
-        return;
-      }
-
-      const candidates = duplicateBuildingsOf(caught);
-      if (candidates) {
-        setDuplicates(candidates);
-        setAcknowledgedDuplicates(false);
-        setError((caught as ApiRequestError).payload.message);
-        goToStep(1);
-        return;
-      }
-
-      if (caught instanceof ApiRequestError) {
-        if (caught.status === 401) {
-          clearSession(tenant);
-          router.replace(`${base}/login`);
-          return;
-        }
-        setFieldErrors(caught.fieldErrors);
-        setError(caught.payload.message);
-      } else {
-        setError(en ? 'Could not save the building.' : 'تعذّر حفظ المبنى.');
-      }
-    } finally {
-      // After a save that landed the button stays off: the page is leaving (see `inFlight`).
-      if (!landed) {
-        inFlight.current = false;
-        setSaving(false);
-      }
-    }
-  };
-
-  /*
-    The answer to «هذا المنزل يصبح مبنى» goes straight back into the rehearsal:
-    once the state holds it, so the next `matrixSave()` sends it. The officer
-    sees the review, not a second press of «حفظ» with nothing to say why.
-  */
-  const rehearseAfterAnswer = useRef(false);
-  useEffect(() => {
-    if (!houseGrowth || !rehearseAfterAnswer.current) return;
-    rehearseAfterAnswer.current = false;
-    void handleSave();
-    // Fires on the answer only; `handleSave` is rebuilt every render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [houseGrowth]);
 
   const cancelHref = `${base}/buildings`;
   /**
