@@ -685,7 +685,7 @@ No cross-tenant path found. Every task here touches citizen data or credentials 
 
 ## [ARCH-06] Add a snapshot-read helper for the treasury's Repeatable Read reads
 - **Priority:** P3 · **Assignee:** Hashem · **Estimate:** S · **Category:** Architecture
-- **Files:** `treasury/treasury.service.ts:156`, `treasury-movements.service.ts:125`, `daily-cash-report.service.ts:63` (bare `$transaction` with `isolationLevel: RepeatableRead`).
+- **Files:** `treasury/treasury.service.ts:156`, `treasury-movements.service.ts:125`, `daily-cash-report.service.ts:63` (bare `$transaction` with `isolationLevel: RepeatableRead`). Found during ARCH-01 (2026-11-24): `FeesService.listAllPayments` reads its page, count and totals in one transaction at Read Committed (now `runInTenantTransaction`; before, an array `$transaction`), whose comment claimed one snapshot — it is a fourth reader for the helper (CQ Backend row).
 - **Problem:** **NEW**. Legitimate reads, but they are the shape the rule forbids and are not in the debt table.
 - **Acceptance criteria:** `readInTenantSnapshot(tenantContext, fn)` in `infrastructure/context`; the three use it; the rule in apps/backend/CLAUDE.md names it.
 - **Depends on:** none
@@ -739,7 +739,7 @@ No cross-tenant path found. Every task here touches citizen data or credentials 
 
 ## [ARCH-13] Convert the identity, staff and OTP prose throws to error codes
 - **Priority:** P2 · **Assignee:** Hashem · **Estimate:** M · **Category:** Architecture
-- **Files:** `identity.service.ts` (19), `staff.service.ts` (19), `otp.service.ts` (6).
+- **Files:** `identity.service.ts` (19), `staff.service.ts` (19), `otp.service.ts` (6). Done during SEC-02 (2026-11-24): the three in `beginTotpEnrolment`, `confirmTotpEnrolment` and `disableTotp` (now `SESSION_INVALID` and `TOTP_ENROLMENT_NOT_STARTED`), so `identity.service.ts` has 16 left and the ratchet is 196.
 - **Acceptance criteria / Verification:** as ARCH-12; ratchet lowered by 44.
 - **Depends on:** none
 
@@ -760,7 +760,7 @@ No cross-tenant path found. Every task here touches citizen data or credentials 
 
 ## [ARCH-16] Rewrite the backend comments that contradict the code
 - **Priority:** P3 · **Assignee:** Hashem · **Estimate:** S · **Category:** Architecture
-- **Files:** tracked (CQ Backend CODE-7 row and CQ Data comments row): `InfrastructureModule` docblock, `AppModule` scheduler comment, `envSchema` SMTP message, `IdentityService.challengeTotp`, `createApiApp` docblock, `User.requiresTotp`; `tenant-schema-ref.ts`, `TenantPrismaFactory.connectionUrlFor`, `tenant-test-client.ts`, `envSchema` `DATABASE_URL`, both `binaryTargets` comments, `TenantSlug`; `ci.yml` comments.
+- **Files:** tracked (CQ Backend CODE-7 row and CQ Data comments row): `InfrastructureModule` docblock, `AppModule` scheduler comment, `envSchema` SMTP message, `IdentityService.challengeTotp`, `createApiApp` docblock, `User.requiresTotp`; `tenant-schema-ref.ts`, `TenantPrismaFactory.connectionUrlFor`, `tenant-test-client.ts`, `envSchema` `DATABASE_URL`, both `binaryTargets` comments, `TenantSlug`; `ci.yml` comments. Found during SEC-05 (2026-11-24): the `SmtpEmailSender` class docblock and `smtp-email.sender.spec.ts`'s header ("falls back to Supabase's reset mail", removed since). Found during ARCH-01: the `declare` docblock («The citizen's claim that they have paid») left above `FeesService.transition`. Both in the CQ Backend CODE-7 row.
 - **Acceptance criteria:** each matches the code; rows removed.
 - **Depends on:** none
 - **Verification:** review.

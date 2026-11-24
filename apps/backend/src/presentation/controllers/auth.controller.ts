@@ -12,6 +12,8 @@ import {
   requestOtpSchema,
   staffLoginSchema,
   totpEnrolmentSchema,
+  totpReauthSchema,
+  type TotpReauth,
   verifyOtpSchema,
 } from '@mechanization/shared-schemas';
 import { IdentityService } from '../../application/features/identity/identity.service';
@@ -211,13 +213,18 @@ export class AuthController {
    * Enrolment is authenticated: an admin who has not yet set up TOTP can still
    * sign in only if their role does not require it, and a SUPER_ADMIN's first
    * secret is issued by a colleague who already has access (see seed.ts).
+   * The session is not enough on its own (audit SEC-02): the body carries the
+   * current password, and the current code while a factor is confirmed. The
+   * own-account throttle, like the other routes that check a password.
    */
   @Post('staff/totp/enrol')
+  @Throttle(OWN_ACCOUNT_THROTTLE)
   async beginTotpEnrolment(
     @CurrentTenant('slug') tenantSlug: string,
     @CurrentUser() user: SessionClaims,
+    @Body(new ZodValidationPipe(totpReauthSchema)) body: TotpReauth,
   ) {
-    return this.identity.beginTotpEnrolment(user.sub, tenantSlug);
+    return this.identity.beginTotpEnrolment(user.sub, tenantSlug, body);
   }
 
   @Post('staff/totp/confirm')
@@ -234,9 +241,9 @@ export class AuthController {
   async disableTotp(
     @CurrentTenant('slug') tenantSlug: string,
     @CurrentUser() user: SessionClaims,
-    @Body() body: { currentPassword?: string },
+    @Body(new ZodValidationPipe(totpReauthSchema)) body: TotpReauth,
   ) {
-    await this.identity.disableTotp(user.sub, tenantSlug, body?.currentPassword);
+    await this.identity.disableTotp(user.sub, tenantSlug, body);
     return { disabled: true };
   }
 

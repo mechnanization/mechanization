@@ -2,7 +2,8 @@ import { declarePaymentSchema } from '@mechanization/shared-schemas';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { WhishGateway } from '../../../domain/interfaces/whish-gateway.interface';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
-import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
+import { TenantContextService, type TenantScope } from '../../../infrastructure/context/tenant-context.service';
+import { inTenantScope } from '../../../infrastructure/context/in-tenant-scope.testing';
 import { ConflictError } from '../../common/exceptions';
 import { FeesService } from './fees.service';
 import { PaymentLedgerService } from './payment-ledger.service';
@@ -85,12 +86,20 @@ function build(row: Row | null, { updatedCount = 1, isLive = true }: { updatedCo
     externalRef: 'WSH-NEW',
   });
 
-  const service = new FeesService(
-    {
-      prisma,
-      tenantSlug: 'albazourieh',
-      tenantId: 'tenant-1',
-    } as unknown as TenantContextService,
+  /*
+    A real tenant scope over the mock, entered for every call (`inTenantScope`):
+    the status writes run in `runInTenantTransaction` since audit ARCH-01, and
+    the mock's `$transaction` hands the work the same mock back as `tx`.
+  */
+  const context = new TenantContextService();
+  const scope = {
+    tenantId: 'tenant-1',
+    tenantSlug: 'albazourieh',
+    schemaName: 'tenant_albazourieh',
+    prisma: prisma as unknown as TenantScope['prisma'],
+  };
+  const service = inTenantScope(new FeesService(
+    context,
     { emit: jest.fn() } as unknown as EventEmitter2,
     { createCheckout, isLive } as unknown as WhishGateway,
     {
@@ -100,7 +109,7 @@ function build(row: Row | null, { updatedCount = 1, isLive = true }: { updatedCo
     } as unknown as RedisCacheService,
     { record } as unknown as PaymentLedgerService,
     { recordInTransaction } as unknown as AuditService,
-  );
+  ), context, scope);
 
   return {
     service,

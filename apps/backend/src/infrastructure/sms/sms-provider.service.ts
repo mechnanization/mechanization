@@ -76,7 +76,11 @@ export class SmsProviderService implements SmsSender {
       }
       // In development the code is also returned by the API response, so a
       // developer without provider credentials can still complete the flow.
-      this.logger.debug(`[dev] SMS to ${input.phone} via ${input.channel}: ${input.message}`);
+      // Never the number in full nor the body, which carries the sign-in code
+      // (audit SEC-05; non-negotiable 7): the same mask `deliver` logs with.
+      this.logger.debug(
+        `[dev] SMS to ${this.mask(input.phone)} via ${input.channel} (${input.message.length} characters, not sent)`,
+      );
       return;
     }
 

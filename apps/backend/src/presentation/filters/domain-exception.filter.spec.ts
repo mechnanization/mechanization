@@ -102,4 +102,41 @@ describe('DomainExceptionFilter', () => {
       expect(line).not.toContain('NZ58VK');
     }
   });
+
+  it('redacts a 5xx message and its stack before they reach the log (SEC-05)', () => {
+    const logged: string[] = [];
+    const response = {
+      status() {
+        return this;
+      },
+      json() {
+        return this;
+      },
+    };
+    const request = { method: 'POST', originalUrl: '/api/v1/t/zahle/citizens', correlationId: 'c-3' };
+    const host = {
+      switchToHttp: () => ({ getResponse: () => response, getRequest: () => request }),
+    } as unknown as ArgumentsHost;
+    const filter = new DomainExceptionFilter();
+    (filter as unknown as { logger: { warn: () => void; error: (line: string, stack?: string) => void } }).logger = {
+      warn: () => undefined,
+      error: (line, stack) => logged.push(line, stack ?? ''),
+    };
+
+    // What Postgres and a careless library say: the row quoted back, a credential in the text.
+    filter.catch(
+      new Error('Unique constraint failed: Key (phone)=(03 123 456) already exists for BZR-2610-NZ58VK'),
+      host,
+    );
+
+    const [line, stack] = logged;
+    expect(line).toContain('error (500)');
+    expect(line).toContain('Key (phone)=([redacted])');
+    expect(line).toContain('[c-3]');
+    expect(stack).toContain('Error: ');
+    for (const text of [line, stack]) {
+      expect(text).not.toContain('123 456');
+      expect(text).not.toContain('NZ58VK');
+    }
+  });
 });

@@ -6,6 +6,7 @@ import { PrismaClient as TenantPrismaClient } from '../../../generated/tenant-cl
 import { migrateTenantSchema } from '../../../infrastructure/prisma/tenant-migrator';
 import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
+import { inTenantScope } from '../../../infrastructure/context/in-tenant-scope.testing';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
 import type { WhishGateway } from '../../../domain/interfaces/whish-gateway.interface';
 import { FeesService } from './fees.service';
@@ -73,21 +74,17 @@ describeIfDb('billing over the census', () => {
 
     db = tenantTestClient(TEST_DATABASE_URL!, SCHEMA);
 
-    fees = new FeesService(
-      {
-        get prisma() {
-          return db;
-        },
-        tenantSlug: 'census-billing',
-      /*
-        Raw queries now write this into their SQL rather than leaning on
-        `search_path` — see `tenant-schema-ref.ts`. Supplying it here is what
-        makes these suites exercise the qualified form rather than a shape
-        that only works because the test client pins one schema per connection.
-      */
-      schemaName: SCHEMA,
-        tenantId: 'tenant-1',
-      } as unknown as TenantContextService,
+    /*
+      A real tenant scope, entered for every call (`inTenantScope`): issuing
+      runs in `runInTenantTransaction` since audit ARCH-01, which re-enters the
+      scope with the transaction client. The scope's `schemaName` is what raw
+      queries write into their SQL (`tenant-schema-ref.ts`), so these suites
+      exercise the qualified form, not one the test client's pinned schema hides.
+    */
+    const context = new TenantContextService();
+    const scope = { tenantId: 'tenant-1', tenantSlug: 'census-billing', schemaName: SCHEMA, prisma: db };
+    fees = inTenantScope(new FeesService(
+      context,
       { emit: jest.fn() } as unknown as EventEmitter2,
       {} as WhishGateway,
       {
@@ -98,7 +95,7 @@ describeIfDb('billing over the census', () => {
       {} as PaymentLedgerService,
       // AuditService: these tests never reach a payment.
       {} as never,
-    );
+    ), context, scope);
 
     clerkId = randomUUID();
     await db.user.create({

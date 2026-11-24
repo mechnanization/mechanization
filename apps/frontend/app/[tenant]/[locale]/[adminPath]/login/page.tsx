@@ -14,7 +14,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { ApiRequestError, isTotpRequired, loginStaff, logApiError } from '@/lib/api-client';
-import { openedAfterPasswordChange } from '@/lib/password-change';
+import { openedAfterPasswordChange, secondFactorNoticeOf } from '@/lib/password-change';
 import { loadSession, saveSession } from '@/lib/session';
 import { defaultPathFor } from '@/components/admin/nav';
 import { Alert } from '@/components/ui/alert';
@@ -49,6 +49,8 @@ export default function StaffLogin({
   const [checking, setChecking] = useState(true);
   // Sent here by «تغيير كلمة المرور», which ended every session of the account.
   const [passwordChanged, setPasswordChanged] = useState(false);
+  // Sent here by confirming or removing the account's second factor, which ends every session too (SEC-02).
+  const [secondFactor, setSecondFactor] = useState<'on' | 'off' | null>(null);
 
   useEffect(() => {
     const session = loadSession(tenant);
@@ -57,6 +59,7 @@ export default function StaffLogin({
       return;
     }
     setPasswordChanged(openedAfterPasswordChange(window.location.search));
+    setSecondFactor(secondFactorNoticeOf(window.location.search));
     setChecking(false);
   }, [tenant, locale, adminPath, router]);
 
@@ -65,6 +68,7 @@ export default function StaffLogin({
     setError(null);
     // Read once: the next attempt is about this sign-in, not the change behind it.
     setPasswordChanged(false);
+    setSecondFactor(null);
 
     try {
       const result = await loginStaff(tenant, {
@@ -232,6 +236,16 @@ export default function StaffLogin({
           {passwordChanged && !error ? (
             <Alert variant="success" live="status" title={t('passwordChangedTitle')} className="mb-6">
               {t('passwordChangedBody')}
+            </Alert>
+          ) : null}
+          {secondFactor && !error ? (
+            <Alert
+              variant="success"
+              live="status"
+              title={secondFactor === 'on' ? t('secondFactorOnTitle') : t('secondFactorOffTitle')}
+              className="mb-6"
+            >
+              {secondFactor === 'on' ? t('secondFactorOnBody') : t('secondFactorOffBody')}
             </Alert>
           ) : null}
 
