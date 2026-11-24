@@ -16,6 +16,7 @@ import { citizenArrears } from './bill-arrears';
 import { FeesService } from './fees.service';
 import { PaymentLedgerService } from './payment-ledger.service';
 import { PaymentSettlementService } from './payment-settlement.service';
+import { StaffActor } from '../../common/actor';
 
 /**
  * An old debt's bill on every read of a bill (old debts task 10,
@@ -49,7 +50,7 @@ describeIfDb('old-debt bills on every read of a bill', () => {
   let settlements: PaymentSettlementService;
 
   const ids = { accountant: randomUUID(), manager: randomUUID() };
-  const MANAGER = { id: ids.manager, role: 'SUPER_ADMIN' };
+  const MANAGER: StaffActor = { id: ids.manager, role: 'SUPER_ADMIN' };
   const citizenId = randomUUID();
   let currentBillId: string;
   let principalBillId: string;

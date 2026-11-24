@@ -9,6 +9,7 @@ import { PrismaAuditRepository } from '../../../infrastructure/repositories/audi
 import type { AuditLogEntry } from '../../../domain/entities/audit-log-entry.entity';
 import { ConflictError, ValidationError } from '../../../domain/errors/domain-error';
 import { UnitCorrectionService } from './unit-correction.service';
+import { StaffActor } from '../../common/actor';
 
 /**
  * «حذف تصحيحي» against a real tenant schema: every migration applied, the units
@@ -39,7 +40,7 @@ describeIfDb('UnitCorrectionService', () => {
   let service: UnitCorrectionService;
   const officerId = randomUUID();
   const adminId = randomUUID();
-  const admin = { id: adminId, role: 'SUPER_ADMIN' };
+  const admin: StaffActor = { id: adminId, role: 'SUPER_ADMIN' };
 
   const within = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'tenant-uc', tenantSlug: 'uc', schemaName: SCHEMA, prisma: db }, work);

@@ -53,6 +53,8 @@ import { TenancyService } from '../../application/features/citizens/tenancy.serv
 import { OwnershipService } from '../../application/features/citizens/ownership.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { CurrentUser } from '../decorators/current-user.decorator';
+import { CurrentActor } from '../decorators/current-actor.decorator';
+import { StaffActor } from '../../application/common/actor';
 import { Roles } from '../decorators/roles.decorator';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
 import { UuidPipe } from '../pipes/uuid.pipe';
@@ -113,10 +115,6 @@ export class BuildingsController {
     });
   }
 
-  private actor(user: SessionClaims) {
-    return { id: user.sub, role: user.role ?? '' };
-  }
-
   /** The census ledger — filters compose, and every one of them is optional. */
   @Roles(...EVERY_STAFF_ROLE)
   @Get()
@@ -151,9 +149,9 @@ export class BuildingsController {
   @Get('unsurveyed-units')
   async unsurveyedUnits(
     @Query(new ZodValidationPipe(worklistQuerySchema)) query: WorklistQuery,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.buildings.unsurveyedUnits(query, this.actor(user));
+    return this.buildings.unsurveyedUnits(query, actor);
   }
 
   /**
@@ -165,9 +163,9 @@ export class BuildingsController {
   @Get('reinspections')
   async reinspections(
     @Query(new ZodValidationPipe(worklistQuerySchema)) query: WorklistQuery,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.buildings.reinspections(query, this.actor(user));
+    return this.buildings.reinspections(query, actor);
   }
 
   /** One building with its whole unit matrix and each unit's occupants. */
@@ -196,9 +194,9 @@ export class BuildingsController {
   @Post()
   async create(
     @Body(new ZodValidationPipe(createBuildingSchema)) body: CreateBuildingInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.buildings.create(body, this.actor(user));
+    return this.buildings.create(body, actor);
   }
 
   @Roles(...REGISTER_WRITE_ROLES)
@@ -206,9 +204,9 @@ export class BuildingsController {
   async update(
     @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(updateBuildingSchema)) body: UpdateBuildingInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.buildings.update(id, body, this.actor(user));
+    return this.buildings.update(id, body, actor);
   }
 
   /**
@@ -220,9 +218,9 @@ export class BuildingsController {
   async saveMatrix(
     @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(saveBuildingMatrixSchema)) body: SaveBuildingMatrixInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.buildings.saveMatrix(id, body, this.actor(user));
+    return this.buildings.saveMatrix(id, body, actor);
   }
 
   /**
@@ -249,15 +247,15 @@ export class BuildingsController {
   async correctParcel(
     @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(correctBuildingParcelSchema)) body: CorrectBuildingParcelInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.parcelCorrection.correct(id, body, this.actor(user));
+    return this.parcelCorrection.correct(id, body, actor);
   }
 
   @Roles('SUPER_ADMIN')
   @Delete(':id')
-  async remove(@Param('id', new UuidPipe()) id: string, @CurrentUser() user: SessionClaims) {
-    await this.buildings.remove(id, this.actor(user));
+  async remove(@Param('id', new UuidPipe()) id: string, @CurrentActor() actor: StaffActor) {
+    await this.buildings.remove(id, actor);
     return { deleted: true };
   }
 
@@ -273,9 +271,9 @@ export class BuildingsController {
   async generateUnits(
     @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(unitBlueprintSchema)) body: UnitBlueprint,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.buildings.generateUnits(id, body, this.actor(user));
+    return this.buildings.generateUnits(id, body, actor);
   }
 
   @Roles(...REGISTER_WRITE_ROLES)
@@ -283,9 +281,9 @@ export class BuildingsController {
   async addUnit(
     @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(upsertUnitSchema)) body: UpsertUnitInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.buildings.addUnit(id, body, this.actor(user));
+    return this.buildings.addUnit(id, body, actor);
   }
 
   /**
@@ -298,9 +296,9 @@ export class BuildingsController {
   async updateUnit(
     @Param('unitId', new UuidPipe()) unitId: string,
     @Body(new ZodValidationPipe(updateUnitSchema)) body: UpdateUnitInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.buildings.updateUnit(unitId, body, this.actor(user));
+    return this.buildings.updateUnit(unitId, body, actor);
   }
 
   /**
@@ -313,9 +311,9 @@ export class BuildingsController {
   async resizeUnitSpan(
     @Param('unitId', new UuidPipe()) unitId: string,
     @Body(new ZodValidationPipe(resizeUnitSpanSchema)) body: ResizeUnitSpanInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.buildings.resizeUnitSpan(unitId, body, this.actor(user));
+    return this.buildings.resizeUnitSpan(unitId, body, actor);
   }
 
   /**
@@ -329,8 +327,8 @@ export class BuildingsController {
    */
   @Roles(...REGISTER_WRITE_ROLES)
   @Delete('units/:unitId')
-  async deleteUnit(@Param('unitId', new UuidPipe()) unitId: string, @CurrentUser() user: SessionClaims) {
-    await this.buildings.deleteUnit(unitId, this.actor(user));
+  async deleteUnit(@Param('unitId', new UuidPipe()) unitId: string, @CurrentActor() actor: StaffActor) {
+    await this.buildings.deleteUnit(unitId, actor);
     return { deleted: true };
   }
 
@@ -352,9 +350,9 @@ export class BuildingsController {
   async confirmVacancy(
     @Param('unitId', new UuidPipe()) unitId: string,
     @Body(new ZodValidationPipe(confirmVacancySchema)) body: ConfirmVacancyInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.buildings.confirmVacancy(unitId, body, this.actor(user));
+    return this.buildings.confirmVacancy(unitId, body, actor);
   }
 
   /**
@@ -370,8 +368,10 @@ export class BuildingsController {
     @Param('unitId', new UuidPipe()) unitId: string,
     @Body(new ZodValidationPipe(endVacancySchema)) body: EndVacancyInput,
     @CurrentUser() user: SessionClaims,
+
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.buildings.endVacancy(unitId, body, this.actor(user));
+    return this.buildings.endVacancy(unitId, body, actor);
   }
 
   // ─────────────────────  «توزيع الرسم على المالكين»  ─────────────────────
@@ -390,9 +390,9 @@ export class BuildingsController {
   async setOwnerBilling(
     @Param('unitId', new UuidPipe()) unitId: string,
     @Body(new ZodValidationPipe(setOwnerBillingSchema)) body: SetOwnerBillingInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.ownerBilling.set(unitId, body, this.actor(user));
+    return this.ownerBilling.set(unitId, body, actor);
   }
 
   /**
@@ -409,9 +409,9 @@ export class BuildingsController {
   async setFeeExemption(
     @Param('unitId', new UuidPipe()) unitId: string,
     @Body(new ZodValidationPipe(setUnitFeeExemptionSchema)) body: SetUnitFeeExemptionInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.feeExemption.set(unitId, body, this.actor(user));
+    return this.feeExemption.set(unitId, body, actor);
   }
 
   // ────────────────────────────  Occupancy  ────────────────────────────
@@ -431,17 +431,17 @@ export class BuildingsController {
    */
   @Roles('SUPER_ADMIN')
   @Post('units/status-review')
-  async settleAllUnits(@CurrentUser() user: SessionClaims) {
-    return this.buildings.settleAllUnits(this.actor(user));
+  async settleAllUnits(@CurrentActor() actor: StaffActor) {
+    return this.buildings.settleAllUnits(actor);
   }
 
   @Roles(...REGISTER_WRITE_ROLES)
   @Post('occupancies')
   async recordOccupancy(
     @Body(new ZodValidationPipe(upsertOccupancySchema)) body: UpsertOccupancyInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.tenancy.recordOccupancy(body, this.actor(user));
+    return this.tenancy.recordOccupancy(body, actor);
   }
 
   /**
@@ -454,12 +454,12 @@ export class BuildingsController {
   async linkOccupancyOwner(
     @Param('occupancyId', new UuidPipe()) occupancyId: string,
     @Body(new ZodValidationPipe(linkOccupancyOwnerSchema)) body: LinkOccupancyOwnerInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
     return this.tenancy.linkOccupancyOwner(
       occupancyId,
       body.landlordCitizenId,
-      this.actor(user),
+      actor,
       body.confirmRecordedAfter ?? false,
     );
   }
@@ -478,7 +478,7 @@ export class BuildingsController {
   async endOccupancy(
     @Param('occupancyId', new UuidPipe()) occupancyId: string,
     @Body(new ZodValidationPipe(endOccupancySchema)) body: EndOccupancyInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
     return this.tenancy.endOccupancy(
       occupancyId,
@@ -490,7 +490,7 @@ export class BuildingsController {
         vacancyNotes: body.vacancyNotes,
         newOwnerId: body.newOwnerId,
       },
-      this.actor(user),
+      actor,
     );
   }
 
@@ -518,9 +518,9 @@ export class BuildingsController {
   @Post('visits')
   async logVisit(
     @Body(new ZodValidationPipe(logVisitSchema)) body: LogVisitInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.buildings.logVisit(body, this.actor(user));
+    return this.buildings.logVisit(body, actor);
   }
 
   /** Every attempt on one unit — the panel behind «٣ محاولات». */
@@ -541,8 +541,8 @@ export class BuildingsController {
   @Post('damage')
   async recordDamage(
     @Body(new ZodValidationPipe(createDamageAssessmentSchema)) body: CreateDamageAssessmentInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.damage.record(body, this.actor(user));
+    return this.damage.record(body, actor);
   }
 }

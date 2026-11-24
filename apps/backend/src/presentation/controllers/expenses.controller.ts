@@ -22,9 +22,9 @@ import {
 } from '@mechanization/shared-schemas';
 import { ValidationError } from '../../application/common/exceptions';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
-import type { SessionClaims } from '../../application/features/identity/identity.service';
 import { ExpensesService } from '../../application/features/treasury/expenses.service';
-import { CurrentUser } from '../decorators/current-user.decorator';
+import { CurrentActor } from '../decorators/current-actor.decorator';
+import { StaffActor } from '../../application/common/actor';
 import { Roles } from '../decorators/roles.decorator';
 import { optionalInt, requireRangeEnd, requireRangeStart } from './query-params';
 import { UuidPipe } from '../pipes/uuid.pipe';
@@ -64,9 +64,9 @@ export class ExpensesController {
   @Post('categories')
   createCategory(
     @Body(new ZodValidationPipe(createExpenseCategorySchema)) body: CreateExpenseCategoryInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.expenses.createCategory(body, { id: user.sub, role: user.role ?? '' });
+    return this.expenses.createCategory(body, actor);
   }
 
   /** Renames a band, re-codes it, or takes it out of use. Never deletes one. */
@@ -75,9 +75,9 @@ export class ExpensesController {
   updateCategory(
     @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(updateExpenseCategorySchema)) body: UpdateExpenseCategoryInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.expenses.updateCategory(id, body, { id: user.sub, role: user.role ?? '' });
+    return this.expenses.updateCategory(id, body, actor);
   }
 
   /** The register, newest first, with what the filtered set adds up to. */
@@ -116,9 +116,9 @@ export class ExpensesController {
   @Post()
   record(
     @Body(new ZodValidationPipe(recordExpenseSchema)) body: RecordExpenseInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.expenses.record(body, { id: user.sub, role: user.role ?? '' });
+    return this.expenses.record(body, actor);
   }
 
   // ─────────────────────  «أمر الصرف» — requests and orders  ─────────────────────
@@ -144,16 +144,16 @@ export class ExpensesController {
   @Post('requests')
   requestPayment(
     @Body(new ZodValidationPipe(requestExpenseSchema)) body: RequestExpenseInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.expenses.requestPayment(body, { id: user.sub, role: user.role ?? '' });
+    return this.expenses.requestPayment(body, actor);
   }
 
   /** «إصدار أمر الصرف» — the manager orders a request, and the money leaves. */
   @Roles(...TREASURY_ADMIN_ROLES)
   @Post('requests/:id/order')
-  orderRequest(@Param('id', new UuidPipe()) id: string, @CurrentUser() user: SessionClaims) {
-    return this.expenses.orderRequest(id, { id: user.sub, role: user.role ?? '' });
+  orderRequest(@Param('id', new UuidPipe()) id: string, @CurrentActor() actor: StaffActor) {
+    return this.expenses.orderRequest(id, actor);
   }
 
   /** «رفض الطلب» — the manager declines a request, with a reason. */
@@ -162,16 +162,16 @@ export class ExpensesController {
   rejectRequest(
     @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(rejectExpenseRequestSchema)) body: RejectExpenseRequestInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.expenses.rejectRequest(id, body.reason, { id: user.sub, role: user.role ?? '' });
+    return this.expenses.rejectRequest(id, body.reason, actor);
   }
 
   /** «سحب الطلب» — its author (or the manager) takes back a request still waiting. */
   @Roles(...TREASURY_WORK_ROLES)
   @Post('requests/:id/withdraw')
-  withdrawRequest(@Param('id', new UuidPipe()) id: string, @CurrentUser() user: SessionClaims) {
-    return this.expenses.withdrawRequest(id, { id: user.sub, role: user.role ?? '' });
+  withdrawRequest(@Param('id', new UuidPipe()) id: string, @CurrentActor() actor: StaffActor) {
+    return this.expenses.withdrawRequest(id, actor);
   }
 
   /**
@@ -186,9 +186,9 @@ export class ExpensesController {
   recordSalary(
     @Param('staffId', new UuidPipe()) staffId: string,
     @Body(new ZodValidationPipe(recordStaffSalarySchema)) body: RecordStaffSalaryInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.expenses.recordSalary(staffId, body, { id: user.sub, role: user.role ?? '' });
+    return this.expenses.recordSalary(staffId, body, actor);
   }
 
   @Roles(...TREASURY_READ_ROLES)
@@ -200,8 +200,8 @@ export class ExpensesController {
   /** «تسوية بأمر صرف» — the manager's order for an urgent payment already made (art. 35). */
   @Roles(...TREASURY_ADMIN_ROLES)
   @Post(':id/order')
-  regularize(@Param('id', new UuidPipe()) id: string, @CurrentUser() user: SessionClaims) {
-    return this.expenses.regularize(id, { id: user.sub, role: user.role ?? '' });
+  regularize(@Param('id', new UuidPipe()) id: string, @CurrentActor() actor: StaffActor) {
+    return this.expenses.regularize(id, actor);
   }
 
   /** «إلغاء سند الصرف»: the manager's alone, and it puts the money back. */
@@ -210,8 +210,8 @@ export class ExpensesController {
   void(
     @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(voidExpenseSchema)) body: VoidExpenseInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.expenses.void(id, body.reason, { id: user.sub, role: user.role ?? '' });
+    return this.expenses.void(id, body.reason, actor);
   }
 }

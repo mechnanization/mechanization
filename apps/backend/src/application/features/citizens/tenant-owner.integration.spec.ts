@@ -17,6 +17,7 @@ import { CitizensService } from './citizens.service';
 import { LandlordLinkService, readFootprint } from './landlord-link.service';
 import { TenancyService } from './tenancy.service';
 import { OwnershipService } from './ownership.service';
+import { StaffActor } from '../../common/actor';
 
 /**
  * A tenant and the owner they rent from, against a real Postgres.
@@ -57,7 +58,7 @@ describeIfDb('A tenant and the owner they rent from', () => {
   let citizens: CitizensService;
   let officerId: string;
 
-  const actor = () => ({ id: officerId, role: 'SUPER_ADMIN' });
+  const actor = (): StaffActor => ({ id: officerId, role: 'SUPER_ADMIN' });
 
   const within = <T>(work: () => Promise<T>): Promise<T> =>
     context.run(

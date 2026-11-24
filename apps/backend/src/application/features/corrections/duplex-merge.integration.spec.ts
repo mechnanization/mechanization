@@ -7,6 +7,7 @@ import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-cli
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { PrismaAuditRepository } from '../../../infrastructure/repositories/audit.repository';
 import { UnitCorrectionService } from './unit-correction.service';
+import { StaffActor } from '../../common/actor';
 
 /**
  * «دمج كدوبلكس» (decision D28) against a real tenant schema.
@@ -35,7 +36,7 @@ describeIfDb('«دمج كدوبلكس»', () => {
   let service: UnitCorrectionService;
   const officerId = randomUUID();
   const adminId = randomUUID();
-  const admin = { id: adminId, role: 'SUPER_ADMIN' };
+  const admin: StaffActor = { id: adminId, role: 'SUPER_ADMIN' };
 
   const within = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'tenant-dm', tenantSlug: 'dm', schemaName: SCHEMA, prisma: db }, work);

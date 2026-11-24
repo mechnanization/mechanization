@@ -15,6 +15,7 @@ import { LandlordLinkService } from '../citizens/landlord-link.service';
 import { FeesService } from '../fees/fees.service';
 import { DataQualityService } from './data-quality.service';
 import { RecordReviewService } from './record-review.service';
+import { StaffActor } from '../../common/actor';
 
 /**
  * «مراجعة الجودة» against a real Postgres: migration 0049, the review states,
@@ -49,8 +50,8 @@ describeIfDb('Quality review', () => {
     auditor: '',
     collector: '',
   };
-  const ROLE_OF = { jawad: 'FIELD_INSPECTOR', hussein: 'FIELD_INSPECTOR', auditor: 'AUDITOR', collector: 'COLLECTOR' };
-  const as = (who: keyof typeof staff, role: string = ROLE_OF[who]) => ({ id: staff[who], role });
+  const ROLE_OF: Record<keyof typeof staff, StaffActor['role']> = { jawad: 'FIELD_INSPECTOR', hussein: 'FIELD_INSPECTOR', auditor: 'AUDITOR', collector: 'COLLECTOR' };
+  const as = (who: keyof typeof staff, role: StaffActor['role'] = ROLE_OF[who]): StaffActor => ({ id: staff[who], role });
 
   const within = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'tenant-quality', tenantSlug: 'quality', schemaName: SCHEMA, prisma: db }, work);

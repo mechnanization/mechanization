@@ -5,10 +5,11 @@ import { CadastreImportService } from '../../application/features/cadastre/cadas
 import { ValidationError } from '../../application/common/exceptions';
 import { CADASTRE_STORAGE_SERVICE } from '../../domain/interfaces/base-repository.interface';
 import type { CadastreStorage } from '../../domain/interfaces/cadastre-storage.interface';
-import { CurrentTenant, CurrentUser } from '../decorators/current-user.decorator';
+import { CurrentTenant } from '../decorators/current-user.decorator';
+import { CurrentActor } from '../decorators/current-actor.decorator';
+import { StaffActor } from '../../application/common/actor';
 import { SelfService } from '../decorators/self-service.decorator';
 import { Roles } from '../decorators/roles.decorator';
-import type { SessionClaims } from '../../application/features/identity/identity.service';
 import { APP_CONFIG } from '../config/app.config';
 
 @Controller('t/:tenantSlug/cadastre')
@@ -74,7 +75,7 @@ export class CadastreController {
   async import(
     @CurrentTenant('slug') tenantSlug: string,
     @UploadedFile() file: Express.Multer.File | undefined,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
     if (!file) {
       throw new ValidationError('لم يتم إرفاق ملف GeoJSON');
@@ -83,7 +84,7 @@ export class CadastreController {
     return this.cadastreImport.importGeoJson({
       tenantSlug,
       buffer: file.buffer,
-      actor: { id: user.sub, role: user.role ?? '' },
+      actor,
     });
   }
 }

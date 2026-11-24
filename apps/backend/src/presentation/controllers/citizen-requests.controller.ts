@@ -31,6 +31,8 @@ import { CitizenRequestsService } from '../../application/features/citizen-reque
 import type { SessionClaims } from '../../application/features/identity/identity.service';
 import { APP_CONFIG } from '../config/app.config';
 import { CurrentUser } from '../decorators/current-user.decorator';
+import { CurrentActor } from '../decorators/current-actor.decorator';
+import { StaffActor } from '../../application/common/actor';
 import { SelfService } from '../decorators/self-service.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import { UuidPipe } from '../pipes/uuid.pipe';
@@ -68,10 +70,6 @@ function asCitizen(user: SessionClaims): string {
     throw new ForbiddenError({ code: 'CITIZENS_ONLY', message: 'This is available to citizens only.' });
   }
   return user.sub;
-}
-
-function staff(user: SessionClaims): { id: string; role: string } {
-  return { id: user.sub, role: user.role ?? '' };
 }
 
 function requireFile(file: Express.Multer.File | undefined): { buffer: Buffer; size: number } {
@@ -176,9 +174,9 @@ export class CitizenRequestsController {
   updateType(
     @Param('type', new ZodValidationPipe(requestTypeSchema)) type: RequestType,
     @Body(new ZodValidationPipe(updateRequestTypeSettingSchema)) body: UpdateRequestTypeSettingInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.requests.updateType(type, body, staff(user));
+    return this.requests.updateType(type, body, actor);
   }
 
   /** A request filed at the counter for a citizen who is present (D8). */
@@ -186,9 +184,9 @@ export class CitizenRequestsController {
   @Post()
   submit(
     @Body(new ZodValidationPipe(submitCounterRequestSchema)) body: SubmitCounterRequestInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.requests.submit(body, { kind: 'STAFF', ...staff(user) });
+    return this.requests.submit(body, { kind: 'STAFF', ...actor });
   }
 
   @Roles(...REQUEST_READ_ROLES)
@@ -200,8 +198,8 @@ export class CitizenRequestsController {
   /** «تحصيل الرسم»: the fee's bill, for the counter to settle. */
   @Roles(...REQUEST_BILL_ROLES)
   @Post(':id/bill')
-  bill(@Param('id', new UuidPipe()) id: string, @CurrentUser() user: SessionClaims) {
-    return this.requests.raiseBill(id, { kind: 'STAFF', ...staff(user) });
+  bill(@Param('id', new UuidPipe()) id: string, @CurrentActor() actor: StaffActor) {
+    return this.requests.raiseBill(id, { kind: 'STAFF', ...actor });
   }
 
   @Roles(...REQUEST_HANDLE_ROLES)
@@ -209,9 +207,9 @@ export class CitizenRequestsController {
   approve(
     @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(approveRequestSchema)) body: ApproveRequestInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.requests.approve(id, body.statement, staff(user));
+    return this.requests.approve(id, body.statement, actor);
   }
 
   @Roles(...REQUEST_HANDLE_ROLES)
@@ -219,21 +217,21 @@ export class CitizenRequestsController {
   reject(
     @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(rejectRequestSchema)) body: RejectRequestInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.requests.reject(id, body.reason, staff(user));
+    return this.requests.reject(id, body.reason, actor);
   }
 
   @Roles(...REQUEST_HANDLE_ROLES)
   @Post(':id/complete')
-  complete(@Param('id', new UuidPipe()) id: string, @CurrentUser() user: SessionClaims) {
-    return this.requests.complete(id, staff(user));
+  complete(@Param('id', new UuidPipe()) id: string, @CurrentActor() actor: StaffActor) {
+    return this.requests.complete(id, actor);
   }
 
   @Roles(...REQUEST_HANDLE_ROLES)
   @Post(':id/cancel')
-  async cancel(@Param('id', new UuidPipe()) id: string, @CurrentUser() user: SessionClaims) {
-    await this.requests.cancel(id, { kind: 'STAFF', ...staff(user) });
+  async cancel(@Param('id', new UuidPipe()) id: string, @CurrentActor() actor: StaffActor) {
+    await this.requests.cancel(id, { kind: 'STAFF', ...actor });
     return this.requests.get(id);
   }
 
@@ -244,9 +242,9 @@ export class CitizenRequestsController {
     @Param('id', new UuidPipe()) id: string,
     @UploadedFile() file: Express.Multer.File | undefined,
     @Body(new ZodValidationPipe(uploadRequestAttachmentSchema)) body: UploadRequestAttachmentInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.requests.addAttachment(id, requireFile(file), body.type, { kind: 'STAFF', ...staff(user) });
+    return this.requests.addAttachment(id, requireFile(file), body.type, { kind: 'STAFF', ...actor });
   }
 
   /** A five-minute link to one paper; every use is an audit row (D6). */
@@ -255,8 +253,8 @@ export class CitizenRequestsController {
   attachmentUrl(
     @Param('id', new UuidPipe()) id: string,
     @Param('attachmentId', new UuidPipe()) attachmentId: string,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.requests.attachmentUrl(id, attachmentId, staff(user));
+    return this.requests.attachmentUrl(id, attachmentId, actor);
   }
 }

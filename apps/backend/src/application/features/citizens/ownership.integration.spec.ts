@@ -16,6 +16,7 @@ import { OwnershipService } from './ownership.service';
 import { AuditService } from '../audit/audit.service';
 import { PrismaAuditRepository } from '../../../infrastructure/repositories/audit.repository';
 import { TenancyService } from './tenancy.service';
+import { StaffActor } from '../../common/actor';
 
 /**
  * Ending an ownership, against a real Postgres.
@@ -49,7 +50,7 @@ describeIfDb('OwnershipService', () => {
   let fees: FeesService;
   let officerId: string;
 
-  const actor = () => ({ id: officerId, role: 'SUPER_ADMIN' });
+  const actor = (): StaffActor => ({ id: officerId, role: 'SUPER_ADMIN' });
   const within = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'tenant-ownership', tenantSlug: 'ownership', schemaName: SCHEMA, prisma: db }, work);
 

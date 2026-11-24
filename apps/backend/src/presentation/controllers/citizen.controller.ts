@@ -40,6 +40,8 @@ import { ZodValidationPipe } from '../../application/common/pipes/zod-validation
 import { NotFoundError } from '../../application/common/exceptions';
 import { citizenArrears } from '../../application/features/fees/bill-arrears';
 import { CurrentTenant, CurrentUser } from '../decorators/current-user.decorator';
+import { CurrentActor } from '../decorators/current-actor.decorator';
+import { StaffActor } from '../../application/common/actor';
 import { SelfService } from '../decorators/self-service.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
@@ -117,6 +119,7 @@ export class CitizenController {
   @Roles(...EVERY_STAFF_ROLE)
   @Get()
   async list(
+    @CurrentActor() actor: StaffActor,
     @Query('search') search?: string,
     @Query('limit') limit = '200',
     @Query('offset') offset = '0',
@@ -128,7 +131,6 @@ export class CitizenController {
      * a 400.
      */
     @Query('status') status?: string,
-    @CurrentUser() user?: SessionClaims,
   ) {
     return this.citizens.list(
       {
@@ -138,7 +140,7 @@ export class CitizenController {
         offset: queryOffset(offset),
       },
       // «يتطلب مراجعة» is the viewer's own queue unless they are an admin.
-      user ? { id: user.sub, role: user.role ?? '' } : undefined,
+      actor,
     );
   }
 
@@ -156,9 +158,9 @@ export class CitizenController {
   @Get('review-queue')
   reviewQueue(
     @Query(new ZodValidationPipe(worklistQuerySchema)) query: WorklistQuery,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.citizens.reviewQueue(query, { id: user.sub, role: user.role ?? '' });
+    return this.citizens.reviewQueue(query, actor);
   }
 
   /**
@@ -404,7 +406,7 @@ export class CitizenController {
   endTenancy(
     @Param('propertyEntryId', new UuidPipe()) propertyEntryId: string,
     @Body(new ZodValidationPipe(endTenancySchema)) body: EndTenancyInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
     return this.tenancy.endCard(
       propertyEntryId,
@@ -417,7 +419,7 @@ export class CitizenController {
         vacancyBasis: body.vacancyBasis,
         vacancyNotes: body.vacancyNotes,
       },
-      { id: user.sub, role: user.role ?? 'STAFF' },
+      actor,
     );
   }
 
@@ -442,7 +444,7 @@ export class CitizenController {
   endOwnership(
     @Param('propertyEntryId', new UuidPipe()) propertyEntryId: string,
     @Body(new ZodValidationPipe(endOwnershipSchema)) body: EndOwnershipInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
     return this.ownership.endCard(
       propertyEntryId,
@@ -455,7 +457,7 @@ export class CitizenController {
         vacancyBasis: body.vacancyBasis,
         vacancyNotes: body.vacancyNotes,
       },
-      { id: user.sub, role: user.role ?? 'STAFF' },
+      actor,
     );
   }
 
@@ -488,12 +490,12 @@ export class CitizenController {
   confirmLandlordLink(
     @Param('propertyEntryId', new UuidPipe()) propertyEntryId: string,
     @Body('citizenId') citizenId: string,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
     return this.landlordLinkService.confirm({
       propertyEntryId,
       citizenId,
-      actor: { id: user.sub, role: user.role ?? 'STAFF' },
+      actor,
     });
   }
 
@@ -508,14 +510,14 @@ export class CitizenController {
   dismissLandlordLink(
     @Param('propertyEntryId', new UuidPipe()) propertyEntryId: string,
     @Body('candidateIds') candidateIds: unknown,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
     return this.landlordLinkService.dismiss({
       propertyEntryId,
       candidateIds: Array.isArray(candidateIds)
         ? candidateIds.filter((id): id is string => typeof id === 'string')
         : [],
-      actor: { id: user.sub, role: user.role ?? 'STAFF' },
+      actor,
     });
   }
 
@@ -525,14 +527,14 @@ export class CitizenController {
   restoreLandlordLink(
     @Param('propertyEntryId', new UuidPipe()) propertyEntryId: string,
     @Body('candidateIds') candidateIds: unknown,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
     return this.landlordLinkService.undismiss({
       propertyEntryId,
       candidateIds: Array.isArray(candidateIds)
         ? candidateIds.filter((id): id is string => typeof id === 'string')
         : [],
-      actor: { id: user.sub, role: user.role ?? 'STAFF' },
+      actor,
     });
   }
 
@@ -546,11 +548,11 @@ export class CitizenController {
   @Delete('landlord-links/:propertyEntryId')
   unlinkLandlord(
     @Param('propertyEntryId', new UuidPipe()) propertyEntryId: string,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
     return this.landlordLinkService.unlink({
       propertyEntryId,
-      actor: { id: user.sub, role: user.role ?? 'STAFF' },
+      actor,
     });
   }
 
@@ -608,12 +610,12 @@ export class CitizenController {
     @CurrentTenant('slug') tenantSlug: string,
     @Body(new ZodValidationPipe(adminCreateCitizenSubmissionSchema))
     payload: AdminCitizenSubmission,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
     return this.citizens.create({
       tenantSlug,
       payload,
-      actor: { id: user.sub, role: user.role ?? '' },
+      actor,
     });
   }
 
@@ -675,9 +677,9 @@ export class CitizenController {
   async merge(
     @CurrentTenant('slug') tenantSlug: string,
     @Body(new ZodValidationPipe(citizenMergeSchema)) body: CitizenMergeInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.merges.merge({ ...body, tenantSlug, actor: { id: user.sub, role: user.role ?? '' } });
+    return this.merges.merge({ ...body, tenantSlug, actor });
   }
 
   /**
@@ -705,13 +707,13 @@ export class CitizenController {
     @CurrentTenant('slug') tenantSlug: string,
     @Param('mergeId', new UuidPipe()) mergeId: string,
     @Body(new ZodValidationPipe(citizenUnmergeSchema)) body: CitizenUnmergeInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
     return this.merges.unmerge({
       mergeId,
       reason: body.reason,
       tenantSlug,
-      actor: { id: user.sub, role: user.role ?? '' },
+      actor,
     });
   }
 
@@ -731,14 +733,14 @@ export class CitizenController {
   async import(
     @CurrentTenant('slug') tenantSlug: string,
     @Body(new ZodValidationPipe(citizenImportSchema)) payload: CitizenImportRequest,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
     return this.citizens.importMany({
       tenantSlug,
       rows: payload.rows,
       startRow: payload.startRow,
       dryRun: payload.dryRun,
-      actor: { id: user.sub, role: user.role ?? '' },
+      actor,
     });
   }
 
@@ -765,13 +767,13 @@ export class CitizenController {
     @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(adminUpdateCitizenSubmissionSchema))
     payload: AdminCitizenUpdateSubmission,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
     return this.citizens.update({
       tenantSlug,
       citizenId: id,
       payload,
-      actor: { id: user.sub, role: user.role ?? '' },
+      actor,
     });
   }
 
@@ -787,7 +789,7 @@ export class CitizenController {
     @CurrentTenant('slug') tenantSlug: string,
     @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(setCitizenActiveSchema)) body: SetCitizenActive,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
     return this.citizens.setActive({
       tenantSlug,
@@ -796,7 +798,7 @@ export class CitizenController {
       ...(body.reason ? { reason: body.reason } : {}),
       ...(body.requestedBy ? { requestedBy: body.requestedBy } : {}),
       ...(body.movedOn ? { movedOn: body.movedOn } : {}),
-      actor: { id: user.sub, role: user.role ?? '' },
+      actor,
     });
   }
 }

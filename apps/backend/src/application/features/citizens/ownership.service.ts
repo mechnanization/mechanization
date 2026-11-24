@@ -14,6 +14,7 @@ import { CasesService } from '../cases/cases.service';
 import { withoutCardFlags, withoutRowFlags } from './card-flags';
 import { LandlordLinkService, type PendingEvent, type SaleRelease } from './landlord-link.service';
 import type { TenancyService } from './tenancy.service';
+import { StaffActor } from '../../common/actor';
 
 /**
  * «إنهاء الملكية» — an owner no longer holds a property, or never did.
@@ -85,13 +86,13 @@ export class OwnershipService {
   // ─────────────────────────────  Entry points  ─────────────────────────────
 
   /** «إنهاء الملكية» from the owner's file or edit form. */
-  async endCard(propertyEntryId: string, input: EndOwnershipCommand, actor: Actor): Promise<EndOwnershipResult> {
+  async endCard(propertyEntryId: string, input: EndOwnershipCommand, actor: StaffActor): Promise<EndOwnershipResult> {
     const target = await this.targetFromCard(propertyEntryId, { rowIds: input.rowIds });
     return this.end(target, input, actor);
   }
 
   /** The matrix's end of an owner's spell. */
-  async endOccupancy(occupancyId: string, input: EndOwnershipCommand, actor: Actor): Promise<EndOwnershipResult> {
+  async endOccupancy(occupancyId: string, input: EndOwnershipCommand, actor: StaffActor): Promise<EndOwnershipResult> {
     const target = await this.targetFromOccupancy(occupancyId);
     return this.end(target, input, actor);
   }
@@ -447,7 +448,7 @@ export class OwnershipService {
 
   // ─────────────────────────────  Ending  ─────────────────────────────
 
-  private async end(target: Target, input: EndOwnershipCommand, actor: Actor): Promise<EndOwnershipResult> {
+  private async end(target: Target, input: EndOwnershipCommand, actor: StaffActor): Promise<EndOwnershipResult> {
     if (target.cards.length === 0 && target.spells.length === 0) {
       throw new ConflictError({
         code: 'OWNERSHIP_NONE_ACTIVE',
@@ -855,7 +856,7 @@ export class OwnershipService {
     target: Target,
     input: EndOwnershipCommand,
     endedAt: Date,
-    actor: Actor,
+    actor: StaffActor,
     result: EndOwnershipResult,
   ): Promise<void> {
     switch (input.afterStatus as AfterTenancyStatus | undefined) {
@@ -934,7 +935,7 @@ export class OwnershipService {
 
   private async openCase(
     unit: TargetUnit,
-    actor: Actor,
+    actor: StaffActor,
     result: EndOwnershipResult,
     caseType: 'GENERAL_NOTE',
     notes: string,
@@ -1003,7 +1004,6 @@ const CARD_SELECT = {
   },
 } as const;
 
-type Actor = { id: string; role: string };
 
 export interface EndOwnershipCommand {
   reason: 'OWNERSHIP_TRANSFERRED' | 'RECORDED_IN_ERROR';
