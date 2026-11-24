@@ -1,13 +1,12 @@
 'use client';
 
 import { billOwesNothing } from '@mechanization/shared-schemas';
-import { isValidElement, use, useCallback, useEffect, useRef, useState } from 'react';
+import { isValidElement, use, useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import {
   Archive,
-  Banknote,
   Building2,
   Calendar,
   Clock3,
@@ -24,8 +23,6 @@ import {
   MessageCircle,
   Pencil,
   Phone,
-  Receipt as ReceiptIcon,
-  ReceiptText,
   Signpost,
   StickyNote,
   Unlink,
@@ -51,7 +48,6 @@ import type {
 } from '@/lib/api-client';
 import { clearSession, loadSession } from '@/lib/session';
 import { useToast } from '@/components/ui/toast';
-import { describeAssessment } from '@/lib/fee-assessment';
 import { flagFieldLabel } from '@/lib/field-flags';
 import { findLocatedProperty, mapHref } from '@/lib/map-link';
 import { ActivityTrail } from '@/components/admin/activity-trail';
@@ -61,7 +57,7 @@ import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { CollapsibleSection } from '@/components/ui/collapsible-section';
-import { Pager } from '@/components/ui/pager';
+import { BillsPanel, BILLS_PAGE_SIZE } from '@/components/admin/citizen-file/bills-panel';
 import { StatItem, StatStrip } from '@/components/ui/stat-strip';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Money } from '@/components/ui/money';
@@ -88,11 +84,8 @@ import {
   REFERENCE_SEND_ROLES,
   hasRole,
 } from '@/lib/staff-roles';
-import { fromCitizenPayment, isBulkSettleable, pageSelection, rowBlock } from '@/lib/bulk-settle';
-import { billPageLink } from '@/lib/bill-receipts';
+import { fromCitizenPayment, isBulkSettleable } from '@/lib/bulk-settle';
 import { useBulkSelection, type BulkSelection } from '@/lib/use-bulk-selection';
-import { BillCheckbox } from '@/components/admin/bulk-settle/bill-checkbox';
-import { ArrearsBillMark, useArrearsPropertyText } from '@/components/arrears-bill-mark';
 import { BulkSettleBar } from '@/components/admin/bulk-settle/bulk-settle-bar';
 
 interface FactItem {
@@ -1536,22 +1529,6 @@ function LandlordOfSection({
 }
 
 /**
- * The bills' columns, one definition for the header and every row, so they
- * cannot drift apart: item · status · due · frequency · amount · actions.
- *
- * From `lg` up the list is one grid and every row is a subgrid of it, so a
- * column is as wide as its widest cell on any row — the actions column fits
- * «تسجيل دفعة نقدية» beside «الوصل» instead of spilling over the amount, as a
- * fixed 13rem did — and the header still lines up. Below `lg` a row stacks
- * into two — item, amount — with the details and the buttons under the item.
- */
-const FEE_LIST_GRID = 'lg:grid lg:grid-cols-[minmax(0,1fr)_auto_auto_auto_auto_auto]';
-const FEE_ROW_GRID = 'grid-cols-[minmax(0,1fr)_auto] lg:col-span-full lg:grid-cols-subgrid';
-
-/** Bills shown at a time on a citizen's file — a household's years of them would otherwise run the page out. */
-const FEES_PAGE_SIZE = 10;
-
-/**
  * The open bill page, in the URL as `?feesPage=` (1-based) so a reload — or
  * coming back from settling a bill on its own page — lands on the same bills.
  * Its own key: `page` would collide with whatever list linked here.
@@ -1605,9 +1582,6 @@ function FeesPanel({
   locale?: string;
 }) {
   const { tenant, adminPath } = useParams<{ tenant: string; adminPath: string }>();
-  const tSelect = useTranslations('bulkSettle.select');
-  const tReceipts = useTranslations('billReceipts');
-  const arrearsPropertyText = useArrearsPropertyText();
   /**
    * The bill's own page, payments/[paymentId]: «تسجيل دفعة نقدية» — ليرة, dollars,
    * the rate — while it is owed, and under it «وصولات الفاتورة», every receipt
@@ -1627,21 +1601,15 @@ function FeesPanel({
     received: number;
   } | null>(null);
 
-  const labels = getLabels(locale);
   // A cancelled bill, or one written off («شطب»), owes nothing.
   const outstanding = payments.filter(
     (payment) => payment.paymentStatus !== 'PAID' && !billOwesNothing(payment.paymentStatus),
   );
   const [{ feesPage: page }, setFeesUrl] = useUrlState(FEES_URL);
   const setPage = useCallback((next: number) => setFeesUrl({ feesPage: next }), [setFeesUrl]);
-  const listTop = useRef<HTMLUListElement>(null);
   // Back inside the list when a reload (or a stale link) leaves fewer pages than the one open.
-  const lastPage = Math.max(0, Math.ceil(payments.length / FEES_PAGE_SIZE) - 1);
+  const lastPage = Math.max(0, Math.ceil(payments.length / BILLS_PAGE_SIZE) - 1);
   const shownPage = Math.min(page, lastPage);
-  const pagePayments = payments.slice(shownPage * FEES_PAGE_SIZE, (shownPage + 1) * FEES_PAGE_SIZE);
-  /** This page's bills that may be ticked, and where «تحديد الكل» stands over them. */
-  const pageEligible = pagePayments.filter(isBulkSettleable).map((row) => fromCitizenPayment(citizen, row));
-  const pageState = selection ? pageSelection(selection.bills, pageEligible) : null;
 
   return (
     <>
@@ -1713,204 +1681,19 @@ function FeesPanel({
               }
             />
           ) : (
-            <div className="space-y-2">
-            {selection && pageState && pageState.eligible > 0 ? (
-              <div className="flex items-center gap-2">
-                <BillCheckbox
-                  id="citizen-fees-select-page"
-                  subject={{ kind: 'page', allSelected: pageState.allSelected }}
-                  checked={pageState.allSelected}
-                  blocked={pageState.blocked}
-                  onToggle={() => selection.toggleRows(pageEligible)}
-                />
-                <label htmlFor="citizen-fees-select-page" className="text-sm">
-                  {pageState.allSelected ? tSelect('pageClear') : tSelect('page')}
-                </label>
-              </div>
-            ) : null}
-            <ul ref={listTop} className={cn('divide-y rounded-lg border lg:gap-x-3', FEE_LIST_GRID)}>
-              <li
-                aria-hidden
-                className={cn(
-                  'hidden items-center gap-x-3 rounded-t-lg bg-muted/40 px-4 py-2 text-xs font-medium text-muted-foreground lg:grid',
-                  FEE_ROW_GRID,
-                )}
-              >
-                {/* Past the rows' boxes when they have them (`size-6` and `gap-3`), so the heading sits over the titles. */}
-                <span className={selection ? 'ps-9' : undefined}>{locale === 'en' ? 'Item' : 'البند'}</span>
-                <span>{locale === 'en' ? 'Status' : 'الحالة'}</span>
-                <span>{locale === 'en' ? 'Due' : 'الاستحقاق'}</span>
-                <span>{locale === 'en' ? 'Frequency' : 'الدورية'}</span>
-                <span className="text-end">{locale === 'en' ? 'Amount' : 'المبلغ'}</span>
-                <span />
-              </li>
-              {pagePayments.map((payment) => {
-                const settled = payment.paymentStatus === 'PAID';
-                const partly = !settled && payment.paidAmount > 0;
-                const breakdown = describeAssessment(payment.assessment, locale);
-                return (
-                  /*
-                    One bill as one row of columns — what it is, its status,
-                    when it was due, how often, what it costs, what can be
-                    done — each in the same column on every row, under the
-                    header above, so the list reads like the ledger it is.
-
-                    From \`lg\` up the details wrapper is \`display: contents\`,
-                    so its three items take the grid's own columns. Below it the
-                    row stacks: the title with the amount opposite, and the
-                    details and buttons under the title.
-                  */
-                  <li
-                    key={payment.id}
-                    className={cn('grid items-center gap-x-3 gap-y-2 p-4', FEE_ROW_GRID)}
-                  >
-                    <div className="flex min-w-0 items-start gap-3">
-                    {/*
-                      The box for «تسديد الفواتير المحددة», beside the row's own
-                      buttons rather than instead of them. A bill that cannot be
-                      ticked keeps the box's width, so every title lines up.
-                    */}
-                    {selection ? (
-                      isBulkSettleable(payment) ? (
-                        <BillCheckbox
-                          subject={{ kind: 'row', title: payment.title }}
-                          checked={selection.bills.some((entry) => entry.id === payment.id)}
-                          blocked={rowBlock(selection.bills, fromCitizenPayment(citizen, payment))}
-                          onToggle={() => selection.toggle(fromCitizenPayment(citizen, payment))}
-                        />
-                      ) : (
-                        <span aria-hidden className="size-6 shrink-0" />
-                      )
-                    ) : null}
-                    <div className="min-w-0 space-y-0.5">
-                      <p className="truncate font-semibold">{payment.title}</p>
-                      {payment.arrears ? (
-                        // An old debt (task 10): the chip, its year and fee, the «ARR-» number, the parcel and the old books' reference.
-                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                          <ArrearsBillMark arrears={payment.arrears} invoiceNumber={payment.invoiceNumber} showOldReference />
-                          <span className="text-xs text-muted-foreground">{arrearsPropertyText(payment.arrears)}</span>
-                        </div>
-                      ) : null}
-                      {/*
-                        «ليش عليّ هالمبلغ؟» — the breakdown stored on the
-                        payment since per-unit billing, answered where the
-                        collector is asked it.
-                      */}
-                      {breakdown ? (
-                        <p className="truncate text-xs text-muted-foreground">
-                          <bdi>{breakdown}</bdi>
-                        </p>
-                      ) : null}
-                      {payment.reviewNote ? (
-                        <p className="truncate text-xs text-muted-foreground">
-                          {locale === 'en' ? 'Staff note: ' : 'ملاحظة الموظف: '}
-                          {payment.reviewNote}
-                        </p>
-                      ) : null}
-                    </div>
-                    </div>
-
-                    <div className="col-span-2 col-start-1 row-start-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground lg:contents">
-                      <span className="lg:text-sm lg:text-foreground">
-                        {labels.paymentStatus?.[payment.paymentStatus as never] ?? payment.paymentStatus}
-                        {partly ? (locale === 'en' ? ' · partly paid' : ' · جزئياً') : null}
-                      </span>
-                      <span className="inline-flex items-center gap-1 tabular-nums lg:text-sm lg:text-foreground">
-                        <Calendar className="size-3.5 shrink-0 text-muted-foreground lg:hidden" aria-hidden />
-                        <span className="lg:hidden">{locale === 'en' ? 'Due ' : 'استحقاق '}</span>
-                        {formatDate(payment.dueDate)}
-                        {payment.paidAt ? (
-                          <span className="ms-1 text-xs text-success">
-                            ({locale === 'en' ? 'paid ' : 'سُدّد '}
-                            {formatDate(payment.paidAt)})
-                          </span>
-                        ) : null}
-                      </span>
-                      <span className="lg:text-sm lg:text-foreground">
-                        {payment.frequency
-                          ? (labels.feeFrequency?.[payment.frequency as never] ?? payment.frequency)
-                          : null}
-                      </span>
-                    </div>
-
-                    <div className="col-start-2 row-start-1 text-end lg:col-start-auto lg:row-start-auto">
-                      <Money amount={payment.amount} exact className="text-base font-bold" />
-                      {partly ? (
-                        <p className="text-xs text-muted-foreground">
-                          {locale === 'en' ? 'Remaining ' : 'متبقٍ '}
-                          <Money amount={payment.remaining} exact />
-                        </p>
-                      ) : null}
-                    </div>
-
-                    {canManage ? (
-                      <div className="col-span-2 col-start-1 row-start-3 flex items-center gap-2 lg:col-span-1 lg:col-start-auto lg:row-start-auto lg:justify-end">
-                        {/*
-                          Every bill links to its own page, named by what it
-                          holds now (`billPageLink`): the cash form while it is
-                          owed, the receipts once it is not — the way to a paid
-                          bill's «عكس الوصل» (review of PR #113). A collector
-                          is sent to the counter settle page (D13), and a bill
-                          with no payment to take shows him no link.
-                        */}
-                        {canTakeCash || billPageLink(payment) === 'settle' ? (
-                          <Link
-                            href={settleHref(payment.id)}
-                            className={buttonVariants({ size: 'sm', variant: 'outline' })}
-                          >
-                            {billPageLink(payment) === 'settle' ? (
-                              <>
-                                <Banknote className="size-4" aria-hidden />
-                                {canTakeCash
-                                  ? locale === 'en'
-                                    ? 'Record cash'
-                                    : 'تسجيل دفعة نقدية'
-                                  : locale === 'en'
-                                    ? 'Record payment'
-                                    : 'تسجيل دفعة'}
-                              </>
-                            ) : (
-                              <>
-                                <ReceiptText className="size-4" aria-hidden />
-                                {tReceipts('open')}
-                              </>
-                            )}
-                          </Link>
-                        ) : null}
-                        {/*
-                          A shared unit bill (0099) is not reprinted from here: its receipt
-                          names whoever paid, and that is not necessarily the person whose
-                          file this is (D9). Its receipts are printed one payment at a time
-                          on the bill's own page, «وصولات الفاتورة», which the row links to.
-                        */}
-                        {payment.paidAmount > 0 && !payment.sharedUnit ? (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => setReceipt({ payment, received: payment.paidAmount })}
-                          >
-                            <ReceiptIcon className="size-4" aria-hidden />
-                            {locale === 'en' ? 'Receipt' : 'الوصل'}
-                          </Button>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </li>
-                );
-              })}
-            </ul>
-            </div>
+            <BillsPanel
+              citizen={citizen}
+              payments={payments}
+              page={shownPage}
+              onPageChange={setPage}
+              canManage={canManage}
+              canTakeCash={canTakeCash}
+              selection={selection}
+              settleHref={settleHref}
+              onReceipt={(payment) => setReceipt({ payment, received: payment.paidAmount })}
+              locale={locale}
+            />
           )}
-
-          <Pager
-            page={shownPage}
-            pageSize={FEES_PAGE_SIZE}
-            total={payments.length}
-            onPageChange={setPage}
-            locale={locale}
-            label={locale === 'en' ? 'Bill pages' : 'صفحات الفواتير'}
-            scrollTarget={listTop}
-          />
 
           {outstanding.length > 1 ? (
             <p className="text-xs text-muted-foreground">
