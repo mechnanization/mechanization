@@ -511,7 +511,7 @@ export function BulkSettleDialog({
                         value={localRaw}
                         placeholder="0"
                         invalid={Boolean(fieldErrors.tender)}
-                        inputClassName="text-lg font-bold"
+                        inputClassName="text-lg sm:text-lg font-bold"
                         onChange={(raw) => {
                           setLocalRaw(formatTypedAmount(raw, decimals(baseCurrency)));
                           setFieldErrors(({ tender: _cleared, ...rest }) => rest);
@@ -529,7 +529,7 @@ export function BulkSettleDialog({
                           unit={currencyUnit(foreignCurrency, locale)}
                           value={foreignRaw}
                           placeholder="0"
-                          inputClassName="text-lg font-bold"
+                          inputClassName="text-lg sm:text-lg font-bold"
                           onChange={(raw) => {
                             setForeignRaw(formatTypedAmount(raw, 2));
                             setFieldErrors(({ tender: _cleared, ...rest }) => rest);

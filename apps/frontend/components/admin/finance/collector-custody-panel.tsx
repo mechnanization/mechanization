@@ -507,7 +507,7 @@ function ReceiveCustodyDialog({
               value={amount}
               placeholder="0"
               invalid={Boolean(amountError) || tooMuch}
-              inputClassName="text-lg font-bold"
+              inputClassName="text-lg sm:text-lg font-bold"
               onChange={(raw) => {
                 setAmount(formatTypedAmount(raw, custody.currency === 'LBP' ? 0 : 2));
                 setAmountError(null);
