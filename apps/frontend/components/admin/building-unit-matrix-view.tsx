@@ -90,9 +90,7 @@ import { UnitCorrectionDeleteButton } from '@/components/admin/unit-correction-d
 import { DuplexMergeButton } from '@/components/admin/duplex-merge-dialog';
 import { AUDIT_ENTITY } from '@/lib/audit-labels';
 import {
-  type EndOccupancyAnswer,
   activeVacancy,
-  AddPersonForm,
   CaseForm,
   cellBadge,
   effectiveUnitStatus,
@@ -100,7 +98,6 @@ import {
   layoutBuilding,
   logVisitWithFollowUp,
   occupancyMessage,
-  OccupantList,
   ownerLinkMessage,
   spanLimitsAcross,
   UnitStateLegend,
@@ -108,6 +105,9 @@ import {
   vacancyBlocker,
   VisitForm,
 } from './building-unit-forms';
+import { type EndOccupancyAnswer } from './units/occupants/end-occupancy-dialog';
+import { AddPersonForm } from './units/occupants/add-person-form';
+import { OccupantList } from './units/occupants/occupant-list';
 import { ConfirmVacancyForm } from './units/vacancy/confirm-vacancy-form';
 import { SeasonalHomePanel } from './units/vacancy/seasonal-home-panel';
 import { VacancyPanel } from './units/vacancy/vacancy-panel';
