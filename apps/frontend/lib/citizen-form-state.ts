@@ -233,6 +233,12 @@ export function withEndedRowsRemoved(
   };
 }
 
+/** One parcel: its رقم العقار (null for a card with none) and the cards on it, by index. */
+export interface PropertyGroup {
+  propertyNumber: string | null;
+  indices: number[];
+}
+
 /**
  * Property cards grouped by shared رقم العقار.
  *
@@ -243,8 +249,8 @@ export function withEndedRowsRemoved(
  */
 export function groupProperties(
   properties: readonly PropertyDraft[],
-): { propertyNumber: string | null; indices: number[] }[] {
-  const groups: { propertyNumber: string | null; indices: number[] }[] = [];
+): PropertyGroup[] {
+  const groups: PropertyGroup[] = [];
   const groupByNumber = new Map<string, number>();
   properties.forEach((property, index) => {
     const propertyNumber = property.propertyNumber?.trim() || null;

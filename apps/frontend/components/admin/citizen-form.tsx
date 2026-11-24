@@ -7,7 +7,6 @@ import {
   CheckCircle2,
   FileQuestion,
   IdCard,
-  Plus,
   TriangleAlert,
   UsersRound,
 } from 'lucide-react';
@@ -24,7 +23,6 @@ import { EmptyState } from '@/components/ui/states';
 import { DuplicateAlert, usePossibleDuplicates } from './possible-duplicates';
 import { MergeCitizensDialog } from './merge-citizens-dialog';
 import {
-  PropertyCard,
   type CardRemovalAnswer,
   type PropertyDraft,
 } from '@/components/citizen/property-card';
@@ -38,7 +36,7 @@ import { applyResidenceMove, planResidenceMove } from '@/lib/residence-move';
 import { withResidence } from '@/lib/citizen-seed';
 import { carryHeldPhone } from '@/lib/citizen-contact';
 import { scrollElementToTop } from '@/lib/scroll-to-top';
-import { cn, scopeErrors } from '@/lib/utils';
+import { cn } from '@/lib/utils';
 
 import type { CitizenFormValues } from '@/lib/citizen-form-values';
 import { askableFields, askablePaths, isBlank, valueAtPath } from '@/lib/citizen-form-askable';
@@ -66,6 +64,7 @@ import { PersonalSection } from './citizen-form/personal-section';
 import { ContactSection } from './citizen-form/contact-section';
 import { PropertiesSection } from './citizen-form/properties-section';
 import { NotesSection } from './citizen-form/notes-section';
+import { PropertyCards } from './citizen-form/property-cards';
 import { DesktopActionBar, MobileActionBar } from './citizen-form/action-bars';
 
 export type { CitizenFormValues } from '@/lib/citizen-form-values';
@@ -312,112 +311,6 @@ export function CitizenForm({
 
   /** Property cards grouped by shared رقم العقار (`groupProperties`). */
   const propertyGroups = useMemo(() => groupProperties(values.properties), [values.properties]);
-
-  /**
-   * Renders `propertyGroups` as cards — a lone card per single-property parcel,
-   * or a headed cluster of «الملكية N» cards plus one shared add-button for a
-   * parcel carrying several. Called once per layout (mobile stepper, desktop
-   * sequential view) rather than duplicated, so the grouping logic is stated
-   * once.
-   */
-  const renderPropertyGroups = () =>
-    propertyGroups.map((group) => {
-      if (group.indices.length === 1) {
-        const index = group.indices[0];
-        const property = values.properties[index];
-        return (
-          <PropertyCard
-            key={property.id ?? index}
-            tenant={tenant}
-            index={index}
-            draft={property}
-            citizenId={citizenId}
-            allowedTypes={allowedTypes}
-            collapsed={!reviewing && collapsed.has(index)}
-            onToggleCollapse={() => toggleCollapsed(index)}
-            onChange={(update) => setProperty(index, update)}
-            onAddOnSameParcel={() => addProperty(index)}
-            onViewParcel={token ? setRosterParcel : undefined}
-            onRemove={(answer) => removeProperty(index, answer)}
-            // Ended on the server, kept there as history — no longer this form's.
-            // A partial end leaves the card here without the rows that ended.
-            onEnded={(result, cardEnded) =>
-              cardEnded ? removeProperty(index) : removeEndedRows(index, result.endedRowIds ?? [])
-            }
-            // Zero properties is a valid registration, so the last remaining
-            // card is removable too — not just every card after the first.
-            canRemove
-            errors={scopeErrors(shown, `properties.${index}`)}
-            locale={locale}
-            token={token}
-            censusPicker
-            canAnswerLandlord={canAnswerLandlord}
-            nonResident={ownerRecord}
-            recordKind={values.residence}
-            // Only the first card inherits a matrix launch: the officer opened
-            // one flat, and pinning every card they go on to add to it would
-            // link properties they never said were in that building.
-            lockedCensusTarget={index === 0 ? (lockedCensusTarget ?? null) : null}
-          />
-        );
-      }
-
-      return (
-        <div key={group.propertyNumber} className="review-body review-group space-y-3">
-          <div className="flex items-center gap-2 border-b-2 border-primary/30 pb-2 text-primary">
-            <Building2 className="size-4 shrink-0" aria-hidden />
-            <span className="text-sm font-semibold">
-              {locale === 'en'
-                ? `Parcel ${group.propertyNumber} — ${group.indices.length} properties`
-                : `العقار رقم ${group.propertyNumber} — ${group.indices.length} ملكيات`}
-            </span>
-          </div>
-
-          {group.indices.map((index, unitPosition) => {
-            const property = values.properties[index];
-            return (
-              <PropertyCard
-                key={property.id ?? index}
-                tenant={tenant}
-                index={index}
-                draft={property}
-                citizenId={citizenId}
-                allowedTypes={allowedTypes}
-                collapsed={!reviewing && collapsed.has(index)}
-                onToggleCollapse={() => toggleCollapsed(index)}
-                onChange={(update) => setProperty(index, update)}
-                onViewParcel={token ? setRosterParcel : undefined}
-                onRemove={(answer) => removeProperty(index, answer)}
-                onEnded={(result, cardEnded) =>
-                  cardEnded ? removeProperty(index) : removeEndedRows(index, result.endedRowIds ?? [])
-                }
-                canRemove
-                errors={scopeErrors(shown, `properties.${index}`)}
-                locale={locale}
-                token={token}
-                censusPicker
-                canAnswerLandlord={canAnswerLandlord}
-                nonResident={ownerRecord}
-                recordKind={values.residence}
-                lockedCensusTarget={index === 0 ? (lockedCensusTarget ?? null) : null}
-                title={locale === 'en' ? `Unit ${unitPosition + 1}` : `الملكية ${unitPosition + 1}`}
-              />
-            );
-          })}
-
-          <button
-            type="button"
-            onClick={() => addProperty(group.indices[0])}
-            className="inline-flex items-center gap-1.5 rounded-md border border-dashed border-primary/50 px-2.5 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/5"
-          >
-            <Plus className="size-3.5 shrink-0" aria-hidden />
-            {locale === 'en'
-              ? 'Add another property on this parcel'
-              : 'إضافة ملكية أخرى على هذا العقار'}
-          </button>
-        </div>
-      );
-    });
 
   const removeProperty = useCallback((index: number, answer?: CardRemovalAnswer) => {
     setValues((current) => withRemovedProperty(current, index, answer));
@@ -950,7 +843,28 @@ export function CitizenForm({
             locale={locale}
             onAdd={() => addProperty()}
           >
-            {renderPropertyGroups()}
+            <PropertyCards
+              tenant={tenant}
+              token={token}
+              citizenId={citizenId}
+              locale={locale}
+              properties={values.properties}
+              groups={propertyGroups}
+              allowedTypes={allowedTypes}
+              collapsed={collapsed}
+              reviewing={reviewing}
+              shown={shown}
+              canAnswerLandlord={canAnswerLandlord}
+              ownerRecord={ownerRecord}
+              residence={values.residence}
+              lockedCensusTarget={lockedCensusTarget}
+              toggleCollapsed={toggleCollapsed}
+              setProperty={setProperty}
+              addProperty={addProperty}
+              removeProperty={removeProperty}
+              removeEndedRows={removeEndedRows}
+              setRosterParcel={setRosterParcel}
+            />
           </PropertiesSection>
 
         <NotesSection
