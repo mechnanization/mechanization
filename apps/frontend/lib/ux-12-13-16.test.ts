@@ -78,7 +78,13 @@ describe('warnings are Alerts, with no emoji (UX-13, CTL-12, BAN-7)', () => {
     'components/admin/unit-correction-delete-dialog.tsx',
     'components/admin/landlord-unlink-dialog.tsx',
     'components/admin/import-citizens-dialog.tsx',
-    'components/admin/building-editor.tsx',
+    // the building editor's Alerts moved out of `building-editor.tsx` with GOD-21 phase 2
+    'components/admin/building-editor/duplicates-prompt.tsx',
+    'components/admin/building-editor/editor-notices.tsx',
+    'components/admin/building-editor/facility-fields.tsx',
+    'components/admin/building-editor/map-section.tsx',
+    'components/admin/building-editor/matrix-card.tsx',
+    'components/admin/building-editor/parcel-section.tsx',
     'components/admin/building-unit-matrix-view.tsx',
     'components/admin/building-unit-matrix-drawer.tsx',
     'components/citizen/property-card.tsx',
@@ -100,12 +106,12 @@ describe('warnings are Alerts, with no emoji (UX-13, CTL-12, BAN-7)', () => {
   it.each(FILES)('%s tints no box warning or info by hand', (path) => {
     const source = code(path);
     expect(source).toMatch(/components\/ui\/alert'/);
-    // Two stay, and neither is a note: `building-editor`'s «no pin» reason box is a group of controls
-    // (its acknowledgement box is tinted with `bg-background/60`), and the staff page's tint is the
-    // icon chip at the top of its dialog.
+    // Two stay, and neither is a note: the building editor's «no pin» reason box is a group of controls
+    // (its acknowledgement box is tinted with `bg-background/60`; the box moved to `building-editor/map-section.tsx`
+    // with GOD-21 phase 2), and the staff page's tint is the icon chip at the top of its dialog.
     const tinted = source.match(/\bbg-(?:warning|info)\/(?:5|10)\b/g) ?? [];
     const onPurpose =
-      path.endsWith('building-editor.tsx') ||
+      path.endsWith('building-editor/map-section.tsx') ||
       path.endsWith('(protected)/staff/page.tsx') ||
       path.endsWith('settings/users-section.tsx');
     expect(tinted.length).toBe(onPurpose ? 1 : 0);
