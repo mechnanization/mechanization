@@ -146,6 +146,16 @@ describe('canAccessPath', () => {
     expect(canAccessPath(`${BASE}/settings`, BASE, 'ACCOUNTANT')).toBe(false);
   });
 
+  // NAV-09: the user menu's «أرباح المسح الميداني» item is drawn under this very question.
+  it('admits «أرباح المسح الميداني» to every working role and not to «مشاهد فقط»', () => {
+    const earnings = `${BASE}/inspector/profile`;
+    expect(canAccessPath(earnings, BASE, 'VIEWER')).toBe(false);
+    expect(canAccessPath(earnings, BASE, undefined)).toBe(false);
+    for (const role of ['SUPER_ADMIN', 'COLLECTOR', 'ACCOUNTANT', 'AUDITOR']) {
+      expect(canAccessPath(earnings, BASE, role)).toBe(true);
+    }
+  });
+
   it('opens a page under a row by that row’s roles', () => {
     expect(canAccessPath(`${BASE}/finance/income/categories`, BASE, 'AUDITOR')).toBe(true);
     expect(canAccessPath(`${BASE}/finance/income/categories`, BASE, 'COLLECTOR')).toBe(false);

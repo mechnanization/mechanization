@@ -18,7 +18,7 @@ import {
 import { useTheme } from 'next-themes';
 import { useEffect, useState } from 'react';
 import type { HeaderBack } from '@/components/admin/header-back-link';
-import { activeNavItem, localizedLabel } from '@/components/admin/nav';
+import { activeNavItem, canAccessPath, localizedLabel } from '@/components/admin/nav';
 import { NotificationsBell } from '@/components/admin/notifications-bell';
 import { LanguageSwitcher } from '@/components/language-switcher';
 import { BackLink } from '@/components/ui/back-link';
@@ -297,10 +297,17 @@ export function AdminHeader({
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
 
-          <DropdownMenuItem onSelect={() => router.push(`${base}/inspector/profile`)}>
-            <BadgeDollarSign className="size-4" aria-hidden />
-            <span>{locale === 'en' ? 'Field Work Earnings' : 'أرباح المسح الميداني'}</span>
-          </DropdownMenuItem>
+          {/*
+            Only for the roles the sidebar row admits (NAV-09): «مشاهد فقط» has no
+            such page, and the menu showed it anyway. `canAccessPath` reads the
+            row's own role list, so the two cannot drift; an unknown role sees nothing.
+          */}
+          {canAccessPath(`${base}/inspector/profile`, base, role) ? (
+            <DropdownMenuItem onSelect={() => router.push(`${base}/inspector/profile`)}>
+              <BadgeDollarSign className="size-4" aria-hidden />
+              <span>{locale === 'en' ? 'Field Work Earnings' : 'أرباح المسح الميداني'}</span>
+            </DropdownMenuItem>
+          ) : null}
 
           <DropdownMenuItem onSelect={() => router.push(`${base}/account`)}>
             <ShieldCheck className="size-4" aria-hidden />
