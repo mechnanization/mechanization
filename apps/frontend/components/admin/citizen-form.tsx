@@ -41,8 +41,25 @@ import { scrollElementToTop } from '@/lib/scroll-to-top';
 import { cn, scopeErrors } from '@/lib/utils';
 
 import type { CitizenFormValues } from '@/lib/citizen-form-values';
-import { askableFields, askablePaths, isBlank, reindexFlags, reindexRowFlags, valueAtPath } from '@/lib/citizen-form-askable';
+import { askableFields, askablePaths, isBlank, valueAtPath } from '@/lib/citizen-form-askable';
 import { validate } from '@/lib/citizen-form-validation';
+import {
+  collapsedAfterAdd,
+  collapsedAfterRemoval,
+  groupProperties,
+  holdsDisallowedType,
+  holdsUnaskableFlag,
+  phoneNoteOf,
+  withAddedProperty,
+  withDisallowedTypesCleared,
+  withEndedRowsRemoved,
+  withFlag,
+  withFlagsApplied,
+  withoutFlag,
+  withProperty,
+  withRemovedProperty,
+  withUnaskableFlagsDropped,
+} from '@/lib/citizen-form-state';
 import { StepNotesField } from './citizen-form/step-notes-field';
 import { StepBar } from './citizen-form/step-bar';
 import { PersonalSection } from './citizen-form/personal-section';
@@ -255,56 +272,14 @@ export function CitizenForm({
     setValues((current) => ({ ...current, contact: carryHeldPhone(current.contact, next) }));
   }, []);
 
-  /**
-   * Raise or amend a «غير مؤكَّد» flag — and empty the field it covers.
-   *
-   * Clearing the value is the substantive half. A flag says the value was
-   * never established; leaving a half-typed number underneath it would make
-   * the record contradict itself, and — because the server strips flagged
-   * fields before it validates anything — would be discarded on arrival
-   * anyway. Doing it here means what the officer sees is what gets stored.
-   *
-   * Amending an existing flag (typing in its reason box) does not re-clear,
-   * because there is nothing left to clear; the same code path handles both
-   * since clearing an already-empty field is a no-op.
-   */
+  /** Raise or amend a «غير مؤكَّد» flag and empty the field it covers (`withFlag`). */
   const setFlag = useCallback((path: string, reason: string) => {
-    setValues((current) => {
-      const flags = new Map(current.flags);
-      flags.set(path, reason);
-
-      const [section, ...rest] = path.split('.');
-
-      if (section === 'personal' || section === 'contact') {
-        const field = rest[0];
-        const next = { ...current[section] };
-        delete next[field];
-        return { ...current, [section]: next, flags };
-      }
-
-      // properties.<index>.<field>
-      const index = Number(rest[0]);
-      const field = rest[1];
-      return {
-        ...current,
-        properties: current.properties.map((property, i) => {
-          if (i !== index) return property;
-          const next = { ...property } as Record<string, unknown>;
-          delete next[field];
-          return next as PropertyDraft;
-        }),
-        flags,
-      };
-    });
+    setValues((current) => withFlag(current, path, reason));
   }, []);
 
   /** Withdraws a flag. The field comes back empty, which is where it was. */
   const clearFlag = useCallback((path: string) => {
-    setValues((current) => {
-      const flags = new Map(current.flags);
-      flags.delete(path);
-      return { ...current, flags };
-    });
+    setValues((current) => withoutFlag(current, path));
   }, []);
 
   const flagging = useMemo(
@@ -318,103 +293,25 @@ export function CitizenForm({
     [values.flags, values.unverified, setFlag, clearFlag, locale],
   );
 
-  /**
-   * One card, updated from whatever it currently is.
-   *
-   * Takes an updater rather than a finished `PropertyDraft`, and that is a
-   * correctness fix rather than a style preference.
-   *
-   * `PropertyCard` used to build the replacement by spreading the `draft` prop
-   * it had been rendered with — `onChange({ ...draft, ...patch })` — so every
-   * write carried a full copy of the card *as it was at that render*. Two
-   * writes landing before React re-rendered therefore both spread the same
-   * stale copy, and the second silently reverted the first.
-   *
-   * That is not a rare interleaving; it is the census picker's ordinary
-   * behaviour. Linking a building sets `buildingId`, which makes the picker
-   * fetch the structure, which fires the effect that copies «اسم المبنى» down
-   * — and that second write, built from the pre-link draft, put `buildingId`
-   * back to undefined. The officer saw the building selected on screen, saved,
-   * and got «بلا ربط بسجل المباني» for a card they had just linked. Ticking two
-   * flats quickly lost the first one the same way.
-   *
-   * An updater cannot express that bug: `p` is whatever the card holds at the
-   * moment the update runs, so writes compose instead of racing.
-   */
+  /** One card, updated from whatever it currently is (`withProperty`: an updater, so two writes compose). */
   const setProperty = useCallback(
     (index: number, update: (current: PropertyDraft) => PropertyDraft) => {
-      setValues((current) => ({
-        ...current,
-        properties: current.properties.map((p, i) => (i === index ? update(p) : p)),
-      }));
+      setValues((current) => withProperty(current, index, update));
     },
     [],
   );
 
-  /**
-   * A new card.
-   *
-   * `sameParcelAs` carries the parcel's own identity across — رقم العقار and
-   * الحي — for the case this form could not express at all until now: one deed
-   * carrying a building, the house behind it and a shop on the street. Those
-   * are three structures that are typed, inspected and taxed differently, so
-   * they are three cards; what they are *not* is three different pieces of
-   * land, and making the clerk retype the number that says so invites the
-   * transposed digit that puts the shop on someone else's parcel.
-   *
-   * The owner is not copied because the owner was never on the card. It is the
-   * citizen this whole form is about, typed once at the top — which is why
-   * adding a fifth structure costs one tap and no re-entry.
-   */
+  /** A new card; `sameParcelAs` carries the parcel's number and الحي across (`withAddedProperty`). */
   const addProperty = useCallback((sameParcelAs?: number) => {
     setValues((current) => {
-      const source = sameParcelAs === undefined ? undefined : current.properties[sameParcelAs];
-
-      const properties = [
-        ...current.properties,
-        {
-          // A clerk entering several properties for one household fills the same
-          // shape repeatedly, so a new card inherits the last one's occupancy.
-          occupancyType:
-            current.residence === 'ESTATE' ? 'OWNER' : (source ?? current.properties.at(-1))?.occupancyType,
-          ...(source
-            ? { propertyNumber: source.propertyNumber, neighborhood: source.neighborhood }
-            : {}),
-        },
-      ];
-      setCollapsed(new Set(properties.slice(0, -1).map((_, i) => i)));
-      return { ...current, properties };
+      const next = withAddedProperty(current, sameParcelAs);
+      setCollapsed(collapsedAfterAdd(next.properties));
+      return next;
     });
   }, []);
 
-  /**
-   * Property cards grouped by shared رقم العقار.
-   *
-   * A parcel with a building, the house behind it and a shop on the street is
-   * one عقار holding three cards — array position doesn't say that, matching
-   * رقم العقار values do. Grouping here is what lets the form show them as one
-   * parcel with several ملكيات instead of three unrelated-looking top-level
-   * cards that merely happen to repeat the same number in their subtitle.
-   *
-   * A group of one (the ordinary case: no other card shares its number) still
-   * renders as a single plain card — the grouping header only earns its place
-   * once there is something to group.
-   */
-  const propertyGroups = useMemo(() => {
-    const groups: { propertyNumber: string | null; indices: number[] }[] = [];
-    const groupByNumber = new Map<string, number>();
-    values.properties.forEach((property, index) => {
-      const propertyNumber = property.propertyNumber?.trim() || null;
-      const groupIndex = propertyNumber ? groupByNumber.get(propertyNumber) : undefined;
-      if (groupIndex !== undefined) {
-        groups[groupIndex].indices.push(index);
-        return;
-      }
-      if (propertyNumber) groupByNumber.set(propertyNumber, groups.length);
-      groups.push({ propertyNumber, indices: [index] });
-    });
-    return groups;
-  }, [values.properties]);
+  /** Property cards grouped by shared رقم العقار (`groupProperties`). */
+  const propertyGroups = useMemo(() => groupProperties(values.properties), [values.properties]);
 
   /**
    * Renders `propertyGroups` as cards — a lone card per single-property parcel,
@@ -523,87 +420,14 @@ export function CitizenForm({
     });
 
   const removeProperty = useCallback((index: number, answer?: CardRemovalAnswer) => {
-    setValues((current) => ({
-      ...current,
-      properties: current.properties.filter((_, i) => i !== index),
-      /*
-        The answer travels with the save, keyed by the card's id — the only
-        thing that still names it once it has left the list.
-      */
-      ...(answer && current.properties[index]?.id
-        ? {
-            removals: [
-              ...(current.removals ?? []).filter(
-                (removal) => removal.propertyId !== current.properties[index]!.id,
-              ),
-              { propertyId: current.properties[index]!.id!, ...answer },
-            ],
-          }
-        : {}),
-      /*
-        Flags are addressed by card index, so deleting a card renumbers them.
-
-        Left alone, a flag on `properties.2.propertyNumber` would silently
-        become a flag on whatever card slid into position 2 — excusing a field
-        nobody said anything about, and holding that card's real gap against
-        the officer. The removed card's own flags go with it.
-
-        The server's «بانتظار التحقق» notes are addressed the same way and are
-        renumbered with them: a note reading "this parcel number is not in the
-        cadastre" parked on the wrong card sends someone to re-check a number
-        that was never in question.
-      */
-      flags: reindexFlags(current.flags, index),
-      unverified: reindexFlags(current.unverified, index),
-    }));
-    // Indices above the removed card shift down by one; rebuilding the set
-    // rather than deleting from it keeps the wrong card from folding shut.
-    setCollapsed((current) => {
-      const next = new Set<number>();
-      for (const i of current) {
-        if (i < index) next.add(i);
-        else if (i > index) next.add(i - 1);
-      }
-      return next;
-    });
+    setValues((current) => withRemovedProperty(current, index, answer));
+    setCollapsed((current) => collapsedAfterRemoval(current, index));
   }, []);
 
-  /**
-   * Rows of card `index` that «إنهاء الإيجار» just ended while the card goes on.
-   *
-   * Taken out of the form by id rather than left for the officer to notice: a
-   * save carrying them would name rows that have ended, which the server refuses
-   * so an ended flat is never written back as held. Flags on those rows go with
-   * them; later rows' flags move up.
-   */
+  /** Rows of card `index` that «إنهاء الإيجار» just ended while the card goes on (`withEndedRowsRemoved`). */
   const removeEndedRows = useCallback((index: number, rowIds: readonly string[]) => {
     if (rowIds.length === 0) return;
-    setValues((current) => {
-      const card = current.properties[index];
-      const units = card?.units ?? [];
-      const positions = units
-        .map((unit, position) => (unit.id && rowIds.includes(unit.id) ? position : -1))
-        .filter((position) => position >= 0)
-        .sort((a, b) => b - a);
-      if (!card || positions.length === 0) return current;
-
-      let flags: Map<string, string> = new Map(current.flags);
-      let unverified: Map<string, string> = new Map(current.unverified);
-      for (const position of positions) {
-        flags = reindexRowFlags(flags, index, position);
-        unverified = reindexRowFlags(unverified, index, position);
-      }
-      return {
-        ...current,
-        properties: current.properties.map((property, i) =>
-          i === index
-            ? { ...property, units: units.filter((unit) => !(unit.id && rowIds.includes(unit.id))) }
-            : property,
-        ),
-        flags,
-        unverified,
-      };
-    });
+    setValues((current) => withEndedRowsRemoved(current, index, rowIds));
   }, []);
 
   const toggleCollapsed = useCallback((index: number) => {
@@ -627,44 +451,20 @@ export function CitizenForm({
     );
   }, [config.enabledPropertyTypes, values.personal.residentStatus]);
 
-  /**
-   * A property left holding a type the current صفة الإقامة no longer permits
-   * has it cleared, rather than failing validation on save against a control
-   * the form has stopped offering.
-   */
+  /** A card holding a type the current صفة الإقامة no longer permits has it cleared (`withDisallowedTypesCleared`). */
   useEffect(() => {
-    const permitted = new Set(allowedTypes);
-    if (values.properties.every((p) => !p.propertyType || permitted.has(p.propertyType))) return;
+    const permitted = new Set<string>(allowedTypes);
+    if (!holdsDisallowedType(values.properties, permitted)) return;
 
-    setValues((current) => ({
-      ...current,
-      properties: current.properties.map((p) =>
-        p.propertyType && !permitted.has(p.propertyType)
-          ? { ...p, propertyType: undefined, tentLocation: undefined }
-          : p,
-      ),
-    }));
+    setValues((current) => withDisallowedTypesCleared(current, permitted));
   }, [allowedTypes, values.properties]);
 
-  /**
-   * A flag whose field the form has stopped asking about is withdrawn.
-   *
-   * Switching a card from خيمة to أرض, or a citizen from أجنبي to لبناني,
-   * retires whole groups of inputs. A flag left behind on one of them would
-   * hold the record at «يتطلب مراجعة» over a question nothing on screen is
-   * asking — the officer would see a complete form and an unexplained status.
-   */
+  /** A flag whose field the form has stopped asking about is withdrawn (`withUnaskableFlagsDropped`). */
   useEffect(() => {
     const askable = askablePaths(values);
-    if ([...values.flags.keys()].every((path) => askable.has(path))) return;
+    if (!holdsUnaskableFlag(values.flags, askable)) return;
 
-    setValues((current) => {
-      const kept = new Map<string, string>();
-      for (const [path, reason] of current.flags) {
-        if (askable.has(path)) kept.set(path, reason);
-      }
-      return { ...current, flags: kept };
-    });
+    setValues((current) => withUnaskableFlagsDropped(current, askable));
   }, [values]);
 
   const shown = useMemo(() => (showErrors ? fieldErrors : {}), [showErrors, fieldErrors]);
@@ -793,18 +593,16 @@ export function CitizenForm({
   */
   const tPhone = useTranslations('citizenForm.phone');
   const ltr = (chunks: React.ReactNode) => <span dir="ltr">{chunks}</span>;
-  const loadedPhone = String(initial.contact.phone ?? '').replace(/\s+/g, '');
-  const phoneNow = String(values.contact.phone ?? '').replace(/\s+/g, '');
-  // An estate or an institution has an optional phone and no «لا يملك رقم هاتف» (the server stores it false).
-  const noPhoneNow = values.contact.hasNoPhone === true && !isNonPersonRecord(values.residence);
-  const phoneNoteText = noPhoneNow ? (
-    <>
-      {tPhone('noPhoneSignIn')}
-      {mode === 'edit' && loadedPhone ? <> {tPhone.rich('oldNumberStops', { number: loadedPhone, ltr })}</> : null}
-    </>
-  ) : mode === 'edit' && loadedPhone && phoneNow !== loadedPhone ? (
-    tPhone.rich('changed', { number: loadedPhone, ltr })
-  ) : null;
+  const note = phoneNoteOf(initial.contact.phone, values.contact, values.residence, mode);
+  const phoneNoteText =
+    note?.kind === 'noPhone' ? (
+      <>
+        {tPhone('noPhoneSignIn')}
+        {note.oldNumber ? <> {tPhone.rich('oldNumberStops', { number: note.oldNumber, ltr })}</> : null}
+      </>
+    ) : note?.kind === 'changed' ? (
+      tPhone.rich('changed', { number: note.oldNumber, ltr })
+    ) : null;
   const phoneNote = phoneNoteText ? (
     <p
       role="note"
@@ -1251,35 +1049,7 @@ export function CitizenForm({
       open={unverifiedDialogOpen}
       onOpenChange={setUnverifiedDialogOpen}
       values={values}
-      onSaveFlags={(newFlags) => {
-        // Also prune fields from values if they are newly flagged
-        setValues((current) => {
-          let updated = { ...current, flags: newFlags };
-          // If a field is newly flagged, clear its value in current state
-          for (const path of newFlags.keys()) {
-            const [section, ...rest] = path.split('.');
-            if (section === 'personal' || section === 'contact') {
-              const field = rest[0];
-              const nextSec = { ...updated[section] };
-              delete nextSec[field];
-              updated = { ...updated, [section]: nextSec };
-            } else if (section === 'properties') {
-              const idx = Number(rest[0]);
-              const field = rest[1];
-              updated = {
-                ...updated,
-                properties: updated.properties.map((p, i) => {
-                  if (i !== idx) return p;
-                  const nextP = { ...p } as Record<string, unknown>;
-                  delete nextP[field];
-                  return nextP as PropertyDraft;
-                }),
-              };
-            }
-          }
-          return updated;
-        });
-      }}
+      onSaveFlags={(newFlags) => setValues((current) => withFlagsApplied(current, newFlags))}
       locale={locale}
     />
     {mergeWith && citizenId && token && onMerged ? (
