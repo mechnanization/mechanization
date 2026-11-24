@@ -32,6 +32,7 @@
     "staff:create": "pnpm --filter @mechanization/backend staff:create",
     "tenant:provision": "pnpm --filter @mechanization/backend tenant:provision",
     "lint": "eslint .",
+    "lint:unused": "node scripts/lint-unused.mjs",
     "typecheck": "pnpm --filter @mechanization/backend exec tsc --noEmit && pnpm --filter @mechanization/frontend exec tsc --noEmit",
     "build:check": "pnpm --filter @mechanization/frontend build:check",
     "test": "pnpm --filter @mechanization/backend test && pnpm --filter @mechanization/frontend test"
@@ -62,6 +63,7 @@
     "eslint": "^9",
     "eslint-plugin-react-hooks": "^5",
     "globals": "^17.11.0",
+    "knip": "^6.48.0",
     "typescript-eslint": "^8"
   }
 }
