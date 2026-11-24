@@ -8,7 +8,9 @@ import {
   type CitizenResidence,
   type UnitStatus,
 } from '@mechanization/shared-schemas';
-import type { CitizenFormValues } from '@/components/admin/citizen-form';
+import type { CitizenFormValues, NamesBefore } from '@/lib/citizen-form-values';
+
+export type { NamesBefore } from '@/lib/citizen-form-values';
 
 /**
  * «تغيير الإقامة» — what a real move into or out of the town has to settle on
@@ -210,15 +212,6 @@ export function applyResidenceMove(
     properties,
     residenceMove: { movedOn: answers.movedOn, reason: answers.reason.trim() },
   };
-}
-
-/** A person's name parts, kept while the file is an institution — see `namesForKind`. */
-export interface NamesBefore {
-  firstName: string;
-  middleName: string;
-  lastName: string;
-  /** The one line they were joined into; restored only while it still reads so. */
-  joined: string;
 }
 
 /**

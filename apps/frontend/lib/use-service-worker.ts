@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect } from 'react';
+import { COMMIT_SHA } from '@/lib/public-config';
+import { serviceWorkerUrl } from '@/lib/service-worker-url';
 
 /**
  * Installs the app shell on this device, and tells it what to keep.
@@ -48,7 +50,7 @@ export function useServiceWorker(base: string): void {
 
     const install = async () => {
       try {
-        const registration = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+        const registration = await navigator.serviceWorker.register(serviceWorkerUrl(COMMIT_SHA), { scope: '/' });
         if (cancelled) return;
 
         /*

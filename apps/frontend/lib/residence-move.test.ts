@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { CitizenFormValues } from '@/components/admin/citizen-form';
+import type { CitizenFormValues } from '@/lib/citizen-form-values';
 import { applyResidenceMove, homeStatusesFor, namesForKind, planResidenceMove } from './residence-move';
 
 const file = (properties: CitizenFormValues['properties'], personal: Record<string, unknown> = { firstName: 'علي', lastName: 'تجربة' }): CitizenFormValues => ({

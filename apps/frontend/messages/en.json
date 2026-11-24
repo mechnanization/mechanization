@@ -57,6 +57,7 @@
     "directionOnly": "Direction only",
     "errorBody": "An unexpected error occurred. Try again, and if it keeps happening contact the municipality.",
     "errorReference": "Error reference",
+    "errorHome": "Back to the home page",
     "refreshFailed": "The page could not be refreshed — what is shown is the last read"
   },
   "nav": {

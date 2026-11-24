@@ -8,7 +8,7 @@ import {
   UNIT_STATUS,
   getLabels,
 } from '@mechanization/shared-schemas';
-import { BUILDING_UNIT_TYPES } from '@/components/citizen/unit-fields';
+import { BUILDING_UNIT_TYPES } from './building-unit-types';
 
 /**
  * What kind of input one citizen field wants, keyed by its leaf name.

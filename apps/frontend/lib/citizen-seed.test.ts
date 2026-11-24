@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { CitizenFormValues } from '@/components/admin/citizen-form';
+import type { CitizenFormValues } from '@/lib/citizen-form-values';
 import { withResidence, withSeededSearch } from './citizen-seed';
 
 const blank = (): CitizenFormValues => ({

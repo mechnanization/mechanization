@@ -1,6 +1,6 @@
 'use client';
 
-import type { CitizenFormValues } from '@/components/admin/citizen-form';
+import type { CitizenFormValues } from '@/lib/citizen-form-values';
 
 /**
  * Keeps the «تسجيل مواطن جديد» form alive across a navigation.

@@ -8,7 +8,6 @@ import {
   defaultUnitTypeFor,
   isStructuralUnitType,
   type StructureType,
-  type UnitStatus,
   type UnitType,
   type UnitTypeView,
 } from '@mechanization/shared-schemas';
@@ -31,52 +30,9 @@ import { cn } from '@/lib/utils';
 import { occupancyDot } from '@/lib/occupancy';
 import { floorLabel } from './parcel-pin-picker';
 
-export interface GridUnitDraft {
-  /** Minted on confirm; carried as the created unit's id, same as the
-   *  registration form's inline units — an offline save can name the row
-   *  before it exists. */
-  clientId: string;
-  /** 0-indexed real floor — row 1 (bottom) is floor 0. */
-  floor: number;
-  /** 1-based column, inclusive. */
-  startCol: number;
-  endCol: number;
-  unitType: UnitType;
-  /**
-   * «نوع الوحدة» (0109): the municipality's type this block was filed as, when
-   * one was chosen from the list. `unitType` is always its base. Absent means
-   * the base alone — the list was not loaded, or nothing was chosen — and the
-   * server files the unit under that base's system type.
-   */
-  unitTypeId?: string;
-  colorIndex: number;
-  /**
-   * The id of the `Unit` this cell already is, when the grid is editing a
-   * building rather than painting a new one. Absent means "created on save".
-   */
-  existingId?: string;
-  /** Its server-derived code, so an existing cell names itself on the grid. */
-  unitCode?: string;
-  /**
-   * Why the census will not let this unit be removed — an occupancy, a visit,
-   * a damage assessment or a citizen's card naming it. Set only for units the
-   * grid already holds, and the reason is shown rather than the delete button.
-   */
-  undeletableReason?: string;
-  /**
-   * What the census says about who is in it — the recorded status, or the
-   * owner's declaration where nothing is recorded (`effectiveUnitStatus`).
-   * Drives the dot in the corner of an existing unit; a freshly painted block
-   * has none, because nobody has been asked yet.
-   */
-  unitStatus?: UnitStatus | null;
-  /**
-   * How many levels an existing home spans upward from `floor` — a «دوبلكس»
-   * is 2 (0095). Its upper rows are drawn as the same block and cannot be
-   * painted over; it is set on the unit, never by painting.
-   */
-  levels?: number;
-}
+import type { GridUnitDraft } from '@/lib/building-draft';
+
+export type { GridUnitDraft } from '@/lib/building-draft';
 
 /** Whether a drafted unit occupies `floor` — at its entrance or as an upper level. */
 function onFloor(unit: GridUnitDraft, floor: number): boolean {

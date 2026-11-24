@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react';
 import { useTranslations } from 'next-intl';
-import type { DataTableLabels } from '@/components/ui/data-table';
+import type { DataTableLabels } from './ui-labels';
 
 /**
  * `DataTable`'s strings from `messages.table`, in the current locale — one

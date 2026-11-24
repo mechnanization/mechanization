@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react';
 import { useTranslations } from 'next-intl';
-import type { PagerLabels } from '@/components/ui/pager';
+import type { PagerLabels } from './ui-labels';
 
 /**
  * `Pager`'s words from `messages.pager`, in the current locale (UX-11) — the

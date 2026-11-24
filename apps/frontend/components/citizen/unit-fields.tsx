@@ -39,6 +39,10 @@ import {
 import type { UnitDraft } from '@/components/citizen/property-card';
 import { cn, scopeErrors } from '@/lib/utils';
 
+import { BUILDING_UNIT_TYPES } from '@/lib/building-unit-types';
+
+export { BUILDING_UNIT_TYPES } from '@/lib/building-unit-types';
+
 /**
  * What the census holds about one canonical `Unit`, as a card needs to read it.
  *
@@ -83,21 +87,6 @@ export interface CensusUnitFacts {
  * them here, nothing imports back into the card except the `UnitDraft` type,
  * which is erased at build time.
  */
-
-/**
- * The unit types a مبنى can actually contain.
- *
- * Derived from `UNIT_TYPE` rather than retyped, which is the whole point: this
- * list said شقة / عيادة / محل for as long as it was a literal, and went on
- * saying it after the taxonomy gained مكتب and مستودع — so a municipality whose
- * schedule of fees charges a warehouse differently from a shop had no way to
- * record one, and two values sat in the database and in the fee-target list
- * reachable from nothing. Subtracting from the enum keeps this correct the next
- * time it widens.
- */
-export const BUILDING_UNIT_TYPES = UNIT_TYPE.filter(
-  (type) => type !== 'INDEPENDENT_HOUSE' && !isStructuralUnitType(type),
-);
 
 /**
  * The unit types the **building matrix** offers — `BUILDING_UNIT_TYPES` plus

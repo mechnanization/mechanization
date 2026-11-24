@@ -30,8 +30,17 @@
   contains.
 */
 
-/** Bump to retire every cache this worker wrote. */
-const VERSION = 'v4';
+/**
+ * The build the page was served from — its commit, which the page puts in this
+ * worker's own address (`/sw.js?v=<sha>`, `lib/service-worker-url.ts`). Every
+ * deploy is a new address, so the browser installs the new worker, and its
+ * caches carry the new name: `activate` below deletes every cache of an earlier
+ * one. Nobody bumps it. Without a `v` (a local build) it is «unversioned».
+ * Only what a cache name can hold is kept.
+ */
+const VERSION =
+  (new URL(self.location.href).searchParams.get('v') ?? '').replace(/[^A-Za-z0-9._-]/g, '').slice(0, 40) ||
+  'unversioned';
 
 const SHELL_CACHE = `mechanization-shell-${VERSION}`;
 const ASSET_CACHE = `mechanization-assets-${VERSION}`;
