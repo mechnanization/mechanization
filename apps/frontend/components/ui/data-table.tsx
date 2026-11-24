@@ -283,7 +283,13 @@ export interface DataTableProps<TData, TValue = unknown> {
    */
   initialHiddenColumns?: readonly string[];
 
-  /** Renders an expandable sub-row's content (e.g. an evidence gallery). */
+  /**
+   * Renders an expandable sub-row's content (e.g. an evidence gallery).
+   *
+   * Drawn under the row in the table and, below `sm`, at the foot of its card, so a
+   * control that expands a row works at every width. The caller supplies that
+   * control (a button in a cell calling `row.toggleExpanded()`).
+   */
   renderSubRow?: (row: Row<TData>) => React.ReactNode;
   getRowCanExpand?: (row: Row<TData>) => boolean;
 
@@ -308,11 +314,13 @@ function MobileCards<TData>({
   loading,
   columnCount,
   pageSize,
+  renderSubRow,
 }: {
   rows: Row<TData>[];
   loading: boolean;
   columnCount: number;
   pageSize: number;
+  renderSubRow?: (row: Row<TData>) => React.ReactNode;
 }): React.JSX.Element {
   /*
    * A column with no header text is an action column — the row's edit and
@@ -397,6 +405,9 @@ function MobileCards<TData>({
                 ))}
               </div>
             ) : null}
+
+            {/* An expanded row's content, under the card's own footer (the table draws it under the row). */}
+            {renderSubRow && row.getIsExpanded() ? <div className="mt-3 border-t pt-3">{renderSubRow(row)}</div> : null}
           </div>
         );
       })}
@@ -910,6 +921,7 @@ export function DataTable<TData, TValue = unknown>({
             loading={loading && rows.length === 0}
             columnCount={columnCount}
             pageSize={pagination.pageSize}
+            renderSubRow={renderSubRow}
           />
         </div>
 

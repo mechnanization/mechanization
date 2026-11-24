@@ -1,6 +1,7 @@
 'use client';
 
 import { useTranslations } from 'next-intl';
+import type { ColumnDef } from '@tanstack/react-table';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Ban, Check, Copy, KeyRound, Loader2, Lock, RotateCcw, Search, ShieldCheck, UserPlus, UsersRound } from 'lucide-react';
 import { EmptyState, ErrorState } from '@/components/ui/states';
@@ -12,6 +13,7 @@ import {
   setStaffActive,
 } from '@/lib/api-client';
 import type { StaffSummary } from '@/lib/api-client';
+import { useTableLabels } from '@/lib/use-table-labels';
 import {
   ROLE_BACKEND_VALUE,
   ROLE_KEYS,
@@ -21,6 +23,7 @@ import {
 } from '@/lib/settings-i18n';
 import { Badge } from '@/components/ui/badge';
 import { CellTag } from '@/components/ui/cell-tag';
+import { DataTable } from '@/components/ui/data-table';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
@@ -41,16 +44,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import { useToast } from '@/components/ui/toast';
-import { ScrollableTable, SettingsCard, SettingsField } from './settings-ui';
+import { SettingsCard, SettingsField } from './settings-ui';
 import { cn } from '@/lib/utils';
 
 const MIN_PASSWORD = 8;
@@ -233,6 +228,67 @@ export function UsersSection({
   /** Roles a new account can actually be given — see the note on this file. */
   const assignableRoles = ROLE_KEYS.filter((key) => ROLE_BACKEND_VALUE[key] !== null);
 
+  const tableLabels = useTableLabels();
+
+  const columns = useMemo<ColumnDef<StaffSummary>[]>(
+    () => [
+      {
+        id: 'name',
+        header: copy.users.colName,
+        meta: { mobile: 'primary', cellClassName: 'font-medium' },
+        cell: ({ row }) => row.original.fullName,
+      },
+      {
+        /* An address is Latin inside an RTL table; without `dir` the @ and the dots reorder around the domain. */
+        id: 'email',
+        header: copy.users.colEmail,
+        cell: ({ row }) => <bdi dir="ltr">{row.original.email}</bdi>,
+      },
+      {
+        id: 'role',
+        header: copy.users.colRole,
+        /* Falls back to the raw enum rather than blank: an unrecognised role is something to notice, not hide. */
+        cell: ({ row }) => {
+          const key = roleKeyFor(row.original.role);
+          return key ? copy.users.roleNames[key] : row.original.role;
+        },
+      },
+      {
+        id: 'status',
+        header: copy.users.colStatus,
+        cell: ({ row }) => (
+          <CellTag tone={row.original.isActive ? 'success' : 'muted'}>
+            {row.original.isActive ? copy.users.statusActive : copy.users.statusSuspended}
+          </CellTag>
+        ),
+      },
+      {
+        id: 'actions',
+        header: copy.users.colActions,
+        enableSorting: false,
+        meta: { align: 'end', mobile: 'actions' },
+        cell: ({ row }) => (
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={pendingId === row.original.id}
+            onClick={() => void toggleActive(row.original)}
+          >
+            {pendingId === row.original.id ? (
+              <Loader2 className="size-4 animate-spin" aria-hidden />
+            ) : row.original.isActive ? (
+              <Ban className="size-4" aria-hidden />
+            ) : (
+              <RotateCcw className="size-4" aria-hidden />
+            )}
+            {row.original.isActive ? copy.users.suspend : copy.users.reactivate}
+          </Button>
+        ),
+      },
+    ],
+    [copy, pendingId, toggleActive],
+  );
+
   return (
     <div className="space-y-6">
       <SettingsCard
@@ -315,61 +371,17 @@ export function UsersSection({
              here says in the same shape. */
           <EmptyState compact icon={UsersRound} title={search ? copy.users.emptySearch : copy.users.empty} />
         ) : (
-          <ScrollableTable minWidth="44rem">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{copy.users.colName}</TableHead>
-                  <TableHead>{copy.users.colEmail}</TableHead>
-                  <TableHead>{copy.users.colRole}</TableHead>
-                  <TableHead>{copy.users.colStatus}</TableHead>
-                  <TableHead className="text-end">{copy.users.colActions}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.map((row) => {
-                  const key = roleKeyFor(row.role);
-                  return (
-                    <TableRow key={row.id}>
-                      <TableCell className="font-medium">{row.fullName}</TableCell>
-                      {/* An address is Latin inside an RTL table; without `dir`
-                          the @ and the dots reorder around the domain. */}
-                      <TableCell>
-                        <bdi dir="ltr">{row.email}</bdi>
-                      </TableCell>
-                      <TableCell>
-                        {/* Falls back to the raw enum rather than blank: an
-                            unrecognised role is something to notice, not hide. */}
-                        {key ? copy.users.roleNames[key] : row.role}
-                      </TableCell>
-                      <TableCell>
-                        <CellTag tone={row.isActive ? 'success' : 'muted'}>
-                          {row.isActive ? copy.users.statusActive : copy.users.statusSuspended}
-                        </CellTag>
-                      </TableCell>
-                      <TableCell className="text-end">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          disabled={pendingId === row.id}
-                          onClick={() => void toggleActive(row)}
-                        >
-                          {pendingId === row.id ? (
-                            <Loader2 className="size-4 animate-spin" aria-hidden />
-                          ) : row.isActive ? (
-                            <Ban className="size-4" aria-hidden />
-                          ) : (
-                            <RotateCcw className="size-4" aria-hidden />
-                          )}
-                          {row.isActive ? copy.users.suspend : copy.users.reactivate}
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </ScrollableTable>
+          /* The card is the frame (BAN-4); below `sm` each account is a card of its own. */
+          <DataTable
+            className="rounded-none border-0 shadow-none"
+            columns={columns}
+            data={filtered}
+            labels={tableLabels}
+            getRowId={(row) => row.id}
+            searchable={false}
+            sortable={false}
+            paginated={false}
+          />
         )}
       </SettingsCard>
 
