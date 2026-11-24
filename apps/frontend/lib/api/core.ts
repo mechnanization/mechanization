@@ -1,7 +1,9 @@
 import { BACKGROUND_REQUEST_HEADER, type ErrorParams, type OccupancyRole, type BuildingLifecycle, type StructureType, type SurveyStatus, type UnitStatus, type UnitType } from '@mechanization/shared-schemas';
 import { localizeApiError } from '../api-errors';
 
-export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
+import { API_URL } from '../public-config';
+
+export { API_URL };
 
 export interface ApiError {
   /**

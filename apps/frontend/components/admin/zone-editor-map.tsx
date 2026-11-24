@@ -6,6 +6,7 @@ import 'mapbox-gl/dist/mapbox-gl.css';
 import type { Polygon } from 'geojson';
 import { Loader2, MousePointerClick, SquareDashedMousePointer } from 'lucide-react';
 import { fetchCadastreAsset } from '@/lib/cadastre-assets';
+import { MAPBOX_ACCESS_TOKEN } from '@/lib/public-config';
 import { MapLayerControl } from './map-layer-control';
 import {
   basemapById,
@@ -15,7 +16,7 @@ import {
   DEFAULT_BASEMAP,
 } from './map-styles';
 
-mapboxgl.accessToken = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
+mapboxgl.accessToken = MAPBOX_ACCESS_TOKEN;
 
 const FALLBACK_CENTER: [number, number] = [35.2654, 33.2539];
 const FALLBACK_ZOOM = 13.5;

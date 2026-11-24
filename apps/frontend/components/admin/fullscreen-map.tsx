@@ -68,6 +68,7 @@ import { CitizenDetailDrawer } from './citizen-detail-drawer';
 import { ZoneLegend } from './zone-legend';
 import { MapExportDialog } from './map-export-dialog';
 import { ZoneInfoDialog } from './zone-info-dialog';
+import { MAPBOX_ACCESS_TOKEN } from '@/lib/public-config';
 import {
   basemapById,
   ensureRtlTextPlugin,
@@ -76,11 +77,10 @@ import {
   DEFAULT_BASEMAP,
 } from './map-styles';
 
-// Falls back to Mapbox's own public example token — never a real project
-// token here, since this file is committed. Set NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN
-// in `.env`/`.env.local` (both gitignored) for real usage.
-mapboxgl.accessToken =
-  process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
+// Never a real project token here, since this file is committed: set
+// NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN in `.env`/`.env.local` (both gitignored), read in
+// `lib/public-config.ts`.
+mapboxgl.accessToken = MAPBOX_ACCESS_TOKEN;
 
 /** Parcel numbers only become legible — and useful — this far in. */
 const PARCEL_LABEL_MIN_ZOOM = 16;

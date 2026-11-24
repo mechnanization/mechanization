@@ -4,8 +4,7 @@ import { QueryProvider } from '@/components/query-provider';
 import { StaffRouteGuard } from '@/components/admin/staff-route-guard';
 import { ToastProvider } from '@/components/ui/toast';
 import { TooltipProvider } from '@/components/ui/tooltip';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
+import { tenantDisplayName } from '@/lib/tenant-config.server';
 
 /**
  * Points the browser at this municipality's own manifest.
@@ -37,28 +36,6 @@ export async function generateMetadata({
 }
 
 /**
- * The municipality's display name, for the header breadcrumb and the drawer.
- *
- * Fetched here rather than read from the session because it is public, cached
- * config — the same endpoint `TenantLayout` already calls, so Next dedupes the
- * two into one request — and because the header must be able to say which
- * municipality this is before a session exists at all.
- */
-async function getTenantName(slug: string, locale: string = 'ar'): Promise<string | undefined> {
-  try {
-    const response = await fetch(`${API_URL}/t/${slug}/tenant/config`, {
-      next: { revalidate: 300 },
-    });
-    if (!response.ok) return undefined;
-    const config = (await response.json()) as { name?: string; nameAr?: string };
-    return locale === 'en' ? (config.name ?? config.nameAr) : (config.nameAr ?? config.name);
-  } catch {
-    // The breadcrumb falls back to «البلدية» / "Municipality".
-    return undefined;
-  }
-}
-
-/**
  * Wraps every staff screen except login in the admin chrome.
  *
  * A route group (`(protected)`) rather than a real segment — it adds nothing
@@ -84,7 +61,7 @@ export default async function ProtectedAdminLayout({
   params: Promise<{ tenant: string; locale: string; adminPath: string }>;
 }) {
   const { tenant, locale, adminPath } = await params;
-  const tenantName = await getTenantName(tenant, locale);
+  const tenantName = await tenantDisplayName(tenant, locale);
 
   return (
     /* Outermost of the three, because it is the longest-lived: the staff read

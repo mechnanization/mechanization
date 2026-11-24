@@ -1,22 +1,7 @@
 import { notFound } from 'next/navigation';
-import type { PublicTenantConfig } from '@/lib/api-client';
+import { fetchTenantConfig } from '@/lib/tenant-config.server';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { LanguageSwitcher } from '@/components/language-switcher';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
-
-/** Same call the parent tenant layout makes; Next dedupes identical fetches within one request. */
-async function getTenant(slug: string): Promise<PublicTenantConfig | null> {
-  try {
-    const response = await fetch(`${API_URL}/t/${slug}/tenant/config`, {
-      next: { revalidate: 300 },
-    });
-    if (!response.ok) return null;
-    return (await response.json()) as PublicTenantConfig;
-  } catch {
-    return null;
-  }
-}
 
 /**
  * The citizen portal's chrome: municipality header, a `max-w-3xl` reading
@@ -35,7 +20,7 @@ export default async function CitizenLayout({
   params: Promise<{ tenant: string; locale: string }>;
 }) {
   const { tenant, locale } = await params;
-  const config = await getTenant(tenant);
+  const config = await fetchTenantConfig(tenant);
   if (!config) notFound();
 
   const { branding } = config;

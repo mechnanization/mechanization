@@ -1,12 +1,13 @@
 import '@/app/globals.css';
 import { headers } from 'next/headers';
 import { notFound } from 'next/navigation';
-import type { PublicTenantConfig } from '@/lib/api-client';
 import { ACCENT_INIT_SCRIPT } from '@/lib/accents';
 import { AccentProvider } from '@/components/accent-provider';
 import { ThemeProvider } from '@/components/theme-provider';
 import { NextIntlClientProvider } from 'next-intl';
 import { getMessages, setRequestLocale } from 'next-intl/server';
+import { fetchTenantConfig } from '@/lib/tenant-config.server';
+import { defaultLocale, isLocale } from '@/i18n/routing';
 
 /**
  * Validates a municipality's brand colour before it reaches a `<style>` tag.
@@ -29,26 +30,13 @@ function safeHslTriple(value: string | undefined): string | null {
     : null;
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
-
 export const dynamic = 'force-dynamic';
 
-/**
- * Server-side fetch so the municipality's name and branding are in the first
- * HTML response — a citizen on a slow connection should not watch an unbranded
- * shell resolve into a government form.
+/*
+ * The municipality's name and branding are fetched on the server (`fetchTenantConfig`) so they are in the
+ * first HTML response — a citizen on a slow connection should not watch an unbranded shell resolve into
+ * a government form.
  */
-async function getTenant(slug: string): Promise<PublicTenantConfig | null> {
-  try {
-    const response = await fetch(`${API_URL}/t/${slug}/tenant/config`, {
-      next: { revalidate: 300 },
-    });
-    if (!response.ok) return null;
-    return (await response.json()) as PublicTenantConfig;
-  } catch {
-    return null;
-  }
-}
 
 export async function generateMetadata({
   params,
@@ -56,7 +44,7 @@ export async function generateMetadata({
   params: Promise<{ tenant: string; locale: string }>;
 }) {
   const { tenant, locale } = await params;
-  const config = await getTenant(tenant);
+  const config = await fetchTenantConfig(tenant);
   const name = locale === 'en' ? (config?.name ?? 'Municipal Register') : (config?.nameAr ?? 'السجل البلدي');
   const subtitle = locale === 'en' ? 'Property & Residency Registry' : 'منصة العقارات والوحدات السكنية';
   return {
@@ -75,9 +63,12 @@ export default async function TenantLayout({
   children: React.ReactNode;
   params: Promise<{ tenant: string; locale: string }>;
 }) {
-  const { tenant, locale } = await params;
+  const { tenant, locale: requested } = await params;
+  // An unrecognised segment is the default language, in its own direction: `i18n/request.ts` loads the
+  // default's messages for it, so the page must not say `dir="ltr"` over Arabic words (DRY-15).
+  const locale = isLocale(requested) ? requested : defaultLocale;
   setRequestLocale(locale);
-  const [config, messages] = await Promise.all([getTenant(tenant), getMessages()]);
+  const [config, messages] = await Promise.all([fetchTenantConfig(tenant), getMessages()]);
 
   // An unknown municipality is a 404, not a generic error page: the slug is the
   // tenant, so a wrong slug means the visitor — citizen or staff — is in the
