@@ -129,11 +129,33 @@ export interface UserRepository {
    */
   endCitizenSessions(userId: string): Promise<boolean>;
 
-  /** Stores an unconfirmed secret; `confirmTotp` is what activates it. */
+  /**
+   * Stores a secret as the account's factor, unconfirmed; `confirmTotp` is
+   * what activates it. For an account being created (`StaffService`), which
+   * has no factor to keep. A staff member's own enrolment goes through
+   * `savePendingTotpSecret` instead.
+   */
   saveTotpSecret(userId: string, secret: string): Promise<void>;
   /** Marks enrolment complete once the admin has proved the app works. */
   confirmTotp(userId: string): Promise<void>;
-  /** Clears TOTP enrolment and secrets. */
+  /**
+   * A staff member's own enrolment (0116, audit SEC-02): the new secret waits
+   * beside the confirmed factor, which keeps signing in until a code from the
+   * new app confirms it. Writes over an earlier pending secret. Staff only.
+   */
+  savePendingTotpSecret(userId: string, secret: string): Promise<void>;
+  /**
+   * Makes `secret` the account's confirmed factor, if it is still the one
+   * waiting — the pending secret, or an unconfirmed `totpSecret` left by an
+   * enrolment started before 0116 — and ends every session the account holds
+   * (`tokenVersion`). False when another enrolment replaced it since, or no
+   * staff account has the id: nothing is written then.
+   */
+  promotePendingTotp(userId: string, secret: string): Promise<boolean>;
+  /**
+   * Clears the second factor, a pending one included, and ends every session
+   * the account holds (`tokenVersion`). Staff only.
+   */
   disableTotp(userId: string): Promise<void>;
 
   /** Every staff account with the history count that gates a hard delete. */

@@ -495,6 +495,12 @@ export const ERROR_CODES = [
   'TOTP_CODE_INVALID',
   'TOTP_CODE_REUSED',
   'TOTP_LOCKED',
+  // Changing one's own second factor (audit SEC-02): a factor is confirmed and its current code was not sent
+  // (422); a confirmation with no enrolment open (409); the enrolment was started again since this one was
+  // shown, so its code no longer applies (409).
+  'TOTP_CODE_REQUIRED',
+  'TOTP_ENROLMENT_NOT_STARTED',
+  'TOTP_ENROLMENT_CHANGED',
   // The phone-code sign-in (`citizen/otp/*`) while no SMS provider is live; the portal signs in by رقم مرجعي.
   'CITIZEN_OTP_UNAVAILABLE',
   // News on Day3ati, the partner API (task «Day3ati HTTP client and error handling»). The first two are the

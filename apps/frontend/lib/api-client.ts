@@ -8,6 +8,7 @@ import {
   type ReinspectionsPage,
   type StaffPresenceResponse,
   type StaffSelf,
+  type TotpReauth,
 } from '@mechanization/shared-schemas';
 import { localizeApiError } from './api-errors';
 import { cachedRequest, invalidateRequests, peekCachedRequest } from './request-cache';
@@ -6480,16 +6481,24 @@ export async function confirmStaffPasswordReset(
   });
 }
 
+/**
+ * Starts an enrolment: the current password, and the current code while a
+ * factor is confirmed (`totpReauthSchema`, audit SEC-02). The factor in use
+ * keeps signing in until `confirmStaffTotpEnrolment` replaces it.
+ */
 export async function beginStaffTotpEnrolment(
   tenant: string,
   token: string,
+  input: TotpReauth,
 ): Promise<{ secret: string; keyUri: string }> {
   return apiFetch<{ secret: string; keyUri: string }>(tenant, '/auth/staff/totp/enrol', {
     method: 'POST',
     token,
+    body: JSON.stringify(input),
   });
 }
 
+/** Confirms the new factor; every session of the account ends, this one included. */
 export async function confirmStaffTotpEnrolment(
   tenant: string,
   token: string,
@@ -6502,10 +6511,14 @@ export async function confirmStaffTotpEnrolment(
   });
 }
 
+/**
+ * The current password and, while a factor is confirmed, its current code
+ * (`totpReauthSchema`). Every session of the account ends, this one included.
+ */
 export async function disableStaffTotp(
   tenant: string,
   token: string,
-  input: { currentPassword?: string },
+  input: TotpReauth,
 ): Promise<{ disabled: boolean }> {
   return apiFetch<{ disabled: boolean }>(tenant, '/auth/staff/totp/disable', {
     method: 'POST',

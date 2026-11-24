@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   openedAfterPasswordChange,
+  secondFactorNoticeOf,
+  signInAfterSecondFactorChange,
   passwordChangeIssues,
   signInAfterPasswordChange,
 } from './password-change';
@@ -51,5 +53,24 @@ describe('the sign-in page after a password change', () => {
   it('shows nothing for a plain visit or any other notice', () => {
     expect(openedAfterPasswordChange('')).toBe(false);
     expect(openedAfterPasswordChange('?notice=anything')).toBe(false);
+  });
+});
+
+describe('the sign-in page after a second-factor change (SEC-02)', () => {
+  it('is opened with a notice that says which change', () => {
+    const on = signInAfterSecondFactorChange('/zahle/ar/admin', 'on');
+    const off = signInAfterSecondFactorChange('/zahle/ar/admin', 'off');
+    expect(on.startsWith('/zahle/ar/admin/login?')).toBe(true);
+    expect(secondFactorNoticeOf(on.slice(on.indexOf('?')))).toBe('on');
+    expect(secondFactorNoticeOf(off.slice(off.indexOf('?')))).toBe('off');
+    // Never read as a password change, nor a password change as this.
+    expect(openedAfterPasswordChange(on.slice(on.indexOf('?')))).toBe(false);
+    const password = signInAfterPasswordChange('/zahle/ar/admin');
+    expect(secondFactorNoticeOf(password.slice(password.indexOf('?')))).toBe(null);
+  });
+
+  it('shows nothing for a plain visit or any other notice', () => {
+    expect(secondFactorNoticeOf('')).toBe(null);
+    expect(secondFactorNoticeOf('?notice=anything')).toBe(null);
   });
 });
