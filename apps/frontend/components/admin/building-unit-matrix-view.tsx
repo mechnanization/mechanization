@@ -1145,7 +1145,7 @@ export function BuildingUnitMatrixView({
                             <span
                               aria-hidden
                               className={cn(
-                                'pointer-events-none absolute -top-1 left-1/2 -translate-x-1/2 rounded-full px-1.5 text-[10px] font-bold tabular-nums shadow',
+                                'pointer-events-none absolute -top-1 left-1/2 -translate-x-1/2 rounded-full px-1.5 text-xs font-bold tabular-nums shadow',
                                 delta > 0 ? 'bg-primary text-primary-foreground' : 'bg-destructive text-destructive-foreground',
                               )}
                             >

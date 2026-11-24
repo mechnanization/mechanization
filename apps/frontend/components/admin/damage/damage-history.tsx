@@ -4,7 +4,7 @@ import { useTranslations } from 'next-intl';
 import { ShieldAlert } from 'lucide-react';
 import { getLabels, isImpairedDamage, isUninhabitableReading } from '@mechanization/shared-schemas';
 import type { DamageAssessmentRow } from '@/lib/api-client';
-import { formatDate } from '@/lib/dates';
+import { formatDate, formatDay } from '@/lib/dates';
 import { Badge } from '@/components/ui/badge';
 
 /**
@@ -82,7 +82,7 @@ export function DamageHistory({
               {row.observations ? <p className="leading-relaxed text-muted-foreground">{row.observations}</p> : null}
               {row.reinspectAt ? (
                 <p className="text-muted-foreground">
-                  {t('history.reinspectDue', { date: formatDate(row.reinspectAt) })}
+                  {t('history.reinspectDue', { date: formatDay(row.reinspectAt.slice(0, 10)) })}
                 </p>
               ) : null}
               {row.assessedByName ? (

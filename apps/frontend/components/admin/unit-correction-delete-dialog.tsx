@@ -345,7 +345,7 @@ function Steps({ step, en }: { step: Step; en: boolean }): React.JSX.Element {
             {index > 0 ? <span aria-hidden className="h-px w-6 bg-border" /> : null}
             <span
               className={cn(
-                'flex size-5 items-center justify-center rounded-full border text-[11px] font-semibold',
+                'flex size-5 items-center justify-center rounded-full border text-xs font-semibold',
                 current
                   ? 'border-destructive bg-destructive text-destructive-foreground'
                   : done

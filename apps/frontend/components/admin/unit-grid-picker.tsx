@@ -1140,7 +1140,7 @@ export function UnitGridPicker({
                       // three floors overflowed their box. 44px is the tablet
                       // touch-target floor, and the same strip the ledger's
                       // read-only matrix draws (`MATRIX_ROW_HEIGHT`).
-                      'group relative flex h-11 sm:h-12 touch-none select-none items-center justify-center rounded-[4px] border text-[9px] font-semibold leading-none transition-colors',
+                      'group relative flex h-11 sm:h-12 touch-none select-none items-center justify-center rounded-[4px] border text-xs font-semibold leading-none transition-colors',
                       /*
                         Air, not a missing flat. A solid box here made a
                         setback floor read as six storeys with a hole in each,
@@ -1245,18 +1245,18 @@ export function UnitGridPicker({
                       label would push the row taller than its neighbours. */}
                   <span className="absolute inset-0 flex flex-col items-center justify-center gap-px overflow-hidden px-0.5 text-center">
                     {/* The hatch is behind the label, so the label gets the
-                        cell's own background back to sit on — ruled text at
-                        9px is unreadable. */}
+                        cell's own background back to sit on — ruled text
+                        is unreadable. */}
                     <span
                       className={cn(
-                        'max-w-full truncate text-[9px] font-bold leading-tight',
+                        'max-w-full truncate text-xs font-bold leading-tight',
                         structural && 'rounded-sm bg-background/85 px-1',
                       )}
                     >
                       {structural ? typeName(unit) : (unit.unitCode ?? typeName(unit))}
                     </span>
                     {!structural && unit.unitCode && span > 1 ? (
-                      <span className="max-w-full truncate text-[8px] font-medium leading-tight opacity-80">
+                      <span className="max-w-full truncate text-xs font-medium leading-tight opacity-80">
                         {typeName(unit)}
                       </span>
                     ) : null}

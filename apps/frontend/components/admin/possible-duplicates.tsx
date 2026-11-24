@@ -296,7 +296,7 @@ function MatchRow({
           <p className="flex flex-wrap items-center gap-1 text-xs">
             <span className="text-muted-foreground">{en ? 'Agrees on:' : 'متطابق في:'}</span>
             {match.matchedOn.map((fact) => (
-              <Badge key={fact} variant="soft-muted" className="px-1.5 py-0 text-[11px] font-medium">
+              <Badge key={fact} variant="soft-muted" className="px-1.5 py-0 text-xs font-medium">
                 {agreed[fact]}
               </Badge>
             ))}
