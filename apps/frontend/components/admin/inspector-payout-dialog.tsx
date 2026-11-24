@@ -467,7 +467,7 @@ function PayoutForm({
           unit={currencyUnit('USD', locale)}
           value={amount}
           invalid={Boolean(errors.amount) || (short && !retrying)}
-          inputClassName="text-lg font-bold"
+          inputClassName="text-lg sm:text-lg font-bold"
           onChange={(raw) => {
             setAmount(formatTypedAmount(raw, 2));
             setErrors(({ amount: _cleared, ...rest }) => rest);

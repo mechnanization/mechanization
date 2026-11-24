@@ -429,7 +429,7 @@ function MobileCards<TData>({
             ) : null}
 
             {actionCells.length > 0 ? (
-              <div className="mt-3 flex flex-wrap items-center justify-end gap-2 border-t pt-3 [&_button]:size-9">
+              <div className="mt-3 flex flex-wrap items-center justify-end gap-2 border-t pt-3 [&_button]:min-h-9 [&_button]:min-w-9">
                 {actionCells.map((cell) => (
                   <React.Fragment key={cell.id}>
                     {flexRender(cell.column.columnDef.cell, cell.getContext())}

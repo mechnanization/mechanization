@@ -22,7 +22,11 @@ import { cn } from '@/lib/utils';
  *
  * `actions` is pushed to the far edge with `ms-auto` rather than the row using
  * `justify-between`: the header has two children at some widths and three at
- * others, and only the actions should ever be flung to the end.
+ * others, and only the actions should ever be flung to the end. They wrap onto
+ * further lines when they do not fit (LAY-5): a row that scrolled sideways hid
+ * the page's main action off-screen at 360px, with nothing to say it was there.
+ * The title keeps `sm:min-w-40`, so a long row of actions wraps rather than
+ * squeezing it to nothing.
  */
 export function PageHeader({
   icon: Icon,
@@ -42,7 +46,7 @@ export function PageHeader({
         className,
       )}
     >
-      <div className="flex min-w-0 flex-1 items-center gap-3">
+      <div className="flex min-w-0 flex-1 items-center gap-3 sm:min-w-40">
         <span
           aria-hidden
           className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"
@@ -54,7 +58,7 @@ export function PageHeader({
         </h1>
       </div>
       {actions ? (
-        <div className="flex items-center gap-2 shrink-0 sm:ms-auto overflow-x-auto max-w-full pb-1 sm:pb-0">{actions}</div>
+        <div className="flex max-w-full flex-wrap items-center gap-2 sm:ms-auto sm:justify-end">{actions}</div>
       ) : null}
     </div>
   );

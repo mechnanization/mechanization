@@ -675,7 +675,7 @@ export default function SettlePaymentPage({
                       value={amount}
                       placeholder="0"
                       invalid={tooMuch}
-                      inputClassName="text-xl font-bold"
+                      inputClassName="text-xl sm:text-xl font-bold"
                       onChange={(raw) => setAmount(formatTypedAmount(raw, 0))}
                     />
                   </Field>

@@ -429,7 +429,7 @@ function SalaryForm({
           value={amount}
           placeholder="0"
           invalid={Boolean(errors.amount) || refusesShort}
-          inputClassName="text-lg font-bold"
+          inputClassName="text-lg sm:text-lg font-bold"
           onChange={(raw) => {
             setAmount(formatTypedAmount(raw, decimals));
             setErrors(({ amount: _cleared, ...rest }) => rest);
