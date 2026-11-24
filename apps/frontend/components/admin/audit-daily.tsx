@@ -9,6 +9,7 @@ import { auditActionLabel, auditEntityLabel } from '@/lib/audit-labels';
 import { describeAudit } from '@/lib/audit-describe';
 import { formatMonth } from '@/lib/dates';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { usePagerLabels } from '@/lib/use-pager-labels';
 import { FactCell, FactRow } from '@/components/ui/facts';
 import { Button } from '@/components/ui/button';
 import { Pager } from '@/components/ui/pager';
@@ -73,6 +74,7 @@ export function AuditDaily({
 
   const actionsKey = filter.actions?.join(',') ?? '';
 
+  const pagerLabels = usePagerLabels();
   const query = useStaffQuery<{ items: AuditDaySummary[]; total: number }>({
     queryKey: [
       'audit-daily',
@@ -186,7 +188,8 @@ export function AuditDaily({
           setOpenKey(null);
           setPage(next);
         }}
-        locale={locale}
+        labels={pagerLabels}
+        disabled={query.fetching}
         scrollTarget={tableTop}
       />
     </div>

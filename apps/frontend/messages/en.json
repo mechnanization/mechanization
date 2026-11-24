@@ -139,6 +139,13 @@
     "invoicesSummary": "Invoices & Demands",
     "askAtMunicipality": "Visit the municipality with your ID card and a clerk will look it up."
   },
+  "pager": {
+    "pages": "Pages",
+    "previous": "Previous page",
+    "next": "Next page",
+    "position": "Page {current} of {total}",
+    "range": "{first}–{last} of {total}"
+  },
   "table": {
     "search": "Search…",
     "clearSearch": "Clear search",

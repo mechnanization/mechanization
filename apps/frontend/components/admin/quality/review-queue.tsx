@@ -17,6 +17,7 @@ import { flagFieldLabel } from '@/lib/field-flags';
 import { CompleteRecordDialog } from '@/components/admin/complete-record-dialog';
 import { formatDateTime, formatRelative } from '@/lib/dates';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { usePagerLabels } from '@/lib/use-pager-labels';
 import { param, useUrlPagination, useUrlState } from '@/lib/use-url-state';
 import { pageWithRows } from '@/lib/url-state';
 import { Badge } from '@/components/ui/badge';
@@ -99,6 +100,7 @@ export function ReviewQueue({
   /** The row whose «استكمال البيانات الناقصة» dialog is open, or none. */
   const [completing, setCompleting] = useState<ReviewQueueItem | null>(null);
 
+  const pagerLabels = usePagerLabels();
   const query = useStaffQuery({
     queryKey: ['quality-reviews', tenant, tab, officerId, flaggedOnly, pagination.pageSize, offset],
     queryFn: (tok, signal) =>
@@ -567,7 +569,8 @@ export function ReviewQueue({
           pageSize={pagination.pageSize}
           total={total}
           onPageChange={(page) => setPagination((current) => ({ ...current, pageIndex: page }))}
-          locale={locale}
+          labels={pagerLabels}
+          disabled={query.fetching}
           label={t('pages')}
           scrollTarget={listTop}
         />

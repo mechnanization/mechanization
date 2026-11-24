@@ -10,6 +10,7 @@ import { AUDIT_FAMILIES, auditFamilyOf } from '@/lib/audit-describe';
 import { formatMonth } from '@/lib/dates';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { usePagerLabels } from '@/lib/use-pager-labels';
 import { param, useUrlState } from '@/lib/use-url-state';
 import { AuditDaily } from '@/components/admin/audit-daily';
 import { AuditEntryItem } from '@/components/admin/audit-entry';
@@ -120,6 +121,7 @@ export default function AuditTrailPage({
     [facets.data],
   );
 
+  const pagerLabels = usePagerLabels();
   const query = useStaffQuery({
     queryKey: ['audit', tenant, actorId, family, entityType, from, to, page, familyActions?.join(',')],
     queryFn: (token, signal) =>
@@ -375,7 +377,8 @@ export default function AuditTrailPage({
         pageSize={PAGE_SIZE}
         total={total}
         onPageChange={(next) => setFilters({ page: next })}
-        locale={locale}
+        labels={pagerLabels}
+        disabled={query.fetching}
         scrollTarget={listTop}
       />
       </>

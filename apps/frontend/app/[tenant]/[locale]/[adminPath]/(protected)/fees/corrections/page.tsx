@@ -13,6 +13,7 @@ import {
 } from '@/lib/api-client';
 import { loadSession } from '@/lib/session';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { usePagerLabels } from '@/lib/use-pager-labels';
 import { param, useUrlState } from '@/lib/use-url-state';
 import { formatLbp } from '@/lib/currency';
 import { BillReviewDialog, CorrectionBillCard } from '@/components/admin/correction-bills';
@@ -83,6 +84,7 @@ export default function CorrectionBillsPage({
   // AUDITOR reads the list; recording a decision is the accountant's.
   const canReview = role === 'SUPER_ADMIN' || role === 'ACCOUNTANT';
 
+  const pagerLabels = usePagerLabels();
   const listQuery = useStaffQuery({
     queryKey: ['correction-affected-bills', tenant, show, page],
     queryFn: (accessToken, signal) =>
@@ -232,7 +234,8 @@ export default function CorrectionBillsPage({
             // A step off the live URL, not the render's value, which can trail a
             // quick second click by one write.
             onPageChange={(target) => setUrlState((current) => ({ page: current.page + (target - page) }))}
-            locale={locale}
+            labels={pagerLabels}
+            disabled={listQuery.fetching}
             scrollTarget={listTop}
           />
         </>
