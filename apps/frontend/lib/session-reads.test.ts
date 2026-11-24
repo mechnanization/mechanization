@@ -42,7 +42,6 @@ describe('the staff session is read through useStaffSession', () => {
 
   it('app: only the staff login page and the citizen pages do', () => {
     expect(callers('app')).toEqual([
-      'app/[tenant]/[locale]/(citizen)/my-account/page.tsx',
       'app/[tenant]/[locale]/(citizen)/my-file/page.tsx',
       'app/[tenant]/[locale]/(citizen)/page.tsx',
       'app/[tenant]/[locale]/(citizen)/payments/page.tsx',

@@ -1,7 +1,7 @@
 ---
 name: Mechanization
 description: Operate-mode municipal register, Arabic and RTL first, on warm neutrals with one blue accent and status colours that each mean one thing.
-# Last verified against the code: fix/pr104-review (uncommitted review fixes), 2026-10-10; components re-checked on fix/fees-page-ux (uncommitted), 2026-10-12; FileInput and the municipal request screens on the same branch (uncommitted), 2026-10-13. Source: apps/frontend/app/globals.css, apps/frontend/tailwind.config.ts.
+# Last verified against the code: `chore/cleanup-decided-dead-13-page-03-cache-02-page-05-06` (on `refactor/cleanup-god-22-citizen-form-phase-2b`, cleanup sprint DEAD-13, PAGE-03, CACHE-02, PAGE-05, PAGE-06, the decisions U-15, U-21, U-3, U-22 and U-23 of 2026-11-24): the accent picker deleted, 2026-11-24; fix/pr104-review (uncommitted review fixes), 2026-10-10; components re-checked on fix/fees-page-ux (uncommitted), 2026-10-12; FileInput and the municipal request screens on the same branch (uncommitted), 2026-10-13. Source: apps/frontend/app/globals.css, apps/frontend/tailwind.config.ts.
 colors:
   background: "hsl(40 20% 98%)"
   foreground: "hsl(0 0% 4%)"
@@ -231,8 +231,8 @@ finished hex values and are not mapped in Tailwind.
   `var(--brand-primary, …)`. `TenantLayout` writes `--brand-primary` from the tenant
   config's `branding.primaryColor` after `safeHslTriple` checks its syntax. It is one
   triple for both themes, and nothing checks its contrast (UI §17).
-- The accent picker is dead code: `ACCENTS` in `lib/accents.ts` has one entry and
-  globals.css has no `[data-accent]` blocks.
+- The accent picker is gone (DEAD-13, decision U-15, 2026-11-24): the colour is the
+  municipality's brand colour or the default blue, and nothing else sets it.
 
 ### Neutral
 - **Page, card, popover** (`background`, `card`, `popover`): three layers, each a hair
