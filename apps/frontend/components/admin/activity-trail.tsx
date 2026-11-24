@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { History, Loader2 } from 'lucide-react';
 
 import { getAuditLog, getRecordHistory, type AuditEntry } from '@/lib/api-client';
-import { loadSession } from '@/lib/session';
+import { useStaffSession } from '@/lib/use-staff-session';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { AuditEntryItem } from '@/components/admin/audit-entry';
 import { CollapsibleSection } from '@/components/ui/collapsible-section';
@@ -52,15 +52,8 @@ export function ActivityTrail({
   defaultOpen?: boolean;
 }) {
   const en = locale === 'en';
-  const [token, setToken] = useState<string | null>(null);
-  const [role, setRole] = useState<string | null>(null);
-
-  useEffect(() => {
-    const session = loadSession(tenant);
-    if (!session || session.user.kind !== 'STAFF') return;
-    setToken(session.accessToken);
-    setRole(session.user.role ?? null);
-  }, [tenant]);
+  const { token, user } = useStaffSession(tenant, base);
+  const role = user?.role || null;
 
   /*
     Two readers, two trails. SUPER_ADMIN and AUDITOR keep the whole trail of

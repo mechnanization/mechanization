@@ -41,7 +41,8 @@ import type {
   PublicTenantConfig,
 } from '@/lib/api-client';
 import { getOpenReturn, type OpenReturn } from '@/lib/quality-api';
-import { clearSession, loadSession } from '@/lib/session';
+import { clearSession } from '@/lib/session';
+import { useStaffSession } from '@/lib/use-staff-session';
 import { formatRelative } from '@/lib/dates';
 import { namesAnotherRelative } from '@/lib/citizen-contact';
 import { LANDLORD_LINK_ANSWER_ROLES, hasRole } from '@/lib/staff-roles';
@@ -881,11 +882,22 @@ export function CitizenEditor({
   const canQueue = !editing && !isQueuedEdit && offlineStorageAvailable();
   const willQueue = canQueue && !online;
 
-  const [token, setToken] = useState<string | null>(null);
+  const staff = useStaffSession(tenant, base);
+  // Read-only roles are bounced rather than shown a form every save would refuse, and get no token
+  // meanwhile. The server is the enforcement; this keeps it out of their way. Collectors stay out
+  // too, though the save routes admit them: the form's owner-link controls («نعم، هو», «إلغاء الربط»)
+  // are not theirs (`LANDLORD_LINK_ANSWER_ROLES`) — see docs/security.md, Known gaps.
+  const mayEdit =
+    staff.user === null
+      ? null
+      : staff.user.role === 'SUPER_ADMIN' ||
+        staff.user.role === 'FIELD_INSPECTOR' ||
+        staff.user.role === 'ADMINISTRATIVE_OFFICER';
+  const token = mayEdit ? staff.token : null;
   /** «دمج ملفين» is SUPER_ADMIN's alone — mirrored here, enforced by the server. */
-  const [canMerge, setCanMerge] = useState(false);
+  const canMerge = mayEdit === true && staff.user?.role === 'SUPER_ADMIN';
   // «ربط» / «ليس هو» on the owner question asked after a save.
-  const [canAnswerLinks, setCanAnswerLinks] = useState(false);
+  const canAnswerLinks = mayEdit === true && hasRole(LANDLORD_LINK_ANSWER_ROLES, staff.user?.role);
   const [config, setConfig] = useState<PublicTenantConfig | null>(null);
   const [initial, setInitial] = useState<CitizenFormValues | null>(null);
   /** The citizen's own reference, and the filing's beside it — two different numbers. */
@@ -1013,28 +1025,8 @@ export function CitizenEditor({
   const keepsDraft = !editing && !isQueuedEdit;
 
   useEffect(() => {
-    const session = loadSession(tenant);
-    if (!session || session.user.kind !== 'STAFF') {
-      router.replace(`${base}/login`);
-      return;
-    }
-    // Read-only roles are bounced rather than shown a form every save would
-    // refuse. The server is the enforcement; this keeps it out of their way.
-    // Collectors stay out too, though the save routes admit them: the form's
-    // owner-link controls («نعم، هو», «إلغاء الربط») are not theirs
-    // (`LANDLORD_LINK_ANSWER_ROLES`) — see docs/security.md, Known gaps.
-    if (
-      session.user.role !== 'SUPER_ADMIN' &&
-      session.user.role !== 'FIELD_INSPECTOR' &&
-      session.user.role !== 'ADMINISTRATIVE_OFFICER'
-    ) {
-      router.replace(`${base}/citizens`);
-      return;
-    }
-    setToken(session.accessToken);
-    setCanMerge(session.user.role === 'SUPER_ADMIN');
-    setCanAnswerLinks(hasRole(LANDLORD_LINK_ANSWER_ROLES, session.user.role));
-  }, [tenant, base, router]);
+    if (mayEdit === false) router.replace(`${base}/citizens`);
+  }, [mayEdit, base, router]);
 
   useEffect(() => {
     if (!token) return;

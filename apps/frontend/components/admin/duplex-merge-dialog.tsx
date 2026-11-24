@@ -22,7 +22,7 @@ import {
   type DuplexMergePreview,
   type DuplexMergeResult,
 } from '@/lib/api-client';
-import { useStaffRole } from '@/components/admin/unit-correction-delete-dialog';
+import { useStaffRole } from '@/lib/use-staff-session';
 
 /*
   «دمج مع الوحدة العلوية كدوبلكس» (decision D28) — two flats recorded as two

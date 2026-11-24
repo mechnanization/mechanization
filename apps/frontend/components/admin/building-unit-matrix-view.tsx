@@ -65,7 +65,8 @@ import {
   type UnitOccupant,
   type UnitWithOccupants,
 } from '@/lib/api-client';
-import { clearSession, loadSession } from '@/lib/session';
+import { clearSession } from '@/lib/session';
+import { useStaffSession } from '@/lib/use-staff-session';
 import { Alert } from '@/components/ui/alert';
 import { BackLink } from '@/components/ui/back-link';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -190,21 +191,10 @@ export function BuildingUnitMatrixView({
   const labels = getLabels(locale);
   const base = `/${tenant}/${locale}/${adminPath}`;
 
-  const [token, setToken] = useState<string | null>(null);
-  const [role, setRole] = useState<string | null>(null);
+  const { token, user: staffUser } = useStaffSession(tenant, base);
+  const role = staffUser?.role || null;
   /** The signed-in officer — lets the visit form recognise their own visit from earlier today. */
-  const [viewerId, setViewerId] = useState<string | null>(null);
-
-  useEffect(() => {
-    const session = loadSession(tenant);
-    if (!session || session.user.kind !== 'STAFF') {
-      router.replace(`${base}/login`);
-      return;
-    }
-    setToken(session.accessToken);
-    setRole(session.user.role ?? null);
-    setViewerId(session.user.id);
-  }, [tenant, base, router]);
+  const viewerId = staffUser?.id ?? null;
 
   // An allow-list (`CENSUS_WRITE_ROLES`), never a list of who may not: a role added later starts read-only.
   const canWrite = hasRole(CENSUS_WRITE_ROLES, role);

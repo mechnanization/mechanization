@@ -25,7 +25,8 @@ import {
   valuesForPropertyType,
   type CaseFormValues,
 } from '@/lib/case-payload';
-import { clearSession, loadSession } from '@/lib/session';
+import { clearSession } from '@/lib/session';
+import { useStaffSession } from '@/lib/use-staff-session';
 import { CASE_WRITE_ROLES, hasRole } from '@/lib/staff-roles';
 import { HeaderBackLink } from '@/components/admin/header-back-link';
 import { Alert } from '@/components/ui/alert';
@@ -79,7 +80,11 @@ export function CaseEditor({
   const base = `/${tenant}/${locale}/${adminPath}`;
   const editing = Boolean(caseId);
 
-  const [token, setToken] = useState<string | null>(null);
+  const staff = useStaffSession(tenant, base);
+  // A role that cannot write cases gets no token, so nothing below reads for it while it is sent
+  // back to the list. The server is the enforcement.
+  const mayWrite = staff.user === null ? null : hasRole(CASE_WRITE_ROLES, staff.user.role);
+  const token = mayWrite ? staff.token : null;
   const [values, setValues] = useState<CaseFormValues>(EMPTY);
   const [loading, setLoading] = useState(editing);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -106,19 +111,9 @@ export function CaseEditor({
   );
 
   useEffect(() => {
-    const session = loadSession(tenant);
-    if (!session || session.user.kind !== 'STAFF') {
-      router.replace(`${base}/login`);
-      return;
-    }
-    // A role that cannot write cases is sent back to the list, not shown a
-    // form every save would refuse. The server is the enforcement.
-    if (!hasRole(CASE_WRITE_ROLES, session.user.role)) {
-      router.replace(`${base}/cases`);
-      return;
-    }
-    setToken(session.accessToken);
-  }, [tenant, base, router]);
+    // Sent back to the list, not shown a form every save would refuse.
+    if (mayWrite === false) router.replace(`${base}/cases`);
+  }, [mayWrite, base, router]);
 
   useEffect(() => {
     if (!token || !caseId) return;

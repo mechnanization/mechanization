@@ -50,3 +50,27 @@ export function useStaffSession(
 
   return { token, user };
 }
+
+/**
+ * Who is signed in, as a plain value, for a component that only needs to know
+ * (ARCH-19): no token, no redirect. The page it sits on already holds the session
+ * through `useStaffSession` and turns a signed-out visitor away; this reads
+ * the same storage so a dialog or a button can ask «who am I» without every
+ * caller threading the user down. Null until its effect has run, and for a
+ * citizen's session.
+ */
+export function useStaffViewer(tenant: string): { id: string; role: string | null } | null {
+  const [viewer, setViewer] = useState<{ id: string; role: string | null } | null>(null);
+  useEffect(() => {
+    const session = loadSession(tenant);
+    setViewer(
+      session?.user.kind === 'STAFF' ? { id: session.user.id, role: session.user.role ?? null } : null,
+    );
+  }, [tenant]);
+  return viewer;
+}
+
+/** The signed-in staff member's role, or null (see `useStaffViewer`). */
+export function useStaffRole(tenant: string): string | null {
+  return useStaffViewer(tenant)?.role ?? null;
+}

@@ -57,7 +57,6 @@ import {
   type UnitOccupant,
   type UnitWithOccupants,
 } from '@/lib/api-client';
-import { loadSession } from '@/lib/session';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -75,7 +74,8 @@ import { MATRIX_UNIT_TYPES } from '@/components/citizen/unit-fields';
 import { chosenType, figuresByType, unitTypeLabel, unitTypeOptions, useUnitTypes } from '@/lib/unit-types';
 import { endTenancyMessage } from '@/components/admin/after-tenancy-question';
 import { BuildingElevation } from '@/components/admin/property-illustrations';
-import { UnitCorrectionDeleteButton, useStaffRole } from '@/components/admin/unit-correction-delete-dialog';
+import { UnitCorrectionDeleteButton } from '@/components/admin/unit-correction-delete-dialog';
+import { useStaffRole, useStaffViewer } from '@/lib/use-staff-session';
 import { DuplexMergeButton } from '@/components/admin/duplex-merge-dialog';
 import {
   activeVacancy,
@@ -199,10 +199,7 @@ export function BuildingUnitMatrixDrawer({
   const labels = getLabels(locale);
   const toast = useToast();
   /** The signed-in officer — lets the visit form recognise their own visit from earlier today. */
-  const [viewerId, setViewerId] = useState<string | null>(null);
-  useEffect(() => {
-    setViewerId(loadSession(tenant)?.user.id ?? null);
-  }, [tenant]);
+  const viewerId = useStaffViewer(tenant)?.id ?? null;
 
   const [building, setBuilding] = useState<BuildingDetail | null>(null);
   const [damage, setDamage] = useState<{
