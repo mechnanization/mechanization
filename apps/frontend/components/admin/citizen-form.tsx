@@ -19,21 +19,13 @@ import {
   isNonPersonRecord,
   isOwnerRecord,
   type CitizenMergeResult,
-  type CitizenResidence,
   type PossibleDuplicateMatch,
 } from '@mechanization/shared-schemas';
 import type { PublicTenantConfig } from '@/lib/api-client';
 import { EmptyState } from '@/components/ui/states';
 import { DuplicateAlert, usePossibleDuplicates } from './possible-duplicates';
-import { MergeCitizensDialog } from './merge-citizens-dialog';
 import { FieldFlagProvider, FieldFocusProvider } from '@/components/ui/field';
-import { UnverifiedFieldsDialog } from './unverified-fields-dialog';
-import { QuickSaveDialog } from './quick-save-dialog';
 import type { LockedCensusTarget } from './building-unit-picker';
-import { ParcelRosterDialog } from './parcel-roster-dialog';
-import { ResidenceChangeDialog } from './residence-change-dialog';
-import { applyResidenceMove, planResidenceMove } from '@/lib/residence-move';
-import { withResidence } from '@/lib/citizen-seed';
 import { scrollElementToTop } from '@/lib/scroll-to-top';
 import { cn } from '@/lib/utils';
 
@@ -42,7 +34,6 @@ import { askableFields, isBlank, valueAtPath } from '@/lib/citizen-form-askable'
 import { validate } from '@/lib/citizen-form-validation';
 import {
   phoneNoteOf,
-  withFlagsApplied,
 } from '@/lib/citizen-form-state';
 import { StepNotesField } from './citizen-form/step-notes-field';
 import { StepBar } from './citizen-form/step-bar';
@@ -52,6 +43,8 @@ import { PropertiesSection } from './citizen-form/properties-section';
 import { NotesSection } from './citizen-form/notes-section';
 import { PropertyCards } from './citizen-form/property-cards';
 import { useCitizenFormRecord } from './citizen-form/use-citizen-form-record';
+import { useResidenceChange } from './citizen-form/use-residence-change';
+import { CitizenFormDialogs } from './citizen-form/citizen-form-dialogs';
 import { DesktopActionBar, MobileActionBar } from './citizen-form/action-bars';
 
 export type { CitizenFormValues } from '@/lib/citizen-form-values';
@@ -229,61 +222,12 @@ export function CitizenForm({
   const ownerRecord = isOwnerRecord(values.residence);
   const tKind = useTranslations('citizenKind');
 
-  /** Switching نوع الملف. See `withResidence`. */
-  const setResidence = useCallback((residence: CitizenResidence) => {
-    setValues((current) => withResidence(current, residence));
-  }, [setValues]);
-
-  /**
-   * «تغيير الإقامة» on a saved file.
-   *
-   * Changing the answer on a saved file opens the guide rather than flipping
-   * it: a real move has tenancies to end and homes to re-describe
-   * (`planResidenceMove`), and the guide also offers the plain switch for a
-   * residence recorded wrongly. A new filing just answers the question.
-   *
-   * Changing it back while a move is applied here undoes that move — the form
-   * as it was the moment the move was applied. Tenancies the guide ended stay
-   * ended: they were saved, on their day, as facts.
-   */
-  const [residenceGuide, setResidenceGuide] = useState<CitizenResidence | null>(null);
-  const beforeMove = useRef<CitizenFormValues | null>(null);
-  const chooseResidence = useCallback(
-    (next: CitizenResidence) => {
-      if (next === (values.residence ?? 'RESIDENT')) return;
-      if (values.residenceMove) {
-        const snapshot = beforeMove.current;
-        beforeMove.current = null;
-        setValues(snapshot ?? { ...withResidence(values, next), residenceMove: undefined });
-        return;
-      }
-      /*
-        The guide is for what happened to a person: a move into or out of the
-        town, or a death (→ «تركة»). Anything else — a file that was always an
-        institution, or an estate recorded by mistake — is a correction, and
-        the form's own checks say what it leaves to settle.
-      */
-      const current = values.residence ?? 'RESIDENT';
-      const guided =
-        (current === 'RESIDENT' && next === 'NON_RESIDENT_OWNER') ||
-        (current === 'NON_RESIDENT_OWNER' && next === 'RESIDENT') ||
-        (!isNonPersonRecord(current) && next === 'ESTATE');
-      if (mode === 'edit' && citizenId && guided) {
-        setResidenceGuide(next);
-        return;
-      }
-      setResidence(next);
-    },
-    [values, setValues, mode, citizenId, setResidence],
-  );
-
-  /** Undoes the move or death applied on this form — the form as it was before it. */
-  const undoMove = useCallback(() => {
-    const snapshot = beforeMove.current;
-    beforeMove.current = null;
-    if (snapshot) setValues(snapshot);
-    else setValues((current) => ({ ...current, residenceMove: undefined }));
-  }, [setValues]);
+  const { residenceGuide, setResidenceGuide, chooseResidence, undoMove, correctResidence, applyMove } = useResidenceChange({
+    values,
+    setValues,
+    mode,
+    citizenId,
+  });
 
   /**
    * «قد يكون مسجَّلاً مسبقاً» — looked up once, shown in one of two places.
@@ -792,78 +736,34 @@ export function CitizenForm({
       />
     </div>
 
-    <QuickSaveDialog
-      open={quickSaveOpen}
-      onOpenChange={setQuickSaveOpen}
-      gapCount={gapCount}
+    <CitizenFormDialogs
+      tenant={tenant}
+      token={token}
+      citizenId={citizenId}
+      locale={locale}
+      values={values}
+      setValues={setValues}
       submitting={submitting}
       error={error}
-      onConfirm={(reason) => handleSubmit(reason)}
-      locale={locale}
+      quickSaveOpen={quickSaveOpen}
+      setQuickSaveOpen={setQuickSaveOpen}
+      gapCount={gapCount}
+      handleSubmit={handleSubmit}
+      rosterParcel={rosterParcel}
+      setRosterParcel={setRosterParcel}
+      unverifiedDialogOpen={unverifiedDialogOpen}
+      setUnverifiedDialogOpen={setUnverifiedDialogOpen}
+      mergeWith={mergeWith}
+      setMergeWith={setMergeWith}
+      onMerged={onMerged}
+      residenceGuide={residenceGuide}
+      setResidenceGuide={setResidenceGuide}
+      correctResidence={correctResidence}
+      applyMove={applyMove}
+      removeProperty={removeProperty}
+      removeEndedRows={removeEndedRows}
+      onDeactivated={onDeactivated}
     />
-
-    {token && rosterParcel ? (
-      <ParcelRosterDialog
-        open
-        onOpenChange={(next) => setRosterParcel(next ? rosterParcel : null)}
-        tenant={tenant}
-        token={token}
-        propertyNumber={rosterParcel}
-        locale={locale}
-      />
-    ) : null}
-
-    <UnverifiedFieldsDialog
-      open={unverifiedDialogOpen}
-      onOpenChange={setUnverifiedDialogOpen}
-      values={values}
-      onSaveFlags={(newFlags) => setValues((current) => withFlagsApplied(current, newFlags))}
-      locale={locale}
-    />
-    {mergeWith && citizenId && token && onMerged ? (
-      <MergeCitizensDialog
-        open
-        onOpenChange={(next) => (next ? undefined : setMergeWith(null))}
-        tenant={tenant}
-        token={token}
-        locale={locale}
-        firstId={citizenId}
-        secondId={mergeWith}
-        onMerged={(result) => {
-          setMergeWith(null);
-          onMerged(result);
-        }}
-      />
-    ) : null}
-    {residenceGuide && citizenId ? (
-      <ResidenceChangeDialog
-        open
-        to={residenceGuide}
-        values={values}
-        tenant={tenant}
-        token={token}
-        citizenId={citizenId}
-        locale={locale}
-        onCancel={() => setResidenceGuide(null)}
-        onCorrect={() => {
-          setValues((current) => ({ ...withResidence(current, residenceGuide), residenceMove: undefined }));
-          setResidenceGuide(null);
-        }}
-        onApply={(answers) => {
-          beforeMove.current = values;
-          setValues(applyResidenceMove(values, planResidenceMove(values, residenceGuide), answers));
-          setResidenceGuide(null);
-        }}
-        onTenancyEnded={(index, result, cardEnded) =>
-          cardEnded ? removeProperty(index) : removeEndedRows(index, result.endedRowIds ?? [])
-        }
-        onRemoveUnsaved={(index) => removeProperty(index)}
-        onDeactivated={() => {
-          setResidenceGuide(null);
-          onDeactivated?.();
-        }}
-      />
-    ) : null}
     </FieldFlagProvider>
   );
 }
