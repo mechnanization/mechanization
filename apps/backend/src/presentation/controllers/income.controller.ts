@@ -15,9 +15,9 @@ import {
   type VoidIncomeVoucherInput,
 } from '@mechanization/shared-schemas';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
-import type { SessionClaims } from '../../application/features/identity/identity.service';
 import { IncomeService } from '../../application/features/treasury/income.service';
-import { CurrentUser } from '../decorators/current-user.decorator';
+import { CurrentActor } from '../decorators/current-actor.decorator';
+import { StaffActor } from '../../application/common/actor';
 import { Roles } from '../decorators/roles.decorator';
 import { UuidPipe } from '../pipes/uuid.pipe';
 
@@ -44,9 +44,9 @@ export class IncomeController {
   @Post('categories')
   createCategory(
     @Body(new ZodValidationPipe(createIncomeCategorySchema)) body: CreateIncomeCategoryInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.income.createCategory(body, { id: user.sub, role: user.role ?? '' });
+    return this.income.createCategory(body, actor);
   }
 
   /** Renames a category, re-codes it, or stops or restarts it. Never deletes one. Manager only. */
@@ -55,9 +55,9 @@ export class IncomeController {
   updateCategory(
     @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(updateIncomeCategorySchema)) body: UpdateIncomeCategoryInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.income.updateCategory(id, body, { id: user.sub, role: user.role ?? '' });
+    return this.income.updateCategory(id, body, actor);
   }
 
   /** The register, newest first, with what the filtered set adds up to. */
@@ -72,9 +72,9 @@ export class IncomeController {
   @Post()
   record(
     @Body(new ZodValidationPipe(recordIncomeVoucherSchema)) body: RecordIncomeVoucherInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.income.record(body, { id: user.sub, role: user.role ?? '' });
+    return this.income.record(body, actor);
   }
 
   @Roles(...TREASURY_READ_ROLES)
@@ -89,8 +89,8 @@ export class IncomeController {
   void(
     @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(voidIncomeVoucherSchema)) body: VoidIncomeVoucherInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.income.void(id, body.reason, { id: user.sub, role: user.role ?? '' });
+    return this.income.void(id, body.reason, actor);
   }
 }

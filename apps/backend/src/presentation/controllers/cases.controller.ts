@@ -11,9 +11,9 @@ import {
 } from '@mechanization/shared-schemas';
 import { CasesService } from '../../application/features/cases/cases.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
-import { CurrentUser } from '../decorators/current-user.decorator';
+import { CurrentActor } from '../decorators/current-actor.decorator';
+import { StaffActor } from '../../application/common/actor';
 import { Roles } from '../decorators/roles.decorator';
-import type { SessionClaims } from '../../application/features/identity/identity.service';
 import { optionalOneOf, parseDate } from './query-params';
 import { UuidPipe } from '../pipes/uuid.pipe';
 
@@ -76,9 +76,9 @@ export class CasesController {
   @Post()
   async create(
     @Body(new ZodValidationPipe(createCaseSchema)) body: CreateCaseInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.cases.create(body, { id: user.sub, role: user.role ?? '' });
+    return this.cases.create(body, actor);
   }
 
   @Roles(...REGISTER_WRITE_ROLES)
@@ -86,15 +86,15 @@ export class CasesController {
   async update(
     @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(updateCaseSchema)) body: UpdateCaseInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.cases.update(id, body, { id: user.sub, role: user.role ?? '' });
+    return this.cases.update(id, body, actor);
   }
 
   @Roles('SUPER_ADMIN')
   @Delete(':id')
-  async remove(@Param('id', new UuidPipe()) id: string, @CurrentUser() user: SessionClaims) {
-    await this.cases.remove(id, { id: user.sub, role: user.role ?? '' });
+  async remove(@Param('id', new UuidPipe()) id: string, @CurrentActor() actor: StaffActor) {
+    await this.cases.remove(id, actor);
     return { deleted: true };
   }
 }

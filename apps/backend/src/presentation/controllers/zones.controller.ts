@@ -9,9 +9,10 @@ import {
 } from '@mechanization/shared-schemas';
 import { ZonesService } from '../../application/features/zones/zones.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
-import { CurrentTenant, CurrentUser } from '../decorators/current-user.decorator';
+import { CurrentTenant } from '../decorators/current-user.decorator';
+import { CurrentActor } from '../decorators/current-actor.decorator';
+import { StaffActor } from '../../application/common/actor';
 import { Roles } from '../decorators/roles.decorator';
-import type { SessionClaims } from '../../application/features/identity/identity.service';
 import { UuidPipe } from '../pipes/uuid.pipe';
 
 /**
@@ -68,9 +69,9 @@ export class ZonesController {
   async create(
     @CurrentTenant('slug') tenantSlug: string,
     @Body(new ZodValidationPipe(createZoneSchema)) body: CreateZoneInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.zones.create(tenantSlug, body, { id: user.sub, role: user.role ?? '' });
+    return this.zones.create(tenantSlug, body, actor);
   }
 
   @Roles(...REGISTER_ADMIN_ROLES)
@@ -79,9 +80,9 @@ export class ZonesController {
     @CurrentTenant('slug') tenantSlug: string,
     @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(updateZoneSchema)) body: UpdateZoneInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.zones.update(tenantSlug, id, body, { id: user.sub, role: user.role ?? '' });
+    return this.zones.update(tenantSlug, id, body, actor);
   }
 
   @Roles('SUPER_ADMIN')
@@ -89,9 +90,9 @@ export class ZonesController {
   async remove(
     @CurrentTenant('slug') tenantSlug: string,
     @Param('id', new UuidPipe()) id: string,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    await this.zones.remove(tenantSlug, id, { id: user.sub, role: user.role ?? '' });
+    await this.zones.remove(tenantSlug, id, actor);
     return { deleted: true };
   }
 }

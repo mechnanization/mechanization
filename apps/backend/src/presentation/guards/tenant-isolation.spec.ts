@@ -189,7 +189,10 @@ describe('RolesGuard — citizen tokens cannot reach staff routes', () => {
     expect(guard.canActivate(context)).toBe(true);
   });
 
-  it('admits requests to routes without role restrictions', () => {
+  // SEC-10: the guard fails closed. A route that names no role is refused
+  // unless it says it is self-service; it used to admit any token, a citizen's
+  // included, and only the route inventory caught a forgotten @Roles.
+  it('refuses a route with no @Roles, no @Public and no @SelfService — a citizen token', () => {
     const reflector = new Reflector();
     jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(undefined);
     const guard = new RolesGuard(reflector);
@@ -199,6 +202,75 @@ describe('RolesGuard — citizen tokens cannot reach staff routes', () => {
       user: { sub: 'c1', kind: 'CITIZEN', tenantSlug: 'albazourieh' },
     });
 
-    expect(guard.canActivate(context)).toBe(true);
+    expect(() => guard.canActivate(context)).toThrow(ForbiddenError);
+  });
+
+  it('refuses a route with no role metadata to staff too, the manager included', () => {
+    const reflector = new Reflector();
+    jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(undefined);
+    const guard = new RolesGuard(reflector);
+
+    const context = contextFor({
+      tenantSlug: 'albazourieh',
+      user: { sub: 's1', kind: 'STAFF', tenantSlug: 'albazourieh', role: 'SUPER_ADMIN' },
+    });
+
+    expect(() => guard.canActivate(context)).toThrow(ForbiddenError);
+  });
+
+  it('refuses an empty @Roles() list rather than reading it as "anyone"', () => {
+    const reflector = new Reflector();
+    jest.spyOn(reflector, 'getAllAndOverride').mockImplementation((key) => (key === 'roles' ? [] : undefined));
+    const guard = new RolesGuard(reflector);
+
+    const context = contextFor({
+      tenantSlug: 'albazourieh',
+      user: { sub: 's1', kind: 'STAFF', tenantSlug: 'albazourieh', role: 'SUPER_ADMIN' },
+    });
+
+    expect(() => guard.canActivate(context)).toThrow(ForbiddenError);
+  });
+
+  it('admits a citizen and a staff member to a @SelfService route — the handler checks kind itself', () => {
+    const reflector = new Reflector();
+    jest
+      .spyOn(reflector, 'getAllAndOverride')
+      .mockImplementation((key) => (key === 'selfService' ? "a citizen's own bills; refuses staff" : undefined));
+    const guard = new RolesGuard(reflector);
+
+    for (const user of [
+      { sub: 'c1', kind: 'CITIZEN' as const, tenantSlug: 'albazourieh' },
+      { sub: 's1', kind: 'STAFF' as const, tenantSlug: 'albazourieh', role: 'VIEWER' as const },
+    ]) {
+      expect(guard.canActivate(contextFor({ tenantSlug: 'albazourieh', user }))).toBe(true);
+    }
+  });
+
+  it('refuses a @SelfService marker with an empty reason', () => {
+    const reflector = new Reflector();
+    jest.spyOn(reflector, 'getAllAndOverride').mockImplementation((key) => (key === 'selfService' ? '' : undefined));
+    const guard = new RolesGuard(reflector);
+
+    const context = contextFor({
+      tenantSlug: 'albazourieh',
+      user: { sub: 'c1', kind: 'CITIZEN', tenantSlug: 'albazourieh' },
+    });
+
+    expect(() => guard.canActivate(context)).toThrow(ForbiddenError);
+  });
+
+  it('reads @Roles before @SelfService, so a citizen is still refused where both are set', () => {
+    const reflector = new Reflector();
+    jest
+      .spyOn(reflector, 'getAllAndOverride')
+      .mockImplementation((key) => (key === 'roles' ? ['SUPER_ADMIN'] : key === 'selfService' ? 'reason' : undefined));
+    const guard = new RolesGuard(reflector);
+
+    const context = contextFor({
+      tenantSlug: 'albazourieh',
+      user: { sub: 'c1', kind: 'CITIZEN', tenantSlug: 'albazourieh' },
+    });
+
+    expect(() => guard.canActivate(context)).toThrow(ForbiddenError);
   });
 });

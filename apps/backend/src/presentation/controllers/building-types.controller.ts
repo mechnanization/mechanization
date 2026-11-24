@@ -11,10 +11,10 @@ import {
 } from '@mechanization/shared-schemas';
 import { BuildingTypesService } from '../../application/features/buildings/building-types.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
-import { CurrentUser } from '../decorators/current-user.decorator';
+import { CurrentActor } from '../decorators/current-actor.decorator';
+import { StaffActor } from '../../application/common/actor';
 import { Roles } from '../decorators/roles.decorator';
 import { UuidPipe } from '../pipes/uuid.pipe';
-import type { SessionClaims } from '../../application/features/identity/identity.service';
 
 /**
  * «أنواع المباني» — the municipality's building types (migration 0106).
@@ -39,9 +39,9 @@ export class BuildingTypesController {
   @Post()
   create(
     @Body(new ZodValidationPipe(createBuildingTypeSchema)) body: CreateBuildingTypeInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.types.create(body, { id: user.sub, role: user.role ?? '' });
+    return this.types.create(body, actor);
   }
 
   @Roles(...BUILDING_TYPE_ADMIN_ROLES)
@@ -49,8 +49,8 @@ export class BuildingTypesController {
   update(
     @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(updateBuildingTypeSchema)) body: UpdateBuildingTypeInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.types.update(id, body, { id: user.sub, role: user.role ?? '' });
+    return this.types.update(id, body, actor);
   }
 }

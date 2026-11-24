@@ -19,6 +19,7 @@ import { CitizensService } from './citizens.service';
 import { LandlordLinkService, readFootprint } from './landlord-link.service';
 import { TenancyService } from './tenancy.service';
 import { OwnershipService } from './ownership.service';
+import { StaffActor } from '../../common/actor';
 
 /**
  * Ending a tenancy, against a real Postgres.
@@ -61,7 +62,7 @@ describeIfDb('TenancyService', () => {
   let fees: FeesService;
   let officerId: string;
 
-  const actor = () => ({ id: officerId, role: 'SUPER_ADMIN' });
+  const actor = (): StaffActor => ({ id: officerId, role: 'SUPER_ADMIN' });
 
   const within = <T>(work: () => Promise<T>): Promise<T> =>
     context.run(

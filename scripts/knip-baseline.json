@@ -1,0 +1,812 @@
+{
+  "$comment": "Unused code knip found before DEAD-18 (2026-11-24), allowed until DEAD-14…16 delete it. Written by `pnpm lint:unused --update`; never add to it by hand.",
+  "findings": {
+    "apps/backend/package.json": {
+      "dependencies": [
+        "@supabase/supabase-js",
+        "qrcode"
+      ],
+      "devDependencies": [
+        "@types/express-serve-static-core",
+        "@types/qrcode"
+      ]
+    },
+    "apps/backend/src/application/features/arrears/arrears-batch.service.ts": {
+      "exports": [
+        "ARREARS_BATCH_APPROVED",
+        "ARREARS_BATCH_DISCARDED",
+        "ARREARS_BATCH_RETURNED",
+        "ARREARS_BATCH_SUBMITTED",
+        "ARREARS_BILL_RAISED",
+        "ARREARS_CUTOFF_CHANGED",
+        "ARREARS_LINE_ADDED",
+        "ARREARS_LINE_LINKED"
+      ]
+    },
+    "apps/backend/src/application/features/audit/audit-view.ts": {
+      "types": [
+        "AuditActorView",
+        "AuditTargetView"
+      ]
+    },
+    "apps/backend/src/application/features/buildings/building.types.ts": {
+      "types": [
+        "CreateBuildingRow",
+        "CreateUnitRow"
+      ]
+    },
+    "apps/backend/src/application/features/buildings/buildings.service.ts": {
+      "exports": [
+        "standsOnParcels"
+      ]
+    },
+    "apps/backend/src/application/features/buildings/fee-exemption.service.ts": {
+      "exports": [
+        "RECONCILED_LIFT_REASON",
+        "UNIT_FEE_EXEMPTION_LIFTED",
+        "UNIT_FEE_EXEMPTION_SET"
+      ]
+    },
+    "apps/backend/src/application/features/buildings/house-growth.ts": {
+      "types": [
+        "HouseCard",
+        "HouseUnit"
+      ]
+    },
+    "apps/backend/src/application/features/buildings/owner-billing.service.ts": {
+      "exports": [
+        "UNIT_OWNER_BILLING_SET"
+      ]
+    },
+    "apps/backend/src/application/features/buildings/unit-types.ts": {
+      "types": [
+        "TypedUnit"
+      ]
+    },
+    "apps/backend/src/application/features/citizens/citizen-merge.plan.ts": {
+      "exports": [
+        "MAX_MERGED_CARDS"
+      ],
+      "types": [
+        "CardMove",
+        "DuplicateClaim",
+        "FillableField",
+        "PlanRow"
+      ]
+    },
+    "apps/backend/src/application/features/citizens/file-changes.ts": {
+      "types": [
+        "CardChange"
+      ]
+    },
+    "apps/backend/src/application/features/citizens/landlord-link.service.ts": {
+      "types": [
+        "LandlordMatch",
+        "LinkBlockCode",
+        "LinkMint"
+      ]
+    },
+    "apps/backend/src/application/features/citizens/possible-duplicates.ts": {
+      "exports": [
+        "RECENT_SAME_PHONE_MS",
+        "duplicateScore"
+      ],
+      "types": [
+        "ContactField",
+        "LandlordPhoneCard",
+        "PhoneOwner"
+      ]
+    },
+    "apps/backend/src/application/features/corrections/duplex-merge.plan.ts": {
+      "exports": [
+        "fingerprintOf"
+      ]
+    },
+    "apps/backend/src/application/features/corrections/unit-correction.plan.ts": {
+      "types": [
+        "CorrectionBuilding",
+        "CorrectionCase",
+        "CorrectionMerge",
+        "CorrectionOccupancy",
+        "CorrectionRegistration",
+        "CorrectionUnit",
+        "CorrectionVacancy",
+        "CorrectionVisit",
+        "LandlordLinkChange",
+        "LineChange",
+        "RegistrationFlagChange"
+      ]
+    },
+    "apps/backend/src/application/features/corrections/unit-correction.service.ts": {
+      "exports": [
+        "UNITS_MERGED_AS_DUPLEX",
+        "UNIT_CORRECTION_DELETED",
+        "UNIT_CORRECTION_FILE_ENDED",
+        "blockerMessage"
+      ]
+    },
+    "apps/backend/src/application/features/day3ati/staff-sync.ts": {
+      "exports": [
+        "DAY3ATI_STAFF_LANGUAGE"
+      ]
+    },
+    "apps/backend/src/application/features/fees/correction-bills.service.ts": {
+      "exports": [
+        "BILL_BASIS_REVIEWED"
+      ],
+      "types": [
+        "CorrectionAffectedBill"
+      ]
+    },
+    "apps/backend/src/application/features/fees/fees.service.ts": {
+      "exports": [
+        "periodBeforeCutoff",
+        "periodYearOf"
+      ]
+    },
+    "apps/backend/src/application/features/news/news-views.ts": {
+      "exports": [
+        "toArticleListItem"
+      ]
+    },
+    "apps/backend/src/application/features/quality/data-quality.service.ts": {
+      "types": [
+        "FindingSeverity"
+      ]
+    },
+    "apps/backend/src/application/features/quality/record-review.service.ts": {
+      "exports": [
+        "REVIEW_STATES"
+      ],
+      "types": [
+        "QueuePage"
+      ]
+    },
+    "apps/backend/src/application/features/treasury/day-closure.service.ts": {
+      "exports": [
+        "closureRefusal"
+      ]
+    },
+    "apps/backend/src/domain/entities/billable-unit.ts": {
+      "types": [
+        "BillableOwnerShare"
+      ]
+    },
+    "apps/backend/src/domain/interfaces/base-repository.interface.ts": {
+      "exports": [
+        "SUPABASE_AUTH_SERVICE"
+      ],
+      "types": [
+        "BaseRepository"
+      ]
+    },
+    "apps/backend/src/domain/interfaces/day3ati-integration.interface.ts": {
+      "types": [
+        "Day3atiStaffRole"
+      ]
+    },
+    "apps/backend/src/domain/interfaces/supabase-auth.interface.ts": {
+      "files": [
+        "apps/backend/src/domain/interfaces/supabase-auth.interface.ts"
+      ]
+    },
+    "apps/backend/src/infrastructure/cadastre/cadastre-storage.service.ts": {
+      "files": [
+        "apps/backend/src/infrastructure/cadastre/cadastre-storage.service.ts"
+      ]
+    },
+    "apps/backend/src/infrastructure/cadastre/parcel-geometry.ts": {
+      "types": [
+        "ParcelBoundary"
+      ]
+    },
+    "apps/backend/src/infrastructure/day3ati/day3ati-news.client.ts": {
+      "exports": [
+        "DAY3ATI_DEFAULT_MAX_PAGES"
+      ]
+    },
+    "apps/backend/src/infrastructure/day3ati/day3ati-token.service.ts": {
+      "exports": [
+        "DAY3ATI_TOKEN_REQUEST_TIMEOUT_MS",
+        "DAY3ATI_TOKEN_SAFETY_MARGIN_SECONDS"
+      ]
+    },
+    "apps/backend/src/infrastructure/prisma/tenant-migrator.ts": {
+      "exports": [
+        "loadTenantMigrations"
+      ],
+      "types": [
+        "TenantMigration"
+      ]
+    },
+    "apps/backend/src/infrastructure/supabase/auth/supabase-auth.service.ts": {
+      "files": [
+        "apps/backend/src/infrastructure/supabase/auth/supabase-auth.service.ts"
+      ]
+    },
+    "apps/backend/src/infrastructure/supabase/storage/supabase-storage.service.ts": {
+      "files": [
+        "apps/backend/src/infrastructure/supabase/storage/supabase-storage.service.ts"
+      ]
+    },
+    "apps/backend/src/presentation/config/env.schema.ts": {
+      "exports": [
+        "DAY3ATI_VARIABLES",
+        "envSchema"
+      ]
+    },
+    "apps/backend/src/presentation/controllers/auth.controller.ts": {
+      "unlisted": [
+        "express"
+      ]
+    },
+    "apps/backend/src/presentation/controllers/backup.controller.ts": {
+      "files": [
+        "apps/backend/src/presentation/controllers/backup.controller.ts"
+      ]
+    },
+    "apps/backend/src/presentation/controllers/cadastre.controller.ts": {
+      "unlisted": [
+        "express"
+      ]
+    },
+    "apps/backend/src/presentation/controllers/metrics.controller.ts": {
+      "unlisted": [
+        "express"
+      ]
+    },
+    "apps/backend/src/presentation/decorators/current-user.decorator.ts": {
+      "unlisted": [
+        "express"
+      ]
+    },
+    "apps/backend/src/presentation/filters/domain-exception.filter.ts": {
+      "unlisted": [
+        "express"
+      ]
+    },
+    "apps/backend/src/presentation/guards/jwt-auth.guard.ts": {
+      "unlisted": [
+        "express"
+      ]
+    },
+    "apps/backend/src/presentation/guards/roles.guard.ts": {
+      "unlisted": [
+        "express"
+      ]
+    },
+    "apps/backend/src/presentation/guards/trusted-origin.guard.ts": {
+      "unlisted": [
+        "express"
+      ]
+    },
+    "apps/backend/src/presentation/metrics.module.ts": {
+      "unlisted": [
+        "express"
+      ]
+    },
+    "apps/backend/src/presentation/middleware/correlation-id.middleware.ts": {
+      "unlisted": [
+        "express"
+      ]
+    },
+    "apps/backend/src/presentation/middleware/http-metrics.middleware.ts": {
+      "unlisted": [
+        "express"
+      ]
+    },
+    "apps/backend/src/presentation/middleware/tenant.middleware.ts": {
+      "unlisted": [
+        "express"
+      ]
+    },
+    "apps/frontend/components/accent-provider.tsx": {
+      "exports": [
+        "useAccent"
+      ]
+    },
+    "apps/frontend/components/admin/building-map-layer.ts": {
+      "exports": [
+        "DAMAGE_COLORS",
+        "SURVEY_COLORS",
+        "matchColor"
+      ]
+    },
+    "apps/frontend/components/admin/building-unit-forms.tsx": {
+      "exports": [
+        "EndOccupancyDialog",
+        "EndVacancyDialog",
+        "FOLLOW_UP_CASE",
+        "VISIT_OUTCOMES",
+        "livingOccupants"
+      ],
+      "types": [
+        "CellVariant"
+      ]
+    },
+    "apps/frontend/components/admin/citizen-form.tsx": {
+      "exports": [
+        "phoneFromSearchTerm",
+        "toPayloadProperty"
+      ]
+    },
+    "apps/frontend/components/admin/citizen-picker.tsx": {
+      "exports": [
+        "pickedCitizen"
+      ]
+    },
+    "apps/frontend/components/admin/complete-record-dialog.tsx": {
+      "exports": [
+        "RecordCompletionBody"
+      ]
+    },
+    "apps/frontend/components/admin/confirm-cash-payment-dialog.tsx": {
+      "files": [
+        "apps/frontend/components/admin/confirm-cash-payment-dialog.tsx"
+      ]
+    },
+    "apps/frontend/components/admin/fee-exemptions/fee-exemption-form.tsx": {
+      "exports": [
+        "EMPTY_FEE_EXEMPTION_DRAFT",
+        "grantInput"
+      ]
+    },
+    "apps/frontend/components/admin/fee-exemptions/fee-exemption-unit-card.tsx": {
+      "exports": [
+        "invalidateFeeExemptions"
+      ]
+    },
+    "apps/frontend/components/admin/fees/notice-review.tsx": {
+      "types": [
+        "EditableStep"
+      ]
+    },
+    "apps/frontend/components/admin/finance/wallet-icon.ts": {
+      "exports": [
+        "WALLET_ICON"
+      ]
+    },
+    "apps/frontend/components/admin/landlord-proposal-card.tsx": {
+      "exports": [
+        "BlockNotice"
+      ]
+    },
+    "apps/frontend/components/admin/link-case-citizen-dialog.tsx": {
+      "types": [
+        "CaseLinkRole"
+      ]
+    },
+    "apps/frontend/components/admin/parcel-pin-picker.tsx": {
+      "exports": [
+        "FALLBACK_CENTER",
+        "MAP_LOAD_TIMEOUT_MS",
+        "PIN_COLOR",
+        "SATELLITE_STYLE",
+        "labelPointCache",
+        "outlineCache"
+      ]
+    },
+    "apps/frontend/components/admin/payment-receipt.tsx": {
+      "exports": [
+        "describeTender"
+      ],
+      "types": [
+        "RecordedTender"
+      ]
+    },
+    "apps/frontend/components/admin/property-illustrations.tsx": {
+      "exports": [
+        "occupiedColumns",
+        "runsWhere",
+        "structureLook",
+        "unitKind"
+      ]
+    },
+    "apps/frontend/components/admin/quality/finding-parts.tsx": {
+      "exports": [
+        "ROLLUP_KINDS",
+        "SEVERITY",
+        "actionFor",
+        "fixHref",
+        "readableDetail"
+      ]
+    },
+    "apps/frontend/components/admin/quality/officer-quality.tsx": {
+      "types": [
+        "OfficerQualityRow"
+      ]
+    },
+    "apps/frontend/components/admin/settings/backup-section.tsx": {
+      "files": [
+        "apps/frontend/components/admin/settings/backup-section.tsx"
+      ]
+    },
+    "apps/frontend/components/admin/settings/numbering-section.tsx": {
+      "exports": [
+        "formatReference"
+      ]
+    },
+    "apps/frontend/components/admin/settings/settings-ui.tsx": {
+      "exports": [
+        "LocalOnlyNotice"
+      ]
+    },
+    "apps/frontend/components/admin/shell-nav.tsx": {
+      "exports": [
+        "shellNavigate"
+      ]
+    },
+    "apps/frontend/components/admin/unit-correction-delete-dialog.tsx": {
+      "exports": [
+        "UnitCorrectionDeleteDialog"
+      ]
+    },
+    "apps/frontend/components/admin/unit-figures.tsx": {
+      "exports": [
+        "hasUnitFigure"
+      ]
+    },
+    "apps/frontend/components/admin/unit-grid-picker.tsx": {
+      "duplicates": [
+        "DEFAULT_HORIZONTAL_BLOCKS = DEFAULT_GRID_SIZE",
+        "MAX_HORIZONTAL_BLOCKS = MAX_GRID_SIZE",
+        "MIN_HORIZONTAL_BLOCKS = MIN_GRID_SIZE"
+      ],
+      "exports": [
+        "DEFAULT_HORIZONTAL_BLOCKS",
+        "MAX_BASEMENT_BLOCKS",
+        "MAX_GRID_SIZE",
+        "MAX_VERTICAL_BLOCKS",
+        "MIN_BASEMENT_BLOCKS",
+        "MIN_GRID_SIZE",
+        "MIN_HORIZONTAL_BLOCKS",
+        "MIN_VERTICAL_BLOCKS"
+      ]
+    },
+    "apps/frontend/components/admin/unit-holdings-grid.tsx": {
+      "exports": [
+        "HELD_CLASS",
+        "HELD_DOT"
+      ]
+    },
+    "apps/frontend/components/admin/unit-levels.tsx": {
+      "exports": [
+        "UnitLevelsBadge",
+        "UnitLevelsSelect"
+      ]
+    },
+    "apps/frontend/components/admin/workflow.tsx": {
+      "files": [
+        "apps/frontend/components/admin/workflow.tsx"
+      ]
+    },
+    "apps/frontend/components/admin/zone-editor-map.tsx": {
+      "types": [
+        "ZoneEditorAssignments"
+      ]
+    },
+    "apps/frontend/components/citizen/pay-dialog.tsx": {
+      "exports": [
+        "Banknote"
+      ]
+    },
+    "apps/frontend/components/citizen/unit-fields.tsx": {
+      "exports": [
+        "summariseUnit"
+      ]
+    },
+    "apps/frontend/components/ui/alert.tsx": {
+      "exports": [
+        "AlertDescription",
+        "AlertTitle",
+        "alertVariants"
+      ],
+      "types": [
+        "AlertProps"
+      ]
+    },
+    "apps/frontend/components/ui/badge.tsx": {
+      "exports": [
+        "badgeVariants"
+      ]
+    },
+    "apps/frontend/components/ui/button.tsx": {
+      "types": [
+        "ButtonProps"
+      ]
+    },
+    "apps/frontend/components/ui/card.tsx": {
+      "exports": [
+        "CardFooter"
+      ]
+    },
+    "apps/frontend/components/ui/cell-tag.tsx": {
+      "types": [
+        "CellTagProps",
+        "CellTone"
+      ]
+    },
+    "apps/frontend/components/ui/dialog.tsx": {
+      "exports": [
+        "DialogClose",
+        "DialogOverlay",
+        "DialogPortal",
+        "DialogTrigger"
+      ]
+    },
+    "apps/frontend/components/ui/dropdown-menu.tsx": {
+      "exports": [
+        "DropdownMenuGroup",
+        "DropdownMenuPortal",
+        "DropdownMenuSub",
+        "DropdownMenuSubContent",
+        "DropdownMenuSubTrigger"
+      ]
+    },
+    "apps/frontend/components/ui/input.tsx": {
+      "types": [
+        "InputProps"
+      ]
+    },
+    "apps/frontend/components/ui/select.tsx": {
+      "exports": [
+        "SelectGroup",
+        "SelectScrollDownButton",
+        "SelectScrollUpButton"
+      ]
+    },
+    "apps/frontend/components/ui/skeleton.tsx": {
+      "exports": [
+        "SkeletonStat"
+      ]
+    },
+    "apps/frontend/i18n/routing.ts": {
+      "exports": [
+        "locales"
+      ]
+    },
+    "apps/frontend/lib/accents.ts": {
+      "exports": [
+        "ACCENTS",
+        "isAccent"
+      ]
+    },
+    "apps/frontend/lib/api-client.ts": {
+      "exports": [
+        "exportSnapshot",
+        "getDashboardCounters",
+        "getFeeTitles",
+        "getUnitVisits",
+        "restoreSnapshot",
+        "runRecurringBilling",
+        "updateBuilding",
+        "updateExpenseCategory"
+      ],
+      "types": [
+        "CitizenProfileRegistration",
+        "CitizenProfileVacancy",
+        "CountedWalletView",
+        "DailyCashReportCustody",
+        "DailyCashReportTotal",
+        "DailyCountView",
+        "DashboardCounters",
+        "DuplexMergeBlocker",
+        "DuplicateCandidate",
+        "DuplicatePhoneOwner",
+        "ExpenseOrderStatus",
+        "ExpenseStatus",
+        "IncomeListResult",
+        "IncomeStatus",
+        "LandlordMatch",
+        "LinkBlockCode",
+        "MonthlyFees",
+        "ParcelFinancials",
+        "ParcelRegistrant",
+        "ParcelRegistrantFinancials",
+        "ParcelStructure",
+        "RestoreReport",
+        "SettlementReceiptItem",
+        "SnapshotManifest",
+        "TransferKind",
+        "TreasuryDayEvent",
+        "TreasuryDayStatus",
+        "TreasuryMovementDay",
+        "TreasuryMovementTotal",
+        "UnitCorrectionBlocker",
+        "UpdateBuildingInput",
+        "UpdateExpenseCategoryInput"
+      ]
+    },
+    "apps/frontend/lib/audit-describe.ts": {
+      "types": [
+        "AuditChange",
+        "AuditFact"
+      ]
+    },
+    "apps/frontend/lib/building-draft.ts": {
+      "exports": [
+        "buildingDraftWorthKeeping"
+      ]
+    },
+    "apps/frontend/lib/building-types.ts": {
+      "exports": [
+        "BUILDING_TYPES_REFERENCE"
+      ]
+    },
+    "apps/frontend/lib/citizen-field-controls.ts": {
+      "exports": [
+        "CITIZEN_FIELD_CONTROLS"
+      ]
+    },
+    "apps/frontend/lib/citizen-field-edit.ts": {
+      "exports": [
+        "CITIZEN_EDITABLE_FIELDS"
+      ]
+    },
+    "apps/frontend/lib/citizen-seed.ts": {
+      "exports": [
+        "phoneFromSearchTerm"
+      ]
+    },
+    "apps/frontend/lib/csv.ts": {
+      "exports": [
+        "csvCell"
+      ]
+    },
+    "apps/frontend/lib/fee-notice-draft.ts": {
+      "exports": [
+        "extensionCode"
+      ],
+      "types": [
+        "CoverageStep"
+      ]
+    },
+    "apps/frontend/lib/map-geometry.ts": {
+      "exports": [
+        "geometryCenter"
+      ]
+    },
+    "apps/frontend/lib/news-article-form.ts": {
+      "exports": [
+        "SCHEDULE_MIN_LEAD_MS"
+      ]
+    },
+    "apps/frontend/lib/news-media.ts": {
+      "exports": [
+        "DAY3ATI_MEDIA_ORIGIN"
+      ]
+    },
+    "apps/frontend/lib/offline-db.ts": {
+      "exports": [
+        "withAttempt",
+        "withRevision"
+      ],
+      "types": [
+        "QueuedBuildingStatus"
+      ]
+    },
+    "apps/frontend/lib/offline-sync.ts": {
+      "exports": [
+        "namesQueuedBuilding"
+      ]
+    },
+    "apps/frontend/lib/quality-api.ts": {
+      "types": [
+        "ReviewHistoryEntry",
+        "ReviewState"
+      ]
+    },
+    "apps/frontend/lib/requests-api.ts": {
+      "types": [
+        "RequestBillView",
+        "RequestClearanceSnapshot",
+        "RequestPropertyView"
+      ]
+    },
+    "apps/frontend/lib/residence-move.ts": {
+      "exports": [
+        "AWAY_HOME_STATUSES",
+        "ESTATE_HOME_STATUSES"
+      ]
+    },
+    "apps/frontend/lib/sentry-redaction.ts": {
+      "exports": [
+        "REDACTED",
+        "redactDeep",
+        "redactText",
+        "redactUrl"
+      ]
+    },
+    "apps/frontend/lib/settings-i18n.ts": {
+      "exports": [
+        "CURRENCIES",
+        "isRtlLocale"
+      ]
+    },
+    "apps/frontend/lib/settings-store.ts": {
+      "files": [
+        "apps/frontend/lib/settings-store.ts"
+      ]
+    },
+    "apps/frontend/lib/unit-types.ts": {
+      "exports": [
+        "UNIT_TYPES_REFERENCE"
+      ]
+    },
+    "apps/frontend/lib/use-citizen-search.ts": {
+      "exports": [
+        "CITIZEN_PICKER_LIMIT"
+      ]
+    },
+    "apps/frontend/lib/use-section-nav.ts": {
+      "files": [
+        "apps/frontend/lib/use-section-nav.ts"
+      ]
+    },
+    "apps/frontend/lib/use-url-state.ts": {
+      "exports": [
+        "PAGE_SIZE_OPTIONS"
+      ]
+    },
+    "apps/frontend/lib/whatsapp.ts": {
+      "exports": [
+        "formatWhatsappNumber"
+      ]
+    },
+    "apps/frontend/lib/zip.ts": {
+      "files": [
+        "apps/frontend/lib/zip.ts"
+      ]
+    },
+    "apps/frontend/package.json": {
+      "dependencies": [
+        "zod"
+      ],
+      "devDependencies": [
+        "@types/mapbox-gl"
+      ]
+    },
+    "scripts/db/backup.mjs": {
+      "unlisted": [
+        "pg"
+      ]
+    },
+    "scripts/db/delete-local-citizens-and-buildings.mjs": {
+      "unlisted": [
+        "pg"
+      ]
+    },
+    "scripts/db/deploy.mjs": {
+      "unlisted": [
+        "pg"
+      ]
+    },
+    "scripts/db/provision.mjs": {
+      "unlisted": [
+        "pg",
+        "ts-node",
+        "tsconfig-paths"
+      ]
+    },
+    "scripts/db/reset-local-money.mjs": {
+      "unlisted": [
+        "pg"
+      ]
+    },
+    "scripts/db/seed-fee-testing-citizens.mjs": {
+      "unlisted": [
+        "pg"
+      ]
+    },
+    "scripts/db/status-local-money.mjs": {
+      "unlisted": [
+        "pg"
+      ]
+    },
+    "scripts/db/verify-restore.mjs": {
+      "unlisted": [
+        "pg"
+      ]
+    }
+  }
+}

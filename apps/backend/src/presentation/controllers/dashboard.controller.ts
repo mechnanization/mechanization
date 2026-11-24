@@ -6,9 +6,10 @@ import {
 } from '@mechanization/shared-schemas';
 import { BuildingsService } from '../../application/features/buildings/buildings.service';
 import { ReportingService } from '../../application/features/reporting/reporting.service';
-import { CurrentTenant, CurrentUser } from '../decorators/current-user.decorator';
+import { CurrentTenant } from '../decorators/current-user.decorator';
+import { CurrentActor } from '../decorators/current-actor.decorator';
+import { StaffActor } from '../../application/common/actor';
 import { Roles } from '../decorators/roles.decorator';
-import type { SessionClaims } from '../../application/features/identity/identity.service';
 
 /**
  * The register's overview, and only for the roles accountable for the register.
@@ -115,13 +116,13 @@ export class DashboardController {
   @Header('Content-Disposition', 'attachment; filename="registrations.csv"')
   async exportCsv(
     @CurrentTenant('slug') tenantSlug: string,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
     // The `status` filter is gone with the review workflow — there is one
     // export now, of everything on file.
     const csv = await this.reporting.exportCsv({
       tenantSlug,
-      actor: { id: user.sub, role: user.role ?? '' },
+      actor,
     });
 
     // BOM so Excel opens Arabic names as UTF-8 rather than mojibake — without

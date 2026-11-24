@@ -7,9 +7,9 @@ import {
 } from '@mechanization/shared-schemas';
 import { UnitCorrectionService } from '../../application/features/corrections/unit-correction.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
-import { CurrentUser } from '../decorators/current-user.decorator';
+import { CurrentActor } from '../decorators/current-actor.decorator';
+import { StaffActor } from '../../application/common/actor';
 import { Roles } from '../decorators/roles.decorator';
-import type { SessionClaims } from '../../application/features/identity/identity.service';
 import { UuidPipe } from '../pipes/uuid.pipe';
 
 /**
@@ -40,9 +40,9 @@ export class CorrectionsController {
   deleteUnit(
     @Param('unitId', new UuidPipe()) unitId: string,
     @Body(new ZodValidationPipe(unitCorrectionDeleteSchema)) body: UnitCorrectionDeleteInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.units.apply(unitId, body, { id: user.sub, role: user.role ?? '' });
+    return this.units.apply(unitId, body, actor);
   }
 
   /**
@@ -61,8 +61,8 @@ export class CorrectionsController {
   mergeUpper(
     @Param('unitId', new UuidPipe()) unitId: string,
     @Body(new ZodValidationPipe(duplexMergeSchema)) body: DuplexMergeInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.units.applyMerge(unitId, body, { id: user.sub, role: user.role ?? '' });
+    return this.units.applyMerge(unitId, body, actor);
   }
 }

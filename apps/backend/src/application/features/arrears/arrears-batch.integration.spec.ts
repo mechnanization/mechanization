@@ -13,6 +13,7 @@ import { CitizenMergeService } from '../citizens/citizen-merge.service';
 import { ParcelDuesService } from '../fees/parcel-dues.service';
 import { ArrearsBatchService } from './arrears-batch.service';
 import { ArrearsService } from './arrears.service';
+import { StaffActor } from '../../common/actor';
 
 /**
  * Old debts after the import (task 5, docs/old-debts-plan.md §4.4–§4.7), against
@@ -47,9 +48,9 @@ describeIfDb('old debts: submit, approve, link', () => {
   let merges: CitizenMergeService;
 
   const ids = { accountant: randomUUID(), otherAccountant: randomUUID(), manager: randomUUID() };
-  const ACCOUNTANT = { id: ids.accountant, role: 'ACCOUNTANT' };
-  const OTHER_ACCOUNTANT = { id: ids.otherAccountant, role: 'ACCOUNTANT' };
-  const MANAGER = { id: ids.manager, role: 'SUPER_ADMIN' };
+  const ACCOUNTANT: StaffActor = { id: ids.accountant, role: 'ACCOUNTANT' };
+  const OTHER_ACCOUNTANT: StaffActor = { id: ids.otherAccountant, role: 'ACCOUNTANT' };
+  const MANAGER: StaffActor = { id: ids.manager, role: 'SUPER_ADMIN' };
   const person = { amal: randomUUID(), bassem: randomUUID(), dalal: randomUUID(), elias: randomUUID(), fadi: randomUUID() };
 
   const within = <T>(work: () => Promise<T>): Promise<T> =>

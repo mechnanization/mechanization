@@ -25,6 +25,7 @@ import {
   type RecordedOwnerLinkResult,
   type RevertReport,
 } from './landlord-link.service';
+import { StaffActor } from '../../common/actor';
 
 /**
  * «إنهاء الإيجار» — one operation, whichever door it is reached through.
@@ -95,7 +96,7 @@ export class TenancyService {
    */
   async recordOccupancy(
     input: UpsertOccupancyInput,
-    actor: Actor,
+    actor: StaffActor,
   ): Promise<
     Awaited<ReturnType<BuildingsService['recordOccupancy']>> & {
       ownerLink: RecordedOwnerLinkResult | null;
@@ -122,7 +123,7 @@ export class TenancyService {
   linkOccupancyOwner(
     occupancyId: string,
     ownerId: string,
-    actor: Actor,
+    actor: StaffActor,
     confirmRecordedAfter = false,
   ): Promise<RecordedOwnerLinkResult> {
     return this.links.linkRecordedOwner({ occupancyId, ownerId, confirmRecordedAfter, actor });
@@ -139,7 +140,7 @@ export class TenancyService {
   async endOccupancy(
     occupancyId: string,
     input: EndInput & { reason: string; newOwnerId?: string },
-    actor: Actor,
+    actor: StaffActor,
   ): Promise<EndTenancyResult | EndOwnershipResult> {
     const occupancy = await this.db.unitOccupancy.findUnique({
       where: { id: occupancyId },
@@ -197,7 +198,7 @@ export class TenancyService {
    * «يسكنها المالك» from then — the buyer, whom the sale records as owner
    * straight after.
    */
-  async endForPurchase(occupancyId: string, endedAt: Date, actor: Actor): Promise<EndTenancyResult> {
+  async endForPurchase(occupancyId: string, endedAt: Date, actor: StaffActor): Promise<EndTenancyResult> {
     const target = await this.targetFromOccupancy(occupancyId);
     return this.end(target, { reason: 'OWNERSHIP_TRANSFERRED', endedAt, afterStatus: 'OWNER_OCCUPIED' }, actor);
   }
@@ -216,7 +217,7 @@ export class TenancyService {
       rowIds?: readonly string[];
       unitIds?: readonly string[];
     },
-    actor: Actor,
+    actor: StaffActor,
   ): Promise<EndTenancyResult> {
     const target = await this.targetFromCard(propertyEntryId, {
       rowIds: input.rowIds,
@@ -516,7 +517,7 @@ export class TenancyService {
   private async end(
     target: Target,
     input: EndInput & { reason: EndingReason },
-    actor: Actor,
+    actor: StaffActor,
   ): Promise<EndTenancyResult> {
     if (target.cards.length === 0 && target.spells.length === 0) {
       throw new ConflictError({
@@ -809,7 +810,7 @@ export class TenancyService {
     target: Target,
     input: EndInput,
     endedAt: Date,
-    actor: Actor,
+    actor: StaffActor,
     result: EndTenancyResult,
     events: PendingEvent[],
   ): Promise<void> {
@@ -1013,7 +1014,6 @@ const CARD_SELECT = {
   },
 } as const;
 
-type Actor = { id: string; role: string };
 /** What an officer can say ended a tenancy — the two answers the routes accept. */
 type EndReason = 'MOVED_OUT' | 'RECORDED_IN_ERROR';
 /**
