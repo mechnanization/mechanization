@@ -18,7 +18,7 @@ import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-re
 import { allocateDocumentNumber } from '../../common/document-number';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { AuditService } from '../audit/audit.service';
-import { isUniqueViolationOn } from '../treasury/retry-key';
+import { isUniqueViolationOn } from '../../../infrastructure/prisma/prisma-errors';
 import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
 import { ARREARS_LINE_SELECT, arrearsView } from './bill-arrears';
 import { officialRateFor } from './fees.service';

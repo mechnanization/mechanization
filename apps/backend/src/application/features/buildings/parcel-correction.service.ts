@@ -6,6 +6,7 @@ import type { CorrectBuildingParcelInput } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
+import { isUniqueViolation } from '../../../infrastructure/prisma/prisma-errors';
 import { AuditService, type BuildingChange, type CitizenChange } from '../audit/audit.service';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { BuildingsService, sharedParcelsExcluding } from './buildings.service';
@@ -253,7 +254,7 @@ export class ParcelCorrectionService {
           data: { parcelNumber: next, codeSuffix, code, sharedParcelNumbers },
         });
       } catch (caught) {
-        if (caught instanceof Prisma.PrismaClientKnownRequestError && caught.code === 'P2002') {
+        if (isUniqueViolation(caught)) {
           throw new ConflictError({
             code: 'BUILDING_CODE_TAKEN',
             message: `Code ${code} is used by another building. Try again.`,

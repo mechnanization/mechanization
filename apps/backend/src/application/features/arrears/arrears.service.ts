@@ -16,6 +16,7 @@ import { Prisma } from '../../../generated/tenant-client';
 import { ConflictError, NotFoundError } from '../../../domain/errors/domain-error';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
+import { isUniqueViolation } from '../../../infrastructure/prisma/prisma-errors';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { AuditService } from '../audit/audit.service';
 import { currentReadingForUnit } from '../buildings/habitability';
@@ -337,7 +338,7 @@ export class ArrearsService {
         })),
       });
     } catch (error) {
-      if ((error as { code?: unknown }).code === 'P2002') {
+      if (isUniqueViolation(error)) {
         throw new ConflictError({ code: 'ARREARS_LINE_DUPLICATE', message: 'A line of this file is already recorded in another batch' });
       }
       throw error;
