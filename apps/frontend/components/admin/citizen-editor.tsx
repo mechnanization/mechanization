@@ -92,6 +92,7 @@ import {
   citizenDisplayName,
   parseFloorLabel,
   POSSIBLE_DUPLICATE_FLAG_PATH,
+  PROPERTY_TYPE,
   qualityLabels,
   STRUCTURE_TYPE_MAP,
   type CitizenResidence,
@@ -1195,7 +1196,7 @@ export function CitizenEditor({
             slug: tenant,
             name: tenant,
             nameAr: tenant,
-            enabledPropertyTypes: ['BUILDING', 'HOUSE', 'LAND', 'TENT'],
+            enabledPropertyTypes: [...PROPERTY_TYPE],
             requiredDocuments: [],
             branding: {},
           });
