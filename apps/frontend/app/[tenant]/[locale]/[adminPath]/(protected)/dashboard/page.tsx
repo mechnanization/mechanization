@@ -44,6 +44,7 @@ import { useBuildingTypes } from '@/lib/building-types';
 import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
 import { clearSession } from '@/lib/session';
 import { useStaffSession } from '@/lib/use-staff-session';
+import { API_URL } from '@/lib/public-config';
 import { formatLbp } from '@/lib/currency';
 import { formatMonth } from '@/lib/dates';
 import { Alert } from '@/components/ui/alert';
@@ -408,7 +409,7 @@ export default function StaffDashboard({
             {/* `REGISTER_EXPORT_ROLES`, as the route: not «مشاهد فقط», whose account reads on screen and takes nothing away. */}
             {hasRole(REGISTER_EXPORT_ROLES, role) ? (
               <a
-                href={`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1'}/t/${tenant}/dashboard/export.csv`}
+                href={`${API_URL}/t/${tenant}/dashboard/export.csv`}
                 className={buttonVariants({ variant: 'outline' })}
               >
                 <Download className="size-4" aria-hidden />

@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { httpsOrigin } from './lib/https-origin';
-
-const LOCALES = ['ar', 'en'] as const;
-const DEFAULT_LOCALE = 'ar';
+import { API_URL } from './lib/public-config';
+import { defaultLocale, isLocale, type Locale } from './i18n/routing';
 
 /**
  * Origins this portal is allowed to talk to, beyond itself.
@@ -20,7 +19,7 @@ const MAPBOX = 'https://api.mapbox.com https://events.mapbox.com https://*.tiles
  * reduced to an origin because a CSP source accepts no path.
  */
 function apiOrigin(): string {
-  const raw = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
+  const raw = API_URL;
   try {
     return new URL(raw).origin;
   } catch {
@@ -155,12 +154,12 @@ export function middleware(request: NextRequest) {
     );
   }
 
-  if (!maybeLocale || !LOCALES.includes(maybeLocale as (typeof LOCALES)[number])) {
+  if (!maybeLocale || !isLocale(maybeLocale)) {
     // 1. Cookie detection
-    let targetLocale = DEFAULT_LOCALE;
+    let targetLocale: Locale = defaultLocale;
     const cookieLocale = request.cookies.get('NEXT_LOCALE')?.value;
-    if (cookieLocale && LOCALES.includes(cookieLocale as (typeof LOCALES)[number])) {
-      targetLocale = cookieLocale as (typeof LOCALES)[number];
+    if (isLocale(cookieLocale)) {
+      targetLocale = cookieLocale;
     } else {
       // 2. Accept-Language header detection
       const acceptLang = request.headers.get('accept-language');
@@ -168,10 +167,8 @@ export function middleware(request: NextRequest) {
         const preferred = acceptLang
           .split(',')
           .map((lang) => lang.split(';')[0].trim().substring(0, 2).toLowerCase());
-        const match = preferred.find((p) => LOCALES.includes(p as (typeof LOCALES)[number]));
-        if (match) {
-          targetLocale = match as (typeof LOCALES)[number];
-        }
+        const match = preferred.find(isLocale);
+        if (match) targetLocale = match;
       }
     }
 

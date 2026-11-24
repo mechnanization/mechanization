@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
+import { tenantDisplayName } from '@/lib/tenant-config.server';
 
 /**
  * The web app manifest — per municipality, and per admin path.
@@ -21,26 +20,13 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1
  * into the shell the service worker holds. That is the difference between
  * "survives a dropped connection" and "works for an afternoon in a settlement".
  */
-async function municipalityName(slug: string, locale: string): Promise<string | undefined> {
-  try {
-    const response = await fetch(`${API_URL}/t/${slug}/tenant/config`, {
-      next: { revalidate: 300 },
-    });
-    if (!response.ok) return undefined;
-    const config = (await response.json()) as { name?: string; nameAr?: string };
-    return locale === 'en' ? (config.name ?? config.nameAr) : (config.nameAr ?? config.name);
-  } catch {
-    return undefined;
-  }
-}
-
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ tenant: string; locale: string; adminPath: string }> },
 ) {
   const { tenant, locale, adminPath } = await params;
   const base = `/${tenant}/${locale}/${adminPath}`;
-  const name = await municipalityName(tenant, locale);
+  const name = await tenantDisplayName(tenant, locale);
 
   const title = name
     ? locale === 'en'
