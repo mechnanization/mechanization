@@ -3,22 +3,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import {
-  ArrowLeft,
-  ArrowRight,
   Building2,
-  Check,
   CheckCircle2,
-  CloudOff,
   FileQuestion,
   IdCard,
-  Loader2,
   Plus,
-  Save,
-  ShieldAlert,
   StickyNote,
   TriangleAlert,
   UsersRound,
-  Zap,
 } from 'lucide-react';
 import {
   allowedPropertyTypesFor,
@@ -29,7 +21,6 @@ import {
   type PossibleDuplicateMatch,
 } from '@mechanization/shared-schemas';
 import type { PublicTenantConfig } from '@/lib/api-client';
-import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/states';
 import { Textarea } from '@/components/ui/textarea';
@@ -66,6 +57,8 @@ import { validate } from '@/lib/citizen-form-validation';
 import { ResidenceChooser } from './citizen-form/residence-chooser';
 import { StepNotesField } from './citizen-form/step-notes-field';
 import { FormSection } from './citizen-form/form-section';
+import { StepBar } from './citizen-form/step-bar';
+import { DesktopActionBar, MobileActionBar } from './citizen-form/action-bars';
 
 export type { CitizenFormValues } from '@/lib/citizen-form-values';
 export { emptyCitizen } from '@/lib/citizen-form-values';
@@ -1093,92 +1086,9 @@ export function CitizenForm({
         is how a card the officer deliberately left unlinked could quietly
         queue a building for creation (see the fold note in `PropertyCard`).
       */}
-      <nav
-        aria-label={locale === 'en' ? 'Form steps' : 'خطوات النموذج'}
-        className="sticky top-0 z-20 space-y-2 bg-background/95 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80"
-      >
-        <ol className="flex w-full items-center gap-2 sm:gap-4">
-          {wizardSteps.map((item, index) => {
-            const Icon = item.icon;
-            const state = index < wizardIndex ? 'done' : index === wizardIndex ? 'current' : 'upcoming';
-            const last = index === wizardSteps.length - 1;
-            return (
-              <li
-                key={item.id}
-                className={cn('flex min-w-0 items-center gap-2 sm:gap-3', last ? 'flex-none' : 'flex-1')}
-              >
-                <button
-                  type="button"
-                  onClick={item.go}
-                  aria-current={state === 'current' ? 'step' : undefined}
-                  aria-label={item.title}
-                  className={cn(
-                    'flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full border text-xs font-semibold transition-colors sm:size-9',
-                    state === 'done' && 'border-primary bg-primary text-primary-foreground',
-                    state === 'current' && 'border-primary bg-primary/10 text-primary ring-2 ring-primary/30',
-                    state === 'upcoming' && 'border-border bg-muted/40 text-muted-foreground hover:bg-muted',
-                    // A page holding an error says so on its circle, whatever its state.
-                    item.invalid && 'border-destructive bg-destructive/10 text-destructive ring-destructive/30',
-                  )}
-                >
-                  {item.invalid ? (
-                    <TriangleAlert className="size-4" />
-                  ) : state === 'done' ? (
-                    <Check className="size-4" />
-                  ) : (
-                    <Icon className="size-4" />
-                  )}
-                </button>
-                <button
-                  type="button"
-                  onClick={item.go}
-                  tabIndex={-1}
-                  /*
-                    From `md`, and allowed to shrink: four labels beside four
-                    circles do not fit a phone, and on a laptop with the
-                    sidebar open the form is narrower than on a tablet — so a
-                    label gives way to «…» rather than pushing the bar off the
-                    edge. Below `md` the current step is named under the bar.
-                  */
-                  className={cn(
-                    'hidden min-w-0 items-center gap-1.5 text-xs font-medium md:inline-flex',
-                    item.invalid
-                      ? 'text-destructive'
-                      : state === 'upcoming'
-                        ? 'text-muted-foreground'
-                        : 'text-foreground',
-                  )}
-                >
-                  <span className="truncate">{item.title}</span>
-                  {item.count ? (
-                    <span className="rounded-full bg-warning/15 px-1.5 py-0.5 text-xs font-bold text-warning">
-                      {item.count}
-                    </span>
-                  ) : null}
-                </button>
-                {!last ? (
-                  <div className={cn('h-px min-w-3 flex-1', index < wizardIndex ? 'bg-primary' : 'bg-border')} />
-                ) : null}
-              </li>
-            );
-          })}
-        </ol>
-
-        {/* On a phone the labels do not fit beside the circles: the current one is said here. */}
-        <div className="flex items-center justify-between px-1 text-xs text-muted-foreground md:hidden">
-          <span className="font-semibold text-foreground">
-            {locale === 'en'
-              ? `Step ${wizardIndex + 1}: ${wizardSteps[wizardIndex]?.title}`
-              : `الخطوة ${wizardIndex + 1}: ${wizardSteps[wizardIndex]?.title}`}
-            {wizardSteps[wizardIndex]?.count ? ` (${wizardSteps[wizardIndex]?.count})` : ''}
-          </span>
-          <span className="font-mono" dir="ltr">
-            {wizardIndex + 1} / {wizardSteps.length}
-          </span>
-        </div>
-
+      <StepBar locale={locale} steps={wizardSteps} current={wizardIndex}>
         {duplicatesAlert}
-      </nav>
+      </StepBar>
 
 
 
@@ -1396,134 +1306,23 @@ export function CitizenForm({
           />
       </div>
 
-      {/* ── Mobile Sticky Bottom Action Bar ── */}
-      {/* Padded past the home indicator: without it the save row is the strip
-          of screen iOS reserves for its own gesture, and every tap there is a
-          swipe up instead. */}
-      <div className="fixed inset-x-0 bottom-0 z-40 block sm:hidden border-t border-border/80 bg-background/95 p-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] shadow-2xl backdrop-blur supports-[backdrop-filter]:bg-background/90">
-        {/*
-          Four equal quarters, whatever the labels say. Sized to their own words
-          they were four different buttons and «غير مؤكَّد» was squeezed to fit
-          what was left; equal, the bar reads as one control with four parts.
-        */}
-        {refusedAsDuplicate ? (
-          <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-destructive">
-            <ShieldAlert className="size-3.5 shrink-0" aria-hidden />
-            {refusedReason}
-          </p>
-        ) : null}
-        <div className="grid grid-flow-col auto-cols-fr gap-2">
-          {wizardIndex > 0 ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={goToPrevStep}
-              className="h-10 w-full min-w-0 gap-1 px-1.5 text-xs font-semibold"
-            >
-              <ArrowRight className="size-4 shrink-0 rtl:rotate-180" />
-              <span className="truncate">{locale === 'en' ? 'Back' : 'السابق'}</span>
-            </Button>
-          ) : (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={onCancel}
-              className="h-10 w-full min-w-0 px-1.5 text-xs text-muted-foreground"
-            >
-              <span className="truncate">{locale === 'en' ? 'Cancel' : 'إلغاء'}</span>
-            </Button>
-          )}
-
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => setUnverifiedDialogOpen(true)}
-            className={cn(
-              'h-10 w-full min-w-0 gap-1 px-1.5 text-xs font-medium',
-              values.flags.size > 0 && 'border-warning/50 bg-warning/10 text-warning',
-            )}
-          >
-            <FileQuestion className="size-3.5 shrink-0" />
-            <span className="truncate">{locale === 'en' ? 'Unverified' : 'غير مؤكَّد'}</span>
-            {values.flags.size > 0 ? (
-              <span className="rounded-full bg-warning/20 px-1.5 py-0.2 text-xs font-bold text-warning">
-                {values.flags.size}
-              </span>
-            ) : null}
-          </Button>
-
-          {/*
-            Quick save sits next to «غير مؤكَّد» because they are the same
-            decision at two scales: one field the officer could not establish,
-            or a visit that produced almost nothing.
-
-            Offered on a correction as well, so the two forms carry the same
-            controls in the same places — a bar that loses a button between the
-            screen you register on and the screen you fix a record on is the
-            difference this section exists to remove. It is worth knowing what
-            it now allows that it did not: a blanket reason on an *edit* excuses
-            gaps in a record that has already been reviewed once, which is a
-            broader claim than the same button makes on a first filing. The
-            dialog still names the count and still writes the reason onto every
-            gap it covers, so what was claimed and by whom stays on the file.
-          */}
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => setQuickSaveOpen(true)}
-            disabled={submitting || refusedAsDuplicate}
-            title={refusedAsDuplicate ? refusedReason : undefined}
-            className="h-10 w-full min-w-0 gap-1 px-1.5 text-xs font-medium"
-          >
-            <Zap className="size-3.5 shrink-0" aria-hidden />
-            <span className="truncate">{locale === 'en' ? 'Quick save' : 'حفظ سريع'}</span>
-          </Button>
-
-          {!reviewing ? (
-            <Button
-              type="button"
-              size="sm"
-              onClick={goToNextStep}
-              className="h-10 w-full min-w-0 gap-1 bg-primary px-1.5 text-xs font-semibold text-primary-foreground shadow-sm"
-            >
-              <span className="truncate">{locale === 'en' ? 'Next' : 'التالي'}</span>
-              <ArrowLeft className="size-4 shrink-0 rtl:rotate-180" />
-            </Button>
-          ) : (
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => handleSubmit()}
-              disabled={submitting || refusedAsDuplicate}
-              title={refusedAsDuplicate ? refusedReason : undefined}
-              className="h-10 w-full min-w-0 gap-1 bg-primary px-1.5 text-xs font-semibold text-primary-foreground shadow-sm"
-            >
-              {submitting ? (
-                <Loader2 className="size-4 shrink-0 animate-spin" />
-              ) : offline ? (
-                <CloudOff className="size-4 shrink-0" />
-              ) : (
-                <Save className="size-4 shrink-0" />
-              )}
-              {/* «حفظ» on a correction: «حفظ وإنشاء» on a record that already
-                  exists promised a second file. */}
-              <span className="truncate">
-                {offline || mode === 'edit'
-                  ? locale === 'en'
-                    ? 'Save'
-                    : 'حفظ'
-                  : locale === 'en'
-                    ? 'Save & Create'
-                    : 'حفظ وإنشاء'}
-              </span>
-            </Button>
-          )}
-        </div>
-      </div>
+      <MobileActionBar
+        locale={locale}
+        mode={mode}
+        offline={offline}
+        submitting={submitting}
+        wizardIndex={wizardIndex}
+        reviewing={reviewing}
+        flagCount={values.flags.size}
+        refusedAsDuplicate={refusedAsDuplicate}
+        refusedReason={refusedReason}
+        onBack={goToPrevStep}
+        onNext={goToNextStep}
+        onCancel={onCancel}
+        onOpenUnverified={() => setUnverifiedDialogOpen(true)}
+        onQuickSave={() => setQuickSaveOpen(true)}
+        onSave={() => handleSubmit()}
+      />
 
       {/*
         Takes up whatever height the step leaves, so the bar below sits at the
@@ -1533,123 +1332,22 @@ export function CitizenForm({
       */}
       <div aria-hidden className="flex-1" />
 
-      {/* ── Desktop Fixed Bottom Actions Bar ── */}
-      <div className="sticky bottom-0 z-30 hidden sm:block -mx-4 -mb-6 mt-8 border-t border-border/80 bg-background/95 px-4 py-3 shadow-md backdrop-blur supports-[backdrop-filter]:bg-background/85 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
-        {error ? (
-          <Alert variant="destructive" live="alert" className="mb-2.5">
-            {error}
-          </Alert>
-        ) : null}
-
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          {/*
-            The wizard's own controls, at the start of the row: «السابق» and
-            «التالي» across all four steps. Equal widths, like the three on the
-            other side.
-          */}
-          <div className="inline-grid grid-flow-col auto-cols-fr gap-2.5">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={goToPrevStep}
-              disabled={wizardIndex === 0}
-              className="h-8 w-full gap-1.5 rounded-lg px-4 text-xs font-medium"
-            >
-              <ArrowRight className="size-3.5 rtl:rotate-180" aria-hidden />
-              {locale === 'en' ? 'Back' : 'السابق'}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={goToNextStep}
-              disabled={reviewing}
-              className="h-8 w-full gap-1.5 rounded-lg px-4 text-xs font-medium"
-            >
-              {locale === 'en' ? 'Next' : 'التالي'}
-              <ArrowLeft className="size-3.5 rtl:rotate-180" aria-hidden />
-            </Button>
-          </div>
-
-          {refusedAsDuplicate ? (
-            <p className="flex items-center gap-1.5 text-xs font-medium text-destructive">
-              <ShieldAlert className="size-3.5 shrink-0" aria-hidden />
-              {refusedReason}
-            </p>
-          ) : (
-          <div className="hidden lg:flex items-center gap-2 text-xs text-muted-foreground">
-            <span
-              className={cn(
-                'inline-block size-2 rounded-full',
-                offline ? 'bg-warning' : 'bg-primary/60',
-              )}
-            />
-            <span>
-              {offline
-                ? locale === 'en'
-                  ? 'Offline — this record will be stored on this device and synced automatically'
-                  : 'بدون اتصال — سيُحفظ السجل على هذا الجهاز ويُرسل تلقائياً عند عودة الشبكة'
-                : mode === 'edit'
-                  ? (locale === 'en' ? 'Editing citizen record' : 'تعديل بيانات المواطن')
-                  : (locale === 'en' ? 'New citizen registration' : 'تسجيل مواطن جديد')}
-            </span>
-          </div>
-          )}
-
-          {/*
-            One width for all three — the widest label's — rather than three
-            buttons sized to their own words. `auto-cols-fr` in a grid that
-            sizes to its content makes every column as wide as the widest.
-          */}
-          <div className="inline-grid grid-flow-col auto-cols-fr gap-2.5">
-            {/* Both modes, for the reason the mobile bar above gives. */}
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setQuickSaveOpen(true)}
-              disabled={submitting || refusedAsDuplicate}
-              title={refusedAsDuplicate ? refusedReason : undefined}
-              className="h-8 w-full gap-1.5 rounded-lg px-4 text-xs font-medium"
-            >
-              <Zap className="size-3.5" aria-hidden />
-              {locale === 'en' ? 'Quick save' : 'حفظ سريع'}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={onCancel}
-              disabled={submitting}
-              className="h-8 w-full px-4 text-xs font-medium rounded-lg hover:bg-muted"
-            >
-              {locale === 'en' ? 'Cancel' : 'إلغاء'}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => handleSubmit()}
-              disabled={submitting || refusedAsDuplicate}
-              title={refusedAsDuplicate ? refusedReason : undefined}
-              className="h-8 w-full px-4 text-xs font-medium rounded-lg shadow-2xs gap-1.5"
-            >
-              {submitting ? (
-                <Loader2 className="size-3.5 animate-spin" aria-hidden />
-              ) : offline ? (
-                <CloudOff className="size-3.5" aria-hidden />
-              ) : (
-                <Save className="size-3.5" aria-hidden />
-              )}
-              {offline
-                ? (locale === 'en' ? 'Save on This Device' : 'حفظ على الجهاز')
-                : mode === 'edit'
-                  ? (locale === 'en' ? 'Save Changes' : 'حفظ التعديلات')
-                  : (locale === 'en' ? 'Save & Create' : 'حفظ وإنشاء')}
-            </Button>
-          </div>
-        </div>
-      </div>
+      <DesktopActionBar
+        locale={locale}
+        mode={mode}
+        offline={offline}
+        submitting={submitting}
+        error={error}
+        wizardIndex={wizardIndex}
+        reviewing={reviewing}
+        refusedAsDuplicate={refusedAsDuplicate}
+        refusedReason={refusedReason}
+        onBack={goToPrevStep}
+        onNext={goToNextStep}
+        onCancel={onCancel}
+        onQuickSave={() => setQuickSaveOpen(true)}
+        onSave={() => handleSubmit()}
+      />
     </div>
 
     <QuickSaveDialog
