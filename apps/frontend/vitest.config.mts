@@ -12,6 +12,7 @@ import { defineConfig } from 'vitest/config';
  * is for; adding it later means adding an environment, not rewriting this.
  */
 export default defineConfig({
+  oxc: { jsx: { runtime: 'automatic' } },
   test: {
     /**
      * `node`, not `jsdom`.

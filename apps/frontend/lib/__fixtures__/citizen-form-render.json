@@ -1,0 +1,30 @@
+{
+  "estate-ar": {
+    "length": 29566,
+    "sha256": "8cdbf435149a8dcd662b122e17fe1e399f5c41b3291630d869b62916279bb41c"
+  },
+  "household-create-ar": {
+    "length": 48326,
+    "sha256": "f3591401d0ce1447f291c4724c61ae75c16ed0ec8b7872f8fa2d6698d30fe0cc"
+  },
+  "household-create-en": {
+    "length": 48588,
+    "sha256": "71eab24249835428c46fb1fa6f11219cbf277db059a52de52243d89e4aa33f69"
+  },
+  "household-offline-saving-ar": {
+    "length": 48952,
+    "sha256": "ce5d88b3f654a699c782829661bf84d50cbdbb608f2eeeeb8da1be89d817cdbd"
+  },
+  "household-with-cards-edit-ar": {
+    "length": 139563,
+    "sha256": "aa16204c89a91822c28e0d82dfc8cb483bdd9c94550bd51d07690dcdcca2da75"
+  },
+  "institution-ar": {
+    "length": 26994,
+    "sha256": "045eb665b0eeeeea43c91654853fc485e6921b0a84a737071e865316cd03a98e"
+  },
+  "non-resident-owner-ar": {
+    "length": 32846,
+    "sha256": "dcc5123a7e975f7936b923df1928602cb93dcdb7d67a53c1b6a2adfe5087a8d5"
+  }
+}

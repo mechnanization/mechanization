@@ -138,9 +138,11 @@ describe('the three files UX-16 names use logical or deliberate directions (RTL-
   });
 
   it("the citizen form's mobile bar spans the viewport with inset-x-0", () => {
-    const source = code('components/admin/citizen-form.tsx');
-    expect(source).not.toMatch(/\bleft-0 right-0\b|\bright-0 left-0\b/);
-    expect(source).toMatch(/fixed inset-x-0 bottom-0/);
+    // The bar is in `citizen-form/action-bars.tsx` since GOD-22 phase 2a; neither file may span the screen with a pair.
+    for (const path of ['components/admin/citizen-form.tsx', 'components/admin/citizen-form/action-bars.tsx']) {
+      expect(code(path), path).not.toMatch(/\bleft-0 right-0\b|\bright-0 left-0\b/);
+    }
+    expect(code('components/admin/citizen-form/action-bars.tsx')).toMatch(/fixed inset-x-0 bottom-0/);
   });
 
   it("the unit drawings' physical left and right are deliberate: drawn inside a dir=ltr elevation, with no margin, padding or text alignment", () => {
