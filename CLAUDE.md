@@ -2,7 +2,7 @@
 
 Last verified against the code: `develop@8742c5b`, 2026-10-03; the two tiered-fees rows
 (the routing table and the docs table), `fix/fee-wizard-review`, 2026-10-26; the majors line
-(zod 4) on `fix/dependency-audit`, 2026-10-28; the two old-debts rows, `docs/old-debts-plan`,
+(zod 4) on `fix/dependency-audit`, 2026-10-28; `jsdom` (tests only) on `chore/test-renderer-jsdom`, 2026-11-24; the two old-debts rows, `docs/old-debts-plan`,
 2026-11-21. Code wins: where a
 doc and the code disagree, the code is the fact and the doc is the bug.
 
@@ -32,7 +32,7 @@ This file is the hub. Every rule has one home, and this file links to it.
   comes from the system of record or the user, never from a plausible guess.
 - **Cite, don't recall.** Your memory of a library API is a guess. These are the
   majors in use: Next 15, React 18, NestJS 10, Prisma 5, Tailwind 3,
-  tailwind-merge 3, zod 4, next-intl 4, TanStack Query 5. Training data is full
+  tailwind-merge 3, zod 4, next-intl 4, TanStack Query 5, jsdom 31 (tests only). Training data is full
   of Prisma 7, Tailwind 4 and React 19, and most zod examples are still zod 3.
   Read the types or source in `node_modules` before you rely on an API.
 - **Read before you infer.** A Prisma model can drift from the database, and a
