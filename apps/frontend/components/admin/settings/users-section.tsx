@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Ban, Check, Copy, KeyRound, Loader2, Lock, RotateCcw, Search, ShieldCheck, UserPlus, UsersRound } from 'lucide-react';
 import { EmptyState } from '@/components/ui/states';
 import {
@@ -112,6 +112,9 @@ export function UsersSection({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [draft, setDraft] = useState<NewAccount>(EMPTY_ACCOUNT);
   const [creating, setCreating] = useState(false);
+  // SUBMIT-04: `creating` is React state, set asynchronously, so a double-click can pass
+  // its stale read. The ref is checked and set first, and released when the write settles.
+  const creatingRef = useRef(false);
 
   const load = useCallback(async () => {
     try {
@@ -185,6 +188,8 @@ export function UsersSection({
       return;
     }
 
+    if (creatingRef.current) return;
+    creatingRef.current = true;
     setCreating(true);
     try {
       const result = await createStaff(tenant, token, {
@@ -215,6 +220,7 @@ export function UsersSection({
       );
     } finally {
       setCreating(false);
+      creatingRef.current = false;
     }
   }, [tenant, token, draft, load, toast, copy.users]);
 

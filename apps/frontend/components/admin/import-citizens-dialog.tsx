@@ -81,6 +81,10 @@ export function ImportCitizensDialog({
   const [parseError, setParseError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
   const [importing, setImporting] = useState(false);
+  // SUBMIT-04: `checking` and `importing` is React state, set asynchronously, so a double-click can pass
+  // its stale read. The ref is checked and set first, and released when the write settles.
+  const checkingRef = useRef(false);
+  const importingRef = useRef(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [preview, setPreview] = useState<CitizenImportResult | null>(null);
   const [outcome, setOutcome] = useState<CitizenImportResult | null>(null);
@@ -122,6 +126,8 @@ export function ImportCitizensDialog({
 
   /** Step 1 → 2: ask the server what would happen, without writing. */
   async function check() {
+    if (checkingRef.current) return;
+    checkingRef.current = true;
     setChecking(true);
     setProgress({ done: 0, total: rows.length });
     setError(null);
@@ -138,6 +144,7 @@ export function ImportCitizensDialog({
       setError(caught instanceof Error ? caught.message : 'تعذّر فحص الملف.');
     } finally {
       setChecking(false);
+      checkingRef.current = false;
     }
   }
 
@@ -153,6 +160,8 @@ export function ImportCitizensDialog({
    * every row of the file against what actually happened to it.
    */
   async function run() {
+    if (importingRef.current) return;
+    importingRef.current = true;
     setImporting(true);
     setProgress({ done: 0, total: rows.length });
     setError(null);
@@ -177,6 +186,7 @@ export function ImportCitizensDialog({
       );
     } finally {
       setImporting(false);
+      importingRef.current = false;
     }
   }
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { ArrowLeftRight, Coins, Layers, Smartphone, UserCheck, Zap } from 'lucide-react';
 import { DEFAULT_LEVEL_FACTORS } from '@mechanization/shared-schemas';
@@ -157,6 +157,10 @@ export function FinanceSection({
   const tFactors = useTranslations('unitLevels.factors');
   const [factors, setFactors] = useState<Record<string, number>>({ ...DEFAULT_LEVEL_FACTORS });
   const [savingFactors, setSavingFactors] = useState(false);
+  // SUBMIT-04: `saving` is React state, set asynchronously, so a double-click can pass
+  // its stale read. The ref is checked and set first, and released when the write settles.
+  const savingRef = useRef(false);
+  const savingFactorsRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -227,6 +231,8 @@ export function FinanceSection({
       return;
     }
 
+    if (savingRef.current) return;
+    savingRef.current = true;
     setSaving(true);
     try {
       const result = await updateMunicipalitySettings(tenant, token, {
@@ -260,6 +266,7 @@ export function FinanceSection({
       toast.error(message);
     } finally {
       setSaving(false);
+      savingRef.current = false;
     }
   }, [
     tenant,
@@ -291,6 +298,8 @@ export function FinanceSection({
   /** Sends the table alone: every other setting is left as it is on the server. */
   const saveFactors = useCallback(
     async (table: Record<string, number>) => {
+      if (savingFactorsRef.current) return;
+      savingFactorsRef.current = true;
       setSavingFactors(true);
       try {
         const result = await updateMunicipalitySettings(tenant, token, { levelFactors: table });
@@ -301,6 +310,7 @@ export function FinanceSection({
         toast.error(caught instanceof ApiRequestError ? caught.message : copy.common.saveError);
       } finally {
         setSavingFactors(false);
+        savingFactorsRef.current = false;
       }
     },
     [tenant, token, toast, tFactors, copy.common.saveError],

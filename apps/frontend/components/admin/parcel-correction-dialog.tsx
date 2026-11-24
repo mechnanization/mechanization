@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { AlertTriangle, ArrowLeft, CheckCircle2, ExternalLink, Hash, Loader2, MapPinOff } from 'lucide-react';
@@ -89,6 +89,9 @@ export function ParcelCorrectionDialog({
   const [keepOld, setKeepOld] = useState(false);
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
+  // `busy` is React state, set asynchronously: a double-click can pass its stale read
+  // before a re-render commits (SUBMIT-03). The ref is checked and set first.
+  const runningRef = useRef(false);
   const [failure, setFailure] = useState<string | null>(null);
 
   const typed = parcel.trim();
@@ -105,6 +108,7 @@ export function ParcelCorrectionDialog({
     setKeepOld(false);
     setReason('');
     setBusy(false);
+    runningRef.current = false;
     setFailure(null);
   }, [open]);
 
@@ -159,7 +163,8 @@ export function ParcelCorrectionDialog({
     !busy;
 
   const run = async () => {
-    if (!preview || !ready) return;
+    if (!preview || !ready || runningRef.current) return;
+    runningRef.current = true;
     setBusy(true);
     setFailure(null);
     try {
@@ -195,6 +200,7 @@ export function ParcelCorrectionDialog({
             : 'تعذّر تصحيح رقم العقار.',
       );
       setBusy(false);
+      runningRef.current = false;
     }
   };
 

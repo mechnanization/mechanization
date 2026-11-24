@@ -98,6 +98,9 @@ export function UnitCorrectionDeleteDialog({
   const [typed, setTyped] = React.useState('');
   const [codeError, setCodeError] = React.useState<string | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
+  // `submitting` is React state, set asynchronously: a double-click can pass its stale read
+  // before a re-render commits (SUBMIT-03). The ref is checked and set first.
+  const submittingRef = React.useRef(false);
   const [submitError, setSubmitError] = React.useState<string | null>(null);
 
   const load = React.useCallback(
@@ -152,7 +155,8 @@ export function UnitCorrectionDeleteDialog({
   const submit = async (): Promise<void> => {
     if (!preview) return;
     setReasonTouched(true);
-    if (!canDelete) return;
+    if (!canDelete || submittingRef.current) return;
+    submittingRef.current = true;
     setSubmitting(true);
     setSubmitError(null);
     setCodeError(null);
@@ -195,6 +199,7 @@ export function UnitCorrectionDeleteDialog({
       }
     } finally {
       setSubmitting(false);
+      submittingRef.current = false;
     }
   };
 

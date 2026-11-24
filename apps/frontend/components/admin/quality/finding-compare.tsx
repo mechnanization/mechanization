@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
@@ -472,6 +472,9 @@ function CitizenCompare({
   const tNoPhone = useTranslations('citizenForm.noPhone');
   const tKind = useTranslations('citizenKind');
   const [merging, setMerging] = useState(false);
+  // `ConfirmDialog` disables its button from state, set asynchronously (SUBMIT-04): a double-click
+  // can reach `save` twice. Checked and set first, released when the write settles.
+  const savingRef = useRef(false);
 
   const query = useStaffQuery({
     queryKey: ['quality-compare-citizens', tenant, pair.a.id, pair.b.id],
@@ -586,6 +589,16 @@ function CitizenCompare({
   };
 
   const save = async () => {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    try {
+      await applySave();
+    } finally {
+      savingRef.current = false;
+    }
+  };
+
+  const applySave = async () => {
     if (!pending || !token) return;
     const form = forms[pending.citizenId];
     if (!form) return;

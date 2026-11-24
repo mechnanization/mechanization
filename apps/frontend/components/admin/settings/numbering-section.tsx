@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FileText, Hash, TriangleAlert } from 'lucide-react';
 import {
   ApiRequestError,
@@ -92,6 +92,9 @@ export function NumberingSection({
   const [saved, setSaved] = useState<NumberingSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  // SUBMIT-04: `saving` is React state, set asynchronously, so a double-click can pass
+  // its stale read. The ref is checked and set first, and released when the write settles.
+  const savingRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -185,6 +188,8 @@ export function NumberingSection({
       return;
     }
 
+    if (savingRef.current) return;
+    savingRef.current = true;
     setSaving(true);
     try {
       // Parsed here, once, at the boundary — the inputs hold strings so that a
@@ -211,6 +216,7 @@ export function NumberingSection({
       toast.error(message);
     } finally {
       setSaving(false);
+      savingRef.current = false;
     }
   }, [tenant, token, invalid, sequences, toast, copy]);
 

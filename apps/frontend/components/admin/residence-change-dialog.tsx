@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Home, Info, Loader2, MoveRight, UserX } from 'lucide-react';
 import { getLabels, isOwnerRecord, type CitizenResidence, type UnitStatus } from '@mechanization/shared-schemas';
@@ -99,6 +99,9 @@ export function ResidenceChangeDialog({
   const [reasonTouched, setReasonTouched] = useState(false);
   const [ending, setEnding] = useState<number | null>(null);
   const [deactivating, setDeactivating] = useState(false);
+  // SUBMIT-04: `deactivating` is React state, set asynchronously, so a double-click can pass
+  // its stale read. The ref is checked and set first, and released when the write settles.
+  const deactivatingRef = useRef(false);
   /** «بطلب من» — who asked for the file to be archived; required with the reason (decision, 2026-10-05). */
   const [requestedBy, setRequestedBy] = useState('');
   const [failure, setFailure] = useState<string | null>(null);
@@ -156,7 +159,8 @@ export function ResidenceChangeDialog({
     : livesIn !== null && Boolean(movedOn) && reasonOk;
 
   const deactivate = async () => {
-    if (!token) return;
+    if (!token || deactivatingRef.current) return;
+    deactivatingRef.current = true;
     setDeactivating(true);
     setFailure(null);
     try {
@@ -172,6 +176,7 @@ export function ResidenceChangeDialog({
       setFailure(caught instanceof ApiRequestError ? caught.message : tArchive('failed'));
     } finally {
       setDeactivating(false);
+      deactivatingRef.current = false;
     }
   };
 

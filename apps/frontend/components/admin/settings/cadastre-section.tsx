@@ -41,6 +41,9 @@ export function CadastreSection({
   const fileInput = useRef<HTMLInputElement>(null);
 
   const [uploading, setUploading] = useState(false);
+  // SUBMIT-04: `uploading` is React state, set asynchronously, so a double-click can pass
+  // its stale read. The ref is checked and set first, and released when the write settles.
+  const uploadingRef = useRef(false);
   const [dragging, setDragging] = useState(false);
   const [result, setResult] = useState<CadastreImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -55,6 +58,8 @@ export function CadastreSection({
         return;
       }
 
+      if (uploadingRef.current) return;
+      uploadingRef.current = true;
       setUploading(true);
       setError(null);
       setResult(null);
@@ -70,6 +75,7 @@ export function CadastreSection({
         toast.error(message);
       } finally {
         setUploading(false);
+        uploadingRef.current = false;
         if (fileInput.current) fileInput.current.value = '';
       }
     },

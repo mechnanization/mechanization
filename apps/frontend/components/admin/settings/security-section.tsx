@@ -157,6 +157,13 @@ export function SecuritySection({
   const [reconfigureModalOpen, setReconfigureModalOpen] = useState(false);
   const [reconfigurePassword, setReconfigurePassword] = useState('');
   const [reconfiguring2FA, setReconfiguring2FA] = useState(false);
+  // SUBMIT-04: the buttons' `disabled` state is React state, set asynchronously, so a double-click can pass
+  // its stale read. The ref is checked and set first, and released when the write settles.
+  const emailChangeRef = useRef(false);
+  const enrollingRef = useRef(false);
+  const confirming2FARef = useRef(false);
+  const disablingRef = useRef(false);
+  const reconfiguringRef = useRef(false);
   const [reconfigureError, setReconfigureError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -207,7 +214,8 @@ export function SecuritySection({
 
   const handleSendEmailChange = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newEmail || !emailPassword || sendingEmailChange) return;
+    if (!newEmail || !emailPassword || sendingEmailChange || emailChangeRef.current) return;
+    emailChangeRef.current = true;
     setEmailError(null);
     setSendingEmailChange(true);
 
@@ -242,6 +250,7 @@ export function SecuritySection({
       }
     } finally {
       setSendingEmailChange(false);
+      emailChangeRef.current = false;
     }
   };
 
@@ -715,6 +724,8 @@ export function SecuritySection({
                     if (show2FASetup) {
                       setShow2FASetup(false);
                     } else {
+                      if (enrollingRef.current) return;
+                      enrollingRef.current = true;
                       try {
                         setEnrolling2FA(true);
                         const res = await beginStaffTotpEnrolment(tenant, token);
@@ -730,6 +741,7 @@ export function SecuritySection({
                         );
                       } finally {
                         setEnrolling2FA(false);
+                        enrollingRef.current = false;
                       }
                     }
                   }
@@ -872,7 +884,8 @@ export function SecuritySection({
                     type="button"
                     disabled={totpCode.length !== 6 || confirming2FA || !totpSecret}
                     onClick={async () => {
-                      if (totpCode.length !== 6 || confirming2FA) return;
+                      if (totpCode.length !== 6 || confirming2FA || confirming2FARef.current) return;
+                      confirming2FARef.current = true;
                       setConfirming2FA(true);
                       setTotpConfirmError(null);
                       try {
@@ -905,6 +918,7 @@ export function SecuritySection({
                         toast.error(msg);
                       } finally {
                         setConfirming2FA(false);
+                        confirming2FARef.current = false;
                       }
                     }}
                   >
@@ -1001,10 +1015,12 @@ export function SecuritySection({
           <form
             onSubmit={async (e) => {
               e.preventDefault();
+              if (disablingRef.current) return;
               if (!disablePassword || disabling2FA) {
                 setDisableError(locale === 'en' ? 'Password is required' : 'كلمة المرور مطلوبة');
                 return;
               }
+              disablingRef.current = true;
               setDisabling2FA(true);
               setDisableError(null);
               try {
@@ -1036,6 +1052,7 @@ export function SecuritySection({
                 setDisableError(msg);
               } finally {
                 setDisabling2FA(false);
+                disablingRef.current = false;
               }
             }}
           >
@@ -1113,10 +1130,12 @@ export function SecuritySection({
           <form
             onSubmit={async (e) => {
               e.preventDefault();
+              if (reconfiguringRef.current) return;
               if (!reconfigurePassword || reconfiguring2FA) {
                 setReconfigureError(locale === 'en' ? 'Password is required' : 'كلمة المرور مطلوبة');
                 return;
               }
+              reconfiguringRef.current = true;
               setReconfiguring2FA(true);
               setReconfigureError(null);
               try {
@@ -1148,6 +1167,7 @@ export function SecuritySection({
                 setReconfigureError(msg);
               } finally {
                 setReconfiguring2FA(false);
+                reconfiguringRef.current = false;
               }
             }}
           >
