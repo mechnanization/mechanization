@@ -44,7 +44,7 @@ export class RolesGuard implements CanActivate {
         context.getClass(),
       ]);
       if (typeof selfService === 'string' && selfService.length > 0) return true;
-      throw new ForbiddenError('You do not have permission to perform this action');
+      throw new ForbiddenError({ code: 'ROUTE_ACCESS_UNDECLARED', message: 'Route declares no @Roles and no @SelfService' });
     }
 
     const request = context.switchToHttp().getRequest<Request>();
