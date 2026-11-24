@@ -1203,7 +1203,10 @@ export function BuildingEditor({
               () => null,
             )
           : Promise.resolve(null),
-        checkPropertyNumber(tenant, trimmedParcel).catch(() => null),
+        checkPropertyNumber(tenant, trimmedParcel).catch((caught) => {
+          logApiError(caught);
+          return null;
+        }),
       ])
         .then(([outlines, zoneIndex, existing, check]) => {
           if (cancelled) return;
@@ -1255,8 +1258,12 @@ export function BuildingEditor({
             if (existing.buildings.length === 0) setAcknowledgedDuplicates(false);
           }
 
+          // `null` is a check that failed (a success is always an object): say so rather than
+          // read it as «not taken, in the cadastre» (ERR-02).
           setCadastreHint(
-            check && check.inCadastre === false
+            check === null
+              ? tEditor('cadastreUnchecked')
+              : check.inCadastre === false
               ? en
                 ? 'This parcel number is not in the cadastre. It can still be saved — verify deed records first.'
                 : 'رقم العقار غير موجود في المسح العقاري. يمكن الحفظ رغم ذلك — راجع سند الملكية أولاً.'

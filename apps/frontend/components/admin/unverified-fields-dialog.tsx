@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { useEffect, useMemo, useState } from 'react';
 import {
   Check,
@@ -86,6 +87,7 @@ export function UnverifiedFieldsDialog({
   onSaveFlags: (newFlags: Map<string, string>) => void;
   locale?: string;
 }) {
+  const tCommon = useTranslations('common');
   const [draftFlags, setDraftFlags] = useState<Map<string, string>>(new Map());
   const [searchTerm, setSearchTerm] = useState('');
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -259,7 +261,7 @@ export function UnverifiedFieldsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[85dvh] flex flex-col p-0 gap-0">
+      <DialogContent closeLabel={tCommon('close')} className="max-w-2xl max-h-[85dvh] flex flex-col p-0 gap-0">
         <DialogHeader className="p-5 border-b border-border/80">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2.5">

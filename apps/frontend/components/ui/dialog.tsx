@@ -27,14 +27,14 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
 
 interface DialogContentProps
   extends React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> {
-  /** Accessible label for the built-in close button. */
+  /** Accessible label for the built-in close button; Arabic by default, like the kit's other labels (KIT-6) — pass the page's own. */
   closeLabel?: string;
 }
 
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   DialogContentProps
->(({ className, children, closeLabel = 'Close', ...props }, ref) => (
+>(({ className, children, closeLabel = 'إغلاق', ...props }, ref) => (
   <DialogPortal>
     <DialogOverlay />
     <DialogPrimitive.Content
@@ -71,7 +71,7 @@ const DialogContent = React.forwardRef<
          * layout shift and nothing overlapping the title beside it. Same
          * technique as `Checkbox`, for the same reason.
          */
-        className="absolute end-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none coarse:before:absolute coarse:before:-inset-4 coarse:before:content-['']"
+        className="absolute end-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none coarse:before:absolute coarse:before:-inset-4 coarse:before:content-['']"
         aria-label={closeLabel}
       >
         <X className="h-4 w-4" />

@@ -573,6 +573,10 @@
     "ARREARS_CUTOFF_LOCKED": "An old-debts batch has been approved, so the billing start year can no longer change (it stays {cutoffYear})."
   },
   "damage": {
+    "readFailed": {
+      "title": "The damage records could not be read",
+      "message": "The building's condition log did not load, so it may look undamaged when it is not. Try again before relying on this page."
+    },
     "level": "Damage level",
     "source": "Source",
     "habitable": {
@@ -2368,6 +2372,10 @@
     "saveNew": "Save as a new record"
   },
   "citizenForm": {
+    "prefillFailed": {
+      "case": "The case this registration was opened from could not be read, so the form opened blank. Fill it in by hand, or reopen the page to prefill the address from the case.",
+      "building": "The building this registration was opened from could not be read, so the form opened blank. Fill it in by hand, or reopen the page to prefill the address from the building."
+    },
     "noPhone": {
       "label": "Does not have a phone number (elderly / special cases)",
       "note": "The two numbers below are left empty, and the record counts as complete without them. Give a relative’s number under «Contact number» so the municipality can still reach this person.",
@@ -3647,6 +3655,7 @@
     "unlinkedTotal": "Their total"
   },
   "buildingEditor": {
+    "cadastreUnchecked": "The parcel number could not be checked against the cadastre. You can still continue and save — verify the deed records first.",
     "deduplicated": {
       "title": "This building was already saved",
       "description": "An earlier press reached the server but its answer was lost, so nothing was created twice. What was saved is what that press sent: check {code} on the matrix."

@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { useEffect, useState } from 'react';
 import { Building2, Loader2, Users } from 'lucide-react';
 import { getLabels, isUnoccupied } from '@mechanization/shared-schemas';
@@ -43,6 +44,7 @@ export function ParcelRosterDialog({
   propertyNumber: string;
   locale?: string;
 }) {
+  const tCommon = useTranslations('common');
   const labels = getLabels(locale);
   const [roster, setRoster] = useState<ParcelRoster | null>(null);
   const [loading, setLoading] = useState(false);
@@ -81,7 +83,7 @@ export function ParcelRosterDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[85dvh] overflow-y-auto">
+      <DialogContent closeLabel={tCommon('close')} className="max-w-2xl max-h-[85dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
             <Building2 className="size-5 shrink-0 text-primary" aria-hidden />
