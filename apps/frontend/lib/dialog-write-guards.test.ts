@@ -19,7 +19,10 @@ import { describe, expect, it } from 'vitest';
   before any `await` can run, and it is released again somewhere.
 */
 const ADMIN = join(__dirname, '..', 'components', 'admin');
-const read = (file: string): string => readFileSync(join(ADMIN, file), 'utf8');
+const FRONTEND = join(__dirname, '..');
+// A path starting `app/` is read from the frontend root; any other is under components/admin.
+const read = (file: string): string =>
+  readFileSync(file.startsWith('app/') ? join(FRONTEND, file) : join(ADMIN, file), 'utf8');
 
 const GUARDS: ReadonlyArray<readonly [string, string]> = [
   // SUBMIT-03
@@ -49,6 +52,10 @@ const GUARDS: ReadonlyArray<readonly [string, string]> = [
   ['settings/backup-section.tsx', 'backupRef'],
   ['settings/backup-section.tsx', 'snapshotRef'],
   ['settings/backup-section.tsx', 'restoreRef'],
+  // SUBMIT-06: the request sheet and the corrections review
+  ['requests/request-sheet.tsx', 'billInFlight'],
+  ['requests/request-sheet.tsx', 'uploadingRef'],
+  ['app/[tenant]/[locale]/[adminPath]/(protected)/fees/corrections/page.tsx', 'savingRef'],
   // SUBMIT-04: import and quality
   ['import-citizens-dialog.tsx', 'checkingRef'],
   ['import-citizens-dialog.tsx', 'importingRef'],

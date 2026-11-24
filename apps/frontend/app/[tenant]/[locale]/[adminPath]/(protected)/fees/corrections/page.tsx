@@ -64,6 +64,8 @@ export default function CorrectionBillsPage({
   const [{ status: show, page }, setUrlState] = useUrlState(CORRECTIONS_URL_STATE);
   const [reviewing, setReviewing] = useState<CorrectionAffectedBill | null>(null);
   const [saving, setSaving] = useState(false);
+  // `saving` is React state, set asynchronously: a double-click can record the decision twice (SUBMIT-06).
+  const savingRef = useRef(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
   /** The top of the list, brought back into view when the page changes. */
   const listTop = useRef<HTMLUListElement>(null);
@@ -109,7 +111,8 @@ export default function CorrectionBillsPage({
   }, [data, page, pages, setUrlState]);
 
   const saveReview = async (note: string) => {
-    if (!reviewing || !token) return;
+    if (!reviewing || !token || savingRef.current) return;
+    savingRef.current = true;
     setSaving(true);
     setReviewError(null);
     try {
@@ -133,6 +136,7 @@ export default function CorrectionBillsPage({
       setReviewError(en ? 'Could not save the decision.' : 'تعذّر حفظ القرار.');
     } finally {
       setSaving(false);
+      savingRef.current = false;
     }
   };
 

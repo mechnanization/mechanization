@@ -493,6 +493,9 @@ function Papers({
     request.channel === 'ONLINE' && !request.attachments.some((paper) => paper.type === 'IDENTITY') ? 'IDENTITY' : 'OTHER',
   );
   const [uploading, setUploading] = useState(false);
+  // `uploading` is React state, set asynchronously: a second drop can pass its stale read
+  // and attach the paper twice (SUBMIT-06). The ref is checked and set first.
+  const uploadingRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
   const full = request.attachments.length >= REQUEST_ATTACHMENTS_MAX;
@@ -520,6 +523,8 @@ function Papers({
       setError(t(`fileProblem.${problem}`, { max: REQUEST_ATTACHMENT_MAX_MB }));
       return;
     }
+    if (uploadingRef.current) return;
+    uploadingRef.current = true;
     setUploading(true);
     setError(null);
     try {
@@ -536,6 +541,7 @@ function Papers({
       );
     } finally {
       setUploading(false);
+      uploadingRef.current = false;
     }
   };
 
