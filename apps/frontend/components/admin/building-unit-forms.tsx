@@ -1,15 +1,19 @@
-'use client';
-
-import { useTranslations } from 'next-intl';
-import { useEffect, useMemo, useState } from 'react';
+import {
+  useTranslations,
+} from 'next-intl';
+import {
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 import Link from 'next/link';
-import type { ColumnDef } from '@tanstack/react-table';
+import {
+  type ColumnDef,
+} from '@tanstack/react-table';
 import {
   AlertTriangle,
   Building2,
   CalendarClock,
-  CalendarDays,
-  DoorClosed,
   EllipsisVertical,
   Footprints,
   Landmark,
@@ -18,7 +22,6 @@ import {
   Ruler,
   Search,
   ShieldAlert,
-  Undo2,
   UserRound,
   UsersRound,
 } from 'lucide-react';
@@ -37,8 +40,6 @@ import {
   SURVEY_STATUS,
   UNIT_STATUS,
   unitStatusForRole,
-  VACANCY_BASIS,
-  VACANCY_END_REASON,
   type BuildingLifecycle,
   type CaseType,
   type CitizenResidence,
@@ -48,8 +49,6 @@ import {
   type StructureType,
   type SurveyStatus,
   type UnitStatus,
-  type VacancyBasis,
-  type VacancyEndReason,
   isDwellingUnitType,
 } from '@mechanization/shared-schemas';
 import {
@@ -68,16 +67,37 @@ import {
   type UnitVisitRow,
   type UnitWithOccupants,
 } from '@/lib/api-client';
-import { ACTION_TINT } from '@/lib/action-tint';
-import { formatDate, monthNames } from '@/lib/dates';
-import { formatPhone } from '@/lib/phone';
-import { useTableLabels } from '@/lib/use-table-labels';
-import { stashLinkSeed } from '@/lib/tab-search';
-import { useCitizenSearch } from '@/lib/use-citizen-search';
-import { cn } from '@/lib/utils';
-import { Alert } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
-import { Button, buttonVariants } from '@/components/ui/button';
+import {
+  ACTION_TINT,
+} from '@/lib/action-tint';
+import {
+  formatDate,
+} from '@/lib/dates';
+import {
+  formatPhone,
+} from '@/lib/phone';
+import {
+  useTableLabels,
+} from '@/lib/use-table-labels';
+import {
+  stashLinkSeed,
+} from '@/lib/tab-search';
+import {
+  useCitizenSearch,
+} from '@/lib/use-citizen-search';
+import {
+  cn,
+} from '@/lib/utils';
+import {
+  Alert,
+} from '@/components/ui/alert';
+import {
+  Badge,
+} from '@/components/ui/badge';
+import {
+  Button,
+  buttonVariants,
+} from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
@@ -92,12 +112,25 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { CellTag } from '@/components/ui/cell-tag';
-import { Checkbox } from '@/components/ui/checkbox';
-import { DataTable } from '@/components/ui/data-table';
-import { DatePicker } from '@/components/ui/date-picker';
-import { Field, FieldFlagProvider } from '@/components/ui/field';
-import { Input } from '@/components/ui/input';
+import {
+  CellTag,
+} from '@/components/ui/cell-tag';
+import {
+  Checkbox,
+} from '@/components/ui/checkbox';
+import {
+  DataTable,
+} from '@/components/ui/data-table';
+import {
+  DatePicker,
+} from '@/components/ui/date-picker';
+import {
+  Field,
+  FieldFlagProvider,
+} from '@/components/ui/field';
+import {
+  Input,
+} from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -105,32 +138,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
-import { Textarea } from '@/components/ui/textarea';
-import { ActionTooltip } from '@/components/ui/tooltip';
+import {
+  Textarea,
+} from '@/components/ui/textarea';
+import {
+  ActionTooltip,
+} from '@/components/ui/tooltip';
 import {
   AfterTenancyQuestion,
   afterTenancyComplete,
   afterTenancyPayload,
 } from '@/components/admin/after-tenancy-question';
-import { EndOwnershipDialog } from '@/components/admin/end-ownership-dialog';
+import {
+  EndOwnershipDialog,
+} from '@/components/admin/end-ownership-dialog';
 
-/**
- * The per-unit forms and small display helpers shared by
- * `building-unit-matrix-drawer.tsx` (the map/cases slide-over) and
- * `building-unit-matrix-view.tsx` (the ledger's full-page spatial matrix).
- * Extracted rather than duplicated so the two surfaces can never quietly
- * diverge on what "add a person to a unit" or "open a follow-up case" means.
- */
-
-/**
- * What an attempt can have produced.
- *
- * `SURVEY_STATUS` minus `NOT_SURVEYED`, which means nobody went — a visit
- * carrying it is a contradiction, and `logVisitSchema` refuses it server-side
- * for the same reason. Derived rather than retyped so a status added to the
- * enum shows up here without anyone remembering to add it.
- */
 export const VISIT_OUTCOMES = SURVEY_STATUS.filter(
   (status): status is Exclude<SurveyStatus, 'NOT_SURVEYED' | 'VACANT_CONFIRMED'> =>
     /*
@@ -197,7 +219,7 @@ const SHORT_UNIT_STATUS: Record<'ar' | 'en', Record<UnitStatus, string>> = {
 };
 
 /** The spells running now, newest first. */
-function liveSpells(unit: UnitWithOccupants) {
+export function liveSpells(unit: UnitWithOccupants) {
   return unit.occupants
     .filter((occupant) => occupant.toDate === null)
     .sort((a, b) => (a.fromDate < b.fromDate ? 1 : -1));
@@ -1998,7 +2020,7 @@ function reasonsFor(role: OccupancyRole): OccupancyEndReason[] {
     : ['MOVED_OUT', 'RECORDED_IN_ERROR'];
 }
 
-const today = () => new Date().toISOString().slice(0, 10);
+export const today = () => new Date().toISOString().slice(0, 10);
 
 /** What «إنهاء الإشغال» sends — the reason, the date, and for a tenancy what the flat is now. */
 export type EndOccupancyAnswer = { reason: OccupancyEndReason; toDate?: string } & AfterTenancyAnswer;
@@ -2793,626 +2815,3 @@ function LinkOwnerDialog({
   );
 }
 
-// ────────────────────────────  «تأكيد الشغور»  ────────────────────────────
-
-/**
- * The safeguard «تأكيد الشغور» never had.
- *
- * One tap used to write «شاغرة» over whatever the unit said, and that tap
- * exempts the owner from the occupancy fee — the flat stops being billed as
- * lived in. Nothing asked what the officer had seen, nothing recorded who
- * decided it, and nothing could put it back.
- *
- * So this asks three things and states one. **What it rests on** has no
- * default, because a pre-selected basis is exactly what muscle memory confirms
- * — and the law distinguishes them: a تصريح بالشغور filed by the owner is the
- * strongest, a neighbour's word the weakest, and a unit is presumed occupied
- * until something says otherwise (هيئة التشريع والاستشارات 725/2003). **When**
- * it was seen empty, back-datable from a paper round. **What shows it**, in the
- * notes, required whatever the basis — and for hearsay, who said so. And it
- * states the consequence — including naming the owner
- * whose bill this changes, because that is the fact an officer can check
- * against the person standing in front of them.
- *
- * It also says what it will overwrite where the flat already claims to be
- * occupied: «مؤجرة» on the register and «شاغرة» at the door is a contradiction
- * worth a second look before it is resolved silently.
- *
- * It opens under the unit's actions like «كشف ضرر» and «فتح حالة متابعة» rather
- * than as a dialog: it is one more thing recorded against the unit on screen,
- * and the panel above it already names which one.
- */
-export function ConfirmVacancyForm({
-  unit,
-  locale,
-  busy,
-  onSubmit,
-}: {
-  unit: UnitWithOccupants;
-  locale: string;
-  busy: boolean;
-  /**
-   * Handed to the panel's `run`, like every other form under a unit. A refusal
-   * — «يسكنها مستأجر مسجَّل» — lands in the panel's error line directly under
-   * this form, and the form stays open to be corrected.
-   */
-  onSubmit: (input: { basis: VacancyBasis; observedAt?: string; notes: string }) => void;
-}) {
-  const en = locale === 'en';
-  const labels = getLabels(locale);
-  // A fresh question every time it opens — the form mounts when its button is
-  // pressed, and the panel keys it on the unit so never the previous flat's.
-  const [basis, setBasis] = useState<VacancyBasis | null>(null);
-  const [observedAt, setObservedAt] = useState(today());
-  const [notes, setNotes] = useState('');
-
-  const owners = liveSpells(unit).filter((occupant) => occupant.role === 'OWNER');
-  const status = effectiveUnitStatus(unit);
-  const overwriting = status && !isUnoccupied(status) ? status : null;
-  /*
-    Every basis says what it saw, not only hearsay. The notes are what a
-    disputed exemption is read against a year later, and «معاينة ميدانية» with
-    nothing under it says no more than the button did. The server insists only
-    for hearsay (`confirmVacancySchema`), so this is the stricter of the two.
-  */
-  const notesMissing = !notes.trim();
-
-  return (
-    <div className="space-y-3 rounded-md border bg-background p-3">
-      {owners.length > 0 ? (
-        <SummaryList>
-          <SummaryRow label={en ? 'Owner on record' : 'المالك المسجَّل'}>
-            {owners
-              .map((owner) => owner.citizenName ?? (en ? 'Unnamed' : 'بلا اسم'))
-              .join(en ? ', ' : '، ')}
-          </SummaryRow>
-        </SummaryList>
-      ) : null}
-
-      {overwriting ? (
-        <p className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 px-2.5 py-2 text-xs leading-relaxed">
-          <AlertTriangle className="mt-px size-3.5 shrink-0" aria-hidden />
-          {en
-            ? `The register currently says «${labels.unitStatus[overwriting]}». Confirming replaces that.`
-            : `الوحدة مسجَّلة حالياً «${labels.unitStatus[overwriting]}». التأكيد يستبدل هذه الحالة.`}
-        </p>
-      ) : null}
-
-      <fieldset className="space-y-1.5">
-        <legend className="text-xs font-medium">
-          {en ? 'What says it is empty?' : 'ما الذي يثبت شغورها؟'}{' '}
-          <span className="text-destructive">*</span>
-        </legend>
-        {/*
-          Rows under a rule rather than four outlined boxes. Boxed, every option
-          looked like a separate button of equal weight and the one chosen
-          differed only by a tint; here each has a radio mark, so the choice
-          reads as one answer to one question — and it still has no default,
-          see above.
-        */}
-        <div className="divide-y divide-border/60" role="radiogroup">
-          {VACANCY_BASIS.map((option) => {
-            const checked = basis === option;
-            return (
-              <button
-                key={option}
-                type="button"
-                role="radio"
-                aria-checked={checked}
-                onClick={() => setBasis(option)}
-                className={cn(
-                  'flex min-h-11 w-full items-center gap-3 px-1 py-2 text-start text-sm transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                  checked ? 'font-medium text-primary' : 'text-foreground',
-                )}
-              >
-                <span
-                  aria-hidden
-                  className={cn(
-                    'flex size-4 shrink-0 items-center justify-center rounded-full border',
-                    checked ? 'border-primary' : 'border-muted-foreground/50',
-                  )}
-                >
-                  {checked ? <span className="size-2 rounded-full bg-primary" /> : null}
-                </span>
-                {labels.vacancyBasis[option]}
-              </button>
-            );
-          })}
-        </div>
-      </fieldset>
-
-      <Field
-        label={en ? 'Seen empty on' : 'تاريخ المعاينة'}
-        htmlFor="vacancy-observed"
-      >
-        <DatePicker
-          id="vacancy-observed"
-          max={today()}
-          value={observedAt}
-          onChange={setObservedAt}
-          locale={en ? 'en' : 'ar'}
-        />
-      </Field>
-
-      <Field label={en ? 'Notes' : 'ملاحظات'} htmlFor="vacancy-notes" required>
-        <Textarea
-          id="vacancy-notes"
-          rows={2}
-          value={notes}
-          onChange={(event) => setNotes(event.target.value)}
-          placeholder={
-            en ? 'Locked, no furniture, no meter reading' : 'مقفلة، بلا أثاث، والعداد متوقف'
-          }
-        />
-      </Field>
-
-      <Button
-        size="sm"
-        disabled={busy || !basis || notesMissing}
-        onClick={() => {
-          if (!basis || notesMissing) return;
-          onSubmit({
-            basis,
-            ...(observedAt && observedAt !== today() ? { observedAt } : {}),
-            notes: notes.trim(),
-          });
-        }}
-      >
-        {busy ? (
-          <Loader2 className="size-4 animate-spin" aria-hidden />
-        ) : (
-          <DoorClosed className="size-4" aria-hidden />
-        )}
-        {en ? 'Confirm vacant' : 'تأكيد الشغور'}
-      </Button>
-    </div>
-  );
-}
-
-/**
- * The undo, asked the way `EndOccupancyDialog` asks.
- *
- * The reason is not a formality: it decides what the flat goes back to, and the
- * dialog says which before it is pressed. «سُجِّل بالخطأ» puts back the حالة the
- * confirmation replaced — the register was wrong and this is the correction.
- * «لم تعد شاغرة» leaves the unit occupied-by-someone-unrecorded, which is the
- * presumption the law starts from and the state that bills the owner again
- * until whoever moved in is recorded.
- */
-export function EndVacancyDialog({
-  vacancy,
-  unitCode,
-  locale,
-  onOpenChange,
-  onConfirm,
-}: {
-  /** The standing confirmation; the dialog is open while this is set. */
-  vacancy: UnitVacancyConfirmation | null;
-  unitCode: string;
-  locale: string;
-  onOpenChange: (open: boolean) => void;
-  onConfirm: (input: {
-    reason: VacancyEndReason;
-    endedAt?: string;
-    notes: string;
-  }) => Promise<void>;
-}) {
-  const en = locale === 'en';
-  const labels = getLabels(locale);
-  const [reason, setReason] = useState<VacancyEndReason | null>(null);
-  const [endedAt, setEndedAt] = useState(today());
-  const [notes, setNotes] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (vacancy) {
-      setReason(null);
-      setEndedAt(today());
-      setNotes('');
-      setFailure(null);
-      setBusy(false);
-    }
-  }, [vacancy]);
-
-  if (!vacancy) return null;
-
-  const restored = vacancy.previousUnitStatus
-    ? labels.unitStatus[vacancy.previousUnitStatus]
-    : en
-      ? 'Occupancy not established'
-      : 'الإشغال غير محدد';
-
-  const confirm = async () => {
-    if (!reason || busy) return;
-    setBusy(true);
-    setFailure(null);
-    try {
-      await onConfirm({
-        reason,
-        ...(reason === 'NO_LONGER_VACANT' && endedAt ? { endedAt } : {}),
-        notes: notes.trim(),
-      });
-      onOpenChange(false);
-    } catch (caught) {
-      setFailure(
-        caught instanceof Error && caught.message
-          ? caught.message
-          : en
-            ? 'Could not lift the vacancy.'
-            : 'تعذّر إلغاء تأكيد الشغور.',
-      );
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Dialog open onOpenChange={busy ? undefined : onOpenChange}>
-      <DialogContent className="max-w-md" closeLabel={en ? 'Cancel' : 'إلغاء'}>
-        <DialogHeader>
-          <div className="min-w-0 space-y-1.5 text-start">
-            <DialogTitle>
-              {en ? 'Lift the vacancy on unit ' : 'إلغاء تأكيد شغور الوحدة '}
-              <span dir="ltr" className="font-mono">
-                {unitCode}
-              </span>
-              {en ? '?' : '؟'}
-            </DialogTitle>
-            <DialogDescription>
-              {en
-                ? 'The confirmation is closed and kept on record — it is not deleted.'
-                : 'يُغلق التأكيد ويبقى محفوظاً في السجل — لا يُحذف.'}
-            </DialogDescription>
-          </div>
-        </DialogHeader>
-
-        <div className="space-y-3">
-          <fieldset className="space-y-1.5">
-            <legend className="text-xs font-medium">
-              {en ? 'Why?' : 'السبب'} <span className="text-destructive">*</span>
-            </legend>
-            <div className="grid gap-2" role="radiogroup">
-              {VACANCY_END_REASON.map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  role="radio"
-                  aria-checked={reason === option}
-                  onClick={() => setReason(option)}
-                  className={cn(
-                    'min-h-11 rounded-md border px-3 py-2 text-start text-sm transition-colors',
-                    reason === option
-                      ? 'border-primary bg-primary/10 font-medium text-primary'
-                      : 'hover:bg-accent',
-                  )}
-                >
-                  {labels.vacancyEndReason[option]}
-                </button>
-              ))}
-            </div>
-          </fieldset>
-
-          {/* What the flat will read afterwards, said before it is pressed. */}
-          {reason ? (
-            <p className="rounded-md bg-accent/40 px-2.5 py-2 text-xs leading-relaxed">
-              {reason === 'RECORDED_IN_ERROR'
-                ? en
-                  ? `The unit goes back to «${restored}».`
-                  : `تعود الوحدة إلى «${restored}».`
-                : en
-                  ? 'The unit is treated as occupied by somebody not yet recorded, and is billed to its owner again until they are. Record whoever lives there next.'
-                  : 'تُعدّ الوحدة مشغولة بمن لم يُسجَّل بعد، وتعود الرسوم على المالك إلى أن يُسجَّل. سجّل من يسكنها بعد ذلك.'}
-            </p>
-          ) : null}
-
-          {reason === 'NO_LONGER_VACANT' ? (
-            <Field label={en ? 'Occupied again since' : 'تاريخ انتهاء الشغور'} htmlFor="vacancy-ended">
-              <DatePicker
-                id="vacancy-ended"
-                min={vacancy.observedAt.slice(0, 10)}
-                max={today()}
-                value={endedAt}
-                onChange={setEndedAt}
-                locale={en ? 'en' : 'ar'}
-              />
-            </Field>
-          ) : null}
-
-          <Field label={en ? 'Notes' : 'ملاحظات'} htmlFor="vacancy-end-notes">
-            <Textarea
-              id="vacancy-end-notes"
-              rows={2}
-              value={notes}
-              onChange={(event) => setNotes(event.target.value)}
-              placeholder={
-                en ? 'A family moved in at the start of the month' : 'سكنتها أسرة مطلع الشهر'
-              }
-            />
-          </Field>
-
-          {failure ? (
-            <Alert variant="destructive" live="alert">
-              {failure}
-            </Alert>
-          ) : null}
-        </div>
-
-        <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <Button
-            variant="outline"
-            onClick={() => onOpenChange(false)}
-            disabled={busy}
-            className="w-full sm:w-auto"
-          >
-            {en ? 'Cancel' : 'إلغاء'}
-          </Button>
-          <Button
-            onClick={() => void confirm()}
-            disabled={busy || !reason}
-            className="w-full sm:w-auto"
-          >
-            {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-            {en ? 'Lift the vacancy' : 'إلغاء تأكيد الشغور'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-/**
- * Why this flat reads «شاغرة», and the one control that changes it.
- *
- * Shown wherever a confirmation is standing. The three facts on it are the ones
- * a dispute turns on — since when, on what basis, and by whom — and they used
- * to exist nowhere: the matrix said «شاغرة» and that was the whole of the
- * record. Underneath, the confirmations already closed, because a flat that has
- * been confirmed empty twice before is telling an officer something about the
- * building.
- *
- * Ones closed «سُجِّل بالخطأ» are left out and counted, exactly as occupancies
- * recorded in error are: they are not history, and a list that shows them
- * invites reading a correction as a fact.
- */
-export function VacancyPanel({
-  unit,
-  unitCode,
-  locale,
-  busy,
-  canWrite,
-  onEnd,
-}: {
-  unit: UnitWithOccupants;
-  unitCode: string;
-  locale: string;
-  busy: boolean;
-  canWrite: boolean;
-  onEnd: (input: {
-    reason: VacancyEndReason;
-    endedAt?: string;
-    notes: string;
-  }) => Promise<void>;
-}) {
-  const en = locale === 'en';
-  const labels = getLabels(locale);
-  const [ending, setEnding] = useState<UnitVacancyConfirmation | null>(null);
-
-  const standing = activeVacancy(unit);
-  const closed = (unit.vacancies ?? []).filter(
-    (row) => row.endedAt !== null && row.endReason !== 'RECORDED_IN_ERROR',
-  );
-  const corrections = (unit.vacancies ?? []).filter(
-    (row) => row.endReason === 'RECORDED_IN_ERROR',
-  ).length;
-
-  if (!standing && closed.length === 0 && corrections === 0) return null;
-
-  return (
-    <>
-      {standing ? (
-        <div className="space-y-2 rounded-md border border-info/30 bg-info/5 p-3">
-          <p className="flex flex-wrap items-center gap-1.5 text-xs font-semibold">
-            <DoorClosed className="size-3.5 shrink-0 text-info" aria-hidden />
-            {en ? 'Confirmed vacant since ' : 'مؤكَّدة الشغور منذ '}
-            {formatDate(standing.observedAt)}
-          </p>
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            {standing.basis
-              ? labels.vacancyBasis[standing.basis]
-              : en
-                ? 'Recorded before the basis was asked for'
-                : 'سُجِّل قبل أن يُسأل عن المستند'}
-            {standing.confirmedByName ? ` — ${standing.confirmedByName}` : ''}
-          </p>
-          {standing.notes ? (
-            <p className="text-xs leading-relaxed">{standing.notes}</p>
-          ) : null}
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            {en
-              ? 'The owner is not billed the occupancy fee for it while this stands.'
-              : 'لا تُحتسب على المالك رسوم الإشغال عنها ما دام هذا التأكيد قائماً.'}
-          </p>
-          {canWrite ? (
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={busy}
-              onClick={() => setEnding(standing)}
-            >
-              <Undo2 className="size-4" aria-hidden />
-              {en ? 'Lift the vacancy…' : 'إلغاء تأكيد الشغور…'}
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
-
-      {closed.length > 0 ? (
-        <ul className="space-y-1">
-          {closed.map((row) => (
-            <li
-              key={row.id}
-              className="flex flex-wrap items-center gap-2 rounded-md bg-muted/40 px-2.5 py-1.5 text-xs text-muted-foreground"
-            >
-              <DoorClosed className="size-3 shrink-0" aria-hidden />
-              {en ? 'Vacant ' : 'شاغرة '}
-              {formatDate(row.observedAt)} — {formatDate(row.endedAt!)}
-              {row.endReason ? (
-                <Badge variant="soft-muted">{labels.vacancyEndReason[row.endReason]}</Badge>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-
-      {corrections > 0 ? (
-        <p className="text-xs text-muted-foreground">
-          {en
-            ? `${corrections} vacancy confirmation(s) recorded in error — kept, not shown.`
-            : `${corrections} تأكيد شغور سُجِّل بالخطأ — محفوظ ولا يُعرض.`}
-        </p>
-      ) : null}
-
-      <EndVacancyDialog
-        vacancy={ending}
-        unitCode={unitCode}
-        locale={locale}
-        onOpenChange={(open) => {
-          if (!open) setEnding(null);
-        }}
-        onConfirm={onEnd}
-      />
-    </>
-  );
-}
-
-// ─────────────────────────────  «مسكن موسمي»  ─────────────────────────────
-
-/**
- * The facts a council needs to decide how a seasonal home is billed — recorded,
- * not decided.
- *
- * Shown for a unit whose state is «مسكن موسمي». The owner still bears the
- * occupancy fee by default: a building is presumed occupied until a تصريح
- * بالشغور is filed (هيئة التشريع والاستشارات 725/2003), and the fee is owed for
- * months actually occupied (Law 60/1988, Art. 11). So this asks which months
- * the owners are usually here, when they last were, and whether a declaration
- * has been filed — the three things that decision turns on.
- */
-export function SeasonalHomePanel({
-  unit,
-  locale,
-  busy,
-  canWrite,
-  onSave,
-}: {
-  unit: UnitWithOccupants;
-  locale: string;
-  busy: boolean;
-  canWrite: boolean;
-  onSave: (values: {
-    presenceMonths: number[];
-    ownerLastStayAt: string | null;
-    vacancyDeclaredAt: string | null;
-  }) => void;
-}) {
-  const en = locale === 'en';
-  const [months, setMonths] = useState<number[]>(unit.presenceMonths ?? []);
-  const [lastStay, setLastStay] = useState(unit.ownerLastStayAt?.slice(0, 10) ?? '');
-  const [declared, setDeclared] = useState(unit.vacancyDeclaredAt?.slice(0, 10) ?? '');
-
-  useEffect(() => {
-    setMonths(unit.presenceMonths ?? []);
-    setLastStay(unit.ownerLastStayAt?.slice(0, 10) ?? '');
-    setDeclared(unit.vacancyDeclaredAt?.slice(0, 10) ?? '');
-  }, [unit.id, unit.presenceMonths, unit.ownerLastStayAt, unit.vacancyDeclaredAt]);
-
-  const toggle = (month: number) =>
-    setMonths((current) =>
-      current.includes(month)
-        ? current.filter((m) => m !== month)
-        : [...current, month].sort((a, b) => a - b),
-    );
-
-  return (
-    <div className="space-y-3 rounded-md border border-info/30 bg-info/5 p-3">
-      <p className="flex items-center gap-1.5 text-xs font-semibold">
-        <CalendarDays className="size-3.5 text-info" aria-hidden />
-        {en ? 'Seasonal home — owners live elsewhere' : 'مسكن موسمي — أصحابه مقيمون خارج البلدة'}
-      </p>
-
-      <fieldset className="space-y-1.5" disabled={!canWrite}>
-        <legend className="text-xs text-muted-foreground">
-          {en ? 'Months the owners are usually here' : 'الأشهر التي يحضر فيها أصحابه عادةً'}
-        </legend>
-        <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-6">
-          {monthNames(locale).map((label, index) => {
-            const month = index + 1;
-            const on = months.includes(month);
-            return (
-              <button
-                key={month}
-                type="button"
-                aria-pressed={on}
-                onClick={() => toggle(month)}
-                className={cn(
-                  'min-h-9 rounded-md border px-1.5 text-xs transition-colors',
-                  on ? 'border-info/60 bg-info/15 font-medium' : 'hover:bg-accent',
-                )}
-              >
-                {label}
-              </button>
-            );
-          })}
-        </div>
-      </fieldset>
-
-      <div className="grid gap-3">
-        <Field label={en ? 'Last stayed' : 'آخر إقامة لأصحابه'} htmlFor="seasonal-last-stay">
-          <Input
-            id="seasonal-last-stay"
-            type="date"
-            max={today()}
-            disabled={!canWrite}
-            value={lastStay}
-            onChange={(event) => setLastStay(event.target.value)}
-            dir="ltr"
-            className="text-start"
-          />
-        </Field>
-        <Field
-          label={en ? 'Vacancy declaration filed on' : 'تاريخ تقديم تصريح بالشغور'}
-          htmlFor="seasonal-declared"
-        >
-          <Input
-            id="seasonal-declared"
-            type="date"
-            max={today()}
-            disabled={!canWrite}
-            value={declared}
-            onChange={(event) => setDeclared(event.target.value)}
-            dir="ltr"
-            className="text-start"
-          />
-        </Field>
-      </div>
-
-      {canWrite ? (
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={busy}
-          onClick={() =>
-            onSave({
-              presenceMonths: months,
-              ownerLastStayAt: lastStay || null,
-              vacancyDeclaredAt: declared || null,
-            })
-          }
-        >
-          {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-          {en ? 'Save seasonal details' : 'حفظ بيانات السكن الموسمي'}
-        </Button>
-      ) : null}
-    </div>
-  );
-}
