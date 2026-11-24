@@ -646,10 +646,11 @@ export default function BuildingsPage({
               >
                 <div
                   className={cn(
-                    'h-full rounded-full transition-all',
+                    // `scaleX` from the reading start, not `width`: only transform and opacity animate (MOT-4).
+                    'h-full w-full origin-left rounded-full transition-transform duration-300 ease-out motion-reduce:transition-none rtl:origin-right',
                     percent === 100 ? 'bg-success' : percent > 0 ? 'bg-primary' : 'bg-transparent',
                   )}
-                  style={{ width: `${percent}%` }}
+                  style={{ transform: `scaleX(${percent / 100})` }}
                 />
               </div>
               {unitsTotal === 0 ? (
