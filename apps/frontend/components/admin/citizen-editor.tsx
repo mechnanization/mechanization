@@ -64,7 +64,7 @@ import {
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { LoadingState } from '@/components/ui/states';
+import { ErrorState, LoadingState } from '@/components/ui/states';
 import { flagsFromArray, unverifiedFromArray } from '@/components/ui/field';
 import { ShellLink } from './shell-nav';
 import { useLeaveTo } from '@/lib/nav-history';
@@ -903,6 +903,9 @@ export function CitizenEditor({
   /** The citizen's own reference, and the filing's beside it — two different numbers. */
   const [reference, setReference] = useState<{ citizen: string | null; filing: string | null } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  /** The load never reached the server (ERR-06), and the bump that runs it again. */
+  const [loadOffline, setLoadOffline] = useState(false);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   /**
    * The file a queued record already reached (`QueuedSubmission.citizenId`):
    * the officer revised it after a send whose answer was lost, and the server
@@ -1199,6 +1202,7 @@ export function CitizenEditor({
           setInitial(emptyCitizen());
           return;
         }
+        setLoadOffline(caught instanceof ApiRequestError && caught.status === 0);
         setLoadError(
           caught instanceof ApiRequestError && caught.status === 404
             ? (locale === 'en' ? 'No citizen found with this ID.' : 'لا يوجد مواطن بهذا المعرّف.')
@@ -1224,6 +1228,7 @@ export function CitizenEditor({
   }, [
     tenant,
     token,
+    loadAttempt,
     citizenId,
     queueId,
     fromCaseId,
@@ -1946,9 +1951,15 @@ export function CitizenEditor({
   if (loadError) {
     return (
       <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-        <Alert variant="destructive" live="alert">
-          {loadError}
-        </Alert>
+        <ErrorState
+          compact
+          description={loadError}
+          offline={loadOffline}
+          onRetry={() => {
+            setLoadError(null);
+            setLoadAttempt((n) => n + 1);
+          }}
+        />
         <ShellLink href={`${base}/citizens`} className={buttonVariants({ variant: 'outline' })}>
           {locale === 'en' ? 'Back to Citizens Registry' : 'رجوع إلى سجل المواطنين'}
         </ShellLink>

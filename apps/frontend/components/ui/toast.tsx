@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { useTranslations } from 'next-intl';
 import { CheckCircle2, Info, TriangleAlert, X, XCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -183,6 +184,7 @@ function ToastCard({
   onDismiss: (id: number) => void;
 }): React.JSX.Element {
   const { icon: Icon, accent, iconColor } = TONE_STYLES[toast.tone];
+  const tCommon = useTranslations('common');
 
   React.useEffect(() => {
     if (paused) return;
@@ -239,7 +241,7 @@ function ToastCard({
       <button
         type="button"
         onClick={() => onDismiss(toast.id)}
-        aria-label="إغلاق"
+        aria-label={tCommon('close')}
         className="-me-1 -mt-1 flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
       >
         <X className="size-4" />

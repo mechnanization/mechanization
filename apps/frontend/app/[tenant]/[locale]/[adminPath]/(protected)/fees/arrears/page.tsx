@@ -182,7 +182,7 @@ export default function ArrearsPage({
         {batches.error && !batches.data ? (
           <ErrorState
             title={t('batches.loadFailed')}
-            description={batches.refusal ?? batches.error}
+            description={batches.refusal ?? batches.error} offline={batches.offline}
             retryLabel={t('retry')}
             onRetry={batches.refetch}
           />

@@ -223,7 +223,7 @@ export function ReviewQueue({
       </div>
 
       {query.error ? (
-        <ErrorState description={query.error} onRetry={query.refetch} />
+        <ErrorState description={query.error} offline={query.offline} onRetry={query.refetch} />
       ) : query.loading ? (
         <LoadingState label={en ? 'Loading records…' : 'جارٍ تحميل السجلات…'} />
       ) : (query.data?.items.length ?? 0) === 0 && total === 0 ? (

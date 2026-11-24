@@ -98,7 +98,7 @@ export default function ParcelDuesPage({
       ) : duesQuery.loading ? (
         <LoadingState label={t('loading')} />
       ) : duesQuery.error ? (
-        <ErrorState description={duesQuery.error} onRetry={() => duesQuery.refetch()} />
+        <ErrorState description={duesQuery.error} offline={duesQuery.offline} onRetry={() => duesQuery.refetch()} />
       ) : nothing ? (
         <EmptyState icon={Landmark} title={t('nothingOwed', { number: parcel })} description={t('nothingOwedBody')} />
       ) : data ? (

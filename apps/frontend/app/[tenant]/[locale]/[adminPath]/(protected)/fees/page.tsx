@@ -175,6 +175,7 @@ export default function FeesPage({
 
   const toast = useToast();
   const tSelect = useTranslations('bulkSettle.select');
+  const tBillReceipts = useTranslations('billReceipts');
   /*
     Only what this ledger says that the shared `table` strings do not: what it
     searches by, what it is empty of, and what it counts. The column picker
@@ -373,18 +374,18 @@ export default function FeesPage({
         const profile = await getCitizenProfile(tenant, token, citizenId);
         const row = profile.payments.find((entry) => entry.id === paymentId);
         if (!row) {
-          toast.error('تعذّر العثور على سجل الدفعة.');
+          toast.error(tBillReceipts('recordNotFound'));
           return;
         }
         setReceipt({ citizen: profile, payment: row, received: receivedAmount });
       } catch (caught) {
         logApiError(caught);
-        toast.error('تعذّر فتح الوصل — يمكنك إصداره من ملف المواطن.');
+        toast.error(tBillReceipts('openFailed'));
       } finally {
         setBusyPaymentId(null);
       }
     },
-    [tenant, token, toast],
+    [tenant, token, toast, tBillReceipts],
   );
 
   /**

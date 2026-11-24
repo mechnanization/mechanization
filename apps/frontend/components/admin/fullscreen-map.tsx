@@ -695,6 +695,7 @@ export function FullscreenMap({
     layer holds, with how many of each; the icon still draws the structure.
   */
   const tTypes = useTranslations('buildingTypes');
+  const tCommon = useTranslations('common');
   const typesQuery = useBuildingTypes(tenant, base, token ?? null, { includeInactive: true, errorMessage: tTypes('loadError') });
   const [typeFilter, setTypeFilter] = useState('');
   const typeOfPin = useCallback(
@@ -1608,7 +1609,7 @@ export function FullscreenMap({
       className="group/map relative h-full w-full"
       data-sheet-open={selected ? "true" : undefined}
     >
-      <div ref={containerRef} className="h-full w-full" aria-label="خريطة العقارات" />
+      <div ref={containerRef} className="h-full w-full" aria-label={tCommon('parcelsMap')} />
 
       {/* Loading Cover */}
       <div

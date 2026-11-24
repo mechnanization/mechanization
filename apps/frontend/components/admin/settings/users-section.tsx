@@ -3,7 +3,7 @@
 import { useTranslations } from 'next-intl';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Ban, Check, Copy, KeyRound, Loader2, Lock, RotateCcw, Search, ShieldCheck, UserPlus, UsersRound } from 'lucide-react';
-import { EmptyState } from '@/components/ui/states';
+import { EmptyState, ErrorState } from '@/components/ui/states';
 import {
   ApiRequestError,
   createStaff,
@@ -19,7 +19,6 @@ import {
   type RoleKey,
   type SettingsCopy,
 } from '@/lib/settings-i18n';
-import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { CellTag } from '@/components/ui/cell-tag';
 import { Button } from '@/components/ui/button';
@@ -108,6 +107,8 @@ export function UsersSection({
   const [rows, setRows] = useState<StaffSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  /** The read never reached the server: a connection problem, said as one (ERR-06). */
+  const [offline, setOffline] = useState(false);
   const [search, setSearch] = useState('');
   const [pendingId, setPendingId] = useState<string | null>(null);
 
@@ -123,8 +124,10 @@ export function UsersSection({
       const { items } = await getStaff(tenant, token);
       setRows(items);
       setError(null);
+      setOffline(false);
     } catch (caught) {
       logApiError(caught);
+      setOffline(caught instanceof ApiRequestError && caught.status === 0);
       setError(caught instanceof ApiRequestError ? caught.message : copy.users.loadError);
     } finally {
       setLoading(false);
@@ -298,9 +301,7 @@ export function UsersSection({
         </div>
 
         {error ? (
-          <Alert variant="destructive" live="alert">
-            {error}
-          </Alert>
+          <ErrorState compact description={error} offline={offline} onRetry={() => void load()} />
         ) : loading ? (
           <div className="space-y-2">
             {[0, 1, 2, 3].map((index) => (

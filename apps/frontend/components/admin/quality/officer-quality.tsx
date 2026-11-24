@@ -41,7 +41,7 @@ export function OfficerQuality({
     errorMessage: en ? 'Could not load the figures.' : 'تعذّر تحميل الأرقام.',
   });
 
-  if (query.error) return <ErrorState description={query.error} onRetry={query.refetch} />;
+  if (query.error) return <ErrorState description={query.error} offline={query.offline} onRetry={query.refetch} />;
   if (query.loading) return <LoadingState label={en ? 'Loading…' : 'جارٍ التحميل…'} />;
 
   const officers = query.data?.officers ?? [];

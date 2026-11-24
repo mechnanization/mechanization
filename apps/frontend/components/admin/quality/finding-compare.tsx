@@ -638,7 +638,7 @@ function CitizenCompare({
   if (query.error) {
     return (
       <CompareShell finding={finding} locale={locale} onBack={onBack}>
-        <ErrorState description={query.error} onRetry={query.refetch} />
+        <ErrorState description={query.error} offline={query.offline} onRetry={query.refetch} />
       </CompareShell>
     );
   }
@@ -962,7 +962,7 @@ function BuildingCompare({
   if (query.error) {
     return (
       <CompareShell finding={finding} locale={locale} onBack={onBack}>
-        <ErrorState description={query.error} onRetry={query.refetch} />
+        <ErrorState description={query.error} offline={query.offline} onRetry={query.refetch} />
       </CompareShell>
     );
   }

@@ -25,6 +25,16 @@ colors:
   success-foreground: "hsl(0 0% 100%)"
   info: "hsl(199 89% 36%)"
   info-foreground: "hsl(0 0% 100%)"
+  identity-1: "hsl(199 80% 30%)"
+  identity-2: "hsl(262 80% 53%)"
+  identity-3: "hsl(38 80% 27%)"
+  identity-4: "hsl(152 80% 23%)"
+  identity-5: "hsl(345 80% 39%)"
+  identity-6: "hsl(187 80% 25%)"
+  identity-7: "hsl(292 80% 38%)"
+  identity-8: "hsl(22 80% 33%)"
+  identity-9: "hsl(172 80% 23%)"
+  identity-10: "hsl(239 80% 58%)"
   border: "hsl(45 12% 87%)"
   input: "hsl(45 12% 84%)"
   ring: "hsl(213 72% 45%)"
@@ -59,6 +69,16 @@ colors:
   success-foreground-dark: "hsl(60 2% 5%)"
   info-dark: "hsl(199 89% 55%)"
   info-foreground-dark: "hsl(60 2% 5%)"
+  identity-1-dark: "hsl(199 85% 53%)"
+  identity-2-dark: "hsl(262 85% 77%)"
+  identity-3-dark: "hsl(38 85% 47%)"
+  identity-4-dark: "hsl(152 85% 40%)"
+  identity-5-dark: "hsl(345 85% 73%)"
+  identity-6-dark: "hsl(187 85% 42%)"
+  identity-7-dark: "hsl(292 85% 71%)"
+  identity-8-dark: "hsl(22 85% 62%)"
+  identity-9-dark: "hsl(172 85% 40%)"
+  identity-10-dark: "hsl(239 85% 79%)"
   border-dark: "hsl(60 2% 18%)"
   input-dark: "hsl(60 2% 22%)"
   ring-dark: "hsl(213 76% 56%)"
@@ -233,6 +253,12 @@ Meanings are binding in COL-2; summary:
 - **Destructive** (`destructive`): overdue, refused, delete. Mostly a text colour.
 - Each has a `-foreground` for a solid fill: white in light mode, near-black in dark mode.
   COL-2 allows no solid `warning` fill; the solid uses that exist are debt (UI §17.2).
+
+### Identity
+- **Identity 1–10** (`identity-1` … `identity-10`): ten colours for telling neighbours apart, which is all they mean — the unit
+  grid gives each confirmed unit one, and the inspector's tiles take two. Always `text-identity-N` on `bg-identity-N/10` or
+  `/15`, and `ring-identity-N` at full strength. Measured for text on every surface and its own 0, 5, 10 and 15% tints in both
+  themes (4.55 to 4.88:1), so they are as vivid as the page lets them be; `lib/identity-colours.test.ts` recomputes it.
 
 ### Illustration
 - **Concrete** and **Shade** (`illustration-concrete`, `illustration-shade`): decorative

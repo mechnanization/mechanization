@@ -117,19 +117,20 @@ export const DEFAULT_GRID_SIZE = DEFAULT_HORIZONTAL_BLOCKS;
  * to read as different units at a glance. Same 10%-wash-background +
  * weighted-text idiom as `badge.tsx`'s `soft-*` variants, for a family
  * resemblance with the rest of the app's status colouring rather than a
- * clashing new palette.
+ * clashing new palette. The ten `identity-N` tokens (globals.css, COL-8), each measured
+ * for its text on its own tint in both themes; the ring is full strength, not `/50`.
  */
 const PALETTE = [
-  { bg: 'bg-sky-500/15', text: 'text-sky-700 dark:text-sky-400', ring: 'ring-sky-500/50' },
-  { bg: 'bg-violet-500/15', text: 'text-violet-700 dark:text-violet-400', ring: 'ring-violet-500/50' },
-  { bg: 'bg-amber-500/15', text: 'text-amber-700 dark:text-amber-400', ring: 'ring-amber-500/50' },
-  { bg: 'bg-emerald-500/15', text: 'text-emerald-700 dark:text-emerald-400', ring: 'ring-emerald-500/50' },
-  { bg: 'bg-rose-500/15', text: 'text-rose-700 dark:text-rose-400', ring: 'ring-rose-500/50' },
-  { bg: 'bg-cyan-500/15', text: 'text-cyan-700 dark:text-cyan-400', ring: 'ring-cyan-500/50' },
-  { bg: 'bg-fuchsia-500/15', text: 'text-fuchsia-700 dark:text-fuchsia-400', ring: 'ring-fuchsia-500/50' },
-  { bg: 'bg-orange-500/15', text: 'text-orange-700 dark:text-orange-400', ring: 'ring-orange-500/50' },
-  { bg: 'bg-teal-500/15', text: 'text-teal-700 dark:text-teal-400', ring: 'ring-teal-500/50' },
-  { bg: 'bg-indigo-500/15', text: 'text-indigo-700 dark:text-indigo-400', ring: 'ring-indigo-500/50' },
+  { bg: 'bg-identity-1/15', text: 'text-identity-1', ring: 'ring-identity-1' },
+  { bg: 'bg-identity-2/15', text: 'text-identity-2', ring: 'ring-identity-2' },
+  { bg: 'bg-identity-3/15', text: 'text-identity-3', ring: 'ring-identity-3' },
+  { bg: 'bg-identity-4/15', text: 'text-identity-4', ring: 'ring-identity-4' },
+  { bg: 'bg-identity-5/15', text: 'text-identity-5', ring: 'ring-identity-5' },
+  { bg: 'bg-identity-6/15', text: 'text-identity-6', ring: 'ring-identity-6' },
+  { bg: 'bg-identity-7/15', text: 'text-identity-7', ring: 'ring-identity-7' },
+  { bg: 'bg-identity-8/15', text: 'text-identity-8', ring: 'ring-identity-8' },
+  { bg: 'bg-identity-9/15', text: 'text-identity-9', ring: 'ring-identity-9' },
+  { bg: 'bg-identity-10/15', text: 'text-identity-10', ring: 'ring-identity-10' },
 ] as const;
 
 /**

@@ -43,6 +43,8 @@ export interface StaffQueryResult<T> {
    * does shows this in its place; the rest keep showing `error`.
    */
   refusal: string | null;
+  /** The read never reached the server (`status === 0`): a connection problem, not a refusal. */
+  offline: boolean;
   refetch: () => void;
 }
 
@@ -185,6 +187,7 @@ export function useStaffQuery<T>({
     fetching: query.isFetching,
     error: error ? errorMessage : null,
     refusal: refusalOf(error),
+    offline: error instanceof ApiRequestError && error.status === 0,
     refetch: () => void query.refetch(),
   };
 }

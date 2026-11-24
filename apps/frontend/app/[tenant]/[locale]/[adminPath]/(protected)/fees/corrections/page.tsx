@@ -179,7 +179,7 @@ export default function CorrectionBillsPage({
       {listQuery.loading ? (
         <LoadingState label={en ? 'Comparing open bills with the register…' : 'تُقارَن الفواتير المفتوحة بالسجل…'} />
       ) : listQuery.error ? (
-        <ErrorState description={listQuery.error} onRetry={() => listQuery.refetch()} />
+        <ErrorState description={listQuery.error} offline={listQuery.offline} onRetry={() => listQuery.refetch()} />
       ) : !data || data.items.length === 0 ? (
         <EmptyState
           icon={FileWarning}

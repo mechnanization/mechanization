@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import * as React from 'react';
 import { Download, Loader2, MessageCircle, Printer, X } from 'lucide-react';
 import { ar, normalizeDigits } from '@mechanization/shared-schemas';
@@ -88,13 +89,14 @@ function whatsappNumber(raw: string | null): string | null {
  * Official Republic of Lebanon Calligraphy SVG Vector Emblem.
  */
 function LebaneseRepublicCalligraphy({ className }: { className?: string }) {
+  const tCommon = useTranslations('common');
   return (
     <svg
       viewBox="0 0 240 60"
       fill="currentColor"
       className={className}
       xmlns="http://www.w3.org/2000/svg"
-      aria-label="الجمهورية اللبنانية"
+      aria-label={tCommon('republic')}
     >
       <text
         x="50%"

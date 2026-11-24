@@ -4,7 +4,7 @@ import { useTranslations } from 'next-intl';
 import { useEffect, useState } from 'react';
 import { Building2, Loader2, Users } from 'lucide-react';
 import { getLabels, isUnoccupied } from '@mechanization/shared-schemas';
-import { getParcelRoster, logApiError, type ParcelRoster } from '@/lib/api-client';
+import { ApiRequestError, getParcelRoster, logApiError, type ParcelRoster } from '@/lib/api-client';
 import {
   Dialog,
   DialogContent,
@@ -12,7 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Alert } from '@/components/ui/alert';
+import { ErrorState } from '@/components/ui/states';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 
@@ -49,6 +49,10 @@ export function ParcelRosterDialog({
   const [roster, setRoster] = useState<ParcelRoster | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** The read never reached the server, so the remedy is the connection, not the parcel. */
+  const [offline, setOffline] = useState(false);
+  /** Bumped by «إعادة المحاولة»: the read runs again. */
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     if (!open || !propertyNumber) return;
@@ -65,6 +69,7 @@ export function ParcelRosterDialog({
       .catch((caught) => {
         logApiError(caught);
         if (!cancelled) {
+          setOffline(caught instanceof ApiRequestError && caught.status === 0);
           setError(
             locale === 'en'
               ? 'Could not load this parcel.'
@@ -79,7 +84,7 @@ export function ParcelRosterDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, tenant, token, propertyNumber, locale]);
+  }, [open, tenant, token, propertyNumber, locale, attempt]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -108,9 +113,7 @@ export function ParcelRosterDialog({
         ) : null}
 
         {error ? (
-          <Alert variant="destructive" live="alert">
-            {error}
-          </Alert>
+          <ErrorState compact description={error} offline={offline} onRetry={() => setAttempt((n) => n + 1)} />
         ) : null}
 
         {roster && roster.citizens.length === 0 ? (

@@ -91,6 +91,7 @@ export function ImportCitizensDialog({
   const [error, setError] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const t = useTranslations('citizenImport');
+  const tCommon = useTranslations('common');
   const locale = useLocale();
   const labels = getLabels(locale);
 
@@ -199,7 +200,7 @@ export function ImportCitizensDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        closeLabel="إغلاق"
+        closeLabel={tCommon('close')}
         className="flex max-h-[88dvh] flex-col gap-0 p-0 sm:max-w-2xl"
       >
         <DialogHeader className="shrink-0 space-y-3 border-b p-6 text-start">
@@ -213,7 +214,7 @@ export function ImportCitizensDialog({
             </DialogDescription>
           </div>
 
-          <ol className="flex items-center gap-1" aria-label="خطوات الاستيراد">
+          <ol className="flex items-center gap-1" aria-label={t('steps')}>
             {STEPS.map((step, position) => {
               const isActive = position === stepIndex;
               const behind = position < stepIndex;
@@ -379,7 +380,7 @@ export function ImportCitizensDialog({
                       <span className="font-medium">
                         {column.header}
                         {column.always ? (
-                          <span className="ms-1 text-destructive" aria-label="إلزامي">
+                          <span className="ms-1 text-destructive" aria-label={tCommon('required')}>
                             *
                           </span>
                         ) : null}

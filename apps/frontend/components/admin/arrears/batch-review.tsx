@@ -118,7 +118,7 @@ export function BatchReview({
   };
 
   if (review.error && !review.data) {
-    return <ErrorState title={t('loadFailed')} description={review.refusal ?? review.error} onRetry={review.refetch} />;
+    return <ErrorState title={t('loadFailed')} description={review.refusal ?? review.error} offline={review.offline} onRetry={review.refetch} />;
   }
   if (!review.data) return <LoadingState />;
   const { batch, totals, byYearAndFee, flagged, bills } = review.data;

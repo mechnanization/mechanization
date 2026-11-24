@@ -104,7 +104,7 @@ export default function ArrearsSettingsPage({
       {!canEdit ? (
         <EmptyState icon={Settings2} title={t('notAllowedTitle')} description={t('notAllowedBody')} />
       ) : settings.error && !settings.data ? (
-        <ErrorState title={t('loadFailed')} description={settings.refusal ?? settings.error} onRetry={settings.refetch} />
+        <ErrorState title={t('loadFailed')} description={settings.refusal ?? settings.error} offline={settings.offline} onRetry={settings.refetch} />
       ) : (
         <>
           {error ? (

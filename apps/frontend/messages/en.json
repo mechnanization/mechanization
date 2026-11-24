@@ -1,5 +1,10 @@
 {
   "common": {
+    "closeMenu": "Close menu",
+    "menu": "Menu",
+    "openInWhatsapp": "Open in WhatsApp",
+    "parcelsMap": "Parcels map",
+    "republic": "Lebanese Republic",
     "sharedUnitBill": "Shared unit {building} / {unit} — people registered: {count}",
     "sharedBillReceipts": "Bill receipts",
     "appName": "Municipal Register",
@@ -138,6 +143,27 @@
     "propertiesSummary": "Registered Properties & Units",
     "invoicesSummary": "Invoices & Demands",
     "askAtMunicipality": "Visit the municipality with your ID card and a clerk will look it up."
+  },
+  "zones": {
+    "deleted": {
+      "title": "Zone deleted",
+      "description": "{name} — its {count} parcels now have no zone."
+    }
+  },
+  "themeToggle": {
+    "group": "Interface theme",
+    "theme": "Theme",
+    "light": "Light",
+    "dark": "Dark",
+    "system": "System",
+    "cycle": "Theme: {mode}. Press to switch.",
+    "cycleTitle": "Theme: {mode} — press to switch",
+    "systemResolved": "System ({mode})"
+  },
+  "errorState": {
+    "title": "Could not load the data",
+    "offlineTitle": "No connection",
+    "retry": "Try again"
   },
   "pager": {
     "pages": "Pages",
@@ -3940,6 +3966,8 @@
     }
   },
   "billReceipts": {
+    "recordNotFound": "The payment record could not be found.",
+    "openFailed": "The receipt could not be opened — you can issue it from the citizen's file.",
     "title": "Receipts on this bill",
     "open": "Bill receipts",
     "loading": "Loading the receipts…",
@@ -4179,6 +4207,7 @@
     }
   },
   "citizenImport": {
+    "steps": "Import steps",
     "possibleDuplicatesHeading": "Rows that resemble someone already on file",
     "possibleDuplicatesNote": "These will be imported and held at “{status}” with “{flag}”, for someone to check whether it is the same person.",
     "resembles": "Resembles: {names}",

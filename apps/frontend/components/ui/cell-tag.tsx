@@ -28,7 +28,7 @@ import { cn } from '@/lib/utils';
 /*
  * Tokens, never raw palette colours. `--success`, `--warning` and `--info` are
  * re-declared for the dark theme, so one class is correct in both; a literal
- * `text-emerald-700` would need a `dark:` twin that somebody has to remember.
+ * palette class would need a `dark:` twin that somebody has to remember.
  */
 const TONE = {
   /** The ordinary case: a value that is just a value. */
