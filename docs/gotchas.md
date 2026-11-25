@@ -1715,12 +1715,12 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
   transparent, but the page behind it kept the dark theme's background, and
   Chromium paints the page margins from the root's `color-scheme`, not from any
   background.
-- **Do this:** print through `documentPrintCss` in
-  `components/admin/finance/official-document.tsx`, which sets
-  `color-scheme: light` and a white `html, body` in print. Check a new printed
-  document with `page.pdf({ printBackground: true })` from a dark theme.
-- **Where:** `official-document.tsx`; the four printed documents share it — the
-  daily report, «أمر الصرف», «سند القبض» and «سند المناقلة» (`transfer-document.tsx`).
+- **Do this:** print through `data-print-root`, whose rules in `app/globals.css` set
+  `color-scheme: light` and a white `html, body` in print (since PAGE-12, 2026-11-25; before it the treasury's
+  documents did this through a per-document stylesheet, `documentPrintCss`, and the statement and the request paper
+  did not). Check a new printed document with `page.pdf({ printBackground: true })` from a dark theme.
+- **Where:** `app/globals.css`; every printed document is a print root — the daily report, «أمر الصرف», «سند القبض»,
+  «سند المناقلة» (`transfer-document.tsx`), the arrears sheet, the account statement, the request paper and the bulk receipt.
 
 ### A re-read that tidies a selection can orphan its retry key
 

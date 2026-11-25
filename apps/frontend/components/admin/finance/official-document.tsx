@@ -127,53 +127,6 @@ export function SignatureBlock({ title, note }: { title: string; note?: string }
 }
 
 /**
- * The print rules for one document, by the id of its outermost element.
- *
- * The admin shell is around every page, so the global print rules
- * (`globals.css`) already hide `body *` for the citizen receipt; these un-hide
- * the document alone and lift it to the top of the sheet, the receipt's own
- * method. The sidebar, the header and the buttons stay hidden. The sheet is
- * mounted only while the document is, and comes after `globals.css`, so its
- * `@page` replaces the receipt's A5 for as long as the document is on screen.
- *
- * Black on white whatever the theme: a signed paper record must not come out
- * grey because the screen was dark (COL-9, the printed-document exception).
- * The page behind the document too — with «Background graphics» ticked, which
- * a clerk does to get the crest in colour, a dark theme printed the whole
- * sheet black under black ink; and the margins are painted from the colour
- * scheme, not the background, so that is set back to light as well.
- * Physical `left` is the print exception RTL-1 names.
- */
-export function documentPrintCss(id: string, page: 'A4 portrait' | 'A4 landscape'): string {
-  return `
-@media print {
-  @page { size: ${page}; margin: 10mm; }
-  html { color-scheme: light !important; }
-  html, body { background: #fff !important; }
-  #${id}, #${id} * { visibility: visible; }
-  #${id} {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-    border: 0;
-    box-shadow: none;
-    padding: 0;
-    background: #fff;
-  }
-  #${id}, #${id} * {
-    color: #000 !important;
-    border-color: #000 !important;
-    background: transparent !important;
-    overflow: visible !important;
-  }
-  #${id} section { break-inside: avoid; }
-  #${id} tr { break-inside: avoid; }
-}
-`;
-}
-
-/**
  * Opens the browser's print dialog once, when `ready` first turns true — for a
  * page reached from a «طباعة» button, which promises the dialog rather than a
  * second click.

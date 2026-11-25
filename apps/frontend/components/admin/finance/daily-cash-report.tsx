@@ -15,14 +15,11 @@ import {
   LetterheadCrest,
   LetterheadLines,
   SignatureBlock,
-  documentPrintCss,
   type MunicipalLetterhead,
 } from './official-document';
 import { TreasuryAmount } from './treasury-amount';
 
 /** Eight columns of figures, each with its unit, do not fit a portrait page at a size anyone can read. */
-const PRINT_CSS = documentPrintCss('daily-cash-report', 'A4 landscape');
-
 /**
  * «تقرير الصندوق اليومي» — one municipal day on one sheet, to print and sign.
  *
@@ -47,9 +44,7 @@ export function DailyCashReport({
   const moved = report.wallets.filter((wallet) => wallet.movements > 0);
 
   return (
-    <article id="daily-cash-report" className="space-y-6 rounded-lg border bg-card p-4 text-sm shadow-sm sm:p-6">
-      <style>{PRINT_CSS}</style>
-
+    <article data-print-root data-print-page="landscape" className="space-y-6 rounded-lg border bg-card p-4 text-sm shadow-sm sm:p-6">
       <header className="flex flex-wrap items-start justify-between gap-4 border-b pb-4">
         <LetterheadLines letterhead={letterhead} />
         <LetterheadCrest crest={letterhead.crest} />

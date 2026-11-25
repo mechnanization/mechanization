@@ -560,13 +560,38 @@
     position: static !important;
   }
 
-  [data-print-root] tr {
+  [data-print-root] tr,
+  [data-print-root] section {
     break-inside: avoid;
+  }
+
+  /*
+   * Light, not only white: the margins around the sheet are painted from the
+   * colour scheme, not from the background, so a dark theme printed them dark
+   * under "background graphics". The treasury's printed documents set this for
+   * themselves before they moved onto the print root; now every document gets it.
+   */
+  html:has([data-print-root]) {
+    color-scheme: light !important;
   }
 
   @page register {
     size: A4 portrait;
     margin: 12mm;
+  }
+
+  /*
+   * The one landscape document, the daily cash report (`data-print-page="landscape"`
+   * on its root). Each page size is named here, once, rather than in a stylesheet
+   * each document mounts.
+   */
+  [data-print-root][data-print-page='landscape'] {
+    page: register-landscape;
+  }
+
+  @page register-landscape {
+    size: A4 landscape;
+    margin: 10mm;
   }
 }
 

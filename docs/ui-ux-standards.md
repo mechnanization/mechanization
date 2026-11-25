@@ -287,10 +287,8 @@ Token values, light and dark: [DESIGN.md](../DESIGN.md) "Colors".
     needs a build step that turns the HSL triples into strings.
   - The printed receipt and the receipt PDF canvas, which must print black on
     white whatever the theme, and the printed treasury documents —
-    «تقرير الصندوق اليومي», «أمر الصرف», «سند القبض» and «سند المناقلة» — through one print
-    stylesheet, `documentPrintCss` in
-    `components/admin/finance/official-document.tsx` (on screen they use
-    tokens). They should become `--paper` and `--ink` tokens.
+    «تقرير الصندوق اليومي», «أمر الصرف», «سند القبض» and «سند المناقلة» — through the print
+    root's rules in `app/globals.css` (on screen they use tokens). They should become `--paper` and `--ink` tokens.
   - QR codes, which need fixed dark-on-light.
   - `app/global-error.tsx`, which renders outside the token tree, and the web
     manifest's `background_color` and `theme_color`.
@@ -1093,10 +1091,11 @@ PAGE-01); `messages.nav` is the nav's names now (NAV-10).
     toasts, which also retired the row that said two of them fired twice.
 
 - **Printing** (PRIM-28): a page with no print root prints the receipt rule's blank sheet;
-  only the treasury statement has one. «تقرير الصندوق اليومي» (`finance/daily/report`, PR #106)
-  was written before PRIM-28 and prints by its own sheet instead (`PRINT_CSS` in
-  `daily-cash-report.tsx`: A4 landscape, `#daily-cash-report` made visible over the receipt
-  rule); it should move to a print root. Not printed in the harness since the merge.
+  every printed document has one now. «تقرير الصندوق اليومي» (`finance/daily/report`, PR #106),
+  «أمر الصرف», «سند القبض», «سند المناقلة» and the arrears sheet printed by a stylesheet each (`documentPrintCss`)
+  until PAGE-12 (2026-11-25) moved them onto `data-print-root`; the daily report is A4 landscape through
+  `data-print-page="landscape"` and `@page register-landscape` in `app/globals.css`. Not printed in the
+  harness since the move.
   «طباعة الوصل» printed only the receipt's top strip,
   repeated on every A5 sheet, because its dialog is fixed and one screen tall (it predates
   PR #104); fixed 2026-10-09 by releasing the dialog in print. The drawn receipt is 653px

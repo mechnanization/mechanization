@@ -1627,6 +1627,15 @@ Each pass first lands the tasks already listed for its pages (named below); what
 - **Files:** `buildings/unsurveyed`, `buildings/reinspections` (NAV-04), `cases/page.tsx` (546; `loadSession`; hand-rolled tabs `case-queue-tabs.tsx` UX-08; unbounded list PAG-02/03), `cases/[caseId]/edit`, `cases/new`.
 - **Depends on:** NAV-04, PAG-03, ARCH-18
 - **Acceptance criteria / Verification:** as PAGE-07.
+- **Done 2026-11-25 (part; stays In Progress):** `cases/page.tsx`, `case-queue-tabs.tsx`, `use-case-columns.tsx`, `case-link-dialogs.tsx` and `use-case-linking.ts`
+  wrote about 60 strings inline in two languages; they are `cases.columns`, `cases.actions`, `cases.queues`, `cases.linking` and `cases.unlink` now, the list
+  separator is `common.listSeparator`, and `CASE_TABS` carries ids only. «تحديث» was not there; a status change was guarded by `busyId` state alone, so
+  **one status change or delete runs at a time through a ref** set before the state; a failed re-read **keeps the rows and says so**
+  (`readView`, `RefreshFailedAlert`) where it replaced them with an error. `lib/page-10.test.ts` renders the table's headers and actions, the tabs, the
+  unlink confirmation and the unlink write in both languages. The group's other files were already clean: `buildings/worklists` (NAV-04) and
+  `case-editor.tsx` (no inline copy, 414 lines). **Open:** the list's server paging, with its tab counts, the zone filter and the conversion strip,
+  waits for `GET cases` to take them (PAG-03, Hashem; D3-287). `link-case-citizen-dialog.tsx` has one inline pair of its own (`caseLinkUnit`'s fallback
+  label), outside this pass. **Not done:** nothing rendered in a browser.
 
 ## [PAGE-11] Bring the fees and collection pages to the page contract
 - **Priority:** P2 · **Assignee:** Abed · **Estimate:** L · **Category:** UI/UX
@@ -1640,6 +1649,17 @@ Each pass first lands the tasks already listed for its pages (named below); what
 - **Problem:** The most recently rebuilt group; mainly the print-mechanism unification (CQ Frontend) and the shared header rule.
 - **Depends on:** none
 - **Acceptance criteria / Verification:** as PAGE-07; `print-pages.test.ts`, `transfer-screens.test.ts` pass.
+- **Done 2026-11-25 (part; stays In Progress):** **the print mechanism is one.** «تقرير الصندوق اليومي», «أمر الصرف», «سند القبض», «سند المناقلة»
+  and the arrears sheet printed by `documentPrintCss` (hide by `visibility`, lift the root with `position: absolute`, a stylesheet each); they
+  are `data-print-root`s now, as the account statement, the request paper and the bulk receipt were, and `documentPrintCss` is deleted. What only it
+  did moved to `globals.css` for every document: `color-scheme: light` (the margins print from it, so a document without it, the statement among them, was exposed to dark ones
+  from a dark theme), a section kept whole across a sheet, and the daily report's landscape sheet, named `register-landscape` and chosen by
+  `data-print-page="landscape"`. Named pages are the mechanism the statement and the request paper already relied on; a browser that does not take
+  them prints a document on the receipt's A5 sheet. `lib/print-roots.test.ts`. The other items measured clean: the two headers the audit's
+  count flagged (`transactions`, `movements`) are three controls or fewer (the rest were phone-only or conditional), the group's copy is in
+  messages (its 7 "inline" hits are locale logic), the reads use `readView`. **Open:** `record-expense-form.tsx` (740 lines) and
+  `record-transfer-form.tsx` (688), one function each, carrying the money keys `expense:pay`, `expense:request` and `transfer:new`: a phased split
+  with a render net first, in follow-up PRs. **Not done:** the print preview in a browser, in light and dark; nothing rendered.
 
 ## [PAGE-13] Bring the review and audit pages to the page contract
 - **Priority:** P2 · **Assignee:** Abed · **Estimate:** M · **Category:** UI/UX

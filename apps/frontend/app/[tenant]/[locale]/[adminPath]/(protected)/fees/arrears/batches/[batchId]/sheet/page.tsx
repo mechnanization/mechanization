@@ -88,7 +88,7 @@ export default function ArrearsBatchSheetPage({
         </Card>
       ) : (
         <>
-          {/* Outside `#arrears-batch-sheet`, so the print rules leave it off the paper. */}
+          {/* Outside the `data-print-root`, so the print rules leave it off the paper. */}
           {view.state === 'ready' && view.refreshFailed ? (
             <RefreshFailedAlert message={view.refreshFailed} onRetry={sheet.refetch} />
           ) : null}

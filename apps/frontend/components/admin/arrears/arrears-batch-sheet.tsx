@@ -11,11 +11,8 @@ import {
   LetterheadCrest,
   LetterheadLines,
   SignatureBlock,
-  documentPrintCss,
   type MunicipalLetterhead,
 } from "@/components/admin/finance/official-document";
-
-const PRINT_CSS = documentPrintCss("arrears-batch-sheet", "A4 portrait");
 
 /**
  * «ورقة دفعة متأخرات سنوات سابقة» (old debts task 11, docs/old-debts-plan.md §8):
@@ -44,9 +41,7 @@ export function ArrearsBatchSheetDocument({
   const figure = (count: number, amount: number) => <bdi>{t("figure", { count, amount: formatLbp(amount, locale) })}</bdi>;
 
   return (
-    <article id="arrears-batch-sheet" data-print-root className="space-y-6 rounded-lg border bg-card p-4 text-sm shadow-sm sm:p-6">
-      <style>{PRINT_CSS}</style>
-
+    <article data-print-root className="space-y-6 rounded-lg border bg-card p-4 text-sm shadow-sm sm:p-6">
       <header className="flex flex-wrap items-start justify-between gap-4 border-b pb-4">
         <LetterheadLines letterhead={letterhead} />
         <LetterheadCrest crest={letterhead.crest} />

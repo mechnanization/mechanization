@@ -11,12 +11,9 @@ import {
   LetterheadCrest,
   LetterheadLines,
   SignatureBlock,
-  documentPrintCss,
   type MunicipalLetterhead,
 } from './official-document';
 import { TreasuryAmount } from './treasury-amount';
-
-const PRINT_CSS = documentPrintCss('transfer-document', 'A4 portrait');
 
 /** How far the rate used strays from the official one, in percent, two places. */
 function deviationOf(rate: number, official: number): number {
@@ -58,11 +55,9 @@ export function TransferDocument({
 
   return (
     <article
-      id="transfer-document"
+      data-print-root
       className="mx-auto w-full max-w-3xl space-y-6 rounded-lg border bg-card p-4 text-sm shadow-sm sm:p-8"
     >
-      <style>{PRINT_CSS}</style>
-
       <header className="flex flex-wrap items-start justify-between gap-4 border-b pb-4">
         <LetterheadLines letterhead={letterhead} />
         <LetterheadCrest crest={letterhead.crest} />

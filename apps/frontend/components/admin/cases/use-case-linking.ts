@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { useTranslations } from 'next-intl';
 import {
   ApiRequestError,
   getCase,
@@ -38,6 +39,8 @@ export function useCaseLinking({
   load: () => Promise<void>;
 }) {
   const toast = useToast();
+  const t = useTranslations('cases.linking');
+  const tCommon = useTranslations('common');
   const queryClient = useQueryClient();
 
   const [linking, setLinking] = useState<CaseSummary | null>(null);
@@ -105,8 +108,7 @@ export function useCaseLinking({
     async (submission: CaseLinkSubmission) => {
       if (!token || !linking || linkInFlight.current) return;
       linkInFlight.current = true;
-      const en = locale === 'en';
-      const list = (names: string[]) => names.join(en ? ', ' : '، ');
+      const list = (names: string[]) => names.join(tCommon('listSeparator'));
       setLinkSubmitting(true);
       setLinkError(null);
 
@@ -154,19 +156,11 @@ export function useCaseLinking({
         current = null;
         await updateCase(tenant, token, linking.id, { resolvedCitizenId: submission.primaryId });
         await (recorded.length > 0 ? reloadAfterRecording() : load());
-        toast.success(en ? 'Case linked and resolved' : 'تم ربط الحالة ووضعها محلولة', {
+        toast.success(t('linked'), {
           description: [
             primaryName,
-            recorded.length > 0
-              ? en
-                ? `recorded on the unit: ${list(recorded.map((person) => person.name))}`
-                : `سُجِّل على الوحدة: ${list(recorded.map((person) => person.name))}`
-              : null,
-            otherCasesClosed > 0
-              ? en
-                ? `${otherCasesClosed} other open case(s) on this unit were closed too`
-                : `وأُغلقت ${otherCasesClosed} حالة مفتوحة أخرى على هذه الوحدة`
-              : null,
+            recorded.length > 0 ? t('recordedOnUnit', { names: list(recorded.map((person) => person.name)) }) : null,
+            otherCasesClosed > 0 ? t('otherClosedToast', { count: otherCasesClosed }) : null,
           ]
             .filter(Boolean)
             .join(' — '),
@@ -174,8 +168,7 @@ export function useCaseLinking({
         openLink(null);
       } catch (caught) {
         logApiError(caught);
-        const reason =
-          caught instanceof ApiRequestError ? caught.message : en ? 'The request failed.' : 'تعذّر الطلب.';
+        const reason = caught instanceof ApiRequestError ? caught.message : t('requestFailed');
         const failed: CaseLinkPerson | null = current;
         const notTried = failed
           ? toRecord.slice(toRecord.indexOf(failed) + 1).map((person) => person.name)
@@ -192,44 +185,18 @@ export function useCaseLinking({
 
         setLinkError(
           [
-            recorded.length > 0
-              ? en
-                ? `Recorded on the unit: ${list(recorded.map((person) => person.name))}.`
-                : `سُجِّل على الوحدة: ${list(recorded.map((person) => person.name))}.`
-              : null,
+            recorded.length > 0 ? t('failRecorded', { names: list(recorded.map((person) => person.name)) }) : null,
             failed
-              ? en
-                ? `Not recorded: ${failed.name} — ${reason}`
-                : `لم يُسجَّل ${failed.name}: ${reason}`
-              : en
-                ? `Could not link the case to ${primaryName}: ${reason}`
-                : `تعذّر ربط الحالة بـ${primaryName}: ${reason}`,
-            notTried.length > 0
-              ? en
-                ? `Not attempted: ${list(notTried)}.`
-                : `لم يُحاوَل تسجيل: ${list(notTried)}.`
-              : null,
-            otherCasesClosed > 0
-              ? en
-                ? `${otherCasesClosed} other open case(s) on this unit were closed.`
-                : `أُغلقت ${otherCasesClosed} حالة مفتوحة أخرى على هذه الوحدة.`
-              : null,
+              ? t('failNotRecorded', { name: failed.name, reason })
+              : t('failCouldNotLink', { name: primaryName, reason }),
+            notTried.length > 0 ? t('failNotAttempted', { names: list(notTried) }) : null,
+            otherCasesClosed > 0 ? t('failOtherClosed', { count: otherCasesClosed }) : null,
             fresh?.resolvedCitizenId
-              ? en
-                ? `The case is now resolved and linked to ${fresh.resolvedCitizenName ?? '—'}: recording someone on its unit closes the unit's open cases.`
-                : `الحالة الآن محلولة ومرتبطة بـ${fresh.resolvedCitizenName ?? '—'}: تسجيل شخص على وحدتها يُغلق حالاتها المفتوحة.`
+              ? t('failNowLinked', { name: fresh.resolvedCitizenName ?? '—' })
               : fresh || !everRecorded
-                ? en
-                  ? 'The case is not linked.'
-                  : 'لم تُربط الحالة.'
-                : en
-                  ? 'The case could not be re-read — the list shows whether it is linked.'
-                  : 'تعذّرت إعادة قراءة الحالة — القائمة تُظهر هل رُبطت.',
-            everRecorded
-              ? en
-                ? 'Whoever was recorded stays on the unit; pressing "Link" again links them without recording them twice.'
-                : 'من سُجِّل يبقى على الوحدة؛ الضغط على «ربط» من جديد يربطهم دون تسجيلهم مرة ثانية.'
-              : null,
+                ? t('failNotLinked')
+                : t('failRereadFailed'),
+            everRecorded ? t('failStays') : null,
           ]
             .filter(Boolean)
             .join(' '),
@@ -248,7 +215,7 @@ export function useCaseLinking({
         setLinkSubmitting(false);
       }
     },
-    [tenant, token, linking, linkRecorded, load, reloadAfterRecording, openLink, toast, locale],
+    [tenant, token, linking, linkRecorded, load, reloadAfterRecording, openLink, toast, locale, t, tCommon],
   );
 
   /**
@@ -259,38 +226,23 @@ export function useCaseLinking({
    */
   const unlinkCitizen = useCallback(
     async (item: CaseSummary) => {
-      const en = locale === 'en';
-      if (!token) throw new Error(en ? 'Your session has ended.' : 'انتهت الجلسة.');
-      if (linkInFlight.current) {
-        throw new Error(
-          en ? 'Another change to this case is still being saved.' : 'ما زال تعديل آخر على الحالة قيد الحفظ.',
-        );
-      }
+      if (!token) throw new Error(t('sessionEnded'));
+      if (linkInFlight.current) throw new Error(t('stillSaving'));
       linkInFlight.current = true;
       try {
         await updateCase(tenant, token, item.id, { resolvedCitizenId: null });
         await load();
-        toast.success(en ? 'Link removed' : 'أُزيل الربط', {
-          description: caseLinkUnit(item, locale)
-            ? en
-              ? 'Nobody was taken off the unit.'
-              : 'لم يُخرَج أحد من الوحدة.'
-            : undefined,
+        toast.success(t('unlinked'), {
+          description: caseLinkUnit(item, locale) ? t('unlinkedNobody') : undefined,
         });
       } catch (caught) {
         logApiError(caught);
-        throw new Error(
-          caught instanceof ApiRequestError
-            ? caught.message
-            : en
-              ? 'Could not remove the link.'
-              : 'تعذّر إلغاء الربط.',
-        );
+        throw new Error(caught instanceof ApiRequestError ? caught.message : t('unlinkFailed'));
       } finally {
         linkInFlight.current = false;
       }
     },
-    [tenant, token, load, toast, locale],
+    [tenant, token, load, toast, locale, t],
   );
 
   /** Who the census records on the case being linked, plus whoever this dialog has recorded since it opened. */

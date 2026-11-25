@@ -2,6 +2,7 @@
 
 import { useMemo } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import type { ColumnDef } from '@tanstack/react-table';
 import { CalendarClock, CheckCircle2, Grid3x3, Link2, Pencil, RotateCcw, Trash2, UserPlus } from 'lucide-react';
 import { getLabels } from '@mechanization/shared-schemas';
@@ -40,12 +41,15 @@ export function useCaseColumns({
 }): ColumnDef<CaseSummary>[] {
   const router = useRouter();
   const labels = getLabels(locale);
+  const t = useTranslations('cases.columns');
+  const tA = useTranslations('cases.actions');
+  const tCommon = useTranslations('common');
 
   return useMemo<ColumnDef<CaseSummary>[]>(
     () => [
       {
         accessorKey: 'notes',
-        header: locale === 'en' ? 'What happened' : 'ماذا حصل',
+        header: t('notes'),
         cell: ({ row }) => (
           <span className="block max-w-xs truncate" title={row.original.notes}>
             {row.original.notes}
@@ -56,7 +60,7 @@ export function useCaseColumns({
         // The property's identifier — the census code and the flat when the
         // case is pinned to them, else the number the officer wrote at the door.
         accessorKey: 'propertyNumber',
-        header: locale === 'en' ? 'Property ID' : 'رقم العقار',
+        header: t('property'),
         cell: ({ row }) => {
           const item = row.original;
           const id = item.buildingCode
@@ -75,7 +79,7 @@ export function useCaseColumns({
       },
       {
         accessorKey: 'status',
-        header: locale === 'en' ? 'Status' : 'الحالة',
+        header: t('status'),
         cell: ({ row }) => {
           const item = row.original;
           return (
@@ -97,8 +101,7 @@ export function useCaseColumns({
                   promise nobody can plan around. */}
               {item.scheduledRevisitAt ? (
                 <p className="text-xs text-muted-foreground">
-                  {locale === 'en' ? 'Revisit ' : 'العودة '}
-                  {formatDate(item.scheduledRevisitAt)}
+                  {t('revisit', { date: formatDate(item.scheduledRevisitAt) })}
                 </p>
               ) : null}
               {item.resolvedCitizenName ? (
@@ -119,17 +122,17 @@ export function useCaseColumns({
       },
       {
         accessorKey: 'createdByName',
-        header: locale === 'en' ? 'Logged By' : 'سجّلها',
+        header: t('loggedBy'),
         cell: ({ row }) => row.original.createdByName ?? <span className="text-muted-foreground text-xs">—</span>,
       },
       {
         accessorKey: 'createdAt',
-        header: locale === 'en' ? 'Date' : 'التاريخ',
+        header: t('date'),
         cell: ({ row }) => formatDate(row.original.createdAt),
       },
       {
         id: 'actions',
-        header: locale === 'en' ? 'Actions' : 'إجراء',
+        header: t('actions'),
         enableSorting: false,
         meta: { mobile: 'actions' },
         cell: ({ row }) => {
@@ -139,11 +142,8 @@ export function useCaseColumns({
           const occupied = residents.length > 0;
           const who = residents
             .map((person) => `${person.name} (${labels.occupancyType[person.role as never] ?? person.role})`)
-            .join(locale === 'en' ? ', ' : '، ');
-          const registerBlocked =
-            locale === 'en'
-              ? `Someone already lives on this unit, registered: ${who} — link the case to them instead.`
-              : `الوحدة مسكونة ومسجَّلة: ${who} — اربط الحالة به بدلاً من تسجيل مواطن جديد.`;
+            .join(tCommon('listSeparator'));
+          const registerBlocked = tA('registerBlocked', { who });
 
           if (!canWrite) return null;
 
@@ -173,12 +173,12 @@ export function useCaseColumns({
                     </span>
                   </ActionTooltip>
                 ) : (
-                <ActionTooltip label={locale === 'en' ? 'Register Citizen' : 'تسجيل المواطن'}>
+                <ActionTooltip label={tA('register')}>
                   <Button
                     variant="outline"
                     size="icon-sm"
                     className="border-primary/40 text-primary hover:bg-primary/5"
-                    aria-label={locale === 'en' ? 'Register Citizen' : 'تسجيل المواطن'}
+                    aria-label={tA('register')}
                     disabled={busy}
                     onClick={() => router.push(`${base}/citizens/new?fromCaseId=${item.id}`)}
                   >
@@ -189,20 +189,12 @@ export function useCaseColumns({
               ) : null}
 
               <ActionTooltip
-                label={
-                  occupied
-                    ? locale === 'en'
-                      ? `Link to a citizen — on this unit: ${who}`
-                      : `ربط بمواطن — على الوحدة: ${who}`
-                    : locale === 'en'
-                      ? 'Link to Citizen'
-                      : 'ربط بمواطن'
-                }
+                label={occupied ? tA('linkOccupied', { who }) : tA('link')}
               >
                 <Button
                   variant="outline"
                   size="icon-sm"
-                  aria-label={locale === 'en' ? 'Link to Citizen' : 'ربط بمواطن'}
+                  aria-label={tA('link')}
                   disabled={busy}
                   onClick={() => openLink(item)}
                 >
@@ -213,24 +205,12 @@ export function useCaseColumns({
               {/* One tap, one step along OPEN → SCHEDULED → RESOLVED. The
                   label names where it goes, never where it is. */}
               <ActionTooltip
-                label={
-                  item.status === 'OPEN'
-                    ? locale === 'en'
-                      ? 'Schedule a revisit'
-                      : 'جدولة زيارة'
-                    : item.status === 'SCHEDULED'
-                      ? locale === 'en'
-                        ? 'Mark resolved'
-                        : 'وضع علامة مُعالجة'
-                      : locale === 'en'
-                        ? 'Reopen'
-                        : 'إعادة فتح'
-                }
+                label={item.status === 'OPEN' ? tA('schedule') : item.status === 'SCHEDULED' ? tA('resolve') : tA('reopen')}
               >
                 <Button
                   variant="outline"
                   size="icon-sm"
-                  aria-label={locale === 'en' ? 'Advance status' : 'تقديم حالة المعاملة'}
+                  aria-label={tA('advance')}
                   disabled={busy}
                   onClick={() => void advanceStatus(item)}
                 >
@@ -247,11 +227,11 @@ export function useCaseColumns({
               {/* A case pinned to a censused structure opens its matrix — the
                   fastest route from "somebody should go back" to the flat. */}
               {item.buildingId ? (
-                <ActionTooltip label={locale === 'en' ? 'Open the unit matrix' : 'فتح مصفوفة الوحدات'}>
+                <ActionTooltip label={tA('openMatrix')}>
                   <Button
                     variant="outline"
                     size="icon-sm"
-                    aria-label={locale === 'en' ? 'Open the unit matrix' : 'فتح مصفوفة الوحدات'}
+                    aria-label={tA('openMatrix')}
                     disabled={busy}
                     onClick={() => setMatrix({ buildingId: item.buildingId!, unitId: item.unitId })}
                   >
@@ -260,11 +240,11 @@ export function useCaseColumns({
                 </ActionTooltip>
               ) : null}
 
-              <ActionTooltip label={locale === 'en' ? 'Edit' : 'تعديل'}>
+              <ActionTooltip label={tA('edit')}>
                 <Button
                   variant="secondary"
                   size="icon-sm"
-                  aria-label={locale === 'en' ? 'Edit' : 'تعديل'}
+                  aria-label={tA('edit')}
                   disabled={busy}
                   onClick={() => router.push(`${base}/cases/${item.id}/edit`)}
                 >
@@ -273,11 +253,11 @@ export function useCaseColumns({
               </ActionTooltip>
 
               {canDelete ? (
-                <ActionTooltip label={locale === 'en' ? 'Delete' : 'حذف'}>
+                <ActionTooltip label={tA('delete')}>
                   <Button
                     variant="outline"
                     size="icon-sm"
-                    aria-label={locale === 'en' ? 'Delete' : 'حذف'}
+                    aria-label={tA('delete')}
                     className="text-destructive hover:bg-destructive/10 hover:text-destructive"
                     disabled={busy}
                     onClick={() => setPendingDelete(item)}
@@ -291,6 +271,6 @@ export function useCaseColumns({
         },
       },
     ],
-    [busyId, canWrite, canDelete, locale, labels, advanceStatus, router, base, setMatrix, openLink, setPendingDelete],
+    [busyId, canWrite, canDelete, labels, t, tA, tCommon, advanceStatus, router, base, setMatrix, openLink, setPendingDelete],
   );
 }

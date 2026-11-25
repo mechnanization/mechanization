@@ -1,6 +1,7 @@
 'use client';
 
 import type { ReactNode } from 'react';
+import { useTranslations } from 'next-intl';
 import { Tabs, TabsContent, TabsCount, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { CASE_TABS } from './case-queues';
 
@@ -30,12 +31,13 @@ export function CaseQueueTabs({
   children: ReactNode;
 }) {
   const en = locale === 'en';
+  const t = useTranslations('cases.queues');
   return (
     <Tabs value={tab} onValueChange={onSelect} dir={en ? 'ltr' : 'rtl'}>
-      <TabsList variant="line" aria-label={en ? 'Case queues' : 'قوائم الحالات'}>
+      <TabsList variant="line" aria-label={t('label')}>
         {CASE_TABS.map((entry) => (
           <TabsTrigger key={entry.id} value={entry.id}>
-            {en ? entry.en : entry.ar}
+            {t(entry.id)}
             <TabsCount>{counts[entry.id] ?? 0}</TabsCount>
           </TabsTrigger>
         ))}

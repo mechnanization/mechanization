@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useCallback, useEffect, useMemo, useState } from 'react';
+import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { ClipboardList, Filter, Plus, TrendingUp, X } from 'lucide-react';
@@ -14,6 +14,7 @@ import {
   updateCase,
 } from '@/lib/api-client';
 import type { CaseSummary } from '@/lib/api-client';
+import { readView } from '@/lib/read-view';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useTabSearch, useUrlPagination, useUrlState } from '@/lib/use-url-state';
@@ -28,6 +29,7 @@ import { DataTable } from '@/components/ui/data-table';
 import { PageHeader } from '@/components/ui/page-header';
 import { useToast } from '@/components/ui/toast';
 import { BuildingUnitMatrixDrawer } from '@/components/admin/building-unit-matrix-drawer';
+import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
 import { CASE_FILTERS, CASE_TABS, TYPED_FILTER_DELAY_MS } from '@/components/admin/cases/case-queues';
 import { nextStatus } from '@/components/admin/cases/case-status';
 import { useCaseColumns } from '@/components/admin/cases/use-case-columns';
@@ -60,6 +62,7 @@ export default function CasesPage({
   const base = `/${tenant}/${locale}/${adminPath}`;
   const toast = useToast();
   const t = useTranslations('cases.page');
+  const tLinking = useTranslations('cases.linking');
   const tCommon = useTranslations('common');
 
   const { token, user: staffUser } = useStaffSession(tenant, base);
@@ -67,6 +70,8 @@ export default function CasesPage({
 
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  /** One status change or delete at a time, whatever `busyId` has caught up with (STA-4). */
+  const writing = useRef(false);
   const [pendingDelete, setPendingDelete] = useState<CaseSummary | null>(null);
 
   // ── Tabs and census filters (P3-T7) ────────────────────────────────
@@ -82,7 +87,7 @@ export default function CasesPage({
     (patch: Parameters<typeof setFilters>[0]) => setFilters(patch, { clear: ['page'] }),
     [setFilters],
   );
-  const setTab = (id: string) => narrow({ tab: id });
+  const setTab = (id: string) => narrow({ tab: id as (typeof CASE_TABS)[number]['id'] });
   const setZoneId = (id: string) => narrow({ zone: id });
   /*
     The two typed boxes filter on every keystroke from local state, as they
@@ -145,6 +150,8 @@ export default function CasesPage({
   });
 
   const allItems = useMemo(() => query.data?.items ?? [], [query.data]);
+  /** A failed re-read keeps the rows on screen and says so; the error takes the table only while nothing has loaded (STA-1). */
+  const view = readView(query.data, query.error);
   // The server's page is `CASES_PAGE_MAX` cases at most (PAG-02); until this page pages on the server (PAG-03), say when that is not all.
   const totalCases = query.data?.total ?? 0;
   const error = actionError;
@@ -267,7 +274,8 @@ export default function CasesPage({
    */
   const advanceStatus = useCallback(
     async (item: CaseSummary) => {
-      if (!token) return;
+      if (!token || writing.current) return;
+      writing.current = true;
       const next = nextStatus(item.status);
       setBusyId(item.id);
       try {
@@ -284,6 +292,7 @@ export default function CasesPage({
           description: message,
         });
       } finally {
+        writing.current = false;
         setBusyId(null);
       }
     },
@@ -293,6 +302,8 @@ export default function CasesPage({
   const removeCase = useCallback(
     async (item: CaseSummary) => {
       if (!token) throw new Error(t('sessionEnded'));
+      if (writing.current) throw new Error(tLinking('stillSaving'));
+      writing.current = true;
       setBusyId(item.id);
       try {
         await deleteCase(tenant, token, item.id);
@@ -304,10 +315,11 @@ export default function CasesPage({
         setActionError(message);
         throw new Error(message);
       } finally {
+        writing.current = false;
         setBusyId(null);
       }
     },
-    [tenant, token, load, toast, t],
+    [tenant, token, load, toast, t, tLinking],
   );
 
   const clearFilters = () => {
@@ -372,6 +384,10 @@ export default function CasesPage({
         </Alert>
       ) : null}
 
+      {view.state === 'ready' && view.refreshFailed ? (
+        <RefreshFailedAlert message={view.refreshFailed} onRetry={query.refetch} />
+      ) : null}
+
       {totalCases > allItems.length ? (
         <Alert variant="warning" live="status">
           {t('truncated', { shown: allItems.length, total: totalCases })}
@@ -428,7 +444,7 @@ export default function CasesPage({
             columnStorageKey="cases"
             getRowId={(row) => row.id}
             loading={query.loading}
-            error={query.error}
+            error={view.state === 'failed' ? view.error : null}
             onRetry={query.refetch}
             searchValue={search}
             onSearchChange={setSearch}
