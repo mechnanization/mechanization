@@ -1,3 +1,6 @@
+'use client';
+
+import { useTranslations } from 'next-intl';
 import { Check, FileQuestion, Loader2, Undo2 } from 'lucide-react';
 import { approveRecord, returnRecord, type ReviewQueueItem } from '@/lib/quality-api';
 import { Button } from '@/components/ui/button';
@@ -31,7 +34,7 @@ export function RecordActions({
   /** The queue's one write: it says what happened and reads the queue again. */
   act: (registrationId: string, run: () => Promise<unknown>, done: string) => void;
 }): React.JSX.Element {
-  const en = locale === 'en';
+  const t = useTranslations('recordReview.actions');
 
   return (
     <>
@@ -44,7 +47,7 @@ export function RecordActions({
             act(
               item.registrationId,
               () => returnRecord(tenant, token!, item.registrationId, input),
-              en ? 'Returned to the officer' : 'أُعيد السجل إلى الموظف',
+              t('returned'),
             )
           }
         />
@@ -85,7 +88,7 @@ export function RecordActions({
               onClick={() => setCompleting(item)}
             >
               <FileQuestion className="size-4" aria-hidden />
-              {en ? 'Fill in the gaps' : 'استكمال الناقص'}
+              {t('fill')}
             </Button>
           ) : null}
           {item.state !== 'RETURNED' ? (
@@ -97,7 +100,7 @@ export function RecordActions({
               onClick={() => setReturning(item.registrationId)}
             >
               <Undo2 className="size-4" aria-hidden />
-              {en ? 'Return to the officer' : 'إعادة إلى الموظف'}
+              {t('return')}
             </Button>
           ) : null}
           <Button
@@ -108,7 +111,7 @@ export function RecordActions({
               act(
                 item.registrationId,
                 () => approveRecord(tenant, token!, item.registrationId),
-                en ? 'Record approved' : 'تم اعتماد السجل',
+                t('approved'),
               )
             }
           >
@@ -117,7 +120,7 @@ export function RecordActions({
             ) : (
               <Check className="size-4" aria-hidden />
             )}
-            {item.state === 'APPROVED' ? (en ? 'Approve again' : 'إعادة الاعتماد') : en ? 'Approve' : 'اعتماد'}
+            {item.state === 'APPROVED' ? t('approveAgain') : t('approve')}
           </Button>
         </div>
       )}

@@ -836,7 +836,129 @@
     }
   },
   "recordReview": {
-    "pages": "Pages of records"
+    "pages": "Pages of records",
+    "loadFailed": "Could not load the review queue.",
+    "loading": "Loading records…",
+    "saveFailed": "The decision was not saved.",
+    "filters": {
+      "state": "Review state",
+      "officer": "Filed by",
+      "everyone": "Everyone",
+      "flagged": "Unverified fields only"
+    },
+    "tabs": {
+      "TO_REVIEW": "To review",
+      "RETURNED": "With officers",
+      "APPROVED": "Approved"
+    },
+    "empty": {
+      "TO_REVIEW": "Nothing waiting for review",
+      "RETURNED": "No record is with an officer",
+      "APPROVED": "No approved records yet",
+      "toReviewBody": "Every filed record has been looked at."
+    },
+    "state": {
+      "NEW": "New",
+      "CORRECTED": "Corrected — needs review",
+      "CHANGED": "Edited since approval",
+      "RETURNED": "With the officer",
+      "APPROVED": "Approved"
+    },
+    "card": {
+      "filedBy": "Filed by",
+      "unknown": "unknown",
+      "filedOn": "Filed on",
+      "lastEdited": "Last edited",
+      "recordRef": "Record ref.",
+      "mother": "Mother",
+      "household": "Household",
+      "householdCount": "{count}",
+      "residence": "Residence",
+      "properties": "Properties",
+      "noProperty": "none on this record",
+      "property": "Property",
+      "propertyNumbered": "Property {number}",
+      "type": "Type",
+      "occupancy": "Occupancy",
+      "parcel": "Parcel",
+      "building": "Building",
+      "units": "Units",
+      "unitCount": "{count}",
+      "area": "Area",
+      "areaValue": "{area} m²",
+      "unconfirmed": "Fields left unconfirmed",
+      "note": "Officer’s note"
+    },
+    "history": {
+      "title": "Review history ({count})",
+      "approved": "Approved",
+      "returned": "Returned",
+      "unknown": "unknown",
+      "corrected": "Corrected",
+      "waiting": "Waiting on the officer"
+    },
+    "actions": {
+      "fill": "Fill in the gaps",
+      "return": "Return to the officer",
+      "returned": "Returned to the officer",
+      "approve": "Approve",
+      "approveAgain": "Approve again",
+      "approved": "Record approved"
+    },
+    "returnForm": {
+      "fields": "What needs correcting?",
+      "reason": "What should the officer do?",
+      "placeholder": "e.g. the phone is the landlord’s — visit and record the occupant’s own number",
+      "cancel": "Cancel",
+      "send": "Send back"
+    }
+  },
+  "qualityChecks": {
+    "loadFailed": "Could not load the checks.",
+    "loading": "Loading…",
+    "saveFailed": "Not saved.",
+    "sample": {
+      "from": "Records filed from",
+      "to": "to",
+      "share": "Share of each officer’s records (%)",
+      "draw": "Draw a sample",
+      "drawn": "{count} record(s) added to the sample",
+      "covered": "The sample already covers this period",
+      "drawFailed": "Could not draw a sample."
+    },
+    "status": {
+      "OPEN": "To check",
+      "DONE": "Checked"
+    },
+    "empty": {
+      "OPEN": "No open checks",
+      "DONE": "No completed checks yet",
+      "openBody": "Draw a sample from a period above."
+    },
+    "card": {
+      "type": "Type",
+      "occupancy": "Occupancy",
+      "parcel": "Parcel",
+      "building": "Building",
+      "units": "Units",
+      "matches": "Matches the record",
+      "differs": "Differs from the record",
+      "assignedTo": "Assigned to",
+      "anyone": "Anyone but the filer",
+      "assigned": "Assignment saved",
+      "record": "Record what you found",
+      "recorded": "Check recorded",
+      "forName": "For {name}",
+      "unassigned": "Unassigned",
+      "filedBy": "Filed by"
+    },
+    "answer": {
+      "matches": "What I found matches the record",
+      "differs": "Something is different",
+      "notes": "What did you find on the ground?",
+      "cancel": "Cancel",
+      "save": "Save"
+    }
   },
   "citizens": {
     "families": "Total families",

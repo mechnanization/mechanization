@@ -97,7 +97,7 @@ export function ReviewQueue({
     tenant,
     base,
     token,
-    errorMessage: en ? 'Could not load the review queue.' : 'تعذّر تحميل قائمة المراجعة.',
+    errorMessage: t('loadFailed'),
     keepPrevious: true,
   });
 
@@ -117,9 +117,9 @@ export function ReviewQueue({
   const counts = query.data?.counts;
   // Keyed by tab so a tab added to `REVIEW_TABS` without a label fails to compile.
   const tabLabel: Record<ReviewTab, string> = {
-    TO_REVIEW: en ? 'To review' : 'للمراجعة',
-    RETURNED: en ? 'With officers' : 'عند الموظفين',
-    APPROVED: en ? 'Approved' : 'معتمدة',
+    TO_REVIEW: t('tabs.TO_REVIEW'),
+    RETURNED: t('tabs.RETURNED'),
+    APPROVED: t('tabs.APPROVED'),
   };
   const tabCount: Record<ReviewTab, number | undefined> = {
     TO_REVIEW: counts ? counts.NEW + counts.CORRECTED + counts.CHANGED : undefined,
@@ -138,13 +138,7 @@ export function ReviewQueue({
       query.refetch();
     } catch (caught) {
       logApiError(caught);
-      toast.error(
-        caught instanceof ApiRequestError
-          ? caught.message
-          : en
-            ? 'The decision was not saved.'
-            : 'لم يُحفظ القرار.',
-      );
+      toast.error(caught instanceof ApiRequestError ? caught.message : t('saveFailed'));
     } finally {
       setBusy(null);
     }
@@ -159,7 +153,7 @@ export function ReviewQueue({
       className="space-y-4"
     >
       <div className="flex flex-wrap items-end gap-3">
-        <TabsList variant="pill" aria-label={en ? 'Review state' : 'حالة المراجعة'}>
+        <TabsList variant="pill" aria-label={t('filters.state')}>
           {tabs.map((option) => (
             <TabsTrigger key={option.key} value={option.key}>
               {option.label}
@@ -170,14 +164,14 @@ export function ReviewQueue({
 
         <div className="min-w-[12rem] space-y-1">
           <Label htmlFor="review-officer" className="text-xs text-muted-foreground">
-            {en ? 'Filed by' : 'الموظف الذي سجَّل'}
+            {t('filters.officer')}
           </Label>
           <Select value={officerId || ANY} onValueChange={(value) => setFilters({ officer: value === ANY ? '' : value }, { clear: ['page'] })}>
             <SelectTrigger id="review-officer" className="h-9">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value={ANY}>{en ? 'Everyone' : 'الجميع'}</SelectItem>
+              <SelectItem value={ANY}>{t('filters.everyone')}</SelectItem>
               {officers.map((officer) => (
                 <SelectItem key={officer.id} value={officer.id}>
                   {officer.name}
@@ -195,7 +189,7 @@ export function ReviewQueue({
           onClick={() => setFilters((current) => ({ flagged: !current.flagged }), { clear: ['page'] })}
         >
           <FileQuestion className="size-4" aria-hidden />
-          {en ? 'Unverified fields only' : 'ما فيه حقول غير مؤكَّدة'}
+          {t('filters.flagged')}
         </Button>
       </div>
 
@@ -203,30 +197,12 @@ export function ReviewQueue({
         {query.error ? (
           <ErrorState description={query.error} offline={query.offline} onRetry={query.refetch} />
         ) : query.loading ? (
-          <LoadingState label={en ? 'Loading records…' : 'جارٍ تحميل السجلات…'} />
+          <LoadingState label={t('loading')} />
         ) : (query.data?.items.length ?? 0) === 0 && total === 0 ? (
           <EmptyState
             icon={ClipboardCheck}
-            title={
-              tab === 'TO_REVIEW'
-                ? en
-                  ? 'Nothing waiting for review'
-                  : 'لا سجلات تنتظر المراجعة'
-                : tab === 'RETURNED'
-                  ? en
-                    ? 'No record is with an officer'
-                    : 'لا سجلات عند الموظفين'
-                  : en
-                    ? 'No approved records yet'
-                    : 'لا سجلات معتمدة بعد'
-            }
-            description={
-              tab === 'TO_REVIEW'
-                ? en
-                  ? 'Every filed record has been looked at.'
-                  : 'كل سجل مُقدَّم جرت مراجعته.'
-                : undefined
-            }
+            title={t(`empty.${tab}`)}
+            description={tab === 'TO_REVIEW' ? t('empty.toReviewBody') : undefined}
           />
         ) : (
           <ol className="space-y-3">
@@ -246,7 +222,7 @@ export function ReviewQueue({
                 <li key={item.registrationId} className="overflow-hidden rounded-xl border bg-card">
                   <div className="divide-y-2 divide-primary/30 [&>*]:px-4 [&>*]:py-3">
                     <RecordDetails item={item} base={base} locale={locale} labels={labels} />
-                    <RecordHistory item={item} locale={locale} quality={quality} />
+                    <RecordHistory item={item} quality={quality} />
                   </div>
 
                   <RecordActions

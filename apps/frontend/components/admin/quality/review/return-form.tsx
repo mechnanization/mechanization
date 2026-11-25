@@ -1,4 +1,7 @@
+'use client';
+
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Loader2, RotateCcw } from 'lucide-react';
 import { qualityLabels, REVIEW_FIELD, type ReviewField } from '@mechanization/shared-schemas';
 import { cn } from '@/lib/utils';
@@ -18,7 +21,7 @@ export function ReturnForm({
   onCancel: () => void;
   onSubmit: (input: { reason: string; fields: ReviewField[] }) => void;
 }) {
-  const en = locale === 'en';
+  const t = useTranslations('recordReview.returnForm');
   const quality = qualityLabels(locale);
   const [fields, setFields] = useState<ReviewField[]>([]);
   const [reason, setReason] = useState('');
@@ -27,7 +30,7 @@ export function ReturnForm({
   return (
     <div className="space-y-3 border-t bg-warning/5 px-4 py-3">
       <fieldset className="space-y-1.5">
-        <legend className="text-xs font-medium">{en ? 'What needs correcting?' : 'ما الذي يحتاج تصحيحاً؟'}</legend>
+        <legend className="text-xs font-medium">{t('fields')}</legend>
         <div className="flex flex-wrap gap-1.5">
           {REVIEW_FIELD.map((field) => {
             const on = fields.includes(field);
@@ -53,7 +56,7 @@ export function ReturnForm({
 
       <div className="space-y-1">
         <Label htmlFor="return-reason" className="text-xs">
-          {en ? 'What should the officer do?' : 'ماذا على الموظف أن يفعل؟'}
+          {t('reason')}
         </Label>
         <Textarea
           id="return-reason"
@@ -61,21 +64,17 @@ export function ReturnForm({
           onChange={(event) => setReason(event.target.value)}
           maxLength={500}
           className="min-h-[72px] text-sm"
-          placeholder={
-            en
-              ? 'e.g. the phone is the landlord’s — visit and record the occupant’s own number'
-              : 'مثال: الرقم المسجَّل هو رقم صاحب الملك — زُر الوحدة وسجِّل رقم الشاغل'
-          }
+          placeholder={t('placeholder')}
         />
       </div>
 
       <div className="flex justify-end gap-2">
         <Button variant="ghost" size="sm" onClick={onCancel} disabled={busy}>
-          {en ? 'Cancel' : 'إلغاء'}
+          {t('cancel')}
         </Button>
         <Button size="sm" className="gap-1.5" disabled={!ready || busy} onClick={() => onSubmit({ reason: reason.trim(), fields })}>
           {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <RotateCcw className="size-4" aria-hidden />}
-          {en ? 'Send back' : 'إعادة السجل'}
+          {t('send')}
         </Button>
       </div>
     </div>
