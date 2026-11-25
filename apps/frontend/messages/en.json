@@ -60,6 +60,24 @@
     "errorHome": "Back to the home page",
     "refreshFailed": "The page could not be refreshed — what is shown is the last read"
   },
+  "quality": {
+    "title": "Quality",
+    "tabsLabel": "Quality sections",
+    "tabs": {
+      "reviews": "Record approval",
+      "findings": "Findings",
+      "checks": "Field re-checks",
+      "officers": "By officer"
+    }
+  },
+  "fieldWorklists": {
+    "title": "Field worklists",
+    "tabsLabel": "Worklists",
+    "tabs": {
+      "unsurveyed": "Unsurveyed units",
+      "reinspections": "Awaiting re-inspection"
+    }
+  },
   "access": {
     "title": "This page is not for your role",
     "registerCitizen": "Your role reads the register but does not add to it. You can read it from this page.",
@@ -763,7 +781,7 @@
     }
   },
   "reviewQueue": {
-    "title": "Requires review",
+    "title": "Incomplete files",
     "wholeRegister": "Whole register",
     "waiting": "Waiting for review",
     "loadError": "Could not load the review queue.",

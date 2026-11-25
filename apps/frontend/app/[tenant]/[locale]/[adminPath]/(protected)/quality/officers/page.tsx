@@ -1,39 +1,16 @@
-'use client';
+import { redirect } from 'next/navigation';
+import { forwardedHref, type SearchParams } from '@/lib/legacy-address';
 
-import { use } from 'react';
-import { UsersRound } from 'lucide-react';
-import { QualityScreen } from '@/components/admin/quality/quality-screen';
-import { OfficerQuality } from '@/components/admin/quality/officer-quality';
-
-/**
- * «حسب الموظف» — the work beside its quality, and nothing about pay.
- *
- * Deliberately not a score. Each figure names something a reader can open, and
- * the only one that is evidence rather than a proxy — how often a re-check on
- * the ground found something different — reads largest.
- *
- * An officer sees their own row on «أرباحي والمسح الميداني»; this page is the
- * oversight view and is held to the reviewer roles.
- */
-export default function QualityOfficersPage({
+/** «الجودة حسب الموظف» is a tab of «الجودة» now (NAV-03): `/quality?tab=officers`. */
+export default async function QualityOfficersForward({
   params,
+  searchParams,
 }: {
   params: Promise<{ tenant: string; locale: string; adminPath: string }>;
-}): React.JSX.Element {
-  const { tenant, locale, adminPath } = use(params);
-  const en = locale === 'en';
-
-  return (
-    <QualityScreen
-      tenant={tenant}
-      locale={locale}
-      adminPath={adminPath}
-      icon={UsersRound}
-      title={en ? 'Quality by officer' : 'الجودة حسب الموظف'}
-    >
-      {({ token, base }) => (
-        <OfficerQuality tenant={tenant} base={base} locale={locale} token={token} />
-      )}
-    </QualityScreen>
+  searchParams: Promise<SearchParams>;
+}): Promise<never> {
+  const { tenant, locale, adminPath } = await params;
+  redirect(
+    forwardedHref(`/${tenant}/${locale}/${adminPath}`, '/quality', await searchParams, { set: { tab: 'officers' } }),
   );
 }

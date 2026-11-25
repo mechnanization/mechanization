@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { settingsCopy } from '@/lib/settings-i18n';
@@ -7,7 +7,7 @@ import { settingsCopy } from '@/lib/settings-i18n';
   UX-08, UX-22, UX-24 and NAV-12 (cleanup sprint, 2026-11-24): a Tabs primitive
   in place of two hand-rolled tablists, a security screen that shows no invented
   sign-ins, a dialog title that keeps clear of its close button, and the
-  quality index forwarding on the server. This reads the sources (the runner
+  quality index forwarding on the server (since NAV-03, a page of tabs). This reads the sources (the runner
   collects `lib/**` only and has no DOM).
 */
 const FRONTEND = join(__dirname, '..');
@@ -38,7 +38,6 @@ function filesMatching(pattern: RegExp, dirs = ['app', 'components', 'lib']): st
 }
 
 const CASES_PAGE = 'app/[tenant]/[locale]/[adminPath]/(protected)/cases/page.tsx';
-const QUALITY_PAGE = 'app/[tenant]/[locale]/[adminPath]/(protected)/quality/page.tsx';
 
 describe('tabs are a primitive (UX-08, CTL-9)', () => {
   it('the primitive is Radix’s, and the package says so', () => {
@@ -90,19 +89,11 @@ describe('the dialog’s title keeps clear of its close button (UX-24)', () => {
   });
 });
 
-describe('the quality index forwards on the server (NAV-12)', () => {
-  it('is a server page that redirects, with no client effect', () => {
-    const source = code(QUALITY_PAGE);
-    expect(source).not.toMatch(/^'use client'/);
-    expect(source).toMatch(/import \{ redirect \} from 'next\/navigation';/);
-    expect(source).toMatch(/redirect\(`\/\$\{tenant\}\/\$\{locale\}\/\$\{adminPath\}\/quality\/reviews`\)/);
-    expect(source).not.toMatch(/useEffect|useRouter|Skeleton/);
-  });
-
-  it('and where it forwards to exists', () => {
-    expect(existsSync(join(FRONTEND, 'app/[tenant]/[locale]/[adminPath]/(protected)/quality/reviews/page.tsx'))).toBe(true);
-  });
-});
+/*
+  NAV-12 (`/quality` forwarding to `/quality/reviews` on the server) was superseded by NAV-03 on
+  2026-11-25: `/quality` is the page of four tabs, and the four old addresses are the server
+  redirects. Those are pinned in `lib/nav-03-04-11.test.ts`.
+*/
 
 describe('«أمان الحساب» shows no invented sign-ins (UX-22)', () => {
   it('the sample rows are gone, and with them the documentation addresses they carried', () => {

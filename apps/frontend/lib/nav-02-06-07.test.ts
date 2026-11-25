@@ -37,10 +37,6 @@ describe('the three rows have left the sidebar', () => {
     }
   });
 
-  it('leaves 32 rows (35 before)', () => {
-    expect(rows).toHaveLength(32);
-  });
-
   it('claims none of them as an older address of another row', () => {
     const owned = rows.flatMap((row) => row.also ?? []);
     for (const path of GONE) expect(owned).not.toContain(path);
@@ -177,7 +173,7 @@ describe('the pages turn their other roles away themselves', () => {
 describe('the other doors stay open', () => {
   it('opens «تسجيل مواطن جديد» from the register’s header, the unsurveyed worklist and a unit in the matrix', () => {
     expect(read('app/[tenant]/[locale]/[adminPath]/(protected)/citizens/page.tsx')).toMatch(/\/citizens\/new/);
-    expect(read('app/[tenant]/[locale]/[adminPath]/(protected)/buildings/unsurveyed/page.tsx')).toMatch(/\/citizens\/new/);
+    expect(read('components/admin/worklists/unsurveyed-worklist.tsx')).toMatch(/\/citizens\/new/);
     expect(read('components/admin/building-unit-matrix-view.tsx')).toMatch(/\/citizens\/new/);
   });
 

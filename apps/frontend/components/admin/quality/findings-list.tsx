@@ -103,7 +103,7 @@ const FINDING: UrlParam<string> = {
 };
 
 /** The queue's filters and the open detail view. `page`/`limit` are `useUrlPagination`'s. */
-const QUEUE = {
+export const FINDINGS_URL = {
   kind: param.oneOf<QualityFindingKind | ''>(QUALITY_FINDING_KIND, ''),
   dismissed: param.flag(),
   finding: FINDING,
@@ -199,7 +199,7 @@ export function FindingsList({
   const quality = useMemo(() => qualityLabels(locale), [locale]);
   const toast = useToast();
 
-  const [queue, setQueue] = useUrlState(QUEUE);
+  const [queue, setQueue] = useUrlState(FINDINGS_URL);
   const { kind, dismissed: includeDismissed } = queue;
   const [pagination, setPagination] = useUrlPagination({ defaultSize: 10 });
   const [search, setSearch] = useTabSearch(tenant, 'quality-findings');

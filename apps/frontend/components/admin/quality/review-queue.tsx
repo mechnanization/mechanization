@@ -38,12 +38,13 @@ const ANY = 'ANY';
 const REVIEW_TABS = ['TO_REVIEW', 'RETURNED', 'APPROVED'] as const satisfies readonly ReviewTab[];
 
 /**
- * The queue's filters, in the URL so a reload keeps them. The officer is a
- * staff row id, never a name. Which card has its «إعادة إلى الموظف» form or
+ * The queue's filters, in the URL so a reload keeps them. `queue` is the state
+ * filter (it was `tab` until «الجودة» became one page with `?tab=` of its own,
+ * NAV-03). The officer is a staff row id, never a name. Which card has its «إعادة إلى الموظف» form or
  * «استكمال» dialog open is not here: both write.
  */
-const FILTERS = {
-  tab: param.oneOf(REVIEW_TABS, 'TO_REVIEW'),
+export const REVIEW_QUEUE_URL = {
+  queue: param.oneOf(REVIEW_TABS, 'TO_REVIEW'),
   officer: param.id(),
   flagged: param.flag(),
 };
@@ -87,8 +88,8 @@ export function ReviewQueue({
   const toast = useToast();
   const t = useTranslations('recordReview');
 
-  const [filters, setFilters] = useUrlState(FILTERS);
-  const { tab, officer: officerId, flagged: flaggedOnly } = filters;
+  const [filters, setFilters] = useUrlState(REVIEW_QUEUE_URL);
+  const { queue: tab, officer: officerId, flagged: flaggedOnly } = filters;
   // `?page=`, reset by every filter below in the same write (`clear: ['page']`).
   const [pagination, setPagination] = useUrlPagination({
     defaultSize: REVIEW_PAGE_SIZE,
@@ -171,7 +172,7 @@ export function ReviewQueue({
     <Tabs
       ref={listTop}
       value={tab}
-      onValueChange={(next) => setFilters({ tab: next as ReviewTab }, { clear: ['page'] })}
+      onValueChange={(next) => setFilters({ queue: next as ReviewTab }, { clear: ['page'] })}
       dir={en ? 'ltr' : 'rtl'}
       className="space-y-4"
     >
