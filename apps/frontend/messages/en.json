@@ -100,7 +100,7 @@
       "payments": "Payment operations",
       "parcelDues": "Owed on a parcel",
       "collectors": "Collectors & handover",
-      "treasury": "Balances",
+      "treasury": "Treasury balances",
       "movements": "Income & expenses",
       "transactions": "Transactions",
       "transfers": "Transfers & exchange",
@@ -1562,6 +1562,11 @@
     "outsideTableUnits": "{count} outside the bracket table"
   },
   "fees": {
+    "header": {
+      "issue": "Issue New Fee",
+      "directCharge": "Direct Charge",
+      "more": "More"
+    },
     "notices": {
       "title": "Fee notices",
       "back": "Back to Fees & billing",

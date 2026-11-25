@@ -61,6 +61,9 @@ const GUARDS: ReadonlyArray<readonly [string, string]> = [
   ['quality/findings-list.tsx', 'workRef'],
   ['quality/findings-list.tsx', 'settleAllRef'],
   ['quality/finding-compare.tsx', 'savingRef'],
+  // PAGE-14: the news editor and its media panel (the two lists’ dialogs validate between check and set: lib/page-14.test.ts)
+  ['news/article-media.tsx', 'inFlight'],
+  ['news/article-editor.tsx', 'inFlight'],
 ];
 
 const CHECKED_APART = new Set(['disablingRef', 'reconfiguringRef']);

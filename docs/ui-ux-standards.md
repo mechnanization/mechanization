@@ -912,7 +912,8 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
 - **Header actions that do not wrap** (LAY-5): fixed 2026-11-24 (UX-20). `PageHeader`'s actions row used to be
   `overflow-x-auto` with no wrap, so at 360px the fees page's «إصدار رسم جديد» was wholly off-screen (measured
   2026-10-12) and the citizens page's second button cut off in English (2026-10-06). It wraps now, and the title
-  keeps `sm:min-w-40`. Not yet re-measured at 360px; the fees page's own eight actions are PAGE-04.
+  keeps `sm:min-w-40`. Not yet re-measured at 360px. The fees page's own eight actions are three controls since PAGE-04
+  (2026-11-25): «إصدار رسم جديد» primary and first, «تكليف مباشر», and a «المزيد» menu (`components/admin/fees/fees-header-actions.tsx`).
 - **Labelled buttons squeezed in `DataTable`'s phone card** (LAY-6): fixed 2026-11-24 (UX-19). The card footer's
   `[&_button]:size-9` made every `<button>` in a `meta.mobile: 'actions'` column a 36px square, so a label spilled out of
   it ([gotchas](gotchas.md)); it is `[&_button]:min-h-9 [&_button]:min-w-9` now, a floor, so a labelled button keeps its

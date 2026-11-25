@@ -1486,7 +1486,7 @@ a row to that row's roles (longest match, CODE-4). So:
   `grep -c labelEn nav.ts` is 0. Every page but three reads its row's key for its heading, and the two earnings screens do too. **Eight titles said
   something else and now say the row's words** (the row's, in every case; change the words once, in `messages.nav.items`): fees «إدارة
   الرسوم والمدفوعات» → «الرسوم والمدفوعات», "Fees & Billing" → "Fees & billing"; payments "Transactions Log" → "Payment operations";
-  the treasury «أرصدة الخزينة» / "Treasury balances" → «الأرصدة» / "Balances"; buildings "Building Census" → "Building census"; audit "Audit trail" →
+  the treasury «أرصدة الخزينة» / "Treasury balances" → «الأرصدة» / "Balances" (put back to «أرصدة الخزينة» / "Treasury balances" by the owner on 2026-11-25, in PAGE-04's PR, so only the sidebar row changed in the end); buildings "Building Census" → "Building census"; audit "Audit trail" →
   "Audit log"; news "News articles" → "News"; staff "Staff" → "Staff management"; account "Account Security" → "Account security"; and
   the earnings row's English «My earnings & survey» → "Field survey earnings", because its page also serves the admins' roster. A page that
   is about one person keeps its own («أرباحي والمسح الميداني», "Inspector earnings: <name>"). **Not read from the key, and why**
@@ -1557,6 +1557,14 @@ a row to that row's roles (longest match, CODE-4). So:
 - **Acceptance criteria:** 1. «إصدار رسم جديد» primary and first in reading order; «تكليف مباشر» secondary. 2. The six links in one `DropdownMenu` («المزيد», PRIM-26), each still gated by its own role check. 3. «تحديث» removed, or kept with a reason in a comment. 4. Fits at 360px in ar and en.
 - **Depends on:** UX-20 (the wrap fix) can land first or together
 - **Verification:** harness at 360/768/1440 for SUPER_ADMIN, ACCOUNTANT, COLLECTOR.
+- **Done 2026-11-25:** the header is `FeesHeaderActions` (`components/admin/fees/fees-header-actions.tsx`): «إصدار رسم جديد» is the primary and
+  first, «تكليف مباشر» the secondary (both `FEE_ISSUE_ROLES`'s), and «فواتير تأثّرت بتصحيحات», «إشعارات الرسوم», «قائمة الإعفاء»,
+  «المتأخرات» and «تقرير المتأخرات» are five items of one «المزيد» `DropdownMenu`, each behind the role check it had («إشعارات الرسوم» for
+  everyone who reads the ledger, so no role gets an empty menu). «تحديث» is gone: every read on the page is `useStaffQuery` and every write
+  invalidates what it moved (`load`), so it re-ran by hand what the data rule retires. The page lost its eight icon imports, `tNotices`,
+  `tExemptions`, `tArrears` and `refreshing`; the two actions' words are `fees.header` in messages. `lib/page-04.test.ts` renders the
+  component for every role from the same role sets the page reads (order, the menu opened, no refresh). **Not done:** the harness at
+  360/768/1440 in ar and en; nothing rendered in a browser.
 
 ## [PAGE-05] Decide whether «سجل العمليات» is a view of the fees page
 - **Priority:** P3 · **Assignee:** Abed · **Estimate:** M · **Category:** UI/UX
@@ -1644,6 +1652,14 @@ Each pass first lands the tasks already listed for its pages (named below); what
 - **Files:** `news/**`, `components/admin/news/day-time-fields.tsx` (native `type="time"`, UX-02 / U-8).
 - **Depends on:** NAV-05
 - **Acceptance criteria / Verification:** as PAGE-07.
+- **Done 2026-11-25** (mostly nothing to do: the pass found the news pages already met the contract). Measured against the ten items:
+  title = row label ✓ (NAV-10); session and reads through `useStaffSession`/`useStaffQuery` ✓; lists keep their rows on a failed re-read ✓ but said
+  nothing, so **the three lists now use `readView` and a `RefreshFailedAlert`**; state in the URL ✓ (`?status=`); every write behind an
+  `inFlight` ref set before its state ✓ (now pinned, `lib/dialog-write-guards.test.ts` and `lib/page-14.test.ts`); copy in messages ✓ (the 5
+  "inline" hits are locale logic, not strings); no file over 600 lines ✓ (the largest is 429). **Changed:** the articles page's header puts
+  «مقال جديد», its one primary action, first in reading order (NAV-05 had put it last), then the two lists. **Left on purpose:** the native
+  `type="time"` in `day-time-fields.tsx` waits for a time primitive, decision U-8 (the owner, 2026-11-25: build one rather than extend
+  `DatePicker`; not built yet). **Not done:** the harness; nothing rendered in a browser.
 
 ## [PAGE-15] Bring the system pages to the page contract
 - **Priority:** P2 · **Assignee:** Abed · **Estimate:** M · **Category:** UI/UX
