@@ -1131,3 +1131,13 @@ with no row opens to every role (`canAccessPath`).
 
 Nobody outside the product owner was asked and no screen was rendered for this decision; the
 implementing tasks check each move in the running app (ui-ux-standards §16).
+
+## 26. A time primitive (decided 2026-11-25)
+
+Decided by Abed, 2026-11-25, in answer to the audit's U-8 (CTL-2): **build a dedicated time primitive** rather than extend
+`DatePicker`, whose date logic and timezone handling a time would only bloat. It is `TimePicker`
+(`apps/frontend/components/ui/time-picker.tsx`, rules in `lib/time-input.ts`): a typed `HH:MM` field on the 24-hour clock,
+not a popover, because a time is four digits and a pair of lists is more to scroll than to type. Latin digits whatever the
+page's language (TYP-4), the colon put in as you type, arrows that step, the digits an Arabic keyboard types accepted. It
+replaced the native `<input type="time">` in the News fields (PAGE-14 closes with it) and in the unrendered backup section.
+Not yet tried by a person on a phone and with a screen reader; the harness is the follow-up.

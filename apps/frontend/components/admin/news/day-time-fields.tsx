@@ -2,12 +2,12 @@
 
 import { DatePicker } from '@/components/ui/date-picker';
 import { Field } from '@/components/ui/field';
-import { Input } from '@/components/ui/input';
+import { TimePicker } from '@/components/ui/time-picker';
 
 /**
  * A day and a time on the municipality's clock, for a News article's schedule
  * and its «featured until». Two controls rather than one: the kit's calendar
- * takes a day, and a time is typed as `HH:MM`. `scheduleInstant`
+ * takes a day, and its time field a time of day, `HH:MM` on the 24-hour clock. `scheduleInstant`
  * (`lib/news-article-form.ts`) turns the pair into the instant Day3ati takes.
  */
 export function DayTimeFields({
@@ -43,15 +43,7 @@ export function DayTimeFields({
         <DatePicker id={`${idPrefix}-day`} locale={locale} value={day} min={minDay} disabled={disabled} onChange={onDay} />
       </Field>
       <Field htmlFor={`${idPrefix}-time`} label={timeLabel} required>
-        <Input
-          id={`${idPrefix}-time`}
-          type="time"
-          dir="ltr"
-          value={time}
-          disabled={disabled}
-          invalid={Boolean(error)}
-          onChange={(event) => onTime(event.target.value)}
-        />
+        <TimePicker id={`${idPrefix}-time`} value={time} disabled={disabled} invalid={Boolean(error)} onChange={onTime} />
       </Field>
     </div>
   );

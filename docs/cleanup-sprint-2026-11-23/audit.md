@@ -865,6 +865,9 @@ No cross-tenant path found. Every task here touches citizen data or credentials 
 - **Acceptance criteria:** `DatePicker` gains a clear action and `aria-describedby`; the six date inputs use it. The time input waits for decision U-8 (time primitive).
 - **Depends on:** GOD-19 if done in the same sprint (the five live there after the move)
 - **Verification:** `grep -rn 'type="date"' apps/frontend/components apps/frontend/app` → 0.
+- **Time inputs, done 2026-11-25 (U-8):** both are `TimePicker` (`components/ui/time-picker.tsx`, `lib/time-input.ts`): the News day-and-time fields
+  and the unrendered backup schedule. `grep -rn 'type="time"' apps/frontend/components apps/frontend/app` finds only the primitive's own comment.
+  `lib/time-picker-dom.test.ts`, `lib/time-input.test.ts`. **Not done:** tried on a phone or with a screen reader.
 
 ## [UX-03] Replace palette classes with tokens outside the map
 - **Priority:** P2 · **Assignee:** Abed · **Estimate:** S · **Category:** UI/UX
@@ -1677,9 +1680,9 @@ Each pass first lands the tasks already listed for its pages (named below); what
   nothing, so **the three lists now use `readView` and a `RefreshFailedAlert`**; state in the URL ✓ (`?status=`); every write behind an
   `inFlight` ref set before its state ✓ (now pinned, `lib/dialog-write-guards.test.ts` and `lib/page-14.test.ts`); copy in messages ✓ (the 5
   "inline" hits are locale logic, not strings); no file over 600 lines ✓ (the largest is 429). **Changed:** the articles page's header puts
-  «مقال جديد», its one primary action, first in reading order (NAV-05 had put it last), then the two lists. **Left on purpose:** the native
-  `type="time"` in `day-time-fields.tsx` waits for a time primitive, decision U-8 (the owner, 2026-11-25: build one rather than extend
-  `DatePicker`; not built yet). **Not done:** the harness; nothing rendered in a browser.
+  «مقال جديد», its one primary action, first in reading order (NAV-05 had put it last), then the two lists. **The native `type="time"` in
+  `day-time-fields.tsx` is `TimePicker` now** (U-8, built 2026-11-25, open-decisions §26), which closes the pass.
+  **Not done:** the harness; nothing rendered in a browser.
 
 ## [PAGE-15] Bring the system pages to the page contract
 - **Priority:** P2 · **Assignee:** Abed · **Estimate:** M · **Category:** UI/UX
@@ -1794,7 +1797,7 @@ an open treasury or fees PR touches it — check `gh pr list` first; GOD splits 
 | U-5 | One `--overlay` token and its value; solid warning fills vs COL-2; the status-token contrast failures (§17.3) | UX colour work beyond UX-03 | ui-ux §17.2, §17.3 |
 | U-6 | Rate-limit topology: the `trust proxy` hop, Redis throttler store, per-account limits | SEC-04 | security.md Undecided; open-decisions §5 |
 | U-7 | Offline PII on field devices: encrypt, clear on sign-out, or accept | (no task written) | security.md Undecided |
-| U-8 | A time primitive (CTL-2): build one or extend `DatePicker` | UX-02's time inputs | ui-ux §3.1 CTL-2 |
+| U-8 | A time primitive (CTL-2): build one or extend `DatePicker` (**decided 2026-11-25: build one**, `TimePicker`, open-decisions §26) | UX-02's time inputs | ui-ux §3.1 CTL-2 |
 | U-9 | When to delete the Supabase adapters | DEAD-08 | code-quality CQ Backend |
 | U-10 | Retire the Vercel runtime; does `InternalCronController` stay? | DEAD-09 | code-quality CQ Backend |
 | U-11 | Rebuild or delete `BackupController`/`BackupService` | DEAD-10, DEAD-06 (`backup-section.tsx`) | code-quality CQ Backend |

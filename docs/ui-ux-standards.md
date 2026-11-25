@@ -156,7 +156,7 @@ Counts and files: §17.1.
 | ID | Banned | Use instead | Exists today | Legitimate exception |
 |---|---|---|---|---|
 | CTL-1 | `<input type="date">` | `DatePicker` inside `Field` | yes | none |
-| CTL-2 | `<input type="time">`, `datetime-local`, `month` | a time primitive | **missing** (no shadcn or Radix part covers it; **Undecided:** build one or extend `DatePicker`) | none |
+| CTL-2 | `<input type="time">`, `datetime-local`, `month` | `TimePicker` (`components/ui/time-picker.tsx`): a typed 24-hour `HH:MM` field with Latin digits, the colon put in as you type, ArrowUp/Down stepping and the digits an Arabic keyboard types | **built** 2026-11-25 (U-8: a focused primitive, not an extension of `DatePicker`); `datetime-local` and `month` have no user | none |
 | CTL-3 | native checkbox | `Checkbox` | yes | none |
 | CTL-4 | native radio | `ChoiceCard` or `SegmentedControl` | yes | the radio inside `ChoiceCard` itself |
 | CTL-5 | native `<select>` | `Select`, `FilterSelect` | yes | `DatePicker`'s in-tree `JumpDropdown` listbox, which must stay inside the calendar's DOM subtree |
@@ -764,8 +764,8 @@ Code-pattern debt outside the UI rules lives in
   `visit-revisit`, `case-revisit`, the two seasonal dates), whose empty value
   means something ("now", "no revisit", erase the date) and `DatePicker` cannot
   be cleared; one in `end-ownership-dialog`, whose `aria-describedby`
-  `DatePicker` cannot pass on; and the `type="time"` in
-  `settings/backup-section.tsx`, which is not rendered. Not yet checked with a
+  `DatePicker` cannot pass on. (The two `type="time"` inputs, the News fields' and `settings/backup-section.tsx`'s,
+  which is not rendered, are `TimePicker` since 2026-11-25, U-8.) Not yet checked with a
   screen reader: whether the chosen date is announced, since the trigger is a
   button named by its `<label>`; on «تكليف مباشر» the calendar opens inside the
   dialog's scrolling body and is reached by scrolling it.

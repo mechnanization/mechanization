@@ -46,6 +46,7 @@ import { CellTag } from '@/components/ui/cell-tag';
 import { Button } from '@/components/ui/button';
 
 import { Input } from '@/components/ui/input';
+import { TimePicker } from '@/components/ui/time-picker';
 import {
   Select,
   SelectContent,
@@ -700,13 +701,13 @@ export function BackupSection({
 
           {schedule.frequency !== 'off' ? (
             <SettingsField label={copy.backup.timeOfDay} htmlFor="backup-time">
-              <Input
+              {/* Saved only when it is a complete time: half a time is not a schedule. */}
+              <TimePicker
                 id="backup-time"
-                type="time"
-                dir="ltr"
-                className="text-start"
                 value={schedule.timeOfDay}
-                onChange={(e) => persistSchedule({ ...schedule, timeOfDay: e.target.value })}
+                onChange={(time) => {
+                  if (time) persistSchedule({ ...schedule, timeOfDay: time });
+                }}
               />
             </SettingsField>
           ) : null}
