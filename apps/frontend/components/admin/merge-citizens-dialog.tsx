@@ -10,6 +10,7 @@ import {
   type CitizenMergeSide,
 } from '@mechanization/shared-schemas';
 import { ApiRequestError, logApiError, mergeCitizens, previewCitizenMerge } from '@/lib/api-client';
+import { blockText } from '@/lib/api-errors';
 import { formatDate } from '@/lib/dates';
 import { cn } from '@/lib/utils';
 import { Alert } from '@/components/ui/alert';
@@ -200,7 +201,7 @@ export function MergeCitizensDialog({
               <Alert variant="destructive" live="status" title={t('blocked')}>
                 <ul className="list-disc space-y-1 ps-5 leading-relaxed">
                   {preview.blocks.map((block) => (
-                    <li key={`${block.code}:${block.message}`}>{block.message}</li>
+                    <li key={`${block.code}:${block.refusal.code}`}>{blockText(block, locale)}</li>
                   ))}
                 </ul>
               </Alert>

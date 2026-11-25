@@ -438,6 +438,11 @@ income, transfers, treasury movements and `ExpensesService`. Arrears controller:
 - **Found during PAG-04:** `components/admin/settings/backup-section.tsx` also reads `getFeeNotices` for its export, and
   since PAG-04 gets `FEE_NOTICES_PAGE_MAX` (200) notices at most where its other tables ask for `EXPORT_LIMIT` (1,000):
   page through, or keep it with the backup decision (U-11, DEAD-10).
+- **Done 2026-11-25:** `fees/notices/page.tsx` is a `manualPagination` `DataTable` over `useUrlPagination` (25 a page,
+  `?page=` and `?limit=`), reading `getFeeNotices(tenant, token, { limit, offset }, signal)` under the key
+  `['fee-notices', tenant, pageIndex, pageSize]` with `keepPrevious`; every write still invalidates the prefix. The
+  «تُعرض أحدث N» alert and `fees.notices.truncated` are gone. `getFeeNotices` without a page still asks for 200, which
+  is all the backup export gets (the note above stands). `lib/err-05-pag-05.test.ts`. **Not done:** the page rendered.
 
 ## [PAG-06] Say when an old-debts list was cut, instead of truncating silently
 - **Priority:** P2 · **Assignee:** Hashem · **Estimate:** S · **Category:** Pagination
@@ -1068,6 +1073,17 @@ No cross-tenant path found. Every task here touches citizen data or credentials 
   from `LinkBlock`, `CitizenMergeBlock`, `CitizenUnmergeBlock` and the API's builders in the same release, a backend
   change. Also `citizen-editor.tsx` (`changes.reconciled.blocked[].block.message`, a save's toast) and
   `citizen-merges.tsx` (the undo's blocks), neither in the file list above.
+- **Done 2026-11-25:** every block is worded by `blockText(block, locale)` (`lib/api-errors.ts`: `localizeApiError` over
+  the block's `refusal`, the server's sentence only for a code the build does not know) in `landlord-proposal-card.tsx`,
+  `merge-citizens-dialog.tsx`, `citizen-merges.tsx`, `citizen-editor.tsx` (the owner-link toast) and
+  `unit-correction-delete-dialog.tsx`, whose hand-written `blockerText` (a second copy of the words, inline in two
+  languages) is gone. `landlord-unlink-dialog.tsx` renders no block: its only server text was `payload.message`, which is
+  ERR-01 (PR #205). `duplex-merge-dialog.tsx` words its blockers from `unitLevels.merge.blocker`, not from server text, and
+  was left as it is. `message` stays on the wire for one release (a page from before this one would show a block with no
+  sentence); removing it from the three types and the builders is logged in `docs/code-quality.md`.
+  `lib/err-05-pag-05.test.ts`. **Not done:** the harness in `/en/` (nothing here was rendered).
+- **Found during ERR-05:** `edit-review-dialog.tsx` renders `blocker.message` of the citizen edit review's own blockers
+  (`STALE`, `TENANTS_LINKED`), server Arabic on `/en/`; not a block of ERR-04's, so not coded.
 
 ## [ERR-06] Detect offline by status in ErrorState and give it a bilingual title
 - **Priority:** P2 · **Assignee:** Abed · **Estimate:** S · **Category:** Error-handling

@@ -21,6 +21,7 @@ import {
   updateCase,
   updateCitizen,
 } from '@/lib/api-client';
+import { blockText } from '@/lib/api-errors';
 import type {
   CitizenEditReview,
   DuplicateReviewAnswer,
@@ -162,7 +163,7 @@ function announceLandlordLinkChanges(
 
   for (const { block } of changes.reconciled?.blocked ?? []) {
     toast.warning(en ? 'The owner link needs attention' : 'ربط المالك يحتاج مراجعة', {
-      description: block.message,
+      description: blockText(block),
       duration: 12000,
     });
   }

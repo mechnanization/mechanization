@@ -1563,8 +1563,7 @@
         "PAYMENT_CLAIM_UNDER_REVIEW": "عليها إبلاغ دفع قيد المراجعة — يُبتّ فيه أولاً",
         "BILL_ALREADY_CANCELLED": "ملغاة أصلاً",
         "BILL_ALREADY_WRITTEN_OFF": "مشطوبة"
-      },
-      "truncated": "تُعرض أحدث {shown} إشعاراً من أصل {total}."
+      }
     },
     "matrix": {
       "field": "جدول الفئات",

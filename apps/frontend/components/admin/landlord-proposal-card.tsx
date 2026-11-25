@@ -30,6 +30,7 @@ import {
   type LinkBlock,
   type LinkOutcome,
 } from '@/lib/api-client';
+import { blockText } from '@/lib/api-errors';
 import { compareNames, type NameMatch } from '@/lib/landlord-display';
 import { nameLight, phoneLight } from '@/lib/landlord-status';
 import { MatchLightLabel } from '@/components/admin/match-light';
@@ -904,7 +905,7 @@ export function BlockNotice({
         <p className="text-sm font-semibold text-warning">
           {en ? 'This card cannot be linked yet' : 'لا يمكن ربط هذه البطاقة بعد'}
         </p>
-        <p className="text-sm leading-relaxed">{block.message}</p>
+        <p className="text-sm leading-relaxed">{blockText(block, locale)}</p>
         {href ? (
           <Link
             href={href}

@@ -11,6 +11,7 @@ import {
   previewCitizenUnmerge,
   undoCitizenMerge,
 } from '@/lib/api-client';
+import { blockText } from '@/lib/api-errors';
 import { formatDate } from '@/lib/dates';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -232,7 +233,7 @@ function UndoMergeDialog({
           <Alert variant="destructive" live="status">
             <ul className="list-disc space-y-1 ps-4">
               {preview.blocks.map((block) => (
-                <li key={block.code}>{block.message}</li>
+                <li key={block.code}>{blockText(block, locale)}</li>
               ))}
             </ul>
           </Alert>

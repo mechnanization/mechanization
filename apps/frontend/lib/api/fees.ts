@@ -232,12 +232,20 @@ export interface FeeNoticeSummary {
 }
 
 /**
- * «إشعارات الرسوم», newest first. Paged on the server since PAG-04; until the
- * page pages (PAG-05) it asks for the most one request may
- * (`FEE_NOTICES_PAGE_MAX`), and `total` says when that was not all of them.
+ * «إشعارات الرسوم», newest first, one page of them (PAG-04, PAG-05). `page`
+ * names the rows wanted (`limit` at most `FEE_NOTICES_PAGE_MAX`, from `offset`),
+ * and `total` is how many notices there are in all. Without `page` it asks for
+ * the most one request may, which is what the backup export wants until it
+ * pages through (audit PAG-05, U-11).
  */
-export function getFeeNotices(tenant: string, token: string, signal?: AbortSignal) {
-  return apiFetch<{ items: FeeNoticeSummary[]; total: number }>(tenant, `/fees/notices?limit=${FEE_NOTICES_PAGE_MAX}`, {
+export function getFeeNotices(
+  tenant: string,
+  token: string,
+  page: { limit: number; offset: number } = { limit: FEE_NOTICES_PAGE_MAX, offset: 0 },
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams({ limit: String(page.limit), offset: String(page.offset) });
+  return apiFetch<{ items: FeeNoticeSummary[]; total: number }>(tenant, `/fees/notices?${query.toString()}`, {
     token,
     signal,
   });

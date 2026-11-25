@@ -118,3 +118,20 @@ export function localizeApiError(payload: ApiErrorText, locale: Locale = current
   }
   return payload.message ?? '';
 }
+
+/**
+ * The words for one block of a preview (a landlord link, «دمج ملفين» and its
+ * undo, ERR-04), in the page's language: its `refusal`, through the same table
+ * every refusal uses. `message`, the server's Arabic sentence, is shown only
+ * for a code this build does not know. `locale` is a screen's own `locale`
+ * prop, which is any string; anything but `en` reads as `ar`.
+ */
+export function blockText(
+  block: { refusal: { code: string; params: ErrorParams }; message?: string },
+  locale?: string,
+): string {
+  return localizeApiError(
+    { code: block.refusal.code, params: block.refusal.params, message: block.message },
+    locale === 'en' ? 'en' : locale === 'ar' ? 'ar' : currentLocale(),
+  );
+}

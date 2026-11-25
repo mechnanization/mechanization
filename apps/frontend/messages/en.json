@@ -1563,8 +1563,7 @@
         "PAYMENT_CLAIM_UNDER_REVIEW": "a payment claim on it is under review — decide it first",
         "BILL_ALREADY_CANCELLED": "already cancelled",
         "BILL_ALREADY_WRITTEN_OFF": "written off"
-      },
-      "truncated": "Showing the latest {shown} of {total} notices."
+      }
     },
     "matrix": {
       "field": "Bracket table",

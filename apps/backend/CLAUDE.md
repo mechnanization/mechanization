@@ -987,8 +987,9 @@ Rule: a refusal is thrown with a specific code from `ERROR_CODES` in
   undo's `CitizenUnmergeBlock` (`UNMERGE_*`), and the «حذف تصحيحي» / «دمج كدوبلكس» blockers through the shared
   `unitCorrectionBlockerRefusal` / `duplexMergeBlockerRefusal`. The act, pressed anyway, throws the same refusal with
   `refusedBy(refusal, details)` (`domain-error.ts`, a 409 whose log message names the code alone). A new block gets
-  its own code; never a sentence in `params`. Each block still carries `message`, the Arabic sentence, until ERR-05
-  renders `refusal`; then it goes. `DUPLEX_MERGE_BLOCKED` is retired.
+  its own code; never a sentence in `params`. Each block still carries `message`, the Arabic sentence: ERR-05's frontend
+  renders `refusal` (`blockText`) since 2026-11-25, so `message` goes in a later release, once no page from before
+  it is live. `DUPLEX_MERGE_BLOCKED` is retired.
 
 Today: the fee, payment, ownership, tenancy, landlord-link, correction, citizen-file, damage and case services
 are converted, the block-driven refusals with them; what is left is counted by `LEGACY_PROSE_THROWS` (184 on

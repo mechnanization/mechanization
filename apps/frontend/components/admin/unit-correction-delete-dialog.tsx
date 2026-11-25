@@ -16,7 +16,6 @@ import {
 import {
   getLabels,
   unitCorrectionDeleteSchema,
-  type UnitCorrectionBlocker,
   type UnitCorrectionPreview,
   type UnitCorrectionResult,
 } from '@mechanization/shared-schemas';
@@ -35,6 +34,7 @@ import {
   getUnitCorrectionPreview,
   unitCorrectionRefusal,
 } from '@/lib/api-client';
+import { blockText } from '@/lib/api-errors';
 import { formatDate } from '@/lib/dates';
 import { useStaffRole } from '@/lib/use-staff-session';
 import { cn } from '@/lib/utils';
@@ -428,7 +428,7 @@ function PreviewBody({
               >
                 <ul className="list-disc space-y-1 ps-4">
                   {preview.blockers.map((blocker, index) => (
-                    <li key={index}>{blockerText(blocker, en)}</li>
+                    <li key={index}>{blockText(blocker, en ? 'en' : 'ar')}</li>
                   ))}
                 </ul>
               </Alert>
@@ -874,23 +874,6 @@ function floorLabel(floor: number, en: boolean): string {
 function lineFloor(floor: string, en: boolean): string {
   const trimmed = floor.trim();
   return /^-?\d+$/.test(trimmed) ? floorLabel(Number(trimmed), en) : trimmed;
-}
-
-function blockerText(blocker: UnitCorrectionBlocker, en: boolean): string {
-  switch (blocker.kind) {
-    case 'DAMAGE_ASSESSMENT':
-      return en
-        ? `${blocker.count} damage assessment(s) on this unit. An assessment is a compensation document and is never deleted with the unit.`
-        : `على الوحدة ${blocker.count} كشف ضرر، وكشف الضرر مستند تعويض لا يُحذف مع الوحدة.`;
-    case 'LINK_NAMES_OTHER_UNITS':
-      return en
-        ? `${blocker.citizenName}'s landlord link also covers other units. Unlink it from their file first.`
-        : `ربط ملف ${blocker.citizenName} بالمالك يشمل وحدات أخرى. ألغِ الربط من ملفه أولاً.`;
-    case 'UNREADABLE_LANDLORD_LINK':
-      return en
-        ? `${blocker.citizenName}'s landlord link could not be read, so it cannot be reverted safely.`
-        : `تعذّرت قراءة ربط ملف ${blocker.citizenName} بالمالك، فلا يمكن التراجع عنه بأمان.`;
-  }
 }
 
 function resultSummary(result: UnitCorrectionResult, en: boolean): string {
