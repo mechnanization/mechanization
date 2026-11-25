@@ -1,10 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
+import { useQueryClient } from '@tanstack/react-query';
 import { ClipboardList, Loader2, Shuffle } from 'lucide-react';
-import { CHECK_DIFFERENCE, getLabels, qualityLabels, type CheckDifference } from '@mechanization/shared-schemas';
+import { CHECK_DIFFERENCE, getLabels, municipalToday, qualityLabels, type CheckDifference } from '@mechanization/shared-schemas';
 import { ApiRequestError, logApiError } from '@/lib/api-client';
 import {
   assignQualityCheck,
@@ -16,6 +17,8 @@ import {
 import { formatDate, formatDateTime } from '@/lib/dates';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { param, useUrlState } from '@/lib/use-url-state';
+import { readView } from '@/lib/read-view';
+import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
 import { Badge } from '@/components/ui/badge';
 import { FactCell, FactRow } from '@/components/ui/facts';
 import { Button } from '@/components/ui/button';
@@ -40,7 +43,8 @@ const CHECK_STATUSES = ['OPEN', 'DONE'] as const satisfies readonly QualityCheck
  */
 export const CHECKS_URL = { status: param.oneOf(CHECK_STATUSES, 'OPEN') };
 
-const isoDaysAgo = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+/** The municipality's day, `days` ago: the UTC date is yesterday's between midnight and 03:00 in Beirut. */
+const isoDaysAgo = (days: number) => municipalToday(new Date(Date.now() - days * 86_400_000));
 
 /**
  * «عيّنة التحقق» — a share of each officer's records, re-checked on the ground
@@ -73,13 +77,19 @@ export function ChecksPanel({
   const quality = qualityLabels(locale);
   const toast = useToast();
   const t = useTranslations('qualityChecks');
+  const tCommon = useTranslations('common');
 
   const [{ status }, setList] = useUrlState(CHECKS_URL);
   const [from, setFrom] = useState(isoDaysAgo(7));
   const [to, setTo] = useState(isoDaysAgo(0));
   const [percent, setPercent] = useState('5');
   const [drawing, setDrawing] = useState(false);
-  const [busy, setBusy] = useState<string | null>(null);
+  /** The checks a write is being saved for: their controls are held. */
+  const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
+  /* The same two, as of this instant: two presses in one tick see them, where state is a render late (STA-3). */
+  const inFlight = useRef(new Set<string>());
+  const drawingRef = useRef(false);
+  const queryClient = useQueryClient();
   const [answering, setAnswering] = useState<string | null>(null);
 
   const query = useStaffQuery({
@@ -92,36 +102,53 @@ export function ChecksPanel({
     keepPrevious: true,
   });
 
+  /*
+    A draw, an assignment or a result changes both lists of checks, what «حسب الموظف» counts and
+    what the checker has waiting.
+  */
+  const reread = (): Promise<unknown> => {
+    void queryClient.invalidateQueries({ queryKey: ['quality-officers', tenant] });
+    void queryClient.invalidateQueries({ queryKey: ['quality-my-tasks', tenant] });
+    return queryClient.invalidateQueries({ queryKey: ['quality-checks', tenant] });
+  };
+
   const draw = async () => {
-    if (!token) return;
+    if (!token || drawingRef.current) return;
+    drawingRef.current = true;
     setDrawing(true);
     try {
       const result = await drawQualitySample(tenant, token, { from, to, percent: Number(percent) || 5 });
       toast.success(result.sampled > 0 ? t('sample.drawn', { count: result.sampled }) : t('sample.covered'));
-      query.refetch();
+      await reread();
     } catch (caught) {
       logApiError(caught);
       toast.error(caught instanceof ApiRequestError ? caught.message : t('sample.drawFailed'));
     } finally {
+      drawingRef.current = false;
       setDrawing(false);
     }
   };
 
   const run = async (id: string, work: () => Promise<unknown>, done: string) => {
-    if (!token) return;
-    setBusy(id);
+    if (!token || inFlight.current.has(id)) return;
+    inFlight.current.add(id);
+    setBusy(new Set(inFlight.current));
     try {
       await work();
       toast.success(done);
-      setAnswering(null);
-      query.refetch();
+      // Only the answer of the check just saved: another may be half written.
+      setAnswering((current) => (current === id ? null : current));
+      await reread();
     } catch (caught) {
       logApiError(caught);
       toast.error(caught instanceof ApiRequestError ? caught.message : t('saveFailed'));
     } finally {
-      setBusy(null);
+      inFlight.current.delete(id);
+      setBusy(new Set(inFlight.current));
     }
   };
+
+  const view = readView(query.data, query.error);
 
   return (
     <div className="space-y-4">
@@ -176,11 +203,14 @@ export function ChecksPanel({
         ))}
       </div>
 
-      {query.error ? (
-        <ErrorState description={query.error} offline={query.offline} onRetry={query.refetch} />
-      ) : query.loading ? (
+      {view.state === 'ready' && view.refreshFailed ? (
+        <RefreshFailedAlert message={view.refreshFailed} onRetry={query.refetch} />
+      ) : null}
+      {view.state === 'failed' ? (
+        <ErrorState description={view.error} offline={query.offline} onRetry={query.refetch} />
+      ) : view.state === 'loading' ? (
         <LoadingState label={t('loading')} />
-      ) : (query.data?.items.length ?? 0) === 0 ? (
+      ) : view.data.items.length === 0 ? (
         <EmptyState
           icon={ClipboardList}
           title={t(`empty.${status}`)}
@@ -188,7 +218,7 @@ export function ChecksPanel({
         />
       ) : (
         <ol className="space-y-3">
-          {query.data!.items.map((check) => (
+          {view.data.items.map((check) => (
             <li key={check.id} className="rounded-xl border bg-card p-4">
               <CheckHeader check={check} base={base} locale={locale} />
 
@@ -217,7 +247,7 @@ export function ChecksPanel({
                       />
                     ) : null}
                     {card.units.length > 0 ? (
-                      <FactCell label={t('card.units')} value={card.units.join('، ')} />
+                      <FactCell label={t('card.units')} value={card.units.join(tCommon('listSeparator'))} />
                     ) : null}
                   </FactRow>
                 ))}
@@ -236,7 +266,7 @@ export function ChecksPanel({
                   </p>
                   {check.differences.length > 0 ? (
                     <p className="text-muted-foreground">
-                      {check.differences.map((code) => quality.checkDifference[code] ?? code).join('، ')}
+                      {check.differences.map((code) => quality.checkDifference[code] ?? code).join(tCommon('listSeparator'))}
                     </p>
                   ) : null}
                   {check.notes ? <p className="text-foreground/90">{check.notes}</p> : null}
@@ -244,7 +274,7 @@ export function ChecksPanel({
               ) : answering === check.id ? (
                 <AnswerForm
                   locale={locale}
-                  busy={busy === check.id}
+                  busy={busy.has(check.id)}
                   onCancel={() => setAnswering(null)}
                   onSubmit={(input) =>
                     run(
@@ -263,6 +293,7 @@ export function ChecksPanel({
                       </Label>
                       <Select
                         value={check.assignedTo?.id ?? UNASSIGNED}
+                        disabled={busy.has(check.id)}
                         onValueChange={(value) =>
                           run(
                             check.id,
@@ -287,7 +318,7 @@ export function ChecksPanel({
                       </Select>
                     </div>
                   ) : null}
-                  <Button size="sm" className="ms-auto" onClick={() => setAnswering(check.id)} disabled={busy === check.id}>
+                  <Button size="sm" className="ms-auto" onClick={() => setAnswering(check.id)} disabled={busy.has(check.id)}>
                     {t('card.record')}
                   </Button>
                 </div>

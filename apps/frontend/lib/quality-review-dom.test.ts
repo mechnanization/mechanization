@@ -19,6 +19,7 @@ import {
   UNASSIGNED_CHECK,
   buttons,
   click,
+  heldRead,
   openScreen,
   openTab,
   queue,
@@ -78,6 +79,28 @@ const checks = (locale: Locale = 'en', canReview = true): ReactElement =>
 const refused = (message = 'server words') => new ApiRequestError(409, { code: 'NOT_A_CODE_WE_KNOW', message });
 const text = () => screen.container.textContent ?? '';
 const search = () => window.location.search;
+/** Presses in one tick, before any render: what only a ref can see. */
+async function pressAtOnce(label: string, times = 2): Promise<void> {
+  const button = buttons(screen, label)[0]!;
+  await act(async () => {
+    for (let i = 0; i < times; i += 1) button.click();
+  });
+  await settle();
+}
+/** Lets a test answer a write when it chooses to. */
+function held(spy: ReturnType<typeof vi.fn>) {
+  const answers: Array<(value: unknown) => void> = [];
+  spy.mockImplementation(() => new Promise((resolve) => answers.push(resolve)));
+  return {
+    answer: async (value: unknown = {}, nth = 0) => {
+      await act(async () => answers[nth]!(value));
+      await settle();
+    },
+  };
+}
+/** The keys a write marked stale. */
+const staled = (spy: { mock: { calls: unknown[][] } }) =>
+  spy.mock.calls.map((call) => (call[0] as { queryKey: unknown[] }).queryKey.join('/')).sort();
 /** The query the screen last asked the server for. */
 const asked = (call: ReturnType<typeof vi.fn>) => call.mock.calls.at(-1)![2];
 
@@ -427,5 +450,224 @@ describe('a check', () => {
     await screen.mount(checks());
     await click(screen, en.errorState.retry);
     expect(text()).toContain('Citizen 1');
+  });
+});
+
+describe('one press, one write (STA-3)', () => {
+  it('approves once however fast it is pressed', async () => {
+    held(api.approveRecord);
+    await screen.mount(reviews());
+    await pressAtOnce('Approve', 3);
+    expect(api.approveRecord).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns once however fast «send back» is pressed', async () => {
+    held(api.returnRecord);
+    await screen.mount(reviews());
+    await click(screen, 'Return to the officer');
+    await click(screen, 'Name');
+    await type(screen, '#return-reason', 'Visit again');
+    await pressAtOnce('Send back');
+    expect(api.returnRecord).toHaveBeenCalledTimes(1);
+  });
+
+  it('decides two records at once, each holding its own card', async () => {
+    const approvals = held(api.approveRecord);
+    await screen.mount(reviews());
+    await click(screen, 'Approve', 0);
+    await click(screen, 'Approve', 1);
+    expect(api.approveRecord).toHaveBeenCalledTimes(2);
+    expect(buttons(screen, 'Approve').map((node) => node.disabled)).toEqual([true, true, false]);
+    await approvals.answer({}, 1);
+    expect(buttons(screen, 'Approve').map((node) => node.disabled)).toEqual([true, false, false]);
+  });
+
+  it('takes a record again once its write was refused', async () => {
+    api.approveRecord.mockRejectedValueOnce(refused());
+    await screen.mount(reviews());
+    await click(screen, 'Approve');
+    await click(screen, 'Approve');
+    expect(api.approveRecord).toHaveBeenCalledTimes(2);
+  });
+
+  it('draws once however fast it is pressed', async () => {
+    held(api.drawQualitySample);
+    await screen.mount(checks());
+    await pressAtOnce('Draw a sample', 3);
+    expect(api.drawQualitySample).toHaveBeenCalledTimes(1);
+  });
+
+  it('draws again once the last draw failed', async () => {
+    api.drawQualitySample.mockRejectedValueOnce(refused());
+    await screen.mount(checks());
+    await click(screen, 'Draw a sample');
+    await click(screen, 'Draw a sample');
+    expect(api.drawQualitySample).toHaveBeenCalledTimes(2);
+  });
+
+  it('records a check once, and holds its assignment meanwhile', async () => {
+    const results = held(api.completeQualityCheck);
+    await screen.mount(checks());
+    await click(screen, 'Record what you found');
+    await click(screen, 'What I found matches the record');
+    await pressAtOnce('Save');
+    expect(api.completeQualityCheck).toHaveBeenCalledTimes(1);
+    // The same check cannot be assigned while its result is on the wire.
+    await act(async () => picks.get(`assign-${ASSIGNED_CHECK.id}`)!('UNASSIGNED'));
+    await settle();
+    expect(api.assignQualityCheck).toHaveBeenCalledTimes(1);
+    await results.answer();
+  });
+
+  it('assigns a check once, with its list off until the answer', async () => {
+    held(api.assignQualityCheck);
+    await screen.mount(checks());
+    const choose = picks.get(`assign-${UNASSIGNED_CHECK.id}`)!;
+    await act(async () => {
+      choose(OFFICERS[1]!.id);
+      choose('UNASSIGNED');
+    });
+    await settle();
+    expect(api.assignQualityCheck).toHaveBeenCalledTimes(1);
+    const list = (id: string) => screen.container.querySelector(`[data-list="assign-${id}"]`)!.getAttribute('data-disabled');
+    expect(list(UNASSIGNED_CHECK.id)).toBe('true');
+    expect(list(ASSIGNED_CHECK.id)).toBe('false');
+    expect(buttons(screen, 'Record what you found')[0]!.disabled).toBe(true);
+  });
+});
+
+describe('a half-written form survives another record’s answer', () => {
+  it('keeps the return form of one record when another is approved', async () => {
+    const approvals = held(api.approveRecord);
+    await screen.mount(reviews());
+    await click(screen, 'Approve', 0);
+    await click(screen, 'Return to the officer', 1);
+    await type(screen, '#return-reason', 'Half written');
+    await approvals.answer();
+    expect(screen.container.querySelector<HTMLTextAreaElement>('#return-reason')!.value).toBe('Half written');
+  });
+
+  it('keeps the answer of one check when another’s result lands', async () => {
+    const results = held(api.completeQualityCheck);
+    await screen.mount(checks());
+    await click(screen, 'Record what you found', 0);
+    await click(screen, 'What I found matches the record');
+    await click(screen, 'Save');
+    await click(screen, 'Record what you found', 0);
+    await click(screen, 'Something is different');
+    await type(screen, 'textarea', 'Half written');
+    await results.answer();
+    expect(screen.container.querySelector('textarea')!.value).toBe('Half written');
+  });
+});
+
+describe('what a write marks stale', () => {
+  it('every page of the queue and the officers’ figures, after a decision or a completed record', async () => {
+    await screen.mount(reviews());
+    const stale = vi.spyOn(screen.client, 'invalidateQueries');
+    await click(screen, 'Approve');
+    expect(staled(stale)).toEqual(['quality-officers/t1', 'quality-reviews/t1']);
+    stale.mockClear();
+    await click(screen, 'Fill in the gaps');
+    await act(async () => dialog.props!.onSaved());
+    await settle();
+    expect(staled(stale)).toEqual(['quality-officers/t1', 'quality-reviews/t1']);
+  });
+
+  it('both lists of checks, the officers’ figures and the checker’s tasks', async () => {
+    await screen.mount(checks());
+    const stale = vi.spyOn(screen.client, 'invalidateQueries');
+    await click(screen, 'Draw a sample');
+    expect(staled(stale)).toEqual(['quality-checks/t1', 'quality-my-tasks/t1', 'quality-officers/t1']);
+  });
+
+  it('nothing, when the write was refused', async () => {
+    api.approveRecord.mockRejectedValueOnce(refused());
+    await screen.mount(reviews());
+    const stale = vi.spyOn(screen.client, 'invalidateQueries');
+    await click(screen, 'Approve');
+    expect(stale).not.toHaveBeenCalled();
+  });
+
+  it('holds the card until the queue has been read again', async () => {
+    await screen.mount(reviews());
+    let answer: (value: unknown) => void = () => {};
+    api.getReviewQueue.mockImplementationOnce(() => {
+      const read = heldRead();
+      answer = read.answer;
+      return read.promise;
+    });
+    await click(screen, 'Approve');
+    expect(buttons(screen, 'Approve')[0]!.disabled).toBe(true);
+    await act(async () => answer(queue([FULL, CORRECTED, CHANGED])));
+    await settle();
+    expect(buttons(screen, 'Approve')[0]!.disabled).toBe(false);
+  });
+});
+
+describe('a failed re-read keeps the list (STA-1)', () => {
+  it.each([
+    ['en', en.common.refreshFailed, en.common.retry, 'Could not load the review queue.', 'Approve'],
+    ['ar', ar.common.refreshFailed, ar.common.retry, 'تعذّر تحميل قائمة المراجعة.', 'اعتماد'],
+  ])('the review queue (%s)', async (locale, title, retry, message, approve) => {
+    await screen.mount(reviews(locale as Locale), locale as Locale);
+    api.getReviewQueue.mockRejectedValueOnce(refused());
+    await click(screen, approve);
+    expect(text()).toContain('Citizen 1');
+    expect(text()).toContain(title);
+    expect(text()).toContain(message);
+    await click(screen, retry);
+    expect(text()).not.toContain(title);
+  });
+
+  it('keeps a half-written return form through it', async () => {
+    await screen.mount(reviews());
+    await click(screen, 'Return to the officer');
+    await type(screen, '#return-reason', 'Half written');
+    api.getReviewQueue.mockRejectedValueOnce(refused());
+    await act(async () => {
+      await screen.client.invalidateQueries({ queryKey: ['quality-reviews', TENANT] });
+    });
+    await settle();
+    expect(text()).toContain(en.common.refreshFailed);
+    expect(screen.container.querySelector<HTMLTextAreaElement>('#return-reason')!.value).toBe('Half written');
+  });
+
+  it('the checks', async () => {
+    await screen.mount(checks());
+    api.getQualityChecks.mockRejectedValueOnce(refused());
+    await click(screen, 'Draw a sample');
+    expect(text()).toContain('Citizen 1');
+    expect(text()).toContain(en.common.refreshFailed);
+    await click(screen, en.common.retry);
+    expect(text()).not.toContain(en.common.refreshFailed);
+  });
+});
+
+describe('the sample’s days are the municipality’s', () => {
+  it('between midnight and 03:00 in Beirut, «today» is Beirut’s, not yesterday’s UTC date', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    // 00:30 on 26 November in Beirut, still the 25th in UTC.
+    vi.setSystemTime(new Date('2026-11-25T22:30:00Z'));
+    try {
+      await screen.mount(checks());
+      expect(screen.container.querySelector('#sample-to')!.getAttribute('data-max')).toBe('2026-11-26');
+      await click(screen, 'Draw a sample');
+      expect(asked(api.drawQualitySample)).toMatchObject({ from: '2026-11-19', to: '2026-11-26' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('a list on the English page is joined with an English comma', () => {
+  it.each([
+    ['en', 'Phone / WhatsApp, Name', 'A-1, A-2'],
+    ['ar', '، ', 'A-1، A-2'],
+  ])('%s', async (locale, fields, units) => {
+    await screen.mount(reviews(locale as Locale), locale as Locale);
+    expect(text()).toContain(fields);
+    await screen.mount(checks(locale as Locale), locale as Locale);
+    expect(text()).toContain(units);
   });
 });

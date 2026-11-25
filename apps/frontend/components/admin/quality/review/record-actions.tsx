@@ -25,8 +25,8 @@ export function RecordActions({
   tenant: string;
   token: string | null;
   locale: string;
-  /** The record a decision is being saved for, or none. */
-  busy: string | null;
+  /** A decision on this record is being saved. */
+  busy: boolean;
   /** The record whose return form is open, or none. */
   returning: string | null;
   setReturning: (registrationId: string | null) => void;
@@ -41,7 +41,7 @@ export function RecordActions({
       {returning === item.registrationId ? (
         <ReturnForm
           locale={locale}
-          busy={busy === item.registrationId}
+          busy={busy}
           onCancel={() => setReturning(null)}
           onSubmit={(input) =>
             act(
@@ -84,7 +84,7 @@ export function RecordActions({
               variant="outline"
               size="sm"
               className="gap-1.5"
-              disabled={busy === item.registrationId}
+              disabled={busy}
               onClick={() => setCompleting(item)}
             >
               <FileQuestion className="size-4" aria-hidden />
@@ -96,7 +96,7 @@ export function RecordActions({
               variant="outline"
               size="sm"
               className="gap-1.5"
-              disabled={busy === item.registrationId}
+              disabled={busy}
               onClick={() => setReturning(item.registrationId)}
             >
               <Undo2 className="size-4" aria-hidden />
@@ -106,7 +106,7 @@ export function RecordActions({
           <Button
             size="sm"
             className="gap-1.5"
-            disabled={busy === item.registrationId}
+            disabled={busy}
             onClick={() =>
               act(
                 item.registrationId,
@@ -115,7 +115,7 @@ export function RecordActions({
               )
             }
           >
-            {busy === item.registrationId ? (
+            {busy ? (
               <Loader2 className="size-4 animate-spin" aria-hidden />
             ) : (
               <Check className="size-4" aria-hidden />

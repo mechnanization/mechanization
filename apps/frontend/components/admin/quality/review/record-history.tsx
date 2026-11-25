@@ -14,6 +14,7 @@ export function RecordHistory({
   quality: ReturnType<typeof qualityLabels>;
 }): React.JSX.Element {
   const t = useTranslations('recordReview.history');
+  const tCommon = useTranslations('common');
   const openReturn = item.history.find((entry) => entry.outcome === 'RETURNED' && !entry.resolvedAt);
 
   return (
@@ -37,7 +38,7 @@ export function RecordHistory({
                 {entry.reason ? <p className="mt-0.5 text-muted-foreground">{entry.reason}</p> : null}
                 {entry.fields.length > 0 ? (
                   <p className="mt-0.5 text-muted-foreground">
-                    {entry.fields.map((field) => quality.reviewField[field] ?? field).join('، ')}
+                    {entry.fields.map((field) => quality.reviewField[field] ?? field).join(tCommon('listSeparator'))}
                   </p>
                 ) : null}
                 {entry.resolvedAt ? (

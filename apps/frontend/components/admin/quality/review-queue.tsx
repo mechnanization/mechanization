@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
+import { useQueryClient } from '@tanstack/react-query';
 import { ClipboardCheck, FileQuestion } from 'lucide-react';
 import { getLabels, qualityLabels } from '@mechanization/shared-schemas';
 import { ApiRequestError, logApiError } from '@/lib/api-client';
@@ -11,6 +12,8 @@ import { useStaffQuery } from '@/lib/use-staff-query';
 import { usePagerLabels } from '@/lib/use-pager-labels';
 import { param, useUrlPagination, useUrlState } from '@/lib/use-url-state';
 import { pageWithRows } from '@/lib/url-state';
+import { readView } from '@/lib/read-view';
+import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Pager } from '@/components/ui/pager';
@@ -79,7 +82,11 @@ export function ReviewQueue({
   });
   const offset = pagination.pageIndex * pagination.pageSize;
   const listTop = useRef<HTMLDivElement | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
+  /** The records a decision is being saved for: their cards' buttons are held. */
+  const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
+  /** The same, as of this instant: two presses in one tick see it, where state is a render late (STA-3). */
+  const inFlight = useRef(new Set<string>());
+  const queryClient = useQueryClient();
   const [returning, setReturning] = useState<string | null>(null);
   /** The row whose «استكمال البيانات الناقصة» dialog is open, or none. */
   const [completing, setCompleting] = useState<ReviewQueueItem | null>(null);
@@ -128,21 +135,36 @@ export function ReviewQueue({
   };
   const tabs = REVIEW_TABS.map((key) => ({ key, label: tabLabel[key], count: tabCount[key] }));
 
+  /*
+    A decision, or a record completed from here, changes which queue the record is in and what
+    «حسب الموظف» counts: every page of both is stale, not only the one on screen.
+  */
+  const reread = (): Promise<unknown> => {
+    void queryClient.invalidateQueries({ queryKey: ['quality-officers', tenant] });
+    return queryClient.invalidateQueries({ queryKey: ['quality-reviews', tenant] });
+  };
+
   const act = async (registrationId: string, run: () => Promise<unknown>, done: string) => {
-    if (!token) return;
-    setBusy(registrationId);
+    if (!token || inFlight.current.has(registrationId)) return;
+    inFlight.current.add(registrationId);
+    setBusy(new Set(inFlight.current));
     try {
       await run();
       toast.success(done);
-      setReturning(null);
-      query.refetch();
+      // Only the form of the record just decided: another may be half written.
+      setReturning((current) => (current === registrationId ? null : current));
+      // Held until the queue is read again, so the card cannot be decided twice while it is still drawn.
+      await reread();
     } catch (caught) {
       logApiError(caught);
       toast.error(caught instanceof ApiRequestError ? caught.message : t('saveFailed'));
     } finally {
-      setBusy(null);
+      inFlight.current.delete(registrationId);
+      setBusy(new Set(inFlight.current));
     }
   };
+
+  const view = readView(query.data, query.error);
 
   return (
     <Tabs
@@ -194,11 +216,14 @@ export function ReviewQueue({
       </div>
 
       <TabsContent value={tab} className="space-y-4">
-        {query.error ? (
-          <ErrorState description={query.error} offline={query.offline} onRetry={query.refetch} />
-        ) : query.loading ? (
+        {view.state === 'ready' && view.refreshFailed ? (
+          <RefreshFailedAlert message={view.refreshFailed} onRetry={query.refetch} />
+        ) : null}
+        {view.state === 'failed' ? (
+          <ErrorState description={view.error} offline={query.offline} onRetry={query.refetch} />
+        ) : view.state === 'loading' ? (
           <LoadingState label={t('loading')} />
-        ) : (query.data?.items.length ?? 0) === 0 && total === 0 ? (
+        ) : view.data.items.length === 0 && total === 0 ? (
           <EmptyState
             icon={ClipboardCheck}
             title={t(`empty.${tab}`)}
@@ -206,7 +231,7 @@ export function ReviewQueue({
           />
         ) : (
           <ol className="space-y-3">
-            {query.data!.items.map((item) => (
+            {view.data.items.map((item) => (
                 /*
                   Bands, not one run of stacked blocks.
 
@@ -230,7 +255,7 @@ export function ReviewQueue({
                     tenant={tenant}
                     token={token}
                     locale={locale}
-                    busy={busy}
+                    busy={busy.has(item.registrationId)}
                     returning={returning}
                     setReturning={setReturning}
                     setCompleting={setCompleting}
@@ -241,7 +266,7 @@ export function ReviewQueue({
           </ol>
         )}
 
-        {!query.error && !query.loading ? (
+        {view.state === 'ready' ? (
           <Pager
             page={pagination.pageIndex}
             pageSize={pagination.pageSize}
@@ -276,7 +301,7 @@ export function ReviewQueue({
           locale={locale}
           onSaved={() => {
             setCompleting(null);
-            query.refetch();
+            void reread();
           }}
         />
       ) : null}
