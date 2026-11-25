@@ -1690,6 +1690,13 @@ Each pass first lands the tasks already listed for its pages (named below); what
   and record each behind an in-flight ref; a failed re-read keeps the list; a decision or check re-reads the officers' figures as
   well; a half-written return or check form survives another record's answer; the sample's days are the municipality's (they were
   UTC); lists on the English page joined with an English comma. **Not done:** tried in a browser, at any width.
+- **Done 2026-11-26 (the findings list and its parts; stays In Progress):** `findings-list.tsx` (747 → 411) and `finding-parts.tsx`
+  (608 → 181) split; their words, and the detail view's, in `qualityFindings.*`, snapshots unchanged in both languages. Writes are
+  guarded by finding: one flag for every write meant a «تم الحل» sent while another finding was being reopened was dropped and its
+  dialog closed as if saved. The dialog sends once per press; a failed re-read keeps the list, an open finding and a comparison; a
+  write re-reads the officers' figures too (the unit review the buildings and cases, a correction the review queue);
+  `CITIZEN_EDIT_ROLES` replaced by `CITIZEN_RECORD_EDIT_ROLES`, the same two roles among those who reach the screen. The list is
+  still paged in the browser (open). **Not done:** tried in a browser, at any width.
 
 ## [PAGE-14] Bring the news pages to the page contract
 - **Priority:** P2 · **Assignee:** Abed · **Estimate:** S · **Category:** UI/UX

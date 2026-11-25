@@ -58,8 +58,7 @@ const GUARDS: ReadonlyArray<readonly [string, string]> = [
   // SUBMIT-04: import and quality
   ['import-citizens-dialog.tsx', 'checkingRef'],
   ['import-citizens-dialog.tsx', 'importingRef'],
-  ['quality/findings-list.tsx', 'workRef'],
-  ['quality/findings-list.tsx', 'settleAllRef'],
+  ['quality/resolve-dialog.tsx', 'sending'],
   ['quality/finding-compare.tsx', 'savingRef'],
   // PAGE-14: the news editor and its media panel (the two lists’ dialogs validate between check and set: lib/page-14.test.ts)
   ['news/article-media.tsx', 'inFlight'],
@@ -91,6 +90,34 @@ describe.each(GUARDS)('%s guards its write with %s', (file, ref) => {
 
   it('releases it when the write settles', () => {
     expect(source).toMatch(new RegExp(`${ref}\\.current = false;`));
+  });
+});
+
+/*
+  «ملاحظات الجودة» guards by key rather than by one flag (PAGE-13): a write on one finding must not swallow a
+  write on another, so the ref is a set of the keys on the wire. What each press then does is driven in
+  `quality-findings-dom.test.ts`.
+*/
+describe('quality/findings-list.tsx guards each write by its key', () => {
+  const source = read('quality/findings-list.tsx');
+
+  it('holds the keys in a ref, set before the state it also sets', () => {
+    expect(source).toMatch(/const inFlight = useRef\(new Set<string>\(\)\);/);
+    expect(source).toMatch(/inFlight\.current\.add\(key\);\s*\n\s*setBusy\(/);
+  });
+
+  it.each([
+    ['a finding’s write', /if \(!token \|\| inFlight\.current\.has\(key\)\) return;\s*\n\s*hold\(key\);/],
+    ['the unit review', /if \(!token \|\| inFlight\.current\.has\('settle-all'\)\) return;\s*\n\s*hold\('settle-all'\);/],
+  ])('checks and holds before %s starts', (_name, guard) => {
+    expect(source).toMatch(guard);
+  });
+
+  it('releases a key when its write settles, refused or not', () => {
+    expect(source).toMatch(/inFlight\.current\.delete\(key\);/);
+    expect(source).toMatch(/\} catch \(caught\) \{\s*\n\s*release\(key\);/);
+    expect(source).toMatch(/void reread\(\)\.finally\(\(\) => release\(key\)\);/);
+    expect(source).toMatch(/\} finally \{\s*\n\s*release\('settle-all'\);/);
   });
 });
 

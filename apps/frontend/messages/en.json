@@ -960,6 +960,91 @@
       "save": "Save"
     }
   },
+  "qualityFindings": {
+    "loadFailed": "Could not load the findings.",
+    "saveFailed": "Not saved.",
+    "reopened": "Reopened",
+    "markedResolved": "Marked resolved",
+    "resolved": "Resolved",
+    "back": "Back to quality findings",
+    "severity": {
+      "HIGH": "Look now",
+      "MEDIUM": "Worth checking",
+      "LOW": "A gap to fill"
+    },
+    "table": {
+      "search": "Search findings",
+      "searchPlaceholder": "Search by record, reference number or officer…",
+      "searchApplied": "Search: \"{term}\"",
+      "empty": "Nothing to look at.",
+      "emptyHint": "No duplicate records, copied numbers or contradictions were found in the register.",
+      "emptySearch": "No finding matches your search.",
+      "emptySearchHint": "Try the record’s name, its reference number, or the officer who filed it.",
+      "loadError": "Failed to load the findings.",
+      "rowsPerPage": "Rows per page",
+      "totalRows": "{count} findings",
+      "resetColumns": "Reset to default",
+      "filters": "Filters",
+      "clearFilters": "Clear filters"
+    },
+    "columns": {
+      "finding": "Finding",
+      "detail": "What was found",
+      "records": "Records",
+      "officers": "Filed by",
+      "at": "Last change",
+      "actions": "Action"
+    },
+    "filters": {
+      "all": "All",
+      "showResolved": "Show resolved"
+    },
+    "gone": {
+      "title": "This finding is no longer in the queue.",
+      "body": "Either the record was corrected, or somebody marked it resolved."
+    },
+    "unitReview": {
+      "body": "Apply the unit-status rule to every flat: statuses follow who is registered inside, and each flat whose records still disagree gets a review case. Its occupancy fee is held until the case is settled.",
+      "run": "Review unit statuses",
+      "running": "Reviewing…",
+      "done": "{checked} flats checked — {changed} statuses corrected, {opened} review cases opened, {closed} closed. {pending} still under review.",
+      "failed": "The review could not run."
+    },
+    "actions": {
+      "compare": "Compare",
+      "open": "Open the record",
+      "details": "View details",
+      "reopen": "Reopen",
+      "resolve": "Resolved",
+      "closesByFixing": "Closes by fixing the record itself."
+    },
+    "dialog": {
+      "cancel": "Cancel",
+      "title": "Mark as resolved",
+      "description": "This clears the finding from the queue and stores your reason against it.",
+      "explanation": "Findings are recomputed on every read — a record you actually correct leaves the queue on its own. Use this for the ones that are not a problem: two genuine neighbours, two cousins on one household phone.",
+      "reason": "Why is this settled?",
+      "placeholder": "e.g. two separate houses, different families",
+      "minimum": "At least four characters.",
+      "confirm": "Mark resolved"
+    },
+    "details": {
+      "lastChange": "Last change to these records",
+      "filedBy": "Filed by",
+      "howCloses": "How it closes",
+      "closesEither": "By correcting the record, or by marking it resolved with a reason.",
+      "closesByFixingOnly": "Only by correcting the record itself.",
+      "records": "The records this is about",
+      "citizen": "Citizen",
+      "structure": "Structure",
+      "correctFile": "Correct the file",
+      "editStructure": "Edit the structure",
+      "markedResolved": "Marked resolved — ",
+      "related": "Other findings on the same records",
+      "noneRelated": "Nothing else the register can find is wrong with these records.",
+      "open": "Open"
+    }
+  },
   "citizens": {
     "families": "Total families",
     "archived": "Archived",
