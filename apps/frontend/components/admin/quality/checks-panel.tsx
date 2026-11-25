@@ -37,7 +37,7 @@ const CHECK_STATUSES = ['OPEN', 'DONE'] as const satisfies readonly QualityCheck
  * what «سحب عيّنة» draws with, not a view of anything, and a reload or a link
  * from last week should not hand the next draw last week's dates.
  */
-const LIST = { status: param.oneOf(CHECK_STATUSES, 'OPEN') };
+export const CHECKS_URL = { status: param.oneOf(CHECK_STATUSES, 'OPEN') };
 
 const isoDaysAgo = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
 
@@ -72,7 +72,7 @@ export function ChecksPanel({
   const quality = qualityLabels(locale);
   const toast = useToast();
 
-  const [{ status }, setList] = useUrlState(LIST);
+  const [{ status }, setList] = useUrlState(CHECKS_URL);
   const [from, setFrom] = useState(isoDaysAgo(7));
   const [to, setTo] = useState(isoDaysAgo(0));
   const [percent, setPercent] = useState('5');

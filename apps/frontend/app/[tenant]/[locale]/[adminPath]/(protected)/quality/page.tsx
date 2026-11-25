@@ -1,26 +1,37 @@
-import { redirect } from 'next/navigation';
+'use client';
+
+import { use } from 'react';
+import { ClipboardCheck } from 'lucide-react';
+import { useTranslations } from 'next-intl';
+import { QualityScreen } from '@/components/admin/quality/quality-screen';
+import { QualityTabs } from '@/components/admin/quality/quality-tabs';
 
 /**
- * «مراجعة الجودة» was one page with four tabs; it is four pages now.
+ * «الجودة» — what the register can tell is probably wrong, and the second pair
+ * of eyes on what officers record: four screens as the tabs of one page
+ * (NAV-03, decided 2026-11-25, open-decisions §25).
  *
- * This address stays as a forward rather than a 404. It is what the sidebar
- * pointed at until that change, so it is in browser histories and in at least
- * one bookmark, and a link that silently became nothing is worse than one that
- * still lands somewhere sensible.
- *
- * «السجلات» is the destination because it is the one with a queue: the other
- * three are things you go and look at, that one is work waiting to be done.
- *
- * A server redirect (NAV-12), as the treasury's old addresses are
- * (`finance/income`): nothing renders here, so there is no skeleton to flash
- * before a client effect runs, and nothing for the route guard to check — the
- * page it lands on is guarded by its own nav row.
+ * «اعتماد السجلات» (`?tab=reviews`, the first) is the queue a reviewer works;
+ * «الملاحظات» what the register itself says is wrong, recomputed on every read;
+ * «التحقق الميداني» a share of each officer's records re-checked on the ground;
+ * «حسب الموظف» the work beside its quality, and nothing about pay. They were
+ * four rows and four pages under `/quality/…`, which forward here with their
+ * query strings kept. `QualityScreen` is the one role gate (`QUALITY_REVIEWER_ROLES`):
+ * an officer's own side of it is on «أرباحي والمسح الميداني».
  */
-export default async function QualityIndexPage({
+export default function QualityPage({
   params,
 }: {
   params: Promise<{ tenant: string; locale: string; adminPath: string }>;
-}): Promise<never> {
-  const { tenant, locale, adminPath } = await params;
-  redirect(`/${tenant}/${locale}/${adminPath}/quality/reviews`);
+}): React.JSX.Element {
+  const { tenant, locale, adminPath } = use(params);
+  const t = useTranslations('quality');
+
+  return (
+    <QualityScreen tenant={tenant} locale={locale} adminPath={adminPath} icon={ClipboardCheck} title={t('title')}>
+      {({ token, base, role }) => (
+        <QualityTabs tenant={tenant} base={base} locale={locale} token={token} role={role} />
+      )}
+    </QualityScreen>
+  );
 }

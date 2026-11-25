@@ -5,9 +5,7 @@ import {
   BadgeDollarSign,
   Building2,
   CalendarCheck,
-  CalendarClock,
   ClipboardCheck,
-  ClipboardList,
   DoorClosed,
   FileCheck,
   FileQuestion,
@@ -27,10 +25,8 @@ import {
   ScrollText,
   Settings,
   ShieldCheck,
-  ShieldQuestion,
   Tags,
   UserPlus,
-  UserRoundCheck,
   Users,
   UsersRound,
   Wallet,
@@ -162,10 +158,10 @@ export interface NavGroup {
  *
  * ## The approved map (NAV-01, decided 2026-11-25; docs/open-decisions.md §25)
  *
- * The rows below are 32: NAV-02, NAV-06 and NAV-07 have moved (2026-11-25;
- * their pages are in `OFF_SIDEBAR_PAGES`, after this list), and the rest are
- * Abed's tasks, each landing with its own `lib/nav.test.ts` change. When they
- * are all in:
+ * The rows below are 28: NAV-02, NAV-06 and NAV-07 (their pages are in
+ * `OFF_SIDEBAR_PAGES`, after this list), NAV-03, NAV-04 and NAV-11 have moved
+ * (2026-11-25), and the rest are Abed's tasks, each landing with its own test.
+ * When they are all in:
  *
  *  - (landing): لوحة التحكم · أرباح المسح الميداني · جولتي — unchanged.
  *  - «المواطنون»: سجل المواطنين · ملفات ناقصة · روابط المالكين · طلبات المعاملات.
@@ -290,11 +286,12 @@ export const NAV_GROUPS: NavGroup[] = [
       */
       {
         path: '/citizens/review',
-        label: 'يتطلب مراجعة',
-        labelEn: 'Requires review',
+        // «ملفات ناقصة», not «يتطلب مراجعة» (NAV-11): the other queue, «اعتماد السجلات» in «الجودة», is the one that reviews.
+        label: 'ملفات ناقصة',
+        labelEn: 'Incomplete files',
         icon: FileQuestion,
         roles: EVERY_STAFF_ROLE,
-        keywords: ['مراجعة', 'ناقص', 'استكمال', 'حقول', 'غير مؤكد', 'review', 'incomplete', 'missing'],
+        keywords: ['ناقص', 'ناقصة', 'استكمال', 'حقول', 'غير مؤكد', 'مراجعة', 'يتطلب مراجعة', 'review', 'incomplete', 'missing'],
       },
       /*
         Owner claims waiting to be recognised as one of the register's own
@@ -391,18 +388,39 @@ export const NAV_GROUPS: NavGroup[] = [
     labelEn: 'Field work',
     items: [
       /*
-        Units nobody has surveyed or registered anyone in yet — each officer's
-        own (the buildings they added), everyone's for the admins. The roles
-        that put work on the census, plus the ones that see everyone's
-        (`CENSUS_WORKLIST_ROLES`); an accountant's list would always be empty.
+        The two lists of doors to go back to, as the tabs of one page (NAV-04,
+        2026-11-25): units nobody has surveyed or registered anyone in yet, and
+        the flats and structures read «غير صالحة للسكن» that wait for the visit
+        after repair, which releases their fee hold. Each officer's own (the
+        buildings they added, the readings they recorded), everyone's for the
+        admins. The roles that put work on the census, plus the ones that see
+        everyone's (`CENSUS_WORKLIST_ROLES`); an accountant's list would always
+        be empty. The old addresses forward to a tab and stay the row's own.
       */
       {
-        path: '/buildings/unsurveyed',
-        label: 'وحدات غير ممسوحة',
-        labelEn: 'Unsurveyed units',
+        path: '/buildings/worklists',
+        label: 'قوائم العمل الميداني',
+        labelEn: 'Field worklists',
         icon: ScanSearch,
+        also: ['/buildings/unsurveyed', '/buildings/reinspections'],
         roles: WORKLIST_ROLES,
-        keywords: ['مسح', 'غير ممسوحة', 'وحدة', 'زيارة', 'ميداني', 'unsurveyed', 'survey', 'unit'],
+        keywords: [
+          'مسح',
+          'غير ممسوحة',
+          'وحدة',
+          'زيارة',
+          'ميداني',
+          'إعادة الكشف',
+          'غير صالحة للسكن',
+          'ترميم',
+          'ضرر',
+          'unsurveyed',
+          'survey',
+          'unit',
+          'reinspection',
+          'uninhabitable',
+          'repair',
+        ],
       },
       // A visit that didn't produce a citizen — nobody home, gate locked: what
       // it records is "who to go back to", not a parcel's own facts.
@@ -413,19 +431,6 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: DoorClosed,
         roles: EVERY_STAFF_ROLE,
         keywords: ['زيارة', 'لا أحد في المنزل', 'متابعة', 'cases', 'follow-up', 'visit'],
-      },
-      /*
-        Flats and structures read «غير صالحة للسكن», waiting for the visit after
-        repair that releases their fee hold — each officer's own readings,
-        everyone's for the admins.
-      */
-      {
-        path: '/buildings/reinspections',
-        label: 'بانتظار إعادة الكشف',
-        labelEn: 'Awaiting re-inspection',
-        icon: CalendarClock,
-        roles: WORKLIST_ROLES,
-        keywords: ['إعادة الكشف', 'غير صالحة للسكن', 'ترميم', 'ضرر', 'reinspection', 'uninhabitable', 'repair'],
       },
     ],
   },
@@ -637,7 +642,10 @@ export const NAV_GROUPS: NavGroup[] = [
     «مراجعة الجودة» was one row opening one page of four tabs, and a tab is not
     addressable: it cannot be linked from a notification, cannot be opened in a
     second window beside the register, and hides three of the four screens from
-    the command palette. Four rows, four pages. «سجل النشاطات» belongs here for
+    the command palette. It became four rows and four pages, and four rows with
+    the same frame became one again (NAV-03, 2026-11-25): «الجودة», whose tabs
+    are addressable (`?tab=`) and whose old addresses forward to them.
+    «سجل النشاطات» belongs here for
     the same reason: an auditor reading who changed what is doing this job, not
     configuring the municipality, and «النظام» is left as what it says —
     settings and accounts.
@@ -651,37 +659,42 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'المراجعة والتدقيق',
     labelEn: 'Review & audit',
     items: [
+      /*
+        Tabs: «اعتماد السجلات» (the queue, first), «الملاحظات», «التحقق الميداني»,
+        «حسب الموظف». The four old paths are the row's own, so a link to one is
+        guarded by these roles and lights this row.
+      */
       {
-        path: '/quality/reviews',
-        label: 'السجلات',
-        labelEn: 'Records to review',
+        path: '/quality',
+        label: 'الجودة',
+        labelEn: 'Quality',
         icon: ClipboardCheck,
+        also: ['/quality/reviews', '/quality/findings', '/quality/checks', '/quality/officers'],
         roles: QUALITY_REVIEWER_ROLES,
-        keywords: ['مراجعة', 'اعتماد', 'إعادة', 'جودة', 'review', 'approve', 'return'],
-      },
-      {
-        path: '/quality/findings',
-        label: 'ملاحظات الجودة',
-        labelEn: 'Quality findings',
-        icon: ShieldQuestion,
-        roles: QUALITY_REVIEWER_ROLES,
-        keywords: ['تكرار', 'جودة', 'تناقض', 'ملاحظات', 'findings', 'duplicates', 'quality'],
-      },
-      {
-        path: '/quality/checks',
-        label: 'التحقق الميداني',
-        labelEn: 'Field re-checks',
-        icon: ClipboardList,
-        roles: QUALITY_REVIEWER_ROLES,
-        keywords: ['تحقق', 'عيّنة', 'ميداني', 'check', 'sample', 'field'],
-      },
-      {
-        path: '/quality/officers',
-        label: 'الجودة حسب الموظف',
-        labelEn: 'Quality by officer',
-        icon: UserRoundCheck,
-        roles: QUALITY_REVIEWER_ROLES,
-        keywords: ['موظف', 'أداء', 'جودة', 'officer', 'performance', 'quality'],
+        keywords: [
+          'مراجعة',
+          'اعتماد',
+          'إعادة',
+          'جودة',
+          'تكرار',
+          'تناقض',
+          'ملاحظات',
+          'تحقق',
+          'عيّنة',
+          'ميداني',
+          'موظف',
+          'أداء',
+          'review',
+          'approve',
+          'return',
+          'findings',
+          'duplicates',
+          'quality',
+          'check',
+          'sample',
+          'officer',
+          'performance',
+        ],
       },
       {
         path: '/audit',

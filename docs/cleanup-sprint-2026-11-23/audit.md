@@ -1381,6 +1381,14 @@ a row to that row's roles (longest match, CODE-4). So:
 - **Acceptance criteria:** 1. One row, `path: '/quality'`, `also` holding the four old paths so links and gating still work. 2. `?tab=reviews|findings|checks|officers`, `useUrlState`. 3. A `SegmentedControl` driving the panels, or `Tabs` once UX-08 lands (CTL-9).
 - **Depends on:** NAV-01; UX-08 optional
 - **Verification:** `lib/nav.test.ts`; old URLs open the right tab.
+- **Done 2026-11-25:** one row, `/quality` («الجودة»), whose `also` holds the four old paths; the page is
+  `quality/page.tsx` over `components/admin/quality/quality-tabs.tsx`, the four screens as `Tabs` (`PageTabs`,
+  `components/admin/page-tabs.tsx`) in `?tab=reviews|findings|checks|officers`, «اعتماد السجلات» first, and the
+  old four pages are server redirects keeping their query strings (`lib/legacy-address.ts`). The review queue's own
+  state filter was `?tab=` and is `?queue=` now, because the page needs `?tab=`. A change of tab clears every
+  parameter the panels keep (`QUALITY_PANEL_KEYS`, taken from their schemas): two of them page with `?page=` and
+  `?limit=`. `QualityScreen` stays the one role gate. `lib/nav-03-04-11.test.ts` (the redirects are invoked, not
+  read), `lib/page-tabs-dom.test.ts`. **Not done:** the harness; nothing rendered in a browser.
 - **Decision (NAV-01, 2026-11-25, [open-decisions §25](../open-decisions.md#25-the-staff-sidebar-and-the-page-moves-decided-2026-11-25)):** **approved**; the first tab is «اعتماد السجلات» (NAV-11). NAV-12 is superseded.
 
 ## [NAV-04] Merge the two census worklists into «قوائم العمل الميداني»
@@ -1389,6 +1397,16 @@ a row to that row's roles (longest match, CODE-4). So:
 - **Acceptance criteria:** one row with `also` for both paths; `?tab=`; each tab keeps its own paging and filters in the URL.
 - **Depends on:** NAV-01
 - **Verification:** `lib/nav.test.ts`; harness.
+- **Done 2026-11-25:** one row, `/buildings/worklists` («قوائم العمل الميداني»), `also` both old paths, ahead of «الحالات»;
+  the page is `buildings/worklists/page.tsx` over `PageTabs`, `?tab=unsurveyed|reinspections`, the two pages' bodies moved
+  (with `git mv`) to `components/admin/worklists/` without their own header. Each tab keeps its own page, size and officer
+  filter in the URL: the first keeps `?page=`, `?limit=`, `?owner=`, the second takes `reinspectPage`, `reinspectLimit`,
+  `reinspectOwner` (`lib/worklist-tabs.ts`), so a change of tab clears nothing and going back finds them. The old pages
+  are server redirects, the second renaming those three keys. `lib/nav-03-04-11.test.ts`, `lib/page-tabs-dom.test.ts`.
+  **Not done:** the harness; nothing rendered in a browser.
+- **Found during NAV-04:** a role outside `WORKLIST_ROLES` still opens `/buildings/worklists` (and did the old pages): `canAccessPath`
+  falls through to the `/buildings` row it can see. The server refuses its reads (`CENSUS_WORKLIST_ROLES`), so it sees an
+  error where it could be turned away; the page does not gate itself.
 - **Decision (NAV-01, 2026-11-25, [open-decisions §25](../open-decisions.md#25-the-staff-sidebar-and-the-page-moves-decided-2026-11-25)):** **approved** as written.
 
 ## [NAV-05] Reach the news categories and publishers from the articles page
@@ -1459,6 +1477,11 @@ a row to that row's roles (longest match, CODE-4). So:
 - **Acceptance criteria:** names chosen by the product owner that say the job (for example «ملفات ناقصة» / «اعتماد السجلات» — proposals only).
 - **Depends on:** NAV-01
 - **Verification:** both locales updated.
+- **Done 2026-11-25:** `/citizens/review` is «ملفات ناقصة» / "Incomplete files" on its row, in `reviewQueue.title` and in the
+  register's link to it; the quality queue is «اعتماد السجلات» / "Record approval" (`quality.tabs.reviews`, the first tab of
+  «الجودة»). A record's own status badge still says «يتطلب مراجعة» (the citizen file, the register's row, the inspector's
+  profile): that is the state of one record, not a queue, and was not part of the decision. `PRODUCT.md` names the queue anew.
+  `lib/nav-03-04-11.test.ts`.
 - **Decision (NAV-01, 2026-11-25, [open-decisions §25](../open-decisions.md#25-the-staff-sidebar-and-the-page-moves-decided-2026-11-25)):** «ملفات ناقصة» / "Incomplete files" for `/citizens/review`, «اعتماد السجلات» / "Record approval" for
   `/quality/reviews`.
 
@@ -1469,6 +1492,9 @@ a row to that row's roles (longest match, CODE-4). So:
 - **Acceptance criteria:** `redirect()` from `next/navigation` in a server page. Superseded if NAV-03 makes `/quality` the page itself.
 - **Depends on:** none (skip if NAV-03 is approved)
 - **Verification:** no client redirect.
+- **Superseded 2026-11-25 by NAV-03:** `/quality` is the page of four tabs, not a redirect (open-decisions §25). The test that pinned
+  it (`lib/ux-08-22-24-nav-12.test.ts`, "the quality index forwards") is replaced by the redirects of the four old pages, pinned in
+  `lib/nav-03-04-11.test.ts`. NAV-12 (D3-384, built earlier in this stack) is replaced by it, and needs no more work.
 
 ## [PAGE-01] Remove the settings «المستخدمون» tab, which repeats /staff
 - **Priority:** P2 · **Assignee:** Abed · **Estimate:** S · **Category:** UI/UX

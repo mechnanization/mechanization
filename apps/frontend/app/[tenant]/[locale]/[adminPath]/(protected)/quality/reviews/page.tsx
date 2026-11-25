@@ -1,77 +1,26 @@
-'use client';
-
-import { use, useMemo } from 'react';
-import { ClipboardCheck } from 'lucide-react';
-import { getOfficerQuality } from '@/lib/quality-api';
-import { useStaffQuery } from '@/lib/use-staff-query';
-import { QualityScreen } from '@/components/admin/quality/quality-screen';
-import { ReviewQueue } from '@/components/admin/quality/review-queue';
+import { redirect } from 'next/navigation';
+import { forwardedHref, type SearchParams } from '@/lib/legacy-address';
 
 /**
- * «السجلات» — records waiting for a second pair of eyes.
+ * «السجلات» is the first tab of «الجودة» now (NAV-03): `/quality?tab=reviews`.
  *
- * Its own page rather than a tab, because it is where a reviewer spends the
- * morning: a tab cannot be linked to from a notification, cannot be opened in
- * a second window beside «المواطنون», and puts three screens' worth of queries
- * behind one address.
+ * The queue's own state filter was `?tab=` here and is `?queue=` there, because
+ * the page's `?tab=` says which of the four screens is open; an old link's
+ * filters carry over under the new name. A server redirect, as the treasury's
+ * old addresses are: nothing renders here.
  */
-export default function QualityReviewsPage({
+export default async function QualityReviewsForward({
   params,
+  searchParams,
 }: {
   params: Promise<{ tenant: string; locale: string; adminPath: string }>;
-}): React.JSX.Element {
-  const { tenant, locale, adminPath } = use(params);
-  const en = locale === 'en';
-
-  return (
-    <QualityScreen
-      tenant={tenant}
-      locale={locale}
-      adminPath={adminPath}
-      icon={ClipboardCheck}
-      title={en ? 'Records to review' : 'السجلات'}
-    >
-      {({ token, base }) => (
-        <ReviewsBody tenant={tenant} base={base} locale={locale} token={token} />
-      )}
-    </QualityScreen>
+  searchParams: Promise<SearchParams>;
+}): Promise<never> {
+  const { tenant, locale, adminPath } = await params;
+  redirect(
+    forwardedHref(`/${tenant}/${locale}/${adminPath}`, '/quality', await searchParams, {
+      rename: { tab: 'queue' },
+      set: { tab: 'reviews' },
+    }),
   );
-}
-
-/**
- * Split out so the officer list is fetched only once this screen is allowed
- * and has a token — the names its «الموظف الذي سجَّل» filter offers.
- *
- * From the quality endpoint rather than `GET /staff`, which is SUPER_ADMIN's
- * alone: an AUDITOR may review records and would otherwise be handed an empty
- * select by a 403.
- */
-function ReviewsBody({
-  tenant,
-  base,
-  locale,
-  token,
-}: {
-  tenant: string;
-  base: string;
-  locale: string;
-  token: string;
-}): React.JSX.Element {
-  const staff = useStaffQuery({
-    // The key «حسب الموظف» uses for the same unfiltered call, so the two
-    // screens share one response instead of each paying for the scans behind it.
-    queryKey: ['quality-officers', tenant, 'all'],
-    queryFn: (tok, signal) => getOfficerQuality(tenant, tok, {}, signal),
-    tenant,
-    base,
-    token,
-    errorMessage: '',
-  });
-
-  const officers = useMemo(
-    () => (staff.data?.officers ?? []).map((person) => ({ id: person.id, name: person.name })),
-    [staff.data],
-  );
-
-  return <ReviewQueue tenant={tenant} base={base} locale={locale} token={token} officers={officers} />;
 }

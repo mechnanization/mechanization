@@ -782,7 +782,7 @@ export default function CitizensPage({
       {/*
         The review queue, offered only when there is one.
 
-        A permanent link reading «يتطلب مراجعة (٠)» is a standing invitation to
+        A permanent link reading «ملفات ناقصة (٠)» is a standing invitation to
         check something that is never there. It appears when a record needs
         finishing, and leads to the queue's own page (`/citizens/review`, also
         a row of the «المواطنون» group), which lists just those records with a «فحص
@@ -796,8 +796,8 @@ export default function CitizensPage({
           >
             <FileQuestion className="size-3.5" aria-hidden />
             {locale === 'en'
-              ? `Requires review (${totals.requiringReview})`
-              : `يتطلب مراجعة (${totals.requiringReview})`}
+              ? `Incomplete files (${totals.requiringReview})`
+              : `ملفات ناقصة (${totals.requiringReview})`}
           </Link>
           <p className="text-xs text-muted-foreground">
             {locale === 'en'
