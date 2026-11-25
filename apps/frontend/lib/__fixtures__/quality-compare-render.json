@@ -1,0 +1,114 @@
+{
+  "asking ar": {
+    "length": 29057,
+    "sha256": "36d11c3633ca253e8ce4c4b7b6ab30a60a7a410f98be7fb088c0851be05efb89"
+  },
+  "asking en": {
+    "length": 29127,
+    "sha256": "7e02dfc030f67ec8d37a4df8e1c6b9b0deb056c7968b5ddff507f67ba9922a34"
+  },
+  "buildings ar": {
+    "length": 16235,
+    "sha256": "2cd0e20d4c5e7fa024cf4aed40fd5dbfc9e75f52f4a382d3f5ad5d31ed8f4830"
+  },
+  "buildings en": {
+    "length": 16214,
+    "sha256": "e5247850c858c660e169f35a14bf7a608e61878d228d548a09c164073079ecf4"
+  },
+  "buildings-failed ar": {
+    "length": 2819,
+    "sha256": "d2a3c8a9efd0ce866d4569f04a9331bc7a02064e0c3f30c1935e44edca3201d5"
+  },
+  "buildings-failed en": {
+    "length": 2840,
+    "sha256": "04e4a2f5897597980b0506902e3317170f873de643a25340cf68b4becf8bdc2c"
+  },
+  "buildings-loading ar": {
+    "length": 1656,
+    "sha256": "f3935555afe5062961a17736b97c679efe5a191f10287b35055287b572567d8d"
+  },
+  "buildings-loading en": {
+    "length": 1670,
+    "sha256": "a8786b948a80efd033b4d24d35b0b36a4e010759acd0f7be709692f3f839d148"
+  },
+  "citizens ar": {
+    "length": 23838,
+    "sha256": "0c8726bd8a3ed7e3a0d217931c783650a6e47aabb1234fdfe12c6bd60811ce2d"
+  },
+  "citizens en": {
+    "length": 23901,
+    "sha256": "2934ade2ef7c507fc81a0c07cc82d41054521b5cb57ee003b1611dba04557185"
+  },
+  "citizens-abroad ar": {
+    "length": 21863,
+    "sha256": "7c272dd340b8910c908fd4e061934ba9538286b8ba3eff719c60a5b8bb44dc0f"
+  },
+  "citizens-abroad en": {
+    "length": 21954,
+    "sha256": "77b66382fa92ef5bb0ccc58e1f2ae83e7c0f89c9bebcf3353a302688249c0048"
+  },
+  "citizens-failed ar": {
+    "length": 2814,
+    "sha256": "4550c04af775f61015d9a4b4219f93848f4a2c1fa396df1e5a148ff4354852eb"
+  },
+  "citizens-failed en": {
+    "length": 2822,
+    "sha256": "2e4f0f9691288e3fcb74ee9ea4d85f65e9452ecc93dc9da673dc11cda6f84e2c"
+  },
+  "citizens-loading ar": {
+    "length": 1651,
+    "sha256": "dcfff0e413b33860f202f76220cd4f3a198664328bdef3f35ab5adc6a8e1a43b"
+  },
+  "citizens-loading en": {
+    "length": 1652,
+    "sha256": "b30654c0271b09444128633a82bc18f99ae7d46bd05d1c54058baab94b11d1e7"
+  },
+  "citizens-officer ar": {
+    "length": 22873,
+    "sha256": "76e3fe2d82f779dfb7208b5a2c76b5ae650d05defd9294223f2c65732757b796"
+  },
+  "citizens-officer en": {
+    "length": 22920,
+    "sha256": "e2290f023b7d106fc8ef0de3c307eeb271aab7f483ae7af9198f617f1aa5610a"
+  },
+  "citizens-reviewer ar": {
+    "length": 18393,
+    "sha256": "fba9966b6291e3f643d4aec4723fb787ba7d9640152db7047e6ab29030f8dd1e"
+  },
+  "citizens-reviewer en": {
+    "length": 18498,
+    "sha256": "de5d23868c14fc35b333d1f42b37e51677b4a64e81a7dc129c84ca9bdb24df9c"
+  },
+  "editing-name ar": {
+    "length": 25650,
+    "sha256": "636fcf89cf177a3e7d40242efdaaaf69401e61600c176c50e18aa6fe1d31fa53"
+  },
+  "editing-name en": {
+    "length": 25723,
+    "sha256": "5b5a475f3e4174085472f8f30254542d4cfb4ce92d747dcfaec26ab5291c4553"
+  },
+  "editing-opening ar": {
+    "length": 23550,
+    "sha256": "1538ecc2dc6a9e7dd8d33a7f741d92934d772e83d109409b78a6061bb2dfca3c"
+  },
+  "editing-opening en": {
+    "length": 23613,
+    "sha256": "b3f11945cc215d80004216847992091d9fa4de2cc0a1e2d55fcb657320bbae66"
+  },
+  "editing-phone ar": {
+    "length": 24503,
+    "sha256": "0b5699077f22712ba81523549872e21b08bb27e328889bacc40623ceba11e659"
+  },
+  "editing-phone en": {
+    "length": 24571,
+    "sha256": "2d2ecc813816d96ef647ce968eafdecb669b2aa1bd86856644bc4c279568f9e2"
+  },
+  "one-record ar": {
+    "length": 1269,
+    "sha256": "740087a6395d441b4df9ac22de744f528eefcfa25a02ba96a0e7d3408ccb4eb8"
+  },
+  "one-record en": {
+    "length": 1293,
+    "sha256": "91aa3e4c3c280815a4061cb6fc5fb432c8f1c98f2a9f083f367dfad819107423"
+  }
+}
