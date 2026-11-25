@@ -1,6 +1,7 @@
 'use client';
 
 import { ShieldQuestion } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import type { qualityLabels, QualityFindingKind } from '@mechanization/shared-schemas';
 import type { useUrlState } from '@/lib/use-url-state';
 import { Button } from '@/components/ui/button';
@@ -9,7 +10,6 @@ import type { FINDINGS_URL } from './finding-address';
 
 /** The kinds as chips, each with how many are open, and whether the resolved ones are shown. */
 export function FindingFilters({
-  locale,
   quality,
   total,
   kinds,
@@ -17,7 +17,6 @@ export function FindingFilters({
   includeDismissed,
   setQueue,
 }: {
-  locale: string;
   quality: ReturnType<typeof qualityLabels>;
   /** Every finding read, whichever kind is picked. */
   total: number;
@@ -26,7 +25,7 @@ export function FindingFilters({
   includeDismissed: boolean;
   setQueue: ReturnType<typeof useUrlState<typeof FINDINGS_URL>>[1];
 }): React.JSX.Element {
-  const en = locale === 'en';
+  const t = useTranslations('qualityFindings.filters');
 
   return (
     <div className="flex flex-wrap items-center gap-1.5">
@@ -39,7 +38,7 @@ export function FindingFilters({
           kind === '' ? 'border-primary bg-primary/10 font-medium text-primary' : 'hover:bg-accent',
         )}
       >
-        {en ? 'All' : 'الكل'}
+        {t('all')}
         <span className="ms-1.5 tabular-nums text-muted-foreground">{total}</span>
       </button>
       {kinds.map(([key, value]) => (
@@ -69,7 +68,7 @@ export function FindingFilters({
         }
       >
         <ShieldQuestion className="size-3.5" aria-hidden />
-        {en ? 'Show resolved' : 'إظهار المحلولة'}
+        {t('showResolved')}
       </Button>
     </div>
   );

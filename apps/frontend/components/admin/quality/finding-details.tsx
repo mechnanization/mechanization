@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import { ArrowLeft, ExternalLink, FilePenLine, ShieldQuestion } from 'lucide-react';
 import { qualityLabels } from '@mechanization/shared-schemas';
 import type { QualityFinding } from '@/lib/quality-api';
@@ -53,7 +54,7 @@ export function FindingDetails({
   onReopen: (finding: QualityFinding) => void;
   onCompare: (finding: QualityFinding) => void;
 }): React.JSX.Element {
-  const en = locale === 'en';
+  const t = useTranslations('qualityFindings');
   const quality = qualityLabels(locale);
   const key = `${finding.kind}|${finding.subjectKey}`;
 
@@ -66,13 +67,13 @@ export function FindingDetails({
           className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground sm:text-sm"
         >
           <ArrowLeft className="size-3.5 rtl:rotate-180 sm:size-4" aria-hidden />
-          {en ? 'Back to quality findings' : 'رجوع إلى ملاحظات الجودة'}
+          {t('back')}
         </button>
         <h2 className="flex flex-wrap items-center gap-2 text-lg font-semibold">
           {quality.findingKind[finding.kind] ?? finding.kind}
-          <SeverityMark severity={finding.severity} locale={locale} />
+          <SeverityMark severity={finding.severity} />
           {finding.dismissal ? (
-            <Badge variant="soft-muted">{en ? 'Resolved' : 'تم الحل'}</Badge>
+            <Badge variant="soft-muted">{t('resolved')}</Badge>
           ) : null}
         </h2>
       </div>
@@ -86,27 +87,19 @@ export function FindingDetails({
           <FactRow>
             {finding.at ? (
               <FactCell
-                label={en ? 'Last change to these records' : 'آخر تغيير على هذه السجلات'}
+                label={t('details.lastChange')}
                 value={`${formatRelative(finding.at, locale)} · ${formatDateTime(finding.at)}`}
               />
             ) : null}
             {finding.officers.length > 0 ? (
               <FactCell
-                label={en ? 'Filed by' : 'سجَّلها'}
+                label={t('details.filedBy')}
                 value={finding.officers.map((officer) => officer.name).join('، ')}
               />
             ) : null}
             <FactCell
-              label={en ? 'How it closes' : 'كيف تُغلَق'}
-              value={
-                finding.dismissable
-                  ? en
-                    ? 'By correcting the record, or by marking it resolved with a reason.'
-                    : 'بتصحيح السجل، أو بتعليمها «تم الحل» مع ذكر السبب.'
-                  : en
-                    ? 'Only by correcting the record itself.'
-                    : 'بتصحيح السجل نفسه فقط.'
-              }
+              label={t('details.howCloses')}
+              value={finding.dismissable ? t('details.closesEither') : t('details.closesByFixingOnly')}
             />
           </FactRow>
         </div>
@@ -121,7 +114,7 @@ export function FindingDetails({
       {finding.subjects.length > 0 ? (
         <section className="space-y-2">
           <h3 className="text-sm font-semibold">
-            {en ? 'The records this is about' : 'السجلات المعنية'}
+            {t('details.records')}
           </h3>
           <ul className="overflow-hidden rounded-xl border bg-card divide-y">
             {finding.subjects.map((subject) => (
@@ -137,13 +130,7 @@ export function FindingDetails({
                     <bdi>{subject.label}</bdi>
                   </Link>
                   <span className="ms-2 text-xs text-muted-foreground">
-                    {subject.kind === 'citizen'
-                      ? en
-                        ? 'Citizen'
-                        : 'مواطن'
-                      : en
-                        ? 'Structure'
-                        : 'منشأة'}
+                    {subject.kind === 'citizen' ? t('details.citizen') : t('details.structure')}
                     {subject.secondary ? ` · ${subject.secondary}` : ''}
                   </span>
                 </span>
@@ -151,14 +138,14 @@ export function FindingDetails({
                   <Button asChild variant="ghost" size="sm" className="ms-auto h-8 gap-1.5">
                     <Link href={`${base}/citizens/${encodeURIComponent(subject.id)}/edit`}>
                       <FilePenLine className="size-3.5" aria-hidden />
-                      {en ? 'Correct the file' : 'تصحيح الملف'}
+                      {t('details.correctFile')}
                     </Link>
                   </Button>
                 ) : (
                   <Button asChild variant="ghost" size="sm" className="ms-auto h-8 gap-1.5">
                     <Link href={`${base}/buildings/${encodeURIComponent(subject.id)}/edit`}>
                       <FilePenLine className="size-3.5" aria-hidden />
-                      {en ? 'Edit the structure' : 'تعديل المنشأة'}
+                      {t('details.editStructure')}
                     </Link>
                   </Button>
                 )}
@@ -172,7 +159,7 @@ export function FindingDetails({
         <p className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/40 px-4 py-3 text-xs">
           <ShieldQuestion className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
           <span>
-            {en ? 'Marked resolved — ' : 'عُلِّمت «تم الحل» — '}
+            {t('details.markedResolved')}
             <span className="font-medium">{finding.dismissal.reason}</span>
           </span>
           <span className="text-muted-foreground">
@@ -188,16 +175,14 @@ export function FindingDetails({
       */}
       <section className="space-y-2">
         <h3 className="text-sm font-semibold">
-          {en ? 'Other findings on the same records' : 'ملاحظات أخرى على السجلات نفسها'}
+          {t('details.related')}
           <span className="ms-2 text-xs font-normal text-muted-foreground tabular-nums">
             {related.length}
           </span>
         </h3>
         {related.length === 0 ? (
           <p className="rounded-xl border bg-card px-4 py-3 text-sm text-muted-foreground">
-            {en
-              ? 'Nothing else the register can find is wrong with these records.'
-              : 'لا شيء آخر يستطيع السجل أن يجده على هذه السجلات.'}
+            {t('details.noneRelated')}
           </p>
         ) : (
           <ul className="overflow-hidden rounded-xl border bg-card divide-y">
@@ -209,13 +194,13 @@ export function FindingDetails({
                   other.dismissal && 'opacity-70',
                 )}
               >
-                <SeverityMark severity={other.severity} locale={locale} withText={false} />
+                <SeverityMark severity={other.severity} withText={false} />
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm font-medium">
                     {quality.findingKind[other.kind] ?? other.kind}
                     {other.dismissal ? (
                       <Badge variant="soft-muted" className="ms-2">
-                        {en ? 'Resolved' : 'تم الحل'}
+                        {t('resolved')}
                       </Badge>
                     ) : null}
                   </span>
@@ -232,7 +217,7 @@ export function FindingDetails({
                   onClick={() => onOpen(other)}
                 >
                   <ExternalLink className="size-3.5" aria-hidden />
-                  {en ? 'Open' : 'فتحها'}
+                  {t('details.open')}
                 </Button>
               </li>
             ))}
@@ -243,7 +228,6 @@ export function FindingDetails({
       <FindingActions
         finding={finding}
         base={base}
-        locale={locale}
         busy={busyKey === key}
         showDetails={false}
         onDetails={() => undefined}

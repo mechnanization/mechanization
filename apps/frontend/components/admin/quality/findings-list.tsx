@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState } from 'react';
 import { CircleCheck } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import { qualityLabels } from '@mechanization/shared-schemas';
 import { ApiRequestError, logApiError, settleAllUnitStatuses } from '@/lib/api-client';
 import { useTabSearch, useUrlPagination, useUrlState } from '@/lib/use-url-state';
@@ -20,7 +21,7 @@ import { FindingDetails } from './finding-details';
 import { FINDING_KEY, FINDINGS_URL, keyOf, type View } from './findings/finding-address';
 import { FindingFilters } from './findings/finding-filters';
 import { FindingGone } from './findings/finding-gone';
-import { tableLabels } from './findings/table-labels';
+import { useFindingTableLabels } from './findings/table-labels';
 import { UnitStatusReview } from './findings/unit-status-review';
 import { useFindingColumns } from './findings/use-finding-columns';
 
@@ -85,7 +86,8 @@ export function FindingsList({
   /** The viewer's role — decides whether a correction can be offered at all. */
   role?: string;
 }): React.JSX.Element {
-  const en = locale === 'en';
+  const t = useTranslations('qualityFindings');
+  const tableLabels = useFindingTableLabels();
   // Memoised because the column definitions below hang off it: `qualityLabels`
   // returns a fresh object per call, which would rebuild every column on every
   // keystroke in the table's own search box.
@@ -127,7 +129,7 @@ export function FindingsList({
     tenant,
     base,
     token,
-    errorMessage: en ? 'Could not load the findings.' : 'تعذّر تحميل ملاحظات الجودة.',
+    errorMessage: t('loadFailed'),
     keepPrevious: true,
   });
 
@@ -189,9 +191,7 @@ export function FindingsList({
     } catch (caught) {
       logApiError(caught);
       if (!quiet) {
-        toast.error(
-          caught instanceof ApiRequestError ? caught.message : en ? 'Not saved.' : 'لم يُحفظ.',
-        );
+        toast.error(caught instanceof ApiRequestError ? caught.message : t('saveFailed'));
       }
       throw caught;
     } finally {
@@ -205,7 +205,7 @@ export function FindingsList({
       keyOf(finding),
       () =>
         restoreFinding(tenant, token!, { kind: finding.kind, subjectKey: finding.subjectKey }),
-      en ? 'Reopened' : 'أُعيد فتح الملاحظة',
+      t('reopened'),
     ).catch(() => undefined);
 
   const columns = useFindingColumns({ tenant, token, base, locale, quality, busy, setView, setResolving, reopen });
@@ -215,7 +215,6 @@ export function FindingsList({
   // not, so a reload of `?page=3` survives the rows arriving.
   const filterBar = (
     <FindingFilters
-      locale={locale}
       quality={quality}
       total={all.length}
       kinds={kinds}
@@ -253,7 +252,7 @@ export function FindingsList({
               subjectKey: finding.subjectKey,
               reason,
             }),
-          en ? 'Marked resolved' : 'عُلِّمت «تم الحل»',
+          t('markedResolved'),
           true,
         );
         // Closing a finding from inside its own detail or comparison view
@@ -276,7 +275,7 @@ export function FindingsList({
     session token arrives, when nothing is loading and nothing is loaded yet.
   */
   if (view.mode !== 'list' && !selected && query.data && !query.loading) {
-    return <FindingGone locale={locale} onBack={() => setView({ mode: 'list' })} />;
+    return <FindingGone onBack={() => setView({ mode: 'list' })} />;
   }
 
   if (view.mode === 'compare' && selected) {
@@ -325,20 +324,18 @@ export function FindingsList({
     try {
       const res = await settleAllUnitStatuses(tenant, token);
       toast.success(
-        en
-          ? `${res.unitsChecked} flats checked — ${res.statusesChanged} statuses corrected, ${res.casesOpened} review cases opened, ${res.casesResolved} closed. ${res.stillUnderReview} still under review.`
-          : `فُحصت ${res.unitsChecked} وحدة — صُحِّحت حالة ${res.statusesChanged}، وفُتحت ${res.casesOpened} حالة مراجعة وأُغلقت ${res.casesResolved}. ما زالت ${res.stillUnderReview} وحدة قيد المراجعة.`,
+        t('unitReview.done', {
+          checked: res.unitsChecked,
+          changed: res.statusesChanged,
+          opened: res.casesOpened,
+          closed: res.casesResolved,
+          pending: res.stillUnderReview,
+        }),
       );
       await query.refetch();
     } catch (caught) {
       logApiError(caught);
-      toast.error(
-        caught instanceof ApiRequestError
-          ? caught.message
-          : en
-            ? 'The review could not run.'
-            : 'تعذّر تشغيل المراجعة.',
-      );
+      toast.error(caught instanceof ApiRequestError ? caught.message : t('unitReview.failed'));
     } finally {
       setBusy(null);
       settleAllRef.current = false;
@@ -349,7 +346,6 @@ export function FindingsList({
     <div className="space-y-4">
       {role === 'SUPER_ADMIN' ? (
         <UnitStatusReview
-          locale={locale}
           running={busy === 'settle-all'}
           ready={Boolean(token)}
           onRun={() => void settleAll()}
@@ -358,7 +354,7 @@ export function FindingsList({
       <DataTable
         columns={columns}
         data={items}
-        labels={tableLabels(locale)}
+        labels={tableLabels}
         getRowId={(finding) => keyOf(finding)}
         columnStorageKey="quality-findings"
         /*

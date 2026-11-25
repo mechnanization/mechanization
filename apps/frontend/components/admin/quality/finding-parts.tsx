@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { getLabels } from '@mechanization/shared-schemas';
 import type { FindingSubject, QualityFinding } from '@/lib/quality-api';
 import { cn } from '@/lib/utils';
@@ -14,18 +15,10 @@ import { cn } from '@/lib/utils';
  * cannot drift into saying different things about the same finding.
  */
 
-export const SEVERITY: Record<
-  QualityFinding['severity'],
-  { dot: string; text: string; ar: string; en: string }
-> = {
-  HIGH: { dot: 'bg-destructive', text: 'text-destructive', ar: 'يستحق النظر الآن', en: 'Look now' },
-  MEDIUM: { dot: 'bg-warning', text: 'text-warning', ar: 'يستحق التحقق', en: 'Worth checking' },
-  LOW: {
-    dot: 'bg-muted-foreground/50',
-    text: 'text-muted-foreground',
-    ar: 'نقص يُستكمل',
-    en: 'A gap to fill',
-  },
+export const SEVERITY: Record<QualityFinding['severity'], { dot: string; text: string }> = {
+  HIGH: { dot: 'bg-destructive', text: 'text-destructive' },
+  MEDIUM: { dot: 'bg-warning', text: 'text-warning' },
+  LOW: { dot: 'bg-muted-foreground/50', text: 'text-muted-foreground' },
 };
 
 /**
@@ -37,15 +30,16 @@ export const SEVERITY: Record<
  */
 export function SeverityMark({
   severity,
-  locale,
   withText = true,
 }: {
   severity: QualityFinding['severity'];
-  locale: string;
+  /** Not read: the comparison still passes it, until its own pull request. */
+  locale?: string;
   withText?: boolean;
 }): React.JSX.Element {
+  const t = useTranslations('qualityFindings.severity');
   const tone = SEVERITY[severity];
-  const label = locale === 'en' ? tone.en : tone.ar;
+  const label = t(severity);
   return (
     // `title` on the dot-only form: the words are already there for a screen
     // reader, and this puts them within reach of a mouse without spending a

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { Loader2 } from 'lucide-react';
 import type { QualityFinding } from '@/lib/quality-api';
 import { Alert } from '@/components/ui/alert';
@@ -48,7 +49,7 @@ export function ResolveDialog({
   /** Awaited — the dialog stays open and busy until it settles. */
   onConfirm: (reason: string) => Promise<void>;
 }): React.JSX.Element {
-  const en = locale === 'en';
+  const t = useTranslations('qualityFindings');
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
@@ -71,7 +72,7 @@ export function ResolveDialog({
       setReason('');
       onOpenChange(false);
     } catch (error) {
-      setFailure(error instanceof Error ? error.message : en ? 'Not saved.' : 'لم يُحفظ.');
+      setFailure(error instanceof Error ? error.message : t('saveFailed'));
     } finally {
       setBusy(false);
     }
@@ -79,13 +80,11 @@ export function ResolveDialog({
 
   return (
     <Dialog open={open} onOpenChange={close}>
-      <DialogContent className="max-w-lg" closeLabel={en ? 'Cancel' : 'إلغاء'}>
+      <DialogContent className="max-w-lg" closeLabel={t('dialog.cancel')}>
         <DialogHeader>
-          <DialogTitle>{en ? 'Mark as resolved' : 'تعليم الملاحظة «تم الحل»'}</DialogTitle>
+          <DialogTitle>{t('dialog.title')}</DialogTitle>
           <DialogDescription>
-            {en
-              ? 'This clears the finding from the queue and stores your reason against it.'
-              : 'يرفع هذا الملاحظة من القائمة ويحفظ سببك معها.'}
+            {t('dialog.description')}
           </DialogDescription>
         </DialogHeader>
 
@@ -98,14 +97,12 @@ export function ResolveDialog({
           </div>
 
           <p className="text-xs leading-relaxed text-muted-foreground">
-            {en
-              ? 'Findings are recomputed on every read — a record you actually correct leaves the queue on its own. Use this for the ones that are not a problem: two genuine neighbours, two cousins on one household phone.'
-              : 'تُحتسب الملاحظات عند كل فتح للشاشة — فالسجل الذي يُصحَّح فعلاً يخرج من القائمة وحده. استعمل هذا لما ليس مشكلة: جاران حقيقيان، أو ابنا عم على هاتف منزل واحد.'}
+            {t('dialog.explanation')}
           </p>
 
           <div className="space-y-1.5">
             <label htmlFor="resolve-reason" className="text-sm font-medium">
-              {en ? 'Why is this settled?' : 'لماذا اعتُبرت محلولة؟'}
+              {t('dialog.reason')}
             </label>
             <Textarea
               id="resolve-reason"
@@ -114,14 +111,10 @@ export function ResolveDialog({
               maxLength={500}
               rows={3}
               autoFocus
-              placeholder={
-                en
-                  ? 'e.g. two separate houses, different families'
-                  : 'مثال: بيتان منفصلان وعائلتان مختلفتان'
-              }
+              placeholder={t('dialog.placeholder')}
             />
             <p className="text-xs text-muted-foreground">
-              {en ? 'At least four characters.' : 'أربعة أحرف على الأقل.'}
+              {t('dialog.minimum')}
             </p>
           </div>
 
@@ -139,7 +132,7 @@ export function ResolveDialog({
             disabled={busy}
             onClick={() => close(false)}
           >
-            {en ? 'Cancel' : 'إلغاء'}
+            {t('dialog.cancel')}
           </Button>
           <Button
             className="w-full gap-1.5 sm:w-auto"
@@ -147,7 +140,7 @@ export function ResolveDialog({
             onClick={run}
           >
             {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-            {en ? 'Mark resolved' : 'تم الحل'}
+            {t('dialog.confirm')}
           </Button>
         </DialogFooter>
       </DialogContent>

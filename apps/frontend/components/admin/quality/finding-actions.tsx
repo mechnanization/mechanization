@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
 import {
   ArrowLeftRight,
   CheckCircle2,
@@ -59,15 +60,10 @@ export function fixHref(finding: QualityFinding, base: string): string | null {
 export function actionFor(
   finding: QualityFinding,
   base: string,
-  locale: string,
-): { mode: 'compare'; label: string } | { mode: 'open'; label: string; href: string } | null {
-  const en = locale === 'en';
-  if (comparablePairOf(finding)) {
-    return { mode: 'compare', label: en ? 'Compare' : 'مقارنة' };
-  }
+): { mode: 'compare' } | { mode: 'open'; href: string } | null {
+  if (comparablePairOf(finding)) return { mode: 'compare' };
   const href = fixHref(finding, base);
-  if (!href) return null;
-  return { mode: 'open', label: en ? 'Open the record' : 'فتح السجل', href };
+  return href ? { mode: 'open', href } : null;
 }
 
 /** One control, drawn as an icon in a row and as a labelled button anywhere else. */
@@ -179,7 +175,6 @@ function Control({
 export function FindingActions({
   finding,
   base,
-  locale,
   busy,
   onDetails,
   onResolve,
@@ -191,7 +186,6 @@ export function FindingActions({
 }: {
   finding: QualityFinding;
   base: string;
-  locale: string;
   busy: boolean;
   onDetails: () => void;
   onResolve: () => void;
@@ -203,8 +197,8 @@ export function FindingActions({
   compact?: boolean;
   className?: string;
 }): React.JSX.Element {
-  const en = locale === 'en';
-  const action = actionFor(finding, base, locale);
+  const t = useTranslations('qualityFindings.actions');
+  const action = actionFor(finding, base);
 
   return (
     /*
@@ -218,7 +212,7 @@ export function FindingActions({
         <Control
           compact={compact}
           icon={Eye}
-          label={en ? 'View details' : 'عرض التفاصيل'}
+          label={t('details')}
           onClick={onDetails}
         />
       ) : null}
@@ -227,7 +221,7 @@ export function FindingActions({
         <Control
           compact={compact}
           icon={busy ? Loader2 : Undo2}
-          label={en ? 'Reopen' : 'إعادة فتحها'}
+          label={t('reopen')}
           disabled={busy}
           onClick={onReopen}
         />
@@ -235,7 +229,7 @@ export function FindingActions({
         <Control
           compact={compact}
           icon={CheckCircle2}
-          label={en ? 'Resolved' : 'تم الحل'}
+          label={t('resolve')}
           disabled={busy || !finding.dismissable}
           /*
             Not every finding can be closed by hand, and the ones that cannot are
@@ -243,13 +237,7 @@ export function FindingActions({
             when the record they describe stops being wrong. The tooltip says
             which, because a greyed control with no explanation reads as a fault.
           */
-          hint={
-            finding.dismissable
-              ? undefined
-              : en
-                ? 'Closes by fixing the record itself.'
-                : 'تُغلَق بتصحيح السجل نفسه.'
-          }
+          hint={finding.dismissable ? undefined : t('closesByFixing')}
           onClick={onResolve}
         />
       )}
@@ -259,7 +247,7 @@ export function FindingActions({
           compact={compact}
           icon={ArrowLeftRight}
           tone="primary"
-          label={action.label}
+          label={t('compare')}
           onClick={onCompare}
         />
       ) : action?.mode === 'open' ? (
@@ -267,7 +255,7 @@ export function FindingActions({
           compact={compact}
           icon={ExternalLink}
           tone="primary"
-          label={action.label}
+          label={t('open')}
           href={action.href}
         />
       ) : null}

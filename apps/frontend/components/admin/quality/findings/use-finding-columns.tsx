@@ -3,6 +3,7 @@
 import { useMemo } from 'react';
 import Link from 'next/link';
 import type { ColumnDef } from '@tanstack/react-table';
+import { useTranslations } from 'next-intl';
 import type { qualityLabels } from '@mechanization/shared-schemas';
 import { formatRelative } from '@/lib/dates';
 import type { QualityFinding } from '@/lib/quality-api';
@@ -34,22 +35,22 @@ export function useFindingColumns({
   setResolving: (finding: QualityFinding) => void;
   reopen: (finding: QualityFinding) => void;
 }): ColumnDef<QualityFinding>[] {
-  const en = locale === 'en';
+  const t = useTranslations('qualityFindings');
 
   const columns = useMemo<ColumnDef<QualityFinding>[]>(
     () => [
       {
         id: 'finding',
         accessorFn: (finding) => quality.findingKind[finding.kind] ?? finding.kind,
-        header: en ? 'Finding' : 'الملاحظة',
+        header: t('columns.finding'),
         meta: {
           mobile: 'primary',
-          label: en ? 'Finding' : 'الملاحظة',
+          label: t('columns.finding'),
           headerClassName: 'w-px',
         },
         cell: ({ row }) => (
           <span className="flex items-center gap-2">
-            <SeverityMark severity={row.original.severity} locale={locale} withText={false} />
+            <SeverityMark severity={row.original.severity} withText={false} />
             <span className="font-medium">
               {quality.findingKind[row.original.kind] ?? row.original.kind}
             </span>
@@ -59,7 +60,7 @@ export function useFindingColumns({
               says «مفتوحة» eleven times says nothing.
             */}
             {row.original.dismissal ? (
-              <Badge variant="soft-muted">{en ? 'Resolved' : 'تم الحل'}</Badge>
+              <Badge variant="soft-muted">{t('resolved')}</Badge>
             ) : null}
           </span>
         ),
@@ -67,7 +68,7 @@ export function useFindingColumns({
       {
         id: 'detail',
         accessorFn: (finding) => finding.detail,
-        header: en ? 'What was found' : 'ما الذي وُجد',
+        header: t('columns.detail'),
         /*
           The one column that takes the leftover width, and the reason the row
           has no gap in the middle of it.
@@ -80,7 +81,7 @@ export function useFindingColumns({
           longest finding in the register and the ellipsis would never appear.
         */
         meta: {
-          label: en ? 'What was found' : 'ما الذي وُجد',
+          label: t('columns.detail'),
           headerClassName: 'w-full min-w-[12rem]',
           cellClassName: 'max-w-0',
         },
@@ -101,10 +102,10 @@ export function useFindingColumns({
           finding.subjects
             .map((subject) => `${subject.label} ${subject.secondary ?? ''}`)
             .join(' '),
-        header: en ? 'Records' : 'السجلات',
+        header: t('columns.records'),
         enableSorting: false,
         meta: {
-          label: en ? 'Records' : 'السجلات',
+          label: t('columns.records'),
           headerClassName: 'w-px',
         },
         cell: ({ row }) =>
@@ -142,9 +143,9 @@ export function useFindingColumns({
       {
         id: 'officers',
         accessorFn: (finding) => finding.officers.map((officer) => officer.name).join('، '),
-        header: en ? 'Filed by' : 'سجَّلها',
+        header: t('columns.officers'),
         enableSorting: false,
-        meta: { label: en ? 'Filed by' : 'سجَّلها', headerClassName: 'w-px' },
+        meta: { label: t('columns.officers'), headerClassName: 'w-px' },
         cell: ({ getValue }) => {
           const names = (getValue() as string) || '—';
           // Capped: a finding about two officers' filings carries both names,
@@ -159,8 +160,8 @@ export function useFindingColumns({
       {
         id: 'at',
         accessorFn: (finding) => finding.at ?? '',
-        header: en ? 'Last change' : 'آخر تغيير',
-        meta: { label: en ? 'Last change' : 'آخر تغيير', headerClassName: 'w-px' },
+        header: t('columns.at'),
+        meta: { label: t('columns.at'), headerClassName: 'w-px' },
         cell: ({ row }) =>
           row.original.at ? (
             <span className="text-muted-foreground">{formatRelative(row.original.at, locale)}</span>
@@ -170,13 +171,13 @@ export function useFindingColumns({
       },
       {
         id: 'actions',
-        header: en ? 'Action' : 'الإجراء',
+        header: t('columns.actions'),
         enableSorting: false,
         enableHiding: false,
         meta: {
           mobile: 'actions',
           align: 'end',
-          label: en ? 'Action' : 'الإجراء',
+          label: t('columns.actions'),
           // Shrink-to-fit: with the controls on one nowrap line, `w-px` makes
           // the column ask for exactly their width and leaves the rest of the
           // table to the values.
@@ -186,7 +187,6 @@ export function useFindingColumns({
           <FindingActions
             finding={row.original}
             base={base}
-            locale={locale}
             compact
             busy={busy === keyOf(row.original)}
             onDetails={() => setView({ mode: 'details', key: keyOf(row.original) })}
@@ -207,7 +207,7 @@ export function useFindingColumns({
       part of a row's controls that changes while the screen is open.
     */
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [base, busy, en, locale, quality, tenant, token],
+    [base, busy, locale, quality, t, tenant, token],
   );
 
   return columns;
