@@ -13,14 +13,11 @@ import {
   LetterheadCrest,
   LetterheadLines,
   SignatureBlock,
-  documentPrintCss,
   type MunicipalLetterhead,
 } from './official-document';
 import { TreasuryAmount } from './treasury-amount';
 
 /** One voucher to a sheet, read top to bottom: portrait. */
-const PRINT_CSS = documentPrintCss('voucher-document', 'A4 portrait');
-
 /**
  * «أمر صرف / حوالة دفع بلدية» — the printed payment order for one «PV-»
  * voucher: a supplier's invoice, a salary, an inspector's commission.
@@ -217,11 +214,9 @@ function VoucherSheet({
 
   return (
     <article
-      id="voucher-document"
+      data-print-root
       className="mx-auto w-full max-w-3xl space-y-6 rounded-lg border bg-card p-4 text-sm shadow-sm sm:p-8"
     >
-      <style>{PRINT_CSS}</style>
-
       <header className="flex flex-wrap items-start justify-between gap-4 border-b pb-4">
         <LetterheadLines letterhead={letterhead} />
         <LetterheadCrest crest={letterhead.crest} />

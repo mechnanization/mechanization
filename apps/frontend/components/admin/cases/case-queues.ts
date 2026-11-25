@@ -13,25 +13,14 @@ import { param } from '@/lib/use-url-state';
  * `null` on the first tab is "no filter", not "no type" — every case is in it.
  */
 export const CASE_TABS: ReadonlyArray<{
-  id: string;
-  ar: string;
-  en: string;
+  /** Also the key of its name, `messages.cases.queues.<id>` (PAGE-10). */
+  id: 'all' | 'revisit' | 'disputes' | 'notes';
   types: readonly CaseType[] | null;
 }> = [
-  { id: 'all', ar: 'الكل', en: 'All', types: null },
-  {
-    id: 'revisit',
-    ar: 'إعادة زيارة',
-    en: 'Revisit',
-    types: ['UNIT_UNREACHABLE', 'VACANT_UNCONFIRMED'],
-  },
-  {
-    id: 'disputes',
-    ar: 'رفض ونزاعات',
-    en: 'Refusals & disputes',
-    types: ['ACCESS_REFUSED', 'OWNERSHIP_DISPUTE'],
-  },
-  { id: 'notes', ar: 'ملاحظات', en: 'Notes', types: ['GENERAL_NOTE'] },
+  { id: 'all', types: null },
+  { id: 'revisit', types: ['UNIT_UNREACHABLE', 'VACANT_UNCONFIRMED'] },
+  { id: 'disputes', types: ['ACCESS_REFUSED', 'OWNERSHIP_DISPUTE'] },
+  { id: 'notes', types: ['GENERAL_NOTE'] },
 ];
 
 /**

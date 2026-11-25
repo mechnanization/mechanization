@@ -1,6 +1,7 @@
 'use client';
 
 import { Grid3x3 } from 'lucide-react';
+import { useTranslations } from 'next-intl';
 import { getLabels } from '@mechanization/shared-schemas';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -63,11 +64,13 @@ export function CaseUnlinkDialog({
 }) {
   const { pendingUnlink, setPendingUnlink, unlinkCitizen } = linkage;
   const labels = getLabels(locale);
+  const t = useTranslations('cases.unlink');
+  const tCommon = useTranslations('common');
   const pendingUnlinkUnit = caseLinkUnit(pendingUnlink, locale);
   /** Who the unlink confirmation names on the unit, with their capacity. */
   const unlinkOccupants = (pendingUnlink?.unitOccupants ?? [])
     .map((person) => `${person.name} (${labels.occupancyType[person.role as never] ?? person.role})`)
-    .join(locale === 'en' ? ', ' : '، ');
+    .join(tCommon('listSeparator'));
 
   return (
     <ConfirmDialog
@@ -75,26 +78,20 @@ export function CaseUnlinkDialog({
       onOpenChange={(open) => {
         if (!open) setPendingUnlink(null);
       }}
-      title={locale === 'en' ? 'Unlink this case?' : 'إلغاء ربط الحالة؟'}
+      title={t('title')}
       description={
         pendingUnlink
           ? [
-              locale === 'en'
-                ? `The case will no longer name ${pendingUnlink.resolvedCitizenName ?? 'a citizen'}.`
-                : `لن تبقى الحالة باسم ${pendingUnlink.resolvedCitizenName ?? 'مواطن'}.`,
-              pendingUnlink.status === 'RESOLVED'
-                ? locale === 'en'
-                  ? 'It stays marked resolved — reopen it from the list if the visit still needs making.'
-                  : 'تبقى محلولة — أعد فتحها من القائمة إن كانت الزيارة ما زالت لازمة.'
-                : null,
+              t('named', { name: pendingUnlink.resolvedCitizenName ?? t('aCitizen') }),
+              pendingUnlink.status === 'RESOLVED' ? t('stillResolved') : null,
             ]
               .filter(Boolean)
               .join(' ')
           : undefined
       }
-      confirmLabel={locale === 'en' ? 'Unlink' : 'إلغاء الربط'}
-      cancelLabel={locale === 'en' ? 'Keep the link' : 'إبقاء الربط'}
-      busyLabel={locale === 'en' ? 'Working…' : 'جارٍ التنفيذ…'}
+      confirmLabel={t('confirm')}
+      cancelLabel={t('keep')}
+      busyLabel={t('working')}
       onConfirm={async () => {
         if (pendingUnlink) await unlinkCitizen(pendingUnlink);
       }}
@@ -103,18 +100,10 @@ export function CaseUnlinkDialog({
         <div className="space-y-2 rounded-lg border bg-muted/30 p-3 text-sm">
           <p>
             {(pendingUnlink.unitOccupants ?? []).length > 0
-              ? locale === 'en'
-                ? `Unlinking does not take anyone off unit ${pendingUnlinkUnit.label}. Recorded on it now: ${unlinkOccupants}. They stay on the unit and on their bills.`
-                : `إلغاء الربط لا يُخرج أحداً من الوحدة ${pendingUnlinkUnit.label}. مسجَّل عليها الآن: ${unlinkOccupants}. يبقون على الوحدة وفي فواتيرهم.`
-              : locale === 'en'
-                ? `Unlinking does not change who is recorded on unit ${pendingUnlinkUnit.label}.`
-                : `إلغاء الربط لا يغيّر من هو مسجَّل على الوحدة ${pendingUnlinkUnit.label}.`}
+              ? t('withOccupants', { unit: pendingUnlinkUnit.label, who: unlinkOccupants })
+              : t('withoutOccupants', { unit: pendingUnlinkUnit.label })}
           </p>
-          <p className="text-muted-foreground">
-            {locale === 'en'
-              ? 'If someone was recorded on it by mistake, end their record from the unit.'
-              : 'إن سُجِّل أحدٌ عليها بالخطأ، أنهِ سجلّه من الوحدة نفسها.'}
-          </p>
+          <p className="text-muted-foreground">{t('mistake')}</p>
           {pendingUnlink.buildingId ? (
             <Button
               variant="outline"
@@ -126,7 +115,7 @@ export function CaseUnlinkDialog({
               }}
             >
               <Grid3x3 className="size-4" aria-hidden />
-              {locale === 'en' ? 'Open the unit' : 'فتح الوحدة'}
+              {t('openUnit')}
             </Button>
           ) : null}
         </div>

@@ -137,7 +137,7 @@ filed it differs. Either way, while online payment is paused (2026-10-13,
 
 - `apps/frontend/components/admin/finance/official-document.tsx` exports
   `useMunicipalLetterhead`, `LetterheadLines`, `LetterheadCrest`, `DocumentRow`,
-  `SignatureBlock`, `documentPrintCss` and `useAutoPrint`. A printed document is
+  `SignatureBlock` and `useAutoPrint`. A printed document is
   **its own page** (PRIM-28: `data-print-root`, `?print=1`), as
   `finance/income/[voucherId]/print` is.
 - The citizen portal is `app/[tenant]/[locale]/(citizen)/`: `my-file`,

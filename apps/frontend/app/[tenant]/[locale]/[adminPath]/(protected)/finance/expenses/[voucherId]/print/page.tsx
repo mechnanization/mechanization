@@ -96,7 +96,7 @@ export default function ExpenseVoucherPrintPage({
         </Card>
       ) : (
         <>
-          {/* Outside `#voucher-document`, so the print rules leave it off the paper. */}
+          {/* Outside the `data-print-root`, so the print rules leave it off the paper. */}
           {view.state === 'ready' && view.refreshFailed ? (
             <RefreshFailedAlert message={view.refreshFailed} onRetry={voucher.refetch} />
           ) : null}

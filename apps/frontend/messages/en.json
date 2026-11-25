@@ -1,5 +1,6 @@
 {
   "common": {
+    "listSeparator": ", ",
     "closeMenu": "Close menu",
     "menu": "Menu",
     "openInWhatsapp": "Open in WhatsApp",
@@ -4313,6 +4314,68 @@
     "row": "Row {row}"
   },
   "cases": {
+    "columns": {
+      "notes": "What happened",
+      "property": "Property ID",
+      "status": "Status",
+      "revisit": "Revisit {date}",
+      "loggedBy": "Logged By",
+      "date": "Date",
+      "actions": "Actions"
+    },
+    "actions": {
+      "register": "Register Citizen",
+      "registerBlocked": "Someone already lives on this unit, registered: {who} — link the case to them instead.",
+      "link": "Link to Citizen",
+      "linkOccupied": "Link to a citizen — on this unit: {who}",
+      "advance": "Advance status",
+      "schedule": "Schedule a revisit",
+      "resolve": "Mark resolved",
+      "reopen": "Reopen",
+      "openMatrix": "Open the unit matrix",
+      "edit": "Edit",
+      "delete": "Delete"
+    },
+    "queues": {
+      "label": "Case queues",
+      "all": "All",
+      "revisit": "Revisit",
+      "disputes": "Refusals & disputes",
+      "notes": "Notes"
+    },
+    "linking": {
+      "linked": "Case linked and resolved",
+      "recordedOnUnit": "recorded on the unit: {names}",
+      "otherClosedToast": "{count, plural, one {# other open case on this unit was closed too} other {# other open cases on this unit were closed too}}",
+      "requestFailed": "The request failed.",
+      "failRecorded": "Recorded on the unit: {names}.",
+      "failNotRecorded": "Not recorded: {name} — {reason}",
+      "failCouldNotLink": "Could not link the case to {name}: {reason}",
+      "failNotAttempted": "Not attempted: {names}.",
+      "failOtherClosed": "{count, plural, one {# other open case on this unit was closed.} other {# other open cases on this unit were closed.}}",
+      "failNowLinked": "The case is now resolved and linked to {name}: recording someone on its unit closes the unit's open cases.",
+      "failNotLinked": "The case is not linked.",
+      "failRereadFailed": "The case could not be re-read — the list shows whether it is linked.",
+      "failStays": "Whoever was recorded stays on the unit; pressing \"Link\" again links them without recording them twice.",
+      "sessionEnded": "Your session has ended.",
+      "stillSaving": "Another change to this case is still being saved.",
+      "unlinked": "Link removed",
+      "unlinkedNobody": "Nobody was taken off the unit.",
+      "unlinkFailed": "Could not remove the link."
+    },
+    "unlink": {
+      "title": "Unlink this case?",
+      "aCitizen": "a citizen",
+      "named": "The case will no longer name {name}.",
+      "stillResolved": "It stays marked resolved — reopen it from the list if the visit still needs making.",
+      "confirm": "Unlink",
+      "keep": "Keep the link",
+      "working": "Working…",
+      "withOccupants": "Unlinking does not take anyone off unit {unit}. Recorded on it now: {who}. They stay on the unit and on their bills.",
+      "withoutOccupants": "Unlinking does not change who is recorded on unit {unit}.",
+      "mistake": "If someone was recorded on it by mistake, end their record from the unit.",
+      "openUnit": "Open the unit"
+    },
     "editor": {
       "back": "Back to Cases",
       "titleEdit": "Edit Case",
