@@ -1663,6 +1663,12 @@ Each pass first lands the tasks already listed for its pages (named below); what
   messages (its 7 "inline" hits are locale logic), the reads use `readView`. **Open:** `record-expense-form.tsx` (740 lines) and
   `record-transfer-form.tsx` (688), one function each, carrying the money keys `expense:pay`, `expense:request` and `transfer:new`: a phased split
   with a render net first, in follow-up PRs. **Not done:** the print preview in a browser, in light and dark; nothing rendered.
+- **Done 2026-11-25 (the expense form; the transfer form still open):** `record-expense-form.tsx` is split (740 → 140 lines). Its state,
+  checks, in-flight ref and the keys `expense:pay` and `expense:request` are `useRecordExpense`, and its fields are three components, all in
+  `components/admin/finance/expense-form/` (the largest, the hook, 393 lines). The logic and the JSX were moved by line range. The nets came
+  first and pass on both the old file and the new: 34 jsdom cases on what a press does, and thirteen page states fingerprinted with the real
+  controls, unchanged by the split (`lib/record-expense-form-dom.test.ts`, `lib/record-expense-form-render.test.ts`,
+  `lib/treasury-form-files.test.ts`). **Not done:** tried in a browser, at any width.
 
 ## [PAGE-13] Bring the review and audit pages to the page contract
 - **Priority:** P2 · **Assignee:** Abed · **Estimate:** M · **Category:** UI/UX
