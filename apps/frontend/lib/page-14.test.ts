@@ -7,8 +7,8 @@ import { describe, expect, it } from 'vitest';
   already (a title equal to its row's label, session and reads through the hooks, the table's state in the
   URL, every write behind one in-flight ref, copy in messages, no file over 600 lines), so what changed is
   small and this pins it: the articles page's primary action comes first, and a failed re-read of a list is
-  said instead of silently leaving the old rows. The time input waits for decision U-8 (a time primitive) and
-  is deliberately not touched. The runner collects `lib/**` only, so the pages are read as source.
+  said instead of silently leaving the old rows. The time input waited for decision U-8 (a time primitive), which landed on 2026-11-25: the news fields
+  use `TimePicker`. The runner collects `lib/**` only, so the pages are read as source.
 */
 const FRONTEND = join(__dirname, '..');
 const NEWS = 'app/[tenant]/[locale]/[adminPath]/(protected)/news';
@@ -65,9 +65,11 @@ describe('the lists’ lists keep a way back (NAV-05)', () => {
   });
 });
 
-describe('what was left as it is, and why', () => {
-  it('the time input still waits for decision U-8: the day-and-time fields keep their native time input', () => {
-    expect(read('components/admin/news/day-time-fields.tsx')).toMatch(/type="time"/);
+describe('what closed the task (U-8) and what was left as it is', () => {
+  it('the day-and-time fields use the kit’s time field, not the native time input', () => {
+    const source = read('components/admin/news/day-time-fields.tsx');
+    expect(source).toMatch(/<TimePicker\b/);
+    expect(source).not.toMatch(/type="time"/);
   });
 
   it('every news write is guarded by a ref (contract item 6)', () => {
