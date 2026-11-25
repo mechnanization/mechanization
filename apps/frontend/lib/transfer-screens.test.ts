@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -14,19 +14,27 @@ import { describe, expect, it } from 'vitest';
  * from the key. Its pages swapped the form for an error panel when the re-read
  * after a press failed.
  *
- * The components are not rendered here (this suite collects `lib/**` and runs
- * without a DOM), so, as `commission-payout.test.ts` does for the payout
- * dialog, they are read.
+ * The components are not rendered here, so, as `commission-payout.test.ts` does
+ * for the payout dialog, they are read. Since PAGE-12 (2026-11-25) the form is
+ * also mounted and driven (`record-transfer-form-dom.test.ts`) and split: the
+ * press is the hook `useRecordTransfer`, the button is in the summary.
  */
 const FRONTEND = join(__dirname, '..');
 const read = (...path: string[]): string => readFileSync(join(FRONTEND, ...path), 'utf8');
+const FINANCE = ['components', 'admin', 'finance'];
 
 describe('the transfer form', () => {
-  const source = read('components', 'admin', 'finance', 'record-transfer-form.tsx');
+  const source = read(...FINANCE, 'transfer-form', 'use-record-transfer.ts');
+  const summary = read(...FINANCE, 'transfer-form', 'transfer-summary.tsx');
+  /** The form and every file split out of it. */
+  const everyFile = [
+    read(...FINANCE, 'record-transfer-form.tsx'),
+    ...readdirSync(join(FRONTEND, ...FINANCE, 'transfer-form')).map((file) => read(...FINANCE, 'transfer-form', file)),
+  ];
 
   it('sends the key held for the act, minted nowhere else', () => {
     expect(source).toMatch(/clientRequestId:\s*heldKey\(tenant,\s*TRANSFER_SCOPE\)/);
-    expect(source).not.toMatch(/randomUUID|newRequestId|requestId\.current/);
+    for (const file of everyFile) expect(file).not.toMatch(/randomUUID|newRequestId|requestId\.current/);
   });
 
   it('spends the key only when the server says the act exists, and marks a lost answer in doubt', () => {
@@ -36,7 +44,7 @@ describe('the transfer form', () => {
 
   it('stays locked after a 2xx, and announces a replay as already recorded', () => {
     expect(source).toMatch(/setDone\(true\)/);
-    expect(source).toMatch(/disabled=\{busy \|\| done/);
+    expect(summary).toMatch(/disabled=\{busy \|\| done/);
     expect(source).toMatch(/if \(inFlight\.current \|\| done\) return;/);
     expect(source).toMatch(/result\.replayed[\s\S]*?toast\.warning\(t\('replayed'/);
   });
@@ -45,7 +53,7 @@ describe('the transfer form', () => {
     expect(source).toMatch(/const retrying = heldInDoubt\(tenant,\s*TRANSFER_SCOPE\)/);
     expect(source).toMatch(/short && !retrying && !next\.amount/);
     expect(source).toMatch(/beyondTolerance && !retrying/);
-    expect(source).toMatch(/disabled=\{busy \|\| done \|\| \(short && !retrying\)\}/);
+    expect(summary).toMatch(/disabled=\{busy \|\| done \|\| \(short && !retrying\)\}/);
   });
 });
 

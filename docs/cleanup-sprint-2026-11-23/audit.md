@@ -1669,6 +1669,12 @@ Each pass first lands the tasks already listed for its pages (named below); what
   first and pass on both the old file and the new: 34 jsdom cases on what a press does, and thirteen page states fingerprinted with the real
   controls, unchanged by the split (`lib/record-expense-form-dom.test.ts`, `lib/record-expense-form-render.test.ts`,
   `lib/treasury-form-files.test.ts`). **Not done:** tried in a browser, at any width.
+- **Done 2026-11-25 (the transfer form; In Review):** `record-transfer-form.tsx` is split (688 → 73 lines): `useRecordTransfer` (state, figures,
+  checks, in-flight ref, `transfer:new`; 351 lines), the wallets, amounts and statement fields, the summary with its actions, and the figure
+  helpers, all in `components/admin/finance/transfer-form/`, moved by line range. The nets came first and pass on the old file and the new:
+  41 jsdom cases and eighteen fingerprinted states, unchanged by the split (`lib/record-transfer-form-dom.test.ts`,
+  `lib/record-transfer-form-render.test.ts`); `transfer-screens.test.ts` now reads the hook and the summary. No file in the group is over
+  600 lines. **Not done:** the print preview and both forms tried by a person in a browser.
 
 ## [PAGE-13] Bring the review and audit pages to the page contract
 - **Priority:** P2 · **Assignee:** Abed · **Estimate:** M · **Category:** UI/UX
