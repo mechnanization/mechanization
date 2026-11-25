@@ -46,6 +46,8 @@ import {
   WORKING_STAFF_ROLES,
 } from '@mechanization/shared-schemas';
 import { CITIZEN_RECORD_EDIT_ROLES, QUALITY_REVIEWER_ROLES, WORKLIST_ROLES } from '@/lib/staff-roles';
+import ar from '../../messages/ar.json';
+import en from '../../messages/en.json';
 
 /*
  * Every row's roles come from the shared role sets the API's `@Roles` are
@@ -78,11 +80,21 @@ import { CITIZEN_RECORD_EDIT_ROLES, QUALITY_REVIEWER_ROLES, WORKLIST_ROLES } fro
  * chances for the highlighted row and the breadcrumb to disagree.
  */
 
+/** The names a row can have: `messages.nav.items`, in both languages (`messages-parity.test.ts`). */
+export type NavKey = keyof typeof ar.nav.items;
+/** The headings a group can have: `messages.nav.groups`. */
+export type NavGroupKey = keyof typeof ar.nav.groups;
+
 export interface NavItem {
   /** Appended to the tenant's admin base path. */
   path: string;
-  label: string;
-  labelEn?: string;
+  /**
+   * What it is called, as a key into `messages.nav.items` (NAV-10): the sidebar,
+   * the header's crumb and the command palette read it through `localizedLabel`,
+   * and the page's own title reads the same message, so the wording is changed
+   * in one place and the row and its page cannot drift apart.
+   */
+  key: NavKey;
   icon: LucideIcon;
   /**
    * Who may see this row. Required — see `EVERY_STAFF_ROLE` for why a row that
@@ -110,9 +122,14 @@ export interface NavGroup {
    * something like «عام», which says nothing, and it would be foldable — and a
    * clerk who folds away the row they land on every morning has hidden their
    * own front door.
+   *
+   * Omitted for one more group (NAV-05, decided 2026-11-25): «الأخبار», a group
+   * of one row that is its own name. A heading over it would say «الأخبار»
+   * twice. It is drawn as its row between two rules, and cannot be folded:
+   * there is nothing in it to hide but the row.
    */
-  label?: string;
-  labelEn?: string;
+  /** A key into `messages.nav.groups`; the heading. Omitted where there is no heading, as above. */
+  key?: NavGroupKey;
   /** Omitted = the group itself gates nothing; its rows still do. */
   roles?: readonly string[];
   items: NavItem[];
@@ -158,10 +175,9 @@ export interface NavGroup {
  *
  * ## The approved map (NAV-01, decided 2026-11-25; docs/open-decisions.md §25)
  *
- * The rows below are 28: NAV-02, NAV-06 and NAV-07 (their pages are in
- * `OFF_SIDEBAR_PAGES`, after this list), NAV-03, NAV-04 and NAV-11 have moved
- * (2026-11-25), and the rest are Abed's tasks, each landing with its own test.
- * When they are all in:
+ * The rows below are 26, the approved map: NAV-02, NAV-05, NAV-06 and NAV-07
+ * (their pages are in `OFF_SIDEBAR_PAGES`, after this list), NAV-03, NAV-04,
+ * NAV-11 and PAGE-01 have all moved (2026-11-25). The map:
  *
  *  - (landing): لوحة التحكم · أرباح المسح الميداني · جولتي — unchanged.
  *  - «المواطنون»: سجل المواطنين · ملفات ناقصة · روابط المالكين · طلبات المعاملات.
@@ -183,9 +199,10 @@ export interface NavGroup {
  *    النشاطات. «السجلات» becomes the tab «اعتماد السجلات» / "Record approval" (NAV-11).
  *  - «الأخبار»: one row, «الأخبار», shown under its own name with no group
  *    heading above it (the owner's words: "in the side bar as its name");
- *    categories and publishers open from the articles page's header (NAV-05).
- *    `NavGroup.label` is documented for the landing group only, and
- *    `lib/nav.test.ts` pins that group unlabelled and first: NAV-05 widens both.
+ *    categories and publishers open from the articles page's header (NAV-05,
+ *    done 2026-11-25): `NavGroup.label` is documented for two unlabelled groups
+ *    now, and `lib/nav.test.ts` pins the landing group unlabelled and first and
+ *    this one as the only other.
  *  - «النظام»: إعدادات البلدية · الموظفون. «أمان الحساب» is in the user menu
  *    only (NAV-06); settings loses its «المستخدمون» tab, which repeats `/staff` (PAGE-01).
  *
@@ -220,8 +237,7 @@ export const NAV_GROUPS: NavGroup[] = [
       */
       {
         path: '/dashboard',
-        label: 'لوحة التحكم',
-        labelEn: 'Dashboard',
+        key: 'dashboard',
         icon: LayoutDashboard,
         roles: DASHBOARD_READ_ROLES,
         keywords: ['مؤشرات', 'تحليلات', 'إحصاءات', 'dashboard', 'analytics'],
@@ -232,8 +248,7 @@ export const NAV_GROUPS: NavGroup[] = [
       // nothing — and whom that route does not admit.
       {
         path: '/inspector/profile',
-        label: 'أرباح المسح الميداني',
-        labelEn: 'My earnings & survey',
+        key: 'earnings',
         icon: BadgeDollarSign,
         roles: WORKING_STAFF_ROLES,
         keywords: ['أرباح', 'عمولة', 'مفتش', 'مسح', 'عقارات', 'inspector', 'earnings'],
@@ -253,8 +268,7 @@ export const NAV_GROUPS: NavGroup[] = [
       */
       {
         path: '/my-round',
-        label: 'جولتي',
-        labelEn: 'My round',
+        key: 'myRound',
         icon: Wallet,
         roles: WORKING_STAFF_ROLES,
         keywords: ['جولة', 'عهدة', 'جابي', 'تحصيل', 'نقدي', 'round', 'custody', 'collector'],
@@ -262,8 +276,7 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: 'المواطنون',
-    labelEn: 'Citizens',
+    key: 'citizens',
     items: [
       /*
         The register itself — one row per person. Readable by every role;
@@ -273,8 +286,7 @@ export const NAV_GROUPS: NavGroup[] = [
       */
       {
         path: '/citizens',
-        label: 'سجل المواطنين',
-        labelEn: 'Citizen register',
+        key: 'citizens',
         icon: Users,
         roles: EVERY_STAFF_ROLE,
         keywords: ['سجل', 'مواطن', 'مواطنون', 'عقار', 'استيراد', 'citizens', 'registry'],
@@ -287,8 +299,7 @@ export const NAV_GROUPS: NavGroup[] = [
       {
         path: '/citizens/review',
         // «ملفات ناقصة», not «يتطلب مراجعة» (NAV-11): the other queue, «اعتماد السجلات» in «الجودة», is the one that reviews.
-        label: 'ملفات ناقصة',
-        labelEn: 'Incomplete files',
+        key: 'incompleteFiles',
         icon: FileQuestion,
         roles: EVERY_STAFF_ROLE,
         keywords: ['ناقص', 'ناقصة', 'استكمال', 'حقول', 'غير مؤكد', 'مراجعة', 'يتطلب مراجعة', 'review', 'incomplete', 'missing'],
@@ -305,8 +316,7 @@ export const NAV_GROUPS: NavGroup[] = [
       */
       {
         path: '/citizens/landlord-links',
-        label: 'روابط المالكين',
-        labelEn: 'Owner links',
+        key: 'ownerLinks',
         icon: Link2,
         roles: EVERY_STAFF_ROLE,
         keywords: [
@@ -331,8 +341,7 @@ export const NAV_GROUPS: NavGroup[] = [
       */
       {
         path: '/requests',
-        label: 'طلبات المعاملات',
-        labelEn: 'Requests & certificates',
+        key: 'requests',
         icon: FileCheck,
         roles: REQUEST_READ_ROLES,
         keywords: ['طلب', 'معاملة', 'إفادة', 'براءة ذمة', 'إفادة سكن', 'شغور', 'requests', 'certificate', 'clearance'],
@@ -340,8 +349,7 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: 'المباني والأرض',
-    labelEn: 'Buildings & land',
+    key: 'buildings',
     items: [
       /*
         The census first: it is the register of structures, as the group above
@@ -352,24 +360,21 @@ export const NAV_GROUPS: NavGroup[] = [
       */
       {
         path: '/buildings',
-        label: 'سجل المباني',
-        labelEn: 'Building census',
+        key: 'buildings',
         icon: Building2,
         roles: EVERY_STAFF_ROLE,
         keywords: ['مبنى', 'مباني', 'وحدات', 'شقق', 'مسح', 'ضرر', 'إحصاء', 'buildings', 'units', 'census', 'damage'],
       },
       {
         path: '/map',
-        label: 'الخريطة',
-        labelEn: 'Cadastral map',
+        key: 'map',
         icon: MapIcon,
         roles: MAP_READ_ROLES,
         keywords: ['عقارات', 'مواقع', 'مسح', 'map', 'cadastre'],
       },
       {
         path: '/zones',
-        label: 'القطاعات',
-        labelEn: 'Zones',
+        key: 'zones',
         icon: Layers,
         roles: EVERY_STAFF_ROLE,
         keywords: ['قطاع', 'منطقة', 'حدود', 'zones', 'districts'],
@@ -384,8 +389,7 @@ export const NAV_GROUPS: NavGroup[] = [
     and a damage reading still sends a flat to re-inspection.
   */
   {
-    label: 'العمل الميداني',
-    labelEn: 'Field work',
+    key: 'fieldWork',
     items: [
       /*
         The two lists of doors to go back to, as the tabs of one page (NAV-04,
@@ -399,8 +403,7 @@ export const NAV_GROUPS: NavGroup[] = [
       */
       {
         path: '/buildings/worklists',
-        label: 'قوائم العمل الميداني',
-        labelEn: 'Field worklists',
+        key: 'fieldWorklists',
         icon: ScanSearch,
         also: ['/buildings/unsurveyed', '/buildings/reinspections'],
         roles: WORKLIST_ROLES,
@@ -426,8 +429,7 @@ export const NAV_GROUPS: NavGroup[] = [
       // it records is "who to go back to", not a parcel's own facts.
       {
         path: '/cases',
-        label: 'الحالات',
-        labelEn: 'Cases',
+        key: 'cases',
         icon: DoorClosed,
         roles: EVERY_STAFF_ROLE,
         keywords: ['زيارة', 'لا أحد في المنزل', 'متابعة', 'cases', 'follow-up', 'visit'],
@@ -441,8 +443,7 @@ export const NAV_GROUPS: NavGroup[] = [
     becomes the treasury's money once it is paid.
   */
   {
-    label: 'الرسوم والجباية',
-    labelEn: 'Fees & collection',
+    key: 'fees',
     items: [
       /*
         `FIELD_INSPECTOR` is absent, and that is not a new restriction — it is
@@ -451,8 +452,7 @@ export const NAV_GROUPS: NavGroup[] = [
       */
       {
         path: '/fees',
-        label: 'الرسوم والمدفوعات',
-        labelEn: 'Fees & billing',
+        key: 'fees',
         icon: ReceiptText,
         roles: FEE_READ_ROLES,
         keywords: ['رسم', 'مطالبة', 'فاتورة', 'دفع', 'fees', 'billing'],
@@ -461,8 +461,7 @@ export const NAV_GROUPS: NavGroup[] = [
       // "what has been paid". An auditor lives here.
       {
         path: '/payments',
-        label: 'سجل العمليات',
-        labelEn: 'Payment operations',
+        key: 'payments',
         icon: ArrowLeftRight,
         roles: ['SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'VIEWER'],
         keywords: ['قبض', 'إيصال', 'محصّل', 'نقد', 'payments', 'transactions'],
@@ -478,8 +477,7 @@ export const NAV_GROUPS: NavGroup[] = [
       */
       {
         path: '/fees/parcel',
-        label: 'المستحق على عقار',
-        labelEn: 'Owed on a parcel',
+        key: 'parcelDues',
         icon: LandPlot,
         roles: FEE_READ_ROLES,
         keywords: ['براءة ذمة', 'براءة ذمّة', 'رقم العقار', 'مستحق', 'دين', 'clearance', 'parcel', 'owed'],
@@ -498,8 +496,7 @@ export const NAV_GROUPS: NavGroup[] = [
       */
       {
         path: '/finance/collectors',
-        label: 'الجباة والتحصيل',
-        labelEn: 'Collectors & handover',
+        key: 'collectors',
         icon: HandCoins,
         roles: TREASURY_READ_ROLES,
         keywords: ['جباة', 'جابي', 'عهدة', 'تحصيل', 'تسليم', 'استلام', 'collectors', 'custody', 'handover'],
@@ -514,8 +511,7 @@ export const NAV_GROUPS: NavGroup[] = [
     which is why each treasury page has a row here.
   */
   {
-    label: 'الخزينة',
-    labelEn: 'Treasury',
+    key: 'treasury',
     items: [
       /*
         The wallets and their balances. «الأرصدة» rather than «الخزينة» now that
@@ -524,8 +520,7 @@ export const NAV_GROUPS: NavGroup[] = [
       */
       {
         path: '/finance',
-        label: 'الأرصدة',
-        labelEn: 'Balances',
+        key: 'treasury',
         icon: Landmark,
         roles: TREASURY_READ_ROLES,
         keywords: ['خزينة', 'صندوق', 'رصيد', 'أرصدة', 'حساب', 'نقد', 'treasury', 'safe', 'balance', 'cash'],
@@ -541,8 +536,7 @@ export const NAV_GROUPS: NavGroup[] = [
       */
       {
         path: '/finance/movements',
-        label: 'الإيرادات والنفقات',
-        labelEn: 'Income & expenses',
+        key: 'movements',
         icon: ArrowDownUp,
         roles: TREASURY_WORK_ROLES,
         keywords: [
@@ -580,8 +574,7 @@ export const NAV_GROUPS: NavGroup[] = [
       {
         path: '/finance/transactions',
         also: ['/finance/income', '/finance/expenses'],
-        label: 'الحركات المالية',
-        labelEn: 'Transactions',
+        key: 'transactions',
         icon: ScrollText,
         roles: TREASURY_READ_ROLES,
         keywords: [
@@ -612,8 +605,7 @@ export const NAV_GROUPS: NavGroup[] = [
       */
       {
         path: '/finance/transfers',
-        label: 'المناقلات والمصارفة',
-        labelEn: 'Transfers & exchange',
+        key: 'transfers',
         icon: ArrowRightLeft,
         roles: TREASURY_READ_ROLES,
         keywords: ['مناقلة', 'تحويل', 'مصارفة', 'صرّاف', 'سعر الصرف', 'إيداع', 'سلفة', 'transfer', 'exchange', 'deposit', 'review'],
@@ -628,8 +620,7 @@ export const NAV_GROUPS: NavGroup[] = [
       */
       {
         path: '/finance/daily',
-        label: 'جرد وإقفال اليومية',
-        labelEn: 'Daily count & close',
+        key: 'dailyClose',
         icon: CalendarCheck,
         roles: TREASURY_READ_ROLES,
         keywords: ['جرد', 'إقفال', 'يومية', 'صندوق', 'عجز', 'فائض', 'تقرير يومي', 'count', 'close', 'daily', 'cash report'],
@@ -656,8 +647,7 @@ export const NAV_GROUPS: NavGroup[] = [
     screen that would only tell them their work is being watched.
   */
   {
-    label: 'المراجعة والتدقيق',
-    labelEn: 'Review & audit',
+    key: 'review',
     items: [
       /*
         Tabs: «اعتماد السجلات» (the queue, first), «الملاحظات», «التحقق الميداني»,
@@ -666,8 +656,7 @@ export const NAV_GROUPS: NavGroup[] = [
       */
       {
         path: '/quality',
-        label: 'الجودة',
-        labelEn: 'Quality',
+        key: 'quality',
         icon: ClipboardCheck,
         also: ['/quality/reviews', '/quality/findings', '/quality/checks', '/quality/officers'],
         roles: QUALITY_REVIEWER_ROLES,
@@ -698,8 +687,7 @@ export const NAV_GROUPS: NavGroup[] = [
       },
       {
         path: '/audit',
-        label: 'سجل النشاطات',
-        labelEn: 'Audit log',
+        key: 'audit',
         icon: ShieldCheck,
         // The two roles `AuditController` serves — the auditor is who the log is for.
         roles: AUDIT_READ_ROLES,
@@ -711,56 +699,55 @@ export const NAV_GROUPS: NavGroup[] = [
     «الأخبار» — the municipality's News, kept on Day3ati and managed from here
     as the signed-in user (`NEWS_EDITOR_ROLES`: the administrator and the
     administrative officer, the two who have an account there). Its own group
-    because it is neither the register nor the books: a screen of its own job,
-    with the articles first and the two lists they are filed and published by.
+    because it is neither the register nor the books: a screen of its own job.
+    One row (NAV-05, 2026-11-25), under its own name with no heading above it:
+    the two lists the articles are filed and published by, «أقسام الأخبار» and
+    «ناشرو الأخبار», open from the articles page's header, and keep their
+    addresses as the row's `also`, so `NEWS_EDITOR_ROLES` still guards them.
   */
   {
-    label: 'الأخبار',
-    labelEn: 'News',
     roles: NEWS_EDITOR_ROLES,
     items: [
       {
         path: '/news/articles',
-        label: 'الأخبار',
-        labelEn: 'News articles',
+        key: 'news',
         icon: Newspaper,
+        also: ['/news/categories', '/news/publishers'],
         roles: NEWS_EDITOR_ROLES,
-        keywords: ['أخبار', 'خبر', 'نشر', 'مقال', 'news', 'article', 'articles', 'publish'],
-      },
-      {
-        path: '/news/categories',
-        label: 'أقسام الأخبار',
-        labelEn: 'News categories',
-        icon: Tags,
-        roles: NEWS_EDITOR_ROLES,
-        keywords: ['أخبار', 'قسم', 'تصنيف', 'news', 'category', 'categories'],
-      },
-      {
-        path: '/news/publishers',
-        label: 'ناشرو الأخبار',
-        labelEn: 'News publishers',
-        icon: Megaphone,
-        roles: NEWS_EDITOR_ROLES,
-        keywords: ['أخبار', 'ناشر', 'جهة', 'news', 'publisher', 'publishers'],
+        keywords: [
+          'أخبار',
+          'خبر',
+          'نشر',
+          'مقال',
+          'قسم',
+          'تصنيف',
+          'ناشر',
+          'جهة',
+          'news',
+          'article',
+          'articles',
+          'publish',
+          'category',
+          'categories',
+          'publisher',
+          'publishers',
+        ],
       },
     ],
   },
   {
-    label: 'النظام',
-    labelEn: 'System',
+    key: 'system',
     items: [
       {
         path: '/settings',
-        label: 'إعدادات البلدية',
-        labelEn: 'Settings',
+        key: 'settings',
         icon: Settings,
         roles: ['SUPER_ADMIN'],
         keywords: ['ويش', 'واتساب', 'عنوان', 'دوام', 'settings', 'config'],
       },
       {
         path: '/staff',
-        label: 'الموظفون',
-        labelEn: 'Staff management',
+        key: 'staff',
         icon: UsersRound,
         roles: ['SUPER_ADMIN'],
         keywords: ['موظف', 'صلاحيات', 'حساب', 'staff', 'users'],
@@ -784,12 +771,12 @@ export const NAV_GROUPS: NavGroup[] = [
  *    unsurveyed worklist, a unit in the matrix, a case, and the palette.
  *  - «فواتير تأثّرت بتصحيحات» (NAV-07): opened from the fees page's header.
  *  - «أمان الحساب» (NAV-06): opened from the user menu.
+ *  - «أقسام الأخبار» and «ناشرو الأخبار» (NAV-05): opened from the articles page's header.
  */
 export const OFF_SIDEBAR_PAGES: ReadonlyArray<NavItem & { inPalette: boolean }> = [
   {
     path: '/citizens/new',
-    label: 'تسجيل مواطن جديد',
-    labelEn: 'Register a citizen',
+    key: 'registerCitizen',
     icon: UserPlus,
     // The roles `CitizenEditor` admits and `CitizenController.create` accepts, not a copy of them.
     roles: CITIZEN_RECORD_EDIT_ROLES,
@@ -798,17 +785,31 @@ export const OFF_SIDEBAR_PAGES: ReadonlyArray<NavItem & { inPalette: boolean }> 
   },
   {
     path: '/fees/corrections',
-    label: 'فواتير تأثّرت بتصحيحات',
-    labelEn: 'Bills affected by corrections',
+    key: 'feeCorrections',
     icon: FileWarning,
     roles: PAYMENT_REVIEW_READ_ROLES,
     keywords: ['تصحيح', 'فاتورة', 'فرق', 'مراجعة', 'corrections', 'bills', 'difference'],
     inPalette: false,
   },
   {
+    path: '/news/categories',
+    key: 'newsCategories',
+    icon: Tags,
+    roles: NEWS_EDITOR_ROLES,
+    keywords: ['أخبار', 'قسم', 'تصنيف', 'news', 'category', 'categories'],
+    inPalette: false,
+  },
+  {
+    path: '/news/publishers',
+    key: 'newsPublishers',
+    icon: Megaphone,
+    roles: NEWS_EDITOR_ROLES,
+    keywords: ['أخبار', 'ناشر', 'جهة', 'news', 'publisher', 'publishers'],
+    inPalette: false,
+  },
+  {
     path: '/account',
-    label: 'أمان الحساب',
-    labelEn: 'Account security',
+    key: 'account',
     icon: KeyRound,
     // Everyone has a password to change and a second factor to enrol, and it is their own.
     roles: EVERY_STAFF_ROLE,
@@ -968,12 +969,26 @@ export function activeNavItem(
   return candidates[0]?.item;
 }
 
+/**
+ * A row's name in the page's language, from `messages.nav.items` (NAV-10).
+ *
+ * A plain lookup, not a hook: the header, the sidebar and the palette are
+ * components, but `nav.ts` is data read by plain functions and tests, and a
+ * label with no placeholders needs no translator (as `audit-labels.ts` reads
+ * `auditActions`). The page's own title reads the same message through
+ * `useTranslations('nav.items')`.
+ */
 export function localizedLabel(item: NavItem, locale: string = 'ar'): string {
-  return locale === 'en' && item.labelEn ? item.labelEn : item.label;
+  return navLabel(item.key, locale);
+}
+
+/** The same lookup by key, for a page that names itself without holding its row. */
+export function navLabel(key: NavKey, locale: string = 'ar'): string {
+  return (locale === 'en' ? en : ar).nav.items[key];
 }
 
 export function localizedGroupLabel(group: NavGroup, locale: string = 'ar'): string {
-  // '' for the unlabelled landing group. Callers render a heading only when
-  // there is one, so this never reaches the screen.
-  return (locale === 'en' && group.labelEn ? group.labelEn : group.label) ?? '';
+  // '' for a group with no heading. Callers render a heading only when there is
+  // one, so this never reaches the screen.
+  return group.key ? (locale === 'en' ? en : ar).nav.groups[group.key] : '';
 }

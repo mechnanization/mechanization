@@ -39,7 +39,9 @@ export function CommandPalette({
     if (!term) return all;
     return all.filter(
       (item) =>
-        item.label.includes(term) ||
+        // Either language's name, as the keywords already are: a clerk on the English page may type the Arabic one.
+        localizedLabel(item, 'ar').includes(term) ||
+        localizedLabel(item, 'en').toLowerCase().includes(term.toLowerCase()) ||
         (item.keywords ?? []).some((keyword) => keyword.includes(term)),
     );
   }, [query, role, newsEnabled]);

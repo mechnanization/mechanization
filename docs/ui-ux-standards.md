@@ -481,7 +481,7 @@ Spacing, radius and shadow values as defined: [DESIGN.md](../DESIGN.md) "Layout"
   always comes from `getLabels(locale)` in `packages/shared-schemas/src/labels.ts`,
   never re-typed. Legacy, converted when you touch the file: inline
   `const en = locale === 'en'` with `en ? '…' : '…'`, `lib/settings-i18n.ts`
-  `settingsCopy`, and `labelEn` in `components/admin/nav.ts`. **Undecided:**
+  `settingsCopy` (the nav's own `labelEn` is gone: a row is a key in `messages.nav.items`, NAV-10). **Undecided:**
   whether "touch" means the whole file or only the components you change, for
   files above the CODE-6 limit.
 - **TXT-2. No language leaks.** Every user-visible string, including `title`,
@@ -713,7 +713,7 @@ Code-pattern debt outside the UI rules lives in
 - **Tables not drawn by `DataTable`, 12 in 10 files** (PRIM-3; recounted 2026-11-24, when
   `DataTable` had 39 users). The four registers PRIM-3 covers moved to it on 2026-11-24 (UX-09, UX-10,
   decision U-2): `finance/collector-custody-panel` (`finance/collectors`), the payouts page
-  (`inspector/profile/[staffId]/payouts`), `settings/users-section` and `audit-daily` (`audit`), whose day
+  (`inspector/profile/[staffId]/payouts`), `audit-daily` (`audit`), whose day
   detail is `renderSubRow`. `DataTable` grew what the last needed: an expanded row is drawn under its phone
   card too (it was drawn under the table row only, so a control that opens one did nothing on a phone).
   (The bills on a citizen's file were a register too, a `<ul>` on a CSS subgrid with its own header row and
@@ -743,11 +743,11 @@ Code-pattern debt outside the UI rules lives in
   ones stand in for a panel whose read failed, which is `ErrorState`'s job
   (STA-1), and stay `Alert` because `ErrorState`'s default title is Arabic only
   and they have no retry: `parcel-roster-dialog`, `case-editor`,
-  `citizen-editor`, `settings/users-section`. **Hand-rolled warning and info
+  `citizen-editor`. **Hand-rolled warning and info
   banners** moved to `Alert` on 2026-11-24 (UX-13): `unit-correction-delete-dialog`'s local
   `Callout` (deleted), the boxes in `landlord-unlink-dialog`, `import-citizens-dialog`, `building-editor`
   (seven), both matrix files' «is it a different unit?» box, `property-card` (three), the citizen cash page and
-  the one-time key notice on the staff page and in `settings/users-section.tsx`, which no longer draws a
+  the one-time key notice on the staff page (and in `settings/users-section.tsx`, deleted with PAGE-01), which no longer draws a
   warning-sign emoji (BAN-7). Left on purpose, because they are not notes: `building-editor/map-section.tsx`'s «no pin» reason box
   (a group of controls) and `property-card`'s success row linking an owner (a row with a button). Several bodies
   were `text-xs` and are `Alert`'s `text-sm` now, and the editor's duplicate-structures box and the matrix
@@ -968,8 +968,8 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
   under `app/` and `components/` and 11 in `lib/`; 62 files declare
   `const en = locale === 'en'`. The grep also counts a locale handed to a
   formatter or a `DatePicker`, which is not copy. Counted 2026-10-15 on
-  `fix/pr116-review`. `settingsCopy` serves settings and account; the 13
-  `messages.nav` keys are never read.
+  `fix/pr116-review`. `settingsCopy` serves settings and account (its users and role catalogue went with
+PAGE-01); `messages.nav` is the nav's names now (NAV-10).
 - **TXT-1 on #116's files**: PR #116 touched 47 files under 600 lines that
   branch on the locale inline. Its review moved four to messages — the three
   PR #124 left to it (`charge-citizen-dialog` → `fees.charge`, `case-editor` →
@@ -1020,7 +1020,7 @@ tokens, add dedicated tint surface tokens, or relax COL-4's tint clause; raise
     restore buttons, the cadastre import, the citizens import and the quality list's writes each take an in-flight
     ref checked and set before the busy state; `lib/dialog-write-guards.test.ts` lists them. A second
     «إنشاء حساب» was already refused by `users_email_key` (unique on `users.email`). Left as they were:
-    `users-section`'s activate/deactivate (the same value twice) and the backup schedule's save-on-change
+    `users-section`'s activate/deactivate (the same value twice; the section is gone, PAGE-01) and the backup schedule's save-on-change
     (each change is a different value).
   - The building editor (`building-editor.tsx`) created a second building on a double click and
     re-enabled «حفظ» while the page was leaving. Fixed 2026-10-11: an in-flight ref, a

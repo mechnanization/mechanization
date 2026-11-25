@@ -27,6 +27,7 @@ import { Card } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ErrorState } from '@/components/ui/states';
+import { navLabel } from '@/components/admin/nav';
 
 /**
  * The side being written, in the URL: «سجّل صرفاً» has an address a clerk can
@@ -146,7 +147,7 @@ export default function MovementsPage({
 
       <PageHeader
         icon={ArrowDownUp}
-        title={t('title')}
+        title={navLabel('movements', locale)}
         actions={
           <>
             <Button asChild variant="outline">

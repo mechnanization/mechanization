@@ -2,7 +2,7 @@
 
 import { use } from 'react';
 import { ClipboardCheck } from 'lucide-react';
-import { useTranslations } from 'next-intl';
+import { navLabel } from '@/components/admin/nav';
 import { QualityScreen } from '@/components/admin/quality/quality-screen';
 import { QualityTabs } from '@/components/admin/quality/quality-tabs';
 
@@ -25,10 +25,9 @@ export default function QualityPage({
   params: Promise<{ tenant: string; locale: string; adminPath: string }>;
 }): React.JSX.Element {
   const { tenant, locale, adminPath } = use(params);
-  const t = useTranslations('quality');
 
   return (
-    <QualityScreen tenant={tenant} locale={locale} adminPath={adminPath} icon={ClipboardCheck} title={t('title')}>
+    <QualityScreen tenant={tenant} locale={locale} adminPath={adminPath} icon={ClipboardCheck} title={navLabel('quality', locale)}>
       {({ token, base, role }) => (
         <QualityTabs tenant={tenant} base={base} locale={locale} token={token} role={role} />
       )}

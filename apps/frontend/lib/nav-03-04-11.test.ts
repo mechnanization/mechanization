@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { STAFF_ROLE } from '@mechanization/shared-schemas';
-import { activeNavItem, canAccessPath, NAV_GROUPS, visibleGroups } from '@/components/admin/nav';
+import { activeNavItem, canAccessPath, localizedGroupLabel, localizedLabel, NAV_GROUPS, visibleGroups } from '@/components/admin/nav';
 import { QUALITY_PANEL_KEYS, QUALITY_TABS } from '@/components/admin/quality/quality-tabs';
 import { REVIEW_QUEUE_URL } from '@/components/admin/quality/review-queue';
 import { forwardedHref } from '@/lib/legacy-address';
@@ -129,15 +129,16 @@ describe('the old addresses forward (NAV-03, NAV-04)', () => {
 });
 
 describe('the sidebar after NAV-03, NAV-04 and NAV-11', () => {
-  it('has 28 rows (32 before; 26 once NAV-05 folds the news rows)', () => {
-    expect(rows).toHaveLength(28);
+  // 35 before NAV-02, 28 after NAV-03/04/11, 26 once NAV-05 folded the news rows: the approved map (§25).
+  it('has 26 rows, the approved map', () => {
+    expect(rows).toHaveLength(26);
   });
 
   it('has one «الجودة» row, which owns the four old addresses and keeps the reviewers', () => {
     expect(rows.filter((row) => row.path.startsWith('/quality'))).toHaveLength(1);
     const row = rowAt('/quality');
-    expect(row?.label).toBe('الجودة');
-    expect(row?.labelEn).toBe('Quality');
+    expect(row && localizedLabel(row, 'ar')).toBe('الجودة');
+    expect(row && localizedLabel(row, 'en')).toBe('Quality');
     expect(row?.also).toEqual(['/quality/reviews', '/quality/findings', '/quality/checks', '/quality/officers']);
     expect(row?.roles).toEqual(QUALITY_REVIEWER_ROLES);
   });
@@ -145,8 +146,8 @@ describe('the sidebar after NAV-03, NAV-04 and NAV-11', () => {
   it('has one «قوائم العمل الميداني» row, which owns both old addresses and keeps the worklist roles', () => {
     expect(rows.filter((row) => /^\/buildings\/(unsurveyed|reinspections|worklists)/.test(row.path))).toHaveLength(1);
     const row = rowAt('/buildings/worklists');
-    expect(row?.label).toBe('قوائم العمل الميداني');
-    expect(row?.labelEn).toBe('Field worklists');
+    expect(row && localizedLabel(row, 'ar')).toBe('قوائم العمل الميداني');
+    expect(row && localizedLabel(row, 'en')).toBe('Field worklists');
     expect(row?.also).toEqual(['/buildings/unsurveyed', '/buildings/reinspections']);
     expect(row?.roles).toEqual(WORKLIST_ROLES);
   });
@@ -172,12 +173,12 @@ describe('the sidebar after NAV-03, NAV-04 and NAV-11', () => {
   });
 
   it('leaves «المراجعة والتدقيق» with «الجودة» and «سجل النشاطات»', () => {
-    const group = visibleGroups('SUPER_ADMIN').find((candidate) => candidate.label === 'المراجعة والتدقيق');
+    const group = visibleGroups('SUPER_ADMIN').find((candidate) => localizedGroupLabel(candidate, 'ar') === 'المراجعة والتدقيق');
     expect(group?.items.map((item) => item.path)).toEqual(['/quality', '/audit']);
   });
 
   it('puts «قوائم العمل الميداني» ahead of «الحالات» in «العمل الميداني»', () => {
-    const group = visibleGroups('SUPER_ADMIN').find((candidate) => candidate.label === 'العمل الميداني');
+    const group = visibleGroups('SUPER_ADMIN').find((candidate) => localizedGroupLabel(candidate, 'ar') === 'العمل الميداني');
     expect(group?.items.map((item) => item.path)).toEqual(['/buildings/worklists', '/cases']);
   });
 });
@@ -185,8 +186,8 @@ describe('the sidebar after NAV-03, NAV-04 and NAV-11', () => {
 describe('the two queues of "records to review" are told apart (NAV-11)', () => {
   it('names `/citizens/review` «ملفات ناقصة» / "Incomplete files", on its row and its page', () => {
     const row = rowAt('/citizens/review');
-    expect(row?.label).toBe('ملفات ناقصة');
-    expect(row?.labelEn).toBe('Incomplete files');
+    expect(row && localizedLabel(row, 'ar')).toBe('ملفات ناقصة');
+    expect(row && localizedLabel(row, 'en')).toBe('Incomplete files');
     expect(ar.reviewQueue.title).toBe('ملفات ناقصة');
     expect(en.reviewQueue.title).toBe('Incomplete files');
   });
@@ -198,9 +199,9 @@ describe('the two queues of "records to review" are told apart (NAV-11)', () => 
 
   it('no row, page title or tab still calls either «يتطلب مراجعة» or «السجلات»', () => {
     for (const row of rows) {
-      expect(row.label).not.toBe('يتطلب مراجعة');
-      expect(row.label).not.toBe('السجلات');
-      expect(row.labelEn).not.toBe('Requires review');
+      expect(localizedLabel(row, 'ar')).not.toBe('يتطلب مراجعة');
+      expect(localizedLabel(row, 'ar')).not.toBe('السجلات');
+      expect(localizedLabel(row, 'en')).not.toBe('Requires review');
     }
     expect(Object.values(ar.quality.tabs)).not.toContain('السجلات');
   });
@@ -256,7 +257,6 @@ describe('the tabbed pages', () => {
     for (const messages of [en, ar]) {
       for (const key of ['reviews', 'findings', 'checks', 'officers'] as const) expect(messages.quality.tabs[key]).toBeTruthy();
       for (const key of ['unsurveyed', 'reinspections'] as const) expect(messages.fieldWorklists.tabs[key]).toBeTruthy();
-      expect(messages.quality.title && messages.fieldWorklists.title).toBeTruthy();
     }
   });
 });

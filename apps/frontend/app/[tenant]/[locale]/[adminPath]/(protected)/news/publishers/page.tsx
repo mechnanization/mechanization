@@ -19,7 +19,9 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { DataTable } from '@/components/ui/data-table';
 import { ErrorState } from '@/components/ui/states';
 import { PageHeader } from '@/components/ui/page-header';
+import { HeaderBackLink } from '@/components/admin/header-back-link';
 import { useToast } from '@/components/ui/toast';
+import { navLabel } from '@/components/admin/nav';
 
 /**
  * «ناشرو الأخبار» — who an article is published as, on Day3ati: the
@@ -139,9 +141,11 @@ export default function NewsPublishersPage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
+      <HeaderBackLink fallbackHref={`${base}/news/articles`} label={t('back')} />
+
       <PageHeader
         icon={Megaphone}
-        title={t('title')}
+        title={navLabel('newsPublishers', locale)}
         actions={
           canEdit ? (
             <Button onClick={() => setEditing(null)}>

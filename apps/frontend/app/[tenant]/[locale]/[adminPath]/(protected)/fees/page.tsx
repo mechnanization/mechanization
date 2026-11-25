@@ -85,6 +85,7 @@ import { PaymentReviewDialog } from '@/components/admin/fees/payment-review-dial
 import { ArrearsBillMark } from '@/components/arrears-bill-mark';
 import { heldKey, keyIsSpent, spendKey } from '@/lib/request-id';
 import { cn } from '@/lib/utils';
+import { navLabel } from '@/components/admin/nav';
 
 /**
  * The order the status tabs read in, which is not alphabetical and not the
@@ -789,7 +790,7 @@ export default function FeesPage({
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <PageHeader
         icon={Receipt}
-        title={locale === 'en' ? 'Fees & Billing' : 'إدارة الرسوم والمدفوعات'}
+        title={navLabel('fees', locale)}
         actions={
           <>
             <Button

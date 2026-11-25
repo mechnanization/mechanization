@@ -18,6 +18,7 @@ import { Input } from '@/components/ui/input';
 import { Money } from '@/components/ui/money';
 import { PageHeader } from '@/components/ui/page-header';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/states';
+import { navLabel } from '@/components/admin/nav';
 
 /** The parcel asked about, in the query string: a reload or a shared link asks again. */
 const PARCEL_URL_STATE = { parcel: param.string() };
@@ -59,7 +60,7 @@ export default function ParcelDuesPage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <PageHeader icon={Landmark} title={t('title')} />
+      <PageHeader icon={Landmark} title={navLabel('parcelDues', locale)} />
 
       <form
         className="flex flex-col gap-2 sm:flex-row sm:items-end"

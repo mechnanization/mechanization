@@ -24,6 +24,7 @@ import { Pager } from '@/components/ui/pager';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState, ErrorState } from '@/components/ui/states';
+import { navLabel } from '@/components/admin/nav';
 
 const PAGE_SIZE = 50;
 const ANY = 'ANY';
@@ -185,7 +186,7 @@ export default function AuditTrailPage({
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <PageHeader
         icon={ShieldCheck}
-        title={en ? 'Audit trail' : 'سجل النشاطات'}
+        title={navLabel('audit', locale)}
       />
 
       <section

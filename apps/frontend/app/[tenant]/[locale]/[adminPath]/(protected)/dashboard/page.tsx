@@ -60,6 +60,7 @@ import {
 } from '@/components/admin/charts';
 import { cn } from '@/lib/utils';
 import { REGISTER_EXPORT_ROLES, hasRole } from '@/lib/staff-roles';
+import { navLabel } from '@/components/admin/nav';
 
 /**
  * Household sizes are bucketed at 8: past that the bars are single households
@@ -403,7 +404,7 @@ export default function StaffDashboard({
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <PageHeader
         icon={LayoutDashboard}
-        title={locale === 'en' ? 'Dashboard' : 'لوحة التحكم'}
+        title={navLabel('dashboard', locale)}
         actions={
           <>
             {/* `REGISTER_EXPORT_ROLES`, as the route: not «مشاهد فقط», whose account reads on screen and takes nothing away. */}

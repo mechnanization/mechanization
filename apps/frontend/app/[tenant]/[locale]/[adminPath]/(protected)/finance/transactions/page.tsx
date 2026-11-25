@@ -41,6 +41,7 @@ import { PageHeader } from '@/components/ui/page-header';
 import { Pager } from '@/components/ui/pager';
 import { SegmentedControl } from '@/components/ui/segmented-control';
 import { EmptyState, ErrorState } from '@/components/ui/states';
+import { navLabel } from '@/components/admin/nav';
 
 /** Lines on a page of the list; `Pager` steps through the rest. */
 const PAGE_SIZE = 25;
@@ -334,7 +335,7 @@ export default function TransactionsPage({
 
       <PageHeader
         icon={ScrollText}
-        title={t('transactionsTitle')}
+        title={navLabel('transactions', locale)}
         actions={
           <>
             {/* The way to record, from the list; on a phone it is the bar at the foot. */}

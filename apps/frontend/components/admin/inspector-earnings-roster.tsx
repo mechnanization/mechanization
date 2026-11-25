@@ -27,6 +27,7 @@ import { StatItem, StatStrip } from '@/components/ui/stat-strip';
 import { EmptyState, ErrorState } from '@/components/ui/states';
 import { ActionTooltip } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+import { navLabel } from '@/components/admin/nav';
 
 /** Every figure on this screen is USD with two decimals, and only here. */
 function money(value: number, locale: string): string {
@@ -148,8 +149,7 @@ export function InspectorEarningsRoster({
   const header = (
     <PageHeader
       icon={BadgeDollarSign}
-      title={isAr ? 'أرباح المسح الميداني' : 'Field survey earnings'}
-
+      title={navLabel('earnings', isAr ? 'ar' : 'en')}
       actions={
         <ActionTooltip label={isAr ? 'تحديث البيانات' : 'Refresh'}>
           <Button variant="outline" size="icon-sm" disabled={fetching} onClick={() => refetch()}>

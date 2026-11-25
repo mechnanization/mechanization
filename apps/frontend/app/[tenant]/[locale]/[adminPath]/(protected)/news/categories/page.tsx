@@ -18,7 +18,9 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { DataTable } from '@/components/ui/data-table';
 import { ErrorState } from '@/components/ui/states';
 import { PageHeader } from '@/components/ui/page-header';
+import { HeaderBackLink } from '@/components/admin/header-back-link';
 import { useToast } from '@/components/ui/toast';
+import { navLabel } from '@/components/admin/nav';
 
 /**
  * «أقسام الأخبار» — the categories an article is filed under, on Day3ati.
@@ -167,9 +169,11 @@ export default function NewsCategoriesPage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
+      <HeaderBackLink fallbackHref={`${base}/news/articles`} label={t('back')} />
+
       <PageHeader
         icon={Tags}
-        title={t('title')}
+        title={navLabel('newsCategories', locale)}
         actions={
           canEdit ? (
             <Button onClick={() => setEditing(null)}>

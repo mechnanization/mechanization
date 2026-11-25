@@ -1407,6 +1407,9 @@ a row to that row's roles (longest match, CODE-4). So:
 - **Found during NAV-04:** a role outside `WORKLIST_ROLES` still opens `/buildings/worklists` (and did the old pages): `canAccessPath`
   falls through to the `/buildings` row it can see. The server refuses its reads (`CENSUS_WORKLIST_ROLES`), so it sees an
   error where it could be turned away; the page does not gate itself.
+- **Fixed 2026-11-25 (with NAV-05, PAGE-01 and NAV-10):** `buildings/worklists/page.tsx` takes its token from `useRoleGate` with
+  `WORKLIST_ROLES`: a role outside it is sent to `/buildings` with a toast (`access.fieldWorklists`) and neither tab is mounted.
+  `lib/page-tabs-dom.test.ts` drives every role in and out of the set.
 - **Decision (NAV-01, 2026-11-25, [open-decisions §25](../open-decisions.md#25-the-staff-sidebar-and-the-page-moves-decided-2026-11-25)):** **approved** as written.
 
 ## [NAV-05] Reach the news categories and publishers from the articles page
@@ -1419,6 +1422,14 @@ a row to that row's roles (longest match, CODE-4). So:
 - **Decision (NAV-01, 2026-11-25, [open-decisions §25](../open-decisions.md#25-the-staff-sidebar-and-the-page-moves-decided-2026-11-25)):** **changed**: the header links as written, but «الأخبار» is **not** folded into another group. It stays in the
   sidebar as one row under its own name, with no group heading above it. `NavGroup.label` is documented for the landing
   group only and `lib/nav.test.ts` pins that group unlabelled and first: widen both.
+- **Done 2026-11-25:** one row, «الأخبار» (`/news/articles`, English «News»), whose `also` holds `/news/categories` and
+  `/news/publishers`, so `NEWS_EDITOR_ROLES` still guards them. The group has no `key`, so no heading and no fold: the sidebar draws
+  it between two rules, and gave a headingless group its own React key (it was "landing" for both). The articles page's header
+  links to both lists, and each list gets a `HeaderBackLink` to the articles (it had none: "keeps" in the task was "gets").
+  The two lists keep a crumb of their own through `OFF_SIDEBAR_PAGES`, and their keywords moved to the row, so the palette still
+  finds them. `NavGroup.key` is documented for two headingless groups, and `lib/nav.test.ts` pins that they are exactly the
+  landing group and this one. `lib/nav-05-page-01.test.ts` renders the sidebar for real. **Not done:** the harness; nothing
+  rendered in a browser.
 
 ## [NAV-06] Keep «أمان الحساب» in the user menu only
 - **Priority:** P3 · **Assignee:** Abed · **Estimate:** XS · **Category:** UI/UX
@@ -1469,6 +1480,19 @@ a row to that row's roles (longest match, CODE-4). So:
 - **Acceptance criteria:** 1. `NavItem` takes a `messageKey`; the sidebar, breadcrumb, palette and the page's `PageHeader` read the same key. 2. `labelEn` removed. 3. `messages-parity.test.ts` passes.
 - **Depends on:** do it after NAV-02…08 so the keys are written once
 - **Verification:** `grep -c "labelEn" components/admin/nav.ts` → 0.
+- **Done 2026-11-25:** `NavItem` and `NavGroup` take a `key` (`NavKey`, `NavGroupKey`, typed from the messages) instead of `label` and `labelEn`;
+  `messages.nav` is `items` (31: the 26 rows and 5 pages with none) and `groups` (7), replacing the 13 keys nothing read. `localizedLabel` and
+  `localizedGroupLabel` read them, `navLabel(key, locale)` is the lookup a page uses, and the palette matches either language's name.
+  `grep -c labelEn nav.ts` is 0. Every page but three reads its row's key for its heading, and the two earnings screens do too. **Eight titles said
+  something else and now say the row's words** (the row's, in every case; change the words once, in `messages.nav.items`): fees «إدارة
+  الرسوم والمدفوعات» → «الرسوم والمدفوعات», "Fees & Billing" → "Fees & billing"; payments "Transactions Log" → "Payment operations";
+  the treasury «أرصدة الخزينة» / "Treasury balances" → «الأرصدة» / "Balances"; buildings "Building Census" → "Building census"; audit "Audit trail" →
+  "Audit log"; news "News articles" → "News"; staff "Staff" → "Staff management"; account "Account Security" → "Account security"; and
+  the earnings row's English «My earnings & survey» → "Field survey earnings", because its page also serves the admins' roster. A page that
+  is about one person keeps its own («أرباحي والمسح الميداني», "Inspector earnings: <name>"). **Not read from the key, and why**
+  (`lib/nav-10.test.ts` lists them): `/map` (no header), `/citizens/new` (the form's own), `/inspector/profile` through its two components.
+  The `title` messages those pages used (`cases.page.title`, `requests.title`, …) are now unread; left, not deleted. Folds: the sidebar remembers
+  them by group key now, not by the Arabic heading, so each user's folds reset once. `lib/nav-10.test.ts` (46). **Not done:** nothing rendered in a browser.
 
 ## [NAV-11] Name the two record-review queues so they cannot be confused
 - **Priority:** P3 · **Assignee:** Abed · **Estimate:** XS · **Category:** UI/UX
@@ -1503,6 +1527,11 @@ a row to that row's roles (longest match, CODE-4). So:
 - **Acceptance criteria:** the tab is gone or replaced by a link to `/staff`; no import of `users-section.tsx` remains; the file is deleted.
 - **Depends on:** NAV-01 (confirm nobody relies on it)
 - **Verification:** `grep -rn "UsersSection" apps/frontend` → 0.
+- **Done 2026-11-25:** the tab, `users-section.tsx` (574 lines) and what only it read in `lib/settings-i18n.ts` (the `users` copy in
+  both languages, `nav.users`, `ROLE_KEYS`, `ROLE_BACKEND_VALUE`, `roleKeyFor`) are deleted, with `lib/settings-roles.test.ts` and the
+  places four other tests read the section. `grep` finds no `UsersSection`. An old `?tab=users` opens «الملف» (the first section). The
+  section's role catalogue («واجبات» of each role) is gone with it; `/staff` is the one place accounts are made. UX-10's users half
+  and SUBMIT-04's `creatingRef` there are moot. `lib/nav-05-page-01.test.ts`. **Not done:** nothing rendered in a browser.
 - **Decision (NAV-01, 2026-11-25, [open-decisions §25](../open-decisions.md#25-the-staff-sidebar-and-the-page-moves-decided-2026-11-25)):** **approved** as written.
 
 ## [PAGE-02] Send a signed-out citizen on «حسابي» to the front door, not the phone-code page

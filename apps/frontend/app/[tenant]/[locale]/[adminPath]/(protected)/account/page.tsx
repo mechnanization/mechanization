@@ -9,6 +9,7 @@ import { SecuritySection } from '@/components/admin/settings/security-section';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { getLabels } from '@mechanization/shared-schemas';
+import { navLabel } from '@/components/admin/nav';
 
 /**
  * Account Security page — accessible to all logged-in staff members.
@@ -53,7 +54,7 @@ export default function AccountSecurityPage({
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <PageHeader
         icon={ShieldCheck}
-        title={locale === 'en' ? 'Account Security' : 'أمان الحساب'}
+        title={navLabel('account', locale)}
       />
 
       {/* User profile summary card */}

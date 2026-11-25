@@ -24,6 +24,7 @@ import { SegmentedControl } from '@/components/ui/segmented-control';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/states';
 import { useToast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
+import { navLabel } from '@/components/admin/nav';
 
 const PAGE_SIZE = 20;
 
@@ -143,7 +144,7 @@ export default function CorrectionBillsPage({
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <PageHeader
         icon={FileWarning}
-        title={en ? 'Bills affected by corrections' : 'فواتير تأثّرت بتصحيحات'}
+        title={navLabel('feeCorrections', locale)}
         actions={
           <Button variant="outline" size="sm" onClick={() => listQuery.refetch()} disabled={listQuery.fetching}>
             <RefreshCw className={cn('size-4', listQuery.fetching && 'animate-spin')} aria-hidden />

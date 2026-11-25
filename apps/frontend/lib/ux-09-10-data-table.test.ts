@@ -131,16 +131,13 @@ describe('the daily audit is a DataTable whose rows open into their day (UX-10)'
   });
 });
 
-describe('the payouts page and the users section are DataTables (UX-09, UX-10)', () => {
+describe('the payouts page is a DataTable (UX-09, UX-10; the users section went with PAGE-01)', () => {
   const payouts = read('app/[tenant]/[locale]/[adminPath]/(protected)/inspector/profile/[staffId]/payouts/page.tsx');
-  const users = read('components/admin/settings/users-section.tsx');
 
-  it('neither draws the bare Table, and each reads its rows through DataTable', () => {
-    for (const source of [payouts, users]) {
-      expect(source).not.toMatch(/components\/ui\/table'/);
-      expect(source).toMatch(/<DataTable\b/);
-      expect(source).toMatch(/getRowId=/);
-    }
+  it('draws no bare Table, and reads its rows through DataTable', () => {
+    expect(payouts).not.toMatch(/components\/ui\/table'/);
+    expect(payouts).toMatch(/<DataTable\b/);
+    expect(payouts).toMatch(/getRowId=/);
   });
 
   it('the payouts page keeps its seven columns, its voucher print link and its failed-read behaviour', () => {
@@ -155,11 +152,6 @@ describe('the payouts page and the users section are DataTables (UX-09, UX-10)',
     expect(payouts).toMatch(/t\('cancelled'\)/);
   });
 
-  it('the users section keeps its search, its offline-aware error and its in-flight guard', () => {
-    expect(users).toMatch(/<ErrorState compact description=\{error\} offline=\{offline\}/);
-    expect(users).toMatch(/creatingRef/);
-    expect(users).toMatch(/disabled=\{pendingId === row\.original\.id\}/);
-  });
 });
 
 describe('DataTable draws an expanded row under its phone card too (U-2)', () => {

@@ -48,6 +48,7 @@ import { StatItem, StatStrip } from '@/components/ui/stat-strip';
 import { ActionTooltip } from '@/components/ui/tooltip';
 import { PaymentReceipt } from '@/components/admin/payment-receipt';
 import { cn } from '@/lib/utils';
+import { navLabel } from '@/components/admin/nav';
 
 /**
  * What the strip shows before the first response, and after a failed one.
@@ -618,7 +619,7 @@ export default function PaymentsPage({
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <PageHeader icon={ArrowLeftRight} title={t('title')} />
+      <PageHeader icon={ArrowLeftRight} title={navLabel('payments', locale)} />
 
       {error ? (
         <Alert variant="destructive" live="alert">

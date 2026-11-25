@@ -44,7 +44,6 @@ const GUARDS: ReadonlyArray<readonly [string, string]> = [
   ['staff/deleted-staff-section.tsx', 'restoringRef'],
   ['residence-change-dialog.tsx', 'deactivatingRef'],
   ['settings/cadastre-section.tsx', 'uploadingRef'],
-  ['settings/users-section.tsx', 'creatingRef'],
   ['settings/finance-section.tsx', 'savingRef'],
   ['settings/finance-section.tsx', 'savingFactorsRef'],
   ['settings/numbering-section.tsx', 'savingRef'],

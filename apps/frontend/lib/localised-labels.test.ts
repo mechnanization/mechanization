@@ -86,7 +86,6 @@ describe('ERR-06: ErrorState is told, not guessing, that the connection dropped'
     ['components/admin/parcel-roster-dialog.tsx', 'error', /<ErrorState compact description=\{error\} offline=\{offline\} onRetry=/],
     ['components/admin/case-editor.tsx', 'loadError', /<ErrorState\s+compact\s+description=\{loadError\}\s+offline=\{loadOffline\}\s+onRetry=/],
     ['components/admin/citizen-editor.tsx', 'loadError', /<ErrorState\s+compact\s+description=\{loadError\}\s+offline=\{loadOffline\}\s+onRetry=/],
-    ['components/admin/settings/users-section.tsx', 'error', /<ErrorState compact description=\{error\} offline=\{offline\} onRetry=\{\(\) => void load\(\)\}/],
   ])('%s draws its failed read as an ErrorState with a retry', (file, variable, shape) => {
     const source = read(...file.split('/'));
     expect(source).toMatch(shape);

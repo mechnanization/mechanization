@@ -60,6 +60,7 @@ import { formatPhone } from '@/lib/phone';
 import { useTableLabels } from '@/lib/use-table-labels';
 import { buildCitizenWelcomeMessage, buildWhatsappHref } from '@/lib/whatsapp';
 import { getLabels } from '@mechanization/shared-schemas';
+import { navLabel } from '@/components/admin/nav';
 
 /** Roles allowed to write. Mirrors the server; the server is the enforcement. */
 const CAN_WRITE = ['SUPER_ADMIN', 'FIELD_INSPECTOR', 'ADMINISTRATIVE_OFFICER'];
@@ -715,7 +716,7 @@ export default function CitizensPage({
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <PageHeader
         icon={Users}
-        title={locale === 'en' ? 'Citizen register' : 'سجل المواطنين'}
+        title={navLabel('citizens', locale)}
 
         actions={
           canWrite ? (

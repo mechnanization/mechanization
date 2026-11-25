@@ -3,7 +3,10 @@ import { act, createElement, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextIntlClientProvider } from 'next-intl';
+import { STAFF_ROLE } from '@mechanization/shared-schemas';
 import { QualityTabs } from '@/components/admin/quality/quality-tabs';
+import { ToastProvider } from '@/components/ui/toast';
+import { WORKLIST_ROLES } from '@/lib/staff-roles';
 import FieldWorklistsPage from '../app/[tenant]/[locale]/[adminPath]/(protected)/buildings/worklists/page';
 import en from '../messages/en.json';
 
@@ -23,12 +26,22 @@ vi.mock('react', async (importOriginal) => ({
   use: (settled: { value: unknown }) => settled.value,
 }));
 
+const nav = vi.hoisted(() => {
+  const replace = vi.fn();
+  return {
+    replace,
+    router: { push: vi.fn(), replace, prefetch() {} },
+    session: { token: 'tok' as string | null, user: { id: 'u1', role: 'SUPER_ADMIN' } as { id: string; role: string } | null },
+  };
+});
+
 // The live address, as `useUrlState` writes it (`history.replaceState`).
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), prefetch() {} }),
+  useRouter: () => nav.router,
   usePathname: () => window.location.pathname,
   useSearchParams: () => new URLSearchParams(window.location.search),
 }));
+vi.mock('@/lib/use-staff-session', () => ({ useStaffSession: () => nav.session }));
 vi.mock('@/lib/use-staff-query', () => ({ useStaffQuery: () => ({ data: { officers: [] } }) }));
 
 // A panel stands in as a marker in the text; hoisted because the mock factories below run before this module's body.
@@ -56,7 +69,13 @@ let root: Root;
 
 async function mount(element: ReactElement): Promise<void> {
   await act(async () => {
-    root.render(createElement(NextIntlClientProvider, { locale: 'en', messages: en as never, children: element }));
+    root.render(
+      createElement(NextIntlClientProvider, {
+        locale: 'en',
+        messages: en as never,
+        children: createElement(ToastProvider, null, element),
+      }),
+    );
   });
 }
 
@@ -74,6 +93,8 @@ async function openTab(name: string): Promise<void> {
 }
 
 beforeEach(() => {
+  nav.replace.mockClear();
+  nav.session = { token: 'tok', user: { id: 'u1', role: 'SUPER_ADMIN' } };
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -154,6 +175,43 @@ describe('«قوائم العمل الميداني» (NAV-04)', () => {
     openAt('?tab=reinspections');
     await mount(page());
     expect(panels()).toEqual(['reinspections']);
+  });
+
+  it.each([...WORKLIST_ROLES])(
+    'opens for %s, a role the server serves both lists to',
+    async (role) => {
+      expect(WORKLIST_ROLES).toContain(role);
+      nav.session = { token: 'tok', user: { id: 'u1', role } };
+      openAt('');
+      await mount(page());
+      expect(panels()).toEqual(['unsurveyed']);
+      expect(nav.replace).not.toHaveBeenCalled();
+    },
+  );
+
+  /*
+    `canAccessPath` falls through to the `/buildings` row a role can see, so a role outside `WORKLIST_ROLES`
+    used to reach the page and read the server's refusal. It is sent to the building register, told why,
+    and neither tab is mounted for it.
+  */
+  it.each(STAFF_ROLE.filter((candidate) => !WORKLIST_ROLES.includes(candidate)))('turns %s away to the building register, saying why, and mounts neither tab', async (role) => {
+    expect(WORKLIST_ROLES).not.toContain(role);
+    nav.session = { token: 'tok', user: { id: 'u1', role } };
+    openAt('?tab=reinspections');
+    await mount(page());
+    expect(panels()).toEqual([]);
+    expect(document.querySelector('[role="tab"]')).toBeNull();
+    expect(nav.replace).toHaveBeenCalledTimes(1);
+    expect(nav.replace).toHaveBeenCalledWith('/t/en/a/buildings');
+    expect(document.body.textContent).toContain(en.access.fieldWorklists);
+  });
+
+  it('draws nothing and sends no one while the session is unread', async () => {
+    nav.session = { token: null, user: null };
+    openAt('');
+    await mount(page());
+    expect(panels()).toEqual([]);
+    expect(nav.replace).not.toHaveBeenCalled();
   });
 
   it('a change of tab names it and leaves each tab’s page and officer where they were', async () => {

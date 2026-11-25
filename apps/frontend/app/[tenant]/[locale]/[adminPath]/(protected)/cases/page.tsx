@@ -35,6 +35,7 @@ import { useCaseLinking } from '@/components/admin/cases/use-case-linking';
 import { CaseLinkDialog, CaseUnlinkDialog } from '@/components/admin/cases/case-link-dialogs';
 import { CaseQueueTabs } from '@/components/admin/cases/case-queue-tabs';
 import { CASE_WRITE_ROLES, hasRole } from '@/lib/staff-roles';
+import { navLabel } from '@/components/admin/nav';
 
 /**
  * حالات — field visits that could not become a citizen registration.
@@ -354,7 +355,7 @@ export default function CasesPage({
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <PageHeader
         icon={ClipboardList}
-        title={t('title')}
+        title={navLabel('cases', locale)}
         actions={
           canWrite ? (
             <Button onClick={() => router.push(`${base}/cases/new`)}>

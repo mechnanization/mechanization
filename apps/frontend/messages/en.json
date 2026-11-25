@@ -61,7 +61,6 @@
     "refreshFailed": "The page could not be refreshed — what is shown is the last read"
   },
   "quality": {
-    "title": "Quality",
     "tabsLabel": "Quality sections",
     "tabs": {
       "reviews": "Record approval",
@@ -71,7 +70,6 @@
     }
   },
   "fieldWorklists": {
-    "title": "Field worklists",
     "tabsLabel": "Worklists",
     "tabs": {
       "unsurveyed": "Unsurveyed units",
@@ -81,22 +79,52 @@
   "access": {
     "title": "This page is not for your role",
     "registerCitizen": "Your role reads the register but does not add to it. You can read it from this page.",
-    "feeCorrections": "Your role does not read the bills affected by corrections. Your work is on the fees page."
+    "feeCorrections": "Your role does not read the bills affected by corrections. Your work is on the fees page.",
+    "fieldWorklists": "Your role has no field worklists. The building register is open to you."
   },
   "nav": {
-    "registry": "Registry",
-    "land": "Land & Cadastre",
-    "system": "System",
-    "dashboard": "Dashboard",
-    "citizens": "Citizens",
-    "fees": "Fees & Payments",
-    "payments": "Transactions Log",
-    "map": "Map",
-    "zones": "Zones",
-    "appearance": "Appearance",
-    "audit": "Activity Log",
-    "settings": "Municipality Settings",
-    "staff": "Staff"
+    "items": {
+      "dashboard": "Dashboard",
+      "earnings": "Field survey earnings",
+      "myRound": "My round",
+      "citizens": "Citizen register",
+      "incompleteFiles": "Incomplete files",
+      "ownerLinks": "Owner links",
+      "requests": "Requests & certificates",
+      "buildings": "Building census",
+      "map": "Cadastral map",
+      "zones": "Zones",
+      "fieldWorklists": "Field worklists",
+      "cases": "Cases",
+      "fees": "Fees & billing",
+      "payments": "Payment operations",
+      "parcelDues": "Owed on a parcel",
+      "collectors": "Collectors & handover",
+      "treasury": "Balances",
+      "movements": "Income & expenses",
+      "transactions": "Transactions",
+      "transfers": "Transfers & exchange",
+      "dailyClose": "Daily count & close",
+      "quality": "Quality",
+      "audit": "Audit log",
+      "news": "News",
+      "settings": "Settings",
+      "staff": "Staff management",
+      "registerCitizen": "Register a citizen",
+      "feeCorrections": "Bills affected by corrections",
+      "newsCategories": "News categories",
+      "newsPublishers": "News publishers",
+      "account": "Account security"
+    },
+    "groups": {
+      "citizens": "Citizens",
+      "buildings": "Buildings & land",
+      "fieldWork": "Field work",
+      "fees": "Fees & collection",
+      "treasury": "Treasury",
+      "review": "Review & audit",
+      "system": "System"
+    }
   },
   "auth": {
     "staffLoginTitle": "Staff Sign-in",
@@ -4767,6 +4795,7 @@
       "title": "News categories",
       "intro": "The categories articles are filed under. They appear as filter chips in the Day3ati app and dashboard: what you add here shows up there, and the other way round.",
       "empty": "No categories yet. Add the first one.",
+      "back": "Back to News",
       "loadError": "Could not load the categories.",
       "add": "Add a category",
       "addTitle": "Add a category",
@@ -4814,6 +4843,7 @@
       "title": "News publishers",
       "intro": "Who an article is published as: the municipality, a department, a committee or an organization. Publishers are shared with the Day3ati app and dashboard.",
       "empty": "No publishers yet. Add the first one.",
+      "back": "Back to News",
       "loadError": "Could not load the publishers.",
       "add": "Add a publisher",
       "addTitle": "Add a publisher",
@@ -4852,6 +4882,8 @@
       "title": "News articles",
       "intro": "Write and publish the municipality news. Articles are kept on Day3ati: what you publish here appears in the residents app, and what is edited in the Day3ati dashboard appears here.",
       "empty": "No articles here yet.",
+      "categoriesLink": "News categories",
+      "publishersLink": "News publishers",
       "loadError": "Could not load the articles.",
       "loadMore": "Load more",
       "loadingMore": "Loading…",
