@@ -159,6 +159,40 @@ export interface NavGroup {
  * `defaultPathFor` reads this order, so the landing group stays first and
  * unchanged — `/dashboard` ahead of `/inspector/profile` ahead of `/my-round`
  * — and every role lands where it landed before.
+ *
+ * ## The approved map (NAV-01, decided 2026-11-25; docs/open-decisions.md §25)
+ *
+ * The rows below are still today's 35; the moves are Abed's tasks, each
+ * landing with its own `lib/nav.test.ts` change. When they are all in:
+ *
+ *  - (landing): لوحة التحكم · أرباح المسح الميداني · جولتي — unchanged.
+ *  - «المواطنون»: سجل المواطنين · ملفات ناقصة · روابط المالكين · طلبات المعاملات.
+ *    «تسجيل مواطن جديد» leaves (NAV-02: the citizens page's header, the
+ *    unsurveyed worklist and the palette open it; `/citizens/new` first turns
+ *    away roles outside `CITIZEN_RECORD_EDIT_ROLES` itself). «يتطلب مراجعة» is
+ *    renamed «ملفات ناقصة» / "Incomplete files" (NAV-11).
+ *  - «المباني والأرض»: سجل المباني · الخريطة · القطاعات — unchanged.
+ *  - «العمل الميداني»: قوائم العمل الميداني (tabs: غير ممسوحة / بانتظار إعادة
+ *    الكشف, NAV-04) · الحالات. The merged row keeps both old paths in `also`.
+ *  - «الرسوم والجباية»: الرسوم والمدفوعات · سجل العمليات · المستحق على عقار ·
+ *    الجباة والتحصيل. «فواتير تأثّرت بتصحيحات» leaves (NAV-07: the fees page's
+ *    header opens it; the page first gates its own reading to
+ *    `PAYMENT_REVIEW_READ_ROLES`). «المستحق على عقار» keeps its row (NAV-08).
+ *    «سجل العمليات» stays its own row (PAGE-05, decided 2026-11-24).
+ *  - «الخزينة»: unchanged (5).
+ *  - «المراجعة والتدقيق»: الجودة (tabs: اعتماد السجلات / الملاحظات / التحقق
+ *    الميداني / حسب الموظف, NAV-03; `also` holds the four old paths) · سجل
+ *    النشاطات. «السجلات» becomes the tab «اعتماد السجلات» / "Record approval" (NAV-11).
+ *  - «الأخبار»: one row, «الأخبار», shown under its own name with no group
+ *    heading above it (the owner's words: "in the side bar as its name");
+ *    categories and publishers open from the articles page's header (NAV-05).
+ *    `NavGroup.label` is documented for the landing group only, and
+ *    `lib/nav.test.ts` pins that group unlabelled and first: NAV-05 widens both.
+ *  - «النظام»: إعدادات البلدية · الموظفون. «أمان الحساب» is in the user menu
+ *    only (NAV-06); settings loses its «المستخدمون» tab, which repeats `/staff` (PAGE-01).
+ *
+ * 26 rows. Every removal keeps its page reachable: a path with no row opens to
+ * every role (`canAccessPath`), so a page that must not, gates itself first.
  */
 export const NAV_GROUPS: NavGroup[] = [
   /*
@@ -467,6 +501,9 @@ export const NAV_GROUPS: NavGroup[] = [
         still owed on a parcel, whoever's file it is on. Read-only, so every
         role that reads the ledger may ask it. `LandPlot`, not `Landmark`:
         that one is the treasury's «الأرصدة», and no two rows share an icon.
+        Keeps a row of its own (NAV-08, decided 2026-11-25): a clerk asks it
+        whenever a citizen asks for a براءة ذمّة. The page has no role check of
+        its own, so this row is what gates it; `lib/nav.test.ts` pins both.
       */
       {
         path: '/fees/parcel',

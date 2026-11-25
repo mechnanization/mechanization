@@ -1,5 +1,5 @@
 import type { AuditEntry } from '../api-client';
-import type { ParcelDues } from '@mechanization/shared-schemas';
+import { FEE_NOTICES_PAGE_MAX, type ParcelDues } from '@mechanization/shared-schemas';
 import { type CitizenSettingsField, type BackupSchedule, type CancelBill, type CurrencyCode, type DeclarePayment, type FeeAssessment, type FeeAssessmentLine, type FeeBasis, type FeeBearer, type FeeFrequency, type FeeMatrixBracket, type FeeNoticePeriodSummary, type FeeNoticePreviewInput, type FeeNoticePreviewResult, type FeeUnassessable, type SharedUnitBillView, type CancelNotice, type NumberingSequence, type PaymentMethod, type PaymentStatus, type ReverseTransaction, type SequenceKey, type SettlePayment, type BulkSettlePayments, type SettlementReceipt, type BillArrearsView, type BillWriteOffView, type WriteOffBillInput } from '@mechanization/shared-schemas';
 import { cachedRequest, invalidateRequests } from '../request-cache';
 import { apiFetch, type Session } from './core';
@@ -231,8 +231,16 @@ export interface FeeNoticeSummary {
   createdAt: string;
 }
 
+/**
+ * «إشعارات الرسوم», newest first. Paged on the server since PAG-04; until the
+ * page pages (PAG-05) it asks for the most one request may
+ * (`FEE_NOTICES_PAGE_MAX`), and `total` says when that was not all of them.
+ */
 export function getFeeNotices(tenant: string, token: string, signal?: AbortSignal) {
-  return apiFetch<{ items: FeeNoticeSummary[] }>(tenant, '/fees/notices', { token, signal });
+  return apiFetch<{ items: FeeNoticeSummary[]; total: number }>(tenant, `/fees/notices?limit=${FEE_NOTICES_PAGE_MAX}`, {
+    token,
+    signal,
+  });
 }
 
 /**

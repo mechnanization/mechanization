@@ -14,7 +14,7 @@ import { join } from 'node:path';
  *
  * A throw counts as prose when its first argument is not an object literal.
  */
-const LEGACY_PROSE_THROWS = 199;
+const LEGACY_PROSE_THROWS = 184; // 199 → 184 with ERR-04 (the landlord-link, merge, unmerge and «حذف تصحيحي» blocks) and the eight in cases.service.ts (2026-11-25)
 
 const BACKEND_ROOT = join(__dirname, '..', '..', '..');
 

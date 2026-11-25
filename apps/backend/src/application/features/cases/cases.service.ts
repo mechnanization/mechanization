@@ -57,13 +57,19 @@ export class CasesService {
     });
   }
 
-  async list(filter?: CaseListFilter): Promise<Case[]> {
-    return this.cases.findAll(filter);
+  /**
+   * One page of «الحالات», newest first (PAG-02). The controller clamps the
+   * page; the service's own reads of one flat's cases (`standingCase`, the
+   * settle hooks) stay on `findAll`, unpaged, because a page there would miss
+   * an open case.
+   */
+  async list(filter: CaseListFilter, page: { limit: number; offset: number }): Promise<{ items: Case[]; total: number }> {
+    return this.cases.findPage(filter, page);
   }
 
   async get(id: string): Promise<Case> {
     const found = await this.cases.findById(id);
-    if (!found) throw new NotFoundError('الحالة غير موجودة');
+    if (!found) throw new NotFoundError({ code: 'CASE_NOT_FOUND', message: `Case ${id} was not found` });
     return found;
   }
 
@@ -82,14 +88,18 @@ export class CasesService {
       hand, it would be closed by the next save of the flat whatever it said.
     */
     if (input.caseType === 'STATUS_CONFLICT') {
-      throw new ValidationError('«تعارض في حالة الوحدة» يُفتح تلقائياً عند تعارض سجلات الوحدة — اختر نوعاً آخر', {
-        caseType: input.caseType,
+      throw new ValidationError({
+        code: 'CASE_TYPE_SET_BY_RULE',
+        message: 'STATUS_CONFLICT cases are opened by the unit status rule, never by hand',
+        details: { caseType: input.caseType },
       });
     }
     const standing = await this.standingCase(input);
     if (standing) {
-      throw new ConflictError('توجد حالة متابعة مفتوحة من النوع نفسه على هذه الوحدة — لم تُفتح حالة ثانية', {
-        existingCaseId: standing.id,
+      throw new ConflictError({
+        code: 'CASE_ALREADY_OPEN_ON_UNIT',
+        message: `An open case of type ${input.caseType} already stands on unit ${input.unitId}`,
+        details: { existingCaseId: standing.id },
       });
     }
     return this.insert(input, actor);
@@ -140,7 +150,7 @@ export class CasesService {
     actor: { id: string; role: string },
   ): Promise<Case> {
     const existing = await this.cases.findById(id);
-    if (!existing) throw new NotFoundError('الحالة غير موجودة');
+    if (!existing) throw new NotFoundError({ code: 'CASE_NOT_FOUND', message: `Case ${id} was not found` });
 
     // Neither into the rule's review type nor out of it — see `create`.
     const retyped = (input as { caseType?: string }).caseType;
@@ -149,7 +159,11 @@ export class CasesService {
       retyped !== existing.caseType &&
       (retyped === 'STATUS_CONFLICT' || existing.caseType === 'STATUS_CONFLICT')
     ) {
-      throw new ValidationError('لا يمكن تغيير نوع «تعارض في حالة الوحدة» أو التحويل إليه', { caseType: retyped });
+      throw new ValidationError({
+        code: 'CASE_TYPE_RULE_LOCKED',
+        message: 'A case cannot be retyped into or out of STATUS_CONFLICT',
+        details: { caseType: retyped },
+      });
     }
 
     let patch: UpdateCaseInput = input;
@@ -158,8 +172,10 @@ export class CasesService {
       if (input.resolvedCitizenId) {
         const citizen = await this.users.findById(input.resolvedCitizenId);
         if (!citizen || citizen.kind !== 'CITIZEN') {
-          throw new ValidationError('المواطن غير موجود', {
-            resolvedCitizenId: input.resolvedCitizenId,
+          throw new ValidationError({
+            code: 'CITIZEN_NOT_FOUND',
+            message: `Citizen ${input.resolvedCitizenId} was not found`,
+            details: { resolvedCitizenId: input.resolvedCitizenId },
           });
         }
         /*
@@ -167,8 +183,10 @@ export class CasesService {
           into another — is not who a door visited today resolves to.
         */
         if (citizen.isActive === false) {
-          throw new ValidationError('هذا الملف معطّل أو مدموج في ملف آخر — اختر الملف النشط للشخص.', {
-            resolvedCitizenId: input.resolvedCitizenId,
+          throw new ValidationError({
+            code: 'CASE_CITIZEN_INACTIVE',
+            message: `Citizen ${input.resolvedCitizenId} is inactive or merged away`,
+            details: { resolvedCitizenId: input.resolvedCitizenId },
           });
         }
         patch = { ...input, status: 'RESOLVED' };
@@ -281,7 +299,7 @@ export class CasesService {
 
   async remove(id: string, actor: { id: string; role: string }): Promise<void> {
     const existing = await this.cases.findById(id);
-    if (!existing) throw new NotFoundError('الحالة غير موجودة');
+    if (!existing) throw new NotFoundError({ code: 'CASE_NOT_FOUND', message: `Case ${id} was not found` });
 
     await this.cases.delete(id);
 

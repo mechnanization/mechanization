@@ -12,6 +12,7 @@ export {
   DomainError,
   ForbiddenError,
   NotFoundError,
+  refusedBy,
   TenantMismatchError,
   TenantNotProvisionedError,
   UnauthorizedError,

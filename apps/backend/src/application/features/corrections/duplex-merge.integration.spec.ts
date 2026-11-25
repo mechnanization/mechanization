@@ -177,7 +177,9 @@ describeIfDb('«دمج كدوبلكس»', () => {
     const caught = await refusal(
       within(() => service.applyMerge(lower.id, { fingerprint: preview.fingerprint, reason: 'محاولة دمج خاطئة', confirmCode: '0101' }, admin)),
     );
-    expect(caught).toMatchObject({ code: 'DUPLEX_MERGE_BLOCKED' });
+    // ERR-04: the blocker's own code and params, the words from the message files (no Arabic sentence in `params`).
+    expect(preview.blockers[0]!.refusal).toEqual({ code: 'DUPLEX_MERGE_OTHER_HOUSEHOLD', params: { name: expect.any(String) } });
+    expect(caught).toMatchObject({ code: 'DUPLEX_MERGE_OTHER_HOUSEHOLD', params: preview.blockers[0]!.refusal.params });
     expect(await db.unit.count({ where: { id: upper.id } })).toBe(1);
   });
 

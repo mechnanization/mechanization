@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { uuid } from './primitives';
+import type { BlockRefusal } from './error-codes';
 
 /**
  * «دمج ملفين» — one person filed twice, folded into one file.
@@ -181,6 +182,17 @@ export interface CitizenMergeSide {
 
 export interface CitizenMergeBlock {
   code: CitizenMergeBlockCode;
+  /** The words, from the message files (ERR-04): one code per variant of `code`. */
+  refusal: BlockRefusal;
+  /** The server's Arabic sentence. Kept until ERR-05 renders `refusal`; never shown on /en/ after it. */
+  message: string;
+}
+
+/** Why an undo cannot go ahead, with its refusal to word it by (ERR-04). */
+export interface CitizenUnmergeBlock {
+  code: CitizenUnmergeBlockCode;
+  refusal: BlockRefusal;
+  /** The server's Arabic sentence, kept until ERR-05 renders `refusal`. */
   message: string;
 }
 
@@ -288,5 +300,5 @@ export interface CitizenMergeRecord {
 
 export interface CitizenUnmergePreview {
   merge: CitizenMergeRecord;
-  blocks: Array<{ code: CitizenUnmergeBlockCode; message: string }>;
+  blocks: CitizenUnmergeBlock[];
 }

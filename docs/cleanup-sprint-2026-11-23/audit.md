@@ -403,6 +403,11 @@ income, transfers, treasury movements and `ExpensesService`. Arrears controller:
 - **Acceptance criteria:** 1. `limit`/`offset` via the helpers, a max, `{ items, total }`. 2. `standingCase` keeps its unpaged internal read.
 - **Depends on:** none (ship with PAG-03 — the contract changes)
 - **Verification:** cases specs; a spec for the cap.
+- **Done 2026-11-25:** `limit` (`CASES_PAGE_DEFAULT` 50, `CASES_PAGE_MAX` 500, both in shared `case.schema.ts`) and
+  `offset`, answered `{ items, total }` (was `{ cases }`); `CaseRepository.findPage` (`id` breaks a `createdAt` tie),
+  `findAll` kept unpaged for the service's own reads. Until PAG-03, `getCases` asks for `CASES_PAGE_MAX` and the page
+  says «تُعرض أحدث N حالة من أصل M» when that was not all. The eight prose throws of `cases.service.ts` were converted
+  on the way (`CASE_*` codes).
 
 ## [PAG-03] Use server paging on the cases page
 - **Priority:** P2 · **Assignee:** Abed · **Estimate:** S · **Category:** Pagination
@@ -410,6 +415,9 @@ income, transfers, treasury movements and `ExpensesService`. Arrears controller:
 - **Acceptance criteria:** `DataTable` with `manualPagination`, `useUrlPagination`; PRIM-3.
 - **Depends on:** PAG-02
 - **Verification:** frontend tests; harness.
+- **Found during PAG-02:** the queue tabs and the zone filter work on the loaded rows, so past `CASES_PAGE_MAX` cases
+  their counts are of the newest 500. Server paging needs the tab (`caseType`) and status as query filters, which the
+  route already takes; the zone filter (parcel → sector, client-side today) has no server filter.
 
 ## [PAG-04] Page GET fees/notices on the server
 - **Priority:** P3 · **Assignee:** Hashem · **Estimate:** S · **Category:** Pagination
@@ -418,12 +426,18 @@ income, transfers, treasury movements and `ExpensesService`. Arrears controller:
 - **Acceptance criteria:** helpers, a max, `{ items, total }`.
 - **Depends on:** none (ship with PAG-05)
 - **Verification:** fees specs.
+- **Done 2026-11-25:** `limit` (`FEE_NOTICES_PAGE_DEFAULT` 50, `FEE_NOTICES_PAGE_MAX` 200, in shared `fee.schema.ts`) and
+  `offset`, answered `{ items, total }`; `id` breaks a `createdAt` tie. Until PAG-05, `getFeeNotices` asks for
+  `FEE_NOTICES_PAGE_MAX` and the page says when that was not all.
 
 ## [PAG-05] Use server paging on «إشعارات الرسوم»
 - **Priority:** P3 · **Assignee:** Abed · **Estimate:** S · **Category:** Pagination
 - **Files:** `app/…/(protected)/fees/notices/page.tsx`, `lib/api-client.ts` `getFeeNotices`.
 - **Depends on:** PAG-04
 - **Acceptance criteria / Verification:** as PAG-03.
+- **Found during PAG-04:** `components/admin/settings/backup-section.tsx` also reads `getFeeNotices` for its export, and
+  since PAG-04 gets `FEE_NOTICES_PAGE_MAX` (200) notices at most where its other tables ask for `EXPORT_LIMIT` (1,000):
+  page through, or keep it with the backup decision (U-11, DEAD-10).
 
 ## [PAG-06] Say when an old-debts list was cut, instead of truncating silently
 - **Priority:** P2 · **Assignee:** Hashem · **Estimate:** S · **Category:** Pagination
@@ -1037,12 +1051,23 @@ No cross-tenant path found. Every task here touches citizen data or credentials 
 - **Acceptance criteria:** each block carries `{ code, params }`; the preview returns codes; message files hold the words.
 - **Depends on:** none
 - **Verification:** specs for each block; frontend in ERR-05.
+- **Done 2026-11-25:** every block carries `refusal: { code, params }` (`BlockRefusal`, shared `error-codes.ts`): a
+  `LinkBlock` (`LANDLORD_LINK_*`), a `CitizenMergeBlock` (`MERGE_*`, one code per variant of a block code) and an undo's
+  `CitizenUnmergeBlock` (`UNMERGE_*`); «حذف تصحيحي» and «دمج كدوبلكس» blockers through the shared
+  `unitCorrectionBlockerRefusal` / `duplexMergeBlockerRefusal`, sent as each preview blocker's `refusal`. The act pressed anyway throws
+  the same code (`refusedBy`, `domain-error.ts`); 37 codes in both message files (`lib/block-refusals.test.ts`).
+  `DUPLEX_MERGE_BLOCKED` is retired (its `reason` param was an Arabic sentence). `message` is still sent beside
+  `refusal` for the frontend that reads it today.
 
 ## [ERR-05] Render the preview blocks from their codes
 - **Priority:** P2 · **Assignee:** Abed · **Estimate:** M · **Category:** Error-handling
 - **Files:** `landlord-proposal-card.tsx`, `unit-correction-delete-dialog.tsx`, `merge-citizens-dialog.tsx`, `landlord-unlink-dialog.tsx`.
 - **Depends on:** ERR-04
 - **Acceptance criteria / Verification:** no server text rendered; harness in `/en/`.
+- **Found during ERR-04:** render `localizeApiError(block.refusal)` (it takes `{ code, params }`); then remove `message`
+  from `LinkBlock`, `CitizenMergeBlock`, `CitizenUnmergeBlock` and the API's builders in the same release, a backend
+  change. Also `citizen-editor.tsx` (`changes.reconciled.blocked[].block.message`, a save's toast) and
+  `citizen-merges.tsx` (the undo's blocks), neither in the file list above.
 
 ## [ERR-06] Detect offline by status in ErrorState and give it a bilingual title
 - **Priority:** P2 · **Assignee:** Abed · **Estimate:** S · **Category:** Error-handling
@@ -1314,6 +1339,8 @@ a row to that row's roles (longest match, CODE-4). So:
   2. The approved map is written into the `NAV_GROUPS` comment.
 - **Depends on:** none
 - **Verification:** this file updated; the decision recorded in docs/open-decisions.md.
+- **Done 2026-11-25** (Hashem's interactive answers): every task below carries its decision; the approved map is in the
+  `NAV_GROUPS` comment ("The approved map"); PAGE-03, PAGE-05 and PAGE-06 were decided the day before (#231, §24).
 
 ## [NAV-02] Move «تسجيل مواطن جديد» out of the sidebar, with the page turning away roles that cannot write
 - **Priority:** P2 · **Assignee:** Abed · **Estimate:** XS · **Category:** UI/UX
@@ -1322,6 +1349,7 @@ a row to that row's roles (longest match, CODE-4). So:
 - **Acceptance criteria:** 1. The page sends a role outside `CITIZEN_RECORD_EDIT_ROLES` back to `/citizens`, saying why. 2. The row is gone; the command palette still offers the action. 3. `lib/nav.test.ts` updated.
 - **Depends on:** NAV-01
 - **Verification:** `lib/nav.test.ts`; harness as «مشاهد فقط» on `/citizens/new`.
+- **Decision (NAV-01, 2026-11-25, [open-decisions §25](../open-decisions.md#25-the-staff-sidebar-and-the-page-moves-decided-2026-11-25)):** **approved** as written.
 
 ## [NAV-03] Merge the four quality rows into one «الجودة» page with tabs
 - **Priority:** P2 · **Assignee:** Abed · **Estimate:** M · **Category:** UI/UX
@@ -1330,6 +1358,7 @@ a row to that row's roles (longest match, CODE-4). So:
 - **Acceptance criteria:** 1. One row, `path: '/quality'`, `also` holding the four old paths so links and gating still work. 2. `?tab=reviews|findings|checks|officers`, `useUrlState`. 3. A `SegmentedControl` driving the panels, or `Tabs` once UX-08 lands (CTL-9).
 - **Depends on:** NAV-01; UX-08 optional
 - **Verification:** `lib/nav.test.ts`; old URLs open the right tab.
+- **Decision (NAV-01, 2026-11-25, [open-decisions §25](../open-decisions.md#25-the-staff-sidebar-and-the-page-moves-decided-2026-11-25)):** **approved**; the first tab is «اعتماد السجلات» (NAV-11). NAV-12 is superseded.
 
 ## [NAV-04] Merge the two census worklists into «قوائم العمل الميداني»
 - **Priority:** P2 · **Assignee:** Abed · **Estimate:** S · **Category:** UI/UX
@@ -1337,6 +1366,7 @@ a row to that row's roles (longest match, CODE-4). So:
 - **Acceptance criteria:** one row with `also` for both paths; `?tab=`; each tab keeps its own paging and filters in the URL.
 - **Depends on:** NAV-01
 - **Verification:** `lib/nav.test.ts`; harness.
+- **Decision (NAV-01, 2026-11-25, [open-decisions §25](../open-decisions.md#25-the-staff-sidebar-and-the-page-moves-decided-2026-11-25)):** **approved** as written.
 
 ## [NAV-05] Reach the news categories and publishers from the articles page
 - **Priority:** P2 · **Assignee:** Abed · **Estimate:** S · **Category:** UI/UX
@@ -1345,6 +1375,9 @@ a row to that row's roles (longest match, CODE-4). So:
 - **Acceptance criteria:** one row with `also: ['/news/categories', '/news/publishers']`; two header links on the articles page; each page keeps `HeaderBackLink` to articles.
 - **Depends on:** NAV-01
 - **Verification:** `lib/nav.test.ts`.
+- **Decision (NAV-01, 2026-11-25, [open-decisions §25](../open-decisions.md#25-the-staff-sidebar-and-the-page-moves-decided-2026-11-25)):** **changed**: the header links as written, but «الأخبار» is **not** folded into another group. It stays in the
+  sidebar as one row under its own name, with no group heading above it. `NavGroup.label` is documented for the landing
+  group only and `lib/nav.test.ts` pins that group unlabelled and first: widen both.
 
 ## [NAV-06] Keep «أمان الحساب» in the user menu only
 - **Priority:** P3 · **Assignee:** Abed · **Estimate:** XS · **Category:** UI/UX
@@ -1352,6 +1385,7 @@ a row to that row's roles (longest match, CODE-4). So:
 - **Acceptance criteria:** the row is removed; `/account` still opens for every staff role (it has no row, so `canAccessPath` admits it); the header breadcrumb still names the page.
 - **Depends on:** NAV-01
 - **Verification:** `lib/nav.test.ts` (`activeNavItem` for `/account`).
+- **Decision (NAV-01, 2026-11-25, [open-decisions §25](../open-decisions.md#25-the-staff-sidebar-and-the-page-moves-decided-2026-11-25)):** **approved** as written.
 
 ## [NAV-07] Reach «فواتير تأثّرت بتصحيحات» from the fees page only
 - **Priority:** P3 · **Assignee:** Abed · **Estimate:** XS · **Category:** UI/UX
@@ -1360,6 +1394,7 @@ a row to that row's roles (longest match, CODE-4). So:
 - **Acceptance criteria:** the page turns away roles outside `PAYMENT_REVIEW_READ_ROLES` itself (it has `canReview` today; check that it also covers *reading*), then the row goes.
 - **Depends on:** NAV-01
 - **Verification:** harness as a role in `FEE_READ_ROLES` but not in the review set.
+- **Decision (NAV-01, 2026-11-25, [open-decisions §25](../open-decisions.md#25-the-staff-sidebar-and-the-page-moves-decided-2026-11-25)):** **approved** as written.
 
 ## [NAV-08] Decide where «المستحق على عقار» lives
 - **Priority:** P3 · **Assignee:** Abed · **Estimate:** S · **Category:** UI/UX
@@ -1367,6 +1402,8 @@ a row to that row's roles (longest match, CODE-4). So:
 - **Problem:** A one-question lookup (what is owed on a رقم عقار) with a row of its own. Options: keep the row; a header action or search mode on `/fees`; or a panel on the building's matrix. Product choice.
 - **Depends on:** NAV-01
 - **Acceptance criteria / Verification:** per the decision; gating kept (`FEE_READ_ROLES`).
+- **Decision (NAV-01, 2026-11-25, [open-decisions §25](../open-decisions.md#25-the-staff-sidebar-and-the-page-moves-decided-2026-11-25)):** **keep the row.** Done 2026-11-25 with NAV-01: the row's comment records it and
+  `lib/nav.test.ts` pins the row and its gate (every role in `FEE_READ_ROLES`, and no other, opens `/fees/parcel`).
 
 ## [NAV-09] Show «أرباح المسح الميداني» in the user menu only to the roles its row admits
 - **Priority:** P2 · **Assignee:** Abed · **Estimate:** XS · **Category:** UI/UX
@@ -1391,6 +1428,8 @@ a row to that row's roles (longest match, CODE-4). So:
 - **Acceptance criteria:** names chosen by the product owner that say the job (for example «ملفات ناقصة» / «اعتماد السجلات» — proposals only).
 - **Depends on:** NAV-01
 - **Verification:** both locales updated.
+- **Decision (NAV-01, 2026-11-25, [open-decisions §25](../open-decisions.md#25-the-staff-sidebar-and-the-page-moves-decided-2026-11-25)):** «ملفات ناقصة» / "Incomplete files" for `/citizens/review`, «اعتماد السجلات» / "Record approval" for
+  `/quality/reviews`.
 
 ## [NAV-12] Redirect /quality on the server
 - **Priority:** P3 · **Assignee:** Abed · **Estimate:** XS · **Category:** UI/UX
@@ -1407,6 +1446,7 @@ a row to that row's roles (longest match, CODE-4). So:
 - **Acceptance criteria:** the tab is gone or replaced by a link to `/staff`; no import of `users-section.tsx` remains; the file is deleted.
 - **Depends on:** NAV-01 (confirm nobody relies on it)
 - **Verification:** `grep -rn "UsersSection" apps/frontend` → 0.
+- **Decision (NAV-01, 2026-11-25, [open-decisions §25](../open-decisions.md#25-the-staff-sidebar-and-the-page-moves-decided-2026-11-25)):** **approved** as written.
 
 ## [PAGE-02] Send a signed-out citizen on «حسابي» to the front door, not the phone-code page
 - **Priority:** P1 · **Assignee:** Abed · **Estimate:** XS · **Category:** UI/UX
@@ -1540,7 +1580,9 @@ Filled in by whoever executes a task (section 0, step 4). One row per finding; t
 
 | ID | Found during | File and symbol | Problem | Fixed in that PR? | Debt doc row added |
 |---|---|---|---|---|---|
-| | | | | | |
+| ERR-08 | ERR-04 | `apps/backend/src/application/features/citizens/landlord-link.service.ts` `reconcile` (a failed reconcile's block) | A coded `ConflictError`'s `message` is English for the log, and was put in the block's `message`, which the tenant's save shows as a toast | Yes: `reconcileFailedBlock` gives the error's own code as the refusal and the Arabic fallback as `message` | — (fixed) |
+| ERR-09 | ERR-04 | `apps/backend/src/application/features/citizens/citizen-merge.plan.ts` `labelOf` | A duplicate flat's `label` in the merge preview falls back to the Arabic words «وحدة» / «منزل» when no code or رقم العقار is known, shown as is on /en/ (the blocks now carry `hasLabel` instead) | No: a preview field, not a refusal; ERR-05's dialog | [code-quality.md](../code-quality.md) Backend |
+| ARCH-26 | PAG-02 | `apps/backend/src/infrastructure/repositories/case.repository.ts` `caseWhere` | `status` and `caseType` reach Prisma `as never`: `CaseListFilter` types them as `string`, though the controller narrows both with `optionalOneOf` | No: the repository's create and update cast the same way; one change for the file | [code-quality.md](../code-quality.md) Backend |
 
 ---
 
@@ -1646,7 +1688,7 @@ an open treasury or fees PR touches it — check `gh pr list` first; GOD splits 
 | U-21 | Retire the portal's phone-code sign-in and «حسابي», now that «ملفّي» and the reference sign-in cover them | PAGE-03 | open-decisions §2 (OTP not used), §21 |
 | U-22 | Is «سجل العمليات» a view of «الرسوم والمدفوعات» or its own row (its roles are wider) | PAGE-05 | **NEW question** |
 | U-23 | Keep «مدفوعاتي» and its own sign-in beside «ملفّي» and the front door | PAGE-06 | open-decisions §21 |
-| U-24 | The target sidebar: 35 → 26 rows (section 12), the two review-queue names, where «المستحق على عقار» lives | NAV-01…08, NAV-11, PAGE-01 | **NEW question**; PRODUCT.md after |
+| U-24 | The target sidebar: 35 → 26 rows (section 12), the two review-queue names, where «المستحق على عقار» lives | NAV-01…08, NAV-11, PAGE-01 | **Decided 2026-11-25**: [open-decisions §25](../open-decisions.md#25-the-staff-sidebar-and-the-page-moves-decided-2026-11-25); PRODUCT.md as each move lands |
 | U-25 | The dashboard redesign `KpiCard` waits on | PAGE-07 (part) | ui-ux §17.1 |
 | U-26 | Delete the four routes no screen calls, or build the screens (an expense category cannot be edited anywhere today) | DEAD-17 | **NEW question** |
 
