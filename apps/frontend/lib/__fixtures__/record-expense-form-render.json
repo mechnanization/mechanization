@@ -1,0 +1,54 @@
+{
+  "accountant-back-to-request": {
+    "length": 12848,
+    "sha256": "28d2105d4981b2269599ee0ff183684af05ce17d8596dc2e38c56ec86acb0bfa"
+  },
+  "accountant-request-ar": {
+    "length": 12668,
+    "sha256": "7c3c9af5345928047d77be07974d7c29b878b25444b5e077fa8423411b90ac8d"
+  },
+  "accountant-request-en": {
+    "length": 12848,
+    "sha256": "28d2105d4981b2269599ee0ff183684af05ce17d8596dc2e38c56ec86acb0bfa"
+  },
+  "accountant-urgent": {
+    "length": 15041,
+    "sha256": "34161143a7d50ae766be731f03abfc78ce9183fa2f6beae16972fc314bb366e7"
+  },
+  "accountant-urgent-ceiling-note": {
+    "length": 15517,
+    "sha256": "661b6f6a8bba351f6a41d8da08446ed4bc0111ead94781ca568d6f24a366ddc0"
+  },
+  "accountant-urgent-over-ceiling": {
+    "length": 17393,
+    "sha256": "79e5a6af8b13ddd52bd661ea77ed5746dc658ea3ed9a954d07b780d3d8b217d2"
+  },
+  "accountant-urgent-over-ceiling-ar": {
+    "length": 17129,
+    "sha256": "3c9e061d8f6954ef8e5ee0e7abac5156233b1f49d9d22254ebe29ce872c3f8ff"
+  },
+  "manager-adding-category": {
+    "length": 15908,
+    "sha256": "427ff950ecd573d905938edc29a096073b343a47f39d2a54636f44f7ff91c2c2"
+  },
+  "manager-ar": {
+    "length": 12262,
+    "sha256": "96f43efcccfa632ee547aff414167b0bab3633c1a38fa92ecb736c7f0852200b"
+  },
+  "manager-carried-draft": {
+    "length": 12682,
+    "sha256": "94a2d8bfe22b4b24babc52fd4597033228ba9698f024bc323437e1dc41c727ca"
+  },
+  "manager-empty-submit": {
+    "length": 13020,
+    "sha256": "716027d5ef4db0380d0b8d90540680b33779335150ee78d47a8182e3c3a69a9e"
+  },
+  "manager-en": {
+    "length": 12359,
+    "sha256": "77113515f336dc9aea7013718cfc64a830b23b2c4ced36b5f1f4ee69be683373"
+  },
+  "manager-short-of-balance": {
+    "length": 13550,
+    "sha256": "ae6a7091fddf863e63cec6284eb7da145fecf680235d8d3bc8daea8a222f276f"
+  }
+}
