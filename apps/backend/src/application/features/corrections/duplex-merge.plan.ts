@@ -140,29 +140,3 @@ export function fingerprintOf(state: DuplexMergeState): string {
   };
   return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
 }
-
-/** Why the merge cannot go ahead, in a sentence the dialog and the refusal both show. */
-export function mergeBlockerReason(blocker: DuplexMergeBlocker): string {
-  switch (blocker.kind) {
-    case 'NOT_FLATS':
-      return 'الدمج كدوبلكس للشقق فقط؛ طوابق المنزل تُسجَّل في «عدد طوابق المسكن»';
-    case 'TOO_MANY_LEVELS':
-      return `المسكن لا يتجاوز ${blocker.max} طوابق`;
-    case 'OTHER_HOUSEHOLD':
-      return `${blocker.citizenName} مسجَّل في الوحدة العلوية وليس في السفلية بالصفة نفسها — قد تكون أسرة أخرى`;
-    case 'CARD_WITHOUT_LOWER':
-      return `ملف ${blocker.citizenName} يسمّي الوحدة العلوية دون السفلية`;
-    case 'STANDING_VACANCY':
-      return 'على الوحدة العلوية تأكيد شغور قائم';
-    case 'BILLING_DIFFERS':
-      return 'الوحدتان تُفوتران بطريقتين مختلفتين (إعفاء أو توزيع بين المالكين)';
-    case 'AREA_UNKNOWN':
-      return 'مساحة إحدى الوحدتين غير مسجَّلة: اكتب مساحة المسكن كاملاً';
-    case 'DAMAGE_ASSESSMENT':
-      return `على الوحدة العلوية ${blocker.count} كشف ضرر`;
-    case 'LINK_NAMES_OTHER_UNITS':
-      return `ربط ملف ${blocker.citizenName} بالمالك يشمل وحدات أخرى`;
-    case 'UNREADABLE_LANDLORD_LINK':
-      return `تعذّرت قراءة ربط ملف ${blocker.citizenName} بالمالك`;
-  }
-}

@@ -4,6 +4,7 @@ import {
   isStructuralUnitType,
   isSurveyed,
   statusForFlags,
+  unitCorrectionBlockerRefusal,
   type FieldFlag,
   type UnitCorrectionBlocker,
   type UnitCorrectionPreview,
@@ -528,7 +529,7 @@ export function previewOf(state: UnitCorrectionState, plan: UnitCorrectionPlan):
     },
     building: { id: state.building.id, code: state.building.code },
     fingerprint: plan.fingerprint,
-    blockers: plan.blockers,
+    blockers: plan.blockers.map((blocker) => ({ ...blocker, refusal: unitCorrectionBlockerRefusal(blocker) })),
     nothingRecorded,
     removed: {
       occupancies: [...state.occupancies]

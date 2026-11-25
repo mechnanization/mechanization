@@ -753,6 +753,11 @@ describeIfDb('LandlordLinkService', () => {
 
     const [proposal] = await within(() => links.claimsNaming(owner.id));
     expect(proposal!.blocked?.code).toBe('NOT_ON_SURVEY');
+    // ERR-04: the block's words are a code the message files hold, and the refusal the press gets is the same.
+    expect(proposal!.blocked?.refusal).toEqual({
+      code: 'LANDLORD_LINK_NOT_ON_SURVEY',
+      params: { hasUnit: 'no', unitCode: '', hasOwners: 'no', owners: '' },
+    });
 
     await expect(
       within(() => links.confirm({ propertyEntryId: entryId, citizenId: owner.id, actor: actor() })),
@@ -786,7 +791,7 @@ describeIfDb('LandlordLinkService', () => {
 
     await expect(
       within(() => links.confirm({ propertyEntryId: entryId, citizenId: owner.id, actor: actor() })),
-    ).rejects.toMatchObject({ details: { block: { code: 'OWNER_CARD_UNLINKED' } } });
+    ).rejects.toMatchObject({ code: 'LANDLORD_LINK_OWNER_CARD_UNLINKED', details: { block: { code: 'OWNER_CARD_UNLINKED' } } });
     expect(await ownerSpells(owner.id)).toEqual([]);
   });
 
@@ -1324,6 +1329,10 @@ describeIfDb('LandlordLinkService', () => {
     expect(await offeredOn(entryId)).toEqual([[wholeOwner.id, 'PROPERTY']]);
     const candidate = (await within(() => links.proposal(entryId)))?.candidates.find((c) => c.id === wholeOwner.id);
     expect(candidate?.blocked?.code).toBe('UNIT_OWNED_BY_OTHER');
+    expect(candidate?.blocked?.refusal).toMatchObject({
+      code: 'LANDLORD_LINK_UNIT_OWNED_BY_OTHER',
+      params: { hasUnit: 'yes', hasOwners: 'yes' },
+    });
 
     // Offered with the reason, and still not linkable over the flat's record: nothing is written.
     await expect(

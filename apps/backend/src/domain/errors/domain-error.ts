@@ -1,4 +1,4 @@
-import type { ErrorCode, ErrorKind, ErrorParams } from '@mechanization/shared-schemas';
+import type { BlockRefusal, ErrorCode, ErrorKind, ErrorParams } from '@mechanization/shared-schemas';
 
 /**
  * Domain errors are framework-free: no NestJS, no HTTP status codes. The
@@ -144,4 +144,13 @@ export class TenantNotProvisionedError extends DomainError {
   constructor(slug: string) {
     super({ code: 'TENANT_NOT_PROVISIONED', message: `Municipality '${slug}' has not been provisioned` });
   }
+}
+
+/**
+ * A block a preview showed, pressed anyway (ERR-04): a 409 with the block's own
+ * code and params, so the toast says what the preview said. The message names
+ * the code alone; a block's params can hold a name, which a log must not.
+ */
+export function refusedBy(refusal: BlockRefusal, details?: unknown): ConflictError {
+  return new ConflictError({ code: refusal.code, message: `Refused by a block: ${refusal.code}`, params: refusal.params, details });
 }

@@ -4,6 +4,14 @@ import { caseTypeSchema, landTypeSchema, propertyTypeSchema } from './enums';
 import { normalizeDigits, uuid } from './primitives';
 
 /**
+ * A page of `GET /cases`: the default and the most one request may ask for
+ * (PAG-02). Ours. The cases page asks for the most until it pages on the
+ * server (PAG-03), and says «عرض N من M» when there are more.
+ */
+export const CASES_PAGE_DEFAULT = 50;
+export const CASES_PAGE_MAX = 500;
+
+/**
  * حالات — field visits that could not become a citizen registration.
  *
  * Nobody home, the gate was locked, access was refused: whatever staff could

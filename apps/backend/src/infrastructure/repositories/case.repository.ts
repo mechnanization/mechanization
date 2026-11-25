@@ -103,6 +103,25 @@ const includeRelations = {
   },
 } as const;
 
+/** The list's filters as a `where`; every one optional, and they compose. */
+function caseWhere(filter?: CaseListFilter) {
+  return {
+    ...(filter?.propertyNumber ? { propertyNumber: filter.propertyNumber } : {}),
+    ...(filter?.status ? { status: filter.status as never } : {}),
+    ...(filter?.caseType ? { caseType: filter.caseType as never } : {}),
+    ...(filter?.buildingId ? { buildingId: filter.buildingId } : {}),
+    ...(filter?.unitId ? { unitId: filter.unitId } : {}),
+    ...(filter?.from || filter?.to
+      ? {
+          createdAt: {
+            ...(filter.from ? { gte: filter.from } : {}),
+            ...(filter.to ? { lte: filter.to } : {}),
+          },
+        }
+      : {}),
+  };
+}
+
 @Injectable()
 export class PrismaCaseRepository implements CaseRepository {
   constructor(private readonly tenantContext: TenantContextService) {}
@@ -113,27 +132,33 @@ export class PrismaCaseRepository implements CaseRepository {
 
   async findAll(filter?: CaseListFilter): Promise<Case[]> {
     const rows = await withConnectionRetry(() =>
-      this.db.case.findMany({
-        where: {
-          ...(filter?.propertyNumber ? { propertyNumber: filter.propertyNumber } : {}),
-          ...(filter?.status ? { status: filter.status as never } : {}),
-          ...(filter?.caseType ? { caseType: filter.caseType as never } : {}),
-          ...(filter?.buildingId ? { buildingId: filter.buildingId } : {}),
-          ...(filter?.unitId ? { unitId: filter.unitId } : {}),
-          ...(filter?.from || filter?.to
-            ? {
-                createdAt: {
-                  ...(filter.from ? { gte: filter.from } : {}),
-                  ...(filter.to ? { lte: filter.to } : {}),
-                },
-              }
-            : {}),
-        },
-        include: includeRelations,
-        orderBy: { createdAt: 'desc' },
-      }),
+      this.db.case.findMany({ where: caseWhere(filter), include: includeRelations, orderBy: { createdAt: 'desc' } }),
     );
     return rows.map((row) => toDomain(row as unknown as CaseRow));
+  }
+
+  /*
+    `id` breaks a tie on `createdAt`, so a page boundary between two cases
+    opened in the same millisecond cannot show one twice and the other never.
+  */
+  async findPage(
+    filter: CaseListFilter,
+    page: { limit: number; offset: number },
+  ): Promise<{ items: Case[]; total: number }> {
+    const where = caseWhere(filter);
+    const [rows, total] = await withConnectionRetry(() =>
+      Promise.all([
+        this.db.case.findMany({
+          where,
+          include: includeRelations,
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          take: page.limit,
+          skip: page.offset,
+        }),
+        this.db.case.count({ where }),
+      ]),
+    );
+    return { items: rows.map((row) => toDomain(row as unknown as CaseRow)), total };
   }
 
   async findById(id: string): Promise<Case | null> {
