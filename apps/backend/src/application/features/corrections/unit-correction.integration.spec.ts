@@ -379,12 +379,14 @@ describeIfDb('UnitCorrectionService', () => {
       },
     });
     const preview = await within(() => service.preview(fixture.units.b102.id));
-    expect(preview.blockers).toEqual([{ kind: 'DAMAGE_ASSESSMENT', count: 1 }]);
+    expect(preview.blockers).toEqual([
+      { kind: 'DAMAGE_ASSESSMENT', count: 1, refusal: { code: 'UNIT_CORRECTION_DAMAGE_ASSESSMENT', params: { count: 1 } } },
+    ]);
     const before = await picture(fixture);
 
     await expect(
       within(() => service.apply(fixture.units.b102.id, input(preview.fingerprint, 'B102'), admin)),
-    ).rejects.toMatchObject({ details: { reason: 'BLOCKED' } });
+    ).rejects.toMatchObject({ code: 'UNIT_CORRECTION_DAMAGE_ASSESSMENT', params: { count: 1 }, details: { reason: 'BLOCKED' } });
     expect(await picture(fixture)).toEqual(before);
   });
 

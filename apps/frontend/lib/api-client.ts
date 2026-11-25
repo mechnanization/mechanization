@@ -1,6 +1,9 @@
 import {
   BACKGROUND_REQUEST_HEADER,
+  CASES_PAGE_MAX,
+  FEE_NOTICES_PAGE_MAX,
   IMPORT_BATCH_SIZE,
+  type BlockRefusal,
   type CitizenSettingsField,
   type ErrorParams,
   type HouseGrowth,
@@ -1587,8 +1590,13 @@ export function getCases(
   if (filter.unitId) query.set('unitId', filter.unitId);
   if (filter.from) query.set('from', filter.from);
   if (filter.to) query.set('to', filter.to);
-  const qs = query.toString();
-  return apiFetch<{ cases: CaseSummary[] }>(tenant, `/cases${qs ? `?${qs}` : ''}`, {
+  /*
+    Paged on the server since PAG-02. Until the page pages (PAG-03) it asks for
+    the most one request may (`CASES_PAGE_MAX`), and `total` says when that was
+    not all of them.
+  */
+  query.set('limit', String(CASES_PAGE_MAX));
+  return apiFetch<{ items: CaseSummary[]; total: number }>(tenant, `/cases?${query.toString()}`, {
     token,
     signal,
   });
@@ -4551,8 +4559,10 @@ export interface LandlordCandidate {
 export type LandlordMatch = 'PHONE' | 'CONTACT' | 'NAME' | 'PROPERTY';
 
 /**
- * Why a link cannot be made yet. Each code names the step that unblocks it,
- * and `message` is the server's Arabic sentence saying so.
+ * Why a link cannot be made yet. Each code names the step that unblocks it.
+ * `refusal` is its words (ERR-04): `localizeApiError(block.refusal)` says it in
+ * the page's language. `message` is the server's Arabic sentence, kept until
+ * ERR-05 renders `refusal`.
  */
 export type LinkBlockCode =
   | 'NOT_ON_SURVEY'
@@ -4567,6 +4577,7 @@ export type LinkBlockCode =
 
 export interface LinkBlock {
   code: LinkBlockCode;
+  refusal: BlockRefusal;
   message: string;
   unitCode: string | null;
 }
@@ -5480,8 +5491,16 @@ export interface FeeNoticeSummary {
   createdAt: string;
 }
 
+/**
+ * «إشعارات الرسوم», newest first. Paged on the server since PAG-04; until the
+ * page pages (PAG-05) it asks for the most one request may
+ * (`FEE_NOTICES_PAGE_MAX`), and `total` says when that was not all of them.
+ */
 export function getFeeNotices(tenant: string, token: string, signal?: AbortSignal) {
-  return apiFetch<{ items: FeeNoticeSummary[] }>(tenant, '/fees/notices', { token, signal });
+  return apiFetch<{ items: FeeNoticeSummary[]; total: number }>(tenant, `/fees/notices?limit=${FEE_NOTICES_PAGE_MAX}`, {
+    token,
+    signal,
+  });
 }
 
 /**

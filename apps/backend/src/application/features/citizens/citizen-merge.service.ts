@@ -16,7 +16,7 @@ import {
   type CitizenMergeResult,
   type CitizenMergeSide,
   type CitizenUnmergePreview,
-  type CitizenUnmergeBlockCode,
+  type CitizenUnmergeBlock,
   citizenDisplayName,
   OPEN_REQUEST_STATUSES,
 } from '@mechanization/shared-schemas';
@@ -29,7 +29,7 @@ import {
 } from '../../../infrastructure/repositories/earnings-registrations';
 import { AuditService, type BuildingChange, type CitizenChange } from '../audit/audit.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
-import { ConflictError, NotFoundError } from '../../common/exceptions';
+import { ConflictError, NotFoundError, refusedBy } from '../../common/exceptions';
 import { citizenPhoneRuleError } from '../../../infrastructure/prisma/check-violation';
 import { arrearsLineKey } from '../arrears/arrears-import.plan';
 import { readFootprint } from './landlord-link.service';
@@ -296,7 +296,7 @@ export class CitizenMergeService {
         });
       }
       if (loaded.plan.blocks.length > 0) {
-        throw new ConflictError(loaded.plan.blocks[0]!.message, { blocks: loaded.plan.blocks });
+        throw refusedBy(loaded.plan.blocks[0]!.refusal, { blocks: loaded.plan.blocks });
       }
 
       const preview = this.describe(loaded, await this.payImpact(loaded), {
@@ -417,7 +417,7 @@ export class CitizenMergeService {
       }
 
       const blocks = await this.unmergeBlocks(input.mergeId);
-      if (blocks.length > 0) throw new ConflictError(blocks[0]!.message, { blocks });
+      if (blocks.length > 0) throw refusedBy(blocks[0]!.refusal, { blocks });
 
       const stored = await this.db.citizenMerge.findUniqueOrThrow({
         where: { id: input.mergeId },
@@ -1311,7 +1311,7 @@ export class CitizenMergeService {
   }
 
   /** Why an undo cannot go through — empty when it can. */
-  private async unmergeBlocks(mergeId: string): Promise<Array<{ code: CitizenUnmergeBlockCode; message: string }>> {
+  private async unmergeBlocks(mergeId: string): Promise<CitizenUnmergeBlock[]> {
     const merge = await this.db.citizenMerge.findUnique({
       where: { id: mergeId },
       select: { survivorId: true, absorbedId: true, undoneAt: true, footprint: true },
@@ -1320,16 +1320,28 @@ export class CitizenMergeService {
       code: 'MERGE_NOT_FOUND',
       message: 'This merge could not be found.',
     });
-    if (merge.undoneAt) return [{ code: 'ALREADY_UNDONE', message: 'تمّ التراجع عن هذا الدمج مسبقاً.' }];
+    if (merge.undoneAt) {
+      return [{ code: 'ALREADY_UNDONE', refusal: { code: 'UNMERGE_ALREADY_UNDONE', params: {} }, message: 'تمّ التراجع عن هذا الدمج مسبقاً.' }];
+    }
 
     const later = await this.db.citizenMerge.findFirst({
       where: { absorbedId: merge.survivorId, undoneAt: null },
       select: { survivor: { select: { firstName: true, lastName: true, residence: true, referenceNumber: true } } },
     });
     if (later) {
+      const name = citizenDisplayName(later.survivor, { middleName: false });
       return [
         {
           code: 'MERGED_AGAIN',
+          // The admin's own screen names the file and its reference, as `CITIZEN_MERGED_AWAY` does.
+          refusal: {
+            code: 'UNMERGE_MERGED_AGAIN',
+            params: {
+              name,
+              hasReference: later.survivor.referenceNumber ? 'yes' : 'no',
+              reference: later.survivor.referenceNumber ?? '',
+            },
+          },
           message: `الملف الباقي نفسه دُمج بعدها في ملف ${citizenDisplayName(later.survivor, { middleName: false })}${
             later.survivor.referenceNumber ? ` (${later.survivor.referenceNumber})` : ''
           }. تراجع عن ذلك الدمج أولاً.`,
@@ -1339,7 +1351,13 @@ export class CitizenMergeService {
 
     const footprint = merge.footprint as unknown as MergeFootprint;
     if (footprint?.v !== 1) {
-      return [{ code: 'CHANGED_SINCE', message: 'سجل هذا الدمج بصيغة لا يعرفها هذا الإصدار — لا يمكن التراجع عنه آلياً.' }];
+      return [
+        {
+          code: 'CHANGED_SINCE',
+          refusal: { code: 'UNMERGE_UNKNOWN_FORMAT', params: {} },
+          message: 'سجل هذا الدمج بصيغة لا يعرفها هذا الإصدار — لا يمكن التراجع عنه آلياً.',
+        },
+      ];
     }
 
     const [keep, absorb] = await Promise.all([this.version(footprint.keepId), this.version(footprint.absorbId)]);
@@ -1348,6 +1366,7 @@ export class CitizenMergeService {
       return [
         {
           code: 'CHANGED_SINCE',
+          refusal: { code: 'UNMERGE_CHANGED_SINCE', params: {} },
           message:
             'عُدِّل أحد الملفين (أو ما نقله الدمج) منذ الدمج، فالتراجع الآلي قد يمحو ذلك التعديل. صحّح الملف يدوياً، أو اطلب تصحيحاً من إدارة النظام.',
         },
