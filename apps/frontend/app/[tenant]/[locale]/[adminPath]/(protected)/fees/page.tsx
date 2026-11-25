@@ -25,16 +25,8 @@ import type { ColumnDef } from '@tanstack/react-table';
 import {
   Banknote,
   CheckCircle2,
-  FileWarning,
-  FileBarChart,
-  History,
-  Megaphone,
-  ShieldCheck,
   Loader2,
-  Plus,
   Receipt,
-  RefreshCw,
-  UserPlus,
 } from 'lucide-react';
 import {
   FEE_ADMIN_ROLES,
@@ -80,6 +72,7 @@ import { BillTypeFilter } from '@/components/admin/bill-type-select';
 import { PaymentReceipt } from '@/components/admin/payment-receipt';
 import { BillCheckbox } from '@/components/admin/bulk-settle/bill-checkbox';
 import { BulkSettleBar } from '@/components/admin/bulk-settle/bulk-settle-bar';
+import { FeesHeaderActions } from '@/components/admin/fees/fees-header-actions';
 import { FeesSummaryStrip } from '@/components/admin/fees/fees-summary-strip';
 import { PaymentReviewDialog } from '@/components/admin/fees/payment-review-dialog';
 import { ArrearsBillMark } from '@/components/arrears-bill-mark';
@@ -207,8 +200,6 @@ export default function FeesPage({
   }, { columnsMenu: true });
   const tReview = useTranslations('fees.register.review');
   const tCommon = useTranslations('common');
-  const tNotices = useTranslations('fees.notices');
-  const tExemptions = useTranslations('feeExemptions');
   const tCharge = useTranslations('fees.charge');
   /** «تأكيد» / «رفض» on a declared transfer — `FEE_ADMIN_ROLES`, as `PATCH fees/payments/:id/review`. */
   const canDecide = hasRole(FEE_ADMIN_ROLES, role);
@@ -217,7 +208,6 @@ export default function FeesPage({
   /** «فواتير تأثّرت بتصحيحات» — `PAYMENT_REVIEW_READ_ROLES`, as the nav row of `/fees/corrections`. */
   const canReadCorrections = hasRole(PAYMENT_REVIEW_READ_ROLES, role);
   const canReadExemptions = hasRole(FEE_EXEMPTION_READ_ROLES, role);
-  const tArrears = useTranslations('arrears');
   /** «المتأخرات» (old debts, task 7): the accountant and the manager prepare them. */
   const canPrepareArrears = hasRole(ARREARS_PREPARE_ROLES, role);
   const canReadArrearsReport = hasRole(ARREARS_REPORT_ROLES, role);
@@ -346,7 +336,6 @@ export default function FeesPage({
   const settings = contextQuery.data?.settings ?? null;
   const municipalityName = contextQuery.data?.municipalityName ?? '';
   const loading = paymentsQuery.loading;
-  const refreshing = paymentsQuery.fetching || contextQuery.fetching;
 
   /** Re-reads both halves of the screen after a write. */
   const queryClient = useQueryClient();
@@ -792,68 +781,16 @@ export default function FeesPage({
         icon={Receipt}
         title={navLabel('fees', locale)}
         actions={
-          <>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void load()}
-              disabled={refreshing}
-            >
-              <RefreshCw className={cn('size-4', refreshing && 'animate-spin')} aria-hidden />
-              {locale === 'en' ? 'Refresh' : 'تحديث'}
-            </Button>
-
-            {canReadCorrections ? (
-              <Link href={`${base}/fees/corrections`} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
-                <FileWarning className="size-4" aria-hidden />
-                {locale === 'en' ? 'Bills affected by corrections' : 'فواتير تأثّرت بتصحيحات'}
-              </Link>
-            ) : null}
-
-            {/* «إشعارات الرسوم»: every notice issued, and the manager's «إلغاء الإشعار». Read by every ledger reader. */}
-            <Link href={`${base}/fees/notices`} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
-              <Megaphone className="size-4" aria-hidden />
-              {tNotices('title')}
-            </Link>
-
-            {/* «قائمة الإعفاء من الرسوم» (0104): names the people on each unit, so `FEE_EXEMPTION_READ_ROLES` only. */}
-            {canReadExemptions ? (
-              <Link href={`${base}/fees/exemptions`} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
-                <ShieldCheck className="size-4" aria-hidden />
-                {tExemptions('link')}
-              </Link>
-            ) : null}
-
-            {canPrepareArrears ? (
-              <Link href={`${base}/fees/arrears`} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
-                <History className="size-4" aria-hidden />
-                {tArrears('link')}
-              </Link>
-            ) : null}
-
-            {/* «تقرير المتأخرات» (task 11): sums only, no citizen, so every finance reader may open it. */}
-            {canReadArrearsReport ? (
-              <Link href={`${base}/fees/arrears/report`} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
-                <FileBarChart className="size-4" aria-hidden />
-                {tArrears('report.link')}
-              </Link>
-            ) : null}
-
-            {canIssue ? (
-              <>
-                <Button variant="outline" size="sm" onClick={() => setChargeOpen(true)}>
-                  <UserPlus className="size-4" aria-hidden />
-                  {locale === 'en' ? 'Direct Charge' : 'تكليف مباشر'}
-                </Button>
-                <Button asChild size="sm">
-                  <Link href={`${base}/fees/new`}>
-                    <Plus className="size-4" aria-hidden />
-                    {locale === 'en' ? 'Issue New Fee' : 'إصدار رسم جديد'}
-                  </Link>
-                </Button>
-              </>
-            ) : null}
-          </>
+          <FeesHeaderActions
+            base={base}
+            locale={locale}
+            canIssue={canIssue}
+            onDirectCharge={() => setChargeOpen(true)}
+            canReadCorrections={canReadCorrections}
+            canReadExemptions={canReadExemptions}
+            canPrepareArrears={canPrepareArrears}
+            canReadArrearsReport={canReadArrearsReport}
+          />
         }
       />
 

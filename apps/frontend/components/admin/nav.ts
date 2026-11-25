@@ -514,9 +514,11 @@ export const NAV_GROUPS: NavGroup[] = [
     key: 'treasury',
     items: [
       /*
-        The wallets and their balances. «الأرصدة» rather than «الخزينة» now that
-        the group carries that name. Activating the treasury is narrower still
-        (the manager) and is gated on the page itself.
+        The wallets and their balances. Named in full, «أرصدة الخزينة» (the owner,
+        2026-11-25, NAV-10), so that the sidebar row and the page heading read the
+        same and each is clear on its own; the group above says «الخزينة» too.
+        Activating the treasury is narrower still (the manager) and is gated on
+        the page itself.
       */
       {
         path: '/finance',

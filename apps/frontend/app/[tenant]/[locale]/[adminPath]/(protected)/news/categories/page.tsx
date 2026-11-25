@@ -19,6 +19,8 @@ import { DataTable } from '@/components/ui/data-table';
 import { ErrorState } from '@/components/ui/states';
 import { PageHeader } from '@/components/ui/page-header';
 import { HeaderBackLink } from '@/components/admin/header-back-link';
+import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
+import { readView } from '@/lib/read-view';
 import { useToast } from '@/components/ui/toast';
 import { navLabel } from '@/components/admin/nav';
 
@@ -167,6 +169,8 @@ export default function NewsCategoriesPage({
     [t, locale, canEdit],
   );
 
+  const view = readView(query.data, query.error);
+
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <HeaderBackLink fallbackHref={`${base}/news/articles`} label={t('back')} />
@@ -186,12 +190,16 @@ export default function NewsCategoriesPage({
 
       <p className="max-w-3xl text-sm text-muted-foreground">{t('intro')}</p>
 
-      {query.error && !query.data ? (
+      {view.state === 'ready' && view.refreshFailed ? (
+        <RefreshFailedAlert message={query.refusal ?? view.refreshFailed} onRetry={query.refetch} />
+      ) : null}
+
+      {view.state === 'failed' ? (
         // `DataTable` shows one generic line for any failure. Here the reason matters: no News access, News switched
         // off for the municipality and Day3ati being down each need a different next step, so it is said.
         <ErrorState
           title={tNews('loadFailedTitle')}
-          description={query.refusal ?? query.error} offline={query.offline}
+          description={query.refusal ?? view.error} offline={query.offline}
           retryLabel={tNews('retry')}
           onRetry={query.refetch}
         />

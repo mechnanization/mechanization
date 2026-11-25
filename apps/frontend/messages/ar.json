@@ -100,7 +100,7 @@
       "payments": "سجل العمليات",
       "parcelDues": "المستحق على عقار",
       "collectors": "الجباة والتحصيل",
-      "treasury": "الأرصدة",
+      "treasury": "أرصدة الخزينة",
       "movements": "الإيرادات والنفقات",
       "transactions": "الحركات المالية",
       "transfers": "المناقلات والمصارفة",
@@ -1562,6 +1562,11 @@
     "outsideTableUnits": "{count} وحدة خارج جدول الفئات"
   },
   "fees": {
+    "header": {
+      "issue": "إصدار رسم جديد",
+      "directCharge": "تكليف مباشر",
+      "more": "المزيد"
+    },
     "notices": {
       "title": "إشعارات الرسوم",
       "back": "عودة إلى الرسوم والمدفوعات",

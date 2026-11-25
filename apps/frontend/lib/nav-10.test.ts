@@ -115,13 +115,14 @@ describe('a page names itself with its row’s key', () => {
   });
 });
 
-describe('the eight titles that said something else now say the row’s words (one place to change them)', () => {
+// The treasury is named in full, «أرصدة الخزينة» / "Treasury balances" (the owner's choice, 2026-11-25), not the short «الأرصدة».
+describe('the titles that said something else now say the row’s words (one place to change them)', () => {
   const item = (key: string, locale: 'ar' | 'en') => ((locale === 'ar' ? ar : en).nav.items as Record<string, string>)[key];
 
   it.each([
     ['fees', 'الرسوم والمدفوعات', 'Fees & billing'],
     ['payments', 'سجل العمليات', 'Payment operations'],
-    ['treasury', 'الأرصدة', 'Balances'],
+    ['treasury', 'أرصدة الخزينة', 'Treasury balances'],
     ['buildings', 'سجل المباني', 'Building census'],
     ['audit', 'سجل النشاطات', 'Audit log'],
     ['news', 'الأخبار', 'News'],

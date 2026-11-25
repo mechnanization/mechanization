@@ -183,7 +183,11 @@ describe('the other doors stay open', () => {
   it('opens «فواتير تأثّرت بتصحيحات» from the fees page, to the roles that may read it', () => {
     const fees = read('app/[tenant]/[locale]/[adminPath]/(protected)/fees/page.tsx');
     expect(fees).toMatch(/const canReadCorrections = hasRole\(PAYMENT_REVIEW_READ_ROLES, role\)/);
-    expect(fees).toMatch(/\{canReadCorrections \? \(\s*<Link href=\{`\$\{base\}\/fees\/corrections`\}/);
+    // The link is in the header's «المزيد» menu since PAGE-04 (`lib/page-04.test.ts` renders it for every role).
+    expect(fees).toMatch(/canReadCorrections=\{canReadCorrections\}/);
+    expect(read('components/admin/fees/fees-header-actions.tsx')).toMatch(
+      /show: canReadCorrections, href: '\/fees\/corrections'/,
+    );
   });
 
   it('opens «أمان الحساب» from the user menu', () => {

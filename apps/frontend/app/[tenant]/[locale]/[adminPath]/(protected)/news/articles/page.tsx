@@ -19,6 +19,8 @@ import { useStaffSession } from '@/lib/use-staff-session';
 import { useTableLabels } from '@/lib/use-table-labels';
 import { useUrlState } from '@/lib/use-url-state';
 import { Alert } from '@/components/ui/alert';
+import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
+import { readView } from '@/lib/read-view';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { DataTable } from '@/components/ui/data-table';
@@ -163,6 +165,8 @@ export default function NewsArticlesPage({
     [t, labels],
   );
 
+  const view = readView(first.data, first.error);
+
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <PageHeader
@@ -170,6 +174,11 @@ export default function NewsArticlesPage({
         title={navLabel('news', locale)}
         actions={
           <>
+            {/* The one primary action, first in reading order (the page contract, PAGE-14). */}
+            <Button onClick={() => router.push(`${base}/news/articles/new`)}>
+              <Plus className="size-4" aria-hidden />
+              {t('new')}
+            </Button>
             {/* The two lists an article is filed and published by have no sidebar row (NAV-05): this is their door. */}
             <Link href={`${base}/news/categories`} className={buttonVariants({ variant: 'outline' })}>
               <Tags className="size-4" aria-hidden />
@@ -179,10 +188,6 @@ export default function NewsArticlesPage({
               <Megaphone className="size-4" aria-hidden />
               {t('publishersLink')}
             </Link>
-            <Button onClick={() => router.push(`${base}/news/articles/new`)}>
-              <Plus className="size-4" aria-hidden />
-              {t('new')}
-            </Button>
           </>
         }
       />
@@ -197,12 +202,16 @@ export default function NewsArticlesPage({
         fullWidth={false}
       />
 
-      {first.error && !first.data ? (
+      {view.state === 'ready' && view.refreshFailed ? (
+        <RefreshFailedAlert message={first.refusal ?? view.refreshFailed} onRetry={first.refetch} />
+      ) : null}
+
+      {view.state === 'failed' ? (
         // `DataTable` shows one generic line for any failure. Here the reason matters: no News access, News switched
         // off for the municipality and Day3ati being down each need a different next step, so it is said.
         <ErrorState
           title={tNews('loadFailedTitle')}
-          description={first.refusal ?? first.error} offline={first.offline}
+          description={first.refusal ?? view.error} offline={first.offline}
           retryLabel={tNews('retry')}
           onRetry={first.refetch}
         />
