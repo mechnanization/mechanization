@@ -59,7 +59,7 @@ const GUARDS: ReadonlyArray<readonly [string, string]> = [
   ['import-citizens-dialog.tsx', 'checkingRef'],
   ['import-citizens-dialog.tsx', 'importingRef'],
   ['quality/resolve-dialog.tsx', 'sending'],
-  ['quality/finding-compare.tsx', 'savingRef'],
+  ['quality/compare/use-citizen-correction.ts', 'savingRef'],
   // PAGE-14: the news editor and its media panel (the two lists’ dialogs validate between check and set: lib/page-14.test.ts)
   ['news/article-media.tsx', 'inFlight'],
   ['news/article-editor.tsx', 'inFlight'],

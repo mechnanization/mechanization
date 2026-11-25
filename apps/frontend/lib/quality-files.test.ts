@@ -3,8 +3,8 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /*
-  PAGE-13 (cleanup sprint, 2026-11-25): the quality screens' files over 600 lines are split one screen at a
-  time. This holds the ones already done to that size; the comparison joins when its pull request reaches it.
+  PAGE-13 (cleanup sprint, 2026-11-25): the quality screens' files over 600 lines were split one screen at a
+  time. This holds every one of them to that size.
 */
 
 const QUALITY = join(__dirname, '..', 'components', 'admin', 'quality');
@@ -20,6 +20,7 @@ const FINDINGS = [
   'resolve-dialog.tsx',
   ...folder('findings'),
 ];
+const COMPARE = ['finding-compare.tsx', ...folder('compare')];
 
 describe('the review queue after its split', () => {
   it('is the queue and the parts of a card', () => {
@@ -52,8 +53,30 @@ describe('the findings after their split', () => {
   });
 });
 
+describe('the comparison after its split', () => {
+  it('is the entry, the two comparisons, the grid and its chrome, the rows, the cell and the correction', () => {
+    expect([...COMPARE].sort()).toEqual([
+      'compare/building-compare.tsx',
+      'compare/citizen-compare.tsx',
+      'compare/citizen-rows.ts',
+      'compare/compare-shell.tsx',
+      'compare/compare-table.tsx',
+      'compare/edit-cell.tsx',
+      'compare/use-citizen-correction.ts',
+      'finding-compare.tsx',
+    ]);
+  });
+
+  it('writes a citizen’s file from the correction hook alone', () => {
+    for (const file of COMPARE) {
+      const writes = readFileSync(join(QUALITY, file), 'utf8').includes('updateCitizen(');
+      expect(writes, file).toBe(file === 'compare/use-citizen-correction.ts');
+    }
+  });
+});
+
 describe('the files already split', () => {
-  it.each([...QUEUE, ...FINDINGS])('%s is no more than 600 lines', (file) => {
+  it.each([...QUEUE, ...FINDINGS, ...COMPARE])('%s is no more than 600 lines', (file) => {
     expect(lineCount(file), file).toBeLessThanOrEqual(600);
   });
 });
