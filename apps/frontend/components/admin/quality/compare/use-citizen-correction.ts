@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { getLabels } from '@mechanization/shared-schemas';
 import {
   ApiRequestError,
@@ -43,7 +44,8 @@ export function useCitizenCorrection({
   /** A correction landed: what is on screen, and the queue behind it, are stale. */
   onSaved: () => void;
 }) {
-  const en = locale === 'en';
+  const t = useTranslations('qualityCompare.edit');
+  const tRows = useTranslations('qualityCompare.rows');
   const labels = getLabels(locale);
   const toast = useToast();
   // `ConfirmDialog` disables its button from state, set asynchronously (SUBMIT-04): a double-click
@@ -75,13 +77,7 @@ export function useCitizenCorrection({
         setForms((current) => ({ ...current, [citizenId]: form! }));
       } catch (caught) {
         logApiError(caught);
-        toast.error(
-          caught instanceof ApiRequestError
-            ? caught.message
-            : en
-              ? 'Could not open this record for editing.'
-              : 'تعذّر فتح هذا السجل للتعديل.',
-        );
+        toast.error(caught instanceof ApiRequestError ? caught.message : t('openFailed'));
         return;
       } finally {
         setLoadingForm(null);
@@ -137,11 +133,7 @@ export function useCitizenCorrection({
       citizenId: person.id,
       row: target,
       label:
-        target === 'name'
-          ? en
-            ? 'Full name'
-            : 'الاسم الكامل'
-          : (labels.citizenField[target] ?? target),
+        target === 'name' ? tRows('fullName') : (labels.citizenField[target] ?? target),
       before,
       after,
       values,
@@ -170,12 +162,10 @@ export function useCitizenCorrection({
         an identity number (`highImpactChanges`), so the save says so on the
         audit row rather than being refused for want of a reason.
       */
-      changeReason: en
-        ? `Corrected while comparing two records in quality review: ${pending.label}`
-        : `تصحيح عند مقارنة سجلَّين في مراجعة الجودة: ${pending.label}`,
+      changeReason: t('reason', { field: pending.label }),
     });
 
-    toast.success(en ? 'The record was corrected.' : 'صُحِّح السجل.');
+    toast.success(t('saved'));
     /*
       The saved file's version is now stale in `forms`, and so is every value on
       it. Dropped rather than patched: the next edit re-reads it, which is also

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import { GitMerge, ShieldAlert } from 'lucide-react';
 import { getCitizenProfile } from '@/lib/api-client';
@@ -42,7 +43,9 @@ export function CitizenCompare({
   onBack: () => void;
   onChanged: () => void;
 }): React.JSX.Element {
-  const en = locale === 'en';
+  const t = useTranslations('qualityCompare.citizens');
+  const tRows = useTranslations('qualityCompare.rows');
+  const tConfirm = useTranslations('qualityCompare.confirm');
   const toast = useToast();
   const router = useRouter();
   const [merging, setMerging] = useState(false);
@@ -57,7 +60,7 @@ export function CitizenCompare({
     tenant,
     base,
     token,
-    errorMessage: en ? 'Could not load the two records.' : 'تعذّر تحميل السجلّين.',
+    errorMessage: t('loadFailed'),
     keepPrevious: true,
   });
 
@@ -85,13 +88,13 @@ export function CitizenCompare({
   if (query.loading || !query.data) {
     return (
       <CompareShell finding={finding} locale={locale} onBack={onBack}>
-        <LoadingState label={en ? 'Loading both records…' : 'جارٍ تحميل السجلّين…'} />
+        <LoadingState label={t('loading')} />
       </CompareShell>
     );
   }
 
   const people = query.data;
-  const rows = citizenRows(people[0], people[1], locale);
+  const rows = citizenRows(people[0], people[1], locale, tRows);
 
   /*
     The three anchor rows carry their own control. They are the fields every
@@ -129,35 +132,32 @@ export function CitizenCompare({
 
   return (
     <CompareShell finding={finding} locale={locale} onBack={onBack}>
-      <DifferenceSummary rows={rows} locale={locale} />
+      <DifferenceSummary rows={rows} />
 
       {!canEdit ? (
         <p className="flex items-start gap-2 rounded-lg border bg-muted/40 p-3 text-xs leading-relaxed">
           <ShieldAlert className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden />
           <span>
-            {en
-              ? 'Your role reviews records but does not change them. Open either file to have an administrative officer correct it.'
-              : 'دورك يراجع السجلات ولا يعدّلها. افتح الملف ليصحّحه موظف إداري.'}
+            {t('reviewOnly')}
           </span>
         </p>
       ) : null}
 
       <CompareTable
-        locale={locale}
         headers={[
           <RecordHeading
             key="a"
             title={people[0].fullName}
             secondary={people[0].referenceNumber}
             href={`${base}/citizens/${encodeURIComponent(people[0].id)}`}
-            openLabel={en ? 'Open the file' : 'فتح الملف'}
+            openLabel={t('openFile')}
           />,
           <RecordHeading
             key="b"
             title={people[1].fullName}
             secondary={people[1].referenceNumber}
             href={`${base}/citizens/${encodeURIComponent(people[1].id)}`}
-            openLabel={en ? 'Open the file' : 'فتح الملف'}
+            openLabel={t('openFile')}
           />,
         ]}
         shortHeaders={[people[0].fullName, people[1].fullName]}
@@ -172,20 +172,16 @@ export function CitizenCompare({
       {canMerge && token ? (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/30 p-3">
           <p className="text-xs leading-relaxed text-muted-foreground">
-            {en
-              ? 'If these are one person, merge them: the file registered first stays, everything the other holds moves onto it, and the other is deactivated. It can be undone while neither file changes.'
-              : 'إن كانا شخصاً واحداً فادمجهما: يبقى الملف المسجَّل أولاً، وينتقل إليه كل ما على الآخر، ويُعطَّل الآخر. يمكن التراجع عن الدمج ما دام الملفان لم يتغيّرا.'}
+            {t('mergeBody')}
           </p>
           <Button size="sm" className="shrink-0 gap-1.5" onClick={() => setMerging(true)}>
             <GitMerge className="size-4" aria-hidden />
-            {en ? 'Merge the two files' : 'دمج الملفين'}
+            {t('merge')}
           </Button>
         </div>
       ) : (
         <p className="text-xs leading-relaxed text-muted-foreground">
-          {en
-            ? 'If this is one person, an administrator can merge the two files from this screen. Until then, correct whichever record is wrong.'
-            : 'إن كانا شخصاً واحداً فيمكن لمدير النظام دمج الملفين من هذه الشاشة. وإلى ذلك الحين صحِّح السجل الخاطئ.'}
+          {t('mergeElsewhere')}
         </p>
       )}
 
@@ -200,7 +196,7 @@ export function CitizenCompare({
           secondId={people[1].id}
           onMerged={(result) => {
             setMerging(false);
-            toast.success(en ? 'The two files were merged.' : 'دُمج الملفان.');
+            toast.success(t('merged'));
             onChanged();
             router.push(`${base}/citizens/${encodeURIComponent(result.keepId)}`);
           }}
@@ -213,29 +209,27 @@ export function CitizenCompare({
           if (!open) setPending(null);
         }}
         destructive={false}
-        title={en ? 'Save this change?' : 'هل أنت متأكد من إجراء هذا التغيير؟'}
+        title={tConfirm('title')}
         description={
           pending ? (
             <span className="block space-y-2">
               <span className="block">
-                {en
-                  ? 'This writes to the citizen’s file and is recorded in the audit trail.'
-                  : 'يُكتب هذا في ملف المواطن ويُسجَّل في سجل التدقيق.'}
+                {tConfirm('body')}
               </span>
               <span className="block rounded-md border bg-muted/40 p-2.5 text-sm">
                 <span className="block text-xs text-muted-foreground">{pending.label}</span>
                 <ChangeValue
                   before={pending.before}
                   after={pending.after}
-                  becameLabel={en ? 'becomes' : 'يصبح'}
+                  becameLabel={tConfirm('becomes')}
                 />
               </span>
             </span>
           ) : null
         }
-        confirmLabel={en ? 'Save' : 'موافق — احفظ'}
-        cancelLabel={en ? 'Cancel' : 'إلغاء'}
-        busyLabel={en ? 'Working…' : 'جارٍ التنفيذ…'}
+        confirmLabel={tConfirm('save')}
+        cancelLabel={tConfirm('cancel')}
+        busyLabel={tConfirm('busy')}
         onConfirm={save}
       />
     </CompareShell>

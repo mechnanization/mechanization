@@ -26,7 +26,7 @@ export function EditCell({
   canEdit: boolean;
   locale: string;
 }): React.ReactNode {
-  const en = locale === 'en';
+  const t = useTranslations('qualityCompare.edit');
   const labels = getLabels(locale);
   const tNoPhone = useTranslations('citizenForm.noPhone');
   const tKind = useTranslations('citizenKind');
@@ -76,7 +76,7 @@ export function EditCell({
         ) : (
           <Pencil className="size-3" aria-hidden />
         )}
-        {en ? 'Edit' : 'تعديل'}
+        {t('edit')}
       </Button>
     );
   }
@@ -109,10 +109,10 @@ export function EditCell({
       ) : null}
       <div className="flex flex-wrap gap-1.5">
         <Button size="sm" className="h-8" onClick={() => requestSave(side, person, target)}>
-          {en ? 'Save' : 'حفظ'}
+          {t('save')}
         </Button>
         <Button variant="ghost" size="sm" className="h-8" onClick={cancelEdit}>
-          {en ? 'Cancel' : 'إلغاء'}
+          {t('cancel')}
         </Button>
       </div>
     </div>

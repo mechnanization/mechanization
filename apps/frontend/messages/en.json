@@ -1045,6 +1045,75 @@
       "open": "Open"
     }
   },
+  "qualityCompare": {
+    "oneRecord": "This finding names a single record, so there is nothing to set against it.",
+    "marks": {
+      "differs": "Differs: ",
+      "notAsked": "Not asked on one record: "
+    },
+    "summary": {
+      "conflicts": "Fields that disagree:",
+      "gaps": "Asked on one record only:"
+    },
+    "rows": {
+      "fullName": "Full name",
+      "reference": "Reference number",
+      "fileType": "File type",
+      "household": "Household (living / registered)",
+      "properties": "Properties on file",
+      "registeredAt": "Filed on",
+      "recordState": "Record state",
+      "active": "Active",
+      "deactivated": "Deactivated"
+    },
+    "citizens": {
+      "loadFailed": "Could not load the two records.",
+      "loading": "Loading both records…",
+      "reviewOnly": "Your role reviews records but does not change them. Open either file to have an administrative officer correct it.",
+      "openFile": "Open the file",
+      "mergeBody": "If these are one person, merge them: the file registered first stays, everything the other holds moves onto it, and the other is deactivated. It can be undone while neither file changes.",
+      "merge": "Merge the two files",
+      "mergeElsewhere": "If this is one person, an administrator can merge the two files from this screen. Until then, correct whichever record is wrong.",
+      "merged": "The two files were merged."
+    },
+    "edit": {
+      "edit": "Edit",
+      "save": "Save",
+      "cancel": "Cancel",
+      "openFailed": "Could not open this record for editing.",
+      "saved": "The record was corrected.",
+      "reason": "Corrected while comparing two records in quality review: {field}"
+    },
+    "confirm": {
+      "title": "Save this change?",
+      "body": "This writes to the citizen’s file and is recorded in the audit trail.",
+      "becomes": "becomes",
+      "save": "Save",
+      "cancel": "Cancel",
+      "busy": "Working…"
+    },
+    "buildings": {
+      "loadFailed": "Could not load the two structures.",
+      "loading": "Loading both structures…",
+      "code": "Code",
+      "name": "Name",
+      "posted": "Number painted on it",
+      "parcel": "Parcel",
+      "zone": "Sector",
+      "structure": "Structure",
+      "condition": "Condition",
+      "floors": "Floors",
+      "basements": "Basements",
+      "units": "Units",
+      "surveyed": "Units surveyed",
+      "pin": "Entrance pin",
+      "createdAt": "Created on",
+      "notes": "Notes",
+      "onParcel": "Parcel {number}",
+      "openMatrix": "Open the matrix",
+      "verdict": "Two structures metres apart on one parcel are a question, not a verdict — genuine neighbours stand that close here too. If they are one structure, correct it in the building editor; if they are two, mark this resolved with the reason."
+    }
+  },
   "citizens": {
     "families": "Total families",
     "archived": "Archived",

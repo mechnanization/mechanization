@@ -33,8 +33,6 @@ export function SeverityMark({
   withText = true,
 }: {
   severity: QualityFinding['severity'];
-  /** Not read: the comparison still passes it, until its own pull request. */
-  locale?: string;
   withText?: boolean;
 }): React.JSX.Element {
   const t = useTranslations('qualityFindings.severity');

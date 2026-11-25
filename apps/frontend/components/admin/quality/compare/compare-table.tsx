@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import Link from 'next/link';
 import { ExternalLink } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -61,14 +62,12 @@ export function CompareTable({
   headers,
   shortHeaders,
   rows,
-  locale,
 }: {
   headers: [React.ReactNode, React.ReactNode];
   shortHeaders: [string, string];
   rows: CompareRow[];
-  locale: string;
 }): React.JSX.Element {
-  const en = locale === 'en';
+  const t = useTranslations('qualityCompare.marks');
   const columns = 'grid grid-cols-1 sm:grid-cols-[minmax(7rem,11rem)_1fr_1fr]';
 
   return (
@@ -102,7 +101,7 @@ export function CompareTable({
                   {entry.state === 'conflict' ? (
                     <>
                       <span aria-hidden className="mt-1.5 size-2 shrink-0 rounded-full bg-destructive" />
-                      <span className="sr-only">{en ? 'Differs: ' : 'قيمتان مختلفتان: '}</span>
+                      <span className="sr-only">{t('differs')}</span>
                     </>
                   ) : entry.state === 'gap' ? (
                     <>
@@ -110,7 +109,7 @@ export function CompareTable({
                         aria-hidden
                         className="mt-1.5 size-2 shrink-0 rounded-full border border-muted-foreground/40"
                       />
-                      <span className="sr-only">{en ? 'Not asked on one record: ' : 'لم يُسأل في أحد السجلين: '}</span>
+                      <span className="sr-only">{t('notAsked')}</span>
                     </>
                   ) : (
                     <span aria-hidden className="mt-1.5 size-2 shrink-0" />

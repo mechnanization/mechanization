@@ -54,9 +54,10 @@ export function citizenRows(
   a: CitizenProfile,
   b: CitizenProfile,
   locale: string,
+  /** `qualityCompare.rows`: the words for the facts that are not a form field's. */
+  t: (key: string) => string,
 ): CompareRow[] {
   const labels = getLabels(locale);
-  const en = locale === 'en';
   const field = labels.citizenField;
   // A phone is the same phone however it was typed.
   const digits = (value: unknown) => String(value ?? '').replace(/\D/g, '');
@@ -73,15 +74,15 @@ export function citizenRows(
     value ? (map[value] ?? value) : null;
 
   return [
-    row('name', en ? 'Full name' : 'الاسم الكامل', a.fullName, b.fullName),
+    row('name', t('fullName'), a.fullName, b.fullName),
     row('motherName', field.motherName, a.motherName, b.motherName),
     row('phone', field.phone, a.phone, b.phone, digits),
     row('whatsapp', field.whatsapp, a.whatsapp, b.whatsapp, digits),
-    row('reference', en ? 'Reference number' : 'الرقم المرجعي', a.referenceNumber, b.referenceNumber),
+    row('reference', t('reference'), a.referenceNumber, b.referenceNumber),
     row('civilRecord', field.civilRecordNumber, a.civilRecordNumber, b.civilRecordNumber),
     row(
       'residence',
-      en ? 'File type' : 'نوع الملف',
+      t('fileType'),
       enumValue(labels.citizenResidence as Record<string, string>, a.residence ?? null),
       enumValue(labels.citizenResidence as Record<string, string>, b.residence ?? null),
     ),
@@ -106,22 +107,22 @@ export function citizenRows(
     ),
     row(
       'household',
-      en ? 'Household (living / registered)' : 'الأسرة (مقيمون / مسجّلون)',
+      t('household'),
       household(a),
       household(b),
     ),
-    row('properties', en ? 'Properties on file' : 'عدد العقارات', properties(a), properties(b)),
+    row('properties', t('properties'), properties(a), properties(b)),
     row(
       'registeredAt',
-      en ? 'Filed on' : 'تاريخ التسجيل',
+      t('registeredAt'),
       formatDate(a.registeredAt),
       formatDate(b.registeredAt),
     ),
     row(
       'active',
-      en ? 'Record state' : 'حالة السجل',
-      a.isActive ? (en ? 'Active' : 'نشط') : en ? 'Deactivated' : 'موقوف',
-      b.isActive ? (en ? 'Active' : 'نشط') : en ? 'Deactivated' : 'موقوف',
+      t('recordState'),
+      a.isActive ? t('active') : t('deactivated'),
+      b.isActive ? t('active') : t('deactivated'),
     ),
   ];
 }

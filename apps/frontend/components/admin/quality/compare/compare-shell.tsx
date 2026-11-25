@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import { ArrowLeft } from 'lucide-react';
 import { qualityLabels } from '@mechanization/shared-schemas';
 import type { QualityFinding } from '@/lib/quality-api';
@@ -18,7 +19,7 @@ export function CompareShell({
   onBack: () => void;
   children: React.ReactNode;
 }): React.JSX.Element {
-  const en = locale === 'en';
+  const tFindings = useTranslations('qualityFindings');
   const quality = qualityLabels(locale);
 
   return (
@@ -31,11 +32,11 @@ export function CompareShell({
             className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground sm:text-sm"
           >
             <ArrowLeft className="size-3.5 rtl:rotate-180 sm:size-4" aria-hidden />
-            {en ? 'Back to quality findings' : 'رجوع إلى ملاحظات الجودة'}
+            {tFindings('back')}
           </button>
           <h2 className="flex flex-wrap items-center gap-2 text-lg font-semibold">
             {quality.findingKind[finding.kind] ?? finding.kind}
-            <SeverityMark severity={finding.severity} locale={locale} />
+            <SeverityMark severity={finding.severity} />
           </h2>
           <FindingDetail detail={finding.detail} locale={locale} className="text-sm" />
         </div>
@@ -52,8 +53,8 @@ export function CompareShell({
  * Arabic's four plural forms to be right at 0, 1, 2 and 11. A legend reads the
  * same either way and cannot be wrong.
  */
-export function DifferenceSummary({ rows, locale }: { rows: CompareRow[]; locale: string }): React.JSX.Element {
-  const en = locale === 'en';
+export function DifferenceSummary({ rows }: { rows: CompareRow[] }): React.JSX.Element {
+  const t = useTranslations('qualityCompare.summary');
   const conflicts = rows.filter((entry) => entry.state === 'conflict').length;
   const gaps = rows.filter((entry) => entry.state === 'gap').length;
 
@@ -61,12 +62,12 @@ export function DifferenceSummary({ rows, locale }: { rows: CompareRow[]; locale
     <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
       <span className="inline-flex items-center gap-1.5">
         <span aria-hidden className="size-2 rounded-full bg-destructive" />
-        {en ? 'Fields that disagree:' : 'حقول متعارضة:'}
+        {t('conflicts')}
         <span className="font-medium tabular-nums text-foreground">{conflicts}</span>
       </span>
       <span className="inline-flex items-center gap-1.5">
         <span aria-hidden className="size-2 rounded-full border border-muted-foreground/40" />
-        {en ? 'Asked on one record only:' : 'لم يُسأل في أحد السجلين:'}
+        {t('gaps')}
         <span className="font-medium tabular-nums text-foreground">{gaps}</span>
       </span>
     </p>

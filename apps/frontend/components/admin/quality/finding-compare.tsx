@@ -1,5 +1,6 @@
 'use client';
 
+import { useTranslations } from 'next-intl';
 import type { QualityFinding } from '@/lib/quality-api';
 import { BuildingCompare } from './compare/building-compare';
 import { CitizenCompare } from './compare/citizen-compare';
@@ -73,6 +74,7 @@ export function FindingCompare({
   /** A correction landed — the queue behind this screen is now stale. */
   onChanged: () => void;
 }): React.JSX.Element {
+  const t = useTranslations('qualityCompare');
   const pair = comparablePairOf(finding);
 
   if (!pair) {
@@ -81,9 +83,7 @@ export function FindingCompare({
     return (
       <CompareShell finding={finding} locale={locale} onBack={onBack}>
         <p className="rounded-lg border bg-muted/40 p-4 text-sm text-muted-foreground">
-          {locale === 'en'
-            ? 'This finding names a single record, so there is nothing to set against it.'
-            : 'هذه الملاحظة تخص سجلاً واحداً، فلا يوجد ما يُقارن به.'}
+          {t('oneRecord')}
         </p>
       </CompareShell>
     );
