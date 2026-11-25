@@ -1365,6 +1365,13 @@ a row to that row's roles (longest match, CODE-4). So:
 - **Acceptance criteria:** 1. The page sends a role outside `CITIZEN_RECORD_EDIT_ROLES` back to `/citizens`, saying why. 2. The row is gone; the command palette still offers the action. 3. `lib/nav.test.ts` updated.
 - **Depends on:** NAV-01
 - **Verification:** `lib/nav.test.ts`; harness as «مشاهد فقط» on `/citizens/new`.
+- **Done 2026-11-25:** the row is gone (35 → 32). `/citizens/new` turns a role outside `CITIZEN_RECORD_EDIT_ROLES` back to
+  `/citizens`, with a toast saying why, before it draws the form (`useRoleGate`, `components/admin/use-role-gate.ts`;
+  `lib/use-role-gate-dom.test.ts` mounts the real page for seven roles). The palette still offers it and the header still
+  names it: `OFF_SIDEBAR_PAGES` / `paletteOnlyItems` / `pageNavItem` in `nav.ts`. The row's role list was a literal that left out
+  `COLLECTOR`; the page and the palette now use `CITIZEN_RECORD_EDIT_ROLES`, which has it and is what `CitizenController.create`
+  accepts, so a collector may now open the form (and see it in the palette). `lib/nav-02-06-07.test.ts`.
+  **Not done:** the harness as «مشاهد فقط»; nothing was rendered in a browser.
 - **Decision (NAV-01, 2026-11-25, [open-decisions §25](../open-decisions.md#25-the-staff-sidebar-and-the-page-moves-decided-2026-11-25)):** **approved** as written.
 
 ## [NAV-03] Merge the four quality rows into one «الجودة» page with tabs
@@ -1401,6 +1408,9 @@ a row to that row's roles (longest match, CODE-4). So:
 - **Acceptance criteria:** the row is removed; `/account` still opens for every staff role (it has no row, so `canAccessPath` admits it); the header breadcrumb still names the page.
 - **Depends on:** NAV-01
 - **Verification:** `lib/nav.test.ts` (`activeNavItem` for `/account`).
+- **Done 2026-11-25:** the row is gone; `/account` has no row, so `canAccessPath` admits every role (pinned in
+  `lib/nav-02-06-07.test.ts`), the user menu still opens it, and the header's crumb names it through `pageNavItem`
+  (`OFF_SIDEBAR_PAGES`, `activeNavItem` alone would name nothing). The palette does not offer it: the decision is "the user menu only".
 - **Decision (NAV-01, 2026-11-25, [open-decisions §25](../open-decisions.md#25-the-staff-sidebar-and-the-page-moves-decided-2026-11-25)):** **approved** as written.
 
 ## [NAV-07] Reach «فواتير تأثّرت بتصحيحات» from the fees page only
@@ -1410,6 +1420,11 @@ a row to that row's roles (longest match, CODE-4). So:
 - **Acceptance criteria:** the page turns away roles outside `PAYMENT_REVIEW_READ_ROLES` itself (it has `canReview` today; check that it also covers *reading*), then the row goes.
 - **Depends on:** NAV-01
 - **Verification:** harness as a role in `FEE_READ_ROLES` but not in the review set.
+- **Done 2026-11-25:** the page did not gate its reading (its `canReview` only hid the decision button, and the server's 403
+  showed as an error), so it now takes its token from `useRoleGate` with `PAYMENT_REVIEW_READ_ROLES`: a role outside it
+  reads nothing, is sent to `/fees` and told why. Then the row went. The fees page's header link (`canReadCorrections`) stays
+  the one door; the palette does not list it; the header's crumb still names the page (`pageNavItem`). The PAGE-04 menu
+  can take that link as it is. `lib/nav-02-06-07.test.ts`, `lib/use-role-gate-dom.test.ts`. **Not done:** the harness; nothing rendered in a browser.
 - **Decision (NAV-01, 2026-11-25, [open-decisions §25](../open-decisions.md#25-the-staff-sidebar-and-the-page-moves-decided-2026-11-25)):** **approved** as written.
 
 ## [NAV-08] Decide where «المستحق على عقار» lives

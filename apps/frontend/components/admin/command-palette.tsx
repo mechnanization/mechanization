@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { CornerDownLeft, Loader2, Search, User, X } from 'lucide-react';
 import type { CitizenListItem } from '@/lib/api-client';
 import { useCitizenSearch } from '@/lib/use-citizen-search';
-import { localizedLabel, visibleGroups, type NavItem } from '@/components/admin/nav';
+import { localizedLabel, paletteOnlyItems, visibleGroups, type NavItem } from '@/components/admin/nav';
 import { cn } from '@/lib/utils';
 
 export function CommandPalette({
@@ -34,7 +34,7 @@ export function CommandPalette({
   const inputRef = React.useRef<HTMLInputElement>(null);
 
   const sections = React.useMemo(() => {
-    const all = visibleGroups(role, { newsEnabled }).flatMap((group) => group.items);
+    const all = [...visibleGroups(role, { newsEnabled }).flatMap((group) => group.items), ...paletteOnlyItems(role)];
     const term = query.trim();
     if (!term) return all;
     return all.filter(

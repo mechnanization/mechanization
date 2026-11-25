@@ -18,7 +18,7 @@ import {
 import { useTheme } from 'next-themes';
 import { useEffect, useState } from 'react';
 import type { HeaderBack } from '@/components/admin/header-back-link';
-import { activeNavItem, canAccessPath, localizedLabel } from '@/components/admin/nav';
+import { canAccessPath, localizedLabel, pageNavItem } from '@/components/admin/nav';
 import { NotificationsBell } from '@/components/admin/notifications-bell';
 import { LanguageSwitcher } from '@/components/language-switcher';
 import { BackLink } from '@/components/ui/back-link';
@@ -81,7 +81,7 @@ export function AdminHeader({
   const { theme, setTheme } = useTheme();
   const base = `/${tenant}/${locale}/${adminPath}`;
   const role = session?.user.role;
-  const active = activeNavItem(pathname, base, role);
+  const active = pageNavItem(pathname, base, role);
 
   // Nothing theme-dependent renders until after hydration: the server cannot
   // know the stored choice, so marking the current radio item on the first
