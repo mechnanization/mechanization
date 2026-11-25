@@ -5,7 +5,9 @@ import { ApiRequestError } from '@/lib/api-client';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { FindingsList } from '@/components/admin/quality/findings-list';
 import { ALL, NO_AREA, NO_PIN, SETTLED, SETTLE_RESULT, TWICE, UNLINKED, findings } from './quality-findings-harness';
-import { BASE, PATH, TENANT, click, openScreen, settle, type Screen } from './quality-review-harness';
+import { BASE, PATH, TENANT, click, heldRead, openScreen, settle, type Screen } from './quality-review-harness';
+import ar from '../messages/ar.json';
+import en from '../messages/en.json';
 
 /*
   What «ملاحظات الجودة» does (PAGE-13, cleanup sprint, 2026-11-25), driven before its files are split: what it
@@ -107,7 +109,7 @@ describe('the queue', () => {
     await mount();
     expect(api.getFindings.mock.calls.at(-1)![2]).toEqual({ includeDismissed: false });
     expect(rows()).toHaveLength(4);
-    expect(rows()[0]).toContain('Rima Haddad، Karim Saleh');
+    expect(rows()[0]).toContain('Rima Haddad, Karim Saleh');
   });
 
   it('reads the resolved ones too once asked, and writes that to the address', async () => {
@@ -402,5 +404,190 @@ describe('the words after a press, in each language', () => {
     api.restoreFinding.mockRejectedValueOnce(new Error('network'));
     await press(table(), button);
     expect(toast.error).toHaveBeenCalledWith(failed);
+  });
+});
+
+describe('a write on one finding leaves the others alone (STA-3)', () => {
+  const both = [TWICE, { ...NO_PIN, dismissal: SETTLED.dismissal }];
+
+  /** Lets a test answer a write when it chooses to. */
+  function held(spy: ReturnType<typeof vi.fn>) {
+    let answer: (value: unknown) => void = () => {};
+    spy.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+    return () => act(async () => answer({}));
+  }
+
+  it('resolves one while another is being reopened, instead of closing the dialog with nothing sent', async () => {
+    api.getFindings.mockResolvedValue(findings(both));
+    held(api.restoreFinding);
+    await mount();
+    await press(row(NO_PIN, 1), 'Reopen');
+    expect((control(row(NO_PIN, 1), 'Reopen') as HTMLButtonElement).disabled).toBe(true);
+    expect((control(row(TWICE, 0), 'Resolved') as HTMLButtonElement).disabled).toBe(false);
+    await press(row(TWICE, 0), 'Resolved');
+    await write('Two cousins');
+    await press(dialog()!, 'Mark resolved');
+    expect(api.dismissFinding).toHaveBeenCalledTimes(1);
+    expect(toast.success).toHaveBeenCalledWith('Marked resolved');
+  });
+
+  it('resolves once however fast the dialog is confirmed, and keeps it open until the answer', async () => {
+    const answer = held(api.dismissFinding);
+    await mount();
+    await press(row(TWICE), 'Resolved');
+    await write('Two cousins');
+    const confirm = control(dialog()!, 'Mark resolved')!;
+    await act(async () => {
+      confirm.click();
+      confirm.click();
+    });
+    await settle();
+    expect(api.dismissFinding).toHaveBeenCalledTimes(1);
+    expect(dialog()).not.toBeNull();
+    await answer();
+    await settle();
+    expect(dialog()).toBeNull();
+  });
+
+  it('closes the dialog on the answer, and holds the finding until the list is read again', async () => {
+    await mount();
+    let read: (value: unknown) => void = () => {};
+    api.getFindings.mockImplementationOnce(() => {
+      const waiting = heldRead();
+      read = waiting.answer;
+      return waiting.promise;
+    });
+    await press(row(TWICE), 'Resolved');
+    await write('Two cousins');
+    await press(dialog()!, 'Mark resolved');
+    expect(dialog()).toBeNull();
+    expect((control(row(TWICE), 'Resolved') as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => read(findings()));
+    await settle();
+    expect((control(row(TWICE), 'Resolved') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('lets a refused reopen be tried again', async () => {
+    api.getFindings.mockResolvedValue(findings([SETTLED]));
+    api.restoreFinding.mockRejectedValueOnce(refused());
+    await mount();
+    await press(table(), 'Reopen');
+    await press(table(), 'Reopen');
+    expect(api.restoreFinding).toHaveBeenCalledTimes(2);
+  });
+
+  it('runs the unit review again once the last one ended', async () => {
+    api.settleAllUnitStatuses.mockRejectedValueOnce(refused());
+    await mount();
+    await press(screen.container, 'Review unit statuses');
+    await press(screen.container, 'Review unit statuses');
+    await press(screen.container, 'Review unit statuses');
+    expect(api.settleAllUnitStatuses).toHaveBeenCalledTimes(3);
+  });
+
+  it('holds a finding in its detail view too', async () => {
+    api.getFindings.mockResolvedValue(findings([SETTLED]));
+    held(api.restoreFinding);
+    await mount();
+    await press(table(), 'View details');
+    await press(screen.container, 'Reopen');
+    expect((control(screen.container, 'Reopen') as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe('what a write marks stale', () => {
+  const staled = (spy: { mock: { calls: unknown[][] } }) =>
+    spy.mock.calls.map((call) => (call[0] as { queryKey: unknown[] }).queryKey.join('/')).sort();
+
+  it('every page of findings and the officers’ figures, after one is resolved', async () => {
+    await mount();
+    const stale = vi.spyOn(screen.client, 'invalidateQueries');
+    await press(row(TWICE), 'Resolved');
+    await write('Two cousins');
+    await press(dialog()!, 'Mark resolved');
+    expect(staled(stale)).toEqual(['quality-findings/t1', 'quality-officers/t1']);
+  });
+
+  it('the buildings and the cases too, after the unit review', async () => {
+    await mount();
+    const stale = vi.spyOn(screen.client, 'invalidateQueries');
+    await press(screen.container, 'Review unit statuses');
+    expect(staled(stale)).toEqual(['buildings/t1', 'cases/t1', 'quality-findings/t1', 'quality-officers/t1']);
+  });
+
+  it('the review queue as well, after a correction made in the comparison', async () => {
+    await mount();
+    await press(row(TWICE), 'Compare');
+    const stale = vi.spyOn(screen.client, 'invalidateQueries');
+    await act(async () => compare.props!.onChanged());
+    await settle();
+    expect(staled(stale)).toEqual(['quality-findings/t1', 'quality-officers/t1', 'quality-reviews/t1']);
+  });
+
+  it('nothing, when the write was refused', async () => {
+    api.settleAllUnitStatuses.mockRejectedValueOnce(refused());
+    await mount();
+    const stale = vi.spyOn(screen.client, 'invalidateQueries');
+    await press(screen.container, 'Review unit statuses');
+    expect(stale).not.toHaveBeenCalled();
+  });
+});
+
+describe('a failed re-read keeps what is on screen (STA-1)', () => {
+  const failNextRead = async () => {
+    api.getFindings.mockRejectedValueOnce(refused());
+    await act(async () => {
+      await screen.client.invalidateQueries({ queryKey: ['quality-findings', TENANT] });
+    });
+    await settle();
+  };
+
+  it.each([
+    ['en', en.common.refreshFailed, en.common.retry, 'Could not load the findings.'],
+    ['ar', ar.common.refreshFailed, ar.common.retry, 'تعذّر تحميل ملاحظات الجودة.'],
+  ])('the list (%s)', async (locale, title, retry, message) => {
+    await mount(locale as Locale);
+    await failNextRead();
+    expect(rows()).toHaveLength(4);
+    expect(text()).toContain(title);
+    expect(text()).toContain(message);
+    await press(screen.container, retry);
+    expect(text()).not.toContain(title);
+  });
+
+  it('an open finding', async () => {
+    await mount();
+    await press(row(NO_AREA), 'View details');
+    await failNextRead();
+    expect(text()).toContain('The records this is about');
+    expect(text()).toContain(en.common.refreshFailed);
+  });
+
+  it('an open comparison', async () => {
+    await mount();
+    await press(row(TWICE), 'Compare');
+    await failNextRead();
+    expect(text()).toContain(`[compare:${TWICE.subjectKey}]`);
+    expect(text()).toContain(en.common.refreshFailed);
+  });
+
+  it('a half-written reason', async () => {
+    await mount();
+    await press(row(TWICE), 'Resolved');
+    await write('Half written');
+    await failNextRead();
+    expect(dialog()!.querySelector<HTMLTextAreaElement>('#resolve-reason')!.value).toBe('Half written');
+  });
+});
+
+describe('officers’ names are joined with the page’s comma', () => {
+  it.each([
+    ['en', 'Rima Haddad, Karim Saleh', 'View details'],
+    ['ar', 'Rima Haddad، Karim Saleh', 'عرض التفاصيل'],
+  ])('%s', async (locale, names, open) => {
+    await mount(locale as Locale);
+    expect(rows()[0]).toContain(names);
+    await press(row(TWICE), open);
+    expect(text()).toContain(names);
   });
 });

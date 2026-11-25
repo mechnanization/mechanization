@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Loader2 } from 'lucide-react';
 import type { QualityFinding } from '@/lib/quality-api';
@@ -52,6 +52,8 @@ export function ResolveDialog({
   const t = useTranslations('qualityFindings');
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
+  /* As of this instant: two presses in one tick see it, where `busy` is a render late (STA-3). */
+  const sending = useRef(false);
   const [failure, setFailure] = useState<string | null>(null);
 
   const close = (next: boolean) => {
@@ -64,7 +66,8 @@ export function ResolveDialog({
   };
 
   const run = async () => {
-    if (reason.trim().length < 4 || busy) return;
+    if (reason.trim().length < 4 || sending.current) return;
+    sending.current = true;
     setBusy(true);
     setFailure(null);
     try {
@@ -74,6 +77,7 @@ export function ResolveDialog({
     } catch (error) {
       setFailure(error instanceof Error ? error.message : t('saveFailed'));
     } finally {
+      sending.current = false;
       setBusy(false);
     }
   };

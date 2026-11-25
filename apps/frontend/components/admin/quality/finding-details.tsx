@@ -34,7 +34,7 @@ export function FindingDetails({
   related,
   locale,
   base,
-  busyKey,
+  busy,
   onBack,
   onOpen,
   onResolve,
@@ -46,8 +46,8 @@ export function FindingDetails({
   related: QualityFinding[];
   locale: string;
   base: string;
-  /** The `kind|subjectKey` of whichever finding is mid-write, or null. */
-  busyKey: string | null;
+  /** The `kind|subjectKey` of each finding mid-write. */
+  busy: ReadonlySet<string>;
   onBack: () => void;
   onOpen: (finding: QualityFinding) => void;
   onResolve: (finding: QualityFinding) => void;
@@ -55,6 +55,7 @@ export function FindingDetails({
   onCompare: (finding: QualityFinding) => void;
 }): React.JSX.Element {
   const t = useTranslations('qualityFindings');
+  const tCommon = useTranslations('common');
   const quality = qualityLabels(locale);
   const key = `${finding.kind}|${finding.subjectKey}`;
 
@@ -94,7 +95,7 @@ export function FindingDetails({
             {finding.officers.length > 0 ? (
               <FactCell
                 label={t('details.filedBy')}
-                value={finding.officers.map((officer) => officer.name).join('، ')}
+                value={finding.officers.map((officer) => officer.name).join(tCommon('listSeparator'))}
               />
             ) : null}
             <FactCell
@@ -228,7 +229,7 @@ export function FindingDetails({
       <FindingActions
         finding={finding}
         base={base}
-        busy={busyKey === key}
+        busy={busy.has(key)}
         showDetails={false}
         onDetails={() => undefined}
         onResolve={() => onResolve(finding)}

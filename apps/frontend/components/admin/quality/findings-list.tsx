@@ -3,6 +3,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { CircleCheck } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import { useQueryClient } from '@tanstack/react-query';
 import { qualityLabels } from '@mechanization/shared-schemas';
 import { ApiRequestError, logApiError, settleAllUnitStatuses } from '@/lib/api-client';
 import { useTabSearch, useUrlPagination, useUrlState } from '@/lib/use-url-state';
@@ -13,6 +14,9 @@ import {
   type QualityFinding,
 } from '@/lib/quality-api';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { readView } from '@/lib/read-view';
+import { CITIZEN_RECORD_EDIT_ROLES, hasRole } from '@/lib/staff-roles';
+import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
 import { DataTable } from '@/components/ui/data-table';
 import { useToast } from '@/components/ui/toast';
 import { ResolveDialog } from './resolve-dialog';
@@ -61,17 +65,6 @@ export { FINDINGS_URL } from './findings/finding-address';
  * they mean to fix later has silenced a reminder rather than fixed anything.
  */
 
-/**
- * The roles that may write to a citizen's file at all.
- *
- * The intersection of two lists that are not the same: `QUALITY_REVIEWER_ROLES`
- * opens this screen (and includes an auditor), while `PATCH /citizens/:id` is
- * for the roles that register households. An auditor comparing two files is
- * doing their job; offering them an «تعديل» button that the endpoint answers
- * with 403 is the portal handing somebody a control it knows will fail.
- */
-const CITIZEN_EDIT_ROLES: readonly string[] = ['SUPER_ADMIN', 'ADMINISTRATIVE_OFFICER'];
-
 export function FindingsList({
   tenant,
   base,
@@ -98,11 +91,21 @@ export function FindingsList({
   const { kind, dismissed: includeDismissed } = queue;
   const [pagination, setPagination] = useUrlPagination({ defaultSize: 10 });
   const [search, setSearch] = useTabSearch(tenant, 'quality-findings');
-  const [busy, setBusy] = useState<string | null>(null);
+  /** The writes on the wire, by finding (`keyOf`), and `settle-all`: their controls are held. */
+  const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
   // SUBMIT-04: `busy` is React state, set asynchronously, so a double-click can pass
   // its stale read. The ref is checked and set first, and released when the write settles.
-  const workRef = useRef(false);
-  const settleAllRef = useRef(false);
+  // By finding, so a write on one never swallows a write on another.
+  const inFlight = useRef(new Set<string>());
+  const hold = (key: string) => {
+    inFlight.current.add(key);
+    setBusy(new Set(inFlight.current));
+  };
+  const release = (key: string) => {
+    inFlight.current.delete(key);
+    setBusy(new Set(inFlight.current));
+  };
+  const queryClient = useQueryClient();
   const [resolving, setResolving] = useState<QualityFinding | null>(null);
   /**
    * A view the address must not hold: the comparison, or a detail view whose
@@ -167,6 +170,12 @@ export function FindingsList({
     );
   }, [all, selected]);
 
+  /* What a write here changes: every page of findings, and what «حسب الموظف» counts. */
+  const reread = (): Promise<unknown> => {
+    void queryClient.invalidateQueries({ queryKey: ['quality-officers', tenant] });
+    return queryClient.invalidateQueries({ queryKey: ['quality-findings', tenant] });
+  };
+
   /**
    * One write, reported once.
    *
@@ -181,23 +190,21 @@ export function FindingsList({
     done: string,
     quiet = false,
   ) => {
-    if (!token || workRef.current) return;
-    workRef.current = true;
-    setBusy(key);
+    if (!token || inFlight.current.has(key)) return;
+    hold(key);
     try {
       await work();
-      toast.success(done);
-      query.refetch();
     } catch (caught) {
+      release(key);
       logApiError(caught);
       if (!quiet) {
         toast.error(caught instanceof ApiRequestError ? caught.message : t('saveFailed'));
       }
       throw caught;
-    } finally {
-      setBusy(null);
-      workRef.current = false;
     }
+    toast.success(done);
+    // Not awaited: the dialog that asked closes now, and the finding's controls stay held until the list is read.
+    void reread().finally(() => release(key));
   };
 
   const reopen = (finding: QualityFinding) =>
@@ -264,6 +271,13 @@ export function FindingsList({
     />
   );
 
+  const read = readView(query.data, query.error);
+  /** A re-read that failed: what is on screen stays, with this above it (STA-1). */
+  const refreshAlert =
+    read.state === 'ready' && read.refreshFailed ? (
+      <RefreshFailedAlert message={read.refreshFailed} onRetry={query.refetch} />
+    ) : null;
+
   /*
     A sub-view whose finding is gone.
 
@@ -281,16 +295,21 @@ export function FindingsList({
   if (view.mode === 'compare' && selected) {
     return (
       <>
+        {refreshAlert}
         <FindingCompare
           finding={selected}
           tenant={tenant}
           base={base}
           locale={locale}
           token={token}
-          canEdit={CITIZEN_EDIT_ROLES.includes(role ?? '')}
+          canEdit={hasRole(CITIZEN_RECORD_EDIT_ROLES, role)}
           canMerge={role === 'SUPER_ADMIN'}
           onBack={() => setView({ mode: 'list' })}
-          onChanged={() => query.refetch()}
+          onChanged={() => {
+            // A corrected file is «عُدِّل بعد الاعتماد» in the review queue too.
+            void queryClient.invalidateQueries({ queryKey: ['quality-reviews', tenant] });
+            void reread();
+          }}
         />
         {resolveDialog}
       </>
@@ -300,12 +319,13 @@ export function FindingsList({
   if (view.mode === 'details' && selected) {
     return (
       <>
+        {refreshAlert}
         <FindingDetails
           finding={selected}
           related={related}
           locale={locale}
           base={base}
-          busyKey={busy}
+          busy={busy}
           onBack={() => setView({ mode: 'list' })}
           onOpen={(finding) => setView({ mode: 'details', key: keyOf(finding) })}
           onResolve={(finding) => setResolving(finding)}
@@ -318,9 +338,8 @@ export function FindingsList({
   }
 
   const settleAll = async () => {
-    if (!token || settleAllRef.current) return;
-    settleAllRef.current = true;
-    setBusy('settle-all');
+    if (!token || inFlight.current.has('settle-all')) return;
+    hold('settle-all');
     try {
       const res = await settleAllUnitStatuses(tenant, token);
       toast.success(
@@ -332,21 +351,24 @@ export function FindingsList({
           pending: res.stillUnderReview,
         }),
       );
-      await query.refetch();
+      // Statuses were corrected and review cases opened or closed across the register.
+      void queryClient.invalidateQueries({ queryKey: ['buildings', tenant] });
+      void queryClient.invalidateQueries({ queryKey: ['cases', tenant] });
+      await reread();
     } catch (caught) {
       logApiError(caught);
       toast.error(caught instanceof ApiRequestError ? caught.message : t('unitReview.failed'));
     } finally {
-      setBusy(null);
-      settleAllRef.current = false;
+      release('settle-all');
     }
   };
 
   return (
     <div className="space-y-4">
+      {refreshAlert}
       {role === 'SUPER_ADMIN' ? (
         <UnitStatusReview
-          running={busy === 'settle-all'}
+          running={busy.has('settle-all')}
           ready={Boolean(token)}
           onRun={() => void settleAll()}
         />
@@ -379,7 +401,7 @@ export function FindingsList({
         pagination={pagination}
         onPaginationChange={setPagination}
         loading={query.loading}
-        error={query.error}
+        error={read.state === 'failed' ? read.error : null}
         onRetry={query.refetch}
         emptyIcon={<CircleCheck className="size-8 text-success" aria-hidden />}
       />

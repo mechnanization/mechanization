@@ -29,13 +29,14 @@ export function useFindingColumns({
   base: string;
   locale: string;
   quality: ReturnType<typeof qualityLabels>;
-  /** The `kind|subjectKey` of the finding mid-write, or null. */
-  busy: string | null;
+  /** The `kind|subjectKey` of each finding mid-write. */
+  busy: ReadonlySet<string>;
   setView: (next: View) => void;
   setResolving: (finding: QualityFinding) => void;
   reopen: (finding: QualityFinding) => void;
 }): ColumnDef<QualityFinding>[] {
   const t = useTranslations('qualityFindings');
+  const tCommon = useTranslations('common');
 
   const columns = useMemo<ColumnDef<QualityFinding>[]>(
     () => [
@@ -142,7 +143,7 @@ export function useFindingColumns({
       },
       {
         id: 'officers',
-        accessorFn: (finding) => finding.officers.map((officer) => officer.name).join('، '),
+        accessorFn: (finding) => finding.officers.map((officer) => officer.name).join(tCommon('listSeparator')),
         header: t('columns.officers'),
         enableSorting: false,
         meta: { label: t('columns.officers'), headerClassName: 'w-px' },
@@ -188,7 +189,7 @@ export function useFindingColumns({
             finding={row.original}
             base={base}
             compact
-            busy={busy === keyOf(row.original)}
+            busy={busy.has(keyOf(row.original))}
             onDetails={() => setView({ mode: 'details', key: keyOf(row.original) })}
             onResolve={() => setResolving(row.original)}
             onReopen={() => reopen(row.original)}
@@ -207,7 +208,7 @@ export function useFindingColumns({
       part of a row's controls that changes while the screen is open.
     */
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [base, busy, locale, quality, t, tenant, token],
+    [base, busy, locale, quality, t, tCommon, tenant, token],
   );
 
   return columns;
