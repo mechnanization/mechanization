@@ -10,7 +10,8 @@ import {
   reviewBillBasis,
   type CorrectionAffectedBill,
 } from '@/lib/api-client';
-import { useStaffSession } from '@/lib/use-staff-session';
+import { useRoleGate } from '@/components/admin/use-role-gate';
+import { PAYMENT_REVIEW_READ_ROLES } from '@mechanization/shared-schemas';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { usePagerLabels } from '@/lib/use-pager-labels';
 import { param, useUrlState } from '@/lib/use-url-state';
@@ -58,8 +59,16 @@ export default function CorrectionBillsPage({
   const base = `/${tenant}/${locale}/${adminPath}`;
   const toast = useToast();
 
-  const { token, user: staffUser } = useStaffSession(tenant, base);
-  const role = staffUser?.role || undefined;
+  /*
+    No sidebar row since NAV-07: a path under `/fees` opens to every role that reads the ledger,
+    which is wider than `PAYMENT_REVIEW_READ_ROLES`. The page turns the others away itself, and a
+    role it turns away gets no token, so nothing below reads for it.
+  */
+  const { token, role: gateRole } = useRoleGate(tenant, base, PAYMENT_REVIEW_READ_ROLES, {
+    to: `${base}/fees`,
+    reason: 'feeCorrections',
+  });
+  const role = gateRole || undefined;
   const [{ status: show, page }, setUrlState] = useUrlState(CORRECTIONS_URL_STATE);
   const [reviewing, setReviewing] = useState<CorrectionAffectedBill | null>(null);
   const [saving, setSaving] = useState(false);

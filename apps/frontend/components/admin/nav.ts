@@ -49,7 +49,7 @@ import {
   TREASURY_WORK_ROLES,
   WORKING_STAFF_ROLES,
 } from '@mechanization/shared-schemas';
-import { QUALITY_REVIEWER_ROLES, WORKLIST_ROLES } from '@/lib/staff-roles';
+import { CITIZEN_RECORD_EDIT_ROLES, QUALITY_REVIEWER_ROLES, WORKLIST_ROLES } from '@/lib/staff-roles';
 
 /*
  * Every row's roles come from the shared role sets the API's `@Roles` are
@@ -162,8 +162,10 @@ export interface NavGroup {
  *
  * ## The approved map (NAV-01, decided 2026-11-25; docs/open-decisions.md §25)
  *
- * The rows below are still today's 35; the moves are Abed's tasks, each
- * landing with its own `lib/nav.test.ts` change. When they are all in:
+ * The rows below are 32: NAV-02, NAV-06 and NAV-07 have moved (2026-11-25;
+ * their pages are in `OFF_SIDEBAR_PAGES`, after this list), and the rest are
+ * Abed's tasks, each landing with its own `lib/nav.test.ts` change. When they
+ * are all in:
  *
  *  - (landing): لوحة التحكم · أرباح المسح الميداني · جولتي — unchanged.
  *  - «المواطنون»: سجل المواطنين · ملفات ناقصة · روابط المالكين · طلبات المعاملات.
@@ -280,29 +282,6 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: Users,
         roles: EVERY_STAFF_ROLE,
         keywords: ['سجل', 'مواطن', 'مواطنون', 'عقار', 'استيراد', 'citizens', 'registry'],
-      },
-      /*
-        The counter's most-used action, promoted to a row of its own.
-
-        It was reachable only as a button on the register, which put the one
-        thing a clerk does forty times a day two screens from where they land
-        and made it invisible to the command palette. A distinct row also gives
-        the draft-restore notice somewhere to live: leaving this page no longer
-        discards what has been typed (see `citizen-draft.ts`), and that promise
-        only makes sense if there is a page to come back *to*.
-
-        Narrower than the register deliberately — these are the roles
-        `CitizenEditor` admits and `CitizenController.create` accepts. An
-        `AUDITOR` reads the register and does not add to it, so offering them
-        the form would be offering a save the server refuses.
-      */
-      {
-        path: '/citizens/new',
-        label: 'تسجيل مواطن جديد',
-        labelEn: 'Register a citizen',
-        icon: UserPlus,
-        roles: ['SUPER_ADMIN', 'FIELD_INSPECTOR', 'ADMINISTRATIVE_OFFICER'],
-        keywords: ['تسجيل', 'مواطن', 'جديد', 'إضافة', 'أسرة', 'نموذج', 'register', 'new', 'add'],
       },
       /*
         The register narrowed to records saved with fields still to confirm —
@@ -482,19 +461,6 @@ export const NAV_GROUPS: NavGroup[] = [
         icon: ArrowLeftRight,
         roles: ['SUPER_ADMIN', 'AUDITOR', 'COLLECTOR', 'ACCOUNTANT', 'VIEWER'],
         keywords: ['قبض', 'إيصال', 'محصّل', 'نقد', 'payments', 'transactions'],
-      },
-      /*
-        Open bills a correction to the register affected — the accountant's
-        worklist, since a correction never changes a bill by itself. The
-        auditor reads it; the collector and the office do not decide on bills.
-      */
-      {
-        path: '/fees/corrections',
-        label: 'فواتير تأثّرت بتصحيحات',
-        labelEn: 'Bills affected by corrections',
-        icon: FileWarning,
-        roles: PAYMENT_REVIEW_READ_ROLES,
-        keywords: ['تصحيح', 'فاتورة', 'فرق', 'مراجعة', 'corrections', 'bills', 'difference'],
       },
       /*
         «المستحق على عقار» — the question asked before a براءة ذمّة: what is
@@ -786,19 +752,83 @@ export const NAV_GROUPS: NavGroup[] = [
         roles: ['SUPER_ADMIN'],
         keywords: ['موظف', 'صلاحيات', 'حساب', 'staff', 'users'],
       },
-      // Everyone has a password to change and a second factor to enrol, and it
-      // is their own — there is no role for which this is someone else's data.
-      {
-        path: '/account',
-        label: 'أمان الحساب',
-        labelEn: 'Account security',
-        icon: KeyRound,
-        roles: EVERY_STAFF_ROLE,
-        keywords: ['كلمة المرور', 'أمان', 'حسابي', 'مصادقة', '2fa', 'password', 'security', 'account'],
-      },
     ],
   },
 ];
+
+/**
+ * A page that has no row in the sidebar, and what still has to know it.
+ *
+ * A page whose row leaves `NAV_GROUPS` leaves with it everything that reads
+ * that list: the header's crumb (`pageNavItem`) and the command palette. These
+ * pages say what the row used to say, so those two keep working, and nothing
+ * else does: the sidebar, `canAccessPath` and `defaultPathFor` read
+ * `NAV_GROUPS` only, so a path here still opens to every role the sidebar
+ * would let in (a path with no row is `/citizens`'s or `/fees`'s). `roles`
+ * is who the page is for, and each page turns the others away itself.
+ *
+ *  - «تسجيل مواطن جديد» (NAV-02): opened from the citizens page's header, the
+ *    unsurveyed worklist, a unit in the matrix, a case, and the palette.
+ *  - «فواتير تأثّرت بتصحيحات» (NAV-07): opened from the fees page's header.
+ *  - «أمان الحساب» (NAV-06): opened from the user menu.
+ */
+export const OFF_SIDEBAR_PAGES: ReadonlyArray<NavItem & { inPalette: boolean }> = [
+  {
+    path: '/citizens/new',
+    label: 'تسجيل مواطن جديد',
+    labelEn: 'Register a citizen',
+    icon: UserPlus,
+    // The roles `CitizenEditor` admits and `CitizenController.create` accepts, not a copy of them.
+    roles: CITIZEN_RECORD_EDIT_ROLES,
+    keywords: ['تسجيل', 'مواطن', 'جديد', 'إضافة', 'أسرة', 'نموذج', 'register', 'new', 'add'],
+    inPalette: true,
+  },
+  {
+    path: '/fees/corrections',
+    label: 'فواتير تأثّرت بتصحيحات',
+    labelEn: 'Bills affected by corrections',
+    icon: FileWarning,
+    roles: PAYMENT_REVIEW_READ_ROLES,
+    keywords: ['تصحيح', 'فاتورة', 'فرق', 'مراجعة', 'corrections', 'bills', 'difference'],
+    inPalette: false,
+  },
+  {
+    path: '/account',
+    label: 'أمان الحساب',
+    labelEn: 'Account security',
+    icon: KeyRound,
+    // Everyone has a password to change and a second factor to enrol, and it is their own.
+    roles: EVERY_STAFF_ROLE,
+    keywords: ['كلمة المرور', 'أمان', 'حسابي', 'مصادقة', '2fa', 'password', 'security', 'account'],
+    inPalette: false,
+  },
+];
+
+/** The off-sidebar pages this role is for. */
+function offSidebarFor(role: string | undefined): ReadonlyArray<NavItem & { inPalette: boolean }> {
+  return role ? OFF_SIDEBAR_PAGES.filter((page) => page.roles.includes(role)) : [];
+}
+
+/** The off-sidebar pages the command palette offers this role, beside the sidebar's rows. */
+export function paletteOnlyItems(role: string | undefined): NavItem[] {
+  return offSidebarFor(role).filter((page) => page.inPalette);
+}
+
+/**
+ * What the header's crumb names for a pathname: the sidebar's row, or an
+ * off-sidebar page when its address is the longer match (`/citizens/new` under
+ * `/citizens`, `/account` under no row at all).
+ */
+export function pageNavItem(pathname: string | null, base: string, role: string | undefined): NavItem | undefined {
+  const row = activeNavItem(pathname, base, role);
+  if (!pathname) return row;
+  const page = offSidebarFor(role)
+    .map((candidate) => ({ candidate, length: matchLength(candidate, pathname, base) }))
+    .filter((match) => match.length >= 0)
+    .sort((a, b) => b.length - a.length)[0];
+  if (!page) return row;
+  return !row || page.length > matchLength(row, pathname, base) ? page.candidate : row;
+}
 
 /**
  * The groups this role may see, with empty groups dropped entirely.

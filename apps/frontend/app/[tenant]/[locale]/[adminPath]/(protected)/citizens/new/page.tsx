@@ -4,6 +4,8 @@ import { use, useState } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { CITIZEN_RESIDENCE } from '@mechanization/shared-schemas';
 import { CitizenEditor } from '@/components/admin/citizen-editor';
+import { useRoleGate } from '@/components/admin/use-role-gate';
+import { CITIZEN_RECORD_EDIT_ROLES } from '@/lib/staff-roles';
 import { readLinkSeed } from '@/lib/tab-search';
 
 /**
@@ -17,6 +19,10 @@ import { readLinkSeed } from '@/lib/tab-search';
  * `?fromCaseId=` arrives from the "Register Citizen" action on an open حالة —
  * it seeds the first property card from what that visit already recorded, and
  * resolves the case back to whoever gets created here. See `CitizenEditor`.
+ *
+ * It has no sidebar row since NAV-02, so a path under `/citizens` opens it to every
+ * role: a role outside `CITIZEN_RECORD_EDIT_ROLES` (the ones the server lets create)
+ * is sent back to the register, with a toast saying why, before the form is drawn.
  */
 export default function NewCitizenPage({
   params,
@@ -24,6 +30,11 @@ export default function NewCitizenPage({
   params: Promise<{ tenant: string; locale: string; adminPath: string }>;
 }) {
   const { tenant, locale, adminPath } = use(params);
+  const base = `/${tenant}/${locale}/${adminPath}`;
+  const gate = useRoleGate(tenant, base, CITIZEN_RECORD_EDIT_ROLES, {
+    to: `${base}/citizens`,
+    reason: 'registerCitizen',
+  });
   const searchParams = useSearchParams();
   const fromCaseId = searchParams.get('fromCaseId') ?? undefined;
 
@@ -76,6 +87,9 @@ export default function NewCitizenPage({
       ? undefined
       : readLinkSeed(tenant, query ? `${pathname}?${query}` : pathname),
   );
+
+  // Nothing until the session is read, and nothing for a role the form would only refuse.
+  if (gate.allowed !== true) return null;
 
   return (
     <CitizenEditor

@@ -60,6 +60,11 @@
     "errorHome": "Back to the home page",
     "refreshFailed": "The page could not be refreshed — what is shown is the last read"
   },
+  "access": {
+    "title": "This page is not for your role",
+    "registerCitizen": "Your role reads the register but does not add to it. You can read it from this page.",
+    "feeCorrections": "Your role does not read the bills affected by corrections. Your work is on the fees page."
+  },
   "nav": {
     "registry": "Registry",
     "land": "Land & Cadastre",
