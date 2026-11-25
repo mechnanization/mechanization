@@ -9,7 +9,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { FactCell, FactRow } from '@/components/ui/facts';
 import { cn } from '@/lib/utils';
-import { FindingActions, FindingDetail, SeverityMark, subjectHref } from './finding-parts';
+import { FindingActions } from './finding-actions';
+import { FindingDetail, SeverityMark, subjectHref } from './finding-parts';
 
 /**
  * «عرض التفاصيل» — one finding, and everything else the register has against

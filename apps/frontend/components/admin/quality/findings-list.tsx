@@ -1,39 +1,30 @@
 'use client';
 
 import { useMemo, useRef, useState } from 'react';
-import Link from 'next/link';
-import type { ColumnDef } from '@tanstack/react-table';
-import { CircleCheck, ShieldQuestion } from 'lucide-react';
-import {
-  QUALITY_FINDING_KIND,
-  qualityLabels,
-  type QualityFindingKind,
-} from '@mechanization/shared-schemas';
+import { CircleCheck } from 'lucide-react';
+import { qualityLabels } from '@mechanization/shared-schemas';
 import { ApiRequestError, logApiError, settleAllUnitStatuses } from '@/lib/api-client';
-import type { UrlParam } from '@/lib/url-state';
-import { param, useTabSearch, useUrlPagination, useUrlState } from '@/lib/use-url-state';
+import { useTabSearch, useUrlPagination, useUrlState } from '@/lib/use-url-state';
 import {
   dismissFinding,
   getFindings,
   restoreFinding,
   type QualityFinding,
 } from '@/lib/quality-api';
-import { formatRelative } from '@/lib/dates';
 import { useStaffQuery } from '@/lib/use-staff-query';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { DataTable, type DataTableLabels } from '@/components/ui/data-table';
+import { DataTable } from '@/components/ui/data-table';
 import { useToast } from '@/components/ui/toast';
-import { cn } from '@/lib/utils';
-import {
-  FindingActions,
-  FindingDetail,
-  ResolveDialog,
-  SeverityMark,
-  subjectHref,
-} from './finding-parts';
+import { ResolveDialog } from './resolve-dialog';
 import { FindingCompare } from './finding-compare';
 import { FindingDetails } from './finding-details';
+import { FINDING_KEY, FINDINGS_URL, keyOf, type View } from './findings/finding-address';
+import { FindingFilters } from './findings/finding-filters';
+import { FindingGone } from './findings/finding-gone';
+import { tableLabels } from './findings/table-labels';
+import { UnitStatusReview } from './findings/unit-status-review';
+import { useFindingColumns } from './findings/use-finding-columns';
+
+export { FINDINGS_URL } from './findings/finding-address';
 
 /**
  * «ملاحظات الجودة» — what the register itself can tell is probably wrong.
@@ -69,46 +60,6 @@ import { FindingDetails } from './finding-details';
  * they mean to fix later has silenced a reminder rather than fixed anything.
  */
 
-type View =
-  | { mode: 'list' }
-  | { mode: 'details'; key: string }
-  | { mode: 'compare'; key: string };
-
-const keyOf = (finding: QualityFinding) => `${finding.kind}|${finding.subjectKey}`;
-
-const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
-const FINDING_KEY = new RegExp(
-  `^(?:${QUALITY_FINDING_KIND.join('|')})\\|(?:${UUID}(?:,${UUID})?|queue)$`,
-);
-
-/**
- * `?finding=` — the finding «عرض التفاصيل» is open on, spelled as `keyOf`.
- *
- * Only in the shape `DataQualityService` builds today: a known kind, then one
- * row UUID, a sorted pair of them, or the owner-link `queue`. No subject key is
- * a name or a document number, and a future one that is fails this test and
- * stays out of the address (`url-state.ts`) — its detail view still opens, as
- * component state.
- *
- * Only the detail view, which reads. «الإجراء» corrects and merges records, so
- * a reload or a pasted link must never land inside it: a reload from there
- * opens the same finding's detail instead, one click from where it was.
- */
-const FINDING: UrlParam<string> = {
-  parse: (raw) => {
-    const value = raw?.trim() ?? '';
-    return FINDING_KEY.test(value) ? value : '';
-  },
-  serialize: (value) => (FINDING_KEY.test(value) ? value : null),
-};
-
-/** The queue's filters and the open detail view. `page`/`limit` are `useUrlPagination`'s. */
-export const FINDINGS_URL = {
-  kind: param.oneOf<QualityFindingKind | ''>(QUALITY_FINDING_KIND, ''),
-  dismissed: param.flag(),
-  finding: FINDING,
-};
-
 /**
  * The roles that may write to a citizen's file at all.
  *
@@ -119,64 +70,6 @@ export const FINDINGS_URL = {
  * with 403 is the portal handing somebody a control it knows will fail.
  */
 const CITIZEN_EDIT_ROLES: readonly string[] = ['SUPER_ADMIN', 'ADMINISTRATIVE_OFFICER'];
-
-function tableLabels(locale: string): DataTableLabels {
-  if (locale === 'en') {
-    return {
-      searchAriaLabel: 'Search findings',
-      searchPlaceholder: 'Search by record, reference number or officer…',
-      clearSearch: 'Clear search',
-      searchHint: 'Enter',
-      searchApplied: 'Search: "{term}"',
-      empty: 'Nothing to look at.',
-      emptyHint:
-        'No duplicate records, copied numbers or contradictions were found in the register.',
-      emptySearch: 'No finding matches your search.',
-      emptySearchHint: 'Try the record’s name, its reference number, or the officer who filed it.',
-      loadError: 'Failed to load the findings.',
-      retry: 'Retry',
-      previous: 'Previous',
-      next: 'Next',
-      pageOf: 'Page {current} of {total}',
-      rowsPerPage: 'Rows per page',
-      totalRows: '{count} findings',
-      sortAscending: 'Sort ascending',
-      sortDescending: 'Sort descending',
-      sortNone: 'Clear sorting',
-      columns: 'Columns',
-      columnsHint: 'Visible columns',
-      resetColumns: 'Reset to default',
-      filters: 'Filters',
-      clearFilters: 'Clear filters',
-    };
-  }
-  return {
-    searchAriaLabel: 'بحث في الملاحظات',
-    searchPlaceholder: 'ابحث باسم السجل أو رقمه المرجعي أو الموظف…',
-    clearSearch: 'مسح البحث',
-    searchHint: 'Enter',
-    searchApplied: 'بحث: «{term}»',
-    empty: 'لا ملاحظات.',
-    emptyHint: 'لم يُعثر على سجلات مكرَّرة أو أرقام منقولة أو تناقضات في السجل.',
-    emptySearch: 'لا ملاحظة مطابقة لبحثك.',
-    emptySearchHint: 'جرّب اسم السجل أو رقمه المرجعي أو اسم الموظف الذي سجَّله.',
-    loadError: 'تعذّر تحميل ملاحظات الجودة.',
-    retry: 'إعادة المحاولة',
-    previous: 'السابق',
-    next: 'التالي',
-    pageOf: 'صفحة {current} من {total}',
-    rowsPerPage: 'صفوف في الصفحة',
-    totalRows: '{count} ملاحظة',
-    sortAscending: 'ترتيب تصاعدي',
-    sortDescending: 'ترتيب تنازلي',
-    sortNone: 'إلغاء الترتيب',
-    columns: 'الأعمدة',
-    columnsHint: 'الأعمدة الظاهرة',
-    resetColumns: 'إعادة الافتراضي',
-    filters: 'الفلاتر',
-    clearFilters: 'مسح الفلاتر',
-  };
-}
 
 export function FindingsList({
   tenant,
@@ -315,227 +208,21 @@ export function FindingsList({
       en ? 'Reopened' : 'أُعيد فتح الملاحظة',
     ).catch(() => undefined);
 
-  const columns = useMemo<ColumnDef<QualityFinding>[]>(
-    () => [
-      {
-        id: 'finding',
-        accessorFn: (finding) => quality.findingKind[finding.kind] ?? finding.kind,
-        header: en ? 'Finding' : 'الملاحظة',
-        meta: {
-          mobile: 'primary',
-          label: en ? 'Finding' : 'الملاحظة',
-          headerClassName: 'w-px',
-        },
-        cell: ({ row }) => (
-          <span className="flex items-center gap-2">
-            <SeverityMark severity={row.original.severity} locale={locale} withText={false} />
-            <span className="font-medium">
-              {quality.findingKind[row.original.kind] ?? row.original.kind}
-            </span>
-            {/*
-              The state rides on the name rather than holding a column of its
-              own: with «إظهار المحلولة» off every row is open, so a column that
-              says «مفتوحة» eleven times says nothing.
-            */}
-            {row.original.dismissal ? (
-              <Badge variant="soft-muted">{en ? 'Resolved' : 'تم الحل'}</Badge>
-            ) : null}
-          </span>
-        ),
-      },
-      {
-        id: 'detail',
-        accessorFn: (finding) => finding.detail,
-        header: en ? 'What was found' : 'ما الذي وُجد',
-        /*
-          The one column that takes the leftover width, and the reason the row
-          has no gap in the middle of it.
-
-          Every other column asks for exactly what its content needs (`w-px`),
-          so whatever the window has to spare lands here instead of pooling
-          between two columns. `max-w-0` on the cell is what makes the clipping
-          work: a table column grows to its widest unbreakable content, and this
-          sentence never wraps — without it the column would size itself to the
-          longest finding in the register and the ellipsis would never appear.
-        */
-        meta: {
-          label: en ? 'What was found' : 'ما الذي وُجد',
-          headerClassName: 'w-full min-w-[12rem]',
-          cellClassName: 'max-w-0',
-        },
-        // One line, clipped, with the whole sentence on hover. The row's job is
-        // to be recognised at a glance; reading it is what «عرض التفاصيل» is for.
-        cell: ({ row }) => (
-          <FindingDetail
-            detail={row.original.detail}
-            locale={locale}
-            tail={false}
-            className="text-sm"
-          />
-        ),
-      },
-      {
-        id: 'records',
-        accessorFn: (finding) =>
-          finding.subjects
-            .map((subject) => `${subject.label} ${subject.secondary ?? ''}`)
-            .join(' '),
-        header: en ? 'Records' : 'السجلات',
-        enableSorting: false,
-        meta: {
-          label: en ? 'Records' : 'السجلات',
-          headerClassName: 'w-px',
-        },
-        cell: ({ row }) =>
-          row.original.subjects.length === 0 ? (
-            <span className="text-muted-foreground">—</span>
-          ) : (
-            /*
-              Names only, on one line. The reference number, the parcel and the
-              second record's own numbers are all on the detail view — a queue
-              row that carries every identifier a record has is four lines tall
-              and still not enough to act on.
-            */
-            <span
-              className="block max-w-[16rem] truncate"
-              title={row.original.subjects
-                .map((subject) =>
-                  subject.secondary ? `${subject.label} — ${subject.secondary}` : subject.label,
-                )
-                .join(' • ')}
-            >
-              {row.original.subjects.map((subject, index) => (
-                <span key={`${subject.kind}-${subject.id}`}>
-                  {index > 0 ? <span className="text-muted-foreground"> • </span> : null}
-                  <Link
-                    href={subjectHref(subject, base)}
-                    className="text-primary underline-offset-4 hover:underline"
-                  >
-                    <bdi>{subject.label}</bdi>
-                  </Link>
-                </span>
-              ))}
-            </span>
-          ),
-      },
-      {
-        id: 'officers',
-        accessorFn: (finding) => finding.officers.map((officer) => officer.name).join('، '),
-        header: en ? 'Filed by' : 'سجَّلها',
-        enableSorting: false,
-        meta: { label: en ? 'Filed by' : 'سجَّلها', headerClassName: 'w-px' },
-        cell: ({ getValue }) => {
-          const names = (getValue() as string) || '—';
-          // Capped: a finding about two officers' filings carries both names,
-          // and a shrink-to-fit column would hand the pair a third of the row.
-          return (
-            <span className="block max-w-[12rem] truncate text-muted-foreground" title={names}>
-              {names}
-            </span>
-          );
-        },
-      },
-      {
-        id: 'at',
-        accessorFn: (finding) => finding.at ?? '',
-        header: en ? 'Last change' : 'آخر تغيير',
-        meta: { label: en ? 'Last change' : 'آخر تغيير', headerClassName: 'w-px' },
-        cell: ({ row }) =>
-          row.original.at ? (
-            <span className="text-muted-foreground">{formatRelative(row.original.at, locale)}</span>
-          ) : (
-            <span className="text-muted-foreground">—</span>
-          ),
-      },
-      {
-        id: 'actions',
-        header: en ? 'Action' : 'الإجراء',
-        enableSorting: false,
-        enableHiding: false,
-        meta: {
-          mobile: 'actions',
-          align: 'end',
-          label: en ? 'Action' : 'الإجراء',
-          // Shrink-to-fit: with the controls on one nowrap line, `w-px` makes
-          // the column ask for exactly their width and leaves the rest of the
-          // table to the values.
-          headerClassName: 'w-px',
-        },
-        cell: ({ row }) => (
-          <FindingActions
-            finding={row.original}
-            base={base}
-            locale={locale}
-            compact
-            busy={busy === keyOf(row.original)}
-            onDetails={() => setView({ mode: 'details', key: keyOf(row.original) })}
-            onResolve={() => setResolving(row.original)}
-            onReopen={() => reopen(row.original)}
-            onCompare={() => setView({ mode: 'compare', key: keyOf(row.original) })}
-            // End-aligned in the table, where the column sits against that
-            // edge; left alone in the phone card, where the row is full width.
-            className="sm:justify-end"
-          />
-        ),
-      },
-    ],
-    /*
-      `reopen` is left out on purpose — it is rebuilt every render and listing
-      it would make this memo do nothing. What it closes over is listed instead:
-      the tenant and the token it writes with, and `busy`, which is the only
-      part of a row's controls that changes while the screen is open.
-    */
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [base, busy, en, locale, quality, tenant, token],
-  );
+  const columns = useFindingColumns({ tenant, token, base, locale, quality, busy, setView, setResolving, reopen });
 
   // Each filter returns to page one in the same write. The table used to do
   // that by itself whenever its rows changed; with the page in the URL it does
   // not, so a reload of `?page=3` survives the rows arriving.
   const filterBar = (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <button
-        type="button"
-        aria-pressed={kind === ''}
-        onClick={() => setQueue({ kind: '' }, { clear: ['page'] })}
-        className={cn(
-          'min-h-9 rounded-md border px-3 text-sm transition-colors',
-          kind === '' ? 'border-primary bg-primary/10 font-medium text-primary' : 'hover:bg-accent',
-        )}
-      >
-        {en ? 'All' : 'الكل'}
-        <span className="ms-1.5 tabular-nums text-muted-foreground">{all.length}</span>
-      </button>
-      {kinds.map(([key, value]) => (
-        <button
-          key={key}
-          type="button"
-          aria-pressed={kind === key}
-          onClick={() => setQueue({ kind: key as QualityFindingKind }, { clear: ['page'] })}
-          className={cn(
-            'min-h-9 rounded-md border px-3 text-sm transition-colors',
-            kind === key
-              ? 'border-primary bg-primary/10 font-medium text-primary'
-              : 'hover:bg-accent',
-          )}
-        >
-          {quality.findingKind[key as QualityFindingKind] ?? key}
-          <span className="ms-1.5 tabular-nums text-muted-foreground">{value?.open ?? 0}</span>
-        </button>
-      ))}
-      <Button
-        variant={includeDismissed ? 'default' : 'ghost'}
-        size="sm"
-        className="ms-auto h-9 gap-1.5"
-        aria-pressed={includeDismissed}
-        onClick={() =>
-          setQueue((current) => ({ dismissed: !current.dismissed }), { clear: ['page'] })
-        }
-      >
-        <ShieldQuestion className="size-3.5" aria-hidden />
-        {en ? 'Show resolved' : 'إظهار المحلولة'}
-      </Button>
-    </div>
+    <FindingFilters
+      locale={locale}
+      quality={quality}
+      total={all.length}
+      kinds={kinds}
+      kind={kind}
+      includeDismissed={includeDismissed}
+      setQueue={setQueue}
+    />
   );
 
   /**
@@ -589,24 +276,7 @@ export function FindingsList({
     session token arrives, when nothing is loading and nothing is loaded yet.
   */
   if (view.mode !== 'list' && !selected && query.data && !query.loading) {
-    return (
-      <div className="space-y-4">
-        <div className="rounded-xl border bg-card p-6 text-center">
-          <CircleCheck className="mx-auto size-8 text-success" aria-hidden />
-          <p className="mt-3 text-sm font-medium">
-            {en ? 'This finding is no longer in the queue.' : 'لم تعد هذه الملاحظة في القائمة.'}
-          </p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {en
-              ? 'Either the record was corrected, or somebody marked it resolved.'
-              : 'إمّا أن السجل صُحِّح، وإمّا أن أحدهم علَّمها «تم الحل».'}
-          </p>
-          <Button className="mt-4" onClick={() => setView({ mode: 'list' })}>
-            {en ? 'Back to quality findings' : 'رجوع إلى ملاحظات الجودة'}
-          </Button>
-        </div>
-      </div>
-    );
+    return <FindingGone locale={locale} onBack={() => setView({ mode: 'list' })} />;
   }
 
   if (view.mode === 'compare' && selected) {
@@ -648,14 +318,6 @@ export function FindingsList({
     );
   }
 
-  /*
-    «مراجعة حالة الوحدات» — SUPER_ADMIN only, and beside the list it feeds.
-
-    Every screen that changes a flat now settles it, but flats nobody has
-    touched since keep what the old rules left. This settles them in one pass
-    and opens a «تعارض في حالة الوحدة» case on each one a person must decide;
-    until then billing already holds their occupancy fee.
-  */
   const settleAll = async () => {
     if (!token || settleAllRef.current) return;
     settleAllRef.current = true;
@@ -686,28 +348,12 @@ export function FindingsList({
   return (
     <div className="space-y-4">
       {role === 'SUPER_ADMIN' ? (
-        <section className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border/70 bg-muted/20 p-3">
-          <p className="max-w-3xl text-sm text-muted-foreground">
-            {en
-              ? 'Apply the unit-status rule to every flat: statuses follow who is registered inside, and each flat whose records still disagree gets a review case. Its occupancy fee is held until the case is settled.'
-              : 'طبّق قاعدة حالة الوحدة على كل الوحدات: تتبع الحالة من هو مسجَّل فيها، وتُفتح حالة مراجعة لكل وحدة ما زالت سجلاتها متعارضة. يبقى رسم الإشغال عليها معلَّقاً حتى تُسوّى.'}
-          </p>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => void settleAll()}
-            disabled={busy === 'settle-all' || !token}
-          >
-            {busy === 'settle-all'
-              ? en
-                ? 'Reviewing…'
-                : 'جارٍ المراجعة…'
-              : en
-                ? 'Review unit statuses'
-                : 'مراجعة حالة الوحدات'}
-          </Button>
-        </section>
+        <UnitStatusReview
+          locale={locale}
+          running={busy === 'settle-all'}
+          ready={Boolean(token)}
+          onRun={() => void settleAll()}
+        />
       ) : null}
       <DataTable
         columns={columns}
