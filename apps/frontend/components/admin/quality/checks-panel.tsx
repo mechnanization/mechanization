@@ -1,9 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import Link from 'next/link';
+import { useTranslations } from 'next-intl';
+import { useQueryClient } from '@tanstack/react-query';
 import { ClipboardList, Loader2, Shuffle } from 'lucide-react';
-import { CHECK_DIFFERENCE, getLabels, qualityLabels, type CheckDifference } from '@mechanization/shared-schemas';
+import { CHECK_DIFFERENCE, getLabels, municipalToday, qualityLabels, type CheckDifference } from '@mechanization/shared-schemas';
 import { ApiRequestError, logApiError } from '@/lib/api-client';
 import {
   assignQualityCheck,
@@ -15,6 +17,8 @@ import {
 import { formatDate, formatDateTime } from '@/lib/dates';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { param, useUrlState } from '@/lib/use-url-state';
+import { readView } from '@/lib/read-view';
+import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
 import { Badge } from '@/components/ui/badge';
 import { FactCell, FactRow } from '@/components/ui/facts';
 import { Button } from '@/components/ui/button';
@@ -39,7 +43,8 @@ const CHECK_STATUSES = ['OPEN', 'DONE'] as const satisfies readonly QualityCheck
  */
 export const CHECKS_URL = { status: param.oneOf(CHECK_STATUSES, 'OPEN') };
 
-const isoDaysAgo = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+/** The municipality's day, `days` ago: the UTC date is yesterday's between midnight and 03:00 in Beirut. */
+const isoDaysAgo = (days: number) => municipalToday(new Date(Date.now() - days * 86_400_000));
 
 /**
  * «عيّنة التحقق» — a share of each officer's records, re-checked on the ground
@@ -71,13 +76,20 @@ export function ChecksPanel({
   const labels = getLabels(locale);
   const quality = qualityLabels(locale);
   const toast = useToast();
+  const t = useTranslations('qualityChecks');
+  const tCommon = useTranslations('common');
 
   const [{ status }, setList] = useUrlState(CHECKS_URL);
   const [from, setFrom] = useState(isoDaysAgo(7));
   const [to, setTo] = useState(isoDaysAgo(0));
   const [percent, setPercent] = useState('5');
   const [drawing, setDrawing] = useState(false);
-  const [busy, setBusy] = useState<string | null>(null);
+  /** The checks a write is being saved for: their controls are held. */
+  const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
+  /* The same two, as of this instant: two presses in one tick see them, where state is a render late (STA-3). */
+  const inFlight = useRef(new Set<string>());
+  const drawingRef = useRef(false);
+  const queryClient = useQueryClient();
   const [answering, setAnswering] = useState<string | null>(null);
 
   const query = useStaffQuery({
@@ -86,48 +98,57 @@ export function ChecksPanel({
     tenant,
     base,
     token,
-    errorMessage: en ? 'Could not load the checks.' : 'تعذّر تحميل عمليات التحقق.',
+    errorMessage: t('loadFailed'),
     keepPrevious: true,
   });
 
+  /*
+    A draw, an assignment or a result changes both lists of checks, what «حسب الموظف» counts and
+    what the checker has waiting.
+  */
+  const reread = (): Promise<unknown> => {
+    void queryClient.invalidateQueries({ queryKey: ['quality-officers', tenant] });
+    void queryClient.invalidateQueries({ queryKey: ['quality-my-tasks', tenant] });
+    return queryClient.invalidateQueries({ queryKey: ['quality-checks', tenant] });
+  };
+
   const draw = async () => {
-    if (!token) return;
+    if (!token || drawingRef.current) return;
+    drawingRef.current = true;
     setDrawing(true);
     try {
       const result = await drawQualitySample(tenant, token, { from, to, percent: Number(percent) || 5 });
-      toast.success(
-        result.sampled > 0
-          ? en
-            ? `${result.sampled} record(s) added to the sample`
-            : `أُضيف ${result.sampled} سجلاً إلى العيّنة`
-          : en
-            ? 'The sample already covers this period'
-            : 'العيّنة تغطي هذه الفترة بالفعل',
-      );
-      query.refetch();
+      toast.success(result.sampled > 0 ? t('sample.drawn', { count: result.sampled }) : t('sample.covered'));
+      await reread();
     } catch (caught) {
       logApiError(caught);
-      toast.error(caught instanceof ApiRequestError ? caught.message : en ? 'Could not draw a sample.' : 'تعذّر سحب العيّنة.');
+      toast.error(caught instanceof ApiRequestError ? caught.message : t('sample.drawFailed'));
     } finally {
+      drawingRef.current = false;
       setDrawing(false);
     }
   };
 
   const run = async (id: string, work: () => Promise<unknown>, done: string) => {
-    if (!token) return;
-    setBusy(id);
+    if (!token || inFlight.current.has(id)) return;
+    inFlight.current.add(id);
+    setBusy(new Set(inFlight.current));
     try {
       await work();
       toast.success(done);
-      setAnswering(null);
-      query.refetch();
+      // Only the answer of the check just saved: another may be half written.
+      setAnswering((current) => (current === id ? null : current));
+      await reread();
     } catch (caught) {
       logApiError(caught);
-      toast.error(caught instanceof ApiRequestError ? caught.message : en ? 'Not saved.' : 'لم يُحفظ.');
+      toast.error(caught instanceof ApiRequestError ? caught.message : t('saveFailed'));
     } finally {
-      setBusy(null);
+      inFlight.current.delete(id);
+      setBusy(new Set(inFlight.current));
     }
   };
+
+  const view = readView(query.data, query.error);
 
   return (
     <div className="space-y-4">
@@ -135,19 +156,19 @@ export function ChecksPanel({
         <section className="grid gap-3 rounded-xl border bg-card p-3 sm:grid-cols-[repeat(3,minmax(0,1fr))_auto] sm:items-end">
           <div className="space-y-1">
             <Label htmlFor="sample-from" className="text-xs text-muted-foreground">
-              {en ? 'Records filed from' : 'سجلات مقدَّمة من'}
+              {t('sample.from')}
             </Label>
             <DatePicker id="sample-from" value={from} onChange={setFrom} max={to} locale={en ? 'en' : 'ar'} />
           </div>
           <div className="space-y-1">
             <Label htmlFor="sample-to" className="text-xs text-muted-foreground">
-              {en ? 'to' : 'إلى'}
+              {t('sample.to')}
             </Label>
             <DatePicker id="sample-to" value={to} onChange={setTo} max={isoDaysAgo(0)} locale={en ? 'en' : 'ar'} />
           </div>
           <div className="space-y-1">
             <Label htmlFor="sample-percent" className="text-xs text-muted-foreground">
-              {en ? 'Share of each officer’s records (%)' : 'نسبة من سجلات كل موظف (٪)'}
+              {t('sample.share')}
             </Label>
             <Input
               id="sample-percent"
@@ -160,7 +181,7 @@ export function ChecksPanel({
           </div>
           <Button className="h-10 gap-1.5" onClick={draw} disabled={drawing || !from || !to}>
             {drawing ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Shuffle className="size-4" aria-hidden />}
-            {en ? 'Draw a sample' : 'سحب عيّنة'}
+            {t('sample.draw')}
           </Button>
         </section>
       ) : null}
@@ -177,30 +198,27 @@ export function ChecksPanel({
               status === value ? 'border-primary bg-primary/10 font-medium text-primary' : 'hover:bg-accent',
             )}
           >
-            {value === 'OPEN' ? (en ? 'To check' : 'بانتظار التحقق') : en ? 'Checked' : 'تم التحقق'}
+            {t(`status.${value}`)}
           </button>
         ))}
       </div>
 
-      {query.error ? (
-        <ErrorState description={query.error} offline={query.offline} onRetry={query.refetch} />
-      ) : query.loading ? (
-        <LoadingState label={en ? 'Loading…' : 'جارٍ التحميل…'} />
-      ) : (query.data?.items.length ?? 0) === 0 ? (
+      {view.state === 'ready' && view.refreshFailed ? (
+        <RefreshFailedAlert message={view.refreshFailed} onRetry={query.refetch} />
+      ) : null}
+      {view.state === 'failed' ? (
+        <ErrorState description={view.error} offline={query.offline} onRetry={query.refetch} />
+      ) : view.state === 'loading' ? (
+        <LoadingState label={t('loading')} />
+      ) : view.data.items.length === 0 ? (
         <EmptyState
           icon={ClipboardList}
-          title={status === 'OPEN' ? (en ? 'No open checks' : 'لا عمليات تحقق مفتوحة') : en ? 'No completed checks yet' : 'لا عمليات تحقق منجزة'}
-          description={
-            canReview && status === 'OPEN'
-              ? en
-                ? 'Draw a sample from a period above.'
-                : 'اسحب عيّنة من فترة أعلاه.'
-              : undefined
-          }
+          title={t(`empty.${status}`)}
+          description={canReview && status === 'OPEN' ? t('empty.openBody') : undefined}
         />
       ) : (
         <ol className="space-y-3">
-          {query.data!.items.map((check) => (
+          {view.data.items.map((check) => (
             <li key={check.id} className="rounded-xl border bg-card p-4">
               <CheckHeader check={check} base={base} locale={locale} />
 
@@ -210,26 +228,26 @@ export function ChecksPanel({
                 {check.properties.map((card, index) => (
                   <FactRow key={`${check.id}-${index}`} className="text-xs">
                     <FactCell
-                      label={en ? 'Type' : 'النوع'}
+                      label={t('card.type')}
                       value={labels.propertyType[card.propertyType as never] ?? card.propertyType}
                     />
                     {card.occupancyType ? (
                       <FactCell
-                        label={en ? 'Occupancy' : 'صفة الإشغال'}
+                        label={t('card.occupancy')}
                         value={labels.occupancyType[card.occupancyType as never] ?? card.occupancyType}
                       />
                     ) : null}
                     {card.propertyNumber ? (
-                      <FactCell label={en ? 'Parcel' : 'رقم العقار'} value={card.propertyNumber} />
+                      <FactCell label={t('card.parcel')} value={card.propertyNumber} />
                     ) : null}
                     {card.buildingCode || card.buildingName ? (
                       <FactCell
-                        label={en ? 'Building' : 'المبنى'}
+                        label={t('card.building')}
                         value={[card.buildingCode, card.buildingName].filter(Boolean).join(' — ')}
                       />
                     ) : null}
                     {card.units.length > 0 ? (
-                      <FactCell label={en ? 'Units' : 'الوحدات'} value={card.units.join('، ')} />
+                      <FactCell label={t('card.units')} value={card.units.join(tCommon('listSeparator'))} />
                     ) : null}
                   </FactRow>
                 ))}
@@ -239,13 +257,7 @@ export function ChecksPanel({
                 <div className="mt-3 space-y-1 rounded-lg bg-muted/40 px-3 py-2 text-xs">
                   <p>
                     <span className="font-medium">
-                      {check.result === 'MATCHES'
-                        ? en
-                          ? 'Matches the record'
-                          : 'مطابق للسجل'
-                        : en
-                          ? 'Differs from the record'
-                          : 'مختلف عن السجل'}
+                      {check.result === 'MATCHES' ? t('card.matches') : t('card.differs')}
                     </span>
                     <span className="text-muted-foreground">
                       {' '}
@@ -254,7 +266,7 @@ export function ChecksPanel({
                   </p>
                   {check.differences.length > 0 ? (
                     <p className="text-muted-foreground">
-                      {check.differences.map((code) => quality.checkDifference[code] ?? code).join('، ')}
+                      {check.differences.map((code) => quality.checkDifference[code] ?? code).join(tCommon('listSeparator'))}
                     </p>
                   ) : null}
                   {check.notes ? <p className="text-foreground/90">{check.notes}</p> : null}
@@ -262,13 +274,13 @@ export function ChecksPanel({
               ) : answering === check.id ? (
                 <AnswerForm
                   locale={locale}
-                  busy={busy === check.id}
+                  busy={busy.has(check.id)}
                   onCancel={() => setAnswering(null)}
                   onSubmit={(input) =>
                     run(
                       check.id,
                       () => completeQualityCheck(tenant, token!, check.id, input),
-                      en ? 'Check recorded' : 'سُجِّل التحقق',
+                      t('card.recorded'),
                     )
                   }
                 />
@@ -277,15 +289,16 @@ export function ChecksPanel({
                   {canReview ? (
                     <div className="flex items-center gap-2">
                       <Label htmlFor={`assign-${check.id}`} className="text-xs text-muted-foreground">
-                        {en ? 'Assigned to' : 'مُسنَد إلى'}
+                        {t('card.assignedTo')}
                       </Label>
                       <Select
                         value={check.assignedTo?.id ?? UNASSIGNED}
+                        disabled={busy.has(check.id)}
                         onValueChange={(value) =>
                           run(
                             check.id,
                             () => assignQualityCheck(tenant, token!, check.id, value === UNASSIGNED ? null : value),
-                            en ? 'Assignment saved' : 'حُفظ الإسناد',
+                            t('card.assigned'),
                           )
                         }
                       >
@@ -293,7 +306,7 @@ export function ChecksPanel({
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value={UNASSIGNED}>{en ? 'Anyone but the filer' : 'أي موظف غير صاحب السجل'}</SelectItem>
+                          <SelectItem value={UNASSIGNED}>{t('card.anyone')}</SelectItem>
                           {officers
                             .filter((officer) => officer.id !== check.originalOfficer?.id)
                             .map((officer) => (
@@ -305,8 +318,8 @@ export function ChecksPanel({
                       </Select>
                     </div>
                   ) : null}
-                  <Button size="sm" className="ms-auto" onClick={() => setAnswering(check.id)} disabled={busy === check.id}>
-                    {en ? 'Record what you found' : 'تسجيل ما وجدته'}
+                  <Button size="sm" className="ms-auto" onClick={() => setAnswering(check.id)} disabled={busy.has(check.id)}>
+                    {t('card.record')}
                   </Button>
                 </div>
               )}
@@ -319,7 +332,7 @@ export function ChecksPanel({
 }
 
 function CheckHeader({ check, base, locale }: { check: QualityCheck; base: string; locale: string }) {
-  const en = locale === 'en';
+  const t = useTranslations('qualityChecks.card');
   const quality = qualityLabels(locale);
   return (
     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
@@ -343,13 +356,13 @@ function CheckHeader({ check, base, locale }: { check: QualityCheck; base: strin
         </Badge>
       ) : check.assignedTo ? (
         <span className="text-xs text-muted-foreground">
-          {en ? `For ${check.assignedTo.name}` : `لـ ${check.assignedTo.name}`}
+          {t('forName', { name: check.assignedTo.name })}
         </span>
       ) : (
-        <span className="text-xs text-muted-foreground">{en ? 'Unassigned' : 'غير مُسنَد'}</span>
+        <span className="text-xs text-muted-foreground">{t('unassigned')}</span>
       )}
       <span className="ms-auto text-xs text-muted-foreground">
-        {en ? 'Filed by' : 'سجَّله'} {check.originalOfficer?.name ?? '—'} · {formatDate(check.filedAt)}
+        {t('filedBy')} {check.originalOfficer?.name ?? '—'} · {formatDate(check.filedAt)}
       </span>
     </div>
   );
@@ -367,7 +380,7 @@ export function AnswerForm({
   onCancel: () => void;
   onSubmit: (input: { result: 'MATCHES' | 'DIFFERS'; differences: CheckDifference[]; notes?: string }) => void;
 }) {
-  const en = locale === 'en';
+  const t = useTranslations('qualityChecks.answer');
   const quality = qualityLabels(locale);
   const [result, setResult] = useState<'MATCHES' | 'DIFFERS' | null>(null);
   const [differences, setDifferences] = useState<CheckDifference[]>([]);
@@ -389,13 +402,7 @@ export function AnswerForm({
               result === value ? 'border-primary bg-primary/10 font-medium text-primary' : 'hover:bg-accent',
             )}
           >
-            {value === 'MATCHES'
-              ? en
-                ? 'What I found matches the record'
-                : 'ما وجدته مطابق للسجل'
-              : en
-                ? 'Something is different'
-                : 'هناك ما يختلف'}
+            {value === 'MATCHES' ? t('matches') : t('differs')}
           </button>
         ))}
       </div>
@@ -428,14 +435,14 @@ export function AnswerForm({
             onChange={(event) => setNotes(event.target.value)}
             maxLength={1000}
             className="min-h-[72px] text-sm"
-            placeholder={en ? 'What did you find on the ground?' : 'ماذا وجدت على الأرض؟'}
+            placeholder={t('notes')}
           />
         </>
       ) : null}
 
       <div className="flex justify-end gap-2">
         <Button variant="ghost" size="sm" onClick={onCancel} disabled={busy}>
-          {en ? 'Cancel' : 'إلغاء'}
+          {t('cancel')}
         </Button>
         <Button
           size="sm"
@@ -443,7 +450,7 @@ export function AnswerForm({
           onClick={() => onSubmit({ result: result!, differences, notes: notes.trim() || undefined })}
         >
           {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-          {en ? 'Save' : 'حفظ'}
+          {t('save')}
         </Button>
       </div>
     </div>

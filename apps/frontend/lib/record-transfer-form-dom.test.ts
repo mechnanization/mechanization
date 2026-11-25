@@ -42,6 +42,9 @@ import en from '../messages/en.json';
 */
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+/* A 5xx or an unknown error loads the Sentry SDK to report it: seconds of import inside a test on a busy machine. */
+vi.mock('@sentry/nextjs', () => ({ captureException: () => {} }));
+
 const api = vi.hoisted(() => ({ createTransfer: vi.fn() }));
 vi.mock('@/lib/api-client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api-client')>()),

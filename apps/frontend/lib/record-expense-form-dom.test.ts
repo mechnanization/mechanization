@@ -22,6 +22,9 @@ import en from '../messages/en.json';
   what they pick is not under test); everything else is the real form, the real schemas and the real key module.
 */
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+/* A 5xx or an unknown error loads the Sentry SDK to report it: seconds of import inside a test on a busy machine. */
+vi.mock('@sentry/nextjs', () => ({ captureException: () => {} }));
 // jsdom has no layout; Radix's checkbox (the «invoice kept» box) measures itself with one.
 (globalThis as { ResizeObserver?: unknown }).ResizeObserver = class {
   observe(): void {}

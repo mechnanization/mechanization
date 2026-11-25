@@ -1681,6 +1681,15 @@ Each pass first lands the tasks already listed for its pages (named below); what
 - **Files:** `quality/**` (NAV-03; `review-queue.tsx` hand-rolled tabs UX-08; `findings-list.tsx` `CITIZEN_EDIT_ROLES`), `audit/page.tsx` (412; `loadSession`; `toLocaleString('ar')` UX-23; `Pager` UX-11), `audit-daily.tsx` (UX-10).
 - **Depends on:** NAV-03, UX-11
 - **Acceptance criteria / Verification:** as PAGE-07.
+- **Plan, approved 2026-11-25:** one screen a pull request (the review queue and the checks; the findings list and its parts; the
+  comparison; the audit page and «حسب الموظف»), each safety nets, then split, then words, then fixes. `complete-record-dialog.tsx`
+  (1,577) is left to PAGE-08, whose citizen pages own it. Server paging for the findings list and the checks needs routes that page,
+  and stays open, as PAG-03 does.
+- **Done 2026-11-25 (the review queue and the checks; stays In Progress):** `review-queue.tsx` split (679 → 310, `quality/review/`);
+  their words in `recordReview.*` and `qualityChecks.*`, page snapshots unchanged in both languages; approve, return, draw, assign
+  and record each behind an in-flight ref; a failed re-read keeps the list; a decision or check re-reads the officers' figures as
+  well; a half-written return or check form survives another record's answer; the sample's days are the municipality's (they were
+  UTC); lists on the English page joined with an English comma. **Not done:** tried in a browser, at any width.
 
 ## [PAGE-14] Bring the news pages to the page contract
 - **Priority:** P2 · **Assignee:** Abed · **Estimate:** S · **Category:** UI/UX
