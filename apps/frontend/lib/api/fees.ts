@@ -1,5 +1,5 @@
 import type { AuditEntry } from '../api-client';
-import type { ParcelDues } from '@mechanization/shared-schemas';
+import { FEE_NOTICES_PAGE_MAX, type ParcelDues } from '@mechanization/shared-schemas';
 import { type CitizenSettingsField, type BackupSchedule, type CancelBill, type CurrencyCode, type DeclarePayment, type FeeAssessment, type FeeAssessmentLine, type FeeBasis, type FeeBearer, type FeeFrequency, type FeeMatrixBracket, type FeeNoticePeriodSummary, type FeeNoticePreviewInput, type FeeNoticePreviewResult, type FeeUnassessable, type SharedUnitBillView, type CancelNotice, type NumberingSequence, type PaymentMethod, type PaymentStatus, type ReverseTransaction, type SequenceKey, type SettlePayment, type BulkSettlePayments, type SettlementReceipt, type BillArrearsView, type BillWriteOffView, type WriteOffBillInput } from '@mechanization/shared-schemas';
 import { cachedRequest, invalidateRequests } from '../request-cache';
 import { apiFetch, type Session } from './core';
@@ -231,8 +231,24 @@ export interface FeeNoticeSummary {
   createdAt: string;
 }
 
-export function getFeeNotices(tenant: string, token: string, signal?: AbortSignal) {
-  return apiFetch<{ items: FeeNoticeSummary[] }>(tenant, '/fees/notices', { token, signal });
+/**
+ * «إشعارات الرسوم», newest first, one page of them (PAG-04, PAG-05). `page`
+ * names the rows wanted (`limit` at most `FEE_NOTICES_PAGE_MAX`, from `offset`),
+ * and `total` is how many notices there are in all. Without `page` it asks for
+ * the most one request may, which is what the backup export wants until it
+ * pages through (audit PAG-05, U-11).
+ */
+export function getFeeNotices(
+  tenant: string,
+  token: string,
+  page: { limit: number; offset: number } = { limit: FEE_NOTICES_PAGE_MAX, offset: 0 },
+  signal?: AbortSignal,
+) {
+  const query = new URLSearchParams({ limit: String(page.limit), offset: String(page.offset) });
+  return apiFetch<{ items: FeeNoticeSummary[]; total: number }>(tenant, `/fees/notices?${query.toString()}`, {
+    token,
+    signal,
+  });
 }
 
 /**

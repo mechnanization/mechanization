@@ -1,4 +1,4 @@
-import { type CaseStatus, type CaseType } from '@mechanization/shared-schemas';
+import { CASES_PAGE_MAX, type CaseStatus, type CaseType } from '@mechanization/shared-schemas';
 import { apiFetch } from './core';
 
 // ────────────────────────────────  Cases  ────────────────────────────────
@@ -121,8 +121,13 @@ export function getCases(
   if (filter.unitId) query.set('unitId', filter.unitId);
   if (filter.from) query.set('from', filter.from);
   if (filter.to) query.set('to', filter.to);
-  const qs = query.toString();
-  return apiFetch<{ cases: CaseSummary[] }>(tenant, `/cases${qs ? `?${qs}` : ''}`, {
+  /*
+    Paged on the server since PAG-02. Until the page pages (PAG-03) it asks for
+    the most one request may (`CASES_PAGE_MAX`), and `total` says when that was
+    not all of them.
+  */
+  query.set('limit', String(CASES_PAGE_MAX));
+  return apiFetch<{ items: CaseSummary[]; total: number }>(tenant, `/cases?${query.toString()}`, {
     token,
     signal,
   });

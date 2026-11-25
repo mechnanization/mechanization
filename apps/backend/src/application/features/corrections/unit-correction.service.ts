@@ -7,15 +7,16 @@ import {
   type DuplexMergeInput,
   type DuplexMergePreview,
   type DuplexMergeResult,
-  type UnitCorrectionBlocker,
   type UnitCorrectionDeleteInput,
   type UnitCorrectionPreview,
   type UnitCorrectionResult,
   citizenDisplayName,
+  duplexMergeBlockerRefusal,
+  unitCorrectionBlockerRefusal,
 } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
 import { AuditLogEntry } from '../../../domain/entities/audit-log-entry.entity';
-import { ConflictError, NotFoundError, ValidationError } from '../../../domain/errors/domain-error';
+import { ConflictError, NotFoundError, ValidationError, refusedBy } from '../../../domain/errors/domain-error';
 import { AUDIT_REPOSITORY } from '../../../domain/interfaces/base-repository.interface';
 import type { AuditRepository } from '../../../domain/interfaces/audit-repository.interface';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
@@ -28,7 +29,7 @@ import {
   type UnitCorrectionPlan,
   type UnitCorrectionState,
 } from './unit-correction.plan';
-import { mergeBlockerReason, planDuplexMerge, type DuplexMergeState, type MergeFlat } from './duplex-merge.plan';
+import { planDuplexMerge, type DuplexMergeState, type MergeFlat } from './duplex-merge.plan';
 import { assertNoFeeExemptionHistory } from '../buildings/fee-exemption';
 
 type Actor = { id: string; role: string };
@@ -44,17 +45,6 @@ const fullName = (row: { firstName: string; middleName?: string | null; lastName
 
 /** Prisma rows (Decimal, Date) as the plain JSON an audit column stores. */
 const json = <T>(value: T): Record<string, unknown> => JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
-
-export function blockerMessage(blocker: UnitCorrectionBlocker): string {
-  switch (blocker.kind) {
-    case 'DAMAGE_ASSESSMENT':
-      return `لا يمكن الحذف: على الوحدة ${blocker.count} كشف ضرر، وكشف الضرر مستند تعويض لا يُحذف مع الوحدة.`;
-    case 'LINK_NAMES_OTHER_UNITS':
-      return `لا يمكن الحذف: ربط ملف ${blocker.citizenName} بالمالك يشمل وحدات أخرى. ألغِ الربط من ملفه أولاً.`;
-    case 'UNREADABLE_LANDLORD_LINK':
-      return `لا يمكن الحذف: تعذّرت قراءة ربط ملف ${blocker.citizenName} بالمالك، فلا يمكن التراجع عنه بأمان.`;
-  }
-}
 
 /**
  * «حذف تصحيحي» — SUPER_ADMIN removes a census unit the ordinary delete refuses.
@@ -158,7 +148,7 @@ export class UnitCorrectionService {
       upper: flatSummary(merge.upper),
       building: removal.building,
       fingerprint: plan.fingerprint,
-      blockers: plan.blockers,
+      blockers: plan.blockers.map((blocker) => ({ ...blocker, refusal: duplexMergeBlockerRefusal(blocker) })),
       levelsAfter: plan.levelsAfter,
       areaAfter: plan.areaAfter,
       visitsMoved: merge.upperState.visits.length,
@@ -231,12 +221,7 @@ export class UnitCorrectionService {
       });
     }
     if (plan.blockers.length > 0) {
-      throw new ConflictError({
-        code: 'DUPLEX_MERGE_BLOCKED',
-        message: 'The two units cannot be merged as a duplex.',
-        params: { reason: mergeBlockerReason(plan.blockers[0]!) },
-        details: { reason: 'BLOCKED', blockers: plan.blockers },
-      });
+      throw refusedBy(duplexMergeBlockerRefusal(plan.blockers[0]!), { reason: 'BLOCKED', blockers: plan.blockers });
     }
     if (input.confirmCode.trim() !== merge.upper.unitCode) {
       throw new ValidationError({
@@ -484,7 +469,7 @@ export class UnitCorrectionService {
       });
     }
     if (plan.blockers.length > 0) {
-      throw new ConflictError(blockerMessage(plan.blockers[0]!), { reason: 'BLOCKED', blockers: plan.blockers });
+      throw refusedBy(unitCorrectionBlockerRefusal(plan.blockers[0]!), { reason: 'BLOCKED', blockers: plan.blockers });
     }
     // A unit with a fee exemption history is corrected, not deleted: the history keys onto it (0104).
     await assertNoFeeExemptionHistory(this.db, { unitIds: [unitId] });

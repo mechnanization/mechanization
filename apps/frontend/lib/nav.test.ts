@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { STAFF_ROLE } from '@mechanization/shared-schemas';
+import { FEE_READ_ROLES, STAFF_ROLE } from '@mechanization/shared-schemas';
 import {
   activeNavItem,
   canAccessPath,
@@ -237,5 +237,30 @@ describe('News and the village that may not have it', () => {
     const all = visibleGroups('SUPER_ADMIN').flatMap((group) => group.items).length;
     const without = visibleGroups('SUPER_ADMIN', { newsEnabled: false }).flatMap((group) => group.items).length;
     expect(all - without).toBe(3);
+  });
+});
+
+/*
+  NAV-08 (decided 2026-11-25, docs/open-decisions.md §25): «المستحق على عقار»
+  keeps a row of its own. A clerk asks it whenever a citizen asks for a براءة
+  ذمّة, so it is one click away, and the page has no role check of its own:
+  its row is what gates it. Moving it into the fees page's header would leave
+  `/fees/parcel` under `/fees`, the same `FEE_READ_ROLES`, but this pins the
+  decision until someone makes another.
+*/
+describe('«المستحق على عقار» (NAV-08)', () => {
+  it('keeps its own row under «الرسوم والجباية», read by the roles that read the ledger', () => {
+    const group = NAV_GROUPS.find((candidate) => candidate.items.some((item) => item.path === '/fees/parcel'));
+    expect(group?.label).toBe('الرسوم والجباية');
+    expect(group?.items.find((item) => item.path === '/fees/parcel')?.roles).toEqual([...FEE_READ_ROLES]);
+  });
+
+  it('opens to every role in FEE_READ_ROLES and to no other', () => {
+    for (const role of STAFF_ROLE) {
+      expect({ role, open: canAccessPath(`${BASE}/fees/parcel`, BASE, role) }).toEqual({
+        role,
+        open: (FEE_READ_ROLES as readonly string[]).includes(role),
+      });
+    }
   });
 });

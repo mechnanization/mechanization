@@ -143,7 +143,9 @@ export default function CasesPage({
     errorMessage: t('loadFailed'),
   });
 
-  const allItems = useMemo(() => query.data?.cases ?? [], [query.data]);
+  const allItems = useMemo(() => query.data?.items ?? [], [query.data]);
+  // The server's page is `CASES_PAGE_MAX` cases at most (PAG-02); until this page pages on the server (PAG-03), say when that is not all.
+  const totalCases = query.data?.total ?? 0;
   const error = actionError;
 
   /**
@@ -366,6 +368,12 @@ export default function CasesPage({
       {error ? (
         <Alert variant="destructive" live="alert">
           {error}
+        </Alert>
+      ) : null}
+
+      {totalCases > allItems.length ? (
+        <Alert variant="warning" live="status">
+          {t('truncated', { shown: allItems.length, total: totalCases })}
         </Alert>
       ) : null}
 

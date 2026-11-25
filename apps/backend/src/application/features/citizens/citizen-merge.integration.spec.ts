@@ -410,9 +410,10 @@ describeIfDb('CitizenMergeService', () => {
     const { into } = await within(() => merges.mergesOf(f.absorbId));
     const { blocks } = await within(() => merges.unmergePreview(into!.id));
     expect(blocks.map((block) => block.code)).toEqual(['CHANGED_SINCE']);
+    expect(blocks[0]!.refusal).toEqual({ code: 'UNMERGE_CHANGED_SINCE', params: {} });
     await expect(
       within(() => merges.unmerge({ mergeId: into!.id, reason: 'محاولة تراجع', tenantSlug: 'merge', actor: actor() })),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: 'UNMERGE_CHANGED_SINCE' });
   });
 
   it('refuses a merge whose preview has gone stale, and writes nothing', async () => {
@@ -526,7 +527,9 @@ describeIfDb('CitizenMergeService', () => {
 
     // The first merge waits for the second to be undone…
     const { into } = await within(() => merges.mergesOf(f.absorbId));
-    expect((await within(() => merges.unmergePreview(into!.id))).blocks.map((block) => block.code)).toEqual(['MERGED_AGAIN']);
+    const again = (await within(() => merges.unmergePreview(into!.id))).blocks;
+    expect(again.map((block) => block.code)).toEqual(['MERGED_AGAIN']);
+    expect(again[0]!.refusal).toMatchObject({ code: 'UNMERGE_MERGED_AGAIN', params: { name: expect.any(String) } });
     await undoOf(f.keepId);
     // …and then goes through, because an undo restores what it moved to the letter.
     expect((await within(() => merges.unmergePreview(into!.id))).blocks).toEqual([]);

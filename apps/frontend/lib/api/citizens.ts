@@ -1,4 +1,4 @@
-import { IMPORT_BATCH_SIZE, type ReinspectionsPage, type CitizenImportResult, type CitizenMergePreview, type CitizenMergeRecord, type CitizenMergeResult, type CitizenUnmergePreview, type CitizenRecordStatus, type CitizenResidence, type DuplicateMatchedOn, type FieldFlag, type ImportRow, type PossibleDuplicateMatch, type PossibleDuplicatesQuery, type SurveyStatus, type UnitType } from '@mechanization/shared-schemas';
+import { IMPORT_BATCH_SIZE, type BlockRefusal, type ReinspectionsPage, type CitizenImportResult, type CitizenMergePreview, type CitizenMergeRecord, type CitizenMergeResult, type CitizenUnmergePreview, type CitizenRecordStatus, type CitizenResidence, type DuplicateMatchedOn, type FieldFlag, type ImportRow, type PossibleDuplicateMatch, type PossibleDuplicatesQuery, type SurveyStatus, type UnitType } from '@mechanization/shared-schemas';
 import { cachedRequest, invalidateRequests, peekCachedRequest } from '../request-cache';
 import { ApiRequestError, apiFetch } from './core';
 import { invalidateCensus, type CensusSyncResult } from './buildings';
@@ -802,8 +802,10 @@ export interface LandlordCandidate {
 export type LandlordMatch = 'PHONE' | 'CONTACT' | 'NAME' | 'PROPERTY';
 
 /**
- * Why a link cannot be made yet. Each code names the step that unblocks it,
- * and `message` is the server's Arabic sentence saying so.
+ * Why a link cannot be made yet. Each code names the step that unblocks it.
+ * `refusal` is its words (ERR-04): `localizeApiError(block.refusal)` says it in
+ * the page's language. `message` is the server's Arabic sentence, kept until
+ * ERR-05 renders `refusal`.
  */
 export type LinkBlockCode =
   | 'NOT_ON_SURVEY'
@@ -818,6 +820,7 @@ export type LinkBlockCode =
 
 export interface LinkBlock {
   code: LinkBlockCode;
+  refusal: BlockRefusal;
   message: string;
   unitCode: string | null;
 }

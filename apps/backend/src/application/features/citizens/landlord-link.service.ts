@@ -9,15 +9,16 @@ import {
   citizenStoredName,
   ESTATE_PREFIX_PATTERN,
   LANDLORD_LINK_ANSWER_ROLES,
+  isSpecificErrorCode,
   withoutEstatePrefix,
 } from '@mechanization/shared-schemas';
-import type { StructureType } from '@mechanization/shared-schemas';
+import type { BlockRefusal, ErrorParams, StructureType } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
 import { AuditService, type CitizenChange } from '../audit/audit.service';
-import { ConflictError, NotFoundError, ValidationError } from '../../../domain/errors/domain-error';
+import { ConflictError, DomainError, NotFoundError, ValidationError, refusedBy } from '../../../domain/errors/domain-error';
 import { BuildingsService } from '../buildings/buildings.service';
 import type { FileLinkResult } from '../buildings/building.types';
 import { withoutCardFlags, withoutRowFlags } from './card-flags';
@@ -1057,7 +1058,7 @@ export class LandlordLinkService {
       ? { block: target.block, outcome: null }
       : this.planFor(target, context.citizens.get(citizen.id)!, context);
     if (plan.block) {
-      throw new ConflictError(plan.block.message, { block: plan.block });
+      throw refusedBy(plan.block.refusal, { block: plan.block });
     }
 
     let changes: AnnouncedChange[] = [];
@@ -1450,7 +1451,7 @@ export class LandlordLinkService {
     const plan = target.block
       ? { block: target.block, outcome: null }
       : this.planFor(target, context.citizens.get(owner.id)!, context);
-    if (plan.block) throw new ConflictError(plan.block.message, { block: plan.block });
+    if (plan.block) throw refusedBy(plan.block.refusal, { block: plan.block });
 
     /*
       The card names who the flat is held from. What the tenant typed is kept;
@@ -1674,7 +1675,7 @@ export class LandlordLinkService {
         select: { id: true, role: true, shares: true },
       });
       if (current && current.role !== 'OWNER') {
-        throw new ConflictError(block('OWNER_OCCUPIES_UNIT', unit.unitCode).message);
+        throw refusedBy(block('OWNER_OCCUPIES_UNIT', unit.unitCode).refusal);
       }
 
       /*
@@ -1730,7 +1731,7 @@ export class LandlordLinkService {
 
       if (fileLink.outcome === 'NO_FILE' || fileLink.outcome === 'NO_BUILDING') {
         // The plan said the property would reach their file; it did not.
-        throw new ConflictError(block('OWNER_NO_FILE').message);
+        throw refusedBy(block('OWNER_NO_FILE').refusal);
       }
 
       const record: FootprintUnit = {
@@ -1999,14 +2000,7 @@ export class LandlordLinkService {
         );
         result.blocked.push({
           propertyEntryId: entry.id,
-          block: {
-            code: 'RECONCILE_FAILED',
-            message:
-              error instanceof ConflictError
-                ? error.message
-                : 'تعذّر تحديث عقار المالك المرتبط — أعد الحفظ أو راجع الربط من ملف المستأجر',
-            unitCode: null,
-          },
+          block: reconcileFailedBlock(error),
         });
       }
     }
@@ -3233,8 +3227,24 @@ export type LinkBlockCode =
 
 export interface LinkBlock {
   code: LinkBlockCode;
+  /** The words, from the message files (ERR-04): `LANDLORD_LINK_<code>` with its params. */
+  refusal: BlockRefusal;
+  /** The server's Arabic sentence. Kept until ERR-05 renders `refusal`; never shown on /en/ after it. */
   message: string;
   unitCode: string | null;
+}
+
+/** The fallback a failed reconcile is reported with when its error carried no code of its own. */
+const RECONCILE_FAILED_MESSAGE = 'تعذّر تحديث عقار المالك المرتبط — أعد الحفظ أو راجع الربط من ملف المستأجر';
+
+/** The params a block's message fills in: the flat, and the owners the building's record names. */
+function blockParams(unitCode: string | null, owners: string | null): ErrorParams {
+  return {
+    hasUnit: unitCode ? 'yes' : 'no',
+    unitCode: unitCode ?? '',
+    hasOwners: owners ? 'yes' : 'no',
+    owners: owners ?? '',
+  };
 }
 
 function block(code: LinkBlockCode, unitCode: string | null = null, detail: string | null = null): LinkBlock {
@@ -3254,7 +3264,35 @@ function block(code: LinkBlockCode, unitCode: string | null = null, detail: stri
     } وهذا المواطن ليس بين مالكيها. إن كان شريكاً في ملكيتها فسجّله مالكاً على الوحدة أولاً، وإلا فصحِّح الوحدة على بطاقة المستأجر.`,
     RECONCILE_FAILED: 'تعذّر تحديث عقار المالك المرتبط.',
   };
-  return { code, message: messages[code], unitCode };
+  return {
+    code,
+    refusal: { code: `LANDLORD_LINK_${code}`, params: blockParams(unitCode, code === 'UNIT_OWNED_BY_OTHER' ? detail : null) },
+    message: messages[code],
+    unitCode,
+  };
+}
+
+/**
+ * A reconcile that failed, as a block on the tenant's save: the error's own
+ * code when it carried one, so the toast says what refused it, else the
+ * generic `LANDLORD_LINK_RECONCILE_FAILED`. A coded error's `message` is
+ * English for the log, so it is never the block's sentence.
+ */
+function reconcileFailedBlock(error: unknown): LinkBlock {
+  if (error instanceof DomainError && isSpecificErrorCode(error.code)) {
+    return {
+      code: 'RECONCILE_FAILED',
+      refusal: { code: error.code, params: error.params ?? {} },
+      message: RECONCILE_FAILED_MESSAGE,
+      unitCode: null,
+    };
+  }
+  return {
+    code: 'RECONCILE_FAILED',
+    refusal: { code: 'LANDLORD_LINK_RECONCILE_FAILED', params: blockParams(null, null) },
+    message: error instanceof ConflictError ? error.message : RECONCILE_FAILED_MESSAGE,
+    unitCode: null,
+  };
 }
 
 /** What a link would do on the owner's file, stated before it is done. */

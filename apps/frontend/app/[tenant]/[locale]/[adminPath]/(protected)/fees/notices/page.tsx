@@ -26,6 +26,7 @@ import { formatDate } from '@/lib/dates';
 import { hasRole } from '@/lib/staff-roles';
 import { useStaffQuery } from '@/lib/use-staff-query';
 import { useStaffSession } from '@/lib/use-staff-session';
+import { useUrlPagination } from '@/lib/use-url-state';
 import { useTableLabels } from '@/lib/use-table-labels';
 import { HeaderBackLink } from '@/components/admin/header-back-link';
 import { Alert } from '@/components/ui/alert';
@@ -96,15 +97,27 @@ export default function FeeNoticesPage({
   const [outcome, setOutcome] = useState<{ title: string; result: FeeNoticeCancelResult } | null>(null);
   const inFlight = useRef(false);
 
+  /** The table's page and size, in the URL (`?page=`, `?limit=`): the server pages the notices (PAG-04). */
+  const [pagination, setPagination] = useUrlPagination({ defaultSize: 25 });
+
   const query = useStaffQuery({
-    queryKey: ['fee-notices', tenant],
-    queryFn: (accessToken, signal) => getFeeNotices(tenant, accessToken, signal),
+    // The prefix `['fee-notices', tenant]` is what the writes below invalidate, whichever page is open.
+    queryKey: ['fee-notices', tenant, pagination.pageIndex, pagination.pageSize],
+    queryFn: (accessToken, signal) =>
+      getFeeNotices(
+        tenant,
+        accessToken,
+        { limit: pagination.pageSize, offset: pagination.pageIndex * pagination.pageSize },
+        signal,
+      ),
     tenant,
     base,
     token,
+    keepPrevious: true,
     errorMessage: t('loadError'),
   });
   const notices = useMemo(() => query.data?.items ?? [], [query.data]);
+  const totalNotices = query.data?.total ?? 0;
 
   const open = (notice: FeeNoticeSummary) => {
     setReason('');
@@ -279,7 +292,11 @@ export default function FeeNoticesPage({
         getRowId={(notice) => notice.id}
         searchable={false}
         sortable={false}
-        paginated={false}
+        manualPagination
+        pageCount={Math.max(Math.ceil(totalNotices / pagination.pageSize), 1)}
+        totalRowCount={totalNotices}
+        pagination={pagination}
+        onPaginationChange={setPagination}
         loading={query.loading}
         error={query.error}
         onRetry={query.refetch}
