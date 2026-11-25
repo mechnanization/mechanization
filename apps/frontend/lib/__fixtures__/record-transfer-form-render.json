@@ -1,0 +1,74 @@
+{
+  "empty-ar": {
+    "length": 9697,
+    "sha256": "30a3f5f2408845e514cd51dc8ef53e6b30c143d9158433839268e026a64404b2"
+  },
+  "empty-en": {
+    "length": 9815,
+    "sha256": "05cf2d6f7f5d06267a55d2352f1e90805433b7520dc54648f1774e336d16af87"
+  },
+  "empty-submitted": {
+    "length": 10484,
+    "sha256": "95285fe6aebb3c1a1449b8cba882d15114e32f1ebce91a5acc8b264d369f1458"
+  },
+  "exchange-beyond": {
+    "length": 19583,
+    "sha256": "5be1fd6d62a96029c39ed2aca5a563a1c8838b48ad83c365db60970ba95c64f7"
+  },
+  "exchange-beyond-submitted": {
+    "length": 19792,
+    "sha256": "8d66bf3335773e5a38a709bf4299d87c4e7e6c57b525b860b5ca7f622a92f739"
+  },
+  "exchange-empty": {
+    "length": 13529,
+    "sha256": "b245f5b219af0109df11c52a955601a7617d674236dac0ab67b8749a3bbea069"
+  },
+  "exchange-empty-ar": {
+    "length": 13359,
+    "sha256": "16c8b2bf524b1ebb9c17031295bb5427933fe40f73a8db916dea71a4c5379591"
+  },
+  "exchange-large": {
+    "length": 17717,
+    "sha256": "23474dc2b9d8f28f90d2af87a63beb5a72692b9dddb42ef3fe7a2b7f74971d7a"
+  },
+  "exchange-no-official-rate": {
+    "length": 17313,
+    "sha256": "d94d9dcee35ceb96b726a1f218e597d676a4eddfe628108339d636142a4beb79"
+  },
+  "exchange-within": {
+    "length": 16952,
+    "sha256": "9d466702c549c56c31c2d03642b6ae559848eca8ad64ef031b322314c1905b71"
+  },
+  "nowhere-to-send": {
+    "length": 11304,
+    "sha256": "42d94e62d61047b6798558237383cb4cfa44c970a22053d63d178b0461c22a4e"
+  },
+  "transfer-backdated": {
+    "length": 12997,
+    "sha256": "a24659b7aa362815814c47025c1d91fea9032438c402b63285001f3f9623228d"
+  },
+  "transfer-filled": {
+    "length": 12070,
+    "sha256": "4705d12fd24f07317147c1d966cba7ad2896602310080a1b398dbec3310e3f6c"
+  },
+  "transfer-recorded": {
+    "length": 12077,
+    "sha256": "f045b5f426e678ff34fa0fd4edd1cd265da9fe7afa39486bdf1de314aef5fcf0"
+  },
+  "transfer-refused": {
+    "length": 12717,
+    "sha256": "426542d9626899fe78c84ce3966ec410830cab357b5926283b2f9b46a740ace5"
+  },
+  "transfer-sending": {
+    "length": 12080,
+    "sha256": "9b63c66b89122e962474816cd14bcd339e4ed4399f483f1275f0bdeb37b9378c"
+  },
+  "transfer-short": {
+    "length": 12994,
+    "sha256": "a3889ab9fb7eb32cb1f0c9e662cce84b5a37ce4289d71a57bbec069e4f95c415"
+  },
+  "transfer-short-in-doubt": {
+    "length": 13721,
+    "sha256": "c11790e52b33b26d33b6a504dec4dcc360f953cb1bef322f33e2d7235996089e"
+  }
+}
