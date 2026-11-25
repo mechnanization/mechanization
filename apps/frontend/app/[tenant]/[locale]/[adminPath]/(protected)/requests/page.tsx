@@ -32,6 +32,7 @@ import { FilterSelect } from '@/components/ui/filter-controls';
 import { Money } from '@/components/ui/money';
 import { PageHeader } from '@/components/ui/page-header';
 import { ChipGroup } from '@/components/ui/segmented-control';
+import { navLabel } from '@/components/admin/nav';
 
 /**
  * The queue's state, in the URL: a reload, a shared link and the back button
@@ -259,7 +260,7 @@ export default function RequestsPage({
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <PageHeader
         icon={FileCheck}
-        title={t('title')}
+        title={navLabel('requests', locale)}
         actions={
           <>
             <Button asChild variant="outline">

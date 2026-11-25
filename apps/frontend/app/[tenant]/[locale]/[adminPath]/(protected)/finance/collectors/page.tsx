@@ -1,11 +1,11 @@
 'use client';
 
 import { use } from 'react';
-import { useTranslations } from 'next-intl';
 import { HandCoins } from 'lucide-react';
 import { useStaffSession } from '@/lib/use-staff-session';
 import { CollectorCustodyPanel } from '@/components/admin/finance/collector-custody-panel';
 import { PageHeader } from '@/components/ui/page-header';
+import { navLabel } from '@/components/admin/nav';
 
 /**
  * «الجباة والتحصيل» — what each collector is still carrying, and receiving it
@@ -28,12 +28,11 @@ export default function CollectorsPage({
 }) {
   const { tenant, locale, adminPath } = use(params);
   const base = `/${tenant}/${locale}/${adminPath}`;
-  const t = useTranslations('finance.collectors');
   const { token, user } = useStaffSession(tenant, base);
 
   return (
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <PageHeader icon={HandCoins} title={t('title')} />
+      <PageHeader icon={HandCoins} title={navLabel('collectors', locale)} />
       <CollectorCustodyPanel
         tenant={tenant}
         base={base}

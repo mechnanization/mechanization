@@ -43,6 +43,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { StatItem, StatStrip } from '@/components/ui/stat-strip';
 import { EmptyState, ErrorState } from '@/components/ui/states';
 import { ActionTooltip } from '@/components/ui/tooltip';
+import { navLabel } from '@/components/admin/nav';
 
 const TABS = ['registrations', 'payouts'] as const;
 
@@ -149,7 +150,7 @@ export function InspectorProfileDetail({
       <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
         <PageHeader
           icon={BadgeDollarSign}
-          title={isAr ? 'لوحة أرباح المفتش الميداني' : 'Inspector earnings'}
+          title={navLabel('earnings', isAr ? 'ar' : 'en')}
         />
         <Card>
           <CardContent className="p-0">

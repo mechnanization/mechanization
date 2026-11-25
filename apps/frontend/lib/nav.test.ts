@@ -5,6 +5,7 @@ import {
   canAccessPath,
   defaultPathFor,
   localizedGroupLabel,
+  localizedLabel,
   NAV_GROUPS,
   visibleGroups,
 } from '@/components/admin/nav';
@@ -45,16 +46,29 @@ describe('the sidebar’s shape', () => {
   });
 
   it('names every row and every labelled group in both languages', () => {
-    for (const row of rows) expect(row.labelEn).toBeTruthy();
-    for (const group of NAV_GROUPS.slice(1)) {
-      expect(group.label).toBeTruthy();
-      expect(group.labelEn).toBeTruthy();
+    for (const row of rows) {
+      expect(localizedLabel(row, 'ar')).toBeTruthy();
+      expect(localizedLabel(row, 'en')).toBeTruthy();
+    }
+    for (const group of NAV_GROUPS.filter((candidate) => candidate.key !== undefined)) {
+      expect(localizedGroupLabel(group, 'ar')).toBeTruthy();
+      expect(localizedGroupLabel(group, 'en')).toBeTruthy();
     }
   });
 
   it('keeps the landing group unlabelled and first', () => {
-    expect(NAV_GROUPS[0].label).toBeUndefined();
+    expect(NAV_GROUPS[0].key).toBeUndefined();
     expect(localizedGroupLabel(NAV_GROUPS[0])).toBe('');
+  });
+
+  // NAV-05 (decided 2026-11-25): «الأخبار» is one row under its own name, with no heading above it.
+  it('lets one other group go without a heading: «الأخبار», one row', () => {
+    const unlabelled = NAV_GROUPS.filter((group) => group.key === undefined);
+    expect(unlabelled).toHaveLength(2);
+    expect(unlabelled[0]).toBe(NAV_GROUPS[0]);
+    expect(unlabelled[1]!.items.map((item) => item.path)).toEqual(['/news/articles']);
+    expect(localizedLabel(unlabelled[1]!.items[0]!, 'ar')).toBe('الأخبار');
+    expect(localizedGroupLabel(unlabelled[1]!)).toBe('');
   });
 });
 
@@ -100,7 +114,7 @@ describe('visibleGroups', () => {
     rather than a «المالية» of which he could open three rows out of seven.
   */
   it('shows the collector the fees and none of the treasury', () => {
-    const labels = visibleGroups('COLLECTOR').map((group) => group.label);
+    const labels = visibleGroups('COLLECTOR').map((group) => localizedGroupLabel(group, 'ar'));
     expect(labels).toContain('الرسوم والجباية');
     expect(labels).not.toContain('الخزينة');
   });
@@ -210,9 +224,20 @@ describe('News and the village that may not have it', () => {
   const newsPaths = (groups: ReturnType<typeof visibleGroups>) =>
     groups.flatMap((group) => group.items).filter((item) => item.path.startsWith('/news')).map((item) => item.path);
 
-  it('shows the three News rows to the administrator and the administrative officer', () => {
+  // NAV-05: the categories and publishers open from the articles page's header, and are the row's `also`.
+  it('shows the one News row to the administrator and the administrative officer', () => {
     for (const role of ['SUPER_ADMIN', 'ADMINISTRATIVE_OFFICER']) {
-      expect(newsPaths(visibleGroups(role))).toEqual(['/news/articles', '/news/categories', '/news/publishers']);
+      expect(newsPaths(visibleGroups(role))).toEqual(['/news/articles']);
+    }
+  });
+
+  it('keeps the categories and publishers under that row, guarded by its roles', () => {
+    const row = rows.find((candidate) => candidate.path === '/news/articles');
+    expect(row?.also).toEqual(['/news/categories', '/news/publishers']);
+    for (const path of ['/news/categories', '/news/publishers']) {
+      for (const role of STAFF_ROLE) {
+        expect(canAccessPath(`${BASE}${path}`, BASE, role)).toBe(['SUPER_ADMIN', 'ADMINISTRATIVE_OFFICER'].includes(role));
+      }
     }
   });
 
@@ -225,18 +250,20 @@ describe('News and the village that may not have it', () => {
   it('hides them, and the group with them, only when Day3ati says News is off', () => {
     const off = visibleGroups('SUPER_ADMIN', { newsEnabled: false });
     expect(newsPaths(off)).toEqual([]);
-    expect(off.map((group) => group.label)).not.toContain('الأخبار');
+    // The group goes with its row: no empty group is left behind.
+    expect(off.flatMap((group) => group.items).some((item) => item.path.startsWith('/news'))).toBe(false);
+    expect(off.every((group) => group.items.length > 0)).toBe(true);
   });
 
   it('keeps them while it is on, or not yet known, so a slow Day3ati does not take the menu away', () => {
-    expect(newsPaths(visibleGroups('SUPER_ADMIN', { newsEnabled: true }))).toHaveLength(3);
-    expect(newsPaths(visibleGroups('SUPER_ADMIN', { newsEnabled: undefined }))).toHaveLength(3);
+    expect(newsPaths(visibleGroups('SUPER_ADMIN', { newsEnabled: true }))).toHaveLength(1);
+    expect(newsPaths(visibleGroups('SUPER_ADMIN', { newsEnabled: undefined }))).toHaveLength(1);
   });
 
   it('leaves every other row alone when News is off', () => {
     const all = visibleGroups('SUPER_ADMIN').flatMap((group) => group.items).length;
     const without = visibleGroups('SUPER_ADMIN', { newsEnabled: false }).flatMap((group) => group.items).length;
-    expect(all - without).toBe(3);
+    expect(all - without).toBe(1);
   });
 });
 
@@ -251,7 +278,7 @@ describe('News and the village that may not have it', () => {
 describe('«المستحق على عقار» (NAV-08)', () => {
   it('keeps its own row under «الرسوم والجباية», read by the roles that read the ledger', () => {
     const group = NAV_GROUPS.find((candidate) => candidate.items.some((item) => item.path === '/fees/parcel'));
-    expect(group?.label).toBe('الرسوم والجباية');
+    expect(group && localizedGroupLabel(group, 'ar')).toBe('الرسوم والجباية');
     expect(group?.items.find((item) => item.path === '/fees/parcel')?.roles).toEqual([...FEE_READ_ROLES]);
   });
 

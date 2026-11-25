@@ -60,6 +60,7 @@ import { buildCsv, downloadCsv } from '@/lib/csv';
 import { cn } from '@/lib/utils';
 import { CENSUS_WRITE_ROLES, hasRole } from '@/lib/staff-roles';
 import { buildingTypeLabel, useBuildingTypes } from '@/lib/building-types';
+import { navLabel } from '@/components/admin/nav';
 
 /**
  * سجل المباني — the census ledger.
@@ -769,7 +770,7 @@ export default function BuildingsPage({
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <PageHeader
         icon={Building2}
-        title={en ? 'Building Census' : 'سجل المباني'}
+        title={navLabel('buildings', locale)}
 
         actions={
           <>

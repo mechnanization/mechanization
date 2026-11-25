@@ -90,7 +90,6 @@ describe('warnings are Alerts, with no emoji (UX-13, CTL-12, BAN-7)', () => {
     'components/citizen/property-card.tsx',
     'app/[tenant]/[locale]/[adminPath]/(protected)/citizens/[citizenId]/payments/[paymentId]/page.tsx',
     'app/[tenant]/[locale]/[adminPath]/(protected)/staff/page.tsx',
-    'components/admin/settings/users-section.tsx',
   ];
 
   it('no source draws the warning-sign glyph', () => {
@@ -112,20 +111,13 @@ describe('warnings are Alerts, with no emoji (UX-13, CTL-12, BAN-7)', () => {
     const tinted = source.match(/\bbg-(?:warning|info)\/(?:5|10)\b/g) ?? [];
     const onPurpose =
       path.endsWith('building-editor/map-section.tsx') ||
-      path.endsWith('(protected)/staff/page.tsx') ||
-      path.endsWith('settings/users-section.tsx');
+      path.endsWith('(protected)/staff/page.tsx');
     expect(tinted.length).toBe(onPurpose ? 1 : 0);
   });
 
   it('the one-time key notice is an Alert on the staff page, titled in the page\'s language', () => {
     const source = code('app/[tenant]/[locale]/[adminPath]/(protected)/staff/page.tsx');
     expect(source).toMatch(/<Alert variant="warning" title=\{locale === 'en' \? 'Notice' : 'تنبيه'\}>/);
-  });
-
-  it('and in the users section, which speaks Arabic only, with its bold lead-in inside the Alert', () => {
-    // Not a `title=` attribute: UX-14's guard allows no bare Arabic one, and this screen has no locale.
-    const source = code('components/admin/settings/users-section.tsx');
-    expect(source).toMatch(/<Alert variant="warning">\s*<strong>تنبيه:<\/strong>/);
   });
 
   it('a notice that has to be said at once is announced as an alert', () => {

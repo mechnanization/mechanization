@@ -25,6 +25,7 @@ import { ZoneModal, type ZoneFormValues } from '@/components/admin/zone-modal';
 import { DraggablePanel } from '@/components/admin/draggable-panel';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useToast } from '@/components/ui/toast';
+import { navLabel } from '@/components/admin/nav';
 
 const ZoneEditorMap = dynamic(
   () => import('@/components/admin/zone-editor-map').then((m) => m.ZoneEditorMap),
@@ -308,7 +309,7 @@ export default function ZonesPage({
               ? editing
                 ? (locale === 'en' ? `Edit: ${editing.name}` : `تعديل: ${editing.name}`)
                 : (locale === 'en' ? 'New Zone / Sector' : 'قطاع جديد')
-              : (locale === 'en' ? 'Zones / Sectors' : 'القطاعات')
+              : navLabel('zones', locale)
           }
         >
           {editorOpen ? (

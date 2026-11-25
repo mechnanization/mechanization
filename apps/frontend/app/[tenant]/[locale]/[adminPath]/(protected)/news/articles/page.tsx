@@ -5,7 +5,7 @@ import { use, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import type { ColumnDef } from '@tanstack/react-table';
-import { Newspaper, Plus } from 'lucide-react';
+import { Megaphone, Newspaper, Plus, Tags } from 'lucide-react';
 import {
   NEWS_ARTICLES_PAGE_DEFAULT,
   NEWS_ARTICLE_STATUS,
@@ -20,11 +20,12 @@ import { useTableLabels } from '@/lib/use-table-labels';
 import { useUrlState } from '@/lib/use-url-state';
 import { Alert } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { DataTable } from '@/components/ui/data-table';
 import { ErrorState } from '@/components/ui/states';
 import { PageHeader } from '@/components/ui/page-header';
 import { SegmentedControl } from '@/components/ui/segmented-control';
+import { navLabel } from '@/components/admin/nav';
 
 const FILTERS = { status: param.oneOf(['all', ...NEWS_ARTICLE_STATUS] as const, 'all') };
 
@@ -166,12 +167,23 @@ export default function NewsArticlesPage({
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <PageHeader
         icon={Newspaper}
-        title={t('title')}
+        title={navLabel('news', locale)}
         actions={
-          <Button onClick={() => router.push(`${base}/news/articles/new`)}>
-            <Plus className="size-4" aria-hidden />
-            {t('new')}
-          </Button>
+          <>
+            {/* The two lists an article is filed and published by have no sidebar row (NAV-05): this is their door. */}
+            <Link href={`${base}/news/categories`} className={buttonVariants({ variant: 'outline' })}>
+              <Tags className="size-4" aria-hidden />
+              {t('categoriesLink')}
+            </Link>
+            <Link href={`${base}/news/publishers`} className={buttonVariants({ variant: 'outline' })}>
+              <Megaphone className="size-4" aria-hidden />
+              {t('publishersLink')}
+            </Link>
+            <Button onClick={() => router.push(`${base}/news/articles/new`)}>
+              <Plus className="size-4" aria-hidden />
+              {t('new')}
+            </Button>
+          </>
         }
       />
 

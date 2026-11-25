@@ -228,12 +228,12 @@ export function SidebarNav({
    * lets a clerk fold the group they are standing in and have it stay folded
    * until they leave it.
    */
-  const activeGroupLabel = groups.find((group) =>
+  const activeGroupKey = groups.find((group) =>
     group.items.some((item) => item.path === active?.path),
-  )?.label;
+  )?.key;
   useEffect(() => {
-    if (activeGroupLabel) setGroupFolded(activeGroupLabel, false);
-  }, [activeGroupLabel]);
+    if (activeGroupKey) setGroupFolded(activeGroupKey, false);
+  }, [activeGroupKey]);
 
   const renderItems = useCallback(
     (items: NavItem[]) => (
@@ -275,13 +275,13 @@ export function SidebarNav({
 
   return (
     <nav className="flex-1 space-y-4 overflow-y-auto p-3">
-      {groups.map((group) => {
+      {groups.map((group, index) => {
         /* Folded to the icon rail, a heading is a word floating in 72px — the
            divider carries the grouping instead. There is no heading left to
            fold against, so the group stays open. */
         if (collapsed) {
           return (
-            <div key={group.label ?? 'landing'}>
+            <div key={group.key ?? group.items[0]?.path}>
               <div aria-hidden className="mx-auto mb-2 h-px w-6 bg-border first:hidden" />
               {renderItems(group.items)}
             </div>
@@ -295,18 +295,25 @@ export function SidebarNav({
           folded is the point here: these are where the role lands, and a clerk
           who folded them away would have hidden their own front door.
         */
-        if (!group.label) {
+        if (!group.key) {
+          /*
+            One more group has no heading: «الأخبار», a single row that is its own
+            name (NAV-05). It is set off by a rule above it, and by one below it
+            when something follows. Nothing in it folds either.
+          */
+          const leading = index === 0;
           return (
-            <div key="landing">
+            <div key={group.items[0]?.path ?? 'landing'}>
+              {!leading ? <div aria-hidden className="mx-2 mb-3 h-px bg-border" /> : null}
               {renderItems(group.items)}
-              <div aria-hidden className="mx-2 mt-3 h-px bg-border" />
+              {leading || index < groups.length - 1 ? <div aria-hidden className="mx-2 mt-3 h-px bg-border" /> : null}
             </div>
           );
         }
 
-        // Captured: the guard above narrows 'group.label' here, but that
+        // Captured: the guard above narrows 'group.key' here, but that
         // narrowing does not survive into the toggle handler's closure.
-        const label = group.label;
+        const label = group.key;
         const isFolded = folded.has(label);
         const holdsActive = group.items.some((item) => item.path === active?.path);
 

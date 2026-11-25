@@ -37,7 +37,6 @@ export interface SettingsCopy {
     cadastre: string;
     security: string;
     backup: string;
-    users: string;
   };
   common: {
     save: string;
@@ -295,83 +294,6 @@ export interface SettingsCopy {
     parcelsSkipped: string;
     reloadMapHint: string;
   };
-  users: {
-    title: string;
-    description: string;
-    heading: string;
-    hint: string;
-    addAccount: string;
-    search: string;
-    colName: string;
-    colEmail: string;
-    colRole: string;
-    colStatus: string;
-    colActions: string;
-    statusActive: string;
-    statusSuspended: string;
-    suspend: string;
-    reactivate: string;
-    empty: string;
-    emptySearch: string;
-    loadError: string;
-    rolesHeading: string;
-    rolesHint: string;
-    roleUnavailable: string;
-    roleUnavailableHint: string;
-    roleNames: Record<RoleKey, string>;
-    roleDuties: Record<RoleKey, string>;
-    newAccount: string;
-    newAccountHint: string;
-    firstName: string;
-    lastName: string;
-    email: string;
-    password: string;
-    passwordHint: string;
-    role: string;
-    create: string;
-    creating: string;
-    created: string;
-    createFailed: string;
-    statusChanged: string;
-    incomplete: string;
-  };
-}
-
-/**
- * The municipal roles this portal names, and how each maps onto the backend.
- *
- * Every key here now maps to a real `StaffRole` value. Accountant, collector
- * and clerk spent a while named but unassignable, because naming a role is
- * cheap and the two things that make it real are not: a Postgres enum
- * migration, and a decision about what it may do at every `@Roles()` guard.
- * Both have since landed, so the `null` case is gone — but the type keeps its
- * `| null` so that the next role someone wants to name can be listed here as
- * unavailable rather than silently offered before its permissions exist.
- */
-export const ROLE_KEYS = [
-  'admin',
-  'collector',
-  'accountant',
-  'inspector',
-  'clerk',
-  'auditor',
-  'viewer',
-] as const;
-export type RoleKey = (typeof ROLE_KEYS)[number];
-
-export const ROLE_BACKEND_VALUE: Record<RoleKey, string | null> = {
-  admin: 'SUPER_ADMIN',
-  collector: 'COLLECTOR',
-  accountant: 'ACCOUNTANT',
-  inspector: 'FIELD_INSPECTOR',
-  clerk: 'ADMINISTRATIVE_OFFICER',
-  auditor: 'AUDITOR',
-  viewer: 'VIEWER',
-};
-
-/** Backend enum value → the catalogue entry that names it. */
-export function roleKeyFor(backendRole: string): RoleKey | undefined {
-  return ROLE_KEYS.find((key) => ROLE_BACKEND_VALUE[key] === backendRole);
 }
 
 /** The documents this portal issues a reference number for. */
@@ -405,7 +327,6 @@ const AR: SettingsCopy = {
     cadastre: 'السجل العقاري',
     security: 'الأمان',
     backup: 'النسخ الاحتياطي والاستعادة',
-    users: 'المستخدمون والأدوار',
   },
   common: {
     save: 'حفظ التغييرات',
@@ -689,63 +610,6 @@ const AR: SettingsCopy = {
     parcelsSkipped: 'تم تجاوزها',
     reloadMapHint: 'افتح الخريطة من جديد لرؤية الطبقة المحدّثة.',
   },
-  users: {
-    title: 'المستخدمون والأدوار',
-    description: 'حسابات الموظفين وصلاحية كل منهم.',
-    heading: 'الحسابات',
-    hint: 'كل من يملك حق الدخول إلى لوحة الإدارة.',
-    addAccount: 'حساب جديد',
-    search: 'ابحث بالاسم أو البريد…',
-    colName: 'الاسم',
-    colEmail: 'البريد الإلكتروني',
-    colRole: 'الدور',
-    colStatus: 'الحالة',
-    colActions: 'إجراءات',
-    statusActive: 'فعّال',
-    statusSuspended: 'موقوف',
-    suspend: 'إيقاف',
-    reactivate: 'إعادة تفعيل',
-    empty: 'لا حسابات بعد.',
-    emptySearch: 'لا نتائج مطابقة لبحثك.',
-    loadError: 'تعذّر تحميل الحسابات.',
-    rolesHeading: 'الأدوار المتاحة',
-    rolesHint: 'ما يستطيع صاحب كل دور فعله داخل النظام.',
-    roleUnavailable: 'غير متاح بعد',
-    roleUnavailableHint:
-      'هذا الدور غير موجود في قاعدة البيانات بعد — إضافته تحتاج ترحيلاً وتحديد صلاحياته على الخادم.',
-    roleNames: {
-      admin: 'مدير النظام',
-      collector: 'جابي',
-      accountant: 'محاسب',
-      inspector: 'مفتّش ميداني',
-      clerk: 'موظف إداري',
-      auditor: 'مدقّق',
-      viewer: 'مشاهد فقط',
-    },
-    roleDuties: {
-      admin: 'صلاحية كاملة: الموافقة النهائية، الإعدادات، وإدارة الحسابات.',
-      collector: 'جباية الرسوم وتسجيل المقبوضات، دون تعديل سجل المواطنين.',
-      accountant: 'إصدار الرسوم وتأكيد الدفعات ومتابعة التحصيل.',
-      inspector: 'مراجعة الطلبات ميدانياً، دون الاطلاع على سجل النشاطات.',
-      clerk: 'إدخال بيانات المواطنين وتحديثها، دون البتّ في الطلبات.',
-      auditor: 'الاطلاع والمراجعة وتصدير البيانات، دون الموافقة النهائية.',
-      viewer: 'حساب رئيس البلدية: يطّلع على لوحة التحكم والتقارير وسجل المواطنين وبياناتهم، ولا يعدّل شيئاً ولا يصدّر سجل المواطنين.',
-    },
-    newAccount: 'إنشاء حساب جديد',
-    newAccountHint: 'يستطيع صاحب الحساب الدخول فور إنشائه.',
-    firstName: 'الاسم الأول',
-    lastName: 'الكنية',
-    email: 'البريد الإلكتروني',
-    password: 'كلمة المرور',
-    passwordHint: 'ثمانية أحرف على الأقل. سلّمها للموظف بوسيلة آمنة.',
-    role: 'الدور',
-    create: 'إنشاء الحساب',
-    creating: 'جارٍ الإنشاء…',
-    created: 'تم إنشاء الحساب.',
-    createFailed: 'تعذّر إنشاء الحساب.',
-    statusChanged: 'تم تحديث حالة الحساب.',
-    incomplete: 'أكمل الحقول الإلزامية.',
-  },
 };
 
 const EN: SettingsCopy = {
@@ -760,7 +624,6 @@ const EN: SettingsCopy = {
     cadastre: 'Cadastre',
     security: 'Security',
     backup: 'Backup & restore',
-    users: 'Users & roles',
   },
   common: {
     save: 'Save changes',
@@ -1042,62 +905,6 @@ const EN: SettingsCopy = {
     linesImported: 'Boundary lines',
     parcelsSkipped: 'Skipped as invalid',
     reloadMapHint: 'Reopen the map to see the new layer.',
-  },
-  users: {
-    title: 'Users & roles',
-    description: 'Staff accounts and what each of them may do.',
-    heading: 'Accounts',
-    hint: 'Everyone who can sign in to the admin portal.',
-    addAccount: 'Add new account',
-    search: 'Search by name or email…',
-    colName: 'Name',
-    colEmail: 'Email',
-    colRole: 'Role',
-    colStatus: 'Status',
-    colActions: 'Actions',
-    statusActive: 'Active',
-    statusSuspended: 'Suspended',
-    suspend: 'Suspend',
-    reactivate: 'Reactivate',
-    empty: 'No accounts yet.',
-    emptySearch: 'No accounts match your search.',
-    loadError: 'Could not load accounts.',
-    rolesHeading: 'Available roles',
-    rolesHint: 'What the holder of each role can do in the system.',
-    roleUnavailable: 'Not available yet',
-    roleUnavailableHint:
-      'This role does not exist in the database yet — adding it needs a migration and a decision about its permissions on the server.',
-    roleNames: {
-      admin: 'Administrator',
-      collector: 'Collector',
-      accountant: 'Accountant',
-      inspector: 'Field inspector',
-      clerk: 'Clerk',
-      auditor: 'Auditor',
-      viewer: 'View only',
-    },
-    roleDuties: {
-      admin: 'Full access: final approval, settings, and account management.',
-      collector: 'Collects fees and registers payments, without editing the register.',
-      accountant: 'Issues fees, confirms payments, and follows up on collection.',
-      inspector: 'Reviews claims in the field, without access to the activity log.',
-      clerk: 'Enters and updates citizen records, without deciding claims.',
-      auditor: 'Reads, reviews, and exports data, without final approval.',
-      viewer: 'The mayor’s account: reads the dashboard, the reports and the citizen register with its data; changes nothing and does not export the citizen register.',
-    },
-    newAccount: 'Create a new account',
-    newAccountHint: 'The holder can sign in as soon as it is created.',
-    firstName: 'First name',
-    lastName: 'Last name',
-    email: 'Email',
-    password: 'Password',    passwordHint: 'At least eight characters. Deliver it securely to the employee.',
-    role: 'Role',
-    create: 'Create account',
-    creating: 'Creating…',
-    created: 'Account created.',
-    createFailed: 'Could not create the account.',
-    statusChanged: 'Account status updated.',
-    incomplete: 'Fill in the required fields.',
   },
 };
 

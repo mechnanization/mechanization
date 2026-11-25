@@ -20,6 +20,7 @@ import { CellTag } from '@/components/ui/cell-tag';
 import { DataTable } from '@/components/ui/data-table';
 import { PageHeader } from '@/components/ui/page-header';
 import { WORKLIST_OWNER_PARAM, WorklistOwnerFilter } from '@/components/admin/worklist-owner-filter';
+import { navLabel } from '@/components/admin/nav';
 
 /** Whose work, in the URL — see `WorklistOwnerFilter`. */
 const URL_STATE = { owner: WORKLIST_OWNER_PARAM };
@@ -235,7 +236,7 @@ export default function ReviewQueuePage({
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <PageHeader
         icon={FileQuestion}
-        title={t('title')}
+        title={navLabel('incompleteFiles', locale)}
         actions={
           <Link href={`${base}/citizens`} className={buttonVariants({ variant: 'outline' })}>
             <Users className="size-4" aria-hidden />

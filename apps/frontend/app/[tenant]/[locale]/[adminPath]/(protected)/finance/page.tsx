@@ -26,6 +26,7 @@ import { PageHeader } from '@/components/ui/page-header';
 import { SegmentedControl } from '@/components/ui/segmented-control';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState, ErrorState } from '@/components/ui/states';
+import { navLabel } from '@/components/admin/nav';
 
 /**
  * «الخزينة» — where the municipality's money is and what each place holds.
@@ -95,7 +96,7 @@ export default function FinancePage({
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <PageHeader
         icon={Landmark}
-        title={t('title')}
+        title={navLabel('treasury', locale)}
         actions={
           // Opening a wallet is the manager's, as activating is (`TreasuryController`).
           canActivate && overview ? (

@@ -10,7 +10,6 @@ import {
   Map as MapIcon,
   Settings as SettingsIcon,
   ShieldCheck,
-  UsersRound,
   type LucideIcon,
 } from 'lucide-react';
 import { useStaffSession } from '@/lib/use-staff-session';
@@ -20,12 +19,12 @@ import { PageHeader } from '@/components/ui/page-header';
 import { ProfileSection } from '@/components/admin/settings/profile-section';
 import { FinanceSection } from '@/components/admin/settings/finance-section';
 import { NumberingSection } from '@/components/admin/settings/numbering-section';
-import { UsersSection } from '@/components/admin/settings/users-section';
 import { CadastreSection } from '@/components/admin/settings/cadastre-section';
 import { SettingsTabs } from '@/components/admin/settings/settings-ui';
 import { Skeleton } from '@/components/ui/skeleton';
+import { navLabel } from '@/components/admin/nav';
 
-const SECTION_IDS = ['profile', 'finance', 'numbering', 'cadastre', 'users'] as const;
+const SECTION_IDS = ['profile', 'finance', 'numbering', 'cadastre'] as const;
 type SectionId = (typeof SECTION_IDS)[number];
 
 interface SectionDef {
@@ -47,7 +46,6 @@ const SECTIONS: SectionDef[] = [
   { id: 'finance', icon: Coins, label: (copy) => copy.nav.finance },
   { id: 'numbering', icon: Hash, label: (copy) => copy.nav.numbering },
   { id: 'cadastre', icon: MapIcon, label: (copy) => copy.nav.cadastre },
-  { id: 'users', icon: UsersRound, label: (copy) => copy.nav.users },
 ];
 
 /**
@@ -107,7 +105,7 @@ export default function SettingsPage({
       <div className="flex flex-wrap items-start justify-between gap-4">
         <PageHeader
           icon={SettingsIcon}
-          title={copy.page.title}
+          title={navLabel('settings', locale)}
         />
 
         {/* Quick link to personal account security */}
@@ -144,9 +142,6 @@ export default function SettingsPage({
           ) : null}
           {active === 'cadastre' ? (
             <CadastreSection tenant={tenant} token={token} copy={copy} />
-          ) : null}
-          {active === 'users' ? (
-            <UsersSection tenant={tenant} token={token} copy={copy} />
           ) : null}
         </div>
       </div>

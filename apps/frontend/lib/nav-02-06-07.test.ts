@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { FEE_READ_ROLES, PAYMENT_REVIEW_READ_ROLES, STAFF_ROLE } from '@mechanization/shared-schemas';
 import {
   canAccessPath,
+  localizedLabel,
   NAV_GROUPS,
   OFF_SIDEBAR_PAGES,
   paletteOnlyItems,
@@ -44,13 +45,15 @@ describe('the three rows have left the sidebar', () => {
 });
 
 describe('OFF_SIDEBAR_PAGES', () => {
-  it('names exactly the three pages, in both languages, with an icon each', () => {
-    expect(OFF_SIDEBAR_PAGES.map((page) => page.path)).toEqual(GONE);
+  // The three of NAV-02, NAV-06 and NAV-07, and the News lists of NAV-05 (named for the crumb only).
+  it('names exactly those pages, in both languages, with an icon each', () => {
+    expect(OFF_SIDEBAR_PAGES.map((page) => page.path)).toEqual([...GONE.slice(0, 2), '/news/categories', '/news/publishers', GONE[2]]);
     for (const page of OFF_SIDEBAR_PAGES) {
-      expect(page.labelEn).toBeTruthy();
+      expect(localizedLabel(page, 'ar')).toBeTruthy();
+      expect(localizedLabel(page, 'en')).toBeTruthy();
       expect(page.keywords?.length).toBeGreaterThan(0);
     }
-    expect(new Set(OFF_SIDEBAR_PAGES.map((page) => page.icon)).size).toBe(3);
+    expect(new Set(OFF_SIDEBAR_PAGES.map((page) => page.icon)).size).toBe(OFF_SIDEBAR_PAGES.length);
   });
 
   it('shares no icon with a sidebar row, so a folded rail never shows two the same', () => {

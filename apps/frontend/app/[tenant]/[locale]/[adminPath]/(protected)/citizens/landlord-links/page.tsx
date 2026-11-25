@@ -42,6 +42,7 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { DataTable } from '@/components/ui/data-table';
 import { PageHeader } from '@/components/ui/page-header';
 import { ActionTooltip } from '@/components/ui/tooltip';
+import { navLabel } from '@/components/admin/nav';
 
 /**
  * Why «ربط» is not offered on a row, or null when it is. The row links only on
@@ -420,7 +421,7 @@ export default function LandlordLinksPage({
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <PageHeader
         icon={Link2}
-        title={en ? 'Owner links' : 'روابط المالكين'}
+        title={navLabel('ownerLinks', locale)}
         actions={
           <Button variant="outline" onClick={() => query.refetch()} disabled={query.fetching} className="h-10">
             <RefreshCw

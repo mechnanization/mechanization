@@ -65,6 +65,7 @@ import { DeletedStaffSection } from '@/components/admin/staff/deleted-staff-sect
 import { StaffSalaryDialog } from '@/components/admin/staff/staff-salary-dialog';
 import { InspectorPayoutDialog } from '@/components/admin/inspector-payout-dialog';
 import { useStaffPresence } from '@/lib/use-staff-presence';
+import { navLabel } from '@/components/admin/nav';
 
 /** The role chips: «all», or one of the roles the server knows. */
 const ROLE_FILTERS = ['all', ...STAFF_ROLE] as const;
@@ -611,7 +612,7 @@ export default function StaffPage({
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <PageHeader
         icon={UsersRound}
-        title={en ? 'Staff' : 'الموظفون'}
+        title={navLabel('staff', locale)}
         actions={
           <Button
             onClick={() => {

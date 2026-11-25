@@ -29,6 +29,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState, ErrorState } from '@/components/ui/states';
+import { navLabel } from '@/components/admin/nav';
 
 /**
  * «جولتي» — what the collector is carrying, and which doors it came from.
@@ -166,7 +167,7 @@ export default function MyRoundPage({
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-5 px-4 py-6 sm:px-6">
-      <PageHeader icon={Wallet} title={t('title')} />
+      <PageHeader icon={Wallet} title={navLabel('myRound', locale)} />
 
       {round.error ? (
         <Card>

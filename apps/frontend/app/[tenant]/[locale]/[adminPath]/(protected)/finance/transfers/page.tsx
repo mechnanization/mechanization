@@ -42,6 +42,7 @@ import { StatItem, StatStrip } from '@/components/ui/stat-strip';
 import { ErrorState } from '@/components/ui/states';
 import { SummaryList, SummaryRow } from '@/components/ui/summary-list';
 import { Textarea } from '@/components/ui/textarea';
+import { navLabel } from '@/components/admin/nav';
 
 const PAGE_SIZE = 50;
 
@@ -231,7 +232,7 @@ export default function TransfersPage({
 
       <PageHeader
         icon={ArrowRightLeft}
-        title={t('title')}
+        title={navLabel('transfers', locale)}
         actions={
           canRecord && overview.data?.active ? (
             <Button asChild>

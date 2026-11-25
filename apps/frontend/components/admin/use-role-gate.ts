@@ -8,10 +8,10 @@ import { useStaffSession } from '@/lib/use-staff-session';
 import { useToast } from '@/components/ui/toast';
 
 /** The `access` message that says why a page is not for the role (`messages.access`). */
-export type TurnedAwayReason = 'registerCitizen' | 'feeCorrections';
+export type TurnedAwayReason = 'registerCitizen' | 'feeCorrections' | 'fieldWorklists';
 
 /**
- * A page with no sidebar row turning away a role it is not for (NAV-02, NAV-07).
+ * A page turning away a role it is not for (NAV-02, NAV-07, and the field worklists, NAV-04).
  *
  * A path under no row opens to every role (`canAccessPath`), so when a row
  * leaves the sidebar the page has to say who it is for itself, as `CaseEditor`

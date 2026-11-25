@@ -36,6 +36,7 @@ import { Field } from '@/components/ui/field';
 import { PageHeader } from '@/components/ui/page-header';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState, ErrorState } from '@/components/ui/states';
+import { navLabel } from '@/components/admin/nav';
 
 const URL_STATE = { date: param.date() };
 
@@ -82,7 +83,7 @@ export default function DailyClosingPage({
     <div className="w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8">
       <PageHeader
         icon={CalendarCheck}
-        title={t('title')}
+        title={navLabel('dailyClose', locale)}
         actions={
           sheet?.goLiveOn ? (
             <Button asChild variant="outline">
