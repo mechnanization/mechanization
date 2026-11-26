@@ -20,6 +20,16 @@ function isExcused(form: CitizenFormData, field: CitizenEditableField): boolean 
   return (form.flags ?? []).some((flag) => flag.path === `personal.${field}` || flag.path === `contact.${field}`);
 }
 
+/** Why a typed value is refused: a key of `qualityCompare.errors`. */
+export type FieldProblem = 'required' | 'phone' | 'nameShort' | 'nameLong' | 'nameCharacters';
+
+/*
+  The shared schema's own messages are Arabic by design, so only what went wrong is taken from it
+  and this screen words it in the page's language (TXT-1).
+*/
+const nameProblem = (code: string | undefined): FieldProblem =>
+  code === 'too_small' ? 'nameShort' : code === 'too_big' ? 'nameLong' : 'nameCharacters';
+
 /**
  * The one field's worth of validation this screen does before it asks the
  * server.
@@ -33,19 +43,19 @@ export function validateField(
   field: CitizenEditableField,
   value: string,
   form: CitizenFormData,
-): { ok: true; value: string } | { ok: false; message: string } {
+): { ok: true; value: string } | { ok: false; problem: FieldProblem } {
   const raw = value.trim();
   if (!raw) {
     // A blank an officer explicitly marked «غير مؤكَّد» is a legitimate state of
     // the record; a blank nobody accounted for is not one this screen creates.
     return isExcused(form, field)
       ? { ok: true, value: '' }
-      : { ok: false, message: 'هذا الحقل مطلوب' };
+      : { ok: false, problem: 'required' };
   }
   const schema = field === 'phone' ? internationalPhone : arabicOrLatinName;
   const parsed = schema.safeParse(raw);
   if (!parsed.success) {
-    return { ok: false, message: parsed.error.issues[0]?.message ?? 'قيمة غير صالحة' };
+    return { ok: false, problem: field === 'phone' ? 'phone' : nameProblem(parsed.error.issues[0]?.code) };
   }
   return { ok: true, value: parsed.data };
 }

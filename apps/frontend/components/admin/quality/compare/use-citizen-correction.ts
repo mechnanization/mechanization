@@ -7,6 +7,7 @@ import {
   ApiRequestError,
   getCitizenForm,
   logApiError,
+  staleEditOf,
   updateCitizen,
   type CitizenFormData,
   type CitizenProfile,
@@ -41,18 +42,25 @@ export function useCitizenCorrection({
   tenant: string;
   token: string | null;
   locale: string;
-  /** A correction landed: what is on screen, and the queue behind it, are stale. */
-  onSaved: () => void;
+  /** This file changed on the server: what is on screen, and the queue behind it, are stale. */
+  onSaved: (citizenId: string) => void;
 }) {
   const t = useTranslations('qualityCompare.edit');
   const tRows = useTranslations('qualityCompare.rows');
+  const tErrors = useTranslations('qualityCompare.errors');
   const labels = getLabels(locale);
   const toast = useToast();
-  // `ConfirmDialog` disables its button from state, set asynchronously (SUBMIT-04): a double-click
-  // can reach `save` twice. Checked and set first, released when the write settles.
-  const savingRef = useRef(false);
+  /*
+    The save on the wire. `ConfirmDialog` disables its button from state, set asynchronously
+    (SUBMIT-04), so a double-click can reach `save` twice. The second press is handed the same
+    answer: returning at once told the dialog it had succeeded, and it closed over a write that
+    could still be refused, with nowhere left to say so.
+  */
+  const saving = useRef<Promise<void> | null>(null);
+  /** Counts what was asked of the editor: a file that answers after a later ask is dropped. */
+  const asked = useRef(0);
 
-  /** The editable copy of each side, fetched only when somebody starts editing. */
+  /** The editable copy of each side, read when somebody starts editing, every time. */
   const [forms, setForms] = useState<Record<string, CitizenFormData>>({});
   const [loadingForm, setLoadingForm] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ side: 0 | 1; row: EditableRow } | null>(null);
@@ -61,6 +69,8 @@ export function useCitizenCorrection({
   const [pending, setPending] = useState<PendingEdit | null>(null);
 
   const cancelEdit = () => {
+    asked.current += 1;
+    setLoadingForm(null);
     setEditing(null);
     setDraft({});
     setProblem(null);
@@ -68,23 +78,28 @@ export function useCitizenCorrection({
 
   const startEdit = async (side: 0 | 1, citizenId: string, target: EditableRow) => {
     if (!token) return;
-    setProblem(null);
-    let form = forms[citizenId];
-    if (!form) {
-      setLoadingForm(citizenId);
-      try {
-        form = await getCitizenForm(tenant, token, citizenId);
-        setForms((current) => ({ ...current, [citizenId]: form! }));
-      } catch (caught) {
-        logApiError(caught);
-        toast.error(caught instanceof ApiRequestError ? caught.message : t('openFailed'));
-        return;
-      } finally {
-        setLoadingForm(null);
-      }
+    // One editor at a time: the one open, or still opening, gives way to this one.
+    cancelEdit();
+    const request = asked.current;
+    setLoadingForm(citizenId);
+    let form: CitizenFormData;
+    try {
+      /*
+        Read on every «Edit», never kept from the last one: the save carries this copy's version, so a
+        copy read before somebody else's save would be refused, and refused again on every retry.
+      */
+      form = await getCitizenForm(tenant, token, citizenId);
+    } catch (caught) {
+      logApiError(caught);
+      if (request !== asked.current) return;
+      setLoadingForm(null);
+      toast.error(caught instanceof ApiRequestError ? caught.message : t('openFailed'));
+      return;
     }
-    const section = (field: CitizenEditableField) =>
-      field === 'phone' ? form!.contact : form!.personal;
+    if (request !== asked.current) return;
+    setLoadingForm(null);
+    setForms((current) => ({ ...current, [citizenId]: form }));
+    const section = (field: CitizenEditableField) => (field === 'phone' ? form.contact : form.personal);
     setDraft(
       Object.fromEntries(
         ROW_FIELDS[target].map((field) => [field, String(section(field)[field] ?? '')]),
@@ -103,7 +118,7 @@ export function useCitizenCorrection({
       if (!isEditableOn(form, field)) continue;
       const checked = validateField(field, draft[field] ?? '', form);
       if (!checked.ok) {
-        setProblem(`${labels.citizenField[field] ?? field}: ${checked.message}`);
+        setProblem(`${labels.citizenField[field] ?? field}: ${tErrors(checked.problem)}`);
         return;
       }
       values[field] = checked.value;
@@ -140,14 +155,11 @@ export function useCitizenCorrection({
     });
   };
 
-  const save = async () => {
-    if (savingRef.current) return;
-    savingRef.current = true;
-    try {
-      await applySave();
-    } finally {
-      savingRef.current = false;
-    }
+  const save = (): Promise<void> => {
+    saving.current ??= applySave().finally(() => {
+      saving.current = null;
+    });
+    return saving.current;
   };
 
   const applySave = async () => {
@@ -155,31 +167,45 @@ export function useCitizenCorrection({
     const form = forms[pending.citizenId];
     if (!form) return;
 
-    await updateCitizen(tenant, token, pending.citizenId, {
-      ...citizenFieldPatch(form, pending.values),
+    try {
+      await updateCitizen(tenant, token, pending.citizenId, {
+        ...citizenFieldPatch(form, pending.values),
+        /*
+          A correction made by comparing two records side by side — which may be
+          an identity number (`highImpactChanges`), so the save says so on the
+          audit row rather than being refused for want of a reason.
+        */
+        changeReason: t('reason', { field: pending.label }),
+      });
+    } catch (caught) {
+      const stale = staleEditOf(caught);
+      const merged = caught instanceof ApiRequestError && caught.code === 'CITIZEN_FILE_STALE_MERGED';
+      // Any other refusal is the question's to show, and to try again.
+      if (!stale && !merged) throw caught;
       /*
-        A correction made by comparing two records side by side — which may be
-        an identity number (`highImpactChanges`), so the save says so on the
-        audit row rather than being refused for want of a reason.
+        Somebody changed the file since it was opened. This copy's version is spent, so saving it
+        again could only be refused again: the question closes, the two files are read again, and the
+        officer decides on what is there now. (The server's own sentence offers «save to replace»,
+        which this screen does not do.)
       */
-      changeReason: t('reason', { field: pending.label }),
-    });
+      logApiError(caught);
+      toast.warning(stale?.lastEditedBy ? t('changedBy', { name: stale.lastEditedBy }) : t('changed'));
+      close(pending.citizenId);
+      return;
+    }
 
     toast.success(t('saved'));
-    /*
-      The saved file's version is now stale in `forms`, and so is every value on
-      it. Dropped rather than patched: the next edit re-reads it, which is also
-      what makes the version check meaningful instead of a token carried
-      forward.
-    */
-    setForms((current) => {
-      const next = { ...current };
-      delete next[pending.citizenId];
-      return next;
-    });
+    close(pending.citizenId);
+  };
+
+  /*
+    After a save, or a file found changed: the question and the editor close, and the screen reads what is
+    there now. The copy just used is never saved again: the next «Edit» reads the file afresh.
+  */
+  const close = (citizenId: string) => {
     setPending(null);
     cancelEdit();
-    onSaved();
+    onSaved(citizenId);
   };
 
   return { forms, loadingForm, editing, draft, setDraft, problem, pending, setPending, cancelEdit, startEdit, requestSave, save };

@@ -1082,7 +1082,9 @@
       "cancel": "Cancel",
       "openFailed": "Could not open this record for editing.",
       "saved": "The record was corrected.",
-      "reason": "Corrected while comparing two records in quality review: {field}"
+      "reason": "Corrected while comparing two records in quality review: {field}",
+      "changed": "This file changed after you opened it. Both records have been read again: check them, then press «Edit» to correct.",
+      "changedBy": "{name} changed this file after you opened it. Both records have been read again: check them, then press «Edit» to correct."
     },
     "confirm": {
       "title": "Save this change?",
@@ -1112,6 +1114,13 @@
       "onParcel": "Parcel {number}",
       "openMatrix": "Open the matrix",
       "verdict": "Two structures metres apart on one parcel are a question, not a verdict — genuine neighbours stand that close here too. If they are one structure, correct it in the building editor; if they are two, mark this resolved with the reason."
+    },
+    "errors": {
+      "required": "This field is required",
+      "phone": "The phone number is not valid",
+      "nameShort": "The name is too short",
+      "nameLong": "The name is too long",
+      "nameCharacters": "The name has characters that are not allowed"
     }
   },
   "citizens": {

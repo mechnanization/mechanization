@@ -59,7 +59,6 @@ const GUARDS: ReadonlyArray<readonly [string, string]> = [
   ['import-citizens-dialog.tsx', 'checkingRef'],
   ['import-citizens-dialog.tsx', 'importingRef'],
   ['quality/resolve-dialog.tsx', 'sending'],
-  ['quality/compare/use-citizen-correction.ts', 'savingRef'],
   // PAGE-14: the news editor and its media panel (the two lists’ dialogs validate between check and set: lib/page-14.test.ts)
   ['news/article-media.tsx', 'inFlight'],
   ['news/article-editor.tsx', 'inFlight'],
@@ -118,6 +117,23 @@ describe('quality/findings-list.tsx guards each write by its key', () => {
     expect(source).toMatch(/\} catch \(caught\) \{\s*\n\s*release\(key\);/);
     expect(source).toMatch(/void reread\(\)\.finally\(\(\) => release\(key\)\);/);
     expect(source).toMatch(/\} finally \{\s*\n\s*release\('settle-all'\);/);
+  });
+});
+
+/*
+  The comparison’s correction hands a second press the save already on the wire (PAGE-13): returning at once told
+  the confirmation it had succeeded, and it closed over a write that could still be refused. What that does is
+  driven in `quality-compare-dom.test.ts`.
+*/
+describe('quality/compare/use-citizen-correction.ts answers a second press with the first save', () => {
+  const source = read('quality/compare/use-citizen-correction.ts');
+
+  it('holds the save on the wire in a ref, starts one only when there is none, and frees it when it settles', () => {
+    expect(source).toMatch(/const saving = useRef<Promise<void> \| null>\(null\);/);
+    expect(source).toMatch(/saving\.current \?\?= applySave\(\)\.finally\(\(\) => \{\s*\n\s*saving\.current = null;/);
+    expect(source).toMatch(/return saving\.current;/);
+    // Nothing else writes: the one call is inside the guarded function.
+    expect(source.match(/await updateCitizen\(/g)).toHaveLength(1);
   });
 });
 

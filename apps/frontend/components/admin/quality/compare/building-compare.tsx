@@ -6,6 +6,8 @@ import { getBuilding, type BuildingDetail } from '@/lib/api-client';
 import type { FindingSubject, QualityFinding } from '@/lib/quality-api';
 import { formatDate } from '@/lib/dates';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { readView } from '@/lib/read-view';
+import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
 import { ErrorState, LoadingState } from '@/components/ui/states';
 import { CompareShell, DifferenceSummary } from './compare-shell';
 import { CompareTable, RecordHeading, row, type CompareRow } from './compare-table';
@@ -85,15 +87,17 @@ export function BuildingCompare({
     keepPrevious: true,
   });
 
-  if (query.error) {
+  const view = readView(query.data, query.error);
+
+  if (view.state === 'failed') {
     return (
       <CompareShell finding={finding} locale={locale} onBack={onBack}>
-        <ErrorState description={query.error} offline={query.offline} onRetry={query.refetch} />
+        <ErrorState description={view.error} offline={query.offline} onRetry={query.refetch} />
       </CompareShell>
     );
   }
 
-  if (query.loading || !query.data) {
+  if (view.state === 'loading') {
     return (
       <CompareShell finding={finding} locale={locale} onBack={onBack}>
         <LoadingState label={t('loading')} />
@@ -101,11 +105,12 @@ export function BuildingCompare({
     );
   }
 
-  const buildings = query.data;
+  const buildings = view.data;
   const rows = buildingRows(buildings[0], buildings[1], locale, t);
 
   return (
     <CompareShell finding={finding} locale={locale} onBack={onBack}>
+      {view.refreshFailed ? <RefreshFailedAlert message={view.refreshFailed} onRetry={query.refetch} /> : null}
       <DifferenceSummary rows={rows} />
 
       <CompareTable

@@ -2,11 +2,14 @@
 
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
+import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { GitMerge, ShieldAlert } from 'lucide-react';
 import { getCitizenProfile } from '@/lib/api-client';
 import type { FindingSubject, QualityFinding } from '@/lib/quality-api';
 import { useStaffQuery } from '@/lib/use-staff-query';
+import { readView } from '@/lib/read-view';
+import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { ChangeValue } from '@/components/ui/facts';
@@ -64,28 +67,33 @@ export function CitizenCompare({
     keepPrevious: true,
   });
 
-  const correction = useCitizenCorrection({
-    tenant,
-    token,
-    locale,
-    onSaved: () => {
-      query.refetch();
-      // A corrected name or phone may dissolve the finding itself — the queue
-      // behind this screen has to hear about it.
-      onChanged();
-    },
-  });
+  const queryClient = useQueryClient();
+  /* A file changed: its page, the register's lists, and every pair it is compared in are stale. */
+  const reread = (citizenIds: string[]) => {
+    for (const citizenId of citizenIds) {
+      void queryClient.invalidateQueries({ queryKey: ['citizen-profile', tenant, citizenId] });
+    }
+    void queryClient.invalidateQueries({ queryKey: ['citizens', tenant] });
+    void queryClient.invalidateQueries({ queryKey: ['quality-compare-citizens', tenant] });
+    // A corrected name or phone may dissolve the finding itself — the queue
+    // behind this screen has to hear about it.
+    onChanged();
+  };
+
+  const correction = useCitizenCorrection({ tenant, token, locale, onSaved: (citizenId) => reread([citizenId]) });
   const { pending, setPending, save } = correction;
 
-  if (query.error) {
+  const view = readView(query.data, query.error);
+
+  if (view.state === 'failed') {
     return (
       <CompareShell finding={finding} locale={locale} onBack={onBack}>
-        <ErrorState description={query.error} offline={query.offline} onRetry={query.refetch} />
+        <ErrorState description={view.error} offline={query.offline} onRetry={query.refetch} />
       </CompareShell>
     );
   }
 
-  if (query.loading || !query.data) {
+  if (view.state === 'loading') {
     return (
       <CompareShell finding={finding} locale={locale} onBack={onBack}>
         <LoadingState label={t('loading')} />
@@ -93,7 +101,7 @@ export function CitizenCompare({
     );
   }
 
-  const people = query.data;
+  const people = view.data;
   const rows = citizenRows(people[0], people[1], locale, tRows);
 
   /*
@@ -132,6 +140,7 @@ export function CitizenCompare({
 
   return (
     <CompareShell finding={finding} locale={locale} onBack={onBack}>
+      {view.refreshFailed ? <RefreshFailedAlert message={view.refreshFailed} onRetry={query.refetch} /> : null}
       <DifferenceSummary rows={rows} />
 
       {!canEdit ? (
@@ -197,7 +206,7 @@ export function CitizenCompare({
           onMerged={(result) => {
             setMerging(false);
             toast.success(t('merged'));
-            onChanged();
+            reread([people[0].id, people[1].id]);
             router.push(`${base}/citizens/${encodeURIComponent(result.keepId)}`);
           }}
         />

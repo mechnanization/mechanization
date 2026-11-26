@@ -19,7 +19,9 @@ import {
   WEST_BUILDING,
   file,
 } from './quality-compare-harness';
-import { BASE, TENANT, openScreen, settle, type Screen } from './quality-review-harness';
+import { BASE, TENANT, heldRead, openScreen, settle, type Screen } from './quality-review-harness';
+import ar from '../messages/ar.json';
+import en from '../messages/en.json';
 
 /*
   The comparison «الإجراء» (PAGE-13, cleanup sprint, 2026-11-25), driven before it is split. It writes a
@@ -92,7 +94,8 @@ const mount = (locale: Locale = 'en', props: Props = {}) => screen.mount(compare
 const text = () => screen.container.textContent ?? '';
 const dialog = () => document.body.querySelector<HTMLElement>('[role="dialog"]');
 const refused = (status: number, code: string, message: string, details?: Record<string, unknown>) =>
-  new ApiRequestError(status, { code, message, ...(details ? { details } : {}) });
+  // As the API sends it: a 409 names its class beside its code, and `staleEditOf` reads the class.
+  new ApiRequestError(status, { code, message, ...(status === 409 ? { kind: 'CONFLICT' } : {}), ...(details ? { details } : {}) });
 const buttons = (scope: ParentNode, label: string) =>
   [...scope.querySelectorAll('button')].filter((node) => node.textContent?.trim() === label);
 async function press(scope: ParentNode, label: string, nth = 0): Promise<void> {
@@ -454,5 +457,221 @@ describe('what the comparison shows', () => {
     expect(text()).toContain(message);
     await press(screen.container, 'Try again');
     expect(screen.container.querySelector('dl')).not.toBeNull();
+  });
+});
+
+/** Asks to save a new phone on the first file, up to the question. */
+async function askToCorrectPhone(value = '+96171000000'): Promise<void> {
+  await edit('Phone Number');
+  await type('edit-0-phone', value);
+  await press(screen.container, 'Save');
+}
+/** The keys a write marked stale. */
+const staled = (spy: { mock: { calls: unknown[][] } }) =>
+  spy.mock.calls.map((call) => (call[0] as { queryKey: unknown[] }).queryKey.join('/')).sort();
+const words = en.qualityCompare;
+
+describe('a file changed by somebody else since it was opened', () => {
+  const stale = (name: string | null) =>
+    refused(409, name ? 'CITIZEN_EDITED_BY_OTHER' : 'CITIZEN_EDITED_SINCE_OPENED', 'save to replace them', {
+      staleEdit: { version: 'filing-1:v8', lastEditedBy: name, lastEditedAt: null, byViewer: false },
+    });
+
+  it.each([
+    ['with their name', stale('Rima Haddad'), words.edit.changedBy.replace('{name}', 'Rima Haddad')],
+    ['with no name', stale(null), words.edit.changed],
+    ['after a merge', refused(409, 'CITIZEN_FILE_STALE_MERGED', 'Reopen the file', { code: 'STALE' }), words.edit.changed],
+  ])('closes the question, says so %s, and reads both files again', async (_name, error, said) => {
+    api.updateCitizen.mockRejectedValueOnce(error);
+    await mount();
+    await askToCorrectPhone();
+    const reads = api.getCitizenProfile.mock.calls.length;
+    await press(dialog()!, 'Save');
+    expect(dialog()).toBeNull();
+    expect(screen.container.querySelector('input')).toBeNull();
+    expect(toast.warning).toHaveBeenCalledWith(said);
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(api.getCitizenProfile.mock.calls.length).toBeGreaterThan(reads);
+    expect(changed).toBe(1);
+  });
+
+  it('saves the next time against the version read then, instead of being refused for ever', async () => {
+    api.updateCitizen.mockRejectedValueOnce(stale('Rima Haddad'));
+    await mount();
+    await askToCorrectPhone();
+    await press(dialog()!, 'Save');
+    api.getCitizenForm.mockResolvedValue(file(ALI, { version: 'filing-1:v8' }));
+    await askToCorrectPhone();
+    await press(dialog()!, 'Save');
+    expect(sent(1).expectedVersion).toBe('filing-1:v8');
+    expect(toast.success).toHaveBeenCalledWith(words.edit.saved);
+  });
+
+  it('is said in Arabic on the Arabic page', async () => {
+    api.updateCitizen.mockRejectedValueOnce(stale('Rima Haddad'));
+    await mount('ar');
+    await edit('رقم الهاتف', 0, 'تعديل');
+    await type('edit-0-phone', '+96171000000');
+    await press(screen.container, 'حفظ');
+    await press(dialog()!, 'موافق — احفظ');
+    expect(toast.warning).toHaveBeenCalledWith(ar.qualityCompare.edit.changedBy.replace('{name}', 'Rima Haddad'));
+  });
+});
+
+describe('the editable copy is the file as it is now', () => {
+  it('is read on every «Edit», even after one was cancelled', async () => {
+    await mount();
+    await edit('Phone Number');
+    await press(screen.container, 'Cancel');
+    api.getCitizenForm.mockResolvedValue(file(ALI, { contact: { ...file(ALI).contact, phone: '+96171888888' } }));
+    await edit('Phone Number');
+    expect(api.getCitizenForm).toHaveBeenCalledTimes(2);
+    expect(input('edit-0-phone')!.value).toBe('+96171888888');
+  });
+
+  it('opens for the last «Edit» pressed, however the two reads answer', async () => {
+    const first = heldRead();
+    api.getCitizenForm.mockImplementationOnce(() => first.promise);
+    await mount();
+    await edit('Phone Number', 0);
+    await edit('Full name', 1);
+    await type('edit-1-firstName', 'half typed');
+    await act(async () => first.answer(file(ALI)));
+    await settle();
+    expect(input('edit-0-phone')).toBeNull();
+    expect(input('edit-1-firstName')!.value).toBe('half typed');
+  });
+
+  it('says nothing about a read that a later «Edit» overtook and that then failed', async () => {
+    let fail: (reason: unknown) => void = () => {};
+    api.getCitizenForm.mockImplementationOnce(() => new Promise((_resolve, reject) => (fail = reject)));
+    await mount();
+    await edit('Phone Number', 0);
+    await edit('Full name', 1);
+    await act(async () => fail(refused(500, 'INTERNAL_ERROR', 'x')));
+    await settle();
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(input('edit-1-firstName')).not.toBeNull();
+  });
+
+  it('closes the open editor while the next one is read', async () => {
+    await mount();
+    await edit('Phone Number', 0);
+    api.getCitizenForm.mockImplementationOnce(() => heldRead().promise);
+    await edit('Full name', 1);
+    expect(screen.container.querySelector('input')).toBeNull();
+    expect(cell('Full name', 1).querySelector('.animate-spin')).not.toBeNull();
+  });
+});
+
+describe('a second press on the question', () => {
+  it('waits for the first save: the question stays open until it is answered, and shows its refusal', async () => {
+    let fail: (reason: unknown) => void = () => {};
+    api.updateCitizen.mockImplementation(() => new Promise((_resolve, reject) => (fail = reject)));
+    await mount();
+    await askToCorrectPhone();
+    const confirm = buttons(dialog()!, 'Save')[0]!;
+    await act(async () => {
+      confirm.click();
+      confirm.click();
+    });
+    await settle();
+    expect(api.updateCitizen).toHaveBeenCalledTimes(1);
+    expect(dialog()).not.toBeNull();
+    await act(async () => fail(refused(400, 'NOT_A_CODE_WE_KNOW', 'The file is archived')));
+    await settle();
+    expect(dialog()!.textContent).toContain('The file is archived');
+    // And the next press is a save again.
+    api.updateCitizen.mockResolvedValue({});
+    await press(dialog()!, 'Save');
+    expect(api.updateCitizen).toHaveBeenCalledTimes(2);
+    expect(dialog()).toBeNull();
+  });
+});
+
+describe('a refused value is worded in the page’s language', () => {
+  const pages = {
+    en: { phone: 'Phone Number', motherName: "Mother's Full Name", edit: 'Edit', save: 'Save', cancel: 'Cancel', errors: en.qualityCompare.errors },
+    ar: { phone: 'رقم الهاتف', motherName: 'اسم الأم وشهرتها', edit: 'تعديل', save: 'حفظ', cancel: 'إلغاء', errors: ar.qualityCompare.errors },
+  } as const;
+  it.each([
+    ['required', 'phone', ''],
+    ['phone', 'phone', '123'],
+    ['nameShort', 'motherName', 'ف'],
+    ['nameLong', 'motherName', 'ف'.repeat(61)],
+    ['nameCharacters', 'motherName', 'فاطمة 2'],
+  ] as const)('%s', async (problem, field, value) => {
+    for (const locale of ['en', 'ar'] as const) {
+      const page = pages[locale];
+      await mount(locale);
+      await edit(page[field], 0, page.edit);
+      await type(`edit-0-${field}`, value);
+      await press(screen.container, page.save);
+      expect(screen.container.querySelector('[role="alert"]')!.textContent).toContain(page.errors[problem]);
+      await press(screen.container, page.cancel);
+    }
+  });
+});
+
+describe('what a correction marks stale', () => {
+  it('that file, the register’s lists and every pair it is compared in, and tells the findings', async () => {
+    await mount();
+    await askToCorrectPhone();
+    const marked = vi.spyOn(screen.client, 'invalidateQueries');
+    await press(dialog()!, 'Save');
+    expect(staled(marked)).toEqual([`citizen-profile/t1/${ALI}`, 'citizens/t1', 'quality-compare-citizens/t1']);
+    expect(changed).toBe(1);
+  });
+
+  it('both files after a merge', async () => {
+    await mount();
+    await press(screen.container, 'Merge the two files');
+    const marked = vi.spyOn(screen.client, 'invalidateQueries');
+    await act(async () => merge.props!.onMerged({ keepId: ALI }));
+    await settle();
+    expect(staled(marked)).toEqual([
+      `citizen-profile/t1/${ALI}`,
+      `citizen-profile/t1/${HASSAN}`,
+      'citizens/t1',
+      'quality-compare-citizens/t1',
+    ]);
+  });
+
+  it('nothing, when the save was refused', async () => {
+    api.updateCitizen.mockRejectedValueOnce(refused(400, 'NOT_A_CODE_WE_KNOW', 'No'));
+    await mount();
+    await askToCorrectPhone();
+    const marked = vi.spyOn(screen.client, 'invalidateQueries');
+    await press(dialog()!, 'Save');
+    expect(marked).not.toHaveBeenCalled();
+    expect(changed).toBe(0);
+  });
+});
+
+describe('a failed re-read keeps the comparison (STA-1)', () => {
+  const failNextRead = async (call: 'getCitizenProfile' | 'getBuilding', key: string) => {
+    api[call].mockRejectedValueOnce(refused(500, 'INTERNAL_ERROR', 'x'));
+    await act(async () => {
+      await screen.client.invalidateQueries({ queryKey: [key, TENANT] });
+    });
+    await settle();
+  };
+
+  it('of the two files, with the editor and what is typed in it', async () => {
+    await mount();
+    await edit('Phone Number');
+    await type('edit-0-phone', '+96171000000');
+    await failNextRead('getCitizenProfile', 'quality-compare-citizens');
+    expect(text()).toContain(en.common.refreshFailed);
+    expect(input('edit-0-phone')!.value).toBe('+96171000000');
+    await press(screen.container, en.common.retry);
+    expect(text()).not.toContain(en.common.refreshFailed);
+  });
+
+  it('of the two structures', async () => {
+    await mount('en', { finding: TWO_BUILDINGS });
+    await failNextRead('getBuilding', 'quality-compare-buildings');
+    expect(text()).toContain(en.common.refreshFailed);
+    expect(row('Code').textContent).toContain('X-498-B');
   });
 });
