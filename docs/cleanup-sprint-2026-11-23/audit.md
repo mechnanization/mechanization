@@ -1697,6 +1697,13 @@ Each pass first lands the tasks already listed for its pages (named below); what
   write re-reads the officers' figures too (the unit review the buildings and cases, a correction the review queue);
   `CITIZEN_EDIT_ROLES` replaced by `CITIZEN_RECORD_EDIT_ROLES`, the same two roles among those who reach the screen. The list is
   still paged in the browser (open). **Not done:** tried in a browser, at any width.
+- **Done 2026-11-26 (the comparison; stays In Progress):** `finding-compare.tsx` split (1,086 → 116, `quality/compare/`) under nets
+  written first around the citizen correction; its words in `qualityCompare.*`, snapshots unchanged in both languages. Fixed: a file
+  changed by somebody else was refused on every retry (the copy with its spent version was kept, even after «cancel») — it is read on
+  every «Edit», and a stale refusal closes the question, names who changed it and re-reads both; a second confirm no longer closes the
+  question over a write still on the wire; a late «Edit» no longer replaces the editor opened after it; refused values are worded in
+  the page's language; a failed re-read keeps the comparison; a correction or merge re-reads the file, the register and the pairs.
+  **Not done:** tried in a browser, at any width.
 
 ## [PAGE-14] Bring the news pages to the page contract
 - **Priority:** P2 · **Assignee:** Abed · **Estimate:** S · **Category:** UI/UX
