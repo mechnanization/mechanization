@@ -331,8 +331,8 @@ export class CitizenController {
       in one response was the read this screen used to make on every visit.
     */
     return this.landlordLinkService.proposals({
-      limit: Number(limit ?? 20),
-      offset: Number(offset ?? 0),
+      limit: queryLimit(limit, 20, 100),
+      offset: queryOffset(offset),
     });
   }
 
