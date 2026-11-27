@@ -57,7 +57,7 @@ import { CensusSyncService } from '../application/features/buildings/census-sync
 import { DamageService } from '../application/features/buildings/damage.service';
 import { CasesService } from '../application/features/cases/cases.service';
 import { ZonesService } from '../application/features/zones/zones.service';
-import type { TenantContextService } from '../infrastructure/context/tenant-context.service';
+import { TenantContextService, type TenantScope } from '../infrastructure/context/tenant-context.service';
 import { PrismaCaseRepository } from '../infrastructure/repositories/case.repository';
 import { PrismaParcelRepository } from '../infrastructure/repositories/parcel.repository';
 import { PrismaUserRepository } from '../infrastructure/repositories/user.repository';
@@ -140,15 +140,25 @@ const TYPICAL_AREA: Record<string, [number, number]> = {
 
 // ─────────────────────────────  Services  ─────────────────────────────
 
-/** The census services over one tenant client — census-sync.integration.spec.ts's setup. */
-function censusServices(db: TenantPrismaClient, tenantSlug: string, schemaName: string) {
-  const context = {
-    get prisma() {
-      return db;
-    },
-    tenantSlug,
-    schemaName,
-  } as unknown as TenantContextService;
+/** Runs `work` as the municipality `schemaName`, over `db`, as `TenantMiddleware` runs a request. */
+function asTenant<T>(
+  context: TenantContextService,
+  db: TenantPrismaClient,
+  tenantSlug: string,
+  schemaName: string,
+  work: () => Promise<T>,
+): Promise<T> {
+  const scope: TenantScope = { tenantId: tenantSlug, tenantSlug, schemaName, prisma: db as unknown as TenantScope['prisma'] };
+  return context.run(scope, work);
+}
+
+/**
+ * The census services over one tenant client — census-sync.integration.spec.ts's setup.
+ * `context` is a real one, and `seedCensus` runs inside its scope (`asTenant` below):
+ * the building writes open `runInTenantTransaction` since audit ARCH-03, which re-enters
+ * the scope, and an object literal standing in for the context has none.
+ */
+function censusServices(context: TenantContextService) {
   const events = new EventEmitter2();
   const cases = new CasesService(new PrismaCaseRepository(context), new PrismaUserRepository(context), events);
   const buildings = new BuildingsService(context, cases, events);
@@ -418,8 +428,9 @@ async function seedCensus(
   tenant: (typeof TENANTS)[number],
   schemaName: string,
   citizens: number,
+  context: TenantContextService,
 ): Promise<CensusResult> {
-  const services = censusServices(db, tenant.slug, schemaName);
+  const services = censusServices(context);
   const s = `"${schemaName}"`;
   const [{ now: runStart }] = await db.$queryRawUnsafe<Array<{ now: Date }>>(
     `SELECT (now() AT TIME ZONE 'utc')::timestamp AS now`,
@@ -1066,7 +1077,10 @@ async function main(): Promise<void> {
       }
       console.log(`  ${tenant.nameAr} (${tenant.slug})`);
       const count = tenant.share === 1 ? citizens : Math.max(50, Math.round(citizens * tenant.share));
-      const result = await seedCensus(db, tenant, schemaName, count);
+      const context = new TenantContextService();
+      const result = await asTenant(context, db, tenant.slug, schemaName, () =>
+        seedCensus(db, tenant, schemaName, count, context),
+      );
       console.log(
         `  written: ${result.zones} zones, ${result.buildingsCreated} buildings, ` +
           `${result.linkedRegistrations} households linked` +
