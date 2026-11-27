@@ -10,6 +10,7 @@ import { ConflictError, NotFoundError, ValidationError } from '../../../domain/e
 import { assertFileOpen, assertNotMergedAway } from './merged-away';
 import { claimsFlat } from '../../../domain/entities/census-claim';
 import { BuildingsService } from '../buildings/buildings.service';
+import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
 import { CasesService } from '../cases/cases.service';
 import { withoutCardFlags, withoutRowFlags } from './card-flags';
 import { LandlordLinkService, type PendingEvent, type SaleRelease } from './landlord-link.service';
@@ -22,7 +23,7 @@ import { StaffActor } from '../../common/actor';
  * ## What was wrong
  *
  * An owner's spell ended on the unit matrix went through
- * `BuildingsService.endOccupancy`, which closed the spell and *unlinked* the
+ * `OccupancyWritesService.endOccupancy`, which closed the spell and *unlinked* the
  * flat from the owner's card — `building_units.unitId = NULL` — and stopped
  * there. The card and its row stayed current, and a row with no flat link
  * still bills from its own area: a sale recorded on the matrix went on billing
@@ -66,6 +67,7 @@ export class OwnershipService {
     private readonly links: LandlordLinkService,
     private readonly events: EventEmitter2,
     private readonly auditTrail: AuditService,
+    private readonly occupancyWrites: OccupancyWritesService,
   ) {}
 
   /**
@@ -726,7 +728,7 @@ export class OwnershipService {
                 : null;
             }
             if (!already || already.role !== 'OWNER') {
-              await this.buildings.recordOccupancy(
+              await this.occupancyWrites.recordOccupancy(
                 {
                   unitId: unit.unitId,
                   citizenId: input.newOwnerId,

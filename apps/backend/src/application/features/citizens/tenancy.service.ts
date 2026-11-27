@@ -16,6 +16,7 @@ import { settleUnit, type UnitStatusEvent } from '../buildings/unit-status';
 import { ConflictError, NotFoundError, ValidationError } from '../../../domain/errors/domain-error';
 import { claimsFlat } from '../../../domain/entities/census-claim';
 import { BuildingsService } from '../buildings/buildings.service';
+import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
 import { CasesService } from '../cases/cases.service';
 import { withoutCardFlags, withoutRowFlags } from './card-flags';
 import { OwnershipService, type EndOwnershipResult } from './ownership.service';
@@ -73,6 +74,7 @@ export class TenancyService {
     private readonly events: EventEmitter2,
     private readonly ownership: OwnershipService,
     private readonly auditTrail: AuditService,
+    private readonly occupancyWrites: OccupancyWritesService,
   ) {
     // A tenant can buy the flat they rent; the sale ends that tenancy through here.
     ownership.bindTenancy(this);
@@ -98,12 +100,12 @@ export class TenancyService {
     input: UpsertOccupancyInput,
     actor: StaffActor,
   ): Promise<
-    Awaited<ReturnType<BuildingsService['recordOccupancy']>> & {
+    Awaited<ReturnType<OccupancyWritesService['recordOccupancy']>> & {
       ownerLink: RecordedOwnerLinkResult | null;
     }
   > {
     return this.inTransaction(async () => {
-      const recorded = await this.buildings.recordOccupancy(input, actor, { fromMatrix: true });
+      const recorded = await this.occupancyWrites.recordOccupancy(input, actor, { fromMatrix: true });
       const ownerLink =
         input.role !== 'OWNER' && input.landlordCitizenId
           ? await this.links.linkRecordedOwner({
@@ -133,7 +135,7 @@ export class TenancyService {
    * The matrix's «إنهاء الإشغال». An owner's spell is not a tenancy — a sale or
    * a correction of who owns the flat — and goes through `OwnershipService`,
    * the same operation «إنهاء الملكية» runs from the owner's file. It used to
-   * go to `BuildingsService.endOccupancy`, which unlinked the flat from the
+   * go to `OccupancyWritesService.endOccupancy`, which unlinked the flat from the
    * owner's card instead of ending the card's row, so the seller kept being
    * billed from the row it left behind.
    */

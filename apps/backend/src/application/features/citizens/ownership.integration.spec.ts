@@ -18,6 +18,7 @@ import { TenancyService } from './tenancy.service';
 import { StaffActor } from '../../common/actor';
 import { feeServices } from '../fees/fee-services.testing';
 import type { FeeNoticesService } from '../fees/fee-notices.service';
+import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
 
 /**
  * Ending an ownership, against a real Postgres.
@@ -42,6 +43,7 @@ describeIfDb('OwnershipService', () => {
   let db: TenantPrismaClient;
   let context: TenantContextService;
   let buildings: BuildingsService;
+  let occupancyWrites: OccupancyWritesService;
   let census: CensusSyncService;
   let links: LandlordLinkService;
   let ownership: OwnershipService;
@@ -70,19 +72,20 @@ describeIfDb('OwnershipService', () => {
       events,
     );
     buildings = new BuildingsService(context, cases, events);
+    occupancyWrites = new OccupancyWritesService(context, cases, events, buildings);
     census = new CensusSyncService(context, cases, events);
     links = new LandlordLinkService(
       context,
-      buildings,
+      occupancyWrites,
       events,
       new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
     );
     const audit = new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never);
-    ownership = new OwnershipService(context, buildings, cases, links, events, audit);
+    ownership = new OwnershipService(context, buildings, cases, links, events, audit, occupancyWrites);
     failingOwnership = new OwnershipService(context, buildings, cases, links, events, {
       recordChangeInTransaction: () => Promise.reject(new Error('audit insert refused')),
-    } as never);
-    tenancy = new TenancyService(context, buildings, cases, links, events, ownership, audit);
+    } as never, occupancyWrites);
+    tenancy = new TenancyService(context, buildings, cases, links, events, ownership, audit, occupancyWrites);
     ({ feeNotices } = feeServices(
       context,
       events,

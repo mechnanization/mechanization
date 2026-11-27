@@ -11,6 +11,7 @@ import { CasesService } from '../cases/cases.service';
 import { PrismaCaseRepository } from '../../../infrastructure/repositories/case.repository';
 import { BuildingsService } from './buildings.service';
 import { CensusSyncService } from './census-sync.service';
+import { OccupancyWritesService } from './occupancy-writes.service';
 
 /**
  * «هذا المنزل يصبح مبنى» and «دوبلكس» (migration 0095, decision D28), against a
@@ -36,6 +37,7 @@ describeIfDb('a house that grows (D28)', () => {
   let ddl: Client;
   let db: TenantPrismaClient;
   let buildings: BuildingsService;
+  let occupancyWrites: OccupancyWritesService;
   let census: CensusSyncService;
   let officerId: string;
   const emitted: Array<{ name: string; payload: Record<string, unknown> }> = [];
@@ -67,6 +69,12 @@ describeIfDb('a house that grows (D28)', () => {
     // A real scope for the census writes, which run in `runInTenantTransaction` since audit ARCH-03.
     const scoped = new TenantContextService();
     buildings = inTenantScope(new BuildingsService(scoped, cases, events), scoped, {
+      tenantId: 'tenant-growth',
+      tenantSlug: 'growth',
+      schemaName: SCHEMA,
+      prisma: db,
+    });
+    occupancyWrites = inTenantScope(new OccupancyWritesService(scoped, cases, events, buildings), scoped, {
       tenantId: 'tenant-growth',
       tenantSlug: 'growth',
       schemaName: SCHEMA,
@@ -218,7 +226,7 @@ describeIfDb('a house that grows (D28)', () => {
       expect(spell.toDate).toBeNull();
 
       // Recording him on the upper flat adds a row to the same card — not a second card.
-      const recorded = await buildings.recordOccupancy(
+      const recorded = await occupancyWrites.recordOccupancy(
         { unitId: upper.id, citizenId: nafe, role: 'OWNER', unitStatus: 'OWNER_OCCUPIED', unitArea: 170 },
         actor(),
         { fromMatrix: true },

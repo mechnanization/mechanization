@@ -217,7 +217,7 @@ export class CasesService {
   /**
    * Closes the cases a newly-recorded occupancy has just answered.
    *
-   * Called from `BuildingsService.recordOccupancy`, because that is the moment
+   * Called from `OccupancyWritesService.recordOccupancy`, because that is the moment
    * the thing these cases were waiting on actually happened: a حالة on a flat
    * says «لم يتم الرد», and an occupancy on that flat says who lives there.
    * Leaving it open sends a second officer to a door the municipality has

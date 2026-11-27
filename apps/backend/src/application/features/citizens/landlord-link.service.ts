@@ -19,7 +19,7 @@ import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-re
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
 import { AuditService, type CitizenChange } from '../audit/audit.service';
 import { ConflictError, DomainError, NotFoundError, ValidationError, refusedBy } from '../../../domain/errors/domain-error';
-import { BuildingsService } from '../buildings/buildings.service';
+import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
 import type { FileLinkResult } from '../buildings/building.types';
 import { withoutCardFlags, withoutRowFlags } from './card-flags';
 import { cardClaiming, claimsFlat } from '../../../domain/entities/census-claim';
@@ -71,7 +71,7 @@ export class LandlordLinkService {
 
   constructor(
     private readonly tenantContext: TenantContextService,
-    private readonly buildings: BuildingsService,
+    private readonly occupancyWrites: OccupancyWritesService,
     private readonly events: EventEmitter2,
     private readonly auditTrail: AuditService,
   ) {}
@@ -1307,7 +1307,7 @@ export class LandlordLinkService {
     let card = await this.tenancyCardFor(spell);
     if (!card) {
       // Nothing on their file claims the flat yet: file it, under this owner.
-      const filed = await this.buildings.ensureOnFile({
+      const filed = await this.occupancyWrites.ensureOnFile({
         unitId: spell.unitId,
         buildingId: spell.unit.buildingId,
         citizenId: spell.citizenId,
@@ -1706,7 +1706,7 @@ export class LandlordLinkService {
           input), so the census is left as it is and only the file is asked to
           back it.
         */
-        fileLink = await this.buildings.ensureOnFile({
+        fileLink = await this.occupancyWrites.ensureOnFile({
           unitId: unit.id,
           buildingId: unit.buildingId,
           citizenId: input.ownerId,
@@ -1716,7 +1716,7 @@ export class LandlordLinkService {
           filedById: input.actor.id,
         });
       } else {
-        const recorded = await this.buildings.recordOccupancy(
+        const recorded = await this.occupancyWrites.recordOccupancy(
           {
             unitId: unit.id,
             citizenId: input.ownerId,

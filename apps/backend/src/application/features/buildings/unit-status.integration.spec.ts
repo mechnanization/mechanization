@@ -19,6 +19,7 @@ import { settleUnit, unitsUnderReview } from './unit-status';
 import { municipalToday } from '@mechanization/shared-schemas';
 import { StaffActor } from '../../common/actor';
 import { feeServices } from '../fees/fee-services.testing';
+import { OccupancyWritesService } from './occupancy-writes.service';
 
 /**
  * «حالة الوحدة» kept in step with who is recorded in the flat — against a real
@@ -46,6 +47,7 @@ describeIfDb('the one rule for «حالة الوحدة»', () => {
   let db: TenantPrismaClient;
   let context: TenantContextService;
   let buildings: BuildingsService;
+  let occupancyWrites: OccupancyWritesService;
   let census: CensusSyncService;
   let tenancy: TenancyService;
   let fees: FeesService;
@@ -71,16 +73,17 @@ describeIfDb('the one rule for «حالة الوحدة»', () => {
       events,
     );
     buildings = new BuildingsService(context, cases, events);
+    occupancyWrites = new OccupancyWritesService(context, cases, events, buildings);
     census = new CensusSyncService(context, cases, events);
     const links = new LandlordLinkService(
       context,
-      buildings,
+      occupancyWrites,
       events,
       new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
     );
     const audit = new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never);
-    const ownership = new OwnershipService(context, buildings, cases, links, events, audit);
-    tenancy = new TenancyService(context, buildings, cases, links, events, ownership, audit);
+    const ownership = new OwnershipService(context, buildings, cases, links, events, audit, occupancyWrites);
+    tenancy = new TenancyService(context, buildings, cases, links, events, ownership, audit, occupancyWrites);
     ({ fees } = feeServices(
       context,
       events,
@@ -471,7 +474,7 @@ describeIfDb('the one rule for «حالة الوحدة»', () => {
     await within(() => buildings.updateUnit(unitId, { unitStatus: 'SEASONAL' } as never, actor()));
 
     await within(() =>
-      buildings.recordOccupancy(
+      occupancyWrites.recordOccupancy(
         { unitId, citizenId: owner.citizenId, role: 'OWNER', unitStatus: 'VACANT' } as never,
         actor(),
         { fromMatrix: true },

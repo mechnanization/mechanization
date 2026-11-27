@@ -1,6 +1,7 @@
 import { TenantContextService, type TenantScope } from '../../../infrastructure/context/tenant-context.service';
 import { inTenantScope } from '../../../infrastructure/context/in-tenant-scope.testing';
 import { BuildingsService } from './buildings.service';
+import { OccupancyWritesService } from './occupancy-writes.service';
 
 /*
   `settleUnit` (the one status rule) reads a dozen tables these fakes do not
@@ -30,25 +31,34 @@ const actor = { id: 'staff-1', role: 'FIELD_INSPECTOR' };
   the vacancy writes run in `runInTenantTransaction` since audit ARCH-03, and
   the mock's `$transaction` hands the work the same mock back as `tx`.
 */
-function service(db: Record<string, unknown>) {
+function services(db: Record<string, unknown>) {
   const context = new TenantContextService();
-  return inTenantScope(
-    new BuildingsService(
-      context,
-      {
-        resolveForUnit: jest.fn().mockResolvedValue(0),
-        resolveVacancyCasesForUnit: jest.fn().mockResolvedValue(0),
-      } as never,
-      { emit: jest.fn() } as never,
-    ),
-    context,
-    {
-      tenantId: 'tenant-1',
-      tenantSlug: 'albazourieh',
-      schemaName: 'tenant_albazourieh',
-      prisma: db as unknown as TenantScope['prisma'],
-    },
-  );
+  const scope: TenantScope = {
+    tenantId: 'tenant-1',
+    tenantSlug: 'albazourieh',
+    schemaName: 'tenant_albazourieh',
+    prisma: db as unknown as TenantScope['prisma'],
+  };
+  const cases = {
+    resolveForUnit: jest.fn().mockResolvedValue(0),
+    resolveVacancyCasesForUnit: jest.fn().mockResolvedValue(0),
+  } as never;
+  const events = { emit: jest.fn() } as never;
+  const buildings = new BuildingsService(context, cases, events);
+  return {
+    buildings: inTenantScope(buildings, context, scope),
+    occupancyWrites: inTenantScope(new OccupancyWritesService(context, cases, events, buildings), context, scope),
+  };
+}
+
+/** «تأكيد الشغور» and the unit edit: `BuildingsService`. */
+function service(db: Record<string, unknown>) {
+  return services(db).buildings;
+}
+
+/** «إنهاء الإشغال»: `OccupancyWritesService` since audit GOD-05. */
+function occupancy(db: Record<string, unknown>) {
+  return services(db).occupancyWrites;
 }
 
 function occupancyDb(existing: Record<string, unknown>) {
@@ -91,7 +101,7 @@ describe('endOccupancy', () => {
   it('stores why the spell ended', async () => {
     const { db, update } = occupancyDb({});
 
-    const row = await service(db).endOccupancy('occ-1', { reason: 'OWNERSHIP_TRANSFERRED' }, actor);
+    const row = await occupancy(db).endOccupancy('occ-1', { reason: 'OWNERSHIP_TRANSFERRED' }, actor);
 
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -105,7 +115,7 @@ describe('endOccupancy', () => {
     const { db, update } = occupancyDb({ toDate: new Date('2026-09-12') });
 
     await expect(
-      service(db).endOccupancy('occ-1', { reason: 'MOVED_OUT' }, actor),
+      occupancy(db).endOccupancy('occ-1', { reason: 'MOVED_OUT' }, actor),
     ).rejects.toThrow('منتهٍ مسبقاً');
     expect(update).not.toHaveBeenCalled();
   });
@@ -114,7 +124,7 @@ describe('endOccupancy', () => {
     const { db, update } = occupancyDb({});
 
     await expect(
-      service(db).endOccupancy('occ-1', { reason: 'MOVED_OUT' }, actor),
+      occupancy(db).endOccupancy('occ-1', { reason: 'MOVED_OUT' }, actor),
     ).rejects.toThrow('بيع أو نقل ملكية');
     expect(update).not.toHaveBeenCalled();
   });
@@ -122,7 +132,7 @@ describe('endOccupancy', () => {
   it('accepts «سُجِّل بالخطأ» for any capacity', async () => {
     const { db, update } = occupancyDb({ role: 'TENANT' });
 
-    await service(db).endOccupancy('occ-1', { reason: 'RECORDED_IN_ERROR' }, actor);
+    await occupancy(db).endOccupancy('occ-1', { reason: 'RECORDED_IN_ERROR' }, actor);
     expect(update).toHaveBeenCalled();
   });
 
@@ -130,7 +140,7 @@ describe('endOccupancy', () => {
     const { db, update } = occupancyDb({});
 
     await expect(
-      service(db).endOccupancy(
+      occupancy(db).endOccupancy(
         'occ-1',
         { reason: 'OWNERSHIP_TRANSFERRED', toDate: new Date('2025-06-01') },
         actor,

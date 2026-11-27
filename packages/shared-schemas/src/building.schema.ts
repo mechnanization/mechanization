@@ -904,7 +904,7 @@ export const ownerSharesValue = z.coerce
  * inviting a client to assert a registration it does not own.
  *
  * The server still *backs* the spell onto that citizen's file if they have
- * one — see `BuildingsService.claimOnFile`, the mirror of the release
+ * one — see `OccupancyWritesService.claimOnFile`, the mirror of the release
  * `endOccupancy` already performs. Recording an occupant and having their own
  * card go on saying nothing about the flat is the asymmetry that produced the
  * «غير مرتبط بملفه» warning on the commonest correct action in the census.

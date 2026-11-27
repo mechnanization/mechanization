@@ -6,6 +6,7 @@ import { BuildingsService } from './buildings.service';
   here it is a collaborator, and what these tests check is that it is asked.
 */
 import { settleUnit } from './unit-status';
+import { OccupancyWritesService } from './occupancy-writes.service';
 
 jest.mock('./unit-status', () => ({
   ...jest.requireActual('./unit-status'),
@@ -217,18 +218,17 @@ function harness(options: HarnessOptions = {}) {
     buildingUnit: { create: buildingUnitCreate },
   };
 
-  const service = new BuildingsService(
-    { prisma: db, tenantSlug: 'albazourieh' } as never,
-    { resolveForUnit: jest.fn().mockResolvedValue(0) } as never,
-    { emit: jest.fn() } as never,
-  );
+  const context = { prisma: db, tenantSlug: 'albazourieh' } as never;
+  const cases = { resolveForUnit: jest.fn().mockResolvedValue(0) } as never;
+  const events = { emit: jest.fn() } as never;
+  const occupancyWrites = new OccupancyWritesService(context, cases, events, new BuildingsService(context, cases, events));
 
-  return { service, db, propertyEntryCreate, buildingUnitCreate, unitUpdate, unitUpdateMany };
+  return { service: occupancyWrites, db, propertyEntryCreate, buildingUnitCreate, unitUpdate, unitUpdateMany };
 }
 
 const actor = { id: 'staff-1', role: 'SUPER_ADMIN' };
 
-function record(service: BuildingsService, over: Record<string, unknown> = {}) {
+function record(service: OccupancyWritesService, over: Record<string, unknown> = {}) {
   return service.recordOccupancy(
     { unitId: UNIT, citizenId: CITIZEN, role: 'OWNER', ...over } as never,
     actor,

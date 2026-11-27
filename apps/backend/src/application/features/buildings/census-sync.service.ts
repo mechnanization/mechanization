@@ -376,7 +376,7 @@ export class CensusSyncService {
    * One unit: the occupancy, the survey status, the visit, and the case.
    *
    * Deliberately the same four facts, in the same order and under the same
-   * rules, as `BuildingsService.recordOccupancy`. The one difference is the
+   * rules, as `OccupancyWritesService.recordOccupancy`. The one difference is the
    * `registrationId` stamped on the row, which is what makes the occupancy
    * traceable back to the file that established it — and what `endUnclaimed`
    * below uses to know which rows this path is allowed to touch.
@@ -1040,7 +1040,7 @@ export class CensusSyncService {
       saved the edit or when the household stopped being recorded in the flat —
       which is precisely what a resident disputing a bill asks to see — and no
       `building.changed`, so the map and the dashboard kept serving the old
-      occupancy for the whole cache TTL. `BuildingsService.endOccupancy`, the
+      occupancy for the whole cache TTL. `OccupancyWritesService.endOccupancy`, the
       matrix's door onto the same fact, has always emitted `OCCUPANCY_ENDED`.
       Two doors, one fact, and only one of them was telling anyone.
     */
@@ -1318,7 +1318,7 @@ export interface CardEnding {
  *
  * `OWNERSHIP_TRANSFERRED` fits an owner's spell only — a tenant does not sell —
  * so on any other spell the answer is ignored and the spell closes plainly, as
- * `BuildingsService.endOccupancy` would refuse it. Its date is the sale's,
+ * `OccupancyWritesService.endOccupancy` would refuse it. Its date is the sale's,
  * never before the spell began (the register cannot have someone sell a flat
  * before it recorded them owning it) and never in the future. An error closes
  * as of now, as `TenancyService` closes one: it has no real end date.

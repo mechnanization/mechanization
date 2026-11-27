@@ -21,6 +21,7 @@ import { OwnershipService } from './ownership.service';
 import { StaffActor } from '../../common/actor';
 import { feeServices } from '../fees/fee-services.testing';
 import type { FeeNoticesService } from '../fees/fee-notices.service';
+import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
 
 /**
  * Ending a tenancy, against a real Postgres.
@@ -56,6 +57,7 @@ describeIfDb('TenancyService', () => {
     (await db.feeNotice.findMany({ where: { isActive: true }, select: { id: true } })).map((notice) => notice.id);
   let context: TenantContextService;
   let buildings: BuildingsService;
+  let occupancyWrites: OccupancyWritesService;
   let census: CensusSyncService;
   let links: LandlordLinkService;
   let tenancy: TenancyService;
@@ -91,15 +93,16 @@ describeIfDb('TenancyService', () => {
       events,
     );
     buildings = new BuildingsService(context, cases, events);
+    occupancyWrites = new OccupancyWritesService(context, cases, events, buildings);
     census = new CensusSyncService(context, cases, events);
     links = new LandlordLinkService(
       context,
-      buildings,
+      occupancyWrites,
       events,
       new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
     );
-    const ownership = new OwnershipService(context, buildings, cases, links, events, audit);
-    tenancy = new TenancyService(context, buildings, cases, links, events, ownership, audit);
+    const ownership = new OwnershipService(context, buildings, cases, links, events, audit, occupancyWrites);
+    tenancy = new TenancyService(context, buildings, cases, links, events, ownership, audit, occupancyWrites);
     citizens = new CitizensService(
       context,
       {} as never,

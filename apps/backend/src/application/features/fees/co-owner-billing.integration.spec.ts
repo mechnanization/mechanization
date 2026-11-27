@@ -18,6 +18,7 @@ import { municipalToday } from '@mechanization/shared-schemas';
 import { StaffActor } from '../../common/actor';
 import { feeServices } from './fee-services.testing';
 import type { FeeNoticesService } from './fee-notices.service';
+import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
 
 /**
  * «توزيع الرسم على المالكين» against a real tenant schema (migration 0075
@@ -52,6 +53,7 @@ describeIfDb('co-owner billing', () => {
   let fees: FeesService;
   let feeNotices: FeeNoticesService;
   let buildings: BuildingsService;
+  let occupancyWrites: OccupancyWritesService;
   let ownerBilling: OwnerBillingService;
   let events: { emit: jest.Mock };
   const officerId = randomUUID();
@@ -88,6 +90,7 @@ describeIfDb('co-owner billing', () => {
       emitter,
     );
     buildings = new BuildingsService(context, cases, emitter);
+    occupancyWrites = new OccupancyWritesService(context, cases, emitter, buildings);
     ownerBilling = new OwnerBillingService(context, fees, audit, events as unknown as EventEmitter2);
 
     await db.user.create({
@@ -393,7 +396,7 @@ describeIfDb('co-owner billing', () => {
       ),
     );
     await within(() =>
-      buildings.recordOccupancy({ unitId: shop.id, citizenId: brothers[2]!, role: 'OWNER' } as never, actor),
+      occupancyWrites.recordOccupancy({ unitId: shop.id, citizenId: brothers[2]!, role: 'OWNER' } as never, actor),
     );
     const spell = await db.unitOccupancy.findFirstOrThrow({
       where: { unitId: shop.id, citizenId: brothers[2]!, toDate: null },

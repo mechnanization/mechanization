@@ -16,6 +16,7 @@ import { DataQualityService } from './data-quality.service';
 import { RecordReviewService } from './record-review.service';
 import { StaffActor } from '../../common/actor';
 import { feeServices } from '../fees/fee-services.testing';
+import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
 
 /**
  * «مراجعة الجودة» against a real Postgres: migration 0049, the review states,
@@ -43,6 +44,7 @@ describeIfDb('Quality review', () => {
   let quality: DataQualityService;
   let audit: AuditService;
   let buildings: BuildingsService;
+  let occupancyWrites: OccupancyWritesService;
 
   const staff: Record<'jawad' | 'hussein' | 'auditor' | 'collector', string> = {
     jawad: '',
@@ -86,9 +88,10 @@ describeIfDb('Quality review', () => {
 
     const cases = new CasesService(new PrismaCaseRepository(context), {} as never, events);
     buildings = new BuildingsService(context, cases, events);
+    occupancyWrites = new OccupancyWritesService(context, cases, events, buildings);
     const links = new LandlordLinkService(
       context,
-      buildings,
+      occupancyWrites,
       events,
       new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
     );

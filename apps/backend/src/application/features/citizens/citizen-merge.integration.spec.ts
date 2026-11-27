@@ -16,6 +16,7 @@ import { AuditService } from '../audit/audit.service';
 import { PrismaAuditRepository } from '../../../infrastructure/repositories/audit.repository';
 import { CitizenMergeService } from './citizen-merge.service';
 import { CitizensService } from './citizens.service';
+import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
 
 /**
  * «دمج ملفين» against a real Postgres — every table a person reaches.
@@ -42,6 +43,7 @@ describeIfDb('CitizenMergeService', () => {
   let db: TenantPrismaClient;
   let context: TenantContextService;
   let buildings: BuildingsService;
+  let occupancyWrites: OccupancyWritesService;
   let census: CensusSyncService;
   let merges: CitizenMergeService;
   let users: PrismaUserRepository;
@@ -66,6 +68,7 @@ describeIfDb('CitizenMergeService', () => {
       events,
     );
     buildings = new BuildingsService(context, cases, events);
+    occupancyWrites = new OccupancyWritesService(context, cases, events, buildings);
     census = new CensusSyncService(context, cases, events);
     merges = new CitizenMergeService(
       context,
@@ -680,7 +683,7 @@ describeIfDb('CitizenMergeService', () => {
     const refusal = (work: () => Promise<unknown>) => within(work).then(() => null, (caught: unknown) => caught);
 
     const occupancy = await refusal(() =>
-      buildings.recordOccupancy({ unitId: f.u2, citizenId: f.absorbId, role: 'OWNER' } as never, actor()),
+      occupancyWrites.recordOccupancy({ unitId: f.u2, citizenId: f.absorbId, role: 'OWNER' } as never, actor()),
     );
     expect((occupancy as ConflictError).details).toMatchObject({ code: 'MERGED_AWAY', survivorId: f.keepId });
 

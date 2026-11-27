@@ -18,6 +18,7 @@ import { CitizensService } from './citizens.service';
 import { LandlordLinkService, readFootprint } from './landlord-link.service';
 import { feeServices } from '../fees/fee-services.testing';
 import type { FeeNoticesService } from '../fees/fee-notices.service';
+import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
 
 /**
  * Owner links against a real Postgres — what a link writes, and that undoing
@@ -52,6 +53,7 @@ describeIfDb('LandlordLinkService', () => {
   let db: TenantPrismaClient;
   let context: TenantContextService;
   let buildings: BuildingsService;
+  let occupancyWrites: OccupancyWritesService;
   let census: CensusSyncService;
   let links: LandlordLinkService;
   let citizens: CitizensService;
@@ -100,10 +102,11 @@ describeIfDb('LandlordLinkService', () => {
       events,
     );
     buildings = new BuildingsService(context, cases, events);
+    occupancyWrites = new OccupancyWritesService(context, cases, events, buildings);
     census = new CensusSyncService(context, cases, events);
     links = new LandlordLinkService(
       context,
-      buildings,
+      occupancyWrites,
       events,
       new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
     );
@@ -524,9 +527,9 @@ describeIfDb('LandlordLinkService', () => {
     });
     const owner = await ownerWithFile(phone.stored);
 
-    const real = buildings.recordOccupancy.bind(buildings);
+    const real = occupancyWrites.recordOccupancy.bind(occupancyWrites);
     const spy = jest
-      .spyOn(buildings, 'recordOccupancy')
+      .spyOn(occupancyWrites, 'recordOccupancy')
       .mockImplementationOnce((input, who) => real(input, who))
       .mockImplementationOnce(async () => {
         throw new Error('connection reset');

@@ -9,6 +9,7 @@ import { AuditService } from './features/audit/audit.service';
 import { BackupService } from './features/backup/backup.service';
 import { CadastreImportService } from './features/cadastre/cadastre-import.service';
 import { BuildingsService } from './features/buildings/buildings.service';
+import { OccupancyWritesService } from './features/buildings/occupancy-writes.service';
 import { CensusSyncService } from './features/buildings/census-sync.service';
 import { DamageService } from './features/buildings/damage.service';
 import { ParcelCorrectionService } from './features/buildings/parcel-correction.service';
@@ -130,6 +131,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
     ZonesService,
     CasesService,
     BuildingsService,
+    OccupancyWritesService,
     CensusSyncService,
     DamageService,
     ParcelCorrectionService,
@@ -193,6 +195,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
     ZonesService,
     CasesService,
     BuildingsService,
+    OccupancyWritesService,
     CensusSyncService,
     DamageService,
     ParcelCorrectionService,

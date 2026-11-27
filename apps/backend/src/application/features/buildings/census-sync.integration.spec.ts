@@ -11,6 +11,7 @@ import { PrismaCaseRepository } from '../../../infrastructure/repositories/case.
 import { ReportingService } from '../reporting/reporting.service';
 import { BuildingsService } from './buildings.service';
 import { CensusSyncService } from './census-sync.service';
+import { OccupancyWritesService } from './occupancy-writes.service';
 
 /**
  * The registration → census write path (P5-T1), against a real Postgres.
@@ -62,6 +63,7 @@ describeIfDb('CensusSyncService', () => {
   let ddl: Client;
   let db: TenantPrismaClient;
   let buildings: BuildingsService;
+  let occupancyWrites: OccupancyWritesService;
   let census: CensusSyncService;
   let cases: CasesService;
   let reporting: ReportingService;
@@ -101,6 +103,12 @@ describeIfDb('CensusSyncService', () => {
     // A real scope for the census writes, which run in `runInTenantTransaction` since audit ARCH-03.
     const scoped = new TenantContextService();
     buildings = inTenantScope(new BuildingsService(scoped, cases, events), scoped, {
+      tenantId: 'tenant-census',
+      tenantSlug: 'census',
+      schemaName: SCHEMA,
+      prisma: db,
+    });
+    occupancyWrites = inTenantScope(new OccupancyWritesService(scoped, cases, events, buildings), scoped, {
       tenantId: 'tenant-census',
       tenantSlug: 'census',
       schemaName: SCHEMA,
@@ -658,7 +666,7 @@ describeIfDb('CensusSyncService', () => {
     const tenant = await citizen('رانيا');
     const flat = units[0]!;
 
-    await buildings.recordOccupancy(
+    await occupancyWrites.recordOccupancy(
       { unitId: flat.id, citizenId: tenant, role: 'TENANT' },
       actor(),
     );
@@ -694,7 +702,7 @@ describeIfDb('CensusSyncService', () => {
     const tenant = await citizen('هدى');
     const flat = units[0]!;
 
-    await buildings.recordOccupancy({ unitId: flat.id, citizenId: tenant, role: 'TENANT' }, actor());
+    await occupancyWrites.recordOccupancy({ unitId: flat.id, citizenId: tenant, role: 'TENANT' }, actor());
 
     const registrationId = await registrationFor({
       citizenId: landlord,
@@ -723,7 +731,7 @@ describeIfDb('CensusSyncService', () => {
     const flat = units[1]!;
 
     await db.unit.update({ where: { id: flat.id }, data: { unitStatus: null } });
-    await buildings.recordOccupancy({ unitId: flat.id, citizenId: tenant, role: 'TENANT' }, actor());
+    await occupancyWrites.recordOccupancy({ unitId: flat.id, citizenId: tenant, role: 'TENANT' }, actor());
 
     const registrationId = await registrationFor({
       citizenId: landlord,
@@ -811,7 +819,7 @@ describeIfDb('CensusSyncService', () => {
       data: { citizenId: tenantId, referenceNumber: `REG-${randomUUID().slice(0, 8)}` },
     });
 
-    const recorded = await buildings.recordOccupancy(
+    const recorded = await occupancyWrites.recordOccupancy(
       { unitId: shop.id, citizenId: tenantId, role: 'TENANT' },
       actor(),
     );
@@ -825,7 +833,7 @@ describeIfDb('CensusSyncService', () => {
     expect(card.units.map((unit) => unit.unitType)).toEqual(['SHOP']);
 
     await expect(
-      buildings.recordOccupancy({ unitId: units[0]!.id, citizenId: tenantId, role: 'TENANT' }, actor()),
+      occupancyWrites.recordOccupancy({ unitId: units[0]!.id, citizenId: tenantId, role: 'TENANT' }, actor()),
     ).rejects.toThrow('مسكن');
     expect(
       await db.unitOccupancy.count({ where: { unitId: units[0]!.id, citizenId: tenantId } }),
@@ -838,7 +846,7 @@ describeIfDb('CensusSyncService', () => {
     const formCitizen = await citizen('رامي');
 
     // An officer walking the stairwell, before either person had a file.
-    await buildings.recordOccupancy(
+    await occupancyWrites.recordOccupancy(
       { unitId: units[1]!.id, citizenId: matrixCitizen, role: 'TENANT' },
       actor(),
     );

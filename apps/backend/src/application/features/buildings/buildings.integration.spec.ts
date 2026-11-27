@@ -19,6 +19,7 @@ import { ConflictError } from '../../common/exceptions';
 import { PrismaCaseRepository } from '../../../infrastructure/repositories/case.repository';
 import { BuildingsService } from './buildings.service';
 import { DamageService } from './damage.service';
+import { OccupancyWritesService } from './occupancy-writes.service';
 
 /**
  * The census, against a real Postgres.
@@ -75,6 +76,7 @@ describeIfDb('BuildingsService', () => {
   let ddl: Client;
   let db: TenantPrismaClient;
   let buildings: BuildingsService;
+  let occupancyWrites: OccupancyWritesService;
   let damage: DamageService;
   /** Held at suite scope so the vacancy tests can open a حالة and read it back. */
   let cases: CasesService;
@@ -114,6 +116,12 @@ describeIfDb('BuildingsService', () => {
     // A real scope for the census writes, which run in `runInTenantTransaction` since audit ARCH-03.
     const scoped = new TenantContextService();
     buildings = inTenantScope(new BuildingsService(scoped, cases, events), scoped, {
+      tenantId: 'tenant-census',
+      tenantSlug: 'census',
+      schemaName: SCHEMA,
+      prisma: db,
+    });
+    occupancyWrites = inTenantScope(new OccupancyWritesService(scoped, cases, events, buildings), scoped, {
       tenantId: 'tenant-census',
       tenantSlug: 'census',
       schemaName: SCHEMA,
@@ -710,7 +718,7 @@ describeIfDb('BuildingsService', () => {
     });
 
     const citizenId = await citizen('علي');
-    const result = await buildings.recordOccupancy(
+    const result = await occupancyWrites.recordOccupancy(
       { unitId: target.id, citizenId, role: 'TENANT' },
       actor(),
     );
@@ -740,7 +748,7 @@ describeIfDb('BuildingsService', () => {
     const citizenId = await citizen('مؤرشف');
     await db.user.update({ where: { id: citizenId }, data: { isActive: false } });
 
-    const refusal = await buildings
+    const refusal = await occupancyWrites
       .recordOccupancy({ unitId: units[0]!.id, citizenId, role: 'OWNER' }, actor())
       .then(() => null, (caught: unknown) => caught);
 
@@ -760,7 +768,7 @@ describeIfDb('BuildingsService', () => {
       actor(),
     );
 
-    await buildings.recordOccupancy(
+    await occupancyWrites.recordOccupancy(
       { unitId: units[0]!.id, citizenId: await citizen('حسن'), role: 'OWNER' },
       actor(),
     );
@@ -771,7 +779,7 @@ describeIfDb('BuildingsService', () => {
     // A demolished flat with an occupancy on it is a contradiction for a person
     // to resolve, not for a side effect to paper over.
     await buildings.updateUnit(units[1]!.id, { surveyStatus: 'DEMOLISHED' }, actor());
-    await buildings.recordOccupancy(
+    await occupancyWrites.recordOccupancy(
       { unitId: units[1]!.id, citizenId: await citizen('زينب'), role: 'OWNER' },
       actor(),
     );
@@ -803,7 +811,7 @@ describeIfDb('BuildingsService', () => {
       );
       await buildings.logVisit({ unitId: units[0]!.id, outcome }, actor());
 
-      await buildings.recordOccupancy(
+      await occupancyWrites.recordOccupancy(
         { unitId: units[0]!.id, citizenId: await citizen('ليلى'), role: 'OWNER' },
         actor(),
       );
@@ -831,12 +839,12 @@ describeIfDb('BuildingsService', () => {
     );
     const unitId = units[0]!.id;
 
-    const first = await buildings.recordOccupancy(
+    const first = await occupancyWrites.recordOccupancy(
       { unitId, citizenId: await citizen('سمير'), role: 'TENANT' },
       actor(),
     );
-    await buildings.endOccupancy(first.occupancy.id, { reason: 'MOVED_OUT' }, actor());
-    await buildings.recordOccupancy(
+    await occupancyWrites.endOccupancy(first.occupancy.id, { reason: 'MOVED_OUT' }, actor());
+    await occupancyWrites.recordOccupancy(
       { unitId, citizenId: await citizen('مريم'), role: 'TENANT' },
       actor(),
     );
@@ -859,8 +867,8 @@ describeIfDb('BuildingsService', () => {
     const unitId = units[0]!.id;
     const citizenId = await citizen('كريم');
 
-    await buildings.recordOccupancy({ unitId, citizenId, role: 'TENANT' }, actor());
-    await buildings.recordOccupancy({ unitId, citizenId, role: 'OWNER' }, actor());
+    await occupancyWrites.recordOccupancy({ unitId, citizenId, role: 'TENANT' }, actor());
+    await occupancyWrites.recordOccupancy({ unitId, citizenId, role: 'OWNER' }, actor());
 
     const rows = await db.unitOccupancy.findMany({ where: { unitId } });
     expect(rows).toHaveLength(1);
@@ -894,7 +902,7 @@ describeIfDb('BuildingsService', () => {
 
     it('records the finding, its basis, and what the unit said before', async () => {
       const { buildingId, unitId } = await flat('9610');
-      await buildings.recordOccupancy(
+      await occupancyWrites.recordOccupancy(
         { unitId, citizenId: await citizen('رامي'), role: 'OWNER', unitStatus: 'RENTED' },
         actor(),
       );
@@ -935,7 +943,7 @@ describeIfDb('BuildingsService', () => {
 
     it('puts the unit back when the confirmation was recorded in error', async () => {
       const { buildingId, unitId } = await flat('9620');
-      await buildings.recordOccupancy(
+      await occupancyWrites.recordOccupancy(
         { unitId, citizenId: await citizen('هدى'), role: 'OWNER', unitStatus: 'RENTED' },
         actor(),
       );
@@ -964,7 +972,7 @@ describeIfDb('BuildingsService', () => {
       await buildings.confirmVacancy(unitId, { basis: 'FIELD_INSPECTION' }, actor());
 
       await expect(
-        buildings.recordOccupancy(
+        occupancyWrites.recordOccupancy(
           { unitId, citizenId: await citizen('سلمى'), role: 'TENANT' },
           actor(),
         ),
@@ -977,7 +985,7 @@ describeIfDb('BuildingsService', () => {
       const { buildingId, unitId } = await flat('9640');
       await buildings.confirmVacancy(unitId, { basis: 'FIELD_INSPECTION' }, actor());
 
-      await buildings.recordOccupancy(
+      await occupancyWrites.recordOccupancy(
         { unitId, citizenId: await citizen('جاد'), role: 'TENANT', endsVacancy: true },
         actor(),
       );
@@ -998,7 +1006,7 @@ describeIfDb('BuildingsService', () => {
       const { buildingId, unitId } = await flat('9650');
       await buildings.confirmVacancy(unitId, { basis: 'OWNER_STATEMENT' }, actor());
 
-      await buildings.recordOccupancy(
+      await occupancyWrites.recordOccupancy(
         { unitId, citizenId: await citizen('فادي'), role: 'OWNER' },
         actor(),
       );
@@ -1046,7 +1054,7 @@ describeIfDb('BuildingsService', () => {
       { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
       actor(),
     );
-    await buildings.recordOccupancy(
+    await occupancyWrites.recordOccupancy(
       { unitId: units[0]!.id, citizenId: await citizen('ندى'), role: 'OWNER' },
       actor(),
     );
@@ -1196,7 +1204,7 @@ describeIfDb('BuildingsService', () => {
     );
     // Surveyed; linked to a citizen; still waiting.
     await buildings.updateUnit(units[0]!.id, { surveyStatus: 'COMPLETE' }, actor());
-    await buildings.recordOccupancy({ unitId: units[1]!.id, citizenId: await citizen('سكن'), role: 'TENANT' }, actor());
+    await occupancyWrites.recordOccupancy({ unitId: units[1]!.id, citizenId: await citizen('سكن'), role: 'TENANT' }, actor());
     const waiting = units[2]!;
 
     const { building: theirs } = await createBuilding(
@@ -1258,11 +1266,11 @@ describeIfDb('BuildingsService', () => {
     await damage.record({ unitId: unlivable, level: 'RESTRICTED_USE', habitable: false, source: 'FIELD_VISIT' }, actor());
 
     // A tenant recorded and gone: the survey answered when they were recorded.
-    const { occupancy } = await buildings.recordOccupancy(
+    const { occupancy } = await occupancyWrites.recordOccupancy(
       { unitId: vacated, citizenId: await citizen('مستأجر'), role: 'TENANT' },
       actor(),
     );
-    await buildings.endOccupancy(occupancy.id, { reason: 'MOVED_OUT' }, actor());
+    await occupancyWrites.endOccupancy(occupancy.id, { reason: 'MOVED_OUT' }, actor());
 
     // A refused door, already booked for a revisit.
     await buildings.updateUnit(refused, { surveyStatus: 'REFUSED' }, actor());
