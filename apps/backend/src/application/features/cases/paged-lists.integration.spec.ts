@@ -5,7 +5,8 @@ import { migrateTenantSchema } from '../../../infrastructure/prisma/tenant-migra
 import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { PrismaCaseRepository } from '../../../infrastructure/repositories/case.repository';
-import { FeesService } from '../fees/fees.service';
+import { feeServices } from '../fees/fee-services.testing';
+import type { FeeNoticesService } from '../fees/fee-notices.service';
 
 /**
  * PAG-02 and PAG-04 against a real Postgres: «الحالات» and «إشعارات الرسوم»
@@ -28,7 +29,7 @@ describeIfDb('the paged lists (PAG-02, PAG-04)', () => {
   let db: TenantPrismaClient;
   let context: TenantContextService;
   let cases: PrismaCaseRepository;
-  let fees: FeesService;
+  let feeNotices: FeeNoticesService;
 
   const within = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'tenant-paged', tenantSlug: 'paged', schemaName: SCHEMA, prisma: db }, work);
@@ -44,7 +45,7 @@ describeIfDb('the paged lists (PAG-02, PAG-04)', () => {
     db = tenantTestClient(TEST_DATABASE_URL!, SCHEMA);
     context = new TenantContextService();
     cases = new PrismaCaseRepository(context);
-    fees = new FeesService(context, new EventEmitter2(), {} as never, {} as never, {} as never, {} as never);
+    ({ feeNotices } = feeServices(context, new EventEmitter2(), {} as never, {} as never, {} as never, {} as never));
 
     for (let index = 0; index < 12; index += 1) {
       await db.case.create({
@@ -103,12 +104,12 @@ describeIfDb('the paged lists (PAG-02, PAG-04)', () => {
   });
 
   it('reads a page of fee notices with their total, and walks them all once', async () => {
-    const first = await within(() => fees.listNotices({ limit: 2, offset: 0 }));
+    const first = await within(() => feeNotices.listNotices({ limit: 2, offset: 0 }));
     expect(first.total).toBe(5);
     expect(first.items).toHaveLength(2);
     const seen = new Set<string>();
     for (let offset = 0; offset < 5; offset += 2) {
-      for (const row of (await within(() => fees.listNotices({ limit: 2, offset }))).items) seen.add(row.id);
+      for (const row of (await within(() => feeNotices.listNotices({ limit: 2, offset }))).items) seen.add(row.id);
     }
     expect(seen.size).toBe(5);
   });

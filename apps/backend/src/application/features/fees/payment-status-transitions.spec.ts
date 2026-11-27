@@ -3,11 +3,10 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { WhishGateway } from '../../../domain/interfaces/whish-gateway.interface';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
 import { TenantContextService, type TenantScope } from '../../../infrastructure/context/tenant-context.service';
-import { inTenantScope } from '../../../infrastructure/context/in-tenant-scope.testing';
 import { ConflictError } from '../../common/exceptions';
-import { FeesService } from './fees.service';
 import { PaymentLedgerService } from './payment-ledger.service';
 import type { AuditService } from '../audit/audit.service';
+import { feeServices, feeServicesInTenantScope } from './fee-services.testing';
 
 /**
  * Status transitions that happen *outside* the payment ledger.
@@ -98,7 +97,7 @@ function build(row: Row | null, { updatedCount = 1, isLive = true }: { updatedCo
     schemaName: 'tenant_albazourieh',
     prisma: prisma as unknown as TenantScope['prisma'],
   };
-  const service = inTenantScope(new FeesService(
+  const { fees: service, whishCheckout } = feeServicesInTenantScope(feeServices(
     context,
     { emit: jest.fn() } as unknown as EventEmitter2,
     { createCheckout, isLive } as unknown as WhishGateway,
@@ -113,6 +112,7 @@ function build(row: Row | null, { updatedCount = 1, isLive = true }: { updatedCo
 
   return {
     service,
+    whishCheckout,
     prisma,
     update,
     updateMany,
@@ -346,11 +346,11 @@ describe('startWhishCheckout', () => {
       In sandbox this path used to move the bill to PENDING_REVIEW under a WSH-
       reference of our own, with no money taken: the refusal must come first.
     */
-    const { service, prisma, createCheckout, updateMany, checkoutCreate, checkoutUpdateMany } = build(INVOICE, {
+    const { whishCheckout, prisma, createCheckout, updateMany, checkoutCreate, checkoutUpdateMany } = build(INVOICE, {
       isLive: false,
     });
 
-    await expect(service.startWhishCheckout(input)).rejects.toMatchObject({ code: 'ONLINE_PAYMENT_UNAVAILABLE' });
+    await expect(whishCheckout.startWhishCheckout(input)).rejects.toMatchObject({ code: 'ONLINE_PAYMENT_UNAVAILABLE' });
     const citizenPayment = prisma.citizenPayment as { findUnique: jest.Mock };
     expect(citizenPayment.findUnique).not.toHaveBeenCalled();
     expect(createCheckout).not.toHaveBeenCalled();
@@ -360,9 +360,9 @@ describe('startWhishCheckout', () => {
   });
 
   it('claims the invoice under the status it was quoted against', async () => {
-    const { service, updateMany } = build(INVOICE);
+    const { whishCheckout, updateMany } = build(INVOICE);
 
-    await service.startWhishCheckout(input);
+    await whishCheckout.startWhishCheckout(input);
 
     expect(updateMany.mock.calls[0][0].where).toEqual({
       id: 'payment-1',
@@ -383,9 +383,9 @@ describe('startWhishCheckout', () => {
       ABANDONED rather than deleted: the provider may still call back about one,
       and `whish_checkouts_one_open_per_payment_key` allows only one live.
     */
-    const { service, checkoutCreate, checkoutUpdateMany } = build(INVOICE);
+    const { whishCheckout, checkoutCreate, checkoutUpdateMany } = build(INVOICE);
 
-    await service.startWhishCheckout(input);
+    await whishCheckout.startWhishCheckout(input);
 
     expect(checkoutUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -404,9 +404,9 @@ describe('startWhishCheckout', () => {
   });
 
   it('does not open a checkout row when the claim is refused', async () => {
-    const { service, checkoutCreate } = build(INVOICE, { updatedCount: 0 });
+    const { whishCheckout, checkoutCreate } = build(INVOICE, { updatedCount: 0 });
 
-    await expect(service.startWhishCheckout(input)).rejects.toBeInstanceOf(ConflictError);
+    await expect(whishCheckout.startWhishCheckout(input)).rejects.toBeInstanceOf(ConflictError);
     expect(checkoutCreate).not.toHaveBeenCalled();
   });
 
@@ -419,9 +419,9 @@ describe('startWhishCheckout', () => {
       but the checkout really does exist by then, and this test says so out
       loud. What to do about that orphan is recorded in docs/open-decisions.md.
     */
-    const { service, createCheckout } = build(INVOICE, { updatedCount: 0 });
+    const { whishCheckout, createCheckout } = build(INVOICE, { updatedCount: 0 });
 
-    await expect(service.startWhishCheckout(input)).rejects.toBeInstanceOf(ConflictError);
+    await expect(whishCheckout.startWhishCheckout(input)).rejects.toBeInstanceOf(ConflictError);
     expect(createCheckout).toHaveBeenCalledTimes(1);
   });
 });

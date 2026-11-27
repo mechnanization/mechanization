@@ -352,7 +352,7 @@ Data access for new code (decided):
   (bills paid, cancelled, written off and reversed through the counter's own services).
 - **Old debts and the fee system (task 6).** A notice bills the period its due date falls in, then the recurring run the
   current one; a year before `system_settings.arrearsCutoffYear` is an old-debt year (docs/old-debts-plan.md §8), so
-  `FeesService.previewNotice` and `issue` refuse such a notice with `FEE_PERIOD_BEFORE_ARREARS_CUTOFF` (`assertPeriodNotBeforeCutoff`,
+  `FeeNoticesService.previewNotice` and `issue` refuse such a notice with `FEE_PERIOD_BEFORE_ARREARS_CUTOFF` (`assertPeriodNotBeforeCutoff`,
   before the assessment, `params.year` and `params.cutoffYear`) and `runRecurringBilling` skips the period (a SKIPPED billing run and a
   warning), reading the cutoff once per run. While no cutoff is set nothing is refused. `periodYearOf` / `periodBeforeCutoff` are the pure
   rule. **«تكليف مباشر» (`chargeIndividual`) is not guarded**: a one-off charge can still carry an old due date. Every sum of what
@@ -362,7 +362,7 @@ Data access for new code (decided):
   figures. `arrears-settlement-order.spec.ts` pins that a settlement pays an old debt, due years earlier, before a current bill.
 - **«شطب», writing off what is left on a bill** (0107/0108, task 9; [docs/finance.md](../../docs/finance.md) §3.8).
   `POST fees/payments/:id/write-off` (`FeesController.writeOffBill`, `BILL_WRITE_OFF_ROLES`, `writeOffBillSchema`)
-  → `FeesService.writeOffBill`: behind `lockInvoices`, `billWriteOffRefusal` (`fees/bill-write-off.ts`), the
+  → `BillLifecycleService.writeOffBill`: behind `lockInvoices`, `billWriteOffRefusal` (`fees/bill-write-off.ts`), the
   request-fee refusal, then one raw `UPDATE` whose `writeOffAmount` is `"amount" - "paidAmount"`, and a Tier 1
   `FEE_BILL_WRITTEN_OFF` row; no ledger row. Every read that treats "not PAID" as owed leaves `WRITTEN_OFF` out as
   it leaves `CANCELLED` out — in TypeScript through the shared `billOwesNothing` / `billRemaining`, in SQL by
@@ -386,7 +386,7 @@ Data access for new code (decided):
 - **«الرسم حسب فئة المساحة» (`TIERED_AREA`, 0098/0099).** `assessCitizen` prices each unit by the notice's
   bracket table (`priceTieredUnits`, `fees/tiered-area.ts`) after exemptions, habitability, the review hold
   and the bearer rule have run; `splitSharedUnitBills` takes the units two or more citizens are charged
-  for off their own bills and bills each once, in full, to all of them (decision D5). `FeesService.planNotice`
+  for off their own bills and bills each once, in full, to all of them (decision D5). `FeeNoticesService.planNotice`
   is the read-and-assess half `issue` and `previewNotice` share, so a preview and the issue after it cannot
   disagree; `POST fees/notices/preview` (`FEE_ISSUE_ROLES`, `feeNoticePreviewSchema`) writes nothing.
   `issue` and `runRecurringBilling` write a period through `writeBills`: own bills, then shared unit bills
@@ -442,7 +442,7 @@ Data access for new code (decided):
   did not confirm in `acknowledgedWarnings`; the confirmation is stored with it, and the `FEE_ISSUED` audit
   row carries the scope. The issue's `exemptedUnits` still counts the out-of-scope units with the bearer's.
 - **A notice issued twice (finding F11 of the 2026-11-14 billing audit, task B8).** The retry key
-  protects one press; two issuers, or one in two tabs, carry two keys. `FeesService.duplicateNotices`
+  protects one press; two issuers, or one in two tabs, carry two keys. `FeeNoticesService.duplicateNotices`
   finds the active notices with the same basis, frequency and target (`sameTarget` in
   `fees/duplicate-notice.ts`: one category in common, the same citizen) that hold a bill not cancelled in
   the new notice's first period — for a one-off notice, due the same month (`sameMonth`), since every
@@ -758,7 +758,7 @@ Data access for new code (decided):
   «INV-2610-0001», «RCP-…», «PV-…», «TR-…», «RV-…», «BRC-…» (the consolidated receipt, 0085). Pass the caller's `tx` and `this.S` — the draw and the
   document must share a transaction, and an unqualified name would resolve through the pooled
   connection's `search_path` into another municipality's counter. Bulk callers take a block sized to
-  what was actually inserted: `FeesService.numberInvoices` numbers after `createMany` because
+  what was actually inserted: `FeeNoticesService.numberInvoices` numbers after `createMany` because
   `skipDuplicates` means a block reserved beforehand would burn numbers on rows that were never
   written. A settlement of several bills reserves its receipts' block first
   (`PaymentLedgerService.reserveReceiptNumbers`): every bill is written or the whole act rolls back
@@ -1075,7 +1075,7 @@ Every state change MUST leave an `audit_log_entries` row, in one of two tiers
 A row no person caused (the recurring biller's scheduled run, a Whish settlement) MUST carry
 `actorId: null` and `actorType: 'SYSTEM'`, never a placeholder: `actorId` is a uuid, and a string
 there is refused, in Tier 2 silently. `POST fees/recurring/run` passes the staff member who called
-it to `FeesService.runRecurringBilling(now, actor)`; the cron passes none. No screen calls that route
+it to `RecurringBillingService.runRecurringBilling(now, actor)`; the cron passes none. No screen calls that route
 (the fees page's «إصدار الفواتير» was removed in `d346729`).
 
 Event names are string literals. Emission is synchronous with no wildcards, because listeners rely on the
@@ -1194,7 +1194,7 @@ points at does not exist. `src/scripts/reset-2fa.ts` has no script entry and MUS
   callable inside a transaction), which stamps who raised it (`issuedById`: the clerk at the counter,
   nobody for a citizen's own press). A request abandoned before payment leaves no open debt; a request
   is cancelled by the citizen or a clerk only while it has no bill, and by the manager's «إلغاء الفاتورة»
-  once it has one: `FeesService.cancelBill` cancels the request waiting on the bill in its own
+  once it has one: `BillLifecycleService.cancelBill` cancels the request waiting on the bill in its own
   transaction (`cancelRequestOfCancelledBill`, decision of 2026-10-13), which `0094`'s guard allows only
   once the bill is CANCELLED.
 - **A card or a flat a request names is never deleted.** `0092`'s keys onto `property_entries` and
@@ -1205,7 +1205,7 @@ points at does not exist. `src/scripts/reset-2fa.ts` has no script entry and MUS
 - **Online payment is paused** (the product owner, 2026-10-13, [open-decisions §21](../../docs/open-decisions.md#21-online-payment-citizen-sign-in-and-notifications-decided-2026-10-13)).
   While the Whish gateway is not live (`WhishGateway.isLive`: `WHISH_PROVIDER_WIRED`, false until
   `postCheckout` is written, and both credentials — so a value set early no longer lifts the refusal into
-  500s, S18), `FeesService.startWhishCheckout` and a citizen's own `raiseBill` refuse with
+  500s, S18), `WhishCheckoutService.startWhishCheckout` and a citizen's own `raiseBill` refuse with
   `ONLINE_PAYMENT_UNAVAILABLE` before anything is read or written; the counter raises the fee. The
   sandbox the gateway runs without credentials is unreachable from the checkout: it moved a bill to
   PENDING_REVIEW under a `WSH-` reference of our own, with no money taken.

@@ -6,7 +6,8 @@ import { PrismaClient as TenantPrismaClient } from '../../../generated/tenant-cl
 import { migrateTenantSchema } from '../../../infrastructure/prisma/tenant-migrator';
 import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
-import { inTenantScope } from '../../../infrastructure/context/in-tenant-scope.testing';
+import { feeServices, feeServicesInTenantScope, type FeeServices } from './fee-services.testing';
+import type { FeeNoticesService } from './fee-notices.service';
 import { PrismaAuditRepository } from '../../../infrastructure/repositories/audit.repository';
 import { AuditService } from '../audit/audit.service';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
@@ -41,6 +42,7 @@ describeIfDb('invoice numbering', () => {
   const otherFees = async () =>
     (await db.feeNotice.findMany({ where: { isActive: true }, select: { id: true } })).map((notice) => notice.id);
   let fees: FeesService;
+  let feeNotices: FeeNoticesService;
   let clerkId: string;
 
   const actor = () => ({ id: clerkId, role: 'SUPER_ADMIN' as const });
@@ -70,8 +72,8 @@ describeIfDb('invoice numbering', () => {
    * `runInTenantTransaction` (audit ARCH-01), which re-enters it.
    */
   const scopeContext = new TenantContextService();
-  const feesOver = (client: TenantPrismaClient): FeesService =>
-    inTenantScope(new FeesService(
+  const feesOver = (client: TenantPrismaClient): FeeServices =>
+    feeServicesInTenantScope(feeServices(
       scopeContext,
       { emit: jest.fn() } as unknown as EventEmitter2,
       {} as WhishGateway,
@@ -91,7 +93,7 @@ describeIfDb('invoice numbering', () => {
     await migrateTenantSchema(ddl, SCHEMA);
 
     db = tenantTestClient(TEST_DATABASE_URL!, SCHEMA);
-    fees = feesOver(db);
+    ({ fees, feeNotices } = feesOver(db));
 
     clerkId = randomUUID();
     await db.user.create({
@@ -116,7 +118,7 @@ describeIfDb('invoice numbering', () => {
   it('numbers every bill a notice raises, in the order they were created', async () => {
     await Promise.all([citizen('أحمد'), citizen('ليلى'), citizen('سمير')]);
 
-    const issued = await fees.issue(
+    const issued = await feeNotices.issue(
       {
         title: 'رسم النفايات',
         amount: 50_000,
@@ -146,7 +148,7 @@ describeIfDb('invoice numbering', () => {
     );
     const highest = Number(before[before.length - 1]!.slice(-4));
 
-    const issued = await fees.issue(
+    const issued = await feeNotices.issue(
       {
         title: 'رسم اللافتات',
         amount: 20_000,
@@ -190,7 +192,7 @@ describeIfDb('invoice numbering', () => {
       select: { id: true },
     });
 
-    await fees.issue(
+    await feeNotices.issue(
       {
         title: 'رسم ثالث',
         amount: 10_000,
@@ -219,7 +221,6 @@ describeIfDb('invoice numbering', () => {
     const charging = new FeesService(
       context,
       { emit: jest.fn() } as unknown as EventEmitter2,
-      {} as WhishGateway,
       {
         get: jest.fn().mockResolvedValue(null),
         set: jest.fn().mockResolvedValue(undefined),
@@ -260,7 +261,7 @@ describeIfDb('invoice numbering', () => {
       fees.chargeIndividual({ citizenId: id, title: 'رسم إشغال رصيف', amount: 75_000, dueDate: '2026-12-31', actor: actor() }),
     ).rejects.toMatchObject({ code: 'FEE_CITIZEN_ARCHIVED' });
     await expect(
-      fees.issue(
+      feeNotices.issue(
         {
           title: 'رسم فردي',
           amount: 20_000,
@@ -304,7 +305,7 @@ describeIfDb('invoice numbering', () => {
       const [session] = await beirut.$queryRaw<Array<{ tz: string }>>`SELECT current_setting('TimeZone') AS tz`;
       expect(session?.tz).toBe('Asia/Beirut');
 
-      const issued = await feesOver(beirut).issue(
+      const issued = await feesOver(beirut).feeNotices.issue(
         {
           title: 'رسم الصرف الصحي',
           amount: 30_000,
@@ -346,7 +347,7 @@ describeIfDb('invoice numbering', () => {
       });
     }
 
-    const issued = await fees.issue(
+    const issued = await feeNotices.issue(
       {
         title: 'رسم البلدة',
         amount: 10_000,

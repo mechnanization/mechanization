@@ -5,6 +5,7 @@ import { migrateTenantSchema } from '../../../infrastructure/prisma/tenant-migra
 import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { FeesService } from './fees.service';
+import { feeServices } from './fee-services.testing';
 
 /**
  * The payments ledger's search, against a real Postgres, for «مشاهد فقط».
@@ -42,7 +43,7 @@ describeIfDb('FeesService.listAllPayments — search', () => {
 
     db = tenantTestClient(TEST_DATABASE_URL!, SCHEMA);
     context = new TenantContextService();
-    fees = new FeesService(
+    ({ fees } = feeServices(
       context,
       { emit: jest.fn() } as never,
       {} as never,
@@ -54,7 +55,7 @@ describeIfDb('FeesService.listAllPayments — search', () => {
       {} as never,
       // AuditService: a read never writes a row.
       {} as never,
-    );
+    ));
 
     const citizenId = randomUUID();
     await db.user.create({

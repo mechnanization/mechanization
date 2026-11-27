@@ -983,7 +983,7 @@ export type FeeNoticeDuplicate = z.infer<typeof feeNoticeDuplicateSchema>;
 
 /**
  * What the preview answers: what issuing this notice now would bill, read by
- * the same path the issue takes (`FeesService.planNotice`) and written nowhere.
+ * the same path the issue takes (`FeeNoticesService.planNotice`) and written nowhere.
  *
  * `expectedRevenue` is the citizens' own bills plus the shared unit bills, in
  * whole pounds. `brackets` is empty under every basis but TIERED_AREA, where it

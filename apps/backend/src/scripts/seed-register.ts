@@ -1279,7 +1279,7 @@ function systemSettingsFor(tenant: SeedTenantProfile): Row {
 
 /**
  * Two flat charges on everyone, issued part-way through the census, the way
- * `FeesService.issue` writes them: one invoice per citizen on file at issue,
+ * `FeeNoticesService.issue` writes them: one invoice per citizen on file at issue,
  * periodKey from the frequency, and a FLAT assessment. Payments go through
  * the ledger's rules: a transaction per movement, `paidAmount` as their sum,
  * PAID only when fully covered. OVERDUE is never stored — the app derives it

@@ -50,6 +50,10 @@ import { FeesService } from '../../application/features/fees/fees.service';
 import { CorrectionBillsService } from '../../application/features/fees/correction-bills.service';
 import { ParcelDuesService } from '../../application/features/fees/parcel-dues.service';
 import { PaymentSettlementService } from '../../application/features/fees/payment-settlement.service';
+import { FeeNoticesService } from '../../application/features/fees/fee-notices.service';
+import { RecurringBillingService } from '../../application/features/fees/recurring-billing.service';
+import { BillLifecycleService } from '../../application/features/fees/bill-lifecycle.service';
+import { WhishCheckoutService } from '../../application/features/fees/whish-checkout.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { CurrentTenant, CurrentUser } from '../decorators/current-user.decorator';
 import { CurrentActor } from '../decorators/current-actor.decorator';
@@ -83,6 +87,10 @@ export class FeesController {
     private readonly correctionBills: CorrectionBillsService,
     private readonly parcelDues: ParcelDuesService,
     private readonly settlements: PaymentSettlementService,
+    private readonly notices: FeeNoticesService,
+    private readonly recurring: RecurringBillingService,
+    private readonly billLifecycle: BillLifecycleService,
+    private readonly whish: WhishCheckoutService,
   ) {}
 
   // ───────────────────────────  Settings  ───────────────────────────
@@ -143,7 +151,7 @@ export class FeesController {
   @Roles(...FEE_READ_ROLES)
   @Get('notices')
   async listNotices(@Query('limit') limit?: string, @Query('offset') offset?: string) {
-    return this.fees.listNotices({
+    return this.notices.listNotices({
       limit: queryLimit(limit, FEE_NOTICES_PAGE_DEFAULT, FEE_NOTICES_PAGE_MAX),
       offset: queryOffset(offset),
     });
@@ -161,7 +169,7 @@ export class FeesController {
     @Body(new ZodValidationPipe(createFeeNoticeSchema)) body: CreateFeeNotice,
     @CurrentActor() actor: StaffActor,
   ) {
-    return this.fees.issue(body, actor);
+    return this.notices.issue(body, actor);
   }
 
   /**
@@ -179,7 +187,7 @@ export class FeesController {
     @Body(new ZodValidationPipe(cancelNoticeSchema)) body: CancelNotice,
     @CurrentActor() actor: StaffActor,
   ) {
-    return this.fees.cancelNoticeBatch(
+    return this.notices.cancelNoticeBatch(
       id,
       { reason: body.reason, periodKeys: body.periodKeys },
       actor,
@@ -194,7 +202,7 @@ export class FeesController {
   @Roles(...BILL_CANCEL_ROLES)
   @Get('notices/:id/periods')
   async noticePeriods(@Param('id', new UuidPipe()) id: string) {
-    return { items: await this.fees.noticePeriods(id) };
+    return { items: await this.notices.noticePeriods(id) };
   }
 
   /**
@@ -209,7 +217,7 @@ export class FeesController {
   async previewNotice(
     @Body(new ZodValidationPipe(feeNoticePreviewSchema)) body: FeeNoticePreviewInput,
   ): Promise<FeeNoticePreviewResult> {
-    return this.fees.previewNotice(body);
+    return this.notices.previewNotice(body);
   }
 
   @Roles(...FEE_READ_ROLES)
@@ -229,7 +237,7 @@ export class FeesController {
     @Body(new ZodValidationPipe(noticeActiveSchema)) body: { isActive: boolean },
     @CurrentActor() actor: StaffActor,
   ) {
-    return this.fees.setNoticeActive(id, body.isActive, actor);
+    return this.notices.setNoticeActive(id, body.isActive, actor);
   }
 
   /**
@@ -262,7 +270,7 @@ export class FeesController {
   @Post('recurring/run')
   async runRecurring(@CurrentActor() actor: StaffActor) {
     // The staff member who called it is the actor on the run's audit rows; the cron's run has none.
-    const result = await this.fees.runRecurringBilling(new Date(), actor);
+    const result = await this.recurring.runRecurringBilling(new Date(), actor);
     return { tenants: 1, ...result };
   }
 
@@ -415,7 +423,7 @@ export class FeesController {
   @Roles(...FEE_READ_ROLES)
   @Get('payments/:id/transactions')
   async transactions(@Param('id', new UuidPipe()) id: string) {
-    return { items: await this.fees.listTransactions(id) };
+    return { items: await this.billLifecycle.listTransactions(id) };
   }
 
   /**
@@ -430,7 +438,7 @@ export class FeesController {
     @Body(new ZodValidationPipe(cancelBillSchema)) body: CancelBill,
     @CurrentActor() actor: StaffActor,
   ) {
-    return this.fees.cancelBill(id, body.reason, actor);
+    return this.billLifecycle.cancelBill(id, body.reason, actor);
   }
 
   /**
@@ -445,7 +453,7 @@ export class FeesController {
     @Body(new ZodValidationPipe(writeOffBillSchema)) body: WriteOffBillInput,
     @CurrentActor() actor: StaffActor,
   ) {
-    return this.fees.writeOffBill(id, body, actor);
+    return this.billLifecycle.writeOffBill(id, body, actor);
   }
 
   /**
@@ -463,7 +471,7 @@ export class FeesController {
     @Body(new ZodValidationPipe(reverseTransactionSchema)) body: { note: string },
     @CurrentActor() actor: StaffActor,
   ) {
-    return this.fees.reverseTransaction({
+    return this.billLifecycle.reverseTransaction({
       transactionId,
       note: body.note,
       actor,
@@ -617,7 +625,7 @@ export class FeesController {
     const apiBase = APP_CONFIG.publicApiUrl;
     const portalBase = APP_CONFIG.publicPortalUrl;
 
-    return this.fees.startWhishCheckout({
+    return this.whish.startWhishCheckout({
       paymentId: id,
       citizenId: user.sub,
       callbackUrl: `${apiBase}/t/${tenantSlug}/fees/whish/callback`,
@@ -643,13 +651,13 @@ export class FeesController {
     const raw = request.rawBody?.toString('utf8') ?? '';
     const signature = request.header('x-whish-signature');
 
-    const callback = this.fees.parseWhishCallback({ rawBody: raw, signature });
+    const callback = this.whish.parseWhishCallback({ rawBody: raw, signature });
     if (!callback) {
       this.logger.warn('Rejected an unverified Whish callback');
       return { received: true };
     }
 
-    await this.fees.settleFromWhishCallback(callback);
+    await this.whish.settleFromWhishCallback(callback);
     return { received: true };
   }
 

@@ -24,6 +24,8 @@ import { IncomeService } from './income.service';
 import { TransfersService } from './transfers.service';
 import { TreasuryLedgerService } from './treasury-ledger.service';
 import { TreasuryService } from './treasury.service';
+import { feeServices } from '../fees/fee-services.testing';
+import type { BillLifecycleService } from '../fees/bill-lifecycle.service';
 
 /**
  * The controls the PR #104 review added to the treasury, against a real Postgres.
@@ -58,6 +60,7 @@ describeIfDb('treasury controls', () => {
   let expenses: ExpensesService;
   let income: IncomeService;
   let fees: FeesService;
+  let billLifecycle: BillLifecycleService;
 
   let citizenId: string;
   let safeLbpId: string;
@@ -159,7 +162,7 @@ describeIfDb('treasury controls', () => {
     expenses = new ExpensesService(context, ledger, auditService);
     transfers = new TransfersService(context, ledger, auditService, expenses);
     income = new IncomeService(context, ledger, auditService);
-    fees = new FeesService(
+    ({ fees, billLifecycle } = feeServices(
       context,
       { emit: jest.fn() } as unknown as EventEmitter2,
       {} as never,
@@ -170,7 +173,7 @@ describeIfDb('treasury controls', () => {
       } as never,
       payments,
       auditService,
-    );
+    ));
 
     citizenId = randomUUID();
     const people = {
@@ -402,7 +405,7 @@ describeIfDb('treasury controls', () => {
       const safeBefore = await balance(safeLbpId);
 
       await expect(
-        scoped(() => fees.reverseTransaction({ transactionId: recorded.id, note: 'قيد بالخطأ', actor: MANAGER() })),
+        scoped(() => billLifecycle.reverseTransaction({ transactionId: recorded.id, note: 'قيد بالخطأ', actor: MANAGER() })),
       ).rejects.toMatchObject({ code: 'PAYMENT_CLAIM_UNDER_REVIEW' });
 
       expect(await db.paymentTransaction.count({ where: { paymentId } })).toBe(1);

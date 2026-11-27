@@ -36,6 +36,10 @@ import { RegistrationService } from './features/registration/registration.servic
 import { ReportingService } from './features/reporting/reporting.service';
 import { TenantService } from './features/tenant/tenant.service';
 import { FeesService } from './features/fees/fees.service';
+import { FeeNoticesService } from './features/fees/fee-notices.service';
+import { RecurringBillingService } from './features/fees/recurring-billing.service';
+import { BillLifecycleService } from './features/fees/bill-lifecycle.service';
+import { WhishCheckoutService } from './features/fees/whish-checkout.service';
 import { CorrectionBillsService } from './features/fees/correction-bills.service';
 import { ParcelDuesService } from './features/fees/parcel-dues.service';
 import { CitizenRequestsService } from './features/citizen-requests/citizen-requests.service';
@@ -99,6 +103,10 @@ import { RecordReviewService } from './features/quality/record-review.service';
     OwnershipService,
     CitizenMergeService,
     FeesService,
+    FeeNoticesService,
+    RecurringBillingService,
+    BillLifecycleService,
+    WhishCheckoutService,
     CorrectionBillsService,
     ParcelDuesService,
     PaymentLedgerService,
@@ -158,6 +166,10 @@ import { RecordReviewService } from './features/quality/record-review.service';
     OwnershipService,
     CitizenMergeService,
     FeesService,
+    FeeNoticesService,
+    RecurringBillingService,
+    BillLifecycleService,
+    WhishCheckoutService,
     CorrectionBillsService,
     ParcelDuesService,
     PaymentLedgerService,

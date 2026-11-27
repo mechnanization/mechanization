@@ -873,7 +873,7 @@ What the code does now ([finance.md](finance.md) §3.7):
   a bill for review between the tick and the press. The **single** counter settle does not
   refuse it on the server: its screens hide the button, but the API takes the money, and the
   Whish callback then finds the bill PAID and records nothing for the transfer that arrived
-  (`FeesService.settleFromWhishCallback` returns `{ applied: false }` on a PAID bill).
+  (`WhishCheckoutService.settleFromWhishCallback` returns `{ applied: false }` on a PAID bill).
   **Decided (the owner, 2026-10-12; [finance.md](finance.md) §13.1c, D11):** no. The single
   settle and a reversal are refused too (`PAYMENT_CLAIM_UNDER_REVIEW`) until a clerk confirms or
   rejects the claim, and a Whish success for a bill settled another way meanwhile is set aside,
@@ -952,7 +952,7 @@ decided; a later answer from the municipality overrides it and is recorded here 
 
 1. **Online payment through Whish is paused** until Whish gives the municipality its API.
    Citizens pay at the municipality's cash office or to a collector.
-   - **What the code does.** `FeesService.startWhishCheckout` and a citizen's own request bill
+   - **What the code does.** `WhishCheckoutService.startWhishCheckout` and a citizen's own request bill
      (`POST requests/mine/:id/bill`) answer `ONLINE_PAYMENT_UNAVAILABLE` while the Whish gateway
      is not live, before anything is read or written. The portal shows no «ادفع عبر Whish» or
      «ادفع الآن» (`ONLINE_PAYMENT_OPEN` in `apps/frontend/lib/online-payment.ts`); it says

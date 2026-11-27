@@ -9,8 +9,9 @@ import { TenantContextService } from '../../../infrastructure/context/tenant-con
 import { PrismaAuditRepository } from '../../../infrastructure/repositories/audit.repository';
 import { AuditService } from '../audit/audit.service';
 import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
-import { FeesService } from './fees.service';
 import { PaymentLedgerService } from './payment-ledger.service';
+import { feeServices } from './fee-services.testing';
+import type { FeeNoticesService } from './fee-notices.service';
 
 /**
  * The duplicate notice guard (finding F11 of the 2026-11-14 billing audit,
@@ -35,7 +36,7 @@ describeIfDb('the duplicate notice guard', () => {
   let ddl: Client;
   let db: TenantPrismaClient;
   let context: TenantContextService;
-  let fees: FeesService;
+  let feeNotices: FeeNoticesService;
   const managerId = randomUUID();
   const manager = { id: managerId, role: 'SUPER_ADMIN' };
   const citizens = [randomUUID(), randomUUID()];
@@ -95,7 +96,7 @@ describeIfDb('the duplicate notice guard', () => {
     // `fee.issued` is a Tier 2 row: wired by hand here, as `@OnEvent` is in the app.
     const events = new EventEmitter2();
     events.on('fee.issued', (payload) => audit.onFeeIssued(payload));
-    fees = new FeesService(
+    ({ feeNotices } = feeServices(
       context,
       events,
       {} as never,
@@ -106,7 +107,7 @@ describeIfDb('the duplicate notice guard', () => {
       } as never,
       new PaymentLedgerService(context, audit, new TreasuryLedgerService(context)),
       audit,
-    );
+    ));
 
     await db.user.create({
       data: {
@@ -141,10 +142,10 @@ describeIfDb('the duplicate notice guard', () => {
   }, SETUP_TIMEOUT_MS);
 
   it('refuses a second notice issued under another key, naming the first, and writes nothing', async () => {
-    const first = await within(() => fees.issue(notice(), manager));
+    const first = await within(() => feeNotices.issue(notice(), manager));
     const [notices, bills] = [await db.feeNotice.count(), await db.citizenPayment.count()];
 
-    const refused = await refusal(within(() => fees.issue(notice({ title: 'رسوم النظافة' }), manager)));
+    const refused = await refusal(within(() => feeNotices.issue(notice({ title: 'رسوم النظافة' }), manager)));
 
     expect(refused.code).toBe('FEE_NOTICE_DUPLICATE');
     expect(refused.params).toMatchObject({ title: 'رسم النظافة', count: 1 });
@@ -154,10 +155,10 @@ describeIfDb('the duplicate notice guard', () => {
   });
 
   it('lists the duplicate in the preview, with the period’s bills', async () => {
-    const first = await within(() => fees.issue(notice(), manager));
+    const first = await within(() => feeNotices.issue(notice(), manager));
 
     const { clientRequestId: _key, ...asked } = notice();
-    const preview = await within(() => fees.previewNotice(asked));
+    const preview = await within(() => feeNotices.previewNotice(asked));
 
     expect(preview.duplicates).toEqual([
       expect.objectContaining({ id: first.noticeId, title: 'رسم النظافة', amount: 50_000, billCount: citizens.length }),
@@ -165,10 +166,10 @@ describeIfDb('the duplicate notice guard', () => {
   });
 
   it('issues once the duplicate is confirmed by id, and records the confirmation', async () => {
-    const first = await within(() => fees.issue(notice(), manager));
+    const first = await within(() => feeNotices.issue(notice(), manager));
 
     const second = await within(() =>
-      fees.issue(notice({ title: 'رسم الإنارة', acknowledgedDuplicates: [first.noticeId.toUpperCase()] }), manager),
+      feeNotices.issue(notice({ title: 'رسم الإنارة', acknowledgedDuplicates: [first.noticeId.toUpperCase()] }), manager),
     );
 
     expect(second.issued).toBe(citizens.length);
@@ -177,10 +178,10 @@ describeIfDb('the duplicate notice guard', () => {
   });
 
   it('does not take a confirmation of another notice for this one', async () => {
-    await within(() => fees.issue(notice(), manager));
+    await within(() => feeNotices.issue(notice(), manager));
 
     const refused = await refusal(
-      within(() => fees.issue(notice({ acknowledgedDuplicates: [randomUUID()] }), manager)),
+      within(() => feeNotices.issue(notice({ acknowledgedDuplicates: [randomUUID()] }), manager)),
     );
 
     expect(refused.code).toBe('FEE_NOTICE_DUPLICATE');
@@ -191,10 +192,10 @@ describeIfDb('the duplicate notice guard', () => {
     ['another basis', { basis: 'PER_UNIT' as const, amount: 10_000 }],
     ['another frequency', { frequency: 'ANNUALLY' as const }],
   ])('is not a duplicate in %s', async (_case, overrides) => {
-    await within(() => fees.issue(notice(), manager));
+    await within(() => feeNotices.issue(notice(), manager));
 
     // Issued, or refused for a reason of its own (a per-unit fee on people with no units bills nobody) — never as a duplicate.
-    const outcome = await within(() => fees.issue(notice(overrides as Partial<CreateFeeNotice>), manager)).then(
+    const outcome = await within(() => feeNotices.issue(notice(overrides as Partial<CreateFeeNotice>), manager)).then(
       () => 'issued',
       (error: { code?: string }) => error.code,
     );
@@ -202,26 +203,26 @@ describeIfDb('the duplicate notice guard', () => {
   });
 
   it('is not a duplicate of a stopped notice', async () => {
-    const first = await within(() => fees.issue(notice(), manager));
+    const first = await within(() => feeNotices.issue(notice(), manager));
     await db.feeNotice.update({ where: { id: first.noticeId }, data: { isActive: false } });
 
-    await expect(within(() => fees.issue(notice(), manager))).resolves.toMatchObject({ issued: citizens.length });
+    await expect(within(() => feeNotices.issue(notice(), manager))).resolves.toMatchObject({ issued: citizens.length });
   });
 
   it('compares one-off notices by the month they are due in', async () => {
-    await within(() => fees.issue(notice({ frequency: 'ONCE', dueDate: thisMonth }), manager));
+    await within(() => feeNotices.issue(notice({ frequency: 'ONCE', dueDate: thisMonth }), manager));
 
-    const sameMonth = await refusal(within(() => fees.issue(notice({ frequency: 'ONCE', dueDate: thisMonth }), manager)));
+    const sameMonth = await refusal(within(() => feeNotices.issue(notice({ frequency: 'ONCE', dueDate: thisMonth }), manager)));
     expect(sameMonth.code).toBe('FEE_NOTICE_DUPLICATE');
     await expect(
-      within(() => fees.issue(notice({ frequency: 'ONCE', dueDate: nextMonth }), manager)),
+      within(() => feeNotices.issue(notice({ frequency: 'ONCE', dueDate: nextMonth }), manager)),
     ).resolves.toMatchObject({ issued: citizens.length });
   });
 
   it('lets one of two issuers racing with two keys win, and refuses the other', async () => {
     const outcomes = await Promise.allSettled([
-      within(() => fees.issue(notice(), manager)),
-      within(() => fees.issue(notice(), manager)),
+      within(() => feeNotices.issue(notice(), manager)),
+      within(() => feeNotices.issue(notice(), manager)),
     ]);
 
     expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1);

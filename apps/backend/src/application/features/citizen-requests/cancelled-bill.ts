@@ -11,7 +11,7 @@ import type { AuditService } from '../audit/audit.service';
  *
  * Two callers, both after the bill is CANCELLED — `citizen_requests_guard`
  * (0094) accepts a cancelled request with a bill only once that bill is:
- * - `FeesService.cancelBill`, behind its row lock on the bill, with the manager
+ * - `BillLifecycleService.cancelBill`, behind its row lock on the bill, with the manager
  *   as the actor;
  * - `CitizenRequestsService.reconcile`, with no actor (a SYSTEM row): it heals a
  *   request the first caller could not reach, and any already stranded.

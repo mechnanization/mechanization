@@ -16,6 +16,9 @@ import { FeesService } from './fees.service';
 import { ParcelDuesService } from './parcel-dues.service';
 import { PaymentLedgerService } from './payment-ledger.service';
 import { PaymentSettlementService } from './payment-settlement.service';
+import { feeServices } from './fee-services.testing';
+import type { BillLifecycleService } from './bill-lifecycle.service';
+import type { FeeNoticesService } from './fee-notices.service';
 
 /**
  * «شطب» (0107/0108, docs/old-debts-plan.md decision 10, docs/finance.md §3.8),
@@ -35,6 +38,8 @@ describeIfDb('«شطب»: writing off what is left on a bill', () => {
   let db: TenantPrismaClient;
   let context: TenantContextService;
   let fees: FeesService;
+  let billLifecycle: BillLifecycleService;
+  let feeNotices: FeeNoticesService;
   let payments: PaymentLedgerService;
   let settlements: PaymentSettlementService;
   let reporting: ReportingService;
@@ -87,7 +92,7 @@ describeIfDb('«شطب»: writing off what is left on a bill', () => {
     );
 
   const writeOff = (paymentId: string, input: Partial<typeof DECISION> = {}) =>
-    scoped(() => fees.writeOffBill(paymentId, { ...DECISION, ...input }, MANAGER()));
+    scoped(() => billLifecycle.writeOffBill(paymentId, { ...DECISION, ...input }, MANAGER()));
 
   const onProfile = async () => (await scoped(() => reporting.getCitizenProfile(citizenId)))!;
 
@@ -108,7 +113,7 @@ describeIfDb('«شطب»: writing off what is left on a bill', () => {
       set: jest.fn().mockResolvedValue(undefined),
       invalidatePrefix: jest.fn().mockResolvedValue(undefined),
     } as never;
-    fees = new FeesService(context, { emit: jest.fn() } as unknown as EventEmitter2, {} as never, cache, payments, auditService);
+    ({ fees, billLifecycle, feeNotices } = feeServices(context, { emit: jest.fn() } as unknown as EventEmitter2, {} as never, cache, payments, auditService));
     settlements = new PaymentSettlementService(context, new EventEmitter2(), payments, auditService, ledger);
     reporting = new ReportingService(context, new EventEmitter2(), cache, { getOrThrow: () => 60 } as never);
     parcelDues = new ParcelDuesService(context);
@@ -208,7 +213,7 @@ describeIfDb('«شطب»: writing off what is left on a bill', () => {
       await expect(writeOff(paid)).rejects.toMatchObject({ code: 'BILL_WRITE_OFF_NOTHING_LEFT' });
 
       const cancelled = await bill(20_000);
-      await scoped(() => fees.cancelBill(cancelled, 'صدر الرسم مرتين', MANAGER()));
+      await scoped(() => billLifecycle.cancelBill(cancelled, 'صدر الرسم مرتين', MANAGER()));
       await expect(writeOff(cancelled)).rejects.toMatchObject({ code: 'BILL_ALREADY_CANCELLED' });
 
       const claimed = await bill(20_000, { status: 'PENDING_REVIEW' });
@@ -363,14 +368,14 @@ describeIfDb('«شطب»: writing off what is left on a bill', () => {
     it('refuses «إلغاء الفاتورة»: the debt was real', async () => {
       const whole = await bill(15_000);
       await writeOff(whole);
-      await expect(scoped(() => fees.cancelBill(whole, 'خطأ في الإصدار', MANAGER()))).rejects.toMatchObject({
+      await expect(scoped(() => billLifecycle.cancelBill(whole, 'خطأ في الإصدار', MANAGER()))).rejects.toMatchObject({
         code: 'BILL_ALREADY_WRITTEN_OFF',
       });
     });
 
     it('refuses reversing a receipt on it while the write-off stands', async () => {
       await expect(
-        scoped(() => fees.reverseTransaction({ transactionId: receiptId, note: 'وصل بالخطأ', actor: MANAGER() })),
+        scoped(() => billLifecycle.reverseTransaction({ transactionId: receiptId, note: 'وصل بالخطأ', actor: MANAGER() })),
       ).rejects.toMatchObject({ code: 'PAYMENT_REVERSAL_BILL_WRITTEN_OFF' });
       expect(await db.paymentTransaction.count({ where: { reversalOfId: receiptId } })).toBe(0);
     });
@@ -440,11 +445,11 @@ describeIfDb('«شطب»: writing off what is left on a bill', () => {
       const open = (await onNotice(neighbour)).id;
       await writeOff(forgiven);
 
-      expect(await scoped(() => fees.noticePeriods(notice.id))).toEqual([
+      expect(await scoped(() => feeNotices.noticePeriods(notice.id))).toEqual([
         expect.objectContaining({ periodKey: 'ONCE', bills: 2, cancellable: 1, writtenOff: 1, alreadyCancelled: 0 }),
       ]);
       await expect(
-        scoped(() => fees.cancelNoticeBatch(notice.id, { reason: 'صدر الإشعار خطأً', periodKeys: ['ONCE'] }, MANAGER())),
+        scoped(() => feeNotices.cancelNoticeBatch(notice.id, { reason: 'صدر الإشعار خطأً', periodKeys: ['ONCE'] }, MANAGER())),
       ).resolves.toMatchObject({
         cancelled: 1,
         skipped: [expect.objectContaining({ paymentId: forgiven, reason: 'BILL_ALREADY_WRITTEN_OFF' })],

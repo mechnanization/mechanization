@@ -15,6 +15,8 @@ import { ArrearsBatchService } from './arrears-batch.service';
 import { ArrearsReportService } from './arrears-report.service';
 import { ArrearsService } from './arrears.service';
 import { StaffActor } from '../../common/actor';
+import { feeServices } from '../fees/fee-services.testing';
+import type { BillLifecycleService } from '../fees/bill-lifecycle.service';
 
 /**
  * «تقرير المتأخرات» and a batch's sheet (task 11, docs/old-debts-plan.md §8),
@@ -44,6 +46,7 @@ describeIfDb('«تقرير المتأخرات» and the batch sheet', () => {
   let db: TenantPrismaClient;
   let context: TenantContextService;
   let fees: FeesService;
+  let billLifecycle: BillLifecycleService;
   let reports: ArrearsReportService;
   let importer: ArrearsService;
   let batches: ArrearsBatchService;
@@ -102,7 +105,7 @@ describeIfDb('«تقرير المتأخرات» and the batch sheet', () => {
       set: jest.fn().mockResolvedValue(undefined),
       invalidatePrefix: jest.fn().mockResolvedValue(undefined),
     } as never;
-    fees = new FeesService(context, { emit: jest.fn() } as unknown as EventEmitter2, {} as never, cache, payments, audit);
+    ({ fees, billLifecycle } = feeServices(context, { emit: jest.fn() } as unknown as EventEmitter2, {} as never, cache, payments, audit));
     importer = new ArrearsService(context, audit);
     batches = new ArrearsBatchService(context, audit, importer, new EventEmitter2());
     reports = new ArrearsReportService(context, batches);
@@ -172,10 +175,10 @@ describeIfDb('«تقرير المتأخرات» and the batch sheet', () => {
     // What the counter does to the bills.
     await cash(await billOf('P1', LAST, 'PRINCIPAL'), 500_000); // paid in full
     const penalty = await billOf('P1', LAST, 'PENALTY');
-    await scoped(() => fees.cancelBill(penalty, 'سدّده المواطن سابقاً: إيصال رقم 123', MANAGER)); // a mistake
+    await scoped(() => billLifecycle.cancelBill(penalty, 'سدّده المواطن سابقاً: إيصال رقم 123', MANAGER)); // a mistake
     const rental = await billOf('P1', OLDER, 'PRINCIPAL', 'RENTAL_VALUE');
     await cash(rental, 100_000); // part-paid, then the rest forgiven
-    await scoped(() => fees.writeOffBill(rental, { reason: 'عفو عن رسوم ما قبل 2020', decisionRef: '45/2026', decisionDate: '2026-11-01' }, MANAGER));
+    await scoped(() => billLifecycle.writeOffBill(rental, { reason: 'عفو عن رسوم ما قبل 2020', decisionRef: '45/2026', decisionDate: '2026-11-01' }, MANAGER));
 
     // Every other bill: one paid and kept, one paid and reversed.
     const kept = await ordinaryBill(person.bassem, 25_000);
@@ -183,7 +186,7 @@ describeIfDb('«تقرير المتأخرات» and the batch sheet', () => {
     const reversed = await ordinaryBill(person.bassem, 30_000);
     await cash(reversed, 30_000);
     const receipt = await db.paymentTransaction.findFirstOrThrow({ where: { paymentId: reversed, reversalOfId: null } });
-    await scoped(() => fees.reverseTransaction({ transactionId: receipt.id, note: 'وصل بالخطأ', actor: MANAGER }));
+    await scoped(() => billLifecycle.reverseTransaction({ transactionId: receipt.id, note: 'وصل بالخطأ', actor: MANAGER }));
 
   }, SETUP_TIMEOUT_MS);
 

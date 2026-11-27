@@ -6,7 +6,7 @@ import {
 } from '@mechanization/shared-schemas';
 import { ValidationError } from '../../application/common/exceptions';
 import type { CasesService } from '../../application/features/cases/cases.service';
-import type { FeesService } from '../../application/features/fees/fees.service';
+import type { FeeNoticesService } from '../../application/features/fees/fee-notices.service';
 import { CasesController } from './cases.controller';
 import { FeesController } from './fees.controller';
 
@@ -44,7 +44,16 @@ describe('the paged lists', () => {
   describe('GET fees/notices (PAG-04)', () => {
     const answer = { items: [], total: 0 };
     const listNotices = jest.fn(async () => answer);
-    const controller = new FeesController({ listNotices } as unknown as FeesService, null as never, null as never, null as never);
+    const controller = new FeesController(
+      null as never,
+      null as never,
+      null as never,
+      null as never,
+      { listNotices } as unknown as FeeNoticesService,
+      null as never,
+      null as never,
+      null as never,
+    );
 
     beforeEach(() => listNotices.mockClear());
 

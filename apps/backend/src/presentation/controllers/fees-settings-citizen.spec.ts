@@ -31,6 +31,10 @@ describe('FeesController.getSettings', () => {
     {} as never,
     {} as never,
     {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
   );
 
   it('gives a citizen how to pay, and only that', async () => {

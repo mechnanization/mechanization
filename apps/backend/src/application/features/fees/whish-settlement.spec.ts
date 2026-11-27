@@ -4,8 +4,8 @@ import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.ser
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { ConflictError } from '../../common/exceptions';
 import { AuditService } from '../audit/audit.service';
-import { FeesService } from './fees.service';
 import { PaymentLedgerService } from './payment-ledger.service';
+import { feeServices } from './fee-services.testing';
 
 /**
  * Applying a verified Whish callback to an invoice.
@@ -77,7 +77,7 @@ function build(
 
   const context = new TenantContextService();
   const recordInTransaction = jest.fn().mockResolvedValue(undefined);
-  const service = new FeesService(
+  const { whishCheckout: whishCheckoutService } = feeServices(
     context,
     { emit: jest.fn() } as unknown as EventEmitter2,
     {} as WhishGateway,
@@ -93,7 +93,7 @@ function build(
   const settle = (input: ReturnType<typeof callback>) =>
     context.run(
       { tenantId: 'tenant-1', tenantSlug: 'albazourieh', schemaName: 'tenant_albazourieh', prisma: prisma as never },
-      () => service.settleFromWhishCallback(input),
+      () => whishCheckoutService.settleFromWhishCallback(input),
     );
 
   return { settle, update, updateMany, recordIn, whishCheckout, recordInTransaction };

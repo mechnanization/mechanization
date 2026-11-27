@@ -6,7 +6,8 @@ import { PrismaClient as TenantPrismaClient } from '../../../generated/tenant-cl
 import { migrateTenantSchema } from '../../../infrastructure/prisma/tenant-migrator';
 import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
-import { FeesService } from './fees.service';
+import { feeServices } from './fee-services.testing';
+import type { FeeNoticesService } from './fee-notices.service';
 
 /**
  * «معاينة قبل الإصدار» against a real tenant schema (0098 and 0099 applied):
@@ -44,7 +45,7 @@ describeIfDb('the notice preview', () => {
   let ddl: Client;
   let db: TenantPrismaClient;
   let context: TenantContextService;
-  let fees: FeesService;
+  let feeNotices: FeeNoticesService;
   const officerId = randomUUID();
   const actor = { id: officerId, role: 'ACCOUNTANT' };
   const brothers = [randomUUID(), randomUUID(), randomUUID()].sort();
@@ -92,7 +93,7 @@ describeIfDb('the notice preview', () => {
     await migrateTenantSchema(ddl, SCHEMA);
     db = tenantTestClient(TEST_DATABASE_URL!, SCHEMA);
     context = new TenantContextService();
-    fees = new FeesService(
+    ({ feeNotices } = feeServices(
       context,
       new EventEmitter2(),
       {} as never,
@@ -103,7 +104,7 @@ describeIfDb('the notice preview', () => {
       } as never,
       {} as never,
       {} as never,
-    );
+    ));
 
     await db.user.create({
       data: {
@@ -189,7 +190,7 @@ describeIfDb('the notice preview', () => {
   it('previews a bracket notice: the shop once to the three brothers, the flat to its owner, nothing written (T-9)', async () => {
     const before = await written();
 
-    const preview = await within(() => fees.previewNotice(tieredNotice));
+    const preview = await within(() => feeNotices.previewNotice(tieredNotice));
 
     expect(preview).toMatchObject({
       targetedCitizens: 5,
@@ -229,8 +230,8 @@ describeIfDb('the notice preview', () => {
       dueDate: '2026-12-31',
     } as const;
 
-    const preview = await within(() => fees.previewNotice(notice));
-    const issued = await within(() => fees.issue({ ...notice, clientRequestId: randomUUID() } as CreateFeeNotice, actor));
+    const preview = await within(() => feeNotices.previewNotice(notice));
+    const issued = await within(() => feeNotices.issue({ ...notice, clientRequestId: randomUUID() } as CreateFeeNotice, actor));
 
     const bills = await db.citizenPayment.findMany({ where: { feeNoticeId: issued.noticeId }, select: { amount: true } });
     expect(issued.issued).toBe(preview.billedCitizens);
@@ -241,7 +242,7 @@ describeIfDb('the notice preview', () => {
 
   it('previews a notice that targets nobody as zeros rather than refusing', async () => {
     const preview = await within(() =>
-      fees.previewNotice({ ...tieredNotice, targetType: 'BUILDING_CATEGORY', targetCategory: 'WAREHOUSE' }),
+      feeNotices.previewNotice({ ...tieredNotice, targetType: 'BUILDING_CATEGORY', targetCategory: 'WAREHOUSE' }),
     );
     expect(preview).toMatchObject({ targetedCitizens: 0, billedCitizens: 0, sharedBills: 0, expectedRevenue: 0 });
   });

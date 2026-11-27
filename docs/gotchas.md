@@ -1070,7 +1070,7 @@ Sections: [Toolchain](#toolchain) · [Database and migrations](#database-and-mig
 - **Do this:** grep for an `@OnEvent` handler for every name you emit. Keep
   emission synchronous.
 - **Where:** `AppModule` comment on `EventEmitterModule`,
-  `FeesService.reverseTransaction`, `AuditService`.
+  `BillLifecycleService.reverseTransaction`, `AuditService`.
 
 ### A Tier 2 audit row is not there when the call returns
 

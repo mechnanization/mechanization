@@ -9,8 +9,9 @@ import { PrismaAuditRepository } from '../../../infrastructure/repositories/audi
 import type { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
 import type { WhishGateway } from '../../../domain/interfaces/whish-gateway.interface';
 import { AuditService } from '../audit/audit.service';
-import { FeesService } from './fees.service';
 import type { PaymentLedgerService } from './payment-ledger.service';
+import { feeServices } from './fee-services.testing';
+import type { RecurringBillingService } from './recurring-billing.service';
 
 /**
  * The recurring biller's audit row, against real Postgres (audit item M6).
@@ -35,7 +36,7 @@ describeIfDb('the recurring billing audit row', () => {
   let ddl: Client;
   let db: TenantPrismaClient;
   let context: TenantContextService;
-  let fees: FeesService;
+  let recurringBilling: RecurringBillingService;
   let audit: AuditService;
   let emit: jest.Mock;
   let accountantId: string;
@@ -66,7 +67,7 @@ describeIfDb('the recurring billing audit row', () => {
     context = new TenantContextService();
     audit = new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never);
     emit = jest.fn();
-    fees = new FeesService(
+    ({ recurringBilling } = feeServices(
       context,
       { emit } as unknown as EventEmitter2,
       {} as WhishGateway,
@@ -77,7 +78,7 @@ describeIfDb('the recurring billing audit row', () => {
       } as unknown as RedisCacheService,
       {} as PaymentLedgerService,
       audit,
-    );
+    ));
 
     accountantId = randomUUID();
     await db.user.createMany({
@@ -119,7 +120,7 @@ describeIfDb('the recurring billing audit row', () => {
   }, SETUP_TIMEOUT_MS);
 
   it("writes the scheduled run's row as the system's, with no actor", async () => {
-    const result = await scoped(() => fees.runRecurringBilling(new Date('2026-03-10T09:00:00.000Z')));
+    const result = await scoped(() => recurringBilling.runRecurringBilling(new Date('2026-03-10T09:00:00.000Z')));
     expect(result.invoicesCreated).toBe(2);
     await deliverIssued();
 
@@ -132,7 +133,7 @@ describeIfDb('the recurring billing audit row', () => {
 
   it('writes a run started from the fees page under the staff member who pressed it', async () => {
     const result = await scoped(() =>
-      fees.runRecurringBilling(new Date('2026-04-10T09:00:00.000Z'), { id: accountantId, role: 'ACCOUNTANT' }),
+      recurringBilling.runRecurringBilling(new Date('2026-04-10T09:00:00.000Z'), { id: accountantId, role: 'ACCOUNTANT' }),
     );
     expect(result.invoicesCreated).toBe(2);
     await deliverIssued();

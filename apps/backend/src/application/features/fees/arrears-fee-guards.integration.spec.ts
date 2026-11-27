@@ -12,6 +12,9 @@ import { ReportingService } from '../reporting/reporting.service';
 import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
 import { FeesService } from './fees.service';
 import { PaymentLedgerService } from './payment-ledger.service';
+import { feeServices } from './fee-services.testing';
+import type { FeeNoticesService } from './fee-notices.service';
+import type { RecurringBillingService } from './recurring-billing.service';
 
 /**
  * Old debts and the fee system (task 6, docs/old-debts-plan.md §8), against a
@@ -40,6 +43,8 @@ describeIfDb('old debts and the fee system', () => {
   let db: TenantPrismaClient;
   let context: TenantContextService;
   let fees: FeesService;
+  let feeNotices: FeeNoticesService;
+  let recurringBilling: RecurringBillingService;
   let reporting: ReportingService;
   let citizens: CitizensService;
 
@@ -64,7 +69,7 @@ describeIfDb('old debts and the fee system', () => {
     acknowledgedDuplicates: [] as string[],
     ...over,
   });
-  const issue = (over: Record<string, unknown> = {}) => within(() => fees.issue(notice(over) as never, ACCOUNTANT));
+  const issue = (over: Record<string, unknown> = {}) => within(() => feeNotices.issue(notice(over) as never, ACCOUNTANT));
   const noticeCount = () => db.feeNotice.count();
 
   beforeAll(async () => {
@@ -81,7 +86,7 @@ describeIfDb('old debts and the fee system', () => {
       invalidatePrefix: jest.fn().mockResolvedValue(undefined),
     } as never;
     const payments = new PaymentLedgerService(context, audit, new TreasuryLedgerService(context));
-    fees = new FeesService(context, { emit: jest.fn() } as unknown as EventEmitter2, {} as never, cache, payments, audit);
+    ({ fees, feeNotices, recurringBilling } = feeServices(context, { emit: jest.fn() } as unknown as EventEmitter2, {} as never, cache, payments, audit));
     reporting = new ReportingService(context, new EventEmitter2(), cache, { getOrThrow: () => 60 } as never);
     citizens = new CitizensService(context, {} as never, {} as never, {} as never, {} as never, {} as never, new EventEmitter2(), audit);
 
@@ -115,7 +120,7 @@ describeIfDb('old debts and the fee system', () => {
 
     it('refuses it at the preview as well, so the clerk learns before the press', async () => {
       await expect(
-        within(() => fees.previewNotice({ ...notice({ dueDate: '2024-06-30' }), clientRequestId: undefined } as never)),
+        within(() => feeNotices.previewNotice({ ...notice({ dueDate: '2024-06-30' }), clientRequestId: undefined } as never)),
       ).rejects.toMatchObject({ code: 'FEE_PERIOD_BEFORE_ARREARS_CUTOFF', params: { year: 2024, cutoffYear: 2026 } });
     });
 
@@ -144,13 +149,13 @@ describeIfDb('old debts and the fee system', () => {
       try {
         // The manager has since moved the cutoff past this year: June 2026 is an old-debt year.
         await setCutoff(2027);
-        await within(() => fees.runRecurringBilling(now));
+        await within(() => recurringBilling.runRecurringBilling(now));
         expect(await billsOn('2026-06')).toBe(0);
         expect(await db.billingRunEntry.findFirst({ where: { feeNoticeId: noticeId, periodKey: '2026-06' } })).toMatchObject({ outcome: 'SKIPPED' });
       } finally {
         await setCutoff(2026);
       }
-      await within(() => fees.runRecurringBilling(now));
+      await within(() => recurringBilling.runRecurringBilling(now));
       expect(await billsOn('2026-06')).toBe(1);
     });
   });

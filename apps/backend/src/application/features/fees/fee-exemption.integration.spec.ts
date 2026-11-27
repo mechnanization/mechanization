@@ -13,6 +13,8 @@ import { DataQualityService } from '../quality/data-quality.service';
 import { ReportingService } from '../reporting/reporting.service';
 import { assessCitizen, FeesService } from './fees.service';
 import { municipalToday } from '@mechanization/shared-schemas';
+import { feeServices } from './fee-services.testing';
+import type { FeeNoticesService } from './fee-notices.service';
 
 /**
  * The two ways a unit is charged nothing (the user's decisions of 2026-10-07),
@@ -38,6 +40,7 @@ describeIfDb('units charged nothing', () => {
   let db: TenantPrismaClient;
   let context: TenantContextService;
   let fees: FeesService;
+  let feeNotices: FeeNoticesService;
   let exemptions: FeeExemptionService;
   let damage: DamageService;
   let quality: DataQualityService;
@@ -58,7 +61,7 @@ describeIfDb('units charged nothing', () => {
     events = { emit: jest.fn() };
     const emitter = new EventEmitter2();
     const audit = new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never);
-    fees = new FeesService(
+    ({ fees, feeNotices } = feeServices(
       context,
       emitter,
       {} as never,
@@ -69,7 +72,7 @@ describeIfDb('units charged nothing', () => {
       } as never,
       {} as never,
       {} as never,
-    );
+    ));
     exemptions = new FeeExemptionService(context, audit, events as unknown as EventEmitter2);
     damage = new DamageService(context, emitter);
     quality = new DataQualityService(
@@ -268,13 +271,13 @@ describeIfDb('units charged nothing', () => {
       targetCategory: 'WAREHOUSE',
       dueDate: '2026-12-31',
     } as never;
-    await expect(within(() => fees.issue(notice, admin))).rejects.toMatchObject({
+    await expect(within(() => feeNotices.issue(notice, admin))).rejects.toMatchObject({
       code: 'FEE_NOTHING_TO_CHARGE',
       params: expect.objectContaining({ feeExempt: 1 }),
     });
 
     await within(() => exemptions.set(store.id, { reason: null, liftReason: 'انتهى قرار الإعفاء' }, admin));
-    await within(() => fees.issue(notice, admin));
+    await within(() => feeNotices.issue(notice, admin));
     const bills = await db.citizenPayment.findMany({ where: { citizenId: owner } });
     expect(bills.map((bill) => Number(bill.amount))).toEqual([50_000]);
   });
@@ -348,7 +351,7 @@ describeIfDb('units charged nothing', () => {
       targetType: 'ALL_CITIZENS',
       dueDate: '2026-12-31',
     } as never;
-    const issued = await within(() => fees.issue(perHead, admin));
+    const issued = await within(() => feeNotices.issue(perHead, admin));
     const billed = new Set(
       (await db.citizenPayment.findMany({ where: { feeNoticeId: issued.noticeId }, select: { citizenId: true } })).map(
         (row) => row.citizenId,

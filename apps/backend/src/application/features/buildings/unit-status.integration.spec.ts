@@ -18,6 +18,7 @@ import { CensusSyncService } from './census-sync.service';
 import { settleUnit, unitsUnderReview } from './unit-status';
 import { municipalToday } from '@mechanization/shared-schemas';
 import { StaffActor } from '../../common/actor';
+import { feeServices } from '../fees/fee-services.testing';
 
 /**
  * «حالة الوحدة» kept in step with who is recorded in the flat — against a real
@@ -80,7 +81,7 @@ describeIfDb('the one rule for «حالة الوحدة»', () => {
     const audit = new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never);
     const ownership = new OwnershipService(context, buildings, cases, links, events, audit);
     tenancy = new TenancyService(context, buildings, cases, links, events, ownership, audit);
-    fees = new FeesService(
+    ({ fees } = feeServices(
       context,
       events,
       {} as never,
@@ -92,7 +93,7 @@ describeIfDb('the one rule for «حالة الوحدة»', () => {
       {} as never,
       // AuditService: these tests never reach a payment.
       {} as never,
-    );
+    ));
 
     officerId = randomUUID();
     await db.user.create({

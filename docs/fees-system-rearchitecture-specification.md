@@ -303,9 +303,9 @@ CLAUDE.md, "Keeping the docs true".
 
 ### Phase 4: preview
 
-- `FeesService.planNotice(input, citizenIds)` is the read-and-assess half of
+- `FeeNoticesService.planNotice(input, citizenIds)` is the read-and-assess half of
   `issue`: the assessment, the shared-unit split and the counts. `issue` and
-  `FeesService.previewNotice(input)` both call it; the preview writes nothing
+  `FeeNoticesService.previewNotice(input)` both call it; the preview writes nothing
   (no notice, bill, audit row or event), so it takes no actor.
 - `POST t/:tenantSlug/fees/notices/preview`, `@Roles(...FEE_ISSUE_ROLES)`,
   `ZodValidationPipe(feeNoticePreviewSchema)`, `@HttpCode(200)`; the answer is
@@ -393,7 +393,7 @@ the register):
 
 Built on `feat/tiered-fees-cancel-and-wizard`.
 
-- `FeesService.cancelNoticeBatch(noticeId, reason, actor)`, in one transaction:
+- `FeeNoticesService.cancelNoticeBatch(noticeId, reason, actor)`, in one transaction:
   every bill of the notice locked, `billCancelRefusal` (the rule `cancelBill`
   now applies too) on each; what passes cancelled in one `updateMany`, with a
   `FEE_BILL_CANCELLED` row per bill and any waiting municipal request cancelled
@@ -620,7 +620,7 @@ reason.
 
 ### 9.4a Old debts (task 6, 2026-11-21)
 
-A notice may not bill a year that old debts cover. `FeesService.previewNotice` and `issue` refuse a notice whose first
+A notice may not bill a year that old debts cover. `FeeNoticesService.previewNotice` and `issue` refuse a notice whose first
 period is before `system_settings.arrearsCutoffYear` (`FEE_PERIOD_BEFORE_ARREARS_CUTOFF`); `runRecurringBilling` skips such a
 period. The rule and the totals it keeps true are in [finance.md](finance.md) §3.6b.
 

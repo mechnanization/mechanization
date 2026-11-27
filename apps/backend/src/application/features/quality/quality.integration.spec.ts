@@ -12,10 +12,10 @@ import { AuditService } from '../audit/audit.service';
 import { CasesService } from '../cases/cases.service';
 import { BuildingsService } from '../buildings/buildings.service';
 import { LandlordLinkService } from '../citizens/landlord-link.service';
-import { FeesService } from '../fees/fees.service';
 import { DataQualityService } from './data-quality.service';
 import { RecordReviewService } from './record-review.service';
 import { StaffActor } from '../../common/actor';
+import { feeServices } from '../fees/fee-services.testing';
 
 /**
  * «مراجعة الجودة» against a real Postgres: migration 0049, the review states,
@@ -97,7 +97,7 @@ describeIfDb('Quality review', () => {
       recordChangeInTransaction: () => Promise.reject(new Error('audit insert refused')),
     } as never);
     // Billing's own reading of a file, asked of a «مالك مسؤول» (F13).
-    const fees = new FeesService(context, events, {} as never, cache as never, {} as never, {} as never);
+    const { fees } = feeServices(context, events, {} as never, cache as never, {} as never, {} as never);
     quality = new DataQualityService(context, links, events, cache as never, { getOrThrow: () => 0 } as never, fees);
     events.on('citizen.changed', (payload) => reviews.onCitizenChanged(payload));
 

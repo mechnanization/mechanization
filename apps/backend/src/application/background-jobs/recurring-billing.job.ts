@@ -3,7 +3,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { TENANT_REPOSITORY } from '../../domain/interfaces/base-repository.interface';
 import { TenantRepository } from '../../domain/interfaces/tenant-repository.interface';
 import { TenantRunner } from '../../infrastructure/context/tenant-runner';
-import { FeesService } from '../features/fees/fees.service';
+import { RecurringBillingService } from '../features/fees/recurring-billing.service';
 
 /**
  * Re-issues recurring fees for every municipality, once a day.
@@ -26,7 +26,7 @@ export class RecurringBillingJob {
   constructor(
     @Inject(TENANT_REPOSITORY) private readonly tenants: TenantRepository,
     private readonly runner: TenantRunner,
-    private readonly fees: FeesService,
+    private readonly recurring: RecurringBillingService,
   ) {}
 
   /**
@@ -54,7 +54,7 @@ export class RecurringBillingJob {
    * Driven by the schedule and by `InternalCronController` — **not** by the
    * admin "run now" button. That endpoint used to call this, on a route mounted
    * under `t/:tenantSlug`, so one municipality's accountant issued invoices in
-   * all the others. It now runs `FeesService.runRecurringBilling` inside its own
+   * all the others. It now runs `RecurringBillingService.runRecurringBilling` inside its own
    * tenant scope; a job that crosses tenants does not belong behind a staff role.
    */
   async runForAllTenants(): Promise<{
@@ -74,7 +74,7 @@ export class RecurringBillingJob {
 
     for (const tenant of tenants) {
       try {
-        const result = await this.runner.runAsTenant(tenant, () => this.fees.runRecurringBilling());
+        const result = await this.runner.runAsTenant(tenant, () => this.recurring.runRecurringBilling());
         invoicesCreated += result.invoicesCreated;
         // Notices that threw inside a run that otherwise completed. Counted
         // here so a partial pass cannot be reported as a clean one.

@@ -14,6 +14,7 @@ import { ExpensesService } from './expenses.service';
 import { TransfersService } from './transfers.service';
 import { TreasuryLedgerService } from './treasury-ledger.service';
 import { TreasuryService } from './treasury.service';
+import { feeServices } from '../fees/fee-services.testing';
 
 /**
  * The PR #111 review (2026-10-10): what its transfers, exchanges, reviews and
@@ -121,7 +122,7 @@ describeIfDb('TransfersService — the PR #111 review', () => {
     const expenses = new ExpensesService(context, ledger, audit);
     transfers = new TransfersService(context, ledger, audit, expenses);
     treasury = new TreasuryService(context, ledger, audit);
-    fees = new FeesService(
+    ({ fees } = feeServices(
       context,
       { emit } as unknown as EventEmitter2,
       {} as never,
@@ -132,7 +133,7 @@ describeIfDb('TransfersService — the PR #111 review', () => {
       } as never,
       new PaymentLedgerService(context, audit, ledger),
       audit,
-    );
+    ));
 
     MANAGER.id = await staff('SUPER_ADMIN');
     ACCOUNTANT.id = await staff('ACCOUNTANT');

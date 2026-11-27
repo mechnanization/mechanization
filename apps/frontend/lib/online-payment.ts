@@ -6,7 +6,7 @@
  * municipality's cash office or to a collector. While this is false the portal
  * shows no «ادفع عبر Whish» or «ادفع الآن», and its copy says where to pay
  * instead (the request messages take `online` as an ICU `select`, through
- * `onlineCopy`). The server refuses regardless: `FeesService.startWhishCheckout`
+ * `onlineCopy`). The server refuses regardless: `WhishCheckoutService.startWhishCheckout`
  * and a citizen's own request bill answer `ONLINE_PAYMENT_UNAVAILABLE` until the
  * Whish gateway is live.
  *

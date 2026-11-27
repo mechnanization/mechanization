@@ -10,13 +10,14 @@ import { PrismaCaseRepository } from '../../../infrastructure/repositories/case.
 import { CasesService } from '../cases/cases.service';
 import { BuildingsService } from '../buildings/buildings.service';
 import { CensusSyncService } from '../buildings/census-sync.service';
-import { FeesService } from '../fees/fees.service';
 import { LandlordLinkService } from './landlord-link.service';
 import { OwnershipService } from './ownership.service';
 import { AuditService } from '../audit/audit.service';
 import { PrismaAuditRepository } from '../../../infrastructure/repositories/audit.repository';
 import { TenancyService } from './tenancy.service';
 import { StaffActor } from '../../common/actor';
+import { feeServices } from '../fees/fee-services.testing';
+import type { FeeNoticesService } from '../fees/fee-notices.service';
 
 /**
  * Ending an ownership, against a real Postgres.
@@ -47,7 +48,7 @@ describeIfDb('OwnershipService', () => {
   /** The same service with an audit trail that refuses every write. */
   let failingOwnership: OwnershipService;
   let tenancy: TenancyService;
-  let fees: FeesService;
+  let feeNotices: FeeNoticesService;
   let officerId: string;
 
   const actor = (): StaffActor => ({ id: officerId, role: 'SUPER_ADMIN' });
@@ -82,7 +83,7 @@ describeIfDb('OwnershipService', () => {
       recordChangeInTransaction: () => Promise.reject(new Error('audit insert refused')),
     } as never);
     tenancy = new TenancyService(context, buildings, cases, links, events, ownership, audit);
-    fees = new FeesService(
+    ({ feeNotices } = feeServices(
       context,
       events,
       {} as never,
@@ -94,7 +95,7 @@ describeIfDb('OwnershipService', () => {
       {} as never,
       // AuditService: these tests never reach a payment.
       {} as never,
-    );
+    ));
 
     officerId = randomUUID();
     await db.user.create({
@@ -196,7 +197,7 @@ describeIfDb('OwnershipService', () => {
       dueDate: '2026-12-31',
     } as CreateFeeNotice;
     try {
-      const issued = await within(() => fees.issue(notice, actor()));
+      const issued = await within(() => feeNotices.issue(notice, actor()));
       const invoice = await db.citizenPayment.findFirst({ where: { citizenId, feeNoticeId: issued.noticeId } });
       return Number(invoice?.amount ?? 0);
     } catch {

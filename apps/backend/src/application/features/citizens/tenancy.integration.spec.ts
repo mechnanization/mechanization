@@ -14,12 +14,13 @@ import { AuditService } from '../audit/audit.service';
 import { CasesService } from '../cases/cases.service';
 import { BuildingsService } from '../buildings/buildings.service';
 import { CensusSyncService } from '../buildings/census-sync.service';
-import { FeesService } from '../fees/fees.service';
 import { CitizensService } from './citizens.service';
 import { LandlordLinkService, readFootprint } from './landlord-link.service';
 import { TenancyService } from './tenancy.service';
 import { OwnershipService } from './ownership.service';
 import { StaffActor } from '../../common/actor';
+import { feeServices } from '../fees/fee-services.testing';
+import type { FeeNoticesService } from '../fees/fee-notices.service';
 
 /**
  * Ending a tenancy, against a real Postgres.
@@ -59,7 +60,7 @@ describeIfDb('TenancyService', () => {
   let links: LandlordLinkService;
   let tenancy: TenancyService;
   let citizens: CitizensService;
-  let fees: FeesService;
+  let feeNotices: FeeNoticesService;
   let officerId: string;
 
   const actor = (): StaffActor => ({ id: officerId, role: 'SUPER_ADMIN' });
@@ -109,7 +110,7 @@ describeIfDb('TenancyService', () => {
       events,
       new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
     );
-    fees = new FeesService(
+    ({ feeNotices } = feeServices(
       context,
       events,
       {} as never,
@@ -121,7 +122,7 @@ describeIfDb('TenancyService', () => {
       {} as never,
       // AuditService: these tests never reach a payment.
       {} as never,
-    );
+    ));
 
     officerId = randomUUID();
     await db.user.create({
@@ -271,7 +272,7 @@ describeIfDb('TenancyService', () => {
       acknowledgedDuplicates: await otherFees(),
     } as CreateFeeNotice;
     try {
-      const issued = await within(() => fees.issue(notice, actor()));
+      const issued = await within(() => feeNotices.issue(notice, actor()));
       const invoice = await db.citizenPayment.findFirst({
         where: { citizenId, feeNoticeId: issued.noticeId },
       });
