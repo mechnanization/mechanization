@@ -1546,6 +1546,10 @@ Filled in by whoever executes a task (section 0, step 4). One row per finding; t
 | — | DRY-01 | `buildings.controller.ts` `private actor(user)` (21 calls), `citizen-requests.controller.ts` `staff(user)` (9), `quality.controller.ts` `actorOf` (8), `citizen.controller.ts` `role: user.role ?? 'STAFF'` (6, not a role at all) | Actor builds the audit's count missed, behind helpers | Yes: all are `@CurrentActor()` now | — |
 | — | DRY-01 | `record-review.service.ts`, the RECORD_CORRECTED auto-close | When the saver's account has no role, the change carried `actorRole: ''`, which is no `StaffRole`: the Tier 2 row was refused, silently | Yes: the role is left out instead | — |
 | DEAD-19 | DEAD-18 | `apps/backend`: `express` imported for types in 13 files and not declared; root `scripts/db/*.mjs`: `pg` (8 files), `ts-node`, `tsconfig-paths` not declared; `@types/express-serve-static-core` declared and unused | Dependencies resolved by luck of hoisting, or kept for nothing (knip, held in its baseline) | No | No |
+| — | DRY-02 | `registration.repository.ts` `translate`, the `P2003` branch | Matched `P2003` inline with `instanceof` the tenant client's class, beside the `P2002` branch the task moved | Yes: `foreignKeyViolated` in `prisma-errors.ts` | — |
+| DRY-21 | DRY-02 | `corrections/unit-correction.service.ts` `busyOr` | Lock conflicts matched on their own: SQLSTATE `55P03` / `40P01` read off `meta.code` behind `instanceof Prisma.PrismaClientKnownRequestError`, then a message regex. Its `P2034` now asks `isSerializationFailure` | No | docs/code-quality.md, Backend |
+| ARCH-25 | DRY-02 | `staff/staff.service.ts` `getInspectorProfile` (`role: inspector.role as any`) | The backend's one `no-explicit-any` lint warning: a cast past the role's type, the `as never` pattern under another name | No | docs/code-quality.md, the `as never` row |
+| — | DRY-03 | `buildings/buildings.service.ts` `addUnit`, the `<schema>:unit-sequence:<building>` lock | `$executeRawUnsafe` for a lock that needs no dynamic SQL, beside the two the task named | Yes: tagged `$executeRaw` | — |
 
 ---
 

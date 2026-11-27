@@ -1,4 +1,5 @@
-import { incomePeriod, municipalDayStart, planIncomeDate } from './income.plan';
+import { municipalDayStart } from '@mechanization/shared-schemas';
+import { incomePeriod, planIncomeDate } from './income.plan';
 
 const TODAY = '2026-10-06';
 const GO_LIVE = '2026-10-01';

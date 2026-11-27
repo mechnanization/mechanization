@@ -32,7 +32,7 @@ import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-re
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { AuditService } from '../audit/audit.service';
 import { planExpenseDate, urgentCeilingBreached } from './expenses.plan';
-import { isUniqueViolationOn } from './retry-key';
+import { isUniqueViolation, isUniqueViolationOn } from '../../../infrastructure/prisma/prisma-errors';
 import { TreasuryLedgerService } from './treasury-ledger.service';
 import { documentOccurredAt } from './treasury.plan';
 import { sameId } from '../../common/ids';
@@ -1633,11 +1633,7 @@ export class ExpensesService {
           });
       return { ...row, key: (row.key as ExpenseCategoryKey | null) ?? null };
     } catch (error) {
-      if (
-        typeof error === 'object' &&
-        error !== null &&
-        (error as { code?: string }).code === 'P2002'
-      ) {
+      if (isUniqueViolation(error)) {
         throw new ConflictError({
           code: 'EXPENSE_CATEGORY_CODE_TAKEN',
           message: 'Another category already carries that budget chapter and article.',

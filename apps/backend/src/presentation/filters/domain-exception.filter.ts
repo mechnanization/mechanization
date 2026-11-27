@@ -12,7 +12,7 @@ import {
   ValidationError,
 } from '../../application/common/exceptions';
 import { reportException } from '../config/sentry';
-import { redactText, redactUrl } from '../config/sentry-redaction';
+import { redactText, redactUrl } from '@mechanization/shared-schemas';
 
 const STATUS_BY_ERROR: Array<[new (...args: never[]) => DomainError, HttpStatus]> = [
   [NotFoundError, HttpStatus.NOT_FOUND],

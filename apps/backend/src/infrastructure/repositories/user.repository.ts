@@ -1,6 +1,6 @@
 import { citizenDisplayName } from '@mechanization/shared-schemas';
 import { Injectable } from '@nestjs/common';
-import { Prisma } from '../../generated/tenant-client';
+import { isUniqueViolation, isUniqueViolationOn } from '../prisma/prisma-errors';
 import { StaffRole, User } from '../../domain/entities/user.entity';
 import { ConflictError } from '../../domain/errors/domain-error';
 import {
@@ -552,17 +552,18 @@ export class PrismaUserRepository implements UserRepository {
 
   /** Prisma error codes stop here — no layer above this one sees them. */
   private translate(error: unknown): unknown {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-      const target = (error.meta?.target as string[] | undefined)?.join(', ') ?? 'value';
-      if (target.includes('referenceNumber')) {
+    if (isUniqueViolation(error)) {
+      if (isUniqueViolationOn(error, 'referenceNumber')) {
         // Astronomically unlikely (32^6 per prefix per month) but a silent
         // collision would hand one citizen another's tracking code.
         return new ConflictError('تعذّر إنشاء رقم مرجعي فريد — يرجى المحاولة مرة أخرى');
       }
-      if (target.includes('email')) {
+      if (isUniqueViolationOn(error, 'email')) {
         return new ConflictError('هذا البريد الإلكتروني مسجّل مسبقاً');
       }
-      return new ConflictError('هذه الوثيقة مسجّلة مسبقاً لشخص آخر');
+      // Not every unique column is a document: the generic sentence, as the
+      // registration repository says it.
+      return new ConflictError('هذه البيانات مسجّلة مسبقاً');
     }
     return error;
   }

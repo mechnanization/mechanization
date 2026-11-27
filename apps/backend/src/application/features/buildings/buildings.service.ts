@@ -45,6 +45,7 @@ import { worklistOwner, type WorklistViewer } from '../../common/worklist-viewer
 import { reinspections, unsurveyedUnits } from './census-worklists';
 import { assertNoFeeExemptionHistory } from './fee-exemption';
 import { resolveBuildingType } from './building-types';
+import { buildingSuffixLockKey } from './suffix-lock-key';
 import { loadUnitTypes } from './unit-types';
 import { Prisma } from '../../../generated/tenant-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
@@ -1446,16 +1447,10 @@ export class BuildingsService {
     const created = await this.db.$transaction(async (tx) => {
       /*
         The lock key names the schema explicitly, for the same reason the query
-        above does. `current_schema()` reads the connection's `search_path`, so
-        on a pooled connection that had drifted it would return `public` — and
-        every municipality's parcel 28 would serialise against every other's,
-        or worse, two officers on one parcel would take *different* locks and
-        the suffix race §4.4 exists to prevent would be back.
+        above does (`buildingSuffixLockKey` says why); without it the suffix
+        race §4.4 exists to prevent would be back.
       */
-      await tx.$executeRawUnsafe(
-        'SELECT pg_advisory_xact_lock(hashtext($1))',
-        `${this.tenantContext.schemaName}:building-suffix:${parcelNumber}`,
-      );
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${buildingSuffixLockKey(this.tenantContext.schemaName, parcelNumber)}))`;
 
       const codeSuffix = nextBuildingSuffix(await this.suffixesInUse(tx, parcelNumber));
       const zone = await this.zoneOfParcel(parcelNumber, tx);
@@ -2402,10 +2397,7 @@ export class BuildingsService {
         `sequence`, and the second one hits the unique constraint as a 500
         instead of being serialised behind the first.
       */
-      await tx.$executeRawUnsafe(
-        'SELECT pg_advisory_xact_lock(hashtext($1))',
-        `${this.tenantContext.schemaName}:unit-sequence:${buildingId}`,
-      );
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${this.tenantContext.schemaName}:unit-sequence:${buildingId}`}))`;
 
       /*
         Asked again under the lock: the question was answered about the

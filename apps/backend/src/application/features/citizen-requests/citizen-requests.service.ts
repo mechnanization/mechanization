@@ -42,7 +42,7 @@ import { AuditService, type AuditEntryInput } from '../audit/audit.service';
 import { assertNotMergedAway } from '../citizens/merged-away';
 import { raiseOneOffBill } from '../fees/one-off-bill';
 import { ParcelDuesService } from '../fees/parcel-dues.service';
-import { isUniqueViolationOn } from '../treasury/retry-key';
+import { isUniqueViolation, isUniqueViolationOn } from '../../../infrastructure/prisma/prisma-errors';
 import { cancelRequestOfCancelledBill } from './cancelled-bill';
 import { settleRequestOfWrittenOffBill } from './written-off-bill';
 
@@ -246,7 +246,7 @@ export class CitizenRequestsService {
         const replay = await this.replay(input, actor);
         if (replay) return replay;
       }
-      if ((error as { code?: string }).code === 'P2002') {
+      if (isUniqueViolation(error)) {
         // The partial index on open requests: a race the friendly check below lost. The
         // winner is committed by now; its number is what the refusal's message names.
         const open = await this.db.citizenRequest.findFirst({

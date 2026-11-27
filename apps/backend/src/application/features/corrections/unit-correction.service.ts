@@ -20,6 +20,7 @@ import { AUDIT_REPOSITORY } from '../../../domain/interfaces/base-repository.int
 import type { AuditRepository } from '../../../domain/interfaces/audit-repository.interface';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
+import { isSerializationFailure } from '../../../infrastructure/prisma/prisma-errors';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import {
   planUnitCorrection,
@@ -1053,7 +1054,7 @@ function busyOr(error: unknown): unknown {
       : null;
   const text = error instanceof Error ? error.message : '';
   if (
-    code === 'P2034' ||
+    isSerializationFailure(error) ||
     code === '55P03' ||
     code === '40P01' ||
     /lock timeout|deadlock detected|could not obtain lock/i.test(text)
