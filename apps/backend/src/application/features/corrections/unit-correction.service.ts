@@ -30,6 +30,7 @@ import {
 } from './unit-correction.plan';
 import { mergeBlockerReason, planDuplexMerge, type DuplexMergeState, type MergeFlat } from './duplex-merge.plan';
 import { assertNoFeeExemptionHistory } from '../buildings/fee-exemption';
+import { setLocalLockTimeout } from '../../common/lock-timeout';
 
 type Actor = { id: string; role: string };
 
@@ -208,7 +209,7 @@ export class UnitCorrectionService {
   }
 
   private async applyMergeLocked(lowerId: string, input: DuplexMergeInput, actor: Actor) {
-    await this.db.$executeRawUnsafe(`SET LOCAL lock_timeout = '5s'`);
+    await setLocalLockTimeout(this.db);
     const pair = await this.mergePair(lowerId);
     // The upper flat, its building, cards, lines and registrations, as the delete locks them — then the lower flat.
     await this.lock(pair.upper.id);
@@ -470,7 +471,7 @@ export class UnitCorrectionService {
   // ─────────────────────────────  The transaction  ─────────────────────────────
 
   private async applyLocked(unitId: string, input: UnitCorrectionDeleteInput, actor: Actor) {
-    await this.db.$executeRawUnsafe(`SET LOCAL lock_timeout = '5s'`);
+    await setLocalLockTimeout(this.db);
     await this.lock(unitId);
 
     const state = await this.load(unitId);

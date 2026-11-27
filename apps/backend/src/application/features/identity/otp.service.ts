@@ -14,7 +14,7 @@ import {
 } from '../../../domain/interfaces/otp-repository.interface';
 import { PhoneNumber } from '../../../domain/value-objects/phone-number.vo';
 import { ConflictError, UnauthorizedError, ValidationError } from '../../common/exceptions';
-import { APP_CONFIG } from '../../../presentation/config/app.config';
+import { APP_CONFIG } from '../../common/app.config';
 
 export interface OtpIssueResult {
   channel: OtpChannel;

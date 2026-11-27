@@ -8,6 +8,7 @@ import { DomainModule } from './domain/domain.module';
 import { InfrastructureModule } from './infrastructure/infrastructure.module';
 import { PresentationModule } from './presentation/presentation.module';
 import { isSchedulerEnabled, validateEnv } from './presentation/config/env.schema';
+import { APP_CONFIG } from './application/common/app.config';
 
 /**
  * Root composition. The four imports are the four layers, in dependency order —
@@ -59,7 +60,13 @@ import { isSchedulerEnabled, validateEnv } from './presentation/config/env.schem
      * moment a second replica exists: per-instance counters make the effective
      * limit N times what is configured.
      */
-    ThrottlerModule.forRoot([{ name: 'default', ttl: 60_000, limit: 120 }]),
+    ThrottlerModule.forRoot([
+      {
+        name: 'default',
+        ttl: APP_CONFIG.throttle.default.ttlSeconds * 1000,
+        limit: APP_CONFIG.throttle.default.limit,
+      },
+    ]),
 
     DomainModule,
     InfrastructureModule,

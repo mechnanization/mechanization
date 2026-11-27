@@ -758,7 +758,7 @@ describeIfDb('finance audit remediation', () => {
         context,
         new EventEmitter2(),
         { get: async () => null, set: async () => undefined } as never,
-        { get: () => undefined } as never,
+        { getOrThrow: () => 60 } as never,
       );
       const onProfile = async () =>
         (await scoped(() => reporting.getCitizenProfile(citizenId)))!.payments.find((row) => row.id === paymentId);

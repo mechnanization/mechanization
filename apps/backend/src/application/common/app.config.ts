@@ -1,5 +1,9 @@
 /** Values that are policy rather than environment — kept out of .env so they are
- *  reviewed in code rather than drifting per-deployment. */
+ *  reviewed in code rather than drifting per-deployment.
+ *
+ *  In `application/common` so a service may read it without importing presentation
+ *  (ARCH-07). Infrastructure may not import it: `runInTenantTransaction`'s own
+ *  default stays in `infrastructure/context/tenant-transaction.ts`. */
 export const APP_CONFIG = {
   /** Path prefix every tenant-scoped route sits under. */
   apiPrefix: 'api/v1',
@@ -59,6 +63,11 @@ export const APP_CONFIG = {
   },
 
   throttle: {
+    /**
+     * Every route without its own `@Throttle` (`ThrottlerModule.forRoot` in `AppModule`).
+     * Per process: under pm2 with N instances a client gets N times this.
+     */
+    default: { ttlSeconds: 60, limit: 120 },
     /** Staff login — credential stuffing is the threat here. */
     staffLogin: { ttlSeconds: 60, limit: 5 },
     /**
@@ -117,6 +126,44 @@ export const APP_CONFIG = {
    * one manager it would make an accountant prepare every batch. The one place it is turned on.
    */
   arrears: { approverMustDifferFromPreparer: false },
+
+  /** The JSON body parser's cap (`createApiApp`). Uploads are multipart and capped per route. */
+  http: { bodyLimit: '1mb' },
+
+  /** How long a cached answer is served before it is read again. */
+  cache: {
+    /**
+     * `FeesService.getSettings`. Contact details and office hours change a few times a year, and a
+     * write drops the entry outright, so this only bounds how long a change made *outside* the
+     * service could go unseen.
+     */
+    feeSettingsTtlSeconds: 300,
+    /** `FeesService.summary`, the fees page's headline figures. */
+    feeSummaryTtlSeconds: 30,
+    /**
+     * `SessionRevocationService`: how long a revoked session can still pass the guard
+     * in another process. Its own process forgets at once.
+     */
+    tokenVersionTtlSeconds: 30,
+  },
+
+  /**
+   * Prisma's interactive-transaction bounds (`maxWait` to start, `timeout` to finish) where a
+   * write needs other than `runInTenantTransaction`'s default (15 s / 60 s, in
+   * `tenant-transaction.ts`). Prisma's own default, 2 s / 5 s, is too short for a town-wide write.
+   */
+  transactions: {
+    /** `BuildingsService.atomic`: a tenancy, a vacancy and their cards. */
+    buildingWrite: { maxWait: 15_000, timeout: 30_000 },
+    /** `BackupService.restore`: every table of a snapshot, rewritten in one transaction. */
+    backupRestore: { maxWait: 15_000, timeout: 120_000 },
+  },
+
+  /**
+   * How long a write waits for a row another write holds before it is refused
+   * (`setLocalLockTimeout`: the corrections, «قائمة الإعفاء», the co-owner billing mode).
+   */
+  locks: { rowLockTimeout: '5s' },
 
   documents: {
     signedUrlTtlSeconds: 300,

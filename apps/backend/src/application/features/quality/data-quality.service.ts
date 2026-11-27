@@ -134,7 +134,7 @@ export class DataQualityService {
    * to be a branch here rather than a TTL of nothing.
    */
   private ttl(): number {
-    return this.config.get<number>('QUALITY_CACHE_TTL_SECONDS') ?? 180;
+    return this.config.getOrThrow<number>('QUALITY_CACHE_TTL_SECONDS');
   }
 
   /**

@@ -172,7 +172,7 @@ describeIfDb('the fee whitelist', () => {
       { proposals: jest.fn().mockResolvedValue({ total: 0, items: [] }) } as never,
       emitter,
       { get: jest.fn().mockResolvedValue(null), set: jest.fn(), invalidatePrefix: jest.fn() } as never,
-      { get: () => 0 } as never,
+      { getOrThrow: () => 0 } as never,
       fees,
     );
     for (const prisma of [db, other]) {

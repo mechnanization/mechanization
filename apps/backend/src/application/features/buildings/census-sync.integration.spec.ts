@@ -110,7 +110,7 @@ describeIfDb('CensusSyncService', () => {
       context,
       events,
       { get: async () => null, set: async () => undefined } as never,
-      { get: () => undefined } as never,
+      { getOrThrow: () => 60 } as never,
     );
 
     officerId = randomUUID();

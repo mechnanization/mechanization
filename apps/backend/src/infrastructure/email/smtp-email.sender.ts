@@ -67,7 +67,7 @@ export class SmtpEmailSender implements EmailSender {
    */
   private connection(): Transporter {
     if (!this.transporter) {
-      const port = Number(this.config.get<string>('SMTP_PORT') ?? 587);
+      const port = this.config.getOrThrow<number>('SMTP_PORT');
       const user = this.config.get<string>('SMTP_USER');
       const pass = this.config.get<string>('SMTP_PASSWORD');
 

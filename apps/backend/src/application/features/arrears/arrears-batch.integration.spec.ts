@@ -7,7 +7,7 @@ import { migrateTenantSchema } from '../../../infrastructure/prisma/tenant-migra
 import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { PrismaAuditRepository } from '../../../infrastructure/repositories/audit.repository';
-import { APP_CONFIG } from '../../../presentation/config/app.config';
+import { APP_CONFIG } from '../../common/app.config';
 import { AuditService } from '../audit/audit.service';
 import { CitizenMergeService } from '../citizens/citizen-merge.service';
 import { ParcelDuesService } from '../fees/parcel-dues.service';

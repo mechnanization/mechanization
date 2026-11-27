@@ -35,7 +35,7 @@ function harness() {
       invalidated.push(prefix);
     },
   };
-  const config = { get: () => 180 };
+  const config = { getOrThrow: () => 180 };
   const quality = new DataQualityService(context, {} as never, {} as never, cache as never, config as never, {} as never);
   const reviews = new RecordReviewService(context, {} as never, cache as never, config as never, {} as never);
   return { context, invalidated, quality, reviews };
