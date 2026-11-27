@@ -35,7 +35,7 @@ const logger = new Logger('TenantTransaction');
  * does not import the application layer; the writes that need other bounds name
  * theirs in `APP_CONFIG.transactions`.
  */
-export const TENANT_TRANSACTION_DEFAULTS = { maxWait: 15_000, timeout: 60_000 } as const;
+const TENANT_TRANSACTION_DEFAULTS = { maxWait: 15_000, timeout: 60_000 } as const;
 
 export async function runInTenantTransaction<T>(
   context: TenantContextService,
