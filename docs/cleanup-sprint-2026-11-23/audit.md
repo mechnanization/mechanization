@@ -1540,7 +1540,14 @@ Filled in by whoever executes a task (section 0, step 4). One row per finding; t
 
 | ID | Found during | File and symbol | Problem | Fixed in that PR? | Debt doc row added |
 |---|---|---|---|---|---|
-| | | | | | |
+| DRY-22 | DRY-07 | `createApiApp`, `TrustedOriginGuard` (`CORS_ORIGINS ?? [...]`); `IdentityService` `get('PASSWORD_RESET_TTL', '30m')`, `get('JWT_CITIZEN_TTL', '7d')`, `get('JWT_STAFF_IDLE_TTL', '15m')`, `staffSessionCap`; `SupabaseStorageService` `'documents'` | Schema defaults repeated at the call site in forms DRY-07's grep does not match (a `<string[]>` type, a second argument). The CORS fallback is pinned by `trusted-origin.guard.spec.ts` as behaviour, and the TTLs sit in token minting, so neither was folded in | No | code-quality.md, Backend |
+| — | DRY-08 | `FeesService.issue` and the recurring run's period write | `{ maxWait: 15_000, timeout: 60_000 }` on a bare `$transaction`, the same bounds as `TENANT_TRANSACTION_DEFAULTS`; left to ARCH-01 (#228), which moves both to `runInTenantTransaction` | No (ARCH-01) | code-quality.md, the transaction-timeouts row narrowed to these two |
+| — | DRY-08 | `FeeExemptionService.set`, `OwnerBillingService.set`, `UnitCorrectionService.applyMergeLocked` | The same `SET LOCAL lock_timeout = '5s'` as `applyLocked`, through `$executeRawUnsafe` | Yes: `setLocalLockTimeout`, a bound `set_config`, `APP_CONFIG.locks.rowLockTimeout` | — |
+| — | DRY-08 | `fees.service.ts` | The settings cache's "Five minutes" comment sat above the `UUID` regex, not its constant (CODE-7) | Yes: moved to `APP_CONFIG.cache.feeSettingsTtlSeconds` | — |
+| — | DRY-08 | `AuditController` `DEFAULT_TIME_ZONE` | A second copy of `MUNICIPAL_TIME_ZONE` (`cash-policy.ts`) | Yes: reads the shared one | — |
+| — | DRY-10 | `migrate-database.yml`, `tenant-migrator.ts` | The production migration runs the migrator under ts-node without building shared-schemas, so the rule could not live there | Yes: the rule is in the domain, with no imports | gotchas.md |
+| — | DRY-10 | `TenantSlug` comment naming `schemaNameFor()`; `seed-fee-testing-citizens.mjs` building `tenant_<slug>` by hand | A comment citing a renamed method (code-quality's comments row); a fifth schema-name builder | Yes | code-quality.md, the comments row narrowed |
+| — | DRY-11 | `C` in six tools, `fail` in five, `require('pg')` in eight, `createRequire` for `ts-node` in `provision.mjs` | The copies went beyond the four files the CQ row named | Yes: all in `lib.mjs` (`backendRequire`) | — |
 
 ---
 
