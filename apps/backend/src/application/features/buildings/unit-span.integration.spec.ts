@@ -6,10 +6,9 @@ import { migrateTenantSchema } from '../../../infrastructure/prisma/tenant-migra
 import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { PrismaAuditRepository } from '../../../infrastructure/repositories/audit.repository';
-import { PrismaCaseRepository } from '../../../infrastructure/repositories/case.repository';
 import { AuditService } from '../audit/audit.service';
-import { CasesService } from '../cases/cases.service';
 import { BuildingsService } from './buildings.service';
+import { UnitsService } from './units.service';
 
 /**
  * «تعديل عرض الوحدة» against a real Postgres: a resize lands, a resize over a
@@ -25,11 +24,12 @@ const describeIfDb = TEST_DATABASE_URL ? describe : describe.skip;
 jest.setTimeout(60_000);
 const SETUP_TIMEOUT_MS = 240_000;
 
-describeIfDb('BuildingsService.resizeUnitSpan', () => {
+describeIfDb('UnitsService.resizeUnitSpan', () => {
   let ddl: Client;
   let db: TenantPrismaClient;
   let context: TenantContextService;
   let buildings: BuildingsService;
+  let unitsService: UnitsService;
   let officerId: string;
 
   const actor = () => ({ id: officerId, role: 'FIELD_INSPECTOR' });
@@ -48,12 +48,8 @@ describeIfDb('BuildingsService.resizeUnitSpan', () => {
     const events = new EventEmitter2();
     const audit = new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never);
     events.on('building.changed', (payload) => audit.onBuildingChanged(payload));
-    const cases = new CasesService(
-      new PrismaCaseRepository(context),
-      { findById: async () => ({ id: officerId, kind: 'CITIZEN' }) } as never,
-      events,
-    );
-    buildings = new BuildingsService(context, cases, events);
+    buildings = new BuildingsService(context, events);
+    unitsService = new UnitsService(context, events, buildings);
 
     officerId = randomUUID();
     await db.user.create({
@@ -82,7 +78,7 @@ describeIfDb('BuildingsService.resizeUnitSpan', () => {
         { parcelNumber, structureType: 'RESIDENTIAL_BUILDING', lifecycleStatus: 'IN_USE', floorsCount: 1, acknowledgedDuplicates: true } as never,
         actor(),
       );
-      await buildings.generateUnits(
+      await unitsService.generateUnits(
         created.id,
         { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 3, unitType: 'APARTMENT' },
         actor(),
@@ -101,7 +97,7 @@ describeIfDb('BuildingsService.resizeUnitSpan', () => {
     expect(units.every((unit) => unit.startCol === null && unit.endCol === null)).toBe(true);
 
     // Drawn at 1, 2, 3. The third grows to 3–5.
-    const row = await within(() => buildings.resizeUnitSpan(units[2]!.id, { startCol: 3, endCol: 5 }, actor()));
+    const row = await within(() => unitsService.resizeUnitSpan(units[2]!.id, { startCol: 3, endCol: 5 }, actor()));
     expect([row.startCol, row.endCol]).toEqual([3, 5]);
     expect(await spans(id)).toEqual([
       ['0001', 1, 1],
@@ -124,14 +120,14 @@ describeIfDb('BuildingsService.resizeUnitSpan', () => {
     const before = await db.building.findUniqueOrThrow({ where: { id }, select: { updatedAt: true } });
     await pause();
 
-    await within(() => buildings.resizeUnitSpan(units[2]!.id, { startCol: 3, endCol: 5 }, actor()));
+    await within(() => unitsService.resizeUnitSpan(units[2]!.id, { startCol: 3, endCol: 5 }, actor()));
 
     const after = await db.building.findUniqueOrThrow({ where: { id }, select: { updatedAt: true } });
     expect(after.updatedAt.getTime()).toBeGreaterThan(before.updatedAt.getTime());
     // The stale screen's save is refused as a stale edit instead of undoing the resize.
     await expect(
       within(() =>
-        buildings.saveMatrix(
+        unitsService.saveMatrix(
           id,
           { expectedUpdatedAt: before.updatedAt.toISOString(), building: {}, remove: [], update: [], add: [] } as never,
           actor(),
@@ -143,7 +139,7 @@ describeIfDb('BuildingsService.resizeUnitSpan', () => {
   it('refuses drawing over a neighbour and writes nothing', async () => {
     const { id, units } = await building('SPAN-2');
     await expect(
-      within(() => buildings.resizeUnitSpan(units[0]!.id, { startCol: 1, endCol: 2 }, actor())),
+      within(() => unitsService.resizeUnitSpan(units[0]!.id, { startCol: 1, endCol: 2 }, actor())),
     ).rejects.toThrow('0002');
     expect(await spans(id)).toEqual([
       ['0001', null, null],
@@ -157,7 +153,7 @@ describeIfDb('BuildingsService.resizeUnitSpan', () => {
     const [first, second, third] = units as [(typeof units)[0], (typeof units)[0], (typeof units)[0]];
 
     // 0002 moves out to column 4, leaving column 2 empty between 0001 and 0003.
-    await within(() => buildings.resizeUnitSpan(second.id, { startCol: 4, endCol: 4 }, actor()));
+    await within(() => unitsService.resizeUnitSpan(second.id, { startCol: 4, endCol: 4 }, actor()));
     expect(await spans(id)).toEqual([
       ['0001', 1, 1],
       ['0002', 4, 4],
@@ -165,10 +161,10 @@ describeIfDb('BuildingsService.resizeUnitSpan', () => {
     ]);
 
     // 0001 grows right into the gap…
-    await within(() => buildings.resizeUnitSpan(first.id, { startCol: 1, endCol: 2 }, actor()));
+    await within(() => unitsService.resizeUnitSpan(first.id, { startCol: 1, endCol: 2 }, actor()));
     // …after which 0003 cannot grow left into it.
     await expect(
-      within(() => buildings.resizeUnitSpan(third.id, { startCol: 2, endCol: 3 }, actor())),
+      within(() => unitsService.resizeUnitSpan(third.id, { startCol: 2, endCol: 3 }, actor())),
     ).rejects.toThrow('0001');
     expect(await spans(id)).toEqual([
       ['0001', 1, 2],

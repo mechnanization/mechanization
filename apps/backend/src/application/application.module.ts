@@ -10,6 +10,8 @@ import { BackupService } from './features/backup/backup.service';
 import { CadastreImportService } from './features/cadastre/cadastre-import.service';
 import { BuildingsService } from './features/buildings/buildings.service';
 import { OccupancyWritesService } from './features/buildings/occupancy-writes.service';
+import { UnitsService } from './features/buildings/units.service';
+import { UnitVisitsService } from './features/buildings/unit-visits.service';
 import { CensusSyncService } from './features/buildings/census-sync.service';
 import { DamageService } from './features/buildings/damage.service';
 import { ParcelCorrectionService } from './features/buildings/parcel-correction.service';
@@ -23,7 +25,10 @@ import { UnitTypesService } from './features/buildings/unit-types.service';
 import { UnitCorrectionService } from './features/corrections/unit-correction.service';
 import { CasesService } from './features/cases/cases.service';
 import { CitizensService } from './features/citizens/citizens.service';
+import { CitizenDuplicatesService } from './features/citizens/citizen-duplicates.service';
 import { LandlordLinkService } from './features/citizens/landlord-link.service';
+import { LandlordUnlinkService } from './features/citizens/landlord-unlink.service';
+import { LandlordLinkQueueService } from './features/citizens/landlord-link-queue.service';
 import { TenancyService } from './features/citizens/tenancy.service';
 import { OwnershipService } from './features/citizens/ownership.service';
 import { CitizenMergeService } from './features/citizens/citizen-merge.service';
@@ -98,7 +103,10 @@ import { RecordReviewService } from './features/quality/record-review.service';
     ReportingService,
     CadastreImportService,
     CitizensService,
+    CitizenDuplicatesService,
     LandlordLinkService,
+    LandlordUnlinkService,
+    LandlordLinkQueueService,
     TenancyService,
 
     OwnershipService,
@@ -132,6 +140,8 @@ import { RecordReviewService } from './features/quality/record-review.service';
     CasesService,
     BuildingsService,
     OccupancyWritesService,
+    UnitsService,
+    UnitVisitsService,
     CensusSyncService,
     DamageService,
     ParcelCorrectionService,
@@ -162,7 +172,10 @@ import { RecordReviewService } from './features/quality/record-review.service';
     ReportingService,
     CadastreImportService,
     CitizensService,
+    CitizenDuplicatesService,
     LandlordLinkService,
+    LandlordUnlinkService,
+    LandlordLinkQueueService,
     TenancyService,
 
     OwnershipService,
@@ -196,6 +209,8 @@ import { RecordReviewService } from './features/quality/record-review.service';
     CasesService,
     BuildingsService,
     OccupancyWritesService,
+    UnitsService,
+    UnitVisitsService,
     CensusSyncService,
     DamageService,
     ParcelCorrectionService,

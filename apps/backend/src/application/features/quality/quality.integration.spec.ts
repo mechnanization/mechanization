@@ -17,6 +17,9 @@ import { RecordReviewService } from './record-review.service';
 import { StaffActor } from '../../common/actor';
 import { feeServices } from '../fees/fee-services.testing';
 import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
+import { UnitsService } from '../buildings/units.service';
+import { UnitVisitsService } from '../buildings/unit-visits.service';
+import { LandlordLinkQueueService } from '../citizens/landlord-link-queue.service';
 
 /**
  * «مراجعة الجودة» against a real Postgres: migration 0049, the review states,
@@ -44,6 +47,8 @@ describeIfDb('Quality review', () => {
   let quality: DataQualityService;
   let audit: AuditService;
   let buildings: BuildingsService;
+  let unitsService: UnitsService;
+  let unitVisits: UnitVisitsService;
   let occupancyWrites: OccupancyWritesService;
 
   const staff: Record<'jawad' | 'hussein' | 'auditor' | 'collector', string> = {
@@ -87,21 +92,24 @@ describeIfDb('Quality review', () => {
     events.on('quality.changed', (payload) => audit.onQualityChanged(payload));
 
     const cases = new CasesService(new PrismaCaseRepository(context), {} as never, events);
-    buildings = new BuildingsService(context, cases, events);
-    occupancyWrites = new OccupancyWritesService(context, cases, events, buildings);
+    buildings = new BuildingsService(context, events);
+    unitsService = new UnitsService(context, events, buildings);
+    unitVisits = new UnitVisitsService(context, cases, events, buildings);
+    occupancyWrites = new OccupancyWritesService(context, cases, events, buildings, unitVisits);
     const links = new LandlordLinkService(
       context,
       occupancyWrites,
       events,
       new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
     );
+    const linkQueue = new LandlordLinkQueueService(context, links);
     reviews = new RecordReviewService(context, events, cache as never, { getOrThrow: () => 0 } as never, audit);
     failingReviews = new RecordReviewService(context, events, cache as never, { getOrThrow: () => 0 } as never, {
       recordChangeInTransaction: () => Promise.reject(new Error('audit insert refused')),
     } as never);
     // Billing's own reading of a file, asked of a «مالك مسؤول» (F13).
     const { fees } = feeServices(context, events, {} as never, cache as never, {} as never, {} as never);
-    quality = new DataQualityService(context, links, events, cache as never, { getOrThrow: () => 0 } as never, fees);
+    quality = new DataQualityService(context, linkQueue, events, cache as never, { getOrThrow: () => 0 } as never, fees);
     events.on('citizen.changed', (payload) => reviews.onCitizenChanged(payload));
 
     for (const [key, first, role] of [
@@ -458,7 +466,7 @@ describeIfDb('Quality review', () => {
 
     // Unit says vacant, owner's own card says owner-occupied.
     const { units } = await within(() =>
-      buildings.generateUnits(
+      unitsService.generateUnits(
         first.building.id,
         { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
         as('jawad'),

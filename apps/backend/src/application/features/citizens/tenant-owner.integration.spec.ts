@@ -19,6 +19,11 @@ import { TenancyService } from './tenancy.service';
 import { OwnershipService } from './ownership.service';
 import { StaffActor } from '../../common/actor';
 import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
+import { UnitsService } from '../buildings/units.service';
+import { UnitVisitsService } from '../buildings/unit-visits.service';
+import { CitizenDuplicatesService } from './citizen-duplicates.service';
+import { LandlordUnlinkService } from './landlord-unlink.service';
+import { LandlordLinkQueueService } from './landlord-link-queue.service';
 
 /**
  * A tenant and the owner they rent from, against a real Postgres.
@@ -53,9 +58,13 @@ describeIfDb('A tenant and the owner they rent from', () => {
   let db: TenantPrismaClient;
   let context: TenantContextService;
   let buildings: BuildingsService;
+  let unitsService: UnitsService;
+  let unitVisits: UnitVisitsService;
   let occupancyWrites: OccupancyWritesService;
   let census: CensusSyncService;
   let links: LandlordLinkService;
+  let unlinks: LandlordUnlinkService;
+  let linkQueue: LandlordLinkQueueService;
   let tenancy: TenancyService;
   let citizens: CitizensService;
   let officerId: string;
@@ -87,8 +96,10 @@ describeIfDb('A tenant and the owner they rent from', () => {
       { findById: async () => ({ id: officerId, kind: 'CITIZEN' }) } as never,
       events,
     );
-    buildings = new BuildingsService(context, cases, events);
-    occupancyWrites = new OccupancyWritesService(context, cases, events, buildings);
+    buildings = new BuildingsService(context, events);
+    unitsService = new UnitsService(context, events, buildings);
+    unitVisits = new UnitVisitsService(context, cases, events, buildings);
+    occupancyWrites = new OccupancyWritesService(context, cases, events, buildings, unitVisits);
     census = new CensusSyncService(context, cases, events);
     links = new LandlordLinkService(
       context,
@@ -96,8 +107,10 @@ describeIfDb('A tenant and the owner they rent from', () => {
       events,
       new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
     );
-    const ownership = new OwnershipService(context, buildings, cases, links, events, audit, occupancyWrites);
-    tenancy = new TenancyService(context, buildings, cases, links, events, ownership, audit, occupancyWrites);
+    unlinks = new LandlordUnlinkService(context, links);
+    linkQueue = new LandlordLinkQueueService(context, links);
+    const ownership = new OwnershipService(context, unitVisits, cases, links, events, audit, occupancyWrites, unlinks);
+    tenancy = new TenancyService(context, unitVisits, cases, links, events, ownership, audit, occupancyWrites, unlinks);
     citizens = new CitizensService(
       context,
       {} as never,
@@ -106,7 +119,7 @@ describeIfDb('A tenant and the owner they rent from', () => {
       census,
       links,
       events,
-      new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
+      new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never), linkQueue, unlinks, new CitizenDuplicatesService(context),
     );
 
     officerId = randomUUID();
@@ -161,7 +174,7 @@ describeIfDb('A tenant and the owner they rent from', () => {
         { parcelNumber, structureType: 'RESIDENTIAL_BUILDING', lifecycleStatus: 'IN_USE', floorsCount: 1 },
         actor(),
       );
-      const { units } = await buildings.generateUnits(
+      const { units } = await unitsService.generateUnits(
         building.id,
         { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor, unitType: 'APARTMENT' as never },
         actor(),
@@ -364,7 +377,7 @@ describeIfDb('A tenant and the owner they rent from', () => {
 
     const [card] = await tenancyCards(tenant.id);
     expect(card).toMatchObject({ landlordName: 'سعيد حرب', landlordPhone: phone, landlordCitizenId: null });
-    const proposals = await within(() => links.claimsNaming(owner.id));
+    const proposals = await within(() => linkQueue.claimsNaming(owner.id));
     expect(proposals.map((proposal) => proposal.propertyEntryId)).toEqual([card!.id]);
   });
 

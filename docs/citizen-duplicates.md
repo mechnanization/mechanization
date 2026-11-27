@@ -85,7 +85,7 @@ duplicate — do not just warn".
   with a reason. Offline deliveries and imports are not asked: they land with
   the «سجل مشابه موجود» flag for the quality screen.
 - **The import's preview asks it too.** `importMany` with `dryRun` runs the
-  same verdict (`CitizensService.screenForDuplicates`, which `create` calls)
+  same verdict (`CitizenDuplicatesService.screenForDuplicates`, which `create` calls)
   on the payload the import would file: a BLOCK fails the row with its code
   (`CITIZEN_DUPLICATE_BLOCKED`, `params.name`), an ASK passes it with
   `possibleDuplicateOf` (the names it resembles), shown in the dialog's review

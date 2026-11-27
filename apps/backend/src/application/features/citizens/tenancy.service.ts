@@ -15,7 +15,7 @@ import { AuditService, type CitizenChange } from '../audit/audit.service';
 import { settleUnit, type UnitStatusEvent } from '../buildings/unit-status';
 import { ConflictError, NotFoundError, ValidationError } from '../../../domain/errors/domain-error';
 import { claimsFlat } from '../../../domain/entities/census-claim';
-import { BuildingsService } from '../buildings/buildings.service';
+import { UnitVisitsService } from '../buildings/unit-visits.service';
 import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
 import { CasesService } from '../cases/cases.service';
 import { withoutCardFlags, withoutRowFlags } from './card-flags';
@@ -27,6 +27,7 @@ import {
   type RevertReport,
 } from './landlord-link.service';
 import { StaffActor } from '../../common/actor';
+import { LandlordUnlinkService } from './landlord-unlink.service';
 
 /**
  * «إنهاء الإيجار» — one operation, whichever door it is reached through.
@@ -52,7 +53,7 @@ import { StaffActor } from '../../common/actor';
  *  3. The owner link on the card follows the reason: a tenant who **left** leaves
  *     the owner exactly as they were — what the link recorded becomes the owner's
  *     own — and a tenancy **recorded in error** reverts what it supported. See
- *     `LandlordLinkService.detachUnits`.
+ *     `LandlordUnlinkService.detachUnits`.
  *  4. The flat's status is what the officer says it is now, not «مؤجرة» by
  *     default — see `AFTER_TENANCY_STATUS` — whenever nobody else is still
  *     recorded living there.
@@ -68,13 +69,14 @@ import { StaffActor } from '../../common/actor';
 export class TenancyService {
   constructor(
     private readonly tenantContext: TenantContextService,
-    private readonly buildings: BuildingsService,
+    private readonly unitVisits: UnitVisitsService,
     private readonly cases: CasesService,
     private readonly links: LandlordLinkService,
     private readonly events: EventEmitter2,
     private readonly ownership: OwnershipService,
     private readonly auditTrail: AuditService,
     private readonly occupancyWrites: OccupancyWritesService,
+    private readonly unlinks: LandlordUnlinkService,
   ) {
     // A tenant can buy the flat they rent; the sale ends that tenancy through here.
     ownership.bindTenancy(this);
@@ -686,7 +688,7 @@ export class TenancyService {
             : card.units
                 .filter((row) => card.endingRowIds.includes(row.id) && row.unitId)
                 .map((row) => row.unitId!);
-          const detached = await this.links.detachUnits(this.db, {
+          const detached = await this.unlinks.detachUnits(this.db, {
             entryId: card.id,
             ownerId: card.landlordCitizenId,
             footprint: card.landlordLinkFootprint,
@@ -887,7 +889,7 @@ export class TenancyService {
           lifted again. It runs inside this transaction, and step 5 settles the
           flat once everything here is written.
         */
-        await this.buildings.confirmVacancy(
+        await this.unitVisits.confirmVacancy(
           unit.unitId,
           {
             basis: input.vacancyBasis as never,

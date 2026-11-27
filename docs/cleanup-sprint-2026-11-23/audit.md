@@ -212,7 +212,9 @@ Sizes today (the docs' numbers are stale): `fees.service.ts` 6,167 (doc 3,979), 
 Each extraction below is a move with no behaviour change, its own spec where the moved code holds decisions (rule 8).
 
 After GOD-01 to GOD-05 (2026-11-27, with ARCH-03): `fees.service.ts` 3,677, `buildings.service.ts` 4,755; the four fee
-services and `occupancy-writes.service.ts` 1,128.
+services and `occupancy-writes.service.ts` 1,128. After GOD-06 to GOD-10 (2026-11-27): `buildings.service.ts` 2,877
+(`units.service.ts` 1,466, `unit-visits.service.ts` 550), `landlord-link.service.ts` 2,874 (`landlord-unlink.service.ts`
+549, `landlord-link-queue.service.ts` 294), `citizens.service.ts` 3,298 (`citizen-duplicates.service.ts` 297).
 
 ## [GOD-01] Extract the Whish checkout and callback out of FeesService
 - **Priority:** P2 · **Assignee:** Hashem · **Estimate:** L · **Category:** God-files
@@ -1610,6 +1612,12 @@ Filled in by whoever executes a task (section 0, step 4). One row per finding; t
 | — | ARCH-03 | `BuildingsService` `assertMayBeCalledEmpty` | Its doc comment (the «شاغرة» rule) sat above `atomic`, stacked on that method's own (CODE-7) | Yes: moved onto `assertMayBeCalledEmpty` | — |
 | DEAD-20 | GOD-05 | `buildings/occupancy-writes.service.ts` `endOccupancy`, `releaseCensusClaim` | No production caller: «إنهاء الإشغال» goes through `TenancyService.endOccupancy` / `OwnershipService.endOccupancy`; only specs reach them | No: deleting them takes their specs, which is not a move | docs/code-quality.md, Backend |
 | — | GOD-01 to GOD-04 | docs/code-quality.md, the `FeesService.issue` timeout row | Logged by DRY-08 (#252) as left to ARCH-01 (#228); with both in one base, `issue` and the recurring run take `TENANT_TRANSACTION_DEFAULTS` | Yes: row removed | — |
+| — | GOD-07 | `BuildingsService.saveMatrix` | The task left it in `BuildingsService`, but it runs `addUnit`, `updateUnit` and `deleteUnit` in one transaction: left behind, `BuildingsService` and `UnitsService` would depend on each other | Yes: it moved to `UnitsService` | — |
+| — | GOD-07 | `wc -l buildings.service.ts` after GOD-05 to GOD-07 | The task's check is under 2,500; it is 2,877 (the ledger and map reads, `create` and `update` remain) | No: GOD-07's methods are all out | — |
+| — | GOD-08 | `LandlordLinkService.revertUnits`, `ownerFileClaims`, `removeMintedCard` | The footprint revert the unlink uses is also the reconcile's on a save; moved, the two services would depend on each other | Yes: kept in `LandlordLinkService`, which the unlink service calls | — |
+| — | GOD-09 | `LandlordLinkService.matchPairs` | The task named it for the queue, but `confirm` asks it too (`ownsClaimedProperty`) | Yes: kept in `LandlordLinkService`; `hydrate`, used only by the queue reads, moved instead | — |
+| — | GOD-10 | `CitizensService.screenForDuplicates` | The check `create` and `importMany` run, and the only other caller of `reviewDuplicates` | Yes: moved with it; `CitizensService` takes the duplicates service | — |
+| — | GOD-05 (#253) | `scripts/seed-census.ts` | Built the census services over an object-literal tenant context; after ARCH-03, `pnpm db:seed:census` would throw at the first building | Yes: fixed on #253 (runs inside a real scope) | — |
 
 ---
 

@@ -19,6 +19,7 @@ import { feeServices } from './fee-services.testing';
 import type { FeeNoticesService } from './fee-notices.service';
 import type { RecurringBillingService } from './recurring-billing.service';
 import type { BillLifecycleService } from './bill-lifecycle.service';
+import { CitizenDuplicatesService } from '../citizens/citizen-duplicates.service';
 
 /**
  * The shared unit bill, written and paid (0099; decision D5 of 2026-10-23,
@@ -149,7 +150,7 @@ describeIfDb('shared unit bills', () => {
       {} as never,
       {} as never,
       new EventEmitter2(),
-      audit,
+      audit, {} as never, {} as never, new CitizenDuplicatesService(context),
     );
 
     await db.user.create({

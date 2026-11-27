@@ -10,6 +10,7 @@ import { PrismaAuditRepository } from '../../../infrastructure/repositories/audi
 import { AuditService } from '../audit/audit.service';
 import { BuildingsService } from './buildings.service';
 import { UnitTypesService } from './unit-types.service';
+import { UnitsService } from './units.service';
 
 /**
  * «أنواع الوحدات» against a real tenant schema (migration 0109; the user's
@@ -33,6 +34,7 @@ describeIfDb('unit types', () => {
   let context: TenantContextService;
   let types: UnitTypesService;
   let buildings: BuildingsService;
+  let unitsService: UnitsService;
   const adminId = randomUUID();
   const admin = { id: adminId, role: 'SUPER_ADMIN' };
 
@@ -51,7 +53,7 @@ describeIfDb('unit types', () => {
   };
   /** Adds one unit on `floor`, the duplicate question already answered. */
   const addUnit = (buildingId: string, input: Record<string, unknown>) =>
-    within(() => buildings.addUnit(buildingId, { floor: 0, acknowledgedDuplicates: true, ...input } as never, admin));
+    within(() => unitsService.addUnit(buildingId, { floor: 0, acknowledgedDuplicates: true, ...input } as never, admin));
   const system = async (baseType: string) =>
     (await within(() => types.list({ includeInactive: true }))).find((type) => type.isSystem && type.baseType === baseType)!;
 
@@ -64,7 +66,8 @@ describeIfDb('unit types', () => {
     context = new TenantContextService();
     const audit = new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never);
     types = new UnitTypesService(context, audit);
-    buildings = new BuildingsService(context, {} as never, new EventEmitter2());
+    buildings = new BuildingsService(context, new EventEmitter2());
+    unitsService = new UnitsService(context, new EventEmitter2(), buildings);
     await db.user.create({
       data: { id: adminId, kind: 'STAFF', tenantSlug: 'uts', email: `${adminId}@uts.gov.lb`, firstName: 'مدير', lastName: 'البلدية', role: 'SUPER_ADMIN' as never },
     });
@@ -122,15 +125,15 @@ describeIfDb('unit types', () => {
     const water = await within(() => types.create({ nameAr: 'شركة مياه خاصة', baseType: 'OFFICE' }, admin));
     const unit = await addUnit(building.id, { unitType: 'OFFICE', unitTypeId: electricity.id });
 
-    expect(await within(() => buildings.updateUnit(unit.id, { unitType: 'OFFICE', notes: 'x' }, admin))).toMatchObject({
+    expect(await within(() => unitsService.updateUnit(unit.id, { unitType: 'OFFICE', notes: 'x' }, admin))).toMatchObject({
       unitTypeId: electricity.id,
     });
     // The same base, another type: nothing about billing moves, and the trail says so.
-    expect(await within(() => buildings.updateUnit(unit.id, { unitType: 'OFFICE', unitTypeId: water.id }, admin))).toMatchObject({
+    expect(await within(() => unitsService.updateUnit(unit.id, { unitType: 'OFFICE', unitTypeId: water.id }, admin))).toMatchObject({
       unitTypeId: water.id,
       unitType: 'OFFICE',
     });
-    const retyped = await within(() => buildings.updateUnit(unit.id, { unitType: 'SHOP' }, admin));
+    const retyped = await within(() => unitsService.updateUnit(unit.id, { unitType: 'SHOP' }, admin));
     expect(retyped).toMatchObject({ unitType: 'SHOP', unitTypeId: (await system('SHOP')).id });
   });
 
@@ -138,7 +141,7 @@ describeIfDb('unit types', () => {
     const building = await newBuilding();
     const unit = await addUnit(building.id, { unitType: 'WAREHOUSE', floor: 0 });
     expect(unit.unitTypeId).not.toBeNull();
-    expect(await within(() => buildings.updateUnit(unit.id, { unitType: 'PILOTIS' }, admin))).toMatchObject({
+    expect(await within(() => unitsService.updateUnit(unit.id, { unitType: 'PILOTIS' }, admin))).toMatchObject({
       unitType: 'PILOTIS',
       unitTypeId: null,
     });
@@ -150,7 +153,7 @@ describeIfDb('unit types', () => {
       data: { buildingId: building.id, floor: 1, sequence: 1, unitCode: '0101', unitType: 'CLINIC' as never },
     });
     expect(bare.unitTypeId).toBeNull();
-    expect(await within(() => buildings.updateUnit(bare.id, { notes: 'مسح' }, admin))).toMatchObject({
+    expect(await within(() => unitsService.updateUnit(bare.id, { notes: 'مسح' }, admin))).toMatchObject({
       unitTypeId: (await system('CLINIC')).id,
       unitType: 'CLINIC',
     });
@@ -165,7 +168,7 @@ describeIfDb('unit types', () => {
     await expect(addUnit(building.id, { unitType: 'CLINIC', unitTypeId: clinic.id, floor: 1 })).rejects.toMatchObject({
       code: 'UNIT_TYPE_INACTIVE',
     });
-    expect(await within(() => buildings.updateUnit(unit.id, { unitTypeId: clinic.id, notes: 'باقٍ' }, admin))).toMatchObject({
+    expect(await within(() => unitsService.updateUnit(unit.id, { unitTypeId: clinic.id, notes: 'باقٍ' }, admin))).toMatchObject({
       unitTypeId: clinic.id,
       notes: 'باقٍ',
     });
@@ -188,7 +191,7 @@ describeIfDb('unit types', () => {
 
     const other = await newBuilding();
     await within(() =>
-      buildings.generateUnits(other.id, { kind: 'uniform', fromFloor: 1, toFloor: 2, unitsPerFloor: 2, unitType: 'APARTMENT', unitTypeId: school.id } as never, admin),
+      unitsService.generateUnits(other.id, { kind: 'uniform', fromFloor: 1, toFloor: 2, unitsPerFloor: 2, unitType: 'APARTMENT', unitTypeId: school.id } as never, admin),
     );
     const generated = await db.unit.findMany({ where: { buildingId: other.id } });
     expect(generated).toHaveLength(4);

@@ -19,6 +19,7 @@ import { DataQualityService } from '../quality/data-quality.service';
 import { assessCitizen, FeesService } from './fees.service';
 import { feeServices } from './fee-services.testing';
 import type { FeeNoticesService } from './fee-notices.service';
+import { UnitsService } from '../buildings/units.service';
 
 /**
  * «قائمة الإعفاء من الرسوم» against a real tenant schema (migrations 0077 and
@@ -55,6 +56,7 @@ describeIfDb('the fee whitelist', () => {
   let feeNotices: FeeNoticesService;
   let exemptions: FeeExemptionService;
   let buildings: BuildingsService;
+  let unitsService: UnitsService;
   let quality: DataQualityService;
   const adminId = randomUUID();
   const admin = { id: adminId, role: 'SUPER_ADMIN' };
@@ -169,7 +171,8 @@ describeIfDb('the fee whitelist', () => {
       {} as never,
     ));
     exemptions = new FeeExemptionService(context, audit, emitter);
-    buildings = new BuildingsService(context, {} as never, emitter);
+    buildings = new BuildingsService(context, emitter);
+    unitsService = new UnitsService(context, emitter, buildings);
     quality = new DataQualityService(
       context,
       { proposals: jest.fn().mockResolvedValue({ total: 0, items: [] }) } as never,
@@ -376,7 +379,7 @@ describeIfDb('the fee whitelist', () => {
     const { building, units } = await block(1);
     await within(() => exemptions.set(units[0]!.id, { reason: 'PUBLIC_FACILITY' }, admin));
     await within(() => exemptions.set(units[0]!.id, { reason: null, liftReason: 'رُفع' }, admin));
-    await expect(within(() => buildings.deleteUnit(units[0]!.id, admin))).rejects.toMatchObject({
+    await expect(within(() => unitsService.deleteUnit(units[0]!.id, admin))).rejects.toMatchObject({
       code: 'UNIT_HAS_FEE_EXEMPTION_HISTORY',
     });
     await expect(within(() => buildings.remove(building.id, admin))).rejects.toMatchObject({

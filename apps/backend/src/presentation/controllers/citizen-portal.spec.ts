@@ -25,7 +25,7 @@ const OWNER = {
 function controller(profile: unknown) {
   const reporting = { getCitizenProfile: jest.fn().mockResolvedValue(profile) } as unknown as ReportingService;
   const none = {} as never;
-  return new CitizenController(none, reporting, none, none, none, none, none);
+  return new CitizenController(none, reporting, none, none, none, none, none, {} as never, {} as never, {} as never);
 }
 
 describe('the citizen portal summary', () => {

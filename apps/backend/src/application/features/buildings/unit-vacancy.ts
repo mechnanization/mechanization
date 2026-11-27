@@ -157,7 +157,7 @@ export async function closeActiveVacancy(
 }
 
 /**
- * Records a vacancy the way `BuildingsService.confirmVacancy` does — the row and
+ * Records a vacancy the way `UnitVisitsService.confirmVacancy` does — the row and
  * its effect on the unit, together — for callers that have already made that
  * method's checks themselves and have no officer to put a refusal to.
  *

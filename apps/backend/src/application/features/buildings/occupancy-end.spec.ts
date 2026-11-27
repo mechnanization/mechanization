@@ -2,6 +2,8 @@ import { TenantContextService, type TenantScope } from '../../../infrastructure/
 import { inTenantScope } from '../../../infrastructure/context/in-tenant-scope.testing';
 import { BuildingsService } from './buildings.service';
 import { OccupancyWritesService } from './occupancy-writes.service';
+import { UnitVisitsService } from './unit-visits.service';
+import { UnitsService } from './units.service';
 
 /*
   `settleUnit` (the one status rule) reads a dozen tables these fakes do not
@@ -44,16 +46,23 @@ function services(db: Record<string, unknown>) {
     resolveVacancyCasesForUnit: jest.fn().mockResolvedValue(0),
   } as never;
   const events = { emit: jest.fn() } as never;
-  const buildings = new BuildingsService(context, cases, events);
+  const buildings = new BuildingsService(context, events);
+  const unitVisits = new UnitVisitsService(context, cases, events, buildings);
   return {
-    buildings: inTenantScope(buildings, context, scope),
-    occupancyWrites: inTenantScope(new OccupancyWritesService(context, cases, events, buildings), context, scope),
+    units: inTenantScope(new UnitsService(context, events, buildings), context, scope),
+    unitVisits: inTenantScope(unitVisits, context, scope),
+    occupancyWrites: inTenantScope(new OccupancyWritesService(context, cases, events, buildings, unitVisits), context, scope),
   };
 }
 
-/** «تأكيد الشغور» and the unit edit: `BuildingsService`. */
-function service(db: Record<string, unknown>) {
-  return services(db).buildings;
+/** «تأكيد الشغور» and its undo: `UnitVisitsService` since audit GOD-06. */
+function visits(db: Record<string, unknown>) {
+  return services(db).unitVisits;
+}
+
+/** The unit edit: `UnitsService` since audit GOD-07. */
+function units(db: Record<string, unknown>) {
+  return services(db).units;
 }
 
 /** «إنهاء الإشغال»: `OccupancyWritesService` since audit GOD-05. */
@@ -269,7 +278,7 @@ describe('confirmVacancy / updateUnit — calling a unit empty', () => {
   it('counts only a tenant or a شاغل بتسامح as somebody living there — never the owner', async () => {
     const { db, count, update } = unitDb(0);
 
-    await service(db).confirmVacancy('unit-1', { basis: 'FIELD_INSPECTION' }, actor);
+    await visits(db).confirmVacancy('unit-1', { basis: 'FIELD_INSPECTION' }, actor);
 
     expect(count).toHaveBeenCalledWith({
       where: { unitId: 'unit-1', toDate: null, role: { in: ['TENANT', 'FREE_OCCUPANT'] } },
@@ -281,7 +290,7 @@ describe('confirmVacancy / updateUnit — calling a unit empty', () => {
     const { db, update } = unitDb(1);
 
     await expect(
-      service(db).confirmVacancy('unit-1', { basis: 'FIELD_INSPECTION' }, actor),
+      visits(db).confirmVacancy('unit-1', { basis: 'FIELD_INSPECTION' }, actor),
     ).rejects.toThrow('كشاغرة');
     expect(update).not.toHaveBeenCalled();
   });
@@ -290,7 +299,7 @@ describe('confirmVacancy / updateUnit — calling a unit empty', () => {
     const { db, update } = unitDb(0, { unitStatus: 'SEASONAL' });
 
     await expect(
-      service(db).confirmVacancy('unit-1', { basis: 'FIELD_INSPECTION' }, actor),
+      visits(db).confirmVacancy('unit-1', { basis: 'FIELD_INSPECTION' }, actor),
     ).rejects.toThrow('مسكن موسمي');
     expect(update).not.toHaveBeenCalled();
   });
@@ -299,7 +308,7 @@ describe('confirmVacancy / updateUnit — calling a unit empty', () => {
     const { db, update } = unitDb(0, { unitStatus: null, ownerCardStatus: 'SEASONAL' });
 
     await expect(
-      service(db).confirmVacancy('unit-1', { basis: 'OWNER_STATEMENT' }, actor),
+      visits(db).confirmVacancy('unit-1', { basis: 'OWNER_STATEMENT' }, actor),
     ).rejects.toThrow('مسكن موسمي');
     expect(update).not.toHaveBeenCalled();
   });
@@ -307,7 +316,7 @@ describe('confirmVacancy / updateUnit — calling a unit empty', () => {
   it('still lets an owner-occupied card be overridden by a confirmed vacancy', async () => {
     const { db, update } = unitDb(0, { unitStatus: null, ownerCardStatus: 'OWNER_OCCUPIED' });
 
-    await service(db).confirmVacancy('unit-1', { basis: 'FIELD_INSPECTION' }, actor);
+    await visits(db).confirmVacancy('unit-1', { basis: 'FIELD_INSPECTION' }, actor);
     expect(update).toHaveBeenCalled();
   });
 
@@ -320,7 +329,7 @@ describe('confirmVacancy / updateUnit — calling a unit empty', () => {
   it('stores what the unit said before, so the undo has something to restore', async () => {
     const { db, createVacancy } = unitDb(0, { unitStatus: 'RENTED' });
 
-    await service(db).confirmVacancy('unit-1', { basis: 'DECLARATION_FILED' }, actor);
+    await visits(db).confirmVacancy('unit-1', { basis: 'DECLARATION_FILED' }, actor);
 
     expect(createVacancy).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -340,7 +349,7 @@ describe('confirmVacancy / updateUnit — calling a unit empty', () => {
     });
 
     await expect(
-      service(db).confirmVacancy('unit-1', { basis: 'FIELD_INSPECTION' }, actor),
+      visits(db).confirmVacancy('unit-1', { basis: 'FIELD_INSPECTION' }, actor),
     ).rejects.toThrow('مؤكَّد شغورها مسبقاً');
     expect(update).not.toHaveBeenCalled();
   });
@@ -355,7 +364,7 @@ describe('confirmVacancy / updateUnit — calling a unit empty', () => {
     const { db, update } = unitDb(0);
 
     await expect(
-      service(db).updateUnit(
+      units(db).updateUnit(
         'unit-1',
         { unitStatus: 'VACANT', surveyStatus: 'VACANT_CONFIRMED' },
         actor,
@@ -370,7 +379,7 @@ describe('confirmVacancy / updateUnit — calling a unit empty', () => {
     });
 
     await expect(
-      service(db).updateUnit('unit-1', { unitStatus: 'RENTED' }, actor),
+      units(db).updateUnit('unit-1', { unitStatus: 'RENTED' }, actor),
     ).rejects.toThrow('ألغِ تأكيد الشغور');
     expect(update).not.toHaveBeenCalled();
   });
@@ -381,7 +390,7 @@ describe('confirmVacancy / updateUnit — calling a unit empty', () => {
       standing: { id: 'vac-0', observedAt: new Date('2026-08-01') },
     });
 
-    await service(db).updateUnit('unit-1', { presenceMonths: [7, 8] }, actor);
+    await units(db).updateUnit('unit-1', { presenceMonths: [7, 8] }, actor);
     expect(update).toHaveBeenCalled();
   });
 
@@ -389,7 +398,7 @@ describe('confirmVacancy / updateUnit — calling a unit empty', () => {
     const { db, update } = unitDb(1);
 
     await expect(
-      service(db).updateUnit('unit-1', { unitStatus: 'VACANT' }, actor),
+      units(db).updateUnit('unit-1', { unitStatus: 'VACANT' }, actor),
     ).rejects.toThrow('كشاغرة');
     expect(update).not.toHaveBeenCalled();
   });
@@ -477,7 +486,7 @@ describe('endVacancy', () => {
   it('puts the unit back to what the confirmation replaced', async () => {
     const store = db(standing);
 
-    const result = await service(store).endVacancy(
+    const result = await visits(store).endVacancy(
       'unit-1',
       { reason: 'RECORDED_IN_ERROR' },
       actor,
@@ -492,7 +501,7 @@ describe('endVacancy', () => {
   it('leaves the flat occupied-by-someone-unrecorded when it is simply no longer vacant', async () => {
     const store = db(standing);
 
-    await service(store).endVacancy('unit-1', { reason: 'NO_LONGER_VACANT' }, actor);
+    await visits(store).endVacancy('unit-1', { reason: 'NO_LONGER_VACANT' }, actor);
 
     expect(store.unit.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: { unitStatus: null, surveyStatus: 'PARTIAL' } }),
@@ -503,7 +512,7 @@ describe('endVacancy', () => {
     const store = db(null);
 
     await expect(
-      service(store).endVacancy('unit-1', { reason: 'RECORDED_IN_ERROR' }, actor),
+      visits(store).endVacancy('unit-1', { reason: 'RECORDED_IN_ERROR' }, actor),
     ).rejects.toThrow('لا يوجد تأكيد شغور قائم');
     expect(store.unit.update).not.toHaveBeenCalled();
   });
@@ -512,7 +521,7 @@ describe('endVacancy', () => {
     const store = db(standing);
 
     await expect(
-      service(store).endVacancy(
+      visits(store).endVacancy(
         'unit-1',
         { reason: 'NO_LONGER_VACANT', endedAt: new Date('2026-08-01') },
         actor,

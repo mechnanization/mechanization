@@ -262,7 +262,7 @@ export class CasesService {
   /**
    * Closes the «شاغرة قيد التحقق» cases a confirmed vacancy has answered.
    *
-   * Called from `BuildingsService.confirmVacancy`, for `resolveForUnit`'s
+   * Called from `UnitVisitsService.confirmVacancy`, for `resolveForUnit`'s
    * reason and with `resolveForUnit`'s restraint: this is the moment the thing
    * that case was waiting on actually happened, and nothing else on the unit is
    * answered by it. A refused entry is still refused, a disputed ownership

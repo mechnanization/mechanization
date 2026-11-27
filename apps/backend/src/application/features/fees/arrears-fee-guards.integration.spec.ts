@@ -15,6 +15,7 @@ import { PaymentLedgerService } from './payment-ledger.service';
 import { feeServices } from './fee-services.testing';
 import type { FeeNoticesService } from './fee-notices.service';
 import type { RecurringBillingService } from './recurring-billing.service';
+import { CitizenDuplicatesService } from '../citizens/citizen-duplicates.service';
 
 /**
  * Old debts and the fee system (task 6, docs/old-debts-plan.md §8), against a
@@ -88,7 +89,7 @@ describeIfDb('old debts and the fee system', () => {
     const payments = new PaymentLedgerService(context, audit, new TreasuryLedgerService(context));
     ({ fees, feeNotices, recurringBilling } = feeServices(context, { emit: jest.fn() } as unknown as EventEmitter2, {} as never, cache, payments, audit));
     reporting = new ReportingService(context, new EventEmitter2(), cache, { getOrThrow: () => 60 } as never);
-    citizens = new CitizensService(context, {} as never, {} as never, {} as never, {} as never, {} as never, new EventEmitter2(), audit);
+    citizens = new CitizensService(context, {} as never, {} as never, {} as never, {} as never, {} as never, new EventEmitter2(), audit, {} as never, {} as never, new CitizenDuplicatesService(context));
 
     await db.user.createMany({
       data: [

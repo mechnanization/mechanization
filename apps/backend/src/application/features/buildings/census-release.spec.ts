@@ -1,5 +1,7 @@
 import { BuildingsService } from './buildings.service';
 import { OccupancyWritesService } from './occupancy-writes.service';
+import { UnitVisitsService } from './unit-visits.service';
+import { UnitsService } from './units.service';
 
 /*
   `settleUnit` (the one status rule) reads a dozen tables these fakes do not
@@ -76,7 +78,8 @@ function harness(unitsInBuilding: number) {
   const context = { prisma: db, tenantSlug: 'albazourieh' } as never;
   const cases = { resolveForUnit: jest.fn().mockResolvedValue(0) } as never;
   const events = { emit: jest.fn() } as never;
-  const service = new OccupancyWritesService(context, cases, events, new BuildingsService(context, cases, events));
+  const buildings = new BuildingsService(context, events);
+  const service = new OccupancyWritesService(context, cases, events, buildings, new UnitVisitsService(context, cases, events, buildings));
 
   return { service, db, buildingUnitUpdateMany, propertyEntryUpdateMany };
 }
@@ -180,7 +183,9 @@ describe('endOccupancy — releasing the census claim', () => {
     const { db } = harness(1);
     const context = { prisma: db, tenantSlug: 'albazourieh' } as never;
     const cases = { resolveForUnit: jest.fn().mockResolvedValue(0) } as never;
-    const service = new OccupancyWritesService(context, cases, { emit } as never, new BuildingsService(context, cases, { emit } as never));
+    const events = { emit } as never;
+    const buildings = new BuildingsService(context, events);
+    const service = new OccupancyWritesService(context, cases, events, buildings, new UnitVisitsService(context, cases, events, buildings));
 
     await service.endOccupancy('occ-1', { reason: 'OWNERSHIP_TRANSFERRED' }, actor);
 
@@ -334,14 +339,13 @@ describe('deleteUnit — what it refuses', () => {
       building: { update: jest.fn() },
     };
 
+    const context = { prisma: db, tenantSlug: 'albazourieh' } as never;
+    const events = { emit: jest.fn() } as never;
     return {
       del,
       db,
-      instance: new BuildingsService(
-        { prisma: db, tenantSlug: 'albazourieh' } as never,
-        { resolveForUnit: jest.fn() } as never,
-        { emit: jest.fn() } as never,
-      ),
+      // `deleteUnit` is `UnitsService`'s since audit GOD-07.
+      instance: new UnitsService(context, events, new BuildingsService(context, events)),
     };
   }
 

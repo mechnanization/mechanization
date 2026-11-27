@@ -23,6 +23,10 @@ import { RegistrationService } from '../registration/registration.service';
 import { CitizensService } from './citizens.service';
 import { LandlordLinkService } from './landlord-link.service';
 import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
+import { UnitVisitsService } from '../buildings/unit-visits.service';
+import { LandlordLinkQueueService } from './landlord-link-queue.service';
+import { LandlordUnlinkService } from './landlord-unlink.service';
+import { CitizenDuplicatesService } from './citizen-duplicates.service';
 
 /**
  * Filing on a citizen's file against a real Postgres: what a save, a new
@@ -71,17 +75,22 @@ describeIfDb('filing on a citizen file', () => {
       { findById: async () => ({ id: officerId, kind: 'STAFF' }) } as never,
       events,
     );
-    const buildings = new BuildingsService(context, cases, events);
-    const occupancyWrites = new OccupancyWritesService(context, cases, events, buildings);
+    const buildings = new BuildingsService(context, events);
+    const unitVisits = new UnitVisitsService(context, cases, events, buildings);
+    const occupancyWrites = new OccupancyWritesService(context, cases, events, buildings, unitVisits);
+    const links = new LandlordLinkService(context, occupancyWrites, events, audit);
     citizens = new CitizensService(
       context,
       new RegistrationService(new PrismaRegistrationRepository(context), parcels, tenants as never, events),
       tenants as never,
       parcels,
       new CensusSyncService(context, cases, events),
-      new LandlordLinkService(context, occupancyWrites, events, audit),
+      links,
       events,
       audit,
+      new LandlordLinkQueueService(context, links),
+      new LandlordUnlinkService(context, links),
+      new CitizenDuplicatesService(context),
     );
 
     officerId = randomUUID();

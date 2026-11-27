@@ -19,6 +19,11 @@ import { LandlordLinkService, readFootprint } from './landlord-link.service';
 import { feeServices } from '../fees/fee-services.testing';
 import type { FeeNoticesService } from '../fees/fee-notices.service';
 import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
+import { UnitsService } from '../buildings/units.service';
+import { UnitVisitsService } from '../buildings/unit-visits.service';
+import { CitizenDuplicatesService } from './citizen-duplicates.service';
+import { LandlordUnlinkService } from './landlord-unlink.service';
+import { LandlordLinkQueueService } from './landlord-link-queue.service';
 
 /**
  * Owner links against a real Postgres — what a link writes, and that undoing
@@ -53,10 +58,15 @@ describeIfDb('LandlordLinkService', () => {
   let db: TenantPrismaClient;
   let context: TenantContextService;
   let buildings: BuildingsService;
+  let unitsService: UnitsService;
+  let unitVisits: UnitVisitsService;
   let occupancyWrites: OccupancyWritesService;
   let census: CensusSyncService;
   let links: LandlordLinkService;
+  let unlinks: LandlordUnlinkService;
+  let linkQueue: LandlordLinkQueueService;
   let citizens: CitizensService;
+  let duplicates: CitizenDuplicatesService;
   let feeNotices: FeeNoticesService;
   let officerId: string;
 
@@ -101,8 +111,10 @@ describeIfDb('LandlordLinkService', () => {
       { findById: async () => ({ id: officerId, kind: 'CITIZEN' }) } as never,
       events,
     );
-    buildings = new BuildingsService(context, cases, events);
-    occupancyWrites = new OccupancyWritesService(context, cases, events, buildings);
+    buildings = new BuildingsService(context, events);
+    unitsService = new UnitsService(context, events, buildings);
+    unitVisits = new UnitVisitsService(context, cases, events, buildings);
+    occupancyWrites = new OccupancyWritesService(context, cases, events, buildings, unitVisits);
     census = new CensusSyncService(context, cases, events);
     links = new LandlordLinkService(
       context,
@@ -110,6 +122,9 @@ describeIfDb('LandlordLinkService', () => {
       events,
       new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
     );
+    unlinks = new LandlordUnlinkService(context, links);
+    linkQueue = new LandlordLinkQueueService(context, links);
+    duplicates = new CitizenDuplicatesService(context);
     citizens = new CitizensService(
       context,
       {} as never,
@@ -121,6 +136,9 @@ describeIfDb('LandlordLinkService', () => {
       links,
       events,
       new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
+      linkQueue,
+      unlinks,
+      duplicates,
     );
     ({ feeNotices } = feeServices(
       context,
@@ -202,7 +220,7 @@ describeIfDb('LandlordLinkService', () => {
         },
         actor(),
       );
-      const { units } = await buildings.generateUnits(
+      const { units } = await unitsService.generateUnits(
         building.id,
         { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor, unitType: 'APARTMENT' },
         actor(),
@@ -325,12 +343,12 @@ describeIfDb('LandlordLinkService', () => {
     });
 
     // Nobody is registered on the number yet: nothing to offer, nothing stored.
-    expect(await within(() => links.claimsFiledBy(registrationId))).toEqual([]);
+    expect(await within(() => linkQueue.claimsFiledBy(registrationId))).toEqual([]);
 
     const owner = await ownerWithFile(phone.stored);
 
     // The save of the owner's file asks, scoped to their numbers.
-    const naming = await within(() => links.claimsNaming(owner.id));
+    const naming = await within(() => linkQueue.claimsNaming(owner.id));
     expect(naming).toHaveLength(1);
     expect(naming[0]).toMatchObject({
       propertyEntryId: entryId,
@@ -342,7 +360,7 @@ describeIfDb('LandlordLinkService', () => {
     ]);
 
     // And the queue shows it to whoever opens it, whenever they do.
-    const queue = await within(() => links.proposals({ limit: 100, offset: 0 }));
+    const queue = await within(() => linkQueue.proposals({ limit: 100, offset: 0 }));
     expect(queue.items.map((item) => item.propertyEntryId)).toContain(entryId);
   });
 
@@ -362,7 +380,7 @@ describeIfDb('LandlordLinkService', () => {
     });
 
     // The form's lookup: both, and says which number is whose.
-    const offered = await within(() => links.candidatesFor(son.typed));
+    const offered = await within(() => linkQueue.candidatesFor(son.typed));
     expect(Object.fromEntries(offered.map((candidate) => [candidate.id, candidate.matchedBy]))).toEqual({
       [sonId]: 'PHONE',
       [fatherId]: 'CONTACT',
@@ -377,7 +395,7 @@ describeIfDb('LandlordLinkService', () => {
     });
 
     // The queue's match offers the father too, as a relative's number.
-    const [proposal] = await within(() => links.claimsFiledBy(registrationId));
+    const [proposal] = await within(() => linkQueue.claimsFiledBy(registrationId));
     expect(proposal).toBeDefined();
     expect(Object.fromEntries(proposal!.candidates.map((candidate) => [candidate.id, candidate.matchedBy]))).toEqual({
       [sonId]: 'PHONE',
@@ -385,7 +403,7 @@ describeIfDb('LandlordLinkService', () => {
     });
 
     // The backward direction: the father's own save is asked about the card.
-    expect((await within(() => links.claimsNaming(fatherId))).map((item) => item.propertyEntryId)).toContain(entryId);
+    expect((await within(() => linkQueue.claimsNaming(fatherId))).map((item) => item.propertyEntryId)).toContain(entryId);
 
     // «نعم، هو المالك» pressed on the form for the father is applied, not dropped.
     const applied = await within(() =>
@@ -588,7 +606,7 @@ describeIfDb('LandlordLinkService', () => {
       onlyUnit?.id ??
       (
         await within(() =>
-          buildings.generateUnits(
+          unitsService.generateUnits(
             building.id,
             { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
             actor(),
@@ -629,7 +647,7 @@ describeIfDb('LandlordLinkService', () => {
     expect(card).toMatchObject({ propertyType: 'HOUSE', occupancyType: 'OWNER', unitStatus: 'RENTED' });
     expect((await ownerSpells(owner.id))[0]).toMatchObject({ unitId, toDate: null });
 
-    const undone = await within(() => links.unlink({ propertyEntryId: entryId, actor: actor() }));
+    const undone = await within(() => unlinks.unlink({ propertyEntryId: entryId, actor: actor() }));
     expect(undone).toMatchObject({ cardsRemoved: 1, occupanciesEnded: 1, kept: [] });
     expect(await ownerCards(owner.id)).toEqual([]);
   });
@@ -651,7 +669,7 @@ describeIfDb('LandlordLinkService', () => {
       onlyUnit?.id ??
       (
         await within(() =>
-          buildings.generateUnits(
+          unitsService.generateUnits(
             building.id,
             { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
             actor(),
@@ -706,7 +724,7 @@ describeIfDb('LandlordLinkService', () => {
     });
 
     // Before this the undo deleted the card and the key answered with an unmapped 500.
-    const undone = await within(() => links.unlink({ propertyEntryId: entryId, actor: actor() }));
+    const undone = await within(() => unlinks.unlink({ propertyEntryId: entryId, actor: actor() }));
     expect(undone).toMatchObject({ cardsRemoved: 0, kept: [{ unitCode: null, reason: 'HAS_REQUESTS', propertyEntryId: card!.id }] });
     expect(await ownerCards(owner.id)).toHaveLength(1);
   });
@@ -734,7 +752,7 @@ describeIfDb('LandlordLinkService', () => {
     await within(() => links.confirm({ propertyEntryId: entryId, citizenId: owner.id, actor: actor() }));
     expect((await db.case.findUniqueOrThrow({ where: { id: opened.id } })).status).toBe('RESOLVED');
 
-    const undone = await within(() => links.unlink({ propertyEntryId: entryId, actor: actor() }));
+    const undone = await within(() => unlinks.unlink({ propertyEntryId: entryId, actor: actor() }));
     expect(undone.casesReopened).toBe(1);
     expect(await db.case.findUniqueOrThrow({ where: { id: opened.id } })).toMatchObject({
       status: 'OPEN',
@@ -755,7 +773,7 @@ describeIfDb('LandlordLinkService', () => {
     });
     const owner = await ownerWithFile(phone.stored);
 
-    const [proposal] = await within(() => links.claimsNaming(owner.id));
+    const [proposal] = await within(() => linkQueue.claimsNaming(owner.id));
     expect(proposal!.blocked?.code).toBe('NOT_ON_SURVEY');
     // ERR-04: the block's words are a code the message files hold, and the refusal the press gets is the same.
     expect(proposal!.blocked?.refusal).toEqual({
@@ -813,10 +831,10 @@ describeIfDb('LandlordLinkService', () => {
     const owner = await ownerWithFile(phone.stored);
     await within(() => links.confirm({ propertyEntryId: entryId, citizenId: owner.id, actor: actor() }));
 
-    const preview = await within(() => links.unlinkPreview(entryId));
+    const preview = await within(() => unlinks.unlinkPreview(entryId));
     expect(preview).toMatchObject({ linked: true, legacy: false, cardsCreated: 1 });
 
-    const result = await within(() => links.unlink({ propertyEntryId: entryId, actor: actor() }));
+    const result = await within(() => unlinks.unlink({ propertyEntryId: entryId, actor: actor() }));
     expect(result).toMatchObject({
       unlinked: true,
       legacy: false,
@@ -843,7 +861,7 @@ describeIfDb('LandlordLinkService', () => {
     expect(tenantSpell.toDate).toBeNull();
     expect((await db.unit.findUniqueOrThrow({ where: { id: units[0]!.id } })).unitStatus).toBe('RENTED');
 
-    const [again] = await within(() => links.claimsNaming(owner.id));
+    const [again] = await within(() => linkQueue.claimsNaming(owner.id));
     expect(again!.propertyEntryId).toBe(entryId);
     expect(await ownerBill(owner.id)).toBe(0);
   });
@@ -869,7 +887,7 @@ describeIfDb('LandlordLinkService', () => {
       },
     });
 
-    const [proposal] = await within(() => links.claimsNaming(owner.id));
+    const [proposal] = await within(() => linkQueue.claimsNaming(owner.id));
     expect(proposal!.candidates[0]!.outcome).toBe('ADDED_TO_CARD');
 
     await within(() => links.confirm({ propertyEntryId: entryId, citizenId: owner.id, actor: actor() }));
@@ -877,7 +895,7 @@ describeIfDb('LandlordLinkService', () => {
     expect(card!.id).toBe(own.id);
     expect(card!.units.map((row) => row.unitId).sort()).toEqual([units[0]!.id, units[1]!.id].sort());
 
-    const result = await within(() => links.unlink({ propertyEntryId: entryId, actor: actor() }));
+    const result = await within(() => unlinks.unlink({ propertyEntryId: entryId, actor: actor() }));
     expect(result).toMatchObject({ rowsRemoved: 1, cardsRemoved: 0, occupanciesEnded: 1 });
 
     [card] = await ownerCards(owner.id);
@@ -900,7 +918,7 @@ describeIfDb('LandlordLinkService', () => {
     const [card] = await ownerCards(owner.id);
     await db.buildingUnit.update({ where: { id: card!.units[0]!.id }, data: { unitArea: 140 } });
 
-    const result = await within(() => links.unlink({ propertyEntryId: entryId, actor: actor() }));
+    const result = await within(() => unlinks.unlink({ propertyEntryId: entryId, actor: actor() }));
     expect(result.kept).toEqual([expect.objectContaining({ reason: 'EDITED' })]);
     expect(result.occupanciesEnded).toBe(0);
 
@@ -930,7 +948,7 @@ describeIfDb('LandlordLinkService', () => {
     await within(() => links.confirm({ propertyEntryId: second.entryId, citizenId: owner.id, actor: actor() }));
     expect(await ownerSpells(owner.id)).toHaveLength(1);
 
-    const undoFirst = await within(() => links.unlink({ propertyEntryId: first.entryId, actor: actor() }));
+    const undoFirst = await within(() => unlinks.unlink({ propertyEntryId: first.entryId, actor: actor() }));
     expect(undoFirst.kept).toEqual([expect.objectContaining({ reason: 'SHARED' })]);
     expect((await ownerSpells(owner.id))[0]!.toDate).toBeNull();
     expect(await ownerCards(owner.id)).toHaveLength(1);
@@ -941,7 +959,7 @@ describeIfDb('LandlordLinkService', () => {
     expect(footprint.units[0]!.occupancyId).not.toBeNull();
 
     // …so undoing it removes them.
-    const undoSecond = await within(() => links.unlink({ propertyEntryId: second.entryId, actor: actor() }));
+    const undoSecond = await within(() => unlinks.unlink({ propertyEntryId: second.entryId, actor: actor() }));
     expect(undoSecond).toMatchObject({ occupanciesEnded: 1, cardsRemoved: 1 });
     expect((await ownerSpells(owner.id))[0]!.toDate).not.toBeNull();
     expect(await ownerCards(owner.id)).toEqual([]);
@@ -974,7 +992,7 @@ describeIfDb('LandlordLinkService', () => {
       data: { flaggedFields: [{ path: 'properties.1.neighborhood', reason: 'غير معروف بعد', kind: 'UNESTABLISHED' }] },
     });
 
-    const result = await within(() => links.unlink({ propertyEntryId: entryId, actor: actor() }));
+    const result = await within(() => unlinks.unlink({ propertyEntryId: entryId, actor: actor() }));
     expect(result.cardsRemoved).toBe(1);
 
     const registration = await db.registration.findUniqueOrThrow({ where: { id: owner.registrationId } });
@@ -998,7 +1016,7 @@ describeIfDb('LandlordLinkService', () => {
     const son = await ownerWithFile(phone.stored);
 
     const offered = async () =>
-      (await within(() => links.proposals({ limit: 100, offset: 0 }))).items
+      (await within(() => linkQueue.proposals({ limit: 100, offset: 0 }))).items
         .find((item) => item.propertyEntryId === entryId)
         ?.candidates.map((candidate) => candidate.id)
         .sort() ?? [];
@@ -1033,7 +1051,7 @@ describeIfDb('LandlordLinkService', () => {
     const later = await ownerWithFile(phone.stored);
 
     const offered = async () =>
-      (await within(() => links.claimsNaming(later.id)))
+      (await within(() => linkQueue.claimsNaming(later.id)))
         .find((item) => item.propertyEntryId === entryId)
         ?.candidates.map((candidate) => candidate.id) ?? [];
 
@@ -1043,7 +1061,7 @@ describeIfDb('LandlordLinkService', () => {
     await within(() => links.dismiss({ propertyEntryId: entryId, candidateIds: [later.id], actor: actor() }));
     const card = await db.propertyEntry.findUniqueOrThrow({ where: { id: entryId } });
     expect([...card.landlordLinkDismissedIds].sort()).toEqual([shown.id, later.id].sort());
-    expect(await within(() => links.claimsNaming(shown.id))).toEqual([]);
+    expect(await within(() => linkQueue.claimsNaming(shown.id))).toEqual([]);
   });
 
   // ─────────────────────────────  By name  ─────────────────────────────
@@ -1067,7 +1085,7 @@ describeIfDb('LandlordLinkService', () => {
       unitIds: [units[0]!.id],
     });
 
-    const queued = (await within(() => links.proposals({ limit: 100, offset: 0 }))).items.find(
+    const queued = (await within(() => linkQueue.proposals({ limit: 100, offset: 0 }))).items.find(
       (item) => item.propertyEntryId === entryId,
     );
     expect(queued?.candidates.map((candidate) => [candidate.id, candidate.matchedBy])).toEqual([
@@ -1075,7 +1093,7 @@ describeIfDb('LandlordLinkService', () => {
     ]);
 
     // The owner's own save finds it from the other side, with no number to go on.
-    expect((await within(() => links.claimsNaming(ownerId))).map((item) => item.propertyEntryId)).toContain(
+    expect((await within(() => linkQueue.claimsNaming(ownerId))).map((item) => item.propertyEntryId)).toContain(
       entryId,
     );
 
@@ -1106,7 +1124,7 @@ describeIfDb('LandlordLinkService', () => {
 
     expect(await offeredOn(entryId)).toEqual([[ownerId, 'NAME']]);
     // The estate is shown as the heirs everywhere a name is read.
-    const queued = (await within(() => links.proposals({ limit: 100, offset: 0 }))).items.find(
+    const queued = (await within(() => linkQueue.proposals({ limit: 100, offset: 0 }))).items.find(
       (item) => item.propertyEntryId === entryId,
     );
     expect(queued?.candidates[0]?.name).toBe('ورثة المرحوم نزار علي عاقوري');
@@ -1138,7 +1156,7 @@ describeIfDb('LandlordLinkService', () => {
 
   /** Who the queue offers on one card, and how it found each — `[]` when the card is not on it. */
   const offeredOn = async (entryId: string) =>
-    ((await within(() => links.proposal(entryId)))?.candidates ?? [])
+    ((await within(() => linkQueue.proposal(entryId)))?.candidates ?? [])
       .map((candidate) => [candidate.id, candidate.matchedBy])
       .sort();
 
@@ -1166,14 +1184,14 @@ describeIfDb('LandlordLinkService', () => {
       unitIds: [units[2]!.id],
     });
 
-    const queue = (await within(() => links.proposals({ limit: 500, offset: 0 }))).items;
+    const queue = (await within(() => linkQueue.proposals({ limit: 500, offset: 0 }))).items;
     expect(
       queue.find((item) => item.propertyEntryId === entryId)?.candidates.map((candidate) => [candidate.id, candidate.matchedBy]),
     ).toEqual([[owner.id, 'PROPERTY']]);
     expect(queue.find((item) => item.propertyEntryId === withNumber.entryId)).toBeUndefined();
 
     // The owner's side finds it too, with nothing typed to go on.
-    expect((await within(() => links.claimsNaming(owner.id))).map((item) => item.propertyEntryId)).toContain(entryId);
+    expect((await within(() => linkQueue.claimsNaming(owner.id))).map((item) => item.propertyEntryId)).toContain(entryId);
 
     // Somebody who owns nothing here may not be asserted as the owner.
     const stranger = await ownerWithFile(freshPhone().stored);
@@ -1230,7 +1248,7 @@ describeIfDb('LandlordLinkService', () => {
     expect(await offeredOn(inFlat0.entryId)).toEqual([[ownerOf0.id, 'PROPERTY']]);
     for (const owner of [ownerOf0, ownerOf1, coOwnerOf1]) {
       expect(
-        (await within(() => links.claimsNaming(owner.id))).map((item) => item.propertyEntryId),
+        (await within(() => linkQueue.claimsNaming(owner.id))).map((item) => item.propertyEntryId),
       ).not.toContain(inFlat2.entryId);
     }
 
@@ -1297,7 +1315,7 @@ describeIfDb('LandlordLinkService', () => {
 
     await within(() => links.dismiss({ propertyEntryId: entryId, candidateIds: [namesakeId], actor: actor() }));
     expect(await offeredOn(entryId)).toEqual([[owner.id, 'PROPERTY']]);
-    expect((await within(() => links.claimsNaming(owner.id))).map((item) => item.propertyEntryId)).toContain(
+    expect((await within(() => linkQueue.claimsNaming(owner.id))).map((item) => item.propertyEntryId)).toContain(
       entryId,
     );
 
@@ -1331,7 +1349,7 @@ describeIfDb('LandlordLinkService', () => {
 
     await within(() => links.dismiss({ propertyEntryId: entryId, candidateIds: [recorded.id], actor: actor() }));
     expect(await offeredOn(entryId)).toEqual([[wholeOwner.id, 'PROPERTY']]);
-    const candidate = (await within(() => links.proposal(entryId)))?.candidates.find((c) => c.id === wholeOwner.id);
+    const candidate = (await within(() => linkQueue.proposal(entryId)))?.candidates.find((c) => c.id === wholeOwner.id);
     expect(candidate?.blocked?.code).toBe('UNIT_OWNED_BY_OTHER');
     expect(candidate?.blocked?.refusal).toMatchObject({
       code: 'LANDLORD_LINK_UNIT_OWNED_BY_OTHER',
@@ -1428,7 +1446,7 @@ describeIfDb('LandlordLinkService', () => {
 
     // «عبدالحسن» with no space — the spelling the 2026-09-15 scan missed.
     const same = await within(() =>
-      citizens.reviewDuplicates(
+      duplicates.reviewDuplicates(
         {
           personal: { firstName: 'عبدالحسن', middleName: 'ابراهيم', lastName: 'حدرج' },
           contact: {},
@@ -1441,7 +1459,7 @@ describeIfDb('LandlordLinkService', () => {
 
     // A different person on the number this officer filed minutes ago.
     const otherPerson = await within(() =>
-      citizens.reviewDuplicates(
+      duplicates.reviewDuplicates(
         {
           personal: { firstName: 'نور', middleName: 'حسين', lastName: 'عياش' },
           contact: { phone: phone.stored },
@@ -1458,7 +1476,7 @@ describeIfDb('LandlordLinkService', () => {
 
     // Another officer, the same number: a household line, not a question.
     const elsewhere = await within(() =>
-      citizens.reviewDuplicates(
+      duplicates.reviewDuplicates(
         {
           personal: { firstName: 'نور', middleName: 'حسين', lastName: 'عياش' },
           contact: { phone: phone.stored },
