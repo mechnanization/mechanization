@@ -1,13 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { isTenantSchemaName } from '../../domain/value-objects/tenant-schema-name';
 import { PrismaClient as TenantPrismaClient } from '../../generated/tenant-client';
-
-/**
- * A Postgres schema name we are willing to interpolate into a connection string.
- * Schema names cannot be bound as parameters, so the only safe approach is to
- * refuse anything that is not exactly the shape we generate ourselves.
- */
-const SAFE_SCHEMA_NAME = /^tenant_[a-z0-9_]{1,50}$/;
 
 /**
  * Hands out a PrismaClient bound to one municipality's Postgres schema.
@@ -34,7 +28,8 @@ export class TenantPrismaFactory implements OnModuleDestroy {
    * else.
    */
   forSchema(schemaName: string): TenantPrismaClient {
-    if (!SAFE_SCHEMA_NAME.test(schemaName)) {
+    // Interpolated into a connection string, where it cannot be a bound parameter.
+    if (!isTenantSchemaName(schemaName)) {
       throw new Error(`Refusing to open a client for unsafe schema name '${schemaName}'`);
     }
 

@@ -52,7 +52,7 @@ import { ZodValidationPipe } from '../../application/common/pipes/zod-validation
 import { CurrentTenant, CurrentUser } from '../decorators/current-user.decorator';
 import { Public } from '../decorators/public.decorator';
 import { Roles } from '../decorators/roles.decorator';
-import { APP_CONFIG } from '../config/app.config';
+import { APP_CONFIG } from '../../application/common/app.config';
 import { ForbiddenError } from '../../application/common/exceptions';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
 import { UuidPipe } from '../pipes/uuid.pipe';

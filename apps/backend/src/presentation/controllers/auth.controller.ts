@@ -21,7 +21,7 @@ import { ForbiddenError } from '../../application/common/exceptions';
 import { Public } from '../decorators/public.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
-import { APP_CONFIG } from '../config/app.config';
+import { APP_CONFIG } from '../../application/common/app.config';
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard';
 import {
   clearStaffRefreshCookie,

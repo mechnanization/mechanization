@@ -23,18 +23,24 @@ jest.mock('nodemailer', () => ({
 
 const { SmtpEmailSender } = require('./smtp-email.sender') as typeof import('./smtp-email.sender');
 
+/** What `validateEnv` hands `ConfigService`: `SMTP_PORT` a number, 587 when unset (envSchema). */
 const CONFIGURED = {
   SMTP_HOST: 'smtp.example.invalid',
-  SMTP_PORT: '587',
+  SMTP_PORT: 587,
   SMTP_USER: 'apikey',
   SMTP_PASSWORD: 'secret',
   MAIL_FROM: 'بلدية البازورية <noreply@example.invalid>',
 };
 
-function sender(overrides: Record<string, string | undefined> = {}) {
-  const values: Record<string, string | undefined> = { ...CONFIGURED, ...overrides };
+function sender(overrides: Record<string, string | number | undefined> = {}) {
+  const values: Record<string, string | number | undefined> = { ...CONFIGURED, ...overrides };
   return new SmtpEmailSender({
     get: (key: string) => values[key],
+    getOrThrow: (key: string) => {
+      const value = values[key];
+      if (value === undefined) throw new TypeError(`Configuration key "${key}" does not exist`);
+      return value;
+    },
   } as unknown as ConfigService);
 }
 
@@ -129,22 +135,17 @@ describe('SmtpEmailSender.send', () => {
    * nodemailer reports success.
    */
   it('demands STARTTLS on the submission port', async () => {
-    await sender({ SMTP_PORT: '587' }).send(MESSAGE);
+    await sender({ SMTP_PORT: 587 }).send(MESSAGE);
 
     expect(transportOptions()).toMatchObject({ port: 587, secure: false, requireTLS: true });
   });
 
   it('uses implicit TLS on 465 instead of demanding an upgrade', async () => {
-    await sender({ SMTP_PORT: '465' }).send(MESSAGE);
+    await sender({ SMTP_PORT: 465 }).send(MESSAGE);
 
     expect(transportOptions()).toMatchObject({ port: 465, secure: true, requireTLS: false });
   });
 
-  it('defaults to the submission port when none is configured', async () => {
-    await sender({ SMTP_PORT: undefined }).send(MESSAGE);
-
-    expect(transportOptions()).toMatchObject({ port: 587, requireTLS: true });
-  });
 
   it('omits auth entirely when no credentials are configured', async () => {
     await sender({ SMTP_USER: undefined, SMTP_PASSWORD: undefined }).send(MESSAGE);

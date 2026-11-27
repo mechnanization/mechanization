@@ -171,7 +171,8 @@ export const envSchema = z
      * feature that has a working manual substitute.
      */
     SMTP_HOST: z.string().min(1).optional(),
-    SMTP_PORT: z.coerce.number().int().positive().max(65535).optional(),
+    /** 587, the submission port (STARTTLS); 465 is implicit TLS. */
+    SMTP_PORT: z.coerce.number().int().positive().max(65535).default(587),
     SMTP_USER: z.string().min(1).optional(),
     SMTP_PASSWORD: z.string().min(1).optional(),
     /** RFC 5322 from-address, e.g. `بلدية البازورية <noreply@example.lb>`. */

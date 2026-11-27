@@ -11,7 +11,7 @@ import {
   StaffSessionGrant,
 } from '../../application/features/identity/identity.service';
 import { ForbiddenError, UnauthorizedError } from '../../application/common/exceptions';
-import { APP_CONFIG } from '../config/app.config';
+import { APP_CONFIG } from '../../application/common/app.config';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { ROLES_KEY } from '../decorators/roles.decorator';
 import { RolesGuard } from '../guards/roles.guard';

@@ -5,7 +5,7 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import compression from 'compression';
 import helmet from 'helmet';
 import { AppModule } from '../app.module';
-import { APP_CONFIG } from './config/app.config';
+import { APP_CONFIG } from '../application/common/app.config';
 import { AppLogger } from './config/app-logger';
 import { METRICS_ROUTE, useHttpMetrics } from './metrics.module';
 
@@ -61,7 +61,7 @@ export async function createApiApp(): Promise<NestExpressApplication> {
    * for `express.json()` directly would mean importing a package this app does
    * not declare, which pnpm's strict linking is right to refuse.
    */
-  app.useBodyParser('json', { limit: '1mb' });
+  app.useBodyParser('json', { limit: APP_CONFIG.http.bodyLimit });
 
   /*
     `credentials: true` stays (reviewed by task S18, 2026-11-16). A Bearer call

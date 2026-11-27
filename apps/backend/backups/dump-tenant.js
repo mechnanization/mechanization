@@ -20,13 +20,6 @@ if (!schema || !out) {
   process.exit(1);
 }
 
-// Only ever a known schema name, and it is interpolated into SQL below —
-// so it is validated rather than trusted.
-if (!/^tenant_[a-z0-9_]+$/.test(schema)) {
-  console.error('ABORT: refusing to interpolate schema name: ' + schema);
-  process.exit(1);
-}
-
 /** Minimal .env reader — enough for one KEY="value" per line. */
 function readEnv(file) {
   const env = {};
@@ -36,13 +29,6 @@ function readEnv(file) {
     env[match[1]] = match[2].trim().replace(/^["']|["']$/g, '');
   }
   return env;
-}
-
-const env = readEnv(path.join(__dirname, '..', '.env'));
-const url = env.DIRECT_URL || env.DATABASE_URL;
-if (!url) {
-  console.error('ABORT: no DIRECT_URL or DATABASE_URL in apps/backend/.env');
-  process.exit(1);
 }
 
 const TABLES = [
@@ -58,6 +44,22 @@ const TABLES = [
 ];
 
 (async () => {
+  // Only ever a known schema name, and it is interpolated into SQL below — so it
+  // is validated rather than trusted, by the rule every tenant schema is held to
+  // (scripts/db/tenant-schema-name.mjs, DRY-10).
+  const { isTenantSchemaName } = await import('../../../scripts/db/tenant-schema-name.mjs');
+  if (!isTenantSchemaName(schema)) {
+    console.error('ABORT: refusing to interpolate schema name: ' + schema);
+    process.exit(1);
+  }
+
+  const env = readEnv(path.join(__dirname, '..', '.env'));
+  const url = env.DIRECT_URL || env.DATABASE_URL;
+  if (!url) {
+    console.error('ABORT: no DIRECT_URL or DATABASE_URL in apps/backend/.env');
+    process.exit(1);
+  }
+
   const client = new Client({ connectionString: url, ssl: { rejectUnauthorized: false } });
   await client.connect();
 

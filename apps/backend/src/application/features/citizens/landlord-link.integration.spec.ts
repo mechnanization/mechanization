@@ -475,7 +475,7 @@ describeIfDb('LandlordLinkService', () => {
       context,
       new EventEmitter2(),
       { get: async () => null, set: async () => undefined } as never,
-      { get: () => undefined } as never,
+      { getOrThrow: () => 60 } as never,
     );
     const profile = await within(() => reporting.getCitizenProfile(tenantId));
     const card = profile!.registrations[0]!.properties[0]!;

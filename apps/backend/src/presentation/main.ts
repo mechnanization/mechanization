@@ -11,7 +11,7 @@ import './instrument';
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createApiApp } from './bootstrap';
-import { APP_CONFIG } from './config/app.config';
+import { APP_CONFIG } from '../application/common/app.config';
 import { flushSentry, sentryEnabled } from './config/sentry';
 
 /**
@@ -64,7 +64,7 @@ async function bootstrap(): Promise<void> {
 
   const app = await createApiApp();
   const config = app.get(ConfigService);
-  const port = config.get<number>('PORT') ?? 4000;
+  const port = config.getOrThrow<number>('PORT');
 
   await app.listen(port);
 

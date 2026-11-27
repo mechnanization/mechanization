@@ -31,6 +31,7 @@ import { citizenSearchText } from '../../common/citizen-search';
 import { NotFoundError, ValidationError } from '../../common/exceptions';
 import { likePattern, searchTokens } from '../../common/search-terms';
 import { AuditService, type BuildingChange } from '../audit/audit.service';
+import { setLocalLockTimeout } from '../../common/lock-timeout';
 
 /** The audit actions, and the names «فواتير تأثّرت بتصحيحات» traces them by. */
 export const UNIT_FEE_EXEMPTION_SET = 'UNIT_FEE_EXEMPTION_SET';
@@ -157,7 +158,7 @@ export class FeeExemptionService {
   ): Promise<FeeExemptionUnitView> {
     const today = municipalToday();
     const change = await runInTenantTransaction(this.tenantContext, async () => {
-      await this.db.$executeRawUnsafe(`SET LOCAL lock_timeout = '5s'`);
+      await setLocalLockTimeout(this.db);
       await this.db.$queryRaw`SELECT "id" FROM ${this.S}"units" WHERE "id" = ${unitId}::uuid FOR UPDATE`;
 
       const unit = await this.db.unit.findUnique({

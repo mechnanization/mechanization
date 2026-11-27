@@ -8,7 +8,7 @@ import type { CadastreStorage } from '../../domain/interfaces/cadastre-storage.i
 import { CurrentTenant, CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
-import { APP_CONFIG } from '../config/app.config';
+import { APP_CONFIG } from '../../application/common/app.config';
 
 @Controller('t/:tenantSlug/cadastre')
 export class CadastreController {

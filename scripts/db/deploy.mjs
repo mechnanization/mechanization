@@ -45,7 +45,6 @@
  *   --skip-promotion-check Bypass (5). For a genuine hotfix; it is logged loudly.
  */
 import { spawnSync } from 'node:child_process';
-import { createRequire } from 'node:module';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
@@ -58,9 +57,7 @@ import {
   promotionProblems,
   readMigrationState,
 } from './migration-state.mjs';
-
-const require = createRequire(join(ROOT, 'apps', 'backend', 'package.json'));
-const { Client } = require('pg');
+import { C, withClient } from './lib.mjs';
 
 /** `--check`'s answer for "migrations are pending, and nothing refused them". */
 const PENDING_EXIT_CODE = 3;
@@ -68,15 +65,6 @@ const PENDING_EXIT_CODE = 3;
 const BACKEND = join(ROOT, 'apps', 'backend');
 const REGISTRY_MIGRATIONS = join(BACKEND, 'src/infrastructure/prisma/registry/migrations');
 const TENANT_MIGRATIONS = join(BACKEND, 'src/infrastructure/prisma/tenant/migrations');
-
-const C = {
-  red: (s) => `\x1b[91m${s}\x1b[0m`,
-  green: (s) => `\x1b[92m${s}\x1b[0m`,
-  yellow: (s) => `\x1b[93m${s}\x1b[0m`,
-  blue: (s) => `\x1b[94m${s}\x1b[0m`,
-  bold: (s) => `\x1b[1m${s}\x1b[0m`,
-  dim: (s) => `\x1b[2m${s}\x1b[0m`,
-};
 
 function migrationFolders(dir) {
   if (!existsSync(dir)) return [];
@@ -92,16 +80,6 @@ function readMigrationSql(dir, name) {
 }
 
 // ── Reading what a database has already applied ────────────────────────────
-
-async function withClient(connectionString, fn) {
-  const client = new Client({ connectionString });
-  await client.connect();
-  try {
-    return await fn(client);
-  } finally {
-    await client.end().catch(() => undefined);
-  }
-}
 
 /**
  * What this target still needs, registry and per tenant schema. Every read

@@ -28,7 +28,7 @@ import { ArrearsReportService } from '../../application/features/arrears/arrears
 import { ArrearsService } from '../../application/features/arrears/arrears.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
-import { APP_CONFIG } from '../config/app.config';
+import { APP_CONFIG } from '../../application/common/app.config';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import { UuidPipe } from '../pipes/uuid.pipe';

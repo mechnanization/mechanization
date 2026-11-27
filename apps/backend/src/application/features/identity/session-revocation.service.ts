@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
+import { APP_CONFIG } from '../../common/app.config';
 
 /**
  * How long a revoked session may still be honoured.
@@ -23,7 +24,7 @@ import { withConnectionRetry } from '../../../infrastructure/prisma/with-connect
  * across replicas, so on a multi-instance deployment this is the worst case on
  * each. Closing that is the pub/sub work tracked as F-14.
  */
-const TOKEN_VERSION_TTL_SECONDS = 30;
+const TOKEN_VERSION_TTL_SECONDS = APP_CONFIG.cache.tokenVersionTtlSeconds;
 
 /** A family id is the root row's UUID; anything else cannot name one. */
 const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

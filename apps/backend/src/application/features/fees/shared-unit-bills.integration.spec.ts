@@ -132,7 +132,7 @@ describeIfDb('shared unit bills', () => {
       context,
       new EventEmitter2(),
       { get: async () => null, set: async () => undefined } as never,
-      { get: () => undefined } as never,
+      { getOrThrow: () => 60 } as never,
     );
     citizens = new CitizensService(
       context,

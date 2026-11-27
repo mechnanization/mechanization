@@ -14,6 +14,7 @@ import { AuditService, type BuildingChange } from '../audit/audit.service';
 import { FeesService } from '../fees/fees.service';
 import { describeOwnerBilling, planOwnerBilling, type OwnerBillingRefusal } from './owner-billing.plan';
 import { activeOwnerSpells } from './owner-billing';
+import { setLocalLockTimeout } from '../../common/lock-timeout';
 
 /** The audit action, and the name «فواتير تأثّرت بتصحيحات» traces it by. */
 export const UNIT_OWNER_BILLING_SET = 'UNIT_OWNER_BILLING_SET';
@@ -58,7 +59,7 @@ export class OwnerBillingService {
 
   async set(unitId: string, input: SetOwnerBillingInput, actor: Actor): Promise<OwnerBillingState> {
     const change = await runInTenantTransaction(this.tenantContext, async () => {
-      await this.db.$executeRawUnsafe(`SET LOCAL lock_timeout = '5s'`);
+      await setLocalLockTimeout(this.db);
       await this.db.$queryRaw`SELECT "id" FROM ${this.S}"units" WHERE "id" = ${unitId}::uuid FOR UPDATE`;
 
       const unit = await this.load(unitId);
