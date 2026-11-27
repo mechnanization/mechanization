@@ -1,15 +1,13 @@
+import { isTenantSchemaName } from '../../domain/value-objects/tenant-schema-name';
 import { Prisma } from '../../generated/tenant-client';
 
-/**
- * A Postgres schema name we are willing to interpolate into SQL.
- *
- * The same rule `TenantPrismaFactory` applies to the connection string, restated
- * here because this module also builds SQL by concatenation and must not trust a
- * caller to have checked. Schema names come from the tenant registry, never from
- * a request — but "never" is a property of today's call graph, and this is the
- * line that keeps it true if that changes.
- */
-const SAFE_SCHEMA_NAME = /^[a-z_][a-z0-9_]{0,62}$/;
+/*
+  Every function here checks the name itself (`isTenantSchemaName`, the rule
+  `TenantPrismaFactory` applies to the connection string) rather than trust a
+  caller to have: it builds SQL by concatenation. Schema names come from the
+  tenant registry, never from a request — but "never" is a property of today's
+  call graph, and this is the line that keeps it true if that changes.
+*/
 
 /**
  * Why every raw query in this codebase names its schema.
@@ -46,7 +44,7 @@ const SAFE_SCHEMA_NAME = /^[a-z_][a-z0-9_]{0,62}$/;
  * without it.
  */
 export function tenantSchemaRef(schemaName: string): Prisma.Sql {
-  if (!SAFE_SCHEMA_NAME.test(schemaName)) {
+  if (!isTenantSchemaName(schemaName)) {
     throw new Error(`Refusing to build SQL for unsafe schema name '${schemaName}'`);
   }
 
@@ -63,7 +61,7 @@ export function tenantSchemaRef(schemaName: string): Prisma.Sql {
 
 /** The same prefix as a plain string, for the two `$queryRawUnsafe` call sites. */
 export function tenantSchemaPrefix(schemaName: string): string {
-  if (!SAFE_SCHEMA_NAME.test(schemaName)) {
+  if (!isTenantSchemaName(schemaName)) {
     throw new Error(`Refusing to build SQL for unsafe schema name '${schemaName}'`);
   }
   return `"${schemaName}".`;

@@ -29,7 +29,7 @@ import { ForbiddenError, ValidationError } from '../../application/common/except
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { CitizenRequestsService } from '../../application/features/citizen-requests/citizen-requests.service';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
-import { APP_CONFIG } from '../config/app.config';
+import { APP_CONFIG } from '../../application/common/app.config';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { CurrentActor } from '../decorators/current-actor.decorator';
 import { StaffActor } from '../../application/common/actor';

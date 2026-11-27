@@ -10,7 +10,7 @@ import { CurrentActor } from '../decorators/current-actor.decorator';
 import { StaffActor } from '../../application/common/actor';
 import { SelfService } from '../decorators/self-service.decorator';
 import { Roles } from '../decorators/roles.decorator';
-import { APP_CONFIG } from '../config/app.config';
+import { APP_CONFIG } from '../../application/common/app.config';
 
 @Controller('t/:tenantSlug/cadastre')
 export class CadastreController {

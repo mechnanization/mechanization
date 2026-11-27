@@ -79,7 +79,7 @@ describeIfDb('Quality review', () => {
       set: async () => undefined,
       invalidatePrefix: async () => undefined,
     };
-    audit = new AuditService(new PrismaAuditRepository(context), context, cache as never, { get: () => 0 } as never);
+    audit = new AuditService(new PrismaAuditRepository(context), context, cache as never, { getOrThrow: () => 0 } as never);
     events.on('building.changed', (payload) => audit.onBuildingChanged(payload));
     events.on('citizen.changed', (payload) => audit.onCitizenChanged(payload));
     events.on('quality.changed', (payload) => audit.onQualityChanged(payload));
@@ -92,13 +92,13 @@ describeIfDb('Quality review', () => {
       events,
       new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
     );
-    reviews = new RecordReviewService(context, events, cache as never, { get: () => 0 } as never, audit);
-    failingReviews = new RecordReviewService(context, events, cache as never, { get: () => 0 } as never, {
+    reviews = new RecordReviewService(context, events, cache as never, { getOrThrow: () => 0 } as never, audit);
+    failingReviews = new RecordReviewService(context, events, cache as never, { getOrThrow: () => 0 } as never, {
       recordChangeInTransaction: () => Promise.reject(new Error('audit insert refused')),
     } as never);
     // Billing's own reading of a file, asked of a «مالك مسؤول» (F13).
     const fees = new FeesService(context, events, {} as never, cache as never, {} as never, {} as never);
-    quality = new DataQualityService(context, links, events, cache as never, { get: () => 0 } as never, fees);
+    quality = new DataQualityService(context, links, events, cache as never, { getOrThrow: () => 0 } as never, fees);
     events.on('citizen.changed', (payload) => reviews.onCitizenChanged(payload));
 
     for (const [key, first, role] of [

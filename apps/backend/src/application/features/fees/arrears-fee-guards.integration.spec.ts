@@ -82,7 +82,7 @@ describeIfDb('old debts and the fee system', () => {
     } as never;
     const payments = new PaymentLedgerService(context, audit, new TreasuryLedgerService(context));
     fees = new FeesService(context, { emit: jest.fn() } as unknown as EventEmitter2, {} as never, cache, payments, audit);
-    reporting = new ReportingService(context, new EventEmitter2(), cache, { get: () => undefined } as never);
+    reporting = new ReportingService(context, new EventEmitter2(), cache, { getOrThrow: () => 60 } as never);
     citizens = new CitizensService(context, {} as never, {} as never, {} as never, {} as never, {} as never, new EventEmitter2(), audit);
 
     await db.user.createMany({

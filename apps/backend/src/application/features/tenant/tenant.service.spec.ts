@@ -44,7 +44,7 @@ describe('TenantService.resolve — last-known-good fallback', () => {
       set: jest.fn().mockResolvedValue(undefined),
       invalidatePrefix: jest.fn().mockResolvedValue(undefined),
     } as unknown as RedisCacheService;
-    const config = { get: jest.fn().mockReturnValue(300) } as unknown as ConfigService;
+    const config = { getOrThrow: jest.fn().mockReturnValue(300) } as unknown as ConfigService;
     const service = new TenantService(repository as TenantRepository, cache, config);
     return { service, cache };
   }

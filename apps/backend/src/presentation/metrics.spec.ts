@@ -23,7 +23,7 @@ import request from 'supertest';
 import { SessionRevocationService } from '../application/features/identity/session-revocation.service';
 import { StaffPresenceService } from '../application/features/identity/staff-presence.service';
 import { createApiApp } from './bootstrap';
-import { APP_CONFIG } from './config/app.config';
+import { APP_CONFIG } from '../application/common/app.config';
 import { Public } from './decorators/public.decorator';
 import { DomainExceptionFilter } from './filters/domain-exception.filter';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';

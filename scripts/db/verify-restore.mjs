@@ -26,23 +26,15 @@
  *   node scripts/db/verify-restore.mjs --dump <file> --manifest <file> --into <url>
  */
 import { spawnSync } from 'node:child_process';
-import { createRequire } from 'node:module';
 import { readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
-import { ROOT, TARGETS, parseConnection } from './targets.mjs';
+import { TARGETS, parseConnection } from './targets.mjs';
+import { Client, abort as fail } from './lib.mjs';
 
 // Resolved from the backend package, where `pg` is a dependency — `scripts/` has
 // no `package.json` of its own. Same as `deploy.mjs`.
-const require = createRequire(join(ROOT, 'apps', 'backend', 'package.json'));
-const { Client } = require('pg');
 
 /** Hostnames a throwaway may live on. Nothing else is a throwaway. */
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', 'postgres']);
-
-function fail(message) {
-  console.error(`\nABORT: ${message}\n`);
-  process.exit(1);
-}
 
 function parseArgs(argv) {
   const options = { dump: null, manifest: null, into: null };

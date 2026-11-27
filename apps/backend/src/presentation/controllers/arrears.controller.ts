@@ -27,7 +27,7 @@ import { ArrearsBatchService } from '../../application/features/arrears/arrears-
 import { ArrearsReportService } from '../../application/features/arrears/arrears-report.service';
 import { ArrearsService } from '../../application/features/arrears/arrears.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
-import { APP_CONFIG } from '../config/app.config';
+import { APP_CONFIG } from '../../application/common/app.config';
 import { CurrentActor } from '../decorators/current-actor.decorator';
 import { StaffActor } from '../../application/common/actor';
 import { Roles } from '../decorators/roles.decorator';

@@ -4,6 +4,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaPrefix } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { ValidationError } from '../../common/exceptions';
+import { APP_CONFIG } from '../../common/app.config';
 
 /**
  * The snapshot format's own version.
@@ -523,7 +524,7 @@ export class BackupService {
           written[table] = result.count;
         }
       },
-      { timeout: 120_000, maxWait: 15_000 },
+      APP_CONFIG.transactions.backupRestore,
     );
 
     this.logger.warn(

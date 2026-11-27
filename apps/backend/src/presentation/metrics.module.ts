@@ -1,7 +1,7 @@
 import { INestApplication, Module, RequestMethod } from '@nestjs/common';
 import { PrometheusModule } from '@willsoto/nestjs-prometheus';
 import { NextFunction, Request, Response } from 'express';
-import { APP_CONFIG } from './config/app.config';
+import { APP_CONFIG } from '../application/common/app.config';
 import { MetricsController } from './controllers/metrics.controller';
 import { HttpMetricsMiddleware, httpMetricProviders } from './middleware/http-metrics.middleware';
 

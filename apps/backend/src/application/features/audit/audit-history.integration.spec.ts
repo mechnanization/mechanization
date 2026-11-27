@@ -62,7 +62,7 @@ describeIfDb('AuditService.history', () => {
       new PrismaAuditRepository(context),
       context,
       { get: async () => null, set: async () => undefined, invalidatePrefix: async () => undefined } as never,
-      { get: () => 1 } as never,
+      { getOrThrow: () => 1 } as never,
     );
 
     await db.user.createMany({

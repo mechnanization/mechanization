@@ -74,6 +74,7 @@ import type {
 } from './building.types';
 import { activeVacancy, closeActiveVacancy, toVacancyRow } from './unit-vacancy';
 import { settleUnit, unitsUnderReview } from './unit-status';
+import { APP_CONFIG } from '../../common/app.config';
 
 /**
  * The census's write side: structures, their unit matrices, and who is in them.
@@ -3225,7 +3226,7 @@ export class BuildingsService {
   private atomic<T>(work: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
     const client = this.db as unknown as { $transaction?: unknown };
     return typeof client.$transaction === 'function'
-      ? this.db.$transaction(work, { maxWait: 15_000, timeout: 30_000 })
+      ? this.db.$transaction(work, APP_CONFIG.transactions.buildingWrite)
       : work(this.db as unknown as Prisma.TransactionClient);
   }
 

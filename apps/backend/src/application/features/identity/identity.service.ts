@@ -28,7 +28,7 @@ import {
   UnauthorizedError,
   ValidationError,
 } from '../../common/exceptions';
-import { APP_CONFIG } from '../../../presentation/config/app.config';
+import { APP_CONFIG } from '../../common/app.config';
 import { OtpService } from './otp.service';
 import { SessionRevocationService } from './session-revocation.service';
 import { sessionSignOptions, verifySessionToken } from './session-token';

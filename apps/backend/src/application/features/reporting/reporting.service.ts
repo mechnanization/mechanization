@@ -754,7 +754,7 @@ export class ReportingService {
   }
 
   private get cacheTtlSeconds(): number {
-    return this.config.get<number>('DASHBOARD_CACHE_TTL_SECONDS') ?? 60;
+    return this.config.getOrThrow<number>('DASHBOARD_CACHE_TTL_SECONDS');
   }
 
   /** Namespaced per tenant so one municipality's cache entries can be

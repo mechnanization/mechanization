@@ -77,7 +77,7 @@ describeIfDb('units charged nothing', () => {
       { proposals: jest.fn().mockResolvedValue({ total: 0, items: [] }) } as never,
       emitter,
       { get: jest.fn().mockResolvedValue(null), set: jest.fn(), invalidatePrefix: jest.fn() } as never,
-      { get: () => 0 } as never,
+      { getOrThrow: () => 0 } as never,
       fees,
     );
 
@@ -317,7 +317,7 @@ describeIfDb('units charged nothing', () => {
       context,
       new EventEmitter2(),
       { get: async () => null, set: async () => undefined } as never,
-      { get: () => undefined } as never,
+      { getOrThrow: () => 60 } as never,
     );
     const profile = await within(() => reporting.getCitizenProfile(citizenId));
     const cards = new Map(profile!.registrations[0]!.properties.map((card) => [card.id, card]));
@@ -402,7 +402,7 @@ describeIfDb('units charged nothing', () => {
       context,
       new EventEmitter2(),
       { get: async () => null, set: async () => undefined } as never,
-      { get: () => undefined } as never,
+      { getOrThrow: () => 60 } as never,
     );
     const profile = await within(() => reporting.getCitizenProfile(citizenId));
     const cards = new Map(profile!.registrations.flatMap((registration) => registration.properties).map((entry) => [entry.id, entry]));

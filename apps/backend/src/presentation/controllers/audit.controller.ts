@@ -2,6 +2,7 @@ import { Controller, Get, Query } from '@nestjs/common';
 import {
   AUDIT_READ_ROLES,
   AUDIT_SYSTEM_ACTOR,
+  MUNICIPAL_TIME_ZONE,
   auditActorFilterSchema,
   type AuditActorFilter,
 } from '@mechanization/shared-schemas';
@@ -9,9 +10,6 @@ import { ZodValidationPipe } from '../../application/common/pipes/zod-validation
 import { AuditService } from '../../application/features/audit/audit.service';
 import { Roles } from '../decorators/roles.decorator';
 import { parseDate, queryLimit, queryOffset } from './query-params';
-
-/** Where a municipality of this system is. Used when the browser says nothing. */
-const DEFAULT_TIME_ZONE = 'Asia/Beirut';
 
 /**
  * Only a zone Postgres will accept.
@@ -22,12 +20,12 @@ const DEFAULT_TIME_ZONE = 'Asia/Beirut';
  * zone names that goes stale.
  */
 function safeTimeZone(value: string | undefined): string {
-  if (!value) return DEFAULT_TIME_ZONE;
+  if (!value) return MUNICIPAL_TIME_ZONE;
   try {
     new Intl.DateTimeFormat('en-GB', { timeZone: value });
     return value;
   } catch {
-    return DEFAULT_TIME_ZONE;
+    return MUNICIPAL_TIME_ZONE;
   }
 }
 

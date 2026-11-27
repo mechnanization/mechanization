@@ -77,7 +77,7 @@ describeIfDb('old-debt bills on every read of a bill', () => {
       invalidatePrefix: jest.fn().mockResolvedValue(undefined),
     } as never;
     fees = new FeesService(context, { emit: jest.fn() } as unknown as EventEmitter2, {} as never, cache, payments, audit);
-    reporting = new ReportingService(context, new EventEmitter2(), cache, { get: () => undefined } as never);
+    reporting = new ReportingService(context, new EventEmitter2(), cache, { getOrThrow: () => 60 } as never);
     settlements = new PaymentSettlementService(context, new EventEmitter2(), payments, audit, ledger);
     const importer = new ArrearsService(context, audit);
     const batches = new ArrearsBatchService(context, audit, importer, new EventEmitter2());

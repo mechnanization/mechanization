@@ -1,6 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { OtpCleanupJob } from './otp-cleanup.job';
 import { TenantContextService } from '../../infrastructure/context/tenant-context.service';
+import { TenantRunner } from '../../infrastructure/context/tenant-runner';
 import type { TenantRepository } from '../../domain/interfaces/tenant-repository.interface';
 import type { TenantPrismaFactory } from '../../infrastructure/prisma/tenant-prisma.factory';
 
@@ -49,7 +50,7 @@ describe('OtpCleanupJob', () => {
       },
     } as unknown as TenantPrismaFactory;
 
-    return { job: new OtpCleanupJob(tenants, context, clients), slugsSeen };
+    return { job: new OtpCleanupJob(tenants, new TenantRunner(context, clients)), slugsSeen };
   }
 
   let errors: string[];

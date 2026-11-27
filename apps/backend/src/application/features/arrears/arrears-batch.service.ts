@@ -28,7 +28,7 @@ import { TenantContextService } from '../../../infrastructure/context/tenant-con
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
 import { isUniqueViolation } from '../../../infrastructure/prisma/prisma-errors';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
-import { APP_CONFIG } from '../../../presentation/config/app.config';
+import { APP_CONFIG } from '../../common/app.config';
 import { AuditService } from '../audit/audit.service';
 import { assertNotMergedAway } from '../citizens/merged-away';
 import { raiseArrearsBills, type ArrearsBillLine } from '../fees/arrears-bill';

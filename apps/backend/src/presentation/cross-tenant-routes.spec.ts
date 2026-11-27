@@ -9,7 +9,7 @@ import { StaffPresenceService } from '../application/features/identity/staff-pre
 import { TenantService } from '../application/features/tenant/tenant.service';
 import { RegistryPrismaService } from '../infrastructure/prisma/registry-prisma.service';
 import { TenantPrismaFactory } from '../infrastructure/prisma/tenant-prisma.factory';
-import { APP_CONFIG } from './config/app.config';
+import { APP_CONFIG } from '../application/common/app.config';
 import { DiscoveredRoute, discoverRoutes } from './controllers/route-discovery';
 import { METRICS_ROUTE } from './metrics.module';
 

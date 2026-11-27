@@ -100,6 +100,7 @@ import { assertLiveCollector } from './live-collector';
 import { AuditService, type AuditEntryInput } from '../audit/audit.service';
 import { billWriteOffRefusal, writeOffDecisionInFuture, writeOffView } from './bill-write-off';
 import { ARREARS_LINE_SELECT, arrearsView } from './bill-arrears';
+import { APP_CONFIG } from '../../common/app.config';
 
 /**
  * Why a bill cannot be cancelled now, or null when it can — «إلغاء الفاتورة»'s
@@ -982,15 +983,8 @@ export function flatCategoryCharge(
   };
 }
 
-/**
- * Five minutes. Contact details and office hours change a few times a year,
- * and a write drops the entry outright, so the TTL only bounds how long a
- * change made *outside* this service could go unseen.
- */
 /** A pasted invoice id, in any casing. Used to route a search to `id` equality. */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-const SETTINGS_CACHE_TTL_SECONDS = 300;
 
 /**
  * The settings the treasury reads, whose every change the audit row carries with
@@ -1360,7 +1354,7 @@ export class FeesService {
     if (cached) return cached;
 
     const settings = await this.readSettings(includeLogo);
-    await this.cache.set(key, settings, SETTINGS_CACHE_TTL_SECONDS);
+    await this.cache.set(key, settings, APP_CONFIG.cache.feeSettingsTtlSeconds);
     return settings;
   }
 
@@ -6000,7 +5994,7 @@ export class FeesService {
       paidTotal: Number(collected._sum.paidAmount ?? 0),
       paidCount: settledCount,
     };
-    await this.cache.set(key, result, 30);
+    await this.cache.set(key, result, APP_CONFIG.cache.feeSummaryTtlSeconds);
     return result;
   }
 }

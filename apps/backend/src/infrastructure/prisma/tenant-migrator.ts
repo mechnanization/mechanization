@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Client } from 'pg';
+import { isTenantSchemaName } from '../../domain/value-objects/tenant-schema-name';
 
 const MIGRATIONS_DIR = join(__dirname, 'tenant', 'migrations');
 
@@ -28,7 +29,7 @@ export function loadTenantMigrations(): TenantMigration[] {
 }
 
 function assertSafeSchemaName(schemaName: string): void {
-  if (!/^tenant_[a-z0-9_]{1,50}$/.test(schemaName)) {
+  if (!isTenantSchemaName(schemaName)) {
     throw new Error(`Refusing to run DDL against unsafe schema name '${schemaName}'`);
   }
 }

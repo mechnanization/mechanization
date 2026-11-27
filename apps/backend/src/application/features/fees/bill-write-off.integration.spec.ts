@@ -110,7 +110,7 @@ describeIfDb('«شطب»: writing off what is left on a bill', () => {
     } as never;
     fees = new FeesService(context, { emit: jest.fn() } as unknown as EventEmitter2, {} as never, cache, payments, auditService);
     settlements = new PaymentSettlementService(context, new EventEmitter2(), payments, auditService, ledger);
-    reporting = new ReportingService(context, new EventEmitter2(), cache, { get: () => undefined } as never);
+    reporting = new ReportingService(context, new EventEmitter2(), cache, { getOrThrow: () => 60 } as never);
     parcelDues = new ParcelDuesService(context);
     requests = new CitizenRequestsService(
       context,

@@ -21,29 +21,12 @@
  *   node scripts/db/seed-fee-testing-citizens.mjs [--clean] [--tenant=<slug>]
  *   pnpm db:seed:fee-testing
  */
-import { createRequire } from 'node:module';
-import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { ROOT, resolveTarget, parseConnection } from './targets.mjs';
+import { resolveTarget, parseConnection } from './targets.mjs';
 import { deleteCitizensAndBuildings } from './delete-local-citizens-and-buildings.mjs';
-
-const require = createRequire(join(ROOT, 'apps', 'backend', 'package.json'));
-const { Client } = require('pg');
-
-const C = {
-  red: (s) => `\x1b[91m${s}\x1b[0m`,
-  green: (s) => `\x1b[92m${s}\x1b[0m`,
-  yellow: (s) => `\x1b[93m${s}\x1b[0m`,
-  cyan: (s) => `\x1b[96m${s}\x1b[0m`,
-  bold: (s) => `\x1b[1m${s}\x1b[0m`,
-  dim: (s) => `\x1b[2m${s}\x1b[0m`,
-};
-
-function fail(msg) {
-  console.error(C.red(`\n✗ ${msg}`));
-  process.exit(1);
-}
+import { isTenantSlug, tenantSchemaNameFor } from './tenant-schema-name.mjs';
+import { Client, C, fail } from './lib.mjs';
 
 export async function seedFeeTestingCitizens({ tenantSlug = 'albazourieh', cleanFirst = true } = {}) {
   console.log(C.bold(`--- Seeding 20 Fee-Testing Citizens & Properties in ${tenantSlug} ---`));
@@ -72,7 +55,9 @@ export async function seedFeeTestingCitizens({ tenantSlug = 'albazourieh', clean
   await client.connect();
 
   try {
-    const s = `tenant_${tenantSlug.replace(/-/g, '_')}`;
+    // Interpolated into the SQL below, so held to the slug rule first (DRY-10).
+    if (!isTenantSlug(tenantSlug)) fail(`'${tenantSlug}' is not a municipality slug.`);
+    const s = tenantSchemaNameFor(tenantSlug);
 
     // Verify tenant schema exists
     const schemaCheck = await client.query('SELECT 1 FROM pg_namespace WHERE nspname = $1', [s]);

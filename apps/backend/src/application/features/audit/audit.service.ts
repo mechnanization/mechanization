@@ -564,7 +564,7 @@ export class AuditService {
       every census write an officer made read as «النظام».
     */
     const result = { items: await toAuditViews(this.tenantContext.prisma, raw.items), total: raw.total };
-    const ttl = this.config.get<number>('AUDIT_CACHE_TTL_SECONDS') ?? 20;
+    const ttl = this.config.getOrThrow<number>('AUDIT_CACHE_TTL_SECONDS');
     await this.cache.set(key, result, ttl);
     return result;
   }
@@ -676,7 +676,7 @@ export class AuditService {
       total: raw.total,
     };
 
-    const ttl = this.config.get<number>('AUDIT_CACHE_TTL_SECONDS') ?? 20;
+    const ttl = this.config.getOrThrow<number>('AUDIT_CACHE_TTL_SECONDS');
     await this.cache.set(key, result, ttl);
     return result;
   }

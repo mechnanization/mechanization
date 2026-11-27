@@ -11,7 +11,7 @@ import {
 } from '../../../domain/interfaces/document-repository.interface';
 import { ImageStorageService } from '../../../domain/interfaces/image-storage-service.interface';
 import { ValidationError } from '../../common/exceptions';
-import { APP_CONFIG } from '../../../presentation/config/app.config';
+import { APP_CONFIG } from '../../common/app.config';
 
 export interface IncomingFile {
   fieldName: string;

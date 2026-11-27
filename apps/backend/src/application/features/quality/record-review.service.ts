@@ -118,7 +118,7 @@ export class RecordReviewService {
 
   /** Shares `QUALITY_CACHE_TTL_SECONDS`; zero or less turns caching off. */
   private ttl(): number {
-    return this.config.get<number>('QUALITY_CACHE_TTL_SECONDS') ?? 180;
+    return this.config.getOrThrow<number>('QUALITY_CACHE_TTL_SECONDS');
   }
 
   /**

@@ -28,6 +28,15 @@ const logger = new Logger('TenantTransaction');
  *
  * Joins an enclosing transaction rather than opening a second one.
  */
+/**
+ * Prisma's interactive-transaction bounds when the caller names none: `maxWait`
+ * to be handed a connection, `timeout` to finish. Prisma's own 2 s / 5 s is too
+ * short for a town-wide write. Here, not in `APP_CONFIG`, because infrastructure
+ * does not import the application layer; the writes that need other bounds name
+ * theirs in `APP_CONFIG.transactions`.
+ */
+export const TENANT_TRANSACTION_DEFAULTS = { maxWait: 15_000, timeout: 60_000 } as const;
+
 export async function runInTenantTransaction<T>(
   context: TenantContextService,
   work: () => Promise<T>,
@@ -40,7 +49,10 @@ export async function runInTenantTransaction<T>(
   const result = await scope.prisma.$transaction(
     (tx) =>
       context.run({ ...scope, prisma: tx as never, transaction: { afterCommit } }, work),
-    { maxWait: options.maxWait ?? 15_000, timeout: options.timeout ?? 60_000 },
+    {
+      maxWait: options.maxWait ?? TENANT_TRANSACTION_DEFAULTS.maxWait,
+      timeout: options.timeout ?? TENANT_TRANSACTION_DEFAULTS.timeout,
+    },
   );
 
   /*
