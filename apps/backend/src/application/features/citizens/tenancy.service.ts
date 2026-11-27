@@ -27,6 +27,7 @@ import {
   type RevertReport,
 } from './landlord-link.service';
 import { StaffActor } from '../../common/actor';
+import { LandlordUnlinkService } from './landlord-unlink.service';
 
 /**
  * «إنهاء الإيجار» — one operation, whichever door it is reached through.
@@ -52,7 +53,7 @@ import { StaffActor } from '../../common/actor';
  *  3. The owner link on the card follows the reason: a tenant who **left** leaves
  *     the owner exactly as they were — what the link recorded becomes the owner's
  *     own — and a tenancy **recorded in error** reverts what it supported. See
- *     `LandlordLinkService.detachUnits`.
+ *     `LandlordUnlinkService.detachUnits`.
  *  4. The flat's status is what the officer says it is now, not «مؤجرة» by
  *     default — see `AFTER_TENANCY_STATUS` — whenever nobody else is still
  *     recorded living there.
@@ -75,6 +76,7 @@ export class TenancyService {
     private readonly ownership: OwnershipService,
     private readonly auditTrail: AuditService,
     private readonly occupancyWrites: OccupancyWritesService,
+    private readonly unlinks: LandlordUnlinkService,
   ) {
     // A tenant can buy the flat they rent; the sale ends that tenancy through here.
     ownership.bindTenancy(this);
@@ -686,7 +688,7 @@ export class TenancyService {
             : card.units
                 .filter((row) => card.endingRowIds.includes(row.id) && row.unitId)
                 .map((row) => row.unitId!);
-          const detached = await this.links.detachUnits(this.db, {
+          const detached = await this.unlinks.detachUnits(this.db, {
             entryId: card.id,
             ownerId: card.landlordCitizenId,
             footprint: card.landlordLinkFootprint,

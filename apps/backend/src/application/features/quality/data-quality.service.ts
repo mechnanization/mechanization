@@ -25,7 +25,6 @@ import { TenantContextService } from '../../../infrastructure/context/tenant-con
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { ConflictError, NotFoundError } from '../../common/exceptions';
 import { metresBetween } from '../buildings/buildings.service';
-import { LandlordLinkService } from '../citizens/landlord-link.service';
 import { unitsUnderReview } from '../buildings/unit-status';
 import { currentReadingForUnit, uninhabitableSql } from '../buildings/habitability';
 import { feeExemptSql } from '../buildings/fee-exemption';
@@ -43,6 +42,7 @@ import {
   isLikelySamePerson,
   matchedOn,
 } from '../citizens/possible-duplicates';
+import { LandlordLinkQueueService } from '../citizens/landlord-link-queue.service';
 
 /**
  * Two buildings on one parcel closer than this are shown as a possible single
@@ -107,7 +107,7 @@ export class DataQualityService {
 
   constructor(
     private readonly tenantContext: TenantContextService,
-    private readonly landlordLinks: LandlordLinkService,
+    private readonly linkQueue: LandlordLinkQueueService,
     private readonly events: EventEmitter2,
     private readonly cache: RedisCacheService,
     private readonly config: ConfigService,
@@ -1325,7 +1325,7 @@ export class DataQualityService {
 
   /** The owner-link queue's size, as one finding pointing at it. */
   private async unlinkedLandlords(): Promise<RawFinding[]> {
-    const { total } = await this.landlordLinks.proposals({ limit: 1, offset: 0 });
+    const { total } = await this.linkQueue.proposals({ limit: 1, offset: 0 });
     if (total === 0) return [];
     return [
       {

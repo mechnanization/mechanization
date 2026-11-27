@@ -1,5 +1,5 @@
 import { ValidationError } from '../../application/common/exceptions';
-import type { LandlordLinkService } from '../../application/features/citizens/landlord-link.service';
+import type { LandlordLinkQueueService } from '../../application/features/citizens/landlord-link-queue.service';
 import { CitizenController } from './citizen.controller';
 
 /**
@@ -12,12 +12,16 @@ import { CitizenController } from './citizen.controller';
  */
 describe('CitizenController — the owner-link queue page', () => {
   const landlordLinks = { proposals: jest.fn().mockResolvedValue({ items: [], total: 0 }) };
+  // The queue reads are `LandlordLinkQueueService`'s since audit GOD-09.
   const controller = new CitizenController(
     {} as never,
     {} as never,
-    landlordLinks as unknown as LandlordLinkService,
     {} as never,
     {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    landlordLinks as unknown as LandlordLinkQueueService,
     {} as never,
     {} as never,
   );

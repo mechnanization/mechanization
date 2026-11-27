@@ -47,6 +47,9 @@ import { Roles } from '../decorators/roles.decorator';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
 import { UuidPipe } from '../pipes/uuid.pipe';
 import { queryLimit, queryOffset } from './query-params';
+import { LandlordLinkQueueService } from '../../application/features/citizens/landlord-link-queue.service';
+import { LandlordUnlinkService } from '../../application/features/citizens/landlord-unlink.service';
+import { CitizenDuplicatesService } from '../../application/features/citizens/citizen-duplicates.service';
 
 /**
  * Shows only the tail of an identifier — `•••567`.
@@ -93,6 +96,9 @@ export class CitizenController {
     private readonly ownership: OwnershipService,
     private readonly audit: AuditService,
     private readonly merges: CitizenMergeService,
+    private readonly linkQueue: LandlordLinkQueueService,
+    private readonly unlinks: LandlordUnlinkService,
+    private readonly duplicates: CitizenDuplicatesService,
   ) {}
 
   /**
@@ -330,7 +336,7 @@ export class CitizenController {
       resolve to somebody, and the page is hydrated from those. The whole queue
       in one response was the read this screen used to make on every visit.
     */
-    return this.landlordLinkService.proposals({
+    return this.linkQueue.proposals({
       limit: queryLimit(limit, 20, 100),
       offset: queryOffset(offset),
     });
@@ -346,7 +352,7 @@ export class CitizenController {
   @Roles(...LANDLORD_SUMMARY_READ_ROLES)
   @Get('landlord-links/summary')
   landlordLinkSummary() {
-    return this.landlordLinkService.unbilledOwnedUnits();
+    return this.linkQueue.unbilledOwnedUnits();
   }
 
   /**
@@ -362,7 +368,7 @@ export class CitizenController {
   @Get('landlord-links/candidate')
   async landlordCandidate(@Query('phone') phone?: string) {
     if (!phone?.trim()) return { candidate: null, candidates: [] };
-    const candidates = await this.landlordLinkService.candidatesFor(phone);
+    const candidates = await this.linkQueue.candidatesFor(phone);
     return { candidate: candidates.length === 1 ? candidates[0] : null, candidates };
   }
 
@@ -379,7 +385,7 @@ export class CitizenController {
   async landlordLink(@Param('propertyEntryId', new UuidPipe()) propertyEntryId: string) {
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     const proposal = uuid.test(propertyEntryId)
-      ? await this.landlordLinkService.proposal(propertyEntryId)
+      ? await this.linkQueue.proposal(propertyEntryId)
       : null;
     if (!proposal) throw new NotFoundError('LandlordLink', propertyEntryId);
     return proposal;
@@ -469,7 +475,7 @@ export class CitizenController {
   @Roles(...LANDLORD_LINK_ANSWER_ROLES)
   @Get('landlord-links/:propertyEntryId/unlink-preview')
   landlordUnlinkPreview(@Param('propertyEntryId', new UuidPipe()) propertyEntryId: string) {
-    return this.landlordLinkService.unlinkPreview(propertyEntryId);
+    return this.unlinks.unlinkPreview(propertyEntryId);
   }
 
   /**
@@ -542,7 +548,7 @@ export class CitizenController {
    * Undoes a confirmation: the claim goes back to the queue, and what the link
    * wrote into the owner's records — occupancies, unit rows, a card it created
    * — is reverted, exactly that and only while unedited. See
-   * `LandlordLinkService.unlink` for what is kept and why.
+   * `LandlordUnlinkService.unlink` for what is kept and why.
    */
   @Roles(...LANDLORD_LINK_ANSWER_ROLES)
   @Delete('landlord-links/:propertyEntryId')
@@ -550,7 +556,7 @@ export class CitizenController {
     @Param('propertyEntryId', new UuidPipe()) propertyEntryId: string,
     @CurrentActor() actor: StaffActor,
   ) {
-    return this.landlordLinkService.unlink({
+    return this.unlinks.unlink({
       propertyEntryId,
       actor,
     });
@@ -638,12 +644,12 @@ export class CitizenController {
     payload: AdminCitizenSubmission,
     @CurrentUser() user: SessionClaims,
   ) {
-    return this.citizens.reviewDuplicates(payload, { id: user.sub });
+    return this.duplicates.reviewDuplicates(payload, { id: user.sub });
   }
 
   /**
    * «قد يكون مسجَّلاً مسبقاً» while the form is typed — the save's own rule on
-   * what has been typed so far (`CitizensService.possibleDuplicates`). Same
+   * what has been typed so far (`CitizenDuplicatesService.possibleDuplicates`). Same
    * roles as `create` and `update`, the two forms that show it.
    */
   @Roles(...REGISTER_WRITE_ROLES)
@@ -651,7 +657,7 @@ export class CitizenController {
   async possibleDuplicates(
     @Body(new ZodValidationPipe(possibleDuplicatesQuerySchema)) query: PossibleDuplicatesQuery,
   ) {
-    return this.citizens.possibleDuplicates(query);
+    return this.duplicates.possibleDuplicates(query);
   }
 
   /**

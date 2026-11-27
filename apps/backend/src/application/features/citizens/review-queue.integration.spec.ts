@@ -7,6 +7,7 @@ import { migrateTenantSchema } from '../../../infrastructure/prisma/tenant-migra
 import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { CitizensService } from './citizens.service';
+import { CitizenDuplicatesService } from './citizen-duplicates.service';
 
 /**
  * «يتطلب مراجعة» against a real Postgres: the queue holds exactly the citizens
@@ -94,7 +95,7 @@ describeIfDb('CitizensService.reviewQueue', () => {
       {} as never,
       {} as never,
       {} as never,
-      new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
+      new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never), {} as never, {} as never, new CitizenDuplicatesService(context),
     );
 
     older = await citizen('سمير');

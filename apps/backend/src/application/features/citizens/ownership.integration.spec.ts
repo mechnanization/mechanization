@@ -21,6 +21,7 @@ import type { FeeNoticesService } from '../fees/fee-notices.service';
 import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
 import { UnitsService } from '../buildings/units.service';
 import { UnitVisitsService } from '../buildings/unit-visits.service';
+import { LandlordUnlinkService } from './landlord-unlink.service';
 
 /**
  * Ending an ownership, against a real Postgres.
@@ -50,6 +51,7 @@ describeIfDb('OwnershipService', () => {
   let occupancyWrites: OccupancyWritesService;
   let census: CensusSyncService;
   let links: LandlordLinkService;
+  let unlinks: LandlordUnlinkService;
   let ownership: OwnershipService;
   /** The same service with an audit trail that refuses every write. */
   let failingOwnership: OwnershipService;
@@ -86,12 +88,13 @@ describeIfDb('OwnershipService', () => {
       events,
       new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
     );
+    unlinks = new LandlordUnlinkService(context, links);
     const audit = new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never);
-    ownership = new OwnershipService(context, unitVisits, cases, links, events, audit, occupancyWrites);
+    ownership = new OwnershipService(context, unitVisits, cases, links, events, audit, occupancyWrites, unlinks);
     failingOwnership = new OwnershipService(context, unitVisits, cases, links, events, {
       recordChangeInTransaction: () => Promise.reject(new Error('audit insert refused')),
-    } as never, occupancyWrites);
-    tenancy = new TenancyService(context, unitVisits, cases, links, events, ownership, audit, occupancyWrites);
+    } as never, occupancyWrites, unlinks);
+    tenancy = new TenancyService(context, unitVisits, cases, links, events, ownership, audit, occupancyWrites, unlinks);
     ({ feeNotices } = feeServices(
       context,
       events,

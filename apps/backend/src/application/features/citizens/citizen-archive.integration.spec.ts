@@ -9,6 +9,7 @@ import { TenantContextService } from '../../../infrastructure/context/tenant-con
 import { PrismaAuditRepository } from '../../../infrastructure/repositories/audit.repository';
 import { AuditService } from '../audit/audit.service';
 import { CitizensService } from './citizens.service';
+import { CitizenDuplicatesService } from './citizen-duplicates.service';
 
 /**
  * «أرشفة الملف» against a real Postgres. A citizen is never deleted (decision,
@@ -88,7 +89,7 @@ describeIfDb('CitizensService.setActive — «أرشفة الملف»', () => {
       {} as never,
       {} as never,
       new EventEmitter2(),
-      new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
+      new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never), {} as never, {} as never, new CitizenDuplicatesService(context),
     );
     officerId = await person('موظف', 'STAFF');
   }, SETUP_TIMEOUT_MS);

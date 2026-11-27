@@ -25,7 +25,10 @@ import { UnitTypesService } from './features/buildings/unit-types.service';
 import { UnitCorrectionService } from './features/corrections/unit-correction.service';
 import { CasesService } from './features/cases/cases.service';
 import { CitizensService } from './features/citizens/citizens.service';
+import { CitizenDuplicatesService } from './features/citizens/citizen-duplicates.service';
 import { LandlordLinkService } from './features/citizens/landlord-link.service';
+import { LandlordUnlinkService } from './features/citizens/landlord-unlink.service';
+import { LandlordLinkQueueService } from './features/citizens/landlord-link-queue.service';
 import { TenancyService } from './features/citizens/tenancy.service';
 import { OwnershipService } from './features/citizens/ownership.service';
 import { CitizenMergeService } from './features/citizens/citizen-merge.service';
@@ -100,7 +103,10 @@ import { RecordReviewService } from './features/quality/record-review.service';
     ReportingService,
     CadastreImportService,
     CitizensService,
+    CitizenDuplicatesService,
     LandlordLinkService,
+    LandlordUnlinkService,
+    LandlordLinkQueueService,
     TenancyService,
 
     OwnershipService,
@@ -166,7 +172,10 @@ import { RecordReviewService } from './features/quality/record-review.service';
     ReportingService,
     CadastreImportService,
     CitizensService,
+    CitizenDuplicatesService,
     LandlordLinkService,
+    LandlordUnlinkService,
+    LandlordLinkQueueService,
     TenancyService,
 
     OwnershipService,

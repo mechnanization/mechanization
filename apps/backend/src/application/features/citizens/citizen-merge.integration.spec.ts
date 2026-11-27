@@ -19,6 +19,7 @@ import { CitizensService } from './citizens.service';
 import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
 import { UnitsService } from '../buildings/units.service';
 import { UnitVisitsService } from '../buildings/unit-visits.service';
+import { CitizenDuplicatesService } from './citizen-duplicates.service';
 
 /**
  * «دمج ملفين» against a real Postgres — every table a person reaches.
@@ -684,7 +685,7 @@ describeIfDb('CitizenMergeService', () => {
       census,
       {} as never,
       new EventEmitter2(),
-      new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
+      new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never), {} as never, {} as never, new CitizenDuplicatesService(context),
     );
     const refusal = (work: () => Promise<unknown>) => within(work).then(() => null, (caught: unknown) => caught);
 
@@ -739,7 +740,7 @@ describeIfDb('CitizenMergeService', () => {
         census,
         {} as never,
         new EventEmitter2(),
-        new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
+        new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never), {} as never, {} as never, new CitizenDuplicatesService(context),
       );
 
     it('refuses an officer outright — from the form and from the offline queue alike — and writes nothing', async () => {

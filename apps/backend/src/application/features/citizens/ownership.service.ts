@@ -16,6 +16,7 @@ import { withoutCardFlags, withoutRowFlags } from './card-flags';
 import { LandlordLinkService, type PendingEvent, type SaleRelease } from './landlord-link.service';
 import type { TenancyService } from './tenancy.service';
 import { StaffActor } from '../../common/actor';
+import { LandlordUnlinkService } from './landlord-unlink.service';
 
 /**
  * «إنهاء الملكية» — an owner no longer holds a property, or never did.
@@ -37,7 +38,7 @@ import { StaffActor } from '../../common/actor';
  *     card itself ends once nothing on it is current. An ended card is history:
  *     it bills nothing, and it stays on the seller's file.
  *  3. On a sale, tenants' links to the seller for those flats are released
- *     (`LandlordLinkService.releaseForSale`), so no later save puts the seller
+ *     (`LandlordUnlinkService.releaseForSale`), so no later save puts the seller
  *     back; a case asks for the tenant to be linked to the new owner.
  *  4. The buyer, when already registered, is recorded owner of the same flats
  *     from the day of the sale. When not, a case asks for them to be recorded.
@@ -68,6 +69,7 @@ export class OwnershipService {
     private readonly events: EventEmitter2,
     private readonly auditTrail: AuditService,
     private readonly occupancyWrites: OccupancyWritesService,
+    private readonly unlinks: LandlordUnlinkService,
   ) {}
 
   /**
@@ -674,7 +676,7 @@ export class OwnershipService {
 
       // 3 — a sale releases the tenants' links to the seller for these flats.
       if (sale && ending.length > 0) {
-        const released = await this.links.releaseForSale({
+        const released = await this.unlinks.releaseForSale({
           ownerId: target.citizenId,
           unitIds: ending.map((unit) => unit.unitId),
           buildingIds: [...new Set(ending.map((unit) => unit.buildingId))],

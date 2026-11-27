@@ -21,6 +21,9 @@ import { StaffActor } from '../../common/actor';
 import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
 import { UnitsService } from '../buildings/units.service';
 import { UnitVisitsService } from '../buildings/unit-visits.service';
+import { CitizenDuplicatesService } from './citizen-duplicates.service';
+import { LandlordUnlinkService } from './landlord-unlink.service';
+import { LandlordLinkQueueService } from './landlord-link-queue.service';
 
 /**
  * A tenant and the owner they rent from, against a real Postgres.
@@ -60,6 +63,8 @@ describeIfDb('A tenant and the owner they rent from', () => {
   let occupancyWrites: OccupancyWritesService;
   let census: CensusSyncService;
   let links: LandlordLinkService;
+  let unlinks: LandlordUnlinkService;
+  let linkQueue: LandlordLinkQueueService;
   let tenancy: TenancyService;
   let citizens: CitizensService;
   let officerId: string;
@@ -102,8 +107,10 @@ describeIfDb('A tenant and the owner they rent from', () => {
       events,
       new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
     );
-    const ownership = new OwnershipService(context, unitVisits, cases, links, events, audit, occupancyWrites);
-    tenancy = new TenancyService(context, unitVisits, cases, links, events, ownership, audit, occupancyWrites);
+    unlinks = new LandlordUnlinkService(context, links);
+    linkQueue = new LandlordLinkQueueService(context, links);
+    const ownership = new OwnershipService(context, unitVisits, cases, links, events, audit, occupancyWrites, unlinks);
+    tenancy = new TenancyService(context, unitVisits, cases, links, events, ownership, audit, occupancyWrites, unlinks);
     citizens = new CitizensService(
       context,
       {} as never,
@@ -112,7 +119,7 @@ describeIfDb('A tenant and the owner they rent from', () => {
       census,
       links,
       events,
-      new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
+      new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never), linkQueue, unlinks, new CitizenDuplicatesService(context),
     );
 
     officerId = randomUUID();
@@ -370,7 +377,7 @@ describeIfDb('A tenant and the owner they rent from', () => {
 
     const [card] = await tenancyCards(tenant.id);
     expect(card).toMatchObject({ landlordName: 'سعيد حرب', landlordPhone: phone, landlordCitizenId: null });
-    const proposals = await within(() => links.claimsNaming(owner.id));
+    const proposals = await within(() => linkQueue.claimsNaming(owner.id));
     expect(proposals.map((proposal) => proposal.propertyEntryId)).toEqual([card!.id]);
   });
 

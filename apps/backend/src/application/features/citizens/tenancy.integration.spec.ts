@@ -24,6 +24,9 @@ import type { FeeNoticesService } from '../fees/fee-notices.service';
 import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
 import { UnitsService } from '../buildings/units.service';
 import { UnitVisitsService } from '../buildings/unit-visits.service';
+import { CitizenDuplicatesService } from './citizen-duplicates.service';
+import { LandlordUnlinkService } from './landlord-unlink.service';
+import { LandlordLinkQueueService } from './landlord-link-queue.service';
 
 /**
  * Ending a tenancy, against a real Postgres.
@@ -64,6 +67,8 @@ describeIfDb('TenancyService', () => {
   let occupancyWrites: OccupancyWritesService;
   let census: CensusSyncService;
   let links: LandlordLinkService;
+  let unlinks: LandlordUnlinkService;
+  let linkQueue: LandlordLinkQueueService;
   let tenancy: TenancyService;
   let citizens: CitizensService;
   let feeNotices: FeeNoticesService;
@@ -107,8 +112,10 @@ describeIfDb('TenancyService', () => {
       events,
       new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
     );
-    const ownership = new OwnershipService(context, unitVisits, cases, links, events, audit, occupancyWrites);
-    tenancy = new TenancyService(context, unitVisits, cases, links, events, ownership, audit, occupancyWrites);
+    unlinks = new LandlordUnlinkService(context, links);
+    linkQueue = new LandlordLinkQueueService(context, links);
+    const ownership = new OwnershipService(context, unitVisits, cases, links, events, audit, occupancyWrites, unlinks);
+    tenancy = new TenancyService(context, unitVisits, cases, links, events, ownership, audit, occupancyWrites, unlinks);
     citizens = new CitizensService(
       context,
       {} as never,
@@ -117,7 +124,7 @@ describeIfDb('TenancyService', () => {
       census,
       links,
       events,
-      new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
+      new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never), linkQueue, unlinks, new CitizenDuplicatesService(context),
     );
     ({ feeNotices } = feeServices(
       context,
@@ -399,7 +406,7 @@ describeIfDb('TenancyService', () => {
     ).toBe(0);
     // Nor is it offered as an owner claim, nor loaded into the edit form.
     expect(
-      (await within(() => links.proposals({ limit: 100, offset: 0 }))).items.map((item) => item.propertyEntryId),
+      (await within(() => linkQueue.proposals({ limit: 100, offset: 0 }))).items.map((item) => item.propertyEntryId),
     ).not.toContain(linked.entryId);
     const editable = await within(() => citizens.getEditable(linked.tenantId));
     expect(editable?.properties).toEqual([]);

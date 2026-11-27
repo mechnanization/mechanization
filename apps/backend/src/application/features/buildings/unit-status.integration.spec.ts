@@ -22,6 +22,7 @@ import { feeServices } from '../fees/fee-services.testing';
 import { OccupancyWritesService } from './occupancy-writes.service';
 import { UnitsService } from './units.service';
 import { UnitVisitsService } from './unit-visits.service';
+import { LandlordUnlinkService } from '../citizens/landlord-unlink.service';
 
 /**
  * «حالة الوحدة» kept in step with who is recorded in the flat — against a real
@@ -87,9 +88,10 @@ describeIfDb('the one rule for «حالة الوحدة»', () => {
       events,
       new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
     );
+    const unlinks = new LandlordUnlinkService(context, links);
     const audit = new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never);
-    const ownership = new OwnershipService(context, unitVisits, cases, links, events, audit, occupancyWrites);
-    tenancy = new TenancyService(context, unitVisits, cases, links, events, ownership, audit, occupancyWrites);
+    const ownership = new OwnershipService(context, unitVisits, cases, links, events, audit, occupancyWrites, unlinks);
+    tenancy = new TenancyService(context, unitVisits, cases, links, events, ownership, audit, occupancyWrites, unlinks);
     ({ fees } = feeServices(
       context,
       events,

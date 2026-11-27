@@ -22,6 +22,7 @@ import { StaffService } from './staff.service';
 import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
 import { UnitsService } from '../buildings/units.service';
 import { UnitVisitsService } from '../buildings/unit-visits.service';
+import { LandlordUnlinkService } from '../citizens/landlord-unlink.service';
 
 /**
  * Who is paid for a unit line, against a real Postgres (migrations 0096, 0097).
@@ -135,8 +136,9 @@ describeIfDb('Who is paid for a unit line', () => {
     unitVisits = new UnitVisitsService(context, cases, events, buildings);
     occupancyWrites = new OccupancyWritesService(context, cases, events, buildings, unitVisits);
     const links = new LandlordLinkService(context, occupancyWrites, events, audit);
-    const ownership = new OwnershipService(context, unitVisits, cases, links, events, audit, occupancyWrites);
-    tenancy = new TenancyService(context, unitVisits, cases, links, events, ownership, audit, occupancyWrites);
+    const unlinks = new LandlordUnlinkService(context, links);
+    const ownership = new OwnershipService(context, unitVisits, cases, links, events, audit, occupancyWrites, unlinks);
+    tenancy = new TenancyService(context, unitVisits, cases, links, events, ownership, audit, occupancyWrites, unlinks);
 
     const ledger = new TreasuryLedgerService(context);
     users = new PrismaUserRepository(context);

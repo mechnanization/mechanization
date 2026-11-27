@@ -19,6 +19,7 @@ import { feeServices } from '../fees/fee-services.testing';
 import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
 import { UnitsService } from '../buildings/units.service';
 import { UnitVisitsService } from '../buildings/unit-visits.service';
+import { LandlordLinkQueueService } from '../citizens/landlord-link-queue.service';
 
 /**
  * «مراجعة الجودة» against a real Postgres: migration 0049, the review states,
@@ -101,13 +102,14 @@ describeIfDb('Quality review', () => {
       events,
       new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
     );
+    const linkQueue = new LandlordLinkQueueService(context, links);
     reviews = new RecordReviewService(context, events, cache as never, { getOrThrow: () => 0 } as never, audit);
     failingReviews = new RecordReviewService(context, events, cache as never, { getOrThrow: () => 0 } as never, {
       recordChangeInTransaction: () => Promise.reject(new Error('audit insert refused')),
     } as never);
     // Billing's own reading of a file, asked of a «مالك مسؤول» (F13).
     const { fees } = feeServices(context, events, {} as never, cache as never, {} as never, {} as never);
-    quality = new DataQualityService(context, links, events, cache as never, { getOrThrow: () => 0 } as never, fees);
+    quality = new DataQualityService(context, linkQueue, events, cache as never, { getOrThrow: () => 0 } as never, fees);
     events.on('citizen.changed', (payload) => reviews.onCitizenChanged(payload));
 
     for (const [key, first, role] of [

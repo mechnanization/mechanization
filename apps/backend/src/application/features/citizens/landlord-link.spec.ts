@@ -1,5 +1,6 @@
 import { LandlordLinkService, landlordNameMatches, readFootprint } from './landlord-link.service';
 import { ConflictError, ValidationError } from '../../../domain/errors/domain-error';
+import { LandlordLinkQueueService } from './landlord-link-queue.service';
 
 /**
  * Identifying the owner a مستأجر named — and, much more importantly, refusing
@@ -167,8 +168,9 @@ function harness(options: HarnessOptions = {}) {
     { emit: jest.fn() } as never,
     { recordChangeInTransaction } as never,
   );
+  const linkQueue = new LandlordLinkQueueService(context as never, service);
 
-  return { service, db, transaction, recordOccupancy, recordChangeInTransaction };
+  return { service, linkQueue, db, transaction, recordOccupancy, recordChangeInTransaction };
 }
 
 async function refusal(promise: Promise<unknown>): Promise<Error & { details?: unknown }> {
@@ -506,9 +508,9 @@ describe('confirm — blocked until the property can reach the owner’s file', 
 
 describe('candidatesFor — the form’s lookup', () => {
   it('normalises what was typed before comparing it to what is stored', async () => {
-    const { service, db } = harness();
+    const { linkQueue, db } = harness();
 
-    await service.candidatesFor('03 123456');
+    await linkQueue.candidatesFor('03 123456');
 
     expect(db.user.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -536,33 +538,33 @@ describe('candidatesFor — the form’s lookup', () => {
       `phone` pretending to be the citizen's own; here the register has been
       told whose number it is.
     */
-    const { service, db } = harness();
+    const { linkQueue, db } = harness();
     db.user.findMany.mockResolvedValue([
       { id: 'elder', firstName: 'جدّ', middleName: 'علي', lastName: 'حرب', motherName: null, phone: null, whatsapp: null, contactPhone: LANDLORD_PHONE, referenceNumber: null, residence: 'RESIDENT', createdAt: new Date() },
     ]);
 
-    const found = await service.candidatesFor(LANDLORD_PHONE);
+    const found = await linkQueue.candidatesFor(LANDLORD_PHONE);
 
     expect(found.map((candidate) => candidate.id)).toEqual(['elder']);
   });
 
   it('returns everybody on a shared line, so the officer can say which one', async () => {
-    const { service, db } = harness();
+    const { linkQueue, db } = harness();
     db.user.findMany.mockResolvedValue([
       { id: 'a', firstName: 'أب', middleName: 'علي', lastName: 'حرب', motherName: null, phone: LANDLORD_PHONE, whatsapp: null, referenceNumber: null, residence: 'RESIDENT', createdAt: new Date() },
       { id: 'b', firstName: 'ابن', middleName: 'أب', lastName: 'حرب', motherName: null, phone: LANDLORD_PHONE, whatsapp: null, referenceNumber: null, residence: 'RESIDENT', createdAt: new Date() },
     ]);
 
-    const found = await service.candidatesFor(LANDLORD_PHONE);
+    const found = await linkQueue.candidatesFor(LANDLORD_PHONE);
 
     expect(found.map((candidate) => candidate.id)).toEqual(['a', 'b']);
     expect(found[1]).toMatchObject({ name: 'ابن أب حرب', fatherName: 'أب' });
   });
 
   it('says nothing about a number too malformed to be one', async () => {
-    const { service, db } = harness();
+    const { linkQueue, db } = harness();
 
-    expect(await service.candidatesFor('12')).toEqual([]);
+    expect(await linkQueue.candidatesFor('12')).toEqual([]);
     expect(db.user.findMany).not.toHaveBeenCalled();
   });
 });
