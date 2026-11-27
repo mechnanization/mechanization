@@ -1,8 +1,7 @@
 import { Injectable, NestMiddleware } from '@nestjs/common';
 import { NextFunction, Request, Response } from 'express';
 import { TenantService } from '../../application/features/tenant/tenant.service';
-import { TenantContextService } from '../../infrastructure/context/tenant-context.service';
-import { TenantPrismaFactory } from '../../infrastructure/prisma/tenant-prisma.factory';
+import { TenantRunner } from '../../infrastructure/context/tenant-runner';
 import { NotFoundError } from '../../application/common/exceptions';
 
 /**
@@ -18,8 +17,7 @@ import { NotFoundError } from '../../application/common/exceptions';
 export class TenantMiddleware implements NestMiddleware {
   constructor(
     private readonly tenants: TenantService,
-    private readonly tenantContext: TenantContextService,
-    private readonly clients: TenantPrismaFactory,
+    private readonly runner: TenantRunner,
   ) {}
 
   async use(req: Request, _res: Response, next: NextFunction): Promise<void> {
@@ -34,7 +32,6 @@ export class TenantMiddleware implements NestMiddleware {
       // provisioned — so a half-onboarded municipality fails clearly instead of
       // producing "relation does not exist" from deep inside Prisma.
       const tenant = await this.tenants.resolve(slug);
-      const prisma = this.clients.forSchema(tenant.schemaName);
 
       /**
        * `require-atomic-updates` reads this as a value assigned after an await
@@ -52,15 +49,7 @@ export class TenantMiddleware implements NestMiddleware {
         adminPathSegment: tenant.adminPathSegment,
       };
 
-      this.tenantContext.run(
-        {
-          tenantId: tenant.id,
-          tenantSlug: tenant.slug,
-          schemaName: tenant.schemaName,
-          prisma,
-        },
-        () => next(),
-      );
+      this.runner.runAsTenant(tenant, () => next());
     } catch (error) {
       next(error);
     }

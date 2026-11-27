@@ -2,8 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { TENANT_REPOSITORY } from '../../domain/interfaces/base-repository.interface';
 import { TenantRepository } from '../../domain/interfaces/tenant-repository.interface';
-import { TenantContextService } from '../../infrastructure/context/tenant-context.service';
-import { TenantPrismaFactory } from '../../infrastructure/prisma/tenant-prisma.factory';
+import { TenantRunner } from '../../infrastructure/context/tenant-runner';
 import { FeesService } from '../features/fees/fees.service';
 
 /**
@@ -26,8 +25,7 @@ export class RecurringBillingJob {
 
   constructor(
     @Inject(TENANT_REPOSITORY) private readonly tenants: TenantRepository,
-    private readonly tenantContext: TenantContextService,
-    private readonly clients: TenantPrismaFactory,
+    private readonly runner: TenantRunner,
     private readonly fees: FeesService,
   ) {}
 
@@ -75,18 +73,8 @@ export class RecurringBillingJob {
     let failures = 0;
 
     for (const tenant of tenants) {
-      const prisma = this.clients.forSchema(tenant.schemaName);
-
       try {
-        const result = await this.tenantContext.run(
-          {
-            tenantId: tenant.id,
-            tenantSlug: tenant.slug,
-            schemaName: tenant.schemaName,
-            prisma,
-          },
-          () => this.fees.runRecurringBilling(),
-        );
+        const result = await this.runner.runAsTenant(tenant, () => this.fees.runRecurringBilling());
         invoicesCreated += result.invoicesCreated;
         // Notices that threw inside a run that otherwise completed. Counted
         // here so a partial pass cannot be reported as a clean one.
