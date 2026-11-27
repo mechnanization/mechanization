@@ -3,7 +3,18 @@ import { citizenDisplayName, feeNoticeScopeSchema } from '@mechanization/shared-
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '../../../generated/tenant-client';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import type { CreateFeeNotice, FeeAssessment, FeeBasis, FeeBearer, FeeMatrixBracket, FeeNoticeDuplicate, FeeNoticePeriodSummary, FeeNoticePreviewInput, FeeNoticePreviewResult, FeeNoticeScope } from '@mechanization/shared-schemas';
+import type {
+  CreateFeeNotice,
+  FeeAssessment,
+  FeeBasis,
+  FeeBearer,
+  FeeMatrixBracket,
+  FeeNoticeDuplicate,
+  FeeNoticePeriodSummary,
+  FeeNoticePreviewInput,
+  FeeNoticePreviewResult,
+  FeeNoticeScope,
+} from '@mechanization/shared-schemas';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
@@ -11,12 +22,28 @@ import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-re
 import { allocateDocumentNumbers } from '../../common/document-number';
 import { cancelRequestOfCancelledBill } from '../citizen-requests/cancelled-bill';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
-import { splitSharedUnitBills, type OutsideUnit, type SharedUnitBill, type SharedUnitConflict, type TieredCitizen } from './tiered-area';
+import {
+  splitSharedUnitBills,
+  type OutsideUnit,
+  type SharedUnitBill,
+  type SharedUnitConflict,
+  type TieredCitizen,
+} from './tiered-area';
 import { sameMonth, sameTarget, unconfirmed } from './duplicate-notice';
 import { PaymentLedgerService } from './payment-ledger.service';
 import { AuditService } from '../audit/audit.service';
 import { billCancelRefusal } from './bill-lifecycle.service';
-import { CitizenAssessment, FeesService, UnassessableCitizen, categoriesOf, issueBillingDay, periodBeforeCutoff, periodKeyFor, periodYearOf, scopeOf } from './fees.service';
+import {
+  CitizenAssessment,
+  FeesService,
+  UnassessableCitizen,
+  categoriesOf,
+  issueBillingDay,
+  periodBeforeCutoff,
+  periodKeyFor,
+  periodYearOf,
+  scopeOf,
+} from './fees.service';
 
 /**
  * The scope a notice is issued with, as stored in `fee_notices.scope`: only

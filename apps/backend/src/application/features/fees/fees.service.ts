@@ -1,10 +1,51 @@
-import { billRemaining, citizenDisplayName, DEFAULT_EXCHANGE_TOLERANCE_PERCENT, DEFAULT_LARGE_EXCHANGE_THRESHOLD, defaultUnitStates, feeNoticeScopeSchema, feeUnitState, isFeeExemptOn, judgeExchange, NON_PERSON_RESIDENCE } from '@mechanization/shared-schemas';
+import {
+  billRemaining,
+  citizenDisplayName,
+  DEFAULT_EXCHANGE_TOLERANCE_PERCENT,
+  DEFAULT_LARGE_EXCHANGE_THRESHOLD,
+  defaultUnitStates,
+  feeNoticeScopeSchema,
+  feeUnitState,
+  isFeeExemptOn,
+  judgeExchange,
+  NON_PERSON_RESIDENCE,
+} from '@mechanization/shared-schemas';
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma, type $Enums } from '../../../generated/tenant-client';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import type { BillArrearsView, DeclarePayment, FeeAssessment, FeeBasis, FeeBearer, FeeMatrixBracket, FeeNoticeScope, FeeUnassessableReason, PaymentMethod, SharedUnitBillView, SystemSettingsInput } from '@mechanization/shared-schemas';
-import { BACKDATE_WINDOW_DAYS, canOverrideCashRules, daysBetween, isOccupiedByOthers, municipalToday, ownerShareOf, readLevelFactors, roofWeight, roundRate, TREASURY_ADMIN_ROLES, DEFAULT_LEVEL_FACTORS, type LevelFactors } from '@mechanization/shared-schemas';
-import { billableUnits, isUnsurveyed, type BillablePropertyEntry, type BillableUnit } from '../../../domain/entities/billable-unit';
+import type {
+  BillArrearsView,
+  DeclarePayment,
+  FeeAssessment,
+  FeeBasis,
+  FeeBearer,
+  FeeMatrixBracket,
+  FeeNoticeScope,
+  FeeUnassessableReason,
+  PaymentMethod,
+  SharedUnitBillView,
+  SystemSettingsInput,
+} from '@mechanization/shared-schemas';
+import {
+  BACKDATE_WINDOW_DAYS,
+  canOverrideCashRules,
+  daysBetween,
+  isOccupiedByOthers,
+  municipalToday,
+  ownerShareOf,
+  readLevelFactors,
+  roofWeight,
+  roundRate,
+  TREASURY_ADMIN_ROLES,
+  DEFAULT_LEVEL_FACTORS,
+  type LevelFactors,
+} from '@mechanization/shared-schemas';
+import {
+  billableUnits,
+  isUnsurveyed,
+  type BillablePropertyEntry,
+  type BillableUnit,
+} from '../../../domain/entities/billable-unit';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
@@ -18,7 +59,17 @@ import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '.
 import { exchangeRuleChangeAllowed } from '../treasury/transfers.plan';
 import { raiseOneOffBill } from './one-off-bill';
 import { billsOwedBy, responsibleDebtorId, SHARED_BILL_INCLUDE, sharedUnitView } from './shared-bill-view';
-import { priceTieredUnits, tieredAssessment, unassessableUnit, type OutsideUnit, type TieredCitizen, type TieredUnit, type Unassessable, type UnassessableDetail, type UnassessableUnit } from './tiered-area';
+import {
+  priceTieredUnits,
+  tieredAssessment,
+  unassessableUnit,
+  type OutsideUnit,
+  type TieredCitizen,
+  type TieredUnit,
+  type Unassessable,
+  type UnassessableDetail,
+  type UnassessableUnit,
+} from './tiered-area';
 import { likePattern, searchTokens } from '../../common/search-terms';
 import { citizenSearchText } from '../../common/citizen-search';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';

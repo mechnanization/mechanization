@@ -11,7 +11,14 @@ import { withConnectionRetry } from '../../../infrastructure/prisma/with-connect
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { billingDayOfPeriod } from '../buildings/fee-exemption';
 import { splitSharedUnitBills, type SharedUnitBill } from './tiered-area';
-import { CitizenAssessment, FeesService, dueDateInCurrentPeriod, periodBeforeCutoff, periodKeyFor, scopeOf } from './fees.service';
+import {
+  CitizenAssessment,
+  FeesService,
+  dueDateInCurrentPeriod,
+  periodBeforeCutoff,
+  periodKeyFor,
+  scopeOf,
+} from './fees.service';
 import { FeeNoticesService } from './fee-notices.service';
 
 /**
