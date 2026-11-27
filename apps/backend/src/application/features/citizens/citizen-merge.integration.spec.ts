@@ -17,6 +17,8 @@ import { PrismaAuditRepository } from '../../../infrastructure/repositories/audi
 import { CitizenMergeService } from './citizen-merge.service';
 import { CitizensService } from './citizens.service';
 import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
+import { UnitsService } from '../buildings/units.service';
+import { UnitVisitsService } from '../buildings/unit-visits.service';
 
 /**
  * «دمج ملفين» against a real Postgres — every table a person reaches.
@@ -43,6 +45,8 @@ describeIfDb('CitizenMergeService', () => {
   let db: TenantPrismaClient;
   let context: TenantContextService;
   let buildings: BuildingsService;
+  let unitsService: UnitsService;
+  let unitVisits: UnitVisitsService;
   let occupancyWrites: OccupancyWritesService;
   let census: CensusSyncService;
   let merges: CitizenMergeService;
@@ -67,8 +71,10 @@ describeIfDb('CitizenMergeService', () => {
       { findById: async () => ({ id: adminId, kind: 'CITIZEN' }) } as never,
       events,
     );
-    buildings = new BuildingsService(context, cases, events);
-    occupancyWrites = new OccupancyWritesService(context, cases, events, buildings);
+    buildings = new BuildingsService(context, events);
+    unitsService = new UnitsService(context, events, buildings);
+    unitVisits = new UnitVisitsService(context, cases, events, buildings);
+    occupancyWrites = new OccupancyWritesService(context, cases, events, buildings, unitVisits);
     census = new CensusSyncService(context, cases, events);
     merges = new CitizenMergeService(
       context,
@@ -127,7 +133,7 @@ describeIfDb('CitizenMergeService', () => {
         { parcelNumber: parcel, structureType: 'RESIDENTIAL_BUILDING', lifecycleStatus: 'IN_USE', floorsCount: 1 },
         actor(),
       );
-      const { units } = await buildings.generateUnits(
+      const { units } = await unitsService.generateUnits(
         building.id,
         { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 3, unitType: 'APARTMENT' },
         actor(),

@@ -761,7 +761,7 @@ const matrixCell = upsertUnitSchema.pick({
  *
  * It used to be one PATCH for the building and one request per unit, so a save
  * could half-succeed — «حُفظ المبنى، لكن رُفض…» — leaving a building nobody
- * had intended. `BuildingsService.saveMatrix` runs it all in one transaction:
+ * had intended. `UnitsService.saveMatrix` runs it all in one transaction:
  * the first refusal names its unit and nothing is written. `dryRun` does the
  * same and rolls back, so the editor can show what a save would do, or why it
  * would be refused, before anyone presses it.

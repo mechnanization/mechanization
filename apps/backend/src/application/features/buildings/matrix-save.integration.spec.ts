@@ -7,10 +7,9 @@ import { migrateTenantSchema } from '../../../infrastructure/prisma/tenant-migra
 import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { PrismaAuditRepository } from '../../../infrastructure/repositories/audit.repository';
-import { PrismaCaseRepository } from '../../../infrastructure/repositories/case.repository';
 import { AuditService } from '../audit/audit.service';
-import { CasesService } from '../cases/cases.service';
 import { BuildingsService } from './buildings.service';
+import { UnitsService } from './units.service';
 
 /**
  * The building editor's save, all or nothing, against a real Postgres.
@@ -29,11 +28,12 @@ const describeIfDb = TEST_DATABASE_URL ? describe : describe.skip;
 jest.setTimeout(60_000);
 const SETUP_TIMEOUT_MS = 240_000;
 
-describeIfDb('BuildingsService.saveMatrix', () => {
+describeIfDb('UnitsService.saveMatrix', () => {
   let ddl: Client;
   let db: TenantPrismaClient;
   let context: TenantContextService;
   let buildings: BuildingsService;
+  let unitsService: UnitsService;
   let officerId: string;
 
   const actor = () => ({ id: officerId, role: 'FIELD_INSPECTOR' });
@@ -52,12 +52,8 @@ describeIfDb('BuildingsService.saveMatrix', () => {
     const events = new EventEmitter2();
     const audit = new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never);
     events.on('building.changed', (payload) => audit.onBuildingChanged(payload));
-    const cases = new CasesService(
-      new PrismaCaseRepository(context),
-      { findById: async () => ({ id: officerId, kind: 'CITIZEN' }) } as never,
-      events,
-    );
-    buildings = new BuildingsService(context, cases, events);
+    buildings = new BuildingsService(context, events);
+    unitsService = new UnitsService(context, events, buildings);
 
     officerId = randomUUID();
     await db.user.create({
@@ -86,7 +82,7 @@ describeIfDb('BuildingsService.saveMatrix', () => {
         { parcelNumber, structureType: 'RESIDENTIAL_BUILDING', lifecycleStatus: 'IN_USE', floorsCount: 2, acknowledgedDuplicates: true } as never,
         actor(),
       );
-      await buildings.generateUnits(
+      await unitsService.generateUnits(
         created.id,
         { kind: 'uniform', fromFloor: 0, toFloor: 1, unitsPerFloor: 2, unitType: 'APARTMENT' },
         actor(),
@@ -96,7 +92,7 @@ describeIfDb('BuildingsService.saveMatrix', () => {
     });
 
   const save = (id: string, body: Record<string, unknown>) =>
-    within(() => buildings.saveMatrix(id, saveBuildingMatrixSchema.parse(body), actor()));
+    within(() => unitsService.saveMatrix(id, saveBuildingMatrixSchema.parse(body), actor()));
 
   it('removes the top floor, retypes a flat, adds one and lowers the floor count, in one save', async () => {
     const { id, units } = await building('MX-1');

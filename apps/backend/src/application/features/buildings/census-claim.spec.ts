@@ -7,6 +7,7 @@ import { BuildingsService } from './buildings.service';
 */
 import { settleUnit } from './unit-status';
 import { OccupancyWritesService } from './occupancy-writes.service';
+import { UnitVisitsService } from './unit-visits.service';
 
 jest.mock('./unit-status', () => ({
   ...jest.requireActual('./unit-status'),
@@ -221,7 +222,8 @@ function harness(options: HarnessOptions = {}) {
   const context = { prisma: db, tenantSlug: 'albazourieh' } as never;
   const cases = { resolveForUnit: jest.fn().mockResolvedValue(0) } as never;
   const events = { emit: jest.fn() } as never;
-  const occupancyWrites = new OccupancyWritesService(context, cases, events, new BuildingsService(context, cases, events));
+  const buildings = new BuildingsService(context, events);
+  const occupancyWrites = new OccupancyWritesService(context, cases, events, buildings, new UnitVisitsService(context, cases, events, buildings));
 
   return { service: occupancyWrites, db, propertyEntryCreate, buildingUnitCreate, unitUpdate, unitUpdateMany };
 }

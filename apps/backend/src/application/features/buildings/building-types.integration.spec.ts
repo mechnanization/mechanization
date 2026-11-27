@@ -57,7 +57,7 @@ describeIfDb('building types', () => {
     context = new TenantContextService();
     const audit = new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never);
     types = new BuildingTypesService(context, audit);
-    buildings = new BuildingsService(context, {} as never, new EventEmitter2());
+    buildings = new BuildingsService(context, new EventEmitter2());
     await db.user.create({
       data: { id: adminId, kind: 'STAFF', tenantSlug: 'bts', email: `${adminId}@bts.gov.lb`, firstName: 'مدير', lastName: 'البلدية', role: 'SUPER_ADMIN' as never },
     });

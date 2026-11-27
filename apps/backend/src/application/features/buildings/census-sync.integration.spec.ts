@@ -12,6 +12,8 @@ import { ReportingService } from '../reporting/reporting.service';
 import { BuildingsService } from './buildings.service';
 import { CensusSyncService } from './census-sync.service';
 import { OccupancyWritesService } from './occupancy-writes.service';
+import { UnitsService } from './units.service';
+import { UnitVisitsService } from './unit-visits.service';
 
 /**
  * The registration → census write path (P5-T1), against a real Postgres.
@@ -63,6 +65,8 @@ describeIfDb('CensusSyncService', () => {
   let ddl: Client;
   let db: TenantPrismaClient;
   let buildings: BuildingsService;
+  let unitsService: UnitsService;
+  let unitVisits: UnitVisitsService;
   let occupancyWrites: OccupancyWritesService;
   let census: CensusSyncService;
   let cases: CasesService;
@@ -102,13 +106,25 @@ describeIfDb('CensusSyncService', () => {
 
     // A real scope for the census writes, which run in `runInTenantTransaction` since audit ARCH-03.
     const scoped = new TenantContextService();
-    buildings = inTenantScope(new BuildingsService(scoped, cases, events), scoped, {
+    buildings = inTenantScope(new BuildingsService(scoped, events), scoped, {
       tenantId: 'tenant-census',
       tenantSlug: 'census',
       schemaName: SCHEMA,
       prisma: db,
     });
-    occupancyWrites = inTenantScope(new OccupancyWritesService(scoped, cases, events, buildings), scoped, {
+    unitsService = inTenantScope(new UnitsService(scoped, events, buildings), scoped, {
+      tenantId: 'tenant-census',
+      tenantSlug: 'census',
+      schemaName: SCHEMA,
+      prisma: db,
+    });
+    unitVisits = inTenantScope(new UnitVisitsService(scoped, cases, events, buildings), scoped, {
+      tenantId: 'tenant-census',
+      tenantSlug: 'census',
+      schemaName: SCHEMA,
+      prisma: db,
+    });
+    occupancyWrites = inTenantScope(new OccupancyWritesService(scoped, cases, events, buildings, unitVisits), scoped, {
       tenantId: 'tenant-census',
       tenantSlug: 'census',
       schemaName: SCHEMA,
@@ -176,7 +192,7 @@ describeIfDb('CensusSyncService', () => {
       },
       actor(),
     );
-    const { units } = await buildings.generateUnits(
+    const { units } = await unitsService.generateUnits(
       building.id,
       { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor, unitType: 'APARTMENT' },
       actor(),
@@ -625,7 +641,7 @@ describeIfDb('CensusSyncService', () => {
     const owner = await citizen('نجوى');
     const flat = units[0]!;
 
-    await buildings.confirmVacancy(
+    await unitVisits.confirmVacancy(
       flat.id,
       { basis: 'FIELD_INSPECTION', notes: 'الشقة مقفلة منذ سنة' },
       actor(),
@@ -801,7 +817,7 @@ describeIfDb('CensusSyncService', () => {
   */
   it('records a non-resident as tenant of a shop, and refuses them as tenant of a flat', async () => {
     const { building, units } = await surveyedBlock('SYNC-9D', 1);
-    const shop = await buildings.addUnit(building.id, { floor: 0, unitType: 'SHOP' }, actor());
+    const shop = await unitsService.addUnit(building.id, { floor: 0, unitType: 'SHOP' }, actor());
 
     const tenantId = randomUUID();
     await db.user.create({
@@ -890,7 +906,7 @@ describeIfDb('CensusSyncService', () => {
       },
       actor(),
     );
-    const { units } = await buildings.generateUnits(
+    const { units } = await unitsService.generateUnits(
       building.id,
       { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'INDEPENDENT_HOUSE' },
       actor(),
@@ -958,7 +974,7 @@ describeIfDb('CensusSyncService', () => {
 
   it('does not overwrite a finding that contradicts it', async () => {
     const { building, units } = await surveyedBlock('SYNC-14');
-    await buildings.logVisit({ unitId: units[0]!.id, outcome: 'DEMOLISHED' }, actor());
+    await unitVisits.logVisit({ unitId: units[0]!.id, outcome: 'DEMOLISHED' }, actor());
 
     const citizenId = await citizen('وسام');
     const registrationId = await registrationFor({
@@ -1002,7 +1018,7 @@ describeIfDb('CensusSyncService', () => {
     'answers a door logged %s when the household is registered afterwards',
     async (outcome, parcelNumber) => {
       const { building, units } = await surveyedBlock(parcelNumber);
-      await buildings.logVisit({ unitId: units[0]!.id, outcome }, actor());
+      await unitVisits.logVisit({ unitId: units[0]!.id, outcome }, actor());
 
       const citizenId = await citizen('صباح');
       const registrationId = await registrationFor({
@@ -1110,7 +1126,7 @@ describeIfDb('CensusSyncService', () => {
       },
       actor(),
     );
-    const second = await buildings.generateUnits(
+    const second = await unitsService.generateUnits(
       secondBuilding.building.id,
       { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 2, unitType: 'APARTMENT' },
       actor(),

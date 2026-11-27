@@ -23,6 +23,7 @@ import { RegistrationService } from '../registration/registration.service';
 import { CitizensService } from './citizens.service';
 import { LandlordLinkService } from './landlord-link.service';
 import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
+import { UnitVisitsService } from '../buildings/unit-visits.service';
 
 /**
  * Filing on a citizen's file against a real Postgres: what a save, a new
@@ -71,8 +72,9 @@ describeIfDb('filing on a citizen file', () => {
       { findById: async () => ({ id: officerId, kind: 'STAFF' }) } as never,
       events,
     );
-    const buildings = new BuildingsService(context, cases, events);
-    const occupancyWrites = new OccupancyWritesService(context, cases, events, buildings);
+    const buildings = new BuildingsService(context, events);
+    const unitVisits = new UnitVisitsService(context, cases, events, buildings);
+    const occupancyWrites = new OccupancyWritesService(context, cases, events, buildings, unitVisits);
     citizens = new CitizensService(
       context,
       new RegistrationService(new PrismaRegistrationRepository(context), parcels, tenants as never, events),

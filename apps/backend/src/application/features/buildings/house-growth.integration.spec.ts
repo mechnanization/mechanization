@@ -12,6 +12,8 @@ import { PrismaCaseRepository } from '../../../infrastructure/repositories/case.
 import { BuildingsService } from './buildings.service';
 import { CensusSyncService } from './census-sync.service';
 import { OccupancyWritesService } from './occupancy-writes.service';
+import { UnitsService } from './units.service';
+import { UnitVisitsService } from './unit-visits.service';
 
 /**
  * «هذا المنزل يصبح مبنى» and «دوبلكس» (migration 0095, decision D28), against a
@@ -37,6 +39,8 @@ describeIfDb('a house that grows (D28)', () => {
   let ddl: Client;
   let db: TenantPrismaClient;
   let buildings: BuildingsService;
+  let unitsService: UnitsService;
+  let unitVisits: UnitVisitsService;
   let occupancyWrites: OccupancyWritesService;
   let census: CensusSyncService;
   let officerId: string;
@@ -68,13 +72,25 @@ describeIfDb('a house that grows (D28)', () => {
     );
     // A real scope for the census writes, which run in `runInTenantTransaction` since audit ARCH-03.
     const scoped = new TenantContextService();
-    buildings = inTenantScope(new BuildingsService(scoped, cases, events), scoped, {
+    buildings = inTenantScope(new BuildingsService(scoped, events), scoped, {
       tenantId: 'tenant-growth',
       tenantSlug: 'growth',
       schemaName: SCHEMA,
       prisma: db,
     });
-    occupancyWrites = inTenantScope(new OccupancyWritesService(scoped, cases, events, buildings), scoped, {
+    unitsService = inTenantScope(new UnitsService(scoped, events, buildings), scoped, {
+      tenantId: 'tenant-growth',
+      tenantSlug: 'growth',
+      schemaName: SCHEMA,
+      prisma: db,
+    });
+    unitVisits = inTenantScope(new UnitVisitsService(scoped, cases, events, buildings), scoped, {
+      tenantId: 'tenant-growth',
+      tenantSlug: 'growth',
+      schemaName: SCHEMA,
+      prisma: db,
+    });
+    occupancyWrites = inTenantScope(new OccupancyWritesService(scoped, cases, events, buildings, unitVisits), scoped, {
       tenantId: 'tenant-growth',
       tenantSlug: 'growth',
       schemaName: SCHEMA,
@@ -173,7 +189,7 @@ describeIfDb('a house that grows (D28)', () => {
       const nafe = await citizen('نافع');
       await houseFiling({ citizenId: nafe, buildingId: building.id, parcelNumber: 'GROW-1' });
 
-      const caught = await refusal(buildings.addUnit(building.id, { floor: 1, unitType: 'APARTMENT' }, actor()));
+      const caught = await refusal(unitsService.addUnit(building.id, { floor: 1, unitType: 'APARTMENT' }, actor()));
       expect(caught).toMatchObject({ code: 'HOUSE_GROWTH_UNANSWERED', params: { unitCode: unit.unitCode } });
       expect((caught as { details: { holders: unknown[] } }).details.holders).toEqual([
         { name: 'نافع حدرج', capacity: 'OWNER' },
@@ -190,7 +206,7 @@ describeIfDb('a house that grows (D28)', () => {
         parcelNumber: 'GROW-2',
       });
 
-      const upper = await buildings.addUnit(
+      const upper = await unitsService.addUnit(
         building.id,
         { floor: 1, unitType: 'APARTMENT', houseGrowth: 'SEPARATE_UNIT' },
         actor(),
@@ -259,7 +275,7 @@ describeIfDb('a house that grows (D28)', () => {
         occupancyType: 'TENANT',
       });
 
-      await buildings.addUnit(building.id, { floor: 0, unitType: 'GARAGE', houseGrowth: 'SEPARATE_UNIT' }, actor());
+      await unitsService.addUnit(building.id, { floor: 0, unitType: 'GARAGE', houseGrowth: 'SEPARATE_UNIT' }, actor());
 
       const row = await db.buildingUnit.findFirstOrThrow({ where: { propertyEntryId: cardId } });
       expect(row).toMatchObject({ unitId: house.id, unitStatus: null });
@@ -271,7 +287,7 @@ describeIfDb('a house that grows (D28)', () => {
       await houseFiling({ citizenId: owner, buildingId: building.id, parcelNumber: 'GROW-4' });
 
       const caught = await refusal(
-        buildings.addUnit(building.id, { floor: 1, unitType: 'APARTMENT', houseGrowth: 'SEPARATE_UNIT' }, actor()),
+        unitsService.addUnit(building.id, { floor: 1, unitType: 'APARTMENT', houseGrowth: 'SEPARATE_UNIT' }, actor()),
       );
       expect(caught).toMatchObject({ kind: 'VALIDATION_FAILED' });
       expect(await db.propertyEntry.count({ where: { buildingId: building.id, propertyType: 'HOUSE' } })).toBe(1);
@@ -284,7 +300,7 @@ describeIfDb('a house that grows (D28)', () => {
       const owner = await citizen('حسين');
       const { cardId } = await houseFiling({ citizenId: owner, buildingId: building.id, parcelNumber: 'LEVEL-1' });
 
-      const row = await buildings.addUnit(
+      const row = await unitsService.addUnit(
         building.id,
         { floor: 1, unitType: 'INDEPENDENT_HOUSE', houseGrowth: 'EXTRA_LEVEL' },
         actor(),
@@ -301,17 +317,17 @@ describeIfDb('a house that grows (D28)', () => {
 
     it('asks on a bare «منزل مستقل» too, and grows it without a card on it', async () => {
       const { building, unit: house } = await oneUnitStructure('LEVEL-2', 'INDEPENDENT_HOUSE');
-      const caught = await refusal(buildings.addUnit(building.id, { floor: 1, unitType: 'INDEPENDENT_HOUSE' }, actor()));
+      const caught = await refusal(unitsService.addUnit(building.id, { floor: 1, unitType: 'INDEPENDENT_HOUSE' }, actor()));
       expect(caught).toMatchObject({ code: 'HOUSE_GROWTH_UNANSWERED' });
 
-      await buildings.addUnit(building.id, { floor: 1, unitType: 'INDEPENDENT_HOUSE', houseGrowth: 'EXTRA_LEVEL' }, actor());
+      await unitsService.addUnit(building.id, { floor: 1, unitType: 'INDEPENDENT_HOUSE', houseGrowth: 'EXTRA_LEVEL' }, actor());
       expect((await db.unit.findUniqueOrThrow({ where: { id: house.id } })).levels).toBe(2);
     });
 
     it('adds a level only directly above the home', async () => {
       const { building } = await oneUnitStructure('LEVEL-3', 'INDEPENDENT_HOUSE');
       const caught = await refusal(
-        buildings.addUnit(building.id, { floor: 2, unitType: 'INDEPENDENT_HOUSE', houseGrowth: 'EXTRA_LEVEL' }, actor()),
+        unitsService.addUnit(building.id, { floor: 2, unitType: 'INDEPENDENT_HOUSE', houseGrowth: 'EXTRA_LEVEL' }, actor()),
       );
       expect(caught).toMatchObject({ code: 'HOUSE_GROWTH_NOT_ABOVE', params: { floor: 1 } });
     });
@@ -320,24 +336,24 @@ describeIfDb('a house that grows (D28)', () => {
   describe('«عدد طوابق المسكن» on a unit', () => {
     it('makes a flat a duplex and grows the building to hold it', async () => {
       const { building, unit } = await oneUnitStructure('DUPLEX-1', 'RESIDENTIAL_BUILDING');
-      const row = await buildings.updateUnit(unit.id, { levels: 2 }, actor());
+      const row = await unitsService.updateUnit(unit.id, { levels: 2 }, actor());
       expect(row.levels).toBe(2);
       expect((await db.building.findUniqueOrThrow({ where: { id: building.id } })).floorsCount).toBe(2);
     });
 
     it('refuses levels on a shop, and refuses retyping a duplex into one', async () => {
       const { building, unit } = await oneUnitStructure('DUPLEX-2', 'RESIDENTIAL_BUILDING');
-      const shop = await buildings.addUnit(
+      const shop = await unitsService.addUnit(
         building.id,
         { floor: 0, unitType: 'SHOP', startCol: 2, endCol: 2, acknowledgedDuplicates: true },
         actor(),
       );
-      expect(await refusal(buildings.updateUnit(shop.id, { levels: 2 }, actor()))).toMatchObject({
+      expect(await refusal(unitsService.updateUnit(shop.id, { levels: 2 }, actor()))).toMatchObject({
         code: 'UNIT_LEVELS_NOT_DWELLING',
       });
 
-      await buildings.updateUnit(unit.id, { levels: 2 }, actor());
-      expect(await refusal(buildings.updateUnit(unit.id, { unitType: 'SHOP' }, actor()))).toMatchObject({
+      await unitsService.updateUnit(unit.id, { levels: 2 }, actor());
+      expect(await refusal(unitsService.updateUnit(unit.id, { unitType: 'SHOP' }, actor()))).toMatchObject({
         code: 'UNIT_LEVELS_NOT_DWELLING',
       });
     });
@@ -357,7 +373,7 @@ describeIfDb('a house that grows (D28)', () => {
         },
       });
 
-      expect(await refusal(buildings.updateUnit(unit.id, { levels: 2 }, actor()))).toMatchObject({
+      expect(await refusal(unitsService.updateUnit(unit.id, { levels: 2 }, actor()))).toMatchObject({
         code: 'UNIT_LEVELS_BLOCKED',
         params: { unitCode: unit.unitCode, blockedBy: above.unitCode },
       });
@@ -365,15 +381,15 @@ describeIfDb('a house that grows (D28)', () => {
 
     it('keeps a new unit off a duplex’s upper level', async () => {
       const { building, unit } = await oneUnitStructure('DUPLEX-4', 'RESIDENTIAL_BUILDING');
-      await buildings.updateUnit(unit.id, { levels: 2 }, actor());
+      await unitsService.updateUnit(unit.id, { levels: 2 }, actor());
 
       const onTop = await refusal(
-        buildings.addUnit(building.id, { floor: 1, unitType: 'APARTMENT', startCol: 1, endCol: 1 }, actor()),
+        unitsService.addUnit(building.id, { floor: 1, unitType: 'APARTMENT', startCol: 1, endCol: 1 }, actor()),
       );
       expect(onTop).toMatchObject({ code: 'UNIT_ON_UPPER_LEVEL', params: { unitCode: unit.unitCode } });
 
       // Beside it is fine.
-      const beside = await buildings.addUnit(
+      const beside = await unitsService.addUnit(
         building.id,
         { floor: 1, unitType: 'APARTMENT', startCol: 2, endCol: 2 },
         actor(),

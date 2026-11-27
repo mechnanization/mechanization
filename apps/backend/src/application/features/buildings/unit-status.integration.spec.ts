@@ -20,6 +20,8 @@ import { municipalToday } from '@mechanization/shared-schemas';
 import { StaffActor } from '../../common/actor';
 import { feeServices } from '../fees/fee-services.testing';
 import { OccupancyWritesService } from './occupancy-writes.service';
+import { UnitsService } from './units.service';
+import { UnitVisitsService } from './unit-visits.service';
 
 /**
  * «حالة الوحدة» kept in step with who is recorded in the flat — against a real
@@ -47,6 +49,8 @@ describeIfDb('the one rule for «حالة الوحدة»', () => {
   let db: TenantPrismaClient;
   let context: TenantContextService;
   let buildings: BuildingsService;
+  let unitsService: UnitsService;
+  let unitVisits: UnitVisitsService;
   let occupancyWrites: OccupancyWritesService;
   let census: CensusSyncService;
   let tenancy: TenancyService;
@@ -72,8 +76,10 @@ describeIfDb('the one rule for «حالة الوحدة»', () => {
       { findById: async () => ({ id: officerId, kind: 'CITIZEN' }) } as never,
       events,
     );
-    buildings = new BuildingsService(context, cases, events);
-    occupancyWrites = new OccupancyWritesService(context, cases, events, buildings);
+    buildings = new BuildingsService(context, events);
+    unitsService = new UnitsService(context, events, buildings);
+    unitVisits = new UnitVisitsService(context, cases, events, buildings);
+    occupancyWrites = new OccupancyWritesService(context, cases, events, buildings, unitVisits);
     census = new CensusSyncService(context, cases, events);
     const links = new LandlordLinkService(
       context,
@@ -82,8 +88,8 @@ describeIfDb('the one rule for «حالة الوحدة»', () => {
       new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
     );
     const audit = new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never);
-    const ownership = new OwnershipService(context, buildings, cases, links, events, audit, occupancyWrites);
-    tenancy = new TenancyService(context, buildings, cases, links, events, ownership, audit, occupancyWrites);
+    const ownership = new OwnershipService(context, unitVisits, cases, links, events, audit, occupancyWrites);
+    tenancy = new TenancyService(context, unitVisits, cases, links, events, ownership, audit, occupancyWrites);
     ({ fees } = feeServices(
       context,
       events,
@@ -134,7 +140,7 @@ describeIfDb('the one rule for «حالة الوحدة»', () => {
         { parcelNumber, structureType: 'RESIDENTIAL_BUILDING', lifecycleStatus: 'IN_USE', floorsCount: 1 },
         actor(),
       );
-      const { units } = await buildings.generateUnits(
+      const { units } = await unitsService.generateUnits(
         building.id,
         { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor, unitType: 'APARTMENT' },
         actor(),
@@ -210,7 +216,7 @@ describeIfDb('the one rule for «حالة الوحدة»', () => {
     const { building, units } = await block('US-1');
     const unitId = units[0]!.id;
     const owner = await filing({ role: 'OWNER', parcelNumber: 'US-1', buildingId: building.id, units: [{ unitId }] });
-    await within(() => buildings.updateUnit(unitId, { unitStatus: 'SEASONAL' } as never, actor()));
+    await within(() => unitsService.updateUnit(unitId, { unitStatus: 'SEASONAL' } as never, actor()));
     expect(await unitStatus(unitId)).toBe('SEASONAL');
 
     const tenant = await filing({ role: 'TENANT', parcelNumber: 'US-1', buildingId: building.id, units: [{ unitId }] });
@@ -289,7 +295,7 @@ describeIfDb('the one rule for «حالة الوحدة»', () => {
       buildingId: building.id,
       units: [{ unitId, status: 'OWNER_OCCUPIED' }],
     });
-    await within(() => buildings.updateUnit(unitId, { unitStatus: 'SEASONAL' } as never, actor()));
+    await within(() => unitsService.updateUnit(unitId, { unitStatus: 'SEASONAL' } as never, actor()));
 
     // The owner's file saved again for something else — the card's answer did not change.
     await within(() =>
@@ -346,7 +352,7 @@ describeIfDb('the one rule for «حالة الوحدة»', () => {
     await filing({ role: 'TENANT', parcelNumber: 'US-6', buildingId: building.id, units: [{ unitId }] });
 
     await expect(
-      within(() => buildings.updateUnit(unitId, { unitStatus: 'OWNER_OCCUPIED' } as never, actor())),
+      within(() => unitsService.updateUnit(unitId, { unitStatus: 'OWNER_OCCUPIED' } as never, actor())),
     ).rejects.toThrow(/مستأجر أو شاغل مسجَّل/);
     expect(await unitStatus(unitId)).toBe('RENTED');
   });
@@ -424,7 +430,7 @@ describeIfDb('the one rule for «حالة الوحدة»', () => {
     const unitId = units[0]!.id;
     const owner = await filing({ role: 'OWNER', parcelNumber: 'US-10', buildingId: building.id, units: [{ unitId, status: 'VACANT' }] });
 
-    await within(() => buildings.endVacancy(unitId, { reason: 'NO_LONGER_VACANT' } as never, actor()));
+    await within(() => unitVisits.endVacancy(unitId, { reason: 'NO_LONGER_VACANT' } as never, actor()));
     expect((await db.buildingUnit.findUniqueOrThrow({ where: { id: owner.lines[0]!.id } })).unitStatus).toBeNull();
 
     // The owner's file saved again for something else.
@@ -471,7 +477,7 @@ describeIfDb('the one rule for «حالة الوحدة»', () => {
     const { building, units } = await block('US-13');
     const unitId = units[0]!.id;
     const owner = await filing({ role: 'OWNER', parcelNumber: 'US-13', buildingId: building.id, units: [{ unitId }] });
-    await within(() => buildings.updateUnit(unitId, { unitStatus: 'SEASONAL' } as never, actor()));
+    await within(() => unitsService.updateUnit(unitId, { unitStatus: 'SEASONAL' } as never, actor()));
 
     await within(() =>
       occupancyWrites.recordOccupancy(

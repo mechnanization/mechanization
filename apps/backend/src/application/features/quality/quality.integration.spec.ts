@@ -17,6 +17,8 @@ import { RecordReviewService } from './record-review.service';
 import { StaffActor } from '../../common/actor';
 import { feeServices } from '../fees/fee-services.testing';
 import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
+import { UnitsService } from '../buildings/units.service';
+import { UnitVisitsService } from '../buildings/unit-visits.service';
 
 /**
  * «مراجعة الجودة» against a real Postgres: migration 0049, the review states,
@@ -44,6 +46,8 @@ describeIfDb('Quality review', () => {
   let quality: DataQualityService;
   let audit: AuditService;
   let buildings: BuildingsService;
+  let unitsService: UnitsService;
+  let unitVisits: UnitVisitsService;
   let occupancyWrites: OccupancyWritesService;
 
   const staff: Record<'jawad' | 'hussein' | 'auditor' | 'collector', string> = {
@@ -87,8 +91,10 @@ describeIfDb('Quality review', () => {
     events.on('quality.changed', (payload) => audit.onQualityChanged(payload));
 
     const cases = new CasesService(new PrismaCaseRepository(context), {} as never, events);
-    buildings = new BuildingsService(context, cases, events);
-    occupancyWrites = new OccupancyWritesService(context, cases, events, buildings);
+    buildings = new BuildingsService(context, events);
+    unitsService = new UnitsService(context, events, buildings);
+    unitVisits = new UnitVisitsService(context, cases, events, buildings);
+    occupancyWrites = new OccupancyWritesService(context, cases, events, buildings, unitVisits);
     const links = new LandlordLinkService(
       context,
       occupancyWrites,
@@ -458,7 +464,7 @@ describeIfDb('Quality review', () => {
 
     // Unit says vacant, owner's own card says owner-occupied.
     const { units } = await within(() =>
-      buildings.generateUnits(
+      unitsService.generateUnits(
         first.building.id,
         { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
         as('jawad'),

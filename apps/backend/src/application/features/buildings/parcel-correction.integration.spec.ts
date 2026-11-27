@@ -12,6 +12,7 @@ import { CasesService } from '../cases/cases.service';
 import { BuildingsService } from './buildings.service';
 import { CensusSyncService } from './census-sync.service';
 import { ParcelCorrectionService } from './parcel-correction.service';
+import { UnitsService } from './units.service';
 
 /**
  * «تصحيح رقم العقار», against a real Postgres.
@@ -36,6 +37,7 @@ describeIfDb('ParcelCorrectionService', () => {
   let db: TenantPrismaClient;
   let context: TenantContextService;
   let buildings: BuildingsService;
+  let unitsService: UnitsService;
   let census: CensusSyncService;
   let correction: ParcelCorrectionService;
   let events: EventEmitter2;
@@ -59,7 +61,8 @@ describeIfDb('ParcelCorrectionService', () => {
       { findById: async () => ({ id: officerId, kind: 'CITIZEN' }) } as never,
       events,
     );
-    buildings = new BuildingsService(context, cases, events);
+    buildings = new BuildingsService(context, events);
+    unitsService = new UnitsService(context, events, buildings);
     census = new CensusSyncService(context, cases, events);
     correction = new ParcelCorrectionService(context, buildings, events, new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never));
 
@@ -122,7 +125,7 @@ describeIfDb('ParcelCorrectionService', () => {
         } as never,
         actor(),
       );
-      const { units } = await buildings.generateUnits(
+      const { units } = await unitsService.generateUnits(
         created.id,
         { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 2, unitType: 'APARTMENT' },
         actor(),

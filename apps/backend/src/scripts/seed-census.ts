@@ -53,6 +53,7 @@ import {
 } from '@mechanization/shared-schemas';
 import type { PrismaClient as TenantPrismaClient } from '../generated/tenant-client';
 import { BuildingsService } from '../application/features/buildings/buildings.service';
+import { UnitVisitsService } from '../application/features/buildings/unit-visits.service';
 import { CensusSyncService } from '../application/features/buildings/census-sync.service';
 import { DamageService } from '../application/features/buildings/damage.service';
 import { CasesService } from '../application/features/cases/cases.service';
@@ -161,9 +162,10 @@ function asTenant<T>(
 function censusServices(context: TenantContextService) {
   const events = new EventEmitter2();
   const cases = new CasesService(new PrismaCaseRepository(context), new PrismaUserRepository(context), events);
-  const buildings = new BuildingsService(context, cases, events);
+  const buildings = new BuildingsService(context, events);
   return {
     buildings,
+    unitVisits: new UnitVisitsService(context, cases, events, buildings),
     cases,
     census: new CensusSyncService(context, cases, events),
     damage: new DamageService(context, events),
@@ -812,7 +814,7 @@ async function seedCensus(
       if (outcome === 'NONE') continue;
       if (outcome === 'VACANT') {
         const basis = d.weighted([['FIELD_INSPECTION', 6], ['OWNER_STATEMENT', 2], ['NEIGHBOUR_OR_CARETAKER', 2]]);
-        await services.buildings.confirmVacancy(
+        await services.unitVisits.confirmVacancy(
           unit.id,
           confirmVacancySchema.parse({
             basis,
@@ -827,7 +829,7 @@ async function seedCensus(
         );
         continue;
       }
-      await services.buildings.logVisit(
+      await services.unitVisits.logVisit(
         logVisitSchema.parse({
           unitId: unit.id,
           outcome,

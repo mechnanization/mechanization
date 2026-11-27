@@ -19,6 +19,7 @@ import { StaffActor } from '../../common/actor';
 import { feeServices } from './fee-services.testing';
 import type { FeeNoticesService } from './fee-notices.service';
 import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
+import { UnitVisitsService } from '../buildings/unit-visits.service';
 
 /**
  * «توزيع الرسم على المالكين» against a real tenant schema (migration 0075
@@ -53,6 +54,7 @@ describeIfDb('co-owner billing', () => {
   let fees: FeesService;
   let feeNotices: FeeNoticesService;
   let buildings: BuildingsService;
+  let unitVisits: UnitVisitsService;
   let occupancyWrites: OccupancyWritesService;
   let ownerBilling: OwnerBillingService;
   let events: { emit: jest.Mock };
@@ -89,8 +91,9 @@ describeIfDb('co-owner billing', () => {
       { findById: async () => ({ id: officerId, kind: 'STAFF' }) } as never,
       emitter,
     );
-    buildings = new BuildingsService(context, cases, emitter);
-    occupancyWrites = new OccupancyWritesService(context, cases, emitter, buildings);
+    buildings = new BuildingsService(context, emitter);
+    unitVisits = new UnitVisitsService(context, cases, emitter, buildings);
+    occupancyWrites = new OccupancyWritesService(context, cases, emitter, buildings, unitVisits);
     ownerBilling = new OwnerBillingService(context, fees, audit, events as unknown as EventEmitter2);
 
     await db.user.create({

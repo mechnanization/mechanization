@@ -44,6 +44,8 @@ import {
   worklistQuerySchema,
 } from '@mechanization/shared-schemas';
 import { BuildingsService } from '../../application/features/buildings/buildings.service';
+import { UnitsService } from '../../application/features/buildings/units.service';
+import { UnitVisitsService } from '../../application/features/buildings/unit-visits.service';
 import { DamageService } from '../../application/features/buildings/damage.service';
 import { ParcelCorrectionService } from '../../application/features/buildings/parcel-correction.service';
 import { OwnerBillingService } from '../../application/features/buildings/owner-billing.service';
@@ -97,6 +99,8 @@ export class BuildingsController {
     private readonly audit: AuditService,
     private readonly ownerBilling: OwnerBillingService,
     private readonly feeExemption: FeeExemptionService,
+    private readonly units: UnitsService,
+    private readonly unitVisitsService: UnitVisitsService,
   ) {}
 
   /**
@@ -220,7 +224,7 @@ export class BuildingsController {
     @Body(new ZodValidationPipe(saveBuildingMatrixSchema)) body: SaveBuildingMatrixInput,
     @CurrentActor() actor: StaffActor,
   ) {
-    return this.buildings.saveMatrix(id, body, actor);
+    return this.units.saveMatrix(id, body, actor);
   }
 
   /**
@@ -273,7 +277,7 @@ export class BuildingsController {
     @Body(new ZodValidationPipe(unitBlueprintSchema)) body: UnitBlueprint,
     @CurrentActor() actor: StaffActor,
   ) {
-    return this.buildings.generateUnits(id, body, actor);
+    return this.units.generateUnits(id, body, actor);
   }
 
   @Roles(...REGISTER_WRITE_ROLES)
@@ -283,7 +287,7 @@ export class BuildingsController {
     @Body(new ZodValidationPipe(upsertUnitSchema)) body: UpsertUnitInput,
     @CurrentActor() actor: StaffActor,
   ) {
-    return this.buildings.addUnit(id, body, actor);
+    return this.units.addUnit(id, body, actor);
   }
 
   /**
@@ -298,7 +302,7 @@ export class BuildingsController {
     @Body(new ZodValidationPipe(updateUnitSchema)) body: UpdateUnitInput,
     @CurrentActor() actor: StaffActor,
   ) {
-    return this.buildings.updateUnit(unitId, body, actor);
+    return this.units.updateUnit(unitId, body, actor);
   }
 
   /**
@@ -313,7 +317,7 @@ export class BuildingsController {
     @Body(new ZodValidationPipe(resizeUnitSpanSchema)) body: ResizeUnitSpanInput,
     @CurrentActor() actor: StaffActor,
   ) {
-    return this.buildings.resizeUnitSpan(unitId, body, actor);
+    return this.units.resizeUnitSpan(unitId, body, actor);
   }
 
   /**
@@ -328,7 +332,7 @@ export class BuildingsController {
   @Roles(...REGISTER_WRITE_ROLES)
   @Delete('units/:unitId')
   async deleteUnit(@Param('unitId', new UuidPipe()) unitId: string, @CurrentActor() actor: StaffActor) {
-    await this.buildings.deleteUnit(unitId, actor);
+    await this.units.deleteUnit(unitId, actor);
     return { deleted: true };
   }
 
@@ -352,7 +356,7 @@ export class BuildingsController {
     @Body(new ZodValidationPipe(confirmVacancySchema)) body: ConfirmVacancyInput,
     @CurrentActor() actor: StaffActor,
   ) {
-    return this.buildings.confirmVacancy(unitId, body, actor);
+    return this.unitVisitsService.confirmVacancy(unitId, body, actor);
   }
 
   /**
@@ -371,7 +375,7 @@ export class BuildingsController {
 
     @CurrentActor() actor: StaffActor,
   ) {
-    return this.buildings.endVacancy(unitId, body, actor);
+    return this.unitVisitsService.endVacancy(unitId, body, actor);
   }
 
   // ─────────────────────  «توزيع الرسم على المالكين»  ─────────────────────
@@ -520,14 +524,14 @@ export class BuildingsController {
     @Body(new ZodValidationPipe(logVisitSchema)) body: LogVisitInput,
     @CurrentActor() actor: StaffActor,
   ) {
-    return this.buildings.logVisit(body, actor);
+    return this.unitVisitsService.logVisit(body, actor);
   }
 
   /** Every attempt on one unit — the panel behind «٣ محاولات». */
   @Roles(...EVERY_STAFF_ROLE)
   @Get('units/:unitId/visits')
   async unitVisits(@Param('unitId', new UuidPipe()) unitId: string) {
-    return { visits: await this.buildings.visits(unitId) };
+    return { visits: await this.unitVisitsService.visits(unitId) };
   }
 
   // ──────────────────────────────  Damage  ──────────────────────────────

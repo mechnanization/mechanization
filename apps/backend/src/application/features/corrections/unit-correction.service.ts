@@ -53,7 +53,7 @@ const json = <T>(value: T): Record<string, unknown> => JSON.parse(JSON.stringify
  *
  * ## Why it exists
  *
- * `BuildingsService.deleteUnit` refuses the moment anything has been recorded
+ * `UnitsService.deleteUnit` refuses the moment anything has been recorded
  * against a unit, and that is right for an officer in a stairwell. But a flat
  * drawn by mistake, with a household recorded in it, then had no way out but
  * hand-written SQL on production (A2-424-A, 2026-09-28). This is that SQL as a

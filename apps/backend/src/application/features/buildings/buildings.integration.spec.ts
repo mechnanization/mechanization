@@ -20,6 +20,8 @@ import { PrismaCaseRepository } from '../../../infrastructure/repositories/case.
 import { BuildingsService } from './buildings.service';
 import { DamageService } from './damage.service';
 import { OccupancyWritesService } from './occupancy-writes.service';
+import { UnitsService } from './units.service';
+import { UnitVisitsService } from './unit-visits.service';
 
 /**
  * The census, against a real Postgres.
@@ -76,6 +78,8 @@ describeIfDb('BuildingsService', () => {
   let ddl: Client;
   let db: TenantPrismaClient;
   let buildings: BuildingsService;
+  let unitsService: UnitsService;
+  let unitVisits: UnitVisitsService;
   let occupancyWrites: OccupancyWritesService;
   let damage: DamageService;
   /** Held at suite scope so the vacancy tests can open a حالة and read it back. */
@@ -115,13 +119,25 @@ describeIfDb('BuildingsService', () => {
 
     // A real scope for the census writes, which run in `runInTenantTransaction` since audit ARCH-03.
     const scoped = new TenantContextService();
-    buildings = inTenantScope(new BuildingsService(scoped, cases, events), scoped, {
+    buildings = inTenantScope(new BuildingsService(scoped, events), scoped, {
       tenantId: 'tenant-census',
       tenantSlug: 'census',
       schemaName: SCHEMA,
       prisma: db,
     });
-    occupancyWrites = inTenantScope(new OccupancyWritesService(scoped, cases, events, buildings), scoped, {
+    unitsService = inTenantScope(new UnitsService(scoped, events, buildings), scoped, {
+      tenantId: 'tenant-census',
+      tenantSlug: 'census',
+      schemaName: SCHEMA,
+      prisma: db,
+    });
+    unitVisits = inTenantScope(new UnitVisitsService(scoped, cases, events, buildings), scoped, {
+      tenantId: 'tenant-census',
+      tenantSlug: 'census',
+      schemaName: SCHEMA,
+      prisma: db,
+    });
+    occupancyWrites = inTenantScope(new OccupancyWritesService(scoped, cases, events, buildings, unitVisits), scoped, {
       tenantId: 'tenant-census',
       tenantSlug: 'census',
       schemaName: SCHEMA,
@@ -566,7 +582,7 @@ describeIfDb('BuildingsService', () => {
     );
 
     await expect(
-      buildings.generateUnits(
+      unitsService.generateUnits(
         building.id,
         { kind: 'uniform', fromFloor: 0, toFloor: 5, unitsPerFloor: 1, unitType: 'APARTMENT' },
         actor(),
@@ -586,7 +602,7 @@ describeIfDb('BuildingsService', () => {
       actor(),
     );
 
-    const result = await buildings.generateUnits(
+    const result = await unitsService.generateUnits(
       building.id,
       { kind: 'uniform', fromFloor: -1, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
       actor(),
@@ -609,12 +625,12 @@ describeIfDb('BuildingsService', () => {
       actor(),
     );
 
-    await buildings.addUnit(building.id, { floor: 4, unitType: 'APARTMENT' }, actor());
+    await unitsService.addUnit(building.id, { floor: 4, unitType: 'APARTMENT' }, actor());
 
     expect((await db.building.findUnique({ where: { id: building.id } }))?.floorsCount).toBe(5);
 
     // Only ever upward: a ground-floor محل is not evidence the block got shorter.
-    await buildings.addUnit(building.id, { floor: 0, unitType: 'SHOP' }, actor());
+    await unitsService.addUnit(building.id, { floor: 0, unitType: 'SHOP' }, actor());
     expect((await db.building.findUnique({ where: { id: building.id } }))?.floorsCount).toBe(5);
   });
 
@@ -624,7 +640,7 @@ describeIfDb('BuildingsService', () => {
       actor(),
     );
 
-    const result = await buildings.generateUnits(
+    const result = await unitsService.generateUnits(
       building.id,
       { kind: 'uniform', fromFloor: 0, toFloor: 2, unitsPerFloor: 4, unitType: 'APARTMENT' },
       actor(),
@@ -662,8 +678,8 @@ describeIfDb('BuildingsService', () => {
       unitType: 'APARTMENT' as const,
     };
 
-    await buildings.generateUnits(building.id, blueprint, actor());
-    const second = await buildings.generateUnits(building.id, blueprint, actor());
+    await unitsService.generateUnits(building.id, blueprint, actor());
+    const second = await unitsService.generateUnits(building.id, blueprint, actor());
 
     expect(second.created).toBe(0);
     expect(second.skipped).toBe(6);
@@ -675,18 +691,18 @@ describeIfDb('BuildingsService', () => {
       { parcelNumber: '5200', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
       actor(),
     );
-    const { units } = await buildings.generateUnits(
+    const { units } = await unitsService.generateUnits(
       building.id,
       { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 2, unitType: 'APARTMENT' },
       actor(),
     );
 
-    await buildings.updateUnit(units[0]!.id, { surveyStatus: 'COMPLETE' }, actor());
+    await unitsService.updateUnit(units[0]!.id, { surveyStatus: 'COMPLETE' }, actor());
     expect((await db.building.findUnique({ where: { id: building.id } }))?.unitsSurveyed).toBe(1);
 
     // REFUSED ends a visit without producing any of the data the census
     // collects, so it does not count as surveyed — see SURVEYED_STATUS.
-    await buildings.updateUnit(units[1]!.id, { surveyStatus: 'REFUSED' }, actor());
+    await unitsService.updateUnit(units[1]!.id, { surveyStatus: 'REFUSED' }, actor());
     expect((await db.building.findUnique({ where: { id: building.id } }))?.unitsSurveyed).toBe(1);
   });
 
@@ -697,7 +713,7 @@ describeIfDb('BuildingsService', () => {
       { parcelNumber: '6000', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 2 },
       actor(),
     );
-    const { units } = await buildings.generateUnits(
+    const { units } = await unitsService.generateUnits(
       building.id,
       { kind: 'uniform', fromFloor: 1, toFloor: 1, unitsPerFloor: 2, unitType: 'APARTMENT' },
       actor(),
@@ -740,7 +756,7 @@ describeIfDb('BuildingsService', () => {
       { parcelNumber: '6150', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
       actor(),
     );
-    const { units } = await buildings.generateUnits(
+    const { units } = await unitsService.generateUnits(
       building.id,
       { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
       actor(),
@@ -762,7 +778,7 @@ describeIfDb('BuildingsService', () => {
       { parcelNumber: '6100', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
       actor(),
     );
-    const { units } = await buildings.generateUnits(
+    const { units } = await unitsService.generateUnits(
       building.id,
       { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 2, unitType: 'APARTMENT' },
       actor(),
@@ -778,7 +794,7 @@ describeIfDb('BuildingsService', () => {
 
     // A demolished flat with an occupancy on it is a contradiction for a person
     // to resolve, not for a side effect to paper over.
-    await buildings.updateUnit(units[1]!.id, { surveyStatus: 'DEMOLISHED' }, actor());
+    await unitsService.updateUnit(units[1]!.id, { surveyStatus: 'DEMOLISHED' }, actor());
     await occupancyWrites.recordOccupancy(
       { unitId: units[1]!.id, citizenId: await citizen('زينب'), role: 'OWNER' },
       actor(),
@@ -804,12 +820,12 @@ describeIfDb('BuildingsService', () => {
         { parcelNumber, structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
         actor(),
       );
-      const { units } = await buildings.generateUnits(
+      const { units } = await unitsService.generateUnits(
         building.id,
         { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
         actor(),
       );
-      await buildings.logVisit({ unitId: units[0]!.id, outcome }, actor());
+      await unitVisits.logVisit({ unitId: units[0]!.id, outcome }, actor());
 
       await occupancyWrites.recordOccupancy(
         { unitId: units[0]!.id, citizenId: await citizen('ليلى'), role: 'OWNER' },
@@ -832,7 +848,7 @@ describeIfDb('BuildingsService', () => {
       { parcelNumber: '6200', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
       actor(),
     );
-    const { units } = await buildings.generateUnits(
+    const { units } = await unitsService.generateUnits(
       building.id,
       { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
       actor(),
@@ -859,7 +875,7 @@ describeIfDb('BuildingsService', () => {
       { parcelNumber: '6300', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
       actor(),
     );
-    const { units } = await buildings.generateUnits(
+    const { units } = await unitsService.generateUnits(
       building.id,
       { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
       actor(),
@@ -889,7 +905,7 @@ describeIfDb('BuildingsService', () => {
         { parcelNumber, structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
         actor(),
       );
-      const { units } = await buildings.generateUnits(
+      const { units } = await unitsService.generateUnits(
         building.id,
         { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
         actor(),
@@ -907,7 +923,7 @@ describeIfDb('BuildingsService', () => {
         actor(),
       );
 
-      await buildings.confirmVacancy(
+      await unitVisits.confirmVacancy(
         unitId,
         { basis: 'DECLARATION_FILED', notes: 'تصريح مقدَّم بتاريخ ١ أيلول' },
         actor(),
@@ -932,10 +948,10 @@ describeIfDb('BuildingsService', () => {
     */
     it('refuses a second standing confirmation', async () => {
       const { unitId } = await flat('9615');
-      await buildings.confirmVacancy(unitId, { basis: 'FIELD_INSPECTION' }, actor());
+      await unitVisits.confirmVacancy(unitId, { basis: 'FIELD_INSPECTION' }, actor());
 
       await expect(
-        buildings.confirmVacancy(unitId, { basis: 'OWNER_STATEMENT' }, actor()),
+        unitVisits.confirmVacancy(unitId, { basis: 'OWNER_STATEMENT' }, actor()),
       ).rejects.toThrow(ConflictError);
 
       expect(await db.unitVacancyConfirmation.count({ where: { unitId, endedAt: null } })).toBe(1);
@@ -947,9 +963,9 @@ describeIfDb('BuildingsService', () => {
         { unitId, citizenId: await citizen('هدى'), role: 'OWNER', unitStatus: 'RENTED' },
         actor(),
       );
-      await buildings.confirmVacancy(unitId, { basis: 'NEIGHBOUR_OR_CARETAKER' }, actor());
+      await unitVisits.confirmVacancy(unitId, { basis: 'NEIGHBOUR_OR_CARETAKER' }, actor());
 
-      await buildings.endVacancy(unitId, { reason: 'RECORDED_IN_ERROR' }, actor());
+      await unitVisits.endVacancy(unitId, { reason: 'RECORDED_IN_ERROR' }, actor());
 
       const unit = await unitOf(buildingId, unitId);
       expect(unit?.unitStatus).toBe('RENTED');
@@ -969,7 +985,7 @@ describeIfDb('BuildingsService', () => {
     */
     it('refuses to record an occupant over a standing vacancy, and says what stands', async () => {
       const { unitId } = await flat('9630');
-      await buildings.confirmVacancy(unitId, { basis: 'FIELD_INSPECTION' }, actor());
+      await unitVisits.confirmVacancy(unitId, { basis: 'FIELD_INSPECTION' }, actor());
 
       await expect(
         occupancyWrites.recordOccupancy(
@@ -983,7 +999,7 @@ describeIfDb('BuildingsService', () => {
 
     it('lifts the vacancy and lets the flat when the officer confirms it', async () => {
       const { buildingId, unitId } = await flat('9640');
-      await buildings.confirmVacancy(unitId, { basis: 'FIELD_INSPECTION' }, actor());
+      await unitVisits.confirmVacancy(unitId, { basis: 'FIELD_INSPECTION' }, actor());
 
       await occupancyWrites.recordOccupancy(
         { unitId, citizenId: await citizen('جاد'), role: 'TENANT', endsVacancy: true },
@@ -1004,7 +1020,7 @@ describeIfDb('BuildingsService', () => {
     */
     it('records an owner on an empty flat without touching the vacancy', async () => {
       const { buildingId, unitId } = await flat('9650');
-      await buildings.confirmVacancy(unitId, { basis: 'OWNER_STATEMENT' }, actor());
+      await unitVisits.confirmVacancy(unitId, { basis: 'OWNER_STATEMENT' }, actor());
 
       await occupancyWrites.recordOccupancy(
         { unitId, citizenId: await citizen('فادي'), role: 'OWNER' },
@@ -1018,10 +1034,10 @@ describeIfDb('BuildingsService', () => {
 
     it('refuses to edit the unit’s status out from under a standing confirmation', async () => {
       const { unitId } = await flat('9660');
-      await buildings.confirmVacancy(unitId, { basis: 'FIELD_INSPECTION' }, actor());
+      await unitVisits.confirmVacancy(unitId, { basis: 'FIELD_INSPECTION' }, actor());
 
       await expect(
-        buildings.updateUnit(unitId, { unitStatus: 'OWNER_OCCUPIED' }, actor()),
+        unitsService.updateUnit(unitId, { unitStatus: 'OWNER_OCCUPIED' }, actor()),
       ).rejects.toThrow('ألغِ تأكيد الشغور');
     });
 
@@ -1036,7 +1052,7 @@ describeIfDb('BuildingsService', () => {
         actor(),
       );
 
-      const result = await buildings.confirmVacancy(unitId, { basis: 'FIELD_INSPECTION' }, actor());
+      const result = await unitVisits.confirmVacancy(unitId, { basis: 'FIELD_INSPECTION' }, actor());
 
       expect(result.casesResolved).toBe(1);
       expect((await cases.get(open.id)).status).toBe('RESOLVED');
@@ -1049,7 +1065,7 @@ describeIfDb('BuildingsService', () => {
       { parcelNumber: '6400', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
       actor(),
     );
-    const { units } = await buildings.generateUnits(
+    const { units } = await unitsService.generateUnits(
       building.id,
       { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
       actor(),
@@ -1151,7 +1167,7 @@ describeIfDb('BuildingsService', () => {
       { parcelNumber: '9005', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
       actor(),
     );
-    const { units } = await buildings.generateUnits(
+    const { units } = await unitsService.generateUnits(
       building.id,
       { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
       actor(),
@@ -1197,13 +1213,13 @@ describeIfDb('BuildingsService', () => {
       { parcelNumber: '9100', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
       actor(),
     );
-    const { units } = await buildings.generateUnits(
+    const { units } = await unitsService.generateUnits(
       mine.id,
       { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 3, unitType: 'APARTMENT' },
       actor(),
     );
     // Surveyed; linked to a citizen; still waiting.
-    await buildings.updateUnit(units[0]!.id, { surveyStatus: 'COMPLETE' }, actor());
+    await unitsService.updateUnit(units[0]!.id, { surveyStatus: 'COMPLETE' }, actor());
     await occupancyWrites.recordOccupancy({ unitId: units[1]!.id, citizenId: await citizen('سكن'), role: 'TENANT' }, actor());
     const waiting = units[2]!;
 
@@ -1211,7 +1227,7 @@ describeIfDb('BuildingsService', () => {
       { parcelNumber: '9101', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
       other,
     );
-    const { units: theirUnits } = await buildings.generateUnits(
+    const { units: theirUnits } = await unitsService.generateUnits(
       theirs.id,
       { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
       other,
@@ -1234,12 +1250,12 @@ describeIfDb('BuildingsService', () => {
       { parcelNumber: '9300', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 3 },
       actor(),
     );
-    const { units } = await buildings.generateUnits(
+    const { units } = await unitsService.generateUnits(
       building.id,
       { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 5, unitType: 'APARTMENT' },
       actor(),
     );
-    await buildings.generateUnits(
+    await unitsService.generateUnits(
       building.id,
       { kind: 'uniform', fromFloor: 2, toFloor: 2, unitsPerFloor: 1, unitType: 'PILOTIS' },
       actor(),
@@ -1273,7 +1289,7 @@ describeIfDb('BuildingsService', () => {
     await occupancyWrites.endOccupancy(occupancy.id, { reason: 'MOVED_OUT' }, actor());
 
     // A refused door, already booked for a revisit.
-    await buildings.updateUnit(refused, { surveyStatus: 'REFUSED' }, actor());
+    await unitsService.updateUnit(refused, { surveyStatus: 'REFUSED' }, actor());
     const revisit = new Date(Date.UTC(2026, 10, 20));
     await db.case.create({
       data: {
@@ -1322,7 +1338,7 @@ describeIfDb('BuildingsService', () => {
       { parcelNumber: '9310', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
       leaver,
     );
-    const { units: leftUnits } = await buildings.generateUnits(
+    const { units: leftUnits } = await unitsService.generateUnits(
       left.id,
       { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
       leaver,
@@ -1331,7 +1347,7 @@ describeIfDb('BuildingsService', () => {
       { parcelNumber: '9311', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
       actor(),
     );
-    await buildings.generateUnits(
+    await unitsService.generateUnits(
       kept.id,
       { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
       actor(),
@@ -1366,7 +1382,7 @@ describeIfDb('BuildingsService', () => {
       { parcelNumber: '9400', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
       actor(),
     );
-    const { units } = await buildings.generateUnits(
+    const { units } = await unitsService.generateUnits(
       building.id,
       { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 2, unitType: 'APARTMENT' },
       actor(),
@@ -1490,7 +1506,7 @@ describeIfDb('BuildingsService', () => {
       { parcelNumber: '9003', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
       actor(),
     );
-    const { units } = await buildings.generateUnits(
+    const { units } = await unitsService.generateUnits(
       building.id,
       { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 2, unitType: 'APARTMENT' },
       actor(),
@@ -1534,7 +1550,7 @@ describeIfDb('BuildingsService', () => {
       { parcelNumber: '9417', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
       actor(),
     );
-    const { units } = await buildings.generateUnits(
+    const { units } = await unitsService.generateUnits(
       building.id,
       { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
       actor(),
@@ -1570,7 +1586,7 @@ describeIfDb('BuildingsService', () => {
       { parcelNumber: '9004', structureType: 'RESIDENTIAL_BUILDING', floorsCount: combos.length },
       actor(),
     );
-    const { units } = await buildings.generateUnits(
+    const { units } = await unitsService.generateUnits(
       building.id,
       { kind: 'uniform', fromFloor: 0, toFloor: combos.length - 1, unitsPerFloor: 1, unitType: 'APARTMENT' },
       actor(),
@@ -1602,7 +1618,7 @@ describeIfDb('BuildingsService', () => {
       { parcelNumber: '9100', structureType: 'MIXED_USE', floorsCount: 4 },
       actor(),
     );
-    const { units } = await buildings.generateUnits(
+    const { units } = await unitsService.generateUnits(
       building.id,
       { kind: 'uniform', fromFloor: 3, toFloor: 3, unitsPerFloor: 1, unitType: 'APARTMENT' },
       actor(),
@@ -1633,14 +1649,14 @@ describeIfDb('BuildingsService', () => {
       },
       actor(),
     );
-    const { units } = await buildings.generateUnits(
+    const { units } = await unitsService.generateUnits(
       building.id,
       { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 3, unitType: 'APARTMENT' },
       actor(),
     );
 
-    await buildings.updateUnit(units[0]!.id, { surveyStatus: 'COMPLETE' }, actor());
-    await buildings.updateUnit(units[1]!.id, { surveyStatus: 'COMPLETE' }, actor());
+    await unitsService.updateUnit(units[0]!.id, { surveyStatus: 'COMPLETE' }, actor());
+    await unitsService.updateUnit(units[1]!.id, { surveyStatus: 'COMPLETE' }, actor());
     await damage.record(
       { buildingId: building.id, level: 'RESTRICTED_USE', source: 'SATELLITE' },
       actor(),
@@ -1814,15 +1830,15 @@ describeIfDb('BuildingsService', () => {
       { parcelNumber: '9440', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 3 },
       actor(),
     );
-    const { units } = await buildings.generateUnits(
+    const { units } = await unitsService.generateUnits(
       building.id,
       { kind: 'uniform', fromFloor: 0, toFloor: 2, unitsPerFloor: 2, unitType: 'APARTMENT' },
       actor(),
     );
-    await buildings.updateUnit(units[0]!.id, { surveyStatus: 'COMPLETE' }, actor());
+    await unitsService.updateUnit(units[0]!.id, { surveyStatus: 'COMPLETE' }, actor());
     // «شاغرة مؤكَّدة» counts as surveyed, and is now reached through the
     // confirmation rather than through a status edit — see `confirmVacancy`.
-    await buildings.confirmVacancy(units[1]!.id, { basis: 'FIELD_INSPECTION' }, actor());
+    await unitVisits.confirmVacancy(units[1]!.id, { basis: 'FIELD_INSPECTION' }, actor());
     await damage.record(
       { buildingId: building.id, level: 'TOTAL_COLLAPSE', source: 'SATELLITE' },
       actor(),
@@ -1870,7 +1886,7 @@ describeIfDb('BuildingsService', () => {
       { parcelNumber: '9460', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
       actor(),
     );
-    const { units } = await buildings.generateUnits(
+    const { units } = await unitsService.generateUnits(
       building.id,
       { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 2, unitType: 'APARTMENT' },
       actor(),
@@ -1900,7 +1916,7 @@ describeIfDb('BuildingsService', () => {
       { parcelNumber: '9500', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
       actor(),
     );
-    const { units } = await buildings.generateUnits(
+    const { units } = await unitsService.generateUnits(
       building.id,
       { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
       actor(),
@@ -1908,7 +1924,7 @@ describeIfDb('BuildingsService', () => {
     const unitId = units[0]!.id;
 
     for (const day of ['2026-08-01', '2026-08-08', '2026-08-15']) {
-      await buildings.logVisit(
+      await unitVisits.logVisit(
         { unitId, outcome: 'VISITED_NO_ANSWER', visitedAt: new Date(day) },
         actor(),
       );
@@ -1933,14 +1949,14 @@ describeIfDb('BuildingsService', () => {
       { parcelNumber: '9515', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
       actor(),
     );
-    const { units } = await buildings.generateUnits(
+    const { units } = await unitsService.generateUnits(
       building.id,
       { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
       actor(),
     );
     const unitId = units[0]!.id;
 
-    await buildings.confirmVacancy(unitId, { basis: 'FIELD_INSPECTION' }, actor());
+    await unitVisits.confirmVacancy(unitId, { basis: 'FIELD_INSPECTION' }, actor());
 
     /*
       A visit that finds a locked door on a flat already confirmed empty is not
@@ -1948,7 +1964,7 @@ describeIfDb('BuildingsService', () => {
       confirmation standing with the unit no longer reading as vacant, which is
       the register saying two things at once. The attempt is still counted.
     */
-    const result = await buildings.logVisit({ unitId, outcome: 'VISITED_NO_ANSWER' }, actor());
+    const result = await unitVisits.logVisit({ unitId, outcome: 'VISITED_NO_ANSWER' }, actor());
     expect(result.visitCount).toBe(1);
     expect(result.vacancyStands).toBe(true);
 
@@ -1957,8 +1973,8 @@ describeIfDb('BuildingsService', () => {
     expect(unit?.unitStatus).toBe('VACANT');
 
     // Lifting it is what lets an ordinary visit move the unit again.
-    await buildings.endVacancy(unitId, { reason: 'RECORDED_IN_ERROR' }, actor());
-    await buildings.logVisit({ unitId, outcome: 'COMPLETE' }, actor());
+    await unitVisits.endVacancy(unitId, { reason: 'RECORDED_IN_ERROR' }, actor());
+    await unitVisits.logVisit({ unitId, outcome: 'COMPLETE' }, actor());
     expect((await buildings.get(building.id)).units[0]?.surveyStatus).toBe('COMPLETE');
   });
 
@@ -1967,14 +1983,14 @@ describeIfDb('BuildingsService', () => {
       { parcelNumber: '9510', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
       actor(),
     );
-    const { units } = await buildings.generateUnits(
+    const { units } = await unitsService.generateUnits(
       building.id,
       { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
       actor(),
     );
     const unitId = units[0]!.id;
 
-    await buildings.logVisit({ unitId, outcome: 'REFUSED' }, actor());
+    await unitVisits.logVisit({ unitId, outcome: 'REFUSED' }, actor());
     expect((await buildings.get(building.id)).units[0]?.surveyStatus).toBe('REFUSED');
 
     /*
@@ -1987,7 +2003,7 @@ describeIfDb('BuildingsService', () => {
       one carries an exemption and goes through `confirmVacancy`, which asks
       what it rests on. The test above covers it.
     */
-    const result = await buildings.logVisit({ unitId, outcome: 'COMPLETE' }, actor());
+    const result = await unitVisits.logVisit({ unitId, outcome: 'COMPLETE' }, actor());
     expect(result.visitCount).toBe(2);
     expect((await buildings.get(building.id)).units[0]?.surveyStatus).toBe('COMPLETE');
   });
@@ -1997,7 +2013,7 @@ describeIfDb('BuildingsService', () => {
       { parcelNumber: '9520', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
       actor(),
     );
-    const { units } = await buildings.generateUnits(
+    const { units } = await unitsService.generateUnits(
       building.id,
       { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
       actor(),
@@ -2016,12 +2032,12 @@ describeIfDb('BuildingsService', () => {
       },
     });
 
-    await buildings.logVisit(
+    await unitVisits.logVisit(
       { unitId: units[0]!.id, outcome: 'REFUSED', notes: 'رفض صاحب العلاقة' },
       { id: leaverId, role: 'FIELD_INSPECTOR' },
     );
 
-    const before = await buildings.visits(units[0]!.id);
+    const before = await unitVisits.visits(units[0]!.id);
     expect(before[0]).toEqual(
       expect.objectContaining({ officerName: 'موظف سابق', notes: 'رفض صاحب العلاقة' }),
     );
@@ -2034,7 +2050,7 @@ describeIfDb('BuildingsService', () => {
     */
     await db.user.delete({ where: { id: leaverId } });
 
-    const after = await buildings.visits(units[0]!.id);
+    const after = await unitVisits.visits(units[0]!.id);
     expect(after).toHaveLength(1);
     expect(after[0]?.officerId).toBeNull();
     expect(after[0]?.outcome).toBe('REFUSED');
@@ -2261,12 +2277,12 @@ describeIfDb('BuildingsService', () => {
       actor(),
     );
 
-    await buildings.generateUnits(
+    await unitsService.generateUnits(
       standing.building.id,
       { kind: 'uniform', fromFloor: 0, toFloor: 1, unitsPerFloor: 2, unitType: 'APARTMENT' },
       actor(),
     );
-    await buildings.generateUnits(
+    await unitsService.generateUnits(
       shell.building.id,
       { kind: 'uniform', fromFloor: 0, toFloor: 1, unitsPerFloor: 2, unitType: 'APARTMENT' },
       actor(),
@@ -2300,7 +2316,7 @@ describeIfDb('BuildingsService', () => {
       },
       actor(),
     );
-    await buildings.generateUnits(
+    await unitsService.generateUnits(
       shell.building.id,
       { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 2, unitType: 'APARTMENT' },
       actor(),
@@ -2372,23 +2388,23 @@ describeIfDb('BuildingsService', () => {
         { parcelNumber: 'DQ-VISIT', structureType: 'COMMERCIAL_CENTER', floorsCount: 1 },
         actor(),
       );
-      const { units } = await buildings.generateUnits(
+      const { units } = await unitsService.generateUnits(
         building.id,
         { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'SHOP' },
         actor(),
       );
       const unitId = units[0]!.id;
 
-      await buildings.logVisit({ unitId, outcome: 'VISITED_NO_ANSWER', notes: 'المحل مغلق' }, actor());
+      await unitVisits.logVisit({ unitId, outcome: 'VISITED_NO_ANSWER', notes: 'المحل مغلق' }, actor());
 
       const refusal = await refusalFrom(() =>
-        buildings.logVisit({ unitId, outcome: 'VISITED_NO_ANSWER', notes: 'مغلق في وقت الزيارة' }, actor()),
+        unitVisits.logVisit({ unitId, outcome: 'VISITED_NO_ANSWER', notes: 'مغلق في وقت الزيارة' }, actor()),
       );
       expect(refusal.details).toMatchObject({ repeatVisit: { unitId, outcome: 'VISITED_NO_ANSWER' } });
 
       // An evening retry the officer confirms, and a different finding, both land.
-      await buildings.logVisit({ unitId, outcome: 'VISITED_NO_ANSWER', acknowledgedRepeat: true }, actor());
-      const done = await buildings.logVisit({ unitId, outcome: 'COMPLETE' }, actor());
+      await unitVisits.logVisit({ unitId, outcome: 'VISITED_NO_ANSWER', acknowledgedRepeat: true }, actor());
+      const done = await unitVisits.logVisit({ unitId, outcome: 'COMPLETE' }, actor());
       expect(done.visitCount).toBe(3);
 
       // Somebody else's knock the same day is dispatch information, not a duplicate.
@@ -2404,7 +2420,7 @@ describeIfDb('BuildingsService', () => {
           role: 'FIELD_INSPECTOR',
         },
       });
-      await expect(buildings.logVisit({ unitId, outcome: 'COMPLETE' }, colleague)).resolves.toBeDefined();
+      await expect(unitVisits.logVisit({ unitId, outcome: 'COMPLETE' }, colleague)).resolves.toBeDefined();
     });
 
     it('opens one follow-up case per door, and any number of notes', async () => {
@@ -2413,7 +2429,7 @@ describeIfDb('BuildingsService', () => {
           { parcelNumber: 'DQ-CASE', structureType: 'COMMERCIAL_CENTER', floorsCount: 1 },
           actor(),
         );
-        const { units } = await buildings.generateUnits(
+        const { units } = await unitsService.generateUnits(
           building.id,
           { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'SHOP' },
           actor(),

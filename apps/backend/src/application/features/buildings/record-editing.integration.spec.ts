@@ -10,6 +10,7 @@ import { CasesService } from '../cases/cases.service';
 import { PrismaCaseRepository } from '../../../infrastructure/repositories/case.repository';
 import { BuildingsService } from './buildings.service';
 import { CensusSyncService } from './census-sync.service';
+import { UnitsService } from './units.service';
 
 /**
  * Correcting a building, a unit or a citizen's cards without leaving the
@@ -31,6 +32,7 @@ describeIfDb('record editing', () => {
   let ddl: Client;
   let db: TenantPrismaClient;
   let buildings: BuildingsService;
+  let unitsService: UnitsService;
   let census: CensusSyncService;
   let officerId: string;
 
@@ -60,7 +62,13 @@ describeIfDb('record editing', () => {
     );
     // A real scope for the census writes, which run in `runInTenantTransaction` since audit ARCH-03.
     const scoped = new TenantContextService();
-    buildings = inTenantScope(new BuildingsService(scoped, cases, events), scoped, {
+    buildings = inTenantScope(new BuildingsService(scoped, events), scoped, {
+      tenantId: 'tenant-editing',
+      tenantSlug: 'editing',
+      schemaName: SCHEMA,
+      prisma: db,
+    });
+    unitsService = inTenantScope(new UnitsService(scoped, events, buildings), scoped, {
       tenantId: 'tenant-editing',
       tenantSlug: 'editing',
       schemaName: SCHEMA,
@@ -102,7 +110,7 @@ describeIfDb('record editing', () => {
       { parcelNumber, structureType: 'RESIDENTIAL_BUILDING', lifecycleStatus: 'IN_USE', floorsCount: 3 },
       actor(),
     );
-    const { units } = await buildings.generateUnits(
+    const { units } = await unitsService.generateUnits(
       building.id,
       { kind: 'uniform', fromFloor: 0, toFloor: 2, unitsPerFloor: 1, unitType },
       actor(),
@@ -156,7 +164,7 @@ describeIfDb('record editing', () => {
 
     it('accepts it once the units on the removed floor are gone', async () => {
       const { building, units } = await block('EDIT-F2');
-      await buildings.deleteUnit(units[2]!.id, actor());
+      await unitsService.deleteUnit(units[2]!.id, actor());
 
       const updated = await buildings.update(building.id, { floorsCount: 2 }, actor());
       expect(updated.floorsCount).toBe(2);
@@ -175,7 +183,7 @@ describeIfDb('record editing', () => {
     it('grows the building so the unit stays on the matrix', async () => {
       const { building, units } = await block('EDIT-M1');
 
-      const moved = await buildings.updateUnit(units[2]!.id, { floor: 5 }, actor());
+      const moved = await unitsService.updateUnit(units[2]!.id, { floor: 5 }, actor());
 
       expect(moved.unitCode).toBe('0501');
       const stored = await db.building.findUniqueOrThrow({ where: { id: building.id } });
@@ -189,7 +197,7 @@ describeIfDb('record editing', () => {
       const tenantId = await citizen('سامي', 'NON_RESIDENT_OWNER');
       await db.unitOccupancy.create({ data: { unitId: units[0]!.id, citizenId: tenantId, role: 'TENANT' } });
 
-      await expect(buildings.updateUnit(units[0]!.id, { unitType: 'APARTMENT' }, actor())).rejects.toThrow(
+      await expect(unitsService.updateUnit(units[0]!.id, { unitType: 'APARTMENT' }, actor())).rejects.toThrow(
         /سامي تجربة/,
       );
       const stored = await db.unit.findUniqueOrThrow({ where: { id: units[0]!.id } });
@@ -207,7 +215,7 @@ describeIfDb('record editing', () => {
         occupancyType: 'TENANT',
       });
 
-      await expect(buildings.updateUnit(units[0]!.id, { unitType: 'APARTMENT' }, actor())).rejects.toThrow(
+      await expect(unitsService.updateUnit(units[0]!.id, { unitType: 'APARTMENT' }, actor())).rejects.toThrow(
         /رامي تجربة/,
       );
     });
@@ -217,7 +225,7 @@ describeIfDb('record editing', () => {
       const tenantId = await citizen('هادي', 'NON_RESIDENT_OWNER');
       await db.unitOccupancy.create({ data: { unitId: units[0]!.id, citizenId: tenantId, role: 'TENANT' } });
 
-      const updated = await buildings.updateUnit(units[0]!.id, { unitType: 'OFFICE' }, actor());
+      const updated = await unitsService.updateUnit(units[0]!.id, { unitType: 'OFFICE' }, actor());
       expect(updated.unitType).toBe('OFFICE');
     });
 
@@ -226,7 +234,7 @@ describeIfDb('record editing', () => {
       const tenantId = await citizen('فادي');
       await db.unitOccupancy.create({ data: { unitId: units[0]!.id, citizenId: tenantId, role: 'TENANT' } });
 
-      const updated = await buildings.updateUnit(units[0]!.id, { unitType: 'APARTMENT' }, actor());
+      const updated = await unitsService.updateUnit(units[0]!.id, { unitType: 'APARTMENT' }, actor());
       expect(updated.unitType).toBe('APARTMENT');
     });
 
@@ -236,7 +244,7 @@ describeIfDb('record editing', () => {
       await db.unitOccupancy.create({ data: { unitId: units[0]!.id, citizenId: ownerId, role: 'OWNER' } });
 
       await expect(
-        buildings.updateUnit(units[0]!.id, { unitStatus: 'OWNER_OCCUPIED' }, actor()),
+        unitsService.updateUnit(units[0]!.id, { unitStatus: 'OWNER_OCCUPIED' }, actor()),
       ).rejects.toThrow(/مسكن موسمي/);
     });
   });

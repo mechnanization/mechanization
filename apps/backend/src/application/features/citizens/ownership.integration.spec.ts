@@ -19,6 +19,8 @@ import { StaffActor } from '../../common/actor';
 import { feeServices } from '../fees/fee-services.testing';
 import type { FeeNoticesService } from '../fees/fee-notices.service';
 import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
+import { UnitsService } from '../buildings/units.service';
+import { UnitVisitsService } from '../buildings/unit-visits.service';
 
 /**
  * Ending an ownership, against a real Postgres.
@@ -43,6 +45,8 @@ describeIfDb('OwnershipService', () => {
   let db: TenantPrismaClient;
   let context: TenantContextService;
   let buildings: BuildingsService;
+  let unitsService: UnitsService;
+  let unitVisits: UnitVisitsService;
   let occupancyWrites: OccupancyWritesService;
   let census: CensusSyncService;
   let links: LandlordLinkService;
@@ -71,8 +75,10 @@ describeIfDb('OwnershipService', () => {
       { findById: async () => ({ id: officerId, kind: 'CITIZEN' }) } as never,
       events,
     );
-    buildings = new BuildingsService(context, cases, events);
-    occupancyWrites = new OccupancyWritesService(context, cases, events, buildings);
+    buildings = new BuildingsService(context, events);
+    unitsService = new UnitsService(context, events, buildings);
+    unitVisits = new UnitVisitsService(context, cases, events, buildings);
+    occupancyWrites = new OccupancyWritesService(context, cases, events, buildings, unitVisits);
     census = new CensusSyncService(context, cases, events);
     links = new LandlordLinkService(
       context,
@@ -81,11 +87,11 @@ describeIfDb('OwnershipService', () => {
       new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
     );
     const audit = new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never);
-    ownership = new OwnershipService(context, buildings, cases, links, events, audit, occupancyWrites);
-    failingOwnership = new OwnershipService(context, buildings, cases, links, events, {
+    ownership = new OwnershipService(context, unitVisits, cases, links, events, audit, occupancyWrites);
+    failingOwnership = new OwnershipService(context, unitVisits, cases, links, events, {
       recordChangeInTransaction: () => Promise.reject(new Error('audit insert refused')),
     } as never, occupancyWrites);
-    tenancy = new TenancyService(context, buildings, cases, links, events, ownership, audit, occupancyWrites);
+    tenancy = new TenancyService(context, unitVisits, cases, links, events, ownership, audit, occupancyWrites);
     ({ feeNotices } = feeServices(
       context,
       events,
@@ -138,7 +144,7 @@ describeIfDb('OwnershipService', () => {
         { parcelNumber, structureType: 'RESIDENTIAL_BUILDING', lifecycleStatus: 'IN_USE', floorsCount: 1 },
         actor(),
       );
-      const { units } = await buildings.generateUnits(
+      const { units } = await unitsService.generateUnits(
         building.id,
         { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor, unitType: 'APARTMENT' },
         actor(),

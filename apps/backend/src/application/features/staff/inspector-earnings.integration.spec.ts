@@ -20,6 +20,8 @@ import { ExpensesService } from '../treasury/expenses.service';
 import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
 import { StaffService } from './staff.service';
 import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
+import { UnitsService } from '../buildings/units.service';
+import { UnitVisitsService } from '../buildings/unit-visits.service';
 
 /**
  * Who is paid for a unit line, against a real Postgres (migrations 0096, 0097).
@@ -52,6 +54,8 @@ describeIfDb('Who is paid for a unit line', () => {
   let db: TenantPrismaClient;
   let context: TenantContextService;
   let buildings: BuildingsService;
+  let unitsService: UnitsService;
+  let unitVisits: UnitVisitsService;
   let occupancyWrites: OccupancyWritesService;
   let tenancy: TenancyService;
   let users: PrismaUserRepository;
@@ -94,7 +98,7 @@ describeIfDb('Who is paid for a unit line', () => {
         { parcelNumber: `ERN-${++parcels}`, structureType: 'RESIDENTIAL_BUILDING', lifecycleStatus: 'IN_USE', floorsCount: 1 },
         actor,
       );
-      const { units } = await buildings.generateUnits(
+      const { units } = await unitsService.generateUnits(
         building.id,
         { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor, unitType: 'APARTMENT' as never },
         actor,
@@ -126,11 +130,13 @@ describeIfDb('Who is paid for a unit line', () => {
     const events = new EventEmitter2();
     const audit = new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never);
     const cases = new CasesService(new PrismaCaseRepository(context), { findById: async (id: string) => ({ id, kind: 'CITIZEN' }) } as never, events);
-    buildings = new BuildingsService(context, cases, events);
-    occupancyWrites = new OccupancyWritesService(context, cases, events, buildings);
+    buildings = new BuildingsService(context, events);
+    unitsService = new UnitsService(context, events, buildings);
+    unitVisits = new UnitVisitsService(context, cases, events, buildings);
+    occupancyWrites = new OccupancyWritesService(context, cases, events, buildings, unitVisits);
     const links = new LandlordLinkService(context, occupancyWrites, events, audit);
-    const ownership = new OwnershipService(context, buildings, cases, links, events, audit, occupancyWrites);
-    tenancy = new TenancyService(context, buildings, cases, links, events, ownership, audit, occupancyWrites);
+    const ownership = new OwnershipService(context, unitVisits, cases, links, events, audit, occupancyWrites);
+    tenancy = new TenancyService(context, unitVisits, cases, links, events, ownership, audit, occupancyWrites);
 
     const ledger = new TreasuryLedgerService(context);
     users = new PrismaUserRepository(context);

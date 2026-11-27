@@ -15,7 +15,7 @@ import { AuditService, type CitizenChange } from '../audit/audit.service';
 import { settleUnit, type UnitStatusEvent } from '../buildings/unit-status';
 import { ConflictError, NotFoundError, ValidationError } from '../../../domain/errors/domain-error';
 import { claimsFlat } from '../../../domain/entities/census-claim';
-import { BuildingsService } from '../buildings/buildings.service';
+import { UnitVisitsService } from '../buildings/unit-visits.service';
 import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
 import { CasesService } from '../cases/cases.service';
 import { withoutCardFlags, withoutRowFlags } from './card-flags';
@@ -68,7 +68,7 @@ import { StaffActor } from '../../common/actor';
 export class TenancyService {
   constructor(
     private readonly tenantContext: TenantContextService,
-    private readonly buildings: BuildingsService,
+    private readonly unitVisits: UnitVisitsService,
     private readonly cases: CasesService,
     private readonly links: LandlordLinkService,
     private readonly events: EventEmitter2,
@@ -887,7 +887,7 @@ export class TenancyService {
           lifted again. It runs inside this transaction, and step 5 settles the
           flat once everything here is written.
         */
-        await this.buildings.confirmVacancy(
+        await this.unitVisits.confirmVacancy(
           unit.unitId,
           {
             basis: input.vacancyBasis as never,

@@ -23,6 +23,7 @@ import {
   assertOccupiableUnit,
   toOccupancyRow,
 } from './buildings.service';
+import { UnitVisitsService } from './unit-visits.service';
 
 /**
  * Who lives in or holds a unit, written: «تسجيل إشغال» (`recordOccupancy`), the
@@ -39,6 +40,7 @@ export class OccupancyWritesService {
     private readonly cases: CasesService,
     private readonly events: EventEmitter2,
     private readonly buildings: BuildingsService,
+    private readonly unitVisits: UnitVisitsService,
   ) {}
 
   private get db() {
@@ -330,7 +332,7 @@ export class OccupancyWritesService {
     const impliedStatus = unitStatusForRole(input.role);
     if (input.role === 'OWNER' && input.unitStatus === 'VACANT') {
       if (!(await activeVacancy(this.db, input.unitId))) {
-        await this.buildings.confirmVacancy(
+        await this.unitVisits.confirmVacancy(
           input.unitId,
           { basis: 'OWNER_STATEMENT', notes: 'تصريح المالك عند تسجيله على الوحدة' } as never,
           actor,

@@ -19,6 +19,8 @@ import { LandlordLinkService, readFootprint } from './landlord-link.service';
 import { feeServices } from '../fees/fee-services.testing';
 import type { FeeNoticesService } from '../fees/fee-notices.service';
 import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
+import { UnitsService } from '../buildings/units.service';
+import { UnitVisitsService } from '../buildings/unit-visits.service';
 
 /**
  * Owner links against a real Postgres — what a link writes, and that undoing
@@ -53,6 +55,8 @@ describeIfDb('LandlordLinkService', () => {
   let db: TenantPrismaClient;
   let context: TenantContextService;
   let buildings: BuildingsService;
+  let unitsService: UnitsService;
+  let unitVisits: UnitVisitsService;
   let occupancyWrites: OccupancyWritesService;
   let census: CensusSyncService;
   let links: LandlordLinkService;
@@ -101,8 +105,10 @@ describeIfDb('LandlordLinkService', () => {
       { findById: async () => ({ id: officerId, kind: 'CITIZEN' }) } as never,
       events,
     );
-    buildings = new BuildingsService(context, cases, events);
-    occupancyWrites = new OccupancyWritesService(context, cases, events, buildings);
+    buildings = new BuildingsService(context, events);
+    unitsService = new UnitsService(context, events, buildings);
+    unitVisits = new UnitVisitsService(context, cases, events, buildings);
+    occupancyWrites = new OccupancyWritesService(context, cases, events, buildings, unitVisits);
     census = new CensusSyncService(context, cases, events);
     links = new LandlordLinkService(
       context,
@@ -202,7 +208,7 @@ describeIfDb('LandlordLinkService', () => {
         },
         actor(),
       );
-      const { units } = await buildings.generateUnits(
+      const { units } = await unitsService.generateUnits(
         building.id,
         { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor, unitType: 'APARTMENT' },
         actor(),
@@ -588,7 +594,7 @@ describeIfDb('LandlordLinkService', () => {
       onlyUnit?.id ??
       (
         await within(() =>
-          buildings.generateUnits(
+          unitsService.generateUnits(
             building.id,
             { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
             actor(),
@@ -651,7 +657,7 @@ describeIfDb('LandlordLinkService', () => {
       onlyUnit?.id ??
       (
         await within(() =>
-          buildings.generateUnits(
+          unitsService.generateUnits(
             building.id,
             { kind: 'uniform', fromFloor: 0, toFloor: 0, unitsPerFloor: 1, unitType: 'APARTMENT' },
             actor(),
