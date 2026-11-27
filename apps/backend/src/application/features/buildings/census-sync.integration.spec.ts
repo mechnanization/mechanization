@@ -5,6 +5,7 @@ import { PrismaClient as TenantPrismaClient } from '../../../generated/tenant-cl
 import { migrateTenantSchema } from '../../../infrastructure/prisma/tenant-migrator';
 import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
+import { inTenantScope } from '../../../infrastructure/context/in-tenant-scope.testing';
 import { CasesService } from '../cases/cases.service';
 import { PrismaCaseRepository } from '../../../infrastructure/repositories/case.repository';
 import { ReportingService } from '../reporting/reporting.service';
@@ -97,7 +98,14 @@ describeIfDb('CensusSyncService', () => {
       events,
     );
 
-    buildings = new BuildingsService(context, cases, events);
+    // A real scope for the census writes, which run in `runInTenantTransaction` since audit ARCH-03.
+    const scoped = new TenantContextService();
+    buildings = inTenantScope(new BuildingsService(scoped, cases, events), scoped, {
+      tenantId: 'tenant-census',
+      tenantSlug: 'census',
+      schemaName: SCHEMA,
+      prisma: db,
+    });
     census = new CensusSyncService(context, cases, events);
 
     /*

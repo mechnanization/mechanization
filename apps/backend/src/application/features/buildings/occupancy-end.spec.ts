@@ -1,3 +1,5 @@
+import { TenantContextService, type TenantScope } from '../../../infrastructure/context/tenant-context.service';
+import { inTenantScope } from '../../../infrastructure/context/in-tenant-scope.testing';
 import { BuildingsService } from './buildings.service';
 
 /*
@@ -23,14 +25,29 @@ jest.mock('./unit-status', () => ({
 
 const actor = { id: 'staff-1', role: 'FIELD_INSPECTOR' };
 
+/*
+  A real tenant scope over the mock, entered for every call (`inTenantScope`):
+  the vacancy writes run in `runInTenantTransaction` since audit ARCH-03, and
+  the mock's `$transaction` hands the work the same mock back as `tx`.
+*/
 function service(db: Record<string, unknown>) {
-  return new BuildingsService(
-    { prisma: db, tenantSlug: 'albazourieh' } as never,
+  const context = new TenantContextService();
+  return inTenantScope(
+    new BuildingsService(
+      context,
+      {
+        resolveForUnit: jest.fn().mockResolvedValue(0),
+        resolveVacancyCasesForUnit: jest.fn().mockResolvedValue(0),
+      } as never,
+      { emit: jest.fn() } as never,
+    ),
+    context,
     {
-      resolveForUnit: jest.fn().mockResolvedValue(0),
-      resolveVacancyCasesForUnit: jest.fn().mockResolvedValue(0),
-    } as never,
-    { emit: jest.fn() } as never,
+      tenantId: 'tenant-1',
+      tenantSlug: 'albazourieh',
+      schemaName: 'tenant_albazourieh',
+      prisma: db as unknown as TenantScope['prisma'],
+    },
   );
 }
 

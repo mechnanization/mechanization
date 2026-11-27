@@ -1445,7 +1445,8 @@ export class BuildingsService {
       );
     }
 
-    const created = await this.db.$transaction(async (tx) => {
+    const created = await runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.db as Prisma.TransactionClient;
       /*
         The lock key names the schema explicitly, for the same reason the query
         above does (`buildingSuffixLockKey` says why); without it the suffix
@@ -2387,7 +2388,7 @@ export class BuildingsService {
       }
     }
 
-    // `atomic`, not `$transaction`: a whole-matrix save (`saveMatrix`) runs this inside its own.
+    // `atomic` joins the transaction a whole-matrix save (`saveMatrix`) runs this inside.
     const added = await this.atomic(async (tx) => {
       /*
         The schema is a literal here for the same reason it is in `create` —
@@ -3192,42 +3193,22 @@ export class BuildingsService {
   // ─────────────────────────  «تأكيد الشغور»  ─────────────────────────
 
   /**
-   * The two things that make "this flat is empty" untrue, refused wherever it
-   * is said.
+   * One transaction — or the caller's, when there already is one: `runInTenantTransaction`
+   * with this service's bounds (`APP_CONFIG.transactions.buildingWrite`), the work handed the
+   * transaction client the scope now holds (audit ARCH-03).
    *
-   * **Somebody living there.** A مستأجر or شاغل بتسامح recorded on the unit is
-   * the flat's occupant, and writing «شاغرة» over them leaves a row saying
-   * nobody is there beside rows naming who is — which `isUnoccupied` then reads
-   * as an exemption, so the contradiction silently stops a bill. Refused rather
-   * than cascaded into ending their spells: those are opposite statements about
-   * people, and only the officer knows which is true. «إنهاء الإشغال» is a click
-   * away and asks who left and when.
-   *
-   * **An owner is not one of them**, and that asymmetry is load-bearing. This
-   * used to refuse over any live spell including the owner's, so officers ended
-   * the *ownership* to record an empty flat — erasing the deed from the file,
-   * billing and all. A deed is not a statement of residence (D2); an owner
-   * recorded on a شاغرة unit is exactly what the join table exists to say.
-   *
-   * **A seasonal home.** Its owners being away is what «مسكن موسمي» means, and
-   * a seasonal home is billed to them (`OWNER_BILLED_WHILE_ABSENT`) while a
-   * vacant one is exempt — so a summer house surveyed in January was one tap
-   * from cancelling the summer's fees. Read the way billing reads it: the
-   * unit's own حالة, or the owner's card where the unit has none.
-   */
-  /**
-   * One transaction — or the caller's, when there already is one.
-   *
-   * «إنهاء الإيجار» confirms the vacancy it leaves behind inside its own
-   * transaction, so the tenancy and the vacancy commit together. The client this
-   * service reads is that transaction then, and a transaction client has no
-   * `$transaction` of its own: the work simply joins the one already open.
+   * «إنهاء الإيجار» confirms the vacancy it leaves behind inside its own transaction, so the
+   * tenancy and the vacancy commit together; a whole-matrix save (`saveMatrix`) runs `addUnit`
+   * inside its own. The helper joins an enclosing transaction rather than opening a second,
+   * and since it swaps the scope, the services and audit listeners called inside the work write
+   * through it too — which the bare `$transaction` this replaced, joined by duck-typing, did not.
    */
   private atomic<T>(work: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
-    const client = this.db as unknown as { $transaction?: unknown };
-    return typeof client.$transaction === 'function'
-      ? this.db.$transaction(work, APP_CONFIG.transactions.buildingWrite)
-      : work(this.db as unknown as Prisma.TransactionClient);
+    return runInTenantTransaction(
+      this.tenantContext,
+      () => work(this.db as Prisma.TransactionClient),
+      APP_CONFIG.transactions.buildingWrite,
+    );
   }
 
   /** See `endVacancy`: an owner's «شاغرة» on their own card, cleared with the vacancy. */
@@ -3319,6 +3300,30 @@ export class BuildingsService {
     }
   }
 
+  /**
+   * The two things that make "this flat is empty" untrue, refused wherever it
+   * is said.
+   *
+   * **Somebody living there.** A مستأجر or شاغل بتسامح recorded on the unit is
+   * the flat's occupant, and writing «شاغرة» over them leaves a row saying
+   * nobody is there beside rows naming who is — which `isUnoccupied` then reads
+   * as an exemption, so the contradiction silently stops a bill. Refused rather
+   * than cascaded into ending their spells: those are opposite statements about
+   * people, and only the officer knows which is true. «إنهاء الإشغال» is a click
+   * away and asks who left and when.
+   *
+   * **An owner is not one of them**, and that asymmetry is load-bearing. This
+   * used to refuse over any live spell including the owner's, so officers ended
+   * the *ownership* to record an empty flat — erasing the deed from the file,
+   * billing and all. A deed is not a statement of residence (D2); an owner
+   * recorded on a شاغرة unit is exactly what the join table exists to say.
+   *
+   * **A seasonal home.** Its owners being away is what «مسكن موسمي» means, and
+   * a seasonal home is billed to them (`OWNER_BILLED_WHILE_ABSENT`) while a
+   * vacant one is exempt — so a summer house surveyed in January was one tap
+   * from cancelling the summer's fees. Read the way billing reads it: the
+   * unit's own حالة, or the owner's card where the unit has none.
+   */
   private async assertMayBeCalledEmpty(
     unit: {
       id: string;
@@ -3529,7 +3534,8 @@ export class BuildingsService {
       );
     }
 
-    const [vacancy, updated] = await this.db.$transaction(async (tx) => {
+    const [vacancy, updated] = await runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.db as Prisma.TransactionClient;
       const closed = await closeActiveVacancy(tx, {
         unitId,
         unit,
@@ -4914,7 +4920,8 @@ export class BuildingsService {
     */
     const standing = await activeVacancy(this.db, input.unitId);
 
-    const [visit, visitCount] = await this.db.$transaction(async (tx) => {
+    const [visit, visitCount] = await runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.db as Prisma.TransactionClient;
       const created = await tx.unitVisit.create({
         data: {
           unitId: input.unitId,
@@ -5016,7 +5023,8 @@ export class BuildingsService {
 
     if (changed.length === 0) return 0;
 
-    await this.db.$transaction(async (tx) => {
+    await runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.db as Prisma.TransactionClient;
       for (const building of changed) {
         await tx.building.update({
           where: { id: building.id },

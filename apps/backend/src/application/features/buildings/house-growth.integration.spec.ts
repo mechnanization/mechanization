@@ -5,6 +5,7 @@ import { PrismaClient as TenantPrismaClient } from '../../../generated/tenant-cl
 import { migrateTenantSchema } from '../../../infrastructure/prisma/tenant-migrator';
 import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
+import { inTenantScope } from '../../../infrastructure/context/in-tenant-scope.testing';
 import { houseCardOnMultiUnitBuilding } from '../../../infrastructure/prisma/house-card-guard';
 import { CasesService } from '../cases/cases.service';
 import { PrismaCaseRepository } from '../../../infrastructure/repositories/case.repository';
@@ -63,7 +64,14 @@ describeIfDb('a house that grows (D28)', () => {
       { findById: async () => ({ id: officerId, kind: 'CITIZEN' }) } as never,
       events,
     );
-    buildings = new BuildingsService(context, cases, events);
+    // A real scope for the census writes, which run in `runInTenantTransaction` since audit ARCH-03.
+    const scoped = new TenantContextService();
+    buildings = inTenantScope(new BuildingsService(scoped, cases, events), scoped, {
+      tenantId: 'tenant-growth',
+      tenantSlug: 'growth',
+      schemaName: SCHEMA,
+      prisma: db,
+    });
     census = new CensusSyncService(context, cases, events);
 
     officerId = randomUUID();
