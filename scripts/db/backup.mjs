@@ -46,17 +46,15 @@
  *   --dry-run   connect, discover and report; produce no files
  */
 import { spawnSync } from 'node:child_process';
-import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { mkdirSync, existsSync, writeFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { ROOT, TARGETS, resolveTarget, TargetError } from './targets.mjs';
+import { TARGETS, resolveTarget, TargetError } from './targets.mjs';
+import { Client, abort as fail } from './lib.mjs';
 
 // Resolved from the backend package, where `pg` is a dependency — `scripts/` has
 // no `package.json` of its own. Same as `deploy.mjs`.
-const require = createRequire(join(ROOT, 'apps', 'backend', 'package.json'));
-const { Client } = require('pg');
 
 /**
  * Forced onto every session, including `pg_dump`'s.
@@ -75,11 +73,6 @@ const READ_ONLY_PGOPTIONS = '-c default_transaction_read_only=on';
  * Leaving it out is the kind of omission that is only discovered mid-recovery.
  */
 const ALWAYS_INCLUDED_SCHEMAS = ['public'];
-
-function fail(message) {
-  console.error(`\nABORT: ${message}\n`);
-  process.exit(1);
-}
 
 function parseArgs(argv) {
   const [target, ...rest] = argv;

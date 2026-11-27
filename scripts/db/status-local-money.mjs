@@ -5,21 +5,8 @@
  *   pnpm db:status:money
  *   or: node scripts/db/status-local-money.mjs
  */
-import { createRequire } from 'node:module';
-import { join } from 'node:path';
-import { ROOT, resolveTarget, parseConnection } from './targets.mjs';
-
-const require = createRequire(join(ROOT, 'apps', 'backend', 'package.json'));
-const { Client } = require('pg');
-
-const C = {
-  red: (s) => `\x1b[91m${s}\x1b[0m`,
-  green: (s) => `\x1b[92m${s}\x1b[0m`,
-  yellow: (s) => `\x1b[93m${s}\x1b[0m`,
-  cyan: (s) => `\x1b[96m${s}\x1b[0m`,
-  bold: (s) => `\x1b[1m${s}\x1b[0m`,
-  dim: (s) => `\x1b[2m${s}\x1b[0m`,
-};
+import { resolveTarget, parseConnection } from './targets.mjs';
+import { Client, C } from './lib.mjs';
 
 async function main() {
   const resolved = resolveTarget('local');

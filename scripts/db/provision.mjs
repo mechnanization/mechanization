@@ -20,29 +20,18 @@
  *   --confirm=<ref>    Non-interactive confirmation for CI.
  */
 import { spawnSync } from 'node:child_process';
-import { createRequire } from 'node:module';
 import { readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
 import { ROOT, TARGETS, resolveTarget, TargetError } from './targets.mjs';
-
-const require = createRequire(join(ROOT, 'apps', 'backend', 'package.json'));
-const { Client } = require('pg');
+import { isTenantSlug, tenantSchemaNameFor } from './tenant-schema-name.mjs';
+import { C, absentIfMissing, backendRequire, withClient } from './lib.mjs';
 
 const TENANT_MIGRATIONS = join(
   ROOT,
   'apps/backend/src/infrastructure/prisma/tenant/migrations',
 );
-
-const C = {
-  red: (s) => `\x1b[91m${s}\x1b[0m`,
-  green: (s) => `\x1b[92m${s}\x1b[0m`,
-  yellow: (s) => `\x1b[93m${s}\x1b[0m`,
-  blue: (s) => `\x1b[94m${s}\x1b[0m`,
-  bold: (s) => `\x1b[1m${s}\x1b[0m`,
-  dim: (s) => `\x1b[2m${s}\x1b[0m`,
-};
 
 function arg(argv, name) {
   const i = argv.indexOf(`--${name}`);
@@ -51,28 +40,18 @@ function arg(argv, name) {
   return eq ? eq.slice(name.length + 3) : undefined;
 }
 
-async function withClient(connectionString, fn) {
-  const client = new Client({ connectionString });
-  await client.connect();
-  try {
-    return await fn(client);
-  } finally {
-    await client.end().catch(() => undefined);
-  }
-}
-
 /** Reads the target back. An exit code says a command ran, not that it worked. */
 async function inspect(connectionString, slug, schemaName) {
   return withClient(connectionString, async (client) => {
-    const reg = await client
-      .query('select id, slug, "schemaName", "provisionedAt", "adminPathSegment" from public.tenants where slug = $1', [slug])
-      .catch(() => ({ rows: [] }));
-    const schema = await client
-      .query('select 1 from pg_namespace where nspname = $1', [schemaName])
-      .catch(() => ({ rows: [] }));
-    const applied = await client
-      .query(`select count(*)::int as n from "${schemaName}"."_tenant_migrations"`)
-      .catch(() => ({ rows: [{ n: 0 }] }));
+    const reg = await absentIfMissing(
+      client.query('select id, slug, "schemaName", "provisionedAt", "adminPathSegment" from public.tenants where slug = $1', [slug]),
+      { rows: [] },
+    );
+    const schema = await client.query('select 1 from pg_namespace where nspname = $1', [schemaName]);
+    const applied = await absentIfMissing(
+      client.query(`select count(*)::int as n from "${schemaName}"."_tenant_migrations"`),
+      { rows: [{ n: 0 }] },
+    );
     return {
       registryRow: reg.rows[0] ?? null,
       schemaExists: schema.rows.length > 0,
@@ -101,9 +80,17 @@ async function main() {
     throw new TargetError('--slug, --name and --name-ar are all required — a municipality cannot be half-named.');
   }
 
+  // The schema is built from the slug and interpolated into SQL below, so the slug is held to
+  // `TenantSlug`'s rule before anything is resolved (DRY-10). `tenant:provision` checks it again.
+  if (!isTenantSlug(slug)) {
+    throw new TargetError(
+      `--slug '${slug}' is not a municipality slug: 2–50 lower-case letters and digits, joined by single hyphens.`,
+    );
+  }
+
   const target = resolveTarget(targetName);
   const isProduction = target.name === 'production';
-  const schemaName = `tenant_${slug.replace(/-/g, '_')}`;
+  const schemaName = tenantSchemaNameFor(slug);
   const onDisk = existsSync(TENANT_MIGRATIONS)
     ? readdirSync(TENANT_MIGRATIONS, { withFileTypes: true }).filter((e) => e.isDirectory()).length
     : 0;
@@ -172,12 +159,11 @@ async function main() {
     ts-node bin, with the arguments passed as an array Node hands to CreateProcess
     directly. No quoting, no metacharacters, no `.cmd`.
 
-    The bin paths are resolved through the backend's own `package.json`, the
-    same trick `pg` uses at the top of this file, so pnpm's strict linking
-    still finds them.
+    The bin paths are resolved through the backend's own `package.json`
+    (`backendRequire`, `lib.mjs`), so pnpm's strict linking still finds them.
   */
-  const tsNodeBin = require.resolve('ts-node/dist/bin.js');
-  const tsconfigPathsRegister = require.resolve('tsconfig-paths/register');
+  const tsNodeBin = backendRequire.resolve('ts-node/dist/bin.js');
+  const tsconfigPathsRegister = backendRequire.resolve('tsconfig-paths/register');
   const script = join(ROOT, 'apps/backend/src/scripts/provision-tenant.ts');
 
   const scriptArgs = ['--slug', slug, '--name', name, '--name-ar', nameAr];
