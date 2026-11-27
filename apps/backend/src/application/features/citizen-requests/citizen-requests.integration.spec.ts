@@ -123,7 +123,7 @@ describeIfDb('CitizenRequestsService', () => {
 
   const raw = (sql: string, values: unknown[] = []) => ddl.query(sql.replaceAll('%s', `"${SCHEMA}"`), values);
 
-  /** A bill withdrawn as `FeesService.cancelBill` writes it, by a path that did not reach its request. */
+  /** A bill withdrawn as `BillLifecycleService.cancelBill` writes it, by a path that did not reach its request. */
   const cancelBillAlone = (citizenPaymentId: string) =>
     db.citizenPayment.update({
       where: { id: citizenPaymentId },
@@ -616,7 +616,7 @@ describeIfDb('CitizenRequestsService', () => {
 
     it('does not hold a براءة ذمة on a bill the manager cancelled: it owes nothing (0090)', async () => {
       const { citizen, filed } = await paidRequest('CLEARANCE');
-      // Raised on the property and then withdrawn («إلغاء الفاتورة»), as `FeesService.cancelBill` writes it.
+      // Raised on the property and then withdrawn («إلغاء الفاتورة»), as `BillLifecycleService.cancelBill` writes it.
       await db.citizenPayment.create({
         data: {
           citizenId: citizen.id,

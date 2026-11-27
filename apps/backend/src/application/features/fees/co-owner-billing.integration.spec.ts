@@ -15,6 +15,10 @@ import { BuildingsService } from '../buildings/buildings.service';
 import { OwnerBillingService } from '../buildings/owner-billing.service';
 import { assessCitizen, FeesService } from './fees.service';
 import { municipalToday } from '@mechanization/shared-schemas';
+import { StaffActor } from '../../common/actor';
+import { feeServices } from './fee-services.testing';
+import type { FeeNoticesService } from './fee-notices.service';
+import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
 
 /**
  * «توزيع الرسم على المالكين» against a real tenant schema (migration 0075
@@ -47,11 +51,13 @@ describeIfDb('co-owner billing', () => {
     (await db.feeNotice.findMany({ where: { isActive: true }, select: { id: true } })).map((notice) => notice.id);
   let context: TenantContextService;
   let fees: FeesService;
+  let feeNotices: FeeNoticesService;
   let buildings: BuildingsService;
+  let occupancyWrites: OccupancyWritesService;
   let ownerBilling: OwnerBillingService;
   let events: { emit: jest.Mock };
   const officerId = randomUUID();
-  const actor = { id: officerId, role: 'FIELD_INSPECTOR' };
+  const actor: StaffActor = { id: officerId, role: 'FIELD_INSPECTOR' };
 
   const within = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'tenant-cob', tenantSlug: 'cob', schemaName: SCHEMA, prisma: db }, work);
@@ -66,7 +72,7 @@ describeIfDb('co-owner billing', () => {
     events = { emit: jest.fn() };
     const emitter = new EventEmitter2();
     const audit = new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never);
-    fees = new FeesService(
+    ({ fees, feeNotices } = feeServices(
       context,
       emitter,
       {} as never,
@@ -77,13 +83,14 @@ describeIfDb('co-owner billing', () => {
       } as never,
       {} as never,
       {} as never,
-    );
+    ));
     const cases = new CasesService(
       new PrismaCaseRepository(context),
       { findById: async () => ({ id: officerId, kind: 'STAFF' }) } as never,
       emitter,
     );
     buildings = new BuildingsService(context, cases, emitter);
+    occupancyWrites = new OccupancyWritesService(context, cases, emitter, buildings);
     ownerBilling = new OwnerBillingService(context, fees, audit, events as unknown as EventEmitter2);
 
     await db.user.create({
@@ -227,7 +234,7 @@ describeIfDb('co-owner billing', () => {
     const { shop, brothers } = await seed();
     await within(() => ownerBilling.set(shop.id, { mode: 'RESPONSIBLE_OWNER', responsibleOwnerId: brothers[0]! }, actor));
     const issuing = within(() =>
-      fees.issue(
+      feeNotices.issue(
         {
           title: `رسم الأرصفة ${randomUUID().slice(0, 8)}`,
           amount: 10_000,
@@ -257,7 +264,7 @@ describeIfDb('co-owner billing', () => {
   async function issueShopFee() {
     const title = `رسم المحلات ${randomUUID().slice(0, 8)}`;
     const outcome = await within(async () =>
-      fees.issue(
+      feeNotices.issue(
         {
           title,
           amount: 50_000,
@@ -389,7 +396,7 @@ describeIfDb('co-owner billing', () => {
       ),
     );
     await within(() =>
-      buildings.recordOccupancy({ unitId: shop.id, citizenId: brothers[2]!, role: 'OWNER' } as never, actor),
+      occupancyWrites.recordOccupancy({ unitId: shop.id, citizenId: brothers[2]!, role: 'OWNER' } as never, actor),
     );
     const spell = await db.unitOccupancy.findFirstOrThrow({
       where: { unitId: shop.id, citizenId: brothers[2]!, toDate: null },

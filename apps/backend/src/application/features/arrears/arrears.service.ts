@@ -16,6 +16,7 @@ import { Prisma } from '../../../generated/tenant-client';
 import { ConflictError, NotFoundError } from '../../../domain/errors/domain-error';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
+import { isUniqueViolation } from '../../../infrastructure/prisma/prisma-errors';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { AuditService } from '../audit/audit.service';
 import { currentReadingForUnit } from '../buildings/habitability';
@@ -29,8 +30,8 @@ import {
   type ArrearsUnit,
   type PlannedArrearsLine,
 } from './arrears-import.plan';
+import { StaffActor } from '../../common/actor';
 
-type Actor = { id: string; role: string };
 type Db = Prisma.TransactionClient;
 
 export const ARREARS_TEMPLATE_EXPORTED = 'ARREARS_TEMPLATE_EXPORTED';
@@ -73,7 +74,7 @@ export class ArrearsService {
    * and its citizen set and returns the template's rows, which the browser
    * writes as CSV. A retry of the same press is answered with the same batch.
    */
-  async exportTemplate(input: ExportArrearsTemplateInput, actor: Actor): Promise<ArrearsExportResult> {
+  async exportTemplate(input: ExportArrearsTemplateInput, actor: StaffActor): Promise<ArrearsExportResult> {
     const scope: BatchScope = input.zoneId ? { zoneId: input.zoneId, count: input.count } : { buildingId: input.buildingId!, count: input.count };
     const key = input.clientRequestId.toLowerCase();
 
@@ -119,7 +120,7 @@ export class ArrearsService {
       await this.auditTrail.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: ARREARS_TEMPLATE_EXPORTED,
         entityType: 'ArrearsBatch',
         entityId: batch.id,
@@ -249,7 +250,7 @@ export class ArrearsService {
    * lock, refuses the whole file while any line is refused, and replaces the
    * draft's lines with the file's. The one-live-line index has the last word.
    */
-  async importLines(batchId: string, input: ImportArrearsInput, actor: Actor): Promise<ArrearsImportResult> {
+  async importLines(batchId: string, input: ImportArrearsInput, actor: StaffActor): Promise<ArrearsImportResult> {
     if (input.dryRun) {
       const batch = await this.draftBatch(this.db as Db, batchId, false);
       const context = await this.importContext(this.db as Db, batchId, input, batch.controlTotal);
@@ -289,7 +290,7 @@ export class ArrearsService {
       await this.auditTrail.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: ARREARS_LINES_IMPORTED,
         entityType: 'ArrearsBatch',
         entityId: batchId,
@@ -337,7 +338,7 @@ export class ArrearsService {
         })),
       });
     } catch (error) {
-      if ((error as { code?: unknown }).code === 'P2002') {
+      if (isUniqueViolation(error)) {
         throw new ConflictError({ code: 'ARREARS_LINE_DUPLICATE', message: 'A line of this file is already recorded in another batch' });
       }
       throw error;

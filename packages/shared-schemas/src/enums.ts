@@ -748,7 +748,7 @@ export function isSurveyed(status: string | null | undefined): boolean {
  * stopping at `PARTIAL`. A flat logged «رفض» and registered a week later kept
  * `REFUSED` under a household and a «مكتملة» visit, and the building's
  * «٤ من ٥ وحدة ممسوحة» never reached five. One constant, read by
- * `BuildingsService.recordOccupancy`, `CensusSyncService.applyOccupancy` and
+ * `OccupancyWritesService.recordOccupancy`, `CensusSyncService.applyOccupancy` and
  * `LandlordLinkService` (which records what it lifted so an unlink can put it
  * back), keeps the three doors agreeing.
  */

@@ -1,4 +1,5 @@
 import { BuildingsService } from './buildings.service';
+import { OccupancyWritesService } from './occupancy-writes.service';
 
 /*
   `settleUnit` (the one status rule) reads a dozen tables these fakes do not
@@ -72,11 +73,10 @@ function harness(unitsInBuilding: number) {
     unit: { count: jest.fn().mockResolvedValue(unitsInBuilding) },
   };
 
-  const service = new BuildingsService(
-    { prisma: db, tenantSlug: 'albazourieh' } as never,
-    { resolveForUnit: jest.fn().mockResolvedValue(0) } as never,
-    { emit: jest.fn() } as never,
-  );
+  const context = { prisma: db, tenantSlug: 'albazourieh' } as never;
+  const cases = { resolveForUnit: jest.fn().mockResolvedValue(0) } as never;
+  const events = { emit: jest.fn() } as never;
+  const service = new OccupancyWritesService(context, cases, events, new BuildingsService(context, cases, events));
 
   return { service, db, buildingUnitUpdateMany, propertyEntryUpdateMany };
 }
@@ -178,11 +178,9 @@ describe('endOccupancy — releasing the census claim', () => {
     */
     const emit = jest.fn();
     const { db } = harness(1);
-    const service = new BuildingsService(
-      { prisma: db, tenantSlug: 'albazourieh' } as never,
-      { resolveForUnit: jest.fn().mockResolvedValue(0) } as never,
-      { emit } as never,
-    );
+    const context = { prisma: db, tenantSlug: 'albazourieh' } as never;
+    const cases = { resolveForUnit: jest.fn().mockResolvedValue(0) } as never;
+    const service = new OccupancyWritesService(context, cases, { emit } as never, new BuildingsService(context, cases, { emit } as never));
 
     await service.endOccupancy('occ-1', { reason: 'OWNERSHIP_TRANSFERRED' }, actor);
 

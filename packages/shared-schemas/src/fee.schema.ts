@@ -23,6 +23,14 @@ import { canSpanLevels, levelFactorsSchema, unitLevels, unitLevelsField } from '
  * 499999.99999.
  */
 
+/**
+ * A page of `GET /fees/notices`: the default and the most one request may ask
+ * for (PAG-04). Ours. «إشعارات الرسوم» asks for the most until it pages on the
+ * server (PAG-05), and says «عرض N من M» when there are more.
+ */
+export const FEE_NOTICES_PAGE_DEFAULT = 50;
+export const FEE_NOTICES_PAGE_MAX = 200;
+
 export const FEE_FREQUENCY = ['ONCE', 'MONTHLY', 'HALF_YEARLY', 'ANNUALLY'] as const;
 export const feeFrequencySchema = z.enum(FEE_FREQUENCY, {
   error: 'دورية الرسم مطلوبة',
@@ -975,7 +983,7 @@ export type FeeNoticeDuplicate = z.infer<typeof feeNoticeDuplicateSchema>;
 
 /**
  * What the preview answers: what issuing this notice now would bill, read by
- * the same path the issue takes (`FeesService.planNotice`) and written nowhere.
+ * the same path the issue takes (`FeeNoticesService.planNotice`) and written nowhere.
  *
  * `expectedRevenue` is the citizens' own bills plus the shared unit bills, in
  * whole pounds. `brackets` is empty under every basis but TIERED_AREA, where it

@@ -7,6 +7,7 @@ import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-cli
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { PrismaAuditRepository } from '../../../infrastructure/repositories/audit.repository';
 import { UnitCorrectionService } from './unit-correction.service';
+import { StaffActor } from '../../common/actor';
 
 /**
  * «دمج كدوبلكس» (decision D28) against a real tenant schema.
@@ -35,7 +36,7 @@ describeIfDb('«دمج كدوبلكس»', () => {
   let service: UnitCorrectionService;
   const officerId = randomUUID();
   const adminId = randomUUID();
-  const admin = { id: adminId, role: 'SUPER_ADMIN' };
+  const admin: StaffActor = { id: adminId, role: 'SUPER_ADMIN' };
 
   const within = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'tenant-dm', tenantSlug: 'dm', schemaName: SCHEMA, prisma: db }, work);
@@ -177,7 +178,9 @@ describeIfDb('«دمج كدوبلكس»', () => {
     const caught = await refusal(
       within(() => service.applyMerge(lower.id, { fingerprint: preview.fingerprint, reason: 'محاولة دمج خاطئة', confirmCode: '0101' }, admin)),
     );
-    expect(caught).toMatchObject({ code: 'DUPLEX_MERGE_BLOCKED' });
+    // ERR-04: the blocker's own code and params, the words from the message files (no Arabic sentence in `params`).
+    expect(preview.blockers[0]!.refusal).toEqual({ code: 'DUPLEX_MERGE_OTHER_HOUSEHOLD', params: { name: expect.any(String) } });
+    expect(caught).toMatchObject({ code: 'DUPLEX_MERGE_OTHER_HOUSEHOLD', params: preview.blockers[0]!.refusal.params });
     expect(await db.unit.count({ where: { id: upper.id } })).toBe(1);
   });
 

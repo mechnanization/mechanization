@@ -13,6 +13,8 @@ import { StaffService } from '../../application/features/staff/staff.service';
 import { StaffPresenceService } from '../../application/features/identity/staff-presence.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { CurrentTenant, CurrentUser } from '../decorators/current-user.decorator';
+import { CurrentActor } from '../decorators/current-actor.decorator';
+import { StaffActor } from '../../application/common/actor';
 import { Roles } from '../decorators/roles.decorator';
 import { ForbiddenError } from '../../application/common/exceptions';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
@@ -70,9 +72,9 @@ export class StaffController {
   async restore(
     @CurrentTenant('slug') tenantSlug: string,
     @Param('id', new UuidPipe()) id: string,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    await this.staff.restore({ tenantSlug, id, actor: { id: user.sub, role: user.role ?? '' } });
+    await this.staff.restore({ tenantSlug, id, actor });
     return { restored: true };
   }
 
@@ -87,12 +89,12 @@ export class StaffController {
       lastName: string;
       role: StaffRole;
     },
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
     return this.staff.create({
       tenantSlug,
       ...body,
-      actor: { id: user.sub, role: user.role ?? '' },
+      actor,
     });
   }
 
@@ -108,13 +110,13 @@ export class StaffController {
       lastName?: string;
       role?: StaffRole;
     },
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
     await this.staff.update({
       tenantSlug,
       id,
       ...body,
-      actor: { id: user.sub, role: user.role ?? '' },
+      actor,
     });
     return { updated: true };
   }
@@ -125,13 +127,13 @@ export class StaffController {
     @CurrentTenant('slug') tenantSlug: string,
     @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(staffActiveSchema)) body: { isActive: boolean },
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
     await this.staff.setActive({
       tenantSlug,
       id,
       isActive: body.isActive,
-      actor: { id: user.sub, role: user.role ?? '' },
+      actor,
     });
     return { isActive: body.isActive };
   }
@@ -141,12 +143,12 @@ export class StaffController {
   async remove(
     @CurrentTenant('slug') tenantSlug: string,
     @Param('id', new UuidPipe()) id: string,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
     await this.staff.remove({
       tenantSlug,
       id,
-      actor: { id: user.sub, role: user.role ?? '' },
+      actor,
     });
     return { deleted: true };
   }
@@ -199,13 +201,13 @@ export class StaffController {
     @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(recordInspectorPayoutSchema))
     body: RecordInspectorPayoutInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
     return this.staff.recordInspectorPayout({
       tenantSlug,
       inspectorId: id,
       payload: body,
-      actor: { id: user.sub, role: user.role ?? '' },
+      actor,
     });
   }
 }

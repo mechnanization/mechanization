@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { typeError } from './type-error';
 import { municipalToday } from './cash-policy';
+import { hasAtMostTwoDecimals } from './money-amount';
 import { businessDay } from './primitives';
 import type { TreasuryAccountType, TreasuryEntrySource } from './treasury.schema';
 
@@ -36,9 +37,6 @@ const businessDate = businessDay;
  */
 const pastOrToday = businessDate.refine((day) => day <= municipalToday(), 'لا يُجرد يومٌ لم يأتِ بعد');
 
-/** At most two decimals: the ledger's own precision. */
-const twoDecimals = (value: number): boolean => Math.abs(value * 100 - Math.round(value * 100)) < 1e-6;
-
 /** Whether two money figures are the same to the cent. */
 export function sameMoney(a: number, b: number): boolean {
   return Math.round(a * 100) === Math.round(b * 100);
@@ -53,21 +51,29 @@ export function varianceOf(counted: number, expected: number): number {
   return (Math.round(counted * 100) - Math.round(expected * 100)) / 100;
 }
 
-/** What was found in a wallet: not negative, at most two decimals. */
+/**
+ * What was found in a wallet: not negative (an empty safe counts zero), at most
+ * two decimals, judged on the number's decimal form (`hasAtMostTwoDecimals`).
+ * Not `positiveMoneyAmount`: a count may be zero.
+ */
 const countedAmount = z
   .number(typeError({ required: 'اكتب المبلغ المعدود', invalid: 'المبلغ المعدود رقم' }))
   .finite('المبلغ المعدود رقم')
   .min(0, 'المبلغ المعدود لا يكون سالباً')
   .max(999_999_999_999, 'المبلغ كبير جداً')
-  .refine(twoDecimals, 'خانتان عشريتان على الأكثر');
+  .refine(hasAtMostTwoDecimals, 'خانتان عشريتان على الأكثر');
 
-/** The books' figure as the screen showed it. Signed, though the ledger never lets it go below zero. */
+/**
+ * The books' figure as the screen showed it. Signed, though the ledger never
+ * lets it go below zero; two decimals by `hasAtMostTwoDecimals`, which reads a
+ * minus sign.
+ */
 const shownExpected = z
   .number(typeError({ required: 'الرصيد الدفتري مطلوب', invalid: 'الرصيد الدفتري رقم' }))
   .finite('الرصيد الدفتري رقم')
   .min(-999_999_999_999, 'الرصيد كبير جداً')
   .max(999_999_999_999, 'الرصيد كبير جداً')
-  .refine(twoDecimals, 'خانتان عشريتان على الأكثر');
+  .refine(hasAtMostTwoDecimals, 'خانتان عشريتان على الأكثر');
 
 /**
  * One wallet as counted.

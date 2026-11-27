@@ -21,6 +21,7 @@ import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.ser
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
+import { StaffActor } from '../../common/actor';
 
 /**
  * Where a filed record stands with its reviewer.
@@ -76,7 +77,6 @@ export interface QueuePage {
 /** A citizen's name as shown — «ورثة المرحوم …» for an estate (0076). */
 const fullName = (row: { firstName: string; middleName?: string | null; lastName: string; residence?: string | null }) => citizenDisplayName(row);
 
-type Actor = { id: string; role: string };
 
 /**
  * «مراجعة السجلات» and «عيّنة التحقق» — a supervisor's decision on a filed
@@ -118,7 +118,7 @@ export class RecordReviewService {
 
   /** Shares `QUALITY_CACHE_TTL_SECONDS`; zero or less turns caching off. */
   private ttl(): number {
-    return this.config.get<number>('QUALITY_CACHE_TTL_SECONDS') ?? 180;
+    return this.config.getOrThrow<number>('QUALITY_CACHE_TTL_SECONDS');
   }
 
   /**
@@ -374,7 +374,7 @@ export class RecordReviewService {
 
   // ─────────────────────────────  Decisions  ─────────────────────────────
 
-  private async loadForDecision(registrationId: string, actor: Actor) {
+  private async loadForDecision(registrationId: string, actor: StaffActor) {
     const registration = await this.db.registration.findUnique({
       where: { id: registrationId },
       select: { id: true, citizenId: true, createdById: true, referenceNumber: true },
@@ -386,7 +386,7 @@ export class RecordReviewService {
     return registration;
   }
 
-  async approve(registrationId: string, actor: Actor) {
+  async approve(registrationId: string, actor: StaffActor) {
     const registration = await this.loadForDecision(registrationId, actor);
 
     /*
@@ -414,7 +414,7 @@ export class RecordReviewService {
     return { id: review.id, outcome: 'APPROVED' as const, at: review.createdAt.toISOString() };
   }
 
-  async returnToOfficer(registrationId: string, input: ReturnRecordInput, actor: Actor) {
+  async returnToOfficer(registrationId: string, input: ReturnRecordInput, actor: StaffActor) {
     const registration = await this.loadForDecision(registrationId, actor);
 
     const open = await this.db.recordReview.findFirst({
@@ -537,7 +537,7 @@ export class RecordReviewService {
       // so the `citizen.changed` listener writes its row (no `alreadyAudited`).
       this.events.emit(
         'citizen.changed',
-        this.change('RECORD_CORRECTED', payload.citizenId, { id: payload.actorId, role: actor?.role ?? '' }, {
+        this.change('RECORD_CORRECTED', payload.citizenId, { id: payload.actorId, role: actor?.role }, {
           reviewsClosed: closed.count,
           // The grounds, so an auto-close is legible in the trail rather than
           // appearing as an unexplained state change.
@@ -587,7 +587,7 @@ export class RecordReviewService {
    * What is waiting on this member of staff: their returned records, and checks
    * they can do — none for a role that cannot record a check's result.
    */
-  async tasksFor(actor: Actor) {
+  async tasksFor(actor: StaffActor) {
     const [returned, checks] = await Promise.all([
       this.db.recordReview.findMany({
         where: {
@@ -638,7 +638,7 @@ export class RecordReviewService {
    * drawing twice over one week tops the sample up to its share instead of
    * growing it each time.
    */
-  async drawSample(input: DrawSampleInput, actor: Actor) {
+  async drawSample(input: DrawSampleInput, actor: StaffActor) {
     const end = new Date(input.to);
     end.setUTCHours(23, 59, 59, 999);
 
@@ -796,7 +796,7 @@ export class RecordReviewService {
     }));
   }
 
-  async assign(checkId: string, input: AssignCheckInput, actor: Actor) {
+  async assign(checkId: string, input: AssignCheckInput, actor: StaffActor) {
     const check = await this.db.qualityCheck.findUnique({
       where: { id: checkId },
       select: { id: true, status: true, originalOfficerId: true, registration: { select: { citizenId: true } } },
@@ -831,7 +831,7 @@ export class RecordReviewService {
     return { id: checkId, assignedToId: input.assignedToId };
   }
 
-  async complete(checkId: string, input: CompleteCheckInput, actor: Actor) {
+  async complete(checkId: string, input: CompleteCheckInput, actor: StaffActor) {
     const check = await this.db.qualityCheck.findUnique({
       where: { id: checkId },
       select: {
@@ -890,7 +890,9 @@ export class RecordReviewService {
   private change(
     action: string,
     citizenId: string,
-    actor: Actor,
+    // A decision has a staff actor; an auto-close after a save names whoever
+    // saved, whose role may be none (a citizen) — then the row carries no role.
+    actor: Pick<StaffActor, 'id'> & { role?: StaffActor['role'] | null },
     after: Record<string, unknown>,
   ): CitizenChange & { tenantSlug: string } {
     return {
@@ -899,7 +901,7 @@ export class RecordReviewService {
       action,
       after,
       actorId: actor.id,
-      actorRole: actor.role,
+      actorRole: actor.role ?? undefined,
     };
   }
 

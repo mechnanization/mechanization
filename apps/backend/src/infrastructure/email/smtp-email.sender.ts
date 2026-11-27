@@ -49,11 +49,16 @@ export class SmtpEmailSender implements EmailSender {
         ...(message.html ? { html: message.html } : {}),
       });
     } catch (error) {
-      // The recipient is a staff email address, so it goes in the log and not
-      // into anything rendered. The subject is not logged either: this sender's
-      // only message is a password reset, and a log line saying who was sent
-      // one is a list of accounts worth attacking.
-      this.logger.error(`SMTP delivery failed for ${message.to}: ${(error as Error).message}`);
+      /*
+        Neither the recipient nor the subject is logged in full. This sender's
+        only message is a password reset, and a log line saying who was sent
+        one is a list of accounts worth attacking (audit SEC-05). The address is
+        masked, and taken out of the server's own text too, which often quotes
+        it back («<x@y>: Recipient address rejected»).
+      */
+      const masked = maskEmail(message.to);
+      const reason = String((error as Error)?.message ?? error).split(message.to).join(masked);
+      this.logger.error(`SMTP delivery failed for ${masked}: ${reason}`);
       throw error;
     }
   }
@@ -67,7 +72,7 @@ export class SmtpEmailSender implements EmailSender {
    */
   private connection(): Transporter {
     if (!this.transporter) {
-      const port = Number(this.config.get<string>('SMTP_PORT') ?? 587);
+      const port = this.config.getOrThrow<number>('SMTP_PORT');
       const user = this.config.get<string>('SMTP_USER');
       const pass = this.config.get<string>('SMTP_PASSWORD');
 
@@ -88,4 +93,15 @@ export class SmtpEmailSender implements EmailSender {
 
     return this.transporter;
   }
+}
+
+/**
+ * `s•••@example.com`: enough to tell two failing staff accounts apart in a log,
+ * not enough to list them. The domain stays, since a failing domain is the
+ * usual finding. Something with no `@` keeps only its first character.
+ */
+export function maskEmail(address: string): string {
+  const at = address.lastIndexOf('@');
+  if (at <= 0) return `${address.slice(0, 1)}•••`;
+  return `${address.slice(0, 1)}•••${address.slice(at)}`;
 }

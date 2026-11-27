@@ -8,8 +8,9 @@ import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-cli
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
 import type { WhishGateway } from '../../../domain/interfaces/whish-gateway.interface';
-import { FeesService } from './fees.service';
 import { PaymentLedgerService } from './payment-ledger.service';
+import { feeServices, feeServicesInTenantScope } from './fee-services.testing';
+import type { FeeNoticesService } from './fee-notices.service';
 
 /**
  * Billing over the census, end to end — the query, not the arithmetic.
@@ -60,7 +61,7 @@ const SETUP_TIMEOUT_MS = 240_000;
 describeIfDb('billing over the census', () => {
   let ddl: Client;
   let db: TenantPrismaClient;
-  let fees: FeesService;
+  let feeNotices: FeeNoticesService;
   let clerkId: string;
 
   const actor = () => ({ id: clerkId, role: 'SUPER_ADMIN' });
@@ -73,21 +74,17 @@ describeIfDb('billing over the census', () => {
 
     db = tenantTestClient(TEST_DATABASE_URL!, SCHEMA);
 
-    fees = new FeesService(
-      {
-        get prisma() {
-          return db;
-        },
-        tenantSlug: 'census-billing',
-      /*
-        Raw queries now write this into their SQL rather than leaning on
-        `search_path` — see `tenant-schema-ref.ts`. Supplying it here is what
-        makes these suites exercise the qualified form rather than a shape
-        that only works because the test client pins one schema per connection.
-      */
-      schemaName: SCHEMA,
-        tenantId: 'tenant-1',
-      } as unknown as TenantContextService,
+    /*
+      A real tenant scope, entered for every call (`inTenantScope`): issuing
+      runs in `runInTenantTransaction` since audit ARCH-01, which re-enters the
+      scope with the transaction client. The scope's `schemaName` is what raw
+      queries write into their SQL (`tenant-schema-ref.ts`), so these suites
+      exercise the qualified form, not one the test client's pinned schema hides.
+    */
+    const context = new TenantContextService();
+    const scope = { tenantId: 'tenant-1', tenantSlug: 'census-billing', schemaName: SCHEMA, prisma: db };
+    ({ feeNotices } = feeServicesInTenantScope(feeServices(
+      context,
       { emit: jest.fn() } as unknown as EventEmitter2,
       {} as WhishGateway,
       {
@@ -98,7 +95,7 @@ describeIfDb('billing over the census', () => {
       {} as PaymentLedgerService,
       // AuditService: these tests never reach a payment.
       {} as never,
-    );
+    ), context, scope));
 
     clerkId = randomUUID();
     await db.user.create({
@@ -252,7 +249,7 @@ describeIfDb('billing over the census', () => {
       units: [{ unitType: 'APARTMENT', floor: '1', unitArea: 100, unitId: units[0]!.id }],
     });
 
-    const issued = await fees.issue(
+    const issued = await feeNotices.issue(
       notice({ basis: 'PER_AREA', amount: 1000, targetCitizenId: citizenId }),
       actor(),
     );
@@ -275,7 +272,7 @@ describeIfDb('billing over the census', () => {
       units: [{ unitType: 'APARTMENT', floor: '1', unitArea: 120, unitId: units[0]!.id }],
     });
 
-    const issued = await fees.issue(
+    const issued = await feeNotices.issue(
       notice({ basis: 'PER_AREA', amount: 1000, targetCitizenId: citizenId }),
       actor(),
     );
@@ -314,7 +311,7 @@ describeIfDb('billing over the census', () => {
       ],
     });
 
-    const issued = await fees.issue(
+    const issued = await feeNotices.issue(
       notice({ basis: 'PER_UNIT', amount: 1000, targetCitizenId: citizenId }),
       actor(),
     );
@@ -344,7 +341,7 @@ describeIfDb('billing over the census', () => {
       ],
     });
 
-    const issued = await fees.issue(
+    const issued = await feeNotices.issue(
       notice({ basis: 'PER_UNIT', amount: 1000, targetCitizenId: citizenId }),
       actor(),
     );
@@ -377,7 +374,7 @@ describeIfDb('billing over the census', () => {
       ],
     });
 
-    const issued = await fees.issue(
+    const issued = await feeNotices.issue(
       notice({ basis: 'PER_UNIT', amount: 1000, bearer: 'OWNER', targetCitizenId: citizenId }),
       actor(),
     );
@@ -409,7 +406,7 @@ describeIfDb('billing over the census', () => {
       ],
     });
 
-    const issued = await fees.issue(
+    const issued = await feeNotices.issue(
       notice({ basis: 'PER_UNIT', amount: 1000, targetCitizenId: citizenId }),
       actor(),
     );
@@ -439,7 +436,7 @@ describeIfDb('billing over the census', () => {
       have been a shortfall nobody could see.
     */
     await expect(
-      fees.issue(notice({ basis: 'PER_UNIT', amount: 1000, targetCitizenId: citizenId }), actor()),
+      feeNotices.issue(notice({ basis: 'PER_UNIT', amount: 1000, targetCitizenId: citizenId }), actor()),
     ).rejects.toMatchObject({
       code: 'FEE_NOTHING_TO_CHARGE',
       params: { held: 0, uninhabitable: 0, exempted: 0, unassessable: 1 },
@@ -472,7 +469,7 @@ describeIfDb('billing over the census', () => {
       data: { unitId: units[0]!.id, citizenId, role: 'OWNER' },
     });
 
-    const issued = await fees.issue(
+    const issued = await feeNotices.issue(
       notice({
         basis: 'PER_UNIT',
         amount: 500,

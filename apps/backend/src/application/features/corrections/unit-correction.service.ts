@@ -7,19 +7,21 @@ import {
   type DuplexMergeInput,
   type DuplexMergePreview,
   type DuplexMergeResult,
-  type UnitCorrectionBlocker,
   type UnitCorrectionDeleteInput,
   type UnitCorrectionPreview,
   type UnitCorrectionResult,
   citizenDisplayName,
+  duplexMergeBlockerRefusal,
+  unitCorrectionBlockerRefusal,
 } from '@mechanization/shared-schemas';
 import { Prisma } from '../../../generated/tenant-client';
 import { AuditLogEntry } from '../../../domain/entities/audit-log-entry.entity';
-import { ConflictError, NotFoundError, ValidationError } from '../../../domain/errors/domain-error';
+import { ConflictError, NotFoundError, ValidationError, refusedBy } from '../../../domain/errors/domain-error';
 import { AUDIT_REPOSITORY } from '../../../domain/interfaces/base-repository.interface';
 import type { AuditRepository } from '../../../domain/interfaces/audit-repository.interface';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
+import { isSerializationFailure } from '../../../infrastructure/prisma/prisma-errors';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import {
   planUnitCorrection,
@@ -28,10 +30,11 @@ import {
   type UnitCorrectionPlan,
   type UnitCorrectionState,
 } from './unit-correction.plan';
-import { mergeBlockerReason, planDuplexMerge, type DuplexMergeState, type MergeFlat } from './duplex-merge.plan';
+import { planDuplexMerge, type DuplexMergeState, type MergeFlat } from './duplex-merge.plan';
 import { assertNoFeeExemptionHistory } from '../buildings/fee-exemption';
+import { StaffActor } from '../../common/actor';
+import { setLocalLockTimeout } from '../../common/lock-timeout';
 
-type Actor = { id: string; role: string };
 
 /** The audit actions this writes. Labelled in the frontend's `audit-labels.ts`. */
 export const UNIT_CORRECTION_DELETED = 'UNIT_CORRECTION_DELETED';
@@ -44,17 +47,6 @@ const fullName = (row: { firstName: string; middleName?: string | null; lastName
 
 /** Prisma rows (Decimal, Date) as the plain JSON an audit column stores. */
 const json = <T>(value: T): Record<string, unknown> => JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
-
-export function blockerMessage(blocker: UnitCorrectionBlocker): string {
-  switch (blocker.kind) {
-    case 'DAMAGE_ASSESSMENT':
-      return `لا يمكن الحذف: على الوحدة ${blocker.count} كشف ضرر، وكشف الضرر مستند تعويض لا يُحذف مع الوحدة.`;
-    case 'LINK_NAMES_OTHER_UNITS':
-      return `لا يمكن الحذف: ربط ملف ${blocker.citizenName} بالمالك يشمل وحدات أخرى. ألغِ الربط من ملفه أولاً.`;
-    case 'UNREADABLE_LANDLORD_LINK':
-      return `لا يمكن الحذف: تعذّرت قراءة ربط ملف ${blocker.citizenName} بالمالك، فلا يمكن التراجع عنه بأمان.`;
-  }
-}
 
 /**
  * «حذف تصحيحي» — SUPER_ADMIN removes a census unit the ordinary delete refuses.
@@ -107,7 +99,7 @@ export class UnitCorrectionService {
     return previewOf(state, planUnitCorrection(state));
   }
 
-  async apply(unitId: string, input: UnitCorrectionDeleteInput, actor: Actor): Promise<UnitCorrectionResult> {
+  async apply(unitId: string, input: UnitCorrectionDeleteInput, actor: StaffActor): Promise<UnitCorrectionResult> {
     let outcome: { result: UnitCorrectionResult; citizens: string[] };
     try {
       outcome = await runInTenantTransaction(this.tenantContext, () => this.applyLocked(unitId, input, actor));
@@ -158,7 +150,7 @@ export class UnitCorrectionService {
       upper: flatSummary(merge.upper),
       building: removal.building,
       fingerprint: plan.fingerprint,
-      blockers: plan.blockers,
+      blockers: plan.blockers.map((blocker) => ({ ...blocker, refusal: duplexMergeBlockerRefusal(blocker) })),
       levelsAfter: plan.levelsAfter,
       areaAfter: plan.areaAfter,
       visitsMoved: merge.upperState.visits.length,
@@ -177,7 +169,7 @@ export class UnitCorrectionService {
    * move down, the lower flat rises and takes the area, and the lower flat's file
    * lines take the area too. One transaction; the trail written inside it.
    */
-  async applyMerge(lowerId: string, input: DuplexMergeInput, actor: Actor): Promise<DuplexMergeResult> {
+  async applyMerge(lowerId: string, input: DuplexMergeInput, actor: StaffActor): Promise<DuplexMergeResult> {
     let outcome: { result: DuplexMergeResult; citizens: string[] };
     try {
       outcome = await runInTenantTransaction(this.tenantContext, () => this.applyMergeLocked(lowerId, input, actor));
@@ -207,8 +199,8 @@ export class UnitCorrectionService {
     return outcome.result;
   }
 
-  private async applyMergeLocked(lowerId: string, input: DuplexMergeInput, actor: Actor) {
-    await this.db.$executeRawUnsafe(`SET LOCAL lock_timeout = '5s'`);
+  private async applyMergeLocked(lowerId: string, input: DuplexMergeInput, actor: StaffActor) {
+    await setLocalLockTimeout(this.db);
     const pair = await this.mergePair(lowerId);
     // The upper flat, its building, cards, lines and registrations, as the delete locks them — then the lower flat.
     await this.lock(pair.upper.id);
@@ -231,12 +223,7 @@ export class UnitCorrectionService {
       });
     }
     if (plan.blockers.length > 0) {
-      throw new ConflictError({
-        code: 'DUPLEX_MERGE_BLOCKED',
-        message: 'The two units cannot be merged as a duplex.',
-        params: { reason: mergeBlockerReason(plan.blockers[0]!) },
-        details: { reason: 'BLOCKED', blockers: plan.blockers },
-      });
+      throw refusedBy(duplexMergeBlockerRefusal(plan.blockers[0]!), { reason: 'BLOCKED', blockers: plan.blockers });
     }
     if (input.confirmCode.trim() !== merge.upper.unitCode) {
       throw new ValidationError({
@@ -344,7 +331,7 @@ export class UnitCorrectionService {
       AuditLogEntry.create({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: UNITS_MERGED_AS_DUPLEX,
         entityType: 'Building',
         entityId: state.building.id,
@@ -377,7 +364,7 @@ export class UnitCorrectionService {
         AuditLogEntry.create({
           actorId: actor.id,
           actorType: 'STAFF',
-          actorRole: actor.role as never,
+          actorRole: actor.role,
           action: UNITS_MERGED_AS_DUPLEX,
           entityType: 'User',
           entityId: citizenId,
@@ -469,8 +456,8 @@ export class UnitCorrectionService {
 
   // ─────────────────────────────  The transaction  ─────────────────────────────
 
-  private async applyLocked(unitId: string, input: UnitCorrectionDeleteInput, actor: Actor) {
-    await this.db.$executeRawUnsafe(`SET LOCAL lock_timeout = '5s'`);
+  private async applyLocked(unitId: string, input: UnitCorrectionDeleteInput, actor: StaffActor) {
+    await setLocalLockTimeout(this.db);
     await this.lock(unitId);
 
     const state = await this.load(unitId);
@@ -484,7 +471,7 @@ export class UnitCorrectionService {
       });
     }
     if (plan.blockers.length > 0) {
-      throw new ConflictError(blockerMessage(plan.blockers[0]!), { reason: 'BLOCKED', blockers: plan.blockers });
+      throw refusedBy(unitCorrectionBlockerRefusal(plan.blockers[0]!), { reason: 'BLOCKED', blockers: plan.blockers });
     }
     // A unit with a fee exemption history is corrected, not deleted: the history keys onto it (0104).
     await assertNoFeeExemptionHistory(this.db, { unitIds: [unitId] });
@@ -607,7 +594,7 @@ export class UnitCorrectionService {
       AuditLogEntry.create({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: UNIT_CORRECTION_DELETED,
         entityType: 'Building',
         entityId: state.building.id,
@@ -641,7 +628,7 @@ export class UnitCorrectionService {
         AuditLogEntry.create({
           actorId: actor.id,
           actorType: 'STAFF',
-          actorRole: actor.role as never,
+          actorRole: actor.role,
           action: UNIT_CORRECTION_FILE_ENDED,
           entityType: 'User',
           entityId: citizenId,
@@ -1053,7 +1040,7 @@ function busyOr(error: unknown): unknown {
       : null;
   const text = error instanceof Error ? error.message : '';
   if (
-    code === 'P2034' ||
+    isSerializationFailure(error) ||
     code === '55P03' ||
     code === '40P01' ||
     /lock timeout|deadlock detected|could not obtain lock/i.test(text)

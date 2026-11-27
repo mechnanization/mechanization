@@ -14,11 +14,14 @@ import { AuditService } from '../audit/audit.service';
 import { CasesService } from '../cases/cases.service';
 import { BuildingsService } from '../buildings/buildings.service';
 import { CensusSyncService } from '../buildings/census-sync.service';
-import { FeesService } from '../fees/fees.service';
 import { CitizensService } from './citizens.service';
 import { LandlordLinkService, readFootprint } from './landlord-link.service';
 import { TenancyService } from './tenancy.service';
 import { OwnershipService } from './ownership.service';
+import { StaffActor } from '../../common/actor';
+import { feeServices } from '../fees/fee-services.testing';
+import type { FeeNoticesService } from '../fees/fee-notices.service';
+import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
 
 /**
  * Ending a tenancy, against a real Postgres.
@@ -54,14 +57,15 @@ describeIfDb('TenancyService', () => {
     (await db.feeNotice.findMany({ where: { isActive: true }, select: { id: true } })).map((notice) => notice.id);
   let context: TenantContextService;
   let buildings: BuildingsService;
+  let occupancyWrites: OccupancyWritesService;
   let census: CensusSyncService;
   let links: LandlordLinkService;
   let tenancy: TenancyService;
   let citizens: CitizensService;
-  let fees: FeesService;
+  let feeNotices: FeeNoticesService;
   let officerId: string;
 
-  const actor = () => ({ id: officerId, role: 'SUPER_ADMIN' });
+  const actor = (): StaffActor => ({ id: officerId, role: 'SUPER_ADMIN' });
 
   const within = <T>(work: () => Promise<T>): Promise<T> =>
     context.run(
@@ -89,15 +93,16 @@ describeIfDb('TenancyService', () => {
       events,
     );
     buildings = new BuildingsService(context, cases, events);
+    occupancyWrites = new OccupancyWritesService(context, cases, events, buildings);
     census = new CensusSyncService(context, cases, events);
     links = new LandlordLinkService(
       context,
-      buildings,
+      occupancyWrites,
       events,
       new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
     );
-    const ownership = new OwnershipService(context, buildings, cases, links, events, audit);
-    tenancy = new TenancyService(context, buildings, cases, links, events, ownership, audit);
+    const ownership = new OwnershipService(context, buildings, cases, links, events, audit, occupancyWrites);
+    tenancy = new TenancyService(context, buildings, cases, links, events, ownership, audit, occupancyWrites);
     citizens = new CitizensService(
       context,
       {} as never,
@@ -108,7 +113,7 @@ describeIfDb('TenancyService', () => {
       events,
       new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
     );
-    fees = new FeesService(
+    ({ feeNotices } = feeServices(
       context,
       events,
       {} as never,
@@ -120,7 +125,7 @@ describeIfDb('TenancyService', () => {
       {} as never,
       // AuditService: these tests never reach a payment.
       {} as never,
-    );
+    ));
 
     officerId = randomUUID();
     await db.user.create({
@@ -270,7 +275,7 @@ describeIfDb('TenancyService', () => {
       acknowledgedDuplicates: await otherFees(),
     } as CreateFeeNotice;
     try {
-      const issued = await within(() => fees.issue(notice, actor()));
+      const issued = await within(() => feeNotices.issue(notice, actor()));
       const invoice = await db.citizenPayment.findFirst({
         where: { citizenId, feeNoticeId: issued.noticeId },
       });

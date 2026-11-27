@@ -20,28 +20,11 @@
  *
  * Citizens, staff accounts, buildings, cadastre, and system settings remain completely intact.
  */
-import { createRequire } from 'node:module';
-import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
-import { ROOT, resolveTarget, parseConnection } from './targets.mjs';
+import { resolveTarget, parseConnection } from './targets.mjs';
 import { withTruncateGuardsOff } from './truncate-guards.mjs';
-
-const require = createRequire(join(ROOT, 'apps', 'backend', 'package.json'));
-const { Client } = require('pg');
-
-const C = {
-  red: (s) => `\x1b[91m${s}\x1b[0m`,
-  green: (s) => `\x1b[92m${s}\x1b[0m`,
-  yellow: (s) => `\x1b[93m${s}\x1b[0m`,
-  bold: (s) => `\x1b[1m${s}\x1b[0m`,
-  dim: (s) => `\x1b[2m${s}\x1b[0m`,
-};
-
-function fail(msg) {
-  console.error(C.red(`\n✗ ${msg}`));
-  process.exit(1);
-}
+import { Client, C, fail } from './lib.mjs';
 
 async function confirmExecution(autoConfirm) {
   if (autoConfirm) return;

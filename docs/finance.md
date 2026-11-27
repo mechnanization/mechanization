@@ -517,7 +517,7 @@ bill — an amnesty, a debt too old to collect, one that cannot be collected. It
 الفاتورة»: that withdraws a bill issued by mistake, with nothing paid on it; a write-off ends a debt
 that was real, and a part-paid bill keeps its receipts.
 
-- **Route.** `POST fees/payments/:id/write-off` (`FeesService.writeOffBill`), `BILL_WRITE_OFF_ROLES`
+- **Route.** `POST fees/payments/:id/write-off` (`BillLifecycleService.writeOffBill`), `BILL_WRITE_OFF_ROLES`
   (the manager alone), body `writeOffBillSchema`: the reason (at least `ADJUSTMENT_REASON_MIN`, as a
   cancellation's), the council decision number and its date. The amount is never sent.
 - **The write.** Under the bill's row lock (`PaymentLedgerService.lockInvoices`), one `UPDATE` sets
@@ -1965,7 +1965,7 @@ out.
 
 - **Income vouchers** (§4): the retry key is bound to its act and a cancelled voucher's key
   is `INCOME_ALREADY_VOID`; a unique violation on the key is answered as a replay
-  (`retry-key.ts`); the lock order is the advisory lock, `config` (`FOR SHARE`),
+  (`isUniqueViolationOn`, `infrastructure/prisma/prisma-errors.ts`); the lock order is the advisory lock, `config` (`FOR SHARE`),
   `lockAccounts`, then the RV number; the go-live day is dated by `documentOccurredAt`
   with the go-live stamp (D5); a void takes the wallet's lock through `lockAccounts`; and
   0083's write-once trigger covers `income_vouchers`.

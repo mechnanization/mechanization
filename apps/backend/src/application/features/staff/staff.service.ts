@@ -24,7 +24,7 @@ import { creditedRegistrationsWhere } from '../../../infrastructure/repositories
 import { Prisma } from '../../../generated/tenant-client';
 import { AuditService } from '../audit/audit.service';
 import { ExpensesService } from '../treasury/expenses.service';
-import { isUniqueViolationOn } from '../treasury/retry-key';
+import { isUniqueViolationOn } from '../../../infrastructure/prisma/prisma-errors';
 import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
 import {
   COMMISSION_RATE,

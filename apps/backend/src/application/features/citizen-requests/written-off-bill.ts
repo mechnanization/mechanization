@@ -16,7 +16,7 @@ import type { AuditService } from '../audit/audit.service';
  * payment: the audit row says so (`REQUEST_FEE_WRITTEN_OFF`, not `REQUEST_PAID`), and
  * the bill's own row names the decision.
  *
- * Two callers: `FeesService.writeOffBill`, behind its row lock on the bill with the
+ * Two callers: `BillLifecycleService.writeOffBill`, behind its row lock on the bill with the
  * manager as the actor, and `CitizenRequestsService.reconcile`, with no actor (a
  * SYSTEM row), which heals a request the first could not reach.
  *

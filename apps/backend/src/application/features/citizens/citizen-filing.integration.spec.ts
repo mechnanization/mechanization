@@ -22,6 +22,7 @@ import { CasesService } from '../cases/cases.service';
 import { RegistrationService } from '../registration/registration.service';
 import { CitizensService } from './citizens.service';
 import { LandlordLinkService } from './landlord-link.service';
+import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
 
 /**
  * Filing on a citizen's file against a real Postgres: what a save, a new
@@ -71,13 +72,14 @@ describeIfDb('filing on a citizen file', () => {
       events,
     );
     const buildings = new BuildingsService(context, cases, events);
+    const occupancyWrites = new OccupancyWritesService(context, cases, events, buildings);
     citizens = new CitizensService(
       context,
       new RegistrationService(new PrismaRegistrationRepository(context), parcels, tenants as never, events),
       tenants as never,
       parcels,
       new CensusSyncService(context, cases, events),
-      new LandlordLinkService(context, buildings, events, audit),
+      new LandlordLinkService(context, occupancyWrites, events, audit),
       events,
       audit,
     );

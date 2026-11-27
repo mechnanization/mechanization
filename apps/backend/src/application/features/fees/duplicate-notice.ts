@@ -1,7 +1,7 @@
 /**
  * When a notice being issued duplicates one already active (finding F11 of the
  * 2026-11-14 billing audit). The rule is `feeNoticeDuplicateSchema`'s in
- * shared-schemas; these are its pure parts, and `FeesService.duplicateNotices`
+ * shared-schemas; these are its pure parts, and `FeeNoticesService.duplicateNotices`
  * reads the register with them.
  *
  * The retry key protects one press of «إصدار». Two issuers, or one issuer in

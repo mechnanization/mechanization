@@ -9,6 +9,7 @@ import { PrismaAuditRepository } from '../../../infrastructure/repositories/audi
 import type { AuditLogEntry } from '../../../domain/entities/audit-log-entry.entity';
 import { ConflictError, ValidationError } from '../../../domain/errors/domain-error';
 import { UnitCorrectionService } from './unit-correction.service';
+import { StaffActor } from '../../common/actor';
 
 /**
  * «حذف تصحيحي» against a real tenant schema: every migration applied, the units
@@ -39,7 +40,7 @@ describeIfDb('UnitCorrectionService', () => {
   let service: UnitCorrectionService;
   const officerId = randomUUID();
   const adminId = randomUUID();
-  const admin = { id: adminId, role: 'SUPER_ADMIN' };
+  const admin: StaffActor = { id: adminId, role: 'SUPER_ADMIN' };
 
   const within = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'tenant-uc', tenantSlug: 'uc', schemaName: SCHEMA, prisma: db }, work);
@@ -379,12 +380,14 @@ describeIfDb('UnitCorrectionService', () => {
       },
     });
     const preview = await within(() => service.preview(fixture.units.b102.id));
-    expect(preview.blockers).toEqual([{ kind: 'DAMAGE_ASSESSMENT', count: 1 }]);
+    expect(preview.blockers).toEqual([
+      { kind: 'DAMAGE_ASSESSMENT', count: 1, refusal: { code: 'UNIT_CORRECTION_DAMAGE_ASSESSMENT', params: { count: 1 } } },
+    ]);
     const before = await picture(fixture);
 
     await expect(
       within(() => service.apply(fixture.units.b102.id, input(preview.fingerprint, 'B102'), admin)),
-    ).rejects.toMatchObject({ details: { reason: 'BLOCKED' } });
+    ).rejects.toMatchObject({ code: 'UNIT_CORRECTION_DAMAGE_ASSESSMENT', params: { count: 1 }, details: { reason: 'BLOCKED' } });
     expect(await picture(fixture)).toEqual(before);
   });
 

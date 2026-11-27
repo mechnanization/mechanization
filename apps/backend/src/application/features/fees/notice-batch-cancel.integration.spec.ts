@@ -11,6 +11,9 @@ import { AuditService } from '../audit/audit.service';
 import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
 import { FeesService } from './fees.service';
 import { PaymentLedgerService } from './payment-ledger.service';
+import { feeServices } from './fee-services.testing';
+import type { FeeNoticesService } from './fee-notices.service';
+import type { RecurringBillingService } from './recurring-billing.service';
 
 /**
  * «إلغاء الإشعار» (decisions D6 of 2026-10-23 and D12 of 2026-10-26,
@@ -33,6 +36,8 @@ describeIfDb('cancelling a notice’s bills in one step', () => {
   let db: TenantPrismaClient;
   let context: TenantContextService;
   let fees: FeesService;
+  let feeNotices: FeeNoticesService;
+  let recurringBilling: RecurringBillingService;
   const managerId = randomUUID();
   const manager = { id: managerId, role: 'SUPER_ADMIN' };
   // Paid in full, part-paid, a Whish claim under review, untouched.
@@ -49,7 +54,7 @@ describeIfDb('cancelling a notice’s bills in one step', () => {
     db = tenantTestClient(TEST_DATABASE_URL!, SCHEMA);
     context = new TenantContextService();
     const audit = new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never);
-    fees = new FeesService(
+    ({ fees, feeNotices, recurringBilling } = feeServices(
       context,
       new EventEmitter2(),
       {} as never,
@@ -60,7 +65,7 @@ describeIfDb('cancelling a notice’s bills in one step', () => {
       } as never,
       new PaymentLedgerService(context, audit, new TreasuryLedgerService(context)),
       audit,
-    );
+    ));
 
     await db.user.create({
       data: {
@@ -93,7 +98,7 @@ describeIfDb('cancelling a notice’s bills in one step', () => {
     const now = new Date();
     const lastMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
     const issued = await within(() =>
-      fees.issue(
+      feeNotices.issue(
         {
           title: 'رسم النظافة',
           amount: 50_000,
@@ -119,7 +124,7 @@ describeIfDb('cancelling a notice’s bills in one step', () => {
 
     const periodKey = (await billOf(untouched)).periodKey;
     const result = await within(() =>
-      fees.cancelNoticeBatch(issued.noticeId, { reason: 'أُصدر بالمبلغ الخطأ', periodKeys: [periodKey] }, manager),
+      feeNotices.cancelNoticeBatch(issued.noticeId, { reason: 'أُصدر بالمبلغ الخطأ', periodKeys: [periodKey] }, manager),
     );
 
     expect(result).toMatchObject({ noticeId: issued.noticeId, cancelled: 1, deactivated: true });
@@ -148,14 +153,14 @@ describeIfDb('cancelling a notice’s bills in one step', () => {
     expect(trail.find((row) => row.action === 'FEE_BILL_CANCELLED')?.entityId).toBe((await billOf(untouched)).id);
 
     const before = await db.citizenPayment.count({ where: { feeNoticeId: issued.noticeId } });
-    await within(() => fees.runRecurringBilling(now));
+    await within(() => recurringBilling.runRecurringBilling(now));
     expect(await db.citizenPayment.count({ where: { feeNoticeId: issued.noticeId } })).toBe(before);
   });
 
   it('answers a second press with nothing more to cancel, and an unknown notice with its code', async () => {
     const notice = await db.feeNotice.findFirstOrThrow({ where: { title: 'رسم النظافة' } });
     const periodKeys = [...new Set((await db.citizenPayment.findMany({ where: { feeNoticeId: notice.id } })).map((bill) => bill.periodKey))];
-    const again = await within(() => fees.cancelNoticeBatch(notice.id, { reason: 'مرة ثانية', periodKeys }, manager));
+    const again = await within(() => feeNotices.cancelNoticeBatch(notice.id, { reason: 'مرة ثانية', periodKeys }, manager));
     expect(again).toMatchObject({ cancelled: 0, deactivated: false });
     expect(again.skipped.map((entry) => entry.reason).sort()).toEqual([
       'BILL_CANCEL_HAS_PAYMENTS',
@@ -164,7 +169,7 @@ describeIfDb('cancelling a notice’s bills in one step', () => {
     ]);
 
     await expect(
-      within(() => fees.cancelNoticeBatch(randomUUID(), { reason: 'لا يوجد', periodKeys: ['2026-01'] }, manager)),
+      within(() => feeNotices.cancelNoticeBatch(randomUUID(), { reason: 'لا يوجد', periodKeys: ['2026-01'] }, manager)),
     ).rejects.toMatchObject({ code: 'FEE_NOTICE_NOT_FOUND' });
   });
 
@@ -172,7 +177,7 @@ describeIfDb('cancelling a notice’s bills in one step', () => {
     const now = new Date();
     const twoMonthsAgo = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 2, 1));
     const issued = await within(() =>
-      fees.issue(
+      feeNotices.issue(
         {
           title: 'رسم الإنارة',
           amount: 30_000,
@@ -186,19 +191,19 @@ describeIfDb('cancelling a notice’s bills in one step', () => {
       ),
     );
     // The current month's bills, raised by the run: two periods on one notice.
-    await within(() => fees.runRecurringBilling(now));
+    await within(() => recurringBilling.runRecurringBilling(now));
     const bills = await db.citizenPayment.findMany({ where: { feeNoticeId: issued.noticeId } });
     const periods = [...new Set(bills.map((bill) => bill.periodKey))].sort();
     expect(periods).toHaveLength(2);
     const [earlier, latest] = periods as [string, string];
 
     // What the dialog shows before the press: each period, newest first, and what the cancel would do.
-    const summary = await within(() => fees.noticePeriods(issued.noticeId));
+    const summary = await within(() => feeNotices.noticePeriods(issued.noticeId));
     expect(summary.map((row) => row.periodKey)).toEqual([latest, earlier]);
     expect(summary[0]).toMatchObject({ bills: 4, cancellable: 4, cancellableAmount: 120_000, withPayments: 0, underReview: 0, alreadyCancelled: 0 });
 
     const result = await within(() =>
-      fees.cancelNoticeBatch(issued.noticeId, { reason: 'صدر لهذا الشهر خطأً', periodKeys: [latest] }, manager),
+      feeNotices.cancelNoticeBatch(issued.noticeId, { reason: 'صدر لهذا الشهر خطأً', periodKeys: [latest] }, manager),
     );
     expect(result).toMatchObject({ cancelled: 4, skipped: [], deactivated: true });
 
@@ -216,7 +221,7 @@ describeIfDb('cancelling a notice’s bills in one step', () => {
     const now = new Date();
     const lastMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
     const issued = await within(() =>
-      fees.issue(
+      feeNotices.issue(
         {
           title: 'رسم الصرف الصحي',
           amount: 20_000,
@@ -231,10 +236,10 @@ describeIfDb('cancelling a notice’s bills in one step', () => {
     );
     const billed = await db.citizenPayment.count({ where: { feeNoticeId: issued.noticeId } });
 
-    await within(() => fees.setNoticeActive(issued.noticeId, false, manager));
+    await within(() => feeNotices.setNoticeActive(issued.noticeId, false, manager));
     // A second press changes nothing and writes nothing.
-    await within(() => fees.setNoticeActive(issued.noticeId, false, manager));
-    await within(() => fees.runRecurringBilling(now));
+    await within(() => feeNotices.setNoticeActive(issued.noticeId, false, manager));
+    await within(() => recurringBilling.runRecurringBilling(now));
 
     const bills = await db.citizenPayment.findMany({ where: { feeNoticeId: issued.noticeId }, select: { paymentStatus: true } });
     expect(bills).toHaveLength(billed);
@@ -242,8 +247,8 @@ describeIfDb('cancelling a notice’s bills in one step', () => {
     const stops = await db.auditLogEntry.findMany({ where: { entityId: issued.noticeId, action: { in: ['FEE_NOTICE_STOPPED', 'FEE_NOTICE_RESUMED'] } } });
     expect(stops.map((entry) => entry.action)).toEqual(['FEE_NOTICE_STOPPED']);
 
-    await within(() => fees.setNoticeActive(issued.noticeId, true, manager));
-    await within(() => fees.runRecurringBilling(now));
+    await within(() => feeNotices.setNoticeActive(issued.noticeId, true, manager));
+    await within(() => recurringBilling.runRecurringBilling(now));
     expect(await db.citizenPayment.count({ where: { feeNoticeId: issued.noticeId } })).toBeGreaterThan(billed);
   });
 });

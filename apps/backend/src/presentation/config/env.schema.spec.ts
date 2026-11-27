@@ -429,3 +429,26 @@ describe('validateEnv — Day3ati', () => {
     );
   });
 });
+
+/*
+  DRY-07: a default lives in the schema and nowhere else, so the sender reads
+  `SMTP_PORT` with `getOrThrow` and must be handed 587 when it is unset.
+*/
+describe('validateEnv — SMTP_PORT', () => {
+  const base = {
+    NODE_ENV: 'development',
+    DATABASE_URL: 'postgresql://u:p@localhost:5432/db?schema=public',
+    DIRECT_URL: 'postgresql://u:p@localhost:5432/db',
+    SUPABASE_URL: 'https://example.supabase.co',
+    SUPABASE_SERVICE_ROLE_KEY: 'x'.repeat(40),
+    JWT_SECRET: 'y'.repeat(40),
+  };
+
+  it('defaults to the submission port when none is configured', () => {
+    expect(validateEnv({ ...base }).SMTP_PORT).toBe(587);
+  });
+
+  it('reads a configured port as a number', () => {
+    expect(validateEnv({ ...base, SMTP_PORT: '465' }).SMTP_PORT).toBe(465);
+  });
+});

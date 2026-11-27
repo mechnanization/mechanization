@@ -873,7 +873,7 @@ What the code does now ([finance.md](finance.md) §3.7):
   a bill for review between the tick and the press. The **single** counter settle does not
   refuse it on the server: its screens hide the button, but the API takes the money, and the
   Whish callback then finds the bill PAID and records nothing for the transfer that arrived
-  (`FeesService.settleFromWhishCallback` returns `{ applied: false }` on a PAID bill).
+  (`WhishCheckoutService.settleFromWhishCallback` returns `{ applied: false }` on a PAID bill).
   **Decided (the owner, 2026-10-12; [finance.md](finance.md) §13.1c, D11):** no. The single
   settle and a reversal are refused too (`PAYMENT_CLAIM_UNDER_REVIEW`) until a clerk confirms or
   rejects the claim, and a Whish success for a bill settled another way meanwhile is set aside,
@@ -952,7 +952,7 @@ decided; a later answer from the municipality overrides it and is recorded here 
 
 1. **Online payment through Whish is paused** until Whish gives the municipality its API.
    Citizens pay at the municipality's cash office or to a collector.
-   - **What the code does.** `FeesService.startWhishCheckout` and a citizen's own request bill
+   - **What the code does.** `WhishCheckoutService.startWhishCheckout` and a citizen's own request bill
      (`POST requests/mine/:id/bill`) answer `ONLINE_PAYMENT_UNAVAILABLE` while the Whish gateway
      is not live, before anything is read or written. The portal shows no «ادفع عبر Whish» or
      «ادفع الآن» (`ONLINE_PAYMENT_OPEN` in `apps/frontend/lib/online-payment.ts`); it says
@@ -1092,3 +1092,27 @@ the request waiting on the bill goes on to «قيد المعالجة», as one w
 (`REQUEST_FEE_WAIVED`), and the audit row is `REQUEST_FEE_WRITTEN_OFF`. Its `paidAt` is the moment the fee
 stopped being owed, because a database CHECK wants a stamp on a billed request in review; if a screen must tell
 "paid" from "forgiven", read the audit row, or give the request its own column in a later migration.
+
+## 25. The staff sidebar and the page moves (decided 2026-11-25)
+
+Decided by Hashem, 2026-11-25, in answer to NAV-01 (D3-234) of the cleanup sprint
+([audit](cleanup-sprint-2026-11-23/audit.md) §12, decision U-24). §24 is #231's (PAGE-03, PAGE-05,
+PAGE-06, decided 2026-11-24); those three stand and are not repeated here. The sidebar goes from 35 rows
+to 26. The approved map is in the `NAV_GROUPS` comment (`apps/frontend/components/admin/nav.ts`, "The
+approved map"); each move is its own task, and a page whose row goes gates itself first, because a path
+with no row opens to every role (`canAccessPath`).
+
+| Task | Decision |
+|---|---|
+| NAV-02 «تسجيل مواطن جديد» | **Approved.** The row goes; the citizens page's header, the unsurveyed worklist and the palette open the form. `/citizens/new` first sends a role outside `CITIZEN_RECORD_EDIT_ROLES` back to `/citizens`, saying why. |
+| NAV-03 the four quality rows | **Approved.** One row, «الجودة», `?tab=reviews\|findings\|checks\|officers`, the four old paths in `also`. NAV-12 (a server redirect for `/quality`) is superseded. |
+| NAV-04 the two census worklists | **Approved.** One row, «قوائم العمل الميداني», two tabs, each keeping its own paging and filters in the URL; both old paths in `also`. |
+| NAV-05 news categories and publishers | **Changed.** They leave the sidebar for two header links on the articles page, as proposed. «الأخبار» stays in the sidebar as one row under its own name, with no group heading above it and joining no other group (Hashem: "let it be in the side bar as its name"). `NavGroup.label` is documented for the landing group only and `lib/nav.test.ts` pins that group unlabelled and first: the task widens both. |
+| NAV-06 «أمان الحساب» | **Approved.** In the user menu only. |
+| NAV-07 «فواتير تأثّرت بتصحيحات» | **Approved.** Reached from the fees page's header only; the page first gates its own reading to `PAYMENT_REVIEW_READ_ROLES`, which is narrower than the `/fees` row's `FEE_READ_ROLES` it falls under. |
+| NAV-08 «المستحق على عقار» | **Kept as its own row** (not a header action on `/fees`, not a panel on the building): a clerk asks it whenever a citizen asks for a براءة ذمّة. Pinned in `lib/nav.test.ts`. |
+| NAV-11 the two review queues | **Renamed.** `/citizens/review` «يتطلب مراجعة» → «ملفات ناقصة» / "Incomplete files"; `/quality/reviews` «السجلات» → «اعتماد السجلات» / "Record approval", the first tab of «الجودة». |
+| PAGE-01 settings «المستخدمون» | **Approved.** The tab goes (or becomes a link to `/staff`), and `users-section.tsx` is deleted. |
+
+Nobody outside the product owner was asked and no screen was rendered for this decision; the
+implementing tasks check each move in the running app (ui-ux-standards §16).

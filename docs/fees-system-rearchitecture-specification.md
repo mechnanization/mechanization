@@ -5,7 +5,7 @@
 > PRs #133–#138 (D8–D14; D6 amended by D12), and on 2026-10-27 with D5's payer.
 > Replaces the earlier draft, which re-specified rules the fee engine already
 > has and contradicted decisions already taken (D28, migration 0075).
-> **Last verified against the code:** `chore/migration-0104` (on `develop@e9e79ff`, uncommitted):
+> **Last verified against the code:** `refactor/cleanup-god-01-05-arch-03` (on `develop@5bf5856a` with #228, #230, #236, #239 and #252 merged in): the preview, issue and cancel named in `FeeNoticesService` after GOD-02, 2026-11-27; `chore/migration-0104` (on `develop@e9e79ff`, uncommitted):
 > §9, «قائمة الإعفاء من الرسوم» — the exemption periods, the last day judged on the first
 > day of the billing period in the preview, the issue, the recurring run and «فواتير تأثّرت
 > بتصحيحات», and the whitelist's routes, 2026-11-16; `fix/fee-wizard-review`, merged with the
@@ -303,9 +303,9 @@ CLAUDE.md, "Keeping the docs true".
 
 ### Phase 4: preview
 
-- `FeesService.planNotice(input, citizenIds)` is the read-and-assess half of
+- `FeeNoticesService.planNotice(input, citizenIds)` is the read-and-assess half of
   `issue`: the assessment, the shared-unit split and the counts. `issue` and
-  `FeesService.previewNotice(input)` both call it; the preview writes nothing
+  `FeeNoticesService.previewNotice(input)` both call it; the preview writes nothing
   (no notice, bill, audit row or event), so it takes no actor.
 - `POST t/:tenantSlug/fees/notices/preview`, `@Roles(...FEE_ISSUE_ROLES)`,
   `ZodValidationPipe(feeNoticePreviewSchema)`, `@HttpCode(200)`; the answer is
@@ -393,7 +393,7 @@ the register):
 
 Built on `feat/tiered-fees-cancel-and-wizard`.
 
-- `FeesService.cancelNoticeBatch(noticeId, reason, actor)`, in one transaction:
+- `FeeNoticesService.cancelNoticeBatch(noticeId, reason, actor)`, in one transaction:
   every bill of the notice locked, `billCancelRefusal` (the rule `cancelBill`
   now applies too) on each; what passes cancelled in one `updateMany`, with a
   `FEE_BILL_CANCELLED` row per bill and any waiting municipal request cancelled
@@ -620,7 +620,7 @@ reason.
 
 ### 9.4a Old debts (task 6, 2026-11-21)
 
-A notice may not bill a year that old debts cover. `FeesService.previewNotice` and `issue` refuse a notice whose first
+A notice may not bill a year that old debts cover. `FeeNoticesService.previewNotice` and `issue` refuse a notice whose first
 period is before `system_settings.arrearsCutoffYear` (`FEE_PERIOD_BEFORE_ARREARS_CUTOFF`); `runRecurringBilling` skips such a
 period. The rule and the totals it keeps true are in [finance.md](finance.md) §3.6b.
 

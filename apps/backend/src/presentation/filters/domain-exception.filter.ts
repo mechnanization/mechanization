@@ -12,7 +12,7 @@ import {
   ValidationError,
 } from '../../application/common/exceptions';
 import { reportException } from '../config/sentry';
-import { redactUrl } from '../config/sentry-redaction';
+import { redactText, redactUrl } from '@mechanization/shared-schemas';
 
 const STATUS_BY_ERROR: Array<[new (...args: never[]) => DomainError, HttpStatus]> = [
   [NotFoundError, HttpStatus.NOT_FOUND],
@@ -55,13 +55,18 @@ export class DomainExceptionFilter implements ExceptionFilter {
     // path, correlationId) trails it rather than burying the message behind
     // an arrow.
     if (status >= 500) {
-      // The client only ever gets the generic body message; the log gets the
-      // real exception detail (and full stack, never sent to the client).
-      const detail = exception instanceof Error ? exception.message : String(exception);
-      this.logger.error(
-        `error (${status}): ${detail} — ${where} [${correlationId}]`,
-        exception instanceof Error ? exception.stack : undefined,
-      );
+      /*
+        The client only ever gets the generic body message; the log gets the
+        exception's own detail and stack, through `redactText` as Sentry gets
+        them (audit SEC-05). An unrecognised error is whatever a library threw,
+        and Postgres quotes the row back (`Key (phone)=(…)`): a phone, a
+        national ID or a رقم مرجعي in it reached stdout as written. The stack
+        is redacted too, because its first line repeats the message. Only these
+        two: the correlation id is a UUID, which `redactText` would mask.
+      */
+      const detail = redactText(exception instanceof Error ? exception.message : String(exception));
+      const stack = exception instanceof Error && exception.stack ? redactText(exception.stack) : undefined;
+      this.logger.error(`error (${status}): ${detail} — ${where} [${correlationId}]`, stack);
 
       /*
         Sentry gets 5xx and nothing else, and the boundary is the point.

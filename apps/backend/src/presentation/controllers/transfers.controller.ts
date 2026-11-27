@@ -20,6 +20,8 @@ import { ZodValidationPipe } from '../../application/common/pipes/zod-validation
 import type { SessionClaims } from '../../application/features/identity/identity.service';
 import { TransfersService } from '../../application/features/treasury/transfers.service';
 import { CurrentUser } from '../decorators/current-user.decorator';
+import { CurrentActor } from '../decorators/current-actor.decorator';
+import { StaffActor } from '../../application/common/actor';
 import { Roles } from '../decorators/roles.decorator';
 import { optionalInt } from './query-params';
 import { UuidPipe } from '../pipes/uuid.pipe';
@@ -94,9 +96,9 @@ export class TransfersController {
   @Post()
   create(
     @Body(new ZodValidationPipe(createTransferSchema)) body: CreateTransferInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.transfers.create(body, { id: user.sub, role: user.role ?? '' });
+    return this.transfers.create(body, actor);
   }
 
   /** «استلام صندوق الجابي»: the counted cash leaves custody and reaches the safe. */
@@ -104,9 +106,9 @@ export class TransfersController {
   @Post('custody/receive')
   receiveCustody(
     @Body(new ZodValidationPipe(receiveCustodySchema)) body: ReceiveCustodyInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.transfers.receiveCustody(body, { id: user.sub, role: user.role ?? '' });
+    return this.transfers.receiveCustody(body, actor);
   }
 
   /** Cancels a transfer and puts both legs back. The manager's alone. */
@@ -115,9 +117,9 @@ export class TransfersController {
   void(
     @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(voidTransferSchema)) body: VoidTransferInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.transfers.void(id, body.reason, { id: user.sub, role: user.role ?? '' });
+    return this.transfers.void(id, body.reason, actor);
   }
 
   /** «اعتماد المراجعة»: an auditor or the manager clears a flagged exchange. */
@@ -126,9 +128,9 @@ export class TransfersController {
   review(
     @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(reviewTransferSchema)) body: ReviewTransferInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.transfers.review(id, body.note, { id: user.sub, role: user.role ?? '' });
+    return this.transfers.review(id, body.note, actor);
   }
 
   /** One transfer, for its printed «سند». Last, so no static path above is read as an id. */

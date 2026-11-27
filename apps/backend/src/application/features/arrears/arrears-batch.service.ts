@@ -26,22 +26,23 @@ import { Prisma } from '../../../generated/tenant-client';
 import { ConflictError, ForbiddenError, NotFoundError } from '../../../domain/errors/domain-error';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { runInTenantTransaction } from '../../../infrastructure/context/tenant-transaction';
+import { isUniqueViolation } from '../../../infrastructure/prisma/prisma-errors';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
-import { APP_CONFIG } from '../../../presentation/config/app.config';
+import { APP_CONFIG } from '../../common/app.config';
 import { AuditService } from '../audit/audit.service';
 import { assertNotMergedAway } from '../citizens/merged-away';
 import { raiseArrearsBills, type ArrearsBillLine } from '../fees/arrears-bill';
 import { approvalProblems, type StoredArrearsLine } from './arrears-approval.plan';
 import { arrearsLineKey, isPrescribed } from './arrears-import.plan';
 import { ArrearsService } from './arrears.service';
+import { StaffActor } from '../../common/actor';
 
-type Actor = { id: string; role: string };
 type Db = Prisma.TransactionClient;
 
 const cents = (amount: number) => Math.round(amount * 100);
 const pounds = (sum: number) => sum / 100;
 const staffName = (user: { firstName: string; lastName: string }) => `${user.firstName} ${user.lastName}`.trim();
-const isApprover = (actor: Actor) => (ARREARS_APPROVE_ROLES as readonly string[]).includes(actor.role);
+const isApprover = (actor: StaffActor) => (ARREARS_APPROVE_ROLES as readonly string[]).includes(actor.role);
 
 const BATCH_VIEW_INCLUDE = {
   preparedBy: { select: { firstName: true, lastName: true } },
@@ -264,7 +265,7 @@ export class ArrearsBatchService {
    * alike, since the pages hold all of them — is the total the accountant added up
    * by hand. Whoever prepared the batch, or the manager, sends it.
    */
-  async submit(batchId: string, input: SubmitArrearsBatchInput, actor: Actor): Promise<ArrearsBatchView> {
+  async submit(batchId: string, input: SubmitArrearsBatchInput, actor: StaffActor): Promise<ArrearsBatchView> {
     return runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Db;
       const batch = await this.lockBatch(tx, batchId);
@@ -302,7 +303,7 @@ export class ArrearsBatchService {
   }
 
   /** The manager sends a submitted batch back to the preparer as a draft, with what to fix. */
-  async returnBatch(batchId: string, input: ReturnArrearsBatchInput, actor: Actor): Promise<ArrearsBatchView> {
+  async returnBatch(batchId: string, input: ReturnArrearsBatchInput, actor: StaffActor): Promise<ArrearsBatchView> {
     return runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Db;
       const batch = await this.lockBatch(tx, batchId);
@@ -322,7 +323,7 @@ export class ArrearsBatchService {
    * by the manager alone. Its lines leave the one-live-line index, so its citizens
    * can be exported again. The reason is kept on the audit row.
    */
-  async discard(batchId: string, input: DiscardArrearsBatchInput, actor: Actor): Promise<ArrearsBatchView> {
+  async discard(batchId: string, input: DiscardArrearsBatchInput, actor: StaffActor): Promise<ArrearsBatchView> {
     return runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Db;
       const batch = await this.lockBatch(tx, batchId);
@@ -344,7 +345,7 @@ export class ArrearsBatchService {
     });
   }
 
-  private assertYours(preparedById: string, actor: Actor): void {
+  private assertYours(preparedById: string, actor: StaffActor): void {
     if (preparedById.toLowerCase() === actor.id.toLowerCase() || isApprover(actor)) return;
     throw new ForbiddenError({ code: 'ARREARS_BATCH_NOT_YOURS', message: 'Only whoever prepared this batch, or the manager, may act on it' });
   }
@@ -364,7 +365,7 @@ export class ArrearsBatchService {
    * \`APP_CONFIG.arrears.approverMustDifferFromPreparer\`: open-decisions §23.3 has
    * not decided it, so it is off, and this is the one place that turns it on.
    */
-  async approve(batchId: string, actor: Actor): Promise<ArrearsBatchView> {
+  async approve(batchId: string, actor: StaffActor): Promise<ArrearsBatchView> {
     const { view, raised } = await runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Db;
       const batch = await this.lockBatch(tx, batchId);
@@ -406,7 +407,7 @@ export class ArrearsBatchService {
         bills.map((bill) => ({
           actorId: actor.id,
           actorType: 'STAFF' as const,
-          actorRole: actor.role as never,
+          actorRole: actor.role,
           action: ARREARS_BILL_RAISED,
           entityType: 'Payment',
           entityId: bill.id,
@@ -436,7 +437,7 @@ export class ArrearsBatchService {
    * press is answered with the batch the first press made; the same key with
    * another line is refused.
    */
-  async addSingleLine(input: ArrearsSingleLineInput, actor: Actor): Promise<ArrearsBatchView> {
+  async addSingleLine(input: ArrearsSingleLineInput, actor: StaffActor): Promise<ArrearsBatchView> {
     const key = input.clientRequestId.toLowerCase();
     return runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Db;
@@ -510,7 +511,7 @@ export class ArrearsBatchService {
    * a debt that has become prescribed since, a duplicate of the file's live line, or
    * a file folded into another is refused.
    */
-  async link(lineId: string, input: LinkArrearsLineInput, actor: Actor): Promise<ArrearsUnmatchedLine> {
+  async link(lineId: string, input: LinkArrearsLineInput, actor: StaffActor): Promise<ArrearsUnmatchedLine> {
     const { line, billId } = await runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Db;
       const locked = await tx.$queryRaw<Array<{ id: string }>>`
@@ -558,7 +559,7 @@ export class ArrearsBatchService {
           data: { citizenId: citizen.id, linkedAt: new Date(), linkedById: actor.id },
         });
       } catch (error) {
-        if ((error as { code?: unknown }).code === 'P2002') {
+        if (isUniqueViolation(error)) {
           throw new ConflictError({ code: 'ARREARS_LINE_DUPLICATE', message: 'This file already holds this debt' });
         }
         throw error;
@@ -568,7 +569,7 @@ export class ArrearsBatchService {
       await this.auditTrail.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: ARREARS_LINE_LINKED,
         entityType: 'ArrearsLine',
         entityId: lineId,
@@ -612,7 +613,7 @@ export class ArrearsBatchService {
    * clears it, and every import is refused again. Under the lock every writer of live lines
    * takes, so an approval cannot slip in between the check and the write.
    */
-  async setCutoff(input: ArrearsCutoffInput, actor: Actor): Promise<ArrearsSettingsView> {
+  async setCutoff(input: ArrearsCutoffInput, actor: StaffActor): Promise<ArrearsSettingsView> {
     await runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Db;
       await this.linesLock(tx);
@@ -632,7 +633,7 @@ export class ArrearsBatchService {
       await this.auditTrail.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: ARREARS_CUTOFF_CHANGED,
         entityType: 'SystemSettings',
         entityId: 'singleton',
@@ -643,11 +644,11 @@ export class ArrearsBatchService {
     return this.settings();
   }
 
-  private async audit(actor: Actor, action: string, batchId: string, after: Record<string, unknown>): Promise<void> {
+  private async audit(actor: StaffActor, action: string, batchId: string, after: Record<string, unknown>): Promise<void> {
     await this.auditTrail.recordInTransaction({
       actorId: actor.id,
       actorType: 'STAFF',
-      actorRole: actor.role as never,
+      actorRole: actor.role,
       action,
       entityType: 'ArrearsBatch',
       entityId: batchId,

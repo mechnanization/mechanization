@@ -9,46 +9,48 @@ import { UuidPipe } from '../pipes/uuid.pipe';
 /*
   The route inventory: who can reach every route the API serves.
 
-  `RolesGuard` admits any authenticated token — a citizen's too — to a route
-  with no `@Roles` (docs/security.md, known gaps), and «مشاهد فقط» (VIEWER)
-  writes nothing only because no write route lists it. Neither is something to
-  trust to whoever adds the next endpoint, so both are checked here, over every
-  controller found on disk rather than a hand-kept list: a new controller is
-  covered the day it is written.
+  `RolesGuard` refuses a non-public route that declares neither `@Roles` nor
+  `@SelfService` (SEC-10), so a forgotten role is a 403, not an open door. What
+  is checked here is the other half: that every route says who may call it, that
+  each self-service route is one a person reviewed, and that «مشاهد فقط»
+  (VIEWER) writes nothing — which holds only because no write route lists it.
+  All of it over every controller found on disk rather than a hand-kept list: a
+  new controller is covered the day it is written.
 */
 
 /** Read off the controllers on disk (`route-discovery.ts`, shared with `cross-tenant-routes.spec.ts`). */
 type Route = DiscoveredRoute;
 
 /**
- * The routes with no `@Roles` that are not `@Public`, each reviewed: a
- * self-service route that checks `user.kind` and scopes by `user.sub` itself
- * (apps/backend/CLAUDE.md, Conventions). A role-less route not on this list
- * fails — give it `@Roles`, or review it and add it here with its reason.
+ * The routes marked `@SelfService(reason)`, each reviewed: the caller acting on
+ * their own record, the handler checking `user.kind` and scoping by `user.sub`
+ * itself (apps/backend/CLAUDE.md, Conventions). The reason lives on the
+ * decorator; this list is the review. A route newly marked self-service fails
+ * here until someone has read its handler and added it.
  */
-const SELF_SERVICE: Record<string, string> = {
-  'AuthController.beginTotpEnrolment': "a staff member's own second factor",
-  'AuthController.confirmTotpEnrolment': "a staff member's own second factor",
-  'AuthController.disableTotp': "a staff member's own second factor",
-  'AuthController.changePassword': "the caller's own password",
-  'AuthController.changeEmail': "the caller's own email",
-  'AuthController.sendResetPasswordEmail': "the caller's own reset email",
-  'AuthController.me': 'who the caller is',
-  'AuthController.logoutCitizen': "a citizen ending their own sessions; refuses staff",
-  'CadastreController.getAsset': 'the parcel map every signed-in screen draws',
-  'CitizenController.mySummary': "a citizen's own summary; refuses staff",
-  'FeesController.getSettings': "the municipality's payment instructions",
-  'FeesController.mine': "a citizen's own bills; refuses staff",
-  'FeesController.whishCheckout': "a citizen paying their own bill; refuses staff",
-  'FeesController.declare': "a citizen declaring their own payment; refuses staff",
-  'CitizenRequestsController.mine': "a citizen's own municipal requests; refuses staff",
-  'CitizenRequestsController.mineTypes': "the request types a citizen may file; refuses staff",
-  'CitizenRequestsController.submitMine': "a citizen filing their own request; refuses staff",
-  'CitizenRequestsController.mineOne': "one of a citizen's own requests; refuses staff",
-  'CitizenRequestsController.uploadMine': "a paper on a citizen's own request; refuses staff",
-  'CitizenRequestsController.billMine': "a citizen raising their own request's fee to pay it; refuses staff",
-  'CitizenRequestsController.cancelMine': "a citizen cancelling their own unbilled request; refuses staff",
-};
+const SELF_SERVICE = [
+  'AuthController.beginTotpEnrolment',
+  'AuthController.confirmTotpEnrolment',
+  'AuthController.disableTotp',
+  'AuthController.changePassword',
+  'AuthController.changeEmail',
+  'AuthController.sendResetPasswordEmail',
+  'AuthController.me',
+  'AuthController.logoutCitizen',
+  'CadastreController.getAsset',
+  'CitizenController.mySummary',
+  'FeesController.getSettings',
+  'FeesController.mine',
+  'FeesController.whishCheckout',
+  'FeesController.declare',
+  'CitizenRequestsController.mine',
+  'CitizenRequestsController.mineTypes',
+  'CitizenRequestsController.submitMine',
+  'CitizenRequestsController.mineOne',
+  'CitizenRequestsController.uploadMine',
+  'CitizenRequestsController.billMine',
+  'CitizenRequestsController.cancelMine',
+];
 
 /**
  * GETs that change something, so they are not "reads" for the VIEWER rule.
@@ -69,13 +71,21 @@ describe('the route inventory', () => {
     expect(new Set(all.map((route) => route.name.split('.')[0])).size).toBeGreaterThan(15);
   });
 
-  it('gives every non-public route @Roles, unless it is a reviewed self-service route', () => {
-    expect(roleLess.map((route) => route.name).filter((name) => !(name in SELF_SERVICE))).toEqual([]);
+  it('gives every non-public route @Roles or @SelfService — RolesGuard refuses the rest', () => {
+    expect(roleLess.filter((route) => !route.selfService).map((route) => route.name)).toEqual([]);
   });
 
-  it('keeps the self-service list honest — every entry exists and is still role-less', () => {
-    const roleLessNames = new Set(roleLess.map((route) => route.name));
-    expect(Object.keys(SELF_SERVICE).filter((name) => !roleLessNames.has(name))).toEqual([]);
+  it('marks exactly the reviewed routes @SelfService, each with a reason', () => {
+    const marked = all.filter((route) => route.selfService !== undefined);
+    expect(marked.map((route) => route.name).sort()).toEqual([...SELF_SERVICE].sort());
+    for (const route of marked) expect([route.name, (route.selfService ?? '').trim().length > 0]).toEqual([route.name, true]);
+  });
+
+  it('never marks a route both @SelfService and @Roles or @Public — the guard would read only one', () => {
+    const both = all.filter(
+      (route) => route.selfService !== undefined && (route.isPublic || (route.roles?.length ?? 0) > 0),
+    );
+    expect(both.map((route) => route.name)).toEqual([]);
   });
 
   it('keeps every correction — «حذف تصحيحي» and «دمج كدوبلكس», preview included — SUPER_ADMIN only', () => {

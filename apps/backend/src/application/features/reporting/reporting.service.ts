@@ -17,7 +17,7 @@ import type {
   SharedUnitBillView,
   BillArrearsView,
 } from '@mechanization/shared-schemas';
-import { effectiveOwnerBilling, isCoOwned, ownerShareOf } from '@mechanization/shared-schemas';
+import { csvCell, effectiveOwnerBilling, isCoOwned, ownerShareOf } from '@mechanization/shared-schemas';
 import { writeOffView } from '../fees/bill-write-off';
 import { ARREARS_LINE_SELECT, arrearsView } from '../fees/bill-arrears';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
@@ -754,7 +754,7 @@ export class ReportingService {
   }
 
   private get cacheTtlSeconds(): number {
-    return this.config.get<number>('DASHBOARD_CACHE_TTL_SECONDS') ?? 60;
+    return this.config.getOrThrow<number>('DASHBOARD_CACHE_TTL_SECONDS');
   }
 
   /** Namespaced per tenant so one municipality's cache entries can be
@@ -2235,19 +2235,6 @@ function personName(person: {
 }): string {
   // «ورثة المرحوم …» for an estate (0076).
   return citizenDisplayName(person);
-}
-
-/**
- * Quotes a CSV field, and neutralises formula injection.
- *
- * Arabic names are fine, but a value starting with =, +, - or @ is executed by
- * Excel when a staff member opens the export — a field a citizen controls should
- * not be able to run a formula on a municipality clerk's machine.
- */
-function csvCell(value: unknown): string {
-  const text = String(value ?? '');
-  const safe = /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
-  return `"${safe.replace(/"/g, '""')}"`;
 }
 
 /** The co-ownership billing of a flat as the citizen's file shows it — see `CitizenProfileUnit.ownerBilling`. Exported for its tests. */

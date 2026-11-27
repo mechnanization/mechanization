@@ -14,6 +14,10 @@ import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
 import { TreasuryService } from '../treasury/treasury.service';
 import { FeesService } from './fees.service';
 import { PaymentLedgerService } from './payment-ledger.service';
+import { feeServices } from './fee-services.testing';
+import type { BillLifecycleService } from './bill-lifecycle.service';
+import type { WhishCheckoutService } from './whish-checkout.service';
+import type { FeeNoticesService } from './fee-notices.service';
 
 /**
  * The finance audit's remediation (2026-10-12), against a real Postgres.
@@ -49,6 +53,9 @@ describeIfDb('finance audit remediation', () => {
   let payments: PaymentLedgerService;
   let expenses: ExpensesService;
   let fees: FeesService;
+  let billLifecycle: BillLifecycleService;
+  let whishCheckout: WhishCheckoutService;
+  let feeNotices: FeeNoticesService;
   /** What the settings cache answers: a stale copy, so a read that trusts it is caught (B8). */
   let staleSettings: Record<string, unknown> | null = null;
 
@@ -106,7 +113,7 @@ describeIfDb('finance audit remediation', () => {
     payments = new PaymentLedgerService(context, auditService, ledger);
     const treasury = new TreasuryService(context, ledger, auditService);
     expenses = new ExpensesService(context, ledger, auditService);
-    fees = new FeesService(
+    ({ fees, billLifecycle, whishCheckout, feeNotices } = feeServices(
       context,
       { emit: jest.fn() } as unknown as EventEmitter2,
       {} as never,
@@ -117,7 +124,7 @@ describeIfDb('finance audit remediation', () => {
       } as never,
       payments,
       auditService,
-    );
+    ));
 
     citizenId = randomUUID();
     const people = {
@@ -385,7 +392,7 @@ describeIfDb('finance audit remediation', () => {
 
       // Reversed, the reference is free for the bill it really paid.
       const row = await db.paymentTransaction.findFirstOrThrow({ where: { paymentId: first } });
-      await scoped(() => fees.reverseTransaction({ transactionId: row.id, note: 'المرجع خاطئ', actor: MANAGER() }));
+      await scoped(() => billLifecycle.reverseTransaction({ transactionId: row.id, note: 'المرجع خاطئ', actor: MANAGER() }));
       await expect(settle(second, 'WSH-REF-B2')).resolves.toMatchObject({ paymentStatus: 'PAID' });
     });
 
@@ -417,7 +424,7 @@ describeIfDb('finance audit remediation', () => {
     };
     const callback = (externalRef: string, amount: number) =>
       scoped(() =>
-        fees.settleFromWhishCallback({
+        whishCheckout.settleFromWhishCallback({
           externalRef,
           transactionRef: `TXN-${externalRef}`,
           amount,
@@ -459,7 +466,7 @@ describeIfDb('finance audit remediation', () => {
       const transactionRef = `TXN-${randomUUID().slice(0, 8)}`;
       await expect(
         scoped(() =>
-          fees.settleFromWhishCallback({ externalRef, transactionRef: `${transactionRef}\t\n`, amount: 70_000, succeeded: true }),
+          whishCheckout.settleFromWhishCallback({ externalRef, transactionRef: `${transactionRef}\t\n`, amount: 70_000, succeeded: true }),
         ),
       ).resolves.toEqual({ applied: true });
       const banked = await db.paymentTransaction.findFirstOrThrow({ where: { paymentId } });
@@ -539,7 +546,7 @@ describeIfDb('finance audit remediation', () => {
         data: { externalRef, paymentId, citizenId, amount: 200_000, currency: 'LBP' },
       });
       const deliver = () =>
-        scoped(() => fees.settleFromWhishCallback({ externalRef, transactionRef: '', amount: 200_000, succeeded: true }));
+        scoped(() => whishCheckout.settleFromWhishCallback({ externalRef, transactionRef: '', amount: 200_000, succeeded: true }));
 
       await expect(deliver()).resolves.toEqual({ applied: true });
       await db.whishCheckout.update({ where: { id: row.id }, data: { state: 'OPEN', settledAt: null, providerTxnRef: null } });
@@ -600,7 +607,7 @@ describeIfDb('finance audit remediation', () => {
   describe('a notice, a charge and a cancelled bill (B3, B4)', () => {
     const notice = (clientRequestId: string, title = 'رسم تنظيفات 2026') =>
       scoped(async () =>
-        fees.issue(
+        feeNotices.issue(
           {
             title,
             amount: 75_000,
@@ -698,14 +705,14 @@ describeIfDb('finance audit remediation', () => {
 
     it('cancels a bill nothing was paid on, once, and the bill then takes nothing', async () => {
       const paymentId = await bill(60_000);
-      await expect(scoped(() => fees.cancelBill(paymentId, 'صدر الرسم مرتين', MANAGER()))).resolves.toMatchObject({
+      await expect(scoped(() => billLifecycle.cancelBill(paymentId, 'صدر الرسم مرتين', MANAGER()))).resolves.toMatchObject({
         paymentStatus: 'CANCELLED',
         remaining: 0,
         cancellationReason: 'صدر الرسم مرتين',
         // No municipal request waited on it.
         cancelledRequest: null,
       });
-      await expect(scoped(() => fees.cancelBill(paymentId, 'مرة ثانية', MANAGER()))).rejects.toMatchObject({
+      await expect(scoped(() => billLifecycle.cancelBill(paymentId, 'مرة ثانية', MANAGER()))).rejects.toMatchObject({
         code: 'BILL_ALREADY_CANCELLED',
       });
       await expect(
@@ -717,11 +724,11 @@ describeIfDb('finance audit remediation', () => {
     it('refuses a bill with money on it, or with a claim waiting, and the database refuses it too', async () => {
       const part = await bill(80_000);
       await scoped(() => fees.settleInPerson({ paymentId: part, method: 'CASH', amount: 10_000, actor: MANAGER() }));
-      await expect(scoped(() => fees.cancelBill(part, 'خطأ في الإصدار', MANAGER()))).rejects.toMatchObject({
+      await expect(scoped(() => billLifecycle.cancelBill(part, 'خطأ في الإصدار', MANAGER()))).rejects.toMatchObject({
         code: 'BILL_CANCEL_HAS_PAYMENTS',
       });
       const claimed = await bill(80_000, 'PENDING_REVIEW');
-      await expect(scoped(() => fees.cancelBill(claimed, 'خطأ في الإصدار', MANAGER()))).rejects.toMatchObject({
+      await expect(scoped(() => billLifecycle.cancelBill(claimed, 'خطأ في الإصدار', MANAGER()))).rejects.toMatchObject({
         code: 'PAYMENT_CLAIM_UNDER_REVIEW',
       });
       // 0091's CHECK: a cancelled bill carries no money, whatever the application does.
@@ -758,7 +765,7 @@ describeIfDb('finance audit remediation', () => {
         context,
         new EventEmitter2(),
         { get: async () => null, set: async () => undefined } as never,
-        { get: () => undefined } as never,
+        { getOrThrow: () => 60 } as never,
       );
       const onProfile = async () =>
         (await scoped(() => reporting.getCitizenProfile(citizenId)))!.payments.find((row) => row.id === paymentId);
@@ -767,7 +774,7 @@ describeIfDb('finance audit remediation', () => {
       });
 
       // …and the answer names the request cancelled with it, for the toast.
-      await expect(scoped(() => fees.cancelBill(paymentId, 'رسم الطلب صدر خطأً', MANAGER()))).resolves.toMatchObject({
+      await expect(scoped(() => billLifecycle.cancelBill(paymentId, 'رسم الطلب صدر خطأً', MANAGER()))).resolves.toMatchObject({
         paymentStatus: 'CANCELLED',
         cancelledRequest: { requestId: request.id, requestNumber: request.requestNumber },
       });
@@ -813,7 +820,7 @@ describeIfDb('finance audit remediation', () => {
       await db.citizenRequest.update({ where: { id: request.id }, data: { citizenPaymentId: paymentId } });
       await db.citizenRequest.update({ where: { id: request.id }, data: { status: 'IN_REVIEW', paidAt: new Date() } });
 
-      await expect(scoped(() => fees.cancelBill(paymentId, 'رسم الطلب صدر خطأً', MANAGER()))).resolves.toMatchObject({
+      await expect(scoped(() => billLifecycle.cancelBill(paymentId, 'رسم الطلب صدر خطأً', MANAGER()))).resolves.toMatchObject({
         cancelledRequest: { requestId: request.id, requestNumber: request.requestNumber },
       });
 

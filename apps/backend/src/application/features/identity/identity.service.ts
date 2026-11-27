@@ -26,8 +26,9 @@ import {
   ForbiddenError,
   NotFoundError,
   UnauthorizedError,
+  ValidationError,
 } from '../../common/exceptions';
-import { APP_CONFIG } from '../../../presentation/config/app.config';
+import { APP_CONFIG } from '../../common/app.config';
 import { OtpService } from './otp.service';
 import { SessionRevocationService } from './session-revocation.service';
 import { sessionSignOptions, verifySessionToken } from './session-token';
@@ -581,18 +582,66 @@ export class IdentityService {
     };
   }
 
-  /** Enrolment: hands back the otpauth:// URI for the authenticator app. */
+  /**
+   * The staff account behind a session, for a change to its own second factor.
+   * `SESSION_INVALID`, as `staffSelf` answers: a session that names no staff
+   * account has nothing to change.
+   */
+  private async ownStaffAccount(userId: string): Promise<User> {
+    const user = await this.users.findById(userId);
+    if (!user || user.kind !== 'STAFF') {
+      throw new UnauthorizedError({
+        code: 'SESSION_INVALID',
+        message: 'The session names no staff account',
+      });
+    }
+    return user;
+  }
+
+  /**
+   * Re-authentication before a change to one's own second factor (audit
+   * SEC-02): the session alone is not enough, or a stolen one could remove the
+   * factor and enrol its own. The password always; and while a factor is
+   * confirmed, a current code from it too, accepted once and counted toward the
+   * lockout like a sign-in's — someone holding the session and the password
+   * still needs the device.
+   */
+  private async reauthenticate(
+    user: User,
+    input: { currentPassword: string; totpToken?: string },
+  ): Promise<void> {
+    const match = await this.hasher.verify(input.currentPassword, user.passwordHash ?? ABSENT_PASSWORD_HASH);
+    if (!match || !user.passwordHash) throw currentPasswordIncorrect();
+
+    const secret = user.totpSecret;
+    if (!user.hasConfirmedTotp || !secret) return;
+    if (!input.totpToken) {
+      throw new ValidationError({
+        code: 'TOTP_CODE_REQUIRED',
+        message: 'A confirmed second factor needs its current code to change',
+      });
+    }
+    await this.acceptTotpCode(user, secret, input.totpToken, { countFailures: true });
+  }
+
+  /**
+   * Enrolment: hands back the otpauth:// URI for the authenticator app.
+   *
+   * The new secret waits beside the factor in use (`totpPendingSecret`, 0116):
+   * until a code from the new app confirms it, the old one still signs in, so a
+   * staff member who stops halfway keeps their second factor. Asks for the
+   * password, and the current code while a factor is confirmed (`reauthenticate`).
+   */
   async beginTotpEnrolment(
     userId: string,
     tenantSlug: string,
+    input: { currentPassword: string; totpToken?: string },
   ): Promise<{ secret: string; keyUri: string }> {
-    const user = await this.users.findById(userId);
-    if (!user || user.kind !== 'STAFF') {
-      throw new NotFoundError('Staff user', userId);
-    }
+    const user = await this.ownStaffAccount(userId);
+    await this.reauthenticate(user, input);
 
     const secret = this.totp.generateSecret();
-    await this.users.saveTotpSecret(user.id, secret);
+    await this.users.savePendingTotpSecret(user.id, secret);
 
     // Recorded because issuing a new second factor is exactly the step an
     // account takeover needs, and the trail is the only place that would show
@@ -612,19 +661,33 @@ export class IdentityService {
   }
 
   /**
-   * Confirms enrolment only after the admin proves the app produces valid codes.
+   * Confirms enrolment only after the admin proves the app produces valid codes,
+   * then makes the new secret the account's factor in place of the old one.
    *
    * The code is burned like a sign-in's, so the one typed here cannot then be
-   * used to sign in while it is still valid.
+   * used to sign in while it is still valid. Every session the account holds
+   * ends (`tokenVersion`), this one included, as a password change ends them:
+   * the factor that guarded them is not the one in force any more.
    */
   async confirmTotpEnrolment(userId: string, token: string): Promise<void> {
-    const user = await this.users.findById(userId);
-    if (!user || !user.totpSecret) {
-      throw new NotFoundError('TOTP enrolment', userId);
+    const user = await this.ownStaffAccount(userId);
+    const secret = user.enrolmentSecret;
+    if (!secret) {
+      throw new ConflictError({
+        code: 'TOTP_ENROLMENT_NOT_STARTED',
+        message: 'No enrolment is waiting to be confirmed',
+      });
     }
-    await this.acceptTotpCode(user, user.totpSecret, token, { countFailures: false });
+    await this.acceptTotpCode(user, secret, token, { countFailures: false });
 
-    await this.users.confirmTotp(user.id);
+    if (!(await this.users.promotePendingTotp(user.id, secret))) {
+      // Another enrolment replaced this one between the read and the write.
+      throw new ConflictError({
+        code: 'TOTP_ENROLMENT_CHANGED',
+        message: 'The enrolment was started again since this code was shown',
+      });
+    }
+    await this.revocation.forget(user.id);
 
     this.events.emit('staff.changed', {
       action: 'TOTP_CONFIRMED',
@@ -636,26 +699,20 @@ export class IdentityService {
   }
 
   /**
-   * Disable TOTP enrolment for a staff user.
+   * Disable TOTP enrolment for a staff user: the password always, and the
+   * current code while a factor is confirmed (`reauthenticate`). Every session
+   * the account holds ends, this one included.
    */
   async disableTotp(
     userId: string,
     tenantSlug: string,
-    currentPassword?: string,
+    input: { currentPassword: string; totpToken?: string },
   ): Promise<void> {
-    const user = await this.users.findById(userId);
-    if (!user || user.kind !== 'STAFF') {
-      throw new NotFoundError('Staff user', userId);
-    }
-
-    if (currentPassword && user.passwordHash) {
-      const match = await this.hasher.verify(currentPassword, user.passwordHash);
-      if (!match) {
-        throw currentPasswordIncorrect();
-      }
-    }
+    const user = await this.ownStaffAccount(userId);
+    await this.reauthenticate(user, input);
 
     await this.users.disableTotp(user.id);
+    await this.revocation.forget(user.id);
 
     this.events.emit('staff.changed', {
       action: 'TOTP_DISABLED',

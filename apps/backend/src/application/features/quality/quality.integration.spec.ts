@@ -12,9 +12,11 @@ import { AuditService } from '../audit/audit.service';
 import { CasesService } from '../cases/cases.service';
 import { BuildingsService } from '../buildings/buildings.service';
 import { LandlordLinkService } from '../citizens/landlord-link.service';
-import { FeesService } from '../fees/fees.service';
 import { DataQualityService } from './data-quality.service';
 import { RecordReviewService } from './record-review.service';
+import { StaffActor } from '../../common/actor';
+import { feeServices } from '../fees/fee-services.testing';
+import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
 
 /**
  * «مراجعة الجودة» against a real Postgres: migration 0049, the review states,
@@ -42,6 +44,7 @@ describeIfDb('Quality review', () => {
   let quality: DataQualityService;
   let audit: AuditService;
   let buildings: BuildingsService;
+  let occupancyWrites: OccupancyWritesService;
 
   const staff: Record<'jawad' | 'hussein' | 'auditor' | 'collector', string> = {
     jawad: '',
@@ -49,8 +52,8 @@ describeIfDb('Quality review', () => {
     auditor: '',
     collector: '',
   };
-  const ROLE_OF = { jawad: 'FIELD_INSPECTOR', hussein: 'FIELD_INSPECTOR', auditor: 'AUDITOR', collector: 'COLLECTOR' };
-  const as = (who: keyof typeof staff, role: string = ROLE_OF[who]) => ({ id: staff[who], role });
+  const ROLE_OF: Record<keyof typeof staff, StaffActor['role']> = { jawad: 'FIELD_INSPECTOR', hussein: 'FIELD_INSPECTOR', auditor: 'AUDITOR', collector: 'COLLECTOR' };
+  const as = (who: keyof typeof staff, role: StaffActor['role'] = ROLE_OF[who]): StaffActor => ({ id: staff[who], role });
 
   const within = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'tenant-quality', tenantSlug: 'quality', schemaName: SCHEMA, prisma: db }, work);
@@ -78,26 +81,27 @@ describeIfDb('Quality review', () => {
       set: async () => undefined,
       invalidatePrefix: async () => undefined,
     };
-    audit = new AuditService(new PrismaAuditRepository(context), context, cache as never, { get: () => 0 } as never);
+    audit = new AuditService(new PrismaAuditRepository(context), context, cache as never, { getOrThrow: () => 0 } as never);
     events.on('building.changed', (payload) => audit.onBuildingChanged(payload));
     events.on('citizen.changed', (payload) => audit.onCitizenChanged(payload));
     events.on('quality.changed', (payload) => audit.onQualityChanged(payload));
 
     const cases = new CasesService(new PrismaCaseRepository(context), {} as never, events);
     buildings = new BuildingsService(context, cases, events);
+    occupancyWrites = new OccupancyWritesService(context, cases, events, buildings);
     const links = new LandlordLinkService(
       context,
-      buildings,
+      occupancyWrites,
       events,
       new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
     );
-    reviews = new RecordReviewService(context, events, cache as never, { get: () => 0 } as never, audit);
-    failingReviews = new RecordReviewService(context, events, cache as never, { get: () => 0 } as never, {
+    reviews = new RecordReviewService(context, events, cache as never, { getOrThrow: () => 0 } as never, audit);
+    failingReviews = new RecordReviewService(context, events, cache as never, { getOrThrow: () => 0 } as never, {
       recordChangeInTransaction: () => Promise.reject(new Error('audit insert refused')),
     } as never);
     // Billing's own reading of a file, asked of a «مالك مسؤول» (F13).
-    const fees = new FeesService(context, events, {} as never, cache as never, {} as never, {} as never);
-    quality = new DataQualityService(context, links, events, cache as never, { get: () => 0 } as never, fees);
+    const { fees } = feeServices(context, events, {} as never, cache as never, {} as never, {} as never);
+    quality = new DataQualityService(context, links, events, cache as never, { getOrThrow: () => 0 } as never, fees);
     events.on('citizen.changed', (payload) => reviews.onCitizenChanged(payload));
 
     for (const [key, first, role] of [

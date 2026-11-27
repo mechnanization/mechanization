@@ -108,7 +108,7 @@ export class TenantService {
       throw new NotFoundError('Municipality', slug);
     }
 
-    const ttl = this.config.get<number>('TENANT_CACHE_TTL_SECONDS') ?? 300;
+    const ttl = this.config.getOrThrow<number>('TENANT_CACHE_TTL_SECONDS');
     await this.cache.set(key, tenant.toProps(), ttl);
     // Kept without expiry, in this process only. It is the fallback for an
     // unreachable registry, so a TTL on it would remove the safety net at

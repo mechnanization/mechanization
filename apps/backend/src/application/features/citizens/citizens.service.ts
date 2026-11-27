@@ -75,7 +75,7 @@ import {
 import { normalizeSearchText } from '../../common/search-terms';
 import { landlordNamesToStore } from '../../common/landlord-name';
 import { assertNotMergedAway } from './merged-away';
-import { isUniqueViolationOn } from '../treasury/retry-key';
+import { isUniqueViolationOn } from '../../../infrastructure/prisma/prisma-errors';
 import { billsOwedBy } from '../fees/shared-bill-view';
 
 /**

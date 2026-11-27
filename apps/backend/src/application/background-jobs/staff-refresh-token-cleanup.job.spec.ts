@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { StaffRefreshTokenCleanupJob } from './staff-refresh-token-cleanup.job';
 import { InternalCronController } from '../../presentation/controllers/internal-cron.controller';
 import { TenantContextService } from '../../infrastructure/context/tenant-context.service';
+import { TenantRunner } from '../../infrastructure/context/tenant-runner';
 import type { TenantRepository } from '../../domain/interfaces/tenant-repository.interface';
 import type { TenantPrismaFactory } from '../../infrastructure/prisma/tenant-prisma.factory';
 
@@ -56,7 +57,7 @@ describe('StaffRefreshTokenCleanupJob', () => {
     } as unknown as TenantPrismaFactory;
 
     return {
-      job: new StaffRefreshTokenCleanupJob(tenants, context, clients),
+      job: new StaffRefreshTokenCleanupJob(tenants, new TenantRunner(context, clients)),
       schemasSeen,
       scopesSeen,
     };

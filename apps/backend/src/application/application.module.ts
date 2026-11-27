@@ -9,6 +9,7 @@ import { AuditService } from './features/audit/audit.service';
 import { BackupService } from './features/backup/backup.service';
 import { CadastreImportService } from './features/cadastre/cadastre-import.service';
 import { BuildingsService } from './features/buildings/buildings.service';
+import { OccupancyWritesService } from './features/buildings/occupancy-writes.service';
 import { CensusSyncService } from './features/buildings/census-sync.service';
 import { DamageService } from './features/buildings/damage.service';
 import { ParcelCorrectionService } from './features/buildings/parcel-correction.service';
@@ -36,6 +37,10 @@ import { RegistrationService } from './features/registration/registration.servic
 import { ReportingService } from './features/reporting/reporting.service';
 import { TenantService } from './features/tenant/tenant.service';
 import { FeesService } from './features/fees/fees.service';
+import { FeeNoticesService } from './features/fees/fee-notices.service';
+import { RecurringBillingService } from './features/fees/recurring-billing.service';
+import { BillLifecycleService } from './features/fees/bill-lifecycle.service';
+import { WhishCheckoutService } from './features/fees/whish-checkout.service';
 import { CorrectionBillsService } from './features/fees/correction-bills.service';
 import { ParcelDuesService } from './features/fees/parcel-dues.service';
 import { CitizenRequestsService } from './features/citizen-requests/citizen-requests.service';
@@ -99,6 +104,10 @@ import { RecordReviewService } from './features/quality/record-review.service';
     OwnershipService,
     CitizenMergeService,
     FeesService,
+    FeeNoticesService,
+    RecurringBillingService,
+    BillLifecycleService,
+    WhishCheckoutService,
     CorrectionBillsService,
     ParcelDuesService,
     PaymentLedgerService,
@@ -122,6 +131,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
     ZonesService,
     CasesService,
     BuildingsService,
+    OccupancyWritesService,
     CensusSyncService,
     DamageService,
     ParcelCorrectionService,
@@ -158,6 +168,10 @@ import { RecordReviewService } from './features/quality/record-review.service';
     OwnershipService,
     CitizenMergeService,
     FeesService,
+    FeeNoticesService,
+    RecurringBillingService,
+    BillLifecycleService,
+    WhishCheckoutService,
     CorrectionBillsService,
     ParcelDuesService,
     PaymentLedgerService,
@@ -181,6 +195,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
     ZonesService,
     CasesService,
     BuildingsService,
+    OccupancyWritesService,
     CensusSyncService,
     DamageService,
     ParcelCorrectionService,

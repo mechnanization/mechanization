@@ -376,6 +376,56 @@ describe('planMerge — what refuses a merge', () => {
   });
 });
 
+describe('planMerge — each block says itself as a code (ERR-04)', () => {
+  const refusalsOf = (plan: ReturnType<typeof planMerge>) => plan.blocks.map((block) => block.refusal);
+
+  it('names the variant and the roles of a flat recorded two ways', () => {
+    const input = fixture();
+    const cards = input.cards.map((entry) => (entry.id === 'c2' ? { ...entry, occupancyType: 'TENANT' } : entry));
+    expect(refusalsOf(planMerge({ ...input, cards, spells: [] }))).toContainEqual({
+      code: 'MERGE_ROLE_CONFLICT_ON_CARDS',
+      params: expect.objectContaining({ hasLabel: 'yes', keptRole: 'OWNER', otherRole: 'TENANT' }),
+    });
+  });
+
+  it('gives the figures of a file too large, and the kind of the file that stays', () => {
+    const input = fixture();
+    const many = Array.from({ length: 26 }, (_, index) =>
+      card({ id: `m${index}`, registrationId: 'RX', createdAt: at(22), buildingId: null, propertyType: 'LAND' }),
+    );
+    expect(refusalsOf(planMerge({ ...input, cards: many }))).toContainEqual({
+      code: 'MERGE_TOO_MANY_CARDS',
+      params: { count: 26, max: 25 },
+    });
+
+    const cards = input.cards.map((entry) =>
+      entry.id === 'c3' ? { ...entry, occupancyType: 'TENANT', propertyType: 'HOUSE', buildingId: null } : entry,
+    );
+    const plan = planMerge({ ...input, cards, keep: { ...input.keep, residence: 'NON_RESIDENT_OWNER' } });
+    expect(refusalsOf(plan)).toContainEqual({
+      code: 'MERGE_KEPT_FILE_NOT_RESIDENT',
+      params: expect.objectContaining({ keptKind: 'NON_RESIDENT_OWNER' }),
+    });
+  });
+
+  it('codes the simple refusals, and keeps every param free of the server Arabic', () => {
+    expect(refusalsOf(planMerge(fixture({ absorb: { ...fixture().absorb, isActive: false } })))[0]).toEqual({
+      code: 'MERGE_FILE_INACTIVE',
+      params: {},
+    });
+    expect(refusalsOf(planMerge(fixture({ keepMerged: true })))[0]?.code).toBe('MERGE_FILE_ALREADY_MERGED');
+    const input = fixture();
+    const cards = input.cards.map((entry) =>
+      entry.id === 'c3' ? { ...entry, occupancyType: 'TENANT', landlordCitizenId: 'K' } : entry,
+    );
+    const selfLink = refusalsOf(planMerge({ ...input, cards }));
+    expect(selfLink.map((refusal) => refusal.code)).toContain('MERGE_SELF_LINK');
+    for (const refusal of selfLink) {
+      for (const value of Object.values(refusal.params)) expect(String(value)).not.toMatch(/[؀-ۿ]/);
+    }
+  });
+});
+
 describe('planFields — the person afterwards', () => {
   const keep = person({ id: 'K', phone: null, motherName: null, bloodType: 'O_POS' });
   const absorb = person({

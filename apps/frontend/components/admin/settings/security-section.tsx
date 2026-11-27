@@ -32,6 +32,7 @@ import {
 import {
   passwordChangeIssues,
   signInAfterPasswordChange,
+  signInAfterSecondFactorChange,
   type PasswordChangeIssues,
 } from '@/lib/password-change';
 import { clearSession } from '@/lib/session';
@@ -151,12 +152,14 @@ export function SecuritySection({
   // 2FA Security Challenge Modals
   const [disableModalOpen, setDisableModalOpen] = useState(false);
   const [disablePassword, setDisablePassword] = useState('');
+  const [disableCode, setDisableCode] = useState('');
   const [disabling2FA, setDisabling2FA] = useState(false);
   const [disableError, setDisableError] = useState<string | null>(null);
 
   const [reconfigureModalOpen, setReconfigureModalOpen] = useState(false);
   const [reconfigurePassword, setReconfigurePassword] = useState('');
-  const [reconfiguring2FA, setReconfiguring2FA] = useState(false);
+  /** The code from the app in use, asked only while a factor is confirmed (SEC-02). */
+  const [reconfigureCode, setReconfigureCode] = useState('');
   const [reconfigureError, setReconfigureError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -204,6 +207,22 @@ export function SecuritySection({
       }),
     [locale],
   );
+
+  /**
+   * Signs out after a change that ended every session of the account, this
+   * one included (the second factor confirmed or removed: SEC-02), the way the
+   * header does it: the server first, then this browser whatever the server
+   * answered, and on to sign-in with the reason.
+   */
+  const endSessionAndGo = async (target: string) => {
+    try {
+      await logoutStaff(tenant, token);
+    } catch {
+      // The session is over either way.
+    }
+    clearSession(tenant);
+    router.replace(target);
+  };
 
   const handleSendEmailChange = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -702,37 +721,20 @@ export function SecuritySection({
                 variant={is2FAEnabled ? 'outline' : 'default'}
                 size="sm"
                 disabled={enrolling2FA || !selfKnown}
-                onClick={async () => {
-                  if (is2FAEnabled) {
-                    if (show2FASetup) {
-                      setShow2FASetup(false);
-                    } else {
-                      setReconfigureModalOpen(true);
-                      setReconfigureError(null);
-                      setReconfigurePassword('');
-                    }
-                  } else {
-                    if (show2FASetup) {
-                      setShow2FASetup(false);
-                    } else {
-                      try {
-                        setEnrolling2FA(true);
-                        const res = await beginStaffTotpEnrolment(tenant, token);
-                        setTotpSecret(res.secret);
-                        setTotpKeyUri(res.keyUri);
-                        setShow2FASetup(true);
-                      } catch (caught) {
-                        logApiError(caught);
-                        toast.error(
-                          locale === 'en'
-                            ? 'Failed to generate authenticator secret'
-                            : 'تعذّر إنشاء مفتاح المصادقة',
-                        );
-                      } finally {
-                        setEnrolling2FA(false);
-                      }
-                    }
+                onClick={() => {
+                  if (show2FASetup) {
+                    setShow2FASetup(false);
+                    return;
                   }
+                  /*
+                    Through the confirmation dialog either way (SEC-02): the
+                    server asks for the password before it issues a secret, and
+                    for the current code too while a factor is confirmed.
+                  */
+                  setReconfigureModalOpen(true);
+                  setReconfigureError(null);
+                  setReconfigurePassword('');
+                  setReconfigureCode('');
                 }}
               >
                 {enrolling2FA ? (
@@ -763,6 +765,7 @@ export function SecuritySection({
                     setDisableModalOpen(true);
                     setDisableError(null);
                     setDisablePassword('');
+                    setDisableCode('');
                   }}
                 >
                   {locale === 'en' ? 'Disable' : 'إلغاء'}
@@ -877,18 +880,6 @@ export function SecuritySection({
                       setTotpConfirmError(null);
                       try {
                         await confirmStaffTotpEnrolment(tenant, token, { token: totpCode });
-                        setIs2FAEnabled(true);
-                        setShow2FASetup(false);
-                        setTotpCode('');
-                        toast.success(
-                          locale === 'en' ? '2FA Protected' : 'تم تفعيل التحقق بخطوتين',
-                          {
-                            description:
-                              locale === 'en'
-                                ? 'Your account is now protected with two-factor authentication.'
-                                : 'تم تفعيل التحقق بخطوتين لحسابك بنجاح وحماية الحساب.',
-                          },
-                        );
                       } catch (caught) {
                         logApiError(caught);
                         // A code already used, or a lockout, is said in the server's
@@ -896,16 +887,21 @@ export function SecuritySection({
                         // wrong code, as it did.
                         const msg =
                           caught instanceof ApiRequestError &&
-                          (caught.code === 'TOTP_CODE_REUSED' || caught.code === 'TOTP_LOCKED')
+                          (caught.code === 'TOTP_CODE_REUSED' ||
+                            caught.code === 'TOTP_LOCKED' ||
+                            caught.code === 'TOTP_ENROLMENT_NOT_STARTED' ||
+                            caught.code === 'TOTP_ENROLMENT_CHANGED')
                             ? caught.message
                             : locale === 'en'
                               ? 'Invalid verification code. Please check the 6-digit code in your app and try again.'
                               : 'رمز التحقق غير صحيح. يرجى التأكد من الرمز والمحاولة مجدداً.';
                         setTotpConfirmError(msg);
                         toast.error(msg);
-                      } finally {
                         setConfirming2FA(false);
+                        return;
                       }
+                      // Every session of the account ended, this one included; the button stays busy until the page moves.
+                      await endSessionAndGo(signInAfterSecondFactorChange(base, 'on'));
                     }}
                   >
                     {confirming2FA ? (
@@ -934,6 +930,8 @@ export function SecuritySection({
                     {locale === 'en' ? 'Cancel' : 'إلغاء'}
                   </Button>
                 </div>
+
+                <p className="text-xs text-muted-foreground">{tAccount('confirmSignsOut')}</p>
 
                 {totpConfirmError && (
                   <p className="text-xs text-destructive font-medium mt-1">
@@ -1008,35 +1006,25 @@ export function SecuritySection({
               setDisabling2FA(true);
               setDisableError(null);
               try {
-                await disableStaffTotp(tenant, token, { currentPassword: disablePassword });
-                setIs2FAEnabled(false);
-                setShow2FASetup(false);
-                setTotpCode('');
-                setDisableModalOpen(false);
-                setDisablePassword('');
-                toast.info(
-                  locale === 'en' ? '2FA Disabled' : 'تم إيقاف التحقق بخطوتين',
-                  {
-                    description:
-                      locale === 'en'
-                        ? 'Two-factor authentication has been turned off for this account.'
-                        : 'تم إيقاف التحقق بخطوتين لهذا الحساب.',
-                  },
-                );
+                await disableStaffTotp(tenant, token, {
+                  currentPassword: disablePassword,
+                  totpToken: disableCode || undefined,
+                });
               } catch (caught) {
                 logApiError(caught);
+                // The API's own words: a wrong password, a missing or wrong code, a lockout.
                 const msg =
-                  caught instanceof ApiRequestError && caught.status === 401
-                    ? locale === 'en'
-                      ? 'Incorrect password. Please try again.'
-                      : 'كلمة المرور غير صحيحة.'
+                  caught instanceof ApiRequestError
+                    ? caught.message
                     : locale === 'en'
                       ? 'Failed to disable 2FA'
                       : 'تعذّر إيقاف التحقق بخطوتين';
                 setDisableError(msg);
-              } finally {
                 setDisabling2FA(false);
+                return;
               }
+              // Every session of the account ended, this one included; the form stays locked until the page moves.
+              await endSessionAndGo(signInAfterSecondFactorChange(base, 'off'));
             }}
           >
             <DialogHeader>
@@ -1049,9 +1037,7 @@ export function SecuritySection({
                     {locale === 'en' ? 'Disable Two-Factor Authentication' : 'إلغاء تفعيل التحقق بخطوتين'}
                   </DialogTitle>
                   <DialogDescription className="mt-1">
-                    {locale === 'en'
-                      ? 'Disabling 2FA lowers your account security. Please confirm your current password to proceed.'
-                      : 'سيؤدي هذا الإجراء إلى خفض مستوى أمان حسابك. يرجى تأكيد كلمة المرور للمتابعة.'}
+                    {tAccount('disableDescription')}
                   </DialogDescription>
                 </div>
               </div>
@@ -1077,6 +1063,23 @@ export function SecuritySection({
                   required
                 />
               </SettingsField>
+              <SettingsField label={tAccount('currentCode')} htmlFor="disable-2fa-code">
+                <Input
+                  id="disable-2fa-code"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  dir="ltr"
+                  maxLength={6}
+                  value={disableCode}
+                  onChange={(e) => {
+                    setDisableCode(e.target.value.replace(/\D/g, ''));
+                    setDisableError(null);
+                  }}
+                  placeholder="000 000"
+                  className="text-center font-mono tracking-[0.35em]"
+                  required
+                />
+              </SettingsField>
             </div>
 
             <DialogFooter className="gap-2 sm:gap-0">
@@ -1087,6 +1090,7 @@ export function SecuritySection({
                 onClick={() => {
                   setDisableModalOpen(false);
                   setDisablePassword('');
+                  setDisableCode('');
                   setDisableError(null);
                 }}
               >
@@ -1113,19 +1117,25 @@ export function SecuritySection({
           <form
             onSubmit={async (e) => {
               e.preventDefault();
-              if (!reconfigurePassword || reconfiguring2FA) {
+              if (!reconfigurePassword || enrolling2FA) {
                 setReconfigureError(locale === 'en' ? 'Password is required' : 'كلمة المرور مطلوبة');
                 return;
               }
-              setReconfiguring2FA(true);
+              setEnrolling2FA(true);
               setReconfigureError(null);
               try {
-                const res = await beginStaffTotpEnrolment(tenant, token);
+                const res = await beginStaffTotpEnrolment(tenant, token, {
+                  currentPassword: reconfigurePassword,
+                  totpToken: is2FAEnabled ? reconfigureCode || undefined : undefined,
+                });
                 setTotpSecret(res.secret);
                 setTotpKeyUri(res.keyUri);
                 setShow2FASetup(true);
                 setReconfigureModalOpen(false);
                 setReconfigurePassword('');
+                setReconfigureCode('');
+                setTotpCode('');
+                setTotpConfirmError(null);
                 toast.info(
                   locale === 'en' ? 'Ready to configure' : 'جاهز لإعادة الضبط',
                   {
@@ -1137,17 +1147,16 @@ export function SecuritySection({
                 );
               } catch (caught) {
                 logApiError(caught);
+                // The API's own words: a wrong password, a missing or wrong code, a lockout.
                 const msg =
-                  caught instanceof ApiRequestError && caught.status === 401
-                    ? locale === 'en'
-                      ? 'Incorrect password. Please try again.'
-                      : 'كلمة المرور غير صحيحة.'
+                  caught instanceof ApiRequestError
+                    ? caught.message
                     : locale === 'en'
                       ? 'Failed to reconfigure'
                       : 'تعذّر إعادة الضبط';
                 setReconfigureError(msg);
               } finally {
-                setReconfiguring2FA(false);
+                setEnrolling2FA(false);
               }
             }}
           >
@@ -1158,12 +1167,14 @@ export function SecuritySection({
                 </div>
                 <div>
                   <DialogTitle>
-                    {locale === 'en' ? 'Reconfigure Authenticator App' : 'إعادة ضبط تطبيق المصادقة'}
+                    {is2FAEnabled
+                      ? locale === 'en'
+                        ? 'Reconfigure Authenticator App'
+                        : 'إعادة ضبط تطبيق المصادقة'
+                      : tAccount('setupTitle')}
                   </DialogTitle>
                   <DialogDescription className="mt-1">
-                    {locale === 'en'
-                      ? 'Confirm your password to generate a new authentication secret and QR code.'
-                      : 'أدخل كلمة المرور الحالية لتوليد مفتاح أمان جديد ورمز QR للربط.'}
+                    {is2FAEnabled ? tAccount('reconfigureDescription') : tAccount('setupDescription')}
                   </DialogDescription>
                 </div>
               </div>
@@ -1189,23 +1200,43 @@ export function SecuritySection({
                   required
                 />
               </SettingsField>
+              {is2FAEnabled ? (
+                <SettingsField label={tAccount('currentCode')} htmlFor="reconfigure-2fa-code">
+                  <Input
+                    id="reconfigure-2fa-code"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    dir="ltr"
+                    maxLength={6}
+                    value={reconfigureCode}
+                    onChange={(e) => {
+                      setReconfigureCode(e.target.value.replace(/\D/g, ''));
+                      setReconfigureError(null);
+                    }}
+                    placeholder="000 000"
+                    className="text-center font-mono tracking-[0.35em]"
+                    required
+                  />
+                </SettingsField>
+              ) : null}
             </div>
 
             <DialogFooter className="gap-2 sm:gap-0">
               <Button
                 type="button"
                 variant="ghost"
-                disabled={reconfiguring2FA}
+                disabled={enrolling2FA}
                 onClick={() => {
                   setReconfigureModalOpen(false);
                   setReconfigurePassword('');
+                  setReconfigureCode('');
                   setReconfigureError(null);
                 }}
               >
                 {locale === 'en' ? 'Cancel' : 'إلغاء'}
               </Button>
-              <Button type="submit" disabled={reconfiguring2FA}>
-                {reconfiguring2FA ? (
+              <Button type="submit" disabled={enrolling2FA}>
+                {enrolling2FA ? (
                   <>
                     <Loader2 className="me-2 size-4 animate-spin" />
                     {locale === 'en' ? 'Unlocking…' : 'جارٍ التأكيد…'}

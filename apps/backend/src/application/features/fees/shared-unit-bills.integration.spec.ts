@@ -15,6 +15,10 @@ import { FeesService } from './fees.service';
 import { ParcelDuesService } from './parcel-dues.service';
 import { PaymentLedgerService } from './payment-ledger.service';
 import { PaymentSettlementService } from './payment-settlement.service';
+import { feeServices } from './fee-services.testing';
+import type { FeeNoticesService } from './fee-notices.service';
+import type { RecurringBillingService } from './recurring-billing.service';
+import type { BillLifecycleService } from './bill-lifecycle.service';
 
 /**
  * The shared unit bill, written and paid (0099; decision D5 of 2026-10-23,
@@ -59,6 +63,9 @@ describeIfDb('shared unit bills', () => {
     (await db.feeNotice.findMany({ where: { isActive: true }, select: { id: true } })).map((notice) => notice.id);
   let context: TenantContextService;
   let fees: FeesService;
+  let feeNotices: FeeNoticesService;
+  let recurringBilling: RecurringBillingService;
+  let billLifecycle: BillLifecycleService;
   let parcelDues: ParcelDuesService;
   let settlements: PaymentSettlementService;
   let reporting: ReportingService;
@@ -114,7 +121,7 @@ describeIfDb('shared unit bills', () => {
     context = new TenantContextService();
     const audit = new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never);
     const payments = new PaymentLedgerService(context, audit, new TreasuryLedgerService(context));
-    fees = new FeesService(
+    ({ fees, feeNotices, recurringBilling, billLifecycle } = feeServices(
       context,
       new EventEmitter2(),
       {} as never,
@@ -125,14 +132,14 @@ describeIfDb('shared unit bills', () => {
       } as never,
       payments,
       audit,
-    );
+    ));
     parcelDues = new ParcelDuesService(context);
     settlements = new PaymentSettlementService(context, new EventEmitter2(), payments, audit, new TreasuryLedgerService(context));
     reporting = new ReportingService(
       context,
       new EventEmitter2(),
       { get: async () => null, set: async () => undefined } as never,
-      { get: () => undefined } as never,
+      { getOrThrow: () => 60 } as never,
     );
     citizens = new CitizensService(
       context,
@@ -222,9 +229,9 @@ describeIfDb('shared unit bills', () => {
     const input = notice();
     const { clientRequestId, ...previewInput } = input;
     expect(clientRequestId).toBeDefined();
-    const preview = await within(() => fees.previewNotice(previewInput));
+    const preview = await within(() => feeNotices.previewNotice(previewInput));
 
-    const issued = await within(() => fees.issue(input, actor));
+    const issued = await within(() => feeNotices.issue(input, actor));
     issuedNoticeId = issued.noticeId;
 
     expect(issued).toMatchObject({ issued: 2, sharedBills: 1, sharedUnitConflicts: [] });
@@ -329,11 +336,11 @@ describeIfDb('shared unit bills', () => {
     const now = new Date();
     const lastMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
     const issued = await within(() =>
-      fees.issue(notice({ frequency: 'MONTHLY', dueDate: lastMonth.toISOString().slice(0, 10) }), actor),
+      feeNotices.issue(notice({ frequency: 'MONTHLY', dueDate: lastMonth.toISOString().slice(0, 10) }), actor),
     );
 
-    await within(() => fees.runRecurringBilling(now));
-    await within(() => fees.runRecurringBilling(now));
+    await within(() => recurringBilling.runRecurringBilling(now));
+    await within(() => recurringBilling.runRecurringBilling(now));
 
     const bills = await db.citizenPayment.findMany({
       where: { feeNoticeId: issued.noticeId },
@@ -391,7 +398,7 @@ describeIfDb('shared unit bills', () => {
   });
 
   it('lists each receipt of a shared bill with the debtor who paid it, so a reprint names them (D9)', async () => {
-    const receipts = await within(() => fees.listTransactions(sharedBillId));
+    const receipts = await within(() => billLifecycle.listTransactions(sharedBillId));
     expect(receipts).toHaveLength(1);
     expect(receipts[0]).toMatchObject({
       amount: 30_000_000,
@@ -403,19 +410,19 @@ describeIfDb('shared unit bills', () => {
     const recurringOwn = await db.citizenPayment.findFirstOrThrow({
       where: { feeNoticeId: recurringNoticeId, citizenId: brothers[0], paymentStatus: 'PAID' },
     });
-    const own = await within(() => fees.listTransactions(recurringOwn.id));
+    const own = await within(() => billLifecycle.listTransactions(recurringOwn.id));
     expect(own.map((row) => [row.paidByCitizenId, row.paidByName])).toEqual([[null, null]]);
   });
 
   it('cancels a period’s shared bill with the notice, its debtors kept on the record (D12)', async () => {
     const now = new Date();
     const current = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
-    const periods = await within(() => fees.noticePeriods(recurringNoticeId));
+    const periods = await within(() => feeNotices.noticePeriods(recurringNoticeId));
     expect(periods.find((row) => row.periodKey === current)).toMatchObject({ bills: 2, cancellable: 2 });
 
     const manager = { id: accountantId, role: 'SUPER_ADMIN' };
     const result = await within(() =>
-      fees.cancelNoticeBatch(recurringNoticeId, { reason: 'صدر بالجدول الخطأ', periodKeys: [current] }, manager),
+      feeNotices.cancelNoticeBatch(recurringNoticeId, { reason: 'صدر بالجدول الخطأ', periodKeys: [current] }, manager),
     );
     expect(result).toMatchObject({ cancelled: 2, skipped: [] });
 
@@ -431,7 +438,7 @@ describeIfDb('shared unit bills', () => {
 
   it('refuses a merged-away debtor as the payer and does not offer them at the counter (D14)', async () => {
     const acknowledgedDuplicates = await otherFees();
-    const issued = await within(() => fees.issue(notice({ acknowledgedDuplicates }), actor));
+    const issued = await within(() => feeNotices.issue(notice({ acknowledgedDuplicates }), actor));
     const shared = await db.citizenPayment.findFirstOrThrow({ where: { feeNoticeId: issued.noticeId, unitId: shopId } });
 
     // The youngest brother's file is folded into the middle one's: the merge keeps both debtor rows.
@@ -470,10 +477,10 @@ describeIfDb('shared unit bills', () => {
     const nextMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 15));
     const current = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
     const issued = await within(() =>
-      fees.issue(notice({ frequency: 'MONTHLY', dueDate: lastMonth.toISOString().slice(0, 10) }), actor),
+      feeNotices.issue(notice({ frequency: 'MONTHLY', dueDate: lastMonth.toISOString().slice(0, 10) }), actor),
     );
     // This month, the eldest alone owns the flat: his own bill charges it.
-    await within(() => fees.runRecurringBilling(now));
+    await within(() => recurringBilling.runRecurringBilling(now));
     const thisMonth = () =>
       db.citizenPayment.findMany({
         where: { feeNoticeId: issued.noticeId, periodKey: current },
@@ -501,14 +508,14 @@ describeIfDb('shared unit bills', () => {
     });
 
     // The next night: nothing more for this month — the flat is not billed a second time.
-    await within(() => fees.runRecurringBilling(now));
+    await within(() => recurringBilling.runRecurringBilling(now));
     const after = await thisMonth();
     expect(after).toHaveLength(before.length);
     expect(after.some((bill) => bill.unitId === flatId)).toBe(false);
     expect(after.some((bill) => bill.citizenId === neighbour)).toBe(false);
 
     // From the next month the flat is one shared bill, owed by both.
-    await within(() => fees.runRecurringBilling(nextMonth));
+    await within(() => recurringBilling.runRecurringBilling(nextMonth));
     const next = `${nextMonth.getUTCFullYear()}-${String(nextMonth.getUTCMonth() + 1).padStart(2, '0')}`;
     const sharedFlat = await db.citizenPayment.findFirstOrThrow({
       where: { feeNoticeId: issued.noticeId, periodKey: next, unitId: flatId },

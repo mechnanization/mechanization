@@ -6,7 +6,9 @@ import { PrismaClient as TenantPrismaClient } from '../../../generated/tenant-cl
 import { migrateTenantSchema } from '../../../infrastructure/prisma/tenant-migrator';
 import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
-import { FeesService } from './fees.service';
+import { feeServices } from './fee-services.testing';
+import type { FeeNoticesService } from './fee-notices.service';
+import type { RecurringBillingService } from './recurring-billing.service';
 
 /**
  * «من يشمل الإشعار» (0100) against a real tenant schema: the unit states, the
@@ -39,7 +41,8 @@ describeIfDb('the notice scope (0100)', () => {
   const otherFees = async () =>
     (await db.feeNotice.findMany({ where: { isActive: true }, select: { id: true } })).map((notice) => notice.id);
   let context: TenantContextService;
-  let fees: FeesService;
+  let feeNotices: FeeNoticesService;
+  let recurringBilling: RecurringBillingService;
   const officerId = randomUUID();
   const actor = { id: officerId, role: 'ACCOUNTANT' };
   const resident = randomUUID();
@@ -93,7 +96,7 @@ describeIfDb('the notice scope (0100)', () => {
     await migrateTenantSchema(ddl, SCHEMA);
     db = tenantTestClient(TEST_DATABASE_URL!, SCHEMA);
     context = new TenantContextService();
-    fees = new FeesService(
+    ({ feeNotices, recurringBilling } = feeServices(
       context,
       new EventEmitter2(),
       {} as never,
@@ -104,7 +107,7 @@ describeIfDb('the notice scope (0100)', () => {
       } as never,
       {} as never,
       {} as never,
-    );
+    ));
 
     await db.user.create({
       data: {
@@ -173,11 +176,11 @@ describeIfDb('the notice scope (0100)', () => {
   };
   const issue = async (input: FeeNoticePreviewInput, key = randomUUID()) => {
     const acknowledgedDuplicates = await otherFees();
-    return within(() => fees.issue({ ...input, clientRequestId: key, acknowledgedDuplicates } as CreateFeeNotice, actor));
+    return within(() => feeNotices.issue({ ...input, clientRequestId: key, acknowledgedDuplicates } as CreateFeeNotice, actor));
   };
 
   it('previews a notice with no scope as before, and says by state what the default left out', async () => {
-    const preview = await within(() => fees.previewNotice(notice));
+    const preview = await within(() => feeNotices.previewNotice(notice));
 
     // The shop and the warehouse; the empty flat is out of scope, and the flat «مؤجرة» with no tenant
     // on file is held for review (`settleUnitStatus`), not counted as a tenant's.
@@ -193,7 +196,7 @@ describeIfDb('the notice scope (0100)', () => {
 
   it('charges the empty flat when every state is ticked, and leaves out the kinds of file unticked', async () => {
     const preview = await within(() =>
-      fees.previewNotice({ ...notice, unitStates: [...EVERY_STATE], residences: ['RESIDENT'] }),
+      feeNotices.previewNotice({ ...notice, unitStates: [...EVERY_STATE], residences: ['RESIDENT'] }),
     );
 
     expect(preview).toMatchObject({ targetedCitizens: 1, billedCitizens: 1, expectedRevenue: 200_000 });
@@ -202,7 +205,7 @@ describeIfDb('the notice scope (0100)', () => {
 
   it('reaches the holders of any of several categories', async () => {
     const preview = await within(() =>
-      fees.previewNotice({ ...notice, targetType: 'BUILDING_CATEGORY', targetCategories: ['SHOP', 'WAREHOUSE'] }),
+      feeNotices.previewNotice({ ...notice, targetType: 'BUILDING_CATEGORY', targetCategories: ['SHOP', 'WAREHOUSE'] }),
     );
     expect(preview).toMatchObject({ targetedCitizens: 2, billedCitizens: 2, expectedRevenue: 200_000 });
   });
@@ -228,7 +231,7 @@ describeIfDb('the notice scope (0100)', () => {
     expect(before.scope).toBeNull();
 
     // The next year's run: the scoped notice bills the resident alone, empty flat included.
-    await within(() => fees.runRecurringBilling(new Date('2027-04-10T09:00:00.000Z')));
+    await within(() => recurringBilling.runRecurringBilling(new Date('2027-04-10T09:00:00.000Z')));
     const nextYear = await db.citizenPayment.findMany({
       where: { feeNoticeId: issued.noticeId, periodKey: '2027' },
       select: { citizenId: true, amount: true },

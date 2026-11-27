@@ -19,6 +19,7 @@ import { TenancyService } from '../citizens/tenancy.service';
 import { ExpensesService } from '../treasury/expenses.service';
 import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
 import { StaffService } from './staff.service';
+import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
 
 /**
  * Who is paid for a unit line, against a real Postgres (migrations 0096, 0097).
@@ -51,6 +52,7 @@ describeIfDb('Who is paid for a unit line', () => {
   let db: TenantPrismaClient;
   let context: TenantContextService;
   let buildings: BuildingsService;
+  let occupancyWrites: OccupancyWritesService;
   let tenancy: TenancyService;
   let users: PrismaUserRepository;
   let staff: StaffService;
@@ -125,9 +127,10 @@ describeIfDb('Who is paid for a unit line', () => {
     const audit = new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never);
     const cases = new CasesService(new PrismaCaseRepository(context), { findById: async (id: string) => ({ id, kind: 'CITIZEN' }) } as never, events);
     buildings = new BuildingsService(context, cases, events);
-    const links = new LandlordLinkService(context, buildings, events, audit);
-    const ownership = new OwnershipService(context, buildings, cases, links, events, audit);
-    tenancy = new TenancyService(context, buildings, cases, links, events, ownership, audit);
+    occupancyWrites = new OccupancyWritesService(context, cases, events, buildings);
+    const links = new LandlordLinkService(context, occupancyWrites, events, audit);
+    const ownership = new OwnershipService(context, buildings, cases, links, events, audit, occupancyWrites);
+    tenancy = new TenancyService(context, buildings, cases, links, events, ownership, audit, occupancyWrites);
 
     const ledger = new TreasuryLedgerService(context);
     users = new PrismaUserRepository(context);

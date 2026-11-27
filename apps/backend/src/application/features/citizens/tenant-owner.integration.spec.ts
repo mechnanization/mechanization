@@ -17,6 +17,8 @@ import { CitizensService } from './citizens.service';
 import { LandlordLinkService, readFootprint } from './landlord-link.service';
 import { TenancyService } from './tenancy.service';
 import { OwnershipService } from './ownership.service';
+import { StaffActor } from '../../common/actor';
+import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
 
 /**
  * A tenant and the owner they rent from, against a real Postgres.
@@ -51,13 +53,14 @@ describeIfDb('A tenant and the owner they rent from', () => {
   let db: TenantPrismaClient;
   let context: TenantContextService;
   let buildings: BuildingsService;
+  let occupancyWrites: OccupancyWritesService;
   let census: CensusSyncService;
   let links: LandlordLinkService;
   let tenancy: TenancyService;
   let citizens: CitizensService;
   let officerId: string;
 
-  const actor = () => ({ id: officerId, role: 'SUPER_ADMIN' });
+  const actor = (): StaffActor => ({ id: officerId, role: 'SUPER_ADMIN' });
 
   const within = <T>(work: () => Promise<T>): Promise<T> =>
     context.run(
@@ -85,15 +88,16 @@ describeIfDb('A tenant and the owner they rent from', () => {
       events,
     );
     buildings = new BuildingsService(context, cases, events);
+    occupancyWrites = new OccupancyWritesService(context, cases, events, buildings);
     census = new CensusSyncService(context, cases, events);
     links = new LandlordLinkService(
       context,
-      buildings,
+      occupancyWrites,
       events,
       new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
     );
-    const ownership = new OwnershipService(context, buildings, cases, links, events, audit);
-    tenancy = new TenancyService(context, buildings, cases, links, events, ownership, audit);
+    const ownership = new OwnershipService(context, buildings, cases, links, events, audit, occupancyWrites);
+    tenancy = new TenancyService(context, buildings, cases, links, events, ownership, audit, occupancyWrites);
     citizens = new CitizensService(
       context,
       {} as never,

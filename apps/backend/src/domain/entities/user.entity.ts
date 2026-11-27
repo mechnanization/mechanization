@@ -25,6 +25,8 @@ export interface StaffProps {
   lastTotpStep?: bigint | null;
   totpSecret?: string | null;
   totpConfirmedAt?: Date | null;
+  /** A secret an enrolment issued that no code has confirmed yet (0116); sign-in never reads it. */
+  totpPendingSecret?: string | null;
   /** While in the future, no code is checked for this account (0101). */
   totpLockedUntil?: Date | null;
 }
@@ -123,6 +125,17 @@ export class User extends AggregateRoot {
 
   get totpSecret(): string | undefined {
     return (this.attrs.totpSecret as string | null | undefined) ?? undefined;
+  }
+
+  /**
+   * The secret an enrolment is waiting to have confirmed (0116), else an
+   * unconfirmed `totpSecret` an enrolment started before 0116 left behind.
+   * Never the confirmed factor: that one signs in, this one does not yet.
+   */
+  get enrolmentSecret(): string | undefined {
+    const pending = this.attrs.totpPendingSecret as string | null | undefined;
+    if (pending) return pending;
+    return this.attrs.totpConfirmedAt ? undefined : this.totpSecret;
   }
 
   /** As every screen names the file — «ورثة المرحوم …» for an estate (0076). */

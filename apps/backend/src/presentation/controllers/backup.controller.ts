@@ -1,10 +1,10 @@
 import { Controller, Get, Post, Query, Req, Res } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { BackupService } from '../../application/features/backup/backup.service';
-import { CurrentUser } from '../decorators/current-user.decorator';
+import { CurrentActor } from '../decorators/current-actor.decorator';
+import { StaffActor } from '../../application/common/actor';
 import { Roles } from '../decorators/roles.decorator';
 import { ValidationError } from '../../application/common/exceptions';
-import type { SessionClaims } from '../../application/features/identity/identity.service';
 
 /**
  * Taking a restorable snapshot of a municipality, and putting one back.
@@ -59,7 +59,7 @@ export class BackupController {
     @Req() request: Request,
     @Query('confirm') confirm: string | undefined,
     @Query('dryRun') dryRun: string | undefined,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
     const gzipped = await readBody(request);
 
@@ -70,7 +70,7 @@ export class BackupController {
         // Anything other than the exact string `false` is a rehearsal.
         dryRun: dryRun !== 'false',
       },
-      { id: user.sub, role: user.role ?? '' },
+      actor,
     );
   }
 }

@@ -16,6 +16,9 @@ import { citizenArrears } from './bill-arrears';
 import { FeesService } from './fees.service';
 import { PaymentLedgerService } from './payment-ledger.service';
 import { PaymentSettlementService } from './payment-settlement.service';
+import { StaffActor } from '../../common/actor';
+import { feeServices } from './fee-services.testing';
+import type { BillLifecycleService } from './bill-lifecycle.service';
 
 /**
  * An old debt's bill on every read of a bill (old debts task 10,
@@ -45,11 +48,12 @@ describeIfDb('old-debt bills on every read of a bill', () => {
   let db: TenantPrismaClient;
   let context: TenantContextService;
   let fees: FeesService;
+  let billLifecycle: BillLifecycleService;
   let reporting: ReportingService;
   let settlements: PaymentSettlementService;
 
   const ids = { accountant: randomUUID(), manager: randomUUID() };
-  const MANAGER = { id: ids.manager, role: 'SUPER_ADMIN' };
+  const MANAGER: StaffActor = { id: ids.manager, role: 'SUPER_ADMIN' };
   const citizenId = randomUUID();
   let currentBillId: string;
   let principalBillId: string;
@@ -75,8 +79,8 @@ describeIfDb('old-debt bills on every read of a bill', () => {
       set: jest.fn().mockResolvedValue(undefined),
       invalidatePrefix: jest.fn().mockResolvedValue(undefined),
     } as never;
-    fees = new FeesService(context, { emit: jest.fn() } as unknown as EventEmitter2, {} as never, cache, payments, audit);
-    reporting = new ReportingService(context, new EventEmitter2(), cache, { get: () => undefined } as never);
+    ({ fees, billLifecycle } = feeServices(context, { emit: jest.fn() } as unknown as EventEmitter2, {} as never, cache, payments, audit));
+    reporting = new ReportingService(context, new EventEmitter2(), cache, { getOrThrow: () => 60 } as never);
     settlements = new PaymentSettlementService(context, new EventEmitter2(), payments, audit, ledger);
     const importer = new ArrearsService(context, audit);
     const batches = new ArrearsBatchService(context, audit, importer, new EventEmitter2());
@@ -250,7 +254,7 @@ describeIfDb('old-debt bills on every read of a bill', () => {
       expect(paid.paymentStatus).toBe('PAID');
       const receipt = await db.paymentTransaction.findFirstOrThrow({ where: { paymentId: otherFeeBillId, reversalOfId: null } });
 
-      await scoped(() => fees.reverseTransaction({ transactionId: receipt.id, note: 'وصل بالخطأ', actor: MANAGER }));
+      await scoped(() => billLifecycle.reverseTransaction({ transactionId: receipt.id, note: 'وصل بالخطأ', actor: MANAGER }));
 
       const again = await scoped(() => fees.getPaymentById(otherFeeBillId));
       // Owed again, and past its due date (31 December of its year): OVERDUE is derived on read.
@@ -261,7 +265,7 @@ describeIfDb('old-debt bills on every read of a bill', () => {
 
     it('cancels it on a reason that cites the old receipt, and keeps the line on the cancelled bill', async () => {
       const reason = 'سدّده المواطن سابقاً: إيصال رقم 123 في دفتر 7 بتاريخ 2019/05/12';
-      await scoped(() => fees.cancelBill(penaltyBillId, reason, MANAGER));
+      await scoped(() => billLifecycle.cancelBill(penaltyBillId, reason, MANAGER));
 
       const cancelled = await scoped(() => fees.getPaymentById(penaltyBillId));
       expect(cancelled).toMatchObject({ paymentStatus: 'CANCELLED', cancellationReason: reason, remaining: 0 });

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
   MUNICIPAL_TIME_ZONE,
+  municipalDayStart,
   municipalToday,
   REOPEN_REASON_MIN,
   type CloseDayInput,
@@ -26,7 +27,6 @@ import {
   planReopen,
   type ClosureRecord,
 } from './day-closing.plan';
-import { municipalDayStart } from './income.plan';
 import { dateColumn, isoDay, TreasuryLedgerService, type TreasuryConfig } from './treasury-ledger.service';
 
 /** Where the books stand before any one day is looked at. */

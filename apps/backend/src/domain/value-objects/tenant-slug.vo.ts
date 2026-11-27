@@ -1,12 +1,17 @@
+import {
+  TENANT_SLUG_MAX_LENGTH,
+  TENANT_SLUG_MIN_LENGTH,
+  TENANT_SLUG_PATTERN,
+  isTenantSlug,
+  tenantSchemaNameFor,
+} from './tenant-schema-name';
 import { ValidationError } from '../errors/domain-error';
-
-const PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 /**
  * The municipality identifier that appears in every URL path.
  *
  * Also the source of the Postgres schema name, which is why the character set is
- * this strict: `schemaNameFor()` interpolates the slug into DDL that cannot be
+ * this strict: `schemaName` is interpolated the slug into DDL that cannot be
  * parameterised, so anything outside [a-z0-9-] must be impossible to construct
  * rather than merely escaped later.
  */
@@ -16,10 +21,12 @@ export class TenantSlug {
   static parse(raw: string): TenantSlug {
     const normalised = raw.trim().toLowerCase();
 
-    if (normalised.length < 2 || normalised.length > 50) {
-      throw new ValidationError('Municipality slug must be 2–50 characters');
+    if (normalised.length < TENANT_SLUG_MIN_LENGTH || normalised.length > TENANT_SLUG_MAX_LENGTH) {
+      throw new ValidationError(
+        `Municipality slug must be ${TENANT_SLUG_MIN_LENGTH}–${TENANT_SLUG_MAX_LENGTH} characters`,
+      );
     }
-    if (!PATTERN.test(normalised)) {
+    if (!TENANT_SLUG_PATTERN.test(normalised)) {
       throw new ValidationError(
         'Municipality slug may contain only lowercase letters, digits and single hyphens',
       );
@@ -29,17 +36,12 @@ export class TenantSlug {
   }
 
   static isValid(raw: string): boolean {
-    const normalised = raw.trim().toLowerCase();
-    return normalised.length >= 2 && normalised.length <= 50 && PATTERN.test(normalised);
+    return isTenantSlug(raw.trim().toLowerCase());
   }
 
-  /**
-   * Postgres schema name for this municipality. Hyphens become underscores
-   * because an unquoted identifier cannot contain a hyphen, and quoting a name
-   * that is sometimes quoted and sometimes not is how schema bugs start.
-   */
+  /** Postgres schema name for this municipality (`tenantSchemaNameFor`). */
   get schemaName(): string {
-    return `tenant_${this.value.replace(/-/g, '_')}`;
+    return tenantSchemaNameFor(this.value);
   }
 
   toString(): string {

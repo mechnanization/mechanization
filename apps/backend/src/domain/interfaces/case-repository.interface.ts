@@ -81,7 +81,11 @@ export interface CaseCensusLinks {
 }
 
 export interface CaseRepository {
+  /** Every case the filter matches, unpaged: the service's own reads (one flat's open cases). */
   findAll(filter?: CaseListFilter): Promise<Case[]>;
+
+  /** One page of the cases list, newest first, and how many match in all (PAG-02). */
+  findPage(filter: CaseListFilter, page: { limit: number; offset: number }): Promise<{ items: Case[]; total: number }>;
 
   findById(id: string): Promise<Case | null>;
 

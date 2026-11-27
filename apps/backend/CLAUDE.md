@@ -1,6 +1,6 @@
 # apps/backend — the NestJS API
 
-Last verified against the code: `feat/arrears-bills-everywhere` (on `develop@90cebdc`): old debts task 10 — `arrears` (`BillArrearsView`, `fees/bill-arrears.ts`: `ARREARS_LINE_SELECT`, `arrearsView`, `citizenArrears`) on the staff bill (`toAdminPaymentItem`), the citizen file's bills (`ReportingService.getCitizenProfile`), the portal's list (`listForCitizen`, which now carries `invoiceNumber` too) and each item of a bulk settlement's receipt; the old books' reference reaches staff only, and `CitizenController.mySummary` clears it with `citizenArrears`, 2026-11-21; `feat/unit-types` (on `chore/migration-0111`): `figureKey` on the unit type view (0111), 2026-11-21; `feat/unit-types` (on `chore/migration-0109`): «أنواع الوحدات» (0109: `UnitTypesService`, `UnitTypesController`, `resolveUnitType` / `loadUnitTypes` in `buildings/unit-types.ts`, the unit writers `create`, `generateUnits`, `addUnit`, `updateUnit` and `saveMatrix`, `unitTypeId` in the audited unit fields), backup version 8, 2026-11-21; `feat/arrears-report` (on `develop@90cebdc`): old debts task 11 — `ArrearsReportService` (`report`, `sheet`), the pure `arrears-report.plan.ts`, `GET arrears/report` and `GET arrears/batches/:batchId/sheet` on `ArrearsController`, `ARREARS_REPORT_ROLES` pinned in `route-inventory.spec.ts`, `ARREARS_BATCH_NOT_APPROVED`, 2026-11-21; `feat/arrears-write-off` (follow-up, 2026-11-21): a municipal request's fee may be written off, and the request goes on to review (`settleRequestOfWrittenOffBill`, `reconcile`, `REQUEST_FEE_WRITTEN_OFF`, the owner's decision of 2026-11-21); `feat/arrears-write-off` (on `develop@67a1ffe`): «شطب» (`POST fees/payments/:id/write-off`, `FeesService.writeOffBill`, `fees/bill-write-off.ts`, `BILL_WRITE_OFF_ROLES` pinned in `route-inventory.spec.ts`) and `WRITTEN_OFF` in every read of what is owed, 2026-11-21; `feat/arrears-fee-guards` (on `develop@c6e7462`): old debts task 6 — a notice whose period is before `arrearsCutoffYear` refused by the wizard's preview and issue and skipped by the recurring run (`FEE_PERIOD_BEFORE_ARREARS_CUTOFF`, `periodBeforeCutoff`), and the totals pinned to count an «ARR-» bill, 2026-11-21; `feat/arrears-approval` (review, 2026-11-21): «دمج ملفين» and its undo take `<schema>:arrears-lines` before the users' rows (`lockArrearsLines`), 2026-11-21; `feat/arrears-approval` (follow-up, 2026-11-21, old debts task 6): the cutoff year is fixed once a batch is approved (`ARREARS_CUTOFF_LOCKED`); `feat/arrears-approval` (on `develop@c6e7462`; follow-up 2026-11-21: the link and a single line refuse an archived file, `FEE_CITIZEN_ARCHIVED`, the owner's decision): old debts task 5 — submit, return, discard, approve (the «ARR-» bills), a single line, the link of a «للمطابقة» line and the cutoff year (`ArrearsBatchService`, `ArrearsController`'s eleven new routes pinned in `route-inventory.spec.ts`, `raiseArrearsBills`, `arrears-approval.plan.ts`), «دمج ملفين» moving old debts, `APP_CONFIG.arrears`, the `arrears.bills.raised` event, 2026-11-21; `feat/arrears-import` (on `feat/arrears-contract`): old debts' export and import (`ArrearsService`, `ArrearsController`, `arrears-import.plan.ts`, `APP_CONFIG.throttle.arrearsBulk`), 2026-11-21; `feat/day3ati-news-media` (on `feat/day3ati-news-articles@bfb9250`): News photos and PDFs (`NewsMediaController`, `NewsMediaService`, `sniffNewsMedia`, the multipart `form` of `Day3atiNewsCall`) and `GET news/availability` (`NewsAvailabilityService`), 2026-11-21; `feat/day3ati-news-articles` (on `feat/day3ati-news-categories@cef40da`): News articles (`NewsArticlesController`, `NewsArticlesService`, the article views in `news-views.ts`, `emitNewsChanged`, `NEWS_ARTICLE_ALREADY_PUBLISHED`), 2026-11-20; `feat/day3ati-news-categories` (on `feat/day3ati-news-client@a84d0ef`): News categories and publishers (`NewsController`, `NewsCatalogService`, `news-views.ts`, the `news.changed` audit row, `NEWS_FIELD_ERROR_CODES`) and the village `modules` read as `[{ key }]`, 2026-11-20; `feat/day3ati-news-client` (on `feat/day3ati-staff-sync@0ff5fc8`): the News client and the village directory (`DAY3ATI_NEWS`, `Day3atiNewsClient`, `DAY3ATI_VILLAGES`, `Day3atiVillageDirectory`, `day3ati-news-errors.ts`, the eight `NEWS_*` codes), 2026-11-20; `feat/day3ati-staff-sync` (on `feat/day3ati-token-service@c10c166`): Day3ati staff provisioning (`DAY3ATI_INTEGRATION`, `Day3atiIntegrationClient`, `Day3atiStaffSyncService`, `planStaffSync`, `NEWS_EDITOR_ROLES`, `day3ati:backfill-staff`), 2026-11-20; `feat/day3ati-token-service` (on `develop@abc8644`): the Day3ati token service (`DAY3ATI_TOKENS`, `Day3atiTokenService`, `Day3atiAuthError`), 2026-11-20; `feat/day3ati-config` (on `develop@578b2e6`): the `DAY3ATI_*` settings in `envSchema` (all four or none), 2026-11-20; `fix/citizen-otp-closed` (on `develop@e9e79ff`): the phone-code sign-in refused while no SMS provider is live (`SmsSender.isLive`, `CITIZEN_OTP_UNAVAILABLE`), `otp/verify` throttled (`APP_CONFIG.throttle.otpVerify`), `NODE_ENV` required with no default, security audit N-2, 2026-11-15; `fix/token-config-hardening` (on `develop@e9e79ff`): session tokens HS256 with issuer and audience and their two-phase rollout (`session-token.ts`), the cron secret compared in constant time (`bearerMatches`), `WHISH_*` declared behind `WHISH_PROVIDER_WIRED`, `CORS_ORIGINS` https in production and `credentials` kept for the refresh cookie (task S18), 2026-11-16; `fix/responsible-owner-billing` (on `develop@e9e79ff`): a «مالك مسؤول» re-checked at billing time — `checkResponsibleOwners`, `FeesService.ownerClaims`, the `RESPONSIBLE_NOT_BILLED` fallback and its quality finding (F13, task B13), 2026-11-16; `fix/citizen-sessions` (on `develop@e9e79ff`): a citizen's sign-out ended on the server (`POST auth/citizen/logout`, `endCitizenSessions`, `signOutCitizen`) and the staff reset token in the link's fragment (`password-reset-link`, `parseResetLink`, the Supabase parsing removed), task S14, both gap rows removed, 2026-11-16; `fix/controller-sweep` (on `chore/cross-tenant-route-test@e23fc96`): the controller sweep (task S11, N-7) — `@CurrentTenant('slug')` for every `@Param('tenantSlug')`, every path id through `UuidPipe` (canonical lower case), `sameId` in the self-guards, the global `SingleQueryValuePipe`, `queryLimit` / `queryOffset` / `optionalOneOf`, `MAX_LIST_PAGE` on the paged registers, and `route-inventory.spec.ts` holding it for every controller, 2026-11-16; `chore/cross-tenant-route-test` (on `develop@e9e79ff`): `cross-tenant-routes.spec.ts`, another municipality's token refused 403 `TENANT_MISMATCH` on every mounted non-public route over HTTP, and `discoverRoutes` shared with `route-inventory.spec.ts`, 2026-11-15; `fix/citizen-settings-allowlist` (on `develop@e9e79ff`): `GET fees/settings` gives a citizen only `CITIZEN_SETTINGS_FIELDS` (task S13, N-6), 2026-11-16; `fix/counter-payment-checks` (on `develop@e9e79ff`): a single counter payment (findings F18 and F19, task B11) — the retry key required and bound to the payer and the day, `expected` and `PAYMENT_FIGURES_CHANGED`, large change needing a reason (`PAYMENT_LARGE_CHANGE_REASON_REQUIRED`, `largeExchangeThreshold` in `ledger.config`), `counterCredit`, 2026-11-15; `fix/duplicate-notice-guard` (on `develop@e9e79ff`): the duplicate notice guard (finding F11, task B8) — `feeNoticeDuplicateSchema`, the preview's `duplicates`, `acknowledgedDuplicates` and `FEE_NOTICE_DUPLICATE`, `duplicateNotices` and the issue lock, the wizard's confirmation in «قبل الإصدار», 2026-11-15; `fix/charge-retry-key` (on `chore/migration-0102@72f0974`): «تكليف مالي»'s retry key (0102, task B11) — `chargeCitizenSchema.clientRequestId`, `replayCharge`, `FEE_CHARGE_REQUEST_REUSED`, the `charge:new` key scope, and the security gap row removed, 2026-11-15; `fix/2fa-replay-guard` (on `chore/migration-0101@7466f6d`): the TOTP replay guard burns the code's own step (`matchStep`, security audit N-1), one step either side, wrong codes counted per account with a lockout (`APP_CONFIG.totp`, `TOTP_CODE_INVALID` / `TOTP_CODE_REUSED` / `TOTP_LOCKED`, `TOTP_LOCKED_OUT`), 2026-11-15; `feat/building-types` (on `feat/unit-fee-whitelist`): «أنواع المباني» (0105/0106: `BuildingTypesService`, `BuildingTypesController`, `resolveBuildingType`, the dashboard's `buildingsByType`, the map pins' type), backup version 7, 2026-11-16; `feat/unit-fee-whitelist` (on `chore/migration-0106`): «قائمة الإعفاء من الرسوم» (0104: `unit_fee_exemptions`, `isFeeExemptOn`/`feeExemptSql`, `holdingsOf`'s `exemptOn` and the billing day, `FeeExemptionsController`, `assertNoFeeExemptionHistory` on every unit delete, `FEE_EXEMPTION_ENDED`), backup version 6, 2026-11-16; `fix/dependency-audit` (on `develop@b2c18dd`): zod 4, 2026-10-28; `fix/fee-wizard-review` (on `feat/tiered-fees-cancel-and-wizard@aa35d4a`, uncommitted): «من يشمل الإشعار» (0100) — `scopeOf`, `inScope`, the scope through targets, assessment, preview, issue, recurring run, retry key and correction bills, the scope on the `FEE_ISSUED` audit row, 2026-10-26; `fix/fee-wizard-review` (on `feat/tiered-fees-cancel-and-wizard@aa35d4a`): the review of PRs #133–#138 — the recurring run's notice lock and `unitsBilledInPeriod` (D8), withheld holders and units outside the table (D10, D11), the cancel by period and `noticePeriods`, `setNoticeActive` audited (D12), a stray category dropped (D13), a merged-away payer refused (D14), `AuditService.recordManyInTransaction`, the register's `owes`, 2026-10-26; `feat/tiered-fees-cancel-and-wizard` (on `feat/tiered-fees-debtor-views@61b0e04`, uncommitted): «إلغاء الإشعار», `cancelNoticeBatch` and `billCancelRefusal`, 2026-10-23; `feat/tiered-fees-debtor-views` (on `feat/tiered-fees-shared-bills@a90a70a`, uncommitted): a debtor's shared bills in every read of what a person owes (`billsOwedBy`), bulk settlement naming the payer, `SHARED_BILL_PAY_AT_OFFICE`, correction bills without `TIERED_AREA`, 2026-10-23; `feat/tiered-fees-shared-bills` (on `feat/tiered-fees-matrix-engine@60b00e2`, uncommitted): shared unit bills issued and recurring (`writeBills`), the payer on a shared bill's receipt, the readers of a bill's citizen, the merge's debtor rows, backup version 5, 2026-10-23; `feat/tiered-fees-matrix-engine` (on `chore/migration-0098-0099@a5539a5`, uncommitted): `TIERED_AREA` pricing, the shared unit bill, `planNotice` and the notice preview, 2026-10-23; `feat/duplex-merge` (stacked on `feat/unit-levels`): «دمج كدوبلكس» and `UNIT_LEVELS_TO_CONFIRM`, D28, 2026-10-17; `feat/unit-levels` (stacked on `chore/migration-0095`, on `develop@a7e62087`): duplexes and the per-roof factor, a house that grows, D28, 2026-10-17; `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): the cadastre import deviation, the cadastre asset's private cache, `GET auth/staff/me`, the own-account throttle, the save-path unlink rows, `assertFileOpen`; the audit reads' `?actorId=` and its «النظام» value, the review queue's total, a registration card's missing building, 2026-10-15; and `bugs-fix` (on `develop@5e8f5c3`; the finance audit remediation: `settleInPerson` in one transaction with the rate read FOR SHARE, `lockExternalRef` and a ledger retry key bound to its act, the Whish callback closed with its money, `cancelBill`, the notice retry key, the one-off charge and the settings save in Tier 1, the salary month and ceiling), 2026-10-12; the review of PR #120 (a Whish reference cleaned when stored and folded in SQL, a cancelled bill named in every owed filter, the recurring-run route has no screen) against `fix/finance-audit-remediation` rebased on `chore/migration-0090-0091@8d386b5`, 2026-10-13; `FEE_ISSUE_ROLES` without the collector and `FEE_SETTLE_ROLES` for the settle, the bill-raising routes pinned on `fix/fees-page-ux` from `develop@5e8f5c3` (uncommitted), 2026-10-12; `GET treasury/movements` («الإيرادات والنفقات»: `TreasuryMovementsService`, `IncomeService.viewsByIds` / `ExpensesService.viewsByIds`, `TreasuryController.movements` pinned; after review, one REPEATABLE READ snapshot and `page` capped) on `fix/fees-page-ux` (uncommitted), 2026-10-12; its screen renamed «الحركات المالية» the same day; municipal requests (`CitizenRequestsService`, `CitizenRequestsController`, the `REQUEST_FILE_STORAGE` port, `raiseOneOffBill`, `sniffAttachment`, `REQUEST_*_ROLES` pinned, a merge moving requests) on `fix/fees-page-ux` (uncommitted), 2026-10-13; online payment paused by the product owner the same day (`ONLINE_PAYMENT_UNAVAILABLE` on the Whish checkout and a citizen's own request bill while the gateway is not live; what an undeclared `WHISH_*` in `.env` really does) (uncommitted); and, on `fix/fees-page-ux` rebased onto `chore/migration-0092@16473f0` (2026-10-13), the review of PR #122: a request cancelled with its bill (`cancelRequestOfCancelledBill`), a card or a flat a request names never deleted (`PROPERTY_NAMED_BY_REQUEST`, `HAS_REQUESTS`), request bills stamp `issuedById`, the API's log lines without query strings, and the isolation tests; and, on `fix/pr122-review` (2026-10-15), the review's blocker and majors: `cancelBill`'s answer carries `cancelledRequest`, the profile's bills carry `request` (kept in `mySummary`, the citizen's own), and `FeesService.declare` refuses anything but a Whish Money report with its reference (`PAYMENT_DECLARATION_WHISH_ONLY`).
+Last verified against the code: `refactor/cleanup-god-01-05-arch-03` (on `develop@5bf5856a` with #228, #230, #236, #239 and #252 merged in): `FeesService` split into `FeeNoticesService`, `RecurringBillingService`, `BillLifecycleService` and `WhishCheckoutService` (GOD-01 to GOD-04), `OccupancyWritesService` out of `BuildingsService` (GOD-05), `BuildingsService` on `runInTenantTransaction` with `atomic` an alias (ARCH-03), `fee-services.testing.ts`, 2026-11-27; `fix/cleanup-dry-07-11` (on `develop@5bf5856`): `APP_CONFIG` in `application/common` (ARCH-07); schema defaults read with `getOrThrow`, `SMTP_PORT` defaulted in `envSchema` (DRY-07); `APP_CONFIG.throttle.default`, `.http`, `.cache`, `.transactions`, `.locks` and `setLocalLockTimeout`, `TENANT_TRANSACTION_DEFAULTS` (DRY-08); `TenantRunner.runAsTenant` (DRY-09); `isTenantSchemaName` in `domain/value-objects/tenant-schema-name.ts` (DRY-10), 2026-11-27; `fix/cleanup-nav-01-08-err-04-pag-02-04` (on `develop@5bf5856a`): the block-driven refusals coded (ERR-04: `refusedBy`, a block's `refusal`), `GET cases` and `GET fees/notices` paged (PAG-02, PAG-04: `CaseRepository.findPage`, `FeesService.listNotices`'s page), `cases.service.ts`'s throws coded, the ratchet at 184, 2026-11-25; `fix/cleanup-dry-02-06` (on `develop@5bf5856a`): Prisma error codes matched in `infrastructure/prisma/prisma-errors.ts` alone (`treasury/retry-key.ts` deleted), `buildingSuffixLockKey` and tagged `$executeRaw` for the census locks, the Sentry scrubber and `csvCell` from shared-schemas, `municipalDayStart` from `cash-policy` (DRY-02 to DRY-06), 2026-11-24; `fix/cleanup-sec-10-dead-18-dry-01` (on `develop@5bf5856`): `@SelfService` and the fail-closed `RolesGuard` (SEC-10); `StaffActor` and `@CurrentActor()` in place of every inline actor (DRY-01); `pnpm lint:unused` (DEAD-18), 2026-11-24; `fix/cleanup-arch-01-sec-05-sec-02` (on `chore/migration-0116`, `develop@5bf5856a`): `FeesService` off the bare `$transaction` (audit ARCH-01); the 5xx log line and stack redacted, SMTP recipients and the dev SMS line masked (SEC-05); 2FA enrolment and removal re-authenticated, the confirmed factor kept until its replacement is confirmed (`totpPendingSecret`), every session ended after (SEC-02); `LEGACY_PROSE_THROWS` 196, 2026-11-24; `feat/arrears-bills-everywhere` (on `develop@90cebdc`): old debts task 10 — `arrears` (`BillArrearsView`, `fees/bill-arrears.ts`: `ARREARS_LINE_SELECT`, `arrearsView`, `citizenArrears`) on the staff bill (`toAdminPaymentItem`), the citizen file's bills (`ReportingService.getCitizenProfile`), the portal's list (`listForCitizen`, which now carries `invoiceNumber` too) and each item of a bulk settlement's receipt; the old books' reference reaches staff only, and `CitizenController.mySummary` clears it with `citizenArrears`, 2026-11-21; `feat/unit-types` (on `chore/migration-0111`): `figureKey` on the unit type view (0111), 2026-11-21; `feat/unit-types` (on `chore/migration-0109`): «أنواع الوحدات» (0109: `UnitTypesService`, `UnitTypesController`, `resolveUnitType` / `loadUnitTypes` in `buildings/unit-types.ts`, the unit writers `create`, `generateUnits`, `addUnit`, `updateUnit` and `saveMatrix`, `unitTypeId` in the audited unit fields), backup version 8, 2026-11-21; `feat/arrears-report` (on `develop@90cebdc`): old debts task 11 — `ArrearsReportService` (`report`, `sheet`), the pure `arrears-report.plan.ts`, `GET arrears/report` and `GET arrears/batches/:batchId/sheet` on `ArrearsController`, `ARREARS_REPORT_ROLES` pinned in `route-inventory.spec.ts`, `ARREARS_BATCH_NOT_APPROVED`, 2026-11-21; `feat/arrears-write-off` (follow-up, 2026-11-21): a municipal request's fee may be written off, and the request goes on to review (`settleRequestOfWrittenOffBill`, `reconcile`, `REQUEST_FEE_WRITTEN_OFF`, the owner's decision of 2026-11-21); `feat/arrears-write-off` (on `develop@67a1ffe`): «شطب» (`POST fees/payments/:id/write-off`, `FeesService.writeOffBill`, `fees/bill-write-off.ts`, `BILL_WRITE_OFF_ROLES` pinned in `route-inventory.spec.ts`) and `WRITTEN_OFF` in every read of what is owed, 2026-11-21; `feat/arrears-fee-guards` (on `develop@c6e7462`): old debts task 6 — a notice whose period is before `arrearsCutoffYear` refused by the wizard's preview and issue and skipped by the recurring run (`FEE_PERIOD_BEFORE_ARREARS_CUTOFF`, `periodBeforeCutoff`), and the totals pinned to count an «ARR-» bill, 2026-11-21; `feat/arrears-approval` (review, 2026-11-21): «دمج ملفين» and its undo take `<schema>:arrears-lines` before the users' rows (`lockArrearsLines`), 2026-11-21; `feat/arrears-approval` (follow-up, 2026-11-21, old debts task 6): the cutoff year is fixed once a batch is approved (`ARREARS_CUTOFF_LOCKED`); `feat/arrears-approval` (on `develop@c6e7462`; follow-up 2026-11-21: the link and a single line refuse an archived file, `FEE_CITIZEN_ARCHIVED`, the owner's decision): old debts task 5 — submit, return, discard, approve (the «ARR-» bills), a single line, the link of a «للمطابقة» line and the cutoff year (`ArrearsBatchService`, `ArrearsController`'s eleven new routes pinned in `route-inventory.spec.ts`, `raiseArrearsBills`, `arrears-approval.plan.ts`), «دمج ملفين» moving old debts, `APP_CONFIG.arrears`, the `arrears.bills.raised` event, 2026-11-21; `feat/arrears-import` (on `feat/arrears-contract`): old debts' export and import (`ArrearsService`, `ArrearsController`, `arrears-import.plan.ts`, `APP_CONFIG.throttle.arrearsBulk`), 2026-11-21; `feat/day3ati-news-media` (on `feat/day3ati-news-articles@bfb9250`): News photos and PDFs (`NewsMediaController`, `NewsMediaService`, `sniffNewsMedia`, the multipart `form` of `Day3atiNewsCall`) and `GET news/availability` (`NewsAvailabilityService`), 2026-11-21; `feat/day3ati-news-articles` (on `feat/day3ati-news-categories@cef40da`): News articles (`NewsArticlesController`, `NewsArticlesService`, the article views in `news-views.ts`, `emitNewsChanged`, `NEWS_ARTICLE_ALREADY_PUBLISHED`), 2026-11-20; `feat/day3ati-news-categories` (on `feat/day3ati-news-client@a84d0ef`): News categories and publishers (`NewsController`, `NewsCatalogService`, `news-views.ts`, the `news.changed` audit row, `NEWS_FIELD_ERROR_CODES`) and the village `modules` read as `[{ key }]`, 2026-11-20; `feat/day3ati-news-client` (on `feat/day3ati-staff-sync@0ff5fc8`): the News client and the village directory (`DAY3ATI_NEWS`, `Day3atiNewsClient`, `DAY3ATI_VILLAGES`, `Day3atiVillageDirectory`, `day3ati-news-errors.ts`, the eight `NEWS_*` codes), 2026-11-20; `feat/day3ati-staff-sync` (on `feat/day3ati-token-service@c10c166`): Day3ati staff provisioning (`DAY3ATI_INTEGRATION`, `Day3atiIntegrationClient`, `Day3atiStaffSyncService`, `planStaffSync`, `NEWS_EDITOR_ROLES`, `day3ati:backfill-staff`), 2026-11-20; `feat/day3ati-token-service` (on `develop@abc8644`): the Day3ati token service (`DAY3ATI_TOKENS`, `Day3atiTokenService`, `Day3atiAuthError`), 2026-11-20; `feat/day3ati-config` (on `develop@578b2e6`): the `DAY3ATI_*` settings in `envSchema` (all four or none), 2026-11-20; `fix/citizen-otp-closed` (on `develop@e9e79ff`): the phone-code sign-in refused while no SMS provider is live (`SmsSender.isLive`, `CITIZEN_OTP_UNAVAILABLE`), `otp/verify` throttled (`APP_CONFIG.throttle.otpVerify`), `NODE_ENV` required with no default, security audit N-2, 2026-11-15; `fix/token-config-hardening` (on `develop@e9e79ff`): session tokens HS256 with issuer and audience and their two-phase rollout (`session-token.ts`), the cron secret compared in constant time (`bearerMatches`), `WHISH_*` declared behind `WHISH_PROVIDER_WIRED`, `CORS_ORIGINS` https in production and `credentials` kept for the refresh cookie (task S18), 2026-11-16; `fix/responsible-owner-billing` (on `develop@e9e79ff`): a «مالك مسؤول» re-checked at billing time — `checkResponsibleOwners`, `FeesService.ownerClaims`, the `RESPONSIBLE_NOT_BILLED` fallback and its quality finding (F13, task B13), 2026-11-16; `fix/citizen-sessions` (on `develop@e9e79ff`): a citizen's sign-out ended on the server (`POST auth/citizen/logout`, `endCitizenSessions`, `signOutCitizen`) and the staff reset token in the link's fragment (`password-reset-link`, `parseResetLink`, the Supabase parsing removed), task S14, both gap rows removed, 2026-11-16; `fix/controller-sweep` (on `chore/cross-tenant-route-test@e23fc96`): the controller sweep (task S11, N-7) — `@CurrentTenant('slug')` for every `@Param('tenantSlug')`, every path id through `UuidPipe` (canonical lower case), `sameId` in the self-guards, the global `SingleQueryValuePipe`, `queryLimit` / `queryOffset` / `optionalOneOf`, `MAX_LIST_PAGE` on the paged registers, and `route-inventory.spec.ts` holding it for every controller, 2026-11-16; `chore/cross-tenant-route-test` (on `develop@e9e79ff`): `cross-tenant-routes.spec.ts`, another municipality's token refused 403 `TENANT_MISMATCH` on every mounted non-public route over HTTP, and `discoverRoutes` shared with `route-inventory.spec.ts`, 2026-11-15; `fix/citizen-settings-allowlist` (on `develop@e9e79ff`): `GET fees/settings` gives a citizen only `CITIZEN_SETTINGS_FIELDS` (task S13, N-6), 2026-11-16; `fix/counter-payment-checks` (on `develop@e9e79ff`): a single counter payment (findings F18 and F19, task B11) — the retry key required and bound to the payer and the day, `expected` and `PAYMENT_FIGURES_CHANGED`, large change needing a reason (`PAYMENT_LARGE_CHANGE_REASON_REQUIRED`, `largeExchangeThreshold` in `ledger.config`), `counterCredit`, 2026-11-15; `fix/duplicate-notice-guard` (on `develop@e9e79ff`): the duplicate notice guard (finding F11, task B8) — `feeNoticeDuplicateSchema`, the preview's `duplicates`, `acknowledgedDuplicates` and `FEE_NOTICE_DUPLICATE`, `duplicateNotices` and the issue lock, the wizard's confirmation in «قبل الإصدار», 2026-11-15; `fix/charge-retry-key` (on `chore/migration-0102@72f0974`): «تكليف مالي»'s retry key (0102, task B11) — `chargeCitizenSchema.clientRequestId`, `replayCharge`, `FEE_CHARGE_REQUEST_REUSED`, the `charge:new` key scope, and the security gap row removed, 2026-11-15; `fix/2fa-replay-guard` (on `chore/migration-0101@7466f6d`): the TOTP replay guard burns the code's own step (`matchStep`, security audit N-1), one step either side, wrong codes counted per account with a lockout (`APP_CONFIG.totp`, `TOTP_CODE_INVALID` / `TOTP_CODE_REUSED` / `TOTP_LOCKED`, `TOTP_LOCKED_OUT`), 2026-11-15; `feat/building-types` (on `feat/unit-fee-whitelist`): «أنواع المباني» (0105/0106: `BuildingTypesService`, `BuildingTypesController`, `resolveBuildingType`, the dashboard's `buildingsByType`, the map pins' type), backup version 7, 2026-11-16; `feat/unit-fee-whitelist` (on `chore/migration-0106`): «قائمة الإعفاء من الرسوم» (0104: `unit_fee_exemptions`, `isFeeExemptOn`/`feeExemptSql`, `holdingsOf`'s `exemptOn` and the billing day, `FeeExemptionsController`, `assertNoFeeExemptionHistory` on every unit delete, `FEE_EXEMPTION_ENDED`), backup version 6, 2026-11-16; `fix/dependency-audit` (on `develop@b2c18dd`): zod 4, 2026-10-28; `fix/fee-wizard-review` (on `feat/tiered-fees-cancel-and-wizard@aa35d4a`, uncommitted): «من يشمل الإشعار» (0100) — `scopeOf`, `inScope`, the scope through targets, assessment, preview, issue, recurring run, retry key and correction bills, the scope on the `FEE_ISSUED` audit row, 2026-10-26; `fix/fee-wizard-review` (on `feat/tiered-fees-cancel-and-wizard@aa35d4a`): the review of PRs #133–#138 — the recurring run's notice lock and `unitsBilledInPeriod` (D8), withheld holders and units outside the table (D10, D11), the cancel by period and `noticePeriods`, `setNoticeActive` audited (D12), a stray category dropped (D13), a merged-away payer refused (D14), `AuditService.recordManyInTransaction`, the register's `owes`, 2026-10-26; `feat/tiered-fees-cancel-and-wizard` (on `feat/tiered-fees-debtor-views@61b0e04`, uncommitted): «إلغاء الإشعار», `cancelNoticeBatch` and `billCancelRefusal`, 2026-10-23; `feat/tiered-fees-debtor-views` (on `feat/tiered-fees-shared-bills@a90a70a`, uncommitted): a debtor's shared bills in every read of what a person owes (`billsOwedBy`), bulk settlement naming the payer, `SHARED_BILL_PAY_AT_OFFICE`, correction bills without `TIERED_AREA`, 2026-10-23; `feat/tiered-fees-shared-bills` (on `feat/tiered-fees-matrix-engine@60b00e2`, uncommitted): shared unit bills issued and recurring (`writeBills`), the payer on a shared bill's receipt, the readers of a bill's citizen, the merge's debtor rows, backup version 5, 2026-10-23; `feat/tiered-fees-matrix-engine` (on `chore/migration-0098-0099@a5539a5`, uncommitted): `TIERED_AREA` pricing, the shared unit bill, `planNotice` and the notice preview, 2026-10-23; `feat/duplex-merge` (stacked on `feat/unit-levels`): «دمج كدوبلكس» and `UNIT_LEVELS_TO_CONFIRM`, D28, 2026-10-17; `feat/unit-levels` (stacked on `chore/migration-0095`, on `develop@a7e62087`): duplexes and the per-roof factor, a house that grows, D28, 2026-10-17; `fix/pr115-review` (PRs #123, #124 and #115 stacked on `develop@5e8f5c3`, each with its review fixes): the cadastre import deviation, the cadastre asset's private cache, `GET auth/staff/me`, the own-account throttle, the save-path unlink rows, `assertFileOpen`; the audit reads' `?actorId=` and its «النظام» value, the review queue's total, a registration card's missing building, 2026-10-15; and `bugs-fix` (on `develop@5e8f5c3`; the finance audit remediation: `settleInPerson` in one transaction with the rate read FOR SHARE, `lockExternalRef` and a ledger retry key bound to its act, the Whish callback closed with its money, `cancelBill`, the notice retry key, the one-off charge and the settings save in Tier 1, the salary month and ceiling), 2026-10-12; the review of PR #120 (a Whish reference cleaned when stored and folded in SQL, a cancelled bill named in every owed filter, the recurring-run route has no screen) against `fix/finance-audit-remediation` rebased on `chore/migration-0090-0091@8d386b5`, 2026-10-13; `FEE_ISSUE_ROLES` without the collector and `FEE_SETTLE_ROLES` for the settle, the bill-raising routes pinned on `fix/fees-page-ux` from `develop@5e8f5c3` (uncommitted), 2026-10-12; `GET treasury/movements` («الإيرادات والنفقات»: `TreasuryMovementsService`, `IncomeService.viewsByIds` / `ExpensesService.viewsByIds`, `TreasuryController.movements` pinned; after review, one REPEATABLE READ snapshot and `page` capped) on `fix/fees-page-ux` (uncommitted), 2026-10-12; its screen renamed «الحركات المالية» the same day; municipal requests (`CitizenRequestsService`, `CitizenRequestsController`, the `REQUEST_FILE_STORAGE` port, `raiseOneOffBill`, `sniffAttachment`, `REQUEST_*_ROLES` pinned, a merge moving requests) on `fix/fees-page-ux` (uncommitted), 2026-10-13; online payment paused by the product owner the same day (`ONLINE_PAYMENT_UNAVAILABLE` on the Whish checkout and a citizen's own request bill while the gateway is not live; what an undeclared `WHISH_*` in `.env` really does) (uncommitted); and, on `fix/fees-page-ux` rebased onto `chore/migration-0092@16473f0` (2026-10-13), the review of PR #122: a request cancelled with its bill (`cancelRequestOfCancelledBill`), a card or a flat a request names never deleted (`PROPERTY_NAMED_BY_REQUEST`, `HAS_REQUESTS`), request bills stamp `issuedById`, the API's log lines without query strings, and the isolation tests; and, on `fix/pr122-review` (2026-10-15), the review's blocker and majors: `cancelBill`'s answer carries `cancelledRequest`, the profile's bills carry `request` (kept in `mySummary`, the citizen's own), and `FeesService.declare` refuses anything but a Whish Money report with its reference (`PAYMENT_DECLARATION_WHISH_ONLY`).
 
 NestJS 10, Prisma 5, zod 4. Read the root [CLAUDE.md](../../CLAUDE.md) first. Database rules: [docs/database.md](../../docs/database.md).
 Security rules and the endpoint checklist: [docs/security.md](../../docs/security.md). This file covers how the backend is built.
@@ -13,9 +13,9 @@ and is bound in `InfrastructureModule`.
 | Layer | Path | Holds | May import |
 |---|---|---|---|
 | Domain | `src/domain` | entities, value objects, ports and their DI symbols (`domain/interfaces/base-repository.interface.ts`), `DomainError` | nothing outside domain (holds today) |
-| Application | `src/application` | services in `application/features/<area>/`, jobs in `application/background-jobs`, `application/common` (exceptions, `ZodValidationPipe`, search terms) | domain, plus the infrastructure entry points below |
+| Application | `src/application` | services in `application/features/<area>/`, jobs in `application/background-jobs`, `application/common` (exceptions, `ZodValidationPipe`, search terms, `APP_CONFIG`) | domain, plus the infrastructure entry points below |
 | Infrastructure | `src/infrastructure` | Prisma clients, tenant context, repositories, S3, SMTP, SMS, Whish, bcrypt, otplib, Redis | domain |
-| Presentation | `src/presentation` | controllers, guards, decorators, middleware, the filter, config, `main.ts` | application, domain |
+| Presentation | `src/presentation` | controllers, guards, decorators, middleware, the filter, `envSchema` and logging config, `main.ts` | application, domain |
 
 Data access for new code (decided):
 - Application services use Prisma through the `prisma` getter of `TenantContextService` and run
@@ -28,25 +28,28 @@ Data access for new code (decided):
   service.
 - Application code MAY import from infrastructure only: `TenantContextService` and `TenantScope`,
   `runInTenantTransaction`, `tenantSchemaRef` / `tenantSchemaPrefix`, `withConnectionRetry` /
-  `isTransientConnectionError`, `RedisCacheService`, `citizenPhoneRuleError` /
+  `isTransientConnectionError`, `isUniqueViolation` / `isUniqueViolationOn` / `foreignKeyViolated` / `isSerializationFailure`
+  (`infrastructure/prisma/prisma-errors.ts`, the one place a Prisma error code is matched; DRY-02),
+  `RedisCacheService`, `citizenPhoneRuleError` /
   `violatedCheckConstraint` / `closedTreasuryDay` (`infrastructure/prisma/check-violation.ts`, which turn
   the `0072` CHECKs' refusal into a coded `ValidationError` and read the day a `0082` trigger refused), and types or the `Prisma` namespace from
-  `src/generated/tenant-client`. `TenantPrismaFactory` only in a background job that builds a tenant scope.
+  `src/generated/tenant-client`. A background job opens a municipality's scope through `TenantRunner.runAsTenant`
+  (`infrastructure/context/tenant-runner.ts`), never `TenantPrismaFactory` itself (DRY-09).
 - Application code MUST NOT import a `Prisma*Repository`, an adapter (`S3StorageService`,
   `SmtpEmailSender`, `SmsProviderService`, `WhishGatewayService`, `Day3atiTokenService`, `Day3atiIntegrationClient`, `Day3atiVillageDirectory`, `Day3atiNewsClient`,
   `BcryptPasswordHasher`, `OtplibTotpService`) or `RegistryPrismaService`. Inject the port symbol
   (`IMAGE_STORAGE_SERVICE`, `EMAIL_SENDER`, `PASSWORD_HASHER`, `DAY3ATI_TOKENS`, `DAY3ATI_INTEGRATION`, `DAY3ATI_VILLAGES`, `DAY3ATI_NEWS`, …) instead.
 - Presentation MUST NOT touch Prisma, except at the two composition points: `TenantMiddleware`
-  (`TenantContextService`, `TenantPrismaFactory`) and `HealthController` (`RegistryPrismaService`).
+  (`TenantRunner`) and `HealthController` (`RegistryPrismaService`).
 - Deviations today (`ZonesService` → `CadastreAssetsService`, `CadastreImportService` →
-  `buildCadastreGeometryAssets` and `mergeParcelPoints`, `OtpService` / `DocumentService` / `IdentityService` → `APP_CONFIG`, `registration.repository.ts`
+  `buildCadastreGeometryAssets` and `mergeParcelPoints`, `registration.repository.ts`
   → `normalizeSearchText`) are tracked in [docs/code-quality.md](../../docs/code-quality.md).
 
 ## Module wiring
 
 - `AppModule` (`src/app.module.ts`): `ConfigModule` (global, `validateEnv`), `EventEmitterModule`
   (global, synchronous), `ScheduleModule` only when `isSchedulerEnabled()`, `ThrottlerModule`
-  (in-memory, 120 requests per 60 s), then `DomainModule`, `InfrastructureModule`, `ApplicationModule`,
+  (in-memory, `APP_CONFIG.throttle.default`: 120 requests per 60 s), then `DomainModule`, `InfrastructureModule`, `ApplicationModule`,
   `PresentationModule`. A fifth import means something escaped its layer.
 - `InfrastructureModule` is `@Global()` and binds each port symbol in use to its adapter
   (`SUPABASE_AUTH_SERVICE` is declared but unbound). `REQUEST_FILE_STORAGE` →
@@ -56,6 +59,21 @@ Data access for new code (decided):
   registers `JwtModule` (`JWT_SECRET`, HS256 pinned for signing and verifying; a session token's issuer,
   audience and rollout in `identity/session-token.ts`, docs/security.md) and every service and job (`ParcelDuesService` among the fee
   services). In both, a new entry goes in `providers` AND `exports`.
+- **The fee services** (audit GOD-01 to GOD-04, 2026-11-27). `FeesService` keeps the settings, the payments
+  (declare, review, `settleInPerson`, `chargeIndividual`, the lists) and who a notice reaches and what each owes
+  (`resolveTargets`, `assessTargets`, `holdingsOf`, `ownerClaims`, `categoryHolders`). `FeeNoticesService` holds a
+  notice's life (`listNotices`, `previewNotice`, `issue` and its write path `planNotice` / `writeBills` /
+  `numberInvoices` / `unitsBilledInPeriod`, `setNoticeActive`, `noticePeriods`, `cancelNoticeBatch`);
+  `RecurringBillingService` the recurring run (`runRecurringBilling`, `recordBillingRun`), which `RecurringBillingJob`
+  and `POST fees/recurring/run` call; `BillLifecycleService` a bill after it is raised (`listTransactions`,
+  `reverseTransaction`, `cancelBill`, `writeOffBill`); `WhishCheckoutService` the Whish checkout and callback.
+  Dependencies go one way: notices → `FeesService`; the recurring run → notices and `FeesService`; a bill's
+  lifecycle → `FeesService` (`getPaymentById`); the Whish checkout → none. `FeesService` calls none of them.
+- **The occupancy writes** (audit GOD-05, 2026-11-27). `OccupancyWritesService` (`buildings/occupancy-writes.service.ts`)
+  holds `recordOccupancy`, `ensureOnFile`, `claimOnFile` and `endOccupancy`, and takes `BuildingsService` for its
+  audit row, the unit's status (`settle`) `confirmVacancy` and `assertNoOccupantBesidesOwner`; `TenancyService`, `OwnershipService` and
+  `LandlordLinkService` take it (the last in place of `BuildingsService`, which it no longer used). `endOccupancy`
+  has no production caller (DEAD-20, docs/code-quality.md).
 - `PresentationModule` registers the controllers, `APP_FILTER` = `DomainExceptionFilter`,
   `APP_INTERCEPTOR` = `ViewerCredentialMaskInterceptor` (masks a رقم مرجعي in every response to
   «مشاهد فقط»; [docs/security.md](../../docs/security.md#authentication-and-authorisation)), and
@@ -64,10 +82,11 @@ Data access for new code (decided):
   `CorrelationIdMiddleware` to every route and `TenantMiddleware` to `t/:tenantSlug/*` (keep the bare
   `*`; see [docs/gotchas.md](../../docs/gotchas.md)). `BackupController` is deliberately unregistered.
 - `createApiApp` (`presentation/bootstrap.ts`) sets the `api/v1` prefix (not on `/metrics`), helmet,
-  compression, a 1 MB JSON limit, CORS from `CORS_ORIGINS`, and `rawBody` for the Whish HMAC.
+  compression, a 1 MB JSON limit (`APP_CONFIG.http.bodyLimit`), CORS from `CORS_ORIGINS`, and `rawBody` for the Whish HMAC.
   `presentation/main.ts` listens. `presentation/serverless.ts` is the retired Vercel entry.
-- Request flow: `TenantMiddleware` resolves the tenant (`TenantService.resolve`, `TenantPrismaFactory.forSchema`) and
-  runs the request in `TenantContextService.run`; `JwtAuthGuard` then requires token tenant = URL tenant and a current `tokenVersion`,
+- Request flow: `TenantMiddleware` resolves the tenant (`TenantService.resolve`) and runs the request as it
+  (`TenantRunner.runAsTenant`: `TenantPrismaFactory.forSchema` and `TenantContextService.run`, the one place a
+  scope is built, which the cross-tenant jobs use too); `JwtAuthGuard` then requires token tenant = URL tenant and a current `tokenVersion`,
   and finally, unless the request is a background one, starts the `users.lastSeenAt` stamp without
   awaiting it (see **Staff presence** below).
 
@@ -76,10 +95,12 @@ Data access for new code (decided):
 - **Routes.** Tenant data lives under `@Controller('t/:tenantSlug/<area>')`. MUST NOT take a tenant, slug
   or schema from a body or query string.
 - **Auth.** Every route is authenticated unless it carries `@Public()`, and every non-public handler
-  MUST carry `@Roles(...)`. Today `RolesGuard` admits any authenticated token, citizens included, when
-  `@Roles` is absent (gap in [docs/security.md](../../docs/security.md#known-gaps)). Until that is fixed, a
-  self-service route without `@Roles` MUST check `user.kind` and scope every query by `user.sub`. A
-  handler's `@Roles` replaces the class's.
+  MUST carry `@Roles(...)` or, for the caller acting on their own record, `@SelfService('<reason>')`
+  (`presentation/decorators/self-service.decorator.ts`). `RolesGuard` fails closed (SEC-10): public
+  admits, `@Roles` admits staff holding a listed role, `@SelfService` admits any authenticated token, and
+  a route with none of them is a 403. A `@SelfService` route MUST check `user.kind` and scope every query
+  by `user.sub`, and goes on `SELF_SERVICE` in `route-inventory.spec.ts`. A handler's `@Roles` replaces the
+  class's.
 - **Role lists.** `@Roles(...)` takes a named set from `@mechanization/shared-schemas` — `role-sets.ts`
   (`EVERY_STAFF_ROLE`, `WORKING_STAFF_ROLES`, `REGISTER_WRITE_ROLES`, `CENSUS_WORKLIST_ROLES`,
   `FEE_ISSUE_ROLES`, `REGISTER_EXPORT_ROLES` and the rest), except the treasury's `TREASURY_*_ROLES`
@@ -89,7 +110,7 @@ Data access for new code (decided):
   new named set there, and so is a single role a screen gates on (`PAYMENT_REVERSE_ROLES` for
   `POST fees/transactions/:transactionId/reverse`, «عكس الوصل»).
   `route-inventory.spec.ts` checks every controller on disk: `@Roles` on every
-  non-public route (or a reviewed entry in its `SELF_SERVICE` list), «مشاهد فقط» on no write and no
+  non-public route or a `@SelfService` that is on its reviewed `SELF_SERVICE` list (never both), «مشاهد فقط» on no write and no
   side-effecting GET, and no route that deletes a citizen. It also pins, route by route, every treasury
   handler and every handler elsewhere that moves treasury money (`MONEY_HANDLERS_ELSEWHERE`: the
   commission payout, and the fee routes that post wallet entries — `settle`, `review`,
@@ -110,10 +131,15 @@ Data access for new code (decided):
   `@Roles(...EVERY_STAFF_ROLE)`) answers `StaffSelf` — id, email, role, `hasConfirmedTotp` and
   nothing else — read by `user.sub`. «أمان الحساب» reads it; `GET staff` is the administrator's
   roster and refuses every other role. The own-account writes beside it (`staff/change-password`,
-  `staff/change-email`, `staff/totp/disable`) refuse a wrong current password with
-  `STAFF_CURRENT_PASSWORD_INCORRECT`.
+  `staff/change-email`, `staff/totp/enrol`, `staff/totp/disable`) refuse a wrong current password with
+  `STAFF_CURRENT_PASSWORD_INCORRECT`. The two 2FA routes take `totpReauthSchema` and ask for the
+  current code too while a factor is confirmed (`IdentityService.reauthenticate`, `TOTP_CODE_REQUIRED`;
+  audit SEC-02). An enrolment writes `totpPendingSecret` (0116), never over the confirmed factor;
+  `confirmTotpEnrolment` checks the code against it and moves it in one conditional write
+  (`promotePendingTotp`), and it and `disableTotp` bump `tokenVersion`, ending every session of the
+  account, this one included.
 - **A citizen's sign-out** (task S14). `POST auth/citizen/logout` (`AuthController.logoutCitizen`,
-  a reviewed self-service route that refuses staff with `CITIZENS_ONLY`) ends every session the citizen
+  a reviewed `@SelfService` route that refuses staff with `CITIZENS_ONLY`) ends every session the citizen
   holds: `UserRepository.endCitizenSessions` bumps `tokenVersion`, scoped to `kind = 'CITIZEN'` in the
   write, and `SessionRevocationService.forget` clears the guard's cache. The staff password-reset link
   carries its token in the fragment (`resetTokenFragment`), never `?token=`.
@@ -341,7 +367,7 @@ Data access for new code (decided):
   (bills paid, cancelled, written off and reversed through the counter's own services).
 - **Old debts and the fee system (task 6).** A notice bills the period its due date falls in, then the recurring run the
   current one; a year before `system_settings.arrearsCutoffYear` is an old-debt year (docs/old-debts-plan.md §8), so
-  `FeesService.previewNotice` and `issue` refuse such a notice with `FEE_PERIOD_BEFORE_ARREARS_CUTOFF` (`assertPeriodNotBeforeCutoff`,
+  `FeeNoticesService.previewNotice` and `issue` refuse such a notice with `FEE_PERIOD_BEFORE_ARREARS_CUTOFF` (`assertPeriodNotBeforeCutoff`,
   before the assessment, `params.year` and `params.cutoffYear`) and `runRecurringBilling` skips the period (a SKIPPED billing run and a
   warning), reading the cutoff once per run. While no cutoff is set nothing is refused. `periodYearOf` / `periodBeforeCutoff` are the pure
   rule. **«تكليف مباشر» (`chargeIndividual`) is not guarded**: a one-off charge can still carry an old due date. Every sum of what
@@ -351,7 +377,7 @@ Data access for new code (decided):
   figures. `arrears-settlement-order.spec.ts` pins that a settlement pays an old debt, due years earlier, before a current bill.
 - **«شطب», writing off what is left on a bill** (0107/0108, task 9; [docs/finance.md](../../docs/finance.md) §3.8).
   `POST fees/payments/:id/write-off` (`FeesController.writeOffBill`, `BILL_WRITE_OFF_ROLES`, `writeOffBillSchema`)
-  → `FeesService.writeOffBill`: behind `lockInvoices`, `billWriteOffRefusal` (`fees/bill-write-off.ts`), the
+  → `BillLifecycleService.writeOffBill`: behind `lockInvoices`, `billWriteOffRefusal` (`fees/bill-write-off.ts`), the
   request-fee refusal, then one raw `UPDATE` whose `writeOffAmount` is `"amount" - "paidAmount"`, and a Tier 1
   `FEE_BILL_WRITTEN_OFF` row; no ledger row. Every read that treats "not PAID" as owed leaves `WRITTEN_OFF` out as
   it leaves `CANCELLED` out — in TypeScript through the shared `billOwesNothing` / `billRemaining`, in SQL by
@@ -375,7 +401,7 @@ Data access for new code (decided):
 - **«الرسم حسب فئة المساحة» (`TIERED_AREA`, 0098/0099).** `assessCitizen` prices each unit by the notice's
   bracket table (`priceTieredUnits`, `fees/tiered-area.ts`) after exemptions, habitability, the review hold
   and the bearer rule have run; `splitSharedUnitBills` takes the units two or more citizens are charged
-  for off their own bills and bills each once, in full, to all of them (decision D5). `FeesService.planNotice`
+  for off their own bills and bills each once, in full, to all of them (decision D5). `FeeNoticesService.planNotice`
   is the read-and-assess half `issue` and `previewNotice` share, so a preview and the issue after it cannot
   disagree; `POST fees/notices/preview` (`FEE_ISSUE_ROLES`, `feeNoticePreviewSchema`) writes nothing.
   `issue` and `runRecurringBilling` write a period through `writeBills`: own bills, then shared unit bills
@@ -431,7 +457,7 @@ Data access for new code (decided):
   did not confirm in `acknowledgedWarnings`; the confirmation is stored with it, and the `FEE_ISSUED` audit
   row carries the scope. The issue's `exemptedUnits` still counts the out-of-scope units with the bearer's.
 - **A notice issued twice (finding F11 of the 2026-11-14 billing audit, task B8).** The retry key
-  protects one press; two issuers, or one in two tabs, carry two keys. `FeesService.duplicateNotices`
+  protects one press; two issuers, or one in two tabs, carry two keys. `FeeNoticesService.duplicateNotices`
   finds the active notices with the same basis, frequency and target (`sameTarget` in
   `fees/duplicate-notice.ts`: one category in common, the same citizen) that hold a bill not cancelled in
   the new notice's first period — for a one-off notice, due the same month (`sameMonth`), since every
@@ -562,7 +588,7 @@ Data access for new code (decided):
     never pays (`payingAccount`).
   - A retry key is bound to its act (`replayVoucher`, `replayRequest`): wallet, amount, clerk,
     band, payee and description, and for a salary the staff account (`payeeStaffId`). A unique violation on it is answered as a replay
-    (`retry-key.ts`), and a key whose voucher was cancelled since gets `EXPENSE_ALREADY_VOID`.
+    (`isUniqueViolationOn`), and a key whose voucher was cancelled since gets `EXPENSE_ALREADY_VOID`.
     When a key is sent, `record` first takes a schema-scoped `pg_advisory_xact_lock` on it
     (`<schema>:expense-request:<key>`), so two identical requests arriving together meet there
     and the second finds the first's voucher.
@@ -642,7 +668,7 @@ Data access for new code (decided):
     requests produce one voucher and replays rather than a unique violation. It is bound to its act
     (`IncomeService.replayVoucher`: wallet, amount, clerk, category, description, payer); a key whose
     voucher was cancelled since gets `INCOME_ALREADY_VOID` (`params.voucherNumber`), and a unique
-    violation on it outside the transaction is answered as a replay (`retry-key.ts`).
+    violation on it outside the transaction is answered as a replay (`isUniqueViolationOn`).
   - `record` takes `config`, then `lockAccounts([wallet])`, then the RV number and the insert, and
     dates the voucher with `documentOccurredAt` and the go-live stamp (D5).
   - A void *removes* money, so it locks the voucher, then the wallet (`lockAccounts`), and refuses
@@ -669,7 +695,7 @@ Data access for new code (decided):
     fee, statement, clerk). Anything else under it is `TREASURY_REQUEST_KEY_REUSED` — a handover's
     key included, which lives in the same column — a key whose transfer was cancelled since gets
     `TRANSFER_ALREADY_VOID` (`params.transferNumber`), and a unique violation on it is answered as
-    a replay (`retry-key.ts`).
+    a replay (`isUniqueViolationOn`).
   - The fee voucher goes through `recordInTransaction` like every voucher, so the payment order
     holds (D3): the manager's transfer is its order; an accountant's fee is paid on the urgent path
     with `TRANSFER_FEE_URGENT_REASON`, held to the urgent ceiling, and waits for `regularize`.
@@ -747,7 +773,7 @@ Data access for new code (decided):
   «INV-2610-0001», «RCP-…», «PV-…», «TR-…», «RV-…», «BRC-…» (the consolidated receipt, 0085). Pass the caller's `tx` and `this.S` — the draw and the
   document must share a transaction, and an unqualified name would resolve through the pooled
   connection's `search_path` into another municipality's counter. Bulk callers take a block sized to
-  what was actually inserted: `FeesService.numberInvoices` numbers after `createMany` because
+  what was actually inserted: `FeeNoticesService.numberInvoices` numbers after `createMany` because
   `skipDuplicates` means a block reserved beforehand would burn numbers on rows that were never
   written. A settlement of several bills reserves its receipts' block first
   (`PaymentLedgerService.reserveReceiptNumbers`): every bill is written or the whole act rolls back
@@ -783,7 +809,7 @@ Data access for new code (decided):
     (`BULK_SETTLE_REQUEST_REUSED`, with the settlement's «BRC-» number in `params.number`: from the
     dialog it means the same bills pressed again another way after a lost answer, so the clerk is told
     which receipt exists); one of whose bills was reversed since is `TRANSACTION_ALREADY_REVERSED`;
-    a unique violation on the key is answered as a replay (`retry-key.ts`).
+    a unique violation on the key is answered as a replay (`isUniqueViolationOn`).
   - Reversing a bill of a settlement (`PaymentLedgerService.reverse`) opposes its entries, as for any
     receipt, except the one row of a cash settlement that carried the set's notes and change (the
     pivot, the only row with a tender): its notes paid every bill and its change, recycled, paid the
@@ -812,8 +838,13 @@ Data access for new code (decided):
   day-buckets use is for their bare timestamp; on this column it moved the boundary six hours.
 - **Who is calling.** `@CurrentUser()` yields `SessionClaims` (`application/features/identity/identity.service.ts`);
   `@CurrentTenant()` yields `req.tenant`, and `@CurrentTenant('slug')` its slug: no handler reads
-  `@Param('tenantSlug')` (the URL's spelling) since task S11. Pass the actor to services as
-  `{ id: user.sub, role: user.role ?? '' }`, and compare ids with `sameId` (`application/common/ids.ts`).
+  `@Param('tenantSlug')` (the URL's spelling) since task S11. The actor a service takes is `StaffActor`
+  (`application/common/actor.ts`: `id`, and `role` typed as `StaffRole`), built by `@CurrentActor()`
+  (`presentation/decorators/current-actor.decorator.ts`) and never spelled inline (DRY-01). It is for a
+  `@Roles` route only: on anything else it throws, rather than hand a service a citizen as staff. A new
+  service parameter is typed `StaffActor`, not `{ id: string; role: string }` (that older shape is
+  tracked debt in [docs/code-quality.md](../../docs/code-quality.md)). Compare ids with `sameId`
+  (`application/common/ids.ts`).
 - **Validation.** `@Body(new ZodValidationPipe(schema))`, schema from `@mechanization/shared-schemas`. Put
   the pipe on the parameter, never in `@UsePipes` (it would validate `tenantSlug` too). Ids:
   `new UuidPipe()` (`presentation/pipes/uuid.pipe.ts`: `ParseUUIDPipe` returning lower case, task S11), and
@@ -831,8 +862,10 @@ Data access for new code (decided):
   `HttpException` in controllers; `DomainExceptionFilter` is the one place errors become HTTP.
 - **Raw SQL.** Tagged `$queryRaw` with `${this.S}table`, where `S` is `tenantSchemaRef(this.tenantContext.schemaName)`,
   and values as bound parameters. `raw-sql-is-schema-qualified.spec.ts` fails the build otherwise.
-- **Config.** Read env through `ConfigService`; every variable MUST be declared in `envSchema`. Policy
-  constants go in `APP_CONFIG` (`presentation/config/app.config.ts`). No literals for limits or TTLs.
+- **Config.** Read env through `ConfigService`; every variable MUST be declared in `envSchema`. A variable
+  with a schema default is read with `getOrThrow`, never `get(...) ?? N` or a second-argument default: the
+  default lives only in `envSchema` (DRY-07). Policy constants go in `APP_CONFIG`
+  (`application/common/app.config.ts`; ARCH-07). No literals for limits or TTLs.
 - **Logging.** `new Logger(ClassName.name)`. Never log PII, tokens, a رقم مرجعي or a URL with its query string.
 - **Cache.** `RedisCacheService` (`get`, `set`, `setIfAbsent`, `invalidatePrefix`), keys `<area>:<tenantSlug>:…`.
   While Redis is offline, `get` and `set` use the in-process layer alone rather than waiting on a retry.
@@ -981,17 +1014,28 @@ Rule: a refusal is thrown with a specific code from `ERROR_CODES` in
 - Existing `details.code` / `details.reason` values (`STALE`, `TENANTS_LINKED`, `PREVIEW_STALE`, …) are
   kept beside the top-level code because screens still read them; do not add new ones.
 
-Today: the fee, payment, ownership, tenancy, landlord-link, correction, citizen-file and damage services
-are converted; what is left is counted by `LEGACY_PROSE_THROWS` (199 on 2026-11-15, after the TOTP
-refusals took `TOTP_CODE_INVALID` and `TOTP_CODE_REUSED`). The block-driven refusals (`plan.block.message` in `LandlordLinkService`,
-`blockerMessage` in `UnitCorrectionService`, `blocks[0].message` in `CitizenMergeService`) are not: their
-text is also rendered in the preview endpoints, which need localising first.
+- **A preview's blocks** (ERR-04, 2026-11-25). A preview that lists why an act cannot go ahead gives each block a
+  `refusal: { code, params }` (`BlockRefusal` in shared `error-codes.ts`): a landlord link's `LinkBlock`
+  (`LANDLORD_LINK_*`), «دمج ملفين»'s `CitizenMergeBlock` (`MERGE_*`, one code per variant of a block's `code`), its
+  undo's `CitizenUnmergeBlock` (`UNMERGE_*`), and the «حذف تصحيحي» / «دمج كدوبلكس» blockers through the shared
+  `unitCorrectionBlockerRefusal` / `duplexMergeBlockerRefusal`. The act, pressed anyway, throws the same refusal with
+  `refusedBy(refusal, details)` (`domain-error.ts`, a 409 whose log message names the code alone). A new block gets
+  its own code; never a sentence in `params`. Each block still carries `message`, the Arabic sentence, until ERR-05
+  renders `refusal`; then it goes. `DUPLEX_MERGE_BLOCKED` is retired.
+
+Today: the fee, payment, ownership, tenancy, landlord-link, correction, citizen-file, damage and case services
+are converted, the block-driven refusals with them; what is left is counted by `LEGACY_PROSE_THROWS` (181 on
+2026-11-27, once SEC-02 and ERR-04 met: 196 on 2026-11-24, after the 2FA enrolment and removal took
+`SESSION_INVALID` and `TOTP_ENROLMENT_NOT_STARTED` in place of three `NotFoundError`s; 184 on 2026-11-25, after
+ERR-04 and `cases.service.ts`; 199 on 2026-11-15, after the TOTP refusals took `TOTP_CODE_INVALID` and
+`TOTP_CODE_REUSED`).
 
 ## Transactions
 
 - Multi-step writes MUST use `runInTenantTransaction(this.tenantContext, () => …)`. It re-enters the
   tenant scope with the transaction client, so every service called inside writes through the same
-  transaction, and it joins an enclosing one. Defaults: `maxWait` 15 s, `timeout` 60 s.
+  transaction, and it joins an enclosing one. Defaults: `maxWait` 15 s, `timeout` 60 s
+  (`TENANT_TRANSACTION_DEFAULTS`); a write that needs other bounds names them in `APP_CONFIG.transactions`.
 - MUST NOT call `this.db.$transaction(...)`. Inside a `runInTenantTransaction` scope `this.db` is a
   transaction client with no `$transaction`, and a bare call never swaps the scope, so services and audit
   listeners called inside it write outside the transaction. Existing calls are tracked debt
@@ -1000,7 +1044,8 @@ text is also rendered in the preview endpoints, which need localising first.
   returns, or push onto `scope.transaction.afterCommit`. A write through the closed client fails with
   "Transaction already closed" and the row is lost. A Tier 1 audit row is the exception: it is written,
   awaited, inside the transaction ([Events and audit](#events-and-audit)).
-- Row locks use `FOR UPDATE` with `SET LOCAL lock_timeout`; parallel creators serialise on
+- Row locks use `FOR UPDATE` after `setLocalLockTimeout(this.db)` (`application/common/lock-timeout.ts`,
+  `APP_CONFIG.locks.rowLockTimeout`); parallel creators serialise on
   `pg_advisory_xact_lock(hashtext(key))`. Database-level rules (lock keys, constraints, `P2002`):
   [docs/database.md](../../docs/database.md#transactions-and-constraints).
 
@@ -1045,7 +1090,7 @@ Every state change MUST leave an `audit_log_entries` row, in one of two tiers
 A row no person caused (the recurring biller's scheduled run, a Whish settlement) MUST carry
 `actorId: null` and `actorType: 'SYSTEM'`, never a placeholder: `actorId` is a uuid, and a string
 there is refused, in Tier 2 silently. `POST fees/recurring/run` passes the staff member who called
-it to `FeesService.runRecurringBilling(now, actor)`; the cron passes none. No screen calls that route
+it to `RecurringBillingService.runRecurringBilling(now, actor)`; the cron passes none. No screen calls that route
 (the fees page's «إصدار الفواتير» was removed in `d346729`).
 
 Event names are string literals. Emission is synchronous with no wildcards, because listeners rely on the
@@ -1077,7 +1122,8 @@ Model: commit `f9fd805` — `CorrectionsController`, `UnitCorrectionService`, `u
    `runInTenantTransaction`; domain errors with a case code; emit after the transaction.
 5. Audit: an `@OnEvent` handler in `AuditService` plus the label under `auditActions` in both message files.
 6. Controller in `presentation/controllers/<feature>.controller.ts`: `@Roles` on every handler,
-   `UuidPipe` ids, `ZodValidationPipe` body, `@CurrentUser()`, `@CurrentTenant()`, no try/catch.
+   `UuidPipe` ids, `ZodValidationPipe` body, `@CurrentActor()` for the actor (`@CurrentUser()` only
+   for other claims), `@CurrentTenant()`, no try/catch.
 7. Register the service in `ApplicationModule` `providers` and `exports`, the controller in `PresentationModule`.
 8. Tests: the plan spec, plus `<feature>.integration.spec.ts` copied from `unit-correction.integration.spec.ts`.
 9. Client function in `apps/frontend/lib/api-client.ts` ([apps/frontend/CLAUDE.md](../frontend/CLAUDE.md)).
@@ -1093,7 +1139,7 @@ Declared in `envSchema` (`presentation/config/env.schema.ts`). Names only; never
 | `NODE_ENV` | Required, with no default since 2026-11-15: unset, boot fails (`development` used to be filled in and relaxed every check). MUST be `production` on every deployed process: every production check keys on it |
 | `DATABASE_URL`, `DIRECT_URL`, `JWT_SECRET` | Required everywhere. `JWT_SECRET` is at least 32 characters and differs per environment |
 | `AWS_REGION`, `S3_DOCUMENTS_BUCKET`, `S3_CADASTRE_BUCKET`; `OTP_ENABLED` | Required in production, the two buckets different; `OTP_ENABLED=false` is refused in production |
-| `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY`; `SMTP_HOST` + `MAIL_FROM` | Optional, each pair set together. Also `AWS_SESSION_TOKEN`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD` |
+| `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY`; `SMTP_HOST` + `MAIL_FROM` | Optional, each pair set together. Also `AWS_SESSION_TOKEN`, `SMTP_USER`, `SMTP_PASSWORD`, and `SMTP_PORT` (587 by default) |
 | `PORT`, `PASSWORD_RESET_TTL`, `JWT_STAFF_TTL`, `JWT_STAFF_IDLE_TTL`, `JWT_STAFF_REMEMBER_TTL`, `JWT_CITIZEN_TTL`, `REDIS_URL`, `DASHBOARD_CACHE_TTL_SECONDS`, `TENANT_CACHE_TTL_SECONDS`, `AUDIT_CACHE_TTL_SECONDS`, `QUALITY_CACHE_TTL_SECONDS` | Optional or defaulted in the schema; a quality TTL of 0 disables that cache |
 | `CRON_SECRET`, `METRICS_TOKEN` | Optional; unset closes `api/v1/internal/cron` and `/metrics` |
 | `DAY3ATI_API_BASE_URL`, `DAY3ATI_TOKEN_URL`, `DAY3ATI_CLIENT_ID`, `DAY3ATI_CLIENT_SECRET` | The Day3ati partner API (News). All four or none: none means the integration is off and boot is unaffected, in production too; some means boot fails naming every missing one. Server-side only; the secret is never sent to the frontend or logged. Production values are swapped in by setting them |
@@ -1112,6 +1158,7 @@ Read but not declared: `VERCEL`, `VERCEL_GIT_COMMIT_SHA`, `NODE_APP_INSTANCE`, `
 |---|---|
 | Run against the local DB (target guard first) | `pnpm --filter @mechanization/backend dev`, or root `pnpm dev` for both apps |
 | Build; lint | `pnpm --filter @mechanization/backend build`; `pnpm --filter @mechanization/backend lint` |
+| Unused files, exports and dependencies, every workspace (knip; root `knip.jsonc`, new findings fail) | root `pnpm lint:unused` |
 | Unit tests; one pattern | `pnpm --filter @mechanization/backend test`, `… test -- <pattern>` |
 | Typecheck (no backend script); Prisma clients; local seed | root `pnpm typecheck`; `pnpm db:generate`; `pnpm db:seed`, `pnpm db:seed:census` |
 | Provision a municipality's existing staff on Day3ati (dry run unless `--apply`) | `pnpm --filter @mechanization/backend day3ati:backfill-staff --slug <slug>` |
@@ -1128,11 +1175,19 @@ points at does not exist. `src/scripts/reset-2fa.ts` has no script entry and MUS
   They `DROP SCHEMA … CASCADE` and rebuild fixed `tenant_*_spec` schemas on whatever database it names,
   and nothing checks the target. Point it ONLY at a throwaway Postgres 17 container (migration `0044`
   needs 17), NEVER at `municipality_db_local`, staging or production. CI uses `postgres:17-alpine` (`ci.yml` job `verify`).
+- A spec over a service that opens `runInTenantTransaction` needs a real `TenantContextService`: the
+  helper re-enters the scope with the transaction client, which an object literal standing in for the
+  context cannot do (`context.require is not a function`). Call it through `inTenantScope(service,
+  context, scope)` (`infrastructure/context/in-tenant-scope.testing.ts`), which runs every method inside
+  the scope, as `TenantMiddleware` runs a request; the fee suites do since audit ARCH-01, and the
+  `BuildingsService` ones since ARCH-03. A spec builds the five fee services with `feeServices(...)`
+  (`fees/fee-services.testing.ts`), from the six arguments `FeesService` took before GOD-01 to GOD-04, and
+  `feeServicesInTenantScope` wraps all five.
 - Locally: the throwaway-container commands and which suites to run are in
   [docs/database.md](../../docs/database.md#test-a-migration-on-a-throwaway-postgres-17).
 - Convention specs: `raw-sql-is-schema-qualified.spec.ts`, `migration-guards-are-schema-scoped.spec.ts`,
   `domain-enum-drift.spec.ts` (the domain's enums, `StaffRole` among them, against the shared ones),
-  `tenant-isolation.spec.ts`, `env.schema.spec.ts`, `route-inventory.spec.ts` (`@Public` / `@Roles` over
+  `tenant-isolation.spec.ts`, `env.schema.spec.ts`, `route-inventory.spec.ts` (`@Public` / `@Roles` / `@SelfService` over
   every controller, and the «مشاهد فقط» boundary), and `cross-tenant-routes.spec.ts` (another
   municipality's token, staff and citizen, refused 403 `TENANT_MISMATCH` on every mounted non-public
   route). The last two share `presentation/controllers/route-discovery.ts` (`discoverRoutes`), which
@@ -1157,7 +1212,7 @@ points at does not exist. `src/scripts/reset-2fa.ts` has no script entry and MUS
   callable inside a transaction), which stamps who raised it (`issuedById`: the clerk at the counter,
   nobody for a citizen's own press). A request abandoned before payment leaves no open debt; a request
   is cancelled by the citizen or a clerk only while it has no bill, and by the manager's «إلغاء الفاتورة»
-  once it has one: `FeesService.cancelBill` cancels the request waiting on the bill in its own
+  once it has one: `BillLifecycleService.cancelBill` cancels the request waiting on the bill in its own
   transaction (`cancelRequestOfCancelledBill`, decision of 2026-10-13), which `0094`'s guard allows only
   once the bill is CANCELLED.
 - **A card or a flat a request names is never deleted.** `0092`'s keys onto `property_entries` and
@@ -1168,7 +1223,7 @@ points at does not exist. `src/scripts/reset-2fa.ts` has no script entry and MUS
 - **Online payment is paused** (the product owner, 2026-10-13, [open-decisions §21](../../docs/open-decisions.md#21-online-payment-citizen-sign-in-and-notifications-decided-2026-10-13)).
   While the Whish gateway is not live (`WhishGateway.isLive`: `WHISH_PROVIDER_WIRED`, false until
   `postCheckout` is written, and both credentials — so a value set early no longer lifts the refusal into
-  500s, S18), `FeesService.startWhishCheckout` and a citizen's own `raiseBill` refuse with
+  500s, S18), `WhishCheckoutService.startWhishCheckout` and a citizen's own `raiseBill` refuse with
   `ONLINE_PAYMENT_UNAVAILABLE` before anything is read or written; the counter raises the fee. The
   sandbox the gateway runs without credentials is unreachable from the checkout: it moved a bill to
   PENDING_REVIEW under a `WSH-` reference of our own, with no money taken.

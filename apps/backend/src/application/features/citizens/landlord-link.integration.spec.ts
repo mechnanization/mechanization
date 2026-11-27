@@ -14,9 +14,11 @@ import { ConflictError, ValidationError } from '../../../domain/errors/domain-er
 import { CasesService } from '../cases/cases.service';
 import { BuildingsService } from '../buildings/buildings.service';
 import { CensusSyncService } from '../buildings/census-sync.service';
-import { FeesService } from '../fees/fees.service';
 import { CitizensService } from './citizens.service';
 import { LandlordLinkService, readFootprint } from './landlord-link.service';
+import { feeServices } from '../fees/fee-services.testing';
+import type { FeeNoticesService } from '../fees/fee-notices.service';
+import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
 
 /**
  * Owner links against a real Postgres — what a link writes, and that undoing
@@ -51,10 +53,11 @@ describeIfDb('LandlordLinkService', () => {
   let db: TenantPrismaClient;
   let context: TenantContextService;
   let buildings: BuildingsService;
+  let occupancyWrites: OccupancyWritesService;
   let census: CensusSyncService;
   let links: LandlordLinkService;
   let citizens: CitizensService;
-  let fees: FeesService;
+  let feeNotices: FeeNoticesService;
   let officerId: string;
 
   const actor = () => ({ id: officerId, role: 'SUPER_ADMIN' });
@@ -99,10 +102,11 @@ describeIfDb('LandlordLinkService', () => {
       events,
     );
     buildings = new BuildingsService(context, cases, events);
+    occupancyWrites = new OccupancyWritesService(context, cases, events, buildings);
     census = new CensusSyncService(context, cases, events);
     links = new LandlordLinkService(
       context,
-      buildings,
+      occupancyWrites,
       events,
       new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
     );
@@ -118,7 +122,7 @@ describeIfDb('LandlordLinkService', () => {
       events,
       new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
     );
-    fees = new FeesService(
+    ({ feeNotices } = feeServices(
       context,
       events,
       {} as never,
@@ -130,7 +134,7 @@ describeIfDb('LandlordLinkService', () => {
       {} as never,
       // AuditService: these tests never reach a payment.
       {} as never,
-    );
+    ));
 
     officerId = randomUUID();
     await db.user.create({
@@ -298,7 +302,7 @@ describeIfDb('LandlordLinkService', () => {
       dueDate: '2026-12-31',
     } as CreateFeeNotice;
     try {
-      const issued = await within(() => fees.issue(notice, actor()));
+      const issued = await within(() => feeNotices.issue(notice, actor()));
       const invoice = await db.citizenPayment.findFirst({
         where: { citizenId, feeNoticeId: issued.noticeId },
       });
@@ -475,7 +479,7 @@ describeIfDb('LandlordLinkService', () => {
       context,
       new EventEmitter2(),
       { get: async () => null, set: async () => undefined } as never,
-      { get: () => undefined } as never,
+      { getOrThrow: () => 60 } as never,
     );
     const profile = await within(() => reporting.getCitizenProfile(tenantId));
     const card = profile!.registrations[0]!.properties[0]!;
@@ -523,9 +527,9 @@ describeIfDb('LandlordLinkService', () => {
     });
     const owner = await ownerWithFile(phone.stored);
 
-    const real = buildings.recordOccupancy.bind(buildings);
+    const real = occupancyWrites.recordOccupancy.bind(occupancyWrites);
     const spy = jest
-      .spyOn(buildings, 'recordOccupancy')
+      .spyOn(occupancyWrites, 'recordOccupancy')
       .mockImplementationOnce((input, who) => real(input, who))
       .mockImplementationOnce(async () => {
         throw new Error('connection reset');
@@ -753,6 +757,11 @@ describeIfDb('LandlordLinkService', () => {
 
     const [proposal] = await within(() => links.claimsNaming(owner.id));
     expect(proposal!.blocked?.code).toBe('NOT_ON_SURVEY');
+    // ERR-04: the block's words are a code the message files hold, and the refusal the press gets is the same.
+    expect(proposal!.blocked?.refusal).toEqual({
+      code: 'LANDLORD_LINK_NOT_ON_SURVEY',
+      params: { hasUnit: 'no', unitCode: '', hasOwners: 'no', owners: '' },
+    });
 
     await expect(
       within(() => links.confirm({ propertyEntryId: entryId, citizenId: owner.id, actor: actor() })),
@@ -786,7 +795,7 @@ describeIfDb('LandlordLinkService', () => {
 
     await expect(
       within(() => links.confirm({ propertyEntryId: entryId, citizenId: owner.id, actor: actor() })),
-    ).rejects.toMatchObject({ details: { block: { code: 'OWNER_CARD_UNLINKED' } } });
+    ).rejects.toMatchObject({ code: 'LANDLORD_LINK_OWNER_CARD_UNLINKED', details: { block: { code: 'OWNER_CARD_UNLINKED' } } });
     expect(await ownerSpells(owner.id)).toEqual([]);
   });
 
@@ -1324,6 +1333,10 @@ describeIfDb('LandlordLinkService', () => {
     expect(await offeredOn(entryId)).toEqual([[wholeOwner.id, 'PROPERTY']]);
     const candidate = (await within(() => links.proposal(entryId)))?.candidates.find((c) => c.id === wholeOwner.id);
     expect(candidate?.blocked?.code).toBe('UNIT_OWNED_BY_OTHER');
+    expect(candidate?.blocked?.refusal).toMatchObject({
+      code: 'LANDLORD_LINK_UNIT_OWNED_BY_OTHER',
+      params: { hasUnit: 'yes', hasOwners: 'yes' },
+    });
 
     // Offered with the reason, and still not linkable over the flat's record: nothing is written.
     await expect(

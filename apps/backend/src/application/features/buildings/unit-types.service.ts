@@ -12,7 +12,7 @@ import { runInTenantTransaction } from '../../../infrastructure/context/tenant-t
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { AuditService } from '../audit/audit.service';
-import { isUniqueViolationOn } from '../treasury/retry-key';
+import { isUniqueViolationOn } from '../../../infrastructure/prisma/prisma-errors';
 
 const TYPE_SELECT = {
   id: true,

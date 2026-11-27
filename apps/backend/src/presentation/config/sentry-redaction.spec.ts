@@ -5,7 +5,7 @@ import {
   redactUrl,
   scrubEvent,
   type ScrubbableEvent,
-} from './sentry-redaction';
+} from '@mechanization/shared-schemas';
 
 /**
  * These tests are the control, not a description of one.
@@ -235,6 +235,65 @@ describe('sentry redaction', () => {
     it('handles an event with no request, user or breadcrumbs', () => {
       expect(() => scrubEvent({})).not.toThrow();
       expect(scrubEvent({ breadcrumbs: null })).toEqual({ breadcrumbs: null });
+    });
+  });
+
+  /*
+    The portal's call (`apps/frontend/lib/sentry-options.ts`): the same module,
+    asked to keep only the URL of a request. Before DRY-05 the portal ran its own
+    untested copy; these pin what it relies on.
+  */
+  describe('the portal', () => {
+    /** A browser event on the staff register: a search typed into the URL, the token beside it. */
+    function portalEvent(): ScrubbableEvent {
+      return {
+        request: {
+          url: 'https://baladyia.com/zahle/ar/admin-x7/citizens/3f2a1b4c-5d6e-4f70-8a9b-0c1d2e3f4a5b?search=ahmad#BZR-2608-5HLQBM',
+          method: 'GET',
+          headers: {
+            'user-agent': 'Mozilla/5.0',
+            referer: 'https://baladyia.com/zahle/ar/admin-x7/citizens?search=ahmad',
+            authorization: 'Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig',
+          },
+          data: { fullName: 'أحمد محمد', nationalId: '123456789' },
+        },
+        user: { id: 'staff-1' },
+        breadcrumbs: [{ message: 'navigated to /zahle/ar/track/BZR-2608-5HLQBM' }],
+        contexts: {
+          browser: { name: 'Chrome', version: '131.0.6778.86' },
+          route: { path: '/zahle/ar/track/BZR-2608-5HLQBM' },
+        },
+      };
+    }
+
+    it('keeps only the redacted URL of a request: no headers, no method, no body', () => {
+      const scrubbed = scrubEvent(portalEvent(), { request: 'url-only' });
+
+      expect(scrubbed.request).toEqual({ url: `https://baladyia.com/zahle/ar/admin-x7/citizens/${REDACTED}` });
+    });
+
+    it('drops the hash as well as the query string, wherever a رقم مرجعي might sit', () => {
+      expect(redactUrl('/zahle/ar/track#BZR-2608-5HLQBM')).toBe('/zahle/ar/track');
+      expect(redactUrl('/zahle/ar/citizens?search=ahmad#top')).toBe('/zahle/ar/citizens');
+    });
+
+    it('redacts a رقم مرجعي in a breadcrumb and an application context, and keeps the browser version', () => {
+      const scrubbed = scrubEvent(portalEvent(), { request: 'url-only' });
+      const serialised = JSON.stringify(scrubbed);
+
+      expect(serialised).not.toContain('BZR-2608-5HLQBM');
+      expect(serialised).not.toContain('123456789');
+      expect(serialised).not.toContain('eyJ');
+      expect(serialised).not.toContain('search=');
+      expect(scrubbed.user).toBeUndefined();
+      expect(scrubbed.contexts?.browser).toEqual({ name: 'Chrome', version: '131.0.6778.86' });
+    });
+
+    it('never keeps the referer, which is a URL with its query string, on the API side either', () => {
+      const headers = scrubEvent(portalEvent()).request?.headers ?? {};
+
+      expect(headers.referer).toBeUndefined();
+      expect(headers['user-agent']).toBe('Mozilla/5.0');
     });
   });
 });

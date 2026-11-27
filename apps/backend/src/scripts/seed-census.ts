@@ -57,7 +57,7 @@ import { CensusSyncService } from '../application/features/buildings/census-sync
 import { DamageService } from '../application/features/buildings/damage.service';
 import { CasesService } from '../application/features/cases/cases.service';
 import { ZonesService } from '../application/features/zones/zones.service';
-import type { TenantContextService } from '../infrastructure/context/tenant-context.service';
+import { TenantContextService, type TenantScope } from '../infrastructure/context/tenant-context.service';
 import { PrismaCaseRepository } from '../infrastructure/repositories/case.repository';
 import { PrismaParcelRepository } from '../infrastructure/repositories/parcel.repository';
 import { PrismaUserRepository } from '../infrastructure/repositories/user.repository';
@@ -65,6 +65,7 @@ import { PrismaZoneRepository } from '../infrastructure/repositories/zone.reposi
 import { TenantSlug } from '../domain/value-objects/tenant-slug.vo';
 import { TENANTS, localDatabaseUrl, requestedCitizens, runSeed, tenantClient } from './seed';
 import { Dice, randomSource, seedId, SEED_NOW } from './seed-register';
+import { StaffActor } from '../application/common/actor';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -73,7 +74,6 @@ const MIN_SPACING_M = 12;
 /** A pin on the parcel's edge reads as standing on the neighbour's land. */
 const EDGE_MARGIN_M = 2;
 
-type Actor = { id: string; role: string };
 type Outline = Feature<Polygon | MultiPolygon>;
 type LngLat = [number, number];
 
@@ -140,15 +140,25 @@ const TYPICAL_AREA: Record<string, [number, number]> = {
 
 // ─────────────────────────────  Services  ─────────────────────────────
 
-/** The census services over one tenant client — census-sync.integration.spec.ts's setup. */
-function censusServices(db: TenantPrismaClient, tenantSlug: string, schemaName: string) {
-  const context = {
-    get prisma() {
-      return db;
-    },
-    tenantSlug,
-    schemaName,
-  } as unknown as TenantContextService;
+/** Runs `work` as the municipality `schemaName`, over `db`, as `TenantMiddleware` runs a request. */
+function asTenant<T>(
+  context: TenantContextService,
+  db: TenantPrismaClient,
+  tenantSlug: string,
+  schemaName: string,
+  work: () => Promise<T>,
+): Promise<T> {
+  const scope: TenantScope = { tenantId: tenantSlug, tenantSlug, schemaName, prisma: db as unknown as TenantScope['prisma'] };
+  return context.run(scope, work);
+}
+
+/**
+ * The census services over one tenant client — census-sync.integration.spec.ts's setup.
+ * `context` is a real one, and `seedCensus` runs inside its scope (`asTenant` below):
+ * the building writes open `runInTenantTransaction` since audit ARCH-03, which re-enters
+ * the scope, and an object literal standing in for the context has none.
+ */
+function censusServices(context: TenantContextService) {
   const events = new EventEmitter2();
   const cases = new CasesService(new PrismaCaseRepository(context), new PrismaUserRepository(context), events);
   const buildings = new BuildingsService(context, cases, events);
@@ -238,7 +248,7 @@ async function seedZones(
   zones: ReturnType<typeof censusServices>['zones'],
   tenantSlug: string,
   parcels: readonly ParcelGeo[],
-  actor: Actor,
+  actor: StaffActor,
 ): Promise<number> {
   if ((await db.zone.count()) > 0) return 0;
 
@@ -418,8 +428,9 @@ async function seedCensus(
   tenant: (typeof TENANTS)[number],
   schemaName: string,
   citizens: number,
+  context: TenantContextService,
 ): Promise<CensusResult> {
-  const services = censusServices(db, tenant.slug, schemaName);
+  const services = censusServices(context);
   const s = `"${schemaName}"`;
   const [{ now: runStart }] = await db.$queryRawUnsafe<Array<{ now: Date }>>(
     `SELECT (now() AT TIME ZONE 'utc')::timestamp AS now`,
@@ -430,10 +441,10 @@ async function seedCensus(
     where: { kind: 'STAFF', email: { endsWith: `@${tenant.slug}.gov.lb` } },
     select: { id: true, email: true, role: true },
   });
-  const byLocal = new Map(staff.map((u) => [u.email!.split('@')[0], { id: u.id, role: u.role as string }]));
+  const byLocal = new Map(staff.map((u) => [u.email!.split('@')[0], { id: u.id, role: u.role! }]));
   const admin = byLocal.get('admin')!;
   const fieldTeam = ['inspector', 'inspector2', 'inspector3', 'inspector4'].map((k) => byLocal.get(k)!).filter(Boolean);
-  const roleOf = new Map(staff.map((u) => [u.id, u.role as string]));
+  const roleOf = new Map(staff.map((u) => [u.id, u.role!]));
 
   // ── The cadastre ──
   const parcels: ParcelGeo[] = (
@@ -1066,7 +1077,10 @@ async function main(): Promise<void> {
       }
       console.log(`  ${tenant.nameAr} (${tenant.slug})`);
       const count = tenant.share === 1 ? citizens : Math.max(50, Math.round(citizens * tenant.share));
-      const result = await seedCensus(db, tenant, schemaName, count);
+      const context = new TenantContextService();
+      const result = await asTenant(context, db, tenant.slug, schemaName, () =>
+        seedCensus(db, tenant, schemaName, count, context),
+      );
       console.log(
         `  written: ${result.zones} zones, ${result.buildingsCreated} buildings, ` +
           `${result.linkedRegistrations} households linked` +

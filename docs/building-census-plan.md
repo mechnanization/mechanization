@@ -12,7 +12,7 @@
 > have **not** been run; see §11.3 before trusting it in the field.
 > The handful of things deliberately not covered are listed under "What is not
 > covered" in §6 and §10 — none of them block field use.
-> **Last verified against the code:** `feat/unit-types` (on `chore/migration-0109`): §17, «أنواع الوحدات», 2026-11-21; `chore/migration-0105`, `chore/migration-0106` and the building types
+> **Last verified against the code:** `refactor/cleanup-god-01-05-arch-03` (on `develop@5bf5856a` with #228, #230, #236, #239 and #252 merged in): the occupancy writes named in `OccupancyWritesService` after GOD-05, 2026-11-27; `feat/unit-types` (on `chore/migration-0109`): §17, «أنواع الوحدات», 2026-11-21; `chore/migration-0105`, `chore/migration-0106` and the building types
 > (on `develop@e9e79ff`, uncommitted): §16, «أنواع المباني» and «قائمة الإعفاء من الرسوم» on the unit
 > drawer, 2026-11-16.
 > **Created:** 2026-09-09 · **Branch to use:** `feat/building-census` (off `develop`)
@@ -1490,7 +1490,7 @@ coloured unvisited, and the حالة that sent them there is still open.
 
 **The cause.** `registration.repository.ts` wrote `buildingId` and `unitId` onto
 the rows and stopped. `unitOccupancy.create` existed in exactly two places in the
-backend — `BuildingsService.recordOccupancy` (the matrix's own form) and
+backend — `OccupancyWritesService.recordOccupancy` (the matrix's own form) and
 `backfill-buildings.ts`. The registration path called neither.
 
 **It was a billing fault, not a display one.** P2-T8's `heldThroughOccupancy`
@@ -2178,7 +2178,7 @@ The rule is enforced in three places. They must stay in step:
 
 - **`nonResidentCardIssues`** (the shared submission schema): the form and
   `POST/PUT /citizens`.
-- **`assertNonResidentOccupancy`** (`BuildingsService.recordOccupancy`): the
+- **`assertNonResidentOccupancy`** (`OccupancyWritesService.recordOccupancy`): the
   matrix. Without it the unit panel is a way around the form, and `claimOnFile`
   would create the card the form refuses.
 - **`PropertyCard` / `UnitsEditor` / `UnitStatusChoice`**: stop offering the

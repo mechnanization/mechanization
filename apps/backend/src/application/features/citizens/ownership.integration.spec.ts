@@ -10,12 +10,15 @@ import { PrismaCaseRepository } from '../../../infrastructure/repositories/case.
 import { CasesService } from '../cases/cases.service';
 import { BuildingsService } from '../buildings/buildings.service';
 import { CensusSyncService } from '../buildings/census-sync.service';
-import { FeesService } from '../fees/fees.service';
 import { LandlordLinkService } from './landlord-link.service';
 import { OwnershipService } from './ownership.service';
 import { AuditService } from '../audit/audit.service';
 import { PrismaAuditRepository } from '../../../infrastructure/repositories/audit.repository';
 import { TenancyService } from './tenancy.service';
+import { StaffActor } from '../../common/actor';
+import { feeServices } from '../fees/fee-services.testing';
+import type { FeeNoticesService } from '../fees/fee-notices.service';
+import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
 
 /**
  * Ending an ownership, against a real Postgres.
@@ -40,16 +43,17 @@ describeIfDb('OwnershipService', () => {
   let db: TenantPrismaClient;
   let context: TenantContextService;
   let buildings: BuildingsService;
+  let occupancyWrites: OccupancyWritesService;
   let census: CensusSyncService;
   let links: LandlordLinkService;
   let ownership: OwnershipService;
   /** The same service with an audit trail that refuses every write. */
   let failingOwnership: OwnershipService;
   let tenancy: TenancyService;
-  let fees: FeesService;
+  let feeNotices: FeeNoticesService;
   let officerId: string;
 
-  const actor = () => ({ id: officerId, role: 'SUPER_ADMIN' });
+  const actor = (): StaffActor => ({ id: officerId, role: 'SUPER_ADMIN' });
   const within = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'tenant-ownership', tenantSlug: 'ownership', schemaName: SCHEMA, prisma: db }, work);
 
@@ -68,20 +72,21 @@ describeIfDb('OwnershipService', () => {
       events,
     );
     buildings = new BuildingsService(context, cases, events);
+    occupancyWrites = new OccupancyWritesService(context, cases, events, buildings);
     census = new CensusSyncService(context, cases, events);
     links = new LandlordLinkService(
       context,
-      buildings,
+      occupancyWrites,
       events,
       new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never),
     );
     const audit = new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never);
-    ownership = new OwnershipService(context, buildings, cases, links, events, audit);
+    ownership = new OwnershipService(context, buildings, cases, links, events, audit, occupancyWrites);
     failingOwnership = new OwnershipService(context, buildings, cases, links, events, {
       recordChangeInTransaction: () => Promise.reject(new Error('audit insert refused')),
-    } as never);
-    tenancy = new TenancyService(context, buildings, cases, links, events, ownership, audit);
-    fees = new FeesService(
+    } as never, occupancyWrites);
+    tenancy = new TenancyService(context, buildings, cases, links, events, ownership, audit, occupancyWrites);
+    ({ feeNotices } = feeServices(
       context,
       events,
       {} as never,
@@ -93,7 +98,7 @@ describeIfDb('OwnershipService', () => {
       {} as never,
       // AuditService: these tests never reach a payment.
       {} as never,
-    );
+    ));
 
     officerId = randomUUID();
     await db.user.create({
@@ -195,7 +200,7 @@ describeIfDb('OwnershipService', () => {
       dueDate: '2026-12-31',
     } as CreateFeeNotice;
     try {
-      const issued = await within(() => fees.issue(notice, actor()));
+      const issued = await within(() => feeNotices.issue(notice, actor()));
       const invoice = await db.citizenPayment.findFirst({ where: { citizenId, feeNoticeId: issued.noticeId } });
       return Number(invoice?.amount ?? 0);
     } catch {

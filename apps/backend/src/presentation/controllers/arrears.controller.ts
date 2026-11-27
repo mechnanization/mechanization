@@ -27,9 +27,9 @@ import { ArrearsBatchService } from '../../application/features/arrears/arrears-
 import { ArrearsReportService } from '../../application/features/arrears/arrears-report.service';
 import { ArrearsService } from '../../application/features/arrears/arrears.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
-import type { SessionClaims } from '../../application/features/identity/identity.service';
-import { APP_CONFIG } from '../config/app.config';
-import { CurrentUser } from '../decorators/current-user.decorator';
+import { APP_CONFIG } from '../../application/common/app.config';
+import { CurrentActor } from '../decorators/current-actor.decorator';
+import { StaffActor } from '../../application/common/actor';
 import { Roles } from '../decorators/roles.decorator';
 import { UuidPipe } from '../pipes/uuid.pipe';
 
@@ -76,9 +76,9 @@ export class ArrearsController {
   @Post('batches/export')
   exportTemplate(
     @Body(new ZodValidationPipe(exportArrearsTemplateSchema)) body: ExportArrearsTemplateInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.arrears.exportTemplate(body, { id: user.sub, role: user.role ?? '' });
+    return this.arrears.exportTemplate(body, actor);
   }
 
   /** The filled template: checked (`dryRun`), or written into the DRAFT batch. */
@@ -88,9 +88,9 @@ export class ArrearsController {
   importLines(
     @Param('batchId', new UuidPipe()) batchId: string,
     @Body(new ZodValidationPipe(importArrearsSchema)) body: ImportArrearsInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.arrears.importLines(batchId, body, { id: user.sub, role: user.role ?? '' });
+    return this.arrears.importLines(batchId, body, actor);
   }
 
   /** The batches, newest first. */
@@ -131,9 +131,9 @@ export class ArrearsController {
   submit(
     @Param('batchId', new UuidPipe()) batchId: string,
     @Body(new ZodValidationPipe(submitArrearsBatchSchema)) body: SubmitArrearsBatchInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.batches.submit(batchId, body, { id: user.sub, role: user.role ?? '' });
+    return this.batches.submit(batchId, body, actor);
   }
 
   /** Approval raises the bills and locks the batch. */
@@ -142,9 +142,9 @@ export class ArrearsController {
   approve(
     @Param('batchId', new UuidPipe()) batchId: string,
     @Body(new ZodValidationPipe(approveArrearsBatchSchema)) _body: Record<string, never>,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.batches.approve(batchId, { id: user.sub, role: user.role ?? '' });
+    return this.batches.approve(batchId, actor);
   }
 
   /** Back to the preparer as a draft, with what to fix. */
@@ -153,9 +153,9 @@ export class ArrearsController {
   returnBatch(
     @Param('batchId', new UuidPipe()) batchId: string,
     @Body(new ZodValidationPipe(returnArrearsBatchSchema)) body: ReturnArrearsBatchInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.batches.returnBatch(batchId, body, { id: user.sub, role: user.role ?? '' });
+    return this.batches.returnBatch(batchId, body, actor);
   }
 
   /** A draft by its preparer or the manager; a submitted batch by the manager alone (the service asks). */
@@ -164,9 +164,9 @@ export class ArrearsController {
   discard(
     @Param('batchId', new UuidPipe()) batchId: string,
     @Body(new ZodValidationPipe(discardArrearsBatchSchema)) body: DiscardArrearsBatchInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.batches.discard(batchId, body, { id: user.sub, role: user.role ?? '' });
+    return this.batches.discard(batchId, body, actor);
   }
 
   /** One line found later: a one-line batch through the same checks and the same approval. */
@@ -174,9 +174,9 @@ export class ArrearsController {
   @Post('lines')
   addLine(
     @Body(new ZodValidationPipe(arrearsSingleLineSchema)) body: ArrearsSingleLineInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.batches.addSingleLine(body, { id: user.sub, role: user.role ?? '' });
+    return this.batches.addSingleLine(body, actor);
   }
 
   /** The lines of approved batches whose person is not on the register yet. */
@@ -192,9 +192,9 @@ export class ArrearsController {
   link(
     @Param('lineId', new UuidPipe()) lineId: string,
     @Body(new ZodValidationPipe(linkArrearsLineSchema)) body: LinkArrearsLineInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.batches.link(lineId, body, { id: user.sub, role: user.role ?? '' });
+    return this.batches.link(lineId, body, actor);
   }
 
   /** The cutoff year, and the old books' totals as the table holds them. */
@@ -209,8 +209,8 @@ export class ArrearsController {
   @Put('settings/cutoff')
   setCutoff(
     @Body(new ZodValidationPipe(arrearsCutoffSchema)) body: ArrearsCutoffInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.batches.setCutoff(body, { id: user.sub, role: user.role ?? '' });
+    return this.batches.setCutoff(body, actor);
   }
 }

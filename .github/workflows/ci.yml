@@ -88,6 +88,13 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      - name: Unused files, exports and dependencies
+        # knip over every workspace (knip.jsonc), failing on anything not in
+        # scripts/knip-baseline.json: what was unused on 2026-11-24 passes until
+        # DEAD-14…16 delete it, and nothing new may join it (DEAD-18). After the
+        # Prisma generate above, so the backend's imports of its clients resolve.
+        run: pnpm lint:unused
+
       - name: Typecheck
         run: pnpm typecheck
 

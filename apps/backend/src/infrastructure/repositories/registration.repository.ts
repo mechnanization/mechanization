@@ -20,6 +20,7 @@ import {
 } from '../../domain/interfaces/registration-repository.interface';
 import { TenantContextService } from '../context/tenant-context.service';
 import { citizenPhoneRuleError } from '../prisma/check-violation';
+import { foreignKeyViolated, isUniqueViolation, isUniqueViolationOn } from '../prisma/prisma-errors';
 import { tenantSchemaRef } from '../prisma/tenant-schema-ref';
 import { normalizeSearchText } from '../../application/common/search-terms';
 
@@ -498,11 +499,7 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
 
   /** A P2002 naming `clientSubmissionId` — the same submission, twice, at once. */
   private isSubmissionIdConflict(error: unknown): boolean {
-    return (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === 'P2002' &&
-      ((error.meta?.target as string[] | undefined) ?? []).join(',').includes('clientSubmissionId')
-    );
+    return isUniqueViolationOn(error, 'clientSubmissionId');
   }
 
   /** Rehydrates the aggregate, properties and their units included. */
@@ -599,8 +596,8 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
       through). Named, so it is a refusal the queue shows a person: as a 500 it
       was retried on every drain, and reported to Sentry each time.
     */
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003') {
-      const constraint = String(error.meta?.field_name ?? '');
+    const constraint = foreignKeyViolated(error);
+    if (constraint !== null) {
       if (constraint.includes('buildingId_fkey')) {
         return new NotFoundError({
           code: 'BUILDING_NOT_FOUND',
@@ -614,20 +611,18 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
         });
       }
     }
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-      const target = (error.meta?.target as string[] | undefined)?.join(', ') ?? '';
-
+    if (isUniqueViolation(error)) {
       // No propertyNumber branch: that column is deliberately not unique any
       // more (see migration 0004), so a P2002 naming it would mean the index
       // came back — worth surfacing as the generic conflict rather than as a
       // reassuring message that hides a schema drift.
-      if (target.includes('identityDocNumber')) {
+      if (isUniqueViolationOn(error, 'identityDocNumber')) {
         return new ConflictError({
           code: 'CITIZEN_IDENTITY_DOC_TAKEN',
           message: 'The identity document number is already held by another file',
         });
       }
-      if (target.includes('referenceNumber')) {
+      if (isUniqueViolationOn(error, 'referenceNumber')) {
         return new ConflictError('تعذّر إنشاء رقم مرجعي فريد — يرجى المحاولة مرة أخرى');
       }
       return new ConflictError('هذه البيانات مسجّلة مسبقاً');

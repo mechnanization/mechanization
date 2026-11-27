@@ -1,4 +1,4 @@
-import { MUNICIPAL_TIME_ZONE } from '@mechanization/shared-schemas';
+import { municipalDayStart } from '@mechanization/shared-schemas';
 import { planExpenseDate } from './expenses.plan';
 
 /**
@@ -55,50 +55,6 @@ export function planIncomeDate(input: {
     case 'EXPENSE_BACKDATE_REASON_REQUIRED':
       return { ok: false, code: 'INCOME_BACKDATE_REASON_REQUIRED', backdatedDays: verdict.backdatedDays };
   }
-}
-
-/** Beirut's wall clock at `instant`, read as if it were UTC, minus the instant: the zone's offset then. */
-function beirutOffsetMs(instant: number): number {
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat('en-US', {
-      timeZone: MUNICIPAL_TIME_ZONE,
-      hourCycle: 'h23',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-    })
-      .formatToParts(new Date(instant))
-      .map((part) => [part.type, part.value]),
-  );
-  const wall = Date.UTC(
-    Number(parts.year),
-    Number(parts.month) - 1,
-    Number(parts.day),
-    Number(parts.hour),
-    Number(parts.minute),
-    Number(parts.second),
-  );
-  return wall - instant;
-}
-
-/**
- * The instant `day` (`YYYY-MM-DD`) begins in Beirut.
- *
- * Lebanon is two hours ahead of UTC in winter and three in summer, so the
- * offset is read at the instant itself rather than assumed. Two passes: the
- * first guess uses the offset at UTC midnight, which is already the day's own
- * offset except on the two nights the clocks change, and the second corrects
- * those. On the night summer time starts the clocks jump from 00:00 to 01:00,
- * and the day begins at the first instant that exists — which is what the
- * second pass lands on.
- */
-export function municipalDayStart(day: string): Date {
-  const utcMidnight = Date.parse(`${day}T00:00:00Z`);
-  const first = utcMidnight - beirutOffsetMs(utcMidnight);
-  return new Date(utcMidnight - beirutOffsetMs(first));
 }
 
 /** `YYYY-MM-DD` plus one calendar day. */

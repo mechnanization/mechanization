@@ -2,8 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { TENANT_REPOSITORY } from '../../domain/interfaces/base-repository.interface';
 import { TenantRepository } from '../../domain/interfaces/tenant-repository.interface';
-import { TenantContextService } from '../../infrastructure/context/tenant-context.service';
-import { TenantPrismaFactory } from '../../infrastructure/prisma/tenant-prisma.factory';
+import { TenantRunner } from '../../infrastructure/context/tenant-runner';
 
 /**
  * Prunes expired OTP challenges in every tenant schema.
@@ -20,8 +19,7 @@ export class OtpCleanupJob {
 
   constructor(
     @Inject(TENANT_REPOSITORY) private readonly tenants: TenantRepository,
-    private readonly tenantContext: TenantContextService,
-    private readonly clients: TenantPrismaFactory,
+    private readonly runner: TenantRunner,
   ) {}
 
   /**
@@ -37,23 +35,13 @@ export class OtpCleanupJob {
     let removed = 0;
 
     for (const tenant of tenants) {
-      const prisma = this.clients.forSchema(tenant.schemaName);
-
       try {
-        await this.tenantContext.run(
-          {
-            tenantId: tenant.id,
-            tenantSlug: tenant.slug,
-            schemaName: tenant.schemaName,
-            prisma,
-          },
-          async () => {
-            const result = await prisma.otpChallenge.deleteMany({
-              where: { expiresAt: { lt: new Date() } },
-            });
-            removed += result.count;
-          },
-        );
+        await this.runner.runAsTenant(tenant, async (prisma) => {
+          const result = await prisma.otpChallenge.deleteMany({
+            where: { expiresAt: { lt: new Date() } },
+          });
+          removed += result.count;
+        });
       } catch (error) {
         // One municipality's failure must not stop the rest: a schema mid
         // migration, or a transient pooler timeout, should cost that tenant an

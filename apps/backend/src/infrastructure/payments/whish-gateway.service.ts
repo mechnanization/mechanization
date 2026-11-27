@@ -18,7 +18,7 @@ import type {
  * **Sandbox is not a fake payment.** With no credentials configured,
  * `createCheckout` does not pretend money moved: it returns to the portal with a
  * reference of our own. No caller reaches it that way today: online payment is
- * paused (open-decisions §21), and `FeesService.startWhishCheckout` refuses with
+ * paused (open-decisions §21), and `WhishCheckoutService.startWhishCheckout` refuses with
  * `ONLINE_PAYMENT_UNAVAILABLE` while `isLive` is false. Nothing in this file can
  * move an invoice to PAID without a signature that verifies — see `parseCallback`.
  */

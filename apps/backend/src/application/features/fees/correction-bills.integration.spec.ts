@@ -13,6 +13,8 @@ import { ConflictError } from '../../common/exceptions';
 import { CorrectionBillsService } from './correction-bills.service';
 import { FeesService } from './fees.service';
 import { PaymentLedgerService } from './payment-ledger.service';
+import { feeServices } from './fee-services.testing';
+import type { FeeNoticesService } from './fee-notices.service';
 
 /**
  * «فواتير تأثّرت بتصحيحات», end to end: the open bills, today's figure through
@@ -36,6 +38,7 @@ describeIfDb('CorrectionBillsService', () => {
   let db: TenantPrismaClient;
   let context: TenantContextService;
   let fees: FeesService;
+  let feeNotices: FeeNoticesService;
   let bills: CorrectionBillsService;
   const clerkId = randomUUID();
   const actor = () => ({ id: clerkId, role: 'ACCOUNTANT' });
@@ -50,7 +53,7 @@ describeIfDb('CorrectionBillsService', () => {
     await migrateTenantSchema(ddl, SCHEMA);
     db = tenantTestClient(TEST_DATABASE_URL!, SCHEMA);
     context = new TenantContextService();
-    fees = new FeesService(
+    ({ fees, feeNotices } = feeServices(
       context,
       { emit: jest.fn() } as unknown as EventEmitter2,
       {} as WhishGateway,
@@ -62,7 +65,7 @@ describeIfDb('CorrectionBillsService', () => {
       {} as PaymentLedgerService,
       // AuditService: these tests never reach a payment.
       {} as never,
-    );
+    ));
     bills = new CorrectionBillsService(context, fees, new PrismaAuditRepository(context));
 
     await db.user.create({
@@ -139,7 +142,7 @@ describeIfDb('CorrectionBillsService', () => {
 
   const issue = async (citizenId: string, over: Partial<CreateFeeNotice> = {}) => {
     const issued = await within(() =>
-      fees.issue(
+      feeNotices.issue(
         {
           title: `رسم ${randomUUID().slice(0, 8)}`,
           amount: 1000,

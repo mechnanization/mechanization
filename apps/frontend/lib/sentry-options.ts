@@ -1,5 +1,5 @@
 import type { Breadcrumb, ErrorEvent } from '@sentry/nextjs';
-import { scrubEvent } from './sentry-redaction';
+import { scrubEvent } from '@mechanization/shared-schemas';
 
 /**
  * The Sentry options every runtime of this app shares.
@@ -10,7 +10,7 @@ import { scrubEvent } from './sentry-redaction';
  * to diverge, and the one that diverges is always the one nobody reads again.
  * So the settings that must not differ live here and are spread into all three.
  *
- * Read `lib/sentry-redaction.ts` alongside this: that module decides what is
+ * Read `sentry-redaction.ts` in `@mechanization/shared-schemas` alongside this: it decides what is
  * removed, this one decides what is never collected.
  */
 export const SHARED_SENTRY_OPTIONS = {
@@ -80,9 +80,9 @@ export const SHARED_SENTRY_OPTIONS = {
     return crumb;
   },
 
-  /** The last gate before anything leaves. See `lib/sentry-redaction.ts`. */
+  /** The last gate before anything leaves: the shared scrubber, keeping only the URL of a request. */
   beforeSend(event: ErrorEvent): ErrorEvent {
-    return scrubEvent(event);
+    return scrubEvent(event, { request: 'url-only' });
   },
 
   /**

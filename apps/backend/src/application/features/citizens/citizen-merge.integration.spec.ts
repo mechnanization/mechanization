@@ -16,6 +16,7 @@ import { AuditService } from '../audit/audit.service';
 import { PrismaAuditRepository } from '../../../infrastructure/repositories/audit.repository';
 import { CitizenMergeService } from './citizen-merge.service';
 import { CitizensService } from './citizens.service';
+import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
 
 /**
  * «دمج ملفين» against a real Postgres — every table a person reaches.
@@ -42,6 +43,7 @@ describeIfDb('CitizenMergeService', () => {
   let db: TenantPrismaClient;
   let context: TenantContextService;
   let buildings: BuildingsService;
+  let occupancyWrites: OccupancyWritesService;
   let census: CensusSyncService;
   let merges: CitizenMergeService;
   let users: PrismaUserRepository;
@@ -66,6 +68,7 @@ describeIfDb('CitizenMergeService', () => {
       events,
     );
     buildings = new BuildingsService(context, cases, events);
+    occupancyWrites = new OccupancyWritesService(context, cases, events, buildings);
     census = new CensusSyncService(context, cases, events);
     merges = new CitizenMergeService(
       context,
@@ -410,9 +413,10 @@ describeIfDb('CitizenMergeService', () => {
     const { into } = await within(() => merges.mergesOf(f.absorbId));
     const { blocks } = await within(() => merges.unmergePreview(into!.id));
     expect(blocks.map((block) => block.code)).toEqual(['CHANGED_SINCE']);
+    expect(blocks[0]!.refusal).toEqual({ code: 'UNMERGE_CHANGED_SINCE', params: {} });
     await expect(
       within(() => merges.unmerge({ mergeId: into!.id, reason: 'محاولة تراجع', tenantSlug: 'merge', actor: actor() })),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: 'UNMERGE_CHANGED_SINCE' });
   });
 
   it('refuses a merge whose preview has gone stale, and writes nothing', async () => {
@@ -526,7 +530,9 @@ describeIfDb('CitizenMergeService', () => {
 
     // The first merge waits for the second to be undone…
     const { into } = await within(() => merges.mergesOf(f.absorbId));
-    expect((await within(() => merges.unmergePreview(into!.id))).blocks.map((block) => block.code)).toEqual(['MERGED_AGAIN']);
+    const again = (await within(() => merges.unmergePreview(into!.id))).blocks;
+    expect(again.map((block) => block.code)).toEqual(['MERGED_AGAIN']);
+    expect(again[0]!.refusal).toMatchObject({ code: 'UNMERGE_MERGED_AGAIN', params: { name: expect.any(String) } });
     await undoOf(f.keepId);
     // …and then goes through, because an undo restores what it moved to the letter.
     expect((await within(() => merges.unmergePreview(into!.id))).blocks).toEqual([]);
@@ -677,7 +683,7 @@ describeIfDb('CitizenMergeService', () => {
     const refusal = (work: () => Promise<unknown>) => within(work).then(() => null, (caught: unknown) => caught);
 
     const occupancy = await refusal(() =>
-      buildings.recordOccupancy({ unitId: f.u2, citizenId: f.absorbId, role: 'OWNER' } as never, actor()),
+      occupancyWrites.recordOccupancy({ unitId: f.u2, citizenId: f.absorbId, role: 'OWNER' } as never, actor()),
     );
     expect((occupancy as ConflictError).details).toMatchObject({ code: 'MERGED_AWAY', survivorId: f.keepId });
 

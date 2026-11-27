@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
+  municipalDayStart,
   municipalToday,
   sameMoney,
   type DailyCountLineView,
@@ -15,7 +16,6 @@ import { ConflictError, NotFoundError, ValidationError } from '../../common/exce
 import { AuditService } from '../audit/audit.service';
 import { addDays, nextDayToClose, planCountDate, planCountLine } from './day-closing.plan';
 import { DayClosureService, type CountRow } from './day-closure.service';
-import { municipalDayStart } from './income.plan';
 import { dateColumn, TreasuryLedgerService } from './treasury-ledger.service';
 
 /**

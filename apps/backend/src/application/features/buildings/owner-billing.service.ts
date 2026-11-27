@@ -14,11 +14,12 @@ import { AuditService, type BuildingChange } from '../audit/audit.service';
 import { FeesService } from '../fees/fees.service';
 import { describeOwnerBilling, planOwnerBilling, type OwnerBillingRefusal } from './owner-billing.plan';
 import { activeOwnerSpells } from './owner-billing';
+import { StaffActor } from '../../common/actor';
+import { setLocalLockTimeout } from '../../common/lock-timeout';
 
 /** The audit action, and the name «فواتير تأثّرت بتصحيحات» traces it by. */
 export const UNIT_OWNER_BILLING_SET = 'UNIT_OWNER_BILLING_SET';
 
-type Actor = { id: string; role: string };
 
 /** The English line each refusal logs; the screen's words come from the code. */
 const REFUSAL_MESSAGES: Record<OwnerBillingRefusal['code'], string> = {
@@ -56,9 +57,9 @@ export class OwnerBillingService {
     return tenantSchemaRef(this.tenantContext.schemaName);
   }
 
-  async set(unitId: string, input: SetOwnerBillingInput, actor: Actor): Promise<OwnerBillingState> {
+  async set(unitId: string, input: SetOwnerBillingInput, actor: StaffActor): Promise<OwnerBillingState> {
     const change = await runInTenantTransaction(this.tenantContext, async () => {
-      await this.db.$executeRawUnsafe(`SET LOCAL lock_timeout = '5s'`);
+      await setLocalLockTimeout(this.db);
       await this.db.$queryRaw`SELECT "id" FROM ${this.S}"units" WHERE "id" = ${unitId}::uuid FOR UPDATE`;
 
       const unit = await this.load(unitId);

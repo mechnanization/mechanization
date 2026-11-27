@@ -17,6 +17,8 @@ import { BuildingsService } from '../buildings/buildings.service';
 import { FeeExemptionService } from '../buildings/fee-exemption.service';
 import { DataQualityService } from '../quality/data-quality.service';
 import { assessCitizen, FeesService } from './fees.service';
+import { feeServices } from './fee-services.testing';
+import type { FeeNoticesService } from './fee-notices.service';
 
 /**
  * «قائمة الإعفاء من الرسوم» against a real tenant schema (migrations 0077 and
@@ -50,6 +52,7 @@ describeIfDb('the fee whitelist', () => {
   let other: TenantPrismaClient;
   let context: TenantContextService;
   let fees: FeesService;
+  let feeNotices: FeeNoticesService;
   let exemptions: FeeExemptionService;
   let buildings: BuildingsService;
   let quality: DataQualityService;
@@ -127,8 +130,8 @@ describeIfDb('the fee whitelist', () => {
 
   /** Previews, then issues, the same notice; answers both, and the issued bill's amount. */
   async function previewThenIssue(notice: FeeNoticePreviewInput) {
-    const preview = await within(() => fees.previewNotice(notice));
-    const issued = await within(() => fees.issue({ ...notice, clientRequestId: randomUUID() } as CreateFeeNotice, admin));
+    const preview = await within(() => feeNotices.previewNotice(notice));
+    const issued = await within(() => feeNotices.issue({ ...notice, clientRequestId: randomUUID() } as CreateFeeNotice, admin));
     const bills = await db.citizenPayment.findMany({ where: { feeNoticeId: issued.noticeId }, select: { amount: true } });
     return { preview, billed: bills.reduce((sum, bill) => sum + Number(bill.amount), 0) };
   }
@@ -157,14 +160,14 @@ describeIfDb('the fee whitelist', () => {
     context = new TenantContextService();
     const emitter = new EventEmitter2();
     const audit = new AuditService(new PrismaAuditRepository(context), context, {} as never, {} as never);
-    fees = new FeesService(
+    ({ fees, feeNotices } = feeServices(
       context,
       emitter,
       {} as never,
       { get: jest.fn().mockResolvedValue(null), set: jest.fn(), invalidatePrefix: jest.fn() } as never,
       {} as never,
       {} as never,
-    );
+    ));
     exemptions = new FeeExemptionService(context, audit, emitter);
     buildings = new BuildingsService(context, {} as never, emitter);
     quality = new DataQualityService(
@@ -172,7 +175,7 @@ describeIfDb('the fee whitelist', () => {
       { proposals: jest.fn().mockResolvedValue({ total: 0, items: [] }) } as never,
       emitter,
       { get: jest.fn().mockResolvedValue(null), set: jest.fn(), invalidatePrefix: jest.fn() } as never,
-      { get: () => 0 } as never,
+      { getOrThrow: () => 0 } as never,
       fees,
     );
     for (const prisma of [db, other]) {
@@ -215,8 +218,8 @@ describeIfDb('the fee whitelist', () => {
 
     it('still pays a FLAT category notice once while any of the three is billed, and not once all are exempt', async () => {
       const flat = forOne(citizenId, { basis: 'FLAT', amount: 7_000, targetType: 'BUILDING_CATEGORY', targetCategory: 'APARTMENT', targetCitizenId: undefined });
-      const preview = await within(() => fees.previewNotice(flat));
-      const issued = await within(() => fees.issue({ ...flat, clientRequestId: randomUUID() } as CreateFeeNotice, admin));
+      const preview = await within(() => feeNotices.previewNotice(flat));
+      const issued = await within(() => feeNotices.issue({ ...flat, clientRequestId: randomUUID() } as CreateFeeNotice, admin));
       const bill = await db.citizenPayment.findFirst({ where: { feeNoticeId: issued.noticeId, citizenId } });
       expect(Number(bill?.amount)).toBe(7_000);
       expect(preview.billedCitizens).toBe(issued.issued);
@@ -292,7 +295,7 @@ describeIfDb('the fee whitelist', () => {
       await db.unitFeeExemption.updateMany({ where: { unitId: units[1]!.id, liftedAt: null }, data: { validUntil: yesterday() } });
 
       expect(await billToday(citizenId)).toMatchObject({ amount: 1_000, assessment: { exemptUnitCount: 1 } });
-      const preview = await within(() => fees.previewNotice(forOne(citizenId, {})));
+      const preview = await within(() => feeNotices.previewNotice(forOne(citizenId, {})));
       expect(preview).toMatchObject({ expectedRevenue: 1_000, notCharged: { feeExemptUnits: 1 } });
 
       const findings = (await within(() => quality.findings())).items.filter((finding) => finding.kind === 'FEE_EXEMPTION_ENDED');

@@ -12,16 +12,19 @@ import {
   requestOtpSchema,
   staffLoginSchema,
   totpEnrolmentSchema,
+  totpReauthSchema,
+  type TotpReauth,
   verifyOtpSchema,
 } from '@mechanization/shared-schemas';
 import { IdentityService } from '../../application/features/identity/identity.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { CurrentTenant, CurrentUser } from '../decorators/current-user.decorator';
+import { SelfService } from '../decorators/self-service.decorator';
 import { ForbiddenError } from '../../application/common/exceptions';
 import { Public } from '../decorators/public.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
-import { APP_CONFIG } from '../config/app.config';
+import { APP_CONFIG } from '../../application/common/app.config';
 import { TrustedOriginGuard } from '../guards/trusted-origin.guard';
 import {
   clearStaffRefreshCookie,
@@ -211,15 +214,22 @@ export class AuthController {
    * Enrolment is authenticated: an admin who has not yet set up TOTP can still
    * sign in only if their role does not require it, and a SUPER_ADMIN's first
    * secret is issued by a colleague who already has access (see seed.ts).
+   * The session is not enough on its own (audit SEC-02): the body carries the
+   * current password, and the current code while a factor is confirmed. The
+   * own-account throttle, like the other routes that check a password.
    */
+  @SelfService("a staff member's own second factor")
   @Post('staff/totp/enrol')
+  @Throttle(OWN_ACCOUNT_THROTTLE)
   async beginTotpEnrolment(
     @CurrentTenant('slug') tenantSlug: string,
     @CurrentUser() user: SessionClaims,
+    @Body(new ZodValidationPipe(totpReauthSchema)) body: TotpReauth,
   ) {
-    return this.identity.beginTotpEnrolment(user.sub, tenantSlug);
+    return this.identity.beginTotpEnrolment(user.sub, tenantSlug, body);
   }
 
+  @SelfService("a staff member's own second factor")
   @Post('staff/totp/confirm')
   async confirmTotpEnrolment(
     @CurrentUser() user: SessionClaims,
@@ -229,14 +239,15 @@ export class AuthController {
     return { confirmed: true };
   }
 
+  @SelfService("a staff member's own second factor")
   @Post('staff/totp/disable')
   @Throttle(OWN_ACCOUNT_THROTTLE)
   async disableTotp(
     @CurrentTenant('slug') tenantSlug: string,
     @CurrentUser() user: SessionClaims,
-    @Body() body: { currentPassword?: string },
+    @Body(new ZodValidationPipe(totpReauthSchema)) body: TotpReauth,
   ) {
-    await this.identity.disableTotp(user.sub, tenantSlug, body?.currentPassword);
+    await this.identity.disableTotp(user.sub, tenantSlug, body);
     return { disabled: true };
   }
 
@@ -251,6 +262,7 @@ export class AuthController {
     return this.identity.staffSelf(user.sub);
   }
 
+  @SelfService("the caller's own password")
   @Post('staff/change-password')
   @Throttle(OWN_ACCOUNT_THROTTLE)
   async changePassword(
@@ -263,6 +275,7 @@ export class AuthController {
     return { changed: true };
   }
 
+  @SelfService("the caller's own email")
   @Post('staff/change-email')
   @Throttle(OWN_ACCOUNT_THROTTLE)
   async changeEmail(
@@ -275,6 +288,7 @@ export class AuthController {
     return result;
   }
 
+  @SelfService("the caller's own reset email")
   @Post('staff/send-reset-password-email')
   async sendResetPasswordEmail(
     @CurrentUser() user: SessionClaims,
@@ -430,6 +444,7 @@ export class AuthController {
    * reviewed self-service route (`route-inventory.spec.ts`). Answers the same
    * whatever there was to end, so the portal clears its storage either way.
    */
+  @SelfService('a citizen ending their own sessions; refuses staff')
   @Post('citizen/logout')
   @HttpCode(200)
   @Throttle(OWN_ACCOUNT_THROTTLE)
@@ -447,6 +462,7 @@ export class AuthController {
   // ────────────────────────────  Shared  ────────────────────────────
 
   /** Lets the frontend confirm a stored token is still valid on page load. */
+  @SelfService('who the caller is')
   @Get('me')
   me(@CurrentUser() user: SessionClaims) {
     return { id: user.sub, kind: user.kind, role: user.role, tenantSlug: user.tenantSlug };

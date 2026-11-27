@@ -34,6 +34,7 @@ import { S3StorageService } from './aws/s3-storage.service';
 import { RedisCacheService } from './cache/redis-cache.service';
 import { CadastreAssetsService } from './cadastre/cadastre-assets.service';
 import { TenantContextService } from './context/tenant-context.service';
+import { TenantRunner } from './context/tenant-runner';
 import { RegistryPrismaService } from './prisma/registry-prisma.service';
 import { TenantPrismaFactory } from './prisma/tenant-prisma.factory';
 import { PrismaAuditRepository } from './repositories/audit.repository';
@@ -61,6 +62,7 @@ import { SmsProviderService } from './sms/sms-provider.service';
 @Module({
   providers: [
     TenantContextService,
+    TenantRunner,
     RegistryPrismaService,
     TenantPrismaFactory,
     RedisCacheService,
@@ -104,6 +106,7 @@ import { SmsProviderService } from './sms/sms-provider.service';
   ],
   exports: [
     TenantContextService,
+    TenantRunner,
     RegistryPrismaService,
     TenantPrismaFactory,
     RedisCacheService,

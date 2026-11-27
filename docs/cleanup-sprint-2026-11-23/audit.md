@@ -211,6 +211,9 @@ Sizes today (the docs' numbers are stale): `fees.service.ts` 6,167 (doc 3,979), 
 `components/` (doc 44). Tracked: CQ Backend god-files row, CQ Frontend api-client and 44-files rows (CODE-6).
 Each extraction below is a move with no behaviour change, its own spec where the moved code holds decisions (rule 8).
 
+After GOD-01 to GOD-05 (2026-11-27, with ARCH-03): `fees.service.ts` 3,677, `buildings.service.ts` 4,755; the four fee
+services and `occupancy-writes.service.ts` 1,128.
+
 ## [GOD-01] Extract the Whish checkout and callback out of FeesService
 - **Priority:** P2 · **Assignee:** Hashem · **Estimate:** L · **Category:** God-files
 - **Files:** `fees/fees.service.ts` `startWhishCheckout` (4763), `parseWhishCallback` (4934), `settleFromWhishCallback` (4951), `markWhishCheckoutMismatched` → new `fees/whish-checkout.service.ts`; `FeesController`, `fees.module`.
@@ -403,6 +406,11 @@ income, transfers, treasury movements and `ExpensesService`. Arrears controller:
 - **Acceptance criteria:** 1. `limit`/`offset` via the helpers, a max, `{ items, total }`. 2. `standingCase` keeps its unpaged internal read.
 - **Depends on:** none (ship with PAG-03 — the contract changes)
 - **Verification:** cases specs; a spec for the cap.
+- **Done 2026-11-25:** `limit` (`CASES_PAGE_DEFAULT` 50, `CASES_PAGE_MAX` 500, both in shared `case.schema.ts`) and
+  `offset`, answered `{ items, total }` (was `{ cases }`); `CaseRepository.findPage` (`id` breaks a `createdAt` tie),
+  `findAll` kept unpaged for the service's own reads. Until PAG-03, `getCases` asks for `CASES_PAGE_MAX` and the page
+  says «تُعرض أحدث N حالة من أصل M» when that was not all. The eight prose throws of `cases.service.ts` were converted
+  on the way (`CASE_*` codes).
 
 ## [PAG-03] Use server paging on the cases page
 - **Priority:** P2 · **Assignee:** Abed · **Estimate:** S · **Category:** Pagination
@@ -410,6 +418,9 @@ income, transfers, treasury movements and `ExpensesService`. Arrears controller:
 - **Acceptance criteria:** `DataTable` with `manualPagination`, `useUrlPagination`; PRIM-3.
 - **Depends on:** PAG-02
 - **Verification:** frontend tests; harness.
+- **Found during PAG-02:** the queue tabs and the zone filter work on the loaded rows, so past `CASES_PAGE_MAX` cases
+  their counts are of the newest 500. Server paging needs the tab (`caseType`) and status as query filters, which the
+  route already takes; the zone filter (parcel → sector, client-side today) has no server filter.
 
 ## [PAG-04] Page GET fees/notices on the server
 - **Priority:** P3 · **Assignee:** Hashem · **Estimate:** S · **Category:** Pagination
@@ -418,12 +429,18 @@ income, transfers, treasury movements and `ExpensesService`. Arrears controller:
 - **Acceptance criteria:** helpers, a max, `{ items, total }`.
 - **Depends on:** none (ship with PAG-05)
 - **Verification:** fees specs.
+- **Done 2026-11-25:** `limit` (`FEE_NOTICES_PAGE_DEFAULT` 50, `FEE_NOTICES_PAGE_MAX` 200, in shared `fee.schema.ts`) and
+  `offset`, answered `{ items, total }`; `id` breaks a `createdAt` tie. Until PAG-05, `getFeeNotices` asks for
+  `FEE_NOTICES_PAGE_MAX` and the page says when that was not all.
 
 ## [PAG-05] Use server paging on «إشعارات الرسوم»
 - **Priority:** P3 · **Assignee:** Abed · **Estimate:** S · **Category:** Pagination
 - **Files:** `app/…/(protected)/fees/notices/page.tsx`, `lib/api-client.ts` `getFeeNotices`.
 - **Depends on:** PAG-04
 - **Acceptance criteria / Verification:** as PAG-03.
+- **Found during PAG-04:** `components/admin/settings/backup-section.tsx` also reads `getFeeNotices` for its export, and
+  since PAG-04 gets `FEE_NOTICES_PAGE_MAX` (200) notices at most where its other tables ask for `EXPORT_LIMIT` (1,000):
+  page through, or keep it with the backup decision (U-11, DEAD-10).
 
 ## [PAG-06] Say when an old-debts list was cut, instead of truncating silently
 - **Priority:** P2 · **Assignee:** Hashem · **Estimate:** S · **Category:** Pagination
@@ -685,7 +702,7 @@ No cross-tenant path found. Every task here touches citizen data or credentials 
 
 ## [ARCH-06] Add a snapshot-read helper for the treasury's Repeatable Read reads
 - **Priority:** P3 · **Assignee:** Hashem · **Estimate:** S · **Category:** Architecture
-- **Files:** `treasury/treasury.service.ts:156`, `treasury-movements.service.ts:125`, `daily-cash-report.service.ts:63` (bare `$transaction` with `isolationLevel: RepeatableRead`).
+- **Files:** `treasury/treasury.service.ts:156`, `treasury-movements.service.ts:125`, `daily-cash-report.service.ts:63` (bare `$transaction` with `isolationLevel: RepeatableRead`). Found during ARCH-01 (2026-11-24): `FeesService.listAllPayments` reads its page, count and totals in one transaction at Read Committed (now `runInTenantTransaction`; before, an array `$transaction`), whose comment claimed one snapshot — it is a fourth reader for the helper (CQ Backend row).
 - **Problem:** **NEW**. Legitimate reads, but they are the shape the rule forbids and are not in the debt table.
 - **Acceptance criteria:** `readInTenantSnapshot(tenantContext, fn)` in `infrastructure/context`; the three use it; the rule in apps/backend/CLAUDE.md names it.
 - **Depends on:** none
@@ -739,7 +756,7 @@ No cross-tenant path found. Every task here touches citizen data or credentials 
 
 ## [ARCH-13] Convert the identity, staff and OTP prose throws to error codes
 - **Priority:** P2 · **Assignee:** Hashem · **Estimate:** M · **Category:** Architecture
-- **Files:** `identity.service.ts` (19), `staff.service.ts` (19), `otp.service.ts` (6).
+- **Files:** `identity.service.ts` (19), `staff.service.ts` (19), `otp.service.ts` (6). Done during SEC-02 (2026-11-24): the three in `beginTotpEnrolment`, `confirmTotpEnrolment` and `disableTotp` (now `SESSION_INVALID` and `TOTP_ENROLMENT_NOT_STARTED`), so `identity.service.ts` has 16 left and the ratchet is 196.
 - **Acceptance criteria / Verification:** as ARCH-12; ratchet lowered by 44.
 - **Depends on:** none
 
@@ -760,7 +777,7 @@ No cross-tenant path found. Every task here touches citizen data or credentials 
 
 ## [ARCH-16] Rewrite the backend comments that contradict the code
 - **Priority:** P3 · **Assignee:** Hashem · **Estimate:** S · **Category:** Architecture
-- **Files:** tracked (CQ Backend CODE-7 row and CQ Data comments row): `InfrastructureModule` docblock, `AppModule` scheduler comment, `envSchema` SMTP message, `IdentityService.challengeTotp`, `createApiApp` docblock, `User.requiresTotp`; `tenant-schema-ref.ts`, `TenantPrismaFactory.connectionUrlFor`, `tenant-test-client.ts`, `envSchema` `DATABASE_URL`, both `binaryTargets` comments, `TenantSlug`; `ci.yml` comments.
+- **Files:** tracked (CQ Backend CODE-7 row and CQ Data comments row): `InfrastructureModule` docblock, `AppModule` scheduler comment, `envSchema` SMTP message, `IdentityService.challengeTotp`, `createApiApp` docblock, `User.requiresTotp`; `tenant-schema-ref.ts`, `TenantPrismaFactory.connectionUrlFor`, `tenant-test-client.ts`, `envSchema` `DATABASE_URL`, both `binaryTargets` comments, `TenantSlug`; `ci.yml` comments. Found during SEC-05 (2026-11-24): the `SmtpEmailSender` class docblock and `smtp-email.sender.spec.ts`'s header ("falls back to Supabase's reset mail", removed since). Found during ARCH-01: the `declare` docblock («The citizen's claim that they have paid») left above `FeesService.transition`. Both in the CQ Backend CODE-7 row.
 - **Acceptance criteria:** each matches the code; rows removed.
 - **Depends on:** none
 - **Verification:** review.
@@ -1037,12 +1054,23 @@ No cross-tenant path found. Every task here touches citizen data or credentials 
 - **Acceptance criteria:** each block carries `{ code, params }`; the preview returns codes; message files hold the words.
 - **Depends on:** none
 - **Verification:** specs for each block; frontend in ERR-05.
+- **Done 2026-11-25:** every block carries `refusal: { code, params }` (`BlockRefusal`, shared `error-codes.ts`): a
+  `LinkBlock` (`LANDLORD_LINK_*`), a `CitizenMergeBlock` (`MERGE_*`, one code per variant of a block code) and an undo's
+  `CitizenUnmergeBlock` (`UNMERGE_*`); «حذف تصحيحي» and «دمج كدوبلكس» blockers through the shared
+  `unitCorrectionBlockerRefusal` / `duplexMergeBlockerRefusal`, sent as each preview blocker's `refusal`. The act pressed anyway throws
+  the same code (`refusedBy`, `domain-error.ts`); 37 codes in both message files (`lib/block-refusals.test.ts`).
+  `DUPLEX_MERGE_BLOCKED` is retired (its `reason` param was an Arabic sentence). `message` is still sent beside
+  `refusal` for the frontend that reads it today.
 
 ## [ERR-05] Render the preview blocks from their codes
 - **Priority:** P2 · **Assignee:** Abed · **Estimate:** M · **Category:** Error-handling
 - **Files:** `landlord-proposal-card.tsx`, `unit-correction-delete-dialog.tsx`, `merge-citizens-dialog.tsx`, `landlord-unlink-dialog.tsx`.
 - **Depends on:** ERR-04
 - **Acceptance criteria / Verification:** no server text rendered; harness in `/en/`.
+- **Found during ERR-04:** render `localizeApiError(block.refusal)` (it takes `{ code, params }`); then remove `message`
+  from `LinkBlock`, `CitizenMergeBlock`, `CitizenUnmergeBlock` and the API's builders in the same release, a backend
+  change. Also `citizen-editor.tsx` (`changes.reconciled.blocked[].block.message`, a save's toast) and
+  `citizen-merges.tsx` (the undo's blocks), neither in the file list above.
 
 ## [ERR-06] Detect offline by status in ErrorState and give it a bilingual title
 - **Priority:** P2 · **Assignee:** Abed · **Estimate:** S · **Category:** Error-handling
@@ -1216,6 +1244,7 @@ False positives checked and excluded: `src/types/express.d.ts` (ambient), `lib/s
 - **Priority:** P3 · **Assignee:** Hashem · **Estimate:** S · **Category:** Dead-code
 - **Files:** backend: `buildings/building.types.ts` `CreateBuildingRow`, `CreateUnitRow`; `domain/interfaces/base-repository.interface.ts` `BaseRepository`. Shared (37), among them `AdminCreateCitizen`, `AdminUpdateCitizen`, `IdentifiedPropertyEntry`, `ApproveArrearsBatchInput`, `arrearsDecisionOf`, `ChangeEmail`, `ChangePassword`, `ConfirmPasswordReset`, `isOpenRequestStatus`, `ContactDetails`, `PersonalDetails` (+ partials), `ApiErrorBody`, `FeeMatrix`, `FeeTargetType`, `ReferenceLogin`, `ReferenceOnlyLogin`, `ReviewPayment`, `paymentStatusSchema`, `unverifiedPaths`, `newsLanguageQuerySchema`, `BulkTender`, `SUGGESTED_PROPERTY_TYPE`, `PropertyNumberCheckResponse`, `TREASURY_DAY_STORED_STATUSES`, `unitCoversFloor` (full list in the txt).
 - **Problem:** **NEW**. Some unused shared *types* should rather be **used**: a controller or client that re-declares the shape inline (CODE-3) is the bug, not the type. Decide per symbol: delete, or replace the inline copy with it.
+- **Found during DEAD-18:** knip does not check these. It takes `main` (`src/index.ts`) as public API and does not follow its `export *`, `includeEntryExports` or not (knip 6.48), so this task stays a check by hand and `pnpm lint:unused` reports shared-schemas' files and dependencies only.
 - **Acceptance criteria:** each symbol deleted or adopted; the 9 used only by specs (`isEmptyChange`, `isStructuralBillableType`, `arrearsCellsFromHeaders`, `isDocumentNumber`, `shareWeight`, `propertyNumberCheckSchema`, `levelSpanLimits`, …) are reviewed: production code that should call them, or test-only code that goes.
 - **Depends on:** none
 - **Verification:** shared build; both apps' typecheck and tests.
@@ -1314,6 +1343,8 @@ a row to that row's roles (longest match, CODE-4). So:
   2. The approved map is written into the `NAV_GROUPS` comment.
 - **Depends on:** none
 - **Verification:** this file updated; the decision recorded in docs/open-decisions.md.
+- **Done 2026-11-25** (Hashem's interactive answers): every task below carries its decision; the approved map is in the
+  `NAV_GROUPS` comment ("The approved map"); PAGE-03, PAGE-05 and PAGE-06 were decided the day before (#231, §24).
 
 ## [NAV-02] Move «تسجيل مواطن جديد» out of the sidebar, with the page turning away roles that cannot write
 - **Priority:** P2 · **Assignee:** Abed · **Estimate:** XS · **Category:** UI/UX
@@ -1322,6 +1353,7 @@ a row to that row's roles (longest match, CODE-4). So:
 - **Acceptance criteria:** 1. The page sends a role outside `CITIZEN_RECORD_EDIT_ROLES` back to `/citizens`, saying why. 2. The row is gone; the command palette still offers the action. 3. `lib/nav.test.ts` updated.
 - **Depends on:** NAV-01
 - **Verification:** `lib/nav.test.ts`; harness as «مشاهد فقط» on `/citizens/new`.
+- **Decision (NAV-01, 2026-11-25, [open-decisions §25](../open-decisions.md#25-the-staff-sidebar-and-the-page-moves-decided-2026-11-25)):** **approved** as written.
 
 ## [NAV-03] Merge the four quality rows into one «الجودة» page with tabs
 - **Priority:** P2 · **Assignee:** Abed · **Estimate:** M · **Category:** UI/UX
@@ -1330,6 +1362,7 @@ a row to that row's roles (longest match, CODE-4). So:
 - **Acceptance criteria:** 1. One row, `path: '/quality'`, `also` holding the four old paths so links and gating still work. 2. `?tab=reviews|findings|checks|officers`, `useUrlState`. 3. A `SegmentedControl` driving the panels, or `Tabs` once UX-08 lands (CTL-9).
 - **Depends on:** NAV-01; UX-08 optional
 - **Verification:** `lib/nav.test.ts`; old URLs open the right tab.
+- **Decision (NAV-01, 2026-11-25, [open-decisions §25](../open-decisions.md#25-the-staff-sidebar-and-the-page-moves-decided-2026-11-25)):** **approved**; the first tab is «اعتماد السجلات» (NAV-11). NAV-12 is superseded.
 
 ## [NAV-04] Merge the two census worklists into «قوائم العمل الميداني»
 - **Priority:** P2 · **Assignee:** Abed · **Estimate:** S · **Category:** UI/UX
@@ -1337,6 +1370,7 @@ a row to that row's roles (longest match, CODE-4). So:
 - **Acceptance criteria:** one row with `also` for both paths; `?tab=`; each tab keeps its own paging and filters in the URL.
 - **Depends on:** NAV-01
 - **Verification:** `lib/nav.test.ts`; harness.
+- **Decision (NAV-01, 2026-11-25, [open-decisions §25](../open-decisions.md#25-the-staff-sidebar-and-the-page-moves-decided-2026-11-25)):** **approved** as written.
 
 ## [NAV-05] Reach the news categories and publishers from the articles page
 - **Priority:** P2 · **Assignee:** Abed · **Estimate:** S · **Category:** UI/UX
@@ -1345,6 +1379,9 @@ a row to that row's roles (longest match, CODE-4). So:
 - **Acceptance criteria:** one row with `also: ['/news/categories', '/news/publishers']`; two header links on the articles page; each page keeps `HeaderBackLink` to articles.
 - **Depends on:** NAV-01
 - **Verification:** `lib/nav.test.ts`.
+- **Decision (NAV-01, 2026-11-25, [open-decisions §25](../open-decisions.md#25-the-staff-sidebar-and-the-page-moves-decided-2026-11-25)):** **changed**: the header links as written, but «الأخبار» is **not** folded into another group. It stays in the
+  sidebar as one row under its own name, with no group heading above it. `NavGroup.label` is documented for the landing
+  group only and `lib/nav.test.ts` pins that group unlabelled and first: widen both.
 
 ## [NAV-06] Keep «أمان الحساب» in the user menu only
 - **Priority:** P3 · **Assignee:** Abed · **Estimate:** XS · **Category:** UI/UX
@@ -1352,6 +1389,7 @@ a row to that row's roles (longest match, CODE-4). So:
 - **Acceptance criteria:** the row is removed; `/account` still opens for every staff role (it has no row, so `canAccessPath` admits it); the header breadcrumb still names the page.
 - **Depends on:** NAV-01
 - **Verification:** `lib/nav.test.ts` (`activeNavItem` for `/account`).
+- **Decision (NAV-01, 2026-11-25, [open-decisions §25](../open-decisions.md#25-the-staff-sidebar-and-the-page-moves-decided-2026-11-25)):** **approved** as written.
 
 ## [NAV-07] Reach «فواتير تأثّرت بتصحيحات» from the fees page only
 - **Priority:** P3 · **Assignee:** Abed · **Estimate:** XS · **Category:** UI/UX
@@ -1360,6 +1398,7 @@ a row to that row's roles (longest match, CODE-4). So:
 - **Acceptance criteria:** the page turns away roles outside `PAYMENT_REVIEW_READ_ROLES` itself (it has `canReview` today; check that it also covers *reading*), then the row goes.
 - **Depends on:** NAV-01
 - **Verification:** harness as a role in `FEE_READ_ROLES` but not in the review set.
+- **Decision (NAV-01, 2026-11-25, [open-decisions §25](../open-decisions.md#25-the-staff-sidebar-and-the-page-moves-decided-2026-11-25)):** **approved** as written.
 
 ## [NAV-08] Decide where «المستحق على عقار» lives
 - **Priority:** P3 · **Assignee:** Abed · **Estimate:** S · **Category:** UI/UX
@@ -1367,6 +1406,8 @@ a row to that row's roles (longest match, CODE-4). So:
 - **Problem:** A one-question lookup (what is owed on a رقم عقار) with a row of its own. Options: keep the row; a header action or search mode on `/fees`; or a panel on the building's matrix. Product choice.
 - **Depends on:** NAV-01
 - **Acceptance criteria / Verification:** per the decision; gating kept (`FEE_READ_ROLES`).
+- **Decision (NAV-01, 2026-11-25, [open-decisions §25](../open-decisions.md#25-the-staff-sidebar-and-the-page-moves-decided-2026-11-25)):** **keep the row.** Done 2026-11-25 with NAV-01: the row's comment records it and
+  `lib/nav.test.ts` pins the row and its gate (every role in `FEE_READ_ROLES`, and no other, opens `/fees/parcel`).
 
 ## [NAV-09] Show «أرباح المسح الميداني» in the user menu only to the roles its row admits
 - **Priority:** P2 · **Assignee:** Abed · **Estimate:** XS · **Category:** UI/UX
@@ -1391,6 +1432,8 @@ a row to that row's roles (longest match, CODE-4). So:
 - **Acceptance criteria:** names chosen by the product owner that say the job (for example «ملفات ناقصة» / «اعتماد السجلات» — proposals only).
 - **Depends on:** NAV-01
 - **Verification:** both locales updated.
+- **Decision (NAV-01, 2026-11-25, [open-decisions §25](../open-decisions.md#25-the-staff-sidebar-and-the-page-moves-decided-2026-11-25)):** «ملفات ناقصة» / "Incomplete files" for `/citizens/review`, «اعتماد السجلات» / "Record approval" for
+  `/quality/reviews`.
 
 ## [NAV-12] Redirect /quality on the server
 - **Priority:** P3 · **Assignee:** Abed · **Estimate:** XS · **Category:** UI/UX
@@ -1407,6 +1450,7 @@ a row to that row's roles (longest match, CODE-4). So:
 - **Acceptance criteria:** the tab is gone or replaced by a link to `/staff`; no import of `users-section.tsx` remains; the file is deleted.
 - **Depends on:** NAV-01 (confirm nobody relies on it)
 - **Verification:** `grep -rn "UsersSection" apps/frontend` → 0.
+- **Decision (NAV-01, 2026-11-25, [open-decisions §25](../open-decisions.md#25-the-staff-sidebar-and-the-page-moves-decided-2026-11-25)):** **approved** as written.
 
 ## [PAGE-02] Send a signed-out citizen on «حسابي» to the front door, not the phone-code page
 - **Priority:** P1 · **Assignee:** Abed · **Estimate:** XS · **Category:** UI/UX
@@ -1540,7 +1584,32 @@ Filled in by whoever executes a task (section 0, step 4). One row per finding; t
 
 | ID | Found during | File and symbol | Problem | Fixed in that PR? | Debt doc row added |
 |---|---|---|---|---|---|
-| | | | | | |
+| DRY-19 | DRY-01 | `apps/backend/src/application/**`: `actor: { id: string; role: string }` on 139 service parameters in 29 files; 51 `actorRole: actor.role as never` | `StaffActor` exists and every controller passes one, but most services still take the untyped shape. Typing them makes about 1,000 lines of service integration specs build their actor constants as `StaffActor` (DRY-01 did that for the 8 services it moved, 12 specs) | No: kept out of DRY-01 for its size | docs/code-quality.md, the actor row (rewritten) |
+| DRY-20 | DRY-01 | `fee-exemptions.controller.ts` `list`, `fees.controller.ts` (`{ role: user.role ?? '' }`), the `NewsActor` builders in `news.controller.ts`, `news-articles.controller.ts`, `news-media.controller.ts` | A role passed alone, or inside a News actor, still spelled from the claims with `?? ''`; not the `{ id, role }` actor DRY-01 covers | No | No |
+| — | DRY-01 | `buildings.controller.ts` `private actor(user)` (21 calls), `citizen-requests.controller.ts` `staff(user)` (9), `quality.controller.ts` `actorOf` (8), `citizen.controller.ts` `role: user.role ?? 'STAFF'` (6, not a role at all) | Actor builds the audit's count missed, behind helpers | Yes: all are `@CurrentActor()` now | — |
+| — | DRY-01 | `record-review.service.ts`, the RECORD_CORRECTED auto-close | When the saver's account has no role, the change carried `actorRole: ''`, which is no `StaffRole`: the Tier 2 row was refused, silently | Yes: the role is left out instead | — |
+| DEAD-19 | DEAD-18 | `apps/backend`: `express` imported for types in 13 files and not declared; root `scripts/db/*.mjs`: `pg` (8 files), `ts-node`, `tsconfig-paths` not declared; `@types/express-serve-static-core` declared and unused | Dependencies resolved by luck of hoisting, or kept for nothing (knip, held in its baseline) | No | No |
+| — | DRY-02 | `registration.repository.ts` `translate`, the `P2003` branch | Matched `P2003` inline with `instanceof` the tenant client's class, beside the `P2002` branch the task moved | Yes: `foreignKeyViolated` in `prisma-errors.ts` | — |
+| DRY-21 | DRY-02 | `corrections/unit-correction.service.ts` `busyOr` | Lock conflicts matched on their own: SQLSTATE `55P03` / `40P01` read off `meta.code` behind `instanceof Prisma.PrismaClientKnownRequestError`, then a message regex. Its `P2034` now asks `isSerializationFailure` | No | docs/code-quality.md, Backend |
+| ARCH-25 | DRY-02 | `staff/staff.service.ts` `getInspectorProfile` (`role: inspector.role as any`) | The backend's one `no-explicit-any` lint warning: a cast past the role's type, the `as never` pattern under another name | No | docs/code-quality.md, the `as never` row |
+| — | DRY-03 | `buildings/buildings.service.ts` `addUnit`, the `<schema>:unit-sequence:<building>` lock | `$executeRawUnsafe` for a lock that needs no dynamic SQL, beside the two the task named | Yes: tagged `$executeRaw` | — |
+| ERR-08 | ERR-04 | `apps/backend/src/application/features/citizens/landlord-link.service.ts` `reconcile` (a failed reconcile's block) | A coded `ConflictError`'s `message` is English for the log, and was put in the block's `message`, which the tenant's save shows as a toast | Yes: `reconcileFailedBlock` gives the error's own code as the refusal and the Arabic fallback as `message` | — (fixed) |
+| ERR-09 | ERR-04 | `apps/backend/src/application/features/citizens/citizen-merge.plan.ts` `labelOf` | A duplicate flat's `label` in the merge preview falls back to the Arabic words «وحدة» / «منزل» when no code or رقم العقار is known, shown as is on /en/ (the blocks now carry `hasLabel` instead) | No: a preview field, not a refusal; ERR-05's dialog | [code-quality.md](../code-quality.md) Backend |
+| ARCH-26 | PAG-02 | `apps/backend/src/infrastructure/repositories/case.repository.ts` `caseWhere` | `status` and `caseType` reach Prisma `as never`: `CaseListFilter` types them as `string`, though the controller narrows both with `optionalOneOf` | No: the repository's create and update cast the same way; one change for the file | [code-quality.md](../code-quality.md) Backend |
+| DRY-22 | DRY-07 | `createApiApp`, `TrustedOriginGuard` (`CORS_ORIGINS ?? [...]`); `IdentityService` `get('PASSWORD_RESET_TTL', '30m')`, `get('JWT_CITIZEN_TTL', '7d')`, `get('JWT_STAFF_IDLE_TTL', '15m')`, `staffSessionCap`; `SupabaseStorageService` `'documents'` | Schema defaults repeated at the call site in forms DRY-07's grep does not match (a `<string[]>` type, a second argument). The CORS fallback is pinned by `trusted-origin.guard.spec.ts` as behaviour, and the TTLs sit in token minting, so neither was folded in | No | code-quality.md, Backend |
+| — | DRY-08 | `FeesService.issue` and the recurring run's period write | `{ maxWait: 15_000, timeout: 60_000 }` on a bare `$transaction`, the same bounds as `TENANT_TRANSACTION_DEFAULTS`; left to ARCH-01 (#228), which moves both to `runInTenantTransaction` | No (ARCH-01) | code-quality.md, the transaction-timeouts row narrowed to these two |
+| — | DRY-08 | `FeeExemptionService.set`, `OwnerBillingService.set`, `UnitCorrectionService.applyMergeLocked` | The same `SET LOCAL lock_timeout = '5s'` as `applyLocked`, through `$executeRawUnsafe` | Yes: `setLocalLockTimeout`, a bound `set_config`, `APP_CONFIG.locks.rowLockTimeout` | — |
+| — | DRY-08 | `fees.service.ts` | The settings cache's "Five minutes" comment sat above the `UUID` regex, not its constant (CODE-7) | Yes: moved to `APP_CONFIG.cache.feeSettingsTtlSeconds` | — |
+| — | DRY-08 | `AuditController` `DEFAULT_TIME_ZONE` | A second copy of `MUNICIPAL_TIME_ZONE` (`cash-policy.ts`) | Yes: reads the shared one | — |
+| — | DRY-10 | `migrate-database.yml`, `tenant-migrator.ts` | The production migration runs the migrator under ts-node without building shared-schemas, so the rule could not live there | Yes: the rule is in the domain, with no imports | gotchas.md |
+| — | DRY-10 | `TenantSlug` comment naming `schemaNameFor()`; `seed-fee-testing-citizens.mjs` building `tenant_<slug>` by hand | A comment citing a renamed method (code-quality's comments row); a fifth schema-name builder | Yes | code-quality.md, the comments row narrowed |
+| — | DRY-11 | `C` in six tools, `fail` in five, `require('pg')` in eight, `createRequire` for `ts-node` in `provision.mjs` | The copies went beyond the four files the CQ row named | Yes: all in `lib.mjs` (`backendRequire`) | — |
+| GOD-25 | GOD-02 | `fees/fees.service.ts` `resolveTargets`, `categoryHolderWhere`, `assessTargets`, `holdingsOf`, `ownerClaims`, `categoryHolders` | Who a notice reaches and what each owes, about 1,000 of the 3,677 lines left: `FeeNoticesService`, `RecurringBillingService` and `CorrectionBillsService` reach it through `FeesService` | No: not the task's methods | docs/code-quality.md, the god-files row |
+| — | GOD-03 | `FeesService.categoryHolders` | The task named it for `RecurringBillingService`, but the recurring run never calls it: `CorrectionBillsService` does, and it wraps `resolveTargets` | Yes: it stays in `FeesService`, with the targeting | — |
+| — | GOD-02 | `replayNotice` | Its doc comment sat above `duplicateNotices`, stacked on that method's own (CODE-7) | Yes: moved onto `replayNotice` | — |
+| — | ARCH-03 | `BuildingsService` `assertMayBeCalledEmpty` | Its doc comment (the «شاغرة» rule) sat above `atomic`, stacked on that method's own (CODE-7) | Yes: moved onto `assertMayBeCalledEmpty` | — |
+| DEAD-20 | GOD-05 | `buildings/occupancy-writes.service.ts` `endOccupancy`, `releaseCensusClaim` | No production caller: «إنهاء الإشغال» goes through `TenancyService.endOccupancy` / `OwnershipService.endOccupancy`; only specs reach them | No: deleting them takes their specs, which is not a move | docs/code-quality.md, Backend |
+| — | GOD-01 to GOD-04 | docs/code-quality.md, the `FeesService.issue` timeout row | Logged by DRY-08 (#252) as left to ARCH-01 (#228); with both in one base, `issue` and the recurring run take `TENANT_TRANSACTION_DEFAULTS` | Yes: row removed | — |
 
 ---
 
@@ -1646,7 +1715,7 @@ an open treasury or fees PR touches it — check `gh pr list` first; GOD splits 
 | U-21 | Retire the portal's phone-code sign-in and «حسابي», now that «ملفّي» and the reference sign-in cover them | PAGE-03 | open-decisions §2 (OTP not used), §21 |
 | U-22 | Is «سجل العمليات» a view of «الرسوم والمدفوعات» or its own row (its roles are wider) | PAGE-05 | **NEW question** |
 | U-23 | Keep «مدفوعاتي» and its own sign-in beside «ملفّي» and the front door | PAGE-06 | open-decisions §21 |
-| U-24 | The target sidebar: 35 → 26 rows (section 12), the two review-queue names, where «المستحق على عقار» lives | NAV-01…08, NAV-11, PAGE-01 | **NEW question**; PRODUCT.md after |
+| U-24 | The target sidebar: 35 → 26 rows (section 12), the two review-queue names, where «المستحق على عقار» lives | NAV-01…08, NAV-11, PAGE-01 | **Decided 2026-11-25**: [open-decisions §25](../open-decisions.md#25-the-staff-sidebar-and-the-page-moves-decided-2026-11-25); PRODUCT.md as each move lands |
 | U-25 | The dashboard redesign `KpiCard` waits on | PAGE-07 (part) | ui-ux §17.1 |
 | U-26 | Delete the four routes no screen calls, or build the screens (an expense category cannot be edited anywhere today) | DEAD-17 | **NEW question** |
 

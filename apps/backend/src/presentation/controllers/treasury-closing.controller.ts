@@ -22,6 +22,8 @@ import { DailyCashReportService } from '../../application/features/treasury/dail
 import { DailyCountService } from '../../application/features/treasury/daily-count.service';
 import { DayClosureService } from '../../application/features/treasury/day-closure.service';
 import { CurrentUser } from '../decorators/current-user.decorator';
+import { CurrentActor } from '../decorators/current-actor.decorator';
+import { StaffActor } from '../../application/common/actor';
 import { Roles } from '../decorators/roles.decorator';
 
 /**
@@ -52,9 +54,9 @@ export class TreasuryClosingController {
   @Post('counts')
   record(
     @Body(new ZodValidationPipe(recordDailyCountSchema)) body: RecordDailyCountInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.counts.record(body, { id: user.sub, role: user.role ?? '' });
+    return this.counts.record(body, actor);
   }
 
   /** The closed and reopened days, latest first. */
@@ -67,15 +69,15 @@ export class TreasuryClosingController {
   /** «أقفل اليومية». */
   @Roles(...TREASURY_WORK_ROLES)
   @Post('closures')
-  close(@Body(new ZodValidationPipe(closeDaySchema)) body: CloseDayInput, @CurrentUser() user: SessionClaims) {
-    return this.closures.close(body, { id: user.sub, role: user.role ?? '' });
+  close(@Body(new ZodValidationPipe(closeDaySchema)) body: CloseDayInput, @CurrentActor() actor: StaffActor) {
+    return this.closures.close(body, actor);
   }
 
   /** «أعد فتح اليومية» — the latest closed day, with a reason. The manager's alone. */
   @Roles(...TREASURY_ADMIN_ROLES)
   @Post('closures/reopen')
-  reopen(@Body(new ZodValidationPipe(reopenDaySchema)) body: ReopenDayInput, @CurrentUser() user: SessionClaims) {
-    return this.closures.reopen(body, { id: user.sub, role: user.role ?? '' });
+  reopen(@Body(new ZodValidationPipe(reopenDaySchema)) body: ReopenDayInput, @CurrentActor() actor: StaffActor) {
+    return this.closures.reopen(body, actor);
   }
 
   /** «تقرير الصندوق اليومي». */

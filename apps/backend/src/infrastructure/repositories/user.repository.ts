@@ -1,6 +1,6 @@
 import { citizenDisplayName } from '@mechanization/shared-schemas';
 import { Injectable } from '@nestjs/common';
-import { Prisma } from '../../generated/tenant-client';
+import { isUniqueViolation, isUniqueViolationOn } from '../prisma/prisma-errors';
 import { StaffRole, User } from '../../domain/entities/user.entity';
 import { ConflictError } from '../../domain/errors/domain-error';
 import {
@@ -43,6 +43,7 @@ export class PrismaUserRepository implements UserRepository {
       lastTotpStep: row.lastTotpStep,
       totpSecret: row.totpSecret,
       totpConfirmedAt: row.totpConfirmedAt,
+      totpPendingSecret: row.totpPendingSecret,
       totpLockedUntil: row.totpLockedUntil,
     });
   }
@@ -66,7 +67,8 @@ export class PrismaUserRepository implements UserRepository {
         lastTotpStep: row.lastTotpStep,
         totpSecret: row.totpSecret,
         totpConfirmedAt: row.totpConfirmedAt,
-      totpLockedUntil: row.totpLockedUntil,
+        totpPendingSecret: row.totpPendingSecret,
+        totpLockedUntil: row.totpLockedUntil,
       });
     }
 
@@ -231,16 +233,50 @@ export class PrismaUserRepository implements UserRepository {
     });
   }
 
-  /** Clears enrolment and secrets so the second factor is no longer requested. */
+  /** See the port: the confirmed factor is not touched. */
+  async savePendingTotpSecret(userId: string, secret: string): Promise<void> {
+    await this.db.user.updateMany({
+      where: { id: userId, kind: 'STAFF' },
+      data: { totpPendingSecret: secret },
+    });
+  }
+
+  /**
+   * One conditional write, so a confirmation racing a second enrolment either
+   * moves the secret it verified or nothing: the WHERE names that secret.
+   */
+  async promotePendingTotp(userId: string, secret: string): Promise<boolean> {
+    const { count } = await this.db.user.updateMany({
+      where: {
+        id: userId,
+        kind: 'STAFF',
+        OR: [
+          { totpPendingSecret: secret },
+          { totpPendingSecret: null, totpSecret: secret, totpConfirmedAt: null },
+        ],
+      },
+      data: {
+        totpSecret: secret,
+        totpConfirmedAt: new Date(),
+        totpPendingSecret: null,
+        tokenVersion: { increment: 1 },
+      },
+    });
+    return count > 0;
+  }
+
+  /** Clears enrolment and secrets so the second factor is no longer requested, and ends every session. */
   async disableTotp(userId: string): Promise<void> {
-    await this.db.user.update({
-      where: { id: userId },
+    await this.db.user.updateMany({
+      where: { id: userId, kind: 'STAFF' },
       data: {
         totpSecret: null,
         totpConfirmedAt: null,
+        totpPendingSecret: null,
         lastTotpStep: null,
         totpFailedAttempts: 0,
         totpLockedUntil: null,
+        tokenVersion: { increment: 1 },
       },
     });
   }
@@ -516,17 +552,18 @@ export class PrismaUserRepository implements UserRepository {
 
   /** Prisma error codes stop here — no layer above this one sees them. */
   private translate(error: unknown): unknown {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-      const target = (error.meta?.target as string[] | undefined)?.join(', ') ?? 'value';
-      if (target.includes('referenceNumber')) {
+    if (isUniqueViolation(error)) {
+      if (isUniqueViolationOn(error, 'referenceNumber')) {
         // Astronomically unlikely (32^6 per prefix per month) but a silent
         // collision would hand one citizen another's tracking code.
         return new ConflictError('تعذّر إنشاء رقم مرجعي فريد — يرجى المحاولة مرة أخرى');
       }
-      if (target.includes('email')) {
+      if (isUniqueViolationOn(error, 'email')) {
         return new ConflictError('هذا البريد الإلكتروني مسجّل مسبقاً');
       }
-      return new ConflictError('هذه الوثيقة مسجّلة مسبقاً لشخص آخر');
+      // Not every unique column is a document: the generic sentence, as the
+      // registration repository says it.
+      return new ConflictError('هذه البيانات مسجّلة مسبقاً');
     }
     return error;
   }

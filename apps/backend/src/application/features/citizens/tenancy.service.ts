@@ -16,6 +16,7 @@ import { settleUnit, type UnitStatusEvent } from '../buildings/unit-status';
 import { ConflictError, NotFoundError, ValidationError } from '../../../domain/errors/domain-error';
 import { claimsFlat } from '../../../domain/entities/census-claim';
 import { BuildingsService } from '../buildings/buildings.service';
+import { OccupancyWritesService } from '../buildings/occupancy-writes.service';
 import { CasesService } from '../cases/cases.service';
 import { withoutCardFlags, withoutRowFlags } from './card-flags';
 import { OwnershipService, type EndOwnershipResult } from './ownership.service';
@@ -25,6 +26,7 @@ import {
   type RecordedOwnerLinkResult,
   type RevertReport,
 } from './landlord-link.service';
+import { StaffActor } from '../../common/actor';
 
 /**
  * «إنهاء الإيجار» — one operation, whichever door it is reached through.
@@ -72,6 +74,7 @@ export class TenancyService {
     private readonly events: EventEmitter2,
     private readonly ownership: OwnershipService,
     private readonly auditTrail: AuditService,
+    private readonly occupancyWrites: OccupancyWritesService,
   ) {
     // A tenant can buy the flat they rent; the sale ends that tenancy through here.
     ownership.bindTenancy(this);
@@ -95,14 +98,14 @@ export class TenancyService {
    */
   async recordOccupancy(
     input: UpsertOccupancyInput,
-    actor: Actor,
+    actor: StaffActor,
   ): Promise<
-    Awaited<ReturnType<BuildingsService['recordOccupancy']>> & {
+    Awaited<ReturnType<OccupancyWritesService['recordOccupancy']>> & {
       ownerLink: RecordedOwnerLinkResult | null;
     }
   > {
     return this.inTransaction(async () => {
-      const recorded = await this.buildings.recordOccupancy(input, actor, { fromMatrix: true });
+      const recorded = await this.occupancyWrites.recordOccupancy(input, actor, { fromMatrix: true });
       const ownerLink =
         input.role !== 'OWNER' && input.landlordCitizenId
           ? await this.links.linkRecordedOwner({
@@ -122,7 +125,7 @@ export class TenancyService {
   linkOccupancyOwner(
     occupancyId: string,
     ownerId: string,
-    actor: Actor,
+    actor: StaffActor,
     confirmRecordedAfter = false,
   ): Promise<RecordedOwnerLinkResult> {
     return this.links.linkRecordedOwner({ occupancyId, ownerId, confirmRecordedAfter, actor });
@@ -132,14 +135,14 @@ export class TenancyService {
    * The matrix's «إنهاء الإشغال». An owner's spell is not a tenancy — a sale or
    * a correction of who owns the flat — and goes through `OwnershipService`,
    * the same operation «إنهاء الملكية» runs from the owner's file. It used to
-   * go to `BuildingsService.endOccupancy`, which unlinked the flat from the
+   * go to `OccupancyWritesService.endOccupancy`, which unlinked the flat from the
    * owner's card instead of ending the card's row, so the seller kept being
    * billed from the row it left behind.
    */
   async endOccupancy(
     occupancyId: string,
     input: EndInput & { reason: string; newOwnerId?: string },
-    actor: Actor,
+    actor: StaffActor,
   ): Promise<EndTenancyResult | EndOwnershipResult> {
     const occupancy = await this.db.unitOccupancy.findUnique({
       where: { id: occupancyId },
@@ -197,7 +200,7 @@ export class TenancyService {
    * «يسكنها المالك» from then — the buyer, whom the sale records as owner
    * straight after.
    */
-  async endForPurchase(occupancyId: string, endedAt: Date, actor: Actor): Promise<EndTenancyResult> {
+  async endForPurchase(occupancyId: string, endedAt: Date, actor: StaffActor): Promise<EndTenancyResult> {
     const target = await this.targetFromOccupancy(occupancyId);
     return this.end(target, { reason: 'OWNERSHIP_TRANSFERRED', endedAt, afterStatus: 'OWNER_OCCUPIED' }, actor);
   }
@@ -216,7 +219,7 @@ export class TenancyService {
       rowIds?: readonly string[];
       unitIds?: readonly string[];
     },
-    actor: Actor,
+    actor: StaffActor,
   ): Promise<EndTenancyResult> {
     const target = await this.targetFromCard(propertyEntryId, {
       rowIds: input.rowIds,
@@ -516,7 +519,7 @@ export class TenancyService {
   private async end(
     target: Target,
     input: EndInput & { reason: EndingReason },
-    actor: Actor,
+    actor: StaffActor,
   ): Promise<EndTenancyResult> {
     if (target.cards.length === 0 && target.spells.length === 0) {
       throw new ConflictError({
@@ -809,7 +812,7 @@ export class TenancyService {
     target: Target,
     input: EndInput,
     endedAt: Date,
-    actor: Actor,
+    actor: StaffActor,
     result: EndTenancyResult,
     events: PendingEvent[],
   ): Promise<void> {
@@ -1013,7 +1016,6 @@ const CARD_SELECT = {
   },
 } as const;
 
-type Actor = { id: string; role: string };
 /** What an officer can say ended a tenancy — the two answers the routes accept. */
 type EndReason = 'MOVED_OUT' | 'RECORDED_IN_ERROR';
 /**

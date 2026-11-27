@@ -1,4 +1,4 @@
-import type { CitizenResidence } from '@mechanization/shared-schemas';
+import type { CitizenResidence, ErrorCode, ErrorParams } from '@mechanization/shared-schemas';
 import { isNonPersonRecord, isOwnerRecord } from '@mechanization/shared-schemas';
 import {
   nonResidentCardIssues,
@@ -603,24 +603,51 @@ const ROLE_LABEL: Record<string, string> = {
   FREE_OCCUPANT: 'شاغل بتسامح',
 };
 
+/** The merge's refusal codes (ERR-04), one per variant of a block. */
+type CitizenMergeRefusalCode = Extract<ErrorCode, `MERGE_${string}`>;
+
+/** A claim's name as a message param: `hasLabel` no when none was known and the message says «عقار». */
+const labelParams = (label: string, known: boolean): ErrorParams => ({ hasLabel: known ? 'yes' : 'no', label: known ? label : '' });
+
+/** A card's رقم العقار as a message param, `hasProperty` no when it has none. */
+const propertyParams = (propertyNumber: string | null): ErrorParams => ({
+  hasProperty: propertyNumber ? 'yes' : 'no',
+  property: propertyNumber ?? '',
+});
+
+/** An occupancy as the messages name it: the three they word, else `OTHER` («شاغل»). */
+const roleParam = (role: string): string => (role in ROLE_LABEL ? role : 'OTHER');
+
 export function planMerge(input: PlanInput): MergePlan {
   const { keep, absorb } = input;
   const blocks: CitizenMergeBlock[] = [];
-  const block = (code: CitizenMergeBlock['code'], message: string) => {
-    if (!blocks.some((existing) => existing.code === code && existing.message === message)) {
-      blocks.push({ code, message });
+  /*
+    Each block carries its refusal (ERR-04): the code of its variant and the
+    values the message files fill in. Two blocks are the same block when both
+    are, so a flat named twice is said once.
+  */
+  const block = (
+    code: CitizenMergeBlock['code'],
+    refusal: { code: CitizenMergeRefusalCode; params?: ErrorParams },
+    message: string,
+  ) => {
+    const params = refusal.params ?? {};
+    const key = JSON.stringify([refusal.code, params]);
+    if (!blocks.some((existing) => JSON.stringify([existing.refusal.code, existing.refusal.params]) === key)) {
+      blocks.push({ code, refusal: { code: refusal.code, params }, message });
     }
   };
 
-  if (keep.id === absorb.id) block('SAME_FILE', 'لا يمكن دمج ملف في نفسه.');
+  if (keep.id === absorb.id) block('SAME_FILE', { code: 'MERGE_SAME_FILE' }, 'لا يمكن دمج ملف في نفسه.');
   if (!keep.isActive || !absorb.isActive) {
     block(
       'INACTIVE',
+      { code: 'MERGE_FILE_INACTIVE' },
       'أحد الملفين معطّل. أعد تفعيله أولاً من صفحته، ثم ادمج — الملف المعطّل لا يُفوتَر، ودمجه قد يعيد فوترة ما أُوقف عمداً.',
     );
   }
   if (input.keepMerged || input.absorbMerged) {
-    block('ALREADY_MERGED', 'أحد الملفين مدموج في ملف آخر. افتح الملف الذي دُمج فيه وادمج منه.');
+    block('ALREADY_MERGED', { code: 'MERGE_FILE_ALREADY_MERGED' }, 'أحد الملفين مدموج في ملف آخر. افتح الملف الذي دُمج فيه وادمج منه.');
   }
   /*
     A person and an estate or an institution are never one record (0076): an
@@ -634,6 +661,7 @@ export function planMerge(input: PlanInput): MergePlan {
   ) {
     block(
       'RESIDENCE_CONFLICT',
+      { code: 'MERGE_PERSON_AND_BODY' },
       'لا يُدمج ملف تركة أو جهة بملف شخص، ولا تركة بجهة. إن كان أحدهما سُجِّل بالنوع الخطأ فصحّح نوع الملف أولاً من صفحته.',
     );
   }
@@ -671,13 +699,16 @@ export function planMerge(input: PlanInput): MergePlan {
     }
   }
 
-  const labelOf = (claimKey: string, card: PlanCard): { label: string; unitId: string | null } => {
+  /** The claim's name: a flat's code, a house's building code, else the card's رقم العقار; `known` false for none. */
+  const labelOf = (claimKey: string, card: PlanCard): { label: string; known: boolean; unitId: string | null } => {
     if (claimKey.startsWith('u:')) {
       const unitId = claimKey.slice(2);
-      return { label: input.unitCode(unitId) ?? card.propertyNumber ?? 'وحدة', unitId };
+      const known = input.unitCode(unitId) ?? card.propertyNumber;
+      return { label: known ?? 'وحدة', known: known !== null, unitId };
     }
     const code = card.buildingId ? input.buildingCode(card.buildingId) : null;
-    return { label: code ?? card.propertyNumber ?? 'منزل', unitId: null };
+    const known = code ?? card.propertyNumber;
+    return { label: known ?? 'منزل', known: known !== null, unitId: null };
   };
 
   const duplicates: DuplicateClaim[] = [];
@@ -689,11 +720,19 @@ export function planMerge(input: PlanInput): MergePlan {
     const dropped = list.filter((entry) => entry.side === 'absorb');
     if (kept.length === 0 || dropped.length === 0) continue;
 
-    const { label, unitId } = labelOf(key, dropped[0]!.card);
+    const { label, known, unitId } = labelOf(key, dropped[0]!.card);
     const roles = new Set(list.map((entry) => entry.card.occupancyType));
     if (roles.size > 1) {
       block(
         'ROLE_CONFLICT',
+        {
+          code: 'MERGE_ROLE_CONFLICT_ON_CARDS',
+          params: {
+            ...labelParams(label, known),
+            keptRole: roleParam(kept[0]!.card.occupancyType),
+            otherRole: roleParam(dropped[0]!.card.occupancyType),
+          },
+        },
         `${label}: أحد الملفين يسجّله ${ROLE_LABEL[kept[0]!.card.occupancyType] ?? 'شاغلاً'} والآخر ${
           ROLE_LABEL[dropped[0]!.card.occupancyType] ?? 'شاغلاً'
         }. صحّح البطاقة الخاطئة في ملفها أولاً، ثم ادمج.`,
@@ -705,6 +744,7 @@ export function planMerge(input: PlanInput): MergePlan {
       if (entry.card.minted || input.linkWritten.cardIds.has(entry.card.id)) {
         block(
           'LINKED_DUPLICATE',
+          { code: 'MERGE_LINK_WROTE_CARD', params: labelParams(label, known) },
           `${label}: نسخة الملف المدموج كتبها ربط مستأجر بمالكه. ألغِ ذلك الربط من ملف المستأجر أولاً، ثم ادمج، ثم أعد الربط بالملف الباقي.`,
         );
         continue;
@@ -751,10 +791,15 @@ export function planMerge(input: PlanInput): MergePlan {
     if (spell.toDate) continue;
     const held = keepCurrent.get(spell.unitId);
     if (!held) continue;
-    const label = input.unitCode(spell.unitId) ?? 'وحدة';
+    const unitCode = input.unitCode(spell.unitId);
+    const label = unitCode ?? 'وحدة';
     if (held.role !== spell.role) {
       block(
         'ROLE_CONFLICT',
+        {
+          code: 'MERGE_ROLE_CONFLICT_ON_UNITS',
+          params: { ...labelParams(label, unitCode !== null), keptRole: roleParam(held.role), otherRole: roleParam(spell.role) },
+        },
         `${label}: سجل المباني يسجّل الشخص ${ROLE_LABEL[held.role] ?? held.role} في أحد الملفين و${
           ROLE_LABEL[spell.role] ?? spell.role
         } في الآخر. صحّح الوحدة في مصفوفة المبنى أولاً، ثم ادمج.`,
@@ -764,6 +809,7 @@ export function planMerge(input: PlanInput): MergePlan {
     if (input.linkWritten.spellIds.has(spell.id)) {
       block(
         'LINKED_DUPLICATE',
+        { code: 'MERGE_LINK_WROTE_OCCUPANCY', params: labelParams(label, unitCode !== null) },
         `${label}: إشغال الملف المدموج لهذه الوحدة كتبه ربط مستأجر بمالكه. ألغِ ذلك الربط أولاً، ثم ادمج، ثم أعد الربط.`,
       );
       continue;
@@ -779,6 +825,7 @@ export function planMerge(input: PlanInput): MergePlan {
     if (card.landlordCitizenId === other) {
       block(
         'SELF_LINK',
+        { code: 'MERGE_SELF_LINK', params: propertyParams(card.propertyNumber) },
         `بطاقة في أحد الملفين تسجّل صاحب الملف الآخر مالكاً لها (${card.propertyNumber ?? 'عقار'}) — بعد الدمج يصبح الشخص مستأجراً من نفسه. ألغِ هذا الربط من البطاقة أولاً.`,
       );
     }
@@ -828,6 +875,7 @@ export function planMerge(input: PlanInput): MergePlan {
   if (finalCards.length > MAX_MERGED_CARDS) {
     block(
       'TOO_MANY_CARDS',
+      { code: 'MERGE_TOO_MANY_CARDS', params: { count: finalCards.length, max: MAX_MERGED_CARDS } },
       `الملف الناتج يحمل ${finalCards.length} بطاقة، والحدّ ${MAX_MERGED_CARDS}. أنهِ البطاقات المنتهية في أحد الملفين أولاً.`,
     );
   }
@@ -959,6 +1007,15 @@ export function planMerge(input: PlanInput): MergePlan {
       if (nonResidentCardIssues(shaped, flaggedPaths, `properties.${index}`, keep.residence as CitizenResidence).length > 0) {
         block(
           'RESIDENCE_CONFLICT',
+          keep.residence === 'ESTATE'
+            ? { code: 'MERGE_ESTATE_HAS_TENANCY', params: propertyParams(card.propertyNumber) }
+            : {
+                code: 'MERGE_KEPT_FILE_NOT_RESIDENT',
+                params: {
+                  ...propertyParams(card.propertyNumber),
+                  keptKind: keep.residence === 'INSTITUTION' ? 'INSTITUTION' : 'NON_RESIDENT_OWNER',
+                },
+              },
           keep.residence === 'ESTATE'
             ? `الملف الباقي تركة، والتركة تملك فقط، والملف الآخر يحمل بطاقة إيجار أو سكن (${
                 card.propertyNumber ?? 'عقار'
