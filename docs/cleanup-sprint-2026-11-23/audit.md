@@ -211,6 +211,9 @@ Sizes today (the docs' numbers are stale): `fees.service.ts` 6,167 (doc 3,979), 
 `components/` (doc 44). Tracked: CQ Backend god-files row, CQ Frontend api-client and 44-files rows (CODE-6).
 Each extraction below is a move with no behaviour change, its own spec where the moved code holds decisions (rule 8).
 
+After GOD-01 to GOD-05 (2026-11-27, with ARCH-03): `fees.service.ts` 3,677, `buildings.service.ts` 4,755; the four fee
+services and `occupancy-writes.service.ts` 1,128.
+
 ## [GOD-01] Extract the Whish checkout and callback out of FeesService
 - **Priority:** P2 · **Assignee:** Hashem · **Estimate:** L · **Category:** God-files
 - **Files:** `fees/fees.service.ts` `startWhishCheckout` (4763), `parseWhishCallback` (4934), `settleFromWhishCallback` (4951), `markWhishCheckoutMismatched` → new `fees/whish-checkout.service.ts`; `FeesController`, `fees.module`.
@@ -1601,6 +1604,12 @@ Filled in by whoever executes a task (section 0, step 4). One row per finding; t
 | — | DRY-10 | `migrate-database.yml`, `tenant-migrator.ts` | The production migration runs the migrator under ts-node without building shared-schemas, so the rule could not live there | Yes: the rule is in the domain, with no imports | gotchas.md |
 | — | DRY-10 | `TenantSlug` comment naming `schemaNameFor()`; `seed-fee-testing-citizens.mjs` building `tenant_<slug>` by hand | A comment citing a renamed method (code-quality's comments row); a fifth schema-name builder | Yes | code-quality.md, the comments row narrowed |
 | — | DRY-11 | `C` in six tools, `fail` in five, `require('pg')` in eight, `createRequire` for `ts-node` in `provision.mjs` | The copies went beyond the four files the CQ row named | Yes: all in `lib.mjs` (`backendRequire`) | — |
+| GOD-25 | GOD-02 | `fees/fees.service.ts` `resolveTargets`, `categoryHolderWhere`, `assessTargets`, `holdingsOf`, `ownerClaims`, `categoryHolders` | Who a notice reaches and what each owes, about 1,000 of the 3,677 lines left: `FeeNoticesService`, `RecurringBillingService` and `CorrectionBillsService` reach it through `FeesService` | No: not the task's methods | docs/code-quality.md, the god-files row |
+| — | GOD-03 | `FeesService.categoryHolders` | The task named it for `RecurringBillingService`, but the recurring run never calls it: `CorrectionBillsService` does, and it wraps `resolveTargets` | Yes: it stays in `FeesService`, with the targeting | — |
+| — | GOD-02 | `replayNotice` | Its doc comment sat above `duplicateNotices`, stacked on that method's own (CODE-7) | Yes: moved onto `replayNotice` | — |
+| — | ARCH-03 | `BuildingsService` `assertMayBeCalledEmpty` | Its doc comment (the «شاغرة» rule) sat above `atomic`, stacked on that method's own (CODE-7) | Yes: moved onto `assertMayBeCalledEmpty` | — |
+| DEAD-20 | GOD-05 | `buildings/occupancy-writes.service.ts` `endOccupancy`, `releaseCensusClaim` | No production caller: «إنهاء الإشغال» goes through `TenancyService.endOccupancy` / `OwnershipService.endOccupancy`; only specs reach them | No: deleting them takes their specs, which is not a move | docs/code-quality.md, Backend |
+| — | GOD-01 to GOD-04 | docs/code-quality.md, the `FeesService.issue` timeout row | Logged by DRY-08 (#252) as left to ARCH-01 (#228); with both in one base, `issue` and the recurring run take `TENANT_TRANSACTION_DEFAULTS` | Yes: row removed | — |
 
 ---
 
