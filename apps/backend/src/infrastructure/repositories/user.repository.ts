@@ -43,6 +43,7 @@ export class PrismaUserRepository implements UserRepository {
       lastTotpStep: row.lastTotpStep,
       totpSecret: row.totpSecret,
       totpConfirmedAt: row.totpConfirmedAt,
+      totpPendingSecret: row.totpPendingSecret,
       totpLockedUntil: row.totpLockedUntil,
     });
   }
@@ -66,7 +67,8 @@ export class PrismaUserRepository implements UserRepository {
         lastTotpStep: row.lastTotpStep,
         totpSecret: row.totpSecret,
         totpConfirmedAt: row.totpConfirmedAt,
-      totpLockedUntil: row.totpLockedUntil,
+        totpPendingSecret: row.totpPendingSecret,
+        totpLockedUntil: row.totpLockedUntil,
       });
     }
 
@@ -231,16 +233,50 @@ export class PrismaUserRepository implements UserRepository {
     });
   }
 
-  /** Clears enrolment and secrets so the second factor is no longer requested. */
+  /** See the port: the confirmed factor is not touched. */
+  async savePendingTotpSecret(userId: string, secret: string): Promise<void> {
+    await this.db.user.updateMany({
+      where: { id: userId, kind: 'STAFF' },
+      data: { totpPendingSecret: secret },
+    });
+  }
+
+  /**
+   * One conditional write, so a confirmation racing a second enrolment either
+   * moves the secret it verified or nothing: the WHERE names that secret.
+   */
+  async promotePendingTotp(userId: string, secret: string): Promise<boolean> {
+    const { count } = await this.db.user.updateMany({
+      where: {
+        id: userId,
+        kind: 'STAFF',
+        OR: [
+          { totpPendingSecret: secret },
+          { totpPendingSecret: null, totpSecret: secret, totpConfirmedAt: null },
+        ],
+      },
+      data: {
+        totpSecret: secret,
+        totpConfirmedAt: new Date(),
+        totpPendingSecret: null,
+        tokenVersion: { increment: 1 },
+      },
+    });
+    return count > 0;
+  }
+
+  /** Clears enrolment and secrets so the second factor is no longer requested, and ends every session. */
   async disableTotp(userId: string): Promise<void> {
-    await this.db.user.update({
-      where: { id: userId },
+    await this.db.user.updateMany({
+      where: { id: userId, kind: 'STAFF' },
       data: {
         totpSecret: null,
         totpConfirmedAt: null,
+        totpPendingSecret: null,
         lastTotpStep: null,
         totpFailedAttempts: 0,
         totpLockedUntil: null,
+        tokenVersion: { increment: 1 },
       },
     });
   }

@@ -1,0 +1,31 @@
+-- 0116_totp_pending_secret
+--
+-- A second factor being set up, kept apart from the one in use.
+--
+-- == What it is for ======================================================
+--
+-- Starting an enrolment wrote the new secret over `totpSecret` and cleared
+-- `totpConfirmedAt` in the same update, so the confirmed factor stopped
+-- counting the moment «إعادة ضبط تطبيق المصادقة» opened, not when the new app
+-- proved itself. A stolen session could start an enrolment and sign in on
+-- the password alone afterwards; a staff member who gave up halfway was left
+-- with no second factor and nothing to say so. Audit SEC-02 and the High gap
+-- «Second-factor changes need no re-authentication» (docs/security.md).
+--
+--   totpPendingSecret  the base32 secret an enrolment issued and no code has
+--                      confirmed yet. NULL for every row today and whenever
+--                      no enrolment is open. Confirming moves it into
+--                      `totpSecret` and clears it; sign-in never reads it.
+--
+-- As sensitive as `totpSecret` beside it: never selected into a view, a log
+-- or an export. The in-app backup copies `users` whole and so takes it, as it
+-- already takes `totpSecret` (BackupController is unregistered).
+--
+-- == Safety ==============================================================
+--
+-- Additive only: one nullable column with no default, so no row is rewritten.
+-- The build serving production when this lands never reads or writes it, so
+-- a rollback is a redeploy. Ships alone, before the code that uses it
+-- (CLAUDE.md non-negotiable 5).
+
+ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "totpPendingSecret" TEXT;

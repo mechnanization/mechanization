@@ -191,4 +191,83 @@ describeIfDb('the TOTP guard (PrismaUserRepository + OtplibTotpService)', () => 
 
     expect(await row(id)).toMatchObject({ lastTotpStep: null, totpFailedAttempts: 0, totpLockedUntil: null });
   });
+
+  /*
+    A second factor being replaced (audit SEC-02, migration 0116): the new
+    secret waits in `totpPendingSecret`, the confirmed one keeps signing in, and
+    the confirmation moves the secret it verified or nothing.
+  */
+  const factor = (id: string) =>
+    db.user.findUniqueOrThrow({
+      where: { id },
+      select: { totpSecret: true, totpConfirmedAt: true, totpPendingSecret: true, tokenVersion: true },
+    });
+
+  it('keeps the confirmed factor while a new one waits, and swaps them on confirmation', async () => {
+    const id = await enrolledStaff();
+    const before = await factor(id);
+
+    await within(() => users.savePendingTotpSecret(id, 'NEWSECRET'));
+    expect(await factor(id)).toMatchObject({
+      totpSecret: SECRET,
+      totpConfirmedAt: before.totpConfirmedAt,
+      totpPendingSecret: 'NEWSECRET',
+      tokenVersion: before.tokenVersion,
+    });
+
+    expect(await within(() => users.promotePendingTotp(id, 'NEWSECRET'))).toBe(true);
+    const after = await factor(id);
+    expect(after).toMatchObject({ totpSecret: 'NEWSECRET', totpPendingSecret: null });
+    expect(after.totpConfirmedAt).not.toBeNull();
+    // Every session of the account ends.
+    expect(after.tokenVersion).toBe(before.tokenVersion + 1);
+  });
+
+  it('promotes nothing when another enrolment replaced the secret since', async () => {
+    const id = await enrolledStaff();
+    await within(() => users.savePendingTotpSecret(id, 'FIRST'));
+    await within(() => users.savePendingTotpSecret(id, 'SECOND'));
+
+    expect(await within(() => users.promotePendingTotp(id, 'FIRST'))).toBe(false);
+    expect(await factor(id)).toMatchObject({ totpSecret: SECRET, totpPendingSecret: 'SECOND' });
+  });
+
+  it('never promotes over a citizen row, nor a confirmed secret with no pending one', async () => {
+    const id = await enrolledStaff();
+    // The confirmed factor itself is not "waiting": confirming it again is refused.
+    expect(await within(() => users.promotePendingTotp(id, SECRET))).toBe(false);
+
+    const citizen = randomUUID();
+    await db.user.create({
+      data: {
+        id: citizen,
+        kind: 'CITIZEN',
+        tenantSlug: 'totp',
+        firstName: 'مواطن',
+        middleName: 'محمد',
+        lastName: 'تجريبي',
+        referenceNumber: `REF-${citizen.slice(0, 8)}`,
+        phone: '+96170123456',
+        totpPendingSecret: 'PLANTED',
+      },
+    });
+    await within(() => users.savePendingTotpSecret(citizen, 'X'));
+    expect(await within(() => users.promotePendingTotp(citizen, 'PLANTED'))).toBe(false);
+    expect((await factor(citizen)).totpPendingSecret).toBe('PLANTED');
+  });
+
+  it('disabling clears a pending secret too and ends every session', async () => {
+    const id = await enrolledStaff();
+    await within(() => users.savePendingTotpSecret(id, 'NEWSECRET'));
+    const before = await factor(id);
+
+    await within(() => users.disableTotp(id));
+
+    expect(await factor(id)).toMatchObject({
+      totpSecret: null,
+      totpConfirmedAt: null,
+      totpPendingSecret: null,
+      tokenVersion: before.tokenVersion + 1,
+    });
+  });
 });

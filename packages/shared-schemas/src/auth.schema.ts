@@ -40,6 +40,25 @@ export const totpEnrolmentSchema = z.object({
   token: z.string().trim().regex(/^\d{6}$/, 'رمز التحقق مكوّن من 6 أرقام'),
 });
 
+/**
+ * Re-authentication for a change to one's own second factor: starting an
+ * enrolment (`staff/totp/enrol`) or switching it off (`staff/totp/disable`).
+ * Audit SEC-02: a stolen session alone could remove 2FA and enrol its own.
+ *
+ * The password always. The code from the authenticator in use only while one
+ * is confirmed, which the server knows and this schema does not: it refuses a
+ * missing code then with `TOTP_CODE_REQUIRED`.
+ */
+export const totpReauthSchema = z.object({
+  currentPassword: z.string().min(1, 'يرجى إدخال كلمة المرور الحالية للتأكيد'),
+  totpToken: z
+    .string()
+    .trim()
+    .regex(/^\d{6}$/, 'رمز التحقق مكوّن من 6 أرقام')
+    .optional(),
+});
+export type TotpReauth = z.infer<typeof totpReauthSchema>;
+
 // ────────────────────────────  Citizens  ────────────────────────────
 
 /*

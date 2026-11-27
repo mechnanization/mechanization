@@ -112,7 +112,11 @@
       "heading": "Sign in to your account",
       "help": "Forgot your password or unable to sign in? Contact your system administrator.",
       "passwordChangedTitle": "Password changed",
-      "passwordChangedBody": "Every session of this account was signed out, on this device and any other. Sign in with the new password."
+      "passwordChangedBody": "Every session of this account was signed out, on this device and any other. Sign in with the new password.",
+      "secondFactorOnTitle": "Two-factor authentication is on",
+      "secondFactorOnBody": "Every session of this account was signed out, on this device and any other. Sign in with your password and the code from your authenticator app.",
+      "secondFactorOffTitle": "Two-factor authentication is off",
+      "secondFactorOffBody": "Every session of this account was signed out, on this device and any other. Sign in with your password."
     }
   },
   "citizen": {
@@ -524,6 +528,9 @@
     "TOTP_CODE_INVALID": "The verification code is incorrect. Check the code in your authenticator app.",
     "TOTP_CODE_REUSED": "This code has already been used. Wait for your authenticator app to show a new one, then enter it.",
     "TOTP_LOCKED": "Too many wrong verification codes, so codes are not being checked for this account. {minutes, plural, one {Try again in a minute.} other {Try again in {minutes} minutes.}}",
+    "TOTP_CODE_REQUIRED": "Enter the current code from your authenticator app to confirm this change.",
+    "TOTP_ENROLMENT_NOT_STARTED": "No authenticator setup is in progress. Start the setup again.",
+    "TOTP_ENROLMENT_CHANGED": "The setup was started again since this code was shown. Scan the new code, then enter the code it gives.",
     "CITIZEN_OTP_UNAVAILABLE": "Signing in with a code sent to your phone is not available yet. Sign in with your reference number, or visit the municipality.",
     "NEWS_FORBIDDEN": "Your role is not allowed to do this in News. Ask the municipality administrator.",
     "NEWS_NOT_A_MEMBER": "Your account does not have News access. Ask the municipality administrator to give your account the right role.",
@@ -3989,6 +3996,12 @@
       "failed": "Could not change the password."
     },
     "ownAccount": {
+      "setupTitle": "Set up an authenticator app",
+      "setupDescription": "Confirm your current password to create a secret key and QR code for your app.",
+      "reconfigureDescription": "Confirm your current password and the code your app shows now. The app you use now keeps working until the new one is confirmed.",
+      "disableDescription": "Disabling 2FA lowers your account security. Confirm your current password and the code your app shows now. Every session of this account will be signed out.",
+      "currentCode": "Current code from your authenticator app",
+      "confirmSignsOut": "Activating signs this account out everywhere, this device included; sign in again with the new code.",
       "loadFailedTitle": "Could not read your account",
       "loadFailed": "The account details did not load. Two-factor settings stay unavailable until they do.",
       "retry": "Retry"

@@ -21,7 +21,7 @@ jest.mock('nodemailer', () => ({
   createTransport: (options: Record<string, unknown>) => mockCreateTransport(options),
 }));
 
-const { SmtpEmailSender } = require('./smtp-email.sender') as typeof import('./smtp-email.sender');
+const { SmtpEmailSender, maskEmail } = require('./smtp-email.sender') as typeof import('./smtp-email.sender');
 
 const CONFIGURED = {
   SMTP_HOST: 'smtp.example.invalid',
@@ -167,5 +167,28 @@ describe('SmtpEmailSender.send', () => {
     mockSendMail.mockRejectedValue(new Error('550 mailbox unavailable'));
 
     await expect(sender().send(MESSAGE)).rejects.toThrow(/550/);
+  });
+
+  it('logs a failure with the recipient masked, in its own words and in the server’s (SEC-05)', async () => {
+    mockSendMail.mockRejectedValue(new Error(`550 5.1.1 <${MESSAGE.to}>: Recipient address rejected`));
+    const instance = sender();
+    const lines: string[] = [];
+    (instance as unknown as { logger: { error: (line: string) => void } }).logger = {
+      error: (line) => lines.push(line),
+    };
+
+    await expect(instance.send(MESSAGE)).rejects.toThrow(/550/);
+
+    expect(lines).toEqual([
+      'SMTP delivery failed for c•••@albazourieh.gov.lb: 550 5.1.1 <c•••@albazourieh.gov.lb>: Recipient address rejected',
+    ]);
+  });
+});
+
+describe('maskEmail', () => {
+  it('keeps the first character and the domain only', () => {
+    expect(maskEmail('clerk@albazourieh.gov.lb')).toBe('c•••@albazourieh.gov.lb');
+    expect(maskEmail('not-an-address')).toBe('n•••');
+    expect(maskEmail('')).toBe('•••');
   });
 });

@@ -6,6 +6,7 @@ import { PrismaClient as TenantPrismaClient } from '../../../generated/tenant-cl
 import { migrateTenantSchema } from '../../../infrastructure/prisma/tenant-migrator';
 import { tenantTestClient } from '../../../infrastructure/prisma/tenant-test-client';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
+import { inTenantScope } from '../../../infrastructure/context/in-tenant-scope.testing';
 import { PrismaAuditRepository } from '../../../infrastructure/repositories/audit.repository';
 import { AuditService } from '../audit/audit.service';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
@@ -63,17 +64,15 @@ describeIfDb('invoice numbering', () => {
     return rows.map((row) => row.invoiceNumber);
   };
 
-  /** The service as one municipality's requests reach it, over `client`. */
+  /**
+   * The service as one municipality's requests reach it, over `client`: every
+   * call inside a real tenant scope (`inTenantScope`), since issuing runs in
+   * `runInTenantTransaction` (audit ARCH-01), which re-enters it.
+   */
+  const scopeContext = new TenantContextService();
   const feesOver = (client: TenantPrismaClient): FeesService =>
-    new FeesService(
-      {
-        get prisma() {
-          return client;
-        },
-        tenantSlug: 'numbering',
-        schemaName: SCHEMA,
-        tenantId: 'tenant-1',
-      } as unknown as TenantContextService,
+    inTenantScope(new FeesService(
+      scopeContext,
       { emit: jest.fn() } as unknown as EventEmitter2,
       {} as WhishGateway,
       {
@@ -83,7 +82,7 @@ describeIfDb('invoice numbering', () => {
       } as unknown as RedisCacheService,
       {} as PaymentLedgerService,
       {} as never,
-    );
+    ), scopeContext, { tenantId: 'tenant-1', tenantSlug: 'numbering', schemaName: SCHEMA, prisma: client });
 
   beforeAll(async () => {
     ddl = new Client({ connectionString: TEST_DATABASE_URL });

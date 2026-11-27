@@ -2009,15 +2009,16 @@ export class FeesService {
     }
 
     /*
-      A bare transaction (docs/code-quality.md lists it): everything in it writes
-      through `tx`. It takes `runInTenantTransaction`'s limits (15 s / 60 s),
-      not Prisma's 5 s default: a town-wide notice writes and numbers tens of
-      thousands of bills in here, and past five seconds Prisma closes the
-      transaction under the insert.
+      `runInTenantTransaction` (audit ARCH-01), so a service or a listener
+      called inside writes through this transaction too, and its limits
+      (15 s / 60 s) rather than Prisma's 5 s default: a town-wide notice writes
+      and numbers tens of thousands of bills in here, and past five seconds
+      Prisma closes the transaction under the insert.
     */
     /** The duplicates found under the issue lock that the clerk confirmed, for the audit row. */
     let duplicatesConfirmed: string[] = [];
-    const result = await this.db.$transaction(async (tx) => {
+    const result = await runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.db as Prisma.TransactionClient;
       /*
         Serialised before anything is written; the key names the schema, so two
         municipalities never wait on each other. Lower-cased: the column is a
@@ -2082,7 +2083,7 @@ export class FeesService {
         sharedBills: written.shared,
         replayed: false as const,
       };
-    }, { maxWait: 15_000, timeout: 60_000 });
+    });
 
     // A press that raced the first one and lost: answered from it, and nothing more is written or emitted.
     if (result.replayed) return this.replayedNoticeResult(result.noticeId, result.issued);
@@ -2707,8 +2708,10 @@ export class FeesService {
         recurring job runs at 2am and is the only thing issuing bills at that
         hour, and the alternative is a half-numbered period.
       */
-      const created = await this.db.$transaction(
-        async (tx) => {
+      const created = await runInTenantTransaction(
+        this.tenantContext,
+        async () => {
+          const tx = this.db as Prisma.TransactionClient;
           /*
             The notice's row first, as «إلغاء الإشعار» takes it (`cancelNoticeBatch`):
             a run and a cancel of the same notice wait for each other instead of
@@ -2755,8 +2758,8 @@ export class FeesService {
           });
           return { count: written.own + written.shared, stopped: false };
         },
-        // As on the first issue: a period of a town-wide notice is more than five seconds of work.
-        { maxWait: 15_000, timeout: 60_000 },
+        // `runInTenantTransaction`'s limits (15 s / 60 s), as on the first issue:
+        // a period of a town-wide notice is more than five seconds of work.
       );
 
       if (created.stopped) {
@@ -3680,7 +3683,8 @@ export class FeesService {
      */
     audit: AuditEntryInput;
   }): Promise<void> {
-    await this.db.$transaction(async (tx) => {
+    await runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.db as Prisma.TransactionClient;
       const { count } = await tx.citizenPayment.updateMany({
         where: {
           id: input.paymentId,
@@ -4662,7 +4666,7 @@ export class FeesService {
 
       The tab predicate and the status cell both compare `dueDate` against
       "now", and they have to be the same "now": read twice, they are separated
-      by the `$transaction` round trip below, and an invoice due in that gap
+      by the transaction below, and an invoice due in that gap
       would be filtered as «غير مدفوعة» and then rendered «متأخرة» in its own
       row. It is a narrow window and it is the one this function is judged on,
       because the two numbers a clerk compares are on the same screen.
@@ -4671,16 +4675,18 @@ export class FeesService {
     const where = { ...whereWithoutStatus, ...paymentStatusWhere(filter.status, now) };
 
     /**
-     * The page and the count in one round trip.
+     * The page, the count and the totals in one transaction, on one connection.
      *
-     * `$transaction` rather than two awaits so both read the same snapshot — a
-     * payment settled between the two would otherwise give a total that
-     * disagrees with the rows beside it, and the page counter would flicker
-     * against a list that had not changed.
+     * Not one snapshot: the transaction runs at Read Committed, so each
+     * statement reads the rows committed when it starts, and a payment settled
+     * between two of them can still put the total a row out from the page
+     * beside it. A Repeatable Read helper for reads like this one is audit
+     * ARCH-06. Through `runInTenantTransaction` (audit ARCH-01), as every
+     * transaction in this service.
      */
     const [rows, total, collected, byMethod, awaiting] = await withConnectionRetry(() =>
-      this.db.$transaction([
-        this.db.citizenPayment.findMany({
+      runInTenantTransaction(this.tenantContext, async () => [
+        await this.db.citizenPayment.findMany({
           where: scoped(where),
           /**
            * A transactions view is a chronology, so it is ordered by when the
@@ -4700,7 +4706,7 @@ export class FeesService {
           skip,
           include: this.ADMIN_PAYMENT_INCLUDE,
         }),
-        this.db.citizenPayment.count({ where: scoped(where) }),
+        await this.db.citizenPayment.count({ where: scoped(where) }),
         /**
          * Aggregates over the *whole filtered set*, not the page.
          *
@@ -4710,20 +4716,20 @@ export class FeesService {
          * total that shrinks when the clerk changes the page size, which is the
          * kind of wrong number nobody notices until it is quoted in a meeting.
          */
-        this.db.citizenPayment.aggregate({
+        await this.db.citizenPayment.aggregate({
           where: scoped({ ...where, paidAmount: { gt: 0 } }),
           _sum: { paidAmount: true },
         }),
-        this.db.citizenPayment.groupBy({
+        await this.db.citizenPayment.groupBy({
           by: ['paymentMethod'],
           where: scoped({ ...where, paidAmount: { gt: 0 } }),
           _count: { _all: true },
         }),
-        this.db.citizenPayment.count({
+        await this.db.citizenPayment.count({
           // `whereWithoutStatus`, not `where` — see the note on its declaration.
           where: scoped({ ...whereWithoutStatus, paymentStatus: 'PENDING_REVIEW' }),
         }),
-      ]),
+      ] as const),
     );
 
     // The same `now` the tab predicate used — see the note above `where`.
@@ -4871,7 +4877,8 @@ export class FeesService {
      * with no checkout row — or a checkout row against an invoice that was never
      * claimed — is a state no callback could be resolved from.
      */
-    await this.db.$transaction(async (tx) => {
+    await runInTenantTransaction(this.tenantContext, async () => {
+      const tx = this.db as Prisma.TransactionClient;
       /*
         Any earlier attempt on this invoice stops being live. A citizen who
         abandons a checkout and starts again leaves the first one open at the
@@ -5026,7 +5033,8 @@ export class FeesService {
         infinite retry loop. `{ applied: false }` is already this method's word
         for "nothing to do".
       */
-      const count = await this.db.$transaction(async (tx) => {
+      const count = await runInTenantTransaction(this.tenantContext, async () => {
+        const tx = this.db as Prisma.TransactionClient;
         const invoice = await tx.citizenPayment.updateMany({
           where: {
             id: payment.id,
