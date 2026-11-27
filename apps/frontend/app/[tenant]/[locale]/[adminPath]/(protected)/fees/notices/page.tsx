@@ -105,6 +105,8 @@ export default function FeeNoticesPage({
     errorMessage: t('loadError'),
   });
   const notices = useMemo(() => query.data?.items ?? [], [query.data]);
+  // The server's page is `FEE_NOTICES_PAGE_MAX` notices at most (PAG-04); until this page pages on the server (PAG-05), say when that is not all.
+  const totalNotices = query.data?.total ?? 0;
 
   const open = (notice: FeeNoticeSummary) => {
     setReason('');
@@ -268,6 +270,12 @@ export default function FeeNoticesPage({
           ) : (
             <p>{t('outcomeAll')}</p>
           )}
+        </Alert>
+      ) : null}
+
+      {totalNotices > notices.length ? (
+        <Alert variant="warning" live="status">
+          {t('truncated', { shown: notices.length, total: totalNotices })}
         </Alert>
       ) : null}
 

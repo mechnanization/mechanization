@@ -1654,18 +1654,28 @@ export class FeesService {
 
   // ──────────────────────────  Fee notices  ──────────────────────────
 
-  async listNotices() {
-    const rows = await withConnectionRetry(() =>
-      this.db.feeNotice.findMany({
-        orderBy: { createdAt: 'desc' },
-        include: {
-          targetCitizen: { select: { firstName: true, lastName: true, residence: true } },
-          _count: { select: { payments: true } },
-        },
-      }),
+  /**
+   * One page of «إشعارات الرسوم», newest first, and how many there are (PAG-04).
+   * `id` breaks a tie on `createdAt`, so a page boundary cannot show one
+   * notice twice and skip another.
+   */
+  async listNotices(page: { limit: number; offset: number }) {
+    const [rows, total] = await withConnectionRetry(() =>
+      Promise.all([
+        this.db.feeNotice.findMany({
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          take: page.limit,
+          skip: page.offset,
+          include: {
+            targetCitizen: { select: { firstName: true, lastName: true, residence: true } },
+            _count: { select: { payments: true } },
+          },
+        }),
+        this.db.feeNotice.count(),
+      ]),
     );
 
-    return rows.map((row) => {
+    const items = rows.map((row) => {
       const scope = scopeOf(row);
       return {
       id: row.id,
@@ -1692,6 +1702,7 @@ export class FeesService {
       createdAt: row.createdAt.toISOString(),
       };
     });
+    return { items, total };
   }
 
   /**

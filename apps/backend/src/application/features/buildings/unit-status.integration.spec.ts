@@ -519,6 +519,6 @@ describeIfDb('the one rule for «حالة الوحدة»', () => {
           actor(),
         ),
       ),
-    ).rejects.toThrow(/يُفتح تلقائياً/);
+    ).rejects.toMatchObject({ code: 'CASE_TYPE_SET_BY_RULE', details: { caseType: 'STATUS_CONFLICT' } });
   });
 });

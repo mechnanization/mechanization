@@ -11,6 +11,8 @@ import {
   type BulkSettlePayments,
   FEE_ADMIN_ROLES,
   FEE_ISSUE_ROLES,
+  FEE_NOTICES_PAGE_DEFAULT,
+  FEE_NOTICES_PAGE_MAX,
   FEE_READ_ROLES,
   FEE_SETTLE_ROLES,
   PAYMENT_REVERSE_ROLES,
@@ -133,10 +135,18 @@ export class FeesController {
 
   // ──────────────────────────  Fee notices  ──────────────────────────
 
+  /**
+   * «إشعارات الرسوم», newest first. Paged since PAG-04: `limit`
+   * (`FEE_NOTICES_PAGE_DEFAULT`, at most `FEE_NOTICES_PAGE_MAX`) and `offset`,
+   * answered as `{ items, total }`.
+   */
   @Roles(...FEE_READ_ROLES)
   @Get('notices')
-  async listNotices() {
-    return { items: await this.fees.listNotices() };
+  async listNotices(@Query('limit') limit?: string, @Query('offset') offset?: string) {
+    return this.fees.listNotices({
+      limit: queryLimit(limit, FEE_NOTICES_PAGE_DEFAULT, FEE_NOTICES_PAGE_MAX),
+      offset: queryOffset(offset),
+    });
   }
 
   /**

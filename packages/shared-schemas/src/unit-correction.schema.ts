@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { typeError } from './type-error';
+import type { BlockRefusal } from './error-codes';
 
 /**
  * «حذف تصحيحي» — a SUPER_ADMIN removes a census unit the ordinary delete
@@ -36,6 +37,21 @@ export type UnitCorrectionBlocker =
   /** A landlord link whose record could not be read, so it cannot be reverted safely. */
   | { kind: 'UNREADABLE_LANDLORD_LINK'; citizenName: string };
 
+/** A blocker as a preview sends it: what it is, and its refusal to word it by (ERR-04). */
+export type WithRefusal<T> = T & { refusal: BlockRefusal };
+
+/** The refusal «حذف تصحيحي» answers a blocker with, and the preview words it by. */
+export function unitCorrectionBlockerRefusal(blocker: UnitCorrectionBlocker): BlockRefusal {
+  switch (blocker.kind) {
+    case 'DAMAGE_ASSESSMENT':
+      return { code: 'UNIT_CORRECTION_DAMAGE_ASSESSMENT', params: { count: blocker.count } };
+    case 'LINK_NAMES_OTHER_UNITS':
+      return { code: 'UNIT_CORRECTION_LINK_NAMES_OTHER_UNITS', params: { name: blocker.citizenName } };
+    case 'UNREADABLE_LANDLORD_LINK':
+      return { code: 'UNIT_CORRECTION_UNREADABLE_LANDLORD_LINK', params: { name: blocker.citizenName } };
+  }
+}
+
 export interface UnitCorrectionPreview {
   unit: {
     id: string;
@@ -48,7 +64,7 @@ export interface UnitCorrectionPreview {
   building: { id: string; code: string };
   /** Recomputed by the server under lock; the delete is refused if it differs. */
   fingerprint: string;
-  blockers: UnitCorrectionBlocker[];
+  blockers: Array<WithRefusal<UnitCorrectionBlocker>>;
   /** Nothing hangs off the unit: the delete removes the unit row and nothing else. */
   nothingRecorded: boolean;
   /** Census records removed with the unit (the foreign-key cascade). */
@@ -168,13 +184,43 @@ export type DuplexMergeBlocker =
   | { kind: 'AREA_UNKNOWN' }
   | UnitCorrectionBlocker;
 
+/**
+ * The refusal «دمج كدوبلكس» answers a blocker with, and the preview words it
+ * by. The three blockers it shares with «حذف تصحيحي» have codes of their own
+ * here: they are about the upper flat, not the unit being deleted.
+ */
+export function duplexMergeBlockerRefusal(blocker: DuplexMergeBlocker): BlockRefusal {
+  switch (blocker.kind) {
+    case 'NOT_FLATS':
+      return { code: 'DUPLEX_MERGE_NOT_FLATS', params: {} };
+    case 'TOO_MANY_LEVELS':
+      return { code: 'DUPLEX_MERGE_TOO_MANY_LEVELS', params: { max: blocker.max } };
+    case 'OTHER_HOUSEHOLD':
+      return { code: 'DUPLEX_MERGE_OTHER_HOUSEHOLD', params: { name: blocker.citizenName } };
+    case 'CARD_WITHOUT_LOWER':
+      return { code: 'DUPLEX_MERGE_CARD_WITHOUT_LOWER', params: { name: blocker.citizenName } };
+    case 'STANDING_VACANCY':
+      return { code: 'DUPLEX_MERGE_STANDING_VACANCY', params: {} };
+    case 'BILLING_DIFFERS':
+      return { code: 'DUPLEX_MERGE_BILLING_DIFFERS', params: {} };
+    case 'AREA_UNKNOWN':
+      return { code: 'DUPLEX_MERGE_AREA_UNKNOWN', params: {} };
+    case 'DAMAGE_ASSESSMENT':
+      return { code: 'DUPLEX_MERGE_DAMAGE_ASSESSMENT', params: { count: blocker.count } };
+    case 'LINK_NAMES_OTHER_UNITS':
+      return { code: 'DUPLEX_MERGE_LINK_NAMES_OTHER_UNITS', params: { name: blocker.citizenName } };
+    case 'UNREADABLE_LANDLORD_LINK':
+      return { code: 'DUPLEX_MERGE_UNREADABLE_LANDLORD_LINK', params: { name: blocker.citizenName } };
+  }
+}
+
 export interface DuplexMergePreview {
   lower: { id: string; unitCode: string; floor: number; levels: number; unitArea: string | null };
   upper: { id: string; unitCode: string; floor: number; levels: number; unitArea: string | null };
   building: { id: string; code: string };
   /** Recomputed under lock; the merge is refused if it differs. */
   fingerprint: string;
-  blockers: DuplexMergeBlocker[];
+  blockers: Array<WithRefusal<DuplexMergeBlocker>>;
   /** What the lower flat becomes. `areaAfter` is null when it must be given (`AREA_UNKNOWN`). */
   levelsAfter: number;
   areaAfter: string | null;

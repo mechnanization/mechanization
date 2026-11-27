@@ -198,6 +198,17 @@ export const ERROR_CODES = [
   'UNIT_STATUS_AFTER_EXIT_REQUIRED',
   'NON_RESIDENT_OWNER_CANNOT_OCCUPY',
   'OCCUPANCY_CHANGED_CONCURRENTLY',
+  // Why a landlord link cannot be made yet (ERR-04): each `LinkBlock` of the proposal carries one as its
+  // `refusal`, and making the link throws the same. `hasUnit` / `unitCode`, and `hasOwners` / `owners`
+  // (the names the building's record holds) where the message says them.
+  'LANDLORD_LINK_NOT_ON_SURVEY',
+  'LANDLORD_LINK_NO_UNITS',
+  'LANDLORD_LINK_UNIT_VACANT',
+  'LANDLORD_LINK_OWNER_NO_FILE',
+  'LANDLORD_LINK_OWNER_CARD_UNLINKED',
+  'LANDLORD_LINK_OWNER_OCCUPIES_UNIT',
+  'LANDLORD_LINK_UNIT_OWNED_BY_OTHER',
+  'LANDLORD_LINK_RECONCILE_FAILED',
   // «توزيع الرسم على المالكين» (migration 0075)
   'OWNER_BILLING_NOT_CO_OWNED',
   'OWNER_BILLING_STRUCTURAL_UNIT',
@@ -245,9 +256,32 @@ export const ERROR_CODES = [
   'UNIT_CORRECTION_UNVERIFIED',
   'UNIT_CORRECTION_BUSY',
   'UNIT_NOT_FOUND',
+  // Why «حذف تصحيحي» cannot go ahead (ERR-04): `unitCorrectionBlockerRefusal(blocker)`; `count`, or the citizen's `name`.
+  'UNIT_CORRECTION_DAMAGE_ASSESSMENT',
+  'UNIT_CORRECTION_LINK_NAMES_OTHER_UNITS',
+  'UNIT_CORRECTION_UNREADABLE_LANDLORD_LINK',
+  // Cases (حالات), converted during PAG-02 (the backend guide: fix a prose throw where you touch its file).
+  'CASE_NOT_FOUND',
+  'CASE_TYPE_SET_BY_RULE',
+  'CASE_TYPE_RULE_LOCKED',
+  'CASE_ALREADY_OPEN_ON_UNIT',
+  'CASE_CITIZEN_INACTIVE',
   // «دمج كدوبلكس» (D28)
   'DUPLEX_MERGE_NO_UPPER',
+  // Retired by ERR-04, never sent since: its `reason` param was an Arabic sentence, shown as is on /en/.
+  // The blocker's own code below replaced it. Kept because a code is never given a new meaning.
   'DUPLEX_MERGE_BLOCKED',
+  // Why two flats cannot be merged as a duplex (ERR-04): `duplexMergeBlockerRefusal(blocker)`; `max`, `count` or `name`.
+  'DUPLEX_MERGE_NOT_FLATS',
+  'DUPLEX_MERGE_TOO_MANY_LEVELS',
+  'DUPLEX_MERGE_OTHER_HOUSEHOLD',
+  'DUPLEX_MERGE_CARD_WITHOUT_LOWER',
+  'DUPLEX_MERGE_STANDING_VACANCY',
+  'DUPLEX_MERGE_BILLING_DIFFERS',
+  'DUPLEX_MERGE_AREA_UNKNOWN',
+  'DUPLEX_MERGE_DAMAGE_ASSESSMENT',
+  'DUPLEX_MERGE_LINK_NAMES_OTHER_UNITS',
+  'DUPLEX_MERGE_UNREADABLE_LANDLORD_LINK',
   'PARCEL_HAS_OTHER_BUILDINGS',
   'PARCEL_CHANGED_CONCURRENTLY',
   'BUILDING_CODE_TAKEN',
@@ -283,6 +317,26 @@ export const ERROR_CODES = [
   'MERGE_NOT_FOUND',
   'MERGE_ABSORBED_CHANGED',
   'CITIZEN_MERGED_AWAY',
+  // Why «دمج ملفين» cannot go ahead (ERR-04): each `CitizenMergeBlock` carries one as its `refusal`, and the
+  // merge throws the first. `label` is the flat's code or the card's رقم العقار (`hasLabel` no: none known);
+  // `keptRole` / `otherRole` an occupancy (OWNER, TENANT, FREE_OCCUPANT, else «شاغل»); `property` a رقم العقار.
+  'MERGE_SAME_FILE',
+  'MERGE_FILE_INACTIVE',
+  'MERGE_FILE_ALREADY_MERGED',
+  'MERGE_PERSON_AND_BODY',
+  'MERGE_ROLE_CONFLICT_ON_CARDS',
+  'MERGE_ROLE_CONFLICT_ON_UNITS',
+  'MERGE_LINK_WROTE_CARD',
+  'MERGE_LINK_WROTE_OCCUPANCY',
+  'MERGE_SELF_LINK',
+  'MERGE_TOO_MANY_CARDS',
+  'MERGE_ESTATE_HAS_TENANCY',
+  'MERGE_KEPT_FILE_NOT_RESIDENT',
+  // Why its undo cannot go ahead. `UNMERGE_MERGED_AGAIN` names the later file (`name`, `hasReference`, `reference`).
+  'UNMERGE_ALREADY_UNDONE',
+  'UNMERGE_MERGED_AGAIN',
+  'UNMERGE_UNKNOWN_FORMAT',
+  'UNMERGE_CHANGED_SINCE',
   // A passport number another file already holds (`users` is unique on the document). Names nobody.
   'CITIZEN_IDENTITY_DOC_TAKEN',
   // A new filing for a file that is archived (`isActive` false): reactivate it first. `details.citizenId`.
@@ -530,6 +584,20 @@ export type ErrorCode = (typeof ERROR_CODES)[number];
 
 /** Values a message interpolates. Formatting (digits, grouping) is the frontend's job. */
 export type ErrorParams = Readonly<Record<string, string | number>>;
+
+/**
+ * A refusal as data (ERR-04): the code and the values its message fills in,
+ * exactly what an error response carries as `code` and `params`. A preview
+ * that lists why an act cannot go ahead (a landlord link, «دمج ملفين», its
+ * undo, «حذف تصحيحي», «دمج كدوبلكس») gives each block one, so the screen words
+ * it from the message files like any refusal, and the act, pressed anyway,
+ * throws the same code. A block's `message`, the server's Arabic sentence, is
+ * kept beside it only until ERR-05 renders the codes.
+ */
+export interface BlockRefusal {
+  code: ErrorCode;
+  params: ErrorParams;
+}
 
 /** The JSON body of every error response. */
 export interface ApiErrorBody {
