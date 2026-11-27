@@ -503,6 +503,9 @@ export const ERROR_CODES = [
   'TOTP_ENROLMENT_CHANGED',
   // The phone-code sign-in (`citizen/otp/*`) while no SMS provider is live; the portal signs in by رقم مرجعي.
   'CITIZEN_OTP_UNAVAILABLE',
+  // A non-public route that declares neither `@Roles` nor `@SelfService`: `RolesGuard` fails closed (SEC-10).
+  // A wiring mistake, so the words are a plain refusal (403).
+  'ROUTE_ACCESS_UNDECLARED',
   // News on Day3ati, the partner API (task «Day3ati HTTP client and error handling»). The first two are the
   // user's role and account (403); the next three are the municipality's setup or the service (409); the rest
   // are the call itself: `NEWS_INVALID_INPUT` carries `details: [{ path, message }]` for the form (422), as

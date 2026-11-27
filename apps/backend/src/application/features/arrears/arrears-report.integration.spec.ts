@@ -14,6 +14,7 @@ import { TreasuryLedgerService } from '../treasury/treasury-ledger.service';
 import { ArrearsBatchService } from './arrears-batch.service';
 import { ArrearsReportService } from './arrears-report.service';
 import { ArrearsService } from './arrears.service';
+import { StaffActor } from '../../common/actor';
 
 /**
  * «تقرير المتأخرات» and a batch's sheet (task 11, docs/old-debts-plan.md §8),
@@ -48,8 +49,8 @@ describeIfDb('«تقرير المتأخرات» and the batch sheet', () => {
   let batches: ArrearsBatchService;
 
   const ids = { accountant: randomUUID(), manager: randomUUID() };
-  const ACCOUNTANT = { id: ids.accountant, role: 'ACCOUNTANT' };
-  const MANAGER = { id: ids.manager, role: 'SUPER_ADMIN' };
+  const ACCOUNTANT: StaffActor = { id: ids.accountant, role: 'ACCOUNTANT' };
+  const MANAGER: StaffActor = { id: ids.manager, role: 'SUPER_ADMIN' };
   const person = { amal: randomUUID(), bassem: randomUUID(), elias: randomUUID(), unchecked: randomUUID(), merged: randomUUID() };
   let batchId: string;
   let draftId: string;

@@ -1,0 +1,40 @@
+// Unused files, exports, types and dependencies, per workspace (DEAD-18).
+// Run through `pnpm lint:unused` (scripts/lint-unused.mjs), which fails only on
+// findings that are not in scripts/knip-baseline.json. Options: the schema of the
+// installed knip, node_modules/knip/schema.json.
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": ["scripts/**/*.mjs"],
+      "project": ["scripts/**/*.mjs"],
+      // Postgres's own client tools, installed on the machine, not packages.
+      "ignoreBinaries": ["pg_dump", "pg_restore"]
+    },
+    "apps/backend": {
+      // The API (nest-cli.json's entryFile), the retired Vercel entry and its
+      // shim, and every script package.json runs through ts-node.
+      "entry": ["src/presentation/main.ts", "src/presentation/serverless.ts", "api/index.js", "src/scripts/*.ts"],
+      "project": ["src/**/*.ts", "api/**/*.js"],
+      // The Prisma clients are generated (`pnpm db:generate`).
+      "ignore": ["src/generated/**"],
+      "ignoreDependencies": [
+        // Read by `prisma generate`; the generated clients bundle their runtime.
+        "@prisma/client",
+        // Ambient: `Express.Multer.File` in the upload handlers.
+        "@types/multer"
+      ]
+    },
+    "apps/frontend": {
+      "project": ["**/*.{ts,tsx,mjs,mts}"]
+    },
+    "packages/shared-schemas": {
+      "entry": ["src/index.ts"],
+      // Unused files and dependencies only: knip takes package.json's `main` as
+      // public API and does not follow its `export *` lines, so an export no app
+      // imports (type or value) is not reported here, `includeEntryExports` or not (tried on
+      // 6.48). Those are DEAD-15's, checked by hand.
+      "project": ["src/**/*.ts"]
+    }
+  }
+}

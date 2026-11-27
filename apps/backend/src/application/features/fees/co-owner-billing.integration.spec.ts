@@ -15,6 +15,7 @@ import { BuildingsService } from '../buildings/buildings.service';
 import { OwnerBillingService } from '../buildings/owner-billing.service';
 import { assessCitizen, FeesService } from './fees.service';
 import { municipalToday } from '@mechanization/shared-schemas';
+import { StaffActor } from '../../common/actor';
 
 /**
  * «توزيع الرسم على المالكين» against a real tenant schema (migration 0075
@@ -51,7 +52,7 @@ describeIfDb('co-owner billing', () => {
   let ownerBilling: OwnerBillingService;
   let events: { emit: jest.Mock };
   const officerId = randomUUID();
-  const actor = { id: officerId, role: 'FIELD_INSPECTOR' };
+  const actor: StaffActor = { id: officerId, role: 'FIELD_INSPECTOR' };
 
   const within = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'tenant-cob', tenantSlug: 'cob', schemaName: SCHEMA, prisma: db }, work);

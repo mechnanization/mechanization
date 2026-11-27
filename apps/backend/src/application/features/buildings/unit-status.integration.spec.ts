@@ -17,6 +17,7 @@ import { BuildingsService } from './buildings.service';
 import { CensusSyncService } from './census-sync.service';
 import { settleUnit, unitsUnderReview } from './unit-status';
 import { municipalToday } from '@mechanization/shared-schemas';
+import { StaffActor } from '../../common/actor';
 
 /**
  * «حالة الوحدة» kept in step with who is recorded in the flat — against a real
@@ -50,7 +51,7 @@ describeIfDb('the one rule for «حالة الوحدة»', () => {
   let cases: CasesService;
   let officerId: string;
 
-  const actor = () => ({ id: officerId, role: 'SUPER_ADMIN' });
+  const actor = (): StaffActor => ({ id: officerId, role: 'SUPER_ADMIN' });
   const within = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'tenant-us', tenantSlug: 'us', schemaName: SCHEMA, prisma: db }, work);
 

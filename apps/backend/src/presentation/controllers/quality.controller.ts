@@ -28,6 +28,8 @@ import {
   type ReviewState,
 } from '../../application/features/quality/record-review.service';
 import { CurrentUser } from '../decorators/current-user.decorator';
+import { CurrentActor } from '../decorators/current-actor.decorator';
+import { StaffActor } from '../../application/common/actor';
 import { Roles } from '../decorators/roles.decorator';
 import { UuidPipe } from '../pipes/uuid.pipe';
 
@@ -37,8 +39,6 @@ const restoreSchema = z.object({
   kind: z.enum(QUALITY_FINDING_KIND),
   subjectKey: z.string().trim().min(1).max(500),
 });
-
-const actorOf = (user: SessionClaims) => ({ id: user.sub, role: user.role ?? '' });
 
 function optionalUuid(value: string | undefined, name: string): string | undefined {
   if (!value) return undefined;
@@ -87,8 +87,8 @@ export class QualityController {
 
   @Roles(...QUALITY_REVIEWER_ROLES)
   @Post('reviews/:registrationId/approve')
-  async approve(@Param('registrationId', new UuidPipe()) registrationId: string, @CurrentUser() user: SessionClaims) {
-    return this.reviews.approve(optionalUuid(registrationId, 'السجل')!, actorOf(user));
+  async approve(@Param('registrationId', new UuidPipe()) registrationId: string, @CurrentActor() actor: StaffActor) {
+    return this.reviews.approve(optionalUuid(registrationId, 'السجل')!, actor);
   }
 
   @Roles(...QUALITY_REVIEWER_ROLES)
@@ -96,9 +96,9 @@ export class QualityController {
   async returnToOfficer(
     @Param('registrationId', new UuidPipe()) registrationId: string,
     @Body(new ZodValidationPipe(returnRecordSchema)) body: ReturnRecordInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.reviews.returnToOfficer(optionalUuid(registrationId, 'السجل')!, body, actorOf(user));
+    return this.reviews.returnToOfficer(optionalUuid(registrationId, 'السجل')!, body, actor);
   }
 
   /** The open return on a citizen's record — shown on its edit form to whoever fixes it. */
@@ -126,18 +126,18 @@ export class QualityController {
   @Post('findings/dismiss')
   async dismiss(
     @Body(new ZodValidationPipe(dismissFindingSchema)) body: DismissFindingInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.dataQuality.dismiss(body, actorOf(user));
+    return this.dataQuality.dismiss(body, actor);
   }
 
   @Roles(...QUALITY_REVIEWER_ROLES)
   @Post('findings/restore')
   async restore(
     @Body(new ZodValidationPipe(restoreSchema)) body: z.infer<typeof restoreSchema>,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.dataQuality.restore(body.kind, body.subjectKey, actorOf(user));
+    return this.dataQuality.restore(body.kind, body.subjectKey, actor);
   }
 
   // ─────────────────────────────  Officers  ─────────────────────────────
@@ -164,8 +164,8 @@ export class QualityController {
 
   @Roles(...WORKING_STAFF_ROLES)
   @Get('tasks/mine')
-  async myTasks(@CurrentUser() user: SessionClaims) {
-    return this.reviews.tasksFor(actorOf(user));
+  async myTasks(@CurrentActor() actor: StaffActor) {
+    return this.reviews.tasksFor(actor);
   }
 
   // ─────────────────────────────  Re-check sample  ─────────────────────────────
@@ -174,9 +174,9 @@ export class QualityController {
   @Post('checks/sample')
   async drawSample(
     @Body(new ZodValidationPipe(drawSampleSchema)) body: DrawSampleInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.reviews.drawSample(body, actorOf(user));
+    return this.reviews.drawSample(body, actor);
   }
 
   @Roles(...QUALITY_REVIEWER_ROLES)
@@ -195,9 +195,9 @@ export class QualityController {
   async assign(
     @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(assignCheckSchema)) body: AssignCheckInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.reviews.assign(optionalUuid(id, 'التحقق')!, body, actorOf(user));
+    return this.reviews.assign(optionalUuid(id, 'التحقق')!, body, actor);
   }
 
   @Roles(...QUALITY_CHECK_ROLES)
@@ -205,8 +205,8 @@ export class QualityController {
   async complete(
     @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(completeCheckSchema)) body: CompleteCheckInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.reviews.complete(optionalUuid(id, 'التحقق')!, body, actorOf(user));
+    return this.reviews.complete(optionalUuid(id, 'التحقق')!, body, actor);
   }
 }

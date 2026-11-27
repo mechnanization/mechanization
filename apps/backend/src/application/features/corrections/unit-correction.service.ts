@@ -30,8 +30,8 @@ import {
 } from './unit-correction.plan';
 import { mergeBlockerReason, planDuplexMerge, type DuplexMergeState, type MergeFlat } from './duplex-merge.plan';
 import { assertNoFeeExemptionHistory } from '../buildings/fee-exemption';
+import { StaffActor } from '../../common/actor';
 
-type Actor = { id: string; role: string };
 
 /** The audit actions this writes. Labelled in the frontend's `audit-labels.ts`. */
 export const UNIT_CORRECTION_DELETED = 'UNIT_CORRECTION_DELETED';
@@ -107,7 +107,7 @@ export class UnitCorrectionService {
     return previewOf(state, planUnitCorrection(state));
   }
 
-  async apply(unitId: string, input: UnitCorrectionDeleteInput, actor: Actor): Promise<UnitCorrectionResult> {
+  async apply(unitId: string, input: UnitCorrectionDeleteInput, actor: StaffActor): Promise<UnitCorrectionResult> {
     let outcome: { result: UnitCorrectionResult; citizens: string[] };
     try {
       outcome = await runInTenantTransaction(this.tenantContext, () => this.applyLocked(unitId, input, actor));
@@ -177,7 +177,7 @@ export class UnitCorrectionService {
    * move down, the lower flat rises and takes the area, and the lower flat's file
    * lines take the area too. One transaction; the trail written inside it.
    */
-  async applyMerge(lowerId: string, input: DuplexMergeInput, actor: Actor): Promise<DuplexMergeResult> {
+  async applyMerge(lowerId: string, input: DuplexMergeInput, actor: StaffActor): Promise<DuplexMergeResult> {
     let outcome: { result: DuplexMergeResult; citizens: string[] };
     try {
       outcome = await runInTenantTransaction(this.tenantContext, () => this.applyMergeLocked(lowerId, input, actor));
@@ -207,7 +207,7 @@ export class UnitCorrectionService {
     return outcome.result;
   }
 
-  private async applyMergeLocked(lowerId: string, input: DuplexMergeInput, actor: Actor) {
+  private async applyMergeLocked(lowerId: string, input: DuplexMergeInput, actor: StaffActor) {
     await this.db.$executeRawUnsafe(`SET LOCAL lock_timeout = '5s'`);
     const pair = await this.mergePair(lowerId);
     // The upper flat, its building, cards, lines and registrations, as the delete locks them — then the lower flat.
@@ -344,7 +344,7 @@ export class UnitCorrectionService {
       AuditLogEntry.create({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: UNITS_MERGED_AS_DUPLEX,
         entityType: 'Building',
         entityId: state.building.id,
@@ -377,7 +377,7 @@ export class UnitCorrectionService {
         AuditLogEntry.create({
           actorId: actor.id,
           actorType: 'STAFF',
-          actorRole: actor.role as never,
+          actorRole: actor.role,
           action: UNITS_MERGED_AS_DUPLEX,
           entityType: 'User',
           entityId: citizenId,
@@ -469,7 +469,7 @@ export class UnitCorrectionService {
 
   // ─────────────────────────────  The transaction  ─────────────────────────────
 
-  private async applyLocked(unitId: string, input: UnitCorrectionDeleteInput, actor: Actor) {
+  private async applyLocked(unitId: string, input: UnitCorrectionDeleteInput, actor: StaffActor) {
     await this.db.$executeRawUnsafe(`SET LOCAL lock_timeout = '5s'`);
     await this.lock(unitId);
 
@@ -607,7 +607,7 @@ export class UnitCorrectionService {
       AuditLogEntry.create({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: UNIT_CORRECTION_DELETED,
         entityType: 'Building',
         entityId: state.building.id,
@@ -641,7 +641,7 @@ export class UnitCorrectionService {
         AuditLogEntry.create({
           actorId: actor.id,
           actorType: 'STAFF',
-          actorRole: actor.role as never,
+          actorRole: actor.role,
           action: UNIT_CORRECTION_FILE_ENDED,
           entityType: 'User',
           entityId: citizenId,

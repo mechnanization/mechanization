@@ -8,6 +8,7 @@ import { TenantContextService } from '../../../infrastructure/context/tenant-con
 import { PrismaAuditRepository } from '../../../infrastructure/repositories/audit.repository';
 import { AuditService } from '../audit/audit.service';
 import { ARREARS_LINES_IMPORTED, ARREARS_TEMPLATE_EXPORTED, ArrearsService } from './arrears.service';
+import { StaffActor } from '../../common/actor';
 
 /**
  * Old debts against a real tenant schema (task 4, docs/old-debts-plan.md §4–§6):
@@ -30,7 +31,7 @@ describeIfDb('old debts: export, dry run, draft', () => {
   let context: TenantContextService;
   let service: ArrearsService;
   const accountantId = randomUUID();
-  const accountant = { id: accountantId, role: 'ACCOUNTANT' };
+  const accountant: StaffActor = { id: accountantId, role: 'ACCOUNTANT' };
   const zoneId = randomUUID();
   const outsideBuildingId = randomUUID();
   const people = {

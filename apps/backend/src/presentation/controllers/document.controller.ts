@@ -3,9 +3,10 @@ import {
   WORKING_STAFF_ROLES,
 } from '@mechanization/shared-schemas';
 import { DocumentService } from '../../application/features/documents/document.service';
-import { CurrentTenant, CurrentUser } from '../decorators/current-user.decorator';
+import { CurrentTenant } from '../decorators/current-user.decorator';
+import { CurrentActor } from '../decorators/current-actor.decorator';
+import { StaffActor } from '../../application/common/actor';
 import { Roles } from '../decorators/roles.decorator';
-import type { SessionClaims } from '../../application/features/identity/identity.service';
 import { UuidPipe } from '../pipes/uuid.pipe';
 
 @Controller('t/:tenantSlug/documents')
@@ -41,12 +42,12 @@ export class DocumentController {
   async getViewUrl(
     @CurrentTenant('slug') tenantSlug: string,
     @Param('id', new UuidPipe()) id: string,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
     return this.documents.createViewUrl({
       tenantSlug,
       documentId: id,
-      actor: { id: user.sub, role: user.role ?? '' },
+      actor,
     });
   }
 }

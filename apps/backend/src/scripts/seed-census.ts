@@ -65,6 +65,7 @@ import { PrismaZoneRepository } from '../infrastructure/repositories/zone.reposi
 import { TenantSlug } from '../domain/value-objects/tenant-slug.vo';
 import { TENANTS, localDatabaseUrl, requestedCitizens, runSeed, tenantClient } from './seed';
 import { Dice, randomSource, seedId, SEED_NOW } from './seed-register';
+import { StaffActor } from '../application/common/actor';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -73,7 +74,6 @@ const MIN_SPACING_M = 12;
 /** A pin on the parcel's edge reads as standing on the neighbour's land. */
 const EDGE_MARGIN_M = 2;
 
-type Actor = { id: string; role: string };
 type Outline = Feature<Polygon | MultiPolygon>;
 type LngLat = [number, number];
 
@@ -238,7 +238,7 @@ async function seedZones(
   zones: ReturnType<typeof censusServices>['zones'],
   tenantSlug: string,
   parcels: readonly ParcelGeo[],
-  actor: Actor,
+  actor: StaffActor,
 ): Promise<number> {
   if ((await db.zone.count()) > 0) return 0;
 
@@ -430,10 +430,10 @@ async function seedCensus(
     where: { kind: 'STAFF', email: { endsWith: `@${tenant.slug}.gov.lb` } },
     select: { id: true, email: true, role: true },
   });
-  const byLocal = new Map(staff.map((u) => [u.email!.split('@')[0], { id: u.id, role: u.role as string }]));
+  const byLocal = new Map(staff.map((u) => [u.email!.split('@')[0], { id: u.id, role: u.role! }]));
   const admin = byLocal.get('admin')!;
   const fieldTeam = ['inspector', 'inspector2', 'inspector3', 'inspector4'].map((k) => byLocal.get(k)!).filter(Boolean);
-  const roleOf = new Map(staff.map((u) => [u.id, u.role as string]));
+  const roleOf = new Map(staff.map((u) => [u.id, u.role!]));
 
   // ── The cadastre ──
   const parcels: ParcelGeo[] = (

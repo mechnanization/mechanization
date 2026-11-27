@@ -532,6 +532,7 @@
     "TOTP_ENROLMENT_NOT_STARTED": "No authenticator setup is in progress. Start the setup again.",
     "TOTP_ENROLMENT_CHANGED": "The setup was started again since this code was shown. Scan the new code, then enter the code it gives.",
     "CITIZEN_OTP_UNAVAILABLE": "Signing in with a code sent to your phone is not available yet. Sign in with your reference number, or visit the municipality.",
+    "ROUTE_ACCESS_UNDECLARED": "You do not have permission to do this.",
     "NEWS_FORBIDDEN": "Your role is not allowed to do this in News. Ask the municipality administrator.",
     "NEWS_NOT_A_MEMBER": "Your account does not have News access. Ask the municipality administrator to give your account the right role.",
     "NEWS_MODULE_DISABLED": "News is not switched on for this municipality.",

@@ -10,10 +10,10 @@ import {
   type ListTreasuryMovementsQuery,
 } from '@mechanization/shared-schemas';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
-import type { SessionClaims } from '../../application/features/identity/identity.service';
 import { TreasuryMovementsService } from '../../application/features/treasury/treasury-movements.service';
 import { TreasuryService } from '../../application/features/treasury/treasury.service';
-import { CurrentUser } from '../decorators/current-user.decorator';
+import { CurrentActor } from '../decorators/current-actor.decorator';
+import { StaffActor } from '../../application/common/actor';
 import { Roles } from '../decorators/roles.decorator';
 import { optionalInt, requireRangeEnd, requireRangeStart } from './query-params';
 import { UuidPipe } from '../pipes/uuid.pipe';
@@ -77,9 +77,9 @@ export class TreasuryController {
   @Post('activate')
   activate(
     @Body(new ZodValidationPipe(activateTreasurySchema)) body: ActivateTreasuryInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.treasury.activate(body, { id: user.sub, role: user.role ?? '' });
+    return this.treasury.activate(body, actor);
   }
 
   /** «إضافة حساب»: a bank account or a petty-cash fund, opened empty. */
@@ -87,8 +87,8 @@ export class TreasuryController {
   @Post('accounts')
   createAccount(
     @Body(new ZodValidationPipe(createTreasuryAccountSchema)) body: CreateTreasuryAccountInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.treasury.createAccount(body, { id: user.sub, role: user.role ?? '' });
+    return this.treasury.createAccount(body, actor);
   }
 }

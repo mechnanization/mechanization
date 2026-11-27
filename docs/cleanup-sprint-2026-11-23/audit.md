@@ -1216,6 +1216,7 @@ False positives checked and excluded: `src/types/express.d.ts` (ambient), `lib/s
 - **Priority:** P3 · **Assignee:** Hashem · **Estimate:** S · **Category:** Dead-code
 - **Files:** backend: `buildings/building.types.ts` `CreateBuildingRow`, `CreateUnitRow`; `domain/interfaces/base-repository.interface.ts` `BaseRepository`. Shared (37), among them `AdminCreateCitizen`, `AdminUpdateCitizen`, `IdentifiedPropertyEntry`, `ApproveArrearsBatchInput`, `arrearsDecisionOf`, `ChangeEmail`, `ChangePassword`, `ConfirmPasswordReset`, `isOpenRequestStatus`, `ContactDetails`, `PersonalDetails` (+ partials), `ApiErrorBody`, `FeeMatrix`, `FeeTargetType`, `ReferenceLogin`, `ReferenceOnlyLogin`, `ReviewPayment`, `paymentStatusSchema`, `unverifiedPaths`, `newsLanguageQuerySchema`, `BulkTender`, `SUGGESTED_PROPERTY_TYPE`, `PropertyNumberCheckResponse`, `TREASURY_DAY_STORED_STATUSES`, `unitCoversFloor` (full list in the txt).
 - **Problem:** **NEW**. Some unused shared *types* should rather be **used**: a controller or client that re-declares the shape inline (CODE-3) is the bug, not the type. Decide per symbol: delete, or replace the inline copy with it.
+- **Found during DEAD-18:** knip does not check these. It takes `main` (`src/index.ts`) as public API and does not follow its `export *`, `includeEntryExports` or not (knip 6.48), so this task stays a check by hand and `pnpm lint:unused` reports shared-schemas' files and dependencies only.
 - **Acceptance criteria:** each symbol deleted or adopted; the 9 used only by specs (`isEmptyChange`, `isStructuralBillableType`, `arrearsCellsFromHeaders`, `isDocumentNumber`, `shareWeight`, `propertyNumberCheckSchema`, `levelSpanLimits`, …) are reviewed: production code that should call them, or test-only code that goes.
 - **Depends on:** none
 - **Verification:** shared build; both apps' typecheck and tests.
@@ -1540,7 +1541,11 @@ Filled in by whoever executes a task (section 0, step 4). One row per finding; t
 
 | ID | Found during | File and symbol | Problem | Fixed in that PR? | Debt doc row added |
 |---|---|---|---|---|---|
-| | | | | | |
+| DRY-19 | DRY-01 | `apps/backend/src/application/**`: `actor: { id: string; role: string }` on 139 service parameters in 29 files; 51 `actorRole: actor.role as never` | `StaffActor` exists and every controller passes one, but most services still take the untyped shape. Typing them makes about 1,000 lines of service integration specs build their actor constants as `StaffActor` (DRY-01 did that for the 8 services it moved, 12 specs) | No: kept out of DRY-01 for its size | docs/code-quality.md, the actor row (rewritten) |
+| DRY-20 | DRY-01 | `fee-exemptions.controller.ts` `list`, `fees.controller.ts` (`{ role: user.role ?? '' }`), the `NewsActor` builders in `news.controller.ts`, `news-articles.controller.ts`, `news-media.controller.ts` | A role passed alone, or inside a News actor, still spelled from the claims with `?? ''`; not the `{ id, role }` actor DRY-01 covers | No | No |
+| — | DRY-01 | `buildings.controller.ts` `private actor(user)` (21 calls), `citizen-requests.controller.ts` `staff(user)` (9), `quality.controller.ts` `actorOf` (8), `citizen.controller.ts` `role: user.role ?? 'STAFF'` (6, not a role at all) | Actor builds the audit's count missed, behind helpers | Yes: all are `@CurrentActor()` now | — |
+| — | DRY-01 | `record-review.service.ts`, the RECORD_CORRECTED auto-close | When the saver's account has no role, the change carried `actorRole: ''`, which is no `StaffRole`: the Tier 2 row was refused, silently | Yes: the role is left out instead | — |
+| DEAD-19 | DEAD-18 | `apps/backend`: `express` imported for types in 13 files and not declared; root `scripts/db/*.mjs`: `pg` (8 files), `ts-node`, `tsconfig-paths` not declared; `@types/express-serve-static-core` declared and unused | Dependencies resolved by luck of hoisting, or kept for nothing (knip, held in its baseline) | No | No |
 
 ---
 

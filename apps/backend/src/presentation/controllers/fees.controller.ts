@@ -50,6 +50,9 @@ import { ParcelDuesService } from '../../application/features/fees/parcel-dues.s
 import { PaymentSettlementService } from '../../application/features/fees/payment-settlement.service';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { CurrentTenant, CurrentUser } from '../decorators/current-user.decorator';
+import { CurrentActor } from '../decorators/current-actor.decorator';
+import { StaffActor } from '../../application/common/actor';
+import { SelfService } from '../decorators/self-service.decorator';
 import { Public } from '../decorators/public.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import { APP_CONFIG } from '../config/app.config';
@@ -97,6 +100,7 @@ export class FeesController {
    * hours. All three were downloading the logo on every load and using none of
    * it. Only the settings form asks for it now.
    */
+  @SelfService("the municipality's payment instructions")
   @Get('settings')
   async getSettings(
     @CurrentUser() user: SessionClaims,
@@ -122,9 +126,9 @@ export class FeesController {
   @Patch('settings')
   async updateSettings(
     @Body(new ZodValidationPipe(systemSettingsSchema)) body: SystemSettingsInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.fees.updateSettings(body, { id: user.sub, role: user.role ?? '' });
+    return this.fees.updateSettings(body, actor);
   }
 
   // ──────────────────────────  Fee notices  ──────────────────────────
@@ -145,9 +149,9 @@ export class FeesController {
   @Post('notices')
   async issue(
     @Body(new ZodValidationPipe(createFeeNoticeSchema)) body: CreateFeeNotice,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.fees.issue(body, { id: user.sub, role: user.role ?? '' });
+    return this.fees.issue(body, actor);
   }
 
   /**
@@ -163,12 +167,12 @@ export class FeesController {
   async cancelNotice(
     @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(cancelNoticeSchema)) body: CancelNotice,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
     return this.fees.cancelNoticeBatch(
       id,
       { reason: body.reason, periodKeys: body.periodKeys },
-      { id: user.sub, role: user.role ?? '' },
+      actor,
     );
   }
 
@@ -213,9 +217,9 @@ export class FeesController {
   async setNoticeActive(
     @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(noticeActiveSchema)) body: { isActive: boolean },
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.fees.setNoticeActive(id, body.isActive, { id: user.sub, role: user.role ?? '' });
+    return this.fees.setNoticeActive(id, body.isActive, actor);
   }
 
   /**
@@ -246,9 +250,9 @@ export class FeesController {
    */
   @Roles(...FEE_ADMIN_ROLES)
   @Post('recurring/run')
-  async runRecurring(@CurrentUser() user: SessionClaims) {
+  async runRecurring(@CurrentActor() actor: StaffActor) {
     // The staff member who called it is the actor on the run's audit rows; the cron's run has none.
-    const result = await this.fees.runRecurringBilling(new Date(), { id: user.sub, role: user.role ?? '' });
+    const result = await this.fees.runRecurringBilling(new Date(), actor);
     return { tenants: 1, ...result };
   }
 
@@ -324,11 +328,11 @@ export class FeesController {
   @Post('payments')
   async charge(
     @Body(new ZodValidationPipe(chargeCitizenSchema)) body: ChargeCitizen,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
     return this.fees.chargeIndividual({
       ...body,
-      actor: { id: user.sub, role: user.role ?? '' },
+      actor,
     });
   }
 
@@ -344,9 +348,9 @@ export class FeesController {
   @Post('payments/bulk-settle')
   async bulkSettle(
     @Body(new ZodValidationPipe(bulkSettlePaymentsSchema)) body: BulkSettlePayments,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.settlements.settle(body, { id: user.sub, role: user.role ?? '' });
+    return this.settlements.settle(body, actor);
   }
 
   /** A consolidated receipt, for a reprint. Readable by whoever reads the fee ledger. */
@@ -369,7 +373,7 @@ export class FeesController {
   async settle(
     @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(settlePaymentSchema)) body: SettlePayment,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
     return this.fees.settleInPerson({
       paymentId: id,
@@ -384,7 +388,7 @@ export class FeesController {
       adjustmentReason: body.adjustmentReason,
       clientRequestId: body.clientRequestId,
       expected: body.expected,
-      actor: { id: user.sub, role: user.role ?? '' },
+      actor,
     });
   }
 
@@ -414,9 +418,9 @@ export class FeesController {
   async cancelBill(
     @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(cancelBillSchema)) body: CancelBill,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.fees.cancelBill(id, body.reason, { id: user.sub, role: user.role ?? '' });
+    return this.fees.cancelBill(id, body.reason, actor);
   }
 
   /**
@@ -429,9 +433,9 @@ export class FeesController {
   async writeOffBill(
     @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(writeOffBillSchema)) body: WriteOffBillInput,
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.fees.writeOffBill(id, body, { id: user.sub, role: user.role ?? '' });
+    return this.fees.writeOffBill(id, body, actor);
   }
 
   /**
@@ -447,12 +451,12 @@ export class FeesController {
   async reverseTransaction(
     @Param('transactionId', new UuidPipe()) transactionId: string,
     @Body(new ZodValidationPipe(reverseTransactionSchema)) body: { note: string },
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
     return this.fees.reverseTransaction({
       transactionId,
       note: body.note,
-      actor: { id: user.sub, role: user.role ?? '' },
+      actor,
     });
   }
 
@@ -485,13 +489,13 @@ export class FeesController {
     @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(reviewPaymentSchema))
     body: { confirmed: boolean; note?: string },
-    @CurrentUser() user: SessionClaims,
+    @CurrentActor() actor: StaffActor,
   ) {
     return this.fees.review({
       paymentId: id,
       confirmed: body.confirmed,
       note: body.note,
-      actor: { id: user.sub, role: user.role ?? '' },
+      actor,
     });
   }
 
@@ -531,8 +535,10 @@ export class FeesController {
     @Param('id', new UuidPipe()) id: string,
     @Body(new ZodValidationPipe(billBasisReviewSchema)) body: BillBasisReview,
     @CurrentUser() user: SessionClaims,
+
+    @CurrentActor() actor: StaffActor,
   ) {
-    return this.correctionBills.review(id, body, { id: user.sub, role: user.role ?? '' });
+    return this.correctionBills.review(id, body, actor);
   }
 
   // ─────────────────────────  Citizen portal  ─────────────────────────
@@ -544,6 +550,7 @@ export class FeesController {
    * asking for "my payments" is a bug, and answering it with an empty list
    * would hide that rather than surface it.
    */
+  @SelfService("a citizen's own bills; refuses staff")
   @Get('payments/mine')
   async mine(@CurrentUser() user: SessionClaims) {
     if (user.kind !== 'CITIZEN') {
@@ -583,6 +590,7 @@ export class FeesController {
    * and a client-supplied `callbackUrl` would let anyone point the provider's
    * confirmation at a server they control.
    */
+  @SelfService('a citizen paying their own bill; refuses staff')
   @Post('payments/mine/:id/whish/checkout')
   async whishCheckout(
     @CurrentTenant('slug') tenantSlug: string,
@@ -636,6 +644,7 @@ export class FeesController {
   }
 
   /** The citizen declaring they have paid — moves to PENDING_REVIEW only. */
+  @SelfService('a citizen declaring their own payment; refuses staff')
   @Post('payments/mine/:id/declare')
   async declare(
     @Param('id', new UuidPipe()) id: string,

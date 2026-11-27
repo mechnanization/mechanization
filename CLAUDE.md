@@ -3,7 +3,8 @@
 Last verified against the code: `develop@8742c5b`, 2026-10-03; the two tiered-fees rows
 (the routing table and the docs table), `fix/fee-wizard-review`, 2026-10-26; the majors line
 (zod 4) on `fix/dependency-audit`, 2026-10-28; the two old-debts rows, `docs/old-debts-plan`,
-2026-11-21. Code wins: where a
+2026-11-21; the `lint:unused` command and definition-of-done lines, `fix/cleanup-sec-10-dead-18-dry-01`,
+2026-11-24. Code wins: where a
 doc and the code disagree, the code is the fact and the doc is the bug.
 
 A multi-tenant registration system for Lebanese municipalities: the citizen
@@ -86,6 +87,7 @@ Every command below is a `package.json` script. Run them from the repo root.
 | Local DB + Redis + both apps | `pnpm start` (Docker required) |
 | Both apps against the local DB | `pnpm dev` |
 | Lint, typecheck | `pnpm lint`, `pnpm typecheck` |
+| Unused files, exports and dependencies (knip, held to `scripts/knip-baseline.json`) | `pnpm lint:unused` |
 | Tests: backend (DB suites skip without `TEST_DATABASE_URL`), frontend, DB tooling | `pnpm --filter @mechanization/backend test`, `pnpm --filter @mechanization/frontend test`, `pnpm db:test` |
 | Production build check without touching `.next` | `pnpm build:check` |
 | Env files and targets, no network | `pnpm db:check` |
@@ -157,6 +159,8 @@ Every command below is a `package.json` script. Run them from the repo root.
 ## Definition of done
 
 - `pnpm typecheck` passes, and so does `pnpm lint` (warnings are allowed, errors are not).
+- `pnpm lint:unused` reports no new unused code. Never add to its baseline by hand; when you delete
+  something it lists, run `pnpm lint:unused --update`.
 - The tests of every package you touched pass, against the same baseline as
   before. If you changed `scripts/db`, `pnpm db:test` passes too. If you changed
   `packages/shared-schemas`, rebuild it before testing its consumers.
