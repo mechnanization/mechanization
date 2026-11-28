@@ -1,6 +1,10 @@
 import { Controller, Get, Param } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
+import { propertyNumberParamSchema } from '@mechanization/shared-schemas';
+import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { RegistrationService } from '../../application/features/registration/registration.service';
 import { Public } from '../decorators/public.decorator';
+import { DEFAULT_THROTTLE } from '../http/throttlers';
 
 /**
  * What survives of the طلبات API: the cadastre lookup.
@@ -30,10 +34,17 @@ export class RegistrationController {
    *
    * Public because it reveals nothing personal — it answers a question about
    * the municipality's own cadastre, which is a public register.
+   *
+   * The default bar, per address (SEC-07): the form asks on every keystroke,
+   * and the clerks of one office share an address. Whether a stranger should
+   * reach it at all is open (docs/security.md, the Low row on this route).
    */
   @Public()
+  @Throttle(DEFAULT_THROTTLE)
   @Get('property-number/:propertyNumber/availability')
-  async checkPropertyNumber(@Param('propertyNumber') propertyNumber: string) {
+  async checkPropertyNumber(
+    @Param('propertyNumber', new ZodValidationPipe(propertyNumberParamSchema)) propertyNumber: string,
+  ) {
     return this.registrations.checkPropertyNumber(propertyNumber);
   }
 }

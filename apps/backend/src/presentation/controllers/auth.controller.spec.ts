@@ -312,8 +312,8 @@ describe('AuthController — how the three routes are mounted', () => {
 
   it('counts refresh and logout per Authorization header, hashed, falling back to the address', () => {
     /*
-      Behind nginx without `trust proxy`, every request has nginx's address, so
-      a per-IP bucket is one bucket for every clerk. The header tells tabs
+      The clerks of one office share one address, `trust proxy` or not, so a
+      per-IP bucket is one bucket for every clerk there. The header tells tabs
       apart; hashed, so the throttler's store never holds a bearer token.
     */
     const tracker = Reflect.getMetadata('THROTTLER:TRACKERdefault', handler('refreshStaff')) as (

@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { Param, ParseUUIDPipe, RequestMethod } from '@nestjs/common';
+import { SkipThrottle, Throttle } from '@nestjs/throttler';
 import { METHOD_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import { RouteParamtypes } from '@nestjs/common/enums/route-paramtypes.enum';
 import { FeesController } from './fees.controller';
@@ -642,6 +643,17 @@ describe('the path parameters of every route (S11)', () => {
     expect(pathArgs.filter((arg) => arg.param === 'tenantSlug').map((arg) => arg.route)).toEqual([]);
   });
 
+  it('bounds every property number in a path with a schema, as a path id is bounded by its pipe (SEC-06)', () => {
+    const numbers = pathArgs.filter((arg) => arg.param === 'propertyNumber');
+    expect(numbers.map((arg) => arg.route).sort()).toEqual([
+      'CitizenController.parcelRoster',
+      'RegistrationController.checkPropertyNumber',
+    ]);
+    expect(
+      numbers.filter((arg) => !arg.pipes.some((pipe) => pipe instanceof ZodValidationPipe)).map((arg) => arg.route),
+    ).toEqual([]);
+  });
+
   it('names every path parameter as an id, or lists it here as reviewed', () => {
     const names = new Set(
       all.flatMap((route) => `${route.controllerPath}/${route.path}`.match(/:(\w+)/g) ?? []).map((name) => name.slice(1)),
@@ -697,5 +709,62 @@ describe('the bodies of every route (SEC-03)', () => {
         .filter((body) => body.field !== undefined || !body.pipes.some((pipe) => pipe instanceof ZodValidationPipe))
         .map((body) => (body.field === undefined ? body.route : `${body.route}(${String(body.field)})`)),
     ).toEqual([]);
+  });
+});
+
+/*
+  Every public route says how fast a stranger may call it (audit SEC-07): a
+  `@Throttle` of its own (`DEFAULT_THROTTLE` when the default is the bar,
+  stated), or a `@SkipThrottle()` with its reason beside it. A route with
+  neither rode the default because nobody had looked, and a public route is the
+  one a stranger reaches without a session.
+*/
+describe('the throttle decision of every public route (SEC-07)', () => {
+  /** What `@Throttle` and `@SkipThrottle` write for the `default` throttler (pinned below). */
+  const LIMIT = 'THROTTLER:LIMITdefault';
+  const SKIP = 'THROTTLER:SKIPdefault';
+  const decided = (target: object): boolean =>
+    Reflect.getMetadata(LIMIT, target) !== undefined || Reflect.getMetadata(SKIP, target) === true;
+
+  const publicRoutes = routes().filter((route) => route.isPublic);
+
+  it('finds them, so the check below is about something', () => {
+    expect(publicRoutes.length).toBeGreaterThan(10);
+    expect(publicRoutes.map((route) => route.name)).toEqual(
+      expect.arrayContaining([
+        'HealthController.health',
+        'TenantController.getPublicConfig',
+        'RegistrationController.checkPropertyNumber',
+        'FeesController.whishCallback',
+        'AuthController.loginStaff',
+      ]),
+    );
+  });
+
+  it('gives each a @Throttle or a @SkipThrottle, on the handler or its class', () => {
+    expect(
+      publicRoutes.filter((route) => !decided(route.handler) && !decided(route.controller)).map((route) => route.name),
+    ).toEqual([]);
+  });
+
+  it('reads the decorators as they write, and a route with neither as undecided', () => {
+    class Probe {
+      @Throttle({ default: { limit: 1, ttl: 1000 } })
+      limited() {
+        return 1;
+      }
+      @SkipThrottle()
+      skipped() {
+        return 1;
+      }
+      undecided() {
+        return 1;
+      }
+    }
+    expect([Probe.prototype.limited, Probe.prototype.skipped, Probe.prototype.undecided].map(decided)).toEqual([
+      true,
+      true,
+      false,
+    ]);
   });
 });

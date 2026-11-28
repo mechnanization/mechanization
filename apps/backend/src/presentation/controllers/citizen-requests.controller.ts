@@ -39,9 +39,9 @@ import { UuidPipe } from '../pipes/uuid.pipe';
 
 /**
  * A citizen filing and uploading through the portal. Counted per session, not
- * per address: behind nginx with no `trust proxy` every citizen shares one IP
- * bucket (docs/security.md), and ten a minute is room to retry a flaky upload,
- * not to fill a queue.
+ * per address: a household, or a café's Wi-Fi, shares one address even with
+ * `trust proxy` set (SEC-04), and ten a minute is room to retry a flaky
+ * upload, not to fill a queue.
  */
 const CITIZEN_SUBMISSION_THROTTLE = {
   default: {

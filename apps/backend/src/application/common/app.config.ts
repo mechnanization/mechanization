@@ -20,18 +20,6 @@ export const APP_CONFIG = {
    */
   metricsPath: 'metrics',
 
-  /**
-   * Absolute URLs this service hands to a third party.
-   *
-   * Whish is told where to send its confirmation and where to return the
-   * citizen's browser. Both are built from configuration and never from the
-   * request: a caller-supplied return URL is an open redirect, and a
-   * caller-supplied callback URL would let anyone aim the provider's
-   * "payment succeeded" message at a server they control.
-   */
-  publicApiUrl:
-    process.env.PUBLIC_API_URL ?? `http://localhost:${process.env.PORT ?? 4000}/api/v1`,
-  publicPortalUrl: process.env.PUBLIC_PORTAL_URL ?? 'http://localhost:3000',
   tenantRoutePattern: 'api/v1/t/:tenantSlug/*',
 
   otp: {
@@ -64,12 +52,23 @@ export const APP_CONFIG = {
 
   throttle: {
     /**
-     * Every route without its own `@Throttle` (`ThrottlerModule.forRoot` in `AppModule`).
-     * Per process: under pm2 with N instances a client gets N times this.
+     * Every route without its own `@Throttle` (`THROTTLERS`, `presentation/http/throttlers.ts`).
+     * Shared by every process through Redis; per process only while `REDIS_URL` is unset or down.
      */
     default: { ttlSeconds: 60, limit: 120 },
-    /** Staff login — credential stuffing is the threat here. */
+    /** Staff login — credential stuffing is the threat here. Per address (`trust proxy`, `http.trustProxy`). */
     staffLogin: { ttlSeconds: 60, limit: 5 },
+    /**
+     * Staff login again, per account: the email typed, whatever address it comes
+     * from (the `account` throttler, `presentation/http/throttlers.ts`; decision
+     * U-6, 2026-11-28). The per-address bar does not follow a password spray
+     * spread over many addresses; this does. Loose on purpose, because anyone
+     * who knows a staff email can spend it: ten a quarter of an hour is five
+     * sign-ins with a code (each is two requests), and the person locked out
+     * waits fifteen minutes, not forever. The code itself is counted apart, in
+     * Postgres (`totp`).
+     */
+    staffLoginAccount: { ttlSeconds: 15 * 60, limit: 10 },
     /**
      * Staff refresh and sign-out — load control, not a guessing defence.
      *
@@ -127,8 +126,21 @@ export const APP_CONFIG = {
    */
   arrears: { approverMustDifferFromPreparer: false },
 
-  /** The JSON body parser's cap (`createApiApp`). Uploads are multipart and capped per route. */
-  http: { bodyLimit: '1mb' },
+  http: {
+    /** The JSON body parser's cap (`createApiApp`). Uploads are multipart and capped per route. */
+    bodyLimit: '1mb',
+    /**
+     * Express's `trust proxy` (`createApiApp`; audit SEC-04, decision U-6 of
+     * 2026-11-28): `X-Forwarded-For` is read only when the connection comes from
+     * this machine, which is nginx in front of pm2 on the Lightsail box. So
+     * `request.ip` is the client nginx saw, for every throttle bucket and every
+     * sign-in's audit row, and a client that sends the header itself is ignored
+     * unless it connects from loopback. Before, every request was nginx's own
+     * address. **Unverified:** that nginx sets `X-Forwarded-For`; if it does
+     * not, `request.ip` stays nginx's address, as it was.
+     */
+    trustProxy: 'loopback',
+  },
 
   /** How long a cached answer is served before it is read again. */
   cache: {

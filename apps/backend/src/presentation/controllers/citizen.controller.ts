@@ -11,6 +11,7 @@ import {
   endOwnershipSchema,
   endTenancySchema,
   possibleDuplicatesQuerySchema,
+  propertyNumberParamSchema,
   setCitizenActiveSchema,
   worklistQuerySchema,
 } from '@mechanization/shared-schemas';
@@ -391,7 +392,7 @@ export class CitizenController {
    */
   @Roles(...EVERY_STAFF_ROLE)
   @Get('parcel/:propertyNumber')
-  parcelRoster(@Param('propertyNumber') propertyNumber: string) {
+  parcelRoster(@Param('propertyNumber', new ZodValidationPipe(propertyNumberParamSchema)) propertyNumber: string) {
     return this.citizens.parcelRoster(propertyNumber);
   }
 

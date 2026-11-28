@@ -177,6 +177,9 @@ export const sharesField = z.coerce
  */
 export const unitStatusField = unitStatusSchema.optional();
 
+/** The longest رقم العقار the form and the API take. */
+const PROPERTY_NUMBER_MAX_LENGTH = 40;
+
 /**
  * رقم العقار as it is saved: trimmed, and in Latin digits whatever keyboard
  * typed it («١٥٥٣» is saved «1553»). The same number typed two ways was two
@@ -189,8 +192,23 @@ export const propertyNumberField = z
   .string(typeError({ required: 'رقم العقار مطلوب' }))
   .trim()
   .min(1, 'رقم العقار مطلوب')
-  .max(40)
+  .max(PROPERTY_NUMBER_MAX_LENGTH)
   .transform((value) => normalizeDigits(value));
+
+/**
+ * رقم العقار in a path (`citizens/parcel/:propertyNumber`, the cadastre check):
+ * the field's bounds, without its digit fold.
+ *
+ * The roster still compares as stored (docs/gotchas.md, `parcelNumberKey`), so
+ * folding «١٥٥٣» here would miss the older rows typed that way, which the form
+ * opens the roster with. The cadastre check folds both sides itself. What this
+ * adds is the bound: a path was any length (audit SEC-06).
+ */
+export const propertyNumberParamSchema = z
+  .string(typeError({ required: 'رقم العقار مطلوب' }))
+  .trim()
+  .min(1, 'رقم العقار مطلوب')
+  .max(PROPERTY_NUMBER_MAX_LENGTH);
 
 /**
  * الحي — common to every property type, unlike رقم العقار it is not checked

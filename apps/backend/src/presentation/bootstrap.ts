@@ -37,6 +37,10 @@ export async function createApiApp(): Promise<NestExpressApplication> {
   });
   const config = app.get(ConfigService);
 
+  // Before anything reads `request.ip`: the throttle buckets and the sign-in
+  // audit rows take the client nginx saw, not nginx. See `APP_CONFIG.http.trustProxy`.
+  app.set('trust proxy', APP_CONFIG.http.trustProxy);
+
   // First, so the request clock covers every layer below and a request any of
   // them rejects is still counted. See `useHttpMetrics`.
   useHttpMetrics(app);

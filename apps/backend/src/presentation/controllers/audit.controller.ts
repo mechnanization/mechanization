@@ -7,6 +7,8 @@ import {
   type AuditActorFilter,
 } from '@mechanization/shared-schemas';
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
+import { ValidationError } from '../../application/common/exceptions';
+import { isUuid } from '../../application/common/ids';
 import { AuditService } from '../../application/features/audit/audit.service';
 import { Roles } from '../decorators/roles.decorator';
 import { parseDate, queryLimit, queryOffset } from './query-params';
@@ -37,6 +39,44 @@ function safeTimeZone(value: string | undefined): string {
 function actorFilter(actorId: AuditActorFilter): { actorId?: string; systemActor?: true } {
   if (actorId === AUDIT_SYSTEM_ACTOR) return { systemActor: true };
   return actorId ? { actorId } : {};
+}
+
+/**
+ * `?entityType=`: a record type as the log files it (`User`, `TreasuryDay`), or
+ * nothing.
+ *
+ * Checked by shape, not against a list. No list of the types exists — each
+ * writer names its own — and the screen offers what the log holds (`facets`),
+ * types no writer uses any more included, so a list here would refuse a filter
+ * the screen itself offered. A well-formed type the log does not hold matches
+ * nothing, which is the right answer; free text up to the URL's length went on
+ * into the cache key (audit SEC-06).
+ */
+function entityTypeFilter(value: string | undefined): string | undefined {
+  if (value === undefined || value === '') return undefined;
+  if (!/^[A-Z][A-Za-z]{1,63}$/.test(value)) {
+    throw new ValidationError({ code: 'INVALID_QUERY_VALUE', message: 'Not a record type the audit log files' });
+  }
+  return value;
+}
+
+/**
+ * `?entityId=`: the record a trail is about, or nothing.
+ *
+ * Most are UUIDs, folded to the lower case the database stores them in: the
+ * column is text, so «3F2A…» matched nothing where `UuidPipe` would have made
+ * it the row. Not all are: a day of the treasury is filed under its date
+ * (`2026-10-08`), the old-debts settings under `singleton`, a News article
+ * under Day3ati's own id. So a short key of letters, digits, `-` and `_` is
+ * taken too, and anything else is refused (audit SEC-06).
+ */
+function entityIdFilter(value: string | undefined): string | undefined {
+  if (value === undefined || value === '') return undefined;
+  if (isUuid(value)) return value.toLowerCase();
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(value)) {
+    throw new ValidationError({ code: 'INVALID_QUERY_VALUE', message: 'Not a record id the audit log files' });
+  }
+  return value;
 }
 
 /** Comma-separated, so one filter can mean a family — «كل التصحيحات». */
@@ -87,7 +127,7 @@ export class AuditController {
   ) {
     return this.audit.daily({
       ...actorFilter(actorId),
-      entityType,
+      entityType: entityTypeFilter(entityType),
       actions: parseActions(action),
       /*
         Dropped rather than passed on when it will not parse. An `Invalid Date`
@@ -117,8 +157,8 @@ export class AuditController {
   ) {
     return this.audit.query({
       ...actorFilter(actorId),
-      entityType,
-      entityId,
+      entityType: entityTypeFilter(entityType),
+      entityId: entityIdFilter(entityId),
       actions: parseActions(action),
       from: parseDate(from),
       to: parseDate(to),

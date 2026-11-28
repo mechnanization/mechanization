@@ -1,4 +1,6 @@
 import { Body, Controller, Get, HttpCode, Logger, Param, Patch, Post, Query, Req, type RawBodyRequest } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { SkipThrottle } from '@nestjs/throttler';
 import type { Request } from 'express';
 import {
   BILL_CANCEL_ROLES,
@@ -91,6 +93,7 @@ export class FeesController {
     private readonly recurring: RecurringBillingService,
     private readonly billLifecycle: BillLifecycleService,
     private readonly whish: WhishCheckoutService,
+    private readonly config: ConfigService,
   ) {}
 
   // ───────────────────────────  Settings  ───────────────────────────
@@ -622,8 +625,9 @@ export class FeesController {
       });
     }
 
-    const apiBase = APP_CONFIG.publicApiUrl;
-    const portalBase = APP_CONFIG.publicPortalUrl;
+    // From configuration, never the request (`envSchema`, `PUBLIC_API_URL`).
+    const apiBase = this.config.getOrThrow<string>('PUBLIC_API_URL');
+    const portalBase = this.config.getOrThrow<string>('PUBLIC_PORTAL_URL');
 
     return this.whish.startWhishCheckout({
       paymentId: id,
@@ -644,8 +648,14 @@ export class FeesController {
    * database failure, and a bill whose currency has no Whish wallet after go-live
    * (`TREASURY_ACCOUNT_MISSING`). The money can still be banked once either is
    * fixed, so the provider's retry is the right answer to both.
+   *
+   * Not throttled (SEC-07): every callback comes from the provider's few
+   * addresses, and one turned away at a busy minute is money Whish took and the
+   * bill does not show until a retry lands. The signature is checked over the
+   * bytes before anything is read, so a forgery costs one HMAC.
    */
   @Public()
+  @SkipThrottle()
   @Post('whish/callback')
   async whishCallback(@Req() request: RawBodyRequest<Request>) {
     const raw = request.rawBody?.toString('utf8') ?? '';

@@ -23,9 +23,13 @@ import { flushSentry, sentryEnabled } from './config/sentry';
  * either. What it still moves is every `new Date()` a human reads in a log line
  * — enough to make two deployments disagree about when something happened, and
  * not enough to justify refusing to boot. Hence a warning, printed once.
+ *
+ * Read through `ConfigService` once the app is built (audit SEC-12): the value
+ * is the one Node already took from the environment at start, so reading it
+ * after the build changes when the line prints, not what it says.
  */
-function warnOnNonUtcClock(): void {
-  const tz = process.env.TZ?.trim();
+function warnOnNonUtcClock(config: ConfigService): void {
+  const tz = config.get<string>('TZ')?.trim();
   if (!tz || tz.toUpperCase() === 'UTC') return;
 
   Logger.warn(
@@ -41,10 +45,10 @@ function warnOnNonUtcClock(): void {
  * processes of a multi-instance app from 0 in `NODE_APP_INSTANCE`. On any
  * instance but the first, a scrape of the shared port reads whichever process
  * answered, and every rate and quantile built on it is wrong without looking
- * wrong.
+ * wrong. pm2 sets it (`envSchema`, `NODE_APP_INSTANCE`).
  */
-function warnOnSecondInstance(): void {
-  const instance = process.env.NODE_APP_INSTANCE?.trim();
+function warnOnSecondInstance(config: ConfigService): void {
+  const instance = config.get<string>('NODE_APP_INSTANCE')?.trim();
   if (!instance || instance === '0') return;
 
   Logger.warn(
@@ -59,11 +63,10 @@ function warnOnSecondInstance(): void {
  * `bootstrap.ts`, shared with the serverless entry point.
  */
 async function bootstrap(): Promise<void> {
-  warnOnNonUtcClock();
-  warnOnSecondInstance();
-
   const app = await createApiApp();
   const config = app.get(ConfigService);
+  warnOnNonUtcClock(config);
+  warnOnSecondInstance(config);
   const port = config.getOrThrow<number>('PORT');
 
   await app.listen(port);
