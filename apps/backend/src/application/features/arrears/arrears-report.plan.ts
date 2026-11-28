@@ -68,6 +68,7 @@ export function assembleArrearsReport(input: {
   coverage: ArrearsReportCoverage;
   collections: readonly RawCollectionRow[];
   batches: readonly ArrearsReportBatch[];
+  approvedBatchCount: number;
 }): ArrearsReport {
   const rows: ArrearsReportRow[] = [...input.rows]
     .sort((a, b) => a.year - b.year || byFeeType(a.feeType, b.feeType))
@@ -125,7 +126,7 @@ export function assembleArrearsReport(input: {
       other: pounds(cents(row.other)),
     }));
 
-  return { cutoffYear: input.cutoffYear, rows, years, coverage: input.coverage, collections, batches: [...input.batches], totals };
+  return { cutoffYear: input.cutoffYear, rows, years, coverage: input.coverage, collections, batches: [...input.batches], approvedBatchCount: input.approvedBatchCount, totals };
 }
 
 /** The sheet's code: a batch has no number of its own, so the first eight characters of its id name it. */

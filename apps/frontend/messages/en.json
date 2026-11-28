@@ -4382,7 +4382,8 @@
       "counts": "Citizens and lines",
       "countsValue": "{citizens} citizens, {lines} lines",
       "actions": "Actions",
-      "import": "Import the file"
+      "import": "Import the file",
+      "truncated": "Showing the latest {shown} of {total} batches."
     },
     "import": {
       "heading": "Import the batch’s file",
@@ -4588,7 +4589,8 @@
       "citizen": "Citizen file",
       "cancel": "Go back",
       "busy": "Linking…",
-      "done": "The line was linked to {name}’s file and its bill raised."
+      "done": "The line was linked to {name}’s file and its bill raised.",
+      "truncated": "Showing {shown} of {total} lines waiting to be matched. Link these, then refresh to see the rest."
     },
     "settings": {
       "link": "Settings",
@@ -4666,7 +4668,8 @@
       "colCounts": "Contents",
       "countsValue": "{citizens} files · {lines} lines",
       "colActions": "Actions",
-      "sheet": "Batch sheet"
+      "sheet": "Batch sheet",
+      "batchesTruncated": "Showing the latest {shown} of {total} approved batches."
     },
     "sheet": {
       "title": "Old-debts batch sheet",

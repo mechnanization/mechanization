@@ -1,10 +1,14 @@
 import { createHash } from 'node:crypto';
-import { Body, Controller, Get, Param, Post, Put } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Put, Query } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import {
   ARREARS_APPROVE_ROLES,
+  ARREARS_BATCHES_PAGE_DEFAULT,
+  ARREARS_BATCHES_PAGE_MAX,
   ARREARS_PREPARE_ROLES,
   ARREARS_REPORT_ROLES,
+  ARREARS_UNMATCHED_PAGE_DEFAULT,
+  ARREARS_UNMATCHED_PAGE_MAX,
   approveArrearsBatchSchema,
   arrearsCutoffSchema,
   arrearsSingleLineSchema,
@@ -32,6 +36,7 @@ import { CurrentActor } from '../decorators/current-actor.decorator';
 import { StaffActor } from '../../application/common/actor';
 import { Roles } from '../decorators/roles.decorator';
 import { UuidPipe } from '../pipes/uuid.pipe';
+import { queryLimit, queryOffset } from './query-params';
 
 /**
  * Old debts' bulk routes, export and import, counted per session
@@ -93,11 +98,14 @@ export class ArrearsController {
     return this.arrears.importLines(batchId, body, actor);
   }
 
-  /** The batches, newest first. */
+  /** A page of the batches, newest first, with how many there are (PAG-06). */
   @Roles(...ARREARS_PREPARE_ROLES)
   @Get('batches')
-  listBatches() {
-    return this.batches.list();
+  listBatches(@Query('limit') limit?: string, @Query('offset') offset?: string) {
+    return this.batches.list({
+      limit: queryLimit(limit, ARREARS_BATCHES_PAGE_DEFAULT, ARREARS_BATCHES_PAGE_MAX),
+      offset: queryOffset(offset),
+    });
   }
 
   /**
@@ -179,11 +187,14 @@ export class ArrearsController {
     return this.batches.addSingleLine(body, actor);
   }
 
-  /** The lines of approved batches whose person is not on the register yet. */
+  /** A page of the lines of approved batches whose person is not on the register yet, with how many wait (PAG-06). */
   @Roles(...ARREARS_PREPARE_ROLES)
   @Get('lines/unmatched')
-  unmatched() {
-    return this.batches.unmatched();
+  unmatched(@Query('limit') limit?: string, @Query('offset') offset?: string) {
+    return this.batches.unmatched({
+      limit: queryLimit(limit, ARREARS_UNMATCHED_PAGE_DEFAULT, ARREARS_UNMATCHED_PAGE_MAX),
+      offset: queryOffset(offset),
+    });
   }
 
   /** Links a «للمطابقة» line to a file; its bill is raised then. */

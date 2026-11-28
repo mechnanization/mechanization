@@ -320,6 +320,11 @@ export default function ArrearsReportPage({
             <h2 id="arrears-report-batches" className="text-lg font-semibold">
               {t('batchesTitle')}
             </h2>
+            {data.approvedBatchCount > data.batches.length ? (
+              <Alert variant="warning" live="status">
+                {t('batchesTruncated', { shown: data.batches.length, total: data.approvedBatchCount })}
+              </Alert>
+            ) : null}
             <DataTable
               columns={batchColumns}
               data={data.batches}

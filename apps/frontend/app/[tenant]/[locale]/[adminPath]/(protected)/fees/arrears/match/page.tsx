@@ -14,6 +14,7 @@ import { useStaffSession } from '@/lib/use-staff-session';
 import { useTableLabels } from '@/lib/use-table-labels';
 import { CitizenPicker, type PickedCitizen } from '@/components/admin/citizen-picker';
 import { HeaderBackLink } from '@/components/admin/header-back-link';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { DataTable } from '@/components/ui/data-table';
@@ -135,6 +136,12 @@ export default function ArrearsMatchPage({
           {lines.error && !lines.data ? (
             <ErrorState title={t('loadFailed')} description={lines.refusal ?? lines.error} onRetry={lines.refetch} />
           ) : (
+            <>
+            {lines.data && lines.data.total > lines.data.items.length ? (
+              <Alert variant="warning" live="status">
+                {t('truncated', { shown: lines.data.items.length, total: lines.data.total })}
+              </Alert>
+            ) : null}
             <DataTable
               columns={columns}
               data={lines.data?.items ?? []}
@@ -145,6 +152,7 @@ export default function ArrearsMatchPage({
               loading={lines.loading}
               error={null}
             />
+            </>
           )}
         </>
       )}

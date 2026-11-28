@@ -19,6 +19,7 @@ import { ArrearsImportPanel } from '@/components/admin/arrears/arrears-import-pa
 import { ExportTemplateDialog } from '@/components/admin/arrears/export-template-dialog';
 import { SingleLineDialog } from '@/components/admin/arrears/single-line-dialog';
 import { HeaderBackLink } from '@/components/admin/header-back-link';
+import { Alert } from '@/components/ui/alert';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { CellTag } from '@/components/ui/cell-tag';
 import { DataTable } from '@/components/ui/data-table';
@@ -187,6 +188,12 @@ export default function ArrearsPage({
             onRetry={batches.refetch}
           />
         ) : (
+          <>
+          {batches.data && batches.data.total > batches.data.items.length ? (
+            <Alert variant="warning" live="status">
+              {t('batches.truncated', { shown: batches.data.items.length, total: batches.data.total })}
+            </Alert>
+          ) : null}
           <DataTable
             columns={columns}
             data={batches.data?.items ?? []}
@@ -197,6 +204,7 @@ export default function ArrearsPage({
             loading={batches.loading}
             error={null}
           />
+          </>
         )}
       </section>
 

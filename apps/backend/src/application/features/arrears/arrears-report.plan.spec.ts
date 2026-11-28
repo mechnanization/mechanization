@@ -25,6 +25,7 @@ const base = {
   coverage: { checked: 0, total: 0 },
   collections: [],
   batches: [],
+  approvedBatchCount: 0,
 };
 
 describe('assembleArrearsReport', () => {
