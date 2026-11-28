@@ -9,7 +9,11 @@ on:
         required: true
         default: 'previous'
 
-# Never run at the same time as a deploy (set the same group in the deploy workflow)
+# Read only (SEC-09): the job reaches the box over SSH and asks GitHub for nothing.
+permissions:
+  contents: read
+
+# Never at the same time as a deploy: `deploy-backend.yml` takes the same group.
 concurrency:
   group: production-deploy
   cancel-in-progress: false
@@ -17,22 +21,58 @@ concurrency:
 jobs:
   rollback:
     runs-on: ubuntu-latest
+    # The environment that holds the box's SSH key, as the deploy's (SEC-09):
+    # it admits protected branches only, so a rollback dispatched from any
+    # other branch is refused before it starts.
+    environment: db-production
     steps:
+      - name: Trust the server's host key and load the deploy key
+        # OpenSSH, as the deploy and the migration tunnel do, in place of a
+        # third-party action pinned by tag; the host key is checked against
+        # SSH_KNOWN_HOSTS and never learned on the fly.
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SSH_KNOWN_HOSTS" ]; then
+            echo "::error::SSH_KNOWN_HOSTS is not set. Add the server's host keys: see docs/database-environments.md §6."
+            exit 1
+          fi
+          install -d -m 700 "$HOME/.ssh"
+          umask 077
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/deploy_key"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/deploy_known_hosts"
+          {
+            echo "Host deploy-box"
+            echo "  HostName $SSH_HOST"
+            echo "  User $SSH_USER"
+            echo "  IdentityFile $HOME/.ssh/deploy_key"
+            echo "  IdentitiesOnly yes"
+            echo "  UserKnownHostsFile $HOME/.ssh/deploy_known_hosts"
+            echo "  StrictHostKeyChecking yes"
+            echo "  BatchMode yes"
+            echo "  ServerAliveInterval 30"
+          } >> "$HOME/.ssh/config"
+
       - name: Switch production to the selected release
-        uses: appleboy/ssh-action@v1.0.3
         env:
           TARGET: ${{ inputs.target }}
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          envs: TARGET
-          script: |
+        run: |
+          set -euo pipefail
+          # Checked here before it is put into the command the box runs, and
+          # again there: letters, digits and hyphens only.
+          if ! [[ "$TARGET" =~ ^[A-Za-z0-9-]+$ ]]; then
+            echo "::error::invalid target '$TARGET'"; exit 1
+          fi
+          remote=$(cat <<'REMOTE'
             set -euo pipefail
             BASE=/var/www/municipality-app-releases
             cd "$BASE/releases"
 
-            # Input is passed as an env var (never interpolated into the script) and validated
+            # Checked again here: the runner checked it before putting it into this command
             if ! [[ "$TARGET" =~ ^[A-Za-z0-9-]+$ ]]; then
               echo "FATAL: invalid target '$TARGET'"; exit 1
             fi
@@ -83,3 +123,6 @@ jobs:
             ln -sfn "$BASE/releases/$CURRENT" "$BASE/current"
             pm2 reload "$BASE/ecosystem.config.js"
             exit 1
+          REMOTE
+          )
+          ssh deploy-box "TARGET='$TARGET'; $remote"

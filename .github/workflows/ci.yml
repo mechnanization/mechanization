@@ -3,11 +3,19 @@ name: CI
 # Every push to a branch and every PR into main. The audit job in particular
 # only earns its keep if it runs on the branch, before review — an advisory
 # discovered after merge is a second piece of work, not a gate.
+#
+# Called too, by `deploy-backend.yml`, as the first job of every production
+# deploy (SEC-09): both jobs here must pass before production is migrated.
+# Called, it is passed no secret, and it needs none.
 on:
   push:
     branches: ['**']
   pull_request:
     branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -16,7 +24,8 @@ concurrency:
 env:
   # Every Prisma command needs these to be *parseable*, not reachable: the
   # generators read the datasource block, and `validateEnv` runs at boot rather
-  # than at build. Nothing in CI connects to a database.
+  # than at build. Nothing connects to them: the one database CI uses is the
+  # throwaway Postgres service below, through `TEST_DATABASE_URL`.
   DATABASE_URL: postgresql://ci:ci@localhost:5432/ci?schema=public
   DIRECT_URL: postgresql://ci:ci@localhost:5432/ci
 
@@ -51,16 +60,16 @@ jobs:
           --health-retries 10
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
         # Version comes from the root `packageManager` field, so CI and a
         # developer's machine cannot drift onto different resolvers — which is
         # how a lockfile ends up rewritten by whoever installed last.
         with:
           run_install: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: pnpm
@@ -79,8 +88,8 @@ jobs:
         run: pnpm --filter @mechanization/backend prisma:generate
 
       - name: Database target guard
-        # `scripts/db/targets.mjs` is what decides which Supabase project a
-        # migration lands in. It has no runtime dependency to break, so the only
+        # `scripts/db/targets.mjs` is what decides which database a migration
+        # lands in. It has no runtime dependency to break, so the only
         # way it regresses is an edit — which is exactly what CI is for. Runs
         # before lint because a broken guard invalidates every deploy below it.
         run: pnpm db:test
@@ -124,11 +133,11 @@ jobs:
     name: dependency audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
         with:
           run_install: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: pnpm
