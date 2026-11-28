@@ -1,9 +1,12 @@
 import {
   ARREARS_PRESCRIPTION_YEARS,
+  arrearsLineMode,
+  arrearsLumpSumYear,
   normalizeArabic,
   normalizeDigits,
   parseArrearsRow,
   type ArrearsComponent,
+  type ArrearsLineMode,
   type ArrearsCoverage,
   type ArrearsFeeType,
   type ArrearsFigure,
@@ -74,6 +77,39 @@ export function unitCodeKey(code: string): string {
   return normalizeDigits(code.trim()).toUpperCase();
 }
 
+/**
+ * Where the «one mode per رقم العقار» rule is judged: a citizen (or, for a line
+ * with no file, the name as the books wrote it) on one رقم العقار, digits folded.
+ */
+export function propertyModeKey(owner: string, propertyNumber: string): string {
+  return `${owner.toLowerCase()}|${normalizeDigits(propertyNumber.trim())}`;
+}
+
+/**
+ * How the live lines already enter each citizen's debts on each رقم العقار:
+ * itemised, «رصيد إجمالي», or (after a merge brought two files together) both.
+ */
+export function liveModesOf(
+  lines: readonly { citizenId: string | null; propertyNumber: string; feeType: string }[],
+): Map<string, Set<ArrearsLineMode>> {
+  const modes = new Map<string, Set<ArrearsLineMode>>();
+  for (const line of lines) {
+    if (line.citizenId === null) continue;
+    const key = propertyModeKey(line.citizenId, line.propertyNumber);
+    const set = modes.get(key) ?? new Set<ArrearsLineMode>();
+    set.add(arrearsLineMode(line.feeType));
+    modes.set(key, set);
+  }
+  return modes;
+}
+
+/** True when a line entered as `mode` would sit beside lines entered the other way. */
+export function conflictsWithMode(existing: ReadonlySet<ArrearsLineMode> | undefined, mode: ArrearsLineMode): boolean {
+  if (!existing) return false;
+  for (const other of existing) if (other !== mode) return true;
+  return false;
+}
+
 /** A citizen in the batch's set, by row key. */
 export interface ArrearsMember {
   citizenId: string;
@@ -106,6 +142,8 @@ export interface ArrearsImportContext {
   units: ReadonlyMap<string, ArrearsUnit>;
   /** The live lines of every other batch, by `arrearsLineKey`. */
   liveKeys: ReadonlySet<string>;
+  /** The same lines' modes, by `propertyModeKey` (`liveModesOf`): «رصيد إجمالي» or itemised. */
+  liveModes: ReadonlyMap<string, ReadonlySet<ArrearsLineMode>>;
   drops: readonly ArrearsLineDrop[];
   controlTotal: number | null;
 }
@@ -150,6 +188,8 @@ export function planArrearsImport(rows: readonly ArrearsTemplateCells[], ctx: Ar
   const dropsByLine = new Map<string, ArrearsLineDrop>(ctx.drops.map((drop) => [`${drop.row}|${drop.component}`, drop]));
   const dropsUsed = new Set<string>();
   const seenInFile = new Set<string>();
+  // The first mode the file uses for each person on each رقم العقار.
+  const modesInFile = new Map<string, ArrearsLineMode>();
   const membersWithLines = new Set<number>();
   const membersBlank = new Set<number>();
   const membersInFile = new Set<number>();
@@ -190,8 +230,18 @@ export function planArrearsImport(rows: readonly ArrearsTemplateCells[], ctx: Ar
     const rowIssues: ArrearsLineIssue[] = [];
     if (unmatched && parsed.rowKey !== null && !parsed.fullName) rowIssues.push('ROW_KEY_NOT_IN_BATCH');
     if (member?.mergedAway) rowIssues.push('CITIZEN_MERGED_AWAY');
+    // A «رصيد إجمالي» carries no year: it is filed under the last year before the cutoff.
+    const year = parsed.year ?? (ctx.cutoffYear === null ? null : arrearsLumpSumYear(ctx.cutoffYear));
     if (ctx.cutoffYear === null) rowIssues.push('CUTOFF_NOT_SET');
-    else if (parsed.year >= ctx.cutoffYear) rowIssues.push('YEAR_NOT_BEFORE_CUTOFF');
+    else if (year !== null && year >= ctx.cutoffYear) rowIssues.push('YEAR_NOT_BEFORE_CUTOFF');
+
+    // One mode per person per رقم العقار: against the live lines, then the rest of the file.
+    const mode = arrearsLineMode(parsed.feeType);
+    const modeKey = propertyModeKey(member ? member.citizenId : `name:${normalizeArabic(parsed.fullName ?? '')}`, parsed.propertyNumber);
+    const fileMode = modesInFile.get(modeKey);
+    if ((member && conflictsWithMode(ctx.liveModes.get(modeKey), mode)) || (fileMode !== undefined && fileMode !== mode)) {
+      rowIssues.push('MIXED_WITH_LUMP_SUM');
+    } else if (fileMode === undefined) modesInFile.set(modeKey, mode);
 
     let unit: ArrearsUnit | undefined;
     if (parsed.unitCode !== null) {
@@ -204,8 +254,31 @@ export function planArrearsImport(rows: readonly ArrearsTemplateCells[], ctx: Ar
     if (member?.archived) flags.archived = true;
     if (member && unit && !member.heldUnitIds.has(unit.unitId)) flags.unitNotHeld = true;
 
-    const prescribed = isPrescribed(parsed.year, ctx.today);
     const name = member?.name ?? parsed.fullName;
+
+    // A lump sum with no cutoff to date it by: refused (`CUTOFF_NOT_SET` is among the row's issues).
+    if (year === null) {
+      for (const { component, amount } of parsed.lines) {
+        verdicts.push({
+          row,
+          rowKey: parsed.rowKey,
+          name,
+          propertyNumber: parsed.propertyNumber,
+          unitCode: parsed.unitCode,
+          year: null,
+          feeType: parsed.feeType,
+          component,
+          amount,
+          status: 'REFUSED',
+          issues: [...rowIssues],
+          dropReason: null,
+          flags: { ...flags },
+        });
+      }
+      return;
+    }
+
+    const prescribed = isPrescribed(year, ctx.today);
 
     for (const { component, amount } of parsed.lines) {
       const issues = [...rowIssues];
@@ -230,7 +303,7 @@ export function planArrearsImport(rows: readonly ArrearsTemplateCells[], ctx: Ar
       // rest of the file; an unmatched one against the file, by the name as written.
       if (status === 'KEEP' || status === 'UNMATCHED') {
         // The unit as it will be stored (the register's spelling), as the index reads it.
-        const debt = { propertyNumber: parsed.propertyNumber, unitCode: unit?.code ?? parsed.unitCode, year: parsed.year, feeType: parsed.feeType, component };
+        const debt = { propertyNumber: parsed.propertyNumber, unitCode: unit?.code ?? parsed.unitCode, year, feeType: parsed.feeType, component };
         const key = member
           ? arrearsLineKey({ citizenId: member.citizenId, ...debt })
           : `name:${normalizeArabic(parsed.fullName ?? '')}|${arrearsLineKey({ citizenId: '', ...debt })}`;
@@ -249,7 +322,7 @@ export function planArrearsImport(rows: readonly ArrearsTemplateCells[], ctx: Ar
         name,
         propertyNumber: parsed.propertyNumber,
         unitCode: parsed.unitCode,
-        year: parsed.year,
+        year,
         feeType: parsed.feeType,
         component,
         amount,
@@ -269,7 +342,7 @@ export function planArrearsImport(rows: readonly ArrearsTemplateCells[], ctx: Ar
         propertyNumber: parsed.propertyNumber,
         unitId: unit?.unitId ?? null,
         unitCode: unit ? unit.code : parsed.unitCode,
-        year: parsed.year,
+        year,
         feeType: parsed.feeType,
         feeTypeNote: parsed.feeTypeNote,
         component,

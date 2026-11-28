@@ -550,6 +550,7 @@
     "ARREARS_CUTOFF_NOT_SET": "No billing start year is set yet, so no old debts can be imported. The system administrator sets it in Settings.",
     "ARREARS_YEAR_NOT_BEFORE_CUTOFF": "{year} is not before the billing start year ({cutoffYear}): the system bills it, so it cannot be entered as an old debt.",
     "ARREARS_LINE_DUPLICATE": "This debt is already recorded in another batch: the same citizen, property number, unit, year and fee type.",
+    "ARREARS_LINE_MODE_CONFLICT": "This file's debts on this property number are entered the other way: a lump sum and itemised lines never sit on one property.",
     "ARREARS_BATCH_NOT_DRAFT": "This batch is no longer a draft ({status}), so it cannot be changed or submitted.",
     "ARREARS_APPROVER_IS_PREPARER": "Whoever prepared a batch does not approve it. Another administrator approves it.",
     "ARREARS_CONTROL_TOTAL_MISMATCH": "The pages' total ({controlTotal, number}) is not the total of the batch's lines ({linesTotal, number}). Check the pages or the file, then submit again.",
@@ -4302,6 +4303,7 @@
     "oldReference": "Old ledger reference: {reference}",
     "groupTitle": "Arrears from previous years",
     "groupYear": "Arrears of {year}",
+    "groupLump": "Lump sum from previous years",
     "groupHint": "Fees recorded in the municipality’s books before the system began and never paid. Paid like any bill.",
     "cancelHint": "If the citizen shows they already paid, cite the old receipt number and its date in the reason.",
     "cancelPlaceholder": "e.g. paid earlier by the citizen, receipt 123 in book 7 dated 12/05/2019"
@@ -4443,7 +4445,12 @@
       "cancel": "Cancel",
       "busy": "Saving…",
       "confirm": "Add the line",
-      "failed": "Could not save the line."
+      "failed": "Could not save the line.",
+      "mode": "How it is entered",
+      "modeDetailed": "Itemised (year and fee type)",
+      "modeLump": "Lump sum",
+      "lumpHint": "One amount, penalties included, with no year or fee type, for a debt inside the five-year period. It is filed under the last year before billing began. It never sits beside itemised lines for the same citizen on the same property number.",
+      "refusedBecause": "The line was not accepted:"
     },
     "issue": {
       "YEAR_INVALID": "The year cannot be read: four digits, such as 2023",
@@ -4465,7 +4472,10 @@
       "DUPLICATE_IN_FILE": "The line is repeated in the same file",
       "DUPLICATE_LIVE_LINE": "This debt is already recorded in another batch",
       "DROP_NOT_A_LINE": "There is no line at this row to drop",
-      "PRESCRIBED_SINCE_IMPORT": "Past prescription since the import: return the batch so its preparer imports it again"
+      "PRESCRIBED_SINCE_IMPORT": "Past prescription since the import: return the batch so its preparer imports it again",
+      "LUMP_SUM_YEAR_GIVEN": "A lump sum has no year: leave the year cell empty",
+      "LUMP_SUM_PENALTY": "A lump sum is one amount with the penalty in it: leave the penalty cell empty",
+      "MIXED_WITH_LUMP_SUM": "A lump sum and itemised lines never sit together for the same citizen on the same property number"
     },
     "review": {
       "link": "Approval",

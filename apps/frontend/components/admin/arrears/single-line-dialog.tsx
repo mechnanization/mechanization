@@ -6,13 +6,18 @@ import { Loader2, Plus } from 'lucide-react';
 import {
   ARREARS_COMPONENT,
   ARREARS_FEE_TYPE,
+  ARREARS_LUMP_SUM_FEE_TYPE,
   arrearsSingleLineSchema,
   getLabels,
+  isArrearsLumpSum,
   municipalToday,
   type ArrearsComponent,
   type ArrearsFeeType,
+  type ArrearsLineIssue,
+  type ArrearsLineMode,
 } from '@mechanization/shared-schemas';
 import { ApiRequestError, logApiError } from '@/lib/api-client';
+import { refusedLineIssues } from '@/lib/arrears';
 import { addArrearsSingleLine } from '@/lib/arrears-api';
 import { heldKey, markInDoubt, outcomeInDoubt, spendKey } from '@/lib/request-id';
 import { CitizenPicker, type PickedCitizen } from '@/components/admin/citizen-picker';
@@ -31,6 +36,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
  * citizen's file, or — for a person not on the register yet — the name as the
  * old books wrote it, which waits in «للمطابقة» (decision 8). LBP only
  * (decision 13). The press carries a retry key held under `arrears:line`.
+ *
+ * Itemised (a year, a fee type, principal or penalty) or «رصيد إجمالي»: one
+ * amount with the penalties in it and no year, which the server dates to the
+ * last year before the cutoff (the decision of 2026-11-23). A refusal lists the
+ * checks that failed (`details.issues`), worded as the import's verdicts are.
  */
 export function SingleLineDialog({
   open,
@@ -48,7 +58,10 @@ export function SingleLineDialog({
   onAdded: () => void;
 }) {
   const t = useTranslations('arrears.single');
+  const tIssue = useTranslations('arrears.issue');
   const labels = getLabels(locale);
+  const [mode, setMode] = useState<ArrearsLineMode>('DETAILED');
+  const lump = mode === 'LUMP';
   const [who, setWho] = useState<'FILE' | 'BOOKS'>('FILE');
   const [citizen, setCitizen] = useState<PickedCitizen | null>(null);
   const [sourceName, setSourceName] = useState('');
@@ -63,6 +76,7 @@ export function SingleLineDialog({
   const [oldReference, setOldReference] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [issues, setIssues] = useState<ArrearsLineIssue[]>([]);
   const inFlight = useRef(false);
 
   const optional = (value: string) => (value.trim() ? value.trim() : undefined);
@@ -70,10 +84,11 @@ export function SingleLineDialog({
     ...(who === 'FILE' ? { citizenId: citizen?.id } : { sourceName: optional(sourceName) }),
     propertyNumber: propertyNumber.trim(),
     unitCode: optional(unitCode),
-    year: year.trim() === '' ? undefined : Number(year),
-    feeType: feeType || undefined,
-    feeTypeNote: feeType === 'OTHER' ? optional(feeTypeNote) : undefined,
-    component,
+    // A lump sum is one amount: no year, no fee type of its own, the penalties in it.
+    year: lump || year.trim() === '' ? undefined : Number(year),
+    feeType: lump ? ARREARS_LUMP_SUM_FEE_TYPE : feeType || undefined,
+    feeTypeNote: !lump && feeType === 'OTHER' ? optional(feeTypeNote) : undefined,
+    component: lump ? 'PRINCIPAL' : component,
     amount: amount.trim() === '' ? undefined : Number(amount.replace(/,/g, '')),
     dueDate: dueDate || undefined,
     oldReference: optional(oldReference),
@@ -85,6 +100,7 @@ export function SingleLineDialog({
     inFlight.current = true;
     setBusy(true);
     setError(null);
+    setIssues([]);
     try {
       await addArrearsSingleLine(tenant, token, input.data);
       spendKey(tenant, 'arrears:line');
@@ -93,7 +109,9 @@ export function SingleLineDialog({
     } catch (caught) {
       logApiError(caught);
       if (outcomeInDoubt(caught)) markInDoubt(tenant, 'arrears:line');
-      setError(caught instanceof ApiRequestError ? caught.message : t('failed'));
+      const refused = caught instanceof ApiRequestError ? refusedLineIssues(caught.payload) : [];
+      setIssues(refused);
+      setError(refused.length > 0 ? t('refusedBecause') : caught instanceof ApiRequestError ? caught.message : t('failed'));
     } finally {
       inFlight.current = false;
       setBusy(false);
@@ -112,8 +130,29 @@ export function SingleLineDialog({
           {error ? (
             <Alert variant="destructive" live="alert">
               {error}
+              {issues.length > 0 ? (
+                <ul className="mt-1 list-disc space-y-0.5 ps-5">
+                  {issues.map((issue) => (
+                    <li key={issue}>{tIssue(issue)}</li>
+                  ))}
+                </ul>
+              ) : null}
             </Alert>
           ) : null}
+
+          <Field label={t('mode')} htmlFor="arrears-line-mode">
+            <SegmentedControl
+              aria-label={t('mode')}
+              size="field"
+              value={mode}
+              onChange={(value) => setMode(value as ArrearsLineMode)}
+              options={[
+                { value: 'DETAILED', label: t('modeDetailed') },
+                { value: 'LUMP', label: t('modeLump') },
+              ]}
+            />
+          </Field>
+          {lump ? <p className="text-sm text-muted-foreground">{t('lumpHint')}</p> : null}
 
           <SegmentedControl
             aria-label={t('who')}
@@ -148,37 +187,42 @@ export function SingleLineDialog({
             <Field label={t('unitCode')} htmlFor="arrears-line-unit">
               <Input id="arrears-line-unit" dir="ltr" value={unitCode} maxLength={50} onChange={(event) => setUnitCode(event.target.value)} />
             </Field>
-            <Field label={t('year')} htmlFor="arrears-line-year" required>
-              <Input id="arrears-line-year" inputMode="numeric" dir="ltr" value={year} onChange={(event) => setYear(event.target.value)} />
-            </Field>
-            <Field label={t('feeType')} htmlFor="arrears-line-fee" required>
-              <Select value={feeType} onValueChange={(value) => setFeeType(value as ArrearsFeeType)}>
-                <SelectTrigger id="arrears-line-fee">
-                  <SelectValue placeholder={t('choose')} />
-                </SelectTrigger>
-                <SelectContent>
-                  {ARREARS_FEE_TYPE.map((code) => (
-                    <SelectItem key={code} value={code}>
-                      {labels.arrearsFeeType[code]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-            {feeType === 'OTHER' ? (
-              <Field label={t('feeTypeNote')} htmlFor="arrears-line-fee-note" required>
-                <Input id="arrears-line-fee-note" value={feeTypeNote} maxLength={200} onChange={(event) => setFeeTypeNote(event.target.value)} />
-              </Field>
-            ) : null}
-            <Field label={t('component')} htmlFor="arrears-line-component">
-              <SegmentedControl
-                aria-label={t('component')}
-                size="field"
-                value={component}
-                onChange={(value) => setComponent(value as ArrearsComponent)}
-                options={ARREARS_COMPONENT.map((code) => ({ value: code, label: labels.arrearsComponent[code] }))}
-              />
-            </Field>
+            {lump ? null : (
+              <>
+                <Field label={t('year')} htmlFor="arrears-line-year" required>
+                  <Input id="arrears-line-year" inputMode="numeric" dir="ltr" value={year} onChange={(event) => setYear(event.target.value)} />
+                </Field>
+                <Field label={t('feeType')} htmlFor="arrears-line-fee" required>
+                  <Select value={feeType} onValueChange={(value) => setFeeType(value as ArrearsFeeType)}>
+                    <SelectTrigger id="arrears-line-fee">
+                      <SelectValue placeholder={t('choose')} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {/* The lump sum is the other mode, not a fee type to pick here. */}
+                      {ARREARS_FEE_TYPE.filter((code) => !isArrearsLumpSum(code)).map((code) => (
+                        <SelectItem key={code} value={code}>
+                          {labels.arrearsFeeType[code]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+                {feeType === 'OTHER' ? (
+                  <Field label={t('feeTypeNote')} htmlFor="arrears-line-fee-note" required>
+                    <Input id="arrears-line-fee-note" value={feeTypeNote} maxLength={200} onChange={(event) => setFeeTypeNote(event.target.value)} />
+                  </Field>
+                ) : null}
+                <Field label={t('component')} htmlFor="arrears-line-component">
+                  <SegmentedControl
+                    aria-label={t('component')}
+                    size="field"
+                    value={component}
+                    onChange={(value) => setComponent(value as ArrearsComponent)}
+                    options={ARREARS_COMPONENT.map((code) => ({ value: code, label: labels.arrearsComponent[code] }))}
+                  />
+                </Field>
+              </>
+            )}
             <Field label={t('amount')} htmlFor="arrears-line-amount" required>
               <Input id="arrears-line-amount" inputMode="decimal" dir="ltr" value={amount} onChange={(event) => setAmount(event.target.value)} />
             </Field>

@@ -1,6 +1,6 @@
 # Old debts — «متأخرات سنوات سابقة» (code: `arrears`)
 
-Last verified against the code: `feat/arrears-bills-everywhere` (on `develop@90cebdc`), 2026-11-21; task 10, an old-debt bill read as one on every screen that shows a bill (§7); `feat/arrears-report` (on `develop@90cebdc`), 2026-11-21; task 11, «تقرير المتأخرات» and the batch sheet (§8); `feat/arrears-approval` (on `develop@c6e7462`), 2026-11-21; the cutoff year fixed once a batch is approved (`ARREARS_CUTOFF_LOCKED`, task 6), 2026-11-21.
+Last verified against the code: `feat/arrears-lump-sum` (on `develop@ff70e839`), 2026-11-23; decision 15, «رصيد إجمالي» and one mode per رقم العقار (§2.1, §4, §5, §6); `feat/arrears-bills-everywhere` (on `develop@90cebdc`), 2026-11-21; task 10, an old-debt bill read as one on every screen that shows a bill (§7); `feat/arrears-report` (on `develop@90cebdc`), 2026-11-21; task 11, «تقرير المتأخرات» and the batch sheet (§8); `feat/arrears-approval` (on `develop@c6e7462`), 2026-11-21; the cutoff year fixed once a batch is approved (`ARREARS_CUTOFF_LOCKED`, task 6), 2026-11-21.
 
 > **Status, 2026-11-21:** tasks 1–4 merged to `develop` (PRs #174–#177). Task 5, the backend after the import — submit,
 > return, discard, approve and the «ARR-» bills, a single line, the link of a «للمطابقة» line, the cutoff year, and «دمج
@@ -109,6 +109,21 @@ There is also no bulk path: thousands of lines would be typed by hand.
     «مرور الزمن» (`flags.prescribed`); no bill is ever raised for it; the accountant
     still sees it, and it is counted apart in the reconciliation panel and on the batch
     sheet. On 2026-11-21 that drops 2020 and earlier.
+15. **«رصيد إجمالي», one amount** (Hashem, 2026-11-23). A debt the books do not itemise
+    by year and fee is entered as one amount, `feeType` `LUMP_SUM`: no year, no fee type
+    of its own, no separate penalty (the penalties are in the amount). The municipality
+    enters a lump only for debt inside the 5 years of decision 14, so «the process stays
+    simple»: the accountant types no year, and the server files the line under the last
+    year before the cutoff (`arrearsLumpSumYear`, 2025 with a 2026 cutoff). That keeps the
+    cutoff check, prescription, the bill's `periodKey`, the duplicate key and the report
+    unchanged, and needs no migration (`feeType` is text). **One mode per رقم العقار:** a
+    citizen's debts on one رقم العقار are all itemised or all one lump, never both
+    (`MIXED_WITH_LUMP_SUM` in the import and the single line, `ARREARS_LINE_MODE_CONFLICT`
+    on a link), so the same money cannot be entered twice in two shapes. To switch, the
+    accountant discards or cancels the other first. A «دمج ملفين» that brings two files
+    together keeps what each held, as it does for a colliding line. Screens name a lump
+    without its year: the bill's title is «متأخرات سنوات سابقة — رصيد إجمالي», and the portal
+    lists lumps under «رصيد إجمالي من سنوات سابقة», after the years.
 
 ### 2.2 Proposed, not confirmed: Undecided
 
@@ -263,7 +278,9 @@ export (N citizens) ─▶ CSV in Excel ─▶ import: dry run ─▶ import: wr
 6. **Link** — task 5 (UI task 8). A «للمطابقة» line of an approved batch is linked to a
    citizen file and its bill raised then.
 7. **Single line** — task 5. The form writes a one-line batch through the same checks
-   and the same approval.
+   and the same approval. It is itemised (year, fee type, principal or penalty) or a
+   «رصيد إجمالي» (decision 15: the amount alone); a refusal lists the checks that failed
+   (`details.issues`, worded as `arrears.issue.*`).
 
 ## 5. The template
 
@@ -271,7 +288,9 @@ export (N citizens) ─▶ CSV in Excel ─▶ import: dry run ─▶ import: wr
 
 Filled by the export: `rowKey`, full name, رقم العقار, unit code. Filled by the
 accountant: year, fee type, principal, penalty, old reference, due date, note. A row
-with both a principal and a penalty becomes two lines.
+with both a principal and a penalty becomes two lines. A «رصيد إجمالي» row (decision 15)
+has «رصيد إجمالي» as its fee type, the amount in the principal cell, and the year and
+penalty cells empty (`LUMP_SUM_YEAR_GIVEN`, `LUMP_SUM_PENALTY` otherwise).
 
 **Never in the file:** رقم مرجعي, phone, ID number, residency status. A citizen's id is
 not in it either: `rowKey` is a small number that means something only inside its
@@ -285,7 +304,9 @@ From Law 60/1988 and the fees this repo already describes
 accountant gives the list (§2.3): `RENTAL_VALUE` «رسم القيمة التأجيرية»,
 `SEWER_SIDEWALK_MAINTENANCE` «رسم صيانة المجاري والأرصفة», `SEWER_SIDEWALK_CONSTRUCTION`
 «رسم إنشاء الأرصفة والمجاري», `CLEANING` «رسم النظافة», and `OTHER` «رسم آخر», which needs a
-description. The column is text, so the final list needs no migration.
+description. The column is text, so the final list needs no migration. `LUMP_SUM` «رصيد
+إجمالي» (decision 15) is not a fee but the other way of entering a debt; the single-line
+form offers it as a mode, not in its fee list.
 
 ## 6. The dry run's checks (task 4)
 
@@ -300,7 +321,8 @@ answered in words before the index has to.
 | `rowKey` in this batch's set | otherwise the row goes to «للمطابقة», with its name; never matched by name |
 | a row key's citizen merged away since the export | refused: re-export |
 | unit code names a unit on that رقم العقار | otherwise refused; a unit the citizen no longer holds is a note, not a refusal (the debt may predate a sale) |
-| year before `arrearsCutoffYear` | otherwise `ARREARS_YEAR_NOT_BEFORE_CUTOFF`; every row refused while it is NULL (`ARREARS_CUTOFF_NOT_SET`) |
+| year before `arrearsCutoffYear` | otherwise `ARREARS_YEAR_NOT_BEFORE_CUTOFF`; every row refused while it is NULL (`ARREARS_CUTOFF_NOT_SET`). A «رصيد إجمالي» takes the year before the cutoff (decision 15) |
+| one mode per citizen × رقم العقار (decision 15) | a lump beside itemised lines, in the file or against a live line, is refused `MIXED_WITH_LUMP_SUM`; a line with no file is held to it within the file by its name |
 | prescribed (decision 14) | set to DROP, reason «مرور الزمن», `flags.prescribed` |
 | amount > 0, a known fee type, `OTHER` with a description | refused |
 | duplicate within the file, or against a live line | `ARREARS_LINE_DUPLICATE` |

@@ -438,6 +438,9 @@ export const ERROR_CODES = [
   // The same citizen, رقم العقار, unit, year, fee and component already has a live line
   // (the index's last word; the import names the line itself in its verdicts).
   'ARREARS_LINE_DUPLICATE',
+  // A «للمطابقة» line linked onto a file whose debts on that رقم العقار are entered the
+  // other way: a «رصيد إجمالي» beside itemised lines, or the reverse (`MIXED_WITH_LUMP_SUM`).
+  'ARREARS_LINE_MODE_CONFLICT',
   // The batch is no longer a draft (`params.status`): only a draft takes lines or is submitted.
   'ARREARS_BATCH_NOT_DRAFT',
   // Maker ≠ checker, reserved: open-decisions §23.3 has not decided it yet.

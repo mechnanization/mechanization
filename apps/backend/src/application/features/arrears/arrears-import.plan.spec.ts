@@ -2,10 +2,13 @@ import type { ArrearsTemplateCells } from '@mechanization/shared-schemas';
 import {
   PRESCRIPTION_DROP_REASON,
   arrearsLineKey,
+  conflictsWithMode,
   isPrescribed,
+  liveModesOf,
   oldestKeptYear,
   planArrearsImport,
   prescriptionEnds,
+  propertyModeKey,
   type ArrearsImportContext,
   type ArrearsMember,
   type ArrearsUnit,
@@ -45,6 +48,7 @@ const context = (over: Partial<ArrearsImportContext> = {}): ArrearsImportContext
   members: new Map([[1, member()]]),
   units: new Map([['Z-1-420-A-0002', unit()]]),
   liveKeys: new Set(),
+  liveModes: new Map(),
   drops: [],
   controlTotal: null,
   ...over,
@@ -217,5 +221,89 @@ describe('planArrearsImport', () => {
     });
     expect(plan.coverage).toEqual({ citizens: 3, withLines: 1, checkedNothingOwed: 1, notInFile: 1 });
     expect(plan.lines).toHaveLength(4);
+  });
+});
+
+describe('«رصيد إجمالي» (LUMP_SUM, the decision of 2026-11-23)', () => {
+  const lump = (cells: ArrearsTemplateCells = {}) => row({ year: '', feeType: 'LUMP_SUM', principal: '1500000', ...cells });
+
+  it('keeps one amount with no year, filed under the last year before the cutoff', () => {
+    const { plan, verdict } = only([lump()]);
+    expect(verdict).toMatchObject({ status: 'KEEP', issues: [], year: 2025, feeType: 'LUMP_SUM', component: 'PRINCIPAL', amount: 1_500_000 });
+    expect(plan.lines).toEqual([expect.objectContaining({ year: 2025, feeType: 'LUMP_SUM', decision: 'KEEP', citizenId: CITIZEN })]);
+  });
+
+  it('follows the cutoff it is dated by', () => {
+    expect(only([lump()], context({ cutoffYear: 2024 })).verdict).toMatchObject({ status: 'KEEP', year: 2023 });
+  });
+
+  it('is never prescribed while it is within five years of its date', () => {
+    // Dated 2025, it stands through 31 December 2030.
+    expect(only([lump()], context({ today: '2030-12-31' })).verdict.status).toBe('KEEP');
+  });
+
+  it('refuses a lump sum while no cutoff is set, with nothing to write', () => {
+    const { plan, verdict } = only([lump()], context({ cutoffYear: null }));
+    expect(verdict).toMatchObject({ status: 'REFUSED', issues: ['CUTOFF_NOT_SET'], year: null, feeType: 'LUMP_SUM' });
+    expect(plan.lines).toEqual([]);
+  });
+
+  it('refuses a year typed on it, and a penalty beside it', () => {
+    expect(only([lump({ year: '2023' })]).verdict).toMatchObject({ status: 'REFUSED', issues: ['LUMP_SUM_YEAR_GIVEN'] });
+    expect(only([lump({ penalty: '5000' })]).verdict).toMatchObject({ status: 'REFUSED', issues: ['LUMP_SUM_PENALTY'] });
+  });
+
+  it('reads «رصيد إجمالي» typed in Arabic', () => {
+    expect(only([lump({ feeType: 'رصيد إجمالي' })]).verdict).toMatchObject({ status: 'KEEP', feeType: 'LUMP_SUM' });
+  });
+
+  it('refuses a lump sum and itemised lines for one person on one رقم العقار in the same file, either way round', () => {
+    const detailedFirst = planArrearsImport([row(), lump()], context());
+    expect(detailedFirst.verdicts.map((verdict) => [verdict.status, verdict.issues])).toEqual([
+      ['KEEP', []],
+      ['REFUSED', ['MIXED_WITH_LUMP_SUM']],
+    ]);
+    const lumpFirst = planArrearsImport([lump(), row()], context());
+    expect(lumpFirst.verdicts.map((verdict) => verdict.status)).toEqual(['KEEP', 'REFUSED']);
+    expect(lumpFirst.verdicts[1]!.issues).toEqual(['MIXED_WITH_LUMP_SUM']);
+  });
+
+  it('allows the other mode on another رقم العقار, or for another person', () => {
+    const units = new Map([
+      ['Z-1-420-A-0002', unit()],
+      ['Z-1-500-A-0001', unit({ unitId: '55555555-5555-4555-8555-555555555555', code: 'Z-1-500-A-0001', propertyNumbers: ['500'] })],
+    ]);
+    const ctx = context({ units, members: new Map([[1, member()], [2, member({ citizenId: OTHER, name: 'ثان' })]]) });
+    const plan = planArrearsImport([row(), lump({ propertyNumber: '500', unitCode: 'Z-1-500-A-0001' }), lump({ rowKey: '2' })], ctx);
+    expect(plan.verdicts.map((verdict) => verdict.status)).toEqual(['KEEP', 'KEEP', 'KEEP']);
+  });
+
+  it('refuses the other mode against the live lines of another batch', () => {
+    const itemised = liveModesOf([{ citizenId: CITIZEN, propertyNumber: '٤٢٠', feeType: 'RENTAL_VALUE' }]);
+    expect(only([lump()], context({ liveModes: itemised })).verdict).toMatchObject({ status: 'REFUSED', issues: ['MIXED_WITH_LUMP_SUM'] });
+    expect(only([row()], context({ liveModes: itemised })).verdict.status).toBe('KEEP');
+
+    const lumped = liveModesOf([{ citizenId: CITIZEN, propertyNumber: '420', feeType: 'LUMP_SUM' }]);
+    expect(only([row()], context({ liveModes: lumped })).verdict).toMatchObject({ status: 'REFUSED', issues: ['MIXED_WITH_LUMP_SUM'] });
+  });
+
+  it('holds a line with no file to the rule by the name as the books wrote it, within the file', () => {
+    const plan = planArrearsImport(
+      [row({ rowKey: '', fullName: 'سمير خليل', unitCode: '' }), lump({ rowKey: '', fullName: 'سمير خليل', unitCode: '' })],
+      context(),
+    );
+    expect(plan.verdicts.map((verdict) => verdict.status)).toEqual(['UNMATCHED', 'REFUSED']);
+    expect(plan.verdicts[1]!.issues).toEqual(['MIXED_WITH_LUMP_SUM']);
+  });
+
+  it('keys the mode on the person and the رقم العقار, digits folded, and sees a conflict only across modes', () => {
+    expect(propertyModeKey(CITIZEN.toUpperCase(), ' ٤٢٠ ')).toBe(propertyModeKey(CITIZEN, '420'));
+    const modes = liveModesOf([
+      { citizenId: CITIZEN, propertyNumber: '420', feeType: 'CLEANING' },
+      { citizenId: null, propertyNumber: '420', feeType: 'LUMP_SUM' },
+    ]);
+    expect(conflictsWithMode(modes.get(propertyModeKey(CITIZEN, '420')), 'DETAILED')).toBe(false);
+    expect(conflictsWithMode(modes.get(propertyModeKey(CITIZEN, '420')), 'LUMP')).toBe(true);
+    expect(conflictsWithMode(undefined, 'LUMP')).toBe(false);
   });
 });

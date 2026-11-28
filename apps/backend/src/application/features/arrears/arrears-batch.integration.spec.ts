@@ -379,8 +379,7 @@ describeIfDb('old debts: submit, approve, link', () => {
       clientRequestId: randomUUID(),
       ...over,
     });
-    const add = (input: ReturnType<typeof line> & Record<string, unknown>, actor = ACCOUNTANT) =>
-      within(() => batches.addSingleLine(input as never, actor));
+    const add = (input: Record<string, unknown>, actor = ACCOUNTANT) => within(() => batches.addSingleLine(input as never, actor));
 
     it('is a batch of one, sent at once with its own amount as the total, and approved like any other', async () => {
       const input = line({ citizenId: person.fadi });
@@ -427,6 +426,45 @@ describeIfDb('old debts: submit, approve, link', () => {
       expect(await db.arrearsLine.findFirstOrThrow({ where: { batchId: view.id } })).toMatchObject({ citizenId: null, sourceName: 'مقيم لم يسجَّل بعد' });
       await approve(view.id);
       expect(await billsOf(view.id)).toHaveLength(0);
+    });
+
+    describe('«رصيد إجمالي»', () => {
+      const lump = (over: Record<string, unknown> = {}) => ({ ...line({ feeType: 'LUMP_SUM', ...over }), year: undefined });
+
+      it('takes one amount with no year, dated the last year before the cutoff, and bills it titled with no year', async () => {
+        const input = lump({ citizenId: person.fadi, amount: 1_500_000 });
+        const view = await add(input);
+        expect(await db.arrearsLine.findFirstOrThrow({ where: { batchId: view.id } })).toMatchObject({
+          year: CUTOFF - 1,
+          feeType: 'LUMP_SUM',
+          component: 'PRINCIPAL',
+        });
+        // A retry after a lost answer carries no year either, and is the same act.
+        expect((await add(input)).id).toBe(view.id);
+
+        await approve(view.id);
+        expect(await billsOf(view.id)).toMatchObject([
+          { citizenId: person.fadi, periodKey: String(CUTOFF - 1), title: 'متأخرات سنوات سابقة — رصيد إجمالي' },
+        ]);
+      });
+
+      it('never sits beside itemised lines for one person on one رقم العقار, either way round', async () => {
+        const property = unique();
+        await add(line({ citizenId: person.bassem, propertyNumber: property }));
+        await expect(add(lump({ citizenId: person.bassem, propertyNumber: property }))).rejects.toMatchObject({
+          code: 'ARREARS_LINE_REFUSED',
+          details: { issues: ['MIXED_WITH_LUMP_SUM'] },
+        });
+
+        const lumped = unique();
+        await add(lump({ citizenId: person.bassem, propertyNumber: lumped }));
+        await expect(add(line({ citizenId: person.bassem, propertyNumber: lumped }))).rejects.toMatchObject({
+          code: 'ARREARS_LINE_REFUSED',
+          details: { issues: ['MIXED_WITH_LUMP_SUM'] },
+        });
+        // Another person on that رقم العقار is free to be itemised.
+        await expect(add(line({ citizenId: person.amal, propertyNumber: lumped }))).resolves.toMatchObject({ status: 'SUBMITTED' });
+      });
     });
   });
 
@@ -483,6 +521,19 @@ describeIfDb('old debts: submit, approve, link', () => {
       await approve(held);
       await expect(within(() => batches.link(twin.lineId, { citizenId: person.fadi }, ACCOUNTANT))).rejects.toMatchObject({ code: 'ARREARS_LINE_DUPLICATE' });
       expect(await billsOf(twin.batchId)).toHaveLength(0);
+    });
+
+    it('does not put a «رصيد إجمالي» onto a file whose debts on that رقم العقار are itemised', async () => {
+      const property = unique();
+      const itemised = await draft([person.amal], [debt(1, property, LAST, '30000')]);
+      await submit(itemised);
+      const lumpWaiting = await waiting({ propertyNumber: property, feeType: 'LUMP_SUM', year: undefined });
+      await approve(lumpWaiting.batchId);
+      await expect(within(() => batches.link(lumpWaiting.lineId, { citizenId: person.amal }, ACCOUNTANT))).rejects.toMatchObject({
+        code: 'ARREARS_LINE_MODE_CONFLICT',
+      });
+      expect(await db.arrearsLine.findUniqueOrThrow({ where: { id: lumpWaiting.lineId } })).toMatchObject({ citizenId: null, linkedAt: null });
+      expect(await billsOf(lumpWaiting.batchId)).toHaveLength(0);
     });
   });
 

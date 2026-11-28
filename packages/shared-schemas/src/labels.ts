@@ -431,6 +431,7 @@ export const ar = {
     SEWER_SIDEWALK_CONSTRUCTION: 'رسم إنشاء الأرصفة والمجاري',
     CLEANING: 'رسم النظافة',
     OTHER: 'رسم آخر',
+    LUMP_SUM: 'رصيد إجمالي',
   } satisfies Record<ArrearsFeeType, string>,
 
   requestAttachmentType: {
@@ -879,6 +880,7 @@ export const en = {
     SEWER_SIDEWALK_CONSTRUCTION: 'Sewer and pavement construction fee',
     CLEANING: 'Cleaning fee',
     OTHER: 'Other fee',
+    LUMP_SUM: 'Lump sum',
   } satisfies Record<ArrearsFeeType, string>,
 
   requestAttachmentType: {

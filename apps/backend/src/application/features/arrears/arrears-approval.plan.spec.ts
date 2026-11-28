@@ -79,6 +79,10 @@ describe('the bill a line becomes', () => {
     expect(arrearsBillTitle(line({ feeType: 'OTHER', feeTypeNote: 'رسم المياه' }))).toBe('متأخرات 2023 — رسم المياه');
   });
 
+  it('titles a «رصيد إجمالي» with no year: its stored year only dates it before the cutoff', () => {
+    expect(arrearsBillTitle(line({ feeType: 'LUMP_SUM', year: 2025 }))).toBe('متأخرات سنوات سابقة — رصيد إجمالي');
+  });
+
   it('is due on its own date, else on the last day of its year, at midnight UTC', () => {
     expect(arrearsDueDate(line()).toISOString()).toBe('2023-12-31T00:00:00.000Z');
     expect(arrearsDueDate(line({ dueDate: '2023-06-15' })).toISOString()).toBe('2023-06-15T00:00:00.000Z');

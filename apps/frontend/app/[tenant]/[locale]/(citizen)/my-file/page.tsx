@@ -53,7 +53,7 @@ import { billFigure, citizenPaymentTotals, isPartlyPaid, isSettled, partlyPaidFi
 import { formatLbp } from '@/lib/currency';
 import { formatDate, formatDay, formatMonthList } from '@/lib/dates';
 import { describeAssessment } from '@/lib/fee-assessment';
-import { groupArrearsByYear, splitArrears } from '@/lib/arrears-bill';
+import { arrearsGroupKey, groupArrearsByYear, isArrearsLumpBill, splitArrears } from '@/lib/arrears-bill';
 import { ArrearsBillMark } from '@/components/arrears-bill-mark';
 import { ONLINE_PAYMENT_OPEN } from '@/lib/online-payment';
 import { ownerBillingApplies, ownerBillingWording } from '@/lib/owner-billing';
@@ -1084,7 +1084,9 @@ function PaymentList({
               const breakdown = describeAssessment(payment.assessment, locale);
               const before = ordered[index - 1];
               const startsArrears = Boolean(payment.arrears) && !before?.arrears;
-              const startsYear = Boolean(payment.arrears) && before?.arrears?.year !== payment.arrears?.year;
+              const startsYear =
+                Boolean(payment.arrears) &&
+                (!before?.arrears || arrearsGroupKey(before.arrears) !== arrearsGroupKey(payment.arrears!));
               return (
                 <Fragment key={payment.id}>
                   {startsArrears ? (
@@ -1095,7 +1097,9 @@ function PaymentList({
                   ) : null}
                   {startsYear && payment.arrears ? (
                     <li className="px-4 pt-3 text-xs font-medium text-muted-foreground">
-                      {tArrears('groupYear', { year: String(payment.arrears.year) })}
+                      {isArrearsLumpBill(payment.arrears)
+                        ? tArrears('groupLump')
+                        : tArrears('groupYear', { year: String(payment.arrears.year) })}
                     </li>
                   ) : null}
                 <li

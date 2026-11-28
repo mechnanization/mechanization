@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   ARREARS_APPROVE_ROLES,
+  arrearsLineMode,
   citizenDisplayName,
   municipalToday,
   sameMoney,
@@ -32,7 +33,7 @@ import { AuditService } from '../audit/audit.service';
 import { assertNotMergedAway } from '../citizens/merged-away';
 import { raiseArrearsBills, type ArrearsBillLine } from '../fees/arrears-bill';
 import { approvalProblems, type StoredArrearsLine } from './arrears-approval.plan';
-import { arrearsLineKey, isPrescribed } from './arrears-import.plan';
+import { arrearsLineKey, conflictsWithMode, isPrescribed, liveModesOf, propertyModeKey } from './arrears-import.plan';
 import { ArrearsService } from './arrears.service';
 
 type Actor = { id: string; role: string };
@@ -448,7 +449,8 @@ export class ArrearsBatchService {
           earlier.lines.length === 1 &&
           line !== undefined &&
           (line.citizenId ?? null) === (input.citizenId?.toLowerCase() ?? null) &&
-          line.year === input.year &&
+          // A «رصيد إجمالي» is sent with no year and stored under the one the plan gave it.
+          (input.year === undefined || line.year === input.year) &&
           line.feeType === input.feeType &&
           line.component === input.component &&
           cents(Number(line.amount)) === cents(input.amount);
@@ -550,6 +552,14 @@ export class ArrearsBatchService {
       const mine = arrearsLineKey({ ...row, citizenId: citizen.id });
       if (live.some((other) => arrearsLineKey({ ...other, citizenId: citizen.id }) === mine)) {
         throw new ConflictError({ code: 'ARREARS_LINE_DUPLICATE', message: 'This file already holds this debt' });
+      }
+      // One mode per رقم العقار: a «رصيد إجمالي» never lands beside itemised lines, nor the reverse.
+      const modes = liveModesOf(live).get(propertyModeKey(citizen.id, row.propertyNumber));
+      if (conflictsWithMode(modes, arrearsLineMode(row.feeType))) {
+        throw new ConflictError({
+          code: 'ARREARS_LINE_MODE_CONFLICT',
+          message: 'This file enters its debts on this property the other way (lump sum or itemised)',
+        });
       }
 
       try {

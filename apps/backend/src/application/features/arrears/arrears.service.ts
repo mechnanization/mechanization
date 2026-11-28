@@ -6,6 +6,7 @@ import {
   normalizeDigits,
   type ArrearsExportResult,
   type ArrearsImportResult,
+  type ArrearsLineMode,
   type ArrearsSingleLineInput,
   type ArrearsTemplateCells,
   type ArrearsTemplateRow,
@@ -21,6 +22,7 @@ import { AuditService } from '../audit/audit.service';
 import { currentReadingForUnit } from '../buildings/habitability';
 import {
   arrearsLineKey,
+  liveModesOf,
   oldestKeptYear,
   planArrearsImport,
   unitCodeKey,
@@ -356,6 +358,7 @@ export class ArrearsService {
     const settings = await tx.systemSettings.findFirst({ select: { arrearsCutoffYear: true } });
     const members = new Map<number, ArrearsMember>();
     const liveKeys = new Set<string>();
+    let liveModes = new Map<string, Set<ArrearsLineMode>>();
     if (input.citizenId) {
       const citizen = await tx.user.findFirst({
         where: { id: input.citizenId, kind: 'CITIZEN' },
@@ -378,13 +381,15 @@ export class ArrearsService {
         heldUnitIds: new Set(spells.map((spell) => spell.unitId)),
       });
       for (const line of live) liveKeys.add(arrearsLineKey({ ...line, citizenId: line.citizenId! }));
+      liveModes = liveModesOf(live);
     }
 
     const cells: ArrearsTemplateCells = {
       ...(input.citizenId ? { rowKey: '1' } : { fullName: input.sourceName }),
       propertyNumber: input.propertyNumber,
       ...(input.unitCode ? { unitCode: input.unitCode } : {}),
-      year: String(input.year),
+      // A «رصيد إجمالي» is sent with no year; the plan dates it.
+      ...(input.year !== undefined ? { year: String(input.year) } : {}),
       feeType: input.feeType,
       ...(input.feeTypeNote ? { feeTypeNote: input.feeTypeNote } : {}),
       [input.component === 'PRINCIPAL' ? 'principal' : 'penalty']: String(input.amount),
@@ -399,6 +404,7 @@ export class ArrearsService {
       members,
       units: await this.unitsNamed(tx, [input.unitCode ?? '']),
       liveKeys,
+      liveModes,
       drops: [],
       controlTotal: null,
     };
@@ -458,6 +464,7 @@ export class ArrearsService {
       members,
       units: await this.unitsNamed(tx, input.rows.map((row) => row.unitCode ?? '')),
       liveKeys: new Set(live.map((line) => arrearsLineKey({ ...line, citizenId: line.citizenId! }))),
+      liveModes: liveModesOf(live),
       drops: input.drops,
       controlTotal,
     };

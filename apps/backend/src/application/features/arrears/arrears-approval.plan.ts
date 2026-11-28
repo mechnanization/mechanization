@@ -1,5 +1,6 @@
 import {
   ar,
+  isArrearsLumpSum,
   type ArrearsApprovalProblem,
   type ArrearsComponent,
   type ArrearsFeeType,
@@ -60,6 +61,8 @@ export function approvalProblems(
 /** «متأخرات 2023 — رسم النظافة», and «… — غرامة» on a penalty line. «رسم آخر» says what it was. */
 export function arrearsBillTitle(line: Pick<StoredArrearsLine, 'year' | 'feeType' | 'feeTypeNote' | 'component'>): string {
   const fee = line.feeType === 'OTHER' && line.feeTypeNote ? line.feeTypeNote : ar.arrearsFeeType[line.feeType];
+  // A «رصيد إجمالي» is not one year's debt: its stored year only dates it before the cutoff.
+  if (isArrearsLumpSum(line.feeType)) return `متأخرات سنوات سابقة — ${fee}`;
   const title = `متأخرات ${line.year} — ${fee}`;
   return line.component === 'PENALTY' ? `${title} — ${ar.arrearsComponent.PENALTY}` : title;
 }

@@ -43,9 +43,38 @@ export const ARREARS_FEE_TYPE = [
   'SEWER_SIDEWALK_CONSTRUCTION',
   'CLEANING',
   'OTHER',
+  'LUMP_SUM',
 ] as const;
 export const arrearsFeeTypeSchema = z.enum(ARREARS_FEE_TYPE, { error: 'اختر نوع الرسم' });
 export type ArrearsFeeType = z.infer<typeof arrearsFeeTypeSchema>;
+
+/**
+ * «رصيد إجمالي» (the user's decision of 2026-11-23): a debt whose years and fees
+ * the books do not itemise, entered as one amount, penalties included. The
+ * accountant types no year and no penalty; the municipality enters a lump only
+ * for debt inside the prescription period, so the server dates it to the last
+ * year before the cutoff (`arrearsLumpSumYear`), which keeps the cutoff check,
+ * the bill's period and the report working unchanged. A citizen's debts on one
+ * رقم العقار are all lump or all itemised, never both (`MIXED_WITH_LUMP_SUM`).
+ */
+export const ARREARS_LUMP_SUM_FEE_TYPE = 'LUMP_SUM' satisfies ArrearsFeeType;
+
+/** True for a «رصيد إجمالي» line. Takes the stored text too: the column is not an enum. */
+export function isArrearsLumpSum(feeType: string | null | undefined): boolean {
+  return feeType === ARREARS_LUMP_SUM_FEE_TYPE;
+}
+
+/** The year a lump sum is filed under: the last year before the cutoff. */
+export function arrearsLumpSumYear(cutoffYear: number): number {
+  return cutoffYear - 1;
+}
+
+/** How a citizen's debts on one رقم العقار are entered: itemised by year and fee, or one lump. */
+export type ArrearsLineMode = 'DETAILED' | 'LUMP';
+
+export function arrearsLineMode(feeType: string): ArrearsLineMode {
+  return isArrearsLumpSum(feeType) ? 'LUMP' : 'DETAILED';
+}
 
 /** Decision 14: a debt older than this many years is dropped («مرور الزمن»). */
 export const ARREARS_PRESCRIPTION_YEARS = 5;
@@ -111,7 +140,7 @@ export const ARREARS_TEMPLATE_COLUMNS: readonly ArrearsTemplateColumn[] = [
   { key: 'fullName', header: 'الاسم الكامل', hint: 'كما في الدفتر لشخص غير موجود في القالب', filledBy: 'EXPORT' },
   { key: 'propertyNumber', header: 'رقم العقار', hint: 'إلزامي', filledBy: 'EXPORT' },
   { key: 'unitCode', header: 'رمز الوحدة', hint: 'اختياري', filledBy: 'EXPORT' },
-  { key: 'year', header: 'السنة', hint: 'سنة الدين، قبل سنة بدء الفوترة', filledBy: 'ACCOUNTANT' },
+  { key: 'year', header: 'السنة', hint: 'سنة الدين، قبل سنة بدء الفوترة. اتركها فارغة للرصيد الإجمالي', filledBy: 'ACCOUNTANT' },
   {
     key: 'feeType',
     header: 'نوع الرسم',
@@ -119,8 +148,8 @@ export const ARREARS_TEMPLATE_COLUMNS: readonly ArrearsTemplateColumn[] = [
     filledBy: 'ACCOUNTANT',
   },
   { key: 'feeTypeNote', header: 'وصف الرسم الآخر', hint: 'إلزامي إذا كان النوع «رسم آخر»', filledBy: 'ACCOUNTANT' },
-  { key: 'principal', header: 'الأصل (ل.ل)', hint: 'المبلغ المستحق من الرسم', filledBy: 'ACCOUNTANT' },
-  { key: 'penalty', header: 'الغرامة (ل.ل)', hint: 'كما في الدفتر فقط، لا تُحتسب', filledBy: 'ACCOUNTANT' },
+  { key: 'principal', header: 'الأصل (ل.ل)', hint: 'المبلغ المستحق من الرسم، أو الرصيد الإجمالي كله', filledBy: 'ACCOUNTANT' },
+  { key: 'penalty', header: 'الغرامة (ل.ل)', hint: 'كما في الدفتر فقط، لا تُحتسب. لا غرامة مع الرصيد الإجمالي', filledBy: 'ACCOUNTANT' },
   { key: 'oldReference', header: 'المرجع في الدفتر', hint: 'رقم الصفحة أو الإيصال', filledBy: 'ACCOUNTANT' },
   { key: 'dueDate', header: 'تاريخ الاستحقاق', hint: 'اختياري، YYYY-MM-DD أو DD/MM/YYYY', filledBy: 'ACCOUNTANT' },
   { key: 'note', header: 'ملاحظة', hint: 'اختياري', filledBy: 'ACCOUNTANT' },
@@ -240,7 +269,8 @@ export const arrearsSingleLineSchema = z
     sourceName: text(200).optional(),
     propertyNumber: text(50).transform((value) => normalizeDigits(value)),
     unitCode: text(50).optional(),
-    year: z.number(typeError({ required: 'اكتب السنة', invalid: 'السنة رقم' })).int().min(ARREARS_YEAR_MIN).max(2100),
+    /** Required for an itemised line; never sent for a lump sum, which the server dates. */
+    year: z.number(typeError({ invalid: 'السنة رقم' })).int().min(ARREARS_YEAR_MIN).max(2100).optional(),
     feeType: arrearsFeeTypeSchema,
     feeTypeNote: text(200).optional(),
     component: arrearsComponentSchema,
@@ -264,6 +294,16 @@ export const arrearsSingleLineSchema = z
     }
     if (value.feeType === 'OTHER' && !value.feeTypeNote) {
       ctx.addIssue({ code: 'custom', path: ['feeTypeNote'], message: 'اكتب وصف الرسم' });
+    }
+    if (isArrearsLumpSum(value.feeType)) {
+      if (value.year !== undefined) {
+        ctx.addIssue({ code: 'custom', path: ['year'], message: 'الرصيد الإجمالي بلا سنة' });
+      }
+      if (value.component !== 'PRINCIPAL') {
+        ctx.addIssue({ code: 'custom', path: ['component'], message: 'الرصيد الإجمالي مبلغ واحد، الغرامة ضمنه' });
+      }
+    } else if (value.year === undefined) {
+      ctx.addIssue({ code: 'custom', path: ['year'], message: 'اكتب السنة' });
     }
   });
 export type ArrearsSingleLineInput = z.infer<typeof arrearsSingleLineSchema>;
@@ -304,7 +344,11 @@ export interface BillWriteOffView {
  * «ARR-» bill. The bill's own number is its `invoiceNumber`.
  */
 export interface BillArrearsView {
-  /** The debt's year, which is also the bill's `periodKey`. */
+  /**
+   * The debt's year, which is also the bill's `periodKey`. On a «رصيد إجمالي»
+   * (`LUMP_SUM`) it is the last year before the cutoff, not the debt's own: a
+   * screen names a lump without it (`isArrearsLumpSum`).
+   */
   year: number;
   feeType: ArrearsFeeType;
   /** What «رسم آخر» was, when `feeType` is `OTHER`. */
@@ -363,6 +407,10 @@ export const ARREARS_LINE_ISSUE = [
   'DUPLICATE_IN_FILE',
   'DUPLICATE_LIVE_LINE',
   'DROP_NOT_A_LINE',
+  // «رصيد إجمالي»: no year and no penalty on it, and never beside itemised lines on one رقم العقار.
+  'LUMP_SUM_YEAR_GIVEN',
+  'LUMP_SUM_PENALTY',
+  'MIXED_WITH_LUMP_SUM',
   // At approval: a kept line is older than the prescription period now (decision 14).
   'PRESCRIBED_SINCE_IMPORT',
 ] as const;
@@ -666,7 +714,8 @@ export type ParsedArrearsRow =
       fullName: string | null;
       propertyNumber: string;
       unitCode: string | null;
-      year: number;
+      /** Null only on a «رصيد إجمالي» row: the server dates it (`arrearsLumpSumYear`). */
+      year: number | null;
       feeType: ArrearsFeeType;
       feeTypeNote: string | null;
       dueDate: string | null;
@@ -729,6 +778,10 @@ export function parseArrearsFeeType(raw: string): ArrearsFeeType | null {
  * principal and a penalty on one row are two lines. A zero is no line, so a row
  * whose only amounts are zero is blank too, year or not; a year with both amount
  * cells empty is refused (`AMOUNT_REQUIRED`), since it may be a figure left out.
+ *
+ * A «رصيد إجمالي» row (`LUMP_SUM`) is one amount in the principal cell: its year
+ * cell stays empty (`LUMP_SUM_YEAR_GIVEN`) and so does its penalty cell, the
+ * penalties being in the amount (`LUMP_SUM_PENALTY`). Its `year` comes back null.
  */
 export function parseArrearsRow(cells: ArrearsTemplateCells): ParsedArrearsRow {
   const issues: { column: ArrearsTemplateColumnKey; issue: ArrearsLineIssue }[] = [];
@@ -767,8 +820,19 @@ export function parseArrearsRow(cells: ArrearsTemplateCells): ParsedArrearsRow {
     return issues.length > 0 ? { kind: 'INVALID', rowKey, fullName, issues } : { kind: 'BLANK', rowKey };
   }
 
+  let feeType: ArrearsFeeType | null = null;
+  if (feeTypeCell === null) issues.push({ column: 'feeType', issue: 'FEE_TYPE_REQUIRED' });
+  else {
+    feeType = parseArrearsFeeType(feeTypeCell);
+    if (feeType === null) issues.push({ column: 'feeType', issue: 'FEE_TYPE_UNKNOWN' });
+  }
+  const lump = isArrearsLumpSum(feeType);
+
   let year: number | null = null;
-  if (yearCell === null) issues.push({ column: 'year', issue: 'YEAR_REQUIRED' });
+  if (lump) {
+    if (yearCell !== null) issues.push({ column: 'year', issue: 'LUMP_SUM_YEAR_GIVEN' });
+    if (amounts.some((line) => line.component === 'PENALTY')) issues.push({ column: 'penalty', issue: 'LUMP_SUM_PENALTY' });
+  } else if (yearCell === null) issues.push({ column: 'year', issue: 'YEAR_REQUIRED' });
   else {
     const folded = normalizeDigits(yearCell);
     if (/^\d{4}$/.test(folded) && Number(folded) >= ARREARS_YEAR_MIN && Number(folded) <= 2100) year = Number(folded);
@@ -777,12 +841,6 @@ export function parseArrearsRow(cells: ArrearsTemplateCells): ParsedArrearsRow {
 
   if (amounts.length === 0 && !amountIssues) issues.push({ column: 'principal', issue: 'AMOUNT_REQUIRED' });
 
-  let feeType: ArrearsFeeType | null = null;
-  if (feeTypeCell === null) issues.push({ column: 'feeType', issue: 'FEE_TYPE_REQUIRED' });
-  else {
-    feeType = parseArrearsFeeType(feeTypeCell);
-    if (feeType === null) issues.push({ column: 'feeType', issue: 'FEE_TYPE_UNKNOWN' });
-  }
   const feeTypeNote = cell(cells, 'feeTypeNote');
   if (feeType === 'OTHER' && feeTypeNote === null) issues.push({ column: 'feeTypeNote', issue: 'FEE_TYPE_NOTE_REQUIRED' });
 
@@ -795,7 +853,7 @@ export function parseArrearsRow(cells: ArrearsTemplateCells): ParsedArrearsRow {
 
   if (rowKey === null && rowKeyCell === null && fullName === null) issues.push({ column: 'fullName', issue: 'NAME_REQUIRED' });
 
-  if (issues.length > 0 || year === null || feeType === null || propertyCell === null) {
+  if (issues.length > 0 || (year === null && !lump) || feeType === null || propertyCell === null) {
     return { kind: 'INVALID', rowKey, fullName, issues };
   }
   return {
