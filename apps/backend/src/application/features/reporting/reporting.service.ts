@@ -156,7 +156,7 @@ export interface SpatialFeature {
 }
 
 /** One citizen registered against a parcel, as the staff map drawer shows them. */
-export interface ParcelRegistrantFinancials {
+interface ParcelRegistrantFinancials {
   totalBilled: number;
   totalPaid: number;
   totalDue: number;
@@ -164,7 +164,7 @@ export interface ParcelRegistrantFinancials {
 }
 
 /** One structure/card registered against a parcel — a building, house, shop, or plot. */
-export interface ParcelStructure {
+interface ParcelStructure {
   id: string;
   propertyType: string;
   occupancyType: string;
@@ -174,7 +174,7 @@ export interface ParcelStructure {
   unitArea?: number | null;
 }
 
-export interface ParcelRegistrant {
+interface ParcelRegistrant {
   citizenId: string;
   registrationId: string;
   fullName: string;
@@ -196,7 +196,7 @@ export interface ParcelRegistrant {
   structures: ParcelStructure[];
 }
 
-export interface ParcelFinancials {
+interface ParcelFinancials {
   totalBilled: number;
   totalPaid: number;
   totalDue: number;

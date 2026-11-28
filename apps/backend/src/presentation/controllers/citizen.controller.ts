@@ -181,7 +181,7 @@ export class CitizenController {
   @Get('me/summary')
   async mySummary(@CurrentUser() user: SessionClaims) {
     const citizen = await this.profiles.getCitizenProfile(user.sub);
-    if (!citizen) throw new NotFoundError('Citizen', user.sub);
+    if (!citizen) throw new NotFoundError({ code: 'CITIZEN_NOT_FOUND', message: 'This citizen could not be found.' });
 
     /*
       How a co-owned flat is divided, and this person's part — never another
@@ -405,7 +405,7 @@ export class CitizenController {
   @Get(':id')
   async getById(@Param('id', new UuidPipe()) id: string) {
     const citizen = await this.profiles.getCitizenProfile(id);
-    if (!citizen) throw new NotFoundError('Citizen', id);
+    if (!citizen) throw new NotFoundError({ code: 'CITIZEN_NOT_FOUND', message: 'This citizen could not be found.' });
     return citizen;
   }
 

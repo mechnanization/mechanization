@@ -109,7 +109,13 @@ export class CitizenLandlordLinksController {
   @Get('landlord-links/:propertyEntryId')
   async landlordLink(@Param('propertyEntryId', new UuidPipe()) propertyEntryId: string) {
     const proposal = await this.linkQueue.proposal(propertyEntryId);
-    if (!proposal) throw new NotFoundError('LandlordLink', propertyEntryId);
+    if (!proposal) {
+      throw new NotFoundError({
+        code: 'LANDLORD_LINK_NOT_OPEN',
+        message: 'This owner-link claim is not open.',
+        details: { propertyEntryId },
+      });
+    }
     return proposal;
   }
 

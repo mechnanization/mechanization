@@ -198,6 +198,8 @@ export const ERROR_CODES = [
   'UNIT_STATUS_AFTER_EXIT_REQUIRED',
   'NON_RESIDENT_OWNER_CANNOT_OCCUPY',
   'OCCUPANCY_CHANGED_CONCURRENTLY',
+  // «فحص الرابط» on a claim that is no longer open: linked, dismissed, ended, or naming nobody registered (GOD-13).
+  'LANDLORD_LINK_NOT_OPEN',
   // Why a landlord link cannot be made yet (ERR-04): each `LinkBlock` of the proposal carries one as its
   // `refusal`, and making the link throws the same. `hasUnit` / `unitCode`, and `hasOwners` / `owners`
   // (the names the building's record holds) where the message says them.
