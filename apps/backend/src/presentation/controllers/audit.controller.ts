@@ -10,6 +10,7 @@ import { ZodValidationPipe } from '../../application/common/pipes/zod-validation
 import { AuditService } from '../../application/features/audit/audit.service';
 import { Roles } from '../decorators/roles.decorator';
 import { parseDate, queryLimit, queryOffset } from './query-params';
+import { APP_CONFIG } from '../../application/common/app.config';
 
 /**
  * Only a zone Postgres will accept.
@@ -81,8 +82,8 @@ export class AuditController {
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('timeZone') timeZone?: string,
-    @Query('limit') limit = '50',
-    @Query('offset') offset = '0',
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
   ) {
     return this.audit.daily({
       ...actorFilter(actorId),
@@ -97,7 +98,7 @@ export class AuditController {
       from: parseDate(from),
       to: parseDate(to),
       timeZone: safeTimeZone(timeZone),
-      limit: queryLimit(limit, 50, 200),
+      limit: queryLimit(limit, APP_CONFIG.pagination.audit.default, APP_CONFIG.pagination.audit.max),
       offset: queryOffset(offset),
     });
   }
@@ -111,8 +112,8 @@ export class AuditController {
     @Query('action') action?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
-    @Query('limit') limit = '50',
-    @Query('offset') offset = '0',
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
   ) {
     return this.audit.query({
       ...actorFilter(actorId),
@@ -121,7 +122,7 @@ export class AuditController {
       actions: parseActions(action),
       from: parseDate(from),
       to: parseDate(to),
-      limit: queryLimit(limit, 50, 200),
+      limit: queryLimit(limit, APP_CONFIG.pagination.audit.default, APP_CONFIG.pagination.audit.max),
       offset: queryOffset(offset),
     });
   }

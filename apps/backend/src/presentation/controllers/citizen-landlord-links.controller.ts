@@ -18,6 +18,7 @@ import { CurrentActor } from '../decorators/current-actor.decorator';
 import { Roles } from '../decorators/roles.decorator';
 import { UuidPipe } from '../pipes/uuid.pipe';
 import { queryLimit, queryOffset } from './query-params';
+import { APP_CONFIG } from '../../application/common/app.config';
 
 /**
  * «روابط المالكين»: the queue of tenancy cards whose landlord number matches a
@@ -61,7 +62,7 @@ export class CitizenLandlordLinksController {
       in one response was the read this screen used to make on every visit.
     */
     return this.linkQueue.proposals({
-      limit: queryLimit(limit, 20, 100),
+      limit: queryLimit(limit, APP_CONFIG.pagination.ownerLinks.default, APP_CONFIG.pagination.ownerLinks.max),
       offset: queryOffset(offset),
     });
   }

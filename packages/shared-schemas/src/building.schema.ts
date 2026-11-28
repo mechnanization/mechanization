@@ -1497,6 +1497,10 @@ export interface OwnerBillingState {
   }>;
 }
 
+/** A page of «سجل المباني» (`buildingFilterSchema`): the default and the most one request may ask for (PAG-07). */
+export const BUILDINGS_PAGE_DEFAULT = 100;
+export const BUILDINGS_PAGE_MAX = 500;
+
 /**
  * What the census ledger filters on.
  *
@@ -1542,7 +1546,7 @@ export const buildingFilterSchema = z.object({
     .union([z.boolean(), z.enum(['true', 'false'])])
     .transform((value) => value === true || value === 'true')
     .optional(),
-  limit: z.coerce.number().int().min(1).max(500).default(100),
+  limit: z.coerce.number().int().min(1).max(BUILDINGS_PAGE_MAX).default(BUILDINGS_PAGE_DEFAULT),
   offset: z.coerce.number().int().min(0).default(0),
 });
 
@@ -1563,10 +1567,14 @@ export type BuildingFilter = z.infer<typeof buildingFilterSchema>;
  */
 export const WORKLIST_UNASSIGNED = 'UNASSIGNED';
 
+/** A page of a worklist (`worklistQuerySchema`): the default and the most one request may ask for (PAG-07). */
+export const WORKLIST_PAGE_DEFAULT = 25;
+export const WORKLIST_PAGE_MAX = 100;
+
 export const worklistQuerySchema = z.object({
   search: z.string().trim().max(120).optional(),
   owner: z.union([uuid, z.literal(WORKLIST_UNASSIGNED)]).optional(),
-  limit: z.coerce.number().int().min(1).max(100).default(25),
+  limit: z.coerce.number().int().min(1).max(WORKLIST_PAGE_MAX).default(WORKLIST_PAGE_DEFAULT),
   offset: z.coerce.number().int().min(0).default(0),
 });
 

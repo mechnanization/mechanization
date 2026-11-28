@@ -165,6 +165,39 @@ export const APP_CONFIG = {
    */
   locks: { rowLockTimeout: '5s' },
 
+  /**
+   * Page sizes, one pair per register (audit PAG-07): `default` when a request names none, `max` the
+   * most one request may ask for. The controller reads a page through `queryLimit(limit, page.default,
+   * page.max)` and the service clamps to the same pair, so the two cannot disagree: «مراجعة السجلات»
+   * admitted 200 at the door and served 100. A register whose query a shared zod schema bounds keeps
+   * its pair beside that schema instead, where the frontend reads it too: `BUILDINGS_PAGE_*` and
+   * `WORKLIST_PAGE_*` (`building.schema.ts`), `TRANSFERS_PAGE_*` (`transfer.schema.ts`),
+   * `CASES_PAGE_*`, `FEE_NOTICES_PAGE_*`, `ARREARS_*_PAGE_*`, and `MAX_LIST_PAGE`.
+   */
+  pagination: {
+    /** «سجل المواطنين», `GET citizens`. */
+    citizens: { default: 200, max: 500 },
+    /** «سجل التعديلات» of a citizen file or a building (`AuditService.history`). */
+    history: { default: 30, max: 100 },
+    /** The audit log and its daily report, `GET audit` and `GET audit/daily`. */
+    audit: { default: 50, max: 200 },
+    /** «روابط المالكين», the owner-link queue (`LandlordLinkQueueService.proposals`). */
+    ownerLinks: { default: 20, max: 100 },
+    /** «فواتير تأثّرت بتصحيحات», `GET fees/correction-affected`. */
+    correctionBills: { default: 20, max: 100 },
+    /** «مراجعة السجلات», `GET quality/reviews` (`RecordReviewService.queue`). */
+    recordReviews: { default: 20, max: 100 },
+    /** «فحوص الجودة», `GET quality/checks` (`RecordReviewService.listChecks`). */
+    qualityChecks: { default: 200, max: 500 },
+    /** What one collector collected, `GET treasury/transfers/custody/:collectorId/collections`. */
+    collectorCollections: { default: 200, max: 500 },
+    /**
+     * Not a page: the most files one duplicate check reads (`CitizenDuplicatesService.duplicateLookup`),
+     * which is the bound on a scan by name or phone, never shown as a list.
+     */
+    duplicateLookupRows: 1000,
+  },
+
   documents: {
     signedUrlTtlSeconds: 300,
     maxFilesPerSubmission: 40,

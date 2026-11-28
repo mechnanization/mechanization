@@ -530,7 +530,7 @@ export class FeesController {
   ) {
     return this.correctionBills.list({
       includeReviewed: includeReviewed === 'true',
-      limit: queryLimit(limit, 20, 100),
+      limit: queryLimit(limit, APP_CONFIG.pagination.correctionBills.default, APP_CONFIG.pagination.correctionBills.max),
       offset: queryOffset(offset),
     });
   }

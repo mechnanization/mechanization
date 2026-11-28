@@ -13,15 +13,7 @@ import {
   type DuplicateReviewFindings,
 } from './possible-duplicates';
 import { normalizeSearchText } from '../../common/search-terms';
-
-/**
- * The most register rows one duplicate lookup compares.
- *
- * The lookup is blocked on the phone and on the name parts, so this is only
- * reached by a very common first name in a very large municipality. Comparing
- * in the application is cheap; this bounds the read.
- */
-const MAX_DUPLICATE_LOOKUP_ROWS = 1000;
+import { APP_CONFIG } from '../../common/app.config';
 
 /**
  * Is this person already on file? The screen a new file and an import go
@@ -193,7 +185,13 @@ export class CitizenDuplicatesService {
             : []),
         ],
       },
-      take: MAX_DUPLICATE_LOOKUP_ROWS,
+      /*
+        The most register rows one lookup compares. It is blocked on the phone and
+        the name parts, so this is reached only by a very common first name in a
+        very large municipality; comparing in the application is cheap, and this
+        bounds the read.
+      */
+      take: APP_CONFIG.pagination.duplicateLookupRows,
       select: {
         id: true,
         firstName: true,

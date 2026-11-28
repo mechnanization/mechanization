@@ -61,6 +61,7 @@ import { Roles } from '../decorators/roles.decorator';
 import type { SessionClaims } from '../../application/features/identity/identity.service';
 import { UuidPipe } from '../pipes/uuid.pipe';
 import { queryLimit, queryOffset } from './query-params';
+import { APP_CONFIG } from '../../application/common/app.config';
 
 /**
  * The building census.
@@ -110,11 +111,11 @@ export class BuildingsController {
    */
   @Roles(...EVERY_STAFF_ROLE)
   @Get(':id/history')
-  history(@Param('id', new UuidPipe()) id: string, @Query('limit') limit = '30', @Query('offset') offset = '0') {
+  history(@Param('id', new UuidPipe()) id: string, @Query('limit') limit?: string, @Query('offset') offset?: string) {
     return this.audit.history({
       entityType: 'Building',
       entityId: id,
-      limit: queryLimit(limit, 30, 100),
+      limit: queryLimit(limit, APP_CONFIG.pagination.history.default, APP_CONFIG.pagination.history.max),
       offset: queryOffset(offset),
     });
   }

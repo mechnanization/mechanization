@@ -1,4 +1,5 @@
-import { citizenDisplayName, citizenStoredName } from '@mechanization/shared-schemas';
+import { citizenDisplayName, citizenStoredName, WORKLIST_PAGE_DEFAULT, WORKLIST_PAGE_MAX } from '@mechanization/shared-schemas';
+import { APP_CONFIG } from '../../common/app.config';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
@@ -62,9 +63,6 @@ import { billsOwedBy } from '../fees/shared-bill-view';
 import { LandlordLinkQueueService } from './landlord-link-queue.service';
 import { LandlordUnlinkService } from './landlord-unlink.service';
 import { CitizenDuplicatesService } from './citizen-duplicates.service';
-
-/** A page of the registry beyond this is a report, not a screen. */
-const MAX_LIST_ROWS = 500;
 
 /**
  * The stored «غير مؤكَّد» flags, read back defensively.
@@ -357,7 +355,8 @@ export class CitizensService {
       families: number;
     };
   }> {
-    const limit = Math.min(filter.limit ?? 100, MAX_LIST_ROWS);
+    // A page of the registry beyond `APP_CONFIG.pagination.citizens.max` is a report, not a screen.
+    const limit = Math.min(filter.limit ?? APP_CONFIG.pagination.citizens.default, APP_CONFIG.pagination.citizens.max);
     const offset = Math.max(filter.offset ?? 0, 0);
     /*
       Every token has to appear somewhere in the row's folded text.
@@ -709,7 +708,7 @@ export class CitizensService {
      */
     viewer?: WorklistViewer,
   ): Promise<{ items: ReviewQueueItem[]; total: number }> {
-    const limit = Math.min(Math.max(filter.limit ?? 25, 1), MAX_LIST_ROWS);
+    const limit = Math.min(Math.max(filter.limit ?? WORKLIST_PAGE_DEFAULT, 1), WORKLIST_PAGE_MAX);
     const offset = Math.max(filter.offset ?? 0, 0);
     const tokens = searchTokens(filter.search);
     const searchable = citizenSearchText(this.S, viewer?.role);

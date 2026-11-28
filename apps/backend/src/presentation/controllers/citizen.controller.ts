@@ -46,6 +46,7 @@ import { UuidPipe } from '../pipes/uuid.pipe';
 import { queryLimit, queryOffset } from './query-params';
 import { CitizenDuplicatesService } from '../../application/features/citizens/citizen-duplicates.service';
 import { CitizenImportService } from '../../application/features/citizens/citizen-import.service';
+import { APP_CONFIG } from '../../application/common/app.config';
 
 /**
  * Shows only the tail of an identifier — `•••567`.
@@ -102,11 +103,11 @@ export class CitizenController {
    */
   @Roles(...EVERY_STAFF_ROLE)
   @Get(':id/history')
-  history(@Param('id', new UuidPipe()) id: string, @Query('limit') limit = '30', @Query('offset') offset = '0') {
+  history(@Param('id', new UuidPipe()) id: string, @Query('limit') limit?: string, @Query('offset') offset?: string) {
     return this.audit.history({
       entityType: 'User',
       entityId: id,
-      limit: queryLimit(limit, 30, 100),
+      limit: queryLimit(limit, APP_CONFIG.pagination.history.default, APP_CONFIG.pagination.history.max),
       offset: queryOffset(offset),
     });
   }
@@ -121,8 +122,8 @@ export class CitizenController {
   async list(
     @CurrentActor() actor: StaffActor,
     @Query('search') search?: string,
-    @Query('limit') limit = '200',
-    @Query('offset') offset = '0',
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
     /**
      * `REQUIRES_REVIEW` narrows the registry to records filed with fields left
      * «غير مؤكَّد». Any other value simply matches nothing rather than being
@@ -136,7 +137,7 @@ export class CitizenController {
       {
         search,
         status,
-        limit: queryLimit(limit, 200, 500),
+        limit: queryLimit(limit, APP_CONFIG.pagination.citizens.default, APP_CONFIG.pagination.citizens.max),
         offset: queryOffset(offset),
       },
       // «يتطلب مراجعة» is the viewer's own queue unless they are an admin.

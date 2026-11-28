@@ -36,6 +36,8 @@ import { TreasuryLedgerService } from './treasury-ledger.service';
 import { planTransferDate, transferKindOf } from './transfers.plan';
 import { documentOccurredAt, roundMoney } from './treasury.plan';
 import { sameId } from '../../common/ids';
+import { APP_CONFIG } from '../../common/app.config';
+import { TRANSFERS_PAGE_DEFAULT, TRANSFERS_PAGE_MAX } from '@mechanization/shared-schemas';
 
 /** The row a screen reads a transfer as. */
 const TRANSFER_SELECT = {
@@ -235,7 +237,7 @@ export class TransfersService {
    * it made «collected − held» more than he ever handed in, and the screen says
    * that difference is exactly what he handed in.
    */
-  async collections(collectorId: string, limit = 200): Promise<CollectorCollectionsResult> {
+  async collections(collectorId: string, limit: number = APP_CONFIG.pagination.collectorCollections.default): Promise<CollectorCollectionsResult> {
     const collector = await this.db.user.findFirst({
       where: { id: collectorId, kind: 'STAFF' },
       select: { id: true, firstName: true, lastName: true },
@@ -258,7 +260,7 @@ export class TransfersService {
       this.db.paymentTransaction.findMany({
         where: theirs,
         orderBy: [{ occurredAt: 'desc' }, { createdAt: 'desc' }],
-        take: Math.min(Math.max(limit, 1), 500),
+        take: Math.min(Math.max(limit, 1), APP_CONFIG.pagination.collectorCollections.max),
         select: {
           id: true,
           receiptNumber: true,
@@ -370,7 +372,7 @@ export class TransfersService {
    * currency. The period is the municipality's calendar.
    */
   async list(query: Partial<ListTransfersQuery> = {}): Promise<TransferListResult> {
-    const pageSize = Math.min(Math.max(query.pageSize ?? 50, 1), 200);
+    const pageSize = Math.min(Math.max(query.pageSize ?? TRANSFERS_PAGE_DEFAULT, 1), TRANSFERS_PAGE_MAX);
     const page = Math.max(query.page ?? 1, 1);
 
     const sameCurrency = Prisma.sql`"fromCurrency" = "toCurrency"`;

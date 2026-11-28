@@ -22,6 +22,7 @@ import { TenantContextService } from '../../../infrastructure/context/tenant-con
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { StaffActor } from '../../common/actor';
+import { APP_CONFIG } from '../../common/app.config';
 
 /**
  * Where a filed record stands with its reviewer.
@@ -58,8 +59,6 @@ export const REVIEW_AUDIT_ACTIONS = [
 
 const canCheck = (role: string | null | undefined): boolean =>
   (QUALITY_CHECK_ROLES as readonly string[]).includes(role ?? '');
-
-const MAX_PAGE = 100;
 
 /**
  * One page of the queue, named so it can be cached.
@@ -167,7 +166,7 @@ export class RecordReviewService {
     limit?: number;
     offset?: number;
   }) {
-    const limit = Math.min(Math.max(filter.limit ?? 20, 1), MAX_PAGE);
+    const limit = Math.min(Math.max(filter.limit ?? APP_CONFIG.pagination.recordReviews.default, 1), APP_CONFIG.pagination.recordReviews.max);
     const offset = Math.max(filter.offset ?? 0, 0);
     const S = this.S;
 
@@ -721,7 +720,7 @@ export class RecordReviewService {
           : {}),
       },
       orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
-      take: Math.min(filter.limit ?? 200, 500),
+      take: Math.min(filter.limit ?? APP_CONFIG.pagination.qualityChecks.default, APP_CONFIG.pagination.qualityChecks.max),
       select: {
         id: true,
         status: true,
