@@ -13,7 +13,7 @@ import { Prisma } from '../../../generated/tenant-client';
 import { readInTenantSnapshot } from '../../../infrastructure/context/tenant-transaction';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
-import { likePattern } from '../../common/search-terms';
+import { likePattern } from '../../../domain/value-objects/search-terms';
 import { ExpensesService } from './expenses.service';
 import { incomePeriod } from './income.plan';
 import { IncomeService } from './income.service';

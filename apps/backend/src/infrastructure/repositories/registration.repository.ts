@@ -22,7 +22,7 @@ import { TenantContextService } from '../context/tenant-context.service';
 import { citizenPhoneRuleError } from '../prisma/check-violation';
 import { foreignKeyViolated, isUniqueViolation, isUniqueViolationOn } from '../prisma/prisma-errors';
 import { tenantSchemaRef } from '../prisma/tenant-schema-ref';
-import { normalizeSearchText } from '../../application/common/search-terms';
+import { normalizeSearchText } from '../../domain/value-objects/search-terms';
 
 /** Where an identity-document clash is recorded on the new citizen's file. */
 const IDENTITY_DOC_PATH = 'personal.identityDocNumber';

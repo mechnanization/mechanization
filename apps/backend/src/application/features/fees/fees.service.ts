@@ -70,7 +70,7 @@ import {
   type UnassessableDetail,
   type UnassessableUnit,
 } from './tiered-area';
-import { likePattern, searchTokens } from '../../common/search-terms';
+import { likePattern, searchTokens } from '../../../domain/value-objects/search-terms';
 import { citizenSearchText } from '../../common/citizen-search';
 import { RedisCacheService } from '../../../infrastructure/cache/redis-cache.service';
 import { counterCredit, PaymentLedgerService, type Tender } from './payment-ledger.service';

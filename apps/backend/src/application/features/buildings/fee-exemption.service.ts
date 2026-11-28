@@ -29,7 +29,7 @@ import { runInTenantTransaction } from '../../../infrastructure/context/tenant-t
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { citizenSearchText } from '../../common/citizen-search';
 import { NotFoundError, ValidationError } from '../../common/exceptions';
-import { likePattern, searchTokens } from '../../common/search-terms';
+import { likePattern, searchTokens } from '../../../domain/value-objects/search-terms';
 import { AuditService, type BuildingChange } from '../audit/audit.service';
 import { setLocalLockTimeout } from '../../common/lock-timeout';
 

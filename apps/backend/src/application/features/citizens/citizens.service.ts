@@ -25,7 +25,7 @@ import { TenantContextService } from '../../../infrastructure/context/tenant-con
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
 import { houseCardOnMultiUnitBuilding } from '../../../infrastructure/prisma/house-card-guard';
-import { likePattern, searchTokens } from '../../common/search-terms';
+import { likePattern, searchTokens } from '../../../domain/value-objects/search-terms';
 import { Prisma } from '../../../generated/tenant-client';
 import { citizenSearchText } from '../../common/citizen-search';
 import { citizenPhoneRuleError } from '../../../infrastructure/prisma/check-violation';

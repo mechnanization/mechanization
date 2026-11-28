@@ -5,7 +5,7 @@ import {
   type DuplicateReviewAnswer,
   type FieldFlag,
 } from '@mechanization/shared-schemas';
-import { normalizeSearchText } from '../../common/search-terms';
+import { normalizeSearchText } from '../../../domain/value-objects/search-terms';
 
 /**
  * «هل هذا الشخص مسجَّل مسبقاً؟» — the rules, without a database.

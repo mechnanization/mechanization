@@ -9,7 +9,7 @@ import {
   type ReinspectionsPage,
 } from '@mechanization/shared-schemas';
 import { Prisma, type PrismaClient as TenantPrismaClient } from '../../../generated/tenant-client';
-import { likePattern } from '../../common/search-terms';
+import { likePattern } from '../../../domain/value-objects/search-terms';
 import { worklistOwnerFilter, type WorklistViewer } from '../../common/worklist-viewer';
 import type { UnsurveyedUnitRow } from './building.types';
 import { answersHabitabilitySql, currentReadingForUnit, uninhabitableSql } from './habitability';
