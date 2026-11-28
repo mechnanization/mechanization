@@ -861,6 +861,10 @@ No cross-tenant path found. Every task here touches citizen data or credentials 
 - **Acceptance criteria:** `grep -rn "role as never" apps/backend/src | grep -v spec` → 0.
 - **Depends on:** DRY-01
 - **Verification:** grep; typecheck.
+- **Done 2026-11-28:** every service parameter spelt `{ id: string; role: string }` (146 in 43 files, specs included) is `StaffActor`, so
+  `actor.role` is the `StaffRole` enum and the 60 `role as never` left after DRY-01 went (0, specs included). The two that were
+  not an actor's role became a typed parameter (`OccupancyRole` on `ensureOnFile` / `claimOnFile`) and a parse
+  (`occupancyRoleSchema.parse` on a shared bill's debtor rows, ARCH-27). Spec actors typed with `as const` or `StaffActor`.
 
 ## [ARCH-11] Remove the enum casts in BuildingsService
 - **Priority:** P2 · **Assignee:** Hashem · **Estimate:** L · **Category:** Architecture
@@ -868,6 +872,12 @@ No cross-tenant path found. Every task here touches citizen data or credentials 
 - **Acceptance criteria:** values typed against `$Enums`; count in the file 0 (or each remaining one commented with why).
 - **Depends on:** ARCH-10, ideally after GOD-05..07
 - **Verification:** `grep -c "as never\|as unknown as" buildings.service.ts`.
+- **Done 2026-11-28:** after GOD-05 to GOD-07 the 72 lived in four files: `buildings.service.ts` 24, `units.service.ts` 13, `unit-visits.service.ts` 12,
+  `occupancy-writes.service.ts` 18; all 0, and `census-sync.service.ts` (16), `unit-vacancy.ts` (5) and `building-types.ts` (1) with them.
+  Most needed nothing; the rest were string-typed inputs, now the shared types (`BuildingListFilter`, `CreateBuildingRow`,
+  `CreateUnitRow`, `TypedStructure`, `TypedUnit`, `UnitTypeRow`, `vacancyReversal`'s unit and confirmation, the census sync's unit
+  and declared status, `endOccupancy`'s reason); `unitStatusForRole` (shared) returns `UnitStatus | null`. Backend total 416 → 268.
+  `fees.service.ts` (13 today) stays the second PR the ticket names.
 
 ## [ARCH-12] Convert BuildingsService's 59 prose throws to error codes
 - **Priority:** P2 · **Assignee:** Hashem · **Estimate:** L · **Category:** Architecture
@@ -876,12 +886,14 @@ No cross-tenant path found. Every task here touches citizen data or credentials 
 - **Acceptance criteria:** `LEGACY_PROSE_THROWS` lowered to the new count (≤ 140); `api-errors.test.ts` passes.
 - **Depends on:** none
 - **Verification:** `error-codes.ratchet.spec.ts`; frontend `api-errors.test.ts`.
+- **Done 2026-11-28:** with ARCH-13 and ARCH-14 in one PR (below).
 
 ## [ARCH-13] Convert the identity, staff and OTP prose throws to error codes
 - **Priority:** P2 · **Assignee:** Hashem · **Estimate:** M · **Category:** Architecture
 - **Files:** `identity.service.ts` (19), `staff.service.ts` (19), `otp.service.ts` (6). Done during SEC-02 (2026-11-24): the three in `beginTotpEnrolment`, `confirmTotpEnrolment` and `disableTotp` (now `SESSION_INVALID` and `TOTP_ENROLMENT_NOT_STARTED`), so `identity.service.ts` has 16 left and the ratchet is 196.
 - **Acceptance criteria / Verification:** as ARCH-12; ratchet lowered by 44.
 - **Depends on:** none
+- **Done 2026-11-28:** with ARCH-12 and ARCH-14 in one PR (below).
 
 ## [ARCH-14] Convert the remaining 96 prose throws to error codes
 - **Priority:** P3 · **Assignee:** Hashem · **Estimate:** M · **Category:** Architecture
@@ -889,6 +901,13 @@ No cross-tenant path found. Every task here touches citizen data or credentials 
 - **Acceptance criteria:** ratchet at 0, the spec turned into a plain "no prose throws" test.
 - **Depends on:** ARCH-12, ARCH-13 (skip the backup and supabase files if DEAD-08/10 deletes them)
 - **Verification:** ratchet spec.
+- **Done 2026-11-28:** ARCH-12, ARCH-13 and ARCH-14 together: the last 178 sites in 37 files (the backup and Supabase files included: DEAD-08/10
+  have not deleted them), 134 new codes in groups at the end of `ERROR_CODES` with `errors.<CODE>` in both message files (Abed
+  reviews the copy), the existing ones reused where they fit. The helpers that built Arabic sentences return a `BlockRefusal`
+  (`nonResidentUnitConflict`, `ownerLivesThereRefusal`; `listCodes`, `structuralLabel` and the zones' `describe` deleted, their
+  lists and labels now ICU params and selects). The property card's domain invariants, English prose shown as is, took 14
+  `PROPERTY_*` codes. The ratchet is `no-prose-throws.spec.ts` (0, with a test of its own detector). 45 spec assertions on
+  the Arabic sentences now assert the code. Logged ARCH-27, ERR-10.
 
 ## [ARCH-15] Declare event names and payloads in one typed module
 - **Priority:** P2 · **Assignee:** Hashem · **Estimate:** M · **Category:** Architecture
@@ -1169,6 +1188,9 @@ No cross-tenant path found. Every task here touches citizen data or credentials 
 - **Acceptance criteria:** a code from `ERROR_CODES`, `errors.<CODE>` in both files (Abed adds copy).
 - **Depends on:** none
 - **Verification:** `api-errors.test.ts`; `commission-payout.test.ts`.
+- **Done 2026-11-28:** `payoutRefusal` returns a `BlockRefusal`: `INSPECTOR_PAYOUT_NOTHING_OWED`, `INSPECTOR_PAYOUT_EXCEEDS_OWED`
+  (`params.owed`, two decimals) and `INSPECTOR_PAYOUT_OVER_OWED` (no figure, `showOwed: false`). The server throws it coded;
+  the dialog words it through `localizeApiError` in the page's language. UI §17.6's entry removed.
 
 ## [ERR-04] Code the block-driven refusals and their preview reasons
 - **Priority:** P2 · **Assignee:** Hashem · **Estimate:** L · **Category:** Error-handling
@@ -1707,7 +1729,7 @@ Filled in by whoever executes a task (section 0, step 4). One row per finding; t
 
 | ID | Found during | File and symbol | Problem | Fixed in that PR? | Debt doc row added |
 |---|---|---|---|---|---|
-| DRY-19 | DRY-01 | `apps/backend/src/application/**`: `actor: { id: string; role: string }` on 139 service parameters in 29 files; 51 `actorRole: actor.role as never` | `StaffActor` exists and every controller passes one, but most services still take the untyped shape. Typing them makes about 1,000 lines of service integration specs build their actor constants as `StaffActor` (DRY-01 did that for the 8 services it moved, 12 specs) | No: kept out of DRY-01 for its size | docs/code-quality.md, the actor row (rewritten) |
+| DRY-19 | DRY-01 | `apps/backend/src/application/**`: `actor: { id: string; role: string }` on 139 service parameters in 29 files; 51 `actorRole: actor.role as never` (fixed by ARCH-10, 2026-11-28) | `StaffActor` exists and every controller passes one, but most services still take the untyped shape. Typing them makes about 1,000 lines of service integration specs build their actor constants as `StaffActor` (DRY-01 did that for the 8 services it moved, 12 specs) | No: kept out of DRY-01 for its size | docs/code-quality.md, the actor row (rewritten) |
 | DRY-20 | DRY-01 | `fee-exemptions.controller.ts` `list`, `fees.controller.ts` (`{ role: user.role ?? '' }`), the `NewsActor` builders in `news.controller.ts`, `news-articles.controller.ts`, `news-media.controller.ts` | A role passed alone, or inside a News actor, still spelled from the claims with `?? ''`; not the `{ id, role }` actor DRY-01 covers | No | No |
 | — | DRY-01 | `buildings.controller.ts` `private actor(user)` (21 calls), `citizen-requests.controller.ts` `staff(user)` (9), `quality.controller.ts` `actorOf` (8), `citizen.controller.ts` `role: user.role ?? 'STAFF'` (6, not a role at all) | Actor builds the audit's count missed, behind helpers | Yes: all are `@CurrentActor()` now | — |
 | — | DRY-01 | `record-review.service.ts`, the RECORD_CORRECTED auto-close | When the saver's account has no role, the change carried `actorRole: ''`, which is no `StaffRole`: the Tier 2 row was refused, silently | Yes: the role is left out instead | — |
@@ -1749,6 +1771,9 @@ Filled in by whoever executes a task (section 0, step 4). One row per finding; t
 | — | SEC-09 | `.github/workflows/rollback-production.yml` (`concurrency: production-deploy`) | Its comment said the deploy shares the group; the deploy used `deploy-backend`, so a rollback could run during a deploy, both moving `current` and reloading pm2 | Yes: both use `production-deploy` | — (fixed) |
 | — | SEC-09 | `.github/workflows/ci.yml` comments («Nothing in CI connects to a database», «which Supabase project») | Contradicted by the Postgres service in the same file (CODE-7; the CQ CI row) | Yes: rewritten | — (fixed, row removed) |
 | — | SEC-12 | `WhishGatewayService` | Named by the ticket as reading `process.env`; it reads `ConfigService` since task S18 (2026-11-16) | Nothing to do | — |
+| ARCH-27 | ARCH-11 | `apps/backend/src/domain/entities/billable-unit.ts` `occupancyType: string`; `fees/tiered-area.ts` `TieredUnit.role`, `SharedUnitBill.debtors[].role` | The census capacity travels as a string from the row to the shared bill's debtor write; ARCH-10 replaced that write's `as never` with `occupancyRoleSchema.parse` | No: typing the domain moves every billing spec's fixtures | docs/code-quality.md |
+| ERR-10 | ARCH-12 | `buildings/occupancy-writes.service.ts`, `buildings/unit-visits.service.ts`: the `since` of `UNIT_VACANCY_STANDING`, `UNIT_VACANCY_ALREADY_CONFIRMED`, `VACANCY_END_BEFORE_CONFIRMATION` | The day is `observedAt.toISOString().slice(0, 10)`, the UTC date, as the prose had it; unverified whether `observedAt` is a stored calendar day or an instant | No: kept as it was; read the column first | docs/code-quality.md |
+| — | ARCH-12 | `buildings.service.ts` `assertNoOccupantBesidesOwner`, `units.service.ts` the structural conversion | Arabic labels chosen in code (`empty`, `label`, `reasons`) for the sentence | Yes: ICU selects and plurals on `status`, `occupancies`, `cardLinks` | — |
 | — | SEC-07 | `HealthController.ready` | `GET health/ready` runs a query on the registry and nginx serves it to the internet like every path; it had no throttle decision of its own | Yes: `DEFAULT_THROTTLE` | — (fixed) |
 
 ---
