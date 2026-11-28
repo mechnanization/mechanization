@@ -12,6 +12,7 @@ import type { OccupancyRole, OccupancyType } from '@mechanization/shared-schemas
 import { CasesService } from '../cases/cases.service';
 import { activeVacancy, closeActiveVacancy, openVacancy } from './unit-vacancy';
 import { settleUnit } from './unit-status';
+import { StaffActor } from '../../common/actor';
 
 /**
  * The write path from a citizen's registration back into the census (P5-T1).
@@ -86,7 +87,7 @@ export class CensusSyncService {
   async syncRegistration(input: {
     registrationId: string;
     citizenId: string;
-    actor: { id: string; role: string };
+    actor: StaffActor;
     /**
      * Which of this citizen's spells a flat no longer claimed may be closed.
      *
@@ -395,7 +396,7 @@ export class CensusSyncService {
     declaredStatus: string | null;
     /** Whether this save changed that statement — see `declareUnitStatus`. */
     statementChanged: boolean;
-    actor: { id: string; role: string };
+    actor: StaffActor;
   }): Promise<{
     created: boolean;
     surveyed: number;
@@ -560,14 +561,14 @@ export class CensusSyncService {
     if (current) {
       await this.db.unitOccupancy.update({
         where: { id: current.id },
-        data: { role: input.role as never, registrationId: input.registrationId },
+        data: { role: input.role, registrationId: input.registrationId },
       });
     } else {
       await this.db.unitOccupancy.create({
         data: {
           unitId: input.unitId,
           citizenId: input.citizenId,
-          role: input.role as never,
+          role: input.role,
           registrationId: input.registrationId,
         },
       });
@@ -737,7 +738,7 @@ export class CensusSyncService {
     declaredStatus: string | null;
     statementChanged: boolean;
     unit: { buildingId: string; unitCode: string; unitStatus: string | null; surveyStatus: string };
-    actor: { id: string; role: string };
+    actor: StaffActor;
   }): Promise<void> {
     const declared = input.declaredStatus;
     if (input.role !== 'OWNER') return;
@@ -1011,7 +1012,7 @@ export class CensusSyncService {
     registrationId: string;
     citizenId: string;
     keep: readonly string[];
-    actor: { id: string; role: string };
+    actor: StaffActor;
     scope: 'CITIZEN' | 'REGISTRATION';
     endings?: ReadonlyMap<string, CardEnding>;
   }): Promise<number> {
@@ -1167,7 +1168,7 @@ export class CensusSyncService {
     unitId: string;
     citizenId: string;
     unit: { buildingId: string; unitCode: string; unitStatus: string | null; surveyStatus: string };
-    actor: { id: string; role: string };
+    actor: StaffActor;
   }): Promise<void> {
     const standing = await activeVacancy(this.db, input.unitId);
     if (standing?.basis !== 'OWNER_STATEMENT') return;
@@ -1206,7 +1207,7 @@ export class CensusSyncService {
   }
 
   /** `settleUnit`, with its audit rows emitted. This service runs outside any transaction. */
-  private async settle(unitId: string, actor: { id: string; role: string }): Promise<void> {
+  private async settle(unitId: string, actor: StaffActor): Promise<void> {
     const outcome = await settleUnit(this.db, {
       unitId,
       tenantSlug: this.tenantContext.tenantSlug,
@@ -1219,7 +1220,7 @@ export class CensusSyncService {
   async syncQuietly(input: {
     registrationId: string;
     citizenId: string;
-    actor: { id: string; role: string };
+    actor: StaffActor;
     scope?: 'CITIZEN' | 'REGISTRATION';
     endings?: ReadonlyMap<string, CardEnding>;
     unchangedStatements?: ReadonlySet<string>;

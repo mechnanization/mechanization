@@ -16,6 +16,7 @@ import type { UnitRow, VacancyRow, VisitRow } from './building.types';
 import { activeVacancy, closeActiveVacancy, toVacancyRow } from './unit-vacancy';
 import { APP_CONFIG } from '../../common/app.config';
 import { BuildingsService, structuralLabel, toUnitRow, toVisitRow } from './buildings.service';
+import { StaffActor } from '../../common/actor';
 
 /**
  * Metres between two pins, on a sphere.
@@ -81,7 +82,7 @@ export class UnitVisitsService {
   private async withdrawOwnerVacancyStatements(
     unitId: string,
     unitCode: string,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<void> {
     const unit = await this.db.unit.findUnique({ where: { id: unitId }, select: { buildingId: true } });
     if (!unit) return;
@@ -172,7 +173,7 @@ export class UnitVisitsService {
   async confirmVacancy(
     unitId: string,
     input: ConfirmVacancyInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
     /**
      * For callers inside another write. `settle: false` — the caller settles
      * the flat once its own writes are done, so a half-written flat is never
@@ -301,7 +302,7 @@ export class UnitVisitsService {
   async endVacancy(
     unitId: string,
     input: EndVacancyInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<{ vacancy: VacancyRow; unit: UnitRow }> {
     const unit = await this.db.unit.findUnique({ where: { id: unitId } });
     if (!unit) throw new NotFoundError('الوحدة غير موجودة');
@@ -418,7 +419,7 @@ export class UnitVisitsService {
    */
   async logVisit(
     input: LogVisitInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<{ visit: VisitRow; visitCount: number; vacancyStands: boolean }> {
     const unit = await this.db.unit.findUnique({
       where: { id: input.unitId },

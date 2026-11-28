@@ -32,6 +32,7 @@ import type { BuildingRow, UnitRow } from './building.types';
 import { activeVacancy } from './unit-vacancy';
 import { APP_CONFIG } from '../../common/app.config';
 import { BuildingsService, MatrixSaveResult, changedUnitFields, nonResidentUnitConflict, personName, structuralLabel, toUnitRow } from './buildings.service';
+import { StaffActor } from '../../common/actor';
 
 /**
  * The census's write side: structures, their unit matrices, and who is in them.
@@ -117,7 +118,7 @@ export class UnitsService {
   async saveMatrix(
     id: string,
     input: SaveBuildingMatrixInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<MatrixSaveResult> {
     const before = await this.db.building.findUnique({ where: { id } });
     if (!before) throw new NotFoundError('المبنى غير موجود');
@@ -213,7 +214,7 @@ export class UnitsService {
   async generateUnits(
     buildingId: string,
     blueprint: UnitBlueprint,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<{ created: number; skipped: number; units: UnitRow[] }> {
     const building = await this.db.building.findUnique({ where: { id: buildingId } });
     if (!building) throw new NotFoundError('المبنى غير موجود');
@@ -401,7 +402,7 @@ export class UnitsService {
   async addUnit(
     buildingId: string,
     asked: UpsertUnitInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<UnitRow> {
     const building = await this.db.building.findUnique({ where: { id: buildingId } });
     if (!building) throw new NotFoundError('المبنى غير موجود');
@@ -636,7 +637,7 @@ export class UnitsService {
   private async growHouseByLevel(
     house: HouseOnFile,
     floor: number,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<UnitRow> {
     const above = house.unit.floor + house.unit.levels;
     if (floor !== above) {
@@ -667,7 +668,7 @@ export class UnitsService {
     promoted: readonly PromotedCard[],
     /** The unit that made it a building — null when a blueprint added several. */
     addedUnitCode: string | null,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): void {
     if (promoted.length === 0) return;
     this.buildings.record({
@@ -792,7 +793,7 @@ export class UnitsService {
   async updateUnit(
     unitId: string,
     asked: UpdateUnitInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<UnitRow> {
     const before = await this.db.unit.findUnique({ where: { id: unitId } });
     if (!before) throw new NotFoundError('الوحدة غير موجودة');
@@ -1219,7 +1220,7 @@ export class UnitsService {
   async resizeUnitSpan(
     unitId: string,
     input: ResizeUnitSpanInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<UnitRow> {
     const target = await this.db.unit.findUnique({
       where: { id: unitId },
@@ -1376,7 +1377,7 @@ export class UnitsService {
    * the row; officers followed it, retried, and got the identical error for
    * ever.
    */
-  async deleteUnit(unitId: string, actor: { id: string; role: string }): Promise<void> {
+  async deleteUnit(unitId: string, actor: StaffActor): Promise<void> {
     const unit = await this.db.unit.findUnique({
       where: { id: unitId },
       select: { id: true, buildingId: true, unitCode: true, floor: true, sequence: true },

@@ -72,7 +72,7 @@ describeIfDb('shared unit bills', () => {
   let profiles: CitizenProfileService;
   let citizens: CitizensService;
   const accountantId = randomUUID();
-  const actor = { id: accountantId, role: 'ACCOUNTANT' };
+  const actor = { id: accountantId, role: 'ACCOUNTANT' as const };
   const brothers = [randomUUID(), randomUUID(), randomUUID()].sort();
   const neighbour = randomUUID();
   let shopId: string;
@@ -160,7 +160,7 @@ describeIfDb('shared unit bills', () => {
         email: `accountant-${accountantId}@sub.gov.lb`,
         firstName: 'سارة',
         lastName: 'المحاسبة',
-        role: 'ACCOUNTANT' as never,
+        role: 'ACCOUNTANT' as const as never,
       },
     });
     await db.systemSettings.upsert({
@@ -420,7 +420,7 @@ describeIfDb('shared unit bills', () => {
     const periods = await within(() => feeNotices.noticePeriods(recurringNoticeId));
     expect(periods.find((row) => row.periodKey === current)).toMatchObject({ bills: 2, cancellable: 2 });
 
-    const manager = { id: accountantId, role: 'SUPER_ADMIN' };
+    const manager = { id: accountantId, role: 'SUPER_ADMIN' as const };
     const result = await within(() =>
       feeNotices.cancelNoticeBatch(recurringNoticeId, { reason: 'صدر بالجدول الخطأ', periodKeys: [current] }, manager),
     );

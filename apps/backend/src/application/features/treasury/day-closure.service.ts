@@ -28,6 +28,7 @@ import {
   type ClosureRecord,
 } from './day-closing.plan';
 import { dateColumn, isoDay, TreasuryLedgerService, type TreasuryConfig } from './treasury-ledger.service';
+import { StaffActor } from '../../common/actor';
 
 /** Where the books stand before any one day is looked at. */
 export interface BookState {
@@ -263,7 +264,7 @@ export class DayClosureService {
    * close. The closure, the swept days, the counts' links and the Tier 1 audit
    * rows commit together or not at all.
    */
-  async close(input: CloseDayInput, actor: { id: string; role: string }): Promise<CloseDayResult> {
+  async close(input: CloseDayInput, actor: StaffActor): Promise<CloseDayResult> {
     return runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
       await this.ledger.lockDayBook(tx);
@@ -315,7 +316,7 @@ export class DayClosureService {
         await this.audit.recordInTransaction({
           actorId: actor.id,
           actorType: 'STAFF',
-          actorRole: actor.role as never,
+          actorRole: actor.role,
           action: 'TREASURY_DAY_AUTO_CLOSED',
           entityType: 'TreasuryDay',
           entityId: day,
@@ -366,7 +367,7 @@ export class DayClosureService {
       await this.audit.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: 'TREASURY_DAY_CLOSED',
         entityType: 'TreasuryDay',
         entityId: input.businessDate,
@@ -403,7 +404,7 @@ export class DayClosureService {
    * would stop meaning anything. The counts stay; they can be recounted, and
    * the day must be closed again before any later day can be.
    */
-  async reopen(input: ReopenDayInput, actor: { id: string; role: string }): Promise<TreasuryDayState> {
+  async reopen(input: ReopenDayInput, actor: StaffActor): Promise<TreasuryDayState> {
     return runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
       await this.ledger.lockDayBook(tx);
@@ -424,7 +425,7 @@ export class DayClosureService {
       await this.audit.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: 'TREASURY_DAY_REOPENED',
         entityType: 'TreasuryDay',
         entityId: input.businessDate,

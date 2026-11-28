@@ -47,7 +47,7 @@ describeIfDb('the notice preview', () => {
   let context: TenantContextService;
   let feeNotices: FeeNoticesService;
   const officerId = randomUUID();
-  const actor = { id: officerId, role: 'ACCOUNTANT' };
+  const actor = { id: officerId, role: 'ACCOUNTANT' as const };
   const brothers = [randomUUID(), randomUUID(), randomUUID()].sort();
   const waqf = randomUUID();
   const unmeasured = randomUUID();
@@ -114,7 +114,7 @@ describeIfDb('the notice preview', () => {
         email: `accountant-${officerId}@fp.gov.lb`,
         firstName: 'سارة',
         lastName: 'المحاسبة',
-        role: 'ACCOUNTANT' as never,
+        role: 'ACCOUNTANT' as const as never,
       },
     });
 

@@ -75,7 +75,7 @@ describeIfDb('Who is paid for a unit line', () => {
   const officer = async (firstName: string) => {
     const id = randomUUID();
     await db.user.create({
-      data: { id, kind: 'STAFF', tenantSlug: 'earnings', email: `${id}@t.gov.lb`, firstName, lastName: 'الميداني', role: 'FIELD_INSPECTOR' },
+      data: { id, kind: 'STAFF', tenantSlug: 'earnings', email: `${id}@t.gov.lb`, firstName, lastName: 'الميداني', role: 'FIELD_INSPECTOR' as const },
     });
     return id;
   };
@@ -94,7 +94,7 @@ describeIfDb('Who is paid for a unit line', () => {
   let parcels = 0;
   const block = async (unitsPerFloor: number) =>
     within(async () => {
-      const actor = { id: registrar, role: 'FIELD_INSPECTOR' };
+      const actor = { id: registrar, role: 'FIELD_INSPECTOR' as const };
       const { building } = await buildings.create(
         { parcelNumber: `ERN-${++parcels}`, structureType: 'RESIDENTIAL_BUILDING', lifecycleStatus: 'IN_USE', floorsCount: 1 },
         actor,
@@ -187,7 +187,7 @@ describeIfDb('Who is paid for a unit line', () => {
       await within(() =>
         tenancy.recordOccupancy(
           { unitId: unit.id, citizenId: doctor.id, role: 'OWNER', unitStatus: 'OWNER_OCCUPIED' } as never,
-          { id: visitor, role: 'FIELD_INSPECTOR' },
+          { id: visitor, role: 'FIELD_INSPECTOR' as const },
         ),
       );
     }

@@ -43,7 +43,7 @@ describeIfDb('ParcelCorrectionService', () => {
   let events: EventEmitter2;
   let officerId: string;
 
-  const actor = () => ({ id: officerId, role: 'FIELD_INSPECTOR' });
+  const actor = () => ({ id: officerId, role: 'FIELD_INSPECTOR' as const });
   const within = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'tenant-parcel', tenantSlug: 'parcel', schemaName: SCHEMA, prisma: db }, work);
 
@@ -75,7 +75,7 @@ describeIfDb('ParcelCorrectionService', () => {
         email: `officer-${officerId}@parcel.gov.lb`,
         firstName: 'موظف',
         lastName: 'البلدية',
-        role: 'FIELD_INSPECTOR',
+        role: 'FIELD_INSPECTOR' as const,
       },
     });
 

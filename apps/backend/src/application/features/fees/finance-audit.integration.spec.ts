@@ -1,3 +1,4 @@
+import type { StaffRole } from '../../../domain/entities/user.entity';
 import { randomUUID } from 'node:crypto';
 import { Client } from 'pg';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -18,6 +19,7 @@ import { feeServices } from './fee-services.testing';
 import type { BillLifecycleService } from './bill-lifecycle.service';
 import type { WhishCheckoutService } from './whish-checkout.service';
 import type { FeeNoticesService } from './fee-notices.service';
+import { StaffActor } from '../../common/actor';
 
 /**
  * The finance audit's remediation (2026-10-12), against a real Postgres.
@@ -62,9 +64,9 @@ describeIfDb('finance audit remediation', () => {
   let citizenId: string;
   let safeLbpId: string;
   const ids = { manager: '', accountant: '', collector: '', otherCollector: '', clerk: '' };
-  const MANAGER = () => ({ id: ids.manager, role: 'SUPER_ADMIN' });
-  const ACCOUNTANT = () => ({ id: ids.accountant, role: 'ACCOUNTANT' });
-  const COLLECTOR = () => ({ id: ids.collector, role: 'COLLECTOR' });
+  const MANAGER = () => ({ id: ids.manager, role: 'SUPER_ADMIN' as const });
+  const ACCOUNTANT = () => ({ id: ids.accountant, role: 'ACCOUNTANT' as const });
+  const COLLECTOR = () => ({ id: ids.collector, role: 'COLLECTOR' as const });
 
   const scoped = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'spec', tenantSlug: 'audit', schemaName: SCHEMA, prisma: db }, work);
@@ -84,7 +86,7 @@ describeIfDb('finance audit remediation', () => {
       })
     ).id;
 
-  const staff = (role: string) => {
+  const staff = (role: StaffRole) => {
     const id = randomUUID();
     return {
       id,
@@ -95,7 +97,7 @@ describeIfDb('finance audit remediation', () => {
         email: `${role.toLowerCase()}-${id}@audit.gov.lb`,
         firstName: role,
         lastName: 'الموظف',
-        role: role as never,
+        role,
       },
     };
   };
@@ -560,7 +562,7 @@ describeIfDb('finance audit remediation', () => {
   // ─────────────────────  B8 and A2: the counter's rate  ─────────────────────
 
   describe('the rate at the counter (B8, A2)', () => {
-    const settleDollars = (paymentId: string, actor: { id: string; role: string }, exchangeRate?: number) =>
+    const settleDollars = (paymentId: string, actor: StaffActor, exchangeRate?: number) =>
       scoped(() =>
         fees.settleInPerson({
           paymentId,
@@ -860,7 +862,7 @@ describeIfDb('finance audit remediation', () => {
     };
     const pay = (
       staffId: string,
-      actor: { id: string; role: string },
+      actor: StaffActor,
       over: { salaryPeriod?: string; amount?: number } = {},
     ) =>
       scoped(() =>

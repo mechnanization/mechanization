@@ -36,7 +36,7 @@ function build(): BackupService {
 }
 
 const OPTIONS = { confirmTenantSlug: 'albazourieh', dryRun: true };
-const ACTOR = { id: 'staff-1', role: 'SUPER_ADMIN' };
+const ACTOR = { id: 'staff-1', role: 'SUPER_ADMIN' as const };
 
 /**
  * A zip bomb in the shape this route would actually receive: highly repetitive

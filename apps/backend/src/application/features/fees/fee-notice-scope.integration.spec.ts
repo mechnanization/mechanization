@@ -44,7 +44,7 @@ describeIfDb('the notice scope (0100)', () => {
   let feeNotices: FeeNoticesService;
   let recurringBilling: RecurringBillingService;
   const officerId = randomUUID();
-  const actor = { id: officerId, role: 'ACCOUNTANT' };
+  const actor = { id: officerId, role: 'ACCOUNTANT' as const };
   const resident = randomUUID();
   const absentee = randomUUID();
 
@@ -117,7 +117,7 @@ describeIfDb('the notice scope (0100)', () => {
         email: `accountant-${officerId}@fs.gov.lb`,
         firstName: 'سارة',
         lastName: 'المحاسبة',
-        role: 'ACCOUNTANT' as never,
+        role: 'ACCOUNTANT' as const as never,
       },
     });
 

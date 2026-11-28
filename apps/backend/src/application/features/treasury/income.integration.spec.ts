@@ -45,7 +45,7 @@ describeIfDb('IncomeService', () => {
   let finesId: string;
   let miscId: string;
 
-  const MANAGER = { id: '', role: 'SUPER_ADMIN' };
+  const MANAGER = { id: '', role: 'SUPER_ADMIN' as const };
 
   const scoped = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'spec', tenantSlug: 'income', schemaName: SCHEMA, prisma: db }, work);
@@ -97,7 +97,7 @@ describeIfDb('IncomeService', () => {
         email: `m-${managerId}@t.gov.lb`,
         firstName: 'المدير',
         lastName: 'العام',
-        role: 'SUPER_ADMIN',
+        role: 'SUPER_ADMIN' as const,
       },
     });
 
@@ -110,7 +110,7 @@ describeIfDb('IncomeService', () => {
         email: `c-${collectorId}@t.gov.lb`,
         firstName: 'علي',
         lastName: 'الجابي',
-        role: 'COLLECTOR',
+        role: 'COLLECTOR' as const,
       },
     });
     custodyId = (

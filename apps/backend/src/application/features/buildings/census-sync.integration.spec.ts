@@ -73,7 +73,7 @@ describeIfDb('CensusSyncService', () => {
   let reporting: ReportingService;
   let officerId: string;
 
-  const actor = () => ({ id: officerId, role: 'FIELD_INSPECTOR' });
+  const actor = () => ({ id: officerId, role: 'FIELD_INSPECTOR' as const });
 
   beforeAll(async () => {
     ddl = new Client({ connectionString: TEST_DATABASE_URL });
@@ -154,7 +154,7 @@ describeIfDb('CensusSyncService', () => {
         email: `officer-${officerId}@census.gov.lb`,
         firstName: 'مفتش',
         lastName: 'ميداني',
-        role: 'FIELD_INSPECTOR',
+        role: 'FIELD_INSPECTOR' as const,
       },
     });
   }, SETUP_TIMEOUT_MS);

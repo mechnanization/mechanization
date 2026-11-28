@@ -228,7 +228,7 @@ function harness(options: HarnessOptions = {}) {
   return { service: occupancyWrites, db, propertyEntryCreate, buildingUnitCreate, unitUpdate, unitUpdateMany };
 }
 
-const actor = { id: 'staff-1', role: 'SUPER_ADMIN' };
+const actor = { id: 'staff-1', role: 'SUPER_ADMIN' as const };
 
 function record(service: OccupancyWritesService, over: Record<string, unknown> = {}) {
   return service.recordOccupancy(

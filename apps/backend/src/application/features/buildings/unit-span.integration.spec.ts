@@ -32,7 +32,7 @@ describeIfDb('UnitsService.resizeUnitSpan', () => {
   let unitsService: UnitsService;
   let officerId: string;
 
-  const actor = () => ({ id: officerId, role: 'FIELD_INSPECTOR' });
+  const actor = () => ({ id: officerId, role: 'FIELD_INSPECTOR' as const });
   const within = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'tenant-span', tenantSlug: 'span', schemaName: SCHEMA, prisma: db }, work);
   const pause = () => new Promise((resolve) => setTimeout(resolve, 400));
@@ -60,7 +60,7 @@ describeIfDb('UnitsService.resizeUnitSpan', () => {
         email: `officer-${officerId}@span.gov.lb`,
         firstName: 'موظف',
         lastName: 'تجربة',
-        role: 'FIELD_INSPECTOR',
+        role: 'FIELD_INSPECTOR' as const,
       },
     });
   }, SETUP_TIMEOUT_MS);

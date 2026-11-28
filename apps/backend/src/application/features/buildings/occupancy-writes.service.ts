@@ -7,6 +7,7 @@ import {
   feeBearerClass,
   OCCUPANCY_LIFTS_SURVEY_STATUS,
   unitStatusForRole,
+  type OccupancyRole,
   type StructureType,
   type UpsertOccupancyInput,
 } from '@mechanization/shared-schemas';
@@ -24,6 +25,7 @@ import {
   toOccupancyRow,
 } from './buildings.service';
 import { UnitVisitsService } from './unit-visits.service';
+import { StaffActor } from '../../common/actor';
 
 /**
  * Who lives in or holds a unit, written: «تسجيل إشغال» (`recordOccupancy`), the
@@ -75,7 +77,7 @@ export class OccupancyWritesService {
    */
   async recordOccupancy(
     input: UpsertOccupancyInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
     /**
      * `fromMatrix`: an officer at the drawer, not another flow recording a
      * party on the way (a sale's buyer, a landlord link's owner). Only then is
@@ -239,7 +241,7 @@ export class OccupancyWritesService {
       ? await this.db.unitOccupancy.update({
           where: { id: current.id },
           data: {
-            role: input.role as never,
+            role: input.role,
             /*
               أسهم are an owner's only, and a re-record with the box left empty
               keeps the ones on file. The drawer sends nothing for an empty box,
@@ -256,7 +258,7 @@ export class OccupancyWritesService {
           data: {
             unitId: input.unitId,
             citizenId: input.citizenId,
-            role: input.role as never,
+            role: input.role,
             shares: input.shares ?? null,
             ...(input.fromDate ? { fromDate: input.fromDate } : {}),
             ...(input.toDate ? { toDate: input.toDate } : {}),
@@ -471,7 +473,7 @@ export class OccupancyWritesService {
     propertyEntryId: string,
     unitId: string,
     status: string,
-    context: { citizenId: string; unitCode: string; actor: { id: string; role: string } },
+    context: { citizenId: string; unitCode: string; actor: StaffActor },
   ): Promise<void> {
     const card = await this.db.propertyEntry.findUnique({
       where: { id: propertyEntryId },
@@ -577,7 +579,7 @@ export class OccupancyWritesService {
     unitId: string;
     buildingId: string;
     citizenId: string;
-    role: string;
+    role: OccupancyRole;
     shares: number | null;
     unitStatus: string | null;
     landlord?: LandlordSpec | null;
@@ -592,7 +594,7 @@ export class OccupancyWritesService {
     unitId: string;
     buildingId: string;
     citizenId: string;
-    role: string;
+    role: OccupancyRole;
     shares: number | null;
     unitStatus: string | null;
     /** Non-owner capacities only: who the flat is held from. */
@@ -794,7 +796,7 @@ export class OccupancyWritesService {
       select: { id: true },
       data: {
         registrationId: registration.id,
-        occupancyType: input.role as never,
+        occupancyType: input.role,
         propertyType: cardType as never,
         buildingId: building.id,
         // The parcel is the building’s own. الحي is left null rather than
@@ -985,7 +987,7 @@ export class OccupancyWritesService {
   async endOccupancy(
     occupancyId: string,
     input: { toDate?: Date; reason: string },
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<OccupancyRow> {
     const existing = await this.db.unitOccupancy.findUnique({
       where: { id: occupancyId },

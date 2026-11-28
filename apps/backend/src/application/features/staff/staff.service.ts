@@ -49,6 +49,7 @@ import {
   ValidationError,
 } from '../../common/exceptions';
 import { sameId } from '../../common/ids';
+import { StaffActor } from '../../common/actor';
 
 /**
  * Staff accounts, managed by a SUPER_ADMIN.
@@ -94,7 +95,7 @@ export class StaffService {
    * own. While deleted, the account keeps its email reserved — a new account
    * cannot take it, so the restore path stays open.
    */
-  async restore(input: { tenantSlug: string; id: string; actor: { id: string; role: string } }): Promise<void> {
+  async restore(input: { tenantSlug: string; id: string; actor: StaffActor }): Promise<void> {
     const target = await this.users.findById(input.id);
     if (!target || target.kind !== 'STAFF' || !(await this.users.isStaffHidden(input.id))) {
       throw new NotFoundError('Deleted staff user', input.id);
@@ -122,7 +123,7 @@ export class StaffService {
     firstName: string;
     lastName: string;
     role: StaffRole;
-    actor: { id: string; role: string };
+    actor: StaffActor;
   }): Promise<{ id: string; totp?: { secret: string; keyUri: string } }> {
     const passwordHash = await this.hasher.hash(input.password);
     const id = await this.users.createStaff({
@@ -196,7 +197,7 @@ export class StaffService {
     firstName?: string;
     lastName?: string;
     role?: StaffRole;
-    actor: { id: string; role: string };
+    actor: StaffActor;
   }): Promise<void> {
     const target = await this.users.findById(input.id);
     if (!target || target.kind !== 'STAFF' || (await this.users.isStaffHidden(input.id))) {
@@ -247,7 +248,7 @@ export class StaffService {
     tenantSlug: string;
     id: string;
     isActive: boolean;
-    actor: { id: string; role: string };
+    actor: StaffActor;
   }): Promise<void> {
     const target = await this.users.findById(input.id);
     if (!target || target.kind !== 'STAFF' || (await this.users.isStaffHidden(input.id))) {
@@ -287,7 +288,7 @@ export class StaffService {
   async remove(input: {
     tenantSlug: string;
     id: string;
-    actor: { id: string; role: string };
+    actor: StaffActor;
   }): Promise<void> {
     const target = await this.users.findById(input.id);
     if (!target || target.kind !== 'STAFF' || (await this.users.isStaffHidden(input.id))) {
@@ -334,7 +335,7 @@ export class StaffService {
     staffId: string;
     currentPassword: string;
     newPassword: string;
-    actor: { id: string; role: string };
+    actor: StaffActor;
   }): Promise<void> {
     const target = await this.users.findById(input.staffId);
     if (!target || target.kind !== 'STAFF' || !target.passwordHash) {
@@ -368,7 +369,7 @@ export class StaffService {
     staffId: string;
     newEmail: string;
     currentPassword: string;
-    actor: { id: string; role: string };
+    actor: StaffActor;
   }): Promise<{ email: string }> {
     const target = await this.users.findById(input.staffId);
     if (!target || target.kind !== 'STAFF' || !target.passwordHash) {
@@ -717,7 +718,7 @@ export class StaffService {
     tenantSlug: string;
     inspectorId: string;
     payload: RecordInspectorPayoutInput;
-    actor: { id: string; role: string };
+    actor: StaffActor;
   }): Promise<RecordInspectorPayoutResult> {
     /*
       One spelling of the inspector's id for everything below. The path's
@@ -773,7 +774,7 @@ export class StaffService {
       tenantSlug: string;
       inspectorId: string;
       payload: RecordInspectorPayoutInput;
-      actor: { id: string; role: string };
+      actor: StaffActor;
     },
     ordersPayments: boolean,
     showOwed: boolean,
@@ -922,7 +923,7 @@ export class StaffService {
       await this.audit.recordInTransaction({
         actorId: input.actor.id,
         actorType: 'STAFF',
-        actorRole: input.actor.role as never,
+        actorRole: input.actor.role,
         action: 'INSPECTOR_PAYOUT_RECORDED',
         entityType: 'User',
         entityId: input.inspectorId,
@@ -954,7 +955,7 @@ export class StaffService {
       tenantSlug: string;
       inspectorId: string;
       payload: RecordInspectorPayoutInput;
-      actor: { id: string; role: string };
+      actor: StaffActor;
     },
   ): Promise<RecordInspectorPayoutResult> {
     const { payload } = input;
@@ -1011,7 +1012,7 @@ export class StaffService {
     await this.audit.recordInTransaction({
       actorId: input.actor.id,
       actorType: 'STAFF',
-      actorRole: input.actor.role as never,
+      actorRole: input.actor.role,
       action: 'INSPECTOR_PAYOUT_RECORDED',
       entityType: 'User',
       entityId: input.inspectorId,

@@ -1,5 +1,6 @@
 import type { Prisma } from '../../../generated/tenant-client';
 import type { AuditService } from '../audit/audit.service';
+import { StaffActor } from '../../common/actor';
 
 /**
  * Lets the request waiting on a bill that is now WRITTEN_OFF («شطب», 0107) go on to
@@ -25,7 +26,7 @@ import type { AuditService } from '../audit/audit.service';
 export async function settleRequestOfWrittenOffBill(
   tx: Prisma.TransactionClient,
   audit: Pick<AuditService, 'recordInTransaction'>,
-  input: { billId: string; actor: { id: string; role: string } | null },
+  input: { billId: string; actor: StaffActor | null },
 ): Promise<{ requestId: string; requestNumber: string } | null> {
   const request = await tx.citizenRequest.findUnique({
     where: { citizenPaymentId: input.billId },
@@ -41,7 +42,7 @@ export async function settleRequestOfWrittenOffBill(
 
   await audit.recordInTransaction({
     ...(input.actor
-      ? { actorId: input.actor.id, actorType: 'STAFF' as const, actorRole: input.actor.role as never }
+      ? { actorId: input.actor.id, actorType: 'STAFF' as const, actorRole: input.actor.role }
       : { actorId: null, actorType: 'SYSTEM' as const }),
     action: 'REQUEST_FEE_WRITTEN_OFF',
     entityType: 'CitizenRequest',

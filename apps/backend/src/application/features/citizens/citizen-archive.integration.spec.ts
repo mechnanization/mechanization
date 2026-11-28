@@ -55,7 +55,7 @@ describeIfDb('CitizensService.setActive — «أرشفة الملف»', () => {
 
   const within = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'tenant-ar', tenantSlug: 'ar', schemaName: SCHEMA, prisma: db }, work);
-  const actor = () => ({ id: officerId, role: 'ADMINISTRATIVE_OFFICER' });
+  const actor = () => ({ id: officerId, role: 'ADMINISTRATIVE_OFFICER' as const });
 
   const person = async (firstName: string, kind: 'CITIZEN' | 'STAFF' = 'CITIZEN') => {
     const id = randomUUID();
@@ -67,7 +67,7 @@ describeIfDb('CitizensService.setActive — «أرشفة الملف»', () => {
         firstName,
         lastName: 'اختبار',
         referenceNumber: kind === 'CITIZEN' ? `AR-${randomUUID().slice(0, 8)}` : null,
-        ...(kind === 'STAFF' ? { email: `${id}@ar.gov.lb`, role: 'ADMINISTRATIVE_OFFICER' } : {}),
+        ...(kind === 'STAFF' ? { email: `${id}@ar.gov.lb`, role: 'ADMINISTRATIVE_OFFICER' as const } : {}),
       },
     });
     return id;

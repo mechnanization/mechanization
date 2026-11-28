@@ -24,6 +24,7 @@ import { incomePeriod, planIncomeDate } from './income.plan';
 import { isUniqueViolation, isUniqueViolationOn } from '../../../infrastructure/prisma/prisma-errors';
 import { TreasuryLedgerService } from './treasury-ledger.service';
 import { documentOccurredAt } from './treasury.plan';
+import { StaffActor } from '../../common/actor';
 
 /** The voucher row a list or a read returns, with everything the screen names. */
 const VOUCHER_SELECT = {
@@ -119,7 +120,7 @@ export class IncomeService {
    */
   async createCategory(
     input: CreateIncomeCategoryInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<IncomeCategoryView> {
     return runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
@@ -133,7 +134,7 @@ export class IncomeService {
       await this.audit.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: 'INCOME_CATEGORY_CREATED',
         entityType: 'IncomeCategory',
         entityId: created.id,
@@ -158,7 +159,7 @@ export class IncomeService {
   async updateCategory(
     id: string,
     input: UpdateIncomeCategoryInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<IncomeCategoryView> {
     return runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
@@ -181,7 +182,7 @@ export class IncomeService {
       await this.audit.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: 'INCOME_CATEGORY_UPDATED',
         entityType: 'IncomeCategory',
         entityId: id,
@@ -293,7 +294,7 @@ export class IncomeService {
    */
   async record(
     input: RecordIncomeVoucherInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<RecordIncomeVoucherResult> {
     try {
       return await runInTenantTransaction(this.tenantContext, () => this.recordInTransaction(input, actor));
@@ -316,7 +317,7 @@ export class IncomeService {
 
   private async recordInTransaction(
     input: RecordIncomeVoucherInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<RecordIncomeVoucherResult> {
     {
       const tx = this.db as Prisma.TransactionClient;
@@ -474,7 +475,7 @@ export class IncomeService {
       await this.audit.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: 'INCOME_RECORDED',
         entityType: 'IncomeVoucher',
         entityId: voucher.id,
@@ -570,7 +571,7 @@ export class IncomeService {
    * The voucher is stamped rather than deleted, and the ledger gets an opposing
    * entry rather than losing the first one: «قُبض في الثالث وأُلغي في الخامس».
    */
-  async void(id: string, reason: string, actor: { id: string; role: string }): Promise<IncomeVoucherView> {
+  async void(id: string, reason: string, actor: StaffActor): Promise<IncomeVoucherView> {
     return runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
 
@@ -645,7 +646,7 @@ export class IncomeService {
       await this.audit.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: 'INCOME_VOIDED',
         entityType: 'IncomeVoucher',
         entityId: id,

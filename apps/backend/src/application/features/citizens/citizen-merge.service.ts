@@ -43,6 +43,7 @@ import {
   type PlanInput,
   type PlanPerson,
 } from './citizen-merge.plan';
+import { StaffActor } from '../../common/actor';
 
 /**
  * «دمج ملفين» and «التراجع عن الدمج» — see `citizen-merge.plan.ts` for every
@@ -257,7 +258,7 @@ export class CitizenMergeService {
 
   // ─────────────────────────────  Merge  ─────────────────────────────
 
-  async merge(input: CitizenMergeInput & { tenantSlug: string; actor: { id: string; role: string } }): Promise<CitizenMergeResult> {
+  async merge(input: CitizenMergeInput & { tenantSlug: string; actor: StaffActor }): Promise<CitizenMergeResult> {
     const outcome = await runInTenantTransaction(this.tenantContext, async () => {
       /*
         Both people locked, in a fixed order so two merges of the same pair
@@ -381,7 +382,7 @@ export class CitizenMergeService {
     mergeId: string;
     reason: string;
     tenantSlug: string;
-    actor: { id: string; role: string };
+    actor: StaffActor;
   }): Promise<CitizenMergeRecord> {
     const outcome = await runInTenantTransaction(this.tenantContext, async () => {
       const merge = await this.db.citizenMerge.findUnique({
@@ -1571,7 +1572,7 @@ export class CitizenMergeService {
    */
   private changes(input: {
     tenantSlug: string;
-    actor: { id: string; role: string };
+    actor: StaffActor;
     keepId: string;
     absorbId: string;
     mergeId: string;

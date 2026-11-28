@@ -10,6 +10,7 @@ import { PrismaAuditRepository } from '../../../infrastructure/repositories/audi
 import { AuditService } from '../audit/audit.service';
 import { ParcelDuesService } from '../fees/parcel-dues.service';
 import { CitizenRequestsService, type RequestActor } from './citizen-requests.service';
+import { StaffActor } from '../../common/actor';
 
 /**
  * Municipal requests against a real tenant schema (migration 0092): the CHECKs
@@ -37,7 +38,7 @@ describeIfDb('CitizenRequestsService', () => {
   let context: TenantContextService;
   let service: CitizenRequestsService;
   let files: { put: jest.Mock; createSignedUrl: jest.Mock; remove: jest.Mock };
-  let clerk: { id: string; role: string };
+  let clerk: StaffActor;
   /** Online payment is paused unless a test opens it (open-decisions §21). */
   const whish = { isLive: false };
   let staffActor: RequestActor;
@@ -77,15 +78,15 @@ describeIfDb('CitizenRequestsService', () => {
         firstName: 'موظف',
         lastName: 'القلم',
         email: `clerk-${clerkId}@example.test`,
-        role: 'ADMINISTRATIVE_OFFICER',
+        role: 'ADMINISTRATIVE_OFFICER' as const,
       },
     });
-    clerk = { id: clerkId, role: 'ADMINISTRATIVE_OFFICER' };
+    clerk = { id: clerkId, role: 'ADMINISTRATIVE_OFFICER' as const };
     staffActor = { kind: 'STAFF', ...clerk };
     await within(async () => {
-      await service.updateType('CLEARANCE', { enabled: true, feeAmount: 200_000 }, { id: clerkId, role: 'SUPER_ADMIN' });
-      await service.updateType('RESIDENCY', { enabled: true, feeAmount: 100_000 }, { id: clerkId, role: 'SUPER_ADMIN' });
-      await service.updateType('OTHER', { enabled: true, feeAmount: 0 }, { id: clerkId, role: 'SUPER_ADMIN' });
+      await service.updateType('CLEARANCE', { enabled: true, feeAmount: 200_000 }, { id: clerkId, role: 'SUPER_ADMIN' as const });
+      await service.updateType('RESIDENCY', { enabled: true, feeAmount: 100_000 }, { id: clerkId, role: 'SUPER_ADMIN' as const });
+      await service.updateType('OTHER', { enabled: true, feeAmount: 0 }, { id: clerkId, role: 'SUPER_ADMIN' as const });
     });
   }, SETUP_TIMEOUT_MS);
 
@@ -405,7 +406,7 @@ describeIfDb('CitizenRequestsService', () => {
     });
 
     it('goes to review without a bill when its type became free before it was billed', async () => {
-      const manager = { id: clerk.id, role: 'SUPER_ADMIN' };
+      const manager = { id: clerk.id, role: 'SUPER_ADMIN' as const };
       await within(() => service.updateType('OCCUPANCY', { enabled: true, feeAmount: 75_000 }, manager));
       const atCounter = (citizen: { id: string; cardId: string }) =>
         within(() =>

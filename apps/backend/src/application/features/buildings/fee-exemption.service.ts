@@ -32,6 +32,7 @@ import { NotFoundError, ValidationError } from '../../common/exceptions';
 import { likePattern, searchTokens } from '../../../domain/value-objects/search-terms';
 import { AuditService, type BuildingChange } from '../audit/audit.service';
 import { setLocalLockTimeout } from '../../common/lock-timeout';
+import { StaffActor } from '../../common/actor';
 
 /** The audit actions, and the names «فواتير تأثّرت بتصحيحات» traces them by. */
 export const UNIT_FEE_EXEMPTION_SET = 'UNIT_FEE_EXEMPTION_SET';
@@ -154,7 +155,7 @@ export class FeeExemptionService {
   async set(
     unitId: string,
     input: SetUnitFeeExemptionInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<FeeExemptionUnitView> {
     const today = municipalToday();
     const change = await runInTenantTransaction(this.tenantContext, async () => {
@@ -351,7 +352,7 @@ export class FeeExemptionService {
   private async audit(
     action: string,
     buildingId: string,
-    actor: { id: string; role: string },
+    actor: StaffActor,
     before: Record<string, unknown>,
     after: Record<string, unknown>,
   ): Promise<BuildingChange & { tenantSlug: string }> {

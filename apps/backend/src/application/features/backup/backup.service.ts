@@ -5,6 +5,7 @@ import { TenantContextService } from '../../../infrastructure/context/tenant-con
 import { tenantSchemaPrefix } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { ValidationError } from '../../common/exceptions';
 import { APP_CONFIG } from '../../common/app.config';
+import { StaffActor } from '../../common/actor';
 
 /**
  * The snapshot format's own version.
@@ -417,7 +418,7 @@ export class BackupService {
   async restore(
     gzipped: Buffer,
     options: { confirmTenantSlug: string; dryRun: boolean },
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<RestoreReport> {
     const scope = this.tenantContext.require();
     const snapshot = this.parse(gzipped);

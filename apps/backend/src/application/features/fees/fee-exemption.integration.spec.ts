@@ -46,7 +46,7 @@ describeIfDb('units charged nothing', () => {
   let quality: DataQualityService;
   let events: { emit: jest.Mock };
   const adminId = randomUUID();
-  const admin = { id: adminId, role: 'SUPER_ADMIN' };
+  const admin = { id: adminId, role: 'SUPER_ADMIN' as const };
 
   const within = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'tenant-fx', tenantSlug: 'fx', schemaName: SCHEMA, prisma: db }, work);
@@ -92,7 +92,7 @@ describeIfDb('units charged nothing', () => {
         email: `admin-${adminId}@fx.gov.lb`,
         firstName: 'مدير',
         lastName: 'النظام',
-        role: 'SUPER_ADMIN' as never,
+        role: 'SUPER_ADMIN' as const as never,
       },
     });
   }, SETUP_TIMEOUT_MS);

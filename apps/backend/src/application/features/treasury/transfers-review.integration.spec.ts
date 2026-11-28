@@ -1,3 +1,4 @@
+import type { StaffRole } from '../../../domain/entities/user.entity';
 import { randomUUID } from 'node:crypto';
 import { Client } from 'pg';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -15,6 +16,7 @@ import { TransfersService } from './transfers.service';
 import { TreasuryLedgerService } from './treasury-ledger.service';
 import { TreasuryService } from './treasury.service';
 import { feeServices } from '../fees/fee-services.testing';
+import { StaffActor } from '../../common/actor';
 
 /**
  * The PR #111 review (2026-10-10): what its transfers, exchanges, reviews and
@@ -59,9 +61,9 @@ describeIfDb('TransfersService — the PR #111 review', () => {
   let safeUsd: string;
   let whishUsd: string;
 
-  const MANAGER = { id: '', role: 'SUPER_ADMIN' };
-  const ACCOUNTANT = { id: '', role: 'ACCOUNTANT' };
-  const AUDITOR = { id: '', role: 'AUDITOR' };
+  const MANAGER = { id: '', role: 'SUPER_ADMIN' as const };
+  const ACCOUNTANT = { id: '', role: 'ACCOUNTANT' as const };
+  const AUDITOR = { id: '', role: 'AUDITOR' as const };
   let collectorId = '';
 
   const scoped = <T>(work: () => Promise<T>): Promise<T> =>
@@ -73,7 +75,7 @@ describeIfDb('TransfersService — the PR #111 review', () => {
     entries: await db.treasuryEntry.count(),
   });
 
-  const move = (over: Record<string, unknown> = {}, actor = ACCOUNTANT) =>
+  const move = (over: Record<string, unknown> = {}, actor: StaffActor = ACCOUNTANT) =>
     scoped(() =>
       transfers.create(
         {
@@ -101,10 +103,10 @@ describeIfDb('TransfersService — the PR #111 review', () => {
       ...over,
     });
 
-  const staff = async (role: string): Promise<string> => {
+  const staff = async (role: StaffRole): Promise<string> => {
     const id = randomUUID();
     await db.user.create({
-      data: { id, kind: 'STAFF', tenantSlug: 'review', email: `${role}-${id}@t.gov.lb`, firstName: role, lastName: 'spec', role: role as never },
+      data: { id, kind: 'STAFF', tenantSlug: 'review', email: `${role}-${id}@t.gov.lb`, firstName: role, lastName: 'spec', role },
     });
     return id;
   };

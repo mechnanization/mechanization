@@ -52,7 +52,7 @@ describeIfDb('old debts and the fee system', () => {
   let citizens: CitizensService;
 
   const ids = { accountant: randomUUID(), owes: randomUUID(), other: randomUUID(), third: randomUUID() };
-  const ACCOUNTANT = { id: ids.accountant, role: 'ACCOUNTANT' };
+  const ACCOUNTANT = { id: ids.accountant, role: 'ACCOUNTANT' as const };
 
   const within = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'afg', tenantSlug: 'afg', schemaName: SCHEMA, prisma: db }, work);
@@ -96,7 +96,7 @@ describeIfDb('old debts and the fee system', () => {
 
     await db.user.createMany({
       data: [
-        { id: ids.accountant, kind: 'STAFF', tenantSlug: 'afg', email: `${ids.accountant}@afg.gov.lb`, firstName: 'محاسب', lastName: 'البلدية', role: 'ACCOUNTANT' as never },
+        { id: ids.accountant, kind: 'STAFF', tenantSlug: 'afg', email: `${ids.accountant}@afg.gov.lb`, firstName: 'محاسب', lastName: 'البلدية', role: 'ACCOUNTANT' as const as never },
         { id: ids.owes, kind: 'CITIZEN', tenantSlug: 'afg', firstName: 'علي', lastName: 'خليل', phone: '+96170111111' },
         { id: ids.other, kind: 'CITIZEN', tenantSlug: 'afg', firstName: 'سامي', lastName: 'حداد', phone: '+96170222222' },
         { id: ids.third, kind: 'CITIZEN', tenantSlug: 'afg', firstName: 'نبيل', lastName: 'سلمان', phone: '+96170333333' },

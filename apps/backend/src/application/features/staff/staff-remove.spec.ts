@@ -6,10 +6,10 @@ import { StaffService } from './staff.service';
   account leaves the list and can never sign in. Nobody deletes themselves.
 */
 
-const ADMIN = { id: 'admin-1', role: 'SUPER_ADMIN' };
+const ADMIN = { id: 'admin-1', role: 'SUPER_ADMIN' as const };
 
 function setup(
-  target: { id: string; kind: string; role?: string } | null = { id: 'staff-1', kind: 'STAFF', role: 'COLLECTOR' },
+  target: { id: string; kind: string; role?: string } | null = { id: 'staff-1', kind: 'STAFF', role: 'COLLECTOR' as const },
   hidden = false,
 ) {
   const users = {
@@ -47,7 +47,7 @@ describe('StaffService.remove', () => {
     expect(revocation.forget).toHaveBeenCalledWith('staff-1');
     expect(events.emit).toHaveBeenCalledWith(
       'staff.changed',
-      expect.objectContaining({ action: 'STAFF_DELETED', staffId: 'staff-1', role: 'COLLECTOR' }),
+      expect.objectContaining({ action: 'STAFF_DELETED', staffId: 'staff-1', role: 'COLLECTOR' as const }),
     );
   });
 
@@ -88,7 +88,7 @@ describe('a deleted staff account stays deleted', () => {
 
 describe('an inspector still owed commission', () => {
   it('is not deleted until paid out', async () => {
-    const { service, users } = setup({ id: 'insp-1', kind: 'STAFF', role: 'FIELD_INSPECTOR' });
+    const { service, users } = setup({ id: 'insp-1', kind: 'STAFF', role: 'FIELD_INSPECTOR' as const });
     jest.spyOn(service, 'getInspectorProfile').mockResolvedValue({ pendingBalance: 40 } as never);
     await expect(service.remove({ tenantSlug: 't', id: 'insp-1', actor: ADMIN })).rejects.toThrow('40.00');
     expect(users.hideStaff).not.toHaveBeenCalled();
@@ -106,7 +106,7 @@ describe('an inspector still owed commission', () => {
   });
 
   it('is deleted once nothing is owed', async () => {
-    const { service, users } = setup({ id: 'insp-1', kind: 'STAFF', role: 'FIELD_INSPECTOR' });
+    const { service, users } = setup({ id: 'insp-1', kind: 'STAFF', role: 'FIELD_INSPECTOR' as const });
     jest.spyOn(service, 'getInspectorProfile').mockResolvedValue({ pendingBalance: 0 } as never);
     await service.remove({ tenantSlug: 't', id: 'insp-1', actor: ADMIN });
     expect(users.hideStaff).toHaveBeenCalledWith('insp-1');

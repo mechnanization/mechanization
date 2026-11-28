@@ -12,6 +12,7 @@ import type { Zone, ZoneRepository } from '../../../domain/interfaces/zone-repos
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { CadastreAssetsService } from '../cadastre/cadastre-assets.service';
 import { BuildingsService } from '../buildings/buildings.service';
+import { StaffActor } from '../../common/actor';
 
 export interface ZoneSummary {
   id: string;
@@ -74,7 +75,7 @@ export class ZonesService {
    */
   private async refreshBuildingCodes(
     parcelNumbers: readonly string[],
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<void> {
     try {
       await this.buildings.recomputeCodesForParcels(parcelNumbers, actor);
@@ -98,7 +99,7 @@ export class ZonesService {
     zoneId: string;
     before?: Record<string, unknown>;
     after?: Record<string, unknown>;
-    actor: { id: string; role: string };
+    actor: StaffActor;
   }): void {
     this.events.emit('zone.changed', {
       tenantSlug: input.tenantSlug,
@@ -127,7 +128,7 @@ export class ZonesService {
   async create(
     tenantSlug: string,
     input: CreateZoneInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<ZoneDetail> {
     const existing = await this.zones.findByCode(input.code);
     if (existing) throw new ConflictError(`رمز القطاع "${input.code}" مستخدم بالفعل`);
@@ -159,7 +160,7 @@ export class ZonesService {
     tenantSlug: string,
     id: string,
     input: UpdateZoneInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<ZoneDetail> {
     const zone = await this.zones.findById(id);
     if (!zone) throw new NotFoundError('القطاع غير موجود');
@@ -205,7 +206,7 @@ export class ZonesService {
   async remove(
     tenantSlug: string,
     id: string,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<void> {
     const zone = await this.zones.findById(id);
     if (!zone) throw new NotFoundError('القطاع غير موجود');

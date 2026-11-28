@@ -1,3 +1,4 @@
+import type { StaffRole } from '../../../domain/entities/user.entity';
 import { randomUUID } from 'node:crypto';
 import { Client } from 'pg';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -48,7 +49,7 @@ describeIfDb('«شطب»: writing off what is left on a bill', () => {
 
   let citizenId: string;
   const ids = { manager: '', clerk: '' };
-  const MANAGER = () => ({ id: ids.manager, role: 'SUPER_ADMIN' });
+  const MANAGER = () => ({ id: ids.manager, role: 'SUPER_ADMIN' as const });
   const DECISION = { reason: 'عفو عن رسوم ما قبل 2020', decisionRef: '45/2026', decisionDate: '2026-11-01' };
 
   const scoped = <T>(work: () => Promise<T>): Promise<T> =>
@@ -132,17 +133,17 @@ describeIfDb('«شطب»: writing off what is left on a bill', () => {
     await db.user.createMany({
       data: [
         { id: citizenId, kind: 'CITIZEN', tenantSlug: 'write-off', firstName: 'علي', lastName: 'خليل', phone: '71123456' },
-        ...[
+        ...([
           [ids.manager, 'SUPER_ADMIN'],
           [ids.clerk, 'ADMINISTRATIVE_OFFICER'],
-        ].map(([id, role]) => ({
+        ] as Array<[string, StaffRole]>).map(([id, role]) => ({
           id: id!,
           kind: 'STAFF' as const,
           tenantSlug: 'write-off',
           email: `${role!.toLowerCase()}-${id}@write-off.gov.lb`,
           firstName: role!,
           lastName: 'الموظف',
-          role: role as never,
+          role,
         })),
       ],
     });

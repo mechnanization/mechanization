@@ -13,6 +13,7 @@ import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-re
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { AuditService } from '../audit/audit.service';
 import { isUniqueViolationOn } from '../../../infrastructure/prisma/prisma-errors';
+import { StaffActor } from '../../common/actor';
 
 const TYPE_SELECT = {
   id: true,
@@ -104,7 +105,7 @@ export class BuildingTypesService {
     return rows.map(toView).sort(compareBuildingTypes);
   }
 
-  async create(input: CreateBuildingTypeInput, actor: { id: string; role: string }): Promise<BuildingTypeView> {
+  async create(input: CreateBuildingTypeInput, actor: StaffActor): Promise<BuildingTypeView> {
     try {
       return await runInTenantTransaction(this.tenantContext, async () => {
         const created = (await this.db.buildingType.create({
@@ -121,7 +122,7 @@ export class BuildingTypesService {
         await this.audit.recordInTransaction({
           actorId: actor.id,
           actorType: 'STAFF',
-          actorRole: actor.role as never,
+          actorRole: actor.role,
           action: 'BUILDING_TYPE_CREATED',
           entityType: 'BuildingType',
           entityId: created.id,
@@ -134,7 +135,7 @@ export class BuildingTypesService {
     }
   }
 
-  async update(id: string, input: UpdateBuildingTypeInput, actor: { id: string; role: string }): Promise<BuildingTypeView> {
+  async update(id: string, input: UpdateBuildingTypeInput, actor: StaffActor): Promise<BuildingTypeView> {
     try {
       return await runInTenantTransaction(this.tenantContext, async () => {
         // The row, locked: a building saved meanwhile reads the type it is given.
@@ -174,7 +175,7 @@ export class BuildingTypesService {
         await this.audit.recordInTransaction({
           actorId: actor.id,
           actorType: 'STAFF',
-          actorRole: actor.role as never,
+          actorRole: actor.role,
           action: 'BUILDING_TYPE_UPDATED',
           entityType: 'BuildingType',
           entityId: id,

@@ -43,7 +43,7 @@ describeIfDb('ExpensesService', () => {
   let fuelId: string;
   let miscId: string;
 
-  const MANAGER = { id: '', role: 'SUPER_ADMIN' };
+  const MANAGER = { id: '', role: 'SUPER_ADMIN' as const };
 
   const scoped = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'spec', tenantSlug: 'expenses', schemaName: SCHEMA, prisma: db }, work);
@@ -91,7 +91,7 @@ describeIfDb('ExpensesService', () => {
         email: `m-${managerId}@t.gov.lb`,
         firstName: 'المدير',
         lastName: 'العام',
-        role: 'SUPER_ADMIN',
+        role: 'SUPER_ADMIN' as const,
       },
     });
 
@@ -403,7 +403,7 @@ describeIfDb('ExpensesService', () => {
             email: `s-${id}@t.gov.lb`,
             firstName: 'ريما',
             lastName: 'حداد',
-            role: 'ADMINISTRATIVE_OFFICER',
+            role: 'ADMINISTRATIVE_OFFICER' as const,
             ...over,
           },
         })

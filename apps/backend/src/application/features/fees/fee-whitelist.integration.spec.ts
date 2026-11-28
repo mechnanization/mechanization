@@ -59,7 +59,7 @@ describeIfDb('the fee whitelist', () => {
   let unitsService: UnitsService;
   let quality: DataQualityService;
   const adminId = randomUUID();
-  const admin = { id: adminId, role: 'SUPER_ADMIN' };
+  const admin = { id: adminId, role: 'SUPER_ADMIN' as const };
 
   const within = <T>(work: () => Promise<T>, schemaName = SCHEMA, prisma = db): Promise<T> =>
     context.run({ tenantId: schemaName, tenantSlug: 'fw', schemaName, prisma }, work);
@@ -183,7 +183,7 @@ describeIfDb('the fee whitelist', () => {
     );
     for (const prisma of [db, other]) {
       await prisma.user.create({
-        data: { id: adminId, kind: 'STAFF', tenantSlug: 'fw', email: `${adminId}@fw.gov.lb`, firstName: 'مدير', lastName: 'البلدية', role: 'SUPER_ADMIN' as never },
+        data: { id: adminId, kind: 'STAFF', tenantSlug: 'fw', email: `${adminId}@fw.gov.lb`, firstName: 'مدير', lastName: 'البلدية', role: 'SUPER_ADMIN' as const as never },
       });
     }
   }, SETUP_TIMEOUT_MS);

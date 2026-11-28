@@ -1,3 +1,4 @@
+import type { StaffRole } from '../../../domain/entities/user.entity';
 import { randomUUID } from 'node:crypto';
 import { Client } from 'pg';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -26,6 +27,7 @@ import { TreasuryLedgerService } from './treasury-ledger.service';
 import { TreasuryService } from './treasury.service';
 import { feeServices } from '../fees/fee-services.testing';
 import type { BillLifecycleService } from '../fees/bill-lifecycle.service';
+import { StaffActor } from '../../common/actor';
 
 /**
  * The controls the PR #104 review added to the treasury, against a real Postgres.
@@ -74,8 +76,8 @@ describeIfDb('treasury controls', () => {
     viewer: '',
     leftCollector: '',
   };
-  const MANAGER = () => ({ id: ids.manager, role: 'SUPER_ADMIN' });
-  const ACCOUNTANT = () => ({ id: ids.accountant, role: 'ACCOUNTANT' });
+  const MANAGER = () => ({ id: ids.manager, role: 'SUPER_ADMIN' as const });
+  const ACCOUNTANT = () => ({ id: ids.accountant, role: 'ACCOUNTANT' as const });
 
   const scoped = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'spec', tenantSlug: 'controls', schemaName: SCHEMA, prisma: db }, work);
@@ -125,12 +127,12 @@ describeIfDb('treasury controls', () => {
     (await db.treasuryAccount.findFirstOrThrow({ where: { type: 'COLLECTOR_CUSTODY', ownerId: owner, currency: 'LBP' } }))
       .id;
 
-  const handOver = (owner: string, amount: number, actor = MANAGER()) =>
+  const handOver = (owner: string, amount: number, actor: StaffActor = MANAGER()) =>
     custodyOf(owner).then((custodyAccountId) =>
       scoped(() => transfers.receiveCustody({ custodyAccountId, amount }, actor)),
     );
 
-  const staff = (role: string, extra: Record<string, unknown> = {}) => {
+  const staff = (role: StaffRole, extra: Record<string, unknown> = {}) => {
     const id = randomUUID();
     return {
       id,
@@ -141,7 +143,7 @@ describeIfDb('treasury controls', () => {
         email: `${role.toLowerCase()}-${id}@controls.gov.lb`,
         firstName: role,
         lastName: 'الموظف',
-        role: role as never,
+        role,
         ...extra,
       },
     };
@@ -293,7 +295,7 @@ describeIfDb('treasury controls', () => {
             collectedById: ids.collector,
             paidOn: await dayBeforeGoLive(),
             adjustmentReason: 'جولة الأسبوع الماضي',
-            actor: { id: ids.collector, role: 'COLLECTOR' },
+            actor: { id: ids.collector, role: 'COLLECTOR' as const },
           }),
         ),
       ).rejects.toMatchObject({ code: 'PAYMENT_DATE_BEFORE_GO_LIVE' });
@@ -337,7 +339,7 @@ describeIfDb('treasury controls', () => {
             collectedById: ids.collector,
             paidOn: yesterday,
             adjustmentReason: 'أُدخلت في اليوم التالي',
-            actor: { id: ids.collector, role: 'COLLECTOR' },
+            actor: { id: ids.collector, role: 'COLLECTOR' as const },
           }),
         );
         const receipt = await db.paymentTransaction.findFirstOrThrow({ where: { paymentId }, select: { id: true } });
@@ -745,7 +747,7 @@ describeIfDb('treasury controls', () => {
       const other = staff('SUPER_ADMIN');
       await db.user.create({ data: other.row });
       await expect(
-        scoped(() => expenses.orderRequest(filed.id, { id: other.id, role: 'SUPER_ADMIN' })),
+        scoped(() => expenses.orderRequest(filed.id, { id: other.id, role: 'SUPER_ADMIN' as const })),
       ).rejects.toMatchObject({ code: 'EXPENSE_REQUEST_ALREADY_DECIDED' });
     });
 
@@ -782,7 +784,7 @@ describeIfDb('treasury controls', () => {
     it('is withdrawn by its author, and by nobody else but the manager', async () => {
       const filed = await scoped(() => expenses.requestPayment(expense(9_000), ACCOUNTANT()));
       await expect(
-        scoped(() => expenses.withdrawRequest(filed.id, { id: ids.otherAccountant, role: 'ACCOUNTANT' })),
+        scoped(() => expenses.withdrawRequest(filed.id, { id: ids.otherAccountant, role: 'ACCOUNTANT' as const })),
       ).rejects.toMatchObject({ code: 'EXPENSE_REQUEST_NOT_YOURS' });
       await expect(scoped(() => expenses.withdrawRequest(filed.id, ACCOUNTANT()))).resolves.toMatchObject({
         status: 'WITHDRAWN',
@@ -937,7 +939,7 @@ describeIfDb('treasury controls', () => {
 
   describe('an income voucher', () => {
     let incomeCategoryId: string;
-    const receive = (over: Record<string, unknown> = {}, actor = MANAGER()) =>
+    const receive = (over: Record<string, unknown> = {}, actor: StaffActor = MANAGER()) =>
       scoped(() =>
         income.record(
           {
@@ -1080,7 +1082,7 @@ describeIfDb('treasury controls', () => {
       }
       return period;
     };
-    const paySalary = (staffId: string, actor: { id: string; role: string }, over: Record<string, unknown> = {}) => {
+    const paySalary = (staffId: string, actor: StaffActor, over: Record<string, unknown> = {}) => {
       const clientRequestId = (over.clientRequestId as string | undefined) ?? randomUUID();
       return scoped(() =>
         expenses.recordSalary(
@@ -1246,7 +1248,7 @@ describeIfDb('treasury controls', () => {
         expenses as unknown as {
           recordInTransaction: (
             input: ReturnType<typeof urgent>,
-            actor: { id: string; role: string },
+            actor: StaffActor,
             path: { payeeStaffId: string | null; exemptFromUrgentCeiling: boolean; mayUseReservedCategory: boolean },
           ) => Promise<unknown>;
         }
@@ -1373,7 +1375,7 @@ describeIfDb('activation on a municipality with no settings row', () => {
           email: `manager-${managerId}@first.gov.lb`,
           firstName: 'المدير',
           lastName: 'العام',
-          role: 'SUPER_ADMIN',
+          role: 'SUPER_ADMIN' as const,
         },
       ],
     });
@@ -1417,7 +1419,7 @@ describeIfDb('activation on a municipality with no settings row', () => {
       const balances = (await db.treasuryAccount.findMany({ where: { type: { not: 'COLLECTOR_CUSTODY' } } })).map(
         (account) => ({ accountId: account.id, amount: 0 }),
       );
-      await scoped(() => treasury.activate({ balances }, { id: managerId, role: 'SUPER_ADMIN' }));
+      await scoped(() => treasury.activate({ balances }, { id: managerId, role: 'SUPER_ADMIN' as const }));
     } finally {
       spy.mockRestore();
     }

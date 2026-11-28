@@ -9,6 +9,7 @@ import type { ParcelRepository } from '../../../domain/interfaces/parcel-reposit
 import { ValidationError } from '../../common/exceptions';
 import { mergeParcelPoints, type Parcel } from './kmz-parser';
 import { buildCadastreGeometryAssets } from './parcel-geometry';
+import { StaffActor } from '../../common/actor';
 
 /** Six decimal places is ~0.11m at this latitude — finer than any survey's own
  * accuracy, and it keeps the static file a fraction of the raw upload's size. */
@@ -56,7 +57,7 @@ export class CadastreImportService {
   async importGeoJson(input: {
     tenantSlug: string;
     buffer: Buffer;
-    actor: { id: string; role: string };
+    actor: StaffActor;
   }): Promise<CadastreImportResult> {
     const geojson = this.parse(input.buffer);
     const { parcels, lines, skipped } = this.extract(geojson);

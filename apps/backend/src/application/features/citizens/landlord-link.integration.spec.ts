@@ -70,7 +70,7 @@ describeIfDb('LandlordLinkService', () => {
   let feeNotices: FeeNoticesService;
   let officerId: string;
 
-  const actor = () => ({ id: officerId, role: 'SUPER_ADMIN' });
+  const actor = () => ({ id: officerId, role: 'SUPER_ADMIN' as const });
 
   /**
    * Every service call runs inside a tenant scope, as a request does — which is
@@ -163,7 +163,7 @@ describeIfDb('LandlordLinkService', () => {
         email: `officer-${officerId}@links.gov.lb`,
         firstName: 'موظف',
         lastName: 'البلدية',
-        role: 'SUPER_ADMIN',
+        role: 'SUPER_ADMIN' as const,
       },
     });
   }, SETUP_TIMEOUT_MS);
@@ -1808,7 +1808,7 @@ describeIfDb('LandlordLinkService', () => {
           email: `reviewer-${reviewerId}@links.gov.lb`,
           firstName: 'مدقق',
           lastName: 'الجودة',
-          role: 'AUDITOR',
+          role: 'AUDITOR' as const,
         },
       });
       await db.auditLogEntry.create({

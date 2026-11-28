@@ -80,6 +80,7 @@ import { AuditService, type AuditEntryInput } from '../audit/audit.service';
 import { writeOffView } from './bill-write-off';
 import { ARREARS_LINE_SELECT, arrearsView } from './bill-arrears';
 import { APP_CONFIG } from '../../common/app.config';
+import { StaffActor } from '../../common/actor';
 
 /**
  * A shared unit bill (0099) is paid at the office, by any of its debtors, named
@@ -1191,7 +1192,7 @@ export class FeesService {
     };
   }
 
-  async updateSettings(input: SystemSettingsInput, actor: { id: string; role: string }) {
+  async updateSettings(input: SystemSettingsInput, actor: StaffActor) {
     // Empty string means "clear it", which has to reach the database as NULL —
     // otherwise the portal would print an empty Whish number as if it were one.
     // `undefined` means "not sent", which Prisma leaves alone; that difference
@@ -1403,7 +1404,7 @@ export class FeesService {
       await this.auditTrail.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: 'SETTINGS_UPDATED',
         entityType: 'SystemSettings',
         before: financeBefore,
@@ -2398,7 +2399,7 @@ export class FeesService {
     paymentId: string;
     confirmed: boolean;
     note?: string;
-    actor: { id: string; role: string };
+    actor: StaffActor;
   }) {
     const payment = await this.db.citizenPayment.findUnique({
       where: { id: input.paymentId },
@@ -2453,7 +2454,7 @@ export class FeesService {
         audit: {
           actorId: input.actor.id,
           actorType: 'STAFF',
-          actorRole: input.actor.role as never,
+          actorRole: input.actor.role,
           action: 'PAYMENT_REJECTED',
           entityType: 'Payment',
           entityId: payment.id,
@@ -2522,7 +2523,7 @@ export class FeesService {
       audit: (movement) => ({
         actorId: input.actor.id,
         actorType: 'STAFF',
-        actorRole: input.actor.role as never,
+        actorRole: input.actor.role,
         action: 'PAYMENT_CONFIRMED',
         entityType: 'Payment',
         entityId: payment.id,
@@ -2588,7 +2589,7 @@ export class FeesService {
     dueDate: string;
     /** One id per press of «تكليف» (0102); a retry is answered with the first bill. */
     clientRequestId?: string;
-    actor: { id: string; role: string };
+    actor: StaffActor;
   }) {
     /*
       A retry after a lost answer (0102; docs/security.md, the «تكليف مالي»
@@ -2642,7 +2643,7 @@ export class FeesService {
       await this.auditTrail.recordInTransaction({
         actorId: input.actor.id,
         actorType: 'STAFF',
-        actorRole: input.actor.role as never,
+        actorRole: input.actor.role,
         action: 'FEE_INDIVIDUAL_LEVIED',
         entityType: 'Payment',
         entityId: bill.id,
@@ -3239,7 +3240,7 @@ export class FeesService {
     clientRequestId?: string;
     /** What the screen showed: the credit and the change; the ledger refuses figures that moved (F18). */
     expected?: { credit: number; change: number };
-    actor: { id: string; role: string };
+    actor: StaffActor;
   }) {
     /*
       What a collector may record (finance audit B1; the owner's decision of
@@ -3416,7 +3417,7 @@ export class FeesService {
         audit: (movement) => ({
           actorId: input.actor.id,
           actorType: 'STAFF',
-          actorRole: input.actor.role as never,
+          actorRole: input.actor.role,
           action: 'PAYMENT_CONFIRMED',
           entityType: 'Payment',
           entityId: input.paymentId,

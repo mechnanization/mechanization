@@ -18,6 +18,7 @@ import {
   municipalPeriod,
   type RecordInspectorPayoutInput,
 } from '@mechanization/shared-schemas';
+import { StaffActor } from '../../common/actor';
 
 /**
  * «صرف عمولة» against a real Postgres (docs/finance.md §5.6, migration 0086).
@@ -56,8 +57,8 @@ describeIfDb('StaffService.recordInspectorPayout', () => {
   let commissionsId: string;
   let miscId: string;
 
-  const MANAGER = { id: '', role: 'SUPER_ADMIN' };
-  const ACCOUNTANT = { id: '', role: 'ACCOUNTANT' };
+  const MANAGER = { id: '', role: 'SUPER_ADMIN' as const };
+  const ACCOUNTANT = { id: '', role: 'ACCOUNTANT' as const };
 
   const scoped = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'spec', tenantSlug: 'payouts', schemaName: SCHEMA, prisma: db }, work);
@@ -69,7 +70,7 @@ describeIfDb('StaffService.recordInspectorPayout', () => {
 
   const pay = (
     payload: Partial<RecordInspectorPayoutInput> & { amount: number },
-    actor: { id: string; role: string } = MANAGER,
+    actor: StaffActor = MANAGER,
     to?: string,
   ) =>
     scoped(() =>
@@ -96,7 +97,7 @@ describeIfDb('StaffService.recordInspectorPayout', () => {
     const citizenId = randomUUID();
     await db.user.createMany({
       data: [
-        { id, kind: 'STAFF', tenantSlug: 'payouts', email: `e-${id}@t.gov.lb`, firstName, lastName: 'الميداني', role: 'FIELD_INSPECTOR' },
+        { id, kind: 'STAFF', tenantSlug: 'payouts', email: `e-${id}@t.gov.lb`, firstName, lastName: 'الميداني', role: 'FIELD_INSPECTOR' as const },
         { id: citizenId, kind: 'CITIZEN', tenantSlug: 'payouts', firstName: 'مالك', lastName: 'الشقة' },
       ],
     });
@@ -158,7 +159,7 @@ describeIfDb('StaffService.recordInspectorPayout', () => {
           email: `a-${ACCOUNTANT.id}@t.gov.lb`,
           firstName: 'رئيس',
           lastName: 'المحاسبة',
-          role: 'ACCOUNTANT',
+          role: 'ACCOUNTANT' as const,
         },
         {
           id: MANAGER.id,
@@ -167,7 +168,7 @@ describeIfDb('StaffService.recordInspectorPayout', () => {
           email: `m-${MANAGER.id}@t.gov.lb`,
           firstName: 'المدير',
           lastName: 'العام',
-          role: 'SUPER_ADMIN',
+          role: 'SUPER_ADMIN' as const,
         },
         {
           id: inspectorId,
@@ -176,7 +177,7 @@ describeIfDb('StaffService.recordInspectorPayout', () => {
           email: `i-${inspectorId}@t.gov.lb`,
           firstName: 'حسن',
           lastName: 'الميداني',
-          role: 'FIELD_INSPECTOR',
+          role: 'FIELD_INSPECTOR' as const,
         },
       ],
     });
@@ -895,8 +896,8 @@ describeIfDb('StaffService.recordInspectorPayout', () => {
       const recorder2 = randomUUID();
       await db.user.createMany({
         data: [
-          { id: inspector2, kind: 'STAFF', tenantSlug: 'payouts', email: `i2-${inspector2}@t.gov.lb`, firstName: 'سليم', lastName: 'الميداني', role: 'FIELD_INSPECTOR' },
-          { id: recorder2, kind: 'STAFF', tenantSlug: 'payouts', email: `r2-${recorder2}@t.gov.lb`, firstName: 'هالة', lastName: 'الإدارية', role: 'SUPER_ADMIN' },
+          { id: inspector2, kind: 'STAFF', tenantSlug: 'payouts', email: `i2-${inspector2}@t.gov.lb`, firstName: 'سليم', lastName: 'الميداني', role: 'FIELD_INSPECTOR' as const },
+          { id: recorder2, kind: 'STAFF', tenantSlug: 'payouts', email: `r2-${recorder2}@t.gov.lb`, firstName: 'هالة', lastName: 'الإدارية', role: 'SUPER_ADMIN' as const },
         ],
       });
       const payout = await db.inspectorPayout.create({

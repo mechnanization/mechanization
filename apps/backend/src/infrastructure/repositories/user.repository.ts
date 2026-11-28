@@ -433,7 +433,7 @@ export class PrismaUserRepository implements UserRepository {
         passwordHash: input.passwordHash,
         firstName: input.firstName,
         lastName: input.lastName,
-        role: input.role as never,
+        role: input.role,
       },
       select: { id: true },
     });
@@ -483,7 +483,7 @@ export class PrismaUserRepository implements UserRepository {
         ...(patch.passwordHash ? { passwordHash: patch.passwordHash } : {}),
         ...(patch.firstName ? { firstName: patch.firstName } : {}),
         ...(patch.lastName ? { lastName: patch.lastName } : {}),
-        ...(patch.role ? { role: patch.role as never } : {}),
+        ...(patch.role ? { role: patch.role } : {}),
         ...(revokes ? { tokenVersion: { increment: 1 } } : {}),
       },
     });

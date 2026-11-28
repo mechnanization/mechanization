@@ -41,7 +41,7 @@ describeIfDb('CorrectionBillsService', () => {
   let feeNotices: FeeNoticesService;
   let bills: CorrectionBillsService;
   const clerkId = randomUUID();
-  const actor = () => ({ id: clerkId, role: 'ACCOUNTANT' });
+  const actor = () => ({ id: clerkId, role: 'ACCOUNTANT' as const });
 
   const within = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'tenant-corrections', tenantSlug: 'corrections', schemaName: SCHEMA, prisma: db }, work);
@@ -76,7 +76,7 @@ describeIfDb('CorrectionBillsService', () => {
         email: `accountant-${clerkId}@corrections.gov.lb`,
         firstName: 'محاسبة',
         lastName: 'البلدية',
-        role: 'ACCOUNTANT',
+        role: 'ACCOUNTANT' as const,
       },
     });
   }, SETUP_TIMEOUT_MS);

@@ -38,6 +38,7 @@ import { documentOccurredAt, roundMoney } from './treasury.plan';
 import { sameId } from '../../common/ids';
 import { APP_CONFIG } from '../../common/app.config';
 import { TRANSFERS_PAGE_DEFAULT, TRANSFERS_PAGE_MAX } from '@mechanization/shared-schemas';
+import { StaffActor } from '../../common/actor';
 
 /** The row a screen reads a transfer as. */
 const TRANSFER_SELECT = {
@@ -456,7 +457,7 @@ export class TransfersService {
    * beyond it, above the threshold, or with no official rate to compare, the
    * transfer is flagged for an auditor. The money moves either way (§6.3).
    */
-  async create(input: CreateTransferInput, actor: { id: string; role: string }): Promise<CreateTransferResult> {
+  async create(input: CreateTransferInput, actor: StaffActor): Promise<CreateTransferResult> {
     try {
       return await runInTenantTransaction(this.tenantContext, () => this.createInTransaction(input, actor));
     } catch (error) {
@@ -476,7 +477,7 @@ export class TransfersService {
 
   private async createInTransaction(
     input: CreateTransferInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<CreateTransferResult> {
     const tx = this.db as Prisma.TransactionClient;
 
@@ -753,7 +754,7 @@ export class TransfersService {
     await this.audit.recordInTransaction({
       actorId: actor.id,
       actorType: 'STAFF',
-      actorRole: actor.role as never,
+      actorRole: actor.role,
       action: exchange ? 'EXCHANGE_RECORDED' : 'TRANSFER_RECORDED',
       entityType: 'TreasuryTransfer',
       entityId: transfer.id,
@@ -863,7 +864,7 @@ export class TransfersService {
    * booked when it happened, and this records that somebody whose job is
    * checking has looked at it. Tier 1 audited, with the note.
    */
-  async review(id: string, note: string | undefined, actor: { id: string; role: string }): Promise<TransferView> {
+  async review(id: string, note: string | undefined, actor: StaffActor): Promise<TransferView> {
     return runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
       const locked = await tx.$queryRaw<
@@ -915,7 +916,7 @@ export class TransfersService {
       await this.audit.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: 'TRANSFER_REVIEWED',
         entityType: 'TreasuryTransfer',
         entityId: id,
@@ -936,7 +937,7 @@ export class TransfersService {
    */
   async receiveCustody(
     input: ReceiveCustodyInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<ReceiveCustodyResult> {
     try {
       return await runInTenantTransaction(this.tenantContext, () => this.receiveCustodyInTransaction(input, actor));
@@ -957,7 +958,7 @@ export class TransfersService {
 
   private async receiveCustodyInTransaction(
     input: ReceiveCustodyInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<ReceiveCustodyResult> {
     {
       const tx = this.db as Prisma.TransactionClient;
@@ -1095,7 +1096,7 @@ export class TransfersService {
       await this.audit.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: 'CUSTODY_RECEIVED',
         entityType: 'TreasuryTransfer',
         entityId: transfer.id,
@@ -1209,7 +1210,7 @@ export class TransfersService {
    * destination no longer holds what arrived. A fee's voucher is cancelled in
    * the same act, so the source gets amount + fee back, as it gave them.
    */
-  async void(id: string, reason: string, actor: { id: string; role: string }): Promise<TransferView> {
+  async void(id: string, reason: string, actor: StaffActor): Promise<TransferView> {
     return runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
 
@@ -1267,7 +1268,7 @@ export class TransfersService {
       await this.audit.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: 'TRANSFER_VOIDED',
         entityType: 'TreasuryTransfer',
         entityId: id,

@@ -22,6 +22,7 @@ import { DamageService } from './damage.service';
 import { OccupancyWritesService } from './occupancy-writes.service';
 import { UnitsService } from './units.service';
 import { UnitVisitsService } from './unit-visits.service';
+import { StaffActor } from '../../common/actor';
 
 /**
  * The census, against a real Postgres.
@@ -86,7 +87,7 @@ describeIfDb('BuildingsService', () => {
   let cases: CasesService;
   let officerId: string;
 
-  const actor = () => ({ id: officerId, role: 'FIELD_INSPECTOR' });
+  const actor = () => ({ id: officerId, role: 'FIELD_INSPECTOR' as const });
 
   beforeAll(async () => {
     ddl = new Client({ connectionString: TEST_DATABASE_URL });
@@ -182,7 +183,7 @@ describeIfDb('BuildingsService', () => {
         email: `officer-${officerId}@census.gov.lb`,
         firstName: 'مفتش',
         lastName: 'ميداني',
-        role: 'FIELD_INSPECTOR',
+        role: 'FIELD_INSPECTOR' as const,
       },
     });
   });
@@ -214,7 +215,7 @@ describeIfDb('BuildingsService', () => {
   const createBuilding = (
     input: Omit<CreateBuildingInput, 'lifecycleStatus' | 'acknowledgedDuplicates'> &
       Partial<Pick<CreateBuildingInput, 'lifecycleStatus' | 'acknowledgedDuplicates'>>,
-    by: { id: string; role: string },
+    by: StaffActor,
   ) => buildings.create({ lifecycleStatus: 'IN_USE', acknowledgedDuplicates: true, ...input }, by);
 
   /**
@@ -1204,10 +1205,10 @@ describeIfDb('BuildingsService', () => {
         email: `other-${otherId}@census.gov.lb`,
         firstName: 'مفتش',
         lastName: 'آخر',
-        role: 'FIELD_INSPECTOR',
+        role: 'FIELD_INSPECTOR' as const,
       },
     });
-    const other = { id: otherId, role: 'FIELD_INSPECTOR' };
+    const other = { id: otherId, role: 'FIELD_INSPECTOR' as const };
 
     const { building: mine } = await createBuilding(
       { parcelNumber: '9100', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
@@ -1240,7 +1241,7 @@ describeIfDb('BuildingsService', () => {
     const theirsOnly = await buildings.unsurveyedUnits({ search: '910', limit: 100, offset: 0 }, other);
     expect(theirsOnly.items.map((row) => row.unitId)).toEqual([theirUnits[0]!.id]);
 
-    const admin = await buildings.unsurveyedUnits({ search: '910', limit: 100, offset: 0 }, { id: otherId, role: 'SUPER_ADMIN' });
+    const admin = await buildings.unsurveyedUnits({ search: '910', limit: 100, offset: 0 }, { id: otherId, role: 'SUPER_ADMIN' as const });
     expect(admin.items.map((row) => row.unitId).sort()).toEqual([waiting.id, theirUnits[0]!.id].sort());
     expect(admin.total).toBe(2);
   });
@@ -1330,10 +1331,10 @@ describeIfDb('BuildingsService', () => {
         email: `leaver-${leaverId}@census.gov.lb`,
         firstName: 'مفتش',
         lastName: 'غادر',
-        role: 'FIELD_INSPECTOR',
+        role: 'FIELD_INSPECTOR' as const,
       },
     });
-    const leaver = { id: leaverId, role: 'FIELD_INSPECTOR' };
+    const leaver = { id: leaverId, role: 'FIELD_INSPECTOR' as const };
     const { building: left } = await createBuilding(
       { parcelNumber: '9310', structureType: 'RESIDENTIAL_BUILDING', floorsCount: 1 },
       leaver,
@@ -1355,7 +1356,7 @@ describeIfDb('BuildingsService', () => {
     // Archived — «الأرشيف»: the account stays, its work has nobody to do it.
     await db.user.update({ where: { id: leaverId }, data: { isActive: false } });
 
-    const admin = { id: officerId, role: 'ADMINISTRATIVE_OFFICER' };
+    const admin = { id: officerId, role: 'ADMINISTRATIVE_OFFICER' as const };
     const orphaned = await buildings.unsurveyedUnits(
       { search: '931', owner: 'UNASSIGNED', limit: 100, offset: 0 },
       admin,
@@ -1439,12 +1440,12 @@ describeIfDb('BuildingsService', () => {
     // Another officer's list does not show readings they did not record; an admin's does.
     const elsewhere = await buildings.reinspections(
       { search: '940', limit: 100, offset: 0 },
-      { id: randomUUID(), role: 'FIELD_INSPECTOR' },
+      { id: randomUUID(), role: 'FIELD_INSPECTOR' as const },
     );
     expect(elsewhere.total).toBe(0);
     const admin = await buildings.reinspections(
       { search: '940', limit: 100, offset: 0 },
-      { id: officerId, role: 'SUPER_ADMIN' },
+      { id: officerId, role: 'SUPER_ADMIN' as const },
     );
     expect(admin.total).toBe(2);
     expect(admin.seesAll).toBe(true);
@@ -2028,13 +2029,13 @@ describeIfDb('BuildingsService', () => {
         email: `leaver-${leaverId}@census.gov.lb`,
         firstName: 'موظف',
         lastName: 'سابق',
-        role: 'FIELD_INSPECTOR',
+        role: 'FIELD_INSPECTOR' as const,
       },
     });
 
     await unitVisits.logVisit(
       { unitId: units[0]!.id, outcome: 'REFUSED', notes: 'رفض صاحب العلاقة' },
-      { id: leaverId, role: 'FIELD_INSPECTOR' },
+      { id: leaverId, role: 'FIELD_INSPECTOR' as const },
     );
 
     const before = await unitVisits.visits(units[0]!.id);
@@ -2408,7 +2409,7 @@ describeIfDb('BuildingsService', () => {
       expect(done.visitCount).toBe(3);
 
       // Somebody else's knock the same day is dispatch information, not a duplicate.
-      const colleague = { id: randomUUID(), role: 'FIELD_INSPECTOR' };
+      const colleague = { id: randomUUID(), role: 'FIELD_INSPECTOR' as const };
       await db.user.create({
         data: {
           id: colleague.id,
@@ -2417,7 +2418,7 @@ describeIfDb('BuildingsService', () => {
           email: `colleague-${colleague.id}@census.gov.lb`,
           firstName: 'زميل',
           lastName: 'ميداني',
-          role: 'FIELD_INSPECTOR',
+          role: 'FIELD_INSPECTOR' as const,
         },
       });
       await expect(unitVisits.logVisit({ unitId, outcome: 'COMPLETE' }, colleague)).resolves.toBeDefined();

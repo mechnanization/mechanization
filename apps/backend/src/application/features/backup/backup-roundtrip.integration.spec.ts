@@ -160,7 +160,7 @@ describeIfDb('BackupService — export and restore round-trip', () => {
   });
 
   const OPTIONS = { confirmTenantSlug: 'roundtrip', dryRun: false };
-  const ACTOR = { id: '22222222-2222-4222-8222-222222222222', role: 'SUPER_ADMIN' };
+  const ACTOR = { id: '22222222-2222-4222-8222-222222222222', role: 'SUPER_ADMIN' as const };
 
   it('restores a register that was emptied after the snapshot', async () => {
     const { buffer } = await service.exportSnapshot();

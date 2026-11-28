@@ -51,6 +51,7 @@ import type {
 import { toVacancyRow } from './unit-vacancy';
 import { settleUnit, unitsUnderReview } from './unit-status';
 import { BUILDINGS_PAGE_DEFAULT, BUILDINGS_PAGE_MAX } from '@mechanization/shared-schemas';
+import { StaffActor } from '../../common/actor';
 
 /** What a whole-matrix save did — or, on a dry run, would do. */
 export interface MatrixSaveResult {
@@ -294,7 +295,7 @@ export class BuildingsService {
     buildingId: string;
     before?: Record<string, unknown>;
     after?: Record<string, unknown>;
-    actor: { id: string; role: string };
+    actor: StaffActor;
   }): void {
     this.events.emit('building.changed', {
       tenantSlug: this.tenantContext.tenantSlug,
@@ -314,7 +315,7 @@ export class BuildingsService {
    */
   async settle(
     unitId: string,
-    actor: { id: string; role: string },
+    actor: StaffActor,
     via: string,
   ): Promise<{ statusChanged: boolean }> {
     const outcome = await settleUnit(this.db, {
@@ -339,7 +340,7 @@ export class BuildingsService {
    * and closes cases whose disagreement is gone. Safe to run again: a settled
    * flat is left alone.
    */
-  async settleAllUnits(actor: { id: string; role: string }): Promise<{
+  async settleAllUnits(actor: StaffActor): Promise<{
     unitsChecked: number;
     statusesChanged: number;
     casesOpened: number;
@@ -1294,7 +1295,7 @@ export class BuildingsService {
    */
   async create(
     input: CreateBuildingInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<{ building: BuildingRow; reconciled: boolean; deduplicated: boolean }> {
     const parcelNumber = input.parcelNumber.trim();
 
@@ -1640,7 +1641,7 @@ export class BuildingsService {
   async update(
     id: string,
     input: UpdateBuildingInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<BuildingRow> {
     const before = await this.db.building.findUnique({ where: { id } });
     if (!before) throw new NotFoundError('المبنى غير موجود');
@@ -1820,7 +1821,7 @@ export class BuildingsService {
     );
   }
 
-  async remove(id: string, actor: { id: string; role: string }): Promise<void> {
+  async remove(id: string, actor: StaffActor): Promise<void> {
     const before = await this.db.building.findUnique({
       where: { id },
       include: { _count: { select: { units: true } } },
@@ -2018,7 +2019,7 @@ export class BuildingsService {
    */
   async recomputeCodesForParcels(
     parcelNumbers: readonly string[],
-    actor?: { id: string; role: string },
+    actor?: StaffActor,
   ): Promise<number> {
     const wanted = [...new Set(parcelNumbers.map((n) => n.trim()).filter(Boolean))];
     if (wanted.length === 0) return 0;

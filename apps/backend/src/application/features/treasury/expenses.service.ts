@@ -36,6 +36,7 @@ import { isUniqueViolation, isUniqueViolationOn } from '../../../infrastructure/
 import { TreasuryLedgerService } from './treasury-ledger.service';
 import { documentOccurredAt } from './treasury.plan';
 import { sameId } from '../../common/ids';
+import { StaffActor } from '../../common/actor';
 
 /** One page of the register. A municipality's year of spending is thousands of rows, not all of them. */
 const PAGE_MAX = 200;
@@ -214,7 +215,7 @@ export class ExpensesService {
    */
   async createCategory(
     input: CreateExpenseCategoryInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<ExpenseCategoryView> {
     return runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
@@ -228,7 +229,7 @@ export class ExpensesService {
       await this.audit.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: 'EXPENSE_CATEGORY_CREATED',
         entityType: 'ExpenseCategory',
         entityId: created.id,
@@ -249,7 +250,7 @@ export class ExpensesService {
   async updateCategory(
     id: string,
     input: UpdateExpenseCategoryInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<ExpenseCategoryView> {
     return runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
@@ -280,7 +281,7 @@ export class ExpensesService {
       await this.audit.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: 'EXPENSE_CATEGORY_UPDATED',
         entityType: 'ExpenseCategory',
         entityId: id,
@@ -384,7 +385,7 @@ export class ExpensesService {
    * through «صرف عمولة», `EXPENSE_CATEGORY_RESERVED`), the date breaks one of the three rules in
    * `planExpenseDate`, or the wallet does not hold the amount.
    */
-  async record(input: RecordExpenseInput, actor: { id: string; role: string }): Promise<RecordExpenseResult> {
+  async record(input: RecordExpenseInput, actor: StaffActor): Promise<RecordExpenseResult> {
     try {
       return await runInTenantTransaction(this.tenantContext, () => this.recordInTransaction(input, actor, FORM_PATH));
     } catch (error) {
@@ -425,7 +426,7 @@ export class ExpensesService {
   async recordSalary(
     staffId: string,
     input: RecordStaffSalaryInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<RecordExpenseResult> {
     // The voucher's own input, built in the transaction; a lost key race is replayed against it, as in `record`.
     const built: { voucher?: RecordExpenseInput } = {};
@@ -587,7 +588,7 @@ export class ExpensesService {
       invoiceNumber?: string;
       clientRequestId?: string;
     },
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<RecordExpenseResult> {
     return runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
@@ -646,7 +647,7 @@ export class ExpensesService {
       paidOn?: string;
       adjustmentReason?: string;
     },
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<RecordExpenseResult> {
     return runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
@@ -678,7 +679,7 @@ export class ExpensesService {
   /** The one write behind `record`, `recordSalary`, `recordCommission` and `recordTransferFee`; `path` says which (`VoucherPath`). */
   private async recordInTransaction(
     input: RecordExpenseInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
     path: VoucherPath,
   ): Promise<RecordExpenseResult> {
     {
@@ -904,7 +905,7 @@ export class ExpensesService {
       await this.audit.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: 'EXPENSE_RECORDED',
         entityType: 'ExpenseVoucher',
         entityId: voucher.id,
@@ -1050,7 +1051,7 @@ export class ExpensesService {
    * voucher PV-000012" is owed «صُرف في الثالث وأُلغي في الخامس»، not a register
    * that has quietly forgotten the third.
    */
-  async void(id: string, reason: string, actor: { id: string; role: string }): Promise<ExpenseVoucherView> {
+  async void(id: string, reason: string, actor: StaffActor): Promise<ExpenseVoucherView> {
     return this.voidVoucher(id, reason, actor, false);
   }
 
@@ -1058,14 +1059,14 @@ export class ExpensesService {
    * Cancels a transfer's fee voucher, as part of cancelling the transfer.
    * `TransfersService.void` is the only caller; `void` refuses these alone.
    */
-  async voidTransferFee(id: string, reason: string, actor: { id: string; role: string }): Promise<ExpenseVoucherView> {
+  async voidTransferFee(id: string, reason: string, actor: StaffActor): Promise<ExpenseVoucherView> {
     return this.voidVoucher(id, reason, actor, true);
   }
 
   private async voidVoucher(
     id: string,
     reason: string,
-    actor: { id: string; role: string },
+    actor: StaffActor,
     asTransferFee: boolean,
   ): Promise<ExpenseVoucherView> {
     return runInTenantTransaction(this.tenantContext, async () => {
@@ -1127,7 +1128,7 @@ export class ExpensesService {
       await this.audit.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: 'EXPENSE_VOIDED',
         entityType: 'ExpenseVoucher',
         entityId: id,
@@ -1153,7 +1154,7 @@ export class ExpensesService {
    */
   async requestPayment(
     input: RequestExpenseInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<RequestExpenseResult> {
     try {
       return await runInTenantTransaction(this.tenantContext, async () => {
@@ -1193,7 +1194,7 @@ export class ExpensesService {
         await this.audit.recordInTransaction({
           actorId: actor.id,
           actorType: 'STAFF',
-          actorRole: actor.role as never,
+          actorRole: actor.role,
           action: 'EXPENSE_REQUESTED',
           entityType: 'ExpenseRequest',
           entityId: request.id,
@@ -1247,7 +1248,7 @@ export class ExpensesService {
    * the accountant who prepared it as its recorder and the manager as its
    * orderer — the two signatures the decree asks for.
    */
-  async orderRequest(id: string, actor: { id: string; role: string }): Promise<RecordExpenseResult> {
+  async orderRequest(id: string, actor: StaffActor): Promise<RecordExpenseResult> {
     return runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
 
@@ -1320,7 +1321,7 @@ export class ExpensesService {
       await this.audit.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: 'EXPENSE_ORDERED',
         entityType: 'ExpenseVoucher',
         entityId: voucher.id,
@@ -1346,7 +1347,7 @@ export class ExpensesService {
   }
 
   /** «رفض الطلب» — the manager declines a request, with a reason. No money ever moved. */
-  async rejectRequest(id: string, reason: string, actor: { id: string; role: string }): Promise<ExpenseRequestView> {
+  async rejectRequest(id: string, reason: string, actor: StaffActor): Promise<ExpenseRequestView> {
     return runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
       await this.lockPendingRequest(tx, id);
@@ -1358,7 +1359,7 @@ export class ExpensesService {
       await this.audit.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: 'EXPENSE_REQUEST_REJECTED',
         entityType: 'ExpenseRequest',
         entityId: id,
@@ -1374,7 +1375,7 @@ export class ExpensesService {
    * may too). Anyone else is refused: a request is one accountant's word, and
    * another may not unsay it.
    */
-  async withdrawRequest(id: string, actor: { id: string; role: string }): Promise<ExpenseRequestView> {
+  async withdrawRequest(id: string, actor: StaffActor): Promise<ExpenseRequestView> {
     return runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
       const request = await this.lockPendingRequest(tx, id);
@@ -1392,7 +1393,7 @@ export class ExpensesService {
       await this.audit.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: 'EXPENSE_REQUEST_WITHDRAWN',
         entityType: 'ExpenseRequest',
         entityId: id,
@@ -1409,7 +1410,7 @@ export class ExpensesService {
    * moved; this stamps the order on the voucher, once. A payment the manager
    * will not order is cancelled instead (`void`), which returns the money.
    */
-  async regularize(voucherId: string, actor: { id: string; role: string }): Promise<ExpenseVoucherView> {
+  async regularize(voucherId: string, actor: StaffActor): Promise<ExpenseVoucherView> {
     return runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
       const locked = await tx.$queryRaw<
@@ -1441,7 +1442,7 @@ export class ExpensesService {
       await this.audit.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: 'EXPENSE_ORDERED',
         entityType: 'ExpenseVoucher',
         entityId: voucherId,

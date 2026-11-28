@@ -44,7 +44,7 @@ describeIfDb('TransfersService — collector handover', () => {
   let collectorId: string;
   let safeLbpId: string;
 
-  const MANAGER = { id: '', role: 'SUPER_ADMIN' };
+  const MANAGER = { id: '', role: 'SUPER_ADMIN' as const };
 
   const scoped = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'spec', tenantSlug: 'transfers', schemaName: SCHEMA, prisma: db }, work);
@@ -119,11 +119,11 @@ describeIfDb('TransfersService — collector handover', () => {
         },
         {
           id: managerId, kind: 'STAFF', tenantSlug: 'transfers', email: `m-${managerId}@t.gov.lb`,
-          firstName: 'المدير', lastName: 'العام', role: 'SUPER_ADMIN',
+          firstName: 'المدير', lastName: 'العام', role: 'SUPER_ADMIN' as const,
         },
         {
           id: collectorId, kind: 'STAFF', tenantSlug: 'transfers', email: `c-${collectorId}@t.gov.lb`,
-          firstName: 'حسن', lastName: 'الجابي', role: 'COLLECTOR',
+          firstName: 'حسن', lastName: 'الجابي', role: 'COLLECTOR' as const,
         },
       ],
     });

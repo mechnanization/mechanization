@@ -26,7 +26,7 @@ jest.mock('./unit-status', () => ({
  * home does, because its owners being away is what the state means.
  */
 
-const actor = { id: 'staff-1', role: 'FIELD_INSPECTOR' };
+const actor = { id: 'staff-1', role: 'FIELD_INSPECTOR' as const };
 
 /*
   A real tenant scope over the mock, entered for every call (`inTenantScope`):

@@ -82,8 +82,8 @@ describeIfDb('Daily count and closing', () => {
   const scoped = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'spec', tenantSlug: 'closing', schemaName: SCHEMA, prisma: db }, work);
 
-  const accountant = () => ({ id: accountantId, role: 'ACCOUNTANT' });
-  const manager = () => ({ id: managerId, role: 'SUPER_ADMIN' });
+  const accountant = () => ({ id: accountantId, role: 'ACCOUNTANT' as const });
+  const manager = () => ({ id: managerId, role: 'SUPER_ADMIN' as const });
 
   const audit: LedgerAudit = (movement) => ({
     actorId: managerId,
@@ -192,15 +192,15 @@ describeIfDb('Daily count and closing', () => {
         { id: citizenId, kind: 'CITIZEN', tenantSlug: 'closing', firstName: 'علي', lastName: 'خليل' },
         {
           id: managerId, kind: 'STAFF', tenantSlug: 'closing', email: `m-${managerId}@t.gov.lb`,
-          firstName: 'المدير', lastName: 'العام', role: 'SUPER_ADMIN',
+          firstName: 'المدير', lastName: 'العام', role: 'SUPER_ADMIN' as const,
         },
         {
           id: accountantId, kind: 'STAFF', tenantSlug: 'closing', email: `a-${accountantId}@t.gov.lb`,
-          firstName: 'رنا', lastName: 'المحاسبة', role: 'ACCOUNTANT',
+          firstName: 'رنا', lastName: 'المحاسبة', role: 'ACCOUNTANT' as const,
         },
         {
           id: collectorId, kind: 'STAFF', tenantSlug: 'closing', email: `c-${collectorId}@t.gov.lb`,
-          firstName: 'حسن', lastName: 'الجابي', role: 'COLLECTOR',
+          firstName: 'حسن', lastName: 'الجابي', role: 'COLLECTOR' as const,
         },
       ],
     });

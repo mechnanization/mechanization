@@ -1,3 +1,4 @@
+import type { StaffRole } from '../../../domain/entities/user.entity';
 import { randomUUID } from 'node:crypto';
 import { Client } from 'pg';
 import { PrismaClient as TenantPrismaClient, Prisma } from '../../../generated/tenant-client';
@@ -48,9 +49,9 @@ describeIfDb('TransfersService — transfers, fees and exchange', () => {
   let whishUsd: string;
   let miscId: string;
 
-  const MANAGER = { id: '', role: 'SUPER_ADMIN' };
-  const ACCOUNTANT = { id: '', role: 'ACCOUNTANT' };
-  const AUDITOR = { id: '', role: 'AUDITOR' };
+  const MANAGER = { id: '', role: 'SUPER_ADMIN' as const };
+  const ACCOUNTANT = { id: '', role: 'ACCOUNTANT' as const };
+  const AUDITOR = { id: '', role: 'AUDITOR' as const };
 
   const scoped = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'spec', tenantSlug: 'transfers', schemaName: SCHEMA, prisma: db }, work);
@@ -93,10 +94,10 @@ describeIfDb('TransfersService — transfers, fees and exchange', () => {
       ...over,
     });
 
-  const staff = async (role: string): Promise<string> => {
+  const staff = async (role: StaffRole): Promise<string> => {
     const id = randomUUID();
     await db.user.create({
-      data: { id, kind: 'STAFF', tenantSlug: 'transfers', email: `${role}-${id}@t.gov.lb`, firstName: role, lastName: 'spec', role: role as never },
+      data: { id, kind: 'STAFF', tenantSlug: 'transfers', email: `${role}-${id}@t.gov.lb`, firstName: role, lastName: 'spec', role },
     });
     return id;
   };
