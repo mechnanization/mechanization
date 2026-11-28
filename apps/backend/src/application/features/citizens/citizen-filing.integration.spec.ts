@@ -55,7 +55,7 @@ describeIfDb('filing on a citizen file', () => {
 
   const within = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'tenant-cf', tenantSlug: 'cf', schemaName: SCHEMA, prisma: db }, work);
-  const actor = () => ({ id: officerId, role: 'ADMINISTRATIVE_OFFICER' });
+  const actor = () => ({ id: officerId, role: 'ADMINISTRATIVE_OFFICER' as const });
 
   beforeAll(async () => {
     ddl = new Client({ connectionString: TEST_DATABASE_URL });
@@ -106,7 +106,7 @@ describeIfDb('filing on a citizen file', () => {
         email: `officer-${officerId}@cf.gov.lb`,
         firstName: 'موظف',
         lastName: 'البلدية',
-        role: 'ADMINISTRATIVE_OFFICER',
+        role: 'ADMINISTRATIVE_OFFICER' as const,
       },
     });
   }, SETUP_TIMEOUT_MS);

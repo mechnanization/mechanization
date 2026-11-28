@@ -19,6 +19,7 @@ import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-re
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { AuditService } from '../audit/audit.service';
 import { TreasuryLedgerService } from './treasury-ledger.service';
+import { StaffActor } from '../../common/actor';
 
 /** The order a screen lists wallets in: the safe first, then Whish, then the rest. */
 const TYPE_ORDER: Record<string, number> = {
@@ -256,7 +257,7 @@ export class TreasuryService {
    */
   async activate(
     input: ActivateTreasuryInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<ActivateTreasuryResult> {
     /*
       The singleton may not exist yet on a municipality that never opened
@@ -346,7 +347,7 @@ export class TreasuryService {
       await this.audit.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: 'TREASURY_ACTIVATED',
         entityType: 'Treasury',
         entityId: settings.id,
@@ -382,7 +383,7 @@ export class TreasuryService {
    */
   async createAccount(
     input: CreateTreasuryAccountInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<TreasuryAccountView> {
     return runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
@@ -427,7 +428,7 @@ export class TreasuryService {
       await this.audit.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: 'TREASURY_ACCOUNT_CREATED',
         entityType: 'TreasuryAccount',
         entityId: created.id,

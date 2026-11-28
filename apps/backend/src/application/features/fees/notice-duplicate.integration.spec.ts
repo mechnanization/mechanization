@@ -38,7 +38,7 @@ describeIfDb('the duplicate notice guard', () => {
   let context: TenantContextService;
   let feeNotices: FeeNoticesService;
   const managerId = randomUUID();
-  const manager = { id: managerId, role: 'SUPER_ADMIN' };
+  const manager = { id: managerId, role: 'SUPER_ADMIN' as const };
   const citizens = [randomUUID(), randomUUID()];
 
   const within = <T>(work: () => Promise<T>): Promise<T> =>
@@ -117,7 +117,7 @@ describeIfDb('the duplicate notice guard', () => {
         email: `manager-${managerId}@dup.gov.lb`,
         firstName: 'رئيس',
         lastName: 'البلدية',
-        role: 'SUPER_ADMIN' as never,
+        role: 'SUPER_ADMIN' as const as never,
       },
     });
     await db.systemSettings.upsert({

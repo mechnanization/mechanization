@@ -9,7 +9,6 @@ import {
   nextBuildingSuffix,
   OCCUPIABLE_LIFECYCLE,
   STRUCTURE_TYPE_MAP,
-  getLabels,
   isDwellingUnitType,
   isStructuralUnitType,
   feeBearerClass,
@@ -34,6 +33,7 @@ import { runInTenantTransaction } from '../../../infrastructure/context/tenant-t
 import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-ref';
 import { withConnectionRetry } from '../../../infrastructure/prisma/with-connection-retry';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
+import type { BlockRefusal } from '@mechanization/shared-schemas';
 import { cardClaiming } from '../../../domain/entities/census-claim';
 import type {
   BuildingLedgerRow,
@@ -51,6 +51,7 @@ import type {
 import { toVacancyRow } from './unit-vacancy';
 import { settleUnit, unitsUnderReview } from './unit-status';
 import { BUILDINGS_PAGE_DEFAULT, BUILDINGS_PAGE_MAX } from '@mechanization/shared-schemas';
+import { StaffActor } from '../../common/actor';
 
 /** What a whole-matrix save did — or, on a dry run, would do. */
 export interface MatrixSaveResult {
@@ -294,7 +295,7 @@ export class BuildingsService {
     buildingId: string;
     before?: Record<string, unknown>;
     after?: Record<string, unknown>;
-    actor: { id: string; role: string };
+    actor: StaffActor;
   }): void {
     this.events.emit('building.changed', {
       tenantSlug: this.tenantContext.tenantSlug,
@@ -314,7 +315,7 @@ export class BuildingsService {
    */
   async settle(
     unitId: string,
-    actor: { id: string; role: string },
+    actor: StaffActor,
     via: string,
   ): Promise<{ statusChanged: boolean }> {
     const outcome = await settleUnit(this.db, {
@@ -339,7 +340,7 @@ export class BuildingsService {
    * and closes cases whose disagreement is gone. Safe to run again: a settled
    * flat is left alone.
    */
-  async settleAllUnits(actor: { id: string; role: string }): Promise<{
+  async settleAllUnits(actor: StaffActor): Promise<{
     unitsChecked: number;
     statusesChanged: number;
     casesOpened: number;
@@ -349,8 +350,8 @@ export class BuildingsService {
     const held = await unitsUnderReview(this.db);
     const withCases = await this.db.case.findMany({
       where: {
-        caseType: 'STATUS_CONFLICT' as never,
-        status: { in: ['OPEN', 'SCHEDULED'] as never },
+        caseType: 'STATUS_CONFLICT',
+        status: { in: ['OPEN', 'SCHEDULED'] },
         unitId: { not: null },
       },
       select: { unitId: true },
@@ -452,7 +453,7 @@ export class BuildingsService {
       so a percentage that looks too good can be explained on the same screen.
     */
     const occupiableWhere: Prisma.BuildingWhereInput = {
-      AND: [where, { lifecycleStatus: { in: [...OCCUPIABLE_LIFECYCLE] as never } }],
+      AND: [where, { lifecycleStatus: { in: [...OCCUPIABLE_LIFECYCLE] } }],
     };
 
     /*
@@ -612,7 +613,7 @@ export class BuildingsService {
     const surveys = await withConnectionRetry(() =>
       this.db.unit.groupBy({
         by: ['surveyStatus'],
-        where: { building: { lifecycleStatus: { in: [...OCCUPIABLE_LIFECYCLE] as never } } },
+        where: { building: { lifecycleStatus: { in: [...OCCUPIABLE_LIFECYCLE] } } },
         orderBy: { surveyStatus: 'asc' },
       }),
     );
@@ -627,7 +628,7 @@ export class BuildingsService {
     const unsurveyedShells = await withConnectionRetry(() =>
       this.db.building.count({
         where: {
-          lifecycleStatus: { in: [...OCCUPIABLE_LIFECYCLE] as never },
+          lifecycleStatus: { in: [...OCCUPIABLE_LIFECYCLE] },
           units: { none: {} },
         },
       }),
@@ -757,9 +758,9 @@ export class BuildingsService {
         standsOnParcels(filter.parcelNumbers),
       ];
     }
-    if (filter.structureType) where.structureType = filter.structureType as never;
+    if (filter.structureType) where.structureType = filter.structureType;
     if (filter.buildingTypeId) where.buildingTypeId = filter.buildingTypeId;
-    if (filter.lifecycleStatus) where.lifecycleStatus = filter.lifecycleStatus as never;
+    if (filter.lifecycleStatus) where.lifecycleStatus = filter.lifecycleStatus;
 
     /*
       «بلا مدخل مُثبت», and its complement.
@@ -816,7 +817,7 @@ export class BuildingsService {
       where.OR =
         filter.surveyStatus === 'NOT_SURVEYED'
           ? [{ units: { some: { surveyStatus: 'NOT_SURVEYED' } } }, { units: { none: {} } }]
-          : [{ units: { some: { surveyStatus: filter.surveyStatus as never } } }];
+          : [{ units: { some: { surveyStatus: filter.surveyStatus } } }];
 
       /*
         And only structures that can hold a household, matching the tiles.
@@ -833,7 +834,7 @@ export class BuildingsService {
       */
       where.AND = [
         ...(Array.isArray(where.AND) ? where.AND : []),
-        { lifecycleStatus: { in: [...OCCUPIABLE_LIFECYCLE] as never } },
+        { lifecycleStatus: { in: [...OCCUPIABLE_LIFECYCLE] } },
       ];
     }
 
@@ -934,7 +935,10 @@ export class BuildingsService {
       }),
     );
 
-    if (!row) throw new NotFoundError('المبنى غير موجود');
+    if (!row) throw new NotFoundError({
+      code: 'BUILDING_NOT_FOUND',
+      message: 'Building was not found',
+    });
 
     const zone = await this.zoneOfParcel(row.parcelNumber);
     const backing = await this.claimsBackingOccupancies(row.id, row.units);
@@ -997,7 +1001,7 @@ export class BuildingsService {
           unitId: { in: open },
           unitStatus: { not: null },
           endedAt: null,
-          propertyEntry: { occupancyType: 'OWNER' as never, endedAt: null },
+          propertyEntry: { occupancyType: 'OWNER', endedAt: null },
         },
         orderBy: { updatedAt: 'desc' },
         select: { unitId: true, unitStatus: true },
@@ -1006,8 +1010,8 @@ export class BuildingsService {
         ? this.db.propertyEntry.findMany({
             where: {
               buildingId,
-              propertyType: 'HOUSE' as never,
-              occupancyType: 'OWNER' as never,
+              propertyType: 'HOUSE',
+              occupancyType: 'OWNER',
               unitStatus: { not: null },
               endedAt: null,
             },
@@ -1112,7 +1116,7 @@ export class BuildingsService {
         ? this.db.propertyEntry.findMany({
             where: {
               buildingId,
-              propertyType: 'HOUSE' as never,
+              propertyType: 'HOUSE',
               endedAt: null,
               registration: { citizenId: { in: citizenIds } },
             },
@@ -1198,7 +1202,7 @@ export class BuildingsService {
       where: {
         buildingId,
         endedAt: null,
-        occupancyType: { in: ['TENANT', 'FREE_OCCUPANT'] as never },
+        occupancyType: { in: ['TENANT', 'FREE_OCCUPANT'] },
         registration: { citizenId: { in: tenantIds } },
       },
       orderBy: { createdAt: 'asc' },
@@ -1294,7 +1298,7 @@ export class BuildingsService {
    */
   async create(
     input: CreateBuildingInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<{ building: BuildingRow; reconciled: boolean; deduplicated: boolean }> {
     const parcelNumber = input.parcelNumber.trim();
 
@@ -1321,9 +1325,11 @@ export class BuildingsService {
         because a client reaching this is confused about which creation it is
         retrying and no answer this method can invent is the right one.
       */
-      throw new ConflictError(
-        `المعرّف المرسل يخص مبنى على العقار ${existing.parcelNumber}، لا العقار ${parcelNumber}.`,
-      );
+      throw new ConflictError({
+        code: 'BUILDING_ID_ON_OTHER_PARCEL',
+        message: 'The id sent belongs to a building on another parcel',
+        params: { existingParcel: existing.parcelNumber, parcel: parcelNumber },
+      });
     }
 
     if (existing) {
@@ -1386,9 +1392,11 @@ export class BuildingsService {
     const unitTypes = input.units?.length ? await loadUnitTypes(this.db) : null;
 
     if (!input.acknowledgedDuplicates && neighbours.length > 0) {
-      throw new ConflictError(
-        `يوجد ${neighbours.length === 1 ? 'مبنى مسجَّل' : `${neighbours.length} مبانٍ مسجَّلة`} على العقار ${parcelNumber}. تأكَّد أن هذه منشأة مختلفة قبل المتابعة.`,
-        {
+      throw new ConflictError({
+        code: 'BUILDING_DUPLICATE_ON_PARCEL',
+        message: `${neighbours.length} buildings already stand on parcel ${parcelNumber}`,
+        params: { count: neighbours.length, parcel: parcelNumber },
+        details: {
           /*
             The candidates travel with the refusal so the dialog can show
             them without a second round trip — an officer offline enough to
@@ -1397,7 +1405,7 @@ export class BuildingsService {
           parcelNumber,
           candidates: neighbours,
         },
-      );
+      });
     }
 
     const created = await runInTenantTransaction(this.tenantContext, async () => {
@@ -1429,9 +1437,9 @@ export class BuildingsService {
           partitionNumbers: partitionNumbersFor(input.isPartitioned, input.partitionNumbers),
           // Never the parcel the code derives from — see `sharedParcelsExcluding`.
           sharedParcelNumbers: sharedParcelsExcluding(input.sharedParcelNumbers, parcelNumber),
-          structureType: typed.structureType as never,
+          structureType: typed.structureType,
           buildingTypeId: typed.buildingTypeId,
-          lifecycleStatus: input.lifecycleStatus as never,
+          lifecycleStatus: input.lifecycleStatus,
           latitude: input.latitude ?? null,
           longitude: input.longitude ?? null,
           floorsCount: input.floorsCount,
@@ -1477,13 +1485,13 @@ export class BuildingsService {
               startCol: unit.startCol ?? null,
               endCol: unit.endCol ?? null,
               unitCode: formatUnitCode(unit.floor, next),
-              unitType: unitTyped.unitType as never,
+              unitType: unitTyped.unitType,
               unitTypeId: unitTyped.unitTypeId,
               postedNumber: unit.postedNumber?.trim() || null,
               side: unit.side?.trim() || null,
               unitArea: unit.unitArea ?? null,
-              unitStatus: (unit.unitStatus ?? null) as never,
-              surveyStatus: (unit.surveyStatus ?? 'NOT_SURVEYED') as never,
+              unitStatus: (unit.unitStatus ?? null),
+              surveyStatus: (unit.surveyStatus ?? 'NOT_SURVEYED'),
               notes: unit.notes?.trim() || null,
             };
           }),
@@ -1640,10 +1648,13 @@ export class BuildingsService {
   async update(
     id: string,
     input: UpdateBuildingInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<BuildingRow> {
     const before = await this.db.building.findUnique({ where: { id } });
-    if (!before) throw new NotFoundError('المبنى غير موجود');
+    if (!before) throw new NotFoundError({
+      code: 'BUILDING_NOT_FOUND',
+      message: 'Building was not found',
+    });
 
     await this.assertFresh(before, input.expectedUpdatedAt, actor);
 
@@ -1691,10 +1702,17 @@ export class BuildingsService {
         basementsAfter,
       );
       if (outside.length > 0) {
-        throw new ConflictError(
-          `لا يمكن إنقاص طوابق المبنى ${before.code}: ${outside.length === 1 ? 'الوحدة' : 'الوحدات'} ${listCodes(outside)} خارج الطوابق الجديدة. احذفها من مصفوفة الوحدات أو انقلها إلى طابق قائم أولاً`,
-          { unitCodes: outside.map((unit) => unit.unitCode), floorsCount: floorsAfter, basementsCount: basementsAfter },
-        );
+        throw new ConflictError({
+          code: 'BUILDING_FLOORS_EXCLUDE_UNITS',
+          message: `Building ${before.code} would leave ${outside.length} units outside its floors`,
+          params: {
+            buildingCode: before.code,
+            count: outside.length,
+            unitCodes: outside.slice(0, 6).map((unit) => unit.unitCode).join(', '),
+            more: Math.max(0, outside.length - 6),
+          },
+          details: { unitCodes: outside.map((unit) => unit.unitCode), floorsCount: floorsAfter, basementsCount: basementsAfter },
+        });
       }
     }
 
@@ -1738,9 +1756,9 @@ export class BuildingsService {
               ),
             }
           : {}),
-        ...(typed ? { structureType: typed.structureType as never, buildingTypeId: typed.buildingTypeId } : {}),
+        ...(typed ? { structureType: typed.structureType, buildingTypeId: typed.buildingTypeId } : {}),
         ...(input.lifecycleStatus !== undefined
-          ? { lifecycleStatus: input.lifecycleStatus as never }
+          ? { lifecycleStatus: input.lifecycleStatus }
           : {}),
         ...(input.latitude !== undefined ? { latitude: input.latitude } : {}),
         ...(input.longitude !== undefined ? { longitude: input.longitude } : {}),
@@ -1805,11 +1823,11 @@ export class BuildingsService {
         })
       : null;
     const who = staff ? `${staff.firstName} ${staff.lastName}` : null;
-    throw new ConflictError(
-      who
-        ? `عدّل ${who} هذا المبنى بعد أن فتحتَه. أعد فتح المبنى لترى تعديلاته قبل الحفظ.`
-        : 'عُدِّل هذا المبنى بعد أن فتحتَه. أعد فتح المبنى لترى التعديلات قبل الحفظ.',
-      {
+    throw new ConflictError({
+      code: 'BUILDING_EDITED_SINCE_OPENED',
+      message: 'The building was edited after it was opened',
+      params: { hasEditor: who ? 'yes' : 'no', editor: who ?? '' },
+      details: {
         staleEdit: {
           updatedAt: before.updatedAt.toISOString(),
           lastEditedBy: who,
@@ -1817,15 +1835,18 @@ export class BuildingsService {
           byViewer: last?.actorId === actor.id,
         },
       },
-    );
+    });
   }
 
-  async remove(id: string, actor: { id: string; role: string }): Promise<void> {
+  async remove(id: string, actor: StaffActor): Promise<void> {
     const before = await this.db.building.findUnique({
       where: { id },
       include: { _count: { select: { units: true } } },
     });
-    if (!before) throw new NotFoundError('المبنى غير موجود');
+    if (!before) throw new NotFoundError({
+      code: 'BUILDING_NOT_FOUND',
+      message: 'Building was not found',
+    });
 
     /*
       A building with occupancies on it is a building somebody has been
@@ -1855,16 +1876,20 @@ export class BuildingsService {
       where: { unit: { buildingId: id }, toDate: null },
     });
     if (current > 0) {
-      throw new ConflictError(
-        `لا يمكن حذف المبنى: ${current} إشغال قائم على وحداته. أنهِ الإشغالات أولاً`,
-      );
+      throw new ConflictError({
+        code: 'BUILDING_DELETE_HAS_OCCUPANCIES',
+        message: `The building has ${current} current occupancies`,
+        params: { count: current },
+      });
     }
 
     const historical = await this.db.unitOccupancy.count({ where: { unit: { buildingId: id } } });
     if (historical > 0) {
-      throw new ConflictError(
-        `لا يمكن حذف مبنى سُجّل فيه سكان: ${historical} إشغال سابق على وحداته. حذفه يمحو سجل من سكنها. عدّل بيانات المبنى أو غيّر حالته إلى «مهدوم» بدلاً من الحذف، وإن كان رقم العقار خاطئاً فاستخدم «تصحيح رقم العقار»`,
-      );
+      throw new ConflictError({
+        code: 'BUILDING_DELETE_HAS_PAST_OCCUPANCIES',
+        message: `The building has ${historical} past occupancies`,
+        params: { count: historical },
+      });
     }
 
     // A unit's fee exemption history keys onto it with RESTRICT (0104): refused here, with a code.
@@ -1916,9 +1941,11 @@ export class BuildingsService {
       of eleven being relabelled a house, and a message naming one of those
       reads as a non-sequitur on the other.
     */
-    throw new ValidationError(
-      `لا يمكن أن يكون المبنى ${building.code} «منزل مستقل» وفيه ${total} وحدة — المنزل مسكن واحد. اختر «بناية سكنية» لتسجيل عدة وحدات`,
-    );
+    throw new ValidationError({
+      code: 'HOUSE_WITH_SEVERAL_UNITS',
+      message: `Building ${building.code} is an independent house with ${total} units`,
+      params: { buildingCode: building.code, count: total },
+    });
   }
 
   /** See `updateUnit`: an owner-side status over a registered tenant is a double charge. */
@@ -1931,21 +1958,23 @@ export class BuildingsService {
       where: {
         unitId: unit.id,
         toDate: null,
-        role: { in: ['TENANT', 'FREE_OCCUPANT'] as never },
+        role: { in: ['TENANT', 'FREE_OCCUPANT'] },
         ...(exceptCitizenId ? { citizenId: { not: exceptCitizenId } } : {}),
       },
     });
     if (live > 0) {
       if (feeBearerClass(status) === 'NOBODY') {
-        const empty = status === 'UNDER_CONSTRUCTION' ? 'قيد الإنجاز' : 'شاغرة';
-        throw new ConflictError(
-          `لا يمكن تسجيل الوحدة ${unit.unitCode} ${empty}: يسكنها ${live} مستأجر أو شاغل مسجَّل. أنهِ إشغاله أولاً`,
-        );
+        throw new ConflictError({
+          code: 'UNIT_STATUS_EMPTY_HAS_OCCUPANTS',
+          message: `Unit ${unit.unitCode} has ${live} tenants or occupants`,
+          params: { unitCode: unit.unitCode, status, count: live },
+        });
       }
-      const label = status === 'SEASONAL' ? 'مسكناً موسمياً' : 'مشغولة من المالك';
-      throw new ConflictError(
-        `لا يمكن تسجيل الوحدة ${unit.unitCode} ${label}: يسكنها ${live} مستأجر أو شاغل مسجَّل، وكلاهما يُكلَّف برسم الإشغال عندها. أنهِ إشغاله أولاً، أو اختر «مؤجرة» / «مشغولة بتسامح»`,
-      );
+      throw new ConflictError({
+        code: 'UNIT_STATUS_OWNER_SIDE_HAS_OCCUPANTS',
+        message: `Unit ${unit.unitCode} has ${live} tenants or occupants`,
+        params: { unitCode: unit.unitCode, status, count: live },
+      });
     }
   }
 
@@ -1983,18 +2012,22 @@ export class BuildingsService {
     options: { seasonalAllowed?: boolean } = {},
   ): Promise<void> {
     const live = await this.db.unitOccupancy.count({
-      where: { unitId: unit.id, toDate: null, role: { in: ['TENANT', 'FREE_OCCUPANT'] as never } },
+      where: { unitId: unit.id, toDate: null, role: { in: ['TENANT', 'FREE_OCCUPANT'] } },
     });
     if (live > 0) {
-      throw new ConflictError(
-        `لا يمكن تسجيل الوحدة ${unit.unitCode} كشاغرة: يسكنها ${live} مستأجر أو شاغل مسجَّل. أنهِ إشغاله أولاً`,
-      );
+      throw new ConflictError({
+        code: 'UNIT_VACANT_HAS_OCCUPANTS',
+        message: `Unit ${unit.unitCode} has ${live} tenants or occupants`,
+        params: { unitCode: unit.unitCode, count: live },
+      });
     }
 
     if (!options.seasonalAllowed && (await this.isSeasonal(unit))) {
-      throw new ConflictError(
-        `لا يمكن تسجيل الوحدة ${unit.unitCode} كشاغرة: هي مسكن موسمي، وغياب أصحابه لا يجعلها شاغرة. سجّل تصريح الشغور في بيانات السكن الموسمي، أو أعد ربط المالك بحالة «شاغرة» إن لم يعودوا يأتون`,
-      );
+      throw new ConflictError({
+        code: 'UNIT_SEASONAL_NOT_VACANT',
+        message: `Unit ${unit.unitCode} is a seasonal home`,
+        params: { unitCode: unit.unitCode },
+      });
     }
   }
 
@@ -2018,7 +2051,7 @@ export class BuildingsService {
    */
   async recomputeCodesForParcels(
     parcelNumbers: readonly string[],
-    actor?: { id: string; role: string },
+    actor?: StaffActor,
   ): Promise<number> {
     const wanted = [...new Set(parcelNumbers.map((n) => n.trim()).filter(Boolean))];
     if (wanted.length === 0) return 0;
@@ -2477,13 +2510,6 @@ export function unitsOutsideFloors<T extends { floor: number; levels?: number | 
   return units.filter((unit) => unitTopFloor(unit) > floorsCount - 1 || unit.floor < -basementsCount);
 }
 
-/** «0401، 0402، 0403 و5 غيرها» — enough codes to find them, never a wall of them. */
-function listCodes(units: ReadonlyArray<{ unitCode: string }>, shown = 6): string {
-  const codes = units.map((unit) => unit.unitCode);
-  const head = codes.slice(0, shown).join('، ');
-  return codes.length > shown ? `${head} و${codes.length - shown} غيرها` : head;
-}
-
 /**
  * Why a unit edit would put a non-resident somewhere the record cannot hold
  * them, or null when it would not — the unit-edit face of
@@ -2501,22 +2527,18 @@ export function nonResidentUnitConflict(input: {
    * institution: that kind (the first owner's), for the refusal's wording.
    */
   seasonalOwner?: string | null;
-}): string | null {
+}): BlockRefusal | null {
   const occupants = [...new Set(input.nonResidentOccupants.filter(Boolean))];
 
   if (occupants.length > 0) {
-    return (
-      `لا يمكن جعل الوحدة ${input.unitCode} مسكناً: ${occupants.join('، ')} ` +
-      `${occupants.length === 1 ? 'مسجَّل عليها مستأجراً أو شاغلاً وملفه ليس' : 'مسجَّلون عليها مستأجرين أو شاغلين وملفاتهم ليست'} ملف أسرة مقيمة ` +
-      '(غير مقيم في البلدة، أو تركة، أو جهة)، وهذا لا يستأجر مسكناً. إن كان يسكنها فعلاً فصحّح نوع ملفه إلى «أسرة مقيمة»، وإن كان قد تركها فأنهِ إيجاره أولاً'
-    );
+    return {
+      code: 'NON_RESIDENT_TENANT_ON_DWELLING',
+      params: { unitCode: input.unitCode, names: occupants.join('، '), count: occupants.length },
+    };
   }
 
   if (input.ownerOccupiedByNonResident) {
-    return (
-      `لا يمكن تسجيل الوحدة ${input.unitCode} «مشغولة من المالك»: مالكها ليس أسرة مقيمة في البلدة (غير مقيم، أو تركة، أو جهة). ` +
-      'اختر «مسكن موسمي» (لغير المقيم) أو «مشغولة بتسامح» أو «شاغرة»، أو صحّح نوع ملف المالك إن كان يسكنها'
-    );
+    return { code: 'OWNER_OCCUPIED_BY_NON_RESIDENT', params: { unitCode: input.unitCode } };
   }
 
   if (input.seasonalOwner) return ownerLivesThereRefusal(input.seasonalOwner, input.unitCode);
@@ -2659,16 +2681,22 @@ export function assertNonResidentOccupancy(input: {
   if (!isDwellingUnitType(input.unitType)) return;
 
   if (input.role !== 'OWNER') {
-    throw new ValidationError(
-      `الوحدة ${input.unitCode} مسكن، وغير المقيم لا يُسجَّل مستأجراً أو شاغلاً لمسكن. من يستأجر مسكناً ويسكنه يُسجَّل بملف أسرة، وإن كانت الوحدة تُستعمل لغير السكن فصحّح نوعها`,
-      { role: input.role, unitType: input.unitType },
-    );
+    throw new ValidationError({
+      code: 'NON_RESIDENT_DWELLING_OCCUPANT',
+      message: `A non-resident cannot rent or occupy dwelling ${input.unitCode}`,
+      params: { unitCode: input.unitCode },
+      details: { role: input.role, unitType: input.unitType },
+    });
   }
 
   // An estate or an institution comes back for no season either (see `nonResidentCardIssues`).
   if (ownerSaidToLiveThere(input.residence, input.unitStatus)) {
-    throw new ValidationError(ownerLivesThereRefusal(input.residence, input.unitCode), {
-      unitStatus: input.unitStatus,
+    const refusal = ownerLivesThereRefusal(input.residence, input.unitCode);
+    throw new ValidationError({
+      code: refusal.code,
+      message: `An owner record (${input.residence}) does not live in ${input.unitCode}`,
+      params: refusal.params,
+      details: { unitStatus: input.unitStatus },
     });
   }
 }
@@ -2685,12 +2713,9 @@ function ownerSaidToLiveThere(residence: string | null | undefined, unitStatus: 
 }
 
 /** The refusal of `ownerSaidToLiveThere`, in the words of the record kind. */
-function ownerLivesThereRefusal(residence: string | null | undefined, unitCode: string): string {
-  return residence === 'ESTATE'
-    ? `المرحوم لا يسكن الوحدة ${unitCode} — إن كانت عائلته تسكنها فاختر «مشغولة بتسامح» وسجّل أحدهم بملف أسرة، وإلا فـ«مؤجرة» أو «شاغرة»`
-    : residence === 'INSTITUTION'
-      ? `الجهة لا تسكن المسكن ${unitCode} — اختر حالة من يشغله («مؤجرة»، «مشغولة بتسامح») أو «شاغرة»`
-      : `غير المقيم لا يسكن الوحدة ${unitCode} — اختر «مسكن موسمي» إن كان يحضر في مواسم، أو «شاغرة»`;
+function ownerLivesThereRefusal(residence: string | null | undefined, unitCode: string): BlockRefusal {
+  // `residence` picks the wording: the deceased, a body, or a non-resident (anything else).
+  return { code: 'OWNER_DOES_NOT_LIVE_THERE', params: { unitCode, residence: residence ?? 'NON_RESIDENT_OWNER' } };
 }
 
 /**
@@ -2715,25 +2740,12 @@ function ownerLivesThereRefusal(residence: string | null | undefined, unitCode: 
 export function assertOccupiableUnit(input: { unitType: string; unitCode: string }): void {
   if (!isStructuralUnitType(input.unitType)) return;
 
-  throw new ValidationError(
-    `الوحدة ${input.unitCode} ${structuralLabel(input.unitType)} — لا يُسجَّل عليها شاغل. اختر وحدة في أحد الطوابق الأخرى، أو صحّح نوع الوحدة إن كانت مقسَّمة ومستعملة`,
-    { unitType: input.unitType, unitCode: input.unitCode },
-  );
-}
-
-/**
- * «طابق أعمدة» or «طابق فارغ (بلا وحدات)», as the case may be.
- *
- * Read from the shared labels rather than written into each message, because
- * there are two structural types now and telling an officer their block is a
- * طابق أعمدة when they marked it فارغ is the kind of wrongness that makes
- * people distrust the rest of the sentence. The Arabic label is the only one
- * used: these messages go to `ValidationError`, which this API returns in
- * Arabic throughout.
- */
-export function structuralLabel(unitType: string): string {
-  const labels = getLabels('ar').unitType as Record<string, string | undefined>;
-  return labels[unitType] ?? 'وحدة إنشائية';
+  throw new ValidationError({
+    code: 'STRUCTURAL_UNIT_NO_OCCUPANT',
+    message: `Unit ${input.unitCode} is structural (${input.unitType})`,
+    params: { unitCode: input.unitCode, unitType: input.unitType },
+    details: { unitType: input.unitType, unitCode: input.unitCode },
+  });
 }
 
 export function toUnitRow(row: {

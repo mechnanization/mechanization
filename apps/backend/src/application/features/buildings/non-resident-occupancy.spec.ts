@@ -22,7 +22,7 @@ describe('assertNonResidentOccupancy', () => {
   it('refuses a non-resident as tenant or free occupant of a dwelling', () => {
     for (const unitType of ['APARTMENT', 'INDEPENDENT_HOUSE']) {
       for (const role of ['TENANT', 'FREE_OCCUPANT']) {
-        expect(() => assertNonResidentOccupancy({ ...base, role, unitType })).toThrow('مسكن');
+        expect(() => assertNonResidentOccupancy({ ...base, role, unitType })).toThrow(expect.objectContaining({ code: 'NON_RESIDENT_DWELLING_OCCUPANT' }));
       }
     }
   });
@@ -38,7 +38,7 @@ describe('assertNonResidentOccupancy', () => {
         unitType: 'APARTMENT',
         unitStatus: 'OWNER_OCCUPIED',
       }),
-    ).toThrow('مسكن موسمي');
+    ).toThrow(expect.objectContaining({ code: 'OWNER_DOES_NOT_LIVE_THERE' }));
   });
 
   it('asks nothing of a household file', () => {

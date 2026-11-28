@@ -64,7 +64,7 @@ describeIfDb('billing over the census', () => {
   let feeNotices: FeeNoticesService;
   let clerkId: string;
 
-  const actor = () => ({ id: clerkId, role: 'SUPER_ADMIN' });
+  const actor = () => ({ id: clerkId, role: 'SUPER_ADMIN' as const });
 
   beforeAll(async () => {
     ddl = new Client({ connectionString: TEST_DATABASE_URL });
@@ -106,7 +106,7 @@ describeIfDb('billing over the census', () => {
         email: `clerk-${clerkId}@census.gov.lb`,
         firstName: 'موظف',
         lastName: 'الجباية',
-        role: 'SUPER_ADMIN',
+        role: 'SUPER_ADMIN' as const,
       },
     });
   }, SETUP_TIMEOUT_MS);

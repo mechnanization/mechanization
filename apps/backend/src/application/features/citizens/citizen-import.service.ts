@@ -14,6 +14,7 @@ import type {
 import { DomainError } from '../../common/exceptions';
 import { CitizenDuplicatesService } from './citizen-duplicates.service';
 import { CitizensService } from './citizens.service';
+import { StaffActor } from '../../common/actor';
 
 /**
  * Turns a Zod issue path into the Arabic column header the clerk sees.
@@ -91,7 +92,7 @@ export class CitizenImportService {
     /** Row number of `rows[0]` in the clerk's file, so batches stay addressable. */
     startRow: number;
     dryRun: boolean;
-    actor: { id: string; role: string };
+    actor: StaffActor;
   }): Promise<CitizenImportResult> {
     const results: CitizenImportRowResult[] = [];
 

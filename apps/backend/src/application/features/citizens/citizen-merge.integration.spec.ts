@@ -54,7 +54,7 @@ describeIfDb('CitizenMergeService', () => {
   let users: PrismaUserRepository;
   let adminId: string;
 
-  const actor = () => ({ id: adminId, role: 'SUPER_ADMIN' });
+  const actor = () => ({ id: adminId, role: 'SUPER_ADMIN' as const });
   const within = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'tenant-merge', tenantSlug: 'merge', schemaName: SCHEMA, prisma: db }, work);
 
@@ -747,7 +747,7 @@ describeIfDb('CitizenMergeService', () => {
       const f = await filedTwice();
       await isolate(f, 'عساف', 'كاملة كنعان');
       const submit = jest.fn();
-      const officer = { id: f.officerA, role: 'FIELD_INSPECTOR' };
+      const officer = { id: f.officerA, role: 'FIELD_INSPECTOR' as const };
 
       for (const reviewDuplicates of [true, false]) {
         const refusal = await within(() =>
@@ -781,7 +781,7 @@ describeIfDb('CitizenMergeService', () => {
             reviewDuplicates: true,
             duplicateReview: { differentFrom: [f.keepId, f.absorbId], sharedPhoneWith: [], sharedPhoneWithLandlord: false, reason: 'توأم بالاسم نفسه — تحقّق المختار' },
           } as never,
-          actor: { id: adminId, role: 'SUPER_ADMIN' },
+          actor: { id: adminId, role: 'SUPER_ADMIN' as const },
         }),
       ).catch(() => undefined);
       expect(submit).toHaveBeenCalledTimes(1);
@@ -794,7 +794,7 @@ describeIfDb('CitizenMergeService', () => {
         service(jest.fn()).create({
           tenantSlug: 'merge',
           payload: { ...household({ lastName: 'زين الدين' }), reviewDuplicates: true } as never,
-          actor: { id: f.officerA, role: 'FIELD_INSPECTOR' },
+          actor: { id: f.officerA, role: 'FIELD_INSPECTOR' as const },
         }),
       ).catch((caught: unknown) => caught);
       expect(refusal).toBeInstanceOf(ConflictError);

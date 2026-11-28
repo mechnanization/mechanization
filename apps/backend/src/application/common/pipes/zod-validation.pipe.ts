@@ -28,13 +28,14 @@ export class ZodValidationPipe<S extends ZodTypeAny>
       // Field-level detail is returned to the client on purpose: the wizard
       // highlights the offending step, and every message here is already
       // user-facing Arabic written for a citizen, not a stack trace.
-      throw new ValidationError(
-        'البيانات المدخلة غير مكتملة أو غير صحيحة',
-        result.error.issues.map((issue) => ({
+      throw new ValidationError({
+        code: 'REQUEST_BODY_INVALID',
+        message: 'The request body failed validation',
+        details: result.error.issues.map((issue) => ({
           path: issue.path.join('.'),
           message: issue.message,
         })),
-      );
+      });
     }
 
     return result.data;

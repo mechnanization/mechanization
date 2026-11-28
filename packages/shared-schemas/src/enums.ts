@@ -303,7 +303,7 @@ export function isOccupiedByOthers(status: string | null | undefined): boolean {
  * residence, and an owner abroad with a tenant downstairs is the case this
  * whole join table exists for (D2). Only a non-owner spell settles the state.
  */
-export function unitStatusForRole(role: string | null | undefined): string | null {
+export function unitStatusForRole(role: string | null | undefined): UnitStatus | null {
   if (role === 'TENANT') return 'RENTED';
   if (role === 'FREE_OCCUPANT') return 'FREE_OCCUPIED';
   return null;

@@ -290,7 +290,10 @@ export class IdentityService {
     if (!user || !passwordMatches) {
       // Same sentence as a wrong password, deliberately: distinguishing them
       // turns this route into a way to enumerate which emails hold accounts.
-      throw new UnauthorizedError('بيانات الدخول غير صحيحة');
+      throw new UnauthorizedError({
+        code: 'LOGIN_CREDENTIALS_INVALID',
+        message: 'Staff sign-in refused',
+      });
     }
 
     // Refuses a deactivated account
@@ -299,7 +302,10 @@ export class IdentityService {
     if (user.tenantSlug !== input.tenantSlug) {
       // A staff row from another municipality reaching this schema means the
       // factory handed out the wrong client. Refuse rather than proceed.
-      throw new UnauthorizedError('بيانات الدخول غير صحيحة');
+      throw new UnauthorizedError({
+        code: 'LOGIN_CREDENTIALS_INVALID',
+        message: 'Staff sign-in refused',
+      });
     }
 
     /**
@@ -393,14 +399,20 @@ export class IdentityService {
     try {
       claims = this.jwt.verify(token, { secret: this.resetSigningKey() });
     } catch {
-      throw new UnauthorizedError('رابط إعادة التعيين غير صالح أو منتهي الصلاحية');
+      throw new UnauthorizedError({
+        code: 'PASSWORD_RESET_LINK_INVALID',
+        message: 'The reset token is not valid',
+      });
     }
 
     // Belt and braces. Nothing else is signed with this key today, so this can
     // only fire if something later starts using it — at which point a token
     // minted for that purpose must not be spendable here.
     if (claims.purpose !== RESET_PURPOSE || !claims.sub || typeof claims.tokenVersion !== 'number') {
-      throw new UnauthorizedError('رابط إعادة التعيين غير صالح أو منتهي الصلاحية');
+      throw new UnauthorizedError({
+        code: 'PASSWORD_RESET_LINK_INVALID',
+        message: 'The reset token is not valid',
+      });
     }
 
     return {
@@ -735,7 +747,10 @@ export class IdentityService {
   ): Promise<void> {
     const user = await this.users.findById(userId);
     if (!user || user.kind !== 'STAFF' || !user.passwordHash) {
-      throw new NotFoundError('Staff user', userId);
+      throw new NotFoundError({
+        code: 'STAFF_NOT_FOUND',
+        message: 'Staff was not found',
+      });
     }
 
     const match = await this.hasher.verify(currentPassword, user.passwordHash);
@@ -773,7 +788,10 @@ export class IdentityService {
   ): Promise<{ email: string }> {
     const user = await this.users.findById(userId);
     if (!user || user.kind !== 'STAFF' || !user.passwordHash) {
-      throw new NotFoundError('Staff user', userId);
+      throw new NotFoundError({
+        code: 'STAFF_NOT_FOUND',
+        message: 'Staff was not found',
+      });
     }
 
     const match = await this.hasher.verify(currentPassword, user.passwordHash);
@@ -788,7 +806,10 @@ export class IdentityService {
 
     const existing = await this.users.findStaffByEmail(nextEmail);
     if (existing) {
-      throw new ConflictError('البريد الإلكتروني مستخدم بالفعل من قبل موظف آخر');
+      throw new ConflictError({
+        code: 'STAFF_EMAIL_TAKEN',
+        message: 'The email is taken by another staff account',
+      });
     }
 
     await this.users.updateStaff(user.id, { email: nextEmail });
@@ -829,13 +850,17 @@ export class IdentityService {
   ): Promise<{ message: string }> {
     const user = await this.users.findById(userId);
     if (!user || user.kind !== 'STAFF' || !user.email) {
-      throw new NotFoundError('Staff user', userId);
+      throw new NotFoundError({
+        code: 'STAFF_NOT_FOUND',
+        message: 'Staff was not found',
+      });
     }
 
     if (!this.email.isConfigured) {
-      throw new ConflictError(
-        'إعادة تعيين كلمة المرور بالبريد غير مُفعّلة — يرجى مراجعة مسؤول النظام لتعيين كلمة مرور جديدة',
-      );
+      throw new ConflictError({
+        code: 'PASSWORD_RESET_EMAIL_DISABLED',
+        message: 'Password reset by email is not configured',
+      });
     }
 
     const link = this.resetLink(this.signResetToken(user), redirectTo);
@@ -875,7 +900,10 @@ export class IdentityService {
     // expired link. Saying "no such account" or "this account is deactivated"
     // turns a public endpoint into a way to ask questions about staff.
     if (!user || user.kind !== 'STAFF' || !user.isActive) {
-      throw new UnauthorizedError('رابط إعادة التعيين غير صالح أو منتهي الصلاحية');
+      throw new UnauthorizedError({
+        code: 'PASSWORD_RESET_LINK_INVALID',
+        message: 'The reset token is not valid',
+      });
     }
 
     /**
@@ -887,7 +915,10 @@ export class IdentityService {
      * this needs no storage: the account itself remembers.
      */
     if ((user.tokenVersion ?? 0) !== claims.tokenVersion) {
-      throw new UnauthorizedError('رابط إعادة التعيين غير صالح أو منتهي الصلاحية');
+      throw new UnauthorizedError({
+        code: 'PASSWORD_RESET_LINK_INVALID',
+        message: 'The reset token is not valid',
+      });
     }
 
     const passwordHash = await this.hasher.hash(newPassword);
@@ -944,7 +975,10 @@ export class IdentityService {
       citizen?.phone != null && normalisePhone(citizen.phone) === normalisePhone(input.phone);
 
     if (!citizen || !phoneMatches) {
-      throw new UnauthorizedError('الرقم المرجعي أو رقم الهاتف غير صحيح');
+      throw new UnauthorizedError({
+        code: 'CITIZEN_SIGN_IN_INVALID',
+        message: 'Citizen sign-in refused',
+      });
     }
 
     citizen.assertMayStartSession();
@@ -984,7 +1018,10 @@ export class IdentityService {
     const citizen = await this.users.findCitizenByReference(input.referenceNumber);
 
     if (!citizen) {
-      throw new UnauthorizedError('الرقم المرجعي غير صحيح');
+      throw new UnauthorizedError({
+        code: 'REFERENCE_NUMBER_INCORRECT',
+        message: 'Citizen sign-in refused',
+      });
     }
 
     citizen.assertMayStartSession();
@@ -1042,7 +1079,10 @@ export class IdentityService {
     const candidates = await this.users.findCitizensByPhone(phone);
 
     if (candidates.length === 0) {
-      throw new NotFoundError('لا يوجد طلب مسجّل بهذا الرقم');
+      throw new NotFoundError({
+        code: 'REGISTRATION_NUMBER_NOT_FOUND',
+        message: 'No registration under this number',
+      });
     }
 
     if (candidates.length > 1 && !input.citizenId) {
@@ -1054,12 +1094,18 @@ export class IdentityService {
     // The chosen id must be one the OTP actually covered — otherwise a valid
     // code for one phone would authenticate any citizen whose id was guessed.
     if (!candidates.some((candidate) => candidate.id === chosenId)) {
-      throw new UnauthorizedError('اختيار غير صالح');
+      throw new UnauthorizedError({
+        code: 'CITIZEN_CHOICE_INVALID',
+        message: 'The chosen citizen is not among the matches',
+      });
     }
 
     const user = await this.users.findById(chosenId);
     if (!user) {
-      throw new NotFoundError('Citizen', chosenId);
+      throw new NotFoundError({
+        code: 'CITIZEN_NOT_FOUND',
+        message: 'Citizen was not found',
+      });
     }
 
     user.assertMayStartSession();

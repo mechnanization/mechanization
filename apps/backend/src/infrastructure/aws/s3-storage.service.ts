@@ -82,7 +82,10 @@ export class S3StorageService implements ImageStorageService {
       // replayed write — both worth reading in the log, neither worth
       // explaining to the person at the counter.
       this.logger.error(`Upload failed for ${path}: ${errorMessage(error)}`);
-      throw new ValidationError('تعذّر رفع الملف — يرجى المحاولة مرة أخرى');
+      throw new ValidationError({
+        code: 'FILE_UPLOAD_FAILED',
+        message: 'The upload to S3 failed',
+      });
     }
 
     return { storagePath: path };
@@ -113,7 +116,10 @@ export class S3StorageService implements ImageStorageService {
       });
     } catch (error) {
       this.logger.error(`Signing failed for ${storagePath}: ${errorMessage(error)}`);
-      throw new ValidationError('تعذّر فتح الملف');
+      throw new ValidationError({
+        code: 'FILE_OPEN_FAILED',
+        message: 'The signed URL could not be created',
+      });
     }
   }
 

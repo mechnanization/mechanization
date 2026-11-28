@@ -37,7 +37,10 @@ export function parseDate(value: string | undefined): Date | undefined {
 export function requireDate(value: string | undefined): Date | undefined {
   if (!value) return undefined;
   const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) throw new ValidationError('تاريخ غير صالح');
+  if (Number.isNaN(parsed.getTime())) throw new ValidationError({
+    code: 'INVALID_QUERY_DATE',
+    message: 'Invalid date',
+  });
   return parsed;
 }
 

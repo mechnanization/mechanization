@@ -7,6 +7,7 @@ import {
   type UnitStatusFacts,
 } from '@mechanization/shared-schemas';
 import type { PrismaClient as TenantPrismaClient } from '../../../generated/tenant-client';
+import { StaffActor } from '../../common/actor';
 
 /**
  * «حالة الوحدة», kept in step with who is recorded in the flat — the database
@@ -233,7 +234,7 @@ export async function unitsUnderReview(
 async function resolveReviews(
   db: UnitStatusDb,
   open: ReadonlyArray<{ id: string; status: string }>,
-  input: { unitId: string; actor: { id: string; role: string }; via: string },
+  input: { unitId: string; actor: StaffActor; via: string },
   reason: string,
 ): Promise<{ count: number; events: UnitStatusEvent[] }> {
   const events: UnitStatusEvent[] = [];
@@ -287,7 +288,7 @@ export async function settleUnit(
   input: {
     unitId: string;
     tenantSlug: string | undefined;
-    actor: { id: string; role: string };
+    actor: StaffActor;
     /** Which action this settles after — goes in the audit row. */
     via: string;
   },

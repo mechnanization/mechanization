@@ -45,9 +45,10 @@ import { ParcelDuesService } from '../fees/parcel-dues.service';
 import { isUniqueViolation, isUniqueViolationOn } from '../../../infrastructure/prisma/prisma-errors';
 import { cancelRequestOfCancelledBill } from './cancelled-bill';
 import { settleRequestOfWrittenOffBill } from './written-off-bill';
+import { StaffActor } from '../../common/actor';
 
 /** Who is acting: a citizen through the portal, or a member of staff. */
-export type RequestActor = { kind: 'CITIZEN'; id: string } | { kind: 'STAFF'; id: string; role: string };
+export type RequestActor = { kind: 'CITIZEN'; id: string } | ({ kind: 'STAFF' } & StaffActor);
 
 /** What a citizen-scoped call is limited to: their own requests. */
 interface Scope {
@@ -201,7 +202,7 @@ export class CitizenRequestsService {
   async updateType(
     type: RequestType,
     input: UpdateRequestTypeSettingInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<RequestTypeSettingView[]> {
     await runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
@@ -214,7 +215,7 @@ export class CitizenRequestsService {
       await this.audit.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: 'REQUEST_TYPE_UPDATED',
         entityType: 'RequestTypeSetting',
         entityId: null,
@@ -776,7 +777,7 @@ export class CitizenRequestsService {
    * is judged here, against what is owed on the property by its bills, and the
    * answer is kept on the request for the paper's «حتى تاريخ».
    */
-  async approve(id: string, statement: string, actor: { id: string; role: string }): Promise<CitizenRequestView> {
+  async approve(id: string, statement: string, actor: StaffActor): Promise<CitizenRequestView> {
     await runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
       const locked = await this.lock(tx, id);
@@ -822,7 +823,7 @@ export class CitizenRequestsService {
       await this.audit.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: 'REQUEST_READY',
         entityType: 'CitizenRequest',
         entityId: id,
@@ -838,7 +839,7 @@ export class CitizenRequestsService {
   }
 
   /** «رفض الطلب», with the reason the citizen reads. A paid fee stays recorded (D5). */
-  async reject(id: string, reason: string, actor: { id: string; role: string }): Promise<CitizenRequestView> {
+  async reject(id: string, reason: string, actor: StaffActor): Promise<CitizenRequestView> {
     await runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
       const locked = await this.lock(tx, id);
@@ -856,7 +857,7 @@ export class CitizenRequestsService {
       await this.audit.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: 'REQUEST_REJECTED',
         entityType: 'CitizenRequest',
         entityId: id,
@@ -869,7 +870,7 @@ export class CitizenRequestsService {
   }
 
   /** «تسليم المعاملة», against the original identity card at the counter. */
-  async complete(id: string, actor: { id: string; role: string }): Promise<CitizenRequestView> {
+  async complete(id: string, actor: StaffActor): Promise<CitizenRequestView> {
     await runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
       const locked = await this.lock(tx, id);
@@ -881,7 +882,7 @@ export class CitizenRequestsService {
       await this.audit.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: 'REQUEST_COMPLETED',
         entityType: 'CitizenRequest',
         entityId: id,
@@ -1003,7 +1004,7 @@ export class CitizenRequestsService {
   }
 
   /** A five-minute link to one paper, for staff; every use is an audit row (D6). */
-  async attachmentUrl(id: string, attachmentId: string, actor: { id: string; role: string }): Promise<RequestAttachmentUrl> {
+  async attachmentUrl(id: string, attachmentId: string, actor: StaffActor): Promise<RequestAttachmentUrl> {
     const attachment = await this.db.citizenRequestAttachment.findFirst({
       where: { id: attachmentId, requestId: id },
       select: { id: true, type: true, storagePath: true, request: { select: { requestNumber: true } } },
@@ -1016,7 +1017,7 @@ export class CitizenRequestsService {
       this.audit.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: 'REQUEST_ATTACHMENT_VIEWED',
         entityType: 'CitizenRequest',
         entityId: id,
@@ -1073,7 +1074,7 @@ export class CitizenRequestsService {
 
   private actorEntry(actor: RequestActor): Pick<AuditEntryInput, 'actorId' | 'actorType' | 'actorRole'> {
     return actor.kind === 'STAFF'
-      ? { actorId: actor.id, actorType: 'STAFF', actorRole: actor.role as never }
+      ? { actorId: actor.id, actorType: 'STAFF', actorRole: actor.role }
       : { actorId: actor.id, actorType: 'CITIZEN' };
   }
 

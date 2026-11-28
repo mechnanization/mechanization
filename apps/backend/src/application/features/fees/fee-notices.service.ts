@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { citizenDisplayName, feeNoticeScopeSchema } from '@mechanization/shared-schemas';
+import { citizenDisplayName, feeNoticeScopeSchema, occupancyRoleSchema } from '@mechanization/shared-schemas';
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '../../../generated/tenant-client';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -44,6 +44,7 @@ import {
   periodYearOf,
   scopeOf,
 } from './fees.service';
+import { StaffActor } from '../../common/actor';
 
 /**
  * The scope a notice is issued with, as stored in `fee_notices.scope`: only
@@ -460,7 +461,7 @@ export class FeeNoticesService {
    * happened before re-running it and double-charging the municipality's
    * residents.
    */
-  async issue(request: CreateFeeNotice, actor: { id: string; role: string }) {
+  async issue(request: CreateFeeNotice, actor: StaffActor) {
     /*
       A category belongs to a notice aimed at one (decision D13, 2026-10-26).
       The route's schema refuses it on any other target; a caller inside the
@@ -855,7 +856,12 @@ export class FeeNoticesService {
         data: rows
           .filter((row) => inserted.has(row.id))
           .flatMap(({ id, bill }) =>
-            bill.debtors.map((debtor) => ({ paymentId: id, citizenId: debtor.citizenId, role: debtor.role as never })),
+            bill.debtors.map((debtor) => ({
+              paymentId: id,
+              citizenId: debtor.citizenId,
+              // The census row's capacity, carried as a string through the domain's BillableUnit: parsed, not cast.
+              role: occupancyRoleSchema.parse(debtor.role),
+            })),
           ),
       });
     }
@@ -1084,7 +1090,7 @@ export class FeeNoticesService {
    * periods the manager names. Taken under the notice's row lock, as the
    * recurring run and the cancel take it, and written to the trail.
    */
-  async setNoticeActive(id: string, isActive: boolean, actor: { id: string; role: string }) {
+  async setNoticeActive(id: string, isActive: boolean, actor: StaffActor) {
     return runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
       const [notice] = await tx.$queryRaw<Array<{ title: string; isActive: boolean }>>`
@@ -1100,7 +1106,7 @@ export class FeeNoticesService {
       await this.auditTrail.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: isActive ? 'FEE_NOTICE_RESUMED' : 'FEE_NOTICE_STOPPED',
         entityType: 'FeeNotice',
         entityId: id,
@@ -1206,7 +1212,7 @@ export class FeeNoticesService {
   async cancelNoticeBatch(
     noticeId: string,
     input: { reason: string; periodKeys: readonly string[] },
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ) {
     const why = input.reason.trim();
     const periodKeys = [...new Set(input.periodKeys)];
@@ -1254,7 +1260,7 @@ export class FeeNoticesService {
             return {
               actorId: actor.id,
               actorType: 'STAFF' as const,
-              actorRole: actor.role as never,
+              actorRole: actor.role,
               action: 'FEE_BILL_CANCELLED',
               entityType: 'Payment',
               entityId: bill.id,
@@ -1291,7 +1297,7 @@ export class FeeNoticesService {
       await this.auditTrail.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: 'FEE_NOTICE_CANCELLED',
         entityType: 'FeeNotice',
         entityId: noticeId,

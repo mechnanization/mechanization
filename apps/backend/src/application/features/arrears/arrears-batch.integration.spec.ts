@@ -1,3 +1,4 @@
+import type { StaffRole } from '../../../domain/entities/user.entity';
 import { randomUUID } from 'node:crypto';
 import { Client } from 'pg';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -105,7 +106,7 @@ describeIfDb('old debts: submit, approve, link', () => {
       id, kind: 'CITIZEN' as const, tenantSlug: 'arb', firstName, middleName: 'محمد', lastName: 'حداد', isActive,
       referenceNumber: `REF-${id.slice(0, 8)}`, phone: '+96170123456',
     });
-    const staff = (id: string, role: string) => ({ id, kind: 'STAFF' as const, tenantSlug: 'arb', email: `${id}@arb.gov.lb`, firstName: role, lastName: 'البلدية', role: role as never });
+    const staff = (id: string, role: StaffRole) => ({ id, kind: 'STAFF' as const, tenantSlug: 'arb', email: `${id}@arb.gov.lb`, firstName: role, lastName: 'البلدية', role });
     await db.user.createMany({
       data: [
         staff(ids.accountant, 'ACCOUNTANT'),

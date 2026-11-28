@@ -18,6 +18,7 @@ import {
   municipalPeriod,
   type RecordInspectorPayoutInput,
 } from '@mechanization/shared-schemas';
+import { StaffActor } from '../../common/actor';
 
 /**
  * «صرف عمولة» against a real Postgres (docs/finance.md §5.6, migration 0086).
@@ -56,8 +57,8 @@ describeIfDb('StaffService.recordInspectorPayout', () => {
   let commissionsId: string;
   let miscId: string;
 
-  const MANAGER = { id: '', role: 'SUPER_ADMIN' };
-  const ACCOUNTANT = { id: '', role: 'ACCOUNTANT' };
+  const MANAGER = { id: '', role: 'SUPER_ADMIN' as const };
+  const ACCOUNTANT = { id: '', role: 'ACCOUNTANT' as const };
 
   const scoped = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'spec', tenantSlug: 'payouts', schemaName: SCHEMA, prisma: db }, work);
@@ -69,7 +70,7 @@ describeIfDb('StaffService.recordInspectorPayout', () => {
 
   const pay = (
     payload: Partial<RecordInspectorPayoutInput> & { amount: number },
-    actor: { id: string; role: string } = MANAGER,
+    actor: StaffActor = MANAGER,
     to?: string,
   ) =>
     scoped(() =>
@@ -96,7 +97,7 @@ describeIfDb('StaffService.recordInspectorPayout', () => {
     const citizenId = randomUUID();
     await db.user.createMany({
       data: [
-        { id, kind: 'STAFF', tenantSlug: 'payouts', email: `e-${id}@t.gov.lb`, firstName, lastName: 'الميداني', role: 'FIELD_INSPECTOR' },
+        { id, kind: 'STAFF', tenantSlug: 'payouts', email: `e-${id}@t.gov.lb`, firstName, lastName: 'الميداني', role: 'FIELD_INSPECTOR' as const },
         { id: citizenId, kind: 'CITIZEN', tenantSlug: 'payouts', firstName: 'مالك', lastName: 'الشقة' },
       ],
     });
@@ -158,7 +159,7 @@ describeIfDb('StaffService.recordInspectorPayout', () => {
           email: `a-${ACCOUNTANT.id}@t.gov.lb`,
           firstName: 'رئيس',
           lastName: 'المحاسبة',
-          role: 'ACCOUNTANT',
+          role: 'ACCOUNTANT' as const,
         },
         {
           id: MANAGER.id,
@@ -167,7 +168,7 @@ describeIfDb('StaffService.recordInspectorPayout', () => {
           email: `m-${MANAGER.id}@t.gov.lb`,
           firstName: 'المدير',
           lastName: 'العام',
-          role: 'SUPER_ADMIN',
+          role: 'SUPER_ADMIN' as const,
         },
         {
           id: inspectorId,
@@ -176,7 +177,7 @@ describeIfDb('StaffService.recordInspectorPayout', () => {
           email: `i-${inspectorId}@t.gov.lb`,
           firstName: 'حسن',
           lastName: 'الميداني',
-          role: 'FIELD_INSPECTOR',
+          role: 'FIELD_INSPECTOR' as const,
         },
       ],
     });
@@ -628,7 +629,7 @@ describeIfDb('StaffService.recordInspectorPayout', () => {
 
       // Above what is owed: refused in words that carry no figure, and nothing is written.
       const over = pay({ amount: owed + 1, accountId: safeUsdId, clientRequestId: randomUUID() }, ACCOUNTANT);
-      await expect(over).rejects.toThrow('المبلغ أكبر من الرصيد المستحق.');
+      await expect(over).rejects.toThrow(expect.objectContaining({ code: 'INSPECTOR_PAYOUT_OVER_OWED', params: {} }));
       await expect(over).rejects.not.toThrow(owed.toFixed(2));
 
       // A wallet that does not exist answers alike whether the amount is within what is owed or not.
@@ -640,7 +641,7 @@ describeIfDb('StaffService.recordInspectorPayout', () => {
       expect(await counts()).toEqual(before);
 
       // The manager, who reads the profile, is told the figure.
-      await expect(pay({ amount: owed + 1, accountId: safeUsdId })).rejects.toThrow(`(${owed.toFixed(2)}$)`);
+      await expect(pay({ amount: owed + 1, accountId: safeUsdId })).rejects.toThrow(expect.objectContaining({ code: 'INSPECTOR_PAYOUT_EXCEEDS_OWED', params: { owed: owed.toFixed(2) } }));
     });
 
     it('keeps «تعويضات المسح والجباية» to «صرف عمولة»: the form, a request and an order refuse it', async () => {
@@ -693,7 +694,7 @@ describeIfDb('StaffService.recordInspectorPayout', () => {
       await expect(
         pay({ amount: 1, accountId: safeUsdId, paidAt: new Date().toISOString() }),
       ).rejects.toMatchObject({ code: 'INSPECTOR_PAYOUT_DATE_NOT_ALLOWED' });
-      await expect(pay({ amount: owed + 1, accountId: safeUsdId })).rejects.toThrow('أكبر من الرصيد المستحق');
+      await expect(pay({ amount: owed + 1, accountId: safeUsdId })).rejects.toThrow(expect.objectContaining({ code: 'INSPECTOR_PAYOUT_EXCEEDS_OWED' }));
       await expect(pay({ amount: 1, accountId: randomUUID() })).rejects.toMatchObject({
         code: 'TREASURY_ACCOUNT_NOT_FOUND',
       });
@@ -895,8 +896,8 @@ describeIfDb('StaffService.recordInspectorPayout', () => {
       const recorder2 = randomUUID();
       await db.user.createMany({
         data: [
-          { id: inspector2, kind: 'STAFF', tenantSlug: 'payouts', email: `i2-${inspector2}@t.gov.lb`, firstName: 'سليم', lastName: 'الميداني', role: 'FIELD_INSPECTOR' },
-          { id: recorder2, kind: 'STAFF', tenantSlug: 'payouts', email: `r2-${recorder2}@t.gov.lb`, firstName: 'هالة', lastName: 'الإدارية', role: 'SUPER_ADMIN' },
+          { id: inspector2, kind: 'STAFF', tenantSlug: 'payouts', email: `i2-${inspector2}@t.gov.lb`, firstName: 'سليم', lastName: 'الميداني', role: 'FIELD_INSPECTOR' as const },
+          { id: recorder2, kind: 'STAFF', tenantSlug: 'payouts', email: `r2-${recorder2}@t.gov.lb`, firstName: 'هالة', lastName: 'الإدارية', role: 'SUPER_ADMIN' as const },
         ],
       });
       const payout = await db.inspectorPayout.create({

@@ -1,6 +1,7 @@
 import { LandlordLinkService, landlordNameMatches, readFootprint } from './landlord-link.service';
 import { ConflictError, ValidationError } from '../../../domain/errors/domain-error';
 import { LandlordLinkQueueService } from './landlord-link-queue.service';
+import type { StaffRole } from '../../../domain/entities/user.entity';
 
 /**
  * Identifying the owner a مستأجر named — and, much more importantly, refusing
@@ -30,7 +31,7 @@ const BUILDING = 'building-1';
  */
 const LANDLORD_PHONE = '+9613123456';
 
-const actor = { id: 'staff-1', role: 'SUPER_ADMIN' };
+const actor = { id: 'staff-1', role: 'SUPER_ADMIN' as const };
 
 interface HarnessOptions {
   entry?: Record<string, unknown> | null;
@@ -684,7 +685,8 @@ describe('applyAgreements — an answer given before the card existed', () => {
     expect(result).toEqual({ remaining: filed, linked: 0 });
   });
 
-  it.each(['COLLECTOR', 'ACCOUNTANT', 'VIEWER', ''])(
+  // '' stands for a token whose role is missing, which the type cannot hold: the one cast is the point of the case.
+  it.each(['COLLECTOR', 'ACCOUNTANT', 'VIEWER', ''] as StaffRole[])(
     'leaves every answer open on a save by %s, a role that does not answer claims (S17)',
     async (role) => {
       const { service } = harness();
@@ -702,7 +704,7 @@ describe('applyAgreements — an answer given before the card existed', () => {
     },
   );
 
-  it.each(['SUPER_ADMIN', 'FIELD_INSPECTOR', 'ADMINISTRATIVE_OFFICER'])(
+  it.each<StaffRole>(['SUPER_ADMIN', 'FIELD_INSPECTOR', 'ADMINISTRATIVE_OFFICER'])(
     'applies the answer on a save by %s, who may answer a claim',
     async (role) => {
       const { service } = harness();

@@ -173,9 +173,11 @@ export class RegistrationService {
 
     for (const property of properties) {
       if (!tenant.allowsPropertyType(property.propertyType as PropertyType)) {
-        throw new ConflictError(
-          `هذه البلدية لا تستقبل حالياً تسجيل هذا النوع من العقارات (${property.propertyType})`,
-        );
+        throw new ConflictError({
+          code: 'PROPERTY_TYPE_NOT_ACCEPTED',
+          message: `Property type ${property.propertyType} is not enabled`,
+          params: { propertyType: property.propertyType },
+        });
       }
     }
 

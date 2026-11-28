@@ -1,3 +1,4 @@
+import type { OccupancyRole } from '@mechanization/shared-schemas';
 import { randomUUID } from 'node:crypto';
 import { Client } from 'pg';
 import type { ArrearsTemplateCells } from '@mechanization/shared-schemas';
@@ -72,7 +73,7 @@ describeIfDb('old debts: export, dry run, draft', () => {
     });
     await db.user.createMany({
       data: [
-        { id: accountantId, kind: 'STAFF', tenantSlug: 'arr', email: `${accountantId}@arr.gov.lb`, firstName: 'محاسب', lastName: 'البلدية', role: 'ACCOUNTANT' as never },
+        { id: accountantId, kind: 'STAFF', tenantSlug: 'arr', email: `${accountantId}@arr.gov.lb`, firstName: 'محاسب', lastName: 'البلدية', role: 'ACCOUNTANT' },
         citizen(people.amal, 'أمل'),
         citizen(people.bassem, 'باسم'),
         citizen(people.dalal, 'دلال', false),
@@ -97,8 +98,8 @@ describeIfDb('old debts: export, dry run, draft', () => {
     const u500b = await unit(b500.id, '0002');
     const u501a = await unit(b501.id, '0001');
     const u600 = await unit(outsideBuildingId, '0001');
-    const hold = (citizenId: string, unitId: string, role = 'OWNER') =>
-      db.unitOccupancy.create({ data: { citizenId, unitId, role: role as never } });
+    const hold = (citizenId: string, unitId: string, role: OccupancyRole = 'OWNER') =>
+      db.unitOccupancy.create({ data: { citizenId, unitId, role } });
     await hold(people.amal, u500a.id);
     await hold(people.bassem, u500b.id);
     await hold(people.bassem, u501a.id);

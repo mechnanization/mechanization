@@ -14,6 +14,7 @@ import { PaymentLedgerService } from './payment-ledger.service';
 import { AuditService } from '../audit/audit.service';
 import { billWriteOffRefusal, writeOffDecisionInFuture } from './bill-write-off';
 import { FeesService } from './fees.service';
+import { StaffActor } from '../../common/actor';
 
 /**
  * Why a bill cannot be cancelled now, or null when it can — «إلغاء الفاتورة»'s
@@ -79,7 +80,7 @@ export class BillLifecycleService {
   async reverseTransaction(input: {
     transactionId: string;
     note?: string;
-    actor: { id: string; role: string };
+    actor: StaffActor;
   }) {
     const reversed = await this.ledger.reverse({
       transactionId: input.transactionId,
@@ -92,7 +93,7 @@ export class BillLifecycleService {
       audit: (movement) => ({
         actorId: input.actor.id,
         actorType: 'STAFF',
-        actorRole: input.actor.role as never,
+        actorRole: input.actor.role,
         action: 'PAYMENT_REVERSED',
         entityType: 'PaymentTransaction',
         entityId: input.transactionId,
@@ -130,7 +131,7 @@ export class BillLifecycleService {
    * deleted: it stays on the citizen's record, CANCELLED, with who, when and why
    * (0091), and a Tier 1 row in the same transaction.
    */
-  async cancelBill(paymentId: string, reason: string, actor: { id: string; role: string }) {
+  async cancelBill(paymentId: string, reason: string, actor: StaffActor) {
     const { citizenId, cancelledRequest } = await runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
       const [bill] = await this.ledger.lockInvoices(tx, [paymentId]);
@@ -174,7 +175,7 @@ export class BillLifecycleService {
       await this.auditTrail.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: 'FEE_BILL_CANCELLED',
         entityType: 'Payment',
         entityId: paymentId,
@@ -228,7 +229,7 @@ export class BillLifecycleService {
    * review in the same transaction (`settleRequestOfWrittenOffBill`). A Tier 1 row
    * in the same transaction.
    */
-  async writeOffBill(paymentId: string, input: WriteOffBillInput, actor: { id: string; role: string }) {
+  async writeOffBill(paymentId: string, input: WriteOffBillInput, actor: StaffActor) {
     const today = municipalToday();
     if (writeOffDecisionInFuture(input.decisionDate, today)) {
       throw new ValidationError({
@@ -283,7 +284,7 @@ export class BillLifecycleService {
       await this.auditTrail.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: 'FEE_BILL_WRITTEN_OFF',
         entityType: 'Payment',
         entityId: paymentId,

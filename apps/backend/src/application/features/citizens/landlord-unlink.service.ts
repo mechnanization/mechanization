@@ -5,6 +5,7 @@ import { TenantContextService } from '../../../infrastructure/context/tenant-con
 import { ConflictError, NotFoundError } from '../../../domain/errors/domain-error';
 import { claimsFlat } from '../../../domain/entities/census-claim';
 import { AnnouncedChange, LandlordLinkService, PendingEvent, RevertReport, SaleRelease, UnlinkPreview, UnlinkResult, emptyReport, fullName, readFootprint } from './landlord-link.service';
+import { StaffActor } from '../../common/actor';
 
 function emptyUnlink(): UnlinkResult {
   return { unlinked: false, ...emptyReport(), reviewUnits: [] };
@@ -118,7 +119,7 @@ export class LandlordUnlinkService {
    */
   async unlink(input: {
     propertyEntryId: string;
-    actor: { id: string; role: string };
+    actor: StaffActor;
   }): Promise<UnlinkResult> {
     const entry = await this.db.propertyEntry.findUnique({
       where: { id: input.propertyEntryId },

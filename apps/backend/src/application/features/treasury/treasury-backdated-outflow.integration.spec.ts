@@ -66,7 +66,7 @@ describeIfDb('An outflow dated on an earlier day', () => {
   let whishLbp: string;
   let bank: string;
 
-  const manager = () => ({ id: managerId, role: 'SUPER_ADMIN' });
+  const manager = () => ({ id: managerId, role: 'SUPER_ADMIN' as const });
 
   const scoped = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'spec', tenantSlug: 'backdated', schemaName: SCHEMA, prisma: db }, work);
@@ -167,7 +167,7 @@ describeIfDb('An outflow dated on an earlier day', () => {
       data: [
         {
           id: managerId, kind: 'STAFF', tenantSlug: 'backdated', email: `m-${managerId}@t.gov.lb`,
-          firstName: 'المدير', lastName: 'العام', role: 'SUPER_ADMIN',
+          firstName: 'المدير', lastName: 'العام', role: 'SUPER_ADMIN' as const,
         },
         { id: citizenId, kind: 'CITIZEN', tenantSlug: 'backdated', firstName: 'سامي', lastName: 'عيسى' },
       ],

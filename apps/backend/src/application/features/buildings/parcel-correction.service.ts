@@ -11,6 +11,7 @@ import { buildingSuffixLockKey } from './suffix-lock-key';
 import { AuditService, type BuildingChange, type CitizenChange } from '../audit/audit.service';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { BuildingsService, sharedParcelsExcluding } from './buildings.service';
+import { StaffActor } from '../../common/actor';
 
 /**
  * «تصحيح رقم العقار» — a building was filed under the wrong parcel.
@@ -166,7 +167,7 @@ export class ParcelCorrectionService {
   async correct(
     id: string,
     input: CorrectBuildingParcelInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<ParcelCorrectionResult> {
     const before = await this.loadBuilding(id);
     await this.buildings.assertFresh(before, input.expectedUpdatedAt, actor);

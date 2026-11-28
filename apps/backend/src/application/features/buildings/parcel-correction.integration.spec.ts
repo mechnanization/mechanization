@@ -43,7 +43,7 @@ describeIfDb('ParcelCorrectionService', () => {
   let events: EventEmitter2;
   let officerId: string;
 
-  const actor = () => ({ id: officerId, role: 'FIELD_INSPECTOR' });
+  const actor = () => ({ id: officerId, role: 'FIELD_INSPECTOR' as const });
   const within = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'tenant-parcel', tenantSlug: 'parcel', schemaName: SCHEMA, prisma: db }, work);
 
@@ -75,7 +75,7 @@ describeIfDb('ParcelCorrectionService', () => {
         email: `officer-${officerId}@parcel.gov.lb`,
         firstName: 'موظف',
         lastName: 'البلدية',
-        role: 'FIELD_INSPECTOR',
+        role: 'FIELD_INSPECTOR' as const,
       },
     });
 
@@ -330,7 +330,7 @@ describeIfDb('ParcelCorrectionService', () => {
     await expect(correct(wrong.id, 'PC-A7')).rejects.toMatchObject({ code: 'PARCEL_NUMBER_UNCHANGED' });
     await expect(
       correct(wrong.id, 'PC-F', { expectedUpdatedAt: new Date(Date.now() - 86_400_000).toISOString() }),
-    ).rejects.toThrow(/بعد أن فتحتَه/);
+    ).rejects.toThrow(expect.objectContaining({ code: 'BUILDING_EDITED_SINCE_OPENED' }));
 
     // PC-F already carries the building an earlier test corrected onto it: answered here.
     const result = await correct(wrong.id, 'PC-F', {

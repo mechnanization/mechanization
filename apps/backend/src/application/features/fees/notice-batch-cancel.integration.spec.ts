@@ -39,7 +39,7 @@ describeIfDb('cancelling a notice’s bills in one step', () => {
   let feeNotices: FeeNoticesService;
   let recurringBilling: RecurringBillingService;
   const managerId = randomUUID();
-  const manager = { id: managerId, role: 'SUPER_ADMIN' };
+  const manager = { id: managerId, role: 'SUPER_ADMIN' as const };
   // Paid in full, part-paid, a Whish claim under review, untouched.
   const [paid, partPaid, claimed, untouched] = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
 
@@ -75,7 +75,7 @@ describeIfDb('cancelling a notice’s bills in one step', () => {
         email: `manager-${managerId}@nbc.gov.lb`,
         firstName: 'رئيس',
         lastName: 'البلدية',
-        role: 'SUPER_ADMIN' as never,
+        role: 'SUPER_ADMIN' as const as never,
       },
     });
     await db.systemSettings.upsert({

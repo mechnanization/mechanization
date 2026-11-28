@@ -8,10 +8,11 @@ import {
   feeBearerClass,
   OCCUPANCY_LIFTS_SURVEY_STATUS,
 } from '@mechanization/shared-schemas';
-import type { OccupancyRole, OccupancyType } from '@mechanization/shared-schemas';
+import type { OccupancyRole, OccupancyType, SurveyStatus, UnitStatus } from '@mechanization/shared-schemas';
 import { CasesService } from '../cases/cases.service';
 import { activeVacancy, closeActiveVacancy, openVacancy } from './unit-vacancy';
 import { settleUnit } from './unit-status';
+import { StaffActor } from '../../common/actor';
 
 /**
  * The write path from a citizen's registration back into the census (P5-T1).
@@ -86,7 +87,7 @@ export class CensusSyncService {
   async syncRegistration(input: {
     registrationId: string;
     citizenId: string;
-    actor: { id: string; role: string };
+    actor: StaffActor;
     /**
      * Which of this citizen's spells a flat no longer claimed may be closed.
      *
@@ -179,7 +180,7 @@ export class CensusSyncService {
         propertyId: string;
         buildingId: string;
         /** حالة الوحدة this card states about the flat, or null where it states none. */
-        declaredStatus: string | null;
+        declaredStatus: UnitStatus | null;
         /** Whether this save changed that statement (or this is a new filing). */
         statementChanged: boolean;
       }
@@ -392,10 +393,10 @@ export class CensusSyncService {
      * حالة الوحدة the card states, or null where it states none — the owner's
      * own answer, carried onto the unit by `declareUnitStatus` below.
      */
-    declaredStatus: string | null;
+    declaredStatus: UnitStatus | null;
     /** Whether this save changed that statement — see `declareUnitStatus`. */
     statementChanged: boolean;
-    actor: { id: string; role: string };
+    actor: StaffActor;
   }): Promise<{
     created: boolean;
     surveyed: number;
@@ -531,10 +532,10 @@ export class CensusSyncService {
           where: { id: input.unitId },
           data: {
             ...(closed.restore.unitStatus !== undefined
-              ? { unitStatus: closed.restore.unitStatus as never }
+              ? { unitStatus: closed.restore.unitStatus }
               : {}),
             ...(closed.restore.surveyStatus !== undefined
-              ? { surveyStatus: closed.restore.surveyStatus as never }
+              ? { surveyStatus: closed.restore.surveyStatus }
               : {}),
           },
         });
@@ -560,14 +561,14 @@ export class CensusSyncService {
     if (current) {
       await this.db.unitOccupancy.update({
         where: { id: current.id },
-        data: { role: input.role as never, registrationId: input.registrationId },
+        data: { role: input.role, registrationId: input.registrationId },
       });
     } else {
       await this.db.unitOccupancy.create({
         data: {
           unitId: input.unitId,
           citizenId: input.citizenId,
-          role: input.role as never,
+          role: input.role,
           registrationId: input.registrationId,
         },
       });
@@ -586,7 +587,7 @@ export class CensusSyncService {
       number should overwrite.
     */
     const lifted = await this.db.unit.updateMany({
-      where: { id: input.unitId, surveyStatus: { in: OCCUPANCY_LIFTS_SURVEY_STATUS as never } },
+      where: { id: input.unitId, surveyStatus: { in: [...OCCUPANCY_LIFTS_SURVEY_STATUS] } },
       data: { surveyStatus: 'COMPLETE' },
     });
 
@@ -619,10 +620,10 @@ export class CensusSyncService {
       withdraws their own «شاغرة» leaves the survey at «بيانات ناقصة» from the
       vacancy's undo, and they are recorded here, which answers it.
     */
-    const afterLift = lifted.count > 0 ? { ...unit, surveyStatus: 'COMPLETE' } : unit;
+    const afterLift = lifted.count > 0 ? { ...unit, surveyStatus: 'COMPLETE' as const } : unit;
     await this.declareUnitStatus({ ...input, unit: afterLift });
     await this.db.unit.updateMany({
-      where: { id: input.unitId, surveyStatus: { in: OCCUPANCY_LIFTS_SURVEY_STATUS as never } },
+      where: { id: input.unitId, surveyStatus: { in: [...OCCUPANCY_LIFTS_SURVEY_STATUS] } },
       data: { surveyStatus: 'COMPLETE' },
     });
 
@@ -734,10 +735,10 @@ export class CensusSyncService {
     unitId: string;
     citizenId: string;
     role: OccupancyRole;
-    declaredStatus: string | null;
+    declaredStatus: UnitStatus | null;
     statementChanged: boolean;
-    unit: { buildingId: string; unitCode: string; unitStatus: string | null; surveyStatus: string };
-    actor: { id: string; role: string };
+    unit: { buildingId: string; unitCode: string; unitStatus: UnitStatus | null; surveyStatus: SurveyStatus };
+    actor: StaffActor;
   }): Promise<void> {
     const declared = input.declaredStatus;
     if (input.role !== 'OWNER') return;
@@ -795,8 +796,8 @@ export class CensusSyncService {
           await this.db.unit.update({
             where: { id: input.unitId },
             data: {
-              ...(closed.restore.unitStatus !== undefined ? { unitStatus: closed.restore.unitStatus as never } : {}),
-              ...(closed.restore.surveyStatus !== undefined ? { surveyStatus: closed.restore.surveyStatus as never } : {}),
+              ...(closed.restore.unitStatus !== undefined ? { unitStatus: closed.restore.unitStatus } : {}),
+              ...(closed.restore.surveyStatus !== undefined ? { surveyStatus: closed.restore.surveyStatus } : {}),
             },
           });
           this.events.emit('building.changed', {
@@ -843,7 +844,7 @@ export class CensusSyncService {
       where: {
         unitId: input.unitId,
         toDate: null,
-        role: { in: ['TENANT', 'FREE_OCCUPANT'] as never },
+        role: { in: ['TENANT', 'FREE_OCCUPANT'] },
       },
       select: { role: true },
     });
@@ -915,7 +916,7 @@ export class CensusSyncService {
 
     await this.db.unit.update({
       where: { id: input.unitId },
-      data: { unitStatus: declared as never },
+      data: { unitStatus: declared },
     });
 
     this.events.emit('building.changed', {
@@ -957,8 +958,8 @@ export class CensusSyncService {
       where: {
         unitId,
         endedAt: null,
-        unitStatus: 'SEASONAL' as never,
-        propertyEntry: { occupancyType: 'OWNER' as never, endedAt: null },
+        unitStatus: 'SEASONAL',
+        propertyEntry: { occupancyType: 'OWNER', endedAt: null },
       },
     });
     return declaredSeasonal > 0;
@@ -1011,7 +1012,7 @@ export class CensusSyncService {
     registrationId: string;
     citizenId: string;
     keep: readonly string[];
-    actor: { id: string; role: string };
+    actor: StaffActor;
     scope: 'CITIZEN' | 'REGISTRATION';
     endings?: ReadonlyMap<string, CardEnding>;
   }): Promise<number> {
@@ -1084,7 +1085,7 @@ export class CensusSyncService {
       if (end.reason === null) continue;
       const ended = await this.db.unitOccupancy.updateMany({
         where: { ...where, id: row.id },
-        data: { toDate: end.toDate, endReason: end.reason as never },
+        data: { toDate: end.toDate, endReason: end.reason },
       });
       endedCount += ended.count;
     }
@@ -1137,9 +1138,9 @@ export class CensusSyncService {
       where: {
         unitId,
         endedAt: null,
-        unitStatus: { in: ['VACANT', 'UNDER_CONSTRUCTION'] as never },
+        unitStatus: { in: ['VACANT', 'UNDER_CONSTRUCTION'] },
         propertyEntry: {
-          occupancyType: 'OWNER' as never,
+          occupancyType: 'OWNER',
           endedAt: null,
           registration: { citizenId: { not: citizenId } },
         },
@@ -1151,10 +1152,10 @@ export class CensusSyncService {
     const houses = await this.db.propertyEntry.count({
       where: {
         buildingId: unit.buildingId,
-        propertyType: 'HOUSE' as never,
-        occupancyType: 'OWNER' as never,
+        propertyType: 'HOUSE',
+        occupancyType: 'OWNER',
         endedAt: null,
-        unitStatus: { in: ['VACANT', 'UNDER_CONSTRUCTION'] as never },
+        unitStatus: { in: ['VACANT', 'UNDER_CONSTRUCTION'] },
         units: { none: { endedAt: null } },
         registration: { citizenId: { not: citizenId } },
       },
@@ -1166,8 +1167,8 @@ export class CensusSyncService {
   private async withdrawOwnerVacancy(input: {
     unitId: string;
     citizenId: string;
-    unit: { buildingId: string; unitCode: string; unitStatus: string | null; surveyStatus: string };
-    actor: { id: string; role: string };
+    unit: { buildingId: string; unitCode: string; unitStatus: UnitStatus | null; surveyStatus: SurveyStatus };
+    actor: StaffActor;
   }): Promise<void> {
     const standing = await activeVacancy(this.db, input.unitId);
     if (standing?.basis !== 'OWNER_STATEMENT') return;
@@ -1184,8 +1185,8 @@ export class CensusSyncService {
     await this.db.unit.update({
       where: { id: input.unitId },
       data: {
-        ...(closed.restore.unitStatus !== undefined ? { unitStatus: closed.restore.unitStatus as never } : {}),
-        ...(closed.restore.surveyStatus !== undefined ? { surveyStatus: closed.restore.surveyStatus as never } : {}),
+        ...(closed.restore.unitStatus !== undefined ? { unitStatus: closed.restore.unitStatus } : {}),
+        ...(closed.restore.surveyStatus !== undefined ? { surveyStatus: closed.restore.surveyStatus } : {}),
       },
     });
     this.events.emit('building.changed', {
@@ -1206,7 +1207,7 @@ export class CensusSyncService {
   }
 
   /** `settleUnit`, with its audit rows emitted. This service runs outside any transaction. */
-  private async settle(unitId: string, actor: { id: string; role: string }): Promise<void> {
+  private async settle(unitId: string, actor: StaffActor): Promise<void> {
     const outcome = await settleUnit(this.db, {
       unitId,
       tenantSlug: this.tenantContext.tenantSlug,
@@ -1219,7 +1220,7 @@ export class CensusSyncService {
   async syncQuietly(input: {
     registrationId: string;
     citizenId: string;
-    actor: { id: string; role: string };
+    actor: StaffActor;
     scope?: 'CITIZEN' | 'REGISTRATION';
     endings?: ReadonlyMap<string, CardEnding>;
     unchangedStatements?: ReadonlySet<string>;

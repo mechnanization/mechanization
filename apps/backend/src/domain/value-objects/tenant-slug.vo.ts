@@ -22,14 +22,17 @@ export class TenantSlug {
     const normalised = raw.trim().toLowerCase();
 
     if (normalised.length < TENANT_SLUG_MIN_LENGTH || normalised.length > TENANT_SLUG_MAX_LENGTH) {
-      throw new ValidationError(
-        `Municipality slug must be ${TENANT_SLUG_MIN_LENGTH}–${TENANT_SLUG_MAX_LENGTH} characters`,
-      );
+      throw new ValidationError({
+        code: 'TENANT_SLUG_LENGTH',
+        message: `Municipality slug must be ${TENANT_SLUG_MIN_LENGTH}–${TENANT_SLUG_MAX_LENGTH} characters`,
+        params: { min: TENANT_SLUG_MIN_LENGTH, max: TENANT_SLUG_MAX_LENGTH },
+      });
     }
     if (!TENANT_SLUG_PATTERN.test(normalised)) {
-      throw new ValidationError(
-        'Municipality slug may contain only lowercase letters, digits and single hyphens',
-      );
+      throw new ValidationError({
+        code: 'TENANT_SLUG_CHARACTERS',
+        message: 'Municipality slug may contain only lowercase letters, digits and single hyphens',
+      });
     }
 
     return new TenantSlug(normalised);

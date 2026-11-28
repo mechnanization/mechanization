@@ -1,3 +1,5 @@
+import type { BuildingLifecycle, StructureType, SurveyStatus, UnitStatus, UnitType } from '@mechanization/shared-schemas';
+
 /**
  * The shapes the census speaks in — structures, the units inside them, who
  * occupies them, and what condition they are in.
@@ -347,12 +349,12 @@ export interface BuildingListFilter {
    * list before it reaches the database.
    */
   zoneId?: string;
-  structureType?: string;
+  structureType?: StructureType;
   /** «نوع المبنى» (0106). */
   buildingTypeId?: string;
   /** Permitted / going up / standing / abandoned / gone. See `BUILDING_LIFECYCLE`. */
-  lifecycleStatus?: string;
-  surveyStatus?: string;
+  lifecycleStatus?: BuildingLifecycle;
+  surveyStatus?: SurveyStatus;
   /** False selects the structures with no entrance recorded — see the schema. */
   hasEntrance?: boolean;
   damageLevel?: string;
@@ -431,7 +433,7 @@ export interface CreateBuildingRow {
   code: string;
   name: string | null;
   postedNumber: string | null;
-  structureType: string;
+  structureType: StructureType;
   latitude: number | null;
   longitude: number | null;
   floorsCount: number;
@@ -444,12 +446,12 @@ export interface CreateUnitRow {
   floor: number;
   sequence: number;
   unitCode: string;
-  unitType: string;
+  unitType: UnitType;
   postedNumber?: string | null;
   side?: string | null;
   unitArea?: number | null;
-  unitStatus?: string | null;
-  surveyStatus?: string;
+  unitStatus?: UnitStatus | null;
+  surveyStatus?: SurveyStatus;
   notes?: string | null;
 }
 

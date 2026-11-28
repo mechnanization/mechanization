@@ -1,10 +1,11 @@
+import type { StructureType } from '@mechanization/shared-schemas';
 import type { PrismaClient as TenantPrismaClient } from '../../../generated/tenant-client';
 import { NotFoundError, ValidationError } from '../../common/exceptions';
 
 /** What a building is filed as: its type, and the `StructureType` every reader keys on. */
 export interface TypedStructure {
   buildingTypeId: string | null;
-  structureType: string;
+  structureType: StructureType;
 }
 
 /**
@@ -25,7 +26,7 @@ export interface TypedStructure {
  */
 export async function resolveBuildingType(
   db: Pick<TenantPrismaClient, 'buildingType'>,
-  input: { buildingTypeId?: string | null; structureType?: string },
+  input: { buildingTypeId?: string | null; structureType?: StructureType },
   current: TypedStructure | null,
 ): Promise<TypedStructure | null> {
   if (input.buildingTypeId) {
@@ -43,7 +44,7 @@ export async function resolveBuildingType(
         params: { name: type.nameAr },
       });
     }
-    return { buildingTypeId: type.id, structureType: String(type.structureType) };
+    return { buildingTypeId: type.id, structureType: type.structureType };
   }
 
   const structureType = input.structureType ?? (current && current.buildingTypeId === null ? current.structureType : undefined);
@@ -51,7 +52,7 @@ export async function resolveBuildingType(
   if (current && current.buildingTypeId !== null && current.structureType === structureType) return null;
 
   const system = await db.buildingType.findFirst({
-    where: { isSystem: true, structureType: structureType as never },
+    where: { isSystem: true, structureType },
     select: { id: true },
   });
   return { buildingTypeId: system?.id ?? null, structureType };

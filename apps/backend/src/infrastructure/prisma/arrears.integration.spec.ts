@@ -151,7 +151,7 @@ describeIfDb('migrations 0107 and 0108: old debts', () => {
     await db.user.createMany({
       data: [
         { id: adminId, kind: 'STAFF', tenantSlug: 'arr', email: `${adminId}@arr.gov.lb`, firstName: 'مدير', lastName: 'النظام', role: 'SUPER_ADMIN' as never },
-        { id: accountantId, kind: 'STAFF', tenantSlug: 'arr', email: `${accountantId}@arr.gov.lb`, firstName: 'محاسب', lastName: 'البلدية', role: 'ACCOUNTANT' as never },
+        { id: accountantId, kind: 'STAFF', tenantSlug: 'arr', email: `${accountantId}@arr.gov.lb`, firstName: 'محاسب', lastName: 'البلدية', role: 'ACCOUNTANT' as const },
         { id: citizenId, kind: 'CITIZEN', tenantSlug: 'arr', firstName: 'مواطن', lastName: 'أول' },
         { id: otherCitizenId, kind: 'CITIZEN', tenantSlug: 'arr', firstName: 'مواطن', lastName: 'ثان' },
       ],

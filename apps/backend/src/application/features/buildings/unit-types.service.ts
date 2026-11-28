@@ -13,6 +13,7 @@ import { tenantSchemaRef } from '../../../infrastructure/prisma/tenant-schema-re
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
 import { AuditService } from '../audit/audit.service';
 import { isUniqueViolationOn } from '../../../infrastructure/prisma/prisma-errors';
+import { StaffActor } from '../../common/actor';
 
 const TYPE_SELECT = {
   id: true,
@@ -103,7 +104,7 @@ export class UnitTypesService {
     return rows.map(toView).sort(compareUnitTypes);
   }
 
-  async create(input: CreateUnitTypeInput, actor: { id: string; role: string }): Promise<UnitTypeView> {
+  async create(input: CreateUnitTypeInput, actor: StaffActor): Promise<UnitTypeView> {
     try {
       return await runInTenantTransaction(this.tenantContext, async () => {
         const created = (await this.db.unitTypeEntry.create({
@@ -119,7 +120,7 @@ export class UnitTypesService {
         await this.audit.recordInTransaction({
           actorId: actor.id,
           actorType: 'STAFF',
-          actorRole: actor.role as never,
+          actorRole: actor.role,
           action: 'UNIT_TYPE_CREATED',
           entityType: 'UnitType',
           entityId: created.id,
@@ -132,7 +133,7 @@ export class UnitTypesService {
     }
   }
 
-  async update(id: string, input: UpdateUnitTypeInput, actor: { id: string; role: string }): Promise<UnitTypeView> {
+  async update(id: string, input: UpdateUnitTypeInput, actor: StaffActor): Promise<UnitTypeView> {
     try {
       return await runInTenantTransaction(this.tenantContext, async () => {
         // The row, locked: a unit saved meanwhile reads the type it is given.
@@ -171,7 +172,7 @@ export class UnitTypesService {
         await this.audit.recordInTransaction({
           actorId: actor.id,
           actorType: 'STAFF',
-          actorRole: actor.role as never,
+          actorRole: actor.role,
           action: 'UNIT_TYPE_UPDATED',
           entityType: 'UnitType',
           entityId: id,

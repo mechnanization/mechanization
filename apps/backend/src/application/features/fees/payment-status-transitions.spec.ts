@@ -243,7 +243,7 @@ describe('review — refusing a claim', () => {
   const refuse = {
     paymentId: 'payment-1',
     confirmed: false,
-    actor: { id: 'staff-1', role: 'ACCOUNTANT' },
+    actor: { id: 'staff-1', role: 'ACCOUNTANT' as const },
   };
 
   it('only releases a claim that is still pending review', async () => {
@@ -312,7 +312,7 @@ describe('review — confirming a claim', () => {
       paymentId: 'payment-1',
       confirmed: true,
       note: 'حوالة مؤكدة',
-      actor: { id: 'staff-1', role: 'ACCOUNTANT' },
+      actor: { id: 'staff-1', role: 'ACCOUNTANT' as const },
     });
 
     expect(record).toHaveBeenCalled();
@@ -326,7 +326,7 @@ describe('review — confirming a claim', () => {
     // The ledger refuses every other write on a bill under review (PAYMENT_CLAIM_UNDER_REVIEW).
     const { service, record } = build({ ...INVOICE, paymentStatus: 'PENDING_REVIEW' });
 
-    await service.review({ paymentId: 'payment-1', confirmed: true, actor: { id: 'staff-1', role: 'ACCOUNTANT' } });
+    await service.review({ paymentId: 'payment-1', confirmed: true, actor: { id: 'staff-1', role: 'ACCOUNTANT' as const } });
 
     expect(record).toHaveBeenCalledWith(expect.objectContaining({ resolvesClaim: true }));
   });

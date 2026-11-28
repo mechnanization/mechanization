@@ -114,7 +114,10 @@ export class PrismaAuditRepository implements AuditRepository {
       // Postgres raises on `'not-a-uuid'::uuid`, which would surface as a 500
       // for what is really a malformed filter the caller sent.
       if (!UUID_PATTERN.test(query.actorId)) {
-        throw new ValidationError('actorId filter must be a valid UUID');
+        throw new ValidationError({
+          code: 'INVALID_QUERY_VALUE',
+          message: 'actorId filter must be a valid UUID',
+        });
       }
       conditions.push(Prisma.sql`"actorId" = ${query.actorId}::uuid`);
     }

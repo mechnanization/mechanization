@@ -23,7 +23,10 @@ export class TenantMiddleware implements NestMiddleware {
   async use(req: Request, _res: Response, next: NextFunction): Promise<void> {
     const slug = this.extractSlug(req);
     if (!slug) {
-      next(new NotFoundError('Municipality'));
+      next(new NotFoundError({
+        code: 'TENANT_NOT_FOUND',
+        message: 'Tenant was not found',
+      }));
       return;
     }
 

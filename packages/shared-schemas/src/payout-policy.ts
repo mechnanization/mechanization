@@ -24,6 +24,8 @@
  * server will accept and why.
  */
 
+import type { BlockRefusal } from './error-codes';
+
 /** Money in whole cents, so 0.1 + 0.2 never decides whether a payout goes through. */
 function cents(amount: number): number {
   return Math.round(amount * 100);
@@ -52,8 +54,8 @@ export function payoutAllowance(input: PayoutPolicyInput): PayoutAllowance {
 }
 
 /**
- * Why `amount` cannot be paid, in the words the dialog and the server both
- * show — or null when it can.
+ * Why `amount` cannot be paid, as the refusal the dialog and the server both
+ * word from the message files (`errors.<code>`, ERR-03) — or null when it can.
  *
  * `showOwed: false` says only that the amount is more than is owed — nothing
  * owed included, which is the same refusal of any positive amount. The server
@@ -65,16 +67,16 @@ export function payoutRefusal(
   allowance: PayoutAllowance,
   amount: number,
   options: { showOwed?: boolean } = {},
-): string | null {
+): BlockRefusal | null {
   const over = allowance.reason === 'NOTHING_OWED' || cents(amount) > cents(allowance.owed);
   if (over && options.showOwed === false) {
-    return 'المبلغ أكبر من الرصيد المستحق.';
+    return { code: 'INSPECTOR_PAYOUT_OVER_OWED', params: {} };
   }
   if (allowance.reason === 'NOTHING_OWED') {
-    return 'لا يوجد رصيد مستحق لهذا المفتش.';
+    return { code: 'INSPECTOR_PAYOUT_NOTHING_OWED', params: {} };
   }
   if (over) {
-    return `المبلغ أكبر من الرصيد المستحق (${allowance.owed.toFixed(2)}$).`;
+    return { code: 'INSPECTOR_PAYOUT_EXCEEDS_OWED', params: { owed: allowance.owed.toFixed(2) } };
   }
   return null;
 }

@@ -1,18 +1,18 @@
-import { isStructuralUnitType } from '@mechanization/shared-schemas';
+import { isStructuralUnitType, type UnitType } from '@mechanization/shared-schemas';
 import type { PrismaClient as TenantPrismaClient } from '../../../generated/tenant-client';
 import { NotFoundError, ValidationError } from '../../common/exceptions';
 
 /** What a unit is filed as: its type, and the base `UnitType` every reader keys on. */
 export interface TypedUnit {
   unitTypeId: string | null;
-  unitType: string;
+  unitType: UnitType;
 }
 
 /** What `resolve` needs of a type row. */
 export interface UnitTypeRow {
   id: string;
   nameAr: string;
-  baseType: string;
+  baseType: UnitType;
   isSystem: boolean;
   isActive: boolean;
 }
@@ -34,7 +34,7 @@ export interface UnitTypeIndex {
    *   0109 after it ran) is given its base's system type; otherwise nothing
    *   changes (`null`).
    */
-  resolve(input: { unitTypeId?: string | null; unitType?: string }, current: TypedUnit | null): TypedUnit | null;
+  resolve(input: { unitTypeId?: string | null; unitType?: UnitType }, current: TypedUnit | null): TypedUnit | null;
 }
 
 /** The pure half: an index over the municipality's types, which are a handful of rows. */
@@ -77,5 +77,5 @@ export async function loadUnitTypes(db: Pick<TenantPrismaClient, 'unitTypeEntry'
   const rows = await db.unitTypeEntry.findMany({
     select: { id: true, nameAr: true, baseType: true, isSystem: true, isActive: true },
   });
-  return indexUnitTypes(rows.map((row) => ({ ...row, baseType: String(row.baseType) })));
+  return indexUnitTypes(rows);
 }

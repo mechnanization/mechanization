@@ -36,7 +36,7 @@ describeIfDb('unit types', () => {
   let buildings: BuildingsService;
   let unitsService: UnitsService;
   const adminId = randomUUID();
-  const admin = { id: adminId, role: 'SUPER_ADMIN' };
+  const admin = { id: adminId, role: 'SUPER_ADMIN' as const };
 
   const within = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'uts', tenantSlug: 'uts', schemaName: SCHEMA, prisma: db }, work);
@@ -69,7 +69,7 @@ describeIfDb('unit types', () => {
     buildings = new BuildingsService(context, new EventEmitter2());
     unitsService = new UnitsService(context, new EventEmitter2(), buildings);
     await db.user.create({
-      data: { id: adminId, kind: 'STAFF', tenantSlug: 'uts', email: `${adminId}@uts.gov.lb`, firstName: 'مدير', lastName: 'البلدية', role: 'SUPER_ADMIN' as never },
+      data: { id: adminId, kind: 'STAFF', tenantSlug: 'uts', email: `${adminId}@uts.gov.lb`, firstName: 'مدير', lastName: 'البلدية', role: 'SUPER_ADMIN' as const as never },
     });
   }, SETUP_TIMEOUT_MS);
 

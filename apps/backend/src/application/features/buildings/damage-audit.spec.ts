@@ -18,7 +18,7 @@ import { DamageService } from './damage.service';
 const BUILDING = '0b6f2c1e-3d4a-4b5c-8d9e-0f1a2b3c4d5e';
 const UNIT = '7c3f5f2e-0b3a-4a1f-9d2e-6a1b2c3d4e5f';
 const UNIT_CODE = 'Z-1-45-A-101';
-const ACTOR = { id: '9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d', role: 'FIELD_INSPECTOR' };
+const ACTOR = { id: '9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d', role: 'FIELD_INSPECTOR' as const };
 
 function damageService(emit: jest.Mock) {
   const prisma = {

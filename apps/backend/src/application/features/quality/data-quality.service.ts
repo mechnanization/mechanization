@@ -43,6 +43,7 @@ import {
   matchedOn,
 } from '../citizens/possible-duplicates';
 import { LandlordLinkQueueService } from '../citizens/landlord-link-queue.service';
+import { StaffActor } from '../../common/actor';
 
 /**
  * Two buildings on one parcel closer than this are shown as a possible single
@@ -297,12 +298,15 @@ export class DataQualityService {
     return { items: visible, counts };
   }
 
-  async dismiss(input: DismissFindingInput, actor: { id: string; role: string }) {
+  async dismiss(input: DismissFindingInput, actor: StaffActor) {
     const existing = await this.db.dataQualityDismissal.findUnique({
       where: { kind_subjectKey: { kind: input.kind, subjectKey: input.subjectKey } },
       select: { id: true },
     });
-    if (existing) throw new ConflictError('هذه الملاحظة مُعلَّمة «ليست مشكلة» بالفعل.');
+    if (existing) throw new ConflictError({
+      code: 'QUALITY_ALREADY_DISMISSED',
+      message: 'The finding is already dismissed',
+    });
 
     await this.db.dataQualityDismissal.create({
       data: { kind: input.kind, subjectKey: input.subjectKey, reason: input.reason, dismissedById: actor.id },
@@ -317,12 +321,15 @@ export class DataQualityService {
     return { dismissed: true };
   }
 
-  async restore(kind: string, subjectKey: string, actor: { id: string; role: string }) {
+  async restore(kind: string, subjectKey: string, actor: StaffActor) {
     const existing = await this.db.dataQualityDismissal.findUnique({
       where: { kind_subjectKey: { kind, subjectKey } },
       select: { id: true, reason: true },
     });
-    if (!existing) throw new NotFoundError('لا يوجد تعليم «ليست مشكلة» على هذه الملاحظة.');
+    if (!existing) throw new NotFoundError({
+      code: 'QUALITY_DISMISSAL_NOT_FOUND',
+      message: 'The finding is not dismissed',
+    });
     await this.db.dataQualityDismissal.delete({ where: { id: existing.id } });
     this.events.emit('quality.changed', {
       tenantSlug: this.tenantContext.tenantSlug,

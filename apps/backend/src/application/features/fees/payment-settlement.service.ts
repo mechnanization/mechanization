@@ -24,6 +24,7 @@ import { ARREARS_LINE_SELECT, arrearsView } from './bill-arrears';
 import { officialRateFor } from './fees.service';
 import { assertLiveCollector } from './live-collector';
 import { PaymentLedgerService, type Tender } from './payment-ledger.service';
+import { StaffActor } from '../../common/actor';
 
 /** What the transaction decided, before the receipt is read back. */
 interface SettleOutcome {
@@ -94,7 +95,7 @@ export class PaymentSettlementService {
    * order. Every pair of resources is taken in the same order by every writer,
    * so none of them can deadlock against a settlement.
    */
-  async settle(input: BulkSettlePayments, actor: { id: string; role: string }): Promise<SettlementReceipt> {
+  async settle(input: BulkSettlePayments, actor: StaffActor): Promise<SettlementReceipt> {
     let outcome: SettleOutcome;
     try {
       outcome = await runInTenantTransaction(this.tenantContext, () => this.settleInTransaction(input, actor));
@@ -237,7 +238,7 @@ export class PaymentSettlementService {
 
   private async settleInTransaction(
     input: BulkSettlePayments,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<SettleOutcome> {
     const tx = this.db as Prisma.TransactionClient;
 
@@ -505,7 +506,7 @@ export class PaymentSettlementService {
         audit: (movement) => ({
           actorId: actor.id,
           actorType: 'STAFF',
-          actorRole: actor.role as never,
+          actorRole: actor.role,
           action: 'PAYMENT_CONFIRMED',
           entityType: 'Payment',
           entityId: row.paymentId,
@@ -548,7 +549,7 @@ export class PaymentSettlementService {
     await this.auditTrail.recordInTransaction({
       actorId: actor.id,
       actorType: 'STAFF',
-      actorRole: actor.role as never,
+      actorRole: actor.role,
       action: 'PAYMENT_BULK_SETTLED',
       entityType: 'PaymentSettlement',
       entityId: settlement.id,

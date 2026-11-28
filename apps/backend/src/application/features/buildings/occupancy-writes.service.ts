@@ -7,7 +7,10 @@ import {
   feeBearerClass,
   OCCUPANCY_LIFTS_SURVEY_STATUS,
   unitStatusForRole,
+  type OccupancyEndReason,
+  type OccupancyRole,
   type StructureType,
+  type UnitStatus,
   type UpsertOccupancyInput,
 } from '@mechanization/shared-schemas';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
@@ -24,6 +27,7 @@ import {
   toOccupancyRow,
 } from './buildings.service';
 import { UnitVisitsService } from './unit-visits.service';
+import { StaffActor } from '../../common/actor';
 
 /**
  * Who lives in or holds a unit, written: «تسجيل إشغال» (`recordOccupancy`), the
@@ -75,7 +79,7 @@ export class OccupancyWritesService {
    */
   async recordOccupancy(
     input: UpsertOccupancyInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
     /**
      * `fromMatrix`: an officer at the drawer, not another flow recording a
      * party on the way (a sale's buyer, a landlord link's owner). Only then is
@@ -96,7 +100,10 @@ export class OccupancyWritesService {
         unitArea: true,
       },
     });
-    if (!unit) throw new NotFoundError('الوحدة غير موجودة');
+    if (!unit) throw new NotFoundError({
+      code: 'UNIT_NOT_FOUND',
+      message: 'Unit was not found',
+    });
 
     /*
       Ahead of the citizen lookup, because it is a fact about the unit alone.
@@ -108,7 +115,11 @@ export class OccupancyWritesService {
 
     const citizen = await this.db.user.findUnique({ where: { id: input.citizenId } });
     if (!citizen || citizen.kind !== 'CITIZEN') {
-      throw new ValidationError('المواطن غير موجود', { citizenId: input.citizenId });
+      throw new ValidationError({
+        code: 'CITIZEN_NOT_FOUND',
+        message: `Citizen ${input.citizenId} was not found`,
+        details: { citizenId: input.citizenId },
+      });
     }
     // A file folded into another is nobody to record in a flat — see `assertNotMergedAway`.
     await assertNotMergedAway(this.db, citizen.id);
@@ -152,11 +163,11 @@ export class OccupancyWritesService {
     const standing = await activeVacancy(this.db, input.unitId);
     if (standing && contradictsVacancy(input.role, input.unitStatus)) {
       if (!input.endsVacancy) {
-        throw new ConflictError(
-          `الوحدة ${unit.unitCode} مؤكَّد شغورها منذ ${standing.observedAt
-            .toISOString()
-            .slice(0, 10)}. تسجيل من يشغلها يُنهي تأكيد الشغور`,
-          {
+        throw new ConflictError({
+          code: 'UNIT_VACANCY_STANDING',
+          message: `Unit ${unit.unitCode} is confirmed vacant`,
+          params: { unitCode: unit.unitCode, since: standing.observedAt.toISOString().slice(0, 10) },
+          details: {
             vacancy: {
               id: standing.id,
               basis: standing.basis,
@@ -164,7 +175,7 @@ export class OccupancyWritesService {
               notes: standing.notes,
             },
           },
-        );
+        });
       }
 
       /*
@@ -184,10 +195,10 @@ export class OccupancyWritesService {
           where: { id: input.unitId },
           data: {
             ...(closed.restore.unitStatus !== undefined
-              ? { unitStatus: closed.restore.unitStatus as never }
+              ? { unitStatus: closed.restore.unitStatus }
               : {}),
             ...(closed.restore.surveyStatus !== undefined
-              ? { surveyStatus: closed.restore.surveyStatus as never }
+              ? { surveyStatus: closed.restore.surveyStatus }
               : {}),
           },
         });
@@ -239,7 +250,7 @@ export class OccupancyWritesService {
       ? await this.db.unitOccupancy.update({
           where: { id: current.id },
           data: {
-            role: input.role as never,
+            role: input.role,
             /*
               أسهم are an owner's only, and a re-record with the box left empty
               keeps the ones on file. The drawer sends nothing for an empty box,
@@ -256,7 +267,7 @@ export class OccupancyWritesService {
           data: {
             unitId: input.unitId,
             citizenId: input.citizenId,
-            role: input.role as never,
+            role: input.role,
             shares: input.shares ?? null,
             ...(input.fromDate ? { fromDate: input.fromDate } : {}),
             ...(input.toDate ? { toDate: input.toDate } : {}),
@@ -277,7 +288,7 @@ export class OccupancyWritesService {
       to resolve, not for a side effect to overwrite.
     */
     await this.db.unit.updateMany({
-      where: { id: input.unitId, surveyStatus: { in: OCCUPANCY_LIFTS_SURVEY_STATUS as never } },
+      where: { id: input.unitId, surveyStatus: { in: [...OCCUPANCY_LIFTS_SURVEY_STATUS] } },
       data: { surveyStatus: 'COMPLETE' },
     });
 
@@ -334,7 +345,7 @@ export class OccupancyWritesService {
       if (!(await activeVacancy(this.db, input.unitId))) {
         await this.unitVisits.confirmVacancy(
           input.unitId,
-          { basis: 'OWNER_STATEMENT', notes: 'تصريح المالك عند تسجيله على الوحدة' } as never,
+          { basis: 'OWNER_STATEMENT', notes: 'تصريح المالك عند تسجيله على الوحدة' },
           actor,
           { settle: false, ownerStatement: true },
         );
@@ -342,7 +353,7 @@ export class OccupancyWritesService {
     } else if (input.unitStatus) {
       await this.db.unit.update({
         where: { id: input.unitId },
-        data: { unitStatus: input.unitStatus as never },
+        data: { unitStatus: input.unitStatus },
       });
     }
 
@@ -470,8 +481,8 @@ export class OccupancyWritesService {
   private async stateOnOwnerCard(
     propertyEntryId: string,
     unitId: string,
-    status: string,
-    context: { citizenId: string; unitCode: string; actor: { id: string; role: string } },
+    status: UnitStatus,
+    context: { citizenId: string; unitCode: string; actor: StaffActor },
   ): Promise<void> {
     const card = await this.db.propertyEntry.findUnique({
       where: { id: propertyEntryId },
@@ -490,11 +501,11 @@ export class OccupancyWritesService {
       const line = card.units[0]!;
       if (line.unitStatus === status) return;
       before = line.unitStatus;
-      await this.db.buildingUnit.update({ where: { id: line.id }, data: { unitStatus: status as never } });
+      await this.db.buildingUnit.update({ where: { id: line.id }, data: { unitStatus: status } });
     } else if (card.propertyType === 'HOUSE') {
       if (card.unitStatus === status) return;
       before = card.unitStatus;
-      await this.db.propertyEntry.update({ where: { id: card.id }, data: { unitStatus: status as never } });
+      await this.db.propertyEntry.update({ where: { id: card.id }, data: { unitStatus: status } });
     } else {
       return;
     }
@@ -577,9 +588,9 @@ export class OccupancyWritesService {
     unitId: string;
     buildingId: string;
     citizenId: string;
-    role: string;
+    role: OccupancyRole;
     shares: number | null;
-    unitStatus: string | null;
+    unitStatus: UnitStatus | null;
     landlord?: LandlordSpec | null;
     /** The staff member doing this, paid for any line it writes. See `claimOnFile`. */
     filedById: string;
@@ -592,9 +603,9 @@ export class OccupancyWritesService {
     unitId: string;
     buildingId: string;
     citizenId: string;
-    role: string;
+    role: OccupancyRole;
     shares: number | null;
-    unitStatus: string | null;
+    unitStatus: UnitStatus | null;
     /** Non-owner capacities only: who the flat is held from. */
     landlord?: LandlordSpec | null;
     /**
@@ -733,11 +744,11 @@ export class OccupancyWritesService {
           // Copied from the canonical unit, which is the register’s own answer
           // and the only one available — the officer was not asked to describe a
           // flat the matrix already describes.
-          unitType: described.unitType as never,
+          unitType: described.unitType,
           floor: described.floor,
           side: described.side,
           unitArea: described.unitArea,
-          unitStatus: (input.unitStatus ?? null) as never,
+          unitStatus: (input.unitStatus ?? null),
           filedById: input.filedById,
         },
       });
@@ -794,8 +805,8 @@ export class OccupancyWritesService {
       select: { id: true },
       data: {
         registrationId: registration.id,
-        occupancyType: input.role as never,
-        propertyType: cardType as never,
+        occupancyType: input.role,
+        propertyType: cardType,
         buildingId: building.id,
         // The parcel is the building’s own. الحي is left null rather than
         // guessed: the cadastre has no neighbourhood layer to ask, and this
@@ -836,19 +847,19 @@ export class OccupancyWritesService {
         */
         ...(cardType === 'HOUSE'
           ? {
-              unitType: mapped.defaultUnitType as never,
-              unitStatus: (input.unitStatus ?? null) as never,
+              unitType: mapped.defaultUnitType,
+              unitStatus: (input.unitStatus ?? null),
               unitArea: described.unitArea,
             }
           : {
               units: {
                 create: {
                   unitId: input.unitId,
-                  unitType: described.unitType as never,
+                  unitType: described.unitType,
                   floor: described.floor,
                   side: described.side,
                   unitArea: described.unitArea,
-                  unitStatus: (input.unitStatus ?? null) as never,
+                  unitStatus: (input.unitStatus ?? null),
                   filedById: input.filedById,
                 },
               },
@@ -912,7 +923,7 @@ export class OccupancyWritesService {
             where: {
               unitId: { in: unitIds },
               toDate: null,
-              role: 'OWNER' as never,
+              role: 'OWNER',
               citizenId: { not: owner.id },
             },
             select: { unitId: true },
@@ -984,14 +995,17 @@ export class OccupancyWritesService {
    */
   async endOccupancy(
     occupancyId: string,
-    input: { toDate?: Date; reason: string },
-    actor: { id: string; role: string },
+    input: { toDate?: Date; reason: OccupancyEndReason },
+    actor: StaffActor,
   ): Promise<OccupancyRow> {
     const existing = await this.db.unitOccupancy.findUnique({
       where: { id: occupancyId },
       include: { unit: { select: { buildingId: true, unitCode: true } } },
     });
-    if (!existing) throw new NotFoundError('سجل الإشغال غير موجود');
+    if (!existing) throw new NotFoundError({
+      code: 'OCCUPANCY_NOT_FOUND',
+      message: 'Occupancy was not found',
+    });
 
     /*
       Ending an ended spell is refused rather than re-dated.
@@ -1001,7 +1015,10 @@ export class OccupancyWritesService {
       rewrote *when* somebody left. The first answer stands.
     */
     if (existing.toDate) {
-      throw new ConflictError('هذا الإشغال منتهٍ مسبقاً');
+      throw new ConflictError({
+        code: 'OCCUPANCY_ALREADY_ENDED',
+        message: 'Occupancy already ended',
+      });
     }
 
     /*
@@ -1019,22 +1036,25 @@ export class OccupancyWritesService {
         ? input.reason === 'OWNERSHIP_TRANSFERRED'
         : input.reason === 'MOVED_OUT');
     if (!fits) {
-      throw new ValidationError(
-        existing.role === 'OWNER'
-          ? 'إنهاء ملكية يكون ببيع أو نقل ملكية، أو لأنها سُجِّلت بالخطأ'
-          : 'إنهاء إشغال مستأجر أو شاغل يكون بخروجه من الوحدة، أو لأنه سُجِّل بالخطأ',
-        { reason: input.reason },
-      );
+      throw new ValidationError({
+        code: existing.role === 'OWNER' ? 'OWNERSHIP_END_REASON_INVALID' : 'TENANCY_END_REASON_INVALID',
+        message: `${input.reason} does not end a ${existing.role} occupancy`,
+        details: { reason: input.reason },
+      });
     }
 
     const toDate = input.toDate ?? new Date();
     if (toDate < existing.fromDate) {
-      throw new ValidationError('تاريخ الانتهاء قبل تاريخ بدء الإشغال', { toDate });
+      throw new ValidationError({
+        code: 'OCCUPANCY_END_BEFORE_START',
+        message: 'The end date is before the occupancy began',
+        details: { toDate },
+      });
     }
 
     const updated = await this.db.unitOccupancy.update({
       where: { id: occupancyId },
-      data: { toDate, endReason: input.reason as never },
+      data: { toDate, endReason: input.reason },
       include: { citizen: { select: { firstName: true, lastName: true, phone: true, isActive: true, residence: true } } },
     });
 
@@ -1127,7 +1147,7 @@ export class OccupancyWritesService {
     const buildingLinks = await this.db.propertyEntry.updateMany({
       where: {
         buildingId: input.buildingId,
-        propertyType: 'HOUSE' as never,
+        propertyType: 'HOUSE',
         endedAt: null,
         registration: { citizenId: input.citizenId },
         // Nothing itemised; the `buildingId` is the whole of the claim. A card

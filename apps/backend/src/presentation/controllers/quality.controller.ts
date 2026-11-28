@@ -43,7 +43,10 @@ const restoreSchema = z.object({
 
 function optionalUuid(value: string | undefined, name: string): string | undefined {
   if (!value) return undefined;
-  if (!UUID.test(value)) throw new ValidationError(`${name} غير صالح`);
+  if (!UUID.test(value)) throw new ValidationError({
+    code: 'INVALID_QUERY_VALUE',
+    message: `${name} is not a valid id`,
+  });
   return value;
 }
 

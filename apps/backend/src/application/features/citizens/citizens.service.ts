@@ -63,6 +63,7 @@ import { billsOwedBy } from '../fees/shared-bill-view';
 import { LandlordLinkQueueService } from './landlord-link-queue.service';
 import { LandlordUnlinkService } from './landlord-unlink.service';
 import { CitizenDuplicatesService } from './citizen-duplicates.service';
+import { StaffActor } from '../../common/actor';
 
 /**
  * The stored «غير مؤكَّد» flags, read back defensively.
@@ -1230,7 +1231,7 @@ export class CitizensService {
   async create(input: {
     tenantSlug: string;
     payload: AdminCitizenSubmission;
-    actor: { id: string; role: string };
+    actor: StaffActor;
   }) {
     /*
       The duplicate question, before anything is written.
@@ -1432,7 +1433,7 @@ export class CitizensService {
     registrationId: string,
     citizenId: string,
     payload: { properties: ReadonlyArray<{ landlordPhone?: string; landlordCitizenId?: string }> },
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<{ filed: LandlordProposal[]; naming: LandlordProposal[] } | null> {
     try {
       /*
@@ -1499,7 +1500,7 @@ export class CitizensService {
     tenantSlug: string;
     citizenId: string;
     payload: AdminCitizenUpdateSubmission;
-    actor: { id: string; role: string };
+    actor: StaffActor;
   }) {
     const tenant = await this.tenants.resolve(input.tenantSlug);
 
@@ -2681,7 +2682,7 @@ export class CitizensService {
   /** `reconcileRegistration`, with its failure kept off a save that committed. */
   private async reconcileLinksQuietly(
     registrationId: string,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<ReconcileResult | null> {
     try {
       return await this.landlordLinks.reconcileRegistration(registrationId, actor);
@@ -2716,7 +2717,7 @@ export class CitizensService {
     requestedBy?: string;
     /** An archive because they moved away: the day they left. */
     movedOn?: Date;
-    actor: { id: string; role: string };
+    actor: StaffActor;
   }) {
     const citizen = await this.db.user.findFirst({
       where: { id: input.citizenId, kind: 'CITIZEN' },

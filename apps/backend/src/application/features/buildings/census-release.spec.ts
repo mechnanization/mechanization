@@ -84,7 +84,7 @@ function harness(unitsInBuilding: number) {
   return { service, db, buildingUnitUpdateMany, propertyEntryUpdateMany };
 }
 
-const actor = { id: 'staff-1', role: 'SUPER_ADMIN' };
+const actor = { id: 'staff-1', role: 'SUPER_ADMIN' as const };
 
 describe('endOccupancy — releasing the census claim', () => {
   it('drops the tick that pointed a مبنى card at this flat', async () => {

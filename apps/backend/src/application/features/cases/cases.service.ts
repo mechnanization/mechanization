@@ -9,6 +9,7 @@ import type {
 } from '../../../domain/interfaces/case-repository.interface';
 import type { UserRepository } from '../../../domain/interfaces/user-repository.interface';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
+import { StaffActor } from '../../common/actor';
 
 /**
  * The follow-up case types a unit can only usefully have one of at a time.
@@ -45,7 +46,7 @@ export class CasesService {
     caseId: string;
     before?: Record<string, unknown>;
     after?: Record<string, unknown>;
-    actor: { id: string; role: string };
+    actor: StaffActor;
   }): void {
     this.events.emit('case.changed', {
       caseId: input.caseId,
@@ -81,7 +82,7 @@ export class CasesService {
   }
 
   /** An officer opening a case. Refuses a second open one of a one-per-door type. */
-  async create(input: CreateCaseInput, actor: { id: string; role: string }): Promise<Case> {
+  async create(input: CreateCaseInput, actor: StaffActor): Promise<Case> {
     /*
       «تعارض في حالة الوحدة» is the status rule's (`settleUnit`): it opens one
       when a flat's records disagree and closes it when they stop. Opened by
@@ -116,14 +117,14 @@ export class CasesService {
    */
   async openUnlessStanding(
     input: CreateCaseInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<{ case: Case; opened: boolean }> {
     const standing = await this.standingCase(input);
     if (standing) return { case: standing, opened: false };
     return { case: await this.insert(input, actor), opened: true };
   }
 
-  private async insert(input: CreateCaseInput, actor: { id: string; role: string }): Promise<Case> {
+  private async insert(input: CreateCaseInput, actor: StaffActor): Promise<Case> {
     const created = await this.cases.create({ ...input, createdById: actor.id });
 
     this.recordChange({
@@ -147,7 +148,7 @@ export class CasesService {
   async update(
     id: string,
     input: UpdateCaseInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<Case> {
     const existing = await this.cases.findById(id);
     if (!existing) throw new NotFoundError({ code: 'CASE_NOT_FOUND', message: `Case ${id} was not found` });
@@ -236,7 +237,7 @@ export class CasesService {
   async resolveForUnit(
     unitId: string,
     citizenId: string,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<number> {
     const open = await this.cases.findAll({ unitId, status: 'OPEN' });
     const scheduled = await this.cases.findAll({ unitId, status: 'SCHEDULED' });
@@ -273,7 +274,7 @@ export class CasesService {
    */
   async resolveVacancyCasesForUnit(
     unitId: string,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<number> {
     const open = await this.cases.findAll({ unitId, status: 'OPEN' });
     const scheduled = await this.cases.findAll({ unitId, status: 'SCHEDULED' });
@@ -297,7 +298,7 @@ export class CasesService {
     return resolved;
   }
 
-  async remove(id: string, actor: { id: string; role: string }): Promise<void> {
+  async remove(id: string, actor: StaffActor): Promise<void> {
     const existing = await this.cases.findById(id);
     if (!existing) throw new NotFoundError({ code: 'CASE_NOT_FOUND', message: `Case ${id} was not found` });
 

@@ -58,7 +58,7 @@ describeIfDb('Bulk settlement', () => {
   let accountantId: string;
   let collectorId: string;
 
-  const actor = () => ({ id: accountantId, role: 'ACCOUNTANT' });
+  const actor = () => ({ id: accountantId, role: 'ACCOUNTANT' as const });
 
   const scoped = <T>(work: () => Promise<T>): Promise<T> =>
     context.run({ tenantId: 'spec', tenantSlug: 'settlement', schemaName: SCHEMA, prisma: db }, work);
@@ -170,11 +170,11 @@ describeIfDb('Bulk settlement', () => {
         { id: otherCitizenId, kind: 'CITIZEN', tenantSlug: 'settlement', firstName: 'ليلى', lastName: 'حداد' },
         {
           id: accountantId, kind: 'STAFF', tenantSlug: 'settlement', email: `a-${accountantId}@t.gov.lb`,
-          firstName: 'سارة', lastName: 'المحاسبة', role: 'ACCOUNTANT',
+          firstName: 'سارة', lastName: 'المحاسبة', role: 'ACCOUNTANT' as const,
         },
         {
           id: collectorId, kind: 'STAFF', tenantSlug: 'settlement', email: `c-${collectorId}@t.gov.lb`,
-          firstName: 'حسن', lastName: 'الجابي', role: 'COLLECTOR',
+          firstName: 'حسن', lastName: 'الجابي', role: 'COLLECTOR' as const,
         },
       ],
     });
@@ -511,7 +511,7 @@ describeIfDb('Bulk settlement', () => {
           amount: a.type === 'CASH_SAFE' ? (a.currency === 'LBP' ? 1_000_000 : 100) : 0,
         }),
       );
-      await scoped(() => treasury.activate({ balances }, { id: accountantId, role: 'SUPER_ADMIN' }));
+      await scoped(() => treasury.activate({ balances }, { id: accountantId, role: 'SUPER_ADMIN' as const }));
     });
 
     it('puts the notes in their wallets and takes the change out of the ليرة safe', async () => {

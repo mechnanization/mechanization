@@ -23,6 +23,7 @@ import type { FileLinkResult } from '../buildings/building.types';
 import { withoutCardFlags, withoutRowFlags } from './card-flags';
 import { cardClaiming } from '../../../domain/entities/census-claim';
 import { foldNamePart } from './possible-duplicates';
+import { StaffActor } from '../../common/actor';
 
 /**
  * Identifying the owner a مستأجر named, among the register's own citizens.
@@ -670,7 +671,7 @@ export class LandlordLinkService {
   async confirm(input: {
     propertyEntryId: string;
     citizenId: string;
-    actor: { id: string; role: string };
+    actor: StaffActor;
   }): Promise<LandlordLinkResult> {
     /*
       Checked before it reaches Prisma, which answers `where: { id: undefined }`
@@ -961,7 +962,7 @@ export class LandlordLinkService {
     ownerId: string;
     /** «نعم، يستأجر منه» — given after being told the owner was recorded after the tenant. */
     confirmRecordedAfter?: boolean;
-    actor: { id: string; role: string };
+    actor: StaffActor;
   }): Promise<RecordedOwnerLinkResult> {
     let changes: AnnouncedChange[] = [];
     const outcome = await this.inTransaction(async () => {
@@ -980,7 +981,7 @@ export class LandlordLinkService {
     occupancyId: string;
     ownerId: string;
     confirmRecordedAfter?: boolean;
-    actor: { id: string; role: string };
+    actor: StaffActor;
   }): Promise<{
     result: RecordedOwnerLinkResult;
     announce: {
@@ -1093,7 +1094,7 @@ export class LandlordLinkService {
         citizenId: spell.citizenId,
         role: spell.role,
         shares: null,
-        unitStatus: unitStatusForRole(spell.role as never),
+        unitStatus: unitStatusForRole(spell.role),
         landlord: { citizenId: owner.id },
         filedById: input.actor.id,
       });
@@ -1425,7 +1426,7 @@ export class LandlordLinkService {
     occupiedBy: string;
     units: readonly PlanUnit[];
     footprint: LinkFootprint;
-    actor: { id: string; role: string };
+    actor: StaffActor;
   }): Promise<void> {
     /*
       What the tenant's card says about the flat, in the owner's vocabulary.
@@ -1597,7 +1598,7 @@ export class LandlordLinkService {
   async applyAgreements(input: {
     filed: LandlordProposal[];
     agreements: Array<{ phone: string; citizenId: string }>;
-    actor: { id: string; role: string };
+    actor: StaffActor;
   }): Promise<{ remaining: LandlordProposal[]; linked: number }> {
     if (input.agreements.length === 0) return { remaining: input.filed, linked: 0 };
 
@@ -1671,7 +1672,7 @@ export class LandlordLinkService {
    */
   async reconcileRegistration(
     registrationId: string,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<ReconcileResult> {
     const linked = await this.db.propertyEntry.findMany({
       where: { registrationId, landlordCitizenId: { not: null }, endedAt: null },
@@ -2142,7 +2143,7 @@ export class LandlordLinkService {
   async dismiss(input: {
     propertyEntryId: string;
     candidateIds: readonly string[];
-    actor: { id: string; role: string };
+    actor: StaffActor;
   }): Promise<{ dismissed: boolean }> {
     const ids = [...new Set(input.candidateIds.filter((id) => UUID.test(id)))];
     if (ids.length === 0) {
@@ -2196,7 +2197,7 @@ export class LandlordLinkService {
   async undismiss(input: {
     propertyEntryId: string;
     candidateIds: readonly string[];
-    actor: { id: string; role: string };
+    actor: StaffActor;
   }): Promise<{ restored: boolean }> {
     const ids = [...new Set(input.candidateIds.filter((id) => UUID.test(id)))];
     if (ids.length === 0) return { restored: false };
@@ -2247,7 +2248,7 @@ export class LandlordLinkService {
   }
 
   /** Emits what a revert returned, once its transaction has committed. */
-  emitAll(events: readonly PendingEvent[], actor: { id: string; role: string }): void {
+  emitAll(events: readonly PendingEvent[], actor: StaffActor): void {
     for (const event of events) {
       this.events.emit(event.name, {
         tenantSlug: this.tenantContext.tenantSlug,
@@ -2267,7 +2268,7 @@ export class LandlordLinkService {
     footprint: LinkFootprint;
     /** How the link was made, when it was not the phone match. */
     detail?: Record<string, unknown>;
-    actor: { id: string; role: string };
+    actor: StaffActor;
   }): AnnouncedChange[] {
     const after = {
       ...(input.detail ?? {}),

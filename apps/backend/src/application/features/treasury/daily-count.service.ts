@@ -17,6 +17,7 @@ import { AuditService } from '../audit/audit.service';
 import { addDays, nextDayToClose, planCountDate, planCountLine } from './day-closing.plan';
 import { DayClosureService, type CountRow } from './day-closure.service';
 import { dateColumn, TreasuryLedgerService } from './treasury-ledger.service';
+import { StaffActor } from '../../common/actor';
 
 /**
  * «جرد الصندوق» — what each wallet held at the end of a municipal day, beside
@@ -101,7 +102,7 @@ export class DailyCountService {
    * anything is written, so a refusal on the third wallet leaves the first two
    * as they were.
    */
-  async record(input: RecordDailyCountInput, actor: { id: string; role: string }): Promise<DailyCountSheet> {
+  async record(input: RecordDailyCountInput, actor: StaffActor): Promise<DailyCountSheet> {
     await runInTenantTransaction(this.tenantContext, async () => {
       const tx = this.db as Prisma.TransactionClient;
       await this.ledger.lockDayBook(tx);
@@ -246,7 +247,7 @@ export class DailyCountService {
       await this.audit.recordInTransaction({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: 'TREASURY_COUNT_RECORDED',
         entityType: 'TreasuryDay',
         entityId: input.businessDate,

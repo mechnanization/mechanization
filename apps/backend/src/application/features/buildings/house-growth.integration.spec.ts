@@ -46,7 +46,7 @@ describeIfDb('a house that grows (D28)', () => {
   let officerId: string;
   const emitted: Array<{ name: string; payload: Record<string, unknown> }> = [];
 
-  const actor = () => ({ id: officerId, role: 'FIELD_INSPECTOR' });
+  const actor = () => ({ id: officerId, role: 'FIELD_INSPECTOR' as const });
 
   beforeAll(async () => {
     ddl = new Client({ connectionString: TEST_DATABASE_URL });
@@ -107,7 +107,7 @@ describeIfDb('a house that grows (D28)', () => {
         email: `officer-${officerId}@growth.gov.lb`,
         firstName: 'علي',
         lastName: 'حدرج',
-        role: 'FIELD_INSPECTOR',
+        role: 'FIELD_INSPECTOR' as const,
       },
     });
   }, SETUP_TIMEOUT_MS);

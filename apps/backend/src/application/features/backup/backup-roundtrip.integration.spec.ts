@@ -160,7 +160,7 @@ describeIfDb('BackupService — export and restore round-trip', () => {
   });
 
   const OPTIONS = { confirmTenantSlug: 'roundtrip', dryRun: false };
-  const ACTOR = { id: '22222222-2222-4222-8222-222222222222', role: 'SUPER_ADMIN' };
+  const ACTOR = { id: '22222222-2222-4222-8222-222222222222', role: 'SUPER_ADMIN' as const };
 
   it('restores a register that was emptied after the snapshot', async () => {
     const { buffer } = await service.exportSnapshot();
@@ -308,7 +308,7 @@ describeIfDb('BackupService — export and restore round-trip', () => {
     snapshot.tables.auditLogEntry = [];
     const tampered = gzipSync(Buffer.from(JSON.stringify(snapshot)));
 
-    await expect(service.restore(tampered, OPTIONS, ACTOR)).rejects.toThrow(/غير معروفة/);
+    await expect(service.restore(tampered, OPTIONS, ACTOR)).rejects.toThrow(expect.objectContaining({ code: 'BACKUP_UNKNOWN_TABLES' }));
   }, 60_000);
 
   it('refuses a snapshot from another municipality', async () => {

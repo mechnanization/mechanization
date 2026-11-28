@@ -378,9 +378,15 @@ export class RecordReviewService {
       where: { id: registrationId },
       select: { id: true, citizenId: true, createdById: true, referenceNumber: true },
     });
-    if (!registration) throw new NotFoundError('السجل غير موجود');
+    if (!registration) throw new NotFoundError({
+      code: 'REGISTRATION_NOT_FOUND',
+      message: 'The registration was not found',
+    });
     if (registration.createdById && registration.createdById === actor.id) {
-      throw new ConflictError('لا يمكنك مراجعة سجل أنشأته بنفسك — يراجعه موظف آخر.');
+      throw new ConflictError({
+        code: 'REVIEW_OWN_RECORD',
+        message: 'A reviewer cannot review their own record',
+      });
     }
     return registration;
   }
@@ -420,7 +426,10 @@ export class RecordReviewService {
       where: { registrationId, outcome: 'RETURNED', resolvedAt: null },
       select: { id: true },
     });
-    if (open) throw new ConflictError('هذا السجل مُعاد إلى موظفه بالفعل وينتظر التصحيح.');
+    if (open) throw new ConflictError({
+      code: 'RECORD_ALREADY_RETURNED',
+      message: 'The record is already returned',
+    });
 
     const change = this.change('RECORD_RETURNED', registration.citizenId, actor, {
       referenceNumber: registration.referenceNumber,
@@ -800,20 +809,35 @@ export class RecordReviewService {
       where: { id: checkId },
       select: { id: true, status: true, originalOfficerId: true, registration: { select: { citizenId: true } } },
     });
-    if (!check) throw new NotFoundError('التحقق غير موجود');
-    if (check.status === 'DONE') throw new ConflictError('تم هذا التحقق بالفعل.');
+    if (!check) throw new NotFoundError({
+      code: 'QUALITY_CHECK_NOT_FOUND',
+      message: 'The check was not found',
+    });
+    if (check.status === 'DONE') throw new ConflictError({
+      code: 'QUALITY_CHECK_DONE',
+      message: 'The check is already done',
+    });
 
     if (input.assignedToId) {
       if (input.assignedToId === check.originalOfficerId) {
-        throw new ValidationError('لا يُسند التحقق إلى الموظف الذي أنشأ السجل.');
+        throw new ValidationError({
+          code: 'QUALITY_CHECK_ASSIGN_TO_FILER',
+          message: 'A check is not assigned to the record’s filer',
+        });
       }
       const staff = await this.db.user.findFirst({
         where: { id: input.assignedToId, kind: 'STAFF', isActive: true },
         select: { firstName: true, lastName: true, role: true },
       });
-      if (!staff) throw new ValidationError('الموظف غير موجود أو غير فعّال.');
+      if (!staff) throw new ValidationError({
+        code: 'QUALITY_CHECK_STAFF_INACTIVE',
+        message: 'The assignee does not exist or is inactive',
+      });
       if (!canCheck(staff.role)) {
-        throw new ValidationError('دور هذا الموظف لا يسمح بتسجيل نتيجة التحقق — أسنِده إلى موظف ميداني أو مراجِع.');
+        throw new ValidationError({
+          code: 'QUALITY_CHECK_ROLE_CANNOT_CHECK',
+          message: 'The assignee’s role cannot record a check',
+        });
       }
     }
 
@@ -841,17 +865,29 @@ export class RecordReviewService {
         registration: { select: { citizenId: true, referenceNumber: true } },
       },
     });
-    if (!check) throw new NotFoundError('التحقق غير موجود');
-    if (check.status === 'DONE') throw new ConflictError('تم هذا التحقق بالفعل.');
+    if (!check) throw new NotFoundError({
+      code: 'QUALITY_CHECK_NOT_FOUND',
+      message: 'The check was not found',
+    });
+    if (check.status === 'DONE') throw new ConflictError({
+      code: 'QUALITY_CHECK_DONE',
+      message: 'The check is already done',
+    });
     if (check.originalOfficerId === actor.id) {
-      throw new ConflictError('لا يمكنك التحقق من سجل أنشأته بنفسك.');
+      throw new ConflictError({
+        code: 'QUALITY_CHECK_OWN_RECORD',
+        message: 'An officer cannot check their own record',
+      });
     }
     if (
       check.assignedToId &&
       check.assignedToId !== actor.id &&
       !(QUALITY_REVIEWER_ROLES as readonly string[]).includes(actor.role)
     ) {
-      throw new ConflictError('هذا التحقق مُسند إلى موظف آخر.');
+      throw new ConflictError({
+        code: 'QUALITY_CHECK_ASSIGNED_TO_OTHER',
+        message: 'The check is assigned to another staff member',
+      });
     }
 
     const now = new Date();

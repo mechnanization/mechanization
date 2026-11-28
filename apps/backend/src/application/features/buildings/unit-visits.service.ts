@@ -15,7 +15,8 @@ import { CasesService } from '../cases/cases.service';
 import type { UnitRow, VacancyRow, VisitRow } from './building.types';
 import { activeVacancy, closeActiveVacancy, toVacancyRow } from './unit-vacancy';
 import { APP_CONFIG } from '../../common/app.config';
-import { BuildingsService, structuralLabel, toUnitRow, toVisitRow } from './buildings.service';
+import { BuildingsService, toUnitRow, toVisitRow } from './buildings.service';
+import { StaffActor } from '../../common/actor';
 
 /**
  * Metres between two pins, on a sphere.
@@ -81,7 +82,7 @@ export class UnitVisitsService {
   private async withdrawOwnerVacancyStatements(
     unitId: string,
     unitCode: string,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<void> {
     const unit = await this.db.unit.findUnique({ where: { id: unitId }, select: { buildingId: true } });
     if (!unit) return;
@@ -91,8 +92,8 @@ export class UnitVisitsService {
         where: {
           unitId,
           endedAt: null,
-          unitStatus: 'VACANT' as never,
-          propertyEntry: { occupancyType: 'OWNER' as never, endedAt: null },
+          unitStatus: 'VACANT',
+          propertyEntry: { occupancyType: 'OWNER', endedAt: null },
         },
         select: { id: true, propertyEntryId: true, propertyEntry: { select: { registration: { select: { citizenId: true } } } } },
       }),
@@ -100,10 +101,10 @@ export class UnitVisitsService {
         ? this.db.propertyEntry.findMany({
             where: {
               buildingId: unit.buildingId,
-              propertyType: 'HOUSE' as never,
-              occupancyType: 'OWNER' as never,
+              propertyType: 'HOUSE',
+              occupancyType: 'OWNER',
               endedAt: null,
-              unitStatus: 'VACANT' as never,
+              unitStatus: 'VACANT',
               units: { none: { endedAt: null } },
             },
             select: { id: true, registration: { select: { citizenId: true } } },
@@ -172,7 +173,7 @@ export class UnitVisitsService {
   async confirmVacancy(
     unitId: string,
     input: ConfirmVacancyInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
     /**
      * For callers inside another write. `settle: false` — the caller settles
      * the flat once its own writes are done, so a half-written flat is never
@@ -184,7 +185,10 @@ export class UnitVisitsService {
     options: { settle?: boolean; ownerStatement?: boolean } = {},
   ): Promise<{ vacancy: VacancyRow; unit: UnitRow; casesResolved: number }> {
     const unit = await this.db.unit.findUnique({ where: { id: unitId } });
-    if (!unit) throw new NotFoundError('الوحدة غير موجودة');
+    if (!unit) throw new NotFoundError({
+      code: 'UNIT_NOT_FOUND',
+      message: 'Unit was not found',
+    });
 
     /*
       A طابق أعمدة is not empty — it is not a space that can be full.
@@ -197,19 +201,21 @@ export class UnitVisitsService {
       a real confirmation carries.
     */
     if (isStructuralUnitType(unit.unitType)) {
-      throw new ValidationError(
-        `الوحدة ${unit.unitCode} ${structuralLabel(unit.unitType)} — لا يُسجَّل لها تأكيد شغور، فهي ليست مسكناً ولا محلاً يُشغل`,
-        { unitType: unit.unitType, unitCode: unit.unitCode },
-      );
+      throw new ValidationError({
+        code: 'STRUCTURAL_UNIT_NO_VACANCY',
+        message: `Unit ${unit.unitCode} is structural (${unit.unitType})`,
+        params: { unitCode: unit.unitCode, unitType: unit.unitType },
+        details: { unitType: unit.unitType, unitCode: unit.unitCode },
+      });
     }
 
     const standing = await activeVacancy(this.db, unitId);
     if (standing) {
-      throw new ConflictError(
-        `الوحدة ${unit.unitCode} مؤكَّد شغورها مسبقاً منذ ${standing.observedAt
-          .toISOString()
-          .slice(0, 10)}`,
-      );
+      throw new ConflictError({
+        code: 'UNIT_VACANCY_ALREADY_CONFIRMED',
+        message: `Unit ${unit.unitCode} is already confirmed vacant`,
+        params: { unitCode: unit.unitCode, since: standing.observedAt.toISOString().slice(0, 10) },
+      });
     }
 
     await this.buildings.assertMayBeCalledEmpty(unit, { seasonalAllowed: options.ownerStatement === true });
@@ -224,7 +230,7 @@ export class UnitVisitsService {
       const created = await tx.unitVacancyConfirmation.create({
         data: {
           unitId,
-          basis: input.basis as never,
+          basis: input.basis,
           ...(input.observedAt ? { observedAt: input.observedAt } : {}),
           notes: input.notes?.trim() || null,
           confirmedById: actor.id,
@@ -301,14 +307,21 @@ export class UnitVisitsService {
   async endVacancy(
     unitId: string,
     input: EndVacancyInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<{ vacancy: VacancyRow; unit: UnitRow }> {
     const unit = await this.db.unit.findUnique({ where: { id: unitId } });
-    if (!unit) throw new NotFoundError('الوحدة غير موجودة');
+    if (!unit) throw new NotFoundError({
+      code: 'UNIT_NOT_FOUND',
+      message: 'Unit was not found',
+    });
 
     const standing = await activeVacancy(this.db, unitId);
     if (!standing) {
-      throw new ConflictError(`لا يوجد تأكيد شغور قائم على الوحدة ${unit.unitCode}`);
+      throw new ConflictError({
+        code: 'UNIT_NO_STANDING_VACANCY',
+        message: `Unit ${unit.unitCode} has no standing vacancy`,
+        params: { unitCode: unit.unitCode },
+      });
     }
 
     /*
@@ -317,10 +330,12 @@ export class UnitVisitsService {
       something for them to correct, not for the server to quietly round.
     */
     if (input.endedAt && input.endedAt < standing.observedAt) {
-      throw new ValidationError(
-        `التاريخ قبل تاريخ تأكيد الشغور (${standing.observedAt.toISOString().slice(0, 10)})`,
-        { endedAt: input.endedAt },
-      );
+      throw new ValidationError({
+        code: 'VACANCY_END_BEFORE_CONFIRMATION',
+        message: 'The date is before the vacancy confirmation',
+        params: { since: standing.observedAt.toISOString().slice(0, 10) },
+        details: { endedAt: input.endedAt },
+      });
     }
 
     const [vacancy, updated] = await runInTenantTransaction(this.tenantContext, async () => {
@@ -336,7 +351,11 @@ export class UnitVisitsService {
       // Nothing can have closed it in between — the read above and this write
       // are in the same request — but the helper is the only thing that knows
       // how, so its null is handled rather than asserted away.
-      if (!closed) throw new ConflictError(`لا يوجد تأكيد شغور قائم على الوحدة ${unit.unitCode}`);
+      if (!closed) throw new ConflictError({
+        code: 'UNIT_NO_STANDING_VACANCY',
+        message: `Unit ${unit.unitCode} has no standing vacancy`,
+        params: { unitCode: unit.unitCode },
+      });
 
       const unitRow =
         Object.keys(closed.restore).length > 0
@@ -344,10 +363,10 @@ export class UnitVisitsService {
               where: { id: unitId },
               data: {
                 ...(closed.restore.unitStatus !== undefined
-                  ? { unitStatus: closed.restore.unitStatus as never }
+                  ? { unitStatus: closed.restore.unitStatus }
                   : {}),
                 ...(closed.restore.surveyStatus !== undefined
-                  ? { surveyStatus: closed.restore.surveyStatus as never }
+                  ? { surveyStatus: closed.restore.surveyStatus }
                   : {}),
               },
             })
@@ -418,13 +437,16 @@ export class UnitVisitsService {
    */
   async logVisit(
     input: LogVisitInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<{ visit: VisitRow; visitCount: number; vacancyStands: boolean }> {
     const unit = await this.db.unit.findUnique({
       where: { id: input.unitId },
       select: { id: true, buildingId: true, unitCode: true, surveyStatus: true },
     });
-    if (!unit) throw new NotFoundError('الوحدة غير موجودة');
+    if (!unit) throw new NotFoundError({
+      code: 'UNIT_NOT_FOUND',
+      message: 'Unit was not found',
+    });
 
     /*
       The same officer, the same door, the same day, the same finding: asked,
@@ -445,7 +467,7 @@ export class UnitVisitsService {
           where: {
             unitId: input.unitId,
             officerId: actor.id,
-            outcome: input.outcome as never,
+            outcome: input.outcome,
             createdAt: { gte: new Date(Date.now() - REPEAT_VISIT_WINDOW_MS) },
           },
           orderBy: { createdAt: 'desc' },
@@ -454,17 +476,11 @@ export class UnitVisitsService {
       ).find((visit) => Math.abs(visit.visitedAt.getTime() - claimedAt) < SAME_VISIT_DAY_MS);
       if (recent) {
         const minutesAgo = Math.max(0, Math.round((Date.now() - recent.createdAt.getTime()) / 60_000));
-        throw new ConflictError(
-          `سجَّلتَ زيارة بالنتيجة نفسها لهذه الوحدة قبل ${
-            minutesAgo === 1
-              ? 'دقيقة واحدة'
-              : minutesAgo === 2
-                ? 'دقيقتين'
-                : minutesAgo >= 3 && minutesAgo <= 10
-                  ? `${minutesAgo} دقائق`
-                  : `${minutesAgo} دقيقة`
-          }. إن كانت هذه محاولة جديدة فأكِّد ذلك قبل التسجيل.`,
-          {
+        throw new ConflictError({
+          code: 'VISIT_REPEATED',
+          message: `The same visit outcome was logged ${minutesAgo} minutes ago`,
+          params: { minutes: minutesAgo },
+          details: {
             repeatVisit: {
               unitId: input.unitId,
               loggedAt: recent.createdAt.toISOString(),
@@ -472,7 +488,7 @@ export class UnitVisitsService {
               minutesAgo,
             },
           },
-        );
+        });
       }
     }
 
@@ -500,7 +516,7 @@ export class UnitVisitsService {
         data: {
           unitId: input.unitId,
           officerId: actor.id,
-          outcome: input.outcome as never,
+          outcome: input.outcome,
           ...(input.visitedAt ? { visitedAt: input.visitedAt } : {}),
           notes: input.notes?.trim() || null,
         },
@@ -510,7 +526,7 @@ export class UnitVisitsService {
       if (!standing) {
         await tx.unit.update({
           where: { id: input.unitId },
-          data: { surveyStatus: input.outcome as never },
+          data: { surveyStatus: input.outcome },
         });
       }
 

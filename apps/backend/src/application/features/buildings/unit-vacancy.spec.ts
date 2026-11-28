@@ -14,7 +14,7 @@ import { vacancyReversal } from './unit-vacancy';
  * them needs a database to be stated.
  */
 describe('vacancyReversal', () => {
-  const vacant = { unitStatus: 'VACANT', surveyStatus: 'VACANT_CONFIRMED' };
+  const vacant = { unitStatus: 'VACANT' as const, surveyStatus: 'VACANT_CONFIRMED' as const };
 
   it('restores the حالة the confirmation replaced when it was recorded in error', () => {
     expect(

@@ -625,9 +625,15 @@ export class PrismaRegistrationRepository implements RegistrationRepository {
         });
       }
       if (isUniqueViolationOn(error, 'referenceNumber')) {
-        return new ConflictError('تعذّر إنشاء رقم مرجعي فريد — يرجى المحاولة مرة أخرى');
+        return new ConflictError({
+          code: 'REFERENCE_NUMBER_GENERATION_FAILED',
+          message: 'Reference number collision',
+        });
       }
-      return new ConflictError('هذه البيانات مسجّلة مسبقاً');
+      return new ConflictError({
+        code: 'RECORD_ALREADY_EXISTS',
+        message: 'Unique violation',
+      });
     }
     return error;
   }

@@ -14,6 +14,7 @@ import {
 } from './possible-duplicates';
 import { normalizeSearchText } from '../../../domain/value-objects/search-terms';
 import { APP_CONFIG } from '../../common/app.config';
+import { StaffActor } from '../../common/actor';
 
 /**
  * Is this person already on file? The screen a new file and an import go
@@ -233,7 +234,7 @@ export class CitizenDuplicatesService {
    * import would.
    */
   async screenForDuplicates(
-    input: { payload: AdminCitizenSubmission; actor: { id: string; role: string } },
+    input: { payload: AdminCitizenSubmission; actor: StaffActor },
     /** A re-delivery of a filing already on file: it is its own "match". */
     replay = false,
   ) {

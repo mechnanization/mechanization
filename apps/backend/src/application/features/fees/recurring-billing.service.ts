@@ -20,6 +20,7 @@ import {
   scopeOf,
 } from './fees.service';
 import { FeeNoticesService } from './fee-notices.service';
+import { StaffActor } from '../../common/actor';
 
 /**
  * A short, safe classifier for a billing failure — never the driver's message.
@@ -89,7 +90,7 @@ export class RecurringBillingService {
    */
   async runRecurringBilling(
     now = new Date(),
-    actor?: { id: string; role: string },
+    actor?: StaffActor,
   ): Promise<{
     noticesConsidered: number;
     invoicesCreated: number;

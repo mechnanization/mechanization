@@ -1,5 +1,6 @@
 import { storedLandlordName } from '@mechanization/shared-schemas';
 import { ValidationError } from '../errors/domain-error';
+import type { ErrorCode, ErrorParams } from '@mechanization/shared-schemas';
 
 export type OccupancyType = 'OWNER' | 'TENANT' | 'FREE_OCCUPANT';
 export type PropertyType = 'BUILDING' | 'HOUSE' | 'LAND' | 'TENT';
@@ -217,8 +218,8 @@ export class PropertyEntry {
     props: PropertyEntryProps,
     unestablished: UnestablishedFields,
   ): void {
-    const fail = (message: string) =>
-      new ValidationError(message, { propertyNumber: props.propertyNumber ?? null });
+    const fail = (code: ErrorCode, message: string, params?: ErrorParams) =>
+      new ValidationError({ code, message, params, details: { propertyNumber: props.propertyNumber ?? null } });
 
     /** A rule is checked unless the officer recorded that field as unestablished. */
     const required = (field: string, present: boolean) =>
@@ -244,7 +245,7 @@ export class PropertyEntry {
     // array is a caller that has confused the two shapes. Not waivable: this
     // is a contradiction in the payload rather than a fact nobody could collect.
     if (props.propertyType !== 'BUILDING' && (props.units?.length ?? 0) > 0) {
-      throw fail(`A ${props.propertyType.toLowerCase()} cannot be divided into units`);
+      throw fail('PROPERTY_CANNOT_HAVE_UNITS', `A ${props.propertyType.toLowerCase()} cannot be divided into units`, { propertyType: props.propertyType });
     }
 
     switch (props.propertyType) {
@@ -271,7 +272,7 @@ export class PropertyEntry {
         // as much, which is what a flag on `units` records.
         const units = props.units ?? [];
         if (units.length === 0) {
-          if (!unestablished.has('units')) throw fail('A building requires at least one unit');
+          if (!unestablished.has('units')) throw fail('PROPERTY_BUILDING_NEEDS_UNIT', 'A building requires at least one unit');
           break;
         }
 
@@ -281,18 +282,18 @@ export class PropertyEntry {
         // an unfinished form.
         units.forEach((unit, index) => {
           const where = `unit ${index + 1}`;
-          if (!unit.unitType) throw fail(`${where} requires a unit type`);
-          if (!unit.floor?.trim()) throw fail(`${where} requires a floor`);
-          if (!unit.unitArea || unit.unitArea <= 0) throw fail(`${where} requires an area`);
+          if (!unit.unitType) throw fail('PROPERTY_UNIT_TYPE_REQUIRED', `${where} requires a unit type`, { unit: index + 1 });
+          if (!unit.floor?.trim()) throw fail('PROPERTY_UNIT_FLOOR_REQUIRED', `${where} requires a floor`, { unit: index + 1 });
+          if (!unit.unitArea || unit.unitArea <= 0) throw fail('PROPERTY_UNIT_AREA_REQUIRED', `${where} requires an area`, { unit: index + 1 });
         });
         break;
       }
       case 'HOUSE':
         // No name demanded here either — see the BUILDING branch above.
         if (!required('unitArea', Boolean(props.unitArea && props.unitArea > 0))) {
-          throw fail('A house requires an area');
+          throw fail('PROPERTY_HOUSE_AREA_REQUIRED', 'A house requires an area');
         }
-        if (props.floor) throw fail('A standalone house cannot have a floor');
+        if (props.floor) throw fail('PROPERTY_HOUSE_NO_FLOOR', 'A standalone house cannot have a floor');
         /*
           A منزل has exactly one unit type and `normalise` supplies it.
           
@@ -304,13 +305,13 @@ export class PropertyEntry {
           مستودع, and a card claiming so has confused the two shapes.
         */
         if (props.unitType && props.unitType !== 'INDEPENDENT_HOUSE') {
-          throw fail('A standalone house can only be an independent house');
+          throw fail('PROPERTY_HOUSE_TYPE_ONLY', 'A standalone house can only be an independent house');
         }
         break;
       case 'LAND':
-        if (!required('landType', Boolean(props.landType))) throw fail('Land requires a land type');
+        if (!required('landType', Boolean(props.landType))) throw fail('PROPERTY_LAND_TYPE_REQUIRED', 'Land requires a land type');
         if (!required('unitArea', Boolean(props.unitArea && props.unitArea > 0))) {
-          throw fail('Land requires an area');
+          throw fail('PROPERTY_LAND_AREA_REQUIRED', 'Land requires an area');
         }
         // أسهم are a share of ownership: asked of the owner, never of a tenant
         // or a شاغل بتسامح farming the plot (see `ownerLandShares`).
@@ -318,18 +319,18 @@ export class PropertyEntry {
           props.occupancyType === 'OWNER' &&
           !required('shares', Boolean(props.shares && props.shares > 0))
         ) {
-          throw fail('Land requires a share count');
+          throw fail('PROPERTY_LAND_SHARES_REQUIRED', 'Land requires a share count');
         }
         if (props.floor || props.unitType || props.buildingName) {
-          throw fail('Land cannot carry building details');
+          throw fail('PROPERTY_LAND_NO_BUILDING_DETAILS', 'Land cannot carry building details');
         }
         break;
       case 'TENT':
         if (!required('tentLocation', Boolean(props.tentLocation?.trim()))) {
-          throw fail('A tent requires a location description');
+          throw fail('PROPERTY_TENT_LOCATION_REQUIRED', 'A tent requires a location description');
         }
         if (props.floor || props.unitType || props.buildingName) {
-          throw fail('A tent cannot carry building details');
+          throw fail('PROPERTY_TENT_NO_BUILDING_DETAILS', 'A tent cannot carry building details');
         }
         break;
     }

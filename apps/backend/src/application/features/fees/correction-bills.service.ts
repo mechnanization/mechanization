@@ -21,6 +21,7 @@ import {
 } from './bill-corrections';
 import { assessCitizen, FeesService, flatCategoryCharge, scopeOf, type CitizenHoldings } from './fees.service';
 import { billingDayOfPeriod } from '../buildings/fee-exemption';
+import { StaffActor } from '../../common/actor';
 
 /** Owed and not yet settled. PENDING_REVIEW is money claimed, not money received. */
 const OPEN_STATUSES = ['UNPAID', 'OVERDUE', 'PENDING_REVIEW'] as const;
@@ -231,7 +232,7 @@ export class CorrectionBillsService {
   async review(
     paymentId: string,
     input: { note: string; figure: string },
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<{ reviewedAt: string }> {
     const bill = (await this.openBills(paymentId))[0];
     if (!bill) {
@@ -270,7 +271,7 @@ export class CorrectionBillsService {
       AuditLogEntry.create({
         actorId: actor.id,
         actorType: 'STAFF',
-        actorRole: actor.role as never,
+        actorRole: actor.role,
         action: BILL_BASIS_REVIEWED,
         entityType: 'Payment',
         entityId: bill.id,

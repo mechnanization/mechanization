@@ -6,6 +6,7 @@ import { withConnectionRetry } from '../../../infrastructure/prisma/with-connect
 import { NotFoundError } from '../../common/exceptions';
 import type { DamageRecorded } from '../audit/audit.service';
 import type { DamageRow } from './building.types';
+import { StaffActor } from '../../common/actor';
 
 /**
  * War-damage assessments — an append-only log, never a column.
@@ -51,7 +52,7 @@ export class DamageService {
    */
   async record(
     input: CreateDamageAssessmentInput,
-    actor: { id: string; role: string },
+    actor: StaffActor,
   ): Promise<DamageRow> {
     // The building the reading is filed under in the trail: its own, or the unit's.
     let buildingId = input.buildingId ?? null;

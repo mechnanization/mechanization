@@ -60,7 +60,10 @@ export class ReferenceNumber {
   static parse(raw: string): ReferenceNumber {
     const normalised = raw.trim().toUpperCase().replace(/\s/g, '');
     if (!PATTERN.test(normalised)) {
-      throw new ValidationError('الرقم المرجعي غير صالح');
+      throw new ValidationError({
+        code: 'REFERENCE_NUMBER_INVALID',
+        message: 'The reference number is not valid',
+      });
     }
     return new ReferenceNumber(normalised);
   }

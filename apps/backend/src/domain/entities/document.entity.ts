@@ -45,10 +45,17 @@ export class Document {
      */
     const isPerProperty = props.type === 'OWNERSHIP_PROOF' || props.type === 'RENTAL_CONTRACT';
     if (isPerProperty && !props.propertyEntryId) {
-      throw new ValidationError(`A ${props.type} must be attached to a specific property`);
+      throw new ValidationError({
+        code: 'DOCUMENT_NEEDS_PROPERTY',
+        message: `A ${props.type} must be attached to a specific property`,
+        params: { type: props.type },
+      });
     }
     if (props.type === 'IDENTITY' && props.propertyEntryId) {
-      throw new ValidationError('An identity document belongs to the person, not a property');
+      throw new ValidationError({
+        code: 'IDENTITY_DOCUMENT_ON_PROPERTY',
+        message: 'An identity document belongs to the person, not a property',
+      });
     }
 
     return new Document(props);
@@ -56,13 +63,23 @@ export class Document {
 
   static assertUploadable(mimeType: string, sizeBytes: number): void {
     if (!ALLOWED_MIME_TYPES.has(mimeType.toLowerCase())) {
-      throw new ValidationError('نوع الملف غير مدعوم — يرجى إرفاق صورة أو ملف PDF');
+      throw new ValidationError({
+        code: 'DOCUMENT_TYPE_UNSUPPORTED',
+        message: 'Unsupported document type',
+      });
     }
     if (sizeBytes <= 0) {
-      throw new ValidationError('الملف فارغ');
+      throw new ValidationError({
+        code: 'DOCUMENT_EMPTY',
+        message: 'Empty document',
+      });
     }
     if (sizeBytes > MAX_BYTES) {
-      throw new ValidationError('حجم الملف كبير جداً — الحد الأقصى 10 ميغابايت');
+      throw new ValidationError({
+        code: 'DOCUMENT_TOO_LARGE',
+        message: 'The document is over the size limit',
+        params: { maxMb: MAX_BYTES / (1024 * 1024) },
+      });
     }
   }
 

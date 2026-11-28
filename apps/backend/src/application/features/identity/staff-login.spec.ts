@@ -263,7 +263,7 @@ const LOGIN = {
   context: {},
 };
 
-const GENERIC_REFUSAL = 'بيانات الدخول غير صحيحة';
+const GENERIC_REFUSAL = expect.objectContaining({ code: 'LOGIN_CREDENTIALS_INVALID' });
 
 describe('loginStaff — the password is checked here, against this schema’s row', () => {
   it('hands the row’s own hash to the hasher and issues a session on a match', async () => {
@@ -373,8 +373,9 @@ describe('loginStaff — the password is checked here, against this schema’s r
     const noSuchAccount = await rejection(unknown.service.loginStaff(LOGIN));
     const badPassword = await rejection(wrong.service.loginStaff(LOGIN));
 
-    expect(noSuchAccount.message).toBe(badPassword.message);
-    expect(noSuchAccount.message).toBe(GENERIC_REFUSAL);
+    expect(noSuchAccount).toEqual(expect.objectContaining({ message: badPassword.message }));
+    expect(badPassword).toEqual(GENERIC_REFUSAL);
+    expect(noSuchAccount).toEqual(GENERIC_REFUSAL);
     expect(noSuchAccount).toBeInstanceOf(UnauthorizedError);
     expect(badPassword).toBeInstanceOf(UnauthorizedError);
   });

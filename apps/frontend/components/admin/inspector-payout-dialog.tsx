@@ -29,6 +29,7 @@ import {
   payoutKeyAfterFailure,
   payoutRequest,
 } from '@/lib/commission-payout';
+import { localizeApiError } from '@/lib/api-errors';
 import { currencyUnit, formatMoney, formatTypedAmount, parseAmount } from '@/lib/currency';
 import { heldInDoubt, heldKey, markInDoubt, spendKey } from '@/lib/request-id';
 import { RefreshFailedAlert } from '@/components/admin/refresh-failed-alert';
@@ -253,8 +254,14 @@ function PayoutForm({
   useEffect(() => () => onBusyChange(false), [onBusyChange]);
 
   const allowance = useMemo(() => payoutAllowance({ pendingBalance: profile.pendingBalance }), [profile]);
+  const pageLocale = locale === 'en' ? 'en' : 'ar';
+  /** The refusal in the page's language: the server's own rule and code (ERR-03). */
+  const refusalText = (amountTyped: number): string | null => {
+    const refusal = payoutRefusal(allowance, amountTyped);
+    return refusal ? localizeApiError(refusal, pageLocale) : null;
+  };
   /** Nothing can be paid, whatever the amount. */
-  const blocked = allowance.allowed ? null : payoutRefusal(allowance, 0);
+  const blocked = allowance.allowed ? null : refusalText(0);
 
   const account = accounts.find((candidate) => candidate.id === accountId);
   const typed = parseAmount(amount);
@@ -302,7 +309,7 @@ function PayoutForm({
     if (checks.accountId) next.accountId = t('errors.accountId');
     if (checks.amount === 'amount') next.amount = t('errors.amount');
     // The server's own rule, in its own words; it checks again.
-    if (checks.amount === 'overOwed') next.amount = payoutRefusal(allowance, typed) ?? t('errors.amount');
+    if (checks.amount === 'overOwed') next.amount = refusalText(typed) ?? t('errors.amount');
     if (checks.amount === 'short') next.amount = t('errors.short');
 
     if (Object.keys(next).length > 0) {

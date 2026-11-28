@@ -36,7 +36,7 @@ function build(): BackupService {
 }
 
 const OPTIONS = { confirmTenantSlug: 'albazourieh', dryRun: true };
-const ACTOR = { id: 'staff-1', role: 'SUPER_ADMIN' };
+const ACTOR = { id: 'staff-1', role: 'SUPER_ADMIN' as const };
 
 /**
  * A zip bomb in the shape this route would actually receive: highly repetitive
@@ -65,19 +65,19 @@ describe('BackupService.restore — the snapshot is bounded before it is parsed'
   it('reports a bomb as an invalid backup rather than crashing', async () => {
     // The limit lands in the existing catch, so an operator is told the file is
     // not a valid backup instead of the process dying on an allocation.
-    await expect(build().restore(bomb(), OPTIONS, ACTOR)).rejects.toThrow(/تعذّر فك الضغط/);
+    await expect(build().restore(bomb(), OPTIONS, ACTOR)).rejects.toThrow(expect.objectContaining({ code: 'BACKUP_FILE_UNREADABLE' }));
   });
 
   it('still refuses input that is not gzip at all', async () => {
     await expect(
       build().restore(Buffer.from('not gzip'), OPTIONS, ACTOR),
-    ).rejects.toThrow(/تعذّر فك الضغط/);
+    ).rejects.toThrow(expect.objectContaining({ code: 'BACKUP_FILE_UNREADABLE' }));
   });
 
   it('still refuses gzip that is not JSON', async () => {
     await expect(
       build().restore(gzipSync(Buffer.from('{{{')), OPTIONS, ACTOR),
-    ).rejects.toThrow(/غير صالح/);
+    ).rejects.toThrow(expect.objectContaining({ code: 'BACKUP_CONTENT_INVALID' }));
   });
 
   it('accepts an ordinary snapshot through the decompression step', async () => {
@@ -93,6 +93,6 @@ describe('BackupService.restore — the snapshot is bounded before it is parsed'
       ),
     );
 
-    await expect(build().restore(snapshot, OPTIONS, ACTOR)).rejects.toThrow(/إصدار النسخة/);
+    await expect(build().restore(snapshot, OPTIONS, ACTOR)).rejects.toThrow(expect.objectContaining({ code: 'BACKUP_VERSION_MISMATCH' }));
   });
 });
