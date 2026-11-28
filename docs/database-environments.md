@@ -1,6 +1,6 @@
 # Database environments
 
-Last verified against the code: `refactor/cleanup-god-06-10` (on `refactor/cleanup-god-01-05-arch-03`, #253, with #198 merged in): `pnpm db:seed:census` runs inside a real tenant scope and calls `UnitVisitsService` (ARCH-03, GOD-06); not run in this change, 2026-11-27; `fix/cleanup-dry-07-11` (on `develop@5bf5856`): `scripts/db/lib.mjs` (`Client`, `C`, `withClient`, `abort`, `fail`, `backendRequire`, `absentIfMissing`) shared by every tool, `provision.mjs` refusing a bad slug and a read it cannot make, `tenant-schema-name.mjs` (DRY-10, DRY-11), 2026-11-27; `fix/cleanup-sec-10-dead-18-dry-01` (on `develop@5bf5856`): CI's `lint:unused` step in the pipeline diagram (DEAD-18), 2026-11-24; `chore/migration-0107-old-debts` (on `develop@abc8644`): the two local reset tools empty the old-debts tables, 2026-11-21; `feat/day3ati-staff-sync` (on `feat/day3ati-token-service@c10c166`): the `day3ati:backfill-staff` script (reads one tenant's staff, calls Day3ati, no schema change), 2026-11-20; `chore/migration-0103` updated onto `develop@e8bb71f`: the scanner's TRUNCATE rule narrowed to the trigger event and `TG_OP` only, so a dynamic `EXECUTE 'TRUNCATE …'` blocks again, and `withTruncateGuardsOff` keeps the work's own error when the aborted transaction refuses the ENABLEs, 2026-11-20; `fix/citizen-otp-closed` (on `develop@e9e79ff`): the phone-code sign-in refused while no SMS provider is live (`SmsSender.isLive`, `CITIZEN_OTP_UNAVAILABLE`), `otp/verify` throttled (`APP_CONFIG.throttle.otpVerify`), `NODE_ENV` required with no default, security audit N-2, 2026-11-15; `chore/migration-0103` (on `chore/migration-0102@72f0974`): `0103_append_only_no_truncate`, TRUNCATE refused on the append-only and written-once tables, the scanner narrowed to the statement, the local reset tools switching the guards (`truncate-guards.mjs`), applied with `pnpm db:deploy:local` and its integration spec run on a throwaway Postgres 17, and the next free number `0104` (task S19), 2026-11-16; `fix/pr88-review` (on `develop@be4f053`), 2026-10-06; the rollback caveat for a new enum value against `chore/migration-0090-0091` (on `develop@5e8f5c3`), 2026-10-13.
+Last verified against the code: `fix/cleanup-sec-04-06-07-09-12` (on `refactor/cleanup-god-11-13-pag-06-07`, #255): `Deploy Backend` runs CI and the dependency audit first, its deploy job and `Rollback Production` run in `db-production` on OpenSSH with the pinned host keys, every action is pinned by SHA, every workflow's token is read only and none holds `id-token: write`, a deploy and a rollback share one concurrency group (SEC-09, decision U-12: no approval beyond the release PR's review); not run in this change, 2026-11-28; `refactor/cleanup-god-06-10` (on `refactor/cleanup-god-01-05-arch-03`, #253, with #198 merged in): `pnpm db:seed:census` runs inside a real tenant scope and calls `UnitVisitsService` (ARCH-03, GOD-06); not run in this change, 2026-11-27; `fix/cleanup-dry-07-11` (on `develop@5bf5856`): `scripts/db/lib.mjs` (`Client`, `C`, `withClient`, `abort`, `fail`, `backendRequire`, `absentIfMissing`) shared by every tool, `provision.mjs` refusing a bad slug and a read it cannot make, `tenant-schema-name.mjs` (DRY-10, DRY-11), 2026-11-27; `fix/cleanup-sec-10-dead-18-dry-01` (on `develop@5bf5856`): CI's `lint:unused` step in the pipeline diagram (DEAD-18), 2026-11-24; `chore/migration-0107-old-debts` (on `develop@abc8644`): the two local reset tools empty the old-debts tables, 2026-11-21; `feat/day3ati-staff-sync` (on `feat/day3ati-token-service@c10c166`): the `day3ati:backfill-staff` script (reads one tenant's staff, calls Day3ati, no schema change), 2026-11-20; `chore/migration-0103` updated onto `develop@e8bb71f`: the scanner's TRUNCATE rule narrowed to the trigger event and `TG_OP` only, so a dynamic `EXECUTE 'TRUNCATE …'` blocks again, and `withTruncateGuardsOff` keeps the work's own error when the aborted transaction refuses the ENABLEs, 2026-11-20; `fix/citizen-otp-closed` (on `develop@e9e79ff`): the phone-code sign-in refused while no SMS provider is live (`SmsSender.isLive`, `CITIZEN_OTP_UNAVAILABLE`), `otp/verify` throttled (`APP_CONFIG.throttle.otpVerify`), `NODE_ENV` required with no default, security audit N-2, 2026-11-15; `chore/migration-0103` (on `chore/migration-0102@72f0974`): `0103_append_only_no_truncate`, TRUNCATE refused on the append-only and written-once tables, the scanner narrowed to the statement, the local reset tools switching the guards (`truncate-guards.mjs`), applied with `pnpm db:deploy:local` and its integration spec run on a throwaway Postgres 17, and the next free number `0104` (task S19), 2026-11-16; `fix/pr88-review` (on `develop@be4f053`), 2026-10-06; the rollback caveat for a new enum value against `chore/migration-0090-0091` (on `develop@5e8f5c3`), 2026-10-13.
 
 Three databases, three targets, and a set of checks whose only job is to make
 "I ran it against the wrong one" impossible rather than unlikely. This is the
@@ -475,12 +475,17 @@ feature branch
   merge to develop
     ↓  Actions: Deploy staging     migrates staging (automatic)
   PR → main, merge
-    ↓  Actions: Deploy Backend     1. migrate staging, then production (automatic)
-                                   2. build, boot the candidate, cut over
+    ↓  Actions: Deploy Backend     1. CI and the dependency audit (ci.yml, called)
+                                   2. migrate staging, then production (automatic)
+                                   3. build, boot the candidate, cut over
 ```
 
-Every push to `main` migrates production **before** the code that needs the
-migration ships, and ships nothing if the migration fails. The migration job is
+Every push to `main` runs CI and the dependency audit first
+([`ci.yml`](../.github/workflows/ci.yml), called as the workflow's first job,
+SEC-09): if either fails, nothing is migrated and nothing ships. Branch
+protection on `main` requires no status check, so before this a release merged
+with CI red migrated production. It then migrates production **before** the
+code that needs the migration ships, and ships nothing if the migration fails. The migration job is
 [`migrate-database.yml`](../.github/workflows/migrate-database.yml). A GitHub
 runner opens an SSH tunnel to the Lightsail box (runner port 5433 → the box's
 5432), writes the env files from the environment's secrets (`db-production`
@@ -500,6 +505,21 @@ the job, and runs `scripts/db/deploy.mjs`: staging first, then production. The g
 The previous release keeps serving traffic until the cutover, so it runs
 against the new schema for a few minutes. That is why the automatic path only
 ever applies additive migrations (§4).
+
+**How CI reaches the box** (SEC-09). The tunnel, the deploy and the rollback
+each run OpenSSH on the runner with the key from `SSH_PRIVATE_KEY` and the host
+keys from `SSH_KNOWN_HOSTS` (`StrictHostKeyChecking yes`), never a third-party
+action. The deploy streams the release over the session (`cat >`, so the box
+needs no SFTP) into `releases/<name>-upload/`, then runs its boot-and-cut-over
+script as the session's command, exactly as the action it replaced did. Every
+`uses:` is pinned to a commit SHA with its version in a comment; a bump is a
+reviewed change to that line. Every workflow's `GITHUB_TOKEN` is
+`contents: read`, and none asks for `id-token: write`: the pre-migration backup
+signs in with `db-production`'s access keys (§5), not through OIDC. A deploy
+and a rollback share the concurrency group `production-deploy`, so neither
+starts while the other runs (before, the rollback named a group the deploy did
+not use). Changing `migrate-database.yml` triggers **Deploy staging** on the
+merge to `develop` (its `paths`): a no-op when staging has nothing pending.
 
 ### The manual workflow
 
@@ -785,7 +805,7 @@ rm -f restore.sql
 | `.env.staging` in `apps/backend` | Staging credentials. Gitignored. Written by CI per run; on a laptop only while working on staging, then deleted. |
 | GitHub → Environments → `db-staging` | `STAGING_DATABASE_URL`, `STAGING_DIRECT_URL` |
 | GitHub → Environments → `db-production` | `PRODUCTION_DATABASE_URL`, `PRODUCTION_DIRECT_URL`, **plus** the two `STAGING_` ones: a production run migrates staging first and checks its history. **Plus** `BACKUP_AGE_PUBLIC_KEY`, `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` for the pre-migration backup (§5); the AWS keys belong in `db-production` only. Without them, a push with a migration pending stops before migrating. |
-| GitHub → repository secrets | `SSH_HOST`, `SSH_USER`, `SSH_PRIVATE_KEY` (the deploy, and the migration tunnel), `SSH_KNOWN_HOSTS` (the tunnel) |
+| GitHub → repository secrets, **to move** | `SSH_HOST`, `SSH_USER`, `SSH_PRIVATE_KEY`, `SSH_KNOWN_HOSTS`: the tunnel, the deploy and the rollback all use the four. A repository secret is readable by a workflow on any branch, so they belong in `db-production` (the deploy, the rollback, a production migration) **and** `db-staging` (a staging migration from `develop`), with the repository copies deleted (docs/security.md, Known gaps). The workflows already name those environments (SEC-09); until the secrets move, the repository copies answer. |
 
 The database URLs name the **runner's end of the tunnel**, not the box. The
 `DIRECT_URL` is the same string, since there is no connection pooler:
@@ -813,10 +833,15 @@ The first word of each line must be exactly what `SSH_HOST` holds. A rebuilt
 box has new keys: update both secrets together, or every deploy stops at
 "Host key verification failed", which is the point.
 
-`db-production` has **no required reviewer**, only a branch policy (read from
-the GitHub API on 2026-10-03): migrations run unattended on every push to
-`main`. Reinstating one makes each push wait for an approval at the migration
-job, even when nothing is pending.
+`db-production` has **no required reviewer**, only a branch policy (protected
+branches; read from the GitHub API on 2026-10-03 and again on 2026-11-28):
+migrations run unattended on every push to `main`, and so does the deploy job,
+which runs in the same environment since SEC-09. Decided 2026-11-28 (U-12):
+no approval on the deploy beyond the one human review the release PR to `main`
+already needs. Reinstating a reviewer would hold each push twice, at the
+migration and at the deploy, even when nothing is pending. A rollback runs in
+`db-production` too, so one dispatched from a branch that is not protected is
+refused before it starts.
 
 The `db-` prefix is not decoration. The Vercel integration creates its own
 environments in this repository — `Production – mechanization-api` (from the

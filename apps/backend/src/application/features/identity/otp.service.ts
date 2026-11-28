@@ -35,6 +35,11 @@ export class OtpService {
     private readonly config: ConfigService,
   ) {}
 
+  /** Through `ConfigService` like every other setting (audit SEC-12); `NODE_ENV` is required by `envSchema`. */
+  private get isProduction(): boolean {
+    return this.config.get<string>('NODE_ENV') === 'production';
+  }
+
   /**
    * Whether a code is actually demanded of the citizen.
    *
@@ -146,14 +151,14 @@ export class OtpService {
        * real, verifiable one. Production still fails loudly: there, a code
        * nobody received is a citizen locked out, not a convenience.
        */
-      if (process.env.NODE_ENV === 'production') {
+      if (this.isProduction) {
         throw new ConflictError(
           'تعذّر إرسال الرمز حالياً. يرجى إعادة المحاولة، أو مراجعة البلدية لتسجيل طلبك.',
         );
       }
 
       this.logger.warn(
-        `Continuing without SMS delivery (NODE_ENV=${process.env.NODE_ENV ?? 'development'}) — ` +
+        `Continuing without SMS delivery (NODE_ENV=${String(this.config.get<string>('NODE_ENV'))}) — ` +
           'the code is returned in the response as devCode.',
       );
     }
@@ -162,7 +167,7 @@ export class OtpService {
       channel,
       expiresAt,
       resendAvailableAt: new Date(Date.now() + APP_CONFIG.otp.resendCooldownSeconds * 1000),
-      devCode: process.env.NODE_ENV === 'production' ? undefined : code,
+      devCode: this.isProduction ? undefined : code,
     };
   }
 
@@ -209,7 +214,7 @@ export class OtpService {
   }
 
   assertDeliverable(): void {
-    if (!this.sms.hasFallback && process.env.NODE_ENV === 'production') {
+    if (!this.sms.hasFallback && this.isProduction) {
       throw new ValidationError('No fallback SMS route configured');
     }
   }

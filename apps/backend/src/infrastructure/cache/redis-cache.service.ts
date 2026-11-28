@@ -190,6 +190,17 @@ export class RedisCacheService implements OnModuleDestroy {
   }
 
   /**
+   * The Redis client while it is connected, else null: for a caller that needs
+   * a command this cache does not wrap (`RedisThrottlerStorage`'s counter) and
+   * must not wait on a reconnect. Unset, still connecting and offline are all
+   * null, so the caller falls back at once rather than queue behind ioredis.
+   */
+  connectedClient(): Redis | null {
+    if (!this.client || this.offline || this.client.status !== 'ready') return null;
+    return this.client;
+  }
+
+  /**
    * Invalidates every key under a prefix across both L1 in-memory cache and Redis.
    */
   async invalidatePrefix(prefix: string): Promise<void> {

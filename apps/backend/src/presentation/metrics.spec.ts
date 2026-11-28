@@ -389,6 +389,43 @@ describe('GET /metrics', () => {
     });
   });
 
+  /*
+    `trust proxy` (audit SEC-04, `APP_CONFIG.http.trustProxy`): supertest
+    connects from loopback, as nginx does on the box, so the forwarded address
+    is the client's. Each test spends its own addresses' budget on
+    `/api/v1/limited` (two a minute).
+  */
+  describe('the client address behind nginx (SEC-04)', () => {
+    const from = (forwardedFor: string) =>
+      request(server).get('/api/v1/limited').set('X-Forwarded-For', forwardedFor);
+
+    it('counts each address nginx forwards apart', async () => {
+      const first: number[] = [];
+      for (let i = 0; i < 3; i++) first.push((await from('203.0.113.1')).status);
+      expect(first).toEqual([200, 200, 429]);
+      expect((await from('203.0.113.2')).status).toBe(200);
+    });
+
+    it('takes the address nginx appended, so a client cannot pick its own bucket', async () => {
+      const statuses: number[] = [];
+      for (const spoofed of ['198.51.100.1', '198.51.100.2', '198.51.100.3']) {
+        statuses.push((await from(`${spoofed}, 203.0.113.3`)).status);
+      }
+      expect(statuses).toEqual([200, 200, 429]);
+    });
+
+    it('reads the header only from a proxy on this machine', () => {
+      const trust = app.getHttpAdapter().getInstance().get('trust proxy fn') as (address: string, hop: number) => boolean;
+      expect(['127.0.0.1', '::1', '::ffff:127.0.0.1', '203.0.113.9', '10.0.0.4'].map((address) => trust(address, 0))).toEqual([
+        true,
+        true,
+        true,
+        false,
+        false,
+      ]);
+    });
+  });
+
   it("includes Node's default process metrics", async () => {
     const body = await scrape();
 

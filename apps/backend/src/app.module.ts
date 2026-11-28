@@ -8,7 +8,8 @@ import { DomainModule } from './domain/domain.module';
 import { InfrastructureModule } from './infrastructure/infrastructure.module';
 import { PresentationModule } from './presentation/presentation.module';
 import { isSchedulerEnabled, validateEnv } from './presentation/config/env.schema';
-import { APP_CONFIG } from './application/common/app.config';
+import { THROTTLERS } from './presentation/http/throttlers';
+import { RedisThrottlerStorage } from './infrastructure/cache/redis-throttler-storage';
 
 /**
  * Root composition. The four imports are the four layers, in dependency order —
@@ -42,7 +43,7 @@ import { APP_CONFIG } from './application/common/app.config';
      * to Vercel Cron (`vercel.json`), which calls the same job classes over
      * HTTP through `InternalCronController`.
      *
-     * This used to read `process.env.VERCEL` directly, which meant "which
+     * This used to read `VERCEL` from the environment directly, which meant "which
      * runtime owns the schedule" was decided by a variable the platform injects
      * and this repository never sets — so on any other host (a container, a VM,
      * `pnpm dev`) the answer was "every process that boots", silently, and
@@ -55,18 +56,15 @@ import { APP_CONFIG } from './application/common/app.config';
     ...(isSchedulerEnabled() ? [ScheduleModule.forRoot()] : []),
 
     /**
-     * In-memory storage — correct for a single instance, which matches the
-     * expected deployment. This is the one component that needs Redis back the
-     * moment a second replica exists: per-instance counters make the effective
-     * limit N times what is configured.
+     * Counted in Redis when `REDIS_URL` is set, so every pm2 process and every
+     * replica shares one count (`RedisThrottlerStorage`; audit SEC-04). In
+     * memory, per process, while it is unset or down: a client then gets each
+     * limit once per process. The throttlers are `THROTTLERS`.
      */
-    ThrottlerModule.forRoot([
-      {
-        name: 'default',
-        ttl: APP_CONFIG.throttle.default.ttlSeconds * 1000,
-        limit: APP_CONFIG.throttle.default.limit,
-      },
-    ]),
+    ThrottlerModule.forRootAsync({
+      inject: [RedisThrottlerStorage],
+      useFactory: (storage: RedisThrottlerStorage) => ({ storage, throttlers: THROTTLERS }),
+    }),
 
     DomainModule,
     InfrastructureModule,

@@ -637,6 +637,18 @@ No cross-tenant path found. Every task here touches citizen data or credentials 
 - **Acceptance criteria:** per the decision: exact hop count, Redis storage, per-account limits beside per-IP.
 - **Depends on:** decision U-6 (rate-limit topology) and reading the nginx config (Unverified)
 - **Verification:** throttle specs; a login from two IPs counted apart.
+- **Done 2026-11-28** (decision U-6, taken that day): `trust proxy` is `loopback` (`APP_CONFIG.http.trustProxy`, set in
+  `createApiApp`), not a hop count: nginx is on the box, so a forwarded address is believed only from loopback.
+  `RedisThrottlerStorage` (`infrastructure/cache`) counts in Redis through `RedisCacheService.connectedClient` with one
+  Lua script per hit, and in the library's in-memory store while `REDIS_URL` is unset, Redis is offline or a command fails
+  (one warning per outage). `THROTTLERS` (`presentation/http/throttlers.ts`) adds `staffAccount`, per municipality and
+  email, `APP_CONFIG.throttle.staffLoginAccount` (10 a quarter hour), skipped on every route without
+  `@CountPerStaffAccount()` (staff sign-in only). The three comments rewritten. Verified: `metrics.spec.ts` over HTTP
+  through the real `createApiApp` (two forwarded addresses counted apart; a spoofed first entry does not escape its
+  bucket; only loopback trusted), `throttlers.spec.ts`, `redis-throttler-storage.spec.ts`, and the script against a
+  throwaway Redis 7 (two stores share one count, block, reopen, window expiry, fallback on a dropped connection; outside the
+  repo). **Unverified:** that nginx sends `X-Forwarded-For` and that `REDIS_URL` is set on Lightsail: the gap row now says
+  so.
 
 ## [SEC-05] Redact PII from 5xx details, mail and dev SMS logs
 - **Priority:** P1 · **Assignee:** Hashem · **Estimate:** S · **Category:** Security
@@ -653,6 +665,17 @@ No cross-tenant path found. Every task here touches citizen data or credentials 
 - **Acceptance criteria:** `UuidPipe({ optional: true })` on `entityId`; `optionalOneOf` on `entityType`; a property-number schema pipe on both params.
 - **Depends on:** none
 - **Verification:** audit controller spec (`entityId=abc` → 400).
+- **Done 2026-11-28, differently in two places, because the code disagreed with the ticket.** `entityId` is a text
+  column, so a non-uuid was never a 500; and real ids are not all UUIDs (a treasury day is filed under its date, the
+  old-debts settings under `singleton`, a News article under Day3ati's id), so `UuidPipe` would refuse real filters. It
+  takes a UUID, folded to lower case (an upper-cased one matched nothing), or a key of letters, digits, `-` and `_` up to
+  64; `abc` is such a key and passes. No list of audit entity types exists (each writer names its own) and the screen offers
+  the types the log holds (`facets`), so `entityType` is checked by shape (`^[A-Z][A-Za-z]{1,63}$`), on `GET audit` and
+  `GET audit/daily`; refused with `INVALID_QUERY_VALUE`. Both property-number params take
+  `propertyNumberParamSchema` (shared: the field's bounds without its digit fold, because the roster compares as stored
+  and the form opens it with older Arabic-digit numbers). `isUuid` added to `application/common/ids.ts`. Verified:
+  `audit.controller.spec.ts` (12 new cases), `route-inventory.spec.ts` (every `propertyNumber` path param behind a
+  `ZodValidationPipe`; checked by taking one off).
 
 ## [SEC-07] Give every public route an explicit throttle decision
 - **Priority:** P2 · **Assignee:** Hashem · **Estimate:** XS · **Category:** Security
@@ -661,6 +684,12 @@ No cross-tenant path found. Every task here touches citizen data or credentials 
 - **Acceptance criteria:** `@Throttle` or `@SkipThrottle()` with a reason comment on each; `route-inventory.spec.ts` asserts it for every `@Public()` route.
 - **Depends on:** none
 - **Verification:** spec.
+- **Done 2026-11-28:** `health` skips (no work; the deploy polls it every two seconds and reads a 429 as a dead process),
+  `health/ready` and `getPublicConfig` and `checkPropertyNumber` state `DEFAULT_THROTTLE`
+  (`presentation/http/throttlers.ts`), `whishCallback` skips (a callback turned away is money taken and not shown; the HMAC
+  is checked before any work). `route-inventory.spec.ts` «the throttle decision of every public route» fails on a
+  `@Public()` route with neither, on the handler or its class (checked by taking `health/ready`'s off). The gap row is
+  removed.
 
 ## [SEC-08] Exclude nested .env files and backups from the Docker build context
 - **Priority:** P1 · **Assignee:** Hashem · **Estimate:** XS · **Category:** Security
@@ -677,6 +706,18 @@ No cross-tenant path found. Every task here touches citizen data or credentials 
 - **Acceptance criteria:** actions pinned by SHA, `permissions: contents: read`, SSH secrets in a protected environment, host fingerprint from `SSH_KNOWN_HOSTS`, deploy gated on CI and the audit job; `id-token: write` gone from all three.
 - **Depends on:** decision U-12 (deploy gating) for the approval part only
 - **Verification:** a run on a branch; docs/database-environments.md and CLAUDE.md updated (workflow row).
+- **Done 2026-11-28** (decision U-12, taken that day: no approval on the deploy beyond the release PR's review):
+  `deploy-backend.yml` runs `ci.yml` (now also `workflow_call`) as its first job, so CI and the audit gate the migration
+  and the deploy; every `uses:` pinned by SHA (checkout v4.4.0, pnpm/action-setup v4.3.0, setup-node v4.4.0) in ci,
+  migrate-database and deploy-backend; `appleboy/scp-action` and `ssh-action` replaced in the deploy and the rollback by
+  OpenSSH against `SSH_KNOWN_HOSTS` (`StrictHostKeyChecking yes`, the tunnel's own pattern); the deploy and rollback jobs
+  in `db-production`; `permissions: contents: read` on every workflow that holds a secret or deploys; `id-token: write` gone
+  from all three callers. **Not run:** a branch run would deploy production. Verified instead: actionlint 1.7.7 (no errors;
+  four shellcheck infos, one pre-existing), and the deploy's and rollback's own `run:` scripts, extracted from the YAML
+  and executed in a container with `ssh deploy-box` standing in for the box (17 checks: the copy byte-identical, the
+  candidate on 4001, the cut-over, `previous` / a short SHA / `list`, a release name or a target with shell in it
+  refused). **Left for the user:** move the four `SSH_*` secrets into `db-production` and `db-staging` and delete the
+  repository copies (settings, not code; the gap row says so).
 
 ## [SEC-10] Make RolesGuard refuse routes with no role metadata
 - **Priority:** P1 · **Assignee:** Hashem · **Estimate:** M · **Category:** Security
@@ -701,6 +742,12 @@ No cross-tenant path found. Every task here touches citizen data or credentials 
 - **Acceptance criteria:** only `isSchedulerEnabled`, `initSentry` and scripts read `process.env`.
 - **Depends on:** ARCH-07
 - **Verification:** `grep -rn "process\.env\." apps/backend/src --include=*.ts | grep -v "spec\|scripts/\|sentry.ts\|env.schema"` → 0.
+- **Done 2026-11-28:** the grep → 0. `OtpService` reads `NODE_ENV` through its `ConfigService`; `APP_CONFIG.publicApiUrl` /
+  `publicPortalUrl` removed, `FeesController.whishCheckout` reads `PUBLIC_API_URL` / `PUBLIC_PORTAL_URL` with
+  `getOrThrow` (the portal's default in `envSchema`; the API's, from `PORT` and `APP_CONFIG.apiPrefix`, in a `transform`
+  after the object parses); `main.ts` warns about `TZ` and `NODE_APP_INSTANCE` (now declared) after the app is built,
+  through `ConfigService`. `WhishGatewayService` already read `ConfigService` (task S18): nothing to do there. The
+  `app.module.ts` comment that named `process.env.VERCEL` reworded so the grep can reach 0.
 
 ---
 
@@ -1664,6 +1711,12 @@ Filled in by whoever executes a task (section 0, step 4). One row per finding; t
 | — | SEC-03 | `packages/shared-schemas/src/auth.schema.ts` `confirmPasswordResetSchema` | Its comment described a Supabase recovery token; since task S14 the token is the one the API signs into the link's fragment (CODE-7) | Yes: rewritten | — (fixed) |
 | — | GOD-13 | `CitizenLandlordLinksController.landlordLink` | A uuid regex behind `UuidPipe`, which already refuses a non-uuid with a 400, and a comment saying a non-uuid was answered «not found» | Yes: the regex removed and the comment corrected | — (fixed) |
 | — | GOD-05 (#253) | `scripts/seed-census.ts` | Built the census services over an object-literal tenant context; after ARCH-03, `pnpm db:seed:census` would throw at the first building | Yes: fixed on #253 (runs inside a real scope) | — |
+| DRY-23 | SEC-06 | `audit/audit-view.ts`, `citizens/landlord-link.service.ts`, `fees/fees.service.ts`, `quality.controller.ts` (`UUID`), `infrastructure/repositories/audit.repository.ts` (`UUID_PATTERN`) | The same UUID regex in five files | No: `isUuid` (`application/common/ids.ts`) added and used by `AuditController` only | [code-quality.md](../code-quality.md) Backend |
+| SEC-13 | SEC-06 | `apps/backend/src/presentation/controllers/cases.controller.ts` `list` (`@Query('propertyNumber')`) | The case list's رقم العقار filter is read raw and unbounded, and compared as stored, so «١٥٥٣» does not find a case saved «1553» (docs/gotchas.md, `parcelNumberKey`) | No: not the ticket's two params, and folding it is a behaviour change | [security.md](../security.md) Known gaps |
+| — | SEC-09 | `.github/workflows/rollback-production.yml` (`concurrency: production-deploy`) | Its comment said the deploy shares the group; the deploy used `deploy-backend`, so a rollback could run during a deploy, both moving `current` and reloading pm2 | Yes: both use `production-deploy` | — (fixed) |
+| — | SEC-09 | `.github/workflows/ci.yml` comments («Nothing in CI connects to a database», «which Supabase project») | Contradicted by the Postgres service in the same file (CODE-7; the CQ CI row) | Yes: rewritten | — (fixed, row removed) |
+| — | SEC-12 | `WhishGatewayService` | Named by the ticket as reading `process.env`; it reads `ConfigService` since task S18 (2026-11-16) | Nothing to do | — |
+| — | SEC-07 | `HealthController.ready` | `GET health/ready` runs a query on the registry and nginx serves it to the internet like every path; it had no throttle decision of its own | Yes: `DEFAULT_THROTTLE` | — (fixed) |
 
 ---
 
@@ -1751,13 +1804,13 @@ an open treasury or fees PR touches it — check `gh pr list` first; GOD splits 
 | U-3 | Retire `request-cache.ts`, or keep it for non-React callers? | CACHE-02 | code-quality CQ Frontend; frontend CLAUDE.md |
 | U-4 | `tailwind-merge` 3 on Tailwind 3.4: pin 2.6 or extend the config? | (no task written) | code-quality CQ Frontend |
 | U-5 | One `--overlay` token and its value; solid warning fills vs COL-2; the status-token contrast failures (§17.3) | UX colour work beyond UX-03 | ui-ux §17.2, §17.3 |
-| U-6 | Rate-limit topology: the `trust proxy` hop, Redis throttler store, per-account limits | SEC-04 | security.md Undecided; open-decisions §5 |
+| U-6 | Rate-limit topology: the `trust proxy` hop, Redis throttler store, per-account limits | SEC-04 | **Decided 2026-11-28**: loopback, Redis when `REDIS_URL` is set, a loose per-account bucket on staff sign-in; [open-decisions §5](../open-decisions.md#5-horizontal-scaling--rate-limiting-and-the-job-schedule) |
 | U-7 | Offline PII on field devices: encrypt, clear on sign-out, or accept | (no task written) | security.md Undecided |
 | U-8 | A time primitive (CTL-2): build one or extend `DatePicker` | UX-02's time inputs | ui-ux §3.1 CTL-2 |
 | U-9 | When to delete the Supabase adapters | DEAD-08 | code-quality CQ Backend |
 | U-10 | Retire the Vercel runtime; does `InternalCronController` stay? | DEAD-09 | code-quality CQ Backend |
 | U-11 | Rebuild or delete `BackupController`/`BackupService` | DEAD-10, DEAD-06 (`backup-section.tsx`) | code-quality CQ Backend |
-| U-12 | Require CI + audit before a production deploy, and an approval on the deploy job | SEC-09 (gating part) | security.md Undecided |
+| U-12 | Require CI + audit before a production deploy, and an approval on the deploy job | SEC-09 (gating part) | **Decided 2026-11-28**: CI and the audit gate the deploy; no approval beyond the release PR's review; [database-environments.md §6](../database-environments.md#6-secrets) |
 | U-13 | Delete `dump-tenant.js` and `reset-2fa.ts`, or rebuild behind the target guard | DEAD-11 | security.md Undecided; memory: Abed PR review 2026-11-20 |
 | U-14 | Retire `numberingSequences` and «تسلسل الترقيم», or wire them to the books | DEAD-12 | security.md gaps; code-quality |
 | U-15 | Keep or remove the accent system | DEAD-13 | code-quality CQ Frontend |

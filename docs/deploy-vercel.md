@@ -1,6 +1,6 @@
 # Deploying to Vercel
 
-Last verified against the code: `fix/cleanup-dry-02-06` (on `develop@5bf5856a`): the Sentry redaction rules live once, in shared-schemas (DRY-05), 2026-11-24; `feat/shorter-staff-sessions` (on `develop@9ec12ec`), 2026-10-04.
+Last verified against the code: `fix/cleanup-sec-04-06-07-09-12` (on `refactor/cleanup-god-11-13-pag-06-07`, #255): the rate-limit caveat, now that the throttle counts in Redis when `REDIS_URL` is set (SEC-04), 2026-11-28; `fix/cleanup-dry-02-06` (on `develop@5bf5856a`): the Sentry redaction rules live once, in shared-schemas (DRY-05), 2026-11-24; `feat/shorter-staff-sessions` (on `develop@9ec12ec`), 2026-10-04.
 
 > **This doc now covers the frontend (the portal) only.** The API runs on AWS
 > Lightsail under pm2, deployed by `.github/workflows/deploy-backend.yml` on
@@ -243,11 +243,12 @@ anywhere: the import now uploads its layers through `CadastreStorage`
 2. **Uploads are capped at ~4.5 MB** by the platform's request-body limit,
    below `APP_CONFIG.cadastre.maxFileSizeBytes` (15 MB). Document uploads are
    well under it; a cadastre KMZ may not be. See (1).
-3. **Rate limiting is per instance.** `ThrottlerModule` stores counters in
-   memory, so the effective limit is roughly `configured × concurrent
-   instances` — the staff-login and OTP limits are the ones that matter. A
-   shared store (Redis) is the fix; until then, treat the numbers in
-   `APP_CONFIG.throttle` as a floor, not a ceiling.
+3. **Rate limiting is per instance without Redis.** The throttle counts in
+   Redis when `REDIS_URL` is set (`RedisThrottlerStorage`, SEC-04); unset, each
+   instance counts in memory, so the effective limit is roughly `configured ×
+   concurrent instances` — the staff-login and OTP limits are the ones that
+   matter. Without Redis, treat the numbers in `APP_CONFIG.throttle` as a floor,
+   not a ceiling.
 4. **Cold starts are slow.** A cold instance boots the whole Nest graph and
    connects the registry Prisma client before it answers anything — expect a
    couple of seconds on the first request after idle.

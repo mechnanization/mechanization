@@ -26,11 +26,11 @@ import { bearerMatches } from '../http/bearer-secret';
  * reports every status ≥ 500 to Sentry, and a scanner probing `/metrics` on a
  * deployment that never meant to serve it is not an incident.
  *
- * `@Public()` because the scraper holds no session. `@SkipThrottle()` because,
- * behind nginx with no `trust proxy`, every request reaches the throttler from
- * nginx's own address. A scrape would compete with all real traffic for one
- * bucket, and it would be the thing dropped at peak, which is exactly when the
- * graph matters.
+ * `@Public()` because the scraper holds no session. `@SkipThrottle()` because a
+ * scrape turned away is a hole in the graph, and it would be turned away at
+ * peak, which is exactly when the graph matters: a scraper on the box itself
+ * shares the loopback address with every local probe. `METRICS_TOKEN` is the
+ * door, compared before any work.
  */
 @Public()
 @SkipThrottle()

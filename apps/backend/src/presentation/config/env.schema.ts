@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { APP_CONFIG } from '../../application/common/app.config';
 
 /**
  * Accepted spellings for `SCHEDULER_ENABLED`. Anything outside this set is a
@@ -401,13 +402,27 @@ export const envSchema = z
     TZ: z.string().optional(),
 
     /**
+     * pm2's number for this process of a multi-instance app, from 0. Set by
+     * pm2, never by hand; read by `main.ts` to warn that `/metrics` counts one
+     * process only.
+     */
+    NODE_APP_INSTANCE: z.string().optional(),
+
+    /**
      * Absolute URLs this service hands to third parties (the Whish callback and
-     * the browser return URL). Localhost defaults are fine on a developer's
-     * machine and useless in a deployment, where the API and the portal are on
-     * separate origins.
+     * the browser return URL, `FeesController.whishCheckout`). Built from
+     * configuration and never from the request: a caller-supplied return URL is
+     * an open redirect, and a caller-supplied callback URL would let anyone aim
+     * the provider's "payment succeeded" message at a server they control.
+     * Localhost defaults are fine on a developer's machine and useless in a
+     * deployment, where the API and the portal are on separate origins. The
+     * API's default is this process's own port, filled in after the object is
+     * parsed (the `transform` at the end), so it is read with `getOrThrow`
+     * like every default (audit SEC-12: `APP_CONFIG` read both from
+     * `process.env` at import).
      */
     PUBLIC_API_URL: z.string().url().optional(),
-    PUBLIC_PORTAL_URL: z.string().url().optional(),
+    PUBLIC_PORTAL_URL: z.string().url().default('http://localhost:3000'),
 
     /**
      * The portal's origins, comma-separated. Credentialed: the staff refresh
@@ -658,7 +673,12 @@ export const envSchema = z
      * that point the keys mean something, and a deploy without them is once
      * again a mistake worth refusing to start over.
      */
-  });
+  })
+  // The API's own address defaults to this process's port, which only the parsed object knows.
+  .transform((env) => ({
+    ...env,
+    PUBLIC_API_URL: env.PUBLIC_API_URL ?? `http://localhost:${env.PORT}/${APP_CONFIG.apiPrefix}`,
+  }));
 
 export type Env = z.infer<typeof envSchema>;
 

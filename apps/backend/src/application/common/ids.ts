@@ -16,3 +16,10 @@ export function sameId(a: string | null | undefined, b: string | null | undefine
   if (!a || !b) return false;
   return a.toLowerCase() === b.toLowerCase();
 }
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Whether a string is spelt as a UUID, in either case. A path id goes through `UuidPipe` instead. */
+export function isUuid(value: string): boolean {
+  return UUID.test(value);
+}

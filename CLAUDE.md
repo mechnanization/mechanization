@@ -5,7 +5,8 @@ Last verified against the code: `develop@8742c5b`, 2026-10-03; the two tiered-fe
 (zod 4) on `fix/dependency-audit`, 2026-10-28; the two old-debts rows, `docs/old-debts-plan`,
 2026-11-21; the `lint:unused` command and definition-of-done lines, `fix/cleanup-sec-10-dead-18-dry-01`,
 2026-11-24; the frontend-shell row's Sentry path (the scrubber moved to shared-schemas),
-`fix/cleanup-dry-02-06`, 2026-11-24. Code wins: where a
+`fix/cleanup-dry-02-06`, 2026-11-24; the release line in Git (CI before the migration),
+`fix/cleanup-sec-04-06-07-09-12`, 2026-11-28. Code wins: where a
 doc and the code disagree, the code is the fact and the doc is the bug.
 
 A multi-tenant registration system for Lebanese municipalities: the citizen
@@ -220,8 +221,9 @@ Docs, tests, lockfiles and generated files never trigger it.
   `chore/migration-NNNN` PR, holding the SQL and `schema.prisma`, merged
   before the feature PR. Details: [docs/database.md](docs/database.md#migrations).
 - PRs target `develop`. A release is a PR from `develop` to `main`, and it needs
-  one human approval. Pushing to `main` migrates production and then deploys
-  the API.
+  one human approval. Pushing to `main` runs CI and the dependency audit, then
+  migrates production, then deploys the API (`deploy-backend.yml`); a red check
+  stops it before the migration.
 - Commit messages follow Conventional Commits with a scope:
   `fix(landlord-links): …`, `feat(cases): …`, `chore(db): …`. Cite rule IDs
   (`COL-4`, `PRIM-3`) when a commit applies one.

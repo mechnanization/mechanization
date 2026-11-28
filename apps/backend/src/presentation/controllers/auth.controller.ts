@@ -22,6 +22,7 @@ import { IdentityService } from '../../application/features/identity/identity.se
 import { ZodValidationPipe } from '../../application/common/pipes/zod-validation.pipe';
 import { CurrentTenant, CurrentUser } from '../decorators/current-user.decorator';
 import { SelfService } from '../decorators/self-service.decorator';
+import { CountPerStaffAccount } from '../decorators/count-per-staff-account.decorator';
 import { ForbiddenError } from '../../application/common/exceptions';
 import { Public } from '../decorators/public.decorator';
 import { Roles } from '../decorators/roles.decorator';
@@ -37,11 +38,10 @@ import {
 /**
  * The throttle on refresh and sign-out, counted per `Authorization` header.
  *
- * The API sits behind nginx without `trust proxy`, so every request arrives
- * from nginx's address and the default per-IP bucket is one bucket for
- * everyone: one tab stuck in a refresh loop — or one anonymous flood — would
- * spend every clerk's refreshes. The header is what tells tabs apart. Hashed
- * so the bucket key never holds a bearer token.
+ * Per address is not enough here even with `trust proxy` set (SEC-04): the
+ * clerks of one municipality sit behind one office address, so one tab stuck in
+ * a refresh loop would spend every colleague's refreshes. The header is what
+ * tells tabs apart. Hashed so the bucket key never holds a bearer token.
  *
  * A caller can mint new buckets by varying the header, and that is acceptable
  * for what this protects: a header that is not a token this service signed is
@@ -101,6 +101,8 @@ export class AuthController {
       ttl: APP_CONFIG.throttle.staffLogin.ttlSeconds * 1000,
     },
   })
+  // And per account, whatever the address (`APP_CONFIG.throttle.staffLoginAccount`; SEC-04).
+  @CountPerStaffAccount()
   /**
    * The pipe sits on `@Body()` specifically rather than on `@UsePipes()` at the
    * method: a method-level pipe runs against every parameter of the handler,

@@ -128,10 +128,29 @@ in a schema.
 one. Both break on the same day, and this list was missing the second until
 2026-09-21.
 
-**Rate limiting.** `@nestjs/throttler` uses in-memory storage. This is correct
-for one instance and wrong the moment there are two: per-instance counters make
-the effective limit N× what is configured, so staff login would allow 5×N
-attempts per minute.
+**Rate limiting.** **Decided 2026-11-28** (audit SEC-04, U-6 in the cleanup
+audit), and built ahead of the trigger below, because pm2 already reloads the
+API as a cluster whose instance count nobody has read:
+
+- `trust proxy` is `loopback`: a forwarded address is believed only from nginx
+  on the same box (`APP_CONFIG.http.trustProxy`). Before, every client was
+  nginx's address, so a per-address bucket was one bucket for everyone.
+- The throttle counts in Redis whenever `REDIS_URL` is set
+  (`RedisThrottlerStorage`), shared by every process and replica, and in each
+  process's memory while it is unset or Redis is down. A count never fails a
+  request.
+- Staff sign-in is limited per account as well as per address
+  (`APP_CONFIG.throttle.staffLoginAccount`, 10 a quarter hour), accepting that
+  whoever knows a staff email can lock that person out for 15 minutes.
+
+**Unverified, and the box's to answer:** that nginx sends `X-Forwarded-For`, and
+that `REDIS_URL` is set on Lightsail (docs/security.md, Known gaps). Until both
+are, the in-memory story below still describes production.
+
+What in-memory storage costs, for the record: it is correct for one instance
+and wrong the moment there are two: per-instance counters make the effective
+limit N× what is configured, so staff login would allow 5×N attempts per
+minute.
 
 **The job schedule.** `ScheduleModule` registers in-process `@Cron` timers, so
 every replica that boots with them is a *separate scheduler*. Two replicas is
@@ -162,8 +181,8 @@ set `VERCEL`.
 **Trigger to revisit — the first time a second backend replica is deployed.**
 On that day, both of these, not one:
 
-1. Move the throttler to Redis. That is the one piece Redis needs to come back
-   for; nothing else in v2 depends on it.
+1. Set `REDIS_URL` on every replica, to one Redis they share: the throttler
+   already counts there when it is set (above, 2026-11-28).
 2. Set `SCHEDULER_ENABLED=false` on every replica but one — or `false` on all of
    them and drive the jobs from an external scheduler through
    `InternalCronController`, which is what the Vercel deployment already does

@@ -4,13 +4,31 @@ on:
   push:
     branches: [main]
 
-# Two pushes in quick succession must not overlap: they share the candidate's
-# pm2 name, port 4001 and the `current` symlink on the box.
+# Read only, every job (SEC-09): nothing here writes to the repository or asks
+# GitHub for a token. The pre-migration backup signs in with the access keys of
+# db-production, not through OIDC, so no job holds `id-token: write`.
+permissions:
+  contents: read
+
+# A deploy never overlaps another deploy or a rollback: they share the
+# candidate's pm2 name, port 4001 and the `current` symlink on the box.
+# `rollback-production.yml` takes the same group.
 concurrency:
-  group: deploy-backend
+  group: production-deploy
   cancel-in-progress: false
 
 jobs:
+  # CI first, the dependency audit with it (SEC-09). Branch protection on main
+  # requires no status check, so without this a release merged with CI red
+  # migrated production and shipped. The same workflow every branch runs,
+  # called, so the gate and the branch checks cannot drift apart. It holds no
+  # secret: none is passed to it.
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
   # Schema first, then code. A release that needs a migration must never go
   # live before it, which is the order this repository has kept by hand for
   # every migration so far ("apply BEFORE code").
@@ -25,12 +43,10 @@ jobs:
   # release, against a schema that was either untouched or changed additively.
   migrate:
     name: migrate databases
+    needs: ci
     uses: ./.github/workflows/migrate-database.yml
-    # id-token: the pre-migration backup assumes its AWS role through OIDC.
-    # A called workflow can only narrow what its caller grants.
     permissions:
       contents: read
-      id-token: write
     with:
       target: production
       confirm: municipality_db
@@ -39,12 +55,18 @@ jobs:
   deploy:
     needs: migrate
     runs-on: ubuntu-latest
+    # The environment that holds the box's SSH key (SEC-09). db-production
+    # admits protected branches only, so once the SSH_* secrets live there and
+    # in db-staging (the migration tunnel reaches the same box from both) and
+    # no longer as repository secrets, a workflow edited on any other branch
+    # cannot read them. Until they are moved, the repository's copies answer.
+    environment: db-production
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: 'pnpm'
@@ -108,24 +130,67 @@ jobs:
         id: vars
         run: echo "release=$(date +%Y%m%d%H%M%S)-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
 
+      - name: Trust the server's host key and load the deploy key
+        # OpenSSH on the runner, as the migration tunnel does (migrate-database.yml),
+        # in place of two third-party actions that were handed the private key
+        # and pinned by tag (SEC-09). The host key is checked against
+        # SSH_KNOWN_HOSTS and never learned on the fly: a fresh runner that
+        # accepted the first key it saw would accept whatever answered at that
+        # address, and hand it the release.
+        #
+        # Every later step reaches the box as `ssh deploy-box`, through the
+        # entry written here: the host, the user, the key, the pinned host keys.
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SSH_KNOWN_HOSTS" ]; then
+            echo "::error::SSH_KNOWN_HOSTS is not set. Add the server's host keys: see docs/database-environments.md §6."
+            exit 1
+          fi
+          install -d -m 700 "$HOME/.ssh"
+          umask 077
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/deploy_key"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/deploy_known_hosts"
+          {
+            echo "Host deploy-box"
+            echo "  HostName $SSH_HOST"
+            echo "  User $SSH_USER"
+            echo "  IdentityFile $HOME/.ssh/deploy_key"
+            echo "  IdentitiesOnly yes"
+            echo "  UserKnownHostsFile $HOME/.ssh/deploy_known_hosts"
+            echo "  StrictHostKeyChecking yes"
+            echo "  BatchMode yes"
+            echo "  ServerAliveInterval 30"
+          } >> "$HOME/.ssh/config"
+
       - name: Copy release to server
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          source: "release.tar.gz"
-          target: "/var/www/municipality-app-releases/releases/${{ steps.vars.outputs.release }}-upload"
+        # Streamed over the session rather than scp, so the box needs nothing
+        # but a shell (no SFTP subsystem); lands where the step below reads it.
+        env:
+          RELEASE: ${{ steps.vars.outputs.release }}
+        run: |
+          set -euo pipefail
+          UPLOAD_DIR="/var/www/municipality-app-releases/releases/$RELEASE-upload"
+          ssh deploy-box "set -e; mkdir -p '$UPLOAD_DIR'; cat > '$UPLOAD_DIR/release.tar.gz'" < release.tar.gz
 
       - name: Extract, boot candidate on port 4001, health-check, then cut over
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
+        # The script is the command the session runs, as the action ran it; the
+        # release name is the only value put into it, and it is the
+        # timestamp-and-SHA the step above built.
+        env:
+          RELEASE: ${{ steps.vars.outputs.release }}
+        run: |
+          set -euo pipefail
+          case "$RELEASE" in
+            *[!A-Za-z0-9-]*|'') echo "::error::Unexpected release name '$RELEASE'"; exit 1 ;;
+          esac
+          remote=$(cat <<'REMOTE'
             set -e
-            RELEASE_DIR=/var/www/municipality-app-releases/releases/${{ steps.vars.outputs.release }}
+            RELEASE_DIR=/var/www/municipality-app-releases/releases/$RELEASE
             UPLOAD_DIR=${RELEASE_DIR}-upload
 
             mkdir -p $RELEASE_DIR
@@ -196,3 +261,6 @@ jobs:
               echo "Production unhealthy after cutover — investigate immediately"
               exit 1
             fi
+          REMOTE
+          )
+          ssh deploy-box "RELEASE='$RELEASE'; $remote"

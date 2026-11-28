@@ -53,6 +53,7 @@ describe('the paged lists', () => {
       null as never,
       null as never,
       null as never,
+      null as never,
     );
 
     beforeEach(() => listNotices.mockClear());
