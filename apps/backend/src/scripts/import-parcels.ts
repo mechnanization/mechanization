@@ -29,8 +29,8 @@ import {
   mergeParcelPoints,
   parseCadastre,
   readKmlText,
-} from '../infrastructure/cadastre/kmz-parser';
-import { buildCadastreGeometryAssets } from '../infrastructure/cadastre/parcel-geometry';
+} from '../application/features/cadastre/kmz-parser';
+import { buildCadastreGeometryAssets } from '../application/features/cadastre/parcel-geometry';
 
 /**
  * Six decimal places is ~0.11 m at this latitude — finer than the survey's own

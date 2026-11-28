@@ -7,8 +7,8 @@ import {
 import type { CadastreStorage } from '../../../domain/interfaces/cadastre-storage.interface';
 import type { ParcelRepository } from '../../../domain/interfaces/parcel-repository.interface';
 import { ValidationError } from '../../common/exceptions';
-import { mergeParcelPoints, type Parcel } from '../../../infrastructure/cadastre/kmz-parser';
-import { buildCadastreGeometryAssets } from '../../../infrastructure/cadastre/parcel-geometry';
+import { mergeParcelPoints, type Parcel } from './kmz-parser';
+import { buildCadastreGeometryAssets } from './parcel-geometry';
 
 /** Six decimal places is ~0.11m at this latitude — finer than any survey's own
  * accuracy, and it keeps the static file a fraction of the raw upload's size. */

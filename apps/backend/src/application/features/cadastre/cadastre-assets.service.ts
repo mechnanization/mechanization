@@ -1,8 +1,8 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import type { Feature, FeatureCollection, Polygon } from 'geojson';
-import { CADASTRE_STORAGE_SERVICE } from '../../domain/interfaces/base-repository.interface';
-import type { CadastreStorage } from '../../domain/interfaces/cadastre-storage.interface';
+import { CADASTRE_STORAGE_SERVICE } from '../../../domain/interfaces/base-repository.interface';
+import type { CadastreStorage } from '../../../domain/interfaces/cadastre-storage.interface';
 
 /**
  * Reads the derived cadastre layers the import writes — parcel shapes and the

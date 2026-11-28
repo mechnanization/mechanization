@@ -81,7 +81,7 @@ Phase 1**. They are kept rather than deleted so a later session reading old code
 comments or old branches recognises what it is looking at.
 
 - **`parcel-polygons.geojson` already exists.** Produced by
-  `apps/backend/src/infrastructure/cadastre/parcel-geometry.ts` (custom half-edge
+  `apps/backend/src/application/features/cadastre/parcel-geometry.ts` (custom half-edge
   face-tracing) and uploaded by the cadastre import. Consumed by
   `zone-editor-map.tsx:122`; `fullscreen-map.tsx` does **not** load it.
   ~~Polygons are not in the database.~~ → **P1-T4 put them there** (`Parcel.boundary`).

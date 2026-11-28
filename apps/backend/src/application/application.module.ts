@@ -7,6 +7,7 @@ import { RecurringBillingJob } from './background-jobs/recurring-billing.job';
 import { StaffRefreshTokenCleanupJob } from './background-jobs/staff-refresh-token-cleanup.job';
 import { AuditService } from './features/audit/audit.service';
 import { BackupService } from './features/backup/backup.service';
+import { CadastreAssetsService } from './features/cadastre/cadastre-assets.service';
 import { CadastreImportService } from './features/cadastre/cadastre-import.service';
 import { BuildingsService } from './features/buildings/buildings.service';
 import { OccupancyWritesService } from './features/buildings/occupancy-writes.service';
@@ -94,6 +95,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
   ],
   providers: [
     TenantService,
+    CadastreAssetsService,
     IdentityService,
     OtpService,
     SessionRevocationService,
@@ -166,6 +168,7 @@ import { RecordReviewService } from './features/quality/record-review.service';
   ],
   exports: [
     TenantService,
+    CadastreAssetsService,
     IdentityService,
     OtpService,
     SessionRevocationService,

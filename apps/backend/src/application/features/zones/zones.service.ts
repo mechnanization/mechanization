@@ -10,7 +10,7 @@ import {
 } from '../../../domain/interfaces/parcel-repository.interface';
 import type { Zone, ZoneRepository } from '../../../domain/interfaces/zone-repository.interface';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/exceptions';
-import { CadastreAssetsService } from '../../../infrastructure/cadastre/cadastre-assets.service';
+import { CadastreAssetsService } from '../cadastre/cadastre-assets.service';
 import { BuildingsService } from '../buildings/buildings.service';
 
 export interface ZoneSummary {
