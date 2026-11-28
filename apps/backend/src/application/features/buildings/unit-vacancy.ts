@@ -1,3 +1,4 @@
+import type { SurveyStatus, UnitStatus } from '@mechanization/shared-schemas';
 import type { PrismaClient as TenantPrismaClient } from '../../../generated/tenant-client';
 import type { VacancyRow } from './building.types';
 
@@ -67,12 +68,12 @@ export async function activeVacancy(db: VacancyDb, unitId: string) {
 export function vacancyReversal(input: {
   reason: 'RECORDED_IN_ERROR' | 'NO_LONGER_VACANT';
   /** The unit as it stands now. */
-  unit: { unitStatus: string | null; surveyStatus: string };
-  confirmation: { previousUnitStatus: string | null; previousSurveyStatus: string | null };
+  unit: { unitStatus: UnitStatus | null; surveyStatus: SurveyStatus };
+  confirmation: { previousUnitStatus: UnitStatus | null; previousSurveyStatus: SurveyStatus | null };
   /** The outcome of the unit's last visit that was not itself the vacancy. */
-  lastVisitOutcome: string | null;
-}): { unitStatus?: string | null; surveyStatus?: string } {
-  const restore: { unitStatus?: string | null; surveyStatus?: string } = {};
+  lastVisitOutcome: SurveyStatus | null;
+}): { unitStatus?: UnitStatus | null; surveyStatus?: SurveyStatus } {
+  const restore: { unitStatus?: UnitStatus | null; surveyStatus?: SurveyStatus } = {};
 
   if (input.unit.unitStatus === 'VACANT') {
     restore.unitStatus =
@@ -106,7 +107,7 @@ export async function closeActiveVacancy(
   db: VacancyDb,
   input: {
     unitId: string;
-    unit: { unitStatus: string | null; surveyStatus: string };
+    unit: { unitStatus: UnitStatus | null; surveyStatus: SurveyStatus };
     reason: 'RECORDED_IN_ERROR' | 'NO_LONGER_VACANT';
     endedAt?: Date;
     notes?: string;
@@ -114,7 +115,7 @@ export async function closeActiveVacancy(
   },
 ): Promise<{
   confirmation: Awaited<ReturnType<typeof activeVacancy>>;
-  restore: { unitStatus?: string | null; surveyStatus?: string };
+  restore: { unitStatus?: UnitStatus | null; surveyStatus?: SurveyStatus };
 } | null> {
   const confirmation = await activeVacancy(db, input.unitId);
   if (!confirmation) return null;
@@ -130,7 +131,7 @@ export async function closeActiveVacancy(
   const endedAt = requested < confirmation.observedAt ? confirmation.observedAt : requested;
 
   const lastVisit = await db.unitVisit.findFirst({
-    where: { unitId: input.unitId, outcome: { not: 'VACANT_CONFIRMED' as never } },
+    where: { unitId: input.unitId, outcome: { not: 'VACANT_CONFIRMED' } },
     orderBy: [{ visitedAt: 'desc' }, { createdAt: 'desc' }],
     select: { outcome: true },
   });
@@ -139,7 +140,7 @@ export async function closeActiveVacancy(
     where: { id: confirmation.id },
     data: {
       endedAt,
-      endReason: input.reason as never,
+      endReason: input.reason,
       endNotes: input.notes?.trim() || null,
       endedById: input.actorId,
     },
@@ -177,7 +178,7 @@ export async function openVacancy(
   db: Pick<TenantPrismaClient, 'unitVacancyConfirmation' | 'unit'>,
   input: {
     unitId: string;
-    unit: { unitStatus: string | null; surveyStatus: string };
+    unit: { unitStatus: UnitStatus | null; surveyStatus: SurveyStatus };
     basis: 'FIELD_INSPECTION' | 'OWNER_STATEMENT' | 'NEIGHBOUR_OR_CARETAKER' | 'DECLARATION_FILED';
     notes?: string | null;
     actorId: string | null;
@@ -186,11 +187,11 @@ export async function openVacancy(
   const confirmation = await db.unitVacancyConfirmation.create({
     data: {
       unitId: input.unitId,
-      basis: input.basis as never,
+      basis: input.basis,
       notes: input.notes?.trim() || null,
       confirmedById: input.actorId,
-      previousUnitStatus: input.unit.unitStatus as never,
-      previousSurveyStatus: input.unit.surveyStatus as never,
+      previousUnitStatus: input.unit.unitStatus,
+      previousSurveyStatus: input.unit.surveyStatus,
     },
   });
   await db.unit.update({
@@ -208,8 +209,8 @@ export function toVacancyRow(row: {
   notes: string | null;
   confirmedById: string | null;
   confirmedBy?: { firstName: string | null; lastName: string | null } | null;
-  previousUnitStatus: string | null;
-  previousSurveyStatus: string | null;
+  previousUnitStatus: UnitStatus | null;
+  previousSurveyStatus: SurveyStatus | null;
   endedAt: Date | null;
   endReason: string | null;
   endNotes: string | null;

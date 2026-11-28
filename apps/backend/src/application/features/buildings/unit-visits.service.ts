@@ -92,8 +92,8 @@ export class UnitVisitsService {
         where: {
           unitId,
           endedAt: null,
-          unitStatus: 'VACANT' as never,
-          propertyEntry: { occupancyType: 'OWNER' as never, endedAt: null },
+          unitStatus: 'VACANT',
+          propertyEntry: { occupancyType: 'OWNER', endedAt: null },
         },
         select: { id: true, propertyEntryId: true, propertyEntry: { select: { registration: { select: { citizenId: true } } } } },
       }),
@@ -101,10 +101,10 @@ export class UnitVisitsService {
         ? this.db.propertyEntry.findMany({
             where: {
               buildingId: unit.buildingId,
-              propertyType: 'HOUSE' as never,
-              occupancyType: 'OWNER' as never,
+              propertyType: 'HOUSE',
+              occupancyType: 'OWNER',
               endedAt: null,
-              unitStatus: 'VACANT' as never,
+              unitStatus: 'VACANT',
               units: { none: { endedAt: null } },
             },
             select: { id: true, registration: { select: { citizenId: true } } },
@@ -225,7 +225,7 @@ export class UnitVisitsService {
       const created = await tx.unitVacancyConfirmation.create({
         data: {
           unitId,
-          basis: input.basis as never,
+          basis: input.basis,
           ...(input.observedAt ? { observedAt: input.observedAt } : {}),
           notes: input.notes?.trim() || null,
           confirmedById: actor.id,
@@ -345,10 +345,10 @@ export class UnitVisitsService {
               where: { id: unitId },
               data: {
                 ...(closed.restore.unitStatus !== undefined
-                  ? { unitStatus: closed.restore.unitStatus as never }
+                  ? { unitStatus: closed.restore.unitStatus }
                   : {}),
                 ...(closed.restore.surveyStatus !== undefined
-                  ? { surveyStatus: closed.restore.surveyStatus as never }
+                  ? { surveyStatus: closed.restore.surveyStatus }
                   : {}),
               },
             })
@@ -446,7 +446,7 @@ export class UnitVisitsService {
           where: {
             unitId: input.unitId,
             officerId: actor.id,
-            outcome: input.outcome as never,
+            outcome: input.outcome,
             createdAt: { gte: new Date(Date.now() - REPEAT_VISIT_WINDOW_MS) },
           },
           orderBy: { createdAt: 'desc' },
@@ -501,7 +501,7 @@ export class UnitVisitsService {
         data: {
           unitId: input.unitId,
           officerId: actor.id,
-          outcome: input.outcome as never,
+          outcome: input.outcome,
           ...(input.visitedAt ? { visitedAt: input.visitedAt } : {}),
           notes: input.notes?.trim() || null,
         },
@@ -511,7 +511,7 @@ export class UnitVisitsService {
       if (!standing) {
         await tx.unit.update({
           where: { id: input.unitId },
-          data: { surveyStatus: input.outcome as never },
+          data: { surveyStatus: input.outcome },
         });
       }
 

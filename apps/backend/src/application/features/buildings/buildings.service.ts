@@ -350,8 +350,8 @@ export class BuildingsService {
     const held = await unitsUnderReview(this.db);
     const withCases = await this.db.case.findMany({
       where: {
-        caseType: 'STATUS_CONFLICT' as never,
-        status: { in: ['OPEN', 'SCHEDULED'] as never },
+        caseType: 'STATUS_CONFLICT',
+        status: { in: ['OPEN', 'SCHEDULED'] },
         unitId: { not: null },
       },
       select: { unitId: true },
@@ -453,7 +453,7 @@ export class BuildingsService {
       so a percentage that looks too good can be explained on the same screen.
     */
     const occupiableWhere: Prisma.BuildingWhereInput = {
-      AND: [where, { lifecycleStatus: { in: [...OCCUPIABLE_LIFECYCLE] as never } }],
+      AND: [where, { lifecycleStatus: { in: [...OCCUPIABLE_LIFECYCLE] } }],
     };
 
     /*
@@ -613,7 +613,7 @@ export class BuildingsService {
     const surveys = await withConnectionRetry(() =>
       this.db.unit.groupBy({
         by: ['surveyStatus'],
-        where: { building: { lifecycleStatus: { in: [...OCCUPIABLE_LIFECYCLE] as never } } },
+        where: { building: { lifecycleStatus: { in: [...OCCUPIABLE_LIFECYCLE] } } },
         orderBy: { surveyStatus: 'asc' },
       }),
     );
@@ -628,7 +628,7 @@ export class BuildingsService {
     const unsurveyedShells = await withConnectionRetry(() =>
       this.db.building.count({
         where: {
-          lifecycleStatus: { in: [...OCCUPIABLE_LIFECYCLE] as never },
+          lifecycleStatus: { in: [...OCCUPIABLE_LIFECYCLE] },
           units: { none: {} },
         },
       }),
@@ -758,9 +758,9 @@ export class BuildingsService {
         standsOnParcels(filter.parcelNumbers),
       ];
     }
-    if (filter.structureType) where.structureType = filter.structureType as never;
+    if (filter.structureType) where.structureType = filter.structureType;
     if (filter.buildingTypeId) where.buildingTypeId = filter.buildingTypeId;
-    if (filter.lifecycleStatus) where.lifecycleStatus = filter.lifecycleStatus as never;
+    if (filter.lifecycleStatus) where.lifecycleStatus = filter.lifecycleStatus;
 
     /*
       «بلا مدخل مُثبت», and its complement.
@@ -817,7 +817,7 @@ export class BuildingsService {
       where.OR =
         filter.surveyStatus === 'NOT_SURVEYED'
           ? [{ units: { some: { surveyStatus: 'NOT_SURVEYED' } } }, { units: { none: {} } }]
-          : [{ units: { some: { surveyStatus: filter.surveyStatus as never } } }];
+          : [{ units: { some: { surveyStatus: filter.surveyStatus } } }];
 
       /*
         And only structures that can hold a household, matching the tiles.
@@ -834,7 +834,7 @@ export class BuildingsService {
       */
       where.AND = [
         ...(Array.isArray(where.AND) ? where.AND : []),
-        { lifecycleStatus: { in: [...OCCUPIABLE_LIFECYCLE] as never } },
+        { lifecycleStatus: { in: [...OCCUPIABLE_LIFECYCLE] } },
       ];
     }
 
@@ -998,7 +998,7 @@ export class BuildingsService {
           unitId: { in: open },
           unitStatus: { not: null },
           endedAt: null,
-          propertyEntry: { occupancyType: 'OWNER' as never, endedAt: null },
+          propertyEntry: { occupancyType: 'OWNER', endedAt: null },
         },
         orderBy: { updatedAt: 'desc' },
         select: { unitId: true, unitStatus: true },
@@ -1007,8 +1007,8 @@ export class BuildingsService {
         ? this.db.propertyEntry.findMany({
             where: {
               buildingId,
-              propertyType: 'HOUSE' as never,
-              occupancyType: 'OWNER' as never,
+              propertyType: 'HOUSE',
+              occupancyType: 'OWNER',
               unitStatus: { not: null },
               endedAt: null,
             },
@@ -1113,7 +1113,7 @@ export class BuildingsService {
         ? this.db.propertyEntry.findMany({
             where: {
               buildingId,
-              propertyType: 'HOUSE' as never,
+              propertyType: 'HOUSE',
               endedAt: null,
               registration: { citizenId: { in: citizenIds } },
             },
@@ -1199,7 +1199,7 @@ export class BuildingsService {
       where: {
         buildingId,
         endedAt: null,
-        occupancyType: { in: ['TENANT', 'FREE_OCCUPANT'] as never },
+        occupancyType: { in: ['TENANT', 'FREE_OCCUPANT'] },
         registration: { citizenId: { in: tenantIds } },
       },
       orderBy: { createdAt: 'asc' },
@@ -1430,9 +1430,9 @@ export class BuildingsService {
           partitionNumbers: partitionNumbersFor(input.isPartitioned, input.partitionNumbers),
           // Never the parcel the code derives from — see `sharedParcelsExcluding`.
           sharedParcelNumbers: sharedParcelsExcluding(input.sharedParcelNumbers, parcelNumber),
-          structureType: typed.structureType as never,
+          structureType: typed.structureType,
           buildingTypeId: typed.buildingTypeId,
-          lifecycleStatus: input.lifecycleStatus as never,
+          lifecycleStatus: input.lifecycleStatus,
           latitude: input.latitude ?? null,
           longitude: input.longitude ?? null,
           floorsCount: input.floorsCount,
@@ -1478,13 +1478,13 @@ export class BuildingsService {
               startCol: unit.startCol ?? null,
               endCol: unit.endCol ?? null,
               unitCode: formatUnitCode(unit.floor, next),
-              unitType: unitTyped.unitType as never,
+              unitType: unitTyped.unitType,
               unitTypeId: unitTyped.unitTypeId,
               postedNumber: unit.postedNumber?.trim() || null,
               side: unit.side?.trim() || null,
               unitArea: unit.unitArea ?? null,
-              unitStatus: (unit.unitStatus ?? null) as never,
-              surveyStatus: (unit.surveyStatus ?? 'NOT_SURVEYED') as never,
+              unitStatus: (unit.unitStatus ?? null),
+              surveyStatus: (unit.surveyStatus ?? 'NOT_SURVEYED'),
               notes: unit.notes?.trim() || null,
             };
           }),
@@ -1739,9 +1739,9 @@ export class BuildingsService {
               ),
             }
           : {}),
-        ...(typed ? { structureType: typed.structureType as never, buildingTypeId: typed.buildingTypeId } : {}),
+        ...(typed ? { structureType: typed.structureType, buildingTypeId: typed.buildingTypeId } : {}),
         ...(input.lifecycleStatus !== undefined
-          ? { lifecycleStatus: input.lifecycleStatus as never }
+          ? { lifecycleStatus: input.lifecycleStatus }
           : {}),
         ...(input.latitude !== undefined ? { latitude: input.latitude } : {}),
         ...(input.longitude !== undefined ? { longitude: input.longitude } : {}),
@@ -1932,7 +1932,7 @@ export class BuildingsService {
       where: {
         unitId: unit.id,
         toDate: null,
-        role: { in: ['TENANT', 'FREE_OCCUPANT'] as never },
+        role: { in: ['TENANT', 'FREE_OCCUPANT'] },
         ...(exceptCitizenId ? { citizenId: { not: exceptCitizenId } } : {}),
       },
     });
@@ -1984,7 +1984,7 @@ export class BuildingsService {
     options: { seasonalAllowed?: boolean } = {},
   ): Promise<void> {
     const live = await this.db.unitOccupancy.count({
-      where: { unitId: unit.id, toDate: null, role: { in: ['TENANT', 'FREE_OCCUPANT'] as never } },
+      where: { unitId: unit.id, toDate: null, role: { in: ['TENANT', 'FREE_OCCUPANT'] } },
     });
     if (live > 0) {
       throw new ConflictError(

@@ -52,7 +52,7 @@ describe('resolving a unit’s type', () => {
   });
 
   it('keeps a custom type when its own base is sent again, and changes it when another base is sent', () => {
-    const school = { unitTypeId: 'school', unitType: 'OFFICE' };
+    const school = { unitTypeId: 'school', unitType: 'OFFICE' as const };
     expect(index.resolve({ unitType: 'OFFICE' }, school)).toBeNull();
     expect(index.resolve({ unitType: 'SHOP' }, school)).toEqual({ unitTypeId: 'sys-shop', unitType: 'SHOP' });
   });

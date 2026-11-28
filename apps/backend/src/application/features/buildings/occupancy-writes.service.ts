@@ -7,8 +7,10 @@ import {
   feeBearerClass,
   OCCUPANCY_LIFTS_SURVEY_STATUS,
   unitStatusForRole,
+  type OccupancyEndReason,
   type OccupancyRole,
   type StructureType,
+  type UnitStatus,
   type UpsertOccupancyInput,
 } from '@mechanization/shared-schemas';
 import { TenantContextService } from '../../../infrastructure/context/tenant-context.service';
@@ -186,10 +188,10 @@ export class OccupancyWritesService {
           where: { id: input.unitId },
           data: {
             ...(closed.restore.unitStatus !== undefined
-              ? { unitStatus: closed.restore.unitStatus as never }
+              ? { unitStatus: closed.restore.unitStatus }
               : {}),
             ...(closed.restore.surveyStatus !== undefined
-              ? { surveyStatus: closed.restore.surveyStatus as never }
+              ? { surveyStatus: closed.restore.surveyStatus }
               : {}),
           },
         });
@@ -279,7 +281,7 @@ export class OccupancyWritesService {
       to resolve, not for a side effect to overwrite.
     */
     await this.db.unit.updateMany({
-      where: { id: input.unitId, surveyStatus: { in: OCCUPANCY_LIFTS_SURVEY_STATUS as never } },
+      where: { id: input.unitId, surveyStatus: { in: [...OCCUPANCY_LIFTS_SURVEY_STATUS] } },
       data: { surveyStatus: 'COMPLETE' },
     });
 
@@ -336,7 +338,7 @@ export class OccupancyWritesService {
       if (!(await activeVacancy(this.db, input.unitId))) {
         await this.unitVisits.confirmVacancy(
           input.unitId,
-          { basis: 'OWNER_STATEMENT', notes: 'تصريح المالك عند تسجيله على الوحدة' } as never,
+          { basis: 'OWNER_STATEMENT', notes: 'تصريح المالك عند تسجيله على الوحدة' },
           actor,
           { settle: false, ownerStatement: true },
         );
@@ -344,7 +346,7 @@ export class OccupancyWritesService {
     } else if (input.unitStatus) {
       await this.db.unit.update({
         where: { id: input.unitId },
-        data: { unitStatus: input.unitStatus as never },
+        data: { unitStatus: input.unitStatus },
       });
     }
 
@@ -472,7 +474,7 @@ export class OccupancyWritesService {
   private async stateOnOwnerCard(
     propertyEntryId: string,
     unitId: string,
-    status: string,
+    status: UnitStatus,
     context: { citizenId: string; unitCode: string; actor: StaffActor },
   ): Promise<void> {
     const card = await this.db.propertyEntry.findUnique({
@@ -492,11 +494,11 @@ export class OccupancyWritesService {
       const line = card.units[0]!;
       if (line.unitStatus === status) return;
       before = line.unitStatus;
-      await this.db.buildingUnit.update({ where: { id: line.id }, data: { unitStatus: status as never } });
+      await this.db.buildingUnit.update({ where: { id: line.id }, data: { unitStatus: status } });
     } else if (card.propertyType === 'HOUSE') {
       if (card.unitStatus === status) return;
       before = card.unitStatus;
-      await this.db.propertyEntry.update({ where: { id: card.id }, data: { unitStatus: status as never } });
+      await this.db.propertyEntry.update({ where: { id: card.id }, data: { unitStatus: status } });
     } else {
       return;
     }
@@ -581,7 +583,7 @@ export class OccupancyWritesService {
     citizenId: string;
     role: OccupancyRole;
     shares: number | null;
-    unitStatus: string | null;
+    unitStatus: UnitStatus | null;
     landlord?: LandlordSpec | null;
     /** The staff member doing this, paid for any line it writes. See `claimOnFile`. */
     filedById: string;
@@ -596,7 +598,7 @@ export class OccupancyWritesService {
     citizenId: string;
     role: OccupancyRole;
     shares: number | null;
-    unitStatus: string | null;
+    unitStatus: UnitStatus | null;
     /** Non-owner capacities only: who the flat is held from. */
     landlord?: LandlordSpec | null;
     /**
@@ -735,11 +737,11 @@ export class OccupancyWritesService {
           // Copied from the canonical unit, which is the register’s own answer
           // and the only one available — the officer was not asked to describe a
           // flat the matrix already describes.
-          unitType: described.unitType as never,
+          unitType: described.unitType,
           floor: described.floor,
           side: described.side,
           unitArea: described.unitArea,
-          unitStatus: (input.unitStatus ?? null) as never,
+          unitStatus: (input.unitStatus ?? null),
           filedById: input.filedById,
         },
       });
@@ -797,7 +799,7 @@ export class OccupancyWritesService {
       data: {
         registrationId: registration.id,
         occupancyType: input.role,
-        propertyType: cardType as never,
+        propertyType: cardType,
         buildingId: building.id,
         // The parcel is the building’s own. الحي is left null rather than
         // guessed: the cadastre has no neighbourhood layer to ask, and this
@@ -838,19 +840,19 @@ export class OccupancyWritesService {
         */
         ...(cardType === 'HOUSE'
           ? {
-              unitType: mapped.defaultUnitType as never,
-              unitStatus: (input.unitStatus ?? null) as never,
+              unitType: mapped.defaultUnitType,
+              unitStatus: (input.unitStatus ?? null),
               unitArea: described.unitArea,
             }
           : {
               units: {
                 create: {
                   unitId: input.unitId,
-                  unitType: described.unitType as never,
+                  unitType: described.unitType,
                   floor: described.floor,
                   side: described.side,
                   unitArea: described.unitArea,
-                  unitStatus: (input.unitStatus ?? null) as never,
+                  unitStatus: (input.unitStatus ?? null),
                   filedById: input.filedById,
                 },
               },
@@ -914,7 +916,7 @@ export class OccupancyWritesService {
             where: {
               unitId: { in: unitIds },
               toDate: null,
-              role: 'OWNER' as never,
+              role: 'OWNER',
               citizenId: { not: owner.id },
             },
             select: { unitId: true },
@@ -986,7 +988,7 @@ export class OccupancyWritesService {
    */
   async endOccupancy(
     occupancyId: string,
-    input: { toDate?: Date; reason: string },
+    input: { toDate?: Date; reason: OccupancyEndReason },
     actor: StaffActor,
   ): Promise<OccupancyRow> {
     const existing = await this.db.unitOccupancy.findUnique({
@@ -1036,7 +1038,7 @@ export class OccupancyWritesService {
 
     const updated = await this.db.unitOccupancy.update({
       where: { id: occupancyId },
-      data: { toDate, endReason: input.reason as never },
+      data: { toDate, endReason: input.reason },
       include: { citizen: { select: { firstName: true, lastName: true, phone: true, isActive: true, residence: true } } },
     });
 
@@ -1129,7 +1131,7 @@ export class OccupancyWritesService {
     const buildingLinks = await this.db.propertyEntry.updateMany({
       where: {
         buildingId: input.buildingId,
-        propertyType: 'HOUSE' as never,
+        propertyType: 'HOUSE',
         endedAt: null,
         registration: { citizenId: input.citizenId },
         // Nothing itemised; the `buildingId` is the whole of the claim. A card

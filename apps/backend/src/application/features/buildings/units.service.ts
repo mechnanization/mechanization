@@ -324,7 +324,7 @@ export class UnitsService {
           floor: entry.floor,
           sequence,
           unitCode: formatUnitCode(entry.floor, sequence),
-          unitType: entryType.unitType as never,
+          unitType: entryType.unitType,
           unitTypeId: entryType.unitTypeId,
         });
       }
@@ -465,7 +465,7 @@ export class UnitsService {
     */
     if (!input.acknowledgedDuplicates) {
       const siblings = await this.db.unit.findMany({
-        where: { buildingId, floor: input.floor, unitType: input.unitType as never },
+        where: { buildingId, floor: input.floor, unitType: input.unitType },
         orderBy: { sequence: 'asc' },
         select: {
           id: true,
@@ -561,13 +561,13 @@ export class UnitsService {
           startCol: input.startCol ?? null,
           endCol: input.endCol ?? null,
           unitCode: formatUnitCode(input.floor, sequence),
-          unitType: input.unitType as never,
+          unitType: input.unitType,
           unitTypeId: typed.unitTypeId,
           postedNumber: input.postedNumber?.trim() || null,
           side: input.side?.trim() || null,
           unitArea: input.unitArea ?? null,
-          unitStatus: (input.unitStatus ?? null) as never,
-          surveyStatus: (input.surveyStatus ?? 'NOT_SURVEYED') as never,
+          unitStatus: (input.unitStatus ?? null),
+          surveyStatus: (input.surveyStatus ?? 'NOT_SURVEYED'),
           notes: input.notes?.trim() || null,
         },
       });
@@ -1044,7 +1044,7 @@ export class UnitsService {
 
     if (becomingDwelling || sayingOwnerLivesThere || sayingSeasonal) {
       const names = { select: { firstName: true, middleName: true, lastName: true, residence: true } } as const;
-      const nonOwner = { in: ['TENANT', 'FREE_OCCUPANT'] as never };
+      const nonOwner = { in: ['TENANT' as const, 'FREE_OCCUPANT' as const] };
       const [spells, rows, owners] = await Promise.all([
         becomingDwelling
           ? this.db.unitOccupancy.findMany({
@@ -1052,7 +1052,7 @@ export class UnitsService {
                 unitId,
                 toDate: null,
                 role: nonOwner,
-                citizen: { residence: { in: [...OWNER_RECORD_RESIDENCE] as never } },
+                citizen: { residence: { in: [...OWNER_RECORD_RESIDENCE] } },
               },
               select: { citizen: names },
             })
@@ -1065,7 +1065,7 @@ export class UnitsService {
                 propertyEntry: {
                   endedAt: null,
                   occupancyType: nonOwner,
-                  registration: { citizen: { residence: { in: [...OWNER_RECORD_RESIDENCE] as never } } },
+                  registration: { citizen: { residence: { in: [...OWNER_RECORD_RESIDENCE] } } },
                 },
               },
               select: { propertyEntry: { select: { registration: { select: { citizen: names } } } } },
@@ -1073,7 +1073,7 @@ export class UnitsService {
           : Promise.resolve([]),
         sayingOwnerLivesThere || sayingSeasonal
           ? this.db.unitOccupancy.findMany({
-              where: { unitId, toDate: null, role: 'OWNER' as never },
+              where: { unitId, toDate: null, role: 'OWNER' },
               select: { citizen: { select: { residence: true } } },
             })
           : Promise.resolve([]),
@@ -1124,7 +1124,7 @@ export class UnitsService {
           ...(moved ? { floor, sequence, unitCode: formatUnitCode(floor, sequence) } : {}),
           ...(input.startCol !== undefined ? { startCol: input.startCol } : {}),
           ...(input.endCol !== undefined ? { endCol: input.endCol } : {}),
-          ...(input.unitType !== undefined ? { unitType: input.unitType as never } : {}),
+          ...(input.unitType !== undefined ? { unitType: input.unitType } : {}),
           ...(typed ? { unitTypeId: typed.unitTypeId } : {}),
           ...(input.levels !== undefined ? { levels: input.levels } : {}),
           ...(input.postedNumber !== undefined
@@ -1138,10 +1138,10 @@ export class UnitsService {
           ...(becomingStructural
             ? { unitStatus: null }
             : input.unitStatus !== undefined
-              ? { unitStatus: input.unitStatus as never }
+              ? { unitStatus: input.unitStatus }
               : {}),
           ...(input.surveyStatus !== undefined
-            ? { surveyStatus: input.surveyStatus as never }
+            ? { surveyStatus: input.surveyStatus }
             : {}),
           ...(input.presenceMonths !== undefined ? { presenceMonths: input.presenceMonths } : {}),
           ...(input.ownerLastStayAt !== undefined ? { ownerLastStayAt: input.ownerLastStayAt } : {}),
@@ -1401,7 +1401,7 @@ export class UnitsService {
         can never be removed.
       */
       this.db.unitVacancyConfirmation.count({
-        where: { unitId, NOT: { endReason: 'RECORDED_IN_ERROR' as never } },
+        where: { unitId, NOT: { endReason: 'RECORDED_IN_ERROR' } },
       }),
     ]);
 
